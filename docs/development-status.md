@@ -2,7 +2,16 @@
 
 ## Current phase
 
-P0-01 — environment inventory and minimum runnable project skeleton.
+P0-01 — PASS. Environment inventory and minimum runnable project skeleton are complete.
+
+## Next task
+
+P0-02A — Windows SQLite FTS5 capability probe.
+
+- Target execution model: DeepSeek V4.1 Flash (`deepseek-flash`), DS-L, reasoning `low`.
+- Task card: `docs/tasks/P0-02A.md`.
+- The current Codex client has not switched to the target DeepSeek client; execute the
+  card there, or record C1/Terra handoff if that client is unavailable.
 
 ## Completed behavior
 
