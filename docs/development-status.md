@@ -2,33 +2,32 @@
 
 ## Current state
 
-**P0-06 is PASS.** Stage A (GPU runtime bring-up on the RTX 4060) and stage B (authorized sample
-evaluation) both passed, so P0-07 was generated and P1 may start after P0-07.
+**P0-07 is PASS; P0 is complete.** The P0 closing summary is
+[docs/reports/P0-07-p0-summary.md](reports/P0-07-p0-summary.md). It inventories the P0 artifacts
+(GPU onedir package, `uv.lock`, the four model manifests, worker/protocol, evaluation tooling and
+the out-of-repo corpus), maps P0-01…P0-06 to their reports, lists the failed/limited components,
+checks the nine §5.2 P0→P1 gates one by one against repository evidence, and states the invariants
+and the items handed to P1/P2/P4. P1 work has not started.
 
-Stage A delivered a single `onnxruntime-gpu[cuda,cudnn]` runtime with a device policy that reports
-the resolved device/provider and disables the CPU execution-provider fallback, real Chinese-CLIP
-image/text CUDA inference (1320/395 node events, zero CPU nodes), CPU/GPU FP32 agreement
-(3.13e-07 / 1.79e-07, cosine 1.0, Top-K identical to P0-03), warm p50 11.76 ms image / 10.29 ms
-text, a managed worker GPU loop with explicit CPU degradation and structured CUDA-unavailable
-failure, InsightFace and RapidOCR CUDA evidence, and a 3.01 GiB packaged GPU build smoked from a
-Chinese/space path offline on CUDA and on explicit CPU.
+Result of the gate check: all nine gates are satisfied → **P1 may start**. No P0 finding required a
+change to the data identity, storage responsibilities or model route, so no C2 decision was needed.
+Chinese-CLIP ViT-B/16 stays the frozen 6 GB baseline; ViT-L/14 stays an optional high-VRAM
+enhancement.
 
-Stage B evaluated the user-authorized sample source (`D:\SZ\朋友`, `D:\SZ\canon`, `D:\SZ\vsco`,
-`D:\SZ\网络`, `D:\SZ\pic`): **3231 images** (934 with faces, 1141 with OCR text) and **150 invented
-Chinese daily-life queries** (50 tuning / 100 holdout) with fixed, model-independent annotation
-rules. Results on CUDA: baseline Chinese-CLIP ViT-B/16 nDCG@20 0.2592 / Recall@50 0.0410 (holdout
-0.2415), candidate ViT-L/14 0.2672 / 0.0417 (holdout 0.2430) at 2.3× the VRAM, random-ranking
-chance level 0.1100 / 0.0157. Decision: keep ViT-B/16 as the 6 GB baseline, record ViT-L/14 as an
-optional high-VRAM enhancement. CPU and GPU produced an identical ranking on a 400-image subset
-(query p50 3.38 vs 17.43 ms).
+Carried forward as limits, not as passes: GTX 1660 6 GB remains **unverified on real hardware**
+(P4-07/P4-08 release gate); InsightFace detection keeps 12 recorded CPU-assigned shape operators
+(recognition graph is 130/130 CUDA); RapidOCR silently falls back to CPU when the CUDA DLLs are not
+preloaded; indexing throughput is decode-bound (≈8.3 images/s, ≈360 ms/image vs ≈12 ms GPU
+inference, ≈16.7 h for 500k with one worker); driver 616.56 exposes no per-process GPU memory; cold
+CUDA start is slow and fragile (one `cuInit` took 2 m 23 s, and killing a worker mid-initialisation
+blocked new CUDA contexts for ~4 minutes); the 150 evaluation queries are labelled by fixed
+attribute rules, so no semantic search quality may be claimed.
 
-Evidence: [P0-06 report](reports/P0-06-gpu-and-model-eval.md) plus the `docs/reports/P0-06-*.json`
-probe and evaluation records. Corpus data, labels and OCR text stay in
-`PhotoSearchData\evaluation` outside the repository; only aggregate counts are committed.
-
-Recorded limits: the query labels are rule-derived attribute matches, not human relevance
-judgements; GTX 1660 6 GB remains unverified on real hardware; per-process GPU memory is not
-exposed by driver 616.56.
+Two historical record inconsistencies were found and recorded (not edited, since the evidence files
+are read-only): the P0-06 report's command table shows a mid-task `44 passed, 1 skipped` snapshot
+while the final count is 51 passed + 1 skipped, and `docs/reports/P0-06-model-evaluation.json` is
+still the stage-A `stage B / BLOCKED` snapshot that was superseded by the stage-B PASS. Details in
+the P0-07 report §3.1.
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2
@@ -40,13 +39,11 @@ Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发
 |---|---|
 | `uv run pytest -q tests/unit tests/integration` | exit 0, 51 passed + 1 skipped (GPU-opt-in) |
 | `uv run ruff check .` / `git diff --check` | clean / clean |
-| GPU probes (`tools/runtime/*`, `tools/packaging/*`) | all exit 0 with `status: pass` |
-| Corpus build (`build_corpus.py --faces --ocr`) | 3231 images, 934 with faces, 1141 with OCR text |
-| Query set (`build_query_set.py`) | 150 queries (50/100), all label bounds satisfied |
-| Baseline / candidate / chance evaluation | 0.2592 / 0.2672 / 0.1100 nDCG@20 on 3231 images |
-| CPU comparison (`--cpu-baseline --limit-images 400`) | identical ranking, query p50 3.38 vs 17.43 ms |
+| `uv lock --check` | exit 0, `Resolved 95 packages` |
+| P0-07 gate review (strategy §5.2, nine items) | all satisfied, each backed by a repo file |
 
-Details, per-command exit codes and the unverified list live in the report.
+P0-07 is a documentation task; GPU probes and the PyInstaller build were not re-run (not required by
+its card). Per-command evidence and the unresolved list live in the P0-07 report.
 
 ## GPU status
 
@@ -55,30 +52,30 @@ CUDA UMD 13.4): Chinese-CLIP image and text towers run on `CUDAExecutionProvider
 fallback disabled, the worker defaults to CUDA, ViT-L/14 also ran fully on CUDA (2687 MiB), and the
 packaged app reproduces the CUDA path from a Chinese/space path offline.
 
-Still open:
+Still open (handed to later phases, see the P0-07 report §6):
 
 - GTX 1660 6 GB is the user-approved minimum target and remains **unverified on real hardware**.
-  The RTX 4060 budget (≈1.2 GiB worker VRAM at batch=1 for ViT-B/16, ≈2.0 GiB for ViT-L/14) is a
-  pre-check only; P4-07/P4-08 own the minimum-configuration runtime, performance, OOM and packaged
-  offline validation before a full release PASS.
-- Cold CUDA start on this machine is slow and fragile (one `cuInit` took 2 m 23 s; terminating a
-  worker inside CUDA initialisation blocked new CUDA contexts for ~4 minutes). The P2 scheduler must
-  distinguish a cold GPU start from a hung worker.
-- InsightFace detection keeps 12 CPU-assigned shape operators, and RapidOCR silently degrades to
-  CPU unless the runtime DLLs are preloaded and the actual provider is verified.
-- Image indexing is dominated by decode (≈360 ms/image vs ≈12 ms GPU inference); a 500k library
-  needs a bounded decode pool.
-- Query labels are attribute-rule-derived; a human-labelled holdout is needed for semantic claims.
+  Runtime pinning, performance, OOM/bounded-batch behaviour and the packaged offline path must be
+  validated at P4-07/P4-08; this item is BLOCKED until then and prevents a full release PASS.
+- P1/P2 must plan a bounded decode pool and thumbnail/subsample prep ahead of the AI worker, because
+  decoding dominates indexing cost.
+- P2's scheduler must distinguish a cold GPU start from a hung worker instead of killing a starting
+  worker.
+- P3 owns the explicit OCR device decision and the InsightFace CPU-operator re-check.
+- A human-labelled holdout is required before any semantic search quality claim.
 
 ## Next task
 
-**P0-07 — 汇总 P0 可行性、失败组件与进入 P1 的约束.**
+**P1-01 — 资产/位置/来源/扫描最小持久任务/迁移与约束.**
 
-- Recommended model: **DS-L / DeepSeek V4.1 Flash / 低推理** (per strategy §5 and the P0-06 card).
-- Task card: `docs/tasks/P0-07.md`.
-- Escalation: if the summary concludes that the core architecture or model route must change,
-  submit the evidence for **C2 / GPT-5.6 Sol / high** review instead of deciding it locally.
-- P0-07 must hand the GTX 1660 6 GB items and the decode-throughput finding to P4/P1 explicitly.
+- Model routing: **C2 冻结核心契约 → DS-H 实现 → C2 聚焦复核** (strategy §6, §11). Freeze the data
+  identity, unique constraints, migration semantics and lease/state-machine contract as ADR-0002
+  first, then implement with DS-H; the implementing model must not change those semantics.
+- Task card: `docs/tasks/P1-01.md`.
+- Escalation: Windows path/permission/filesystem issues → C1; any need to change data identity,
+  unique constraints or migration semantics → C2 review instead of a local decision.
+- P1-01 must carry forward the P0-07 handoff: bounded decode pool and thumbnail prep, read-only
+  originals, data directory outside the install directory, and the frozen 512-D/L2/CUDA contracts.
 
-Do not start P1 before P0-07 passes. Do not read or scan a real photo library again without an
-explicit authorization.
+Model switching is always manual in Codex. Do not reread the full architecture or strategy
+documents for P1-01; read only the sections listed in the card.
