@@ -7,6 +7,12 @@ requires-python = "==3.12.10"
 dependencies = [
     "fastapi>=0.115,<1",
     "lancedb>=0.38.0",
+    "onnx>=1.17,<2",
+    "onnxruntime>=1.20,<2",
+    "pillow>=10,<12",
+    "torch>=2.5,<3",
+    "torchvision>=0.20,<1",
+    "transformers>=4.46,<4.47",
     "uvicorn>=0.30,<1",
 ]
 
