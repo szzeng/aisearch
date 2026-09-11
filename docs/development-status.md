@@ -2,59 +2,68 @@
 
 ## Current state
 
-**P0-07 is PASS; P0 is complete. P1-01 has started.** The P0 closing summary is
-[docs/reports/P0-07-p0-summary.md](reports/P0-07-p0-summary.md). It inventories the P0 artifacts
-(GPU onedir package, `uv.lock`, the four model manifests, worker/protocol, evaluation tooling and
-the out-of-repo corpus), maps P0-01…P0-06 to their reports, lists the failed/limited components,
-checks the nine §5.2 P0→P1 gates one by one against repository evidence, and states the invariants
-and the items handed to P1/P2/P4.
+**P0 is complete. P1-01 implementation and D-level validation are complete; P1-01 is NOT PASS yet.**
+The DS-H stage delivered the catalog foundation under the frozen contract
+`docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md` (unchanged), and the evidence
+package is [docs/reports/P1-01-catalog-identity-and-scan.md](reports/P1-01-catalog-identity-and-scan.md).
 
-Result of the gate check: all nine gates are satisfied → **P1 may start**. No P0 finding required a
-change to the data identity, storage responsibilities or model route. Chinese-CLIP ViT-B/16 stays
-the frozen 6 GB baseline; ViT-L/14 stays an optional high-VRAM enhancement.
+Delivered in the DS-H stage: versioned migration with read-only compatibility preflight, atomic
+per-version transactions, pre-migration backup and disk budget (`src/photo_search/catalog/**`),
+catalog schema v1 with six tables and database-level identity/CHECK constraints
+(`metadata`, `source_roots`, `scan_runs`, `assets`, `file_locations`, `jobs`), Windows comparison keys
+and source-overlap/data-root boundaries (`catalog/paths.py`), the minimal persistent scan task with
+claim/heartbeat/expiry-takeover/late-submit rules (`jobs/queue.py`), the minimal deterministic scan
+with positive-fact commits and one final atomic missing reconciliation (`ingestion/**`), and an
+observable internal CLI entry (`python -m photo_search catalog init|info|add-source|list-sources|scan|status`
+with `--json`). No HTTP business API was added; `GET /api/v1/health` keeps its P0-01 behaviour.
+55 new tests were added and all eight required fault-injection/recovery scenarios were really executed
+(migration interruption, scan kill + restart, lease expiry/late submit, same-path content replacement,
+shared assets across locations and sources, Chinese/space/long paths and overlap rejection, offline
+source, WAL + `BLOCKED -> QUEUED` scan state).
 
-**P1-01 stage 1 (C2 contract freeze) is complete.** The frozen implementation contract is
-`docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`. It fixes the content/location/
-source identity rules, database unique/check constraints, read-only schema compatibility preflight,
-WAL runtime requirement, migration semantics, scan/job state interaction, lease/late-submit rules and
-the rule that missing conclusions are produced only by a complete successful scan. The P1-01 task
-card has been synchronized to require this ADR before implementation.
-
-P1-01 is **not PASS** yet. No P1-01 implementation, D-level fault injection, task report, or P1-02
-handoff has been completed. The next execution step is the DS-H implementation stage under the
-frozen ADR, followed by the C2 focused review required by the task card.
-
-Carried forward as limits, not as passes: GTX 1660 6 GB remains **unverified on real hardware**
-(P4-07/P4-08 release gate); InsightFace detection keeps 12 recorded CPU-assigned shape operators
-(recognition graph is 130/130 CUDA); RapidOCR silently falls back to CPU when the CUDA DLLs are not
-preloaded; indexing throughput is decode-bound (≈8.3 images/s, ≈360 ms/image vs ≈12 ms GPU
-inference, ≈16.7 h for 500k with one worker); driver 616.56 exposes no per-process GPU memory; cold
-CUDA start is slow and fragile (one `cuInit` took 2 m 23 s, and killing a worker mid-initialisation
-blocked new CUDA contexts for ~4 minutes); the 150 evaluation queries are labelled by fixed
-attribute rules, so no semantic search quality may be claimed.
-
-Two historical record inconsistencies were found and recorded (not edited, since the evidence files
-are read-only): the P0-06 report's command table shows a mid-task `44 passed, 1 skipped` snapshot
-while the final count is 51 passed + 1 skipped, and `docs/reports/P0-06-model-evaluation.json` is
-still the stage-A `stage B / BLOCKED` snapshot that was superseded by the stage-B PASS. Details in
-the P0-07 report §3.1.
+What is still missing before P1-01 can be marked PASS: the **C2 focused review** required by the task
+card and ADR-0002 §12 (16 items). The report lists the evidence per item together with the seven
+implementation decisions DS-H made inside the ADR's allowed space (for example the `immutable=1`
+read-only preflight, the extra error codes, the `RUNNING -> RUNNING` scan-run recovery self-loop and the
+source-scoped `assets` count). Any review finding that would change asset/source identity, unique
+constraints, schema compatibility or migration semantics, the WAL requirement, the state machine,
+lease/late-submit rules or the missing-detection boundary must go back to C2 and update ADR-0002; the
+implementation model must not change those semantics on its own.
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2
 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
+Carried forward as limits, not as passes:
+
+- GTX 1660 6 GB remains **unverified on real hardware** (P4-07/P4-08 release gate); InsightFace
+  detection keeps 12 recorded CPU-assigned shape operators; RapidOCR silently falls back to CPU
+  without preloaded CUDA DLLs; indexing throughput is decode-bound; driver 616.56 exposes no
+  per-process GPU memory; cold CUDA start is slow and fragile; the 150 evaluation queries are
+  rule-labelled, so no semantic search quality may be claimed.
+- P1-01's scan re-hashes every enumerated file on every pass. That is deliberately stronger than the
+  minimal contract (it detects same-size/same-mtime replacements) but it is **not** the P1-02
+  production scanner: no stability window, no hash-before/after double stat, no file-id move
+  acceleration, no directory cursor, no scale-level missing reconciliation.
+- P1-01's single-writer coordinator is in-process; cross-process writers are protected by WAL +
+  `BEGIN IMMEDIATE` + busy timeout but were not stress-tested.
+- The read-only preflight reads a clean database (no `-wal` sidecar) with `immutable=1` so no sidecar
+  is created; when a `-wal` file exists it uses a plain read-only connection (documented exception).
+- `format/width/height` stay NULL in P1-01 (allowed by ADR-0002 §3.5).
+- Two historical record inconsistencies remain recorded but unedited (P0-06 report command table and
+  `docs/reports/P0-06-model-evaluation.json`); details in the P0-07 report §3.1.
+
 ## Latest verification
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q tests/unit tests/integration` | P0 baseline: exit 0, 51 passed + 1 skipped (GPU-opt-in); P1-01 implementation tests not run yet |
-| `uv run ruff check .` / `git diff --check` | P0 baseline clean / clean; current C2 stage changed documentation only |
-| `uv lock --check` | P0 baseline: exit 0, `Resolved 95 packages` |
-| P0-07 gate review (strategy §5.2, nine items) | all satisfied, each backed by a repo file |
-| P1-01 C2 contract freeze | complete; ADR-0002 frozen and task card synchronized |
-
-The C2 stage is a documentation/contract stage; backend tests and P1-01 D-level fault injection are
-not claimed as completed by this stage.
+| `uv run pytest -o addopts="" -q tests/unit tests/integration` | exit 0, `106 passed, 1 skipped in 72.53s` (skip = pre-existing GPU opt-in case; P0 baseline was 51 + 1) |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| `python -m photo_search catalog init|add-source|scan|status --json` | exit 0, structured JSON (schema v1, `state=SUCCEEDED`, assets/locations/missing counts) |
+| `python -m photo_search catalog scan --source-id 9 --json` | exit 1, `{"status":"error","error":{"code":"SOURCE_NOT_FOUND",...}}` |
+| `uv lock --check` | not re-run: no dependency change (standard library only) |
+| P1-01 D-level fault injection (8 required scenarios) | all really executed; evidence table in the P1-01 report §4 |
+| ADR-0002 §12 focused review (16 items) | evidence listed in the P1-01 report §4; **review itself still pending C2** |
 
 ## GPU status
 
@@ -77,23 +86,25 @@ Still open (handed to later phases, see the P0-07 report §6):
 
 ## Current task / next execution step
 
-**P1-01 — 资产/位置/来源/扫描最小持久任务/迁移与约束.**
+**P1-01 — stage 3: C2 focused review** (task card `docs/tasks/P1-01.md`, contract
+`docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`).
 
-- Stage 1 complete: **C2 / GPT-5.6 Sol / high contract freeze**.
-- Frozen contract: `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`.
-- Current execution step: **DS-H / DeepSeek V4.1 Flash / 高推理 implementation, tests and fixes**.
-- Task card: `docs/tasks/P1-01.md`.
-- The implementing model must not change asset/source identity, database unique/check constraints,
-  schema compatibility/migration semantics, WAL requirement, lease/state-machine rules or missing
-  detection boundaries. Any required change to these semantics stops local implementation and goes
-  back to C2 review.
-- Escalation: Windows path/permission/filesystem/long-path/sqlite native issues → C1.
-- P1-01 must carry forward the P0-07 handoff: bounded decode pool and thumbnail prep are later
-  concerns, originals remain read-only, the data directory stays outside the install directory, and
-  the frozen 512-D/L2/CUDA contracts remain unchanged.
-- P1-01 remains incomplete until implementation + required D-level validation + task report + C2
-  focused review are complete.
+- Recommended execution model for this step: **C2 / GPT-5.6 Sol / high** (high-risk protocol review).
+- Inputs: the P1-01 report §2 (implementation decisions) and §4 (ADR §12 evidence table), plus
+  `src/photo_search/catalog/**`, `src/photo_search/jobs/queue.py`,
+  `src/photo_search/ingestion/**` and the new tests.
+- Output: the focused review conclusion recorded in `docs/reports/P1-01-*.md` (or a new follow-up
+  report) plus, if needed, an ADR-0002 update. Only then can P1-01 move to PASS.
+- The reviewer must not re-implement P1-01; DS-H owns implementation, C2 owns the rules and review.
 
-Model switching is always manual in Codex. For the implementation stage, the task card recommends
-**DS-H / DeepSeek V4.1 Flash / 高推理**. Read the current task card and ADR-0002 before coding; do
-not reread the full architecture or strategy documents beyond the sections listed by the card.
+**P1-02 — 流式扫描、稳定等待、hash 前后校验、缺失判定** is the next implementation task after the
+review; its card is already generated at `docs/tasks/P1-02.md` and recommends
+**DS-H / DeepSeek V4.1 Flash / 高推理**.
+
+P1-01 must carry forward the P0-07 handoff: bounded decode pool and thumbnail prep are later concerns,
+originals remain read-only, the data directory stays outside the install directory, and the frozen
+512-D/L2/CUDA contracts remain unchanged.
+
+Model switching is always manual in Codex. The current step recommends **C2 / GPT-5.6 Sol / high**;
+the implementation stage that follows recommends **DS-H / DeepSeek V4.1 Flash / 高推理**. Codex only
+records and reminds; it never switches models, clients or agents.

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import uvicorn
 
+from photo_search.ingestion.cli import add_catalog_parser, run_catalog_command
 from photo_search.runtime.device import DevicePolicy
 from photo_search.workers.client import AiWorkerClient
 
@@ -83,7 +84,10 @@ def main() -> None:
         default=None,
         help="write the JSON report to this path as UTF-8 (console output still prints)",
     )
+    add_catalog_parser(subparsers)
     args = parser.parse_args()
+    if args.command == "catalog":
+        raise SystemExit(run_catalog_command(args))
     if args.command == "demo-search":
         raise SystemExit(
             _demo_search(
