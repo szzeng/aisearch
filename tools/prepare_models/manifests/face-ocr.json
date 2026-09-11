@@ -1,0 +1,389 @@
+{
+  "artifact_root_note": "All artifact paths are relative to the user-selected model root (PhotoSearchData/models).",
+  "face": {
+    "artifacts": {
+      "detection": {
+        "bytes": 16923827,
+        "path": "face/buffalo_l/det_10g.onnx",
+        "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+        "source_url": "https://github.com/deepinsight/insightface/releases/download/model-zoo/buffalo_l.zip"
+      },
+      "recognition": {
+        "bytes": 174383860,
+        "path": "face/buffalo_l/w600k_r50.onnx",
+        "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+        "source_url": "https://github.com/deepinsight/insightface/releases/download/model-zoo/buffalo_l.zip"
+      }
+    },
+    "embedding": {
+      "dimension": 512,
+      "metric": "cosine",
+      "normalization": "L2",
+      "source": "onnx graph output shape of the recognition model"
+    },
+    "license": {
+      "package": {
+        "basis": "GitHub API repo metadata reported no recognized license file (2026-09-11); package license metadata is empty",
+        "source_url": "https://github.com/deepinsight/insightface",
+        "spdx": null,
+        "verified": false
+      },
+      "weights": {
+        "allow_redistribution": false,
+        "basis": "official model_zoo README: 'ALL models are available for non-commercial research purposes only.' (quoted 2026-09-11)",
+        "source_url": "https://github.com/deepinsight/insightface/tree/master/model_zoo",
+        "spdx": null,
+        "verified": true
+      }
+    },
+    "notes": [
+      "Only the detection and recognition weights are extracted; landmark, gender/age and 3D models from the same pack are not used.",
+      "Weights are for non-commercial research use; distribution terms must be re-checked before shipping the model pack to users."
+    ],
+    "onnx_io": {
+      "detection": {
+        "inputs": [
+          {
+            "name": "input.1",
+            "shape": [
+              1,
+              3,
+              "?",
+              "?"
+            ],
+            "type": "tensor(float)"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "448",
+            "shape": [
+              12800,
+              1
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "471",
+            "shape": [
+              3200,
+              1
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "494",
+            "shape": [
+              800,
+              1
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "451",
+            "shape": [
+              12800,
+              4
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "474",
+            "shape": [
+              3200,
+              4
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "497",
+            "shape": [
+              800,
+              4
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "454",
+            "shape": [
+              12800,
+              10
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "477",
+            "shape": [
+              3200,
+              10
+            ],
+            "type": "tensor(float)"
+          },
+          {
+            "name": "500",
+            "shape": [
+              800,
+              10
+            ],
+            "type": "tensor(float)"
+          }
+        ]
+      },
+      "recognition": {
+        "inputs": [
+          {
+            "name": "input.1",
+            "shape": [
+              "None",
+              3,
+              112,
+              112
+            ],
+            "type": "tensor(float)"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "683",
+            "shape": [
+              1,
+              512
+            ],
+            "type": "tensor(float)"
+          }
+        ]
+      }
+    },
+    "pack": "buffalo_l",
+    "pack_release": {
+      "archive_bytes": 288621354,
+      "archive_sha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
+      "legacy_url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
+      "url": "https://github.com/deepinsight/insightface/releases/download/model-zoo/buffalo_l.zip"
+    },
+    "package": "insightface",
+    "package_version": "2.0",
+    "preprocessing": {
+      "detection": {
+        "channel_order": "RGB",
+        "input_size": [
+          640,
+          640
+        ],
+        "mean": [
+          127.5,
+          127.5,
+          127.5
+        ],
+        "note": "reference values from the InsightFace SCRFD implementation",
+        "scale": 0.0078125
+      },
+      "dtype": "float32",
+      "recognition": {
+        "alignment": "ArcFace 5-point similarity transform template",
+        "channel_order": "RGB",
+        "input_size": [
+          112,
+          112
+        ],
+        "mean": [
+          127.5,
+          127.5,
+          127.5
+        ],
+        "note": "reference values from the InsightFace ArcFace ONNX implementation",
+        "scale": 0.00784313725490196
+      }
+    },
+    "source_url": "https://github.com/deepinsight/insightface/tree/master/model_zoo"
+  },
+  "generated_at_utc": "2026-09-11T03:45:54.295726+00:00",
+  "generator": "tools/prepare_models/prepare_face_ocr.py",
+  "ocr": {
+    "artifacts": {
+      "classification": {
+        "bytes": 585532,
+        "path": "ocr/ppocr-v4-mobile/ch_ppocr_mobile_v2.0_cls_infer.onnx",
+        "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+        "source_url": "https://pypi.org/project/rapidocr-onnxruntime/"
+      },
+      "config": {
+        "bytes": 1221,
+        "path": "ocr/ppocr-v4-mobile/config.yaml",
+        "sha256": "bf94a1da4cba828e67b1d61e27cee14d9e7da27c9f272e04048a17e41ae97332",
+        "source_url": "https://pypi.org/project/rapidocr-onnxruntime/"
+      },
+      "detection": {
+        "bytes": 4745517,
+        "path": "ocr/ppocr-v4-mobile/ch_PP-OCRv4_det_infer.onnx",
+        "sha256": "d2a7720d45a54257208b1e13e36a8479894cb74155a5efe29462512d42f49da9",
+        "source_url": "https://pypi.org/project/rapidocr-onnxruntime/"
+      },
+      "recognition": {
+        "bytes": 10857958,
+        "path": "ocr/ppocr-v4-mobile/ch_PP-OCRv4_rec_infer.onnx",
+        "sha256": "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b",
+        "source_url": "https://pypi.org/project/rapidocr-onnxruntime/"
+      }
+    },
+    "engine": "rapidocr-onnxruntime",
+    "license": {
+      "package": {
+        "basis": "PyPI metadata info.license for rapidocr-onnxruntime (2026-09-11)",
+        "source_url": "https://github.com/RapidAI/RapidOCR/blob/main/LICENSE",
+        "spdx": "Apache-2.0"
+      },
+      "weights": {
+        "basis": "PP-OCRv4 mobile models shipped inside the official RapidOCR wheel and published by PaddleOCR; not re-verified file by file",
+        "source_url": "https://github.com/PaddlePaddle/PaddleOCR",
+        "spdx": "Apache-2.0",
+        "verified": false
+      }
+    },
+    "notes": [
+      "Weights come from the pinned wheel, so the package version pins them; the copied files and their hashes are recorded here.",
+      "RapidOCR 1.4.x is the ONNX-only line; the successor package is 'rapidocr' (not evaluated in this task)."
+    ],
+    "onnx_io": {
+      "classification": {
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              null,
+              3,
+              "?",
+              "?"
+            ],
+            "type": "tensor(float)"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "save_infer_model/scale_0.tmp_1",
+            "shape": [
+              null,
+              2
+            ],
+            "type": "tensor(float)"
+          }
+        ]
+      },
+      "detection": {
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              "p2o.DynamicDimension.0",
+              3,
+              "p2o.DynamicDimension.1",
+              "p2o.DynamicDimension.2"
+            ],
+            "type": "tensor(float)"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "sigmoid_0.tmp_0",
+            "shape": [
+              "p2o.DynamicDimension.3",
+              1,
+              "p2o.DynamicDimension.4",
+              "p2o.DynamicDimension.5"
+            ],
+            "type": "tensor(float)"
+          }
+        ]
+      },
+      "recognition": {
+        "inputs": [
+          {
+            "name": "x",
+            "shape": [
+              "p2o.DynamicDimension.0",
+              3,
+              "?",
+              "p2o.DynamicDimension.1"
+            ],
+            "type": "tensor(float)"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "softmax_11.tmp_0",
+            "shape": [
+              "p2o.DynamicDimension.2",
+              "p2o.DynamicDimension.3",
+              6625
+            ],
+            "type": "tensor(float)"
+          }
+        ]
+      }
+    },
+    "output_contract": {
+      "normalization": "none; raw recognized text plus polygon and confidence",
+      "result_fields": [
+        "box",
+        "text",
+        "score"
+      ]
+    },
+    "package_version": "1.4.4",
+    "preprocessing": {
+      "channel_order": "BGR",
+      "classification": {
+        "image_shape": [
+          3,
+          48,
+          192
+        ]
+      },
+      "detection": {
+        "box_thresh": 0.5,
+        "limit_side_len": 736,
+        "limit_type": "min",
+        "mean": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "score_mode": "fast",
+        "std": [
+          0.5,
+          0.5,
+          0.5
+        ],
+        "thresh": 0.3,
+        "unclip_ratio": 1.6,
+        "use_dilation": true
+      },
+      "dtype": "float32",
+      "recognition": {
+        "image_shape": [
+          3,
+          48,
+          320
+        ]
+      }
+    },
+    "source_url": "https://pypi.org/project/rapidocr-onnxruntime/"
+  },
+  "resolved_model_root": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models",
+  "runtime": {
+    "backend": "onnxruntime",
+    "device": "CPU",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "precision": "FP32",
+    "python": "3.12.10",
+    "versions": {
+      "Pillow": "11.3.0",
+      "insightface": "2.0",
+      "numpy": "2.5.3",
+      "onnxruntime": "1.30.0",
+      "opencv-python": "5.0.0.93",
+      "rapidocr-onnxruntime": "1.4.4"
+    }
+  },
+  "schema_version": 1
+}

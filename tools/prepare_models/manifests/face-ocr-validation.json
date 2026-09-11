@@ -1,0 +1,258 @@
+{
+  "face": {
+    "det_size": [
+      640,
+      640
+    ],
+    "det_threshold": 0.5,
+    "directory": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\face\\buffalo_l",
+    "models": {
+      "detection": {
+        "input_mean": 127.5,
+        "input_shape": [
+          1,
+          3,
+          "?",
+          "?"
+        ],
+        "input_std": 128.0,
+        "taskname": "detection"
+      },
+      "recognition": {
+        "input_mean": 127.5,
+        "input_shape": [
+          "None",
+          3,
+          112,
+          112
+        ],
+        "input_std": 127.5,
+        "taskname": "recognition"
+      }
+    },
+    "pack": "buffalo_l",
+    "recognition_smoke": {
+      "input_name": "input.1",
+      "input_shape": [
+        1,
+        3,
+        112,
+        112
+      ],
+      "l2_norm": 9.132683753967285,
+      "note": "deterministic zero patch: graph plumbing only, not a face",
+      "output_shape": [
+        1,
+        512
+      ]
+    },
+    "records": [
+      {
+        "face_count": 0,
+        "faces": [],
+        "fixture": "neutral",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\face-neutral.png"
+      },
+      {
+        "face_count": 0,
+        "faces": [],
+        "fixture": "warm",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\face-warm.png"
+      },
+      {
+        "face_count": 0,
+        "faces": [],
+        "fixture": "cool",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\face-cool.png"
+      },
+      {
+        "face_count": 1,
+        "faces": [
+          {
+            "bbox": [
+              180.91258239746094,
+              59.413665771484375,
+              270.48529052734375,
+              179.105224609375
+            ],
+            "det_score": 0.8304325342178345,
+            "embedding_l2_norm": 19.658565521240234,
+            "embedding_shape": [
+              512
+            ],
+            "kps": [
+              [
+                204.3254852294922,
+                100.87935638427734
+              ],
+              [
+                247.243896484375,
+                102.92386627197266
+              ],
+              [
+                224.0703125,
+                128.71658325195312
+              ],
+              [
+                202.70697021484375,
+                139.0757293701172
+              ],
+              [
+                244.81396484375,
+                141.07901000976562
+              ]
+            ]
+          }
+        ],
+        "fixture": "sample-astronaut",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\face-sample-astronaut.png"
+      }
+    ]
+  },
+  "face_positive_case": true,
+  "fixture_directory": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures",
+  "ocr": {
+    "engine": "rapidocr-onnxruntime",
+    "model_paths": {
+      "classification": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\ocr\\ppocr-v4-mobile\\ch_ppocr_mobile_v2.0_cls_infer.onnx",
+      "detection": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\ocr\\ppocr-v4-mobile\\ch_PP-OCRv4_det_infer.onnx",
+      "recognition": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\ocr\\ppocr-v4-mobile\\ch_PP-OCRv4_rec_infer.onnx"
+    },
+    "records": [
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "box": [
+              [
+                40.0,
+                52.0
+              ],
+              [
+                379.0,
+                51.0
+              ],
+              [
+                379.0,
+                109.0
+              ],
+              [
+                40.0,
+                110.0
+              ]
+            ],
+            "score": 0.9990648726622263,
+            "text": "照片搜索测试"
+          },
+          {
+            "box": [
+              [
+                38.0,
+                181.0
+              ],
+              [
+                429.0,
+                181.0
+              ],
+              [
+                429.0,
+                240.0
+              ],
+              [
+                38.0,
+                240.0
+              ]
+            ],
+            "score": 0.999933385848999,
+            "text": "编号20260911"
+          }
+        ],
+        "elapsed_seconds": 1.9336111149459612,
+        "fixture": "cjk",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\ocr-cjk.png",
+        "text": "照片搜索测试 编号20260911"
+      },
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "box": [
+              [
+                42.0,
+                53.0
+              ],
+              [
+                527.0,
+                54.0
+              ],
+              [
+                527.0,
+                106.0
+              ],
+              [
+                41.0,
+                105.0
+              ]
+            ],
+            "score": 0.9970454503508175,
+            "text": "Photo Search Test"
+          },
+          {
+            "box": [
+              [
+                41.0,
+                185.0
+              ],
+              [
+                372.0,
+                185.0
+              ],
+              [
+                372.0,
+                234.0
+              ],
+              [
+                41.0,
+                234.0
+              ]
+            ],
+            "score": 0.980978933247653,
+            "text": "ID 20260911"
+          }
+        ],
+        "elapsed_seconds": 1.4886931969085708,
+        "fixture": "ascii",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\ocr-ascii.png",
+        "text": "Photo Search Test ID 20260911"
+      },
+      {
+        "box_count": 0,
+        "boxes": [],
+        "elapsed_seconds": null,
+        "fixture": "blank",
+        "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\ocr-blank.png",
+        "text": ""
+      }
+    ]
+  },
+  "providers_available": [
+    "AzureExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "providers_used": [
+    "CPUExecutionProvider"
+  ],
+  "status": "pass",
+  "task": "P0-04",
+  "third_party_fixtures": [
+    {
+      "bytes": 440419,
+      "license": "public-domain sample data shipped with scikit-image; not from the user photo library",
+      "name": "sample-astronaut",
+      "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\cache\\p0-04-fixtures\\face-sample-astronaut.png",
+      "provider": "scikit-image sample data (skimage.data.astronaut)",
+      "sha256": "b8c8afe36141c45dd06f55d257d6b951b4c77a1a2c31fe09e78452cdda2dfcd4",
+      "source_url": "https://scikit-image.org/docs/stable/api/skimage.data.html"
+    }
+  ]
+}
