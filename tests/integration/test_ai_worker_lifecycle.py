@@ -21,7 +21,9 @@ def test_spawn_worker_reports_spec_and_error_then_exits(model_dir: Path) -> None
         pytest.skip("P0-03 model artifacts are not available")
     root = Path(__file__).resolve().parents[2]
     manifest = root / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-    with AiWorkerClient(model_dir, manifest) as worker:
+    worker = AiWorkerClient(model_dir, manifest)
+    stderr_path = worker._stderr_file
+    with worker:
         health = worker.health(timeout=120)
         assert health["loaded"] is True
         assert health["spec"]["dimension"] == 512
@@ -32,6 +34,8 @@ def test_spawn_worker_reports_spec_and_error_then_exits(model_dir: Path) -> None
         pid = worker.pid
     assert pid is not None
     assert not worker._process.is_alive()
+    assert not stderr_path.exists()
+
 
 def test_timeout_terminates_spawned_worker(model_dir: Path) -> None:
     if not model_dir.is_dir():
@@ -39,17 +43,29 @@ def test_timeout_terminates_spawned_worker(model_dir: Path) -> None:
     root = Path(__file__).resolve().parents[2]
     manifest = root / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
     worker = AiWorkerClient(model_dir, manifest)
+    stderr_path = worker._stderr_file
     with pytest.raises(TimeoutError):
         worker.health(timeout=0.001)
     assert not worker._process.is_alive()
     worker.shutdown()
+    assert not stderr_path.exists()
 
 
 def test_startup_error_contains_stderr_tail(model_dir: Path, tmp_path: Path) -> None:
     bad_manifest = tmp_path / "missing-manifest.json"
     worker = AiWorkerClient(model_dir, bad_manifest)
+    stderr_path = worker._stderr_file
     with pytest.raises(WorkerError) as captured:
         worker.health(timeout=30)
     assert captured.value.payload["stage"] == "startup"
     assert "FileNotFoundError" in captured.value.stderr_tail
     worker.shutdown()
+    assert not stderr_path.exists()
+
+
+def test_shutdown_without_start_removes_stderr_file(tmp_path: Path) -> None:
+    worker = AiWorkerClient(tmp_path / "model", tmp_path / "manifest.json")
+    stderr_path = worker._stderr_file
+    assert stderr_path.exists()
+    worker.shutdown()
+    assert not stderr_path.exists()
