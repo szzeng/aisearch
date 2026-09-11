@@ -24,6 +24,7 @@ photo-search = "photo_search.__main__:main"
 [dependency-groups]
 dev = [
     "httpx>=0.27,<1",
+    "pyinstaller>=6.11,<7",
     "pytest>=8,<9",
     "ruff>=0.8,<1",
 ]
