@@ -20,7 +20,7 @@ P1-01 的实现必须遵守以下不可变边界：
 4. **负向结论必须晚于完整成功扫描。** 扫描中断、来源离线、权限失败、路径碰撞或其他未完整覆盖情况都不得把未见文件判为 `MISSING`。只有完整扫描成功的最终提交事务可以生成缺失结论并推进 `last_successful_scan`。
 5. **迁移必须原子、可拒绝、可恢复。** `schema_version` 是数据库写入兼容性的权威版本。更高版本数据库只允许安全只读诊断，必须拒绝写入；禁止删库重建或“重新扫描”代替迁移。
 6. **持久任务由数据库而非内存队列定义。** 逻辑任务唯一键为 **5 个字段**
-   `(subject_type, subject_id, input_revision, task_type, processor_id)`，五者全部 `NOT NULL`。任务卡中“四要素”是文字笔误，不改变本契约。
+   `(subject_type, subject_id, input_revision, task_type, processor_id)`，五者全部 `NOT NULL`。
 7. **租约是提交资格。** 每次领取产生新的 `lease_token`；心跳、增量结果和最终提交都必须校验当前 token、未过期租约、`input_revision` 与 `processor_id`。迟到结果不得覆盖新执行。
 8. **原图永远只读。** 扫描、stat、hash、格式探测不得写入、重命名、移动、删除或修改用户文件及其元数据。
 
@@ -30,11 +30,13 @@ P1-01 的实现必须遵守以下不可变边界：
 
 ## 2. 统一存储约定
 
-### 2.1 SQLite 与时间格式
+### 2.1 SQLite、WAL 与时间格式
 
 - 主库位置沿用架构：`<data_root>/catalog/catalog.db`；运行数据不得写入安装目录。
 - P1-01 使用标准库 `sqlite3` 和显式 SQL 迁移，不引入 ORM 迁移框架。
-- 所有数据库连接必须启用 `PRAGMA foreign_keys = ON`。
+- 所有业务连接必须启用 `PRAGMA foreign_keys = ON`。
+- **已有数据库必须先以真正只读方式检查 `schema_version` 与核心 schema 一致性；在确认兼容之前，不得执行 `journal_mode` 切换、建表、metadata 写入、迁移或任何其他会产生数据库/sidecar 写副作用的操作。**
+- 确认 schema 兼容后，正常 catalog 数据库运行模式必须启用并验证 `journal_mode=WAL`；实现不得长期退回 SQLite 默认 rollback journal。迁移期间可在停止业务写入的前提下使用适合迁移的锁策略，但迁移完成后必须恢复/确认正常运行的 WAL 模式。
 - 业务写入由单写协调器串行提交；文件枚举、stat、hash、解码或其他慢 I/O 不得在 SQLite 写事务内执行。
 - 除 `mtime_ns` 外，P1-01 新建表中的机器时间统一使用 **UTC Unix epoch milliseconds** 的 `INTEGER`。
 - `mtime_ns` 保存文件系统返回的原始纳秒整数，不转换为毫秒。
@@ -73,7 +75,7 @@ P1-01 当前支持版本为 **1**。
 | `display_name` | `TEXT NOT NULL`，仅展示，不参与身份 |
 | `root_path` | `TEXT NOT NULL`，当前显式映射的绝对 Windows 路径 |
 | `volume_hint` | `TEXT NULL`，仅辅助诊断/重映射，不参与唯一身份 |
-| `status` | `TEXT NOT NULL`，P1-01 值：`ONLINE / OFFLINE / ERROR` |
+| `status` | `TEXT NOT NULL CHECK(status IN ('ONLINE','OFFLINE','ERROR'))` |
 | `last_successful_scan` | `INTEGER NULL`，语义为最近一次完整成功的 `scan_runs.scan_id` |
 
 约束：
@@ -92,17 +94,10 @@ P1-01 当前支持版本为 **1**。
 | `source_id` | `INTEGER NOT NULL` → `source_roots.source_id` |
 | `started_at` | `INTEGER NULL`，真正开始执行时填写 |
 | `finished_at` | `INTEGER NULL`，终态填写 |
-| `state` | `TEXT NOT NULL` |
+| `state` | `TEXT NOT NULL CHECK(state IN ('QUEUED','RUNNING','SUCCEEDED','BLOCKED','FAILED','CANCELLED'))` |
 | `error` | `TEXT NULL`，失败/阻塞诊断的紧凑 JSON 文本 |
 
-P1-01 扫描状态：
-
-- `QUEUED`
-- `RUNNING`
-- `SUCCEEDED`
-- `BLOCKED`
-- `FAILED`
-- `CANCELLED`
+P1-01 扫描状态：`QUEUED / RUNNING / SUCCEEDED / BLOCKED / FAILED / CANCELLED`。
 
 状态语义：
 
@@ -113,8 +108,7 @@ P1-01 扫描状态：
 - `CANCELLED`：当前扫描请求被取消；不产生缺失结论。
 - `SUCCEEDED`：完整覆盖本次来源范围，且最终缺失对账与成功标记已经在同一最终事务中完成。
 
-必须保证一个来源最多只有一个非终态扫描请求。P1-01 推荐以 SQLite 部分唯一索引约束：
-`source_id` 在 `QUEUED / RUNNING / BLOCKED` 中唯一。
+必须保证一个来源最多只有一个非终态扫描请求。P1-01 推荐以 SQLite 部分唯一索引约束：`source_id` 在 `QUEUED / RUNNING / BLOCKED` 中唯一。
 
 重复调用“发起扫描”时，如该来源已有非终态 `scan_run`，返回现有扫描，不再创建第二个并发逻辑扫描。
 
@@ -124,7 +118,7 @@ P1-01 扫描状态：
 - P1-01 的 `catalog_scan` job 首次进入 `RUNNING` 时，对应 `scan_run` 必须从 `QUEUED` 进入 `RUNNING`。
 - job 进入 `SUCCEEDED / BLOCKED / FAILED / CANCELLED` 时，对应 `scan_run` 必须在同一业务提交路径进入同名终态（其中 `SUCCEEDED` 仍须满足 §5.2 的最终原子提交条件）。
 - job 的 `RETRY_WAIT` 仅表示调度退避；对应 `scan_run` 继续保持 `RUNNING`，不增加 `RETRY_WAIT` 扫描状态。
-- `BLOCKED -> QUEUED` 恢复调度时，对应 `scan_run` 从 `BLOCKED` 恢复为 `RUNNING`，继续同一个逻辑扫描身份，不新建第二个 `scan_run`。
+- `BLOCKED -> QUEUED` 恢复调度时，对应 `scan_run` 必须从 `BLOCKED` 恢复为 `QUEUED`；只有 job 被真正 claim 并进入 `RUNNING` 的同一业务提交路径中，`scan_run` 才进入 `RUNNING`。不得出现“job 尚未领取、scan_run 已显示 RUNNING”。
 
 ### 3.4 `file_locations`
 
@@ -138,11 +132,9 @@ P1-01 扫描状态：
 | `size` | `INTEGER NOT NULL CHECK(size >= 0)` |
 | `mtime_ns` | `INTEGER NOT NULL CHECK(mtime_ns >= 0)` |
 | `last_seen_scan_id` | `INTEGER NULL` → `scan_runs.scan_id`，且必须属于同一来源 |
-| `availability` | `TEXT NOT NULL`，P1-01 值：`PRESENT / MISSING` |
+| `availability` | `TEXT NOT NULL CHECK(availability IN ('PRESENT','MISSING'))` |
 
-核心约束：
-
-`UNIQUE(source_id, path_key)`
+核心约束：`UNIQUE(source_id, path_key)`。
 
 语义：
 
@@ -159,13 +151,13 @@ P1-01 扫描状态：
 | 字段 | 契约 |
 |---|---|
 | `asset_id` | `INTEGER PRIMARY KEY AUTOINCREMENT`，稳定内容身份 |
-| `sha256` | `TEXT NOT NULL UNIQUE`，64 位小写十六进制完整 SHA-256 |
+| `sha256` | `TEXT NOT NULL UNIQUE CHECK(length(sha256) = 64)`，64 位小写十六进制完整 SHA-256 |
 | `byte_size` | `INTEGER NOT NULL CHECK(byte_size >= 0)` |
 | `width` | `INTEGER NULL` |
 | `height` | `INTEGER NULL` |
 | `format` | `TEXT NULL` |
 | `created_at` | `INTEGER NOT NULL` |
-| `state` | `TEXT NOT NULL`；P1-01 只写 `ACTIVE` |
+| `state` | `TEXT NOT NULL CHECK(state = 'ACTIVE')`；P1-01 只写 `ACTIVE` |
 
 冻结规则：
 
@@ -178,25 +170,21 @@ P1-01 扫描状态：
 
 ### 3.6 `jobs`
 
-字段按任务卡完整保留：
-
-`job_id, subject_type, subject_id, input_revision, task_type, processor_id, state, priority,
-attempts, max_attempts, run_after, lease_token, lease_expires_at, worker_id, progress,
-last_error_code, last_error_message, created_at, updated_at`
+字段按任务卡完整保留：`job_id, subject_type, subject_id, input_revision, task_type, processor_id, state, priority, attempts, max_attempts, run_after, lease_token, lease_expires_at, worker_id, progress, last_error_code, last_error_message, created_at, updated_at`。
 
 冻结约束：
 
 - `job_id`：`INTEGER PRIMARY KEY AUTOINCREMENT`。
 - `subject_type / subject_id / input_revision / task_type / processor_id` **五个字段全部 `NOT NULL`**。
-- 逻辑唯一键：
-  `UNIQUE(subject_type, subject_id, input_revision, task_type, processor_id)`。
+- 逻辑唯一键：`UNIQUE(subject_type, subject_id, input_revision, task_type, processor_id)`。
 - `subject_id` 使用 `TEXT`，以容纳不同 subject 类型的稳定 ID；P1-01 的扫描任务保存十进制 `scan_id` 字符串。
 - `input_revision` 与 `processor_id` 创建后不可修改。
+- `state`：`TEXT NOT NULL CHECK(state IN ('QUEUED','RUNNING','SUCCEEDED','RETRY_WAIT','BLOCKED','FAILED','CANCELLED'))`。
 - `priority`：整数，数值越大优先级越高。
-- `attempts`：已失败或因租约丢失而消耗的执行次数，初始 `0`。
-- `max_attempts`：默认 `3`，必须大于 0。
+- `attempts`：`INTEGER NOT NULL CHECK(attempts >= 0)`，初始 `0`。
+- `max_attempts`：`INTEGER NOT NULL CHECK(max_attempts > 0)`，默认 `3`。
 - `run_after`：UTC epoch ms，初始为创建时间。
-- `progress`：`0.0～1.0`。
+- `progress`：数值且必须满足 `CHECK(progress >= 0.0 AND progress <= 1.0)`。
 - `lease_token / lease_expires_at / worker_id`：仅 `RUNNING` 时允许非空；离开 `RUNNING` 时同一事务清空。
 - `last_error_code / last_error_message`：最近一次阻塞/失败诊断；成功后可清空。
 
@@ -210,11 +198,9 @@ P1-01 扫描任务固定身份：
 
 “发起扫描”必须在同一事务中创建 `scan_runs` 和对应 `jobs`，避免只有一边存在。
 
----
+### 3.7 数据库约束与应用事务约束的边界
 
-## 3.7 数据库约束与应用事务约束的边界
-
-能由 SQLite 直接、清晰表达的约束必须下沉到数据库层，包括 `PRIMARY KEY`、`NOT NULL`、`UNIQUE`、普通外键与局部 `CHECK`。
+SQLite 能直接、清晰表达的完整性约束必须下沉到数据库层，包括 `PRIMARY KEY`、`NOT NULL`、`UNIQUE`、普通外键与局部 `CHECK`。Python 层可以提前校验并给出更好的错误信息，但不得以 Python enum/if 检查替代数据库本身的约束。
 
 跨行、跨状态或需要同时检查多张表当前值的语义，由 catalog 单写事务强制并以测试锁死；P1-01 不为此引入复杂 trigger。典型例子包括：
 
@@ -248,8 +234,7 @@ P1-01 的 `path_key` 必须由**来源相对路径**产生，不包含盘符和 
 7. **不调用 `resolve()`，不把符号链接/目录联接目标路径写入 key。**
 8. `\\?\` 仅可作为 I/O 层长路径传输前缀，不得进入 `root_path`、`relative_path` 或 `path_key` 的持久语义。
 
-如果真实文件系统中出现两个不同目录项却得到相同 `path_key`，必须报告
-`PATH_KEY_COLLISION` 并使本次扫描不能进入 `SUCCEEDED`，不得把两者静默合并。
+如果真实文件系统中出现两个不同目录项却得到相同 `path_key`，必须报告 `PATH_KEY_COLLISION` 并使本次扫描不能进入 `SUCCEEDED`，不得把两者静默合并。
 
 ### 4.3 来源重叠
 
@@ -298,8 +283,7 @@ P1-01 的 `path_key` 必须由**来源相对路径**产生，不包含盘符和 
 2. 未发生导致覆盖不完整的来源离线、权限失败、路径键碰撞、未处理的目录枚举错误；
 3. 本次需要提交的正向位置/资产写入已完成；
 4. 基于当前 `scan_id` 的缺失对账已完成；
-5. `scan_runs.state='SUCCEEDED'`、`finished_at`、`source_roots.last_successful_scan=scan_id`
-   与缺失对账在同一个最终 SQLite 事务中提交。
+5. `scan_runs.state='SUCCEEDED'`、`finished_at`、`source_roots.last_successful_scan=scan_id` 与缺失对账在同一个最终 SQLite 事务中提交。
 
 如果最终事务失败，扫描保持非成功状态；不得出现“版本/状态已成功但缺失对账只做了一半”的结果。
 
@@ -395,12 +379,7 @@ RUNNING(expired lease) -> RUNNING(new lease)
 
 任一不匹配时，本次结果是迟到/过期结果，**不得写资产绑定、扫描成功、进度终值或其他覆盖性结果**。
 
-建议错误分类：
-
-- `LEASE_CONFLICT`
-- `STALE_LEASE`
-- `STALE_INPUT_REVISION`
-- `PROCESSOR_MISMATCH`
+建议错误分类：`LEASE_CONFLICT / STALE_LEASE / STALE_INPUT_REVISION / PROCESSOR_MISMATCH`。
 
 “旧 worker 最后完成”永远不能覆盖“新 worker 已重新领取后的结果”。
 
@@ -408,30 +387,31 @@ RUNNING(expired lease) -> RUNNING(new lease)
 
 ## 7. Schema 迁移契约
 
-### 7.1 版本发现
+### 7.1 版本发现与只读兼容检查
 
-迁移器启动时按以下规则判断当前版本：
+迁移器启动时按以下顺序判断当前版本：
 
 1. 数据库文件不存在：版本 `0`。
-2. 数据库存在且没有业务表：版本 `0`。
-3. 存在 `metadata` 且 `schema_version` 为合法整数：使用该值。
-4. 数据库已经存在业务表但没有合法 `schema_version`：返回 `SCHEMA_INCONSISTENT`，拒绝猜测、删库或自动重建。
-5. `schema_version > 程序支持版本`：返回 `SCHEMA_TOO_NEW`，拒绝所有写入。
+2. 数据库存在：**先以真正只读连接打开**，不得先执行会写库的 PRAGMA、WAL 切换、建表或 metadata 初始化。
+3. 数据库存在且没有业务表：版本 `0`。
+4. 存在 `metadata` 且 `schema_version` 为合法整数：使用该值。
+5. 数据库已经存在业务表但没有合法 `schema_version`：返回 `SCHEMA_INCONSISTENT`，拒绝猜测、删库或自动重建。
+6. `schema_version > 程序支持版本`：返回 `SCHEMA_TOO_NEW`，关闭只读连接并拒绝所有写入。
+7. `schema_version` 在支持范围内时，还必须验证该版本要求的核心表、关键列、唯一索引和数据库级完整性约束是否存在；版本号存在但 schema 缺件或不匹配，同样返回 `SCHEMA_INCONSISTENT`，不得自动补洞后继续写。
+8. 只有上述兼容检查通过后，才允许打开可写连接、启用/确认 WAL、执行 backup、migration 或业务写入。
 
-P1-01 当前最大支持版本为 `1`，迁移文件从 `0001_initial.sql` 开始，版本号必须连续、不得跳号。
+P1-01 当前最大支持版本为 **1**，迁移文件从 `0001_initial.sql` 开始，版本号必须连续、不得跳号。
 
 ### 7.2 迁移前保护
 
-对已有非空数据库执行任何升级前：
+对已有非空且 schema 兼容的数据库执行任何升级前：
 
 1. 停止/阻止新的业务写入；
 2. 检查目标数据卷剩余空间；
 3. 用 SQLite backup API 创建一致性备份到数据根的备份目录；
 4. 备份成功后再执行迁移。
 
-P1-01 的默认磁盘预算至少覆盖：
-
-`当前逻辑数据库大小 + 64 MiB 迁移余量`
+P1-01 的默认磁盘预算至少覆盖：`当前逻辑数据库大小 + 64 MiB 迁移余量`。
 
 后续若某个迁移需要更多临时空间，必须由该迁移显式提高预算，不能降低到不足以保存完整备份。
 
@@ -444,7 +424,8 @@ P1-01 的迁移只允许使用 SQLite 可事务化操作：
 - 每个版本升级在受控事务内执行；
 - `metadata.schema_version` 必须作为该迁移的最后逻辑步骤，在同一事务内推进；
 - 任一 SQL 失败或进程在提交前终止，事务回滚，版本号保持旧值；
-- 重启后从旧版本重新执行，结果必须幂等。
+- 重启后从旧版本重新执行，结果必须幂等；
+- 迁移完成后必须重新验证目标版本的核心 schema 契约，并确认正常运行连接处于 WAL 模式。
 
 P1-01 **禁止**引入不能被事务保护的迁移步骤。未来若确实需要非事务迁移，必须另做 C2 决策并引入显式可恢复阶段标记。
 
@@ -452,8 +433,9 @@ P1-01 **禁止**引入不能被事务保护的迁移步骤。未来若确实需�
 
 当数据库版本高于当前程序支持版本时：
 
-- 可以进行不会写库的版本/健康诊断；
+- 只允许真正只读的版本/健康诊断；
 - 所有业务写入口必须返回 `SCHEMA_TOO_NEW`；
+- 在判定 `SCHEMA_TOO_NEW` 前不得执行 WAL 切换、建立 sidecar、写 metadata、建表或其他写副作用；
 - 不得自动删除表、复制部分数据到新库、降低版本号或提示用户“重新扫描即可”。
 
 已有稳定 ID 和未来人工知识优先于“让旧程序勉强启动”。
@@ -471,14 +453,7 @@ P1-01 **禁止**引入不能被事务保护的迁移步骤。未来若确实需�
 5. 完整扫描最终提交：缺失对账 + `scan_runs=SUCCEEDED` + `finished_at` + `source_roots.last_successful_scan`。
 6. 同路径内容确认替换：新/既有资产选择 + 位置重新绑定。
 
-事务中禁止：
-
-- 文件枚举；
-- 文件 hash；
-- 图片解码；
-- 模型推理；
-- HTTP；
-- 长时间 sleep / 重试等待。
+事务中禁止：文件枚举、文件 hash、图片解码、模型推理、HTTP、长时间 sleep / 重试等待。
 
 ---
 
@@ -551,7 +526,8 @@ P1-01 尚未创建人物、标签、人工注释、OCR、向量或 outbox 表，
 - “只有完整成功扫描才能产生缺失结论”；
 - jobs 的五字段唯一逻辑键及非空性；
 - job 状态迁移和迟到提交校验；
-- schema 高版本拒绝写入、迁移原子性和备份原则；
+- schema 高版本只读预检、拒绝写入、迁移原子性和备份原则；
+- 正常运行 WAL 模式；
 - 原图只读；
 - P1-01 不提前创建人物、向量、FTS、outbox、索引世代表。
 
@@ -566,15 +542,19 @@ DS-H 实现完成后，C2 聚焦复核至少检查：
 1. `assets.sha256` 真正由数据库唯一约束保护，不只是 Python 先查后插。
 2. `UNIQUE(source_id, path_key)` 真正在数据库层生效。
 3. 五字段 job 逻辑键全部非空，未受 SQLite `NULL` 唯一性漏洞影响。
-4. 迁移失败不会出现“表只建了一半但 schema_version 已推进”。
-5. 更高 schema 版本不会触发删库/重建。
-6. 扫描中断/来源离线不会把未见位置批量标 `MISSING`。
-7. 完整扫描成功的缺失对账与 `last_successful_scan` 是同一最终事务。
-8. 同字节多位置只产生一个资产。
-9. 同路径换内容只改位置绑定，旧资产仍存在。
-10. 旧 `lease_token`、过期 token、旧 revision、错误 processor 的提交都不会写入结果。
-11. 中文、空格、长路径 fixture 使用真实 Windows 路径语义测试；若长路径或 reparse-point 行为受本机/权限影响，按任务卡升级 C1，不由 DS-H 改契约。
-12. 所有测试只使用临时夹具，不读取真实照片库。
+4. 状态、availability、attempts/max_attempts、progress 等关键值域由数据库 `CHECK` 防护。
+5. 迁移失败不会出现“表只建了一半但 schema_version 已推进”。
+6. 更高 schema 版本在任何写副作用前通过只读检查被拒绝；不会触发 WAL 切换、删库或重建。
+7. `schema_version` 与核心表、列、唯一索引和关键约束一致；版本号存在但 schema 缺件会报 `SCHEMA_INCONSISTENT`。
+8. 正常 catalog 运行连接确认使用 WAL。
+9. 扫描中断/来源离线不会把未见位置批量标 `MISSING`。
+10. 完整扫描成功的缺失对账与 `last_successful_scan` 是同一最终事务。
+11. 同字节多位置只产生一个资产。
+12. 同路径换内容只改位置绑定，旧资产仍存在。
+13. 旧 `lease_token`、过期 token、旧 revision、错误 processor 的提交都不会写入结果。
+14. `BLOCKED -> QUEUED` 恢复不会提前把 `scan_run` 标为 `RUNNING`。
+15. 中文、空格、长路径 fixture 使用真实 Windows 路径语义测试；若长路径或 reparse-point 行为受本机/权限影响，按任务卡升级 C1，不由 DS-H 改契约。
+16. 所有测试只使用临时夹具，不读取真实照片库。
 
 ---
 
