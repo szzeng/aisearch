@@ -3,6 +3,7 @@
 - For an implementation task, first read `docs/development-status.md` and the current task card named there.
 - Read only the sections of `个人图片搜索系统_V3.0_开发主架构.md` and `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md` listed by that task card, plus the directly related implementation, interfaces, and tests.
 - Read both current architecture/strategy documents in full only for initial architecture alignment, a missing or repository-inconsistent task card, an architecture-wide or cross-module protocol/data-semantics decision, or an explicit architecture audit. Starting another subtask or phase does not by itself require a full reread; read the relevant phase sections instead.
+- Model routing is advisory only. The user manually switches GPT/DeepSeek models and reasoning levels inside Codex. Never attempt or claim an automatic model switch, never require a separate agent/client for DeepSeek, and when the next task recommends a different model, stop after generating the next task card and remind the user to switch manually.
 - Work on one accepted task at a time; create modules only when that task needs them.
 - Never scan, modify, move, or delete a real photo library without explicit user authorization.
 - Keep application data outside the install directory. Do not add cloud services, Docker, Redis, or a second vector backend without a documented architecture decision.
