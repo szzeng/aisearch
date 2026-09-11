@@ -14,15 +14,15 @@
 ## 决定
 
 1. 最低支持目标 GTX 1660 6 GB 级别 NVIDIA GPU，正常 AI 模式要求兼容驱动和已验证 CUDA runtime；基础图文 image/text 与人脸 detection/recognition 默认 CUDA。
-2. CPU 保留数值对照、诊断和显式慢速降级。默认 CUDA 失败明确报错并暂停相应 AI 任务，保留非 AI 浏览/管理；禁止静默整图/全库 CPU 回退。已记录的 CPU 算子分配与整图降级分别报告。
+2. CPU 保留数值对照、诊断和受设备策略允许的显式慢速路径。默认 CUDA 失败明确报错并暂停相应 AI 任务，保留非 AI 浏览/管理；禁止静默整图/全库 CPU 回退。设备许可由 ProcessorSpec.device_policy 固定：GPU_REQUIRED 不允许生产 CPU fallback，CPU_ALLOWED 可按明确请求/策略使用 CPU 或 GPU，CPU_PREFERRED 默认 CPU。已记录的 CPU 算子分配与整图降级分别报告。
 3. 单 AI worker、有界批次、交互优先、按阶段复用模型，预算包含推理临时占用与桌面余量。固定 batch=1、FP32 为现有验证起点；不依赖 Tensor Core、BF16、TF32、FlashAttention 或 TensorRT；任何精度/批量优化另验收。
-4. GPU 正式包和匹配 DLL 可复现锁定，检查传递依赖冲突；CPU 对照优先使用 GPU 包的 CPUExecutionProvider，不在同环境混装 onnxruntime 与 onnxruntime-gpu。未来实施依赖变更须更新 uv.lock，本次不安装或变更依赖。
+4. GPU 正式包和匹配 DLL 可复现锁定，检查传递依赖冲突；CPU 对照优先使用 GPU 包的 CPUExecutionProvider，不在同环境混装 onnxruntime 与 onnxruntime-gpu。运行时通过 RuntimeCapabilities 暴露 provider/GPU/health 事实，调度器根据 device_policy + requested_device 解析 resolved_device/runtime_provider，任务结果记录实际 provider/device/precision。未来实施依赖变更须更新 uv.lock，本次不安装或变更依赖。
 5. OCR 设备按收益选择；存储、索引、解码等保持原职责。更大模型只在满足最低硬件时才可成为基础默认，否则作为另有要求的可选增强。
 6. P0-06 在当前 RTX 4060 上先过 GPU/source/package/一致性/资源/显式降级，再完成授权质量评测；二者通过才可进入 P0-07/P1。GTX 1660 真机的运行库、模型、性能、资源、争用、离线发行包最迟 P4-07/P4-08 验收，不能以限显存实验代替。缺最低配置实机证据时该项 BLOCKED，正式发行不得完整 PASS；P0 后开发可按既有门槛继续。
 
 ## 后果与范围
 
-硬件要求提高为 GPU 必选；CPU-only 机器仅提供有限浏览/管理和已验证的显式降级，不承诺完整 AI 性能。模型更换须评估 6 GB 预算，现有 Chinese-CLIP/buffalo_l 身份和向量契约保持不变。GPU 提速倍数、GTX 1660 兼容和性能目前均未测得，不写成已通过。
+硬件要求提高为 GPU 必选；CPU-only 机器仅提供有限浏览/管理和已验证、且符合 device_policy 的显式路径，不承诺完整 AI 性能。模型更换须评估 6 GB 预算，现有 Chinese-CLIP/buffalo_l 身份和向量契约保持不变。GPU 提速倍数、GTX 1660 兼容和性能目前均未测得，不写成已通过。
 
 本次仅同步文档，不实施 P0-06、不扫描真实图库、不追溯撤销 P0-05 的 CPU 阶段 PASS。下一执行任务仍为 P0-06；文档交接无需启动并行任务或自动切换模型。
 
