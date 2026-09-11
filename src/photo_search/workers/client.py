@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import queue
 import tempfile
 from pathlib import Path
@@ -32,10 +33,18 @@ class AiWorkerClient:
         self._ctx = multiprocessing.get_context("spawn")
         self._requests = self._ctx.Queue(maxsize=queue_size)
         self._responses = self._ctx.Queue(maxsize=queue_size)
-        self._stderr_file = Path(tempfile.mkstemp(prefix="photo-search-ai-", suffix=".stderr")[1])
+        stderr_fd, stderr_path = tempfile.mkstemp(prefix="photo-search-ai-", suffix=".stderr")
+        os.close(stderr_fd)
+        self._stderr_file = Path(stderr_path)
         self._process = self._ctx.Process(
             target=run_worker,
-            args=(self._requests, self._responses, str(model_dir), str(manifest_path), str(self._stderr_file)),
+            args=(
+                self._requests,
+                self._responses,
+                str(model_dir),
+                str(manifest_path),
+                str(self._stderr_file),
+            ),
             name="photo-search-ai",
         )
         self._started = False
@@ -68,6 +77,7 @@ class AiWorkerClient:
             if self._process.is_alive():
                 self._stop()
         self._close_queues()
+        self._cleanup_stderr_file()
 
     def _call(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
         self.start()
@@ -76,7 +86,8 @@ class AiWorkerClient:
             self._requests.put(checked, timeout=min(timeout, 1.0))
         except queue.Full as error:
             raise WorkerError(
-                {"exception_type": "QueueFull", "message": "worker request queue is full"}, self.stderr_tail()
+                {"exception_type": "QueueFull", "message": "worker request queue is full"},
+                self.stderr_tail(),
             ) from error
         try:
             response = self._responses.get(timeout=timeout)
@@ -105,6 +116,12 @@ class AiWorkerClient:
         for channel in (self._requests, self._responses):
             channel.close()
             channel.join_thread()
+
+    def _cleanup_stderr_file(self) -> None:
+        try:
+            self._stderr_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def __enter__(self) -> AiWorkerClient:
         return self
