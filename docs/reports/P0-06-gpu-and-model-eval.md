@@ -1,10 +1,13 @@
 # P0-06 — GPU runtime bring-up + authorized model evaluation
 
-**Status:** stage **A (GPU hard gate): PASS**. Stage **B (authorized 2,000-image quality
-evaluation): BLOCKED** — no user-authorized sample source exists, so the evaluator, data
-contract, split rules and metrics are implemented and unit-tested but no quality comparison
-was run. Per `docs/tasks/P0-06.md` §B2 and strategy §5.1, **P0-06 is therefore not PASS and
-P0-07 is not generated**.
+**Status:** stage **A (GPU hard gate): PASS**. Stage **B (authorized sample evaluation):
+PASS** on the user-authorized source (`D:\SZ\朋友`, `D:\SZ\canon`, `D:\SZ\vsco`,
+`D:\SZ\网络`, `D:\SZ\pic`). **P0-06 is therefore PASS**, and `docs/tasks/P0-07.md` was
+generated.
+
+One limit is recorded with the result: the 150 queries are labelled by fixed, model-independent
+attribute rules (capture time, geometry, exposure/colour, face counts, OCR text presence), not by
+human relevance judgements. The metrics therefore measure ranking of attribute-defined images.
 
 Actual executor: this Codex session (client model as configured for the session; no model
 switch is claimed). Git baseline at start: `caba9f1` with a clean worktree.
@@ -206,25 +209,84 @@ passed explicitly, and the environment forced offline operation
 The CJK query text survived the packaged round trip unchanged, and no run needed the network.
 The P0-05 CPU package is not reused as evidence here.
 
-## B. Authorized sample evaluation — BLOCKED
+## B. Authorized sample evaluation — PASS
 
-No user-authorized 2,000-image sample source was provided, and this task never scans a real photo
-library on its own. Implemented and unit-tested in this task:
+Sample source (user authorization, 2026-09-11): `D:\SZ\朋友`, `D:\SZ\canon`, `D:\SZ\vsco`,
+`D:\SZ\网络`, `D:\SZ\pic`. The tools only read those folders. The corpus file (absolute paths,
+OCR text) stays in the user data directory (`PhotoSearchData\evaluation`), and the repository
+receives aggregate counts only; because the `朋友` tree is organised by person, the corpus uses
+opaque ids (`img_00001`…) and no folder or person name is written into the repository.
 
-- `src/photo_search/evaluation/dataset.py` — schema v1 for images/queries, graded relevance,
-  annotation rules and a mandatory recorded authorization; rejects duplicate ids, unknown splits,
-  unlabelled queries, non-positive grades and **tuning/holdout leakage**.
-- `src/photo_search/evaluation/metrics.py` — nDCG@20, Recall@50, best rank, per-split aggregation
-  and a failure-query list; tuning and holdout are reported separately.
-- `tools/evaluation/chinese_clip_eval.py` — encodes the authorized set on CUDA (with an optional
-  CPU baseline), reports model identity, device facts, metrics, latency, throughput and resources.
-  Without `--dataset` it writes `{"status": "BLOCKED"}` and exits 2
-  (`docs/reports/P0-06-model-evaluation.json`).
+### B1. Corpus and query set
 
-To unblock: the user names an authorized sample source (paths plus scope) that yields ≥ 2000
-images and 100–200 Chinese queries with graded relevance, split into tuning and holdout. Then
-stage B runs on the frozen P0-03 baseline plus one stronger candidate that actually runs on CUDA
-within the 6 GB budget (CPU-only candidates are research-only and cannot become the default).
+| Item | Value |
+|---|---|
+| Images | **3231** readable images (10.97 GiB) from the five authorized roots |
+| By source | pic 1350, vsco 872, 朋友 881, canon 99, 网络 29 |
+| Orientation | landscape 2111, portrait 994, square 126 |
+| Capture time source | EXIF 1814, file mtime 1417 |
+| Faces (InsightFace) | 934 images with ≥1 face (604 single-face, 330 with ≥2) |
+| Text (RapidOCR) | 1141 images with text, 339 containing digits |
+| Excluded | 1 HEIC (Pillow cannot decode it here) and 3 RAR archives (not extracted) |
+| Queries | **150 invented Chinese daily-life queries**: 50 tuning + 100 holdout |
+| Label density | 13–1282 positive images per query, median 363 |
+
+Ground truth is derived from signals that do **not** involve the evaluated model: EXIF capture time,
+geometry, exposure/colour statistics over a 384 px thumbnail, InsightFace face counts and RapidOCR
+text presence. Thresholds were fixed on the tuning queries before any model run, and the builder
+refuses to emit a query with fewer than 3 or more than 40 % positive images. This is the accuracy
+limit of the evaluation: it measures whether a model can rank *attribute-defined* images, not
+human-judged relevance, so it cannot judge queries such as "吃火锅" or "生日蛋糕".
+
+Tooling: `tools/evaluation/build_corpus.py` (attributes, face and OCR passes with resumable
+caches), `tools/evaluation/build_query_set.py` (rules, bounds checks, dataset),
+`tools/evaluation/random_baseline.py` (chance level), `tools/evaluation/chinese_clip_eval.py`
+(metrics, latency, resources) and the contract/metrics modules under
+`src/photo_search/evaluation/`.
+
+### B2. Baseline vs stronger candidate
+
+Baseline: the frozen P0-03 **Chinese-CLIP ViT-B/16** (512-D, revision `36e679e6…`) on CUDA.
+Candidate: **Chinese-CLIP ViT-L/14** (`OFA-Sys/chinese-clip-vit-large-patch14`, revision
+`660941af70c6…`, 768-D), downloaded and exported to ONNX FP32 by
+`tools/prepare_models/prepare_chinese_clip_candidate.py`. Both run through the same adapter,
+device policy and evaluator, with `use_tf32=0` and the CPU fallback disabled.
+
+| Model | Dim | nDCG@20 overall | tuning | holdout | Recall@50 | image p50 | images/s | GPU MiB | RAM MiB |
+|---|---|---|---|---|---|---|---|---|---|
+| Baseline ViT-B/16 | 512 | 0.2592 | 0.2946 | 0.2415 | 0.0410 | 370.8 ms | 8.34 | 1151 | 943 |
+| Candidate ViT-L/14 | 768 | **0.2672** | **0.3157** | **0.2430** | 0.0417 | 417.7 ms | 7.71 | 2687 | 997 |
+| Random ranking (chance) | – | 0.1100 | – | – | 0.0157 | – | – | – | – |
+
+Both models beat chance by ≈2.4× (nDCG@20) and ≈2.6× (Recall@50). The candidate improves the tuning
+split by +7.2 % relative but the holdout split by only **+0.6 %** (0.2415 → 0.2430), while using
+**2.3× the VRAM** (2687 MiB vs 1151 MiB total GPU memory) and running ~13 % slower per image; a
+768-D space also doubles the index size. Per-query failures overlap in 121 of ~125 queries, i.e.
+both models fail on the same queries.
+
+Decision: **keep Chinese-CLIP ViT-B/16 as the product baseline** and record ViT-L/14 as an optional
+enhancement for higher-VRAM machines, not a replacement; revisit only with a human-labelled
+holdout. No architecture or model-route change is required, so no C2 review is triggered.
+
+### B3. CPU comparison and resource notes
+
+Same model on an identical 400-image stride subset, GPU and CPU in one process: the ranking is
+**identical** on both devices (nDCG@20 0.243734 and Recall@50 0.232313 exactly equal), which
+extends the A4 vector-level agreement to full ranking agreement.
+
+| Path | Query p50 | Image p50 | Throughput |
+|---|---|---|---|
+| CUDA (CPU fallback disabled) | 3.38 ms | 378.27 ms | 8.49 images/s |
+| Explicit CPU degradation | 17.43 ms | 543.84 ms | 5.80 images/s |
+
+Image latency is dominated by reading and decoding the original files (the corpus contains stitched
+panoramas up to 161 MP), not by the model: GPU inference is ≈12 ms per image. At the measured
+8.3 images/s one worker would need ≈16.7 h for a 500k library, so P1/P2 must plan a bounded decode
+pool and/or subsampled decoding ahead of the AI worker.
+
+Failure queries: 125 of 150 queries score nDCG@20 < 0.5 for the baseline (124 for the candidate).
+The worst are the time/date and colour-attribute queries whose labels are large sets (for example
+`晚上拍的照片` has 1059 positive images), where a 20-result window cannot cover the label.
 
 ## Commands, exit codes, results
 
@@ -243,7 +305,13 @@ within the 6 GB budget (CPU-only candidates are research-only and cannot become 
 | `uv run python -m photo_search demo-search --device cpu --output …` | 0 | explicit CPU degradation |
 | `uv run python tools/packaging/build_onedir.py` | 0 | onedir package with CUDA runtime |
 | `uv run python tools/packaging/smoke_packaged_gpu.py` | 0 | packaged CUDA + CPU smoke, no failures |
-| `uv run python tools/evaluation/chinese_clip_eval.py` (no dataset) | 2 | intentional `BLOCKED` report |
+| `uv run python tools/evaluation/build_corpus.py --faces --ocr` | 0 | 3231 images, 934 with faces, 1141 with OCR text (1086 s) |
+| `uv run python tools/evaluation/build_query_set.py` | 0 | 150 labelled queries (50 tuning / 100 holdout), bounds satisfied |
+| `uv run python tools/evaluation/random_baseline.py` | 0 | chance level 0.1100 nDCG@20 / 0.0157 Recall@50 |
+| `uv run python tools/evaluation/chinese_clip_eval.py` (baseline, CUDA) | 0 | nDCG@20 0.2592 / Recall@50 0.0410 over 3231 images |
+| `uv run python tools/evaluation/chinese_clip_eval.py` (ViT-L/14, CUDA) | 0 | nDCG@20 0.2672 / Recall@50 0.0417, 2687 MiB |
+| `uv run python tools/evaluation/chinese_clip_eval.py --cpu-baseline --limit-images 400` | 0 | identical CPU/GPU ranking; query p50 3.38 vs 17.43 ms |
+| `uv run python tools/prepare_models/prepare_chinese_clip_candidate.py` | 0 | ViT-L/14 ONNX export (1.16 GB image / 390 MB text, 768-D) |
 
 ## Findings and limits
 
@@ -273,6 +341,19 @@ within the 6 GB budget (CPU-only candidates are research-only and cannot become 
    unusable. File edits were written inside the repository through escalated shell writes; nothing
    was written outside the repository, the user data directory or `%TEMP%`.
 
+9. **The front of the pipeline dominates the cost.** Decoding the original photos costs ≈360 ms
+   per image against ≈12 ms of GPU inference; the resulting 500k-library estimate (≈16.7 h with one
+   worker) is a P1/P2 planning input, not a model-quality problem.
+10. **Chinese file names need Pillow, not OpenCV.** `cv2.imread` cannot open non-ASCII Windows
+    paths, which silently lost 546 face measurements in the first pass; the corpus builder now
+    loads images through Pillow. Any future OpenCV-based component must do the same or those photos
+    are silently skipped.
+11. **The candidate did not earn a promotion.** ViT-L/14 buys a tuning-set gain of +7.2 % relative
+    while holdout moves +0.6 % and VRAM grows 2.3×, so the 6 GB baseline stays ViT-B/16.
+12. **Labels are rule-derived, not human judgements.** They are reproducible and model-independent,
+    but they cannot express semantic queries; a human-labelled holdout is the next quality step if
+    the product needs to claim semantic search quality.
+
 ## GTX 1660 6 GB handoff (minimum supported target)
 
 - Runtime plan: keep the same `onnxruntime-gpu` CUDA 13.x / cuDNN 9.x line, pin the actual
@@ -290,7 +371,7 @@ within the 6 GB budget (CPU-only candidates are research-only and cannot become 
 ## Handoff record
 
 ```text
-任务 ID / 状态：P0-06 / A PASS，B BLOCKED（整体未 PASS，未生成 P0-07）
+任务 ID / 状态：P0-06 / A PASS + B PASS（整体 PASS，已生成 P0-07 任务卡）
 执行模型 / reasoning / 速度：由用户在当前 Codex 会话中手动选择；本会话未切换模型，也未声称切换
 基线提交号：caba9f1（工作树干净）
 已完成行为：onnxruntime-gpu[cuda,cudnn] 单发行包依赖方案 + uv.lock；设备策略/显式降级/禁用 CPU 回退的运行时层；
@@ -300,7 +381,10 @@ within the 6 GB budget (CPU-only candidates are research-only and cannot become 
   CUDA 不可用与 gpu_required 拒绝 CPU 的结构化失败；InsightFace 检测/识别 CUDA smoke（识别 130 节点全 CUDA，
   检测 141 CUDA/12 CPU 记录在案）；RapidOCR 实际 provider 与延迟（预加载后 75.95 ms vs CPU 917.94 ms，未预加载时静默回退）；
   GPU onedir 包（21 个 NVIDIA DLL，3.01 GiB）+ 中文/空格路径/离线/显式 CPU 降级 smoke；
-  B 阶段 evaluator、数据契约、split/泄漏校验与 nDCG@20/Recall@50 指标 + 单测
+  B 阶段 evaluator、数据契约、split/泄漏校验与 nDCG@20/Recall@50 指标 + 单测；
+  用户授权 5 个来源共 3231 张图片（934 含人脸、1141 含文字）+ 150 条自制中文日常查询（50/100 划分），
+  基线 ViT-B/16（nDCG@20 0.2592、holdout 0.2415、显存 1151 MiB）对比候选 ViT-L/14（0.2672、holdout 0.2430、2687 MiB），
+  随机基线 0.1100；结论保留 ViT-B/16，ViT-L/14 记为高显存可选增强
 修改文件与接口/迁移变化：见上表；ProcessorSpec 增加 device_policy/runtime_provider/runtime_version/precision/cpu_fallback_disabled；
   worker 协议新增 demo_search/provider_usage 动作与 error.details（向后兼容，无数据库迁移）
 实际命令和结果：见上表（uv lock/sync、pytest 44 passed 1 skipped、ruff、git diff --check、五个 runtime/packaging 探针全部退出码 0）
@@ -308,6 +392,6 @@ within the 6 GB budget (CPU-only candidates are research-only and cannot become 
 未验证项和具体阻塞：B 质量评测缺少用户授权的 ≥2000 图样本（BLOCKED）；GTX 1660 6 GB 实机（P4-07/P4-08）；
   动态 batch/FP16/量化/TensorRT；建库吞吐与前台争用；API 层 P95；OCR 设备最终决策
 失败修复轮次：5（K32GetProcessMemoryInfo、CUDA UMD 解析、Pillow 弃用调用、探针导入路径、detection 严格 CUDA 断言）
-下一任务：无（P0-06 未 PASS 不生成 P0-07；下一步需用户授权评测样本集后在原任务内继续 B 阶段）
+下一任务：P0-07（汇总 P0 可行性、失败组件与进入 P1 的约束），推荐 DS-L / DeepSeek V4.1 Flash / 低推理，需用户手动切换模型后执行
 独立审查者与结果：未执行；若 B 阶段结果触发模型路线变化，按任务卡交 C2 / GPT-5.6 Sol / high 审查
 ```

@@ -1,0 +1,78 @@
+{
+  "brightness": {
+    "p05": 0.1892,
+    "p50": 0.4536,
+    "p95": 0.6539
+  },
+  "by_dominant_hue": {
+    "blue": 35,
+    "cyan": 29,
+    "green": 63,
+    "neutral": 31,
+    "orange": 554,
+    "purple": 682,
+    "red": 1605,
+    "yellow": 232
+  },
+  "by_orientation": {
+    "landscape": 2111,
+    "portrait": 994,
+    "square": 126
+  },
+  "by_source": {
+    "canon": 99,
+    "pic": 1350,
+    "vsco": 872,
+    "朋友": 881,
+    "网络": 29
+  },
+  "by_year": {
+    "2010": 2,
+    "2011": 358,
+    "2012": 565,
+    "2013": 240,
+    "2014": 102,
+    "2015": 286,
+    "2016": 225,
+    "2017": 88,
+    "2018": 128,
+    "2019": 91,
+    "2020": 53,
+    "2021": 22,
+    "2022": 80,
+    "2023": 298,
+    "2024": 332,
+    "2025": 245,
+    "2026": 116
+  },
+  "completed_steps": [
+    "attributes",
+    "faces",
+    "ocr"
+  ],
+  "face_coverage": 3231,
+  "faces_detected_total": 2446,
+  "images": 3231,
+  "images_with_digits": 339,
+  "images_with_faces": 934,
+  "images_with_multiple_faces": 330,
+  "images_with_text": 1141,
+  "note": "aggregate counts only; absolute paths and OCR text stay in the user data directory",
+  "ocr_coverage": 3231,
+  "saturation": {
+    "p05": 0.0963,
+    "p50": 0.2706,
+    "p95": 0.5509
+  },
+  "seconds": 1086.3,
+  "sources": [
+    "canon",
+    "pic",
+    "vsco",
+    "朋友",
+    "网络"
+  ],
+  "stage": "B",
+  "status": "ok",
+  "task": "P0-06"
+}

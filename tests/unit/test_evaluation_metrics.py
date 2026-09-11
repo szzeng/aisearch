@@ -76,6 +76,25 @@ def test_dataset_rejects_duplicate_ids_and_unlabelled_queries(tmp_path: Path) ->
         parse_dataset(payload, base_directory=tmp_path)
 
 
+def test_shared_split_policy_allows_one_corpus_with_query_splits(tmp_path: Path) -> None:
+    payload = dataset_payload()
+    payload["image_split_policy"] = "shared"
+    for image in payload["images"]:
+        image["split"] = "shared"
+    payload["queries"][0]["relevant"] = {"t1": 2, "h1": 1}
+    dataset = parse_dataset(payload, base_directory=tmp_path)
+    assert dataset.image_split_policy == "shared"
+    assert dataset.summary()["image_split_policy"] == "shared"
+    assert [query.id for query in dataset.queries_for_split("holdout")] == ["qh"]
+
+
+def test_unknown_split_policy_is_rejected(tmp_path: Path) -> None:
+    payload = dataset_payload()
+    payload["image_split_policy"] = "whatever"
+    with pytest.raises(DatasetError, match="image_split_policy"):
+        parse_dataset(payload, base_directory=tmp_path)
+
+
 def test_dataset_rejects_non_positive_grades(tmp_path: Path) -> None:
     payload = dataset_payload()
     payload["queries"][0]["relevant"] = {"t1": 0}

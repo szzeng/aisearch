@@ -2,35 +2,33 @@
 
 ## Current state
 
-P0-06 stage **A (GPU runtime bring-up on the RTX 4060) is PASS**; stage **B (authorized
-2,000-image quality evaluation) is BLOCKED** because no user-authorized sample source exists.
-P0-06 is therefore **not PASS**, and `docs/tasks/P0-07.md` was deliberately not generated.
+**P0-06 is PASS.** Stage A (GPU runtime bring-up on the RTX 4060) and stage B (authorized sample
+evaluation) both passed, so P0-07 was generated and P1 may start after P0-07.
 
-Delivered by P0-06 stage A:
+Stage A delivered a single `onnxruntime-gpu[cuda,cudnn]` runtime with a device policy that reports
+the resolved device/provider and disables the CPU execution-provider fallback, real Chinese-CLIP
+image/text CUDA inference (1320/395 node events, zero CPU nodes), CPU/GPU FP32 agreement
+(3.13e-07 / 1.79e-07, cosine 1.0, Top-K identical to P0-03), warm p50 11.76 ms image / 10.29 ms
+text, a managed worker GPU loop with explicit CPU degradation and structured CUDA-unavailable
+failure, InsightFace and RapidOCR CUDA evidence, and a 3.01 GiB packaged GPU build smoked from a
+Chinese/space path offline on CUDA and on explicit CPU.
 
-- one ONNX Runtime distribution: `onnxruntime-gpu[cuda,cudnn]` 1.30.0 with matching `nvidia-*`
-  wheels pinned in `uv.lock` (95 packages), and an override that keeps `rapidocr-onnxruntime`
-  from reinstalling the CPU `onnxruntime`;
-- a runtime device layer (`photo_search.runtime.device`) with an explicit device policy, a
-  reportable degradation reason, `session.disable_cpu_ep_fallback`, CUDA DLL preloading and
-  packaged-DLL discovery;
-- real Chinese-CLIP CUDA inference: image tower **1320/1320** and text tower **395/395** node
-  events on `CUDAExecutionProvider`, zero CPU nodes; CPU/GPU FP32 max abs difference
-  3.13e-07 (image) / 1.79e-07 (text), cosine 1.0, Top-K identical to the frozen P0-03 record;
-- warm batch=1 latency p50 11.76 ms (image) / 10.29 ms (text) on GPU vs 58.28 ms / 130.66 ms on
-  CPU; worker VRAM ≈ 1.2 GiB with both towers loaded;
-- managed worker: default CUDA loop (text encode, image encode, worker-internal demo-search,
-  provider evidence), reproducible explicit CPU degradation, structured failure when CUDA is
-  unavailable or `gpu_required` forbids CPU, and no silent whole-model CPU fallback;
-- InsightFace `buffalo_l` detection/recognition CUDA smoke (recognition 130/130 nodes on CUDA;
-  detection documented as 141 CUDA / 12 CPU shape-operator nodes);
-- RapidOCR provider status: CUDA after DLL preload (p50 75.95 ms vs 917.94 ms CPU), with its
-  silent CPU fallback when the DLLs are not preloaded recorded as a defect to fix in P3;
-- GPU onedir package (21 NVIDIA DLLs, 3.01 GiB) smoked from a Chinese/space path offline on
-  CUDA and on explicit CPU, plus stage-B evaluator/data-contract/metrics with unit tests.
+Stage B evaluated the user-authorized sample source (`D:\SZ\朋友`, `D:\SZ\canon`, `D:\SZ\vsco`,
+`D:\SZ\网络`, `D:\SZ\pic`): **3231 images** (934 with faces, 1141 with OCR text) and **150 invented
+Chinese daily-life queries** (50 tuning / 100 holdout) with fixed, model-independent annotation
+rules. Results on CUDA: baseline Chinese-CLIP ViT-B/16 nDCG@20 0.2592 / Recall@50 0.0410 (holdout
+0.2415), candidate ViT-L/14 0.2672 / 0.0417 (holdout 0.2430) at 2.3× the VRAM, random-ranking
+chance level 0.1100 / 0.0157. Decision: keep ViT-B/16 as the 6 GB baseline, record ViT-L/14 as an
+optional high-VRAM enhancement. CPU and GPU produced an identical ranking on a 400-image subset
+(query p50 3.38 vs 17.43 ms).
 
-Evidence: [P0-06 report](reports/P0-06-gpu-and-model-eval.md) and the `docs/reports/P0-06-*.json`
-probe records.
+Evidence: [P0-06 report](reports/P0-06-gpu-and-model-eval.md) plus the `docs/reports/P0-06-*.json`
+probe and evaluation records. Corpus data, labels and OCR text stay in
+`PhotoSearchData\evaluation` outside the repository; only aggregate counts are committed.
+
+Recorded limits: the query labels are rule-derived attribute matches, not human relevance
+judgements; GTX 1660 6 GB remains unverified on real hardware; per-process GPU memory is not
+exposed by driver 616.56.
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2
@@ -40,48 +38,47 @@ Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发
 
 | Check | Result |
 |---|---|
-| `uv lock` / `uv lock --check` | resolved 95 packages, lock up to date |
-| `uv run pytest tests/unit tests/integration` | 44 passed, 1 skipped (56.75 s) |
-| `PHOTO_SEARCH_GPU_TESTS=1 uv run pytest -q tests/integration/test_ai_worker_lifecycle.py -k gpu` | 2 passed (real CUDA worker path) |
+| `uv run pytest -q tests/unit tests/integration` | exit 0, 51 passed + 1 skipped (GPU-opt-in) |
 | `uv run ruff check .` / `git diff --check` | clean / clean |
 | GPU probes (`tools/runtime/*`, `tools/packaging/*`) | all exit 0 with `status: pass` |
+| Corpus build (`build_corpus.py --faces --ocr`) | 3231 images, 934 with faces, 1141 with OCR text |
+| Query set (`build_query_set.py`) | 150 queries (50/100), all label bounds satisfied |
+| Baseline / candidate / chance evaluation | 0.2592 / 0.2672 / 0.1100 nDCG@20 on 3231 images |
+| CPU comparison (`--cpu-baseline --limit-images 400`) | identical ranking, query p50 3.38 vs 17.43 ms |
 
-P0-06 stage A (GPU hard gate) is verified end-to-end; stage B quality numbers do not exist yet,
-so no token/quality claim is made. Details and per-command exit codes live in the report.
+Details, per-command exit codes and the unverified list live in the report.
 
 ## GPU status
 
-Model GPU execution is now **verified on this machine** (RTX 4060 Laptop GPU / 8188 MiB /
-driver 616.56 / CUDA UMD 13.4): Chinese-CLIP image and text towers really run on
-`CUDAExecutionProvider` with the CPU fallback disabled, the worker default is CUDA, and the
-packaged app reproduces it from a Chinese/space path offline.
+Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 /
+CUDA UMD 13.4): Chinese-CLIP image and text towers run on `CUDAExecutionProvider` with the CPU
+fallback disabled, the worker defaults to CUDA, ViT-L/14 also ran fully on CUDA (2687 MiB), and the
+packaged app reproduces the CUDA path from a Chinese/space path offline.
 
 Still open:
 
-- GTX 1660 6 GB is the user-approved minimum target and remains **unverified on real hardware**;
-  the RTX 4060 budget (≈ 1.2 GiB worker VRAM at batch=1, ≈ 3.7 GiB headroom on a 6 GB card) is a
-  pre-check only. P4-07/P4-08 must verify runtime, models, performance, OOM/load-unload, the
-  packaged offline path and minimum-configuration performance before a full release PASS.
+- GTX 1660 6 GB is the user-approved minimum target and remains **unverified on real hardware**.
+  The RTX 4060 budget (≈1.2 GiB worker VRAM at batch=1 for ViT-B/16, ≈2.0 GiB for ViT-L/14) is a
+  pre-check only; P4-07/P4-08 own the minimum-configuration runtime, performance, OOM and packaged
+  offline validation before a full release PASS.
 - Cold CUDA start on this machine is slow and fragile (one `cuInit` took 2 m 23 s; terminating a
-  worker inside CUDA initialisation blocked new CUDA contexts for ~4 minutes). The worker must not
-  be treated as cheaply restartable mid-initialisation; the P2 scheduler should distinguish a cold
-  GPU start from a hung worker.
+  worker inside CUDA initialisation blocked new CUDA contexts for ~4 minutes). The P2 scheduler must
+  distinguish a cold GPU start from a hung worker.
 - InsightFace detection keeps 12 CPU-assigned shape operators, and RapidOCR silently degrades to
   CPU unless the runtime DLLs are preloaded and the actual provider is verified.
+- Image indexing is dominated by decode (≈360 ms/image vs ≈12 ms GPU inference); a 500k library
+  needs a bounded decode pool.
+- Query labels are attribute-rule-derived; a human-labelled holdout is needed for semantic claims.
 
 ## Next task
 
-**P0-06 stage B — same task, no new task card.** P0-07 stays ungenerated until both stages pass.
+**P0-07 — 汇总 P0 可行性、失败组件与进入 P1 的约束.**
 
-- Blocking condition: the user must explicitly authorize a sample source giving **≥ 2000 images
-  and 100–200 Chinese queries** with graded relevance (tuning and holdout separated). Until then
-  the quality stage stays **BLOCKED**.
-- Recommended model: **DS-H / DeepSeek V4.1 Flash / 高推理** (same task, same session is fine; no
-  switch is required to unblock).
-- If stage B results would change the core model route or architecture constraints, submit the
-  evidence for **C2 / GPT-5.6 Sol / high** review.
-- GPU/Windows/ONNX/DLL/driver problems during stage B: recommend a manual switch to
-  **C1 / GPT-5.6 Terra / medium** while staying on P0-06.
+- Recommended model: **DS-L / DeepSeek V4.1 Flash / 低推理** (per strategy §5 and the P0-06 card).
+- Task card: `docs/tasks/P0-07.md`.
+- Escalation: if the summary concludes that the core architecture or model route must change,
+  submit the evidence for **C2 / GPT-5.6 Sol / high** review instead of deciding it locally.
+- P0-07 must hand the GTX 1660 6 GB items and the decode-throughput finding to P4/P1 explicitly.
 
-Do not read or scan a real photo library until the user explicitly authorizes the sample source.
-P1 must not start before P0-06 passes both stages.
+Do not start P1 before P0-07 passes. Do not read or scan a real photo library again without an
+explicit authorization.

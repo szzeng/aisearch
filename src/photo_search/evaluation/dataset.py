@@ -15,6 +15,11 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 SPLITS = ("tuning", "holdout")
+#: ``strict`` keeps images and queries in the same split (annotation sets must not leak).
+#: ``shared`` marks an attribute-grounded corpus where one image may be relevant to queries of
+#: both splits, so the split is a property of the query only; thresholds are still chosen on the
+#: tuning queries and reported separately from the holdout queries.
+IMAGE_SPLIT_POLICIES = ("strict", "shared")
 
 
 class DatasetError(ValueError):
@@ -46,6 +51,7 @@ class EvalDataset:
     queries: tuple[EvalQuery, ...]
     annotation_rules: str
     authorization: str
+    image_split_policy: str = "strict"
 
     def images_for_split(self, split: str) -> tuple[EvalImage, ...]:
         return tuple(image for image in self.images if image.split == split)
@@ -54,16 +60,18 @@ class EvalDataset:
         return tuple(query for query in self.queries if query.split == split)
 
     def summary(self) -> dict[str, Any]:
+        images = {split: len(self.images_for_split(split)) for split in SPLITS}
+        if self.image_split_policy == "shared":
+            images["shared"] = len(self.images)
         return {
             "name": self.name,
-            "images": {
-                split: len(self.images_for_split(split)) for split in SPLITS
-            },
+            "images": images,
             "queries": {
                 split: len(self.queries_for_split(split)) for split in SPLITS
             },
             "annotation_rules": self.annotation_rules,
             "authorization": self.authorization,
+            "image_split_policy": self.image_split_policy,
         }
 
 
@@ -82,6 +90,9 @@ def parse_dataset(raw: dict[str, Any], *, base_directory: Path) -> EvalDataset:
     authorization = str(raw.get("authorization") or "").strip()
     if not authorization:
         raise DatasetError("the dataset must record the user's explicit authorization")
+    split_policy = str(raw.get("image_split_policy") or "strict")
+    if split_policy not in IMAGE_SPLIT_POLICIES:
+        raise DatasetError(f"unknown image_split_policy: {split_policy!r}")
 
     images: list[EvalImage] = []
     seen_images: set[str] = set()
@@ -90,8 +101,8 @@ def parse_dataset(raw: dict[str, Any], *, base_directory: Path) -> EvalDataset:
         if image_id in seen_images:
             raise DatasetError(f"duplicate image id: {image_id}")
         seen_images.add(image_id)
-        split = str(entry.get("split", ""))
-        if split not in SPLITS:
+        split = str(entry.get("split", "shared" if split_policy == "shared" else ""))
+        if split not in (*SPLITS, "shared"):
             raise DatasetError(f"image {image_id} has an unknown split {split!r}")
         images.append(
             EvalImage(
@@ -127,7 +138,7 @@ def parse_dataset(raw: dict[str, Any], *, base_directory: Path) -> EvalDataset:
             if image_id not in seen_images:
                 raise DatasetError(f"query {query_id} references unknown image {image_id}")
             image_split = next(image.split for image in images if image.id == image_id)
-            if image_split != split:
+            if split_policy == "strict" and image_split != split:
                 raise DatasetError(
                     f"query {query_id} ({split}) uses {image_id} from the {image_split} split"
                 )
@@ -143,6 +154,7 @@ def parse_dataset(raw: dict[str, Any], *, base_directory: Path) -> EvalDataset:
         queries=tuple(queries),
         annotation_rules=str(raw.get("annotation_rules") or ""),
         authorization=authorization,
+        image_split_policy=split_policy,
     )
 
 

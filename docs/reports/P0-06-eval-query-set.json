@@ -1,0 +1,1514 @@
+{
+  "annotation_rules": "Ground truth is rule-derived from signals independent of the evaluated model: EXIF capture time (file mtime when EXIF is absent), pixel geometry, exposure/colour statistics over a 384 px RGB thumbnail, InsightFace face count and RapidOCR text presence. grade 2 = strict rule, grade 1 = documented neighbouring band. Thresholds are fixed before any model run and are chosen on the tuning queries only; labels are not human judgements but objective attribute matches, which is the accuracy limit of this evaluation.",
+  "authorization": "User authorization 2026-09-11: P0-06 evaluation may read D:\\SZ\\朋友, D:\\SZ\\canon, D:\\SZ\\vsco, D:\\SZ\\网络 and D:\\SZ\\pic as the sample source; read-only, no modification, and 150 Chinese queries written by the executor.",
+  "corpus_images": 3231,
+  "holdout": 100,
+  "problems": [],
+  "queries": 150,
+  "queries_report": [
+    {
+      "corpus_share": 0.3278,
+      "graded_positives": 1059,
+      "id": "q001",
+      "near_rule": "17 <= hour <= 18",
+      "rule": "(ge hour 19 or le hour 4)",
+      "split": "tuning",
+      "strict_positives": 482,
+      "text": "晚上拍的照片"
+    },
+    {
+      "corpus_share": 0.0833,
+      "graded_positives": 269,
+      "id": "q002",
+      "near_rule": "20 <= hour <= 21",
+      "rule": "(ge hour 22 or le hour 3)",
+      "split": "holdout",
+      "strict_positives": 120,
+      "text": "深夜拍的照片"
+    },
+    {
+      "corpus_share": 0.0529,
+      "graded_positives": 171,
+      "id": "q003",
+      "near_rule": "eq hour 8",
+      "rule": "5 <= hour <= 7",
+      "split": "holdout",
+      "strict_positives": 47,
+      "text": "清晨拍的照片"
+    },
+    {
+      "corpus_share": 0.1838,
+      "graded_positives": 594,
+      "id": "q004",
+      "near_rule": "eq hour 10",
+      "rule": "6 <= hour <= 9",
+      "split": "tuning",
+      "strict_positives": 318,
+      "text": "早上拍的照片"
+    },
+    {
+      "corpus_share": 0.299,
+      "graded_positives": 966,
+      "id": "q005",
+      "near_rule": "eq hour 12",
+      "rule": "9 <= hour <= 11",
+      "split": "holdout",
+      "strict_positives": 691,
+      "text": "上午拍的照片"
+    },
+    {
+      "corpus_share": 0.2204,
+      "graded_positives": 712,
+      "id": "q006",
+      "near_rule": "eq hour 11",
+      "rule": "12 <= hour <= 13",
+      "split": "holdout",
+      "strict_positives": 444,
+      "text": "中午拍的照片"
+    },
+    {
+      "corpus_share": 0.3203,
+      "graded_positives": 1035,
+      "id": "q007",
+      "near_rule": "eq hour 13",
+      "rule": "14 <= hour <= 16",
+      "split": "tuning",
+      "strict_positives": 866,
+      "text": "下午拍的照片"
+    },
+    {
+      "corpus_share": 0.2439,
+      "graded_positives": 788,
+      "id": "q008",
+      "near_rule": "eq hour 19",
+      "rule": "17 <= hour <= 18",
+      "split": "holdout",
+      "strict_positives": 577,
+      "text": "傍晚拍的照片"
+    },
+    {
+      "corpus_share": 0.2751,
+      "graded_positives": 889,
+      "id": "q009",
+      "near_rule": "eq hour 20",
+      "rule": "17 <= hour <= 19",
+      "split": "tuning",
+      "strict_positives": 788,
+      "text": "黄昏时分的照片"
+    },
+    {
+      "corpus_share": 0.0145,
+      "graded_positives": 47,
+      "id": "q010",
+      "near_rule": "eq hour 7",
+      "rule": "5 <= hour <= 6",
+      "split": "holdout",
+      "strict_positives": 43,
+      "text": "天刚亮时拍的照片"
+    },
+    {
+      "corpus_share": 0.2844,
+      "graded_positives": 919,
+      "id": "q011",
+      "near_rule": null,
+      "rule": "month in [6, 7, 8]",
+      "split": "tuning",
+      "strict_positives": 919,
+      "text": "夏天的照片"
+    },
+    {
+      "corpus_share": 0.1777,
+      "graded_positives": 574,
+      "id": "q012",
+      "near_rule": null,
+      "rule": "month in [12, 1, 2]",
+      "split": "holdout",
+      "strict_positives": 574,
+      "text": "冬天的照片"
+    },
+    {
+      "corpus_share": 0.1659,
+      "graded_positives": 536,
+      "id": "q013",
+      "near_rule": null,
+      "rule": "month in [3, 4, 5]",
+      "split": "holdout",
+      "strict_positives": 536,
+      "text": "春天的照片"
+    },
+    {
+      "corpus_share": 0.372,
+      "graded_positives": 1202,
+      "id": "q014",
+      "near_rule": null,
+      "rule": "month in [9, 10, 11]",
+      "split": "tuning",
+      "strict_positives": 1202,
+      "text": "秋天的照片"
+    },
+    {
+      "corpus_share": 0.3336,
+      "graded_positives": 1078,
+      "id": "q015",
+      "near_rule": null,
+      "rule": "weekday in [5, 6]",
+      "split": "tuning",
+      "strict_positives": 1078,
+      "text": "周末拍的照片"
+    },
+    {
+      "corpus_share": 0.2863,
+      "graded_positives": 925,
+      "id": "q016",
+      "near_rule": null,
+      "rule": "(weekday in [0, 1, 2, 3, 4] and 10 <= hour <= 14)",
+      "split": "holdout",
+      "strict_positives": 925,
+      "text": "工作日白天的照片"
+    },
+    {
+      "corpus_share": 0.0396,
+      "graded_positives": 128,
+      "id": "q017",
+      "near_rule": null,
+      "rule": "eq year 2018",
+      "split": "holdout",
+      "strict_positives": 128,
+      "text": "2018年拍的照片"
+    },
+    {
+      "corpus_share": 0.0282,
+      "graded_positives": 91,
+      "id": "q018",
+      "near_rule": null,
+      "rule": "eq year 2019",
+      "split": "tuning",
+      "strict_positives": 91,
+      "text": "2019年拍的照片"
+    },
+    {
+      "corpus_share": 0.0164,
+      "graded_positives": 53,
+      "id": "q019",
+      "near_rule": null,
+      "rule": "eq year 2020",
+      "split": "holdout",
+      "strict_positives": 53,
+      "text": "2020年拍的照片"
+    },
+    {
+      "corpus_share": 0.0068,
+      "graded_positives": 22,
+      "id": "q020",
+      "near_rule": null,
+      "rule": "eq year 2021",
+      "split": "holdout",
+      "strict_positives": 22,
+      "text": "2021年拍的照片"
+    },
+    {
+      "corpus_share": 0.0248,
+      "graded_positives": 80,
+      "id": "q021",
+      "near_rule": null,
+      "rule": "eq year 2022",
+      "split": "tuning",
+      "strict_positives": 80,
+      "text": "2022年拍的照片"
+    },
+    {
+      "corpus_share": 0.0922,
+      "graded_positives": 298,
+      "id": "q022",
+      "near_rule": null,
+      "rule": "eq year 2023",
+      "split": "holdout",
+      "strict_positives": 298,
+      "text": "2023年拍的照片"
+    },
+    {
+      "corpus_share": 0.1028,
+      "graded_positives": 332,
+      "id": "q023",
+      "near_rule": null,
+      "rule": "eq year 2024",
+      "split": "holdout",
+      "strict_positives": 332,
+      "text": "2024年拍的照片"
+    },
+    {
+      "corpus_share": 0.0758,
+      "graded_positives": 245,
+      "id": "q024",
+      "near_rule": null,
+      "rule": "eq year 2025",
+      "split": "tuning",
+      "strict_positives": 245,
+      "text": "2025年拍的照片"
+    },
+    {
+      "corpus_share": 0.0359,
+      "graded_positives": 116,
+      "id": "q025",
+      "near_rule": null,
+      "rule": "eq year 2026",
+      "split": "holdout",
+      "strict_positives": 116,
+      "text": "今年拍的照片"
+    },
+    {
+      "corpus_share": 0.0882,
+      "graded_positives": 285,
+      "id": "q026",
+      "near_rule": null,
+      "rule": "eq month 1",
+      "split": "holdout",
+      "strict_positives": 285,
+      "text": "一月份拍的照片"
+    },
+    {
+      "corpus_share": 0.0563,
+      "graded_positives": 182,
+      "id": "q027",
+      "near_rule": null,
+      "rule": "eq month 5",
+      "split": "tuning",
+      "strict_positives": 182,
+      "text": "五月份拍的照片"
+    },
+    {
+      "corpus_share": 0.1105,
+      "graded_positives": 357,
+      "id": "q028",
+      "near_rule": null,
+      "rule": "eq month 10",
+      "split": "holdout",
+      "strict_positives": 357,
+      "text": "十月份拍的照片"
+    },
+    {
+      "corpus_share": 0.0566,
+      "graded_positives": 183,
+      "id": "q029",
+      "near_rule": null,
+      "rule": "eq month 12",
+      "split": "holdout",
+      "strict_positives": 183,
+      "text": "十二月拍的照片"
+    },
+    {
+      "corpus_share": 0.0755,
+      "graded_positives": 244,
+      "id": "q030",
+      "near_rule": null,
+      "rule": "eq month 7",
+      "split": "holdout",
+      "strict_positives": 244,
+      "text": "七月拍的照片"
+    },
+    {
+      "corpus_share": 0.3076,
+      "graded_positives": 994,
+      "id": "q031",
+      "near_rule": null,
+      "rule": "eq orientation portrait",
+      "split": "tuning",
+      "strict_positives": 994,
+      "text": "竖着拍的照片"
+    },
+    {
+      "corpus_share": 0.3776,
+      "graded_positives": 1220,
+      "id": "q032",
+      "near_rule": null,
+      "rule": "(eq orientation landscape and 10 <= hour <= 16)",
+      "split": "holdout",
+      "strict_positives": 1220,
+      "text": "横版的日常照片"
+    },
+    {
+      "corpus_share": 0.039,
+      "graded_positives": 126,
+      "id": "q033",
+      "near_rule": null,
+      "rule": "eq orientation square",
+      "split": "holdout",
+      "strict_positives": 126,
+      "text": "正方形构图的照片"
+    },
+    {
+      "corpus_share": 0.3429,
+      "graded_positives": 1108,
+      "id": "q034",
+      "near_rule": "ge aspect 1.5",
+      "rule": "ge aspect 1.8",
+      "split": "holdout",
+      "strict_positives": 82,
+      "text": "全景照片"
+    },
+    {
+      "corpus_share": 0.0254,
+      "graded_positives": 82,
+      "id": "q035",
+      "near_rule": "ge aspect 1.8",
+      "rule": "ge aspect 2.2",
+      "split": "tuning",
+      "strict_positives": 67,
+      "text": "很宽的全景照片"
+    },
+    {
+      "corpus_share": 0.2872,
+      "graded_positives": 928,
+      "id": "q036",
+      "near_rule": "le aspect 0.75",
+      "rule": "le aspect 0.6",
+      "split": "holdout",
+      "strict_positives": 65,
+      "text": "竖版长图的照片"
+    },
+    {
+      "corpus_share": 0.0656,
+      "graded_positives": 212,
+      "id": "q037",
+      "near_rule": "ge pixels 20000000",
+      "rule": "ge pixels 30000000",
+      "split": "tuning",
+      "strict_positives": 64,
+      "text": "分辨率很高的照片"
+    },
+    {
+      "corpus_share": 0.3042,
+      "graded_positives": 983,
+      "id": "q038",
+      "near_rule": "ge bytes 5000000",
+      "rule": "ge bytes 8000000",
+      "split": "holdout",
+      "strict_positives": 265,
+      "text": "大尺寸的高清照片"
+    },
+    {
+      "corpus_share": 0.2881,
+      "graded_positives": 931,
+      "id": "q039",
+      "near_rule": "le bytes 900000",
+      "rule": "le bytes 500000",
+      "split": "holdout",
+      "strict_positives": 857,
+      "text": "小文件的照片"
+    },
+    {
+      "corpus_share": 0.2652,
+      "graded_positives": 857,
+      "id": "q040",
+      "near_rule": "le bytes 500000",
+      "rule": "le bytes 300000",
+      "split": "holdout",
+      "strict_positives": 700,
+      "text": "文件很小的照片"
+    },
+    {
+      "corpus_share": 0.32,
+      "graded_positives": 1034,
+      "id": "q041",
+      "near_rule": "ge brightness 0.5",
+      "rule": "ge brightness 0.55",
+      "split": "tuning",
+      "strict_positives": 644,
+      "text": "明亮的照片"
+    },
+    {
+      "corpus_share": 0.1993,
+      "graded_positives": 644,
+      "id": "q042",
+      "near_rule": "ge brightness 0.55",
+      "rule": "ge brightness 0.65",
+      "split": "holdout",
+      "strict_positives": 171,
+      "text": "很亮的照片"
+    },
+    {
+      "corpus_share": 0.2185,
+      "graded_positives": 706,
+      "id": "q043",
+      "near_rule": "le brightness 0.35",
+      "rule": "le brightness 0.3",
+      "split": "tuning",
+      "strict_positives": 470,
+      "text": "昏暗的照片"
+    },
+    {
+      "corpus_share": 0.1455,
+      "graded_positives": 470,
+      "id": "q044",
+      "near_rule": "le brightness 0.3",
+      "rule": "le brightness 0.18",
+      "split": "holdout",
+      "strict_positives": 145,
+      "text": "很暗的照片"
+    },
+    {
+      "corpus_share": 0.3584,
+      "graded_positives": 1158,
+      "id": "q045",
+      "near_rule": "0.4 <= brightness <= 0.5",
+      "rule": "0.42 <= brightness <= 0.48",
+      "split": "holdout",
+      "strict_positives": 743,
+      "text": "亮度中等的照片"
+    },
+    {
+      "corpus_share": 0.2377,
+      "graded_positives": 768,
+      "id": "q046",
+      "near_rule": "ge contrast 0.25",
+      "rule": "ge contrast 0.29",
+      "split": "holdout",
+      "strict_positives": 297,
+      "text": "对比强烈的照片"
+    },
+    {
+      "corpus_share": 0.2482,
+      "graded_positives": 802,
+      "id": "q047",
+      "near_rule": "le contrast 0.17",
+      "rule": "le contrast 0.13",
+      "split": "tuning",
+      "strict_positives": 311,
+      "text": "灰蒙蒙的照片"
+    },
+    {
+      "corpus_share": 0.2813,
+      "graded_positives": 909,
+      "id": "q048",
+      "near_rule": "ge saturation 0.35",
+      "rule": "ge saturation 0.45",
+      "split": "tuning",
+      "strict_positives": 402,
+      "text": "色彩鲜艳的照片"
+    },
+    {
+      "corpus_share": 0.1244,
+      "graded_positives": 402,
+      "id": "q049",
+      "near_rule": "ge saturation 0.45",
+      "rule": "ge saturation 0.55",
+      "split": "holdout",
+      "strict_positives": 164,
+      "text": "颜色很艳的照片"
+    },
+    {
+      "corpus_share": 0.2804,
+      "graded_positives": 906,
+      "id": "q050",
+      "near_rule": "le saturation 0.2",
+      "rule": "le saturation 0.14",
+      "split": "holdout",
+      "strict_positives": 409,
+      "text": "颜色很淡的照片"
+    },
+    {
+      "corpus_share": 0.2139,
+      "graded_positives": 691,
+      "id": "q051",
+      "near_rule": "ge grey_ratio 0.6",
+      "rule": "ge grey_ratio 0.75",
+      "split": "tuning",
+      "strict_positives": 315,
+      "text": "接近黑白的照片"
+    },
+    {
+      "corpus_share": 0.0975,
+      "graded_positives": 315,
+      "id": "q052",
+      "near_rule": "ge grey_ratio 0.75",
+      "rule": "ge grey_ratio 0.9",
+      "split": "holdout",
+      "strict_positives": 107,
+      "text": "几乎黑白的照片"
+    },
+    {
+      "corpus_share": 0.1551,
+      "graded_positives": 501,
+      "id": "q053",
+      "near_rule": "ge redness 0.06",
+      "rule": "ge redness 0.1",
+      "split": "tuning",
+      "strict_positives": 209,
+      "text": "偏红的照片"
+    },
+    {
+      "corpus_share": 0.0647,
+      "graded_positives": 209,
+      "id": "q054",
+      "near_rule": "ge redness 0.1",
+      "rule": "ge redness 0.18",
+      "split": "holdout",
+      "strict_positives": 37,
+      "text": "红色很多的照片"
+    },
+    {
+      "corpus_share": 0.1674,
+      "graded_positives": 541,
+      "id": "q055",
+      "near_rule": "ge blueness 0.03",
+      "rule": "ge blueness 0.06",
+      "split": "tuning",
+      "strict_positives": 288,
+      "text": "偏蓝的照片"
+    },
+    {
+      "corpus_share": 0.0891,
+      "graded_positives": 288,
+      "id": "q056",
+      "near_rule": "ge blueness 0.06",
+      "rule": "ge blueness 0.12",
+      "split": "holdout",
+      "strict_positives": 55,
+      "text": "蓝色很明显的照片"
+    },
+    {
+      "corpus_share": 0.0669,
+      "graded_positives": 216,
+      "id": "q057",
+      "near_rule": "ge greenness 0.03",
+      "rule": "ge greenness 0.05",
+      "split": "holdout",
+      "strict_positives": 121,
+      "text": "偏绿的照片"
+    },
+    {
+      "corpus_share": 0.0374,
+      "graded_positives": 121,
+      "id": "q058",
+      "near_rule": "ge greenness 0.05",
+      "rule": "ge greenness 0.1",
+      "split": "tuning",
+      "strict_positives": 4,
+      "text": "绿色植物很多的照片"
+    },
+    {
+      "corpus_share": 0.2467,
+      "graded_positives": 797,
+      "id": "q059",
+      "near_rule": "ge warmth 0.08",
+      "rule": "ge warmth 0.12",
+      "split": "tuning",
+      "strict_positives": 491,
+      "text": "暖色调的照片"
+    },
+    {
+      "corpus_share": 0.2909,
+      "graded_positives": 940,
+      "id": "q060",
+      "near_rule": "le warmth -0.03",
+      "rule": "le warmth -0.08",
+      "split": "holdout",
+      "strict_positives": 555,
+      "text": "冷色调的照片"
+    },
+    {
+      "corpus_share": 0.1093,
+      "graded_positives": 353,
+      "id": "q061",
+      "near_rule": "ge warmth 0.14",
+      "rule": "ge warmth 0.2",
+      "split": "holdout",
+      "strict_positives": 162,
+      "text": "偏黄的照片"
+    },
+    {
+      "corpus_share": 0.0891,
+      "graded_positives": 288,
+      "id": "q062",
+      "near_rule": "ge blueness 0.06",
+      "rule": "ge blueness 0.1",
+      "split": "holdout",
+      "strict_positives": 106,
+      "text": "蓝天下拍的照片"
+    },
+    {
+      "corpus_share": 0.0374,
+      "graded_positives": 121,
+      "id": "q063",
+      "near_rule": "ge greenness 0.05",
+      "rule": "ge greenness 0.08",
+      "split": "holdout",
+      "strict_positives": 27,
+      "text": "草坪和绿树的照片"
+    },
+    {
+      "corpus_share": 0.1346,
+      "graded_positives": 435,
+      "id": "q064",
+      "near_rule": "(16 <= hour <= 20 and ge warmth 0.05)",
+      "rule": "(17 <= hour <= 19 and ge warmth 0.1)",
+      "split": "tuning",
+      "strict_positives": 176,
+      "text": "夕阳西下的照片"
+    },
+    {
+      "corpus_share": 0.074,
+      "graded_positives": 239,
+      "id": "q065",
+      "near_rule": "(ge saturation 0.35 and ge brightness 0.45)",
+      "rule": "(ge saturation 0.45 and ge brightness 0.5)",
+      "split": "holdout",
+      "strict_positives": 27,
+      "text": "高饱和又明亮的照片"
+    },
+    {
+      "corpus_share": 0.1773,
+      "graded_positives": 573,
+      "id": "q066",
+      "near_rule": "(le brightness 0.35 and ge contrast 0.12)",
+      "rule": "(le brightness 0.3 and ge contrast 0.15)",
+      "split": "holdout",
+      "strict_positives": 278,
+      "text": "暗淡的低调照片"
+    },
+    {
+      "corpus_share": 0.1647,
+      "graded_positives": 532,
+      "id": "q067",
+      "near_rule": "(ge grey_ratio 0.6 and ge contrast 0.15)",
+      "rule": "(ge grey_ratio 0.7 and ge contrast 0.2)",
+      "split": "holdout",
+      "strict_positives": 219,
+      "text": "反差大的黑白照片"
+    },
+    {
+      "corpus_share": 0.0631,
+      "graded_positives": 204,
+      "id": "q068",
+      "near_rule": "(ge blueness 0.05 and ge brightness 0.45)",
+      "rule": "(ge blueness 0.08 and ge brightness 0.5)",
+      "split": "holdout",
+      "strict_positives": 40,
+      "text": "蓝色天空很亮的照片"
+    },
+    {
+      "corpus_share": 0.2891,
+      "graded_positives": 934,
+      "id": "q069",
+      "near_rule": null,
+      "rule": "ge face_count 1",
+      "split": "tuning",
+      "strict_positives": 934,
+      "text": "有人的照片"
+    },
+    {
+      "corpus_share": 0.1981,
+      "graded_positives": 640,
+      "id": "q070",
+      "near_rule": "(le face_count 0 and (ge greenness 0.02 or ge blueness 0.03))",
+      "rule": "(le face_count 0 and (ge greenness 0.05 or ge blueness 0.06))",
+      "split": "holdout",
+      "strict_positives": 320,
+      "text": "户外没有人的照片"
+    },
+    {
+      "corpus_share": 0.2891,
+      "graded_positives": 934,
+      "id": "q071",
+      "near_rule": "ge face_count 1",
+      "rule": "ge face_count 2",
+      "split": "tuning",
+      "strict_positives": 330,
+      "text": "合影"
+    },
+    {
+      "corpus_share": 0.1021,
+      "graded_positives": 330,
+      "id": "q072",
+      "near_rule": "ge face_count 2",
+      "rule": "ge face_count 3",
+      "split": "holdout",
+      "strict_positives": 228,
+      "text": "多人的合照"
+    },
+    {
+      "corpus_share": 0.2185,
+      "graded_positives": 706,
+      "id": "q073",
+      "near_rule": null,
+      "rule": "1 <= face_count <= 2",
+      "split": "holdout",
+      "strict_positives": 706,
+      "text": "一两个人的照片"
+    },
+    {
+      "corpus_share": 0.1869,
+      "graded_positives": 604,
+      "id": "q074",
+      "near_rule": null,
+      "rule": "eq face_count 1",
+      "split": "tuning",
+      "strict_positives": 604,
+      "text": "单人照"
+    },
+    {
+      "corpus_share": 0.0706,
+      "graded_positives": 228,
+      "id": "q075",
+      "near_rule": "ge face_count 3",
+      "rule": "ge face_count 4",
+      "split": "holdout",
+      "strict_positives": 169,
+      "text": "人很多的热闹照片"
+    },
+    {
+      "corpus_share": 0.2417,
+      "graded_positives": 781,
+      "id": "q076",
+      "near_rule": "ge max_det_score 0.7",
+      "rule": "ge max_det_score 0.8",
+      "split": "holdout",
+      "strict_positives": 617,
+      "text": "人脸很清楚的照片"
+    },
+    {
+      "corpus_share": 0.2897,
+      "graded_positives": 936,
+      "id": "q077",
+      "near_rule": "(le face_count 0 and ge brightness 0.48)",
+      "rule": "(le face_count 0 and ge brightness 0.55)",
+      "split": "holdout",
+      "strict_positives": 465,
+      "text": "只有背景没有人的照片"
+    },
+    {
+      "corpus_share": 0.1024,
+      "graded_positives": 331,
+      "id": "q078",
+      "near_rule": "(ge face_count 1 and le brightness 0.4)",
+      "rule": "(ge face_count 1 and le brightness 0.3)",
+      "split": "holdout",
+      "strict_positives": 100,
+      "text": "昏暗环境里有人"
+    },
+    {
+      "corpus_share": 0.1903,
+      "graded_positives": 615,
+      "id": "q079",
+      "near_rule": null,
+      "rule": "(ge face_count 1 and 9 <= hour <= 16)",
+      "split": "tuning",
+      "strict_positives": 615,
+      "text": "白天拍的人像"
+    },
+    {
+      "corpus_share": 0.0297,
+      "graded_positives": 96,
+      "id": "q080",
+      "near_rule": null,
+      "rule": "(ge face_count 1 and (ge hour 19 or le hour 4))",
+      "split": "holdout",
+      "strict_positives": 96,
+      "text": "晚上拍的人像"
+    },
+    {
+      "corpus_share": 0.1204,
+      "graded_positives": 389,
+      "id": "q081",
+      "near_rule": "(ge face_count 1 and ge saturation 0.3)",
+      "rule": "(ge face_count 1 and (ge greenness 0.05 or ge blueness 0.05))",
+      "split": "holdout",
+      "strict_positives": 109,
+      "text": "户外人像"
+    },
+    {
+      "corpus_share": 0.2779,
+      "graded_positives": 898,
+      "id": "q082",
+      "near_rule": "(ge face_count 1 and le brightness 0.65)",
+      "rule": "(ge face_count 1 and 0.3 <= brightness <= 0.6 and le saturation 0.35)",
+      "split": "holdout",
+      "strict_positives": 551,
+      "text": "居家人像"
+    },
+    {
+      "corpus_share": 0.1513,
+      "graded_positives": 489,
+      "id": "q083",
+      "near_rule": "(ge face_count 1 and le brightness 0.45)",
+      "rule": "(ge face_count 1 and le brightness 0.35)",
+      "split": "holdout",
+      "strict_positives": 200,
+      "text": "穿深色衣服的人"
+    },
+    {
+      "corpus_share": 0.2891,
+      "graded_positives": 934,
+      "id": "q084",
+      "near_rule": "ge max_det_score 0.5",
+      "rule": "ge max_det_score 0.65",
+      "split": "tuning",
+      "strict_positives": 829,
+      "text": "有清晰人脸的照片"
+    },
+    {
+      "corpus_share": 0.0474,
+      "graded_positives": 153,
+      "id": "q085",
+      "near_rule": "(ge face_count 1 and le max_det_score 0.7)",
+      "rule": "(ge face_count 1 and le max_det_score 0.62 and ge max_det_score 0.3)",
+      "split": "holdout",
+      "strict_positives": 83,
+      "text": "人脸比较模糊的照片"
+    },
+    {
+      "corpus_share": 0.3531,
+      "graded_positives": 1141,
+      "id": "q086",
+      "near_rule": null,
+      "rule": "ge ocr_chars 1",
+      "split": "tuning",
+      "strict_positives": 1141,
+      "text": "有文字的照片"
+    },
+    {
+      "corpus_share": 0.0579,
+      "graded_positives": 187,
+      "id": "q087",
+      "near_rule": "ge ocr_chars 30",
+      "rule": "ge ocr_chars 60",
+      "split": "tuning",
+      "strict_positives": 94,
+      "text": "文字很多的照片"
+    },
+    {
+      "corpus_share": 0.0201,
+      "graded_positives": 65,
+      "id": "q088",
+      "near_rule": "ge ocr_chars 80",
+      "rule": "ge ocr_chars 150",
+      "split": "holdout",
+      "strict_positives": 31,
+      "text": "像截图一样的照片"
+    },
+    {
+      "corpus_share": 0.1049,
+      "graded_positives": 339,
+      "id": "q089",
+      "near_rule": null,
+      "rule": "flag ocr_has_digits",
+      "split": "holdout",
+      "strict_positives": 339,
+      "text": "带数字的照片"
+    },
+    {
+      "corpus_share": 0.2136,
+      "graded_positives": 690,
+      "id": "q090",
+      "near_rule": null,
+      "rule": "flag ocr_has_latin",
+      "split": "holdout",
+      "strict_positives": 690,
+      "text": "带英文的照片"
+    },
+    {
+      "corpus_share": 0.061,
+      "graded_positives": 197,
+      "id": "q091",
+      "near_rule": "(le ocr_chars 3 and ge greenness 0.03)",
+      "rule": "(le ocr_chars 0 and ge greenness 0.05)",
+      "split": "holdout",
+      "strict_positives": 101,
+      "text": "没有文字的绿色照片"
+    },
+    {
+      "corpus_share": 0.1668,
+      "graded_positives": 539,
+      "id": "q092",
+      "near_rule": null,
+      "rule": "5 <= ocr_chars <= 40",
+      "split": "holdout",
+      "strict_positives": 539,
+      "text": "标题文字不多的照片"
+    },
+    {
+      "corpus_share": 0.0424,
+      "graded_positives": 137,
+      "id": "q093",
+      "near_rule": "(flag ocr_has_digits and ge ocr_chars 20)",
+      "rule": "(flag ocr_has_digits and ge ocr_chars 40)",
+      "split": "holdout",
+      "strict_positives": 88,
+      "text": "单据或价目表的照片"
+    },
+    {
+      "corpus_share": 0.199,
+      "graded_positives": 643,
+      "id": "q094",
+      "near_rule": null,
+      "rule": "3 <= ocr_chars <= 30",
+      "split": "holdout",
+      "strict_positives": 643,
+      "text": "路牌或标识的照片"
+    },
+    {
+      "corpus_share": 0.0121,
+      "graded_positives": 39,
+      "id": "q095",
+      "near_rule": "ge ocr_chars 120",
+      "rule": "ge ocr_chars 200",
+      "split": "holdout",
+      "strict_positives": 26,
+      "text": "书页或文档的照片"
+    },
+    {
+      "corpus_share": 0.0684,
+      "graded_positives": 221,
+      "id": "q096",
+      "near_rule": null,
+      "rule": "(flag ocr_has_digits and flag ocr_has_latin)",
+      "split": "holdout",
+      "strict_positives": 221,
+      "text": "数字和英文都有的照片"
+    },
+    {
+      "corpus_share": 0.0675,
+      "graded_positives": 218,
+      "id": "q097",
+      "near_rule": "((ge hour 19 or le hour 4) and ge saturation 0.3)",
+      "rule": "((ge hour 19 or le hour 4) and ge saturation 0.4)",
+      "split": "holdout",
+      "strict_positives": 111,
+      "text": "晚上拍的彩色照片"
+    },
+    {
+      "corpus_share": 0.3968,
+      "graded_positives": 1282,
+      "id": "q098",
+      "near_rule": "(10 <= hour <= 16 and le face_count 0)",
+      "rule": "(12 <= hour <= 15 and le face_count 0)",
+      "split": "tuning",
+      "strict_positives": 753,
+      "text": "白天拍的风景照"
+    },
+    {
+      "corpus_share": 0.0108,
+      "graded_positives": 35,
+      "id": "q099",
+      "near_rule": "(month in [3, 4, 5] and ge greenness 0.02)",
+      "rule": "(month in [3, 4, 5] and ge greenness 0.05)",
+      "split": "holdout",
+      "strict_positives": 8,
+      "text": "春天的绿色照片"
+    },
+    {
+      "corpus_share": 0.0811,
+      "graded_positives": 262,
+      "id": "q100",
+      "near_rule": "(month in [6, 7, 8] and ge blueness 0.03)",
+      "rule": "(month in [6, 7, 8] and ge blueness 0.06)",
+      "split": "holdout",
+      "strict_positives": 137,
+      "text": "夏天的蓝天"
+    },
+    {
+      "corpus_share": 0.0529,
+      "graded_positives": 171,
+      "id": "q101",
+      "near_rule": "(month in [12, 1, 2] and le brightness 0.4)",
+      "rule": "(month in [12, 1, 2] and le brightness 0.3)",
+      "split": "holdout",
+      "strict_positives": 74,
+      "text": "冬天昏暗的照片"
+    },
+    {
+      "corpus_share": 0.1346,
+      "graded_positives": 435,
+      "id": "q102",
+      "near_rule": "(16 <= hour <= 20 and ge warmth 0.05)",
+      "rule": "(17 <= hour <= 19 and ge warmth 0.1)",
+      "split": "tuning",
+      "strict_positives": 176,
+      "text": "傍晚的暖色照片"
+    },
+    {
+      "corpus_share": 0.0167,
+      "graded_positives": 54,
+      "id": "q103",
+      "near_rule": "(5 <= hour <= 8 and ge brightness 0.45)",
+      "rule": "(5 <= hour <= 8 and ge brightness 0.55)",
+      "split": "holdout",
+      "strict_positives": 5,
+      "text": "清晨的明亮照片"
+    },
+    {
+      "corpus_share": 0.0932,
+      "graded_positives": 301,
+      "id": "q104",
+      "near_rule": "((ge hour 19 or le hour 4) and le brightness 0.4)",
+      "rule": "((ge hour 22 or le hour 3) and le brightness 0.3)",
+      "split": "holdout",
+      "strict_positives": 55,
+      "text": "深夜的暗色照片"
+    },
+    {
+      "corpus_share": 0.1148,
+      "graded_positives": 371,
+      "id": "q105",
+      "near_rule": null,
+      "rule": "(eq orientation portrait and ge face_count 1)",
+      "split": "holdout",
+      "strict_positives": 371,
+      "text": "竖版的人像"
+    },
+    {
+      "corpus_share": 0.0418,
+      "graded_positives": 135,
+      "id": "q106",
+      "near_rule": "(eq orientation landscape and le face_count 0 and ge greenness 0.02)",
+      "rule": "(eq orientation landscape and le face_count 0 and ge greenness 0.03)",
+      "split": "tuning",
+      "strict_positives": 91,
+      "text": "横版的绿色风景"
+    },
+    {
+      "corpus_share": 0.112,
+      "graded_positives": 362,
+      "id": "q107",
+      "near_rule": "(eq orientation portrait and ge ocr_chars 1)",
+      "rule": "(eq orientation portrait and ge ocr_chars 20)",
+      "split": "holdout",
+      "strict_positives": 75,
+      "text": "竖版的文字照片"
+    },
+    {
+      "corpus_share": 0.1677,
+      "graded_positives": 542,
+      "id": "q108",
+      "near_rule": "(eq orientation landscape and ge face_count 1)",
+      "rule": "(eq orientation landscape and ge face_count 2)",
+      "split": "holdout",
+      "strict_positives": 258,
+      "text": "横版的合影"
+    },
+    {
+      "corpus_share": 0.1442,
+      "graded_positives": 466,
+      "id": "q109",
+      "near_rule": "(ge bytes 3000000 and ge brightness 0.5)",
+      "rule": "(ge bytes 5000000 and ge brightness 0.55)",
+      "split": "holdout",
+      "strict_positives": 212,
+      "text": "大尺寸又明亮的照片"
+    },
+    {
+      "corpus_share": 0.0371,
+      "graded_positives": 120,
+      "id": "q110",
+      "near_rule": "(le bytes 1500000 and le brightness 0.35)",
+      "rule": "(le bytes 900000 and le brightness 0.3)",
+      "split": "holdout",
+      "strict_positives": 69,
+      "text": "小尺寸又昏暗的照片"
+    },
+    {
+      "corpus_share": 0.1421,
+      "graded_positives": 459,
+      "id": "q111",
+      "near_rule": "(weekday in [5, 6] and ge face_count 1)",
+      "rule": "(weekday in [5, 6] and ge face_count 2)",
+      "split": "holdout",
+      "strict_positives": 177,
+      "text": "周末拍的合影"
+    },
+    {
+      "corpus_share": 0.0721,
+      "graded_positives": 233,
+      "id": "q112",
+      "near_rule": "(weekday in [0, 1, 2, 3, 4] and ge ocr_chars 15)",
+      "rule": "(weekday in [0, 1, 2, 3, 4] and ge ocr_chars 40 and 9 <= hour <= 17)",
+      "split": "holdout",
+      "strict_positives": 60,
+      "text": "工作日白天的文字照片"
+    },
+    {
+      "corpus_share": 0.0192,
+      "graded_positives": 62,
+      "id": "q113",
+      "near_rule": null,
+      "rule": "(eq year 2019 and month in [6, 7, 8])",
+      "split": "tuning",
+      "strict_positives": 62,
+      "text": "2019年夏天的照片"
+    },
+    {
+      "corpus_share": 0.0065,
+      "graded_positives": 21,
+      "id": "q114",
+      "near_rule": null,
+      "rule": "(eq year 2023 and month in [12, 1, 2])",
+      "split": "holdout",
+      "strict_positives": 21,
+      "text": "2023年冬天的照片"
+    },
+    {
+      "corpus_share": 0.0074,
+      "graded_positives": 24,
+      "id": "q115",
+      "near_rule": null,
+      "rule": "(eq year 2024 and ge face_count 1)",
+      "split": "holdout",
+      "strict_positives": 24,
+      "text": "2024年有人的照片"
+    },
+    {
+      "corpus_share": 0.004,
+      "graded_positives": 13,
+      "id": "q116",
+      "near_rule": "(eq year 2024 and ge greenness 0.02)",
+      "rule": "(eq year 2024 and ge greenness 0.05)",
+      "split": "tuning",
+      "strict_positives": 2,
+      "text": "2024年的绿色照片"
+    },
+    {
+      "corpus_share": 0.0758,
+      "graded_positives": 245,
+      "id": "q117",
+      "near_rule": null,
+      "rule": "eq year 2025",
+      "split": "holdout",
+      "strict_positives": 245,
+      "text": "去年的照片"
+    },
+    {
+      "corpus_share": 0.2724,
+      "graded_positives": 880,
+      "id": "q118",
+      "near_rule": "(ge saturation 0.3 and ge brightness 0.35)",
+      "rule": "(ge saturation 0.4 and ge brightness 0.4)",
+      "split": "tuning",
+      "strict_positives": 268,
+      "text": "色彩饱满的照片"
+    },
+    {
+      "corpus_share": 0.1123,
+      "graded_positives": 363,
+      "id": "q119",
+      "near_rule": "(ge contrast 0.27 and 0.25 <= brightness <= 0.55)",
+      "rule": "(ge contrast 0.3 and 0.3 <= brightness <= 0.5)",
+      "split": "tuning",
+      "strict_positives": 130,
+      "text": "光影对比明显的照片"
+    },
+    {
+      "corpus_share": 0.2872,
+      "graded_positives": 928,
+      "id": "q120",
+      "near_rule": "(ge warmth 0.06 and le brightness 0.6)",
+      "rule": "(ge warmth 0.1 and le brightness 0.5)",
+      "split": "tuning",
+      "strict_positives": 450,
+      "text": "室内暖光的照片"
+    },
+    {
+      "corpus_share": 0.031,
+      "graded_positives": 100,
+      "id": "q121",
+      "near_rule": "(ge blueness 0.05 and ge brightness 0.5)",
+      "rule": "(ge blueness 0.08 and ge brightness 0.55)",
+      "split": "tuning",
+      "strict_positives": 12,
+      "text": "蓝天白云的照片"
+    },
+    {
+      "corpus_share": 0.0669,
+      "graded_positives": 216,
+      "id": "q122",
+      "near_rule": null,
+      "rule": "ge greenness 0.03",
+      "split": "tuning",
+      "strict_positives": 216,
+      "text": "有一点绿色的照片"
+    },
+    {
+      "corpus_share": 0.1393,
+      "graded_positives": 450,
+      "id": "q123",
+      "near_rule": null,
+      "rule": "ge blueness 0.04",
+      "split": "tuning",
+      "strict_positives": 450,
+      "text": "稍微偏蓝的照片"
+    },
+    {
+      "corpus_share": 0.1021,
+      "graded_positives": 330,
+      "id": "q124",
+      "near_rule": null,
+      "rule": "ge face_count 2",
+      "split": "tuning",
+      "strict_positives": 330,
+      "text": "有两个人以上的照片"
+    },
+    {
+      "corpus_share": 0.2488,
+      "graded_positives": 804,
+      "id": "q125",
+      "near_rule": null,
+      "rule": "1 <= ocr_chars <= 15",
+      "split": "tuning",
+      "strict_positives": 804,
+      "text": "文字很少的照片"
+    },
+    {
+      "corpus_share": 0.2522,
+      "graded_positives": 815,
+      "id": "q126",
+      "near_rule": null,
+      "rule": "8 <= hour <= 11",
+      "split": "tuning",
+      "strict_positives": 815,
+      "text": "上午出门拍的照片"
+    },
+    {
+      "corpus_share": 0.2225,
+      "graded_positives": 719,
+      "id": "q127",
+      "near_rule": null,
+      "rule": "eq month 9",
+      "split": "tuning",
+      "strict_positives": 719,
+      "text": "九月份拍的照片"
+    },
+    {
+      "corpus_share": 0.039,
+      "graded_positives": 126,
+      "id": "q128",
+      "near_rule": null,
+      "rule": "eq month 11",
+      "split": "tuning",
+      "strict_positives": 126,
+      "text": "十一月份拍的照片"
+    },
+    {
+      "corpus_share": 0.1303,
+      "graded_positives": 421,
+      "id": "q129",
+      "near_rule": null,
+      "rule": "eq month 8",
+      "split": "tuning",
+      "strict_positives": 421,
+      "text": "八月份拍的照片"
+    },
+    {
+      "corpus_share": 0.2204,
+      "graded_positives": 712,
+      "id": "q130",
+      "near_rule": null,
+      "rule": "11 <= hour <= 13",
+      "split": "tuning",
+      "strict_positives": 712,
+      "text": "中午前后的照片"
+    },
+    {
+      "corpus_share": 0.0916,
+      "graded_positives": 296,
+      "id": "q131",
+      "near_rule": null,
+      "rule": "(eq orientation portrait and ge saturation 0.35)",
+      "split": "tuning",
+      "strict_positives": 296,
+      "text": "竖版的彩色照片"
+    },
+    {
+      "corpus_share": 0.0523,
+      "graded_positives": 169,
+      "id": "q132",
+      "near_rule": "((ge hour 19 or le hour 4) and ge warmth 0.04)",
+      "rule": "((ge hour 19 or le hour 4) and ge warmth 0.08)",
+      "split": "holdout",
+      "strict_positives": 110,
+      "text": "夜晚的暖色照片"
+    },
+    {
+      "corpus_share": 0.0229,
+      "graded_positives": 74,
+      "id": "q133",
+      "near_rule": "(5 <= hour <= 9 and ge greenness 0.02)",
+      "rule": "(5 <= hour <= 8 and ge greenness 0.03)",
+      "split": "holdout",
+      "strict_positives": 52,
+      "text": "清晨的绿色照片"
+    },
+    {
+      "corpus_share": 0.2377,
+      "graded_positives": 768,
+      "id": "q134",
+      "near_rule": "(13 <= hour <= 17 and ge brightness 0.45)",
+      "rule": "(14 <= hour <= 16 and ge brightness 0.5)",
+      "split": "holdout",
+      "strict_positives": 358,
+      "text": "下午的明亮照片"
+    },
+    {
+      "corpus_share": 0.082,
+      "graded_positives": 265,
+      "id": "q135",
+      "near_rule": "(16 <= hour <= 19 and ge face_count 1)",
+      "rule": "(17 <= hour <= 18 and ge face_count 1)",
+      "split": "holdout",
+      "strict_positives": 129,
+      "text": "傍晚拍的人像"
+    },
+    {
+      "corpus_share": 0.0344,
+      "graded_positives": 111,
+      "id": "q136",
+      "near_rule": "(eq orientation portrait and ge blueness 0.03)",
+      "rule": "(eq orientation portrait and ge blueness 0.06)",
+      "split": "holdout",
+      "strict_positives": 65,
+      "text": "蓝天的竖版照片"
+    },
+    {
+      "corpus_share": 0.0405,
+      "graded_positives": 131,
+      "id": "q137",
+      "near_rule": "(eq orientation landscape and ge greenness 0.03)",
+      "rule": "(eq orientation landscape and ge greenness 0.06)",
+      "split": "holdout",
+      "strict_positives": 42,
+      "text": "绿色的横版照片"
+    },
+    {
+      "corpus_share": 0.1783,
+      "graded_positives": 576,
+      "id": "q138",
+      "near_rule": "(ge ocr_chars 1 and ge brightness 0.45)",
+      "rule": "(ge ocr_chars 1 and ge brightness 0.55)",
+      "split": "holdout",
+      "strict_positives": 253,
+      "text": "有文字又明亮的照片"
+    },
+    {
+      "corpus_share": 0.0511,
+      "graded_positives": 165,
+      "id": "q139",
+      "near_rule": "(ge ocr_chars 20 and le brightness 0.5)",
+      "rule": "(ge ocr_chars 40 and le brightness 0.4)",
+      "split": "holdout",
+      "strict_positives": 46,
+      "text": "文字多又昏暗的照片"
+    },
+    {
+      "corpus_share": 0.1764,
+      "graded_positives": 570,
+      "id": "q140",
+      "near_rule": "(eq face_count 1 and ge max_det_score 0.55)",
+      "rule": "(eq face_count 1 and ge max_det_score 0.7)",
+      "split": "holdout",
+      "strict_positives": 471,
+      "text": "人像特写"
+    },
+    {
+      "corpus_share": 0.0625,
+      "graded_positives": 202,
+      "id": "q141",
+      "near_rule": "(ge face_count 3 and 8 <= hour <= 17)",
+      "rule": "(ge face_count 3 and 9 <= hour <= 16)",
+      "split": "holdout",
+      "strict_positives": 151,
+      "text": "白天拍的多人合照"
+    },
+    {
+      "corpus_share": 0.0582,
+      "graded_positives": 188,
+      "id": "q142",
+      "near_rule": null,
+      "rule": "eq month 3",
+      "split": "holdout",
+      "strict_positives": 188,
+      "text": "三月份拍的照片"
+    },
+    {
+      "corpus_share": 0.0786,
+      "graded_positives": 254,
+      "id": "q143",
+      "near_rule": null,
+      "rule": "eq month 6",
+      "split": "holdout",
+      "strict_positives": 254,
+      "text": "六月份拍的照片"
+    },
+    {
+      "corpus_share": 0.0328,
+      "graded_positives": 106,
+      "id": "q144",
+      "near_rule": null,
+      "rule": "eq month 2",
+      "split": "holdout",
+      "strict_positives": 106,
+      "text": "二月份拍的照片"
+    },
+    {
+      "corpus_share": 0.0514,
+      "graded_positives": 166,
+      "id": "q145",
+      "near_rule": null,
+      "rule": "eq month 4",
+      "split": "holdout",
+      "strict_positives": 166,
+      "text": "四月份拍的照片"
+    },
+    {
+      "corpus_share": 0.2916,
+      "graded_positives": 942,
+      "id": "q146",
+      "near_rule": "(ge grey_ratio 0.4 and le contrast 0.24)",
+      "rule": "(ge grey_ratio 0.5 and le contrast 0.2)",
+      "split": "holdout",
+      "strict_positives": 390,
+      "text": "阴天拍的照片"
+    },
+    {
+      "corpus_share": 0.2912,
+      "graded_positives": 941,
+      "id": "q147",
+      "near_rule": "(le brightness 0.42 and ge contrast 0.15)",
+      "rule": "(le brightness 0.35 and ge contrast 0.18)",
+      "split": "holdout",
+      "strict_positives": 324,
+      "text": "逆光偏暗的照片"
+    },
+    {
+      "corpus_share": 0.1538,
+      "graded_positives": 497,
+      "id": "q148",
+      "near_rule": "(16 <= hour <= 21 and ge warmth 0.04)",
+      "rule": "(17 <= hour <= 20 and ge warmth 0.08)",
+      "split": "holdout",
+      "strict_positives": 256,
+      "text": "颜色偏紫的晚霞"
+    },
+    {
+      "corpus_share": 0.0563,
+      "graded_positives": 182,
+      "id": "q149",
+      "near_rule": null,
+      "rule": "(weekday in [5, 6] and 11 <= hour <= 13)",
+      "split": "holdout",
+      "strict_positives": 182,
+      "text": "周末中午拍的照片"
+    },
+    {
+      "corpus_share": 0.0449,
+      "graded_positives": 145,
+      "id": "q150",
+      "near_rule": "(5 <= hour <= 11 and ge greenness 0.02)",
+      "rule": "(6 <= hour <= 10 and ge greenness 0.03)",
+      "split": "holdout",
+      "strict_positives": 92,
+      "text": "早上拍的绿色照片"
+    }
+  ],
+  "stage": "B",
+  "status": "ok",
+  "task": "P0-06",
+  "tuning": 50
+}

@@ -34,7 +34,12 @@ from runtime_common import (  # noqa: E402
     write_json,
 )
 
-from photo_search.evaluation.dataset import DatasetError, EvalDataset, load_dataset
+from photo_search.evaluation.dataset import (
+    DatasetError,
+    EvalDataset,
+    EvalQuery,
+    load_dataset,
+)
 from photo_search.evaluation.metrics import score_query, summarise
 from photo_search.models.embedding.chinese_clip_onnx import (
     ChineseClipOnnxAdapter,
@@ -122,6 +127,15 @@ def main() -> int:
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     parser.add_argument("--cpu-baseline", action="store_true")
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--limit-images",
+        type=int,
+        default=None,
+        help=(
+            "evaluate only a deterministic stride sample of the corpus; used for the CPU "
+            "comparison run, and recorded in the report so the two are never confused"
+        ),
+    )
     args = parser.parse_args()
 
     if args.dataset is None:
@@ -152,6 +166,36 @@ def main() -> int:
     }
     try:
         dataset = load_dataset(args.dataset.resolve())
+        if args.limit_images and len(dataset.images) > args.limit_images:
+            stride = len(dataset.images) / args.limit_images
+            picked = [
+                dataset.images[min(len(dataset.images) - 1, int(index * stride))]
+                for index in range(args.limit_images)
+            ]
+            kept = {image.id for image in picked}
+            dataset = EvalDataset(
+                name=dataset.name,
+                images=tuple(picked),
+                queries=tuple(
+                    EvalQuery(
+                        id=query.id,
+                        text=query.text,
+                        split=query.split,
+                        relevant={
+                            image_id: grade
+                            for image_id, grade in query.relevant.items()
+                            if image_id in kept
+                        },
+                    )
+                    for query in dataset.queries
+                    if any(image_id in kept for image_id in query.relevant)
+                ),
+                annotation_rules=dataset.annotation_rules,
+                authorization=dataset.authorization,
+                image_split_policy=dataset.image_split_policy,
+            )
+            result["limited_to_images"] = len(dataset.images)
+            result["limited_queries"] = len(dataset.queries)
         result["sample"] = dataset.summary()
         adapter = ChineseClipOnnxAdapter(
             args.model_dir.resolve(),
