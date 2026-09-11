@@ -9,17 +9,26 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from photo_search.runtime.device import DevicePolicy
 from photo_search.workers.ai_worker import run_worker
 from photo_search.workers.protocol import checked_message
 
 
 class WorkerError(RuntimeError):
-    """A worker returned an error envelope or exited unexpectedly."""
+    """A worker returned an error envelope or exited unexpectedly.
+
+    ``payload["details"]`` carries the device/provider facts when the failure came from
+    an unavailable or failing execution device, so callers never parse error text.
+    """
 
     def __init__(self, payload: dict[str, Any], stderr_tail: str) -> None:
         super().__init__(f"{payload.get('exception_type')}: {payload.get('message')}")
         self.payload = payload
         self.stderr_tail = stderr_tail
+
+    @property
+    def details(self) -> dict[str, Any]:
+        return dict(self.payload.get("details") or {})
 
 
 class WorkerTimeoutError(TimeoutError):
@@ -29,10 +38,20 @@ class WorkerTimeoutError(TimeoutError):
 class AiWorkerClient:
     """A single-worker client using spawn and queues bounded to eight messages."""
 
-    def __init__(self, model_dir: Path, manifest_path: Path, *, queue_size: int = 8) -> None:
+    def __init__(
+        self,
+        model_dir: Path,
+        manifest_path: Path,
+        *,
+        device: str | None = None,
+        device_policy: DevicePolicy | str = DevicePolicy.CPU_ALLOWED,
+        queue_size: int = 8,
+    ) -> None:
         self._ctx = multiprocessing.get_context("spawn")
         self._requests = self._ctx.Queue(maxsize=queue_size)
         self._responses = self._ctx.Queue(maxsize=queue_size)
+        self.device = device
+        self.device_policy = DevicePolicy(device_policy)
         stderr_fd, stderr_path = tempfile.mkstemp(prefix="photo-search-ai-", suffix=".stderr")
         os.close(stderr_fd)
         self._stderr_file = Path(stderr_path)
@@ -44,6 +63,8 @@ class AiWorkerClient:
                 str(model_dir),
                 str(manifest_path),
                 str(self._stderr_file),
+                device,
+                self.device_policy.value,
             ),
             name="photo-search-ai",
         )
@@ -58,14 +79,21 @@ class AiWorkerClient:
             self._process.start()
             self._started = True
 
-    def health(self, timeout: float = 30.0) -> dict[str, Any]:
+    def health(self, timeout: float = 60.0) -> dict[str, Any]:
         return self._call({"action": "health"}, timeout)
 
     def encode_text(self, text: str, timeout: float = 30.0) -> dict[str, Any]:
         return self._call({"action": "encode_text", "text": text}, timeout)
 
-    def encode_image(self, image_path: Path, timeout: float = 30.0) -> dict[str, Any]:
+    def encode_image(self, image_path: Path, timeout: float = 60.0) -> dict[str, Any]:
         return self._call({"action": "encode_image", "image_path": str(image_path)}, timeout)
+
+    def demo_search(self, timeout: float = 180.0) -> dict[str, Any]:
+        return self._call({"action": "demo_search"}, timeout)
+
+    def provider_usage(self, timeout: float = 60.0) -> dict[str, Any]:
+        """Per-node execution providers recorded by ONNX Runtime profiling."""
+        return self._call({"action": "provider_usage"}, timeout)
 
     def shutdown(self, timeout: float = 10.0) -> None:
         if self._started and self._process.is_alive():

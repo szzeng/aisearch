@@ -1,0 +1,11 @@
+{
+  "available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "reason": "no authorized 2,000-image sample source was provided; the evaluator, data contract, split rules and metrics are implemented and unit-tested, but the quality comparison cannot run and P0-06 cannot be marked PASS",
+  "stage": "B",
+  "status": "BLOCKED",
+  "task": "P0-06"
+}

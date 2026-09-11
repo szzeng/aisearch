@@ -1,0 +1,360 @@
+{
+  "cpu": {
+    "consistency": {
+      "image": {
+        "cosine_similarity": 1.0,
+        "max_abs_difference": 3.129243850708008e-07,
+        "shape": [
+          512
+        ]
+      },
+      "min_cosine_similarity": 1.0,
+      "text": [
+        {
+          "cosine_similarity": 1.0000001192092896,
+          "max_abs_difference": 1.7881393432617188e-07,
+          "shape": [
+            512
+          ]
+        },
+        {
+          "cosine_similarity": 1.0,
+          "max_abs_difference": 1.4901161193847656e-07,
+          "shape": [
+            512
+          ]
+        },
+        {
+          "cosine_similarity": 1.000000238418579,
+          "max_abs_difference": 1.7881393432617188e-07,
+          "shape": [
+            512
+          ]
+        },
+        {
+          "cosine_similarity": 1.0,
+          "max_abs_difference": 8.940696716308594e-08,
+          "shape": [
+            512
+          ]
+        },
+        {
+          "cosine_similarity": 1.0000001192092896,
+          "max_abs_difference": 1.1920928955078125e-07,
+          "shape": [
+            512
+          ]
+        }
+      ],
+      "top_k_identical": true
+    },
+    "device": {
+      "available_providers": [
+        "TensorrtExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "cpu_fallback_disabled": false,
+      "device": "cpu",
+      "is_degradation": true,
+      "policy": "cpu_allowed",
+      "precision": "FP32",
+      "provider": "CPUExecutionProvider",
+      "provider_options": {},
+      "reason": "explicit CPU request",
+      "requested_device": "cpu",
+      "strict_fp32": true
+    },
+    "image_l2_norm": 0.9999999984838003,
+    "latency": {
+      "image": {
+        "count": 5,
+        "max_ms": 159.86,
+        "mean_ms": 78.03,
+        "min_ms": 56.43,
+        "p50_ms": 58.28,
+        "p95_ms": 159.86,
+        "stdev_ms": 45.75
+      },
+      "text": {
+        "count": 5,
+        "max_ms": 136.18,
+        "mean_ms": 108.85,
+        "min_ms": 67.28,
+        "p50_ms": 130.66,
+        "p95_ms": 136.18,
+        "stdev_ms": 33.25
+      }
+    },
+    "p0_03_record": {
+      "cpu_top_k_matches_record": true,
+      "path": "D:\\SZ\\project\\aisearch\\tools\\prepare_models\\manifests\\chinese-clip-vit-b-16-validation.json",
+      "recorded_onnx_image_max_abs_difference": 1.9073486328125e-06,
+      "recorded_onnx_text_max_abs_difference": 1.52587890625e-05,
+      "recorded_top_k": [
+        0,
+        1,
+        2,
+        4,
+        3
+      ]
+    },
+    "spec": {
+      "backend": "onnxruntime",
+      "cpu_fallback_disabled": true,
+      "device": "cpu",
+      "device_policy": "cpu_allowed",
+      "dimension": 512,
+      "image_size": 224,
+      "metric": "cosine",
+      "model_revision": "36e679e65c2a2fead755ae21162091293ad37834",
+      "normalization": "L2",
+      "precision": "FP32",
+      "processor_id": "chinese-clip-vit-b-16@36e679e65c2a",
+      "runtime_provider": "CPUExecutionProvider",
+      "runtime_version": "1.30.0",
+      "space_id": "chinese-clip-vit-b-16:c8ac42d3907c57b0",
+      "token_limit": 52
+    },
+    "top_k": [
+      0,
+      1,
+      2,
+      4,
+      3
+    ]
+  },
+  "elapsed_seconds": 405.5,
+  "environment": {
+    "capabilities": {
+      "cuda_available": true,
+      "cuda_dll_packages": {
+        "nvidia-cublas": "13.1.1.3",
+        "nvidia-cuda-nvrtc": "13.0.88",
+        "nvidia-cuda-runtime": "13.0.96",
+        "nvidia-cudnn-cu13": "9.24.0.43",
+        "nvidia-cufft": "12.0.0.61",
+        "nvidia-curand": "10.4.0.35",
+        "nvidia-nvjitlink": "13.4.52"
+      },
+      "platform": "Windows-11-10.0.26200-SP0",
+      "providers": [
+        "TensorrtExecutionProvider",
+        "CUDAExecutionProvider",
+        "CPUExecutionProvider"
+      ],
+      "python": "3.12.10",
+      "runtime_backend": "onnxruntime",
+      "runtime_package": "onnxruntime-gpu",
+      "runtime_version": "1.30.0"
+    },
+    "gpu_memory_used_before_load_mib": 611,
+    "hardware": {
+      "cuda_umd_version": "13.4",
+      "nvidia_smi": {
+        "compute_cap": "8.9",
+        "driver_version": "616.56",
+        "memory.total": "8188",
+        "memory.used": "612",
+        "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+        "pstate": "P8",
+        "temperature.gpu": "51"
+      }
+    },
+    "onnxruntime": "1.30.0",
+    "python": "3.12.10",
+    "working_set_before_load_mib": 232.1
+  },
+  "fixture": {
+    "image": "P0-03 deterministic RGB gradient/checkerboard",
+    "queries": [
+      "一只橙色的猫",
+      "海边的日落",
+      "城市夜景",
+      "家人聚餐",
+      "绿色的山林"
+    ]
+  },
+  "gpu": {
+    "gpu_memory_used_after_load_mib": 1785,
+    "gpu_memory_used_peak_mib": 1805,
+    "gpu_processes": [
+      {
+        "name": "C:\\Windows\\explorer.exe",
+        "pid": "15628",
+        "used_memory_mib": null
+      },
+      {
+        "name": "C:\\Program Files\\WindowsApps\\AD2F1837.OMENCommandCenter_1101.2608.3.0_x64__v10z8vjag6ke6\\OmenCommandCenterApp\\OmenCommandCenterBackground.exe",
+        "pid": "21956",
+        "used_memory_mib": null
+      },
+      {
+        "name": "C:\\Users\\28288\\AppData\\Local\\Python\\pythoncore-3.12-64\\python.exe",
+        "pid": "2608",
+        "used_memory_mib": null
+      }
+    ],
+    "health": {
+      "cuda_dlls": {
+        "directory": null,
+        "error": null,
+        "loaded": true,
+        "search_path_added": false
+      },
+      "device": {
+        "available_providers": [
+          "TensorrtExecutionProvider",
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "cpu_fallback_disabled": true,
+        "device": "cuda",
+        "is_degradation": false,
+        "policy": "cpu_allowed",
+        "precision": "FP32",
+        "provider": "CUDAExecutionProvider",
+        "provider_options": {
+          "use_tf32": "0"
+        },
+        "reason": "explicit CUDA request",
+        "requested_device": "cuda",
+        "strict_fp32": true
+      },
+      "loaded": true,
+      "runtime": {
+        "cuda_available": true,
+        "cuda_dll_packages": {
+          "nvidia-cublas": "13.1.1.3",
+          "nvidia-cuda-nvrtc": "13.0.88",
+          "nvidia-cuda-runtime": "13.0.96",
+          "nvidia-cudnn-cu13": "9.24.0.43",
+          "nvidia-cufft": "12.0.0.61",
+          "nvidia-curand": "10.4.0.35",
+          "nvidia-nvjitlink": "13.4.52"
+        },
+        "platform": "Windows-11-10.0.26200-SP0",
+        "providers": [
+          "TensorrtExecutionProvider",
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ],
+        "python": "3.12.10",
+        "runtime_backend": "onnxruntime",
+        "runtime_package": "onnxruntime-gpu",
+        "runtime_version": "1.30.0"
+      },
+      "spec": {
+        "backend": "onnxruntime",
+        "cpu_fallback_disabled": true,
+        "device": "cuda",
+        "device_policy": "cpu_allowed",
+        "dimension": 512,
+        "image_size": 224,
+        "metric": "cosine",
+        "model_revision": "36e679e65c2a2fead755ae21162091293ad37834",
+        "normalization": "L2",
+        "precision": "FP32",
+        "processor_id": "chinese-clip-vit-b-16@36e679e65c2a",
+        "runtime_provider": "CUDAExecutionProvider",
+        "runtime_version": "1.30.0",
+        "space_id": "chinese-clip-vit-b-16:c8ac42d3907c57b0",
+        "token_limit": 52
+      }
+    },
+    "image_l2_norm": 1.0000000178310953,
+    "image_shape": [
+      512
+    ],
+    "latency": {
+      "image": {
+        "count": 20,
+        "max_ms": 74.41,
+        "mean_ms": 14.93,
+        "min_ms": 11.64,
+        "p50_ms": 11.76,
+        "p95_ms": 12.35,
+        "stdev_ms": 14.0
+      },
+      "text": {
+        "count": 20,
+        "max_ms": 51.59,
+        "mean_ms": 13.67,
+        "min_ms": 9.76,
+        "p50_ms": 10.29,
+        "p95_ms": 37.32,
+        "stdev_ms": 10.78
+      }
+    },
+    "load_seconds": 238.69,
+    "process_gpu_memory_after_load_mib": null,
+    "process_gpu_memory_peak_mib": null,
+    "provider_usage": {
+      "image": {
+        "available": true,
+        "node_events": 10120,
+        "node_providers": {
+          "CUDAExecutionProvider": 10120
+        },
+        "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-gpu-check-nllj5_j0\\profiles\\photo-search-74e4d0aa-_2026-09-11_20-05-06_954.json"
+      },
+      "text": {
+        "available": true,
+        "node_events": 10665,
+        "node_providers": {
+          "CUDAExecutionProvider": 10665
+        },
+        "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-gpu-check-nllj5_j0\\profiles\\photo-search-74e4d0aa-_2026-09-11_20-09-00_005.json"
+      }
+    },
+    "spec": {
+      "backend": "onnxruntime",
+      "cpu_fallback_disabled": true,
+      "device": "cuda",
+      "device_policy": "cpu_allowed",
+      "dimension": 512,
+      "image_size": 224,
+      "metric": "cosine",
+      "model_revision": "36e679e65c2a2fead755ae21162091293ad37834",
+      "normalization": "L2",
+      "precision": "FP32",
+      "processor_id": "chinese-clip-vit-b-16@36e679e65c2a",
+      "runtime_provider": "CUDAExecutionProvider",
+      "runtime_version": "1.30.0",
+      "space_id": "chinese-clip-vit-b-16:c8ac42d3907c57b0",
+      "token_limit": 52
+    },
+    "text_l2_norms": [
+      1.0000000648094147,
+      1.0000000648615126,
+      0.9999999678409248,
+      0.9999999386112338,
+      1.000000060510067
+    ],
+    "top_k": [
+      0,
+      1,
+      2,
+      4,
+      3
+    ],
+    "working_set_after_load_mib": 618.2,
+    "working_set_peak_mib": 1014.5
+  },
+  "stage": "A",
+  "status": "pass",
+  "task": "P0-06",
+  "thresholds": {
+    "min_cosine_similarity": 0.9999,
+    "top_k_identical": true
+  },
+  "vram_budget": {
+    "desktop_and_other_processes_mib": 611,
+    "measurement_scope": "nvidia-smi total GPU memory before/after load and during the latency loop; per-process usage is reported when the driver exposes it",
+    "note": "Batch is fixed at 1 by the frozen manifest; the text tower is loaded in the same worker process, so the peak covers both towers and inference workspace.",
+    "target_gpu_memory_mib": 6144,
+    "total_gpu_memory_used_peak_mib": 1805,
+    "worker_delta_mib": 1194,
+    "worker_process_gpu_memory_peak_mib": null
+  }
+}

@@ -1,4 +1,4 @@
-"""Local development entry point and the P0-05 offline demo."""
+"""Local development entry point and the offline Chinese-CLIP demo."""
 
 from __future__ import annotations
 
@@ -7,14 +7,16 @@ import json
 import multiprocessing
 import os
 import sys
-import tempfile
 from pathlib import Path
 
-import numpy as np
 import uvicorn
-from PIL import Image
 
+from photo_search.runtime.device import DevicePolicy
 from photo_search.workers.client import AiWorkerClient
+
+#: A cold CUDA start on a power-gated laptop GPU can take minutes; validation runs use
+#: generous deadlines so a slow start is never mistaken for a hung worker.
+COLD_START_TIMEOUT_SECONDS = 900.0
 
 
 def _default_model_dir() -> Path:
@@ -28,45 +30,70 @@ def _default_manifest() -> Path:
     return Path.cwd() / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
 
 
-def _demo_search(model_dir: Path, manifest: Path) -> int:
-    """Run a deterministic local fixture through the managed image/text worker."""
-
-    with tempfile.TemporaryDirectory(prefix="photo-search-demo-") as raw_directory:
-        directory = Path(raw_directory)
-        colors = {"red": (220, 40, 40), "green": (40, 180, 70), "blue": (45, 80, 210)}
-        paths: list[tuple[str, Path]] = []
-        for name, color in colors.items():
-            path = directory / f"{name}.png"
-            Image.new("RGB", (256, 192), color).save(path)
-            paths.append((name, path))
-        with AiWorkerClient(model_dir, manifest) as worker:
-            health = worker.health()
-            query = worker.encode_text("红色的图片")
-            image_results = [(name, worker.encode_image(path)) for name, path in paths]
-        query_vector = np.asarray(query["vector"], dtype=np.float32)
-        scores = [
-            {"id": name, "cosine": float(query_vector @ np.asarray(result["vector"], dtype=np.float32))}
-            for name, result in image_results
-        ]
-        scores.sort(key=lambda row: row["cosine"], reverse=True)
-        print(json.dumps({
-            "status": "ok", "query": "红色的图片", "processor": query["spec"],
-            "health": health, "query_l2_norm": float(np.linalg.norm(query_vector)),
-            "images": [{"id": name, "l2_norm": float(np.linalg.norm(result["vector"]))}
-                       for name, result in image_results], "top_k": scores,
-        }, ensure_ascii=False))
+def _demo_search(
+    model_dir: Path,
+    manifest: Path,
+    device: str | None,
+    device_policy: DevicePolicy,
+    output: Path | None,
+) -> int:
+    """Run the deterministic fixture search inside the managed AI worker."""
+    with AiWorkerClient(
+        model_dir, manifest, device=device, device_policy=device_policy
+    ) as worker:
+        health = worker.health(timeout=COLD_START_TIMEOUT_SECONDS)
+        demo = worker.demo_search(timeout=COLD_START_TIMEOUT_SECONDS)
+        usage = worker.provider_usage(timeout=COLD_START_TIMEOUT_SECONDS)
+    report = {
+        "status": "ok",
+        "device": demo["device"],
+        "runtime": health.get("runtime"),
+        "provider_usage": usage["sessions"],
+        "query": demo["query"],
+        "query_l2_norm": demo["query_l2_norm"],
+        "images": demo["images"],
+        "top_k": demo["top_k"],
+    }
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    print(json.dumps(report, ensure_ascii=False))
     return 0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Personal local photo search")
     subparsers = parser.add_subparsers(dest="command")
-    demo = subparsers.add_parser("demo-search", help="run offline Chinese-CLIP CPU fixture search")
+    demo = subparsers.add_parser("demo-search", help="run the offline Chinese-CLIP fixture search")
     demo.add_argument("--model-dir", type=Path, default=_default_model_dir())
     demo.add_argument("--manifest", type=Path, default=_default_manifest())
+    demo.add_argument(
+        "--device",
+        default="cuda",
+        help="cuda (default, GPU required) or cpu (explicit reported degradation)",
+    )
+    demo.add_argument("--device-policy", default=DevicePolicy.CPU_ALLOWED.value)
+    demo.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="write the JSON report to this path as UTF-8 (console output still prints)",
+    )
     args = parser.parse_args()
     if args.command == "demo-search":
-        raise SystemExit(_demo_search(args.model_dir, args.manifest))
+        raise SystemExit(
+            _demo_search(
+                args.model_dir,
+                args.manifest,
+                args.device,
+                DevicePolicy(args.device_policy),
+                args.output,
+            )
+        )
     uvicorn.run("photo_search.app:app", host="127.0.0.1", port=8000)
 
 

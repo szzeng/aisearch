@@ -1,13 +1,20 @@
-"""Manifest-driven, CPU-only Chinese-CLIP ONNX adapter.
+"""Manifest-driven Chinese-CLIP ONNX adapter with an explicit device policy.
 
-The module intentionally owns ONNX, tokenization and image preprocessing.  Its public
-results are ordinary metadata plus vectors, so callers do not depend on tensor details.
+The module owns ONNX, tokenization and image preprocessing.  Its public results are
+ordinary metadata plus vectors, so callers do not depend on tensor details.
+
+The adapter never guesses a device.  It resolves the requested device against the
+runtime's providers (default CUDA under ADR-0001), creates the ONNX session with the CPU
+execution-provider fallback disabled so a CUDA fault cannot turn into a silent whole-model
+CPU run, and reports the resolved device/provider plus any degradation reason.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import tempfile
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +22,17 @@ import numpy as np
 import onnxruntime
 from PIL import Image
 from transformers import BertTokenizerFast
+
+from photo_search.runtime.device import (
+    DevicePolicy,
+    DeviceResolution,
+    RuntimeCapabilities,
+    build_session_options,
+    preload_runtime_dlls,
+    resolve_device,
+    runtime_capabilities,
+    session_providers,
+)
 
 
 @dataclass(frozen=True)
@@ -31,17 +49,44 @@ class ProcessorSpec:
     device: str
     image_size: int
     token_limit: int
+    device_policy: str = DevicePolicy.CPU_ALLOWED.value
+    runtime_provider: str = "unresolved"
+    runtime_version: str = ""
+    precision: str = "FP32"
+    cpu_fallback_disabled: bool = True
 
     def as_dict(self) -> dict[str, Any]:
         return self.__dict__.copy()
 
 
+@dataclass(frozen=True)
+class RuntimeConfig:
+    """Per-processor runtime choices; the device stays explicit and reportable."""
+
+    requested_device: str | None = None
+    device_policy: DevicePolicy = DevicePolicy.CPU_ALLOWED
+    precision: str = "FP32"
+    strict_fp32: bool = True
+    disable_cpu_fallback: bool = True
+    enable_profiling: bool = False
+    profile_directory: Path | None = None
+    cuda_memory_limit_bytes: int | None = None
+    preload_cuda_dlls: bool = True
+    dll_directory: Path | None = None
+
+
 class ChineseClipOnnxAdapter:
     """Load P0-03's frozen ONNX artifacts without importing PyTorch."""
 
-    def __init__(self, model_dir: Path, manifest_path: Path) -> None:
+    def __init__(
+        self,
+        model_dir: Path,
+        manifest_path: Path,
+        runtime_config: RuntimeConfig | None = None,
+    ) -> None:
         self.model_dir = model_dir
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self._config = runtime_config or RuntimeConfig()
         embedding = self.manifest["embedding"]
         model = self.manifest["model"]
         runtime = self.manifest["runtime"]
@@ -56,9 +101,13 @@ class ChineseClipOnnxAdapter:
             normalization=str(embedding["normalization"]),
             model_revision=str(model["resolved_revision"]),
             backend=str(runtime["backend"]),
-            device="CPU",
+            device="unresolved",
             image_size=int(preprocessing["image_size"]),
             token_limit=int(tokenizer["max_length"]),
+            device_policy=DevicePolicy(self._config.device_policy).value,
+            runtime_version=onnxruntime.__version__,
+            precision=self._config.precision,
+            cpu_fallback_disabled=self._config.disable_cpu_fallback,
         )
         self._mean = np.asarray(preprocessing["mean"], dtype=np.float32).reshape(3, 1, 1)
         self._std = np.asarray(preprocessing["std"], dtype=np.float32).reshape(3, 1, 1)
@@ -68,24 +117,105 @@ class ChineseClipOnnxAdapter:
         self._image_session: onnxruntime.InferenceSession | None = None
         self._text_session: onnxruntime.InferenceSession | None = None
         self._tokenizer: BertTokenizerFast | None = None
+        self._resolution: DeviceResolution | None = None
+        self._capabilities: RuntimeCapabilities | None = None
+        self._dll_report: dict[str, Any] | None = None
+        self._profile_prefix = f"photo-search-{uuid.uuid4().hex[:8]}-"
 
     def spec(self) -> ProcessorSpec:
         return self._spec
+
+    @property
+    def resolution(self) -> DeviceResolution:
+        if self._resolution is None:
+            raise RuntimeError("adapter is not loaded")
+        return self._resolution
 
     def load(self) -> None:
         for path in (self._image_path, self._text_path, self._tokenizer_path):
             if not path.is_file():
                 raise FileNotFoundError(f"required model artifact not found: {path}")
-        self._image_session = onnxruntime.InferenceSession(
-            str(self._image_path), providers=["CPUExecutionProvider"]
+        self._capabilities = runtime_capabilities()
+        self._resolution = resolve_device(
+            self._config.requested_device,
+            policy=self._config.device_policy,
+            providers=self._capabilities.providers,
+            precision=self._config.precision,
+            strict_fp32=self._config.strict_fp32,
+            disable_cpu_fallback=self._config.disable_cpu_fallback,
+            cuda_memory_limit_bytes=self._config.cuda_memory_limit_bytes,
         )
-        self._text_session = onnxruntime.InferenceSession(
-            str(self._text_path), providers=["CPUExecutionProvider"]
+        # The CUDA/cuDNN DLLs are only preloaded for a CUDA session; an explicit CPU run
+        # must not touch the GPU driver at all.
+        if self._resolution.device == "cuda" and self._config.preload_cuda_dlls:
+            self._dll_report = preload_runtime_dlls(self._config.dll_directory)
+        session_options = build_session_options(
+            self._resolution,
+            enable_profiling=self._config.enable_profiling,
+            profile_file_prefix=self._profile_prefix_value(),
         )
+        providers = session_providers(self._resolution)
+        self._image_session = self._create_session(self._image_path, providers, session_options, "image")
+        self._text_session = self._create_session(self._text_path, providers, session_options, "text")
         self._tokenizer = BertTokenizerFast(vocab_file=str(self._tokenizer_path), do_lower_case=True)
+        self._spec = replace(
+            self._spec,
+            device=self._resolution.device,
+            runtime_provider=self._resolution.provider,
+        )
+
+    def _create_session(
+        self,
+        model_path: Path,
+        providers: list[Any],
+        session_options: onnxruntime.SessionOptions,
+        role: str,
+    ) -> onnxruntime.InferenceSession:
+        try:
+            return onnxruntime.InferenceSession(
+                str(model_path), sess_options=session_options, providers=providers
+            )
+        except Exception as error:
+            if self._resolution is not None and self._resolution.device == "cuda":
+                raise RuntimeError(
+                    "failed to create the {role} CUDA session without a silent CPU fallback "
+                    "(provider={provider}, model={model}): {error}".format(
+                        role=role,
+                        provider=self._resolution.provider,
+                        model=model_path.name,
+                        error=error,
+                    )
+                ) from error
+            raise
+
+    def _profile_prefix_value(self) -> str | None:
+        if not self._config.enable_profiling:
+            return None
+        directory = self._config.profile_directory or Path(tempfile.gettempdir())
+        return str(directory / self._profile_prefix)
 
     def health(self) -> dict[str, Any]:
-        return {"loaded": self._image_session is not None, "spec": self.spec().as_dict()}
+        return {
+            "loaded": self._image_session is not None and self._text_session is not None,
+            "spec": self.spec().as_dict(),
+            "device": self._resolution.as_dict() if self._resolution else None,
+            "runtime": self._capabilities.as_dict() if self._capabilities else None,
+            "cuda_dlls": self._dll_report,
+        }
+
+    def provider_usage(self) -> dict[str, Any]:
+        """Actual per-node execution providers, read from ONNX Runtime profiling."""
+        usage: dict[str, Any] = {}
+        for role, session in (("image", self._image_session), ("text", self._text_session)):
+            if session is None:
+                continue
+            try:
+                profile_path = session.end_profiling()
+            except Exception as error:
+                usage[role] = {"error": f"{type(error).__name__}: {error}"}
+                continue
+            usage[role] = _summarise_profile(profile_path)
+        return usage
 
     def encode_text(self, text: str) -> list[float]:
         if not isinstance(text, str) or not text:
@@ -135,3 +265,37 @@ class ChineseClipOnnxAdapter:
         if normalized.shape != (self._spec.dimension,):
             raise ValueError(f"unexpected embedding shape: {normalized.shape}")
         return normalized
+
+
+def _summarise_profile(profile_path: str | None) -> dict[str, Any]:
+    """Count the execution provider of every node event in an ORT profile file."""
+    if not profile_path:
+        return {"available": False}
+    path = Path(profile_path)
+    if not path.is_file():
+        return {"available": False, "profile_path": str(path)}
+    try:
+        events = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return {"available": False, "profile_path": str(path), "error": str(error)}
+    counts: dict[str, int] = {}
+    nodes = 0
+    for event in events:
+        if event.get("cat") not in {"Node", "Kernel"}:
+            continue
+        provider = (event.get("args") or {}).get("provider")
+        if provider is None:
+            continue
+        nodes += 1
+        counts[str(provider)] = counts.get(str(provider), 0) + 1
+    summary: dict[str, Any] = {
+        "available": True,
+        "profile_path": str(path),
+        "node_events": nodes,
+        "node_providers": counts,
+    }
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return summary

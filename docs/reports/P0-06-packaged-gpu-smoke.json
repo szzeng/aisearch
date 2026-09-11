@@ -1,0 +1,230 @@
+{
+  "copied_bytes": 3228256514,
+  "copied_package": "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch",
+  "environment": {
+    "ALL_PROXY": "http://127.0.0.1:9",
+    "HF_HUB_DISABLE_TELEMETRY": "1",
+    "HF_HUB_OFFLINE": "1",
+    "HTTPS_PROXY": "http://127.0.0.1:9",
+    "HTTP_PROXY": "http://127.0.0.1:9",
+    "NO_PROXY": "",
+    "PYTHONIOENCODING": "utf-8",
+    "TRANSFORMERS_OFFLINE": "1"
+  },
+  "executable_exists": true,
+  "failures": [],
+  "manifest": "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch\\_internal\\tools\\prepare_models\\manifests\\chinese-clip-vit-b-16.json",
+  "model_dir": "C:\\Users\\28288\\AppData\\Local\\PhotoSearchData\\models\\chinese_clip\\vit-b-16",
+  "package": "D:\\SZ\\project\\aisearch\\dist\\PhotoSearch",
+  "runs": [
+    {
+      "command": [
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch\\PhotoSearch.exe",
+        "demo-search",
+        "--device",
+        "cuda",
+        "--model-dir",
+        "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\chinese_clip\\vit-b-16",
+        "--manifest",
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch\\_internal\\tools\\prepare_models\\manifests\\chinese-clip-vit-b-16.json",
+        "--output",
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06-smoke-eu0dplyq\\demo-cuda.json"
+      ],
+      "device_requested": "cuda",
+      "failures": [],
+      "report": {
+        "device": {
+          "available_providers": [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "cpu_fallback_disabled": true,
+          "device": "cuda",
+          "is_degradation": false,
+          "policy": "cpu_allowed",
+          "precision": "FP32",
+          "provider": "CUDAExecutionProvider",
+          "provider_options": {
+            "use_tf32": "0"
+          },
+          "reason": "explicit CUDA request",
+          "requested_device": "cuda",
+          "strict_fp32": true
+        },
+        "images": [
+          {
+            "id": "red",
+            "l2_norm": 0.9999999403953552
+          },
+          {
+            "id": "green",
+            "l2_norm": 1.0
+          },
+          {
+            "id": "blue",
+            "l2_norm": 1.0
+          }
+        ],
+        "provider_usage": {
+          "image": {
+            "available": true,
+            "node_events": 1320,
+            "node_providers": {
+              "CUDAExecutionProvider": 1320
+            },
+            "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-587ba9e7-_2026-09-11_21-01-46_525.json"
+          },
+          "text": {
+            "available": true,
+            "node_events": 395,
+            "node_providers": {
+              "CUDAExecutionProvider": 395
+            },
+            "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-587ba9e7-_2026-09-11_21-02-04_246.json"
+          }
+        },
+        "query": "红色的图片",
+        "query_l2_norm": 1.0,
+        "runtime": {
+          "cuda_available": true,
+          "cuda_dll_packages": {},
+          "platform": "Windows-11-10.0.26200-SP0",
+          "providers": [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "python": "3.12.10",
+          "runtime_backend": "onnxruntime",
+          "runtime_package": "onnxruntime-gpu",
+          "runtime_version": "1.30.0"
+        },
+        "status": "ok",
+        "top_k": [
+          {
+            "cosine": 0.44083234667778015,
+            "id": "red"
+          },
+          {
+            "cosine": 0.41859498620033264,
+            "id": "green"
+          },
+          {
+            "cosine": 0.40591099858283997,
+            "id": "blue"
+          }
+        ]
+      },
+      "returncode": 0,
+      "seconds": 36.7,
+      "stderr_tail": "None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.\nNone of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.\n",
+      "stdout_tail": "{\"status\": \"ok\", \"device\": {\"requested_device\": \"cuda\", \"device\": \"cuda\", \"provider\": \"CUDAExecutionProvider\", \"policy\": \"cpu_allowed\", \"is_degradation\": false, \"reason\": \"explicit CUDA request\", \"available_providers\": [\"TensorrtExecutionProvider\", \"CUDAExecutionProvider\", \"CPUExecutionProvider\"], \"precision\": \"FP32\", \"strict_fp32\": true, \"provider_options\": {\"use_tf32\": \"0\"}, \"cpu_fallback_disabled\": true}, \"runtime\": {\"runtime_backend\": \"onnxruntime\", \"runtime_package\": \"onnxruntime-gpu\", \"runtime_version\": \"1.30.0\", \"python\": \"3.12.10\", \"platform\": \"Windows-11-10.0.26200-SP0\", \"providers\": [\"TensorrtExecutionProvider\", \"CUDAExecutionProvider\", \"CPUExecutionProvider\"], \"cuda_available\": true, \"cuda_dll_packages\": {}}, \"provider_usage\": {\"image\": {\"available\": true, \"profile_path\": \"C:\\\\Users\\\\28288\\\\AppData\\\\Local\\\\Temp\\\\photo-search-587ba9e7-_2026-09-11_21-01-46_525.json\", \"node_events\": 1320, \"node_providers\": {\"CUDAExecutionProvider\": 1320}}, \"text\": {\"available\": true, \"profile_path\": \"C:\\\\Users\\\\28288\\\\AppData\\\\Local\\\\Temp\\\\photo-search-587ba9e7-_2026-09-11_21-02-04_246.json\", \"node_events\": 395, \"node_providers\": {\"CUDAExecutionProvider\": 395}}}, \"query\": \"��ɫ��ͼƬ\", \"query_l2_norm\": 1.0, \"images\": [{\"id\": \"red\", \"l2_norm\": 0.9999999403953552}, {\"id\": \"green\", \"l2_norm\": 1.0}, {\"id\": \"blue\", \"l2_norm\": 1.0}], \"top_k\": [{\"id\": \"red\", \"cosine\": 0.44083234667778015}, {\"id\": \"green\", \"cosine\": 0.41859498620033264}, {\"id\": \"blue\", \"cosine\": 0.40591099858283997}]}\n"
+    },
+    {
+      "command": [
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch\\PhotoSearch.exe",
+        "demo-search",
+        "--device",
+        "cpu",
+        "--model-dir",
+        "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\chinese_clip\\vit-b-16",
+        "--manifest",
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06 b9qr3_91\\P0-06 中文 空格 验收\\PhotoSearch\\_internal\\tools\\prepare_models\\manifests\\chinese-clip-vit-b-16.json",
+        "--output",
+        "C:\\Users\\28288\\AppData\\Local\\Temp\\P0-06-smoke-eu0dplyq\\demo-cpu.json"
+      ],
+      "device_requested": "cpu",
+      "failures": [],
+      "report": {
+        "device": {
+          "available_providers": [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "cpu_fallback_disabled": false,
+          "device": "cpu",
+          "is_degradation": true,
+          "policy": "cpu_allowed",
+          "precision": "FP32",
+          "provider": "CPUExecutionProvider",
+          "provider_options": {},
+          "reason": "explicit CPU request",
+          "requested_device": "cpu",
+          "strict_fp32": true
+        },
+        "images": [
+          {
+            "id": "red",
+            "l2_norm": 0.9999999403953552
+          },
+          {
+            "id": "green",
+            "l2_norm": 1.0
+          },
+          {
+            "id": "blue",
+            "l2_norm": 1.0
+          }
+        ],
+        "provider_usage": {
+          "image": {
+            "available": true,
+            "node_events": 1323,
+            "node_providers": {
+              "CPUExecutionProvider": 1323
+            },
+            "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-ca9834b5-_2026-09-11_21-02-22_155.json"
+          },
+          "text": {
+            "available": true,
+            "node_events": 407,
+            "node_providers": {
+              "CPUExecutionProvider": 407
+            },
+            "profile_path": "C:\\Users\\28288\\AppData\\Local\\Temp\\photo-search-ca9834b5-_2026-09-11_21-02-22_646.json"
+          }
+        },
+        "query": "红色的图片",
+        "query_l2_norm": 0.9999999403953552,
+        "runtime": {
+          "cuda_available": true,
+          "cuda_dll_packages": {},
+          "platform": "Windows-11-10.0.26200-SP0",
+          "providers": [
+            "TensorrtExecutionProvider",
+            "CUDAExecutionProvider",
+            "CPUExecutionProvider"
+          ],
+          "python": "3.12.10",
+          "runtime_backend": "onnxruntime",
+          "runtime_package": "onnxruntime-gpu",
+          "runtime_version": "1.30.0"
+        },
+        "status": "ok",
+        "top_k": [
+          {
+            "cosine": 0.4408322870731354,
+            "id": "red"
+          },
+          {
+            "cosine": 0.41859495639801025,
+            "id": "green"
+          },
+          {
+            "cosine": 0.4059109687805176,
+            "id": "blue"
+          }
+        ]
+      },
+      "returncode": 0,
+      "seconds": 3.5,
+      "stderr_tail": "None of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.\nNone of PyTorch, TensorFlow >= 2.0, or Flax have been found. Models won't be available and only tokenizers, configuration and file/data utilities can be used.\n",
+      "stdout_tail": "{\"status\": \"ok\", \"device\": {\"requested_device\": \"cpu\", \"device\": \"cpu\", \"provider\": \"CPUExecutionProvider\", \"policy\": \"cpu_allowed\", \"is_degradation\": true, \"reason\": \"explicit CPU request\", \"available_providers\": [\"TensorrtExecutionProvider\", \"CUDAExecutionProvider\", \"CPUExecutionProvider\"], \"precision\": \"FP32\", \"strict_fp32\": true, \"provider_options\": {}, \"cpu_fallback_disabled\": false}, \"runtime\": {\"runtime_backend\": \"onnxruntime\", \"runtime_package\": \"onnxruntime-gpu\", \"runtime_version\": \"1.30.0\", \"python\": \"3.12.10\", \"platform\": \"Windows-11-10.0.26200-SP0\", \"providers\": [\"TensorrtExecutionProvider\", \"CUDAExecutionProvider\", \"CPUExecutionProvider\"], \"cuda_available\": true, \"cuda_dll_packages\": {}}, \"provider_usage\": {\"image\": {\"available\": true, \"profile_path\": \"C:\\\\Users\\\\28288\\\\AppData\\\\Local\\\\Temp\\\\photo-search-ca9834b5-_2026-09-11_21-02-22_155.json\", \"node_events\": 1323, \"node_providers\": {\"CPUExecutionProvider\": 1323}}, \"text\": {\"available\": true, \"profile_path\": \"C:\\\\Users\\\\28288\\\\AppData\\\\Local\\\\Temp\\\\photo-search-ca9834b5-_2026-09-11_21-02-22_646.json\", \"node_events\": 407, \"node_providers\": {\"CPUExecutionProvider\": 407}}}, \"query\": \"��ɫ��ͼƬ\", \"query_l2_norm\": 0.9999999403953552, \"images\": [{\"id\": \"red\", \"l2_norm\": 0.9999999403953552}, {\"id\": \"green\", \"l2_norm\": 1.0}, {\"id\": \"blue\", \"l2_norm\": 1.0}], \"top_k\": [{\"id\": \"red\", \"cosine\": 0.4408322870731354}, {\"id\": \"green\", \"cosine\": 0.41859495639801025}, {\"id\": \"blue\", \"cosine\": 0.4059109687805176}]}\n"
+    }
+  ],
+  "stage": "A11",
+  "status": "pass",
+  "task": "P0-06"
+}

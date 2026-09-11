@@ -1,0 +1,221 @@
+{
+  "available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "cpu": {
+    "latency": {
+      "count": 3,
+      "max_ms": 1035.51,
+      "mean_ms": 900.34,
+      "min_ms": 747.58,
+      "p50_ms": 917.94,
+      "p95_ms": 1035.51,
+      "stdev_ms": 144.77
+    },
+    "records": [
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "score": 0.9990648726622263,
+            "text": "照片搜索测试"
+          },
+          {
+            "score": 0.999933385848999,
+            "text": "编号20260911"
+          }
+        ],
+        "elapsed_seconds": 2.0425064806477167,
+        "fixture": "cjk",
+        "text": "照片搜索测试 编号20260911"
+      },
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "score": 0.9970454503508175,
+            "text": "Photo Search Test"
+          },
+          {
+            "score": 0.980978933247653,
+            "text": "ID 20260911"
+          }
+        ],
+        "elapsed_seconds": 1.443057196069276,
+        "fixture": "ascii",
+        "text": "Photo Search Test ID 20260911"
+      }
+    ],
+    "session_facts": {
+      "text_cls": {
+        "engine_use_cuda": false,
+        "provider_options": [],
+        "providers": [
+          "CPUExecutionProvider"
+        ]
+      },
+      "text_det": {
+        "engine_use_cuda": false,
+        "provider_options": [],
+        "providers": [
+          "CPUExecutionProvider"
+        ]
+      },
+      "text_rec": {
+        "engine_use_cuda": false,
+        "provider_options": [],
+        "providers": [
+          "CPUExecutionProvider"
+        ]
+      }
+    }
+  },
+  "elapsed_seconds": 198304.3,
+  "engine": "rapidocr-onnxruntime",
+  "fixture_spec": {
+    "ascii": {
+      "lines": [
+        "Photo Search Test",
+        "ID 20260911"
+      ],
+      "required_any": [
+        "photo",
+        "search",
+        "test"
+      ],
+      "required_substrings": [
+        "20260911"
+      ]
+    },
+    "cjk": {
+      "lines": [
+        "照片搜索测试",
+        "编号 20260911"
+      ],
+      "required_any": [
+        "照片",
+        "搜索",
+        "测试"
+      ],
+      "required_substrings": [
+        "20260911"
+      ]
+    }
+  },
+  "gpu": {
+    "gpu_memory_used_peak_mib": 713,
+    "latency": {
+      "count": 3,
+      "max_ms": 78.68,
+      "mean_ms": 74.3,
+      "min_ms": 68.28,
+      "p50_ms": 75.95,
+      "p95_ms": 78.68,
+      "stdev_ms": 5.39
+    },
+    "process_gpu_memory_mib": null,
+    "records": [
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "score": 0.9990549186865488,
+            "text": "照片搜索测试"
+          },
+          {
+            "score": 0.9999337553977966,
+            "text": "编号20260911"
+          }
+        ],
+        "elapsed_seconds": 8.269287009199616,
+        "fixture": "cjk",
+        "text": "照片搜索测试 编号20260911"
+      },
+      {
+        "box_count": 2,
+        "boxes": [
+          {
+            "score": 0.9970068826394922,
+            "text": "Photo Search Test"
+          },
+          {
+            "score": 0.9809776923873208,
+            "text": "ID 20260911"
+          }
+        ],
+        "elapsed_seconds": 1.6785424712870736,
+        "fixture": "ascii",
+        "text": "Photo Search Test ID 20260911"
+      }
+    ],
+    "session_facts": {
+      "text_cls": {
+        "engine_use_cuda": true,
+        "provider_options": [],
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "text_det": {
+        "engine_use_cuda": true,
+        "provider_options": [],
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "text_rec": {
+        "engine_use_cuda": true,
+        "provider_options": [],
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    }
+  },
+  "gpu_active": true,
+  "gpu_memory_used_before_load_mib": 38,
+  "hardware": {
+    "cuda_umd_version": "13.4",
+    "nvidia_smi": {
+      "compute_cap": "8.9",
+      "driver_version": "616.56",
+      "memory.total": "8188",
+      "memory.used": "38",
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "pstate": "P8",
+      "temperature.gpu": "50"
+    }
+  },
+  "note": "RapidOCR 1.4.4 keeps CPUExecutionProvider in its own provider list; the recorded session providers are the authoritative evidence of what it actually used",
+  "p0_04_record": {
+    "cpu_text_matches_record": {
+      "ascii": true,
+      "cjk": true
+    },
+    "gpu_text_matches_record": {
+      "ascii": true,
+      "cjk": true
+    },
+    "path": "D:\\SZ\\project\\aisearch\\tools\\prepare_models\\manifests\\face-ocr-validation.json",
+    "recorded_text": {
+      "ascii": "Photo Search Test ID 20260911",
+      "blank": "",
+      "cjk": "照片搜索测试 编号20260911"
+    }
+  },
+  "preload": {
+    "directory": null,
+    "error": null,
+    "loaded": true,
+    "search_path_added": false
+  },
+  "runtime": "1.30.0",
+  "stage": "A8",
+  "status": "pass",
+  "task": "P0-06"
+}

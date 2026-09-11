@@ -1,0 +1,138 @@
+{
+  "available_providers": [
+    "TensorrtExecutionProvider",
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "detection_graph": {
+    "cpu_node_ops": {
+      "Concat": 2,
+      "Gather": 4,
+      "Slice": 2,
+      "Unsqueeze": 4
+    },
+    "error": "Fail: [ONNXRuntimeError] : 1 : FAIL : This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user.",
+    "node_providers": {
+      "CPUExecutionProvider": 12,
+      "CUDAExecutionProvider": 141
+    },
+    "note": "the pinned graph has nodes that only the default CPU EP can take",
+    "providers_requested": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "strict_cuda_session": false
+  },
+  "device": "cuda",
+  "gpu_memory_used_before_load_mib": 655,
+  "gpu_memory_used_peak_mib": 1085,
+  "hardware": {
+    "cuda_umd_version": "13.4",
+    "nvidia_smi": {
+      "compute_cap": "8.9",
+      "driver_version": "616.56",
+      "memory.total": "8188",
+      "memory.used": "655",
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "pstate": "P8",
+      "temperature.gpu": "49"
+    }
+  },
+  "latency": {
+    "count": 5,
+    "max_ms": 18.76,
+    "mean_ms": 17.68,
+    "min_ms": 17.19,
+    "p50_ms": 17.49,
+    "p95_ms": 18.76,
+    "stdev_ms": 0.62
+  },
+  "process_gpu_memory_mib": null,
+  "providers_requested": [
+    "CUDAExecutionProvider",
+    "CPUExecutionProvider"
+  ],
+  "recognition_graph": {
+    "cpu_node_ops": {},
+    "input_name": "input.1",
+    "input_shape": [
+      1,
+      3,
+      112,
+      112
+    ],
+    "node_providers": {
+      "CUDAExecutionProvider": 130
+    },
+    "note": "no node could fall back to CPU: the graph is entirely CUDA-assigned",
+    "output_count": 1,
+    "output_shapes": [
+      [
+        1,
+        512
+      ]
+    ],
+    "providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "providers_requested": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "seconds": 0.175,
+    "strict_cuda_session": true
+  },
+  "records": [
+    {
+      "face_count": 0,
+      "faces": [],
+      "fixture": "neutral",
+      "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\cache\\p0-06-face-fixtures\\face-neutral.png",
+      "seconds": 4.554
+    },
+    {
+      "face_count": 0,
+      "faces": [],
+      "fixture": "warm",
+      "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\cache\\p0-06-face-fixtures\\face-warm.png",
+      "seconds": 0.907
+    },
+    {
+      "face_count": 1,
+      "faces": [
+        {
+          "bbox": [
+            180.91085815429688,
+            59.41956329345703,
+            270.483154296875,
+            179.1047821044922
+          ],
+          "det_score": 0.8304827213287354,
+          "embedding_l2_norm": 19.65688133239746,
+          "embedding_shape": [
+            512
+          ]
+        }
+      ],
+      "fixture": "sample-astronaut",
+      "path": "C:\\Users\\28288\\AppData\\Local\\Packages\\OpenAI.Codex_2p2nqsd0c76g0\\LocalCache\\Local\\PhotoSearchData\\models\\cache\\p0-06-face-fixtures\\face-sample-astronaut.png",
+      "seconds": 0.918
+    }
+  ],
+  "runtime": "1.30.0",
+  "session_providers": {
+    "detection": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "recognition": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "stage": "A7",
+  "status": "pass",
+  "task": "P0-06",
+  "working_set_mib": 1160.9
+}

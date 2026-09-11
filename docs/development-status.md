@@ -2,47 +2,86 @@
 
 ## Current state
 
-P0-05 is complete: **PASS**. Chinese-CLIP runs in a managed spawn worker with bounded 1 MiB JSON messages, file-path image inputs, structured failure propagation, timeout cleanup and an offline CPU demo. A PyInstaller onedir package was built and its executable completed the demo from a temporary directory containing Chinese characters and spaces.
+P0-06 stage **A (GPU runtime bring-up on the RTX 4060) is PASS**; stage **B (authorized
+2,000-image quality evaluation) is BLOCKED** because no user-authorized sample source exists.
+P0-06 is therefore **not PASS**, and `docs/tasks/P0-07.md` was deliberately not generated.
 
-P0-05A housekeeping is also complete: Python/build ignore rules were restored, tracked `.pyc` files were removed, and the worker stderr temporary file descriptor/file lifecycle was fixed.
+Delivered by P0-06 stage A:
 
-Evidence: `docs/reports/P0-05-worker-and-packaging.md` plus the P0-05A housekeeping commits.
+- one ONNX Runtime distribution: `onnxruntime-gpu[cuda,cudnn]` 1.30.0 with matching `nvidia-*`
+  wheels pinned in `uv.lock` (95 packages), and an override that keeps `rapidocr-onnxruntime`
+  from reinstalling the CPU `onnxruntime`;
+- a runtime device layer (`photo_search.runtime.device`) with an explicit device policy, a
+  reportable degradation reason, `session.disable_cpu_ep_fallback`, CUDA DLL preloading and
+  packaged-DLL discovery;
+- real Chinese-CLIP CUDA inference: image tower **1320/1320** and text tower **395/395** node
+  events on `CUDAExecutionProvider`, zero CPU nodes; CPU/GPU FP32 max abs difference
+  3.13e-07 (image) / 1.79e-07 (text), cosine 1.0, Top-K identical to the frozen P0-03 record;
+- warm batch=1 latency p50 11.76 ms (image) / 10.29 ms (text) on GPU vs 58.28 ms / 130.66 ms on
+  CPU; worker VRAM ≈ 1.2 GiB with both towers loaded;
+- managed worker: default CUDA loop (text encode, image encode, worker-internal demo-search,
+  provider evidence), reproducible explicit CPU degradation, structured failure when CUDA is
+  unavailable or `gpu_required` forbids CPU, and no silent whole-model CPU fallback;
+- InsightFace `buffalo_l` detection/recognition CUDA smoke (recognition 130/130 nodes on CUDA;
+  detection documented as 141 CUDA / 12 CPU shape-operator nodes);
+- RapidOCR provider status: CUDA after DLL preload (p50 75.95 ms vs 917.94 ms CPU), with its
+  silent CPU fallback when the DLLs are not preloaded recorded as a defect to fix in P3;
+- GPU onedir package (21 NVIDIA DLLs, 3.01 GiB) smoked from a Chinese/space path offline on
+  CUDA and on explicit CPU, plus stage-B evaluator/data-contract/metrics with unit tests.
+
+Evidence: [P0-06 report](reports/P0-06-gpu-and-model-eval.md) and the `docs/reports/P0-06-*.json`
+probe records.
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
-Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
+Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2
+(2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
-## Latest documentation verification
+## Latest verification
 
-GPU requirement alignment: **PASS** (documentation/link checks, Ruff and diff-check). Architecture, strategy and P0-06 now require default CUDA with a GTX 1660 6 GB minimum support target; CPU is a reference/explicit degradation path. Decision: [ADR-0001](decisions/ADR-0001-gpu-required.md). Verification and handoff: [GPU architecture report](reports/2026-09-11-gpu-architecture-alignment.md).
-This documentation change does not complete P0-06 or GPU runtime validation.
+| Check | Result |
+|---|---|
+| `uv lock` / `uv lock --check` | resolved 95 packages, lock up to date |
+| `uv run pytest tests/unit tests/integration` | 44 passed, 1 skipped (56.75 s) |
+| `PHOTO_SEARCH_GPU_TESTS=1 uv run pytest -q tests/integration/test_ai_worker_lifecycle.py -k gpu` | 2 passed (real CUDA worker path) |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| GPU probes (`tools/runtime/*`, `tools/packaging/*`) | all exit 0 with `status: pass` |
+
+P0-06 stage A (GPU hard gate) is verified end-to-end; stage B quality numbers do not exist yet,
+so no token/quality claim is made. Details and per-command exit codes live in the report.
 
 ## GPU status
 
-Hardware visibility is verified, but model GPU execution is **not yet verified**.
+Model GPU execution is now **verified on this machine** (RTX 4060 Laptop GPU / 8188 MiB /
+driver 616.56 / CUDA UMD 13.4): Chinese-CLIP image and text towers really run on
+`CUDAExecutionProvider` with the CPU fallback disabled, the worker default is CUDA, and the
+packaged app reproduces it from a Chinese/space path offline.
 
-- Current read-only hardware check: NVIDIA GeForce RTX 4060 Laptop GPU, 8188 MiB VRAM, driver 616.56; consistent with the P0-01 hardware family.
-- P0-06 A0 preserves the user's independent GPU probe where CUDAExecutionProvider was listed; that environment is not the formal project runtime.
-- GTX 1660 6 GB is the user-approved minimum target, not an observed device. Its real-device compatibility/performance/package validation is pending, required by P4-07/P4-08 before full release PASS; RTX 4060 memory limiting is not equivalent evidence.
-- P0-03 Chinese-CLIP used CPU-only ONNX Runtime sessions; no `CUDAExecutionProvider` was available or exercised.
-- P0-04 InsightFace and RapidOCR probes also ran on CPU-only ONNX Runtime.
-- P0-05 worker/package integration is currently a CPU Chinese-CLIP path.
+Still open:
 
-Therefore there is still no committed evidence that Chinese-CLIP or InsightFace has executed through `CUDAExecutionProvider`, and no GPU worker/VRAM/latency validation has passed yet.
+- GTX 1660 6 GB is the user-approved minimum target and remains **unverified on real hardware**;
+  the RTX 4060 budget (≈ 1.2 GiB worker VRAM at batch=1, ≈ 3.7 GiB headroom on a 6 GB card) is a
+  pre-check only. P4-07/P4-08 must verify runtime, models, performance, OOM/load-unload, the
+  packaged offline path and minimum-configuration performance before a full release PASS.
+- Cold CUDA start on this machine is slow and fragile (one `cuInit` took 2 m 23 s; terminating a
+  worker inside CUDA initialisation blocked new CUDA contexts for ~4 minutes). The worker must not
+  be treated as cheaply restartable mid-initialisation; the P2 scheduler should distinguish a cold
+  GPU start from a hung worker.
+- InsightFace detection keeps 12 CPU-assigned shape operators, and RapidOCR silently degrades to
+  CPU unless the runtime DLLs are preloaded and the actual provider is verified.
 
 ## Next task
 
-P0-06 — **first complete GPU runtime bring-up, then perform the authorized 2,000-image / 100–200-query model evaluation**.
+**P0-06 stage B — same task, no new task card.** P0-07 stays ungenerated until both stages pass.
 
-- Target: **DS-H / DeepSeek V4.1 Flash / 高推理**.
-- GPU runtime / Windows / ONNX / CUDA provider / DLL / driver / dependency problems: recommend manual switch to **C1 / GPT-5.6 Terra / medium** while continuing the same task.
-- Architecture/model-route decision triggered by evidence: **C2 / GPT-5.6 Sol / high** review.
-- Task card: `docs/tasks/P0-06.md`.
+- Blocking condition: the user must explicitly authorize a sample source giving **≥ 2000 images
+  and 100–200 Chinese queries** with graded relevance (tuning and holdout separated). Until then
+  the quality stage stays **BLOCKED**.
+- Recommended model: **DS-H / DeepSeek V4.1 Flash / 高推理** (same task, same session is fine; no
+  switch is required to unblock).
+- If stage B results would change the core model route or architecture constraints, submit the
+  evidence for **C2 / GPT-5.6 Sol / high** review.
+- GPU/Windows/ONNX/DLL/driver problems during stage B: recommend a manual switch to
+  **C1 / GPT-5.6 Terra / medium** while staying on P0-06.
 
-### P0-06 hard ordering
-
-1. GPU bring-up must pass first: `CUDAExecutionProvider`, Chinese-CLIP image/text CUDA inference, CPU/GPU consistency, measured GPU latency/VRAM, managed worker default GPU encode/demo-search, no silent full-model CPU fallback, explicit CPU degradation, GPU packaged offline/path smoke, 6 GB budget/handoff, and InsightFace detection/recognition CUDA smoke.
-2. Only after that may the formal authorized model-quality evaluation begin.
-3. If no authorized 2,000-image evaluation set is available, the GPU stage still proceeds, but the quality stage is marked **BLOCKED**.
-4. P0-06 cannot be marked PASS and P0-07/P1 cannot start until both the GPU hard gate and the authorized quality evaluation pass.
-
-Do not read a real photo library until the user explicitly authorizes the sample source.
+Do not read or scan a real photo library until the user explicitly authorizes the sample source.
+P1 must not start before P0-06 passes both stages.

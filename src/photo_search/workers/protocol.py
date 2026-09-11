@@ -25,17 +25,24 @@ def checked_message(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def error_message(
-    *, stage: str,
+    *,
+    stage: str,
     error: BaseException,
     completed_steps: list[str],
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create the stable failure envelope returned to the parent process."""
-    return checked_message(
-        {
-            "status": "error",
-            "stage": stage,
-            "exception_type": type(error).__name__,
-            "message": str(error),
-            "completed_steps": completed_steps,
-        }
-    )
+    """Create the stable failure envelope returned to the parent process.
+
+    ``details`` carries the device/provider facts a scheduler needs to pause the right AI
+    task after a CUDA fault, so no caller has to parse exception text.
+    """
+    payload: dict[str, Any] = {
+        "status": "error",
+        "stage": stage,
+        "exception_type": type(error).__name__,
+        "message": str(error),
+        "completed_steps": completed_steps,
+    }
+    if details:
+        payload["details"] = details
+    return checked_message(payload)
