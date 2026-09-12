@@ -21,22 +21,74 @@ from photo_search.catalog.errors import (
     ACCESS_DENIED,
     DISK_SPACE_INSUFFICIENT,
     FILE_READ_ERROR,
+    INPUT_UNSTABLE,
+    JOB_NOT_FOUND,
+    LEASE_CONFLICT,
     PATH_KEY_COLLISION,
+    PROCESSOR_MISMATCH,
     SOURCE_NOT_FOUND,
     SOURCE_OFFLINE,
+    STALE_INPUT_REVISION,
+    STALE_LEASE,
     CatalogError,
 )
 from photo_search.catalog.paths import path_key
 from photo_search.jobs import queue as jobs
 
 HASH_CHUNK_BYTES = 1024 * 1024
-HEARTBEAT_EVERY_FILES = 25
 MIN_SCAN_HEADROOM_BYTES = 64 * 1024 * 1024
+#: Inline re-observations allowed for one file before the scan request is re-queued.
+UNSTABLE_FILE_ATTEMPTS = 3
+
+#: ADR-0002 §6.5: these mean "this execution may no longer write anything". The scan and
+#: job state must be left exactly as the current execution owner has it; a late submit
+#: never overwrites the newer execution's results or its state.
+SUBMISSION_ERROR_CODES = frozenset(
+    {
+        JOB_NOT_FOUND,
+        LEASE_CONFLICT,
+        STALE_LEASE,
+        STALE_INPUT_REVISION,
+        PROCESSOR_MISMATCH,
+    }
+)
 FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 class ScanInterrupted(Exception):
     """Fault-injection signal: the process "died" mid-scan, leaving the lease in place."""
+
+
+@dataclass
+class _Execution:
+    """The live execution identity: token, revision, processor and current lease."""
+
+    job: jobs.Job
+
+    def maybe_extend(
+        self,
+        connection: Any,
+        *,
+        worker: str,
+        lease_seconds: int,
+        now_ms: int,
+    ) -> None:
+        """Renew the lease once less than half of it remains (time-based, not file-based)."""
+        if self.job.lease_expires_at is None:
+            return
+        half_lease_ms = (int(lease_seconds) * 1000) // 2
+        if now_ms + half_lease_ms >= self.job.lease_expires_at:
+            self.job = jobs.heartbeat(
+                connection,
+                job_id=self.job.job_id,
+                lease_token=self.job.lease_token or "",
+                worker_id=worker,
+                now_ms=now_ms,
+                lease_seconds=lease_seconds,
+            )
+
+    def require(self, connection: Any, *, now_ms: int) -> None:
+        _require_submission(connection, self.job, now_ms=now_ms)
 
 
 @dataclass(frozen=True)
@@ -57,6 +109,7 @@ class ScanOutcome:
     files_seen: int
     locations_missing: int
     locations_pending_content: int
+    unstable_retries: int
     counts: dict[str, Any]
     reused_scan_request: bool
 
@@ -69,6 +122,7 @@ class ScanOutcome:
             "files_seen": self.files_seen,
             "locations_missing": self.locations_missing,
             "locations_pending_content": self.locations_pending_content,
+            "unstable_retries": self.unstable_retries,
             "counts": self.counts,
             "reused_scan_request": self.reused_scan_request,
         }
@@ -225,6 +279,7 @@ def execute_scan(
         )
         if store.get_scan_row(connection, scan_id)["state"] != "RUNNING":
             store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=catalog.now_ms())
+    execution = _Execution(job)
 
     source = catalog.read_one(
         "SELECT source_id, root_path, status FROM source_roots WHERE source_id = ?", (source_id,)
@@ -238,7 +293,7 @@ def execute_scan(
     if not root.is_dir():
         raise _block(
             catalog,
-            job=job,
+            job=execution.job,
             scan_id=scan_id,
             source_id=source_id,
             error=CatalogError(
@@ -258,77 +313,83 @@ def execute_scan(
     except CatalogError as error:
         if error.code == PATH_KEY_COLLISION:
             raise _fail(
-                catalog, job=job, scan_id=scan_id, source_id=source_id, error=error
+                catalog, job=execution.job, scan_id=scan_id, source_id=source_id, error=error
             ) from error
         if error.code == DISK_SPACE_INSUFFICIENT:
             raise _fail(
-                catalog, job=job, scan_id=scan_id, source_id=source_id, error=error
+                catalog, job=execution.job, scan_id=scan_id, source_id=source_id, error=error
             ) from error
         status = "OFFLINE" if error.code == SOURCE_OFFLINE else (
             "ERROR" if error.code == ACCESS_DENIED else "ONLINE"
         )
         raise _block(
-            catalog, job=job, scan_id=scan_id, source_id=source_id, error=error, source_status=status
+            catalog,
+            job=execution.job,
+            scan_id=scan_id,
+            source_id=source_id,
+            error=error,
+            source_status=status,
         ) from error
 
     processed = 0
-    pending_content = 0
+    unstable_retries = 0
     for observation in listing:
         if interrupt_after is not None and processed >= interrupt_after:
             raise ScanInterrupted(
                 f"scan {scan_id} interrupted after {processed} of {len(listing)} files"
             )
-        with catalog.write() as connection:
-            location_id, _ = store.observe_location(
-                connection,
-                source_id=source_id,
+        try:
+            unstable_retries += _process_file(
+                catalog,
+                execution=execution,
                 scan_id=scan_id,
-                relative_path=observation.relative_path,
-                path_key=observation.path_key,
-                size=observation.size,
-                mtime_ns=observation.mtime_ns,
+                source_id=source_id,
+                worker=worker,
+                lease=lease,
+                observation=observation,
+                backoff_ms=service.retry_backoff_ms,
             )
-            if processed and processed % HEARTBEAT_EVERY_FILES == 0:
-                jobs.heartbeat(
-                    connection,
-                    job_id=job_id,
-                    lease_token=job.lease_token or "",
-                    worker_id=worker,
-                    now_ms=catalog.now_ms(),
-                    lease_seconds=lease,
-                )
-        digest = sha256_file(observation.absolute_path)
-        with catalog.write() as connection:
-            bound = store.bind_location_content(
-                connection,
-                location_id=location_id,
-                observed_size=observation.size,
-                observed_mtime_ns=observation.mtime_ns,
-                sha256=digest,
-                byte_size=observation.size,
-                now_ms=catalog.now_ms(),
-            )
-        if not bound:
-            # The input changed between hashing and commit: keep the positive observation
-            # and leave the location unbound instead of attaching a stale hash (ADR-0002 §5.4).
-            pending_content += 1
+        except CatalogError as error:
+            if error.code == INPUT_UNSTABLE:
+                # Already persisted as a retryable re-queue (ADR-0002 §5.4 step 3).
+                raise
+            if error.code in SUBMISSION_ERROR_CODES:
+                # Late/expired execution: no state change, no persistent result.
+                raise
+            if error.code in (SOURCE_OFFLINE, ACCESS_DENIED, FILE_READ_ERROR):
+                status = "OFFLINE" if error.code == SOURCE_OFFLINE else "ERROR"
+                raise _block(
+                    catalog,
+                    job=execution.job,
+                    scan_id=scan_id,
+                    source_id=source_id,
+                    error=error,
+                    source_status=status,
+                ) from error
+            raise _fail(
+                catalog, job=execution.job, scan_id=scan_id, source_id=source_id, error=error
+            ) from error
         processed += 1
 
     try:
         require_free_space(service.disk_usage, service.data_root)
     except CatalogError as error:
-        raise _fail(catalog, job=job, scan_id=scan_id, source_id=source_id, error=error) from error
+        raise _fail(
+            catalog, job=execution.job, scan_id=scan_id, source_id=source_id, error=error
+        ) from error
 
     now_ms = catalog.now_ms()
     with catalog.write() as connection:
-        jobs.validate_submission(
-            connection,
-            job_id=job_id,
-            lease_token=job.lease_token or "",
-            now_ms=now_ms,
-            input_revision=job.input_revision,
-            processor_id=job.processor_id,
-        )
+        execution.require(connection, now_ms=now_ms)
+        pending = store.count_unbound_locations(connection, source_id=source_id, scan_id=scan_id)
+        if pending:
+            # Defensive invariant: a scan may only succeed once every position it saw has a
+            # confirmed content identity (ADR-0002 §5.2).
+            raise CatalogError(
+                INPUT_UNSTABLE,
+                "scan cannot succeed while a seen position still needs content confirmation",
+                details={"source_id": source_id, "scan_id": scan_id, "pending_content": pending},
+            )
         missing = store.reconcile_missing(connection, source_id=source_id, scan_id=scan_id)
         store.set_scan_state(connection, scan_id=scan_id, state="SUCCEEDED", now_ms=now_ms)
         store.set_last_successful_scan(
@@ -337,10 +398,10 @@ def execute_scan(
         jobs.finish(
             connection,
             job_id=job_id,
-            lease_token=job.lease_token or "",
+            lease_token=execution.job.lease_token or "",
             state=jobs.STATE_SUCCEEDED,
-            input_revision=job.input_revision,
-            processor_id=job.processor_id,
+            input_revision=execution.job.input_revision,
+            processor_id=execution.job.processor_id,
             now_ms=now_ms,
             progress=1.0,
         )
@@ -351,10 +412,138 @@ def execute_scan(
         state="SUCCEEDED",
         files_seen=processed,
         locations_missing=missing,
-        locations_pending_content=pending_content,
+        locations_pending_content=0,
+        unstable_retries=unstable_retries,
         counts=service.counts(source_id=source_id),
         reused_scan_request=bool(requested["reused"]),
     )
+
+
+def _require_submission(connection: Any, job: jobs.Job, *, now_ms: int) -> None:
+    """ADR-0002 §6.5 gate: no persistent result without a live, matching execution."""
+    jobs.validate_submission(
+        connection,
+        job_id=job.job_id,
+        lease_token=job.lease_token or "",
+        now_ms=now_ms,
+        input_revision=job.input_revision,
+        processor_id=job.processor_id,
+    )
+
+
+def _process_file(
+    catalog: Any,
+    *,
+    execution: _Execution,
+    scan_id: int,
+    source_id: int,
+    worker: str,
+    lease: int,
+    observation: FileObservation,
+    backoff_ms: int,
+) -> int:
+    """Commit one file's positive facts, or re-queue the scan when the input stays unstable."""
+    current = observation
+    attempts = 0
+    while True:
+        now_ms = catalog.now_ms()
+        with catalog.write() as connection:
+            if attempts == 0:
+                execution.maybe_extend(
+                    connection, worker=worker, lease_seconds=lease, now_ms=now_ms
+                )
+            execution.require(connection, now_ms=now_ms)
+            location_id, _ = store.observe_location(
+                connection,
+                source_id=source_id,
+                scan_id=scan_id,
+                relative_path=current.relative_path,
+                path_key=current.path_key,
+                size=current.size,
+                mtime_ns=current.mtime_ns,
+            )
+        digest = sha256_file(current.absolute_path)
+        confirmed = observe_file(current.relative_path, current.absolute_path)
+        if confirmed.size != current.size or confirmed.mtime_ns != current.mtime_ns:
+            attempts += 1
+            if attempts >= UNSTABLE_FILE_ATTEMPTS:
+                raise _requeue(
+                    catalog,
+                    job=execution.job,
+                    scan_id=scan_id,
+                    source_id=source_id,
+                    backoff_ms=backoff_ms,
+                    error=_unstable_error(current, confirmed),
+                )
+            current = confirmed
+            continue
+        now_ms = catalog.now_ms()
+        with catalog.write() as connection:
+            execution.require(connection, now_ms=now_ms)
+            bound = store.bind_location_content(
+                connection,
+                location_id=location_id,
+                observed_size=current.size,
+                observed_mtime_ns=current.mtime_ns,
+                sha256=digest,
+                byte_size=current.size,
+                now_ms=now_ms,
+            )
+        if bound:
+            return attempts
+        attempts += 1
+        if attempts >= UNSTABLE_FILE_ATTEMPTS:
+            raise _requeue(
+                catalog,
+                job=execution.job,
+                scan_id=scan_id,
+                source_id=source_id,
+                backoff_ms=backoff_ms,
+                error=CatalogError(
+                    INPUT_UNSTABLE,
+                    "the position changed before its confirmed content could be bound",
+                    details={"relative_path": current.relative_path},
+                ),
+            )
+        current = observe_file(current.relative_path, current.absolute_path)
+
+
+def _unstable_error(previous: FileObservation, confirmed: FileObservation) -> CatalogError:
+    return CatalogError(
+        INPUT_UNSTABLE,
+        "the file changed between observation and content confirmation",
+        details={
+            "relative_path": previous.relative_path,
+            "observed_size": previous.size,
+            "confirmed_size": confirmed.size,
+        },
+    )
+
+
+def _requeue(
+    catalog: Any,
+    *,
+    job: jobs.Job,
+    scan_id: int,
+    source_id: int,
+    backoff_ms: int,
+    error: CatalogError,
+) -> CatalogError:
+    """Return the scan request to RETRY_WAIT; the scan_run keeps RUNNING (ADR-0002 §3.3)."""
+    now_ms = catalog.now_ms()
+    with catalog.write() as connection:
+        jobs.finish(
+            connection,
+            job_id=job.job_id,
+            lease_token=job.lease_token or "",
+            state=jobs.STATE_RETRY_WAIT,
+            input_revision=job.input_revision,
+            processor_id=job.processor_id,
+            now_ms=now_ms,
+            error=error,
+            run_after_ms=now_ms + int(backoff_ms),
+        )
+    return error
 
 
 def _block(

@@ -11,6 +11,7 @@ from photo_search.catalog.errors import (
     INVALID_STATE_TRANSITION,
     LEASE_CONFLICT,
     PROCESSOR_MISMATCH,
+    RETRY_EXHAUSTED,
     STALE_INPUT_REVISION,
     STALE_LEASE,
     CatalogError,
@@ -236,6 +237,7 @@ def test_retry_wait_respects_run_after(catalog: Catalog) -> None:
     )
 
     assert retried.state == jobs.STATE_RETRY_WAIT
+    assert retried.attempts == 1
     assert retried.run_after == 10_000
     assert retried.last_error_code == "FILE_READ_ERROR"
     with catalog.write() as connection:
@@ -244,7 +246,80 @@ def test_retry_wait_respects_run_after(catalog: Catalog) -> None:
         claimed_again = jobs.claim_next(connection, worker_id="worker-1", now_ms=10_000, lease_seconds=60)
     assert claimed_again is not None
     assert claimed_again.state == jobs.STATE_RUNNING
-    assert claimed_again.attempts == 0
+    assert claimed_again.attempts == 1
+
+
+def test_retryable_failure_exhausts_the_attempt_ceiling(catalog: Catalog) -> None:
+    _enqueue(catalog, max_attempts=2)
+    with catalog.write() as connection:
+        first = jobs.claim_next(connection, worker_id="worker-1", now_ms=1_000, lease_seconds=60)
+    first_failure = _finish(
+        catalog,
+        first,
+        jobs.STATE_RETRY_WAIT,
+        now_ms=2_000,
+        run_after_ms=2_500,
+        error=CatalogError("FILE_READ_ERROR", "temporary share violation"),
+    )
+    assert first_failure.state == jobs.STATE_RETRY_WAIT
+    assert first_failure.attempts == 1
+
+    with catalog.write() as connection:
+        second = jobs.claim_job(
+            connection, job_id=first.job_id, worker_id="worker-1", now_ms=2_500, lease_seconds=60
+        )
+    assert second.attempts == 1
+    final = _finish(
+        catalog,
+        second,
+        jobs.STATE_RETRY_WAIT,
+        now_ms=3_000,
+        error=CatalogError("FILE_READ_ERROR", "temporary share violation"),
+    )
+
+    assert final.state == jobs.STATE_FAILED
+    assert final.attempts == 2
+    assert final.lease_token is None
+    with catalog.write() as connection:
+        assert jobs.claim_next(connection, worker_id="worker-2", now_ms=9_999_999, lease_seconds=60) is None
+        with pytest.raises(CatalogError) as terminal:
+            jobs.claim_job(
+                connection, job_id=first.job_id, worker_id="worker-2", now_ms=9_999_999, lease_seconds=60
+            )
+        assert terminal.value.code == INVALID_STATE_TRANSITION
+
+
+def test_expired_lease_takeover_respects_the_retry_ceiling(catalog: Catalog) -> None:
+    _enqueue(catalog, max_attempts=1)
+    with catalog.write() as connection:
+        claimed = jobs.claim_next(connection, worker_id="worker-1", now_ms=1_000, lease_seconds=1)
+
+    with catalog.write() as connection:
+        with pytest.raises(CatalogError) as error:
+            jobs.claim_job(
+                connection, job_id=claimed.job_id, worker_id="worker-2", now_ms=2_001, lease_seconds=60
+            )
+        assert error.value.code == RETRY_EXHAUSTED
+        failed = jobs.get_job(connection, claimed.job_id)
+        assert failed.state == jobs.STATE_FAILED
+        assert failed.attempts == 1
+        assert failed.last_error_code == "LEASE_EXPIRED"
+        assert failed.lease_token is None
+        assert failed.lease_expires_at is None
+        assert jobs.claim_next(connection, worker_id="worker-2", now_ms=2_002, lease_seconds=60) is None
+
+
+def test_scheduler_fails_expired_executions_without_budget(catalog: Catalog) -> None:
+    _enqueue(catalog, max_attempts=1)
+    with catalog.write() as connection:
+        claimed = jobs.claim_next(connection, worker_id="worker-1", now_ms=1_000, lease_seconds=1)
+
+    with catalog.write() as connection:
+        assert jobs.claim_next(connection, worker_id="worker-2", now_ms=3_000, lease_seconds=60) is None
+        failed = jobs.get_job(connection, claimed.job_id)
+        assert failed.state == jobs.STATE_FAILED
+        assert failed.attempts == 1
+        assert failed.last_error_code == "LEASE_EXPIRED"
 
 
 def test_blocked_job_is_not_claimable_until_it_is_resumed(catalog: Catalog) -> None:

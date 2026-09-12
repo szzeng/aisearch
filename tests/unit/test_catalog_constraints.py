@@ -9,7 +9,7 @@ import pytest
 
 from photo_search.catalog import store
 from photo_search.catalog.db import Catalog
-from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.errors import INVALID_STATE_TRANSITION, CatalogError
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -256,3 +256,36 @@ def test_foreign_keys_restrict_identity_deletion(catalog: Catalog) -> None:
             connection.execute("DELETE FROM source_roots WHERE source_id = ?", (source_id,))
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("DELETE FROM assets WHERE asset_id = ?", (asset_id,))
+
+
+def test_observed_scan_must_belong_to_the_same_source(catalog: Catalog) -> None:
+    with catalog.write() as connection:
+        first = _insert_source(connection, "one")
+        second = _insert_source(connection, "two")
+        foreign_scan = store.insert_scan_run(connection, source_id=second)
+        with pytest.raises(CatalogError) as error:
+            store.observe_location(
+                connection,
+                source_id=first,
+                scan_id=foreign_scan,
+                relative_path="a.jpg",
+                path_key="a.jpg",
+                size=1,
+                mtime_ns=1,
+            )
+        assert error.value.code == INVALID_STATE_TRANSITION
+        with pytest.raises(CatalogError):
+            store.reconcile_missing(connection, source_id=first, scan_id=foreign_scan)
+        assert connection.execute("SELECT COUNT(*) FROM file_locations").fetchone()[0] == 0
+
+
+def test_scan_run_has_no_generic_running_self_loop(catalog: Catalog) -> None:
+    with catalog.write() as connection:
+        source_id = _insert_source(connection)
+        scan_id = store.insert_scan_run(connection, source_id=source_id)
+        started = store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=1)
+        assert started["state"] == "RUNNING"
+        assert started["started_at"] == 1
+        with pytest.raises(CatalogError) as error:
+            store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=1)
+        assert error.value.code == INVALID_STATE_TRANSITION

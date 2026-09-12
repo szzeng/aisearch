@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -22,12 +23,14 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.catalog.paths import path_key
+from photo_search.ingestion import scanner
 from photo_search.ingestion.scanner import (
     FileObservation,
     ScanInterrupted,
     check_path_key_collisions,
 )
 from photo_search.ingestion.service import CatalogService
+from photo_search.jobs import queue as jobs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -331,7 +334,9 @@ def test_expired_lease_result_is_refused_and_recovered_later(
     assert late["finished_at"] is None
     assert harness.service.get_source(source_id)["last_successful_scan"] is None
     late_counts = harness.service.counts(source_id=source_id)
-    assert late_counts["locations_present"] == 2
+    # C2 B1: an executor without a live lease must not leave any new persistent result.
+    assert late_counts["locations"] == 0
+    assert late_counts["assets_total"] == 0
     assert late_counts["locations_missing"] == 0
     assert _jobs(harness)[0]["state"] == "RUNNING"
 
@@ -339,9 +344,179 @@ def test_expired_lease_result_is_refused_and_recovered_later(
     recovered = harness.service.run_scan(source_id)
     assert recovered["state"] == "SUCCEEDED"
     assert recovered["scan_id"] == 1
+    assert harness.service.counts(source_id=source_id)["locations_present"] == 2
     job = _jobs(harness)[0]
     assert job["state"] == "SUCCEEDED"
     assert job["attempts"] == 1
+    assert harness.service.get_source(source_id)["last_successful_scan"] == 1
+
+
+def test_positive_writes_require_a_live_submission(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 B1: no persistent scan result may be written without a qualified execution."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    calls = {"count": 0}
+    real_validate = jobs.validate_submission
+
+    def refuse_first(connection, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise CatalogError("PROCESSOR_MISMATCH", "simulated unqualified execution")
+        return real_validate(connection, **kwargs)
+
+    monkeypatch.setattr(scanner.jobs, "validate_submission", refuse_first)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+    assert error.value.code == "PROCESSOR_MISMATCH"
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations"] == 0
+    assert counts["assets_total"] == 0
+    assert _scan_row(harness, 1)["state"] == "RUNNING"
+
+    calls["count"] = 0
+    monkeypatch.setattr(scanner.jobs, "validate_submission", real_validate)
+    harness.clock.advance(61_000)
+    harness.service.run_scan(source_id)
+    assert harness.service.counts(source_id=source_id)["locations"] == 1
+
+
+def test_content_binding_requires_a_live_submission(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 B1: the asset upsert + binding transaction is gated before it writes."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    calls = {"count": 0}
+    real_validate = jobs.validate_submission
+
+    def refuse_second(connection, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise CatalogError("STALE_INPUT_REVISION", "simulated revision change")
+        return real_validate(connection, **kwargs)
+
+    monkeypatch.setattr(scanner.jobs, "validate_submission", refuse_second)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+    assert error.value.code == "STALE_INPUT_REVISION"
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations"] == 1
+    assert counts["locations_pending_content"] == 1
+    assert counts["assets_total"] == 0
+    assert _scan_row(harness, 1)["state"] == "RUNNING"
+
+
+def test_input_change_during_hashing_discards_the_stale_hash(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 B4: a hash taken before a change is discarded, never bound to the location."""
+    root = tmp_path / "library"
+    target = _write(root / "a.jpg", b"ORIGINAL")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    mutated = {"done": False}
+
+    def hashing_mutator(path: Path) -> str:
+        digest = real_hash(path)
+        if path.name == "a.jpg" and not mutated["done"]:
+            mutated["done"] = True
+            target.write_bytes(b"REPLACED-CONTENT")
+        return digest
+
+    monkeypatch.setattr(scanner, "sha256_file", hashing_mutator)
+    outcome = harness.service.run_scan(source_id)
+
+    assert outcome["state"] == "SUCCEEDED"
+    assert outcome["unstable_retries"] == 1
+    assert outcome["locations_pending_content"] == 0
+    locations = _locations(harness)
+    assert len(locations) == 1
+    asset = harness.service.catalog.read_one(
+        "SELECT sha256, byte_size FROM assets WHERE asset_id = ?", (locations[0]["asset_id"],)
+    )
+    assert asset["sha256"] == hashlib.sha256(b"REPLACED-CONTENT").hexdigest()
+    assert asset["byte_size"] == len(b"REPLACED-CONTENT")
+    assert harness.service.counts()["assets_total"] == 1
+
+
+def test_long_scan_renews_its_lease_before_it_expires(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 B1: the per-write qualification must not be lost by a slow multi-file scan."""
+    root = tmp_path / "library"
+    for index in range(6):
+        _write(root / f"photo-{index}.jpg", b"CONTENT-%d" % index)
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+
+    def slow_hash(path: Path) -> str:
+        harness.clock.advance(600)
+        return real_hash(path)
+
+    monkeypatch.setattr(scanner, "sha256_file", slow_hash)
+    outcome = harness.service.run_scan(source_id, lease_seconds=1)
+
+    assert outcome["state"] == "SUCCEEDED"
+    assert outcome["files_seen"] == 6
+    job = _jobs(harness)[0]
+    assert job["state"] == "SUCCEEDED"
+    assert job["attempts"] == 0
+    assert harness.service.counts(source_id=source_id)["locations_present"] == 6
+
+
+def test_persistent_instability_requeues_instead_of_succeeding(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 B4: unstable input must not be reported as a complete successful scan."""
+    root = tmp_path / "library"
+    target = _write(root / "a.jpg", b"ORIGINAL")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    state = {"grow": True, "writes": 0}
+
+    def always_changing(path: Path) -> str:
+        digest = real_hash(path)
+        if path.name == "a.jpg" and state["grow"]:
+            state["writes"] += 1
+            target.write_bytes(b"X" * (8 + state["writes"]))
+        return digest
+
+    monkeypatch.setattr(scanner, "sha256_file", always_changing)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+
+    assert error.value.code == "INPUT_UNSTABLE"
+    unstable = _scan_row(harness, 1)
+    assert unstable["state"] == "RUNNING"
+    assert unstable["finished_at"] is None
+    job = _jobs(harness)[0]
+    assert job["state"] == "RETRY_WAIT"
+    assert job["attempts"] == 1
+    assert job["last_error_code"] == "INPUT_UNSTABLE"
+    assert job["lease_token"] is None
+    assert harness.service.get_source(source_id)["last_successful_scan"] is None
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations_missing"] == 0
+    assert counts["locations_pending_content"] == 1
+    assert counts["scans"] == 1
+
+    state["grow"] = False
+    harness.clock.advance(harness.service.retry_backoff_ms)
+    recovered = harness.service.run_scan(source_id)
+
+    assert recovered["scan_id"] == 1
+    assert recovered["state"] == "SUCCEEDED"
+    assert recovered["reused_scan_request"] is True
+    assert recovered["locations_pending_content"] == 0
+    final_counts = harness.service.counts(source_id=source_id)
+    assert final_counts["locations"] == 1
+    assert final_counts["locations_pending_content"] == 0
+    assert final_counts["locations_missing"] == 0
+    assert final_counts["scans"] == 1
     assert harness.service.get_source(source_id)["last_successful_scan"] == 1
 
 

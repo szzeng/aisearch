@@ -46,11 +46,15 @@ LOCATION_FIELDS = (
 ASSET_FIELDS = ("asset_id", "sha256", "byte_size", "width", "height", "format", "created_at", "state")
 SCAN_FIELDS = ("scan_id", "source_id", "started_at", "finished_at", "state", "error")
 
-#: Legal scan_run transitions. ``RUNNING -> RUNNING`` is the documented recovery path
-#: where a new lease takes over an expired one without restarting the logical scan.
+#: Legal scan_run transitions for the normal state machine (ADR-0002 §3.3/§6.1).
+#: A RUNNING scan_run keeps its state while a new lease takes over an expired one; that
+#: special recovery is handled in the scanner and is deliberately not a self-loop here.
 ALLOWED_SCAN_TRANSITIONS: dict[str, frozenset[str]] = {
     "QUEUED": frozenset({"RUNNING", "CANCELLED"}),
-    "RUNNING": frozenset({"RUNNING", "SUCCEEDED", "BLOCKED", "FAILED", "CANCELLED"}),
+    # A RUNNING scan_run keeps its state while a new lease takes over the expired one
+    # (ADR-0002 §6.1 special recovery); it is not a generic self-loop, so callers never
+    # transition RUNNING -> RUNNING through this helper.
+    "RUNNING": frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "CANCELLED"}),
     "BLOCKED": frozenset({"QUEUED", "CANCELLED"}),
     "SUCCEEDED": frozenset(),
     "FAILED": frozenset(),
@@ -224,6 +228,15 @@ def observe_location(
     mtime_ns: int,
 ) -> tuple[int, bool]:
     """Record a positive observation; a changed size/mtime clears the content binding."""
+    scan = connection.execute(
+        "SELECT source_id FROM scan_runs WHERE scan_id = ?", (scan_id,)
+    ).fetchone()
+    if scan is None or int(scan["source_id"]) != int(source_id):
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            "last_seen_scan_id must belong to the same source as the location",
+            details={"source_id": source_id, "scan_id": scan_id},
+        )
     row = connection.execute(
         "SELECT location_id, size, mtime_ns, asset_id FROM file_locations "
         "WHERE source_id = ? AND path_key = ?",
@@ -285,6 +298,15 @@ def bind_location_content(
 
 def reconcile_missing(connection: sqlite3.Connection, *, source_id: int, scan_id: int) -> int:
     """Mark locations this complete scan did not see; only the final commit calls this."""
+    scan = connection.execute(
+        "SELECT source_id FROM scan_runs WHERE scan_id = ?", (scan_id,)
+    ).fetchone()
+    if scan is None or int(scan["source_id"]) != int(source_id):
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            "missing reconciliation must use a scan of the same source",
+            details={"source_id": source_id, "scan_id": scan_id},
+        )
     cursor = connection.execute(
         "UPDATE file_locations SET availability = 'MISSING' "
         "WHERE source_id = ? AND availability <> 'MISSING' "
@@ -292,6 +314,19 @@ def reconcile_missing(connection: sqlite3.Connection, *, source_id: int, scan_id
         (source_id, scan_id),
     )
     return int(cursor.rowcount or 0)
+
+
+def count_unbound_locations(
+    connection: sqlite3.Connection, *, source_id: int, scan_id: int
+) -> int:
+    """Positions this scan still has to confirm content for (ADR-0002 §5.2)."""
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM file_locations "
+            "WHERE source_id = ? AND last_seen_scan_id = ? AND asset_id IS NULL",
+            (source_id, scan_id),
+        ).fetchone()[0]
+    )
 
 
 def scan_job_id(connection: sqlite3.Connection, *, scan_id: int) -> int | None:

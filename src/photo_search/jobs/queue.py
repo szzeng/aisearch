@@ -17,7 +17,9 @@ from photo_search.catalog.errors import (
     INVALID_STATE_TRANSITION,
     JOB_NOT_FOUND,
     LEASE_CONFLICT,
+    LEASE_EXPIRED,
     PROCESSOR_MISMATCH,
+    RETRY_EXHAUSTED,
     STALE_INPUT_REVISION,
     STALE_LEASE,
     CatalogError,
@@ -32,6 +34,11 @@ STATE_FAILED = "FAILED"
 STATE_CANCELLED = "CANCELLED"
 
 TERMINAL_STATES = frozenset({STATE_SUCCEEDED, STATE_FAILED, STATE_CANCELLED})
+
+#: Backoff applied when a retryable failure returns a job to RETRY_WAIT (ADR-0002 §6.2).
+DEFAULT_RETRY_BACKOFF_MS = 5_000
+
+_EXHAUSTED_MESSAGE = "lease expired before completion; no retry budget left"
 
 #: Ordinary, contract-frozen state transitions (ADR-0002 §6.1).
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
@@ -210,14 +217,46 @@ def _start_running(
     lease_seconds: int,
     takeover: bool,
 ) -> Job:
+    job = get_job(connection, job_id)
     token = new_lease_token()
     expires_at = now_ms + int(lease_seconds) * 1000
     if takeover:
+        # A lost execution counts as one ordinary failure before this worker may continue,
+        # and the retry ceiling applies to it exactly as it does to a reported failure.
+        lost_attempts = job.attempts + 1
+        if lost_attempts >= job.max_attempts:
+            connection.execute(
+                """
+                UPDATE jobs
+                   SET state = ?, attempts = ?, lease_token = NULL, lease_expires_at = NULL,
+                       worker_id = NULL, last_error_code = ?, last_error_message = ?, updated_at = ?
+                 WHERE job_id = ? AND state = ? AND lease_expires_at <= ?
+                """,
+                (
+                    STATE_FAILED,
+                    lost_attempts,
+                    LEASE_EXPIRED,
+                    f"lease expired before completion; attempts reached max_attempts={job.max_attempts}",
+                    now_ms,
+                    job_id,
+                    STATE_RUNNING,
+                    now_ms,
+                ),
+            )
+            raise CatalogError(
+                RETRY_EXHAUSTED,
+                f"job {job_id} exhausted {job.max_attempts} attempts after an expired lease",
+                details={
+                    "job_id": job_id,
+                    "attempts": lost_attempts,
+                    "max_attempts": job.max_attempts,
+                },
+            )
         connection.execute(
             """
             UPDATE jobs
                SET state = ?, lease_token = ?, lease_expires_at = ?, worker_id = ?,
-                   attempts = attempts + 1, updated_at = ?
+                   attempts = ?, updated_at = ?
              WHERE job_id = ? AND state = ? AND lease_expires_at <= ?
             """,
             (
@@ -225,6 +264,7 @@ def _start_running(
                 token,
                 expires_at,
                 worker_id,
+                lost_attempts,
                 now_ms,
                 job_id,
                 STATE_RUNNING,
@@ -260,6 +300,18 @@ def claim_job(
 ) -> Job:
     """Claim one specific logical job, or atomically take over its expired lease."""
     job = get_job(connection, job_id)
+    if job.state == STATE_RETRY_WAIT:
+        if job.run_after > now_ms:
+            raise CatalogError(
+                INVALID_STATE_TRANSITION,
+                f"job {job_id} is not runnable before {job.run_after}",
+                details={"job_id": job_id, "run_after": job.run_after, "now": now_ms},
+            )
+        connection.execute(
+            "UPDATE jobs SET state = ?, updated_at = ? WHERE job_id = ? AND state = ?",
+            (STATE_QUEUED, now_ms, job_id, STATE_RETRY_WAIT),
+        )
+        job = get_job(connection, job_id)
     if job.state == STATE_QUEUED:
         if job.run_after > now_ms:
             raise CatalogError(
@@ -310,6 +362,7 @@ def claim_next(
         "UPDATE jobs SET state = ?, updated_at = ? WHERE state = ? AND run_after <= ?",
         (STATE_QUEUED, now_ms, STATE_RETRY_WAIT, now_ms),
     )
+    _fail_exhausted_leases(connection, now_ms=now_ms, task_type=task_type)
     row = _claimable_row(connection, now_ms=now_ms, task_type=task_type)
     if row is None:
         return None
@@ -322,6 +375,37 @@ def claim_next(
         lease_seconds=lease_seconds,
         takeover=takeover,
     )
+
+
+def _fail_exhausted_leases(
+    connection: sqlite3.Connection,
+    *,
+    now_ms: int,
+    task_type: str | None = None,
+) -> int:
+    """Fail expired executions that have no retry budget left before claiming again."""
+    task_filter = "" if task_type is None else " AND task_type = ?"
+    parameters: tuple = (
+        (STATE_FAILED, LEASE_EXPIRED, _EXHAUSTED_MESSAGE, int(now_ms), STATE_RUNNING, int(now_ms))
+        if task_type is None
+        else (
+            STATE_FAILED,
+            LEASE_EXPIRED,
+            _EXHAUSTED_MESSAGE,
+            int(now_ms),
+            STATE_RUNNING,
+            int(now_ms),
+            task_type,
+        )
+    )
+    cursor = connection.execute(
+        "UPDATE jobs SET state = ?, attempts = attempts + 1, lease_token = NULL, "
+        "lease_expires_at = NULL, worker_id = NULL, last_error_code = ?, last_error_message = ?, "
+        f"updated_at = ? WHERE state = ? AND lease_expires_at <= ? "
+        f"AND attempts + 1 >= max_attempts{task_filter}",
+        parameters,
+    )
+    return int(cursor.rowcount or 0)
 
 
 def heartbeat(
@@ -438,20 +522,41 @@ def finish(
             f"job {job_id} cannot move from {job.state} to {state}",
             details={"job_id": job_id, "from": job.state, "to": state},
         )
+    target = state
+    attempts = job.attempts
+    error_code = error.code if error else None
+    error_message = _short_message(error)
+    if state in (STATE_RETRY_WAIT, STATE_FAILED):
+        # ADR-0002 §6.2: every failed execution consumes retry budget, and a retryable
+        # failure that reaches max_attempts becomes a terminal failure.
+        attempts += 1
+        if state == STATE_RETRY_WAIT and attempts >= job.max_attempts:
+            target = STATE_FAILED
+            error_code = error_code or RETRY_EXHAUSTED
+            error_message = error_message or (
+                f"attempts reached max_attempts={job.max_attempts} after a retryable failure"
+            )
+    if target == STATE_SUCCEEDED:
+        error_code = None
+        error_message = None
+    next_run_after = job.run_after
+    if target == STATE_RETRY_WAIT:
+        next_run_after = run_after_ms if run_after_ms is not None else now_ms + DEFAULT_RETRY_BACKOFF_MS
     connection.execute(
         """
         UPDATE jobs
-           SET state = ?, progress = COALESCE(?, progress), last_error_code = ?, last_error_message = ?,
-               lease_token = NULL, lease_expires_at = NULL, worker_id = NULL,
-               run_after = COALESCE(?, run_after), updated_at = ?
+           SET state = ?, attempts = ?, progress = COALESCE(?, progress), last_error_code = ?,
+               last_error_message = ?, lease_token = NULL, lease_expires_at = NULL, worker_id = NULL,
+               run_after = ?, updated_at = ?
          WHERE job_id = ?
         """,
         (
-            state,
+            target,
+            attempts,
             progress,
-            error.code if error else None,
-            _short_message(error),
-            run_after_ms,
+            error_code,
+            error_message,
+            next_run_after,
             now_ms,
             job_id,
         ),

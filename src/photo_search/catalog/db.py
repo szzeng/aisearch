@@ -42,15 +42,19 @@ class Catalog:
         db_path: str | Path | None = None,
         *,
         data_root: str | Path | None = None,
-        migrate: bool = True,
         clock: Callable[[], int] | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         disk_usage: Callable[[str | Path], object] | None = None,
     ) -> Catalog:
+        """Open the catalog for business use.
+
+        There is deliberately no way to skip the read-only compatibility preflight: the
+        database is always inspected read-only first, so a higher ``schema_version`` is
+        rejected with ``SCHEMA_TOO_NEW`` before any read-write/WAL initialisation.
+        """
         data_root = resolve_data_root(data_root)
         path = Path(db_path) if db_path is not None else catalog_db_path(data_root)
-        if migrate:
-            migrate_database(path, data_root=data_root, disk_usage=disk_usage)
+        migrate_database(path, data_root=data_root, disk_usage=disk_usage)
         connection = connect_rw(path)
         try:
             ensure_wal(connection)

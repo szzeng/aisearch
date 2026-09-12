@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import sqlite3
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.catalog.migrate import catalog_info, inspect_database, migrate_database
 from photo_search.catalog.sqlite_io import connect_rw, open_readonly
+from photo_search.ingestion.service import CatalogService
 
 CORE_TABLES = {
     "assets",
@@ -258,3 +260,9 @@ def test_preflight_reads_a_live_wal_database_without_changing_it(tmp_path: Path)
         assert writer.execute("SELECT value FROM metadata WHERE key = 'probe'").fetchone()[0] == "live"
     finally:
         writer.close()
+
+
+def test_catalog_open_exposes_no_migration_bypass() -> None:
+    """ADR-0002 §7.1/§7.4: every business write path starts with the read-only preflight."""
+    assert "migrate" not in inspect.signature(Catalog.open).parameters
+    assert "migrate" not in inspect.signature(CatalogService.open).parameters

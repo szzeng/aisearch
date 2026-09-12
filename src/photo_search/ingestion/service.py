@@ -33,10 +33,12 @@ class CatalogService:
         *,
         data_root: Path,
         disk_usage: Callable[[str | Path], Any] | None = None,
+        retry_backoff_ms: int = jobs.DEFAULT_RETRY_BACKOFF_MS,
     ) -> None:
         self.catalog = catalog
         self.data_root = Path(data_root)
         self.disk_usage = disk_usage or shutil.disk_usage
+        self.retry_backoff_ms = int(retry_backoff_ms)
 
     @classmethod
     def open(
@@ -47,7 +49,7 @@ class CatalogService:
         clock: Callable[[], int] | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         disk_usage: Callable[[str | Path], Any] | None = None,
-        migrate: bool = True,
+        retry_backoff_ms: int = jobs.DEFAULT_RETRY_BACKOFF_MS,
     ) -> CatalogService:
         root = resolve_data_root(data_root)
         catalog = Catalog.open(
@@ -56,9 +58,13 @@ class CatalogService:
             clock=clock,
             lease_seconds=lease_seconds,
             disk_usage=disk_usage,
-            migrate=migrate,
         )
-        return cls(catalog, data_root=root, disk_usage=disk_usage)
+        return cls(
+            catalog,
+            data_root=root,
+            disk_usage=disk_usage,
+            retry_backoff_ms=retry_backoff_ms,
+        )
 
     # ------------------------------------------------------------------ reads
     def info(self) -> dict[str, Any]:
