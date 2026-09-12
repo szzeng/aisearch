@@ -105,6 +105,17 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   ADR-0002 §7 additive migration + C2). A fully offline asset shows no relative path in the grid
   (`current_location` is null once every position is MISSING); the detail view still lists every position.
 
+  两个**非阻塞后续项**已按上述分工写成正式任务卡（都不改变 P1-06 作为下一主线任务）：
+
+  - `docs/tasks/P1-05A.md` — 本机路径脱敏补强（repr 转义与多拼写 + 未登记路径兜底），推荐
+    **C1 / GPT-5.6 Terra / medium**，验收等级 **B**；唯一允许改动的生产文件是
+    `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。
+  - `docs/tasks/P1-05B.md` — 前端静态契约断言集中化 + `%TEMP%` 夹具脚本 + 浏览器 smoke 核对清单
+    （不引入 Node/npm），推荐 **DS-L / DeepSeek V4.1 Flash / 低推理**，验收等级 **A**；
+    建议在 P2-07（搜索页）之前执行。
+  - `taken_at`（EXIF 拍摄时间）不写成实现卡：它属于数据语义决策，必须先交
+    **C2 / GPT-5.6 Sol / high** 决策并通过 ADR-0002 §7 的加列迁移路径。
+
 ## GPU status
 
 Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 / CUDA UMD 13.4):
