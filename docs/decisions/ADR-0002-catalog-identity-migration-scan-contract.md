@@ -1,12 +1,13 @@
 # ADR-0002 — 图库身份、迁移、扫描与最小持久任务契约
 
 - 日期：2026-09-11
-- 决策状态：**ACCEPTED / FROZEN FOR P1-01 IMPLEMENTATION**
+- 决策状态：**ACCEPTED / FROZEN FOR P1-01 IMPLEMENTATION / C2 AMENDED 2026-09-12**
 - 所属任务：P1-01 — 资产 / 位置 / 来源 / 扫描最小持久任务 / 迁移与约束
 - 决策角色：C2 / GPT-5.6 Sol / high
-- 基线：P0-07 已 PASS；P1-01 尚未进入 DS-H 实现
+- 基线：P0-07 已 PASS；P1-01 DS-H 初始实现已完成，C2 聚焦复核要求返修
 - 依据：`个人图片搜索系统_V3.0_开发主架构.md` §4.1～4.4、§5.1～5.3、§6.2～6.3、§11.1～11.2、§13.1、§15.4；`个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md` §3、§4、§6、§11～§13；`docs/tasks/P1-01.md`
 - 本 ADR 只冻结 P1-01 的高风险语义；不实现 P1-02 的完整扫描算法，不改 AI / worker / 向量空间契约。
+- 2026-09-12 C2 窄幅修订：仅补充“预检开始前已经存在活动 `-wal`”时的只读 WAL-index / `-shm` 边界；其他冻结语义不变。详见 §2.1、§7.4。
 
 ---
 
@@ -35,7 +36,7 @@ P1-01 的实现必须遵守以下不可变边界：
 - 主库位置沿用架构：`<data_root>/catalog/catalog.db`；运行数据不得写入安装目录。
 - P1-01 使用标准库 `sqlite3` 和显式 SQL 迁移，不引入 ORM 迁移框架。
 - 所有业务连接必须启用 `PRAGMA foreign_keys = ON`。
-- **已有数据库必须先以真正只读方式检查 `schema_version` 与核心 schema 一致性；在确认兼容之前，不得执行 `journal_mode` 切换、建表、metadata 写入、迁移或任何其他会产生数据库/sidecar 写副作用的操作。**
+- **已有数据库必须先以真正只读方式检查 `schema_version` 与核心 schema 一致性；在确认兼容之前，不得执行 `journal_mode` 切换、建表、metadata 写入、迁移或其他业务写副作用。** 对预检开始前**不存在 `-wal`** 的干净数据库，预检不得创建 `-wal/-shm`。若预检开始前已经存在活动 `-wal`，为只读观察数据库当前完整状态，允许 SQLite 使用或重建派生 WAL index / `-shm`；该窄幅例外不得修改主数据库内容、不得修改已有 `-wal` 内容、不得切换 journal mode、不得执行 checkpoint、不得写 metadata 或业务数据。
 - 确认 schema 兼容后，正常 catalog 数据库运行模式必须启用并验证 `journal_mode=WAL`；实现不得长期退回 SQLite 默认 rollback journal。迁移期间可在停止业务写入的前提下使用适合迁移的锁策略，但迁移完成后必须恢复/确认正常运行的 WAL 模式。
 - 业务写入由单写协调器串行提交；文件枚举、stat、hash、解码或其他慢 I/O 不得在 SQLite 写事务内执行。
 - 除 `mtime_ns` 外，P1-01 新建表中的机器时间统一使用 **UTC Unix epoch milliseconds** 的 `INTEGER`。
@@ -435,7 +436,9 @@ P1-01 **禁止**引入不能被事务保护的迁移步骤。未来若确实需�
 
 - 只允许真正只读的版本/健康诊断；
 - 所有业务写入口必须返回 `SCHEMA_TOO_NEW`；
-- 在判定 `SCHEMA_TOO_NEW` 前不得执行 WAL 切换、建立 sidecar、写 metadata、建表或其他写副作用；
+- 对预检开始前不存在 `-wal` 的干净数据库，在判定 `SCHEMA_TOO_NEW` 前不得执行 WAL 切换、创建 `-wal/-shm`、写 metadata、建表或其他写副作用；
+- 若预检开始前已存在活动 `-wal`，只读连接可以为了看到当前数据库完整状态而使用或重建派生 WAL index / `-shm`。这不是业务写权限：不得修改主数据库内容、不得修改已有 `-wal` 内容、不得切换 journal mode、不得 checkpoint、不得写 metadata/业务数据；
+- 上述活动 WAL 例外不得成为绕过兼容预检的理由。任何业务 RW 连接、WAL 初始化/确认、迁移、备份或业务写入，仍必须发生在兼容检查通过之后；
 - 不得自动删除表、复制部分数据到新库、降低版本号或提示用户“重新扫描即可”。
 
 已有稳定 ID 和未来人工知识优先于“让旧程序勉强启动”。
@@ -544,7 +547,7 @@ DS-H 实现完成后，C2 聚焦复核至少检查：
 3. 五字段 job 逻辑键全部非空，未受 SQLite `NULL` 唯一性漏洞影响。
 4. 状态、availability、attempts/max_attempts、progress 等关键值域由数据库 `CHECK` 防护。
 5. 迁移失败不会出现“表只建了一半但 schema_version 已推进”。
-6. 更高 schema 版本在任何写副作用前通过只读检查被拒绝；不会触发 WAL 切换、删库或重建。
+6. 更高 schema 版本在任何业务 RW/WAL 初始化或业务写副作用前通过只读检查被拒绝；干净数据库不会因预检产生 `-wal/-shm`。若预检前已经存在活动 `-wal`，仅允许按 §2.1/§7.4 使用或重建派生 WAL index / `-shm`，不得修改主库或已有 WAL。
 7. `schema_version` 与核心表、列、唯一索引和关键约束一致；版本号存在但 schema 缺件会报 `SCHEMA_INCONSISTENT`。
 8. 正常 catalog 运行连接确认使用 WAL。
 9. 扫描中断/来源离线不会把未见位置批量标 `MISSING`。
