@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from photo_search.api.errors import VALIDATION_ERROR, ApiError
 from photo_search.api.settings import ApiSettings, generate_session_token
 from photo_search.config import session_credential_path
 
@@ -32,6 +33,44 @@ COOKIE_PATH = "/"
 COOKIE_SAMESITE = "strict"
 
 CREDENTIAL_SCHEMA = 1
+
+#: Characters that must never appear in a same-origin redirect target.
+_FORBIDDEN_REDIRECT_CHARS = ("\r", "\n", "\\")
+
+
+def safe_redirect_target(value: str | None) -> str | None:
+    """Return the local absolute path a successful exchange may redirect to.
+
+    ``next`` is only ever honoured when it is a plain same-origin path: it must start with
+    exactly one ``/``, must not be scheme-relative (``//host``), must not carry a scheme or
+    a backslash spelling that a browser could read as a network path, and must not contain
+    a control character. Anything else is refused with a structured ``422`` *before* the
+    one-time credential is burned, so a mistyped link never costs the user their session.
+    """
+    if value is None:
+        return None
+    text = str(value)
+    if not text:
+        raise ApiError(
+            VALIDATION_ERROR,
+            "the next parameter must not be empty",
+            status=422,
+            details={"param": "next"},
+        )
+    problem: str | None = None
+    if not text.startswith("/"):
+        problem = "the next parameter must be an absolute path on this server"
+    elif text.startswith("//"):
+        problem = "the next parameter must not be scheme-relative"
+    elif "://" in text:
+        problem = "the next parameter must not carry a scheme"
+    elif any(char in text for char in _FORBIDDEN_REDIRECT_CHARS):
+        problem = "the next parameter must not contain a control character or a backslash"
+    elif any(ord(char) < 0x20 for char in text):
+        problem = "the next parameter must not contain a control character"
+    if problem is not None:
+        raise ApiError(VALIDATION_ERROR, problem, status=422, details={"param": "next"})
+    return text
 
 
 def _system_now_ms() -> int:

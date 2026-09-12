@@ -19,7 +19,16 @@ from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
 
+#: Opaque cursor prefix of the default ``asset_id`` ordering (P1-04, frozen).
 CURSOR_PREFIX = "v1"
+#: Opaque cursor prefix of the ``time_desc`` ordering. The two orderings deliberately use
+#: different token spaces, so a cursor minted by one ordering is rejected by the other
+#: (``INVALID_CURSOR``) instead of silently resuming at a meaningless position.
+TIME_CURSOR_PREFIX = "t1"
+#: ``order`` values the asset listing accepts. ``asset_id`` is the P1-04 default.
+ORDER_ASSET_ID = "asset_id"
+ORDER_TIME_DESC = "time_desc"
+ORDERS = (ORDER_ASSET_ID, ORDER_TIME_DESC)
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
 #: How many asset rows one chunk examines; keeps memory bounded while still letting a
@@ -36,31 +45,57 @@ SELECT l.asset_id, l.location_id, l.source_id, l.relative_path, l.availability,
 """
 
 
-def encode_cursor(value: int) -> str:
-    """Opaque keyset cursor holding the last examined row identity."""
-    raw = f"{CURSOR_PREFIX}:{int(value)}".encode("ascii")
-    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+def _encode_cursor(prefix: str, values: tuple[int, ...]) -> str:
+    payload = ":".join((str(prefix), *(str(int(value)) for value in values)))
+    return base64.urlsafe_b64encode(payload.encode("ascii")).decode("ascii").rstrip("=")
 
 
-def decode_cursor(text: str | None) -> int:
-    """Decode a cursor, rejecting anything this build did not produce."""
+def _decode_cursor(text: str | None, *, prefix: str, arity: int) -> list[int] | None:
+    """Decode one opaque cursor; ``None`` means "start at the first page"."""
     if text is None or str(text).strip() == "":
-        return 0
+        return None
     raw = str(text).strip()
     try:
         decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("ascii")
     except (binascii.Error, UnicodeDecodeError, ValueError) as error:
         raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid") from error
-    prefix, separator, value = decoded.partition(":")
-    if separator != ":" or prefix != CURSOR_PREFIX:
+    parts = decoded.split(":")
+    if len(parts) != arity + 1 or parts[0] != prefix:
+        # A cursor minted by the other ordering (or by another version) is never
+        # reinterpreted; the caller has to restart that ordering explicitly.
         raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
-    try:
-        number = int(value)
-    except ValueError as error:
-        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid") from error
-    if number < 0:
-        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
-    return number
+    numbers: list[int] = []
+    for part in parts[1:]:
+        try:
+            number = int(part)
+        except ValueError as error:
+            raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid") from error
+        if number < 0:
+            raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+        numbers.append(number)
+    return numbers
+
+
+def encode_cursor(value: int) -> str:
+    """Opaque keyset cursor holding the last examined ``asset_id``."""
+    return _encode_cursor(CURSOR_PREFIX, (int(value),))
+
+
+def decode_cursor(text: str | None) -> int:
+    """Decode an ``asset_id``-ordering cursor, rejecting anything this build did not make."""
+    numbers = _decode_cursor(text, prefix=CURSOR_PREFIX, arity=1)
+    return 0 if numbers is None else numbers[0]
+
+
+def encode_time_cursor(created_at: int, asset_id: int) -> str:
+    """Opaque keyset cursor holding the last examined ``(created_at, asset_id)`` pair."""
+    return _encode_cursor(TIME_CURSOR_PREFIX, (int(created_at), int(asset_id)))
+
+
+def decode_time_cursor(text: str | None) -> tuple[int, int] | None:
+    """Decode a ``time_desc`` cursor; ``None`` means "start at the newest asset"."""
+    numbers = _decode_cursor(text, prefix=TIME_CURSOR_PREFIX, arity=2)
+    return None if numbers is None else (numbers[0], numbers[1])
 
 
 def clamp_limit(limit: int | None, *, default: int = DEFAULT_PAGE_LIMIT) -> int:
@@ -137,8 +172,15 @@ def asset_page(
     source_id: int | None = None,
     availability: str = "any",
     has_thumbnail: str = "any",
+    order: str = ORDER_ASSET_ID,
 ) -> dict[str, Any]:
-    """One bounded page of assets in stable ``asset_id`` order."""
+    """One bounded page of assets in a stable, caller-selected order.
+
+    ``order=asset_id`` is the frozen P1-04 behaviour (same SQL, same cursor, same rows).
+    ``order=time_desc`` walks ``(created_at DESC, asset_id DESC)``, where ``created_at`` is
+    the *catalog insertion* time, not an EXIF capture time. Both orderings keep their own
+    cursor token space, so a cursor never leaks across orderings.
+    """
     if availability not in ("present", "missing", "any"):
         raise ApiError(
             VALIDATION_ERROR, "availability must be present, missing or any", status=422
@@ -147,11 +189,22 @@ def asset_page(
         raise ApiError(
             VALIDATION_ERROR, "has_thumbnail must be true, false or any", status=422
         )
-    start = decode_cursor(cursor)
+    if order not in ORDERS:
+        raise ApiError(
+            VALIDATION_ERROR,
+            "order must be asset_id or time_desc",
+            status=422,
+            details={"order": str(order)},
+        )
+    start: int | tuple[int, int] | None
+    if order == ORDER_TIME_DESC:
+        start = decode_time_cursor(cursor)
+    else:
+        start = decode_cursor(cursor)
     page_limit = int(limit)
     chunk_size = max(ASSET_CHUNK_SIZE, page_limit)
     matched: list[dict[str, Any]] = []
-    examined_last = start
+    examined_last: Any = start
     exhausted = False
     while len(matched) < page_limit:
         rows = _asset_chunk(
@@ -160,13 +213,14 @@ def asset_page(
             size=chunk_size,
             source_id=source_id,
             availability=availability,
+            order=order,
         )
         if not rows:
             exhausted = True
             break
         grouped = locations_by_asset(catalog, [int(row["asset_id"]) for row in rows])
         for row in rows:
-            examined_last = int(row["asset_id"])
+            examined_last = _cursor_position(row, order)
             summary = summarize_asset(
                 cache,
                 asset_id=int(row["asset_id"]),
@@ -190,24 +244,54 @@ def asset_page(
     return {
         "assets": matched,
         "limit": page_limit,
-        "next_cursor": encode_cursor(examined_last) if has_more else None,
+        "next_cursor": _encode_position(examined_last, order) if has_more else None,
         "has_more": has_more,
         "availability": availability,
         "has_thumbnail": has_thumbnail,
         "source_id": None if source_id is None else int(source_id),
+        "order": order,
     }
+
+
+def _cursor_position(row: Any, order: str) -> Any:
+    """The keyset position of one examined row, in the requested ordering."""
+    if order == ORDER_TIME_DESC:
+        return (int(row["created_at"]), int(row["asset_id"]))
+    return int(row["asset_id"])
+
+
+def _encode_position(position: Any, order: str) -> str | None:
+    if position is None:  # pragma: no cover - defensive: has_more implies a position
+        return None
+    if order == ORDER_TIME_DESC:
+        created_at, asset_id = position
+        return encode_time_cursor(created_at, asset_id)
+    return encode_cursor(position)
 
 
 def _asset_chunk(
     catalog: Any,
     *,
-    after: int,
+    after: Any,
     size: int,
     source_id: int | None,
     availability: str,
+    order: str = ORDER_ASSET_ID,
 ) -> list[Any]:
-    conditions = ["a.asset_id > ?"]
-    parameters: list[Any] = [int(after)]
+    conditions: list[str] = []
+    parameters: list[Any] = []
+    if order == ORDER_TIME_DESC:
+        if after is not None:
+            created_at, asset_id = after
+            conditions.append(
+                "(a.created_at < ? OR (a.created_at = ? AND a.asset_id < ?))"
+            )
+            parameters.extend([int(created_at), int(created_at), int(asset_id)])
+        ordering = "a.created_at DESC, a.asset_id DESC"
+    else:
+        conditions.append("a.asset_id > ?")
+        parameters.append(0 if after is None else int(after))
+        ordering = "a.asset_id"
     if source_id is not None:
         conditions.append(
             "EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = a.asset_id "
@@ -225,10 +309,11 @@ def _asset_chunk(
             "AND l.availability = 'PRESENT')"
         )
     parameters.append(int(size))
+    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(
         catalog.read_all(
             "SELECT a.asset_id, a.sha256, a.byte_size, a.created_at FROM assets AS a "
-            f"WHERE {' AND '.join(conditions)} ORDER BY a.asset_id LIMIT ?",
+            f"{where} ORDER BY {ordering} LIMIT ?",
             tuple(parameters),
         )
     )

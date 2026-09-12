@@ -21,6 +21,7 @@ from photo_search.api.handlers import install_exception_handlers
 from photo_search.api.routes import APP_VERSION, router
 from photo_search.api.security import SecurityMiddleware
 from photo_search.api.settings import ApiSettings
+from photo_search.api.web import router as web_router
 
 __all__ = ["APP_VERSION", "app", "create_app"]
 
@@ -59,6 +60,9 @@ def create_app(
     )
     install_exception_handlers(application)
     application.include_router(router)
+    # The front-end shell and its assets sit outside ``/api/v1``: they carry no user data
+    # and need no session, while every data request still goes through the guarded API.
+    application.include_router(web_router)
     return application
 
 

@@ -62,6 +62,8 @@ INVALID_RANGE = "INVALID_RANGE"
 RANGE_NOT_SATISFIABLE = "RANGE_NOT_SATISFIABLE"
 INTERNAL_ERROR = "INTERNAL_ERROR"
 MEDIA_NOT_READY = "MEDIA_NOT_READY"
+#: The packaged front-end shell or one of its assets is missing from this build.
+WEB_ASSET_NOT_FOUND = "WEB_ASSET_NOT_FOUND"
 
 REQUEST_ID_HEADER = "X-Request-ID"
 MAX_REQUEST_ID_CHARS = 64
@@ -74,6 +76,7 @@ _STATUS_BY_CODE: dict[str, int] = {
     ASSET_NOT_FOUND: 404,
     SOURCE_NOT_FOUND: 404,
     JOB_NOT_FOUND: 404,
+    WEB_ASSET_NOT_FOUND: 404,
     # Conflict: the request is well-formed but the current state forbids it. The task card
     # deliberately folds "unsupported"/"unavailable" into 409 with a stable code.
     SOURCE_OVERLAP: 409,

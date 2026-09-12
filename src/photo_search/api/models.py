@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 AvailabilityFilter = Literal["present", "missing", "any"]
 ReadyFilter = Literal["true", "false", "any"]
+AssetOrder = Literal["asset_id", "time_desc"]
 
 
 class ErrorResponse(BaseModel):
@@ -171,6 +172,8 @@ class AssetListResponse(BaseModel):
     availability: AvailabilityFilter
     has_thumbnail: ReadyFilter
     source_id: int | None = None
+    #: The ordering that actually produced this page; ``time_desc`` is insertion time.
+    order: AssetOrder = "asset_id"
 
 
 class ScanState(BaseModel):

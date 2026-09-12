@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>本机图片搜索</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/web/styles.css" />
+    <script src="/web/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <header class="app-header">
+      <h1>本机图片搜索</h1>
+      <nav class="app-nav" aria-label="主导航">
+        <button type="button" class="nav-button" data-view="sources">来源与扫描</button>
+        <button type="button" class="nav-button" data-view="browse">按加入时间浏览</button>
+      </nav>
+      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
+    </header>
+
+    <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <main id="main" tabindex="-1">
+      <section id="view-sources" class="view" hidden aria-labelledby="view-sources-title">
+        <h2 id="view-sources-title">来源与扫描</h2>
+        <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
+        <ul id="sources-list" class="sources"></ul>
+        <form id="source-form" class="card" novalidate>
+          <h3>新增来源</h3>
+          <p class="hint">
+            把照片目录的完整路径粘贴到下面的输入框。本页面不会枚举本机文件系统，
+            只有你亲手填写的路径会提交给本机服务。
+          </p>
+          <p>
+            <label for="source-name">显示名</label>
+            <input
+              id="source-name"
+              name="display_name"
+              type="text"
+              maxlength="200"
+              required
+              autocomplete="off"
+            />
+          </p>
+          <p>
+            <label for="source-root">来源根目录</label>
+            <input
+              id="source-root"
+              name="root_path"
+              type="text"
+              maxlength="4096"
+              required
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </p>
+          <p>
+            <button type="submit">注册来源</button>
+          </p>
+          <p class="error" id="source-form-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="view-browse" class="view" hidden aria-labelledby="view-browse-title">
+        <h2 id="view-browse-title">按加入时间浏览</h2>
+        <p class="hint">
+          “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。
+        </p>
+        <div class="browse-controls">
+          <label for="browse-source">来源筛选</label>
+          <select id="browse-source">
+            <option value="">全部来源</option>
+          </select>
+          <button type="button" id="browse-reload">刷新</button>
+        </div>
+        <div id="browse-status" class="state-block" role="status" aria-live="polite"></div>
+        <ol id="asset-grid" class="grid" aria-label="按加入时间排列的图片"></ol>
+        <div id="grid-sentinel" class="sentinel" hidden></div>
+        <p>
+          <button type="button" id="load-more" hidden>加载更多</button>
+        </p>
+      </section>
+
+      <section id="view-detail" class="view" hidden aria-labelledby="view-detail-title">
+        <h2 id="view-detail-title">图片详情</h2>
+        <p>
+          <button type="button" id="detail-back">返回浏览</button>
+        </p>
+        <div id="detail-body"></div>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>
+    </noscript>
+  </body>
+</html>

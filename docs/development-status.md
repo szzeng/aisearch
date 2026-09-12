@@ -3,7 +3,8 @@
 ## Current state
 
 **P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is PASS
-(B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is now READY / CURRENT TASK.**
+(B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is now PASS
+(B level + C-level packaged smoke + a recorded real-browser smoke). P1-06 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -30,25 +31,31 @@ session + double-submit CSRF + Host/Origin checks, four-layer controlled path re
 scan executor that reuses the production `catalog scan` path. `schema_version` is still 1, ADR-0002 is unchanged,
 and the only dependency edit is declaring the already-resolved `pydantic` range explicitly.
 
+P1-05 (sources page, insertion-time browsing, detail view, offline hints) is recorded in
+[docs/reports/P1-05-local-frontend-sources-browse-detail-offline.md](reports/P1-05-local-frontend-sources-browse-detail-offline.md).
+It ships a dependency-free static front end (`src/photo_search/web/**` served from package data by
+`src/photo_search/api/web.py`), an additive `order=time_desc` keyset with its own cursor space, an additive
+`next=` redirect on the session exchange, and a launcher URL that lands on the page. `schema_version` is still 1,
+ADR-0002 is unchanged, `pyproject.toml`/`uv.lock` are untouched, and every existing P1-04 test still passes
+unmodified.
+
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
 ## Latest accepted verification
 
-Produced by DS-H on the P1-04 implementation (see the P1-04 report for per-scenario evidence; C1 review of the
-packaging fix in §6 is still recommended, no C2 review was run).
+Produced by DS-L on the P1-05 implementation (see the P1-05 report for per-scenario evidence).
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q tests/unit tests/integration` | exit 0, `252 passed, 1 skipped in 122.25s` |
-| focused P1-04 suites (`tests/unit/test_api_*.py`, `tests/integration/test_api_*.py`) | exit 0, `72 passed` |
+| `uv run pytest -q tests/unit tests/integration` | exit 0, 304 collected, `303 passed, 1 skipped` |
+| focused P1-05 suites | exit 0, `50 passed` (`test_api_frontend.py` 42, `test_api_frontend_routes.py` 4, `test_api_time_order.py` 4) |
 | `uv run ruff check .` / `git diff --check` | clean / clean |
-| `uv lock --check` | exit 0, `Resolved 95 packages` |
-| Measured versions (`uv run python -c ...`) | Python 3.12.10, fastapi 0.141.1, starlette 1.6.0, pydantic 2.13.5, uvicorn 0.52.4, httpx 0.28.1 |
-| P1-04 API scenarios 1-10 (session/CSRF/Origin/Host, sources incl. overlap + data-root rejection, 202 scan + reuse + interrupted-lease recovery, 26-asset keyset paging, thumbnail/preview/original bytes and Range, `..`/absolute/UNC/drive/junction traversal refusals, offline + replaced original, Chinese/space/>220-char paths with read-only originals, `SCHEMA_TOO_NEW` without write side effects, real-port smoke) | all executed on `%TEMP%` fixtures; mapped to named tests in report §5 |
-| Real-port launcher smoke (`tests/integration/test_api_server.py`) | health 200, session 200 with `HttpOnly; Path=/`, unauthenticated read 401, CSRF-protected `POST /sources` 201, access log `token=<redacted>`, non-loopback bind exits 2 without creating a credential |
-| C-level packaged smoke (`tools/packaging/build_onedir.py` + `tools/diagnostics/packaged_api_smoke.py`) | build exit 0 in 57 s; bundle copied to `%TEMP%\P1-04 打包 API 验收\PhotoSearch 中文 空格`; `status=ok` with health/session/scan/thumbnail/offline-original/capabilities all as specified; startup 1.02 s |
-| C-gate finding fixed | the PyInstaller build did not collect `catalog/migrations/*.sql`, so a frozen build silently created an **empty catalog** and failed on the first query; `build_onedir.py` now uses `--collect-data photo_search` and `schema.migration_files()` requires the full `0001..supported` set (new unit test) |
+| `uv lock --check` | exit 0, `Resolved 95 packages` (no dependency change) |
+| P1-05 API/page scenarios 1-9 (public shell + static assets with traversal refusals, session `next` 303 + unsafe-`next` 422 without burning the credential, `time_desc` 26-asset paging with tie-break stability and cross-cursor `INVALID_CURSOR`, sources/scan flow, detail/offline with `SOURCE_FILE_MISSING`, bad-media codes, empty/single/multi-page/unicode/read-only boundaries, higher `schema_version`) | all executed on `%TEMP%` fixtures; mapped to named tests in report §5 |
+| Recorded real-browser smoke (Codex in-app browser, real port, 2061-file `%TEMP%` fixture) | 10 steps observed: 303 landing, source registration without rendering absolute paths, live `RUNNING 14% → 65% → SUCCEEDED 100%`, 50 → 100 grid paging with lazy thumbnails, detail with 7 locations, `原文件不可用` badge with the thumbnail still shown, real `409 SOURCE_FILE_MISSING` from `/original`, `DECODE_FAILED` with the path withheld, narrow 640×900 viewport + Tab/Enter, and the `SCHEMA_TOO_NEW` notice (no empty list, no `-wal`/`-shm` written) |
+| C-level packaged smoke (`tools/packaging/build_onedir.py` + `tools/diagnostics/packaged_api_smoke.py`) | build exit 0 (~62 s, 34,020,895 B); bundle copied to `%TEMP%\P1-05 打包页面验收\PhotoSearch 中文 空格`; `status=ok`/`problems=[]`: `GET /` 200 `text/html` `no-cache` with no external reference or local path, `/web/app.js` 200 (33,516 B) and `/web/styles.css` 200 inside the frozen bundle, unknown asset 404, printed link → 303 `Location: /`, plus the P1-04 session/scan/thumbnail/offline scenarios; startup 1.0 s |
+| New finding (carried forward) | the media failure records embed a **repr-escaped** path (`C:\\Users\\…`) that `errors.Redactor` does not match, so `GET /assets/{id}` messages can still contain an absolute path; the page now withholds such messages (unit-asserted) and a C1/C2-reviewed server-side fix is recommended (report §8.1) |
 
 P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85, LANCZOS, never enlarged) and preview
 `catalog-preview@1` (long edge 1600, JPEG q88, lazy). Layout
@@ -89,6 +96,14 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   current RTX 4060 Laptop GPU; earlier P0 limits for InsightFace/RapidOCR, cold CUDA start and human-labelled semantic
   quality remain carried forward.
 - Two historical P0 record inconsistencies remain recorded but unedited; see the P0-07 report §3.1.
+- **P1-05**: `GET /assets/{id}` media failure messages can still carry an absolute path because the stored
+  Pillow message uses a repr-escaped Windows path (`C:\\Users\\…`) that `errors.Redactor` does not match; the page
+  withholds such messages, but a server-side fix needs a C1/C2-reviewed follow-up (P1-05 report §8.1). The front
+  end has no automated DOM tests (no Node/npm chain allowed); its behaviour rests on static assertions plus the
+  recorded browser smoke. Narrow-viewport/200% zoom was proxied by a 640×900 viewport (no horizontal overflow,
+  3-column reflow), not by real OS zoom. `time_desc` sorts by insertion time only (`taken_at` would need an
+  ADR-0002 §7 additive migration + C2). A fully offline asset shows no relative path in the grid
+  (`current_location` is null once every position is MISSING); the detail view still lists every position.
 
 ## GPU status
 
@@ -102,20 +117,22 @@ human-labelled semantic-search holdout.
 
 ## Current task / next execution step
 
-**P1-05 — 来源页、时间浏览、详情、离线提示.**
+**P1-06 — 重复、移动、替换、断盘、重映射、重启验收.**
 
-- Status: **READY / CURRENT TASK**. P1-01 … P1-04 are accepted; P1-05 has no unfinished dependency.
-- Task card: `docs/tasks/P1-05.md`.
-- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**.
-- Goal: ship the first usable local frontend over the accepted P1-04 API — a source page (register / scan /
-  progress), a time-ordered browsing grid, an asset detail view (locations + media state), and honest offline
-  hints — as a dependency-free static bundle served by the app, without weakening the session/CSRF/path boundary.
-- Validation level: **B** (`uv run pytest -q tests/unit tests/integration` + ruff + diff-check) plus a real-port
-  browser smoke; the static assets change the packaged bundle as well, so the C-level packaged smoke from P1-04 may
-  be re-run (`tools/diagnostics/packaged_api_smoke.py` is the entry point).
+- Status: **READY / CURRENT TASK**. P1-01 … P1-05 are accepted; P1-06 has no unfinished dependency.
+- Task card: `docs/tasks/P1-06.md`.
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**.
+- Goal: prove the frozen ADR-0002 identity/location/missing rules end-to-end on real fixtures: duplicate content
+  shares one asset with several positions, a move leaves "new position PRESENT + old position MISSING" on the same
+  `asset_id`, a replaced file is not silently re-bound, an unmounted/offline volume never turns into a deletion
+  conclusion, a re-mapped root keeps identity and position binding, and a restart mid-scan recovers the same
+  `scan_run` without duplicating rows.
+- Validation level: **D** (`uv run pytest -q tests/unit tests/integration` + ruff + diff-check + the required
+  fault-injection/recovery scenarios). Packaging is only required if the task touches packaged resources.
 - Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
 
-An optional **C1 / GPT-5.6 Terra / medium** review of the P1-04 packaging/migration-check fix (report §6) is
-recommended but is not a dependency of P1-05.
+Optional follow-ups recorded but not dependencies of P1-06: a **C1 / GPT-5.6 Terra / medium** review of the P1-05
+§8.1 redaction gap (and, if still open, the P1-04 packaging/migration-check fix), and a **C2 / GPT-5.6 Sol / high**
+decision before adding any `taken_at`/EXIF-capture-time column.
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -1,9 +1,12 @@
-"""C-level smoke test for the packaged local API (P1-04).
+"""C-level smoke test for the packaged local API and front end (P1-04, extended by P1-05).
 
 The launcher changed in P1-04 (explicit bind options, one-time session credential,
 in-process ``uvicorn`` with an application object), so the packaged build is exercised for
 the scenarios that only a real bundle can prove: a Chinese/space installation path, a
 Chinese/space *source* root, an offline original, and the access-log credential filter.
+P1-05 adds the packaged static front end: ``GET /`` must return the shell and
+``GET /web/app.js`` the script, and the single-use link printed by the launcher must
+redirect a real client onto that shell.
 
 Everything is created under ``%TEMP%``; the user's real photo library is never touched.
 The script only reads ``sys.argv`` and the bundle, writes its own fixtures, and prints one
@@ -20,6 +23,7 @@ import argparse
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -29,12 +33,13 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from PIL import Image
 
 DEFAULT_BUNDLE = Path("dist") / "PhotoSearch"
-WORK_DIRNAME = "P1-04 打包 API 验收"
+WORK_DIRNAME = "P1-05 打包页面验收"
 START_TIMEOUT_SECONDS = 180.0
 
 
@@ -109,9 +114,17 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
         bootstrap = wait_for(stdout, lambda line: "token=" in line, timeout=timeout)
         if not bootstrap:
             raise SystemExit(f"packaged launcher never printed its session URL: {stdout} {stderr}")
-        token = bootstrap.split("token=", 1)[1].strip()
+        match = re.search(r"https?://\S+", bootstrap)
+        if not match:
+            raise SystemExit(f"the launcher did not print a usable session URL: {bootstrap}")
+        bootstrap_url = urlsplit(match.group(0))
+        query = parse_qs(bootstrap_url.query)
+        token = (query.get("token") or [""])[0]
+        if not token:
+            raise SystemExit(f"the printed session URL carries no credential: {bootstrap}")
         checks["startup_seconds"] = round(time.monotonic() - started, 2)
         checks["bootstrap_line_present"] = True
+        checks["bootstrap_next"] = (query.get("next") or [None])[0]
 
         base = f"http://127.0.0.1:{port}"
         deadline = time.monotonic() + timeout
@@ -128,9 +141,29 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
         checks["credential_file"] = (data_root / "runtime" / "session.json").is_file()
 
         with httpx.Client(base_url=base, timeout=180.0) as client:
+            shell = client.get("/")
+            checks["shell_status"] = shell.status_code
+            checks["shell_content_type"] = shell.headers.get("Content-Type")
+            checks["shell_cache_control"] = shell.headers.get("Cache-Control")
+            checks["shell_has_no_external_reference"] = (
+                "http://" not in shell.text and "https://" not in shell.text
+            )
+            checks["shell_has_no_local_path"] = all(
+                needle not in shell.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            script = client.get("/web/app.js")
+            checks["web_script_status"] = script.status_code
+            checks["web_script_content_type"] = script.headers.get("Content-Type")
+            checks["web_script_bytes"] = len(script.content)
+            checks["web_style_status"] = client.get("/web/styles.css").status_code
+            checks["web_missing_status"] = client.get("/web/does-not-exist.js").status_code
             checks["stats_without_session"] = client.get("/api/v1/stats").status_code
-            session = client.get("/api/v1/session", params={"token": token})
+            # Follow the launcher's own single-use link: it must set both cookies and
+            # redirect (303) onto the shell.
+            session = client.get(f"{bootstrap_url.path}?{bootstrap_url.query}")
             checks["session_exchange"] = session.status_code
+            checks["session_redirect_location"] = session.headers.get("Location")
             cookie_header = " | ".join(
                 value for value in session.headers.get_list("set-cookie")
             )
@@ -139,7 +172,9 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             checks["session_token_reused"] = client.get(
                 "/api/v1/session", params={"token": token}
             ).status_code
-            csrf = session.json()["csrf_token"]
+            # The front end reads the double-submit value from the non-HttpOnly cookie.
+            csrf = client.cookies.get("ps_csrf") or ""
+            checks["csrf_cookie_readable"] = bool(csrf)
             headers = {"Origin": base, "X-CSRF-Token": csrf}
 
             created = client.post(
@@ -216,11 +251,31 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
 def summarize(report: dict[str, Any]) -> list[str]:
     checks = report["checks"]
     problems: list[str] = []
+    if checks.get("bootstrap_next") != "/":
+        problems.append("launcher session link carries next=/")
+    if checks.get("shell_status") != 200 or "text/html" not in str(
+        checks.get("shell_content_type")
+    ):
+        problems.append("packaged shell")
+    if not checks.get("shell_has_no_external_reference"):
+        problems.append("shell external references")
+    if not checks.get("shell_has_no_local_path"):
+        problems.append("shell local paths")
+    if checks.get("web_script_status") != 200 or "javascript" not in str(
+        checks.get("web_script_content_type")
+    ):
+        problems.append("packaged script")
+    if checks.get("web_style_status") != 200:
+        problems.append("packaged stylesheet")
+    if checks.get("web_missing_status") != 404:
+        problems.append("unknown web asset")
     if checks.get("health") != 200:
         problems.append("health")
     if checks.get("stats_without_session") != 401:
         problems.append("unauthenticated read")
-    if checks.get("session_exchange") != 200 or not checks.get("session_cookie_httponly"):
+    if checks.get("session_exchange") != 303 or checks.get("session_redirect_location") != "/":
+        problems.append("session redirect")
+    if not checks.get("session_cookie_httponly") or not checks.get("csrf_cookie_readable"):
         problems.append("session exchange")
     if checks.get("session_token_reused") != 401:
         problems.append("single-use credential")

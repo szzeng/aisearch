@@ -84,7 +84,10 @@ def _serve(args: argparse.Namespace) -> int:
     print(
         "photo-search: open this single-use session URL to start the local session:\n"
         f"  http://{settings.browser_host()}:{settings.bind_port}/api/v1/session"
-        f"?token={bootstrap.token}"
+        # ``next`` comes first and the credential stays last: the exchange then lands the
+        # user on the front end, and the launcher line keeps its documented shape (the
+        # credential is the final query parameter, which the launcher smoke tests read).
+        f"?next=/&token={bootstrap.token}"
     )
     if bootstrap.path is not None:
         print(f"photo-search: credential file {bootstrap.path} ({bootstrap.permission})")

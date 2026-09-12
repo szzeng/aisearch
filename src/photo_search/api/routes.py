@@ -13,8 +13,8 @@ import asyncio
 from email.utils import formatdate
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from photo_search.api.context import ApiContext
 from photo_search.api.errors import (
@@ -36,6 +36,7 @@ from photo_search.api.files import (
 from photo_search.api.models import (
     AssetDetail,
     AssetListResponse,
+    AssetOrder,
     CapabilitiesResponse,
     JobListResponse,
     JobRecord,
@@ -59,6 +60,7 @@ from photo_search.api.session import (
     COOKIE_SAMESITE,
     CSRF_COOKIE,
     SESSION_COOKIE,
+    safe_redirect_target,
 )
 from photo_search.catalog.errors import CatalogError
 from photo_search.catalog.migrate import catalog_info
@@ -105,8 +107,19 @@ async def health() -> dict[str, str]:
     response_model=SessionResponse,
     summary="Exchange the one-time local credential for a session cookie",
 )
-async def exchange_session(request: Request, token: str | None = None) -> Response:
-    """Burn the launcher credential and set the HttpOnly session plus CSRF cookies."""
+async def exchange_session(
+    request: Request,
+    token: str | None = None,
+    redirect_to: str | None = Query(default=None, alias="next"),
+) -> Response:
+    """Burn the launcher credential and set the HttpOnly session plus CSRF cookies.
+
+    Without ``next`` this is exactly the P1-04 behaviour: ``200`` plus the same JSON body
+    and the same two cookies. With a safe same-origin ``next`` the exchange answers
+    ``303 See Other`` instead, so the launcher link can drop the user straight on the
+    front-end while still setting both cookies on the redirect response.
+    """
+    target = safe_redirect_target(redirect_to)
     context = context_of(request)
     session = context.sessions.exchange(token)
     if session is None:
@@ -115,14 +128,17 @@ async def exchange_session(request: Request, token: str | None = None) -> Respon
             "the session credential is not valid",
             details={"hint": "use the credential printed by the launcher; it is single-use"},
         )
-    response = JSONResponse(
-        status_code=200,
-        content={
-            "status": "ok",
-            "csrf_token": session.csrf_token,
-            "session_expires": "process",
-        },
-    )
+    if target is None:
+        response: Response = JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "csrf_token": session.csrf_token,
+                "session_expires": "process",
+            },
+        )
+    else:
+        response = RedirectResponse(url=target, status_code=303)
     response.set_cookie(
         SESSION_COOKIE,
         session.session_id,
@@ -295,6 +311,7 @@ async def list_assets(
     source_id: int | None = None,
     availability: Literal["present", "missing", "any"] = "any",
     has_thumbnail: Literal["true", "false", "any"] = "any",
+    order: AssetOrder = "asset_id",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -307,6 +324,7 @@ async def list_assets(
         source_id=source_id,
         availability=availability,
         has_thumbnail=has_thumbnail,
+        order=order,
     )
 
 
