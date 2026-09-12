@@ -36,6 +36,19 @@ INPUT_UNSTABLE = "INPUT_UNSTABLE"
 LEASE_EXPIRED = "LEASE_EXPIRED"
 SCAN_INTERRUPTED = "SCAN_INTERRUPTED"
 
+#: P1-03 derived-media codes. ``SOURCE_FILE_MISSING`` and ``DISK_SPACE_INSUFFICIENT`` are
+#: deliberately reused from the frozen scan set; the rest have no honest equivalent there.
+ASSET_NOT_FOUND = "ASSET_NOT_FOUND"
+SOURCE_FILE_MISSING = "SOURCE_FILE_MISSING"
+DECODE_FAILED = "DECODE_FAILED"
+FORMAT_UNSUPPORTED = "FORMAT_UNSUPPORTED"
+ARTIFACT_WRITE_FAILED = "ARTIFACT_WRITE_FAILED"
+MEDIA_INTERRUPTED = "MEDIA_INTERRUPTED"
+
+#: Codes a media batch records per asset and keeps enumerable without re-decoding.
+#: Only the first two are treated as deterministic properties of the input content.
+DETERMINISTIC_MEDIA_FAILURES = frozenset({DECODE_FAILED, FORMAT_UNSUPPORTED})
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

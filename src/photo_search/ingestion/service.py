@@ -6,7 +6,7 @@ import ntpath
 import os
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,10 @@ from photo_search.ingestion.scanner import (
     StabilityPolicy,
 )
 from photo_search.jobs import queue as jobs
+from photo_search.media.cache import MediaCache
+from photo_search.media.contract import KINDS, spec_for
+from photo_search.media.pipeline import MediaGenerator, select_targets
+from photo_search.media.status import media_status
 
 
 def system_wall_clock_ms() -> int:
@@ -234,6 +238,84 @@ class CatalogService:
 
         options.setdefault("stability", self.stability_policy())
         return execute_scan(self, int(source_id), **options).as_dict()
+
+    # ------------------------------------------------------------ derived media
+    def media_cache(self) -> MediaCache:
+        """The rebuildable artifact cache rooted in this service's data directory."""
+        return MediaCache.open(self.data_root)
+
+    def generate_media(
+        self,
+        kind: str,
+        *,
+        asset_ids: Sequence[int] | None = None,
+        source_id: int | None = None,
+        limit: int | None = None,
+        retry_failed: bool = False,
+        interrupt_after: int | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        failure_limit: int = 20,
+        min_free_bytes: int | None = None,
+    ) -> dict[str, Any]:
+        """Generate one media kind for the requested assets, isolating bad inputs."""
+        spec = spec_for(kind)
+        cache = self.media_cache()
+        targets = select_targets(
+            self.catalog,
+            asset_ids=asset_ids,
+            source_id=source_id,
+            limit=limit,
+        )
+        generator_options: dict[str, Any] = {
+            "cache": cache,
+            "data_root": self.data_root,
+            "disk_usage": self.disk_usage,
+            "wall_clock_ms": self.wall_clock_ms,
+        }
+        if min_free_bytes is not None:
+            generator_options["min_free_bytes"] = int(min_free_bytes)
+        generator = MediaGenerator(
+            self.catalog,
+            **generator_options,
+        )
+        return generator.run(
+            spec,
+            targets,
+            retry_failed=retry_failed,
+            interrupt_after=interrupt_after,
+            cancel_check=cancel_check,
+            failure_limit=failure_limit,
+        )
+
+    def generate_thumbnail(self, **options: Any) -> dict[str, Any]:
+        return self.generate_media("thumbnail", **options)
+
+    def generate_preview(self, **options: Any) -> dict[str, Any]:
+        return self.generate_media("preview", **options)
+
+    def media_report(
+        self,
+        *,
+        kinds: Sequence[str] = KINDS,
+        source_id: int | None = None,
+        asset_limit: int | None = None,
+        include_failures: bool = False,
+        failure_limit: int = 20,
+        prune_temp: bool = False,
+        min_temp_age_ms: int = 600_000,
+    ) -> dict[str, Any]:
+        """Read-only derived-media status; creates nothing and prunes only temp files."""
+        return media_status(
+            self.catalog,
+            self.media_cache(),
+            kinds=tuple(kinds),
+            source_id=source_id,
+            asset_limit=asset_limit,
+            include_failures=include_failures,
+            failure_limit=failure_limit,
+            prune_temp=prune_temp,
+            min_temp_age_ms=min_temp_age_ms,
+        )
 
     def close(self) -> None:
         self.catalog.close()

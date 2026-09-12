@@ -17,6 +17,12 @@ DATA_ROOT_DIRNAME = "PhotoSearchData"
 CATALOG_DIRNAME = "catalog"
 CATALOG_FILENAME = "catalog.db"
 BACKUPS_DIRNAME = "backups"
+#: Architecture §11.1: derived media lives in rebuildable directories of the data root,
+#: never inside a source root and never inside the install directory.
+THUMBNAILS_DIRNAME = "thumbnails"
+PREVIEWS_DIRNAME = "previews"
+CACHE_DIRNAME = "cache"
+MEDIA_CACHE_DIRNAME = "media"
 
 
 def default_data_root() -> Path:
@@ -47,3 +53,18 @@ def catalog_db_path(data_root: str | Path | None = None) -> Path:
 
 def backups_dir(data_root: str | Path | None = None) -> Path:
     return resolve_data_root(data_root) / BACKUPS_DIRNAME / CATALOG_DIRNAME
+
+
+def thumbnails_dir(data_root: str | Path | None = None) -> Path:
+    """Root of the rebuildable grid-thumbnail cache (architecture §5.4, §11.1)."""
+    return resolve_data_root(data_root) / THUMBNAILS_DIRNAME
+
+
+def previews_dir(data_root: str | Path | None = None) -> Path:
+    """Root of the rebuildable detail-preview cache; may be deleted on its own."""
+    return resolve_data_root(data_root) / PREVIEWS_DIRNAME
+
+
+def media_cache_dir(data_root: str | Path | None = None) -> Path:
+    """Structured, rebuildable media bookkeeping that is not a media artifact itself."""
+    return resolve_data_root(data_root) / CACHE_DIRNAME / MEDIA_CACHE_DIRNAME

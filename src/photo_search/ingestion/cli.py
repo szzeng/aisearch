@@ -1,9 +1,15 @@
-"""``catalog`` CLI: the observable internal entry for the catalog and scan tasks.
+"""``catalog`` CLI: the observable internal entry for the catalog, scan and media tasks.
 
 Every subcommand can emit one JSON document with ``--json`` and returns a non-zero exit
-P1-02 adds streaming-scan fields and a structured ``SCAN_INTERRUPTED`` error while keeping
-the existing P1-01 fields and exit codes. No HTTP business API is added;
-``GET /api/v1/health`` keeps its P0-01 behaviour.
+code on failure. P1-02 adds streaming-scan fields and a structured ``SCAN_INTERRUPTED``
+error; P1-03 adds ``thumbnail``, ``preview`` and ``media-status``. Existing fields and the
+exit-code contract (batch ran to completion 0, structured ``CatalogError`` 1, usage 2) are
+unchanged. No HTTP business API is added; ``GET /api/v1/health`` keeps its P0-01 behaviour.
+
+``thumbnail``/``preview`` exit 0 when the batch ran to completion, including the isolated
+per-asset failures the batch reports in ``--json`` (a corrupt file must not fail a whole
+library). A structured error such as ``DISK_SPACE_INSUFFICIENT`` or an interrupted batch
+exits 1 and publishes nothing half-written.
 """
 
 from __future__ import annotations
@@ -14,13 +20,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from photo_search.catalog.errors import SCAN_INTERRUPTED, CatalogError
+from photo_search.catalog.errors import MEDIA_INTERRUPTED, SCAN_INTERRUPTED, CatalogError
 from photo_search.catalog.migrate import catalog_info, migrate_database
 from photo_search.config import catalog_db_path, resolve_data_root
 from photo_search.ingestion.scanner import ScanInterrupted
 from photo_search.ingestion.service import CatalogService
+from photo_search.media.contract import KINDS
+from photo_search.media.pipeline import MediaInterrupted
 
-COMMANDS = ("init", "info", "add-source", "list-sources", "scan", "status")
+COMMANDS = (
+    "init",
+    "info",
+    "add-source",
+    "list-sources",
+    "scan",
+    "status",
+    "thumbnail",
+    "preview",
+    "media-status",
+)
 
 
 def _common_options() -> argparse.ArgumentParser:
@@ -72,6 +90,44 @@ def add_catalog_parser(subparsers: Any) -> None:
         default=None,
         help="upper bound on stability waiting before the scan request is re-queued",
     )
+    for name, help_text in (
+        ("thumbnail", "generate orientation-correct grid thumbnails (320 px, JPEG)"),
+        ("preview", "generate detail previews (1600 px, JPEG) on demand"),
+    ):
+        media = commands.add_parser(name, parents=[common], help=help_text)
+        media.add_argument(
+            "--asset-id",
+            type=int,
+            action="append",
+            default=None,
+            help="restrict the batch to one asset (repeatable)",
+        )
+        media.add_argument("--source-id", type=int, default=None)
+        media.add_argument(
+            "--limit",
+            type=int,
+            default=None,
+            help="process at most this many assets (required for a lazy preview run)",
+        )
+        media.add_argument(
+            "--retry-failed",
+            action="store_true",
+            help="re-decode assets whose deterministic failure is already recorded",
+        )
+    report = commands.add_parser(
+        "media-status", parents=[common], help="read-only thumbnail/preview status"
+    )
+    report.add_argument("--source-id", type=int, default=None)
+    report.add_argument("--kind", choices=[*KINDS, "all"], default="all")
+    report.add_argument("--asset-limit", type=int, default=None)
+    report.add_argument("--failures", action="store_true", help="enumerate failure reasons")
+    report.add_argument("--failure-limit", type=int, default=20)
+    report.add_argument(
+        "--prune-temp",
+        action="store_true",
+        help="delete leftover temporary files of interrupted runs",
+    )
+    report.add_argument("--min-temp-age-ms", type=int, default=600_000)
 
 
 def _is_scalar(value: Any) -> bool:
@@ -111,6 +167,21 @@ def run_catalog_command(args: argparse.Namespace) -> int:
             )
         else:
             print(f"error: USAGE: {message}", file=sys.stderr)
+        return 2
+    limits = [
+        value
+        for value in (
+            getattr(args, "limit", None),
+            getattr(args, "asset_limit", None),
+            getattr(args, "failure_limit", None),
+        )
+        if value is not None
+    ]
+    if any(int(value) < 0 for value in limits):
+        _emit_error(args, CatalogError("USAGE", "limits must not be negative"))
+        return 2
+    if command == "preview" and not getattr(args, "asset_id", None) and getattr(args, "limit", None) is None:
+        _emit_error(args, CatalogError("USAGE", "preview is lazy; pass --asset-id or --limit"))
         return 2
     data_root = resolve_data_root(args.data_root)
     try:
@@ -154,6 +225,27 @@ def run_catalog_command(args: argparse.Namespace) -> int:
                     payload["sources"] = service.list_sources()
                 else:
                     payload["source"] = service.get_source(args.source_id)
+            elif command in ("thumbnail", "preview"):
+                payload = {
+                    "status": "ok",
+                    "media": service.generate_media(
+                        command,
+                        asset_ids=args.asset_id,
+                        source_id=args.source_id,
+                        limit=args.limit,
+                        retry_failed=args.retry_failed,
+                    ),
+                }
+            elif command == "media-status":
+                payload = service.media_report(
+                    kinds=KINDS if args.kind == "all" else (args.kind,),
+                    source_id=args.source_id,
+                    asset_limit=args.asset_limit,
+                    include_failures=args.failures,
+                    failure_limit=args.failure_limit,
+                    prune_temp=args.prune_temp,
+                    min_temp_age_ms=args.min_temp_age_ms,
+                )
             else:  # pragma: no cover - argparse restricts the choices
                 raise CatalogError("USAGE", f"unsupported catalog command: {command}")
             _emit(args, payload)
@@ -162,6 +254,19 @@ def run_catalog_command(args: argparse.Namespace) -> int:
         _emit_error(
             args,
             CatalogError(SCAN_INTERRUPTED, str(interrupted), details={"reason": "interrupted"}),
+        )
+        return 1
+    except MediaInterrupted as interrupted:
+        _emit_error(
+            args,
+            CatalogError(
+                MEDIA_INTERRUPTED,
+                str(interrupted),
+                details={
+                    "reason": "interrupted",
+                    "summary": interrupted.summary,
+                },
+            ),
         )
         return 1
     except CatalogError as error:
