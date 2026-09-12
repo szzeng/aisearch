@@ -8,6 +8,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,13 @@ from photo_search.jobs import queue as jobs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+#: Wall clock the fixtures compare their ``mtime`` against (P1-02 stability window).
+#: Fixtures written by ``_write`` are one hour old, so they are quiet immediately; a test
+#: that wants a "still being written" file passes ``age_ms=0`` and drives the wall clock
+#: through ``Harness.wall.advance`` instead of sleeping for real.
+WALL_BASE_MS = time.time_ns() // 1_000_000
+QUIET_AGE_MS = 3_600_000
+
 
 class Clock:
     def __init__(self, start: int = 1_000_000) -> None:
@@ -44,6 +52,10 @@ class Clock:
 
     def advance(self, delta_ms: int) -> None:
         self.ms += delta_ms
+
+
+class WallClock(Clock):
+    """Wall-clock stand-in: the scanner compares file ``mtime`` against this, not leases."""
 
 
 class Usage:
@@ -57,23 +69,33 @@ class Usage:
 class Harness:
     service: CatalogService
     clock: Clock
+    wall: WallClock
     data_root: Path
 
 
 @pytest.fixture()
 def harness(tmp_path: Path):
     clock = Clock()
+    wall = WallClock(WALL_BASE_MS)
     data_root = tmp_path / "PhotoSearchData"
-    service = CatalogService.open(data_root=data_root, clock=clock, lease_seconds=60)
+    service = CatalogService.open(
+        data_root=data_root,
+        clock=clock,
+        lease_seconds=60,
+        wall_clock_ms=wall,
+        stability_sleep=wall.advance,
+    )
     try:
-        yield Harness(service=service, clock=clock, data_root=data_root)
+        yield Harness(service=service, clock=clock, wall=wall, data_root=data_root)
     finally:
         service.close()
 
 
-def _write(path: Path, payload: bytes) -> Path:
+def _write(path: Path, payload: bytes, *, age_ms: int = QUIET_AGE_MS) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(payload)
+    stamp = (WALL_BASE_MS - age_ms) * 1_000_000
+    os.utime(path, ns=(stamp, stamp))
     return path
 
 
@@ -286,16 +308,27 @@ def test_interrupted_scan_resumes_after_restart_without_duplicate_jobs(
     assert jobs_after_interrupt[0]["state"] == "RUNNING"
     assert jobs_after_interrupt[0]["attempts"] == 0
     assert jobs_after_interrupt[0]["lease_token"] is not None
+    # P1-02 phases: the whole streamed enumeration is a positive observation, while only
+    # the files whose content was confirmed may hold an asset binding.
     partial = harness.service.counts(source_id=source_id)
-    assert partial["locations"] == 2
-    assert partial["locations_pending_content"] == 0
+    assert partial["locations"] == 5
+    assert partial["locations_pending_content"] == 3
     assert partial["assets"] == 2
     assert partial["scans"] == 1
+    bound = {row["relative_path"]: row for row in _locations(harness)}
+    assert bound["photo-0.jpg"]["asset_id"] is not None
+    assert bound["photo-1.jpg"]["asset_id"] is not None
+    assert all(bound[f"photo-{index}.jpg"]["asset_id"] is None for index in (2, 3, 4))
+    assert 0.0 < jobs_after_interrupt[0]["progress"] < 1.0
 
     harness.service.close()
     harness.clock.advance(61_000)
     restarted = CatalogService.open(
-        data_root=harness.data_root, clock=harness.clock, lease_seconds=60
+        data_root=harness.data_root,
+        clock=harness.clock,
+        lease_seconds=60,
+        wall_clock_ms=harness.wall,
+        stability_sleep=harness.wall.advance,
     )
     try:
         outcome = restarted.run_scan(source_id)
@@ -386,23 +419,29 @@ def test_positive_writes_require_a_live_submission(
 def test_content_binding_requires_a_live_submission(
     harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """C2 B1: the asset upsert + binding transaction is gated before it writes."""
+    """C2 B1: the asset upsert + binding transaction is gated before it writes.
+
+    P1-02 order for one file: #1 enumeration observation, #2 content-pass observation,
+    #3 asset upsert + bind, #4 final success transaction. Refusing #3 keeps the streamed
+    observation but must not create an asset.
+    """
     root = tmp_path / "library"
     _write(root / "a.jpg", b"AAAA")
     source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
     calls = {"count": 0}
     real_validate = jobs.validate_submission
 
-    def refuse_second(connection, **kwargs):
+    def refuse_binding(connection, **kwargs):
         calls["count"] += 1
-        if calls["count"] == 2:
+        if calls["count"] == 3:
             raise CatalogError("STALE_INPUT_REVISION", "simulated revision change")
         return real_validate(connection, **kwargs)
 
-    monkeypatch.setattr(scanner.jobs, "validate_submission", refuse_second)
+    monkeypatch.setattr(scanner.jobs, "validate_submission", refuse_binding)
     with pytest.raises(CatalogError) as error:
         harness.service.run_scan(source_id)
     assert error.value.code == "STALE_INPUT_REVISION"
+    assert calls["count"] == 3
     counts = harness.service.counts(source_id=source_id)
     assert counts["locations"] == 1
     assert counts["locations_pending_content"] == 1
@@ -931,7 +970,14 @@ def test_cli_reports_json_results_and_structured_errors(tmp_path: Path) -> None:
 
     scanned = _run_cli(data_root, "scan", "--source-id", "1", "--json")
     assert scanned.returncode == 0, scanned.stderr
-    assert json.loads(scanned.stdout)["scan"]["state"] == "SUCCEEDED"
+    scan_body = json.loads(scanned.stdout)["scan"]
+    assert scan_body["state"] == "SUCCEEDED"
+    # P1-02 adds observable streaming fields without changing the P1-01 ones.
+    assert scan_body["enumerated"] == 1
+    assert scan_body["files_seen"] == 1
+    assert scan_body["stability_wait_ms"] == 0
+    assert scan_body["enumeration_ms"] >= 0
+    assert scan_body["processing_ms"] >= 0
 
     status = _run_cli(data_root, "status", "--source-id", "1", "--json")
     assert status.returncode == 0

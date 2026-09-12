@@ -2,60 +2,80 @@
 
 ## Current state
 
-**P0 is complete. P1-01 is PASS after the C2 final short re-review. P1-02 is now READY / CURRENT TASK.**
+**P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is now READY / CURRENT TASK.**
 
-P1-01 history:
+P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
-- Initial implementation: `92ca7566aeeb007c1e442f19612b932412c07a73`, evidence in [docs/reports/P1-01-catalog-identity-and-scan.md](reports/P1-01-catalog-identity-and-scan.md).
-- First C2 focused review: `83adb65`, [docs/reports/P1-01-c2-focused-review.md](reports/P1-01-c2-focused-review.md), result FAIL / FIX REQUIRED.
-- First DS-H corrective pass: `ce6f56c57fbf96203a0d81d1eb975fa27f469ac5`, [docs/reports/P1-01-c2-remediation.md](reports/P1-01-c2-remediation.md), recorded `117 passed, 1 skipped`.
-- C2 final focused re-review: `8393583`, [docs/reports/P1-01-c2-final-rereview.md](reports/P1-01-c2-final-rereview.md), found F1/F2 and returned FAIL / FIX REQUIRED.
-- Final DS-H corrective pass: `f0b4f402e020e327748d9feef292447cd6301757`, [docs/reports/P1-01-c2-final-remediation.md](reports/P1-01-c2-final-remediation.md), recorded `122 passed, 1 skipped`.
-- C2 final short re-review: [docs/reports/P1-01-c2-final-pass.md](reports/P1-01-c2-final-pass.md), result **PASS**.
+- Implementation `92ca7566`, three C2 review rounds (`83adb65` FAIL, `8393583` FAIL) and two corrective passes
+  (`ce6f56c5`, `f0b4f402`), final C2 short re-review PASS in [docs/reports/P1-01-c2-final-pass.md](reports/P1-01-c2-final-pass.md).
+  Accepted closing baseline: `e39a40c`.
+- Persistent positive writes are submission-qualified, retry/lease exhaustion commits job/scan_run terminal state in one
+  transaction, schema compatibility cannot be bypassed, stale hashes cannot produce success, and same-scan recovery no
+  longer inherits observations from an older execution.
 
-P1-01's frozen contract is `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`. The final accepted implementation closes B1-B4/R1-R2 and F1/F2: persistent positive writes are submission-qualified, retry/lease exhaustion commits job/scan_run terminal state consistently, schema compatibility cannot be bypassed, stale hashes cannot produce success, and same-scan recovery coverage no longer inherits observations from an older execution.
+P1-02 (streaming scan, stability waiting, hash before/after stat, missing rules) is recorded in
+[docs/reports/P1-02-streaming-scan-stability-and-missing.md](reports/P1-02-streaming-scan-stability-and-missing.md).
 
-Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.  
+Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
 ## Latest accepted verification
 
-The execution results below were produced by DS-H on the final P1-01 corrective pass. C2 performed the final static focused review and did not independently rerun the suite on the user's Windows machine.
+Produced by DS-H on the P1-02 implementation (see the P1-02 report for per-scenario evidence; no C2 review was run for P1-02).
 
 | Check | Result |
 |---|---|
-| `uv run pytest -o addopts="" -q tests/unit tests/integration` | exit 0, `122 passed, 1 skipped in 75.38s` (final P1-01 DS-H baseline) |
+| `uv run pytest tests/unit tests/integration` (equivalent to the card's `-q` form) | exit 0, `133 passed, 2 skipped in 98.21s` |
+| `.venv\Scripts\python.exe -m pytest -o addopts="" -q tests/unit tests/integration` | exit 0, `134 passed, 1 skipped in 87.11s` (junction fixture only creatable outside the `uv run pytest` process context) |
 | `uv run ruff check .` / `git diff --check` | clean / clean |
-| F1 production-path tests | expired-lease exhaustion, unstable-input exhaustion and generic scheduler exhaustion all keep job/scan_run terminal state linked |
-| F2 production-path tests | same-scan recovery correctly marks deleted positions MISSING and ignores stale unbound coverage from a killed execution |
-| C2 final short re-review | **PASS** |
+| P1-02 D-level scenarios 1-8 (stability wait, hash before/after, kill+resume, enumeration failure, missing atomicity, move/rename, streaming scale, path-key collision) | all executed on temporary fixtures; mapped to named tests in the report |
+| Scale/memory (`tools/diagnostics/scan_scale_probe.py`) | 5k files: 29.2 MB peak working set, 379 files/s; 20k files: 30.1 MB peak, 374.6 files/s; `reset_execution_coverage` over 20000 positions = 31 ms |
+
+P1-02 shipped defaults: stability window **1500 ms**, wait limit **30000 ms**, chunked position reads (256 rows),
+progress 0.0-1.0 monotone, `MISSING`/`last_successful_scan` still only in the single final success transaction.
+No schema change (still `schema_version = 1`), no new dependency.
 
 ## Carried-forward limits / follow-ups
 
-- P1-02 must measure the cost of `reset_execution_coverage()` at realistic catalog sizes. It currently performs a source/scan-marker UPDATE when a new execution is claimed; correctness is accepted for P1-01, while large-catalog transaction duration remains a performance follow-up.
-- New P1-02 code that directly uses `jobs.claim_job()` must preserve the accepted exhaustion transaction boundary; consider hardening the API if additional callers make misuse likely.
-- GTX 1660 6 GB remains **unverified on real hardware** (P4-07/P4-08 release gate). Model GPU execution is verified on the current RTX 4060 Laptop GPU; earlier P0 limitations for InsightFace/RapidOCR, cold CUDA start and human-labelled semantic quality remain carried forward.
-- The single-writer coordinator is in-process; cross-process writers use WAL + `BEGIN IMMEDIATE` + busy timeout but have not been stress-tested.
-- `format/width/height` remain NULL in P1-01 as allowed by ADR-0002 §3.5.
+- No file-id move acceleration: a move is only proven by full SHA-256, so it leaves "new location PRESENT + old position
+  MISSING" with the same `asset_id`. Explicitly allowed by the P1-02 card; revisit only with a sound identity argument.
+- A file that disappears between enumeration and content confirmation still classifies as `FILE_READ_ERROR` → `BLOCKED`
+  (conservative: never converted into a deletion conclusion). A re-run of the same `scan_run` completes it.
+- Files whose `mtime` is later than the wall clock (clock skew, wrong camera date) skip the quiet-period check and rely on
+  the stat pair around the hash only.
+- Throughput is bounded by per-file short write transactions (2 observe/bind writes + throttled progress): ~375 files/s on
+  4 KB synthetic files in this environment. Batching commits is a future tuning item that must not break ADR-0002 §8.
+- Single-writer coordinator is in-process; cross-process writers use WAL + `BEGIN IMMEDIATE` + busy timeout but have not
+  been stress-tested. Recovery always re-enumerates the whole source (no directory cursor), as ADR-0002 §5.3 allows.
+- `assets.width/height/format` remain NULL (ADR-0002 §3.5); P1-03 owns orientation/decoding.
+- GTX 1660 6 GB remains **unverified on real hardware** (P4-07/P4-08 release gate). Model GPU execution is verified on the
+  current RTX 4060 Laptop GPU; earlier P0 limits for InsightFace/RapidOCR, cold CUDA start and human-labelled semantic
+  quality remain carried forward.
 - Two historical P0 record inconsistencies remain recorded but unedited; see the P0-07 report §3.1.
 
 ## GPU status
 
-Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 / CUDA UMD 13.4): Chinese-CLIP image and text towers run on `CUDAExecutionProvider` with CPU fallback disabled, the worker defaults to CUDA, ViT-L/14 also ran fully on CUDA, and the packaged app reproduced the CUDA path from a Chinese/space path offline.
+Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 / CUDA UMD 13.4):
+Chinese-CLIP image and text towers run on `CUDAExecutionProvider` with CPU fallback disabled, the worker defaults to CUDA,
+ViT-L/14 also ran fully on CUDA, and the packaged app reproduced the CUDA path from a Chinese/space path offline.
 
-Still open for later phases: real GTX 1660 6 GB validation; bounded decode pool and thumbnail/subsample prep; scheduler handling of cold GPU start; explicit OCR device decision; InsightFace CPU-operator re-check; and a human-labelled semantic-search holdout.
+Still open for later phases: real GTX 1660 6 GB validation; bounded decode pool and thumbnail/subsample prep (P1-03);
+scheduler handling of cold GPU start; explicit OCR device decision; InsightFace CPU-operator re-check; and a
+human-labelled semantic-search holdout.
 
 ## Current task / next execution step
 
-**P1-02 — 流式扫描、稳定等待、hash 前后校验、缺失判定.**
+**P1-03 — 方向、缩略图/预览、缓存分片、坏图隔离.**
 
-- Status: **READY / CURRENT TASK**. The P1-01 C2 gate is satisfied.
-- Task card: `docs/tasks/P1-02.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**.
-- Goal: upgrade the P1-01 minimal deterministic scanner into a real-library scanner with streaming/bounded-memory enumeration, stability waiting, hash-before/after stat validation, production recovery and complete-scan-only missing reconciliation.
-- Keep ADR-0002 identity, unique-key, lease, submission-qualification and missing atomicity semantics frozen. Any required semantic change stops implementation and returns to **C2 / GPT-5.6 Sol / high**.
-- Validation level: **D**. Use temporary fixtures only; never scan a real photo library without explicit user authorization.
+- Status: **READY / CURRENT TASK**. P1-01 and P1-02 are accepted; P1-03 has no unfinished dependency.
+- Task card: `docs/tasks/P1-03.md`.
+- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理** (complex media compatibility can escalate to DS-H).
+- Goal: turn catalogued assets into browseable, orientation-correct thumbnails and previews with a sharded rebuildable
+  cache, atomic replace and honest isolation of unreadable/unsupported files — without touching the frozen P1-01/P1-02
+  identity, lease, scan and missing semantics.
+- Validation level: **B** (`pytest -q tests/unit tests/integration` + ruff + diff-check); if the task adds a schema
+  migration it must additionally run the D-level migration/interrupted-write fault injections.
+- Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
 
-After P1-02 implementation and D-level validation, persist its report/status and create/update the P1-03 task card per `docs/tasks/P1-02.md`.
-
-Model switching remains manual. The repository records the recommended role/model for each stage; it does not switch clients or models itself.
+After P1-03 implementation and validation, persist its report/status and create/update the P1-04 task card per
+`docs/tasks/P1-03.md`. Model switching remains manual; the repository only records the recommended model per stage.

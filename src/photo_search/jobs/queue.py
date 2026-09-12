@@ -472,6 +472,42 @@ def heartbeat(
     return get_job(connection, job_id)
 
 
+def set_progress(
+    connection: sqlite3.Connection,
+    *,
+    job_id: int,
+    lease_token: str,
+    now_ms: int,
+    progress: float,
+) -> float:
+    """Store monotone progress for a live execution (ADR-0002 §6.5, P1-02 §4).
+
+    The caller writes this inside the same ``BEGIN IMMEDIATE`` transaction that already
+    validated the submission for this lease, so a late or expired executor cannot advance
+    progress either. A non-running job, a stale token or an expired lease writes nothing,
+    and the stored value never decreases.
+    """
+    job = get_job(connection, job_id)
+    if job.state != STATE_RUNNING or job.lease_token != lease_token:
+        raise CatalogError(
+            LEASE_CONFLICT,
+            f"job {job_id} is not running under this lease",
+            details={"job_id": job_id, "state": job.state},
+        )
+    if job.lease_expires_at is None or job.lease_expires_at <= now_ms:
+        raise CatalogError(
+            STALE_LEASE,
+            f"lease for job {job_id} has expired",
+            details={"job_id": job_id, "lease_expires_at": job.lease_expires_at, "now": now_ms},
+        )
+    value = min(max(float(progress), 0.0), 1.0)
+    value = max(value, float(job.progress or 0.0))
+    connection.execute(
+        "UPDATE jobs SET progress = ?, updated_at = ? WHERE job_id = ?", (value, now_ms, job_id)
+    )
+    return value
+
+
 def validate_submission(
     connection: sqlite3.Connection,
     *,

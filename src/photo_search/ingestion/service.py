@@ -5,6 +5,7 @@ from __future__ import annotations
 import ntpath
 import os
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,21 @@ from photo_search.catalog.errors import (
 from photo_search.catalog.migrate import catalog_info
 from photo_search.catalog.paths import is_same_or_ancestor, normalize_root
 from photo_search.config import resolve_data_root
+from photo_search.ingestion.scanner import (
+    DEFAULT_STABILITY_WAIT_LIMIT_MS,
+    DEFAULT_STABILITY_WINDOW_MS,
+    StabilityPolicy,
+)
 from photo_search.jobs import queue as jobs
+
+
+def system_wall_clock_ms() -> int:
+    """Wall-clock milliseconds; compared against file ``mtime``, never against leases."""
+    return time.time_ns() // 1_000_000
+
+
+def _default_stability_sleep(milliseconds: int) -> None:
+    time.sleep(milliseconds / 1000.0)
 
 
 class CatalogService:
@@ -34,11 +49,25 @@ class CatalogService:
         data_root: Path,
         disk_usage: Callable[[str | Path], Any] | None = None,
         retry_backoff_ms: int = jobs.DEFAULT_RETRY_BACKOFF_MS,
+        stability_window_ms: int | None = None,
+        stability_wait_limit_ms: int | None = None,
+        wall_clock_ms: Callable[[], int] | None = None,
+        stability_sleep: Callable[[int], None] | None = None,
     ) -> None:
         self.catalog = catalog
         self.data_root = Path(data_root)
         self.disk_usage = disk_usage or shutil.disk_usage
         self.retry_backoff_ms = int(retry_backoff_ms)
+        self.stability_window_ms = int(
+            DEFAULT_STABILITY_WINDOW_MS if stability_window_ms is None else stability_window_ms
+        )
+        self.stability_wait_limit_ms = int(
+            DEFAULT_STABILITY_WAIT_LIMIT_MS
+            if stability_wait_limit_ms is None
+            else stability_wait_limit_ms
+        )
+        self.wall_clock_ms = wall_clock_ms or system_wall_clock_ms
+        self.stability_sleep = stability_sleep or _default_stability_sleep
 
     @classmethod
     def open(
@@ -50,6 +79,10 @@ class CatalogService:
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
         disk_usage: Callable[[str | Path], Any] | None = None,
         retry_backoff_ms: int = jobs.DEFAULT_RETRY_BACKOFF_MS,
+        stability_window_ms: int | None = None,
+        stability_wait_limit_ms: int | None = None,
+        wall_clock_ms: Callable[[], int] | None = None,
+        stability_sleep: Callable[[int], None] | None = None,
     ) -> CatalogService:
         root = resolve_data_root(data_root)
         catalog = Catalog.open(
@@ -64,6 +97,18 @@ class CatalogService:
             data_root=root,
             disk_usage=disk_usage,
             retry_backoff_ms=retry_backoff_ms,
+            stability_window_ms=stability_window_ms,
+            stability_wait_limit_ms=stability_wait_limit_ms,
+            wall_clock_ms=wall_clock_ms,
+            stability_sleep=stability_sleep,
+        )
+
+    def stability_policy(self, overrides: StabilityPolicy | None = None) -> StabilityPolicy:
+        if overrides is not None:
+            return overrides
+        return StabilityPolicy(
+            window_ms=self.stability_window_ms,
+            wait_limit_ms=self.stability_wait_limit_ms,
         )
 
     # ------------------------------------------------------------------ reads
@@ -187,6 +232,7 @@ class CatalogService:
     def run_scan(self, source_id: int, **options: Any) -> dict[str, Any]:
         from photo_search.ingestion.scanner import execute_scan
 
+        options.setdefault("stability", self.stability_policy())
         return execute_scan(self, int(source_id), **options).as_dict()
 
     def close(self) -> None:

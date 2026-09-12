@@ -1,8 +1,9 @@
-"""``catalog`` CLI: the observable internal entry for P1-01.
+"""``catalog`` CLI: the observable internal entry for the catalog and scan tasks.
 
 Every subcommand can emit one JSON document with ``--json`` and returns a non-zero exit
-code on failure, including structured catalog errors. No HTTP business API is added in
-P1-01; ``GET /api/v1/health`` keeps its P0-01 behaviour.
+P1-02 adds streaming-scan fields and a structured ``SCAN_INTERRUPTED`` error while keeping
+the existing P1-01 fields and exit codes. No HTTP business API is added;
+``GET /api/v1/health`` keeps its P0-01 behaviour.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.errors import SCAN_INTERRUPTED, CatalogError
 from photo_search.catalog.migrate import catalog_info, migrate_database
 from photo_search.config import catalog_db_path, resolve_data_root
+from photo_search.ingestion.scanner import ScanInterrupted
 from photo_search.ingestion.service import CatalogService
 
 COMMANDS = ("init", "info", "add-source", "list-sources", "scan", "status")
@@ -54,10 +56,22 @@ def add_catalog_parser(subparsers: Any) -> None:
     add_source.add_argument("--name", required=True)
     add_source.add_argument("--path", required=True, type=Path)
     add_source.add_argument("--volume-hint", default=None)
-    scan = commands.add_parser("scan", parents=[common], help="run the minimal catalog scan")
+    scan = commands.add_parser("scan", parents=[common], help="run the streaming catalog scan")
     scan.add_argument("--source-id", type=int, required=True)
     scan.add_argument("--worker-id", default=None)
     scan.add_argument("--lease-seconds", type=int, default=None)
+    scan.add_argument(
+        "--stability-window-ms",
+        type=int,
+        default=None,
+        help="quiet period size/mtime_ns must hold before content is committed",
+    )
+    scan.add_argument(
+        "--stability-wait-limit-ms",
+        type=int,
+        default=None,
+        help="upper bound on stability waiting before the scan request is re-queued",
+    )
 
 
 def _is_scalar(value: Any) -> bool:
@@ -108,7 +122,11 @@ def run_catalog_command(args: argparse.Namespace) -> int:
             payload = {"status": "ok", **result.as_dict()}
             _emit(args, payload)
             return 0
-        with CatalogService.open(data_root=data_root) as service:
+        with CatalogService.open(
+            data_root=data_root,
+            stability_window_ms=getattr(args, "stability_window_ms", None),
+            stability_wait_limit_ms=getattr(args, "stability_wait_limit_ms", None),
+        ) as service:
             if command == "add-source":
                 payload = {
                     "status": "ok",
@@ -140,6 +158,12 @@ def run_catalog_command(args: argparse.Namespace) -> int:
                 raise CatalogError("USAGE", f"unsupported catalog command: {command}")
             _emit(args, payload)
             return 0
+    except ScanInterrupted as interrupted:
+        _emit_error(
+            args,
+            CatalogError(SCAN_INTERRUPTED, str(interrupted), details={"reason": "interrupted"}),
+        )
+        return 1
     except CatalogError as error:
         _emit_error(args, error)
         return 1

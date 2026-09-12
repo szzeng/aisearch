@@ -10,11 +10,14 @@ single-writer transaction.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from photo_search.catalog.errors import (
     ASSET_SIZE_MISMATCH,
     INVALID_STATE_TRANSITION,
+    PATH_KEY_COLLISION,
     SOURCE_NOT_FOUND,
     CatalogError,
 )
@@ -230,7 +233,45 @@ def observe_location(
     size: int,
     mtime_ns: int,
 ) -> tuple[int, bool]:
-    """Record a positive observation; a changed size/mtime clears the content binding."""
+    """Record a positive observation and return ``(location_id, changed)``."""
+    observed = observe_location_detailed(
+        connection,
+        source_id=source_id,
+        scan_id=scan_id,
+        relative_path=relative_path,
+        path_key=path_key,
+        size=size,
+        mtime_ns=mtime_ns,
+    )
+    return observed.location_id, observed.changed
+
+
+@dataclass(frozen=True)
+class LocationObservation:
+    """Result of one positive position observation (P1-02 streaming scans)."""
+
+    location_id: int
+    created: bool
+    changed: bool
+
+
+def observe_location_detailed(
+    connection: sqlite3.Connection,
+    *,
+    source_id: int,
+    scan_id: int,
+    relative_path: str,
+    path_key: str,
+    size: int,
+    mtime_ns: int,
+) -> LocationObservation:
+    """Record a positive observation; a changed size/mtime clears the content binding.
+
+    The streaming scanner cannot hold the whole enumeration in memory, so two distinct
+    paths that collapse into one ``path_key`` are detected here instead of by an eager
+    in-memory pass: a row already seen by *this* execution under a different display path
+    is ``PATH_KEY_COLLISION`` and the scan must not reach ``SUCCEEDED`` (ADR-0002 §4.2).
+    """
     scan = connection.execute(
         "SELECT source_id FROM scan_runs WHERE scan_id = ?", (scan_id,)
     ).fetchone()
@@ -241,7 +282,8 @@ def observe_location(
             details={"source_id": source_id, "scan_id": scan_id},
         )
     row = connection.execute(
-        "SELECT location_id, size, mtime_ns, asset_id FROM file_locations "
+        "SELECT location_id, relative_path, size, mtime_ns, asset_id, last_seen_scan_id "
+        "FROM file_locations "
         "WHERE source_id = ? AND path_key = ?",
         (source_id, path_key),
     ).fetchone()
@@ -252,7 +294,23 @@ def observe_location(
             "VALUES (?, ?, ?, NULL, ?, ?, ?, 'PRESENT')",
             (source_id, relative_path, path_key, size, mtime_ns, scan_id),
         )
-        return int(cursor.lastrowid), True
+        return LocationObservation(location_id=int(cursor.lastrowid), created=True, changed=True)
+    if (
+        str(row["relative_path"]) != relative_path
+        and row["last_seen_scan_id"] is not None
+        and int(row["last_seen_scan_id"]) == int(scan_id)
+    ):
+        raise CatalogError(
+            PATH_KEY_COLLISION,
+            "two different paths in this source produce the same comparison key",
+            details={
+                "path_key": path_key,
+                "first_path": str(row["relative_path"]),
+                "second_path": relative_path,
+                "source_id": source_id,
+                "scan_id": scan_id,
+            },
+        )
     location_id = int(row["location_id"])
     changed = int(row["size"]) != int(size) or int(row["mtime_ns"]) != int(mtime_ns)
     if changed:
@@ -261,13 +319,56 @@ def observe_location(
             "last_seen_scan_id = ?, availability = 'PRESENT' WHERE location_id = ?",
             (relative_path, size, mtime_ns, scan_id, location_id),
         )
-        return location_id, True
+        return LocationObservation(location_id=location_id, created=False, changed=True)
     connection.execute(
         "UPDATE file_locations SET relative_path = ?, last_seen_scan_id = ?, availability = 'PRESENT' "
         "WHERE location_id = ?",
         (relative_path, scan_id, location_id),
     )
-    return location_id, False
+    return LocationObservation(location_id=location_id, created=False, changed=False)
+
+
+SEEN_LOCATION_FIELDS = ("location_id", "relative_path", "path_key", "size", "mtime_ns")
+
+
+def count_seen_locations(
+    connection: sqlite3.Connection, *, source_id: int, scan_id: int
+) -> int:
+    """How many positions the current execution has already observed (progress basis)."""
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND last_seen_scan_id = ?",
+            (source_id, scan_id),
+        ).fetchone()[0]
+    )
+
+
+def iter_seen_locations(
+    connection: sqlite3.Connection,
+    *,
+    source_id: int,
+    scan_id: int,
+    chunk_size: int = 256,
+) -> Iterator[sqlite3.Row]:
+    """Stream the positions of this execution in bounded chunks (P1-02 §1).
+
+    Keyset pagination keeps the memory footprint independent of the library size and
+    never leaves a live cursor open while the scanner commits the next short write
+    transaction on the same connection.
+    """
+    size = max(int(chunk_size), 1)
+    last_id = 0
+    while True:
+        rows = connection.execute(
+            f"SELECT {', '.join(SEEN_LOCATION_FIELDS)} FROM file_locations "
+            "WHERE source_id = ? AND last_seen_scan_id = ? AND location_id > ? "
+            "ORDER BY location_id LIMIT ?",
+            (source_id, scan_id, last_id, size),
+        ).fetchall()
+        if not rows:
+            return
+        yield from rows
+        last_id = int(rows[-1]["location_id"])
 
 
 def bind_location_content(
