@@ -520,6 +520,204 @@ def test_persistent_instability_requeues_instead_of_succeeding(
     assert harness.service.get_source(source_id)["last_successful_scan"] == 1
 
 
+def _set_max_attempts(harness: Harness, job_id: int, value: int) -> None:
+    with harness.service.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET max_attempts = ? WHERE job_id = ?", (value, job_id))
+
+
+def test_expired_lease_exhaustion_fails_job_and_scan_on_the_production_path(
+    harness: Harness, tmp_path: Path
+) -> None:
+    """C2 F1: the real execute_scan path must persist the terminal state, not roll it back."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    requested = harness.service.start_scan(source_id)
+    _set_max_attempts(harness, requested["job_id"], 1)
+
+    with pytest.raises(CatalogError) as stale:
+        harness.service.run_scan(source_id, lease_seconds=0)
+    assert stale.value.code == "STALE_LEASE"
+    assert _jobs(harness)[0]["state"] == "RUNNING"
+
+    harness.clock.advance(1)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+
+    assert error.value.code == "RETRY_EXHAUSTED"
+    job = _jobs(harness)[0]
+    assert job["state"] == "FAILED"
+    assert job["attempts"] == 1
+    assert job["lease_token"] is None
+    assert job["last_error_code"] == "LEASE_EXPIRED"
+    scan = _scan_row(harness, 1)
+    assert scan["state"] == "FAILED"
+    assert scan["finished_at"] is not None
+    assert json.loads(scan["error"])["code"] == "RETRY_EXHAUSTED"
+    assert harness.service.get_source(source_id)["last_successful_scan"] is None
+
+    with harness.service.catalog.write() as connection:
+        with pytest.raises(CatalogError) as terminal:
+            jobs.claim_job(
+                connection,
+                job_id=job["job_id"],
+                worker_id="worker-2",
+                now_ms=harness.clock(),
+                lease_seconds=60,
+            )
+        assert terminal.value.code == "INVALID_STATE_TRANSITION"
+
+    fresh = harness.service.start_scan(source_id)
+    assert fresh["scan_id"] == 2
+    assert fresh["reused"] is False
+    assert harness.service.counts()["jobs"] == 2
+
+
+def test_unstable_input_ceiling_fails_job_and_scan_together(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 F1: retry exhaustion must not leave job FAILED while the scan_run stays RUNNING."""
+    root = tmp_path / "library"
+    target = _write(root / "a.jpg", b"ORIGINAL")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    requested = harness.service.start_scan(source_id)
+    _set_max_attempts(harness, requested["job_id"], 1)
+    real_hash = scanner.sha256_file
+    state = {"writes": 0}
+
+    def always_changing(path: Path) -> str:
+        digest = real_hash(path)
+        if path.name == "a.jpg":
+            state["writes"] += 1
+            target.write_bytes(b"X" * (8 + state["writes"]))
+        return digest
+
+    monkeypatch.setattr(scanner, "sha256_file", always_changing)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+
+    assert error.value.code == "RETRY_EXHAUSTED"
+    assert error.value.details["reason_code"] == "INPUT_UNSTABLE"
+    job = _jobs(harness)[0]
+    assert job["state"] == "FAILED"
+    assert job["attempts"] == 1
+    assert job["last_error_code"] == "INPUT_UNSTABLE"
+    assert job["lease_token"] is None
+    scan = _scan_row(harness, 1)
+    assert scan["state"] == "FAILED"
+    assert scan["finished_at"] is not None
+    assert json.loads(scan["error"])["code"] == "INPUT_UNSTABLE"
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations_missing"] == 0
+    assert counts["locations_pending_content"] == 1
+    assert harness.service.get_source(source_id)["last_successful_scan"] is None
+
+
+def test_scheduler_fails_an_exhausted_scan_job_and_syncs_the_scan_run(
+    harness: Harness, tmp_path: Path
+) -> None:
+    """C2 F1: the generic claim path mirrors the terminal state onto the scan_run too."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    requested = harness.service.start_scan(source_id)
+    _set_max_attempts(harness, requested["job_id"], 1)
+    with harness.service.catalog.write() as connection:
+        jobs.claim_job(
+            connection,
+            job_id=requested["job_id"],
+            worker_id="worker-1",
+            now_ms=harness.clock(),
+            lease_seconds=1,
+        )
+
+    harness.clock.advance(2_000)
+    with harness.service.catalog.write() as connection:
+        assert (
+            jobs.claim_next(connection, worker_id="worker-2", now_ms=harness.clock(), lease_seconds=60)
+            is None
+        )
+    job = _jobs(harness)[0]
+    assert job["state"] == "FAILED"
+    assert job["attempts"] == 1
+    assert job["last_error_code"] == "LEASE_EXPIRED"
+    assert _scan_row(harness, 1)["state"] == "FAILED"
+
+
+def test_resume_marks_positions_deleted_before_recovery_as_missing(
+    harness: Harness, tmp_path: Path
+) -> None:
+    """C2 F2: missing must follow the current complete execution, not the killed one."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    _write(root / "b.jpg", b"BBBB")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+
+    with pytest.raises(ScanInterrupted):
+        harness.service.run_scan(source_id, interrupt_after=1)
+    observed = {row["relative_path"]: row for row in _locations(harness)}
+    assert observed["a.jpg"]["last_seen_scan_id"] == 1
+    assert observed["a.jpg"]["asset_id"] is not None
+
+    (root / "a.jpg").unlink()
+    harness.clock.advance(61_000)
+    recovered = harness.service.run_scan(source_id)
+
+    assert recovered["scan_id"] == 1
+    assert recovered["state"] == "SUCCEEDED"
+    assert recovered["locations_missing"] == 1
+    final = {row["relative_path"]: row for row in _locations(harness)}
+    assert final["a.jpg"]["availability"] == "MISSING"
+    assert final["a.jpg"]["asset_id"] is not None
+    assert final["b.jpg"]["availability"] == "PRESENT"
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations_missing"] == 1
+    assert counts["assets_total"] == 2
+    assert harness.service.get_source(source_id)["last_successful_scan"] == 1
+
+
+def test_resume_ignores_unbound_leftovers_from_a_killed_execution(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 F2: an unbound row from the killed execution must not block the recovery scan."""
+    root = tmp_path / "library"
+    _write(root / "a.jpg", b"AAAA")
+    _write(root / "b.jpg", b"BBBB")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    killed = {"done": False}
+
+    def kill_after_observe(path: Path) -> str:
+        if not killed["done"]:
+            killed["done"] = True
+            raise ScanInterrupted("simulated kill between observe and bind")
+        return real_hash(path)
+
+    monkeypatch.setattr(scanner, "sha256_file", kill_after_observe)
+    with pytest.raises(ScanInterrupted):
+        harness.service.run_scan(source_id)
+    leftover = {row["relative_path"]: row for row in _locations(harness)}
+    assert leftover["a.jpg"]["last_seen_scan_id"] == 1
+    assert leftover["a.jpg"]["asset_id"] is None
+
+    monkeypatch.setattr(scanner, "sha256_file", real_hash)
+    (root / "a.jpg").unlink()
+    harness.clock.advance(61_000)
+    recovered = harness.service.run_scan(source_id)
+
+    assert recovered["state"] == "SUCCEEDED"
+    assert recovered["scan_id"] == 1
+    assert recovered["locations_pending_content"] == 0
+    final = {row["relative_path"]: row for row in _locations(harness)}
+    assert final["a.jpg"]["availability"] == "MISSING"
+    assert final["a.jpg"]["asset_id"] is None
+    assert final["b.jpg"]["availability"] == "PRESENT"
+    counts = harness.service.counts(source_id=source_id)
+    assert counts["locations_pending_content"] == 0
+    assert counts["locations_missing"] == 1
+    assert counts["assets_total"] == 1
+
+
 def test_same_path_content_change_rebinds_without_losing_the_old_asset(
     harness: Harness, tmp_path: Path
 ) -> None:

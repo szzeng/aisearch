@@ -50,12 +50,15 @@ SCAN_FIELDS = ("scan_id", "source_id", "started_at", "finished_at", "state", "er
 #: A RUNNING scan_run keeps its state while a new lease takes over an expired one; that
 #: special recovery is handled in the scanner and is deliberately not a self-loop here.
 ALLOWED_SCAN_TRANSITIONS: dict[str, frozenset[str]] = {
-    "QUEUED": frozenset({"RUNNING", "CANCELLED"}),
+    # A job may reach a terminal state before its scan_run ever ran, and ADR-0002 §3.3
+    # requires the scan_run to follow the job into the same terminal state in the same
+    # business commit, so FAILED is legal from every non-terminal state.
+    "QUEUED": frozenset({"RUNNING", "FAILED", "CANCELLED"}),
     # A RUNNING scan_run keeps its state while a new lease takes over the expired one
     # (ADR-0002 §6.1 special recovery); it is not a generic self-loop, so callers never
     # transition RUNNING -> RUNNING through this helper.
     "RUNNING": frozenset({"SUCCEEDED", "BLOCKED", "FAILED", "CANCELLED"}),
-    "BLOCKED": frozenset({"QUEUED", "CANCELLED"}),
+    "BLOCKED": frozenset({"QUEUED", "FAILED", "CANCELLED"}),
     "SUCCEEDED": frozenset(),
     "FAILED": frozenset(),
     "CANCELLED": frozenset(),
@@ -329,6 +332,40 @@ def count_unbound_locations(
     )
 
 
+def reset_execution_coverage(
+    connection: sqlite3.Connection, *, source_id: int, scan_id: int
+) -> int:
+    """Start a new execution of one logical scan with no inherited coverage.
+
+    ``scan_runs`` may be resumed by a later execution under the same ``scan_id`` (ADR-0002
+    §5.3). Coverage must be per execution, otherwise a position merely observed by the
+    killed execution would look "seen" to the recovery execution and would never be
+    reconciled. Only the scan-attribution marker is cleared: the location row, its stat
+    values, its availability and its content binding are preserved positive facts.
+    """
+    cursor = connection.execute(
+        "UPDATE file_locations SET last_seen_scan_id = NULL WHERE source_id = ? AND last_seen_scan_id = ?",
+        (source_id, scan_id),
+    )
+    return int(cursor.rowcount or 0)
+
+
+def ensure_scan_failed(
+    connection: sqlite3.Connection,
+    *,
+    scan_id: int,
+    now_ms: int,
+    error_text: str | None = None,
+) -> sqlite3.Row:
+    """Put a scan_run into FAILED once; used where a job reached a terminal failure."""
+    row = get_scan_row(connection, scan_id)
+    if str(row["state"]) == "FAILED":
+        return row
+    return set_scan_state(
+        connection, scan_id=scan_id, state="FAILED", now_ms=now_ms, error_text=error_text
+    )
+
+
 def scan_job_id(connection: sqlite3.Connection, *, scan_id: int) -> int | None:
     row = connection.execute(
         "SELECT job_id FROM jobs WHERE subject_type = ? AND subject_id = ? AND input_revision = ? "
@@ -339,6 +376,13 @@ def scan_job_id(connection: sqlite3.Connection, *, scan_id: int) -> int | None:
 
 
 def catalog_counts(connection: sqlite3.Connection, *, source_id: int | None = None) -> dict[str, Any]:
+    """Counts for status output.
+
+    ``locations_pending_content`` counts available positions whose content identity is not
+    confirmed yet. A ``MISSING`` position keeps its last known binding (or none, if its
+    content was never confirmed) and is reported through ``locations_missing`` instead.
+    """
+
     def scalar(sql: str, params: tuple = ()) -> int:
         return int(connection.execute(sql, params).fetchone()[0])
 
@@ -356,7 +400,7 @@ def catalog_counts(connection: sqlite3.Connection, *, source_id: int | None = No
                 "SELECT COUNT(*) FROM file_locations WHERE availability = 'MISSING'"
             ),
             "locations_pending_content": scalar(
-                "SELECT COUNT(*) FROM file_locations WHERE asset_id IS NULL"
+                "SELECT COUNT(*) FROM file_locations WHERE availability = 'PRESENT' AND asset_id IS NULL"
             ),
             "scans": scalar("SELECT COUNT(*) FROM scan_runs"),
             "jobs": scalar("SELECT COUNT(*) FROM jobs"),
@@ -381,7 +425,8 @@ def catalog_counts(connection: sqlite3.Connection, *, source_id: int | None = No
             parameters,
         ),
         "locations_pending_content": scalar(
-            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND asset_id IS NULL",
+            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND availability = 'PRESENT' "
+            "AND asset_id IS NULL",
             parameters,
         ),
         "scans": scalar("SELECT COUNT(*) FROM scan_runs WHERE source_id = ?", parameters),

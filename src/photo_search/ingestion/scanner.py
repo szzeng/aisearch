@@ -26,6 +26,7 @@ from photo_search.catalog.errors import (
     LEASE_CONFLICT,
     PATH_KEY_COLLISION,
     PROCESSOR_MISMATCH,
+    RETRY_EXHAUSTED,
     SOURCE_NOT_FOUND,
     SOURCE_OFFLINE,
     STALE_INPUT_REVISION,
@@ -269,16 +270,38 @@ def execute_scan(
             jobs.resume_blocked(connection, job_id=job_id, now_ms=catalog.now_ms())
             store.set_scan_state(connection, scan_id=scan_id, state="QUEUED", now_ms=catalog.now_ms())
 
+    # The claim starts exactly one execution of this logical scan. Exhaustion has to be
+    # persisted inside the transaction and re-raised only after it commits, otherwise the
+    # rollback would undo the terminal job/scan_run state (C2 F1).
+    exhausted: CatalogError | None = None
     with catalog.write() as connection:
-        job = jobs.claim_job(
-            connection,
-            job_id=job_id,
-            worker_id=worker,
-            now_ms=catalog.now_ms(),
-            lease_seconds=lease,
-        )
-        if store.get_scan_row(connection, scan_id)["state"] != "RUNNING":
-            store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=catalog.now_ms())
+        try:
+            job = jobs.claim_job(
+                connection,
+                job_id=job_id,
+                worker_id=worker,
+                now_ms=catalog.now_ms(),
+                lease_seconds=lease,
+            )
+        except CatalogError as error:
+            if error.code != RETRY_EXHAUSTED:
+                raise
+            store.ensure_scan_failed(
+                connection,
+                scan_id=scan_id,
+                now_ms=catalog.now_ms(),
+                error_text=error.error_json,
+            )
+            exhausted = error
+        else:
+            # Coverage belongs to the current execution: a killed execution's last_seen
+            # markers must not hide a deleted position from this complete re-enumeration
+            # and must not leave an unbound row blocking the final success guard (C2 F2).
+            store.reset_execution_coverage(connection, source_id=source_id, scan_id=scan_id)
+            if store.get_scan_row(connection, scan_id)["state"] != "RUNNING":
+                store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=catalog.now_ms())
+    if exhausted is not None:
+        raise exhausted
     execution = _Execution(job)
 
     source = catalog.read_one(
@@ -352,6 +375,9 @@ def execute_scan(
         except CatalogError as error:
             if error.code == INPUT_UNSTABLE:
                 # Already persisted as a retryable re-queue (ADR-0002 §5.4 step 3).
+                raise
+            if error.code == RETRY_EXHAUSTED:
+                # Retry budget exhausted; job and scan_run are already FAILED in one commit.
                 raise
             if error.code in SUBMISSION_ERROR_CODES:
                 # Late/expired execution: no state change, no persistent result.
@@ -531,8 +557,9 @@ def _requeue(
 ) -> CatalogError:
     """Return the scan request to RETRY_WAIT; the scan_run keeps RUNNING (ADR-0002 §3.3)."""
     now_ms = catalog.now_ms()
+    terminal: CatalogError | None = None
     with catalog.write() as connection:
-        jobs.finish(
+        finished = jobs.finish(
             connection,
             job_id=job.job_id,
             lease_token=job.lease_token or "",
@@ -543,7 +570,23 @@ def _requeue(
             error=error,
             run_after_ms=now_ms + int(backoff_ms),
         )
-    return error
+        if finished.state != jobs.STATE_RETRY_WAIT:
+            # The retry ceiling turned this into a terminal failure; the scan_run must
+            # reach the same terminal state in the same commit (ADR-0002 §3.3).
+            store.ensure_scan_failed(
+                connection, scan_id=scan_id, now_ms=now_ms, error_text=error.error_json
+            )
+            terminal = CatalogError(
+                RETRY_EXHAUSTED,
+                f"scan {scan_id} exhausted its retry budget after an unstable input",
+                details={
+                    "scan_id": scan_id,
+                    "reason_code": error.code,
+                    "attempts": finished.attempts,
+                    "max_attempts": finished.max_attempts,
+                },
+            )
+    return terminal if terminal is not None else error
 
 
 def _block(

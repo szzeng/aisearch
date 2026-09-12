@@ -362,7 +362,7 @@ def claim_next(
         "UPDATE jobs SET state = ?, updated_at = ? WHERE state = ? AND run_after <= ?",
         (STATE_QUEUED, now_ms, STATE_RETRY_WAIT, now_ms),
     )
-    _fail_exhausted_leases(connection, now_ms=now_ms, task_type=task_type)
+    fail_exhausted_leases(connection, now_ms=now_ms, task_type=task_type)
     row = _claimable_row(connection, now_ms=now_ms, task_type=task_type)
     if row is None:
         return None
@@ -377,35 +377,57 @@ def claim_next(
     )
 
 
-def _fail_exhausted_leases(
+def fail_exhausted_leases(
     connection: sqlite3.Connection,
     *,
     now_ms: int,
     task_type: str | None = None,
-) -> int:
-    """Fail expired executions that have no retry budget left before claiming again."""
+) -> list[sqlite3.Row]:
+    """Fail expired executions that have no retry budget left before claiming again.
+
+    The scan_run (or other subject owner) of every failed job is brought to the same
+    terminal state inside the same transaction, as ADR-0002 §3.3 requires.
+    """
     task_filter = "" if task_type is None else " AND task_type = ?"
-    parameters: tuple = (
-        (STATE_FAILED, LEASE_EXPIRED, _EXHAUSTED_MESSAGE, int(now_ms), STATE_RUNNING, int(now_ms))
-        if task_type is None
-        else (
-            STATE_FAILED,
-            LEASE_EXPIRED,
-            _EXHAUSTED_MESSAGE,
-            int(now_ms),
-            STATE_RUNNING,
-            int(now_ms),
-            task_type,
-        )
-    )
-    cursor = connection.execute(
+    filter_parameters: tuple = () if task_type is None else (task_type,)
+    rows = connection.execute(
+        "SELECT job_id, subject_type, subject_id, attempts, max_attempts FROM jobs "
+        f"WHERE state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts{task_filter}",
+        (STATE_RUNNING, int(now_ms), *filter_parameters),
+    ).fetchall()
+    if not rows:
+        return []
+    job_ids = [int(row["job_id"]) for row in rows]
+    placeholders = ", ".join("?" for _ in job_ids)
+    connection.execute(
         "UPDATE jobs SET state = ?, attempts = attempts + 1, lease_token = NULL, "
         "lease_expires_at = NULL, worker_id = NULL, last_error_code = ?, last_error_message = ?, "
-        f"updated_at = ? WHERE state = ? AND lease_expires_at <= ? "
-        f"AND attempts + 1 >= max_attempts{task_filter}",
-        parameters,
+        f"updated_at = ? WHERE job_id IN ({placeholders})",
+        (STATE_FAILED, LEASE_EXPIRED, _EXHAUSTED_MESSAGE, int(now_ms), *job_ids),
     )
-    return int(cursor.rowcount or 0)
+    _sync_subject_state(connection, rows=rows, now_ms=int(now_ms))
+    return list(rows)
+
+
+def _sync_subject_state(
+    connection: sqlite3.Connection, *, rows: list[sqlite3.Row], now_ms: int
+) -> None:
+    """Mirror a job's terminal state onto its subject owner (catalog_scan scan_run)."""
+    from photo_search.catalog import store
+
+    for row in rows:
+        if str(row["subject_type"]) != store.SCAN_SUBJECT_TYPE:
+            continue
+        store.ensure_scan_failed(
+            connection,
+            scan_id=int(row["subject_id"]),
+            now_ms=now_ms,
+            error_text=CatalogError(
+                LEASE_EXPIRED,
+                _EXHAUSTED_MESSAGE,
+                details={"job_id": int(row["job_id"]), "max_attempts": int(row["max_attempts"])},
+            ).error_json,
+        )
 
 
 def heartbeat(
