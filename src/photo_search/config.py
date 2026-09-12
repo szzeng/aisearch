@@ -23,6 +23,10 @@ THUMBNAILS_DIRNAME = "thumbnails"
 PREVIEWS_DIRNAME = "previews"
 CACHE_DIRNAME = "cache"
 MEDIA_CACHE_DIRNAME = "media"
+#: Architecture §11.1: run-time files (including the one-time local session credential)
+#: live under the data root, never inside an installation directory or a source root.
+RUNTIME_DIRNAME = "runtime"
+SESSION_CREDENTIAL_FILENAME = "session.json"
 
 
 def default_data_root() -> Path:
@@ -68,3 +72,13 @@ def previews_dir(data_root: str | Path | None = None) -> Path:
 def media_cache_dir(data_root: str | Path | None = None) -> Path:
     """Structured, rebuildable media bookkeeping that is not a media artifact itself."""
     return resolve_data_root(data_root) / CACHE_DIRNAME / MEDIA_CACHE_DIRNAME
+
+
+def runtime_dir(data_root: str | Path | None = None) -> Path:
+    """Run-time state of the local application (architecture §11.1)."""
+    return resolve_data_root(data_root) / RUNTIME_DIRNAME
+
+
+def session_credential_path(data_root: str | Path | None = None) -> Path:
+    """Where the launcher records the one-time local session credential."""
+    return runtime_dir(data_root) / SESSION_CREDENTIAL_FILENAME

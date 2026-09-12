@@ -266,3 +266,36 @@ def test_catalog_open_exposes_no_migration_bypass() -> None:
     """ADR-0002 §7.1/§7.4: every business write path starts with the read-only preflight."""
     assert "migrate" not in inspect.signature(Catalog.open).parameters
     assert "migrate" not in inspect.signature(CatalogService.open).parameters
+
+
+def test_a_build_without_migration_scripts_fails_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frozen build must not silently create an empty catalog (ADR-0002 §7.1 item 7).
+
+    P1-04's packaged smoke test found exactly this: the ``.sql`` migrations were not
+    collected into the bundle, ``migration_files()`` returned an empty list, the
+    "expected vs actual" comparison became vacuous and the first business query failed with
+    ``no such table``. The set must therefore cover 0001..supported.
+    """
+    empty = tmp_path / "migrations"
+    empty.mkdir()
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", empty)
+
+    with pytest.raises(CatalogError) as failure:
+        schema.migration_files()
+    assert failure.value.code == SCHEMA_INCONSISTENT
+    assert failure.value.details["versions"] == []
+    assert failure.value.details["expected_versions"] == [1]
+
+    fresh = tmp_path / "catalog" / "catalog.db"
+    with pytest.raises(CatalogError) as open_failure:
+        Catalog.open(fresh, data_root=tmp_path)
+    assert open_failure.value.code == SCHEMA_INCONSISTENT
+    # Nothing usable was created: the file, if any, still has no business tables.
+    if fresh.exists():
+        connection = open_readonly(fresh)
+        try:
+            assert schema.business_tables(connection) == []
+        finally:
+            connection.close()

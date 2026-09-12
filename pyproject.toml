@@ -11,6 +11,7 @@ dependencies = [
     "onnx>=1.17,<2",
     "onnxruntime-gpu[cuda,cudnn]>=1.30,<2",
     "pillow>=10,<12",
+    "pydantic>=2.9,<3",
     "rapidocr-onnxruntime>=1.4.4,<1.5",
     "torch>=2.5,<3",
     "torchvision>=0.20,<1",

@@ -53,6 +53,9 @@ def main() -> int:
         "--paths", str(root / "src"), "--add-data", f"{manifest};tools/prepare_models/manifests",
         "--collect-binaries", "onnxruntime", "--collect-data", "tokenizers",
         "--exclude-module", "torch", "--exclude-module", "torchvision",
+        # The catalog migrations are ``.sql`` data files inside the package: without them a
+        # frozen build would start with no schema at all (P1-04 report §6.1).
+        "--collect-data", "photo_search",
     ]
     for dll in dlls:
         command += ["--add-binary", f"{dll};{DLL_TARGET_DIRECTORY}"]

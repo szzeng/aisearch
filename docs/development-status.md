@@ -2,8 +2,8 @@
 
 ## Current state
 
-**P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is now
-READY / CURRENT TASK.**
+**P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is PASS
+(B level plus a real-port smoke and a C-level packaged smoke). P1-05 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -22,22 +22,33 @@ P1-03 (EXIF orientation, thumbnails/previews, sharded rebuildable cache, bad-med
 It ships `catalog thumbnail` / `catalog preview` / `catalog media-status`, keeps `schema_version = 1` (no new table, no
 new dependency) and treats the atomically published artifact file itself as the READY marker.
 
+P1-04 (sources/assets API, controlled file access, local session protection) is recorded in
+[docs/reports/P1-04-api-controlled-files-and-local-session.md](reports/P1-04-api-controlled-files-and-local-session.md).
+It adds `src/photo_search/api/**` (`/api/v1/{health,session,capabilities,stats,sources,assets,jobs}` plus
+thumbnail/preview/original), a loopback-only binding policy with a single-use bootstrap credential, HttpOnly
+session + double-submit CSRF + Host/Origin checks, four-layer controlled path resolution, and one background
+scan executor that reuses the production `catalog scan` path. `schema_version` is still 1, ADR-0002 is unchanged,
+and the only dependency edit is declaring the already-resolved `pydantic` range explicitly.
+
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
 ## Latest accepted verification
 
-Produced by DS-L on the P1-03 implementation (see the P1-03 report for per-scenario evidence; no C2 review was run for P1-03).
+Produced by DS-H on the P1-04 implementation (see the P1-04 report for per-scenario evidence; C1 review of the
+packaging fix in §6 is still recommended, no C2 review was run).
 
 | Check | Result |
 |---|---|
-| `uv run pytest -q tests/unit tests/integration` | exit 0, `180 passed, 1 skipped in 111.20s` |
-| focused P1-03 suites (`tests/unit/test_media_decode.py`, `test_media_cache.py`, `tests/integration/test_catalog_media.py`) | exit 0, `27 passed` / `19 passed` |
+| `uv run pytest -q tests/unit tests/integration` | exit 0, `252 passed, 1 skipped in 122.25s` |
+| focused P1-04 suites (`tests/unit/test_api_*.py`, `tests/integration/test_api_*.py`) | exit 0, `72 passed` |
 | `uv run ruff check .` / `git diff --check` | clean / clean |
-| P1-03 media scenarios 1-10 (EXIF 1-8 with mirror variants, truncated/0-byte/non-image/TIFF-RAW, kill+resume, cache wipe, idempotency, all-missing/offline, Chinese+space+>220-char paths and read-only originals, disk shortage, 200-1000 file scale) | all executed on `%TEMP%` fixtures; mapped to named tests in the report §6 |
-| P1-03 artifact-publish fault injections (`os.replace` failure, `interrupt_after`, cancel/Ctrl-C, leftover temp, rerun) | all PASS: no READY half-product, no duplicate or recomputed artifact |
-| Pillow capability probe (Pillow 11.3.0, `probe_capabilities()`) | WebP save True, TIFF read True (refused by policy), JPEG True, zlib True, `exif_transpose` True, `MAX_IMAGE_PIXELS` = 89,478,485 |
-| Scale/memory (`tools/diagnostics/media_scale_probe.py`) | 200 files 1600x1200: 8.88 ms/file, 112.6 files/s, 3,499 B/artifact, host peak 43.5 MiB. 500 files 1280x960: 7.17 ms/file, 3,587 B/artifact. 20 files 4032x3024 grainy: 39.25 ms/file, 6,285 B/artifact, preview 167.55 ms / 597 KB. 108 MP JPEG: thumbnail 36 ms, preview 97 ms, media-stage peak delta 53.6 MiB |
+| `uv lock --check` | exit 0, `Resolved 95 packages` |
+| Measured versions (`uv run python -c ...`) | Python 3.12.10, fastapi 0.141.1, starlette 1.6.0, pydantic 2.13.5, uvicorn 0.52.4, httpx 0.28.1 |
+| P1-04 API scenarios 1-10 (session/CSRF/Origin/Host, sources incl. overlap + data-root rejection, 202 scan + reuse + interrupted-lease recovery, 26-asset keyset paging, thumbnail/preview/original bytes and Range, `..`/absolute/UNC/drive/junction traversal refusals, offline + replaced original, Chinese/space/>220-char paths with read-only originals, `SCHEMA_TOO_NEW` without write side effects, real-port smoke) | all executed on `%TEMP%` fixtures; mapped to named tests in report §5 |
+| Real-port launcher smoke (`tests/integration/test_api_server.py`) | health 200, session 200 with `HttpOnly; Path=/`, unauthenticated read 401, CSRF-protected `POST /sources` 201, access log `token=<redacted>`, non-loopback bind exits 2 without creating a credential |
+| C-level packaged smoke (`tools/packaging/build_onedir.py` + `tools/diagnostics/packaged_api_smoke.py`) | build exit 0 in 57 s; bundle copied to `%TEMP%\P1-04 打包 API 验收\PhotoSearch 中文 空格`; `status=ok` with health/session/scan/thumbnail/offline-original/capabilities all as specified; startup 1.02 s |
+| C-gate finding fixed | the PyInstaller build did not collect `catalog/migrations/*.sql`, so a frozen build silently created an **empty catalog** and failed on the first query; `build_onedir.py` now uses `--collect-data photo_search` and `schema.migration_files()` requires the full `0001..supported` set (new unit test) |
 
 P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85, LANCZOS, never enlarged) and preview
 `catalog-preview@1` (long edge 1600, JPEG q88, lazy). Layout
@@ -47,6 +58,11 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
 
 ## Carried-forward limits / follow-ups
 
+- **P1-04**: the local session lives in memory for the process lifetime (no TTL, no logout, no LAN auth); the
+  bootstrap credential file's Windows DACL could not be verified here (`icacls` was denied in this sandbox, so
+  the tightening stays best-effort); the API and the scan worker use two SQLite connections in one process and only
+  a sequential-overlap window was stress-tested; media generation still runs on the event loop thread; `GET /stats`
+  is O(assets). A C1 review of the packaging/migration-check fix is recommended; see report §6 and §8.
 - No file-id move acceleration: a move is only proven by full SHA-256, so it leaves "new location PRESENT + old position
   MISSING" with the same `asset_id`. Explicitly allowed by the P1-02 card; revisit only with a sound identity argument.
 - A file that disappears between enumeration and content confirmation still classifies as `FILE_READ_ERROR` → `BLOCKED`
@@ -86,17 +102,20 @@ human-labelled semantic-search holdout.
 
 ## Current task / next execution step
 
-**P1-04 — sources/assets API、受控文件访问、本机会话保护.**
+**P1-05 — 来源页、时间浏览、详情、离线提示.**
 
-- Status: **READY / CURRENT TASK**. P1-01, P1-02 and P1-03 are accepted; P1-04 has no unfinished dependency.
-- Task card: `docs/tasks/P1-04.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**; the Windows path and local-access boundaries
-  should get a focused **C1 / GPT-5.6 Terra / medium** check.
-- Goal: expose the accepted catalog and media results over the local HTTP API (`sources`, `assets`, `stats`,
-  `capabilities`, thumbnail/preview/original byte endpoints) behind a local session, with controlled file access that
-  only ever resolves registered source positions — without touching the frozen ADR-0002 identity/lease/scan semantics.
-- Validation level: **B** (`uv run pytest -q tests/unit tests/integration` + ruff + diff-check); packaging or launcher
-  changes would additionally require C-level packaging smoke tests.
+- Status: **READY / CURRENT TASK**. P1-01 … P1-04 are accepted; P1-05 has no unfinished dependency.
+- Task card: `docs/tasks/P1-05.md`.
+- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**.
+- Goal: ship the first usable local frontend over the accepted P1-04 API — a source page (register / scan /
+  progress), a time-ordered browsing grid, an asset detail view (locations + media state), and honest offline
+  hints — as a dependency-free static bundle served by the app, without weakening the session/CSRF/path boundary.
+- Validation level: **B** (`uv run pytest -q tests/unit tests/integration` + ruff + diff-check) plus a real-port
+  browser smoke; the static assets change the packaged bundle as well, so the C-level packaged smoke from P1-04 may
+  be re-run (`tools/diagnostics/packaged_api_smoke.py` is the entry point).
 - Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
+
+An optional **C1 / GPT-5.6 Terra / medium** review of the P1-04 packaging/migration-check fix (report §6) is
+recommended but is not a dependency of P1-05.
 
 Model switching remains manual; the repository only records the recommended model per stage.

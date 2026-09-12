@@ -17,14 +17,22 @@ _OBJECT_TYPES = ("table", "index", "view", "trigger")
 
 
 def migration_files() -> list[tuple[int, Path]]:
-    """Return ``(version, path)`` for every migration script, validating continuity."""
+    """Return ``(version, path)`` for every migration script, validating continuity.
+
+    The set must cover every version from ``0001`` up to ``SUPPORTED_SCHEMA_VERSION``. This
+    is stricter than "no gaps between the files that happen to be present": a build that
+    ships *no* migration scripts at all (seen once in a frozen bundle whose ``.sql`` files
+    were not collected) must fail loudly here instead of silently creating an empty catalog
+    that only breaks on the first query (ADR-0002 §7.1 item 7).
+    """
     files = sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql"))
     versions = [int(path.name.split("_", 1)[0]) for path in files]
-    if versions != list(range(1, len(versions) + 1)):
+    expected = list(range(1, int(SUPPORTED_SCHEMA_VERSION) + 1))
+    if versions != expected:
         raise CatalogError(
             SCHEMA_INCONSISTENT,
-            "migration scripts must be contiguous and start at 0001",
-            details={"versions": versions},
+            "the migration scripts must cover every version from 0001 to the supported version",
+            details={"versions": versions, "expected_versions": expected},
         )
     return [(version, path) for version, path in zip(versions, files, strict=True)]
 

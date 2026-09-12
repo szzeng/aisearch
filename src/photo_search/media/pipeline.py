@@ -528,6 +528,11 @@ def _require_unchanged(path: Path, row: Any) -> tuple[int, int]:
     return observed
 
 
+#: Public alias: the controlled file-access layer reuses this exact stat guard, so a
+#: thumbnail, a preview and an original can never disagree about "still unchanged".
+require_unchanged = _require_unchanged
+
+
 def _failure_state(error: CatalogError) -> str:
     if error.code == FORMAT_UNSUPPORTED:
         return STATE_UNSUPPORTED

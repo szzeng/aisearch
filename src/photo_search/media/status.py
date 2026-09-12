@@ -34,6 +34,63 @@ SELECT l.relative_path, l.availability, s.root_path
  ORDER BY l.location_id
 """
 
+#: The five honest answers one asset can give for one artifact kind (architecture §5.4).
+MEDIA_STATE_READY = "ready"
+MEDIA_STATE_PENDING = "pending"
+MEDIA_STATE_SOURCE_MISSING = "source_missing"
+MEDIA_STATE_FAILED = "failed"
+MEDIA_STATE_UNSUPPORTED = "unsupported"
+
+
+def asset_media_states(
+    catalog: Any,
+    cache: MediaCache,
+    *,
+    asset_id: int,
+    sha256: str,
+    kinds: tuple[str, ...] = KINDS,
+) -> dict[str, dict[str, Any]]:
+    """Per-kind artifact state of one asset, using the same rule as ``media_status``.
+
+    This is the single decision used by the CLI status report, ``GET /api/v1/stats`` and
+    the asset detail view, so a caller can never see "ready" where the report counts
+    "failed" (or the other way round).
+    """
+    states: dict[str, dict[str, Any]] = {}
+    reachable: bool | None = None
+    for kind in kinds:
+        spec = spec_for(kind)
+        state: dict[str, Any] = {
+            "kind": spec.kind,
+            "processor_id": spec.processor_id,
+            "long_edge": spec.long_edge,
+            "state": MEDIA_STATE_PENDING,
+            "code": None,
+            "record": None,
+        }
+        artifact = cache.artifact_path(spec=spec, sha256=sha256)
+        if cache.is_published(artifact):
+            state["state"] = MEDIA_STATE_READY
+            states[spec.kind] = state
+            continue
+        record = cache.read_failure(spec=spec, sha256=sha256)
+        if record is not None:
+            code = str(record.get("code"))
+            state["code"] = code
+            state["record"] = record
+            state["state"] = (
+                MEDIA_STATE_UNSUPPORTED
+                if code == FORMAT_UNSUPPORTED or str(record.get("state")) == STATE_UNSUPPORTED
+                else MEDIA_STATE_FAILED
+            )
+            states[spec.kind] = state
+            continue
+        if reachable is None:
+            reachable = _any_location_reachable(catalog, int(asset_id))
+        state["state"] = MEDIA_STATE_PENDING if reachable else MEDIA_STATE_SOURCE_MISSING
+        states[spec.kind] = state
+    return states
+
 
 def media_status(
     catalog: Any,
@@ -84,24 +141,23 @@ def media_status(
     for row in examined:
         asset_id = int(row["asset_id"])
         sha256 = str(row["sha256"])
-        # Only paid for when an asset actually has something left to generate: a cheap
-        # existence probe tells "waiting for generation" apart from "the original is not
-        # reachable", which is the honest answer for an offline source.
-        reachable: bool | None = None
+        # The per-kind state is decided once, by the same helper the API uses. Reachability
+        # is only probed when an asset has something left to generate, so an offline source
+        # is reported as ``source_missing`` instead of being re-listed as pending.
+        states = asset_media_states(
+            catalog, cache, asset_id=asset_id, sha256=sha256, kinds=tuple(spec.kind for spec in specs)
+        )
         for spec in specs:
             bucket = counts[spec.kind]
-            artifact = cache.artifact_path(spec=spec, sha256=sha256)
-            if cache.is_published(artifact):
+            state = states[spec.kind]
+            if state["state"] == MEDIA_STATE_READY:
                 bucket["published"] += 1
                 continue
-            record = cache.read_failure(spec=spec, sha256=sha256)
-            if record is not None:
-                code = str(record.get("code"))
+            if state["state"] in (MEDIA_STATE_FAILED, MEDIA_STATE_UNSUPPORTED):
+                code = str(state["code"])
+                record = state["record"] or {}
                 bucket["failure_codes"][code] = int(bucket["failure_codes"].get(code, 0)) + 1
-                if code == FORMAT_UNSUPPORTED or str(record.get("state")) == STATE_UNSUPPORTED:
-                    bucket["unsupported"] += 1
-                else:
-                    bucket["failed"] += 1
+                bucket[str(state["state"])] += 1
                 if include_failures and len(failures) < max(int(failure_limit), 0):
                     failures.append(
                         {
@@ -116,12 +172,7 @@ def media_status(
                         }
                     )
                 continue
-            if reachable is None:
-                reachable = _any_location_reachable(catalog, asset_id)
-            if reachable:
-                bucket["pending"] += 1
-            else:
-                bucket["source_missing"] += 1
+            bucket[str(state["state"])] += 1
 
     for spec in specs:
         bucket = counts[spec.kind]
