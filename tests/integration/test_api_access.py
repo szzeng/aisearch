@@ -141,9 +141,7 @@ def test_state_changing_requests_need_origin_and_csrf(api_env) -> None:
         assert bad_csrf.status_code == 403
         assert bad_csrf.json()["code"] == "CSRF_INVALID"
 
-        no_origin = await client.post(
-            "/api/v1/sources", json=body, headers={"X-CSRF-Token": csrf}
-        )
+        no_origin = await client.post("/api/v1/sources", json=body, headers={"X-CSRF-Token": csrf})
         assert no_origin.status_code == 403
         assert no_origin.json()["code"] == "ORIGIN_NOT_ALLOWED"
 
@@ -210,9 +208,7 @@ def test_higher_schema_version_is_structured_and_has_no_write_side_effects(tmp_p
     _too_new_database(data_root)
     before = sorted(path.name for path in (data_root / "catalog").iterdir())
     app = create_app(
-        settings=ApiSettings(
-            data_root=data_root, session_token=TOKEN, allowed_hosts=ALLOWED_HOSTS
-        )
+        settings=ApiSettings(data_root=data_root, session_token=TOKEN, allowed_hosts=ALLOWED_HOSTS)
     )
     try:
         result = _probe_read_only_business_api(app, data_root)
@@ -270,3 +266,40 @@ def _probe_read_only_business_api(app, data_root: Path) -> dict:
             }
 
     return asyncio.run(scenario())
+
+
+def test_local_origin_and_host_must_use_the_actual_listening_port(api_env) -> None:
+    """A separate localhost service must not share a session across ports."""
+    app = api_env.app
+    library = api_env.library
+
+    async def scenario() -> None:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://localhost:8000"
+        ) as client:
+            session = await client.get("/api/v1/session", params={"token": TOKEN})
+            assert session.status_code == 200
+            csrf = session.json()["csrf_token"]
+            body = {"display_name": "local-port", "root_path": str(library)}
+
+            for origin in ("http://localhost", "http://localhost:80", "https://localhost"):
+                refused = await client.post(
+                    "/api/v1/sources",
+                    json=body,
+                    headers={"Origin": origin, "X-CSRF-Token": csrf},
+                )
+                assert refused.status_code == 403, (origin, refused.text)
+                assert refused.json()["code"] == "ORIGIN_NOT_ALLOWED"
+
+            missing_host_port = await client.get("/api/v1/stats", headers={"Host": "localhost"})
+            assert missing_host_port.status_code == 403
+            assert missing_host_port.json()["code"] == "HOST_NOT_ALLOWED"
+
+            accepted = await client.post(
+                "/api/v1/sources",
+                json=body,
+                headers={"Origin": "http://localhost:8000", "X-CSRF-Token": csrf},
+            )
+            assert accepted.status_code == 201, accepted.text
+
+    asyncio.run(scenario())

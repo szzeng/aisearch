@@ -3,7 +3,7 @@
 ## Current state
 
 **P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is PASS
-(B level plus a real-port smoke and a C-level packaged smoke). P1-05 is now READY / CURRENT TASK.**
+(B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 

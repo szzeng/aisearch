@@ -140,7 +140,9 @@ class SecurityMiddleware:
                 "this API only answers requests addressed to the local machine",
                 details={"host": hostname},
             )
-        if port is not None and port not in {_server_port(request), 80, 443}:
+        actual_port = _server_port(request)
+        host_port = port if port is not None else _default_port(request.url.scheme)
+        if host_port != actual_port:
             return ApiError(
                 HOST_NOT_ALLOWED,
                 "the Host header port does not belong to this server",
@@ -170,7 +172,8 @@ class SecurityMiddleware:
                 "cross-origin requests are not accepted",
                 details={"origin": str(origin)},
             )
-        if parsed.port is not None and parsed.port not in {_server_port(request), 80, 443}:
+        origin_port = parsed.port if parsed.port is not None else _default_port(scheme)
+        if origin_port != _server_port(request):
             return ApiError(
                 ORIGIN_NOT_ALLOWED,
                 "the Origin header port does not belong to this server",
@@ -239,3 +242,8 @@ def _server_port(request: Request) -> int:
     if len(server) >= 2 and isinstance(server[1], int):
         return int(server[1])
     return int(DEFAULT_PORTS.get(str(request.url.scheme).lower(), 80))
+
+
+def _default_port(scheme: str) -> int:
+    """Return the effective port when an HTTP authority omits it."""
+    return int(DEFAULT_PORTS.get(str(scheme).lower(), 80))
