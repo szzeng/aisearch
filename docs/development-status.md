@@ -3,8 +3,9 @@
 ## Current state
 
 **P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is PASS
-(B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is now PASS
-(B level + C-level packaged smoke + a recorded real-browser smoke). P1-06 is now READY / CURRENT TASK.**
+(B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is PASS
+(B level + C-level packaged smoke + a recorded real-browser smoke); its non-blocking follow-up P1-05B
+(front-end verification base) is also PASS. P1-06 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -44,7 +45,19 @@ Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发
 
 ## Latest accepted verification
 
-Produced by DS-L on the P1-05 implementation (see the P1-05 report for per-scenario evidence).
+Produced by DS-L on the P1-05 implementation and its P1-05B follow-up (see the P1-05 and P1-05B reports for
+per-scenario evidence).
+
+### P1-05B (front-end verification base, A level)
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q tests/unit/test_api_frontend.py` | exit 0, `46 passed` (42 existing + 4 new contract cases) |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| `uv run python tools/diagnostics/frontend_smoke_fixture.py --photos 60 --bulk 2000 --corrupt --reset` | exit 0, 2061 synthetic files under `%TEMP%`, prints the source root, the real-port start command and the 10 expected observations |
+| `--too-new` / `--offline` branches (separate `%TEMP%` dir) | verified: deletes the named original, reports the missing ones, builds a `schema_version = 2` catalog |
+| Production code | untouched (`src/photo_search/**` unchanged); the only test edit is 4 added cases in `tests/unit/test_api_frontend.py` |
+| New artifacts | `tools/diagnostics/frontend_smoke_fixture.py`, `docs/diagnostics/frontend-smoke-checklist.md` |
 
 | Check | Result |
 |---|---|
@@ -98,21 +111,23 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
 - Two historical P0 record inconsistencies remain recorded but unedited; see the P0-07 report §3.1.
 - **P1-05**: `GET /assets/{id}` media failure messages can still carry an absolute path because the stored
   Pillow message uses a repr-escaped Windows path (`C:\\Users\\…`) that `errors.Redactor` does not match; the page
-  withholds such messages, but a server-side fix needs a C1/C2-reviewed follow-up (P1-05 report §8.1). The front
-  end has no automated DOM tests (no Node/npm chain allowed); its behaviour rests on static assertions plus the
-  recorded browser smoke. Narrow-viewport/200% zoom was proxied by a 640×900 viewport (no horizontal overflow,
+  withholds such messages, but a server-side fix needs a C1/C2-reviewed follow-up (P1-05 report §8.1; task card
+  `docs/tasks/P1-05A.md`). The front end has no automated DOM tests (no Node/npm chain allowed); its behaviour
+  rests on the static contract assertions consolidated by P1-05B in `tests/unit/test_api_frontend.py` plus the
+  repeatable manual checklist `docs/diagnostics/frontend-smoke-checklist.md`. Narrow-viewport/200% zoom was
+  proxied by a 640×900 viewport (no horizontal overflow,
   3-column reflow), not by real OS zoom. `time_desc` sorts by insertion time only (`taken_at` would need an
   ADR-0002 §7 additive migration + C2). A fully offline asset shows no relative path in the grid
   (`current_location` is null once every position is MISSING); the detail view still lists every position.
 
   两个**非阻塞后续项**已按上述分工写成正式任务卡（都不改变 P1-06 作为下一主线任务）：
 
+  - `docs/tasks/P1-05B.md` — 前端静态契约断言集中化 + `%TEMP%` 夹具脚本 + 浏览器 smoke 核对清单
+    （不引入 Node/npm），验收等级 A。**状态：PASS**，见
+    [docs/reports/P1-05B-frontend-verification-base.md](reports/P1-05B-frontend-verification-base.md)。
   - `docs/tasks/P1-05A.md` — 本机路径脱敏补强（repr 转义与多拼写 + 未登记路径兜底），推荐
     **C1 / GPT-5.6 Terra / medium**，验收等级 **B**；唯一允许改动的生产文件是
-    `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。
-  - `docs/tasks/P1-05B.md` — 前端静态契约断言集中化 + `%TEMP%` 夹具脚本 + 浏览器 smoke 核对清单
-    （不引入 Node/npm），推荐 **DS-L / DeepSeek V4.1 Flash / 低推理**，验收等级 **A**；
-    建议在 P2-07（搜索页）之前执行。
+    `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。**状态：待执行。**
   - `taken_at`（EXIF 拍摄时间）不写成实现卡：它属于数据语义决策，必须先交
     **C2 / GPT-5.6 Sol / high** 决策并通过 ADR-0002 §7 的加列迁移路径。
 

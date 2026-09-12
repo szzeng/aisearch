@@ -156,3 +156,73 @@ def test_the_shipped_shell_has_no_external_reference_or_credential() -> None:
     # The browsing dimension is honestly labelled and uses the documented ordering.
     assert "加入时间" in shell + script
     assert "time_desc" in script
+
+
+# ---------------------------------------------------------------------------------------
+# P1-05B: the front-end contract, one assertion per promise the page makes to the user.
+# Each of these guards one specific regression; they are static on purpose (the repository
+# deliberately ships no Node/npm chain, so there is no DOM test harness -- see
+# docs/diagnostics/frontend-smoke-checklist.md).
+# ---------------------------------------------------------------------------------------
+def _web_documents() -> tuple[str, str, str]:
+    shell = (read_static(INDEX_NAME) or b"").decode("utf-8")
+    script = (read_static("app.js") or b"").decode("utf-8")
+    style = (read_static("styles.css") or b"").decode("utf-8")
+    assert shell and script and style
+    return shell, script, style
+
+
+def test_frontend_reaches_data_only_through_the_protected_api() -> None:
+    """Every data request goes through ``/api/v1``; nothing bypasses the boundary."""
+    _, script, _ = _web_documents()
+
+    assert 'var API = "/api/v1";' in script
+    # No request may be issued without the API prefix, so the count of call sites and the
+    # count of prefixed call sites have to match exactly.
+    assert script.count("fetch(") == script.count("fetch(API +")
+    assert "fetch(" in script
+    # The original bytes are reached by navigating to a controlled asset id, not a path.
+    assert 'link.href = API + "/assets/"' in script
+    # The page never opens the catalog or a source directory itself.
+    assert "sqlite" not in script.lower()
+    assert "catalog.db" not in script
+
+
+def test_frontend_never_puts_a_credential_in_a_url_or_in_storage() -> None:
+    """The bootstrap credential and the CSRF value never leave the cookie/header channel."""
+    _, script, _ = _web_documents()
+
+    assert "ps_csrf" in script
+    assert "X-CSRF-Token" in script
+    assert "token=" not in script
+    assert "csrf_token" not in script
+    assert "document.cookie =" not in script  # read-only cookie access
+    assert "localStorage" not in script
+    assert "sessionStorage" not in script
+    assert "console." not in script
+
+
+def test_frontend_never_renders_an_absolute_local_path() -> None:
+    """Only display names and source-relative paths are rendered; root_path stays in the form."""
+    _, script, _ = _web_documents()
+
+    # The user's typed root path is sent to the API as a request field, but the list and the
+    # detail renderer never read it back into the DOM.
+    assert "root_path: root" in script
+    assert "source.root_path" not in script
+    # Server-supplied text is scrubbed before it is shown (P1-05 report §8.1).
+    assert "PATH_LIKE" in script
+    assert "错误详情包含本机路径" in script
+
+
+def test_frontend_copy_stays_honest_about_time_and_offline_media() -> None:
+    """The page states the browsing dimension and the offline reason explicitly."""
+    shell, script, _ = _web_documents()
+
+    assert "加入时间" in shell + script
+    assert "不是 EXIF 拍摄时间" in shell
+    assert "原文件不可用" in script
+    assert "请使用启动器打印的一次性链接建立会话。" in script
+    # A refused artifact shows the server-supplied code as visible text, never a broken image.
+    assert "badge-code" in script
+    assert "result.code" in script
