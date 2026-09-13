@@ -5,7 +5,9 @@
 **P0 is complete. P1-01 is PASS (C2 final short re-review). P1-02 is PASS. P1-03 is PASS. P1-04 is PASS
 (B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is PASS
 (B level + C-level packaged smoke + a recorded real-browser smoke); its non-blocking follow-up P1-05B
-(front-end verification base) is also PASS. P1-06 is now READY / CURRENT TASK.**
+(front-end verification base) is also PASS. P1-06 is PASS (D level: 16 new adversarial acceptance cases for
+duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 is now
+READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -42,12 +44,34 @@ unmodified.
 
 P1-05A 的服务端 Windows 路径脱敏补强为 **PASS**：完整 B 级测试（303 passed、1 skipped）、专项回归、
 真实端口损坏图片场景、Ruff 与差异检查均通过；详见
-[P1-05A 报告](reports/P1-05A-local-path-redaction.md)。主线当前任务仍为 P1-06。
+[P1-05A 报告](reports/P1-05A-local-path-redaction.md)。
+
+P1-06 (the duplicate / move / replace / offline / remap / restart acceptance closed loop) is recorded in
+[docs/reports/P1-06-identity-lifecycle-acceptance.md](reports/P1-06-identity-lifecycle-acceptance.md). 它新增
+一个测试文件 `tests/integration/test_catalog_identity_lifecycle.py`（16 个用例），**未改任何生产代码**：
+`schema_version` 仍为 1，ADR-0002、`0001_initial.sql`、`pyproject.toml`、`uv.lock` 均未改动，既有测试
+全部原样通过。主线当前任务为 P2-01。
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
 ## Latest accepted verification
+
+P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q tests/integration/test_catalog_identity_lifecycle.py` | exit 0, `16 passed`（本次新增用例） |
+| `uv run pytest -q tests/unit tests/integration` | exit 0, `tests=337 failures=0 errors=0 skipped=1`（336 passed / 1 skipped，127.111 s） |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| `uv lock --check` | exit 0, `Resolved 95 packages`（无依赖变更） |
+| 场景：重复内容（同来源 3 份含中文/空格、>220 字符长路径、只读原文件 + 跨来源 1 份） | 1 个 `asset_id`、4 个位置、1 个内容寻址缩略图；删除同来源 1 份后其余 `PRESENT`、来源内 `assets` 仍为 1、产物字节/时间戳不变；删除另一来源唯一位置后资产行仍保留 |
+| 场景：移动（`a.jpg` → `2024 年/照 片 一.jpg`） | 新位置 `PRESENT` + 旧位置 `MISSING`、`asset_id` 不变、位置数 +1、资产数不变、缩略图路径与 `(size, mtime_ns)` 完全不变（未重算） |
+| 场景：替换（4 种） | 不同长度覆盖 → 新内容身份、旧资产仍 `ACTIVE`；覆盖成既有位置的内容 → 重绑该既有资产、不新增；同尺寸 + 还原 mtime → 仍重新 hash 识别；两位置互换 → 各自跟随内容身份；覆盖后中断 → 位置 `PRESENT` 但 `asset_id IS NULL`（待确认）、`RUNNING`、无缺失、`last_successful_scan` 不变 |
+| 场景：断盘/离线（成功后拔盘 + 扫描中掉盘 + 枚举↔确认窗口） | 一律 `BLOCKED`、`locations_missing == 0`、`last_successful_scan` 不变；2 个已发布缩略图字节不变且 `media-status` 仍 `published == 2`；未生成的 preview 报 `source_missing`/`SOURCE_FILE_MISSING`；原文件仅被夹具移动、字节未变 |
+| 场景：重映射（真实改名挂载点 + 单写事务更新 `root_path`） | 位置行零改写（`location_id`/`path_key`/`asset_id`/`size`/`mtime_ns`/`availability` 投影逐项不变）、重扫 0 缺失、资产数与产物不变；产品 remap 入口实测不存在（OpenAPI 14 条路径，无 `remap`） |
+| 场景：重启/中断恢复 | 关闭服务 → 停机期间替换 1 个已绑定文件 + 删除 1 个未确认文件 → 新进程接管**同一** `scan_run`（`scans == 1`、`jobs == 1`）；`attempts == 1`、无重复位置、被替换位置绑定新内容、旧内容资产仍 `ACTIVE`、被删位置 `MISSING` 且 `asset_id IS NULL`；多次接管 `attempts` 0→1→2 单调 |
+| 边界 | 0 文件/空子目录、1 文件、1001 文件（1001 位置 / 1001 资产 / `path_key` 全不重复 / 0 缺失）、只读原文件、中文/空格/长路径 |
 
 Produced by DS-L on the P1-05 implementation and its P1-05B follow-up (see the P1-05 and P1-05B reports for
 per-scenario evidence).
@@ -82,6 +106,18 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
 
 ## Carried-forward limits / follow-ups
 
+- **P1-06**: 对抗性验收**未发现**与 ADR-0002 冲突的真实缺陷，故无生产代码改动。三项残留边界已实测记录：
+  (a) 若内容被替换但字节数不变且 `mtime` 被还原，扫描层的变化提示不会触发，此时若扫描被中断，位置会
+  在**下一次完整扫描**前保留上一次观测（旧 `asset_id`/旧 size/mtime）；ADR-0002 §5.1 明确 size/mtime
+  只是快速提示，且每次完整扫描都重算完整 SHA-256（`test_same_size_replacement_window_*` 已实测纠正），
+  该窗口内 `last_successful_scan` 不前进、不会静默成功；若要缩短到「中断窗口内立即解除绑定」，属于改变
+  缺失/身份判定边界，必须先交 C2 更新 ADR-0002。
+  (b) 「断盘」用真实重命名/移走来源根目录模拟，**不是**真实外接盘/网络盘的卷级故障
+  （`ERROR_NOT_READY`、USB 意外拔出、SMB 断链仍未在真实硬件上验证）。
+  (c) 重映射只验证到夹具层（受控 `source_roots.root_path` 更新 + 重扫的身份/位置/产物不变）；
+  `POST /sources/{id}/remap` 的**产品能力**（新根校验、来源重叠复查、映射审计、API 契约）仍缺，
+  该项产品层入口标记为 `VALIDATION PENDING — 缺产品能力，不缺验收能力`。
+  跨进程写者约束沿用 P1-02 记录，本任务未新增承诺。
 - **P1-04**: the local session lives in memory for the process lifetime (no TTL, no logout, no LAN auth); the
   bootstrap credential file's Windows DACL could not be verified here (`icacls` was denied in this sandbox, so
   the tightening stays best-effort); the API and the scan worker use two SQLite connections in one process and only
@@ -148,22 +184,26 @@ human-labelled semantic-search holdout.
 
 ## Current task / next execution step
 
-**P1-06 — 重复、移动、替换、断盘、重映射、重启验收.**
+**P1-06 — 重复、移动、替换、断盘、重映射、重启验收：PASS.** 见
+[P1-06 报告](reports/P1-06-identity-lifecycle-acceptance.md)。
 
-- Status: **READY / CURRENT TASK**. P1-01 … P1-05 are accepted; P1-06 has no unfinished dependency.
-- Task card: `docs/tasks/P1-06.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**.
-- Goal: prove the frozen ADR-0002 identity/location/missing rules end-to-end on real fixtures: duplicate content
-  shares one asset with several positions, a move leaves "new position PRESENT + old position MISSING" on the same
-  `asset_id`, a replaced file is not silently re-bound, an unmounted/offline volume never turns into a deletion
-  conclusion, a re-mapped root keeps identity and position binding, and a restart mid-scan recovers the same
-  `scan_run` without duplicating rows.
-- Validation level: **D** (`uv run pytest -q tests/unit tests/integration` + ruff + diff-check + the required
-  fault-injection/recovery scenarios). Packaging is only required if the task touches packaged resources.
+**P2-01 — JobRequest/Result、ProcessorSpec、device_policy、RuntimeCapabilities、EmbeddingAdapter、
+SearchProfile 契约.**
+
+- Status: **READY / CURRENT TASK**. P1-01 … P1-06 are accepted; P2-01 has no unfinished dependency.
+- Task card: `docs/tasks/P2-01.md`.
+- Recommended execution model: **C2 / GPT-5.6 Sol / high**（V3.1 §7「C2 冻结契约」，§11 高风险任务）。
+- Goal: freeze the minimum P2 protocol before any implementation — JobRequest/JobResult identity, ProcessorSpec
+  fields, the three `device_policy` values with the no-implicit-fallback device eligibility rules,
+  RuntimeCapabilities, the EmbeddingAdapter/RerankerAdapter method contracts, and the immutable SearchProfile with
+  its atomic active pointer and `space_id` isolation — as `docs/decisions/ADR-0003-*.md` plus a machine-readable
+  JSON Schema companion and a contract test. **No production code and no table/migration change in this task.**
+- Validation level: **A** (`uv run pytest -q tests/unit/test_p2_contracts.py` + `uv run ruff check .` +
+  `git diff --check`); it escalates to D if any production code, migration or dependency is touched.
 - Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
 
-Optional follow-ups recorded but not dependencies of P1-06: a **C1 / GPT-5.6 Terra / medium** review of the P1-05
-§8.1 redaction gap (and, if still open, the P1-04 packaging/migration-check fix), and a **C2 / GPT-5.6 Sol / high**
-decision before adding any `taken_at`/EXIF-capture-time column.
+Optional follow-ups recorded but not dependencies of P2-01: a **C1 / GPT-5.6 Terra / medium** review of the P1-05
+§8.1 redaction gap (and, if still open, the P1-04 packaging/migration-check fix); the P1-06 §5 product remap
+capability; and a **C2 / GPT-5.6 Sol / high** decision before adding any `taken_at`/EXIF-capture-time column.
 
 Model switching remains manual; the repository only records the recommended model per stage.
