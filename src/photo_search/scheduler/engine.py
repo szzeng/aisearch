@@ -20,8 +20,11 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from photo_search.artifacts.store import ArtifactStore, PreparedArtifact
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
+    ARTIFACT_INVALID,
+    INVALID_JOB_RESULT,
     INVALID_STATE_TRANSITION,
     RETRY_EXHAUSTED,
     RUNTIME_CAPABILITY_UNAVAILABLE,
@@ -61,6 +64,7 @@ class Scheduler:
         retry_base_ms: int = state.DEFAULT_RETRY_BASE_MS,
         retry_multiplier: int = state.DEFAULT_RETRY_MULTIPLIER,
         retry_max_ms: int = state.DEFAULT_RETRY_MAX_MS,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self.catalog = catalog
         self._specs: dict[str, ProcessorSpec] = {}
@@ -72,6 +76,9 @@ class Scheduler:
         self.retry_base_ms = int(retry_base_ms)
         self.retry_multiplier = int(retry_multiplier)
         self.retry_max_ms = int(retry_max_ms)
+        self.artifact_store = artifact_store or ArtifactStore.open(
+            catalog.db_path.parent.parent
+        )
 
     # ------------------------------------------------------------------ registry
     @property
@@ -299,68 +306,119 @@ class Scheduler:
             )
 
     def submit(self, result: JobResult, *, now_ms: int) -> jobs.Job:
-        """Validate a result and commit its terminal/retry transition atomically."""
-        with self.catalog.write() as connection:
-            job = jobs.validate_submission(
-                connection,
-                job_id=result.job_id,
-                lease_token=result.lease_token,
-                now_ms=int(now_ms),
-                input_revision=result.input_revision,
-                processor_id=result.processor_id,
+        """Validate, publish and atomically commit artifact/outbox plus job state."""
+        # File hashing/staging stays outside a SQLite transaction. This first qualification
+        # avoids even a temporary file for an already stale/late execution; the exact same
+        # checks run again under BEGIN IMMEDIATE before publication and database writes.
+        job = jobs.validate_submission(
+            self.catalog.connection,
+            job_id=result.job_id,
+            lease_token=result.lease_token,
+            now_ms=int(now_ms),
+            input_revision=result.input_revision,
+            processor_id=result.processor_id,
+        )
+        self._validate_result_identity(job, result)
+        spec = self.spec_for(result.processor_id)
+        if spec is None:
+            raise CatalogError(
+                INVALID_JOB_RESULT,
+                "the result processor is not registered with this scheduler",
             )
-            dispatched = (job.resolved_device, job.runtime_provider, job.precision)
-            reported = (result.resolved_device, result.runtime_provider, result.precision)
-            if dispatched != reported:
-                raise CatalogError(
-                    RUNTIME_RESOLUTION_MISMATCH,
-                    f"job {job.job_id} was dispatched as {dispatched} but reports {reported}",
-                    details={
-                        "job_id": job.job_id,
-                        "dispatched": [value for value in dispatched],
-                        "reported": [value for value in reported],
-                    },
+        if result.artifacts and result.state != jobs.STATE_SUCCEEDED:
+            raise CatalogError(
+                ARTIFACT_INVALID,
+                "only a qualified SUCCEEDED result may publish artifacts",
+            )
+        prepared: list[PreparedArtifact] = []
+        try:
+            for ref in result.artifacts:
+                prepared.append(self.artifact_store.prepare(ref))
+            with self.catalog.write() as connection:
+                job = jobs.validate_submission(
+                    connection,
+                    job_id=result.job_id,
+                    lease_token=result.lease_token,
+                    now_ms=int(now_ms),
+                    input_revision=result.input_revision,
+                    processor_id=result.processor_id,
                 )
-            run_after_ms: int | None = None
-            blocking_reason: str | None = None
-            error: CatalogError | None = None
-            if result.error is not None:
-                error = CatalogError(result.error.code, result.error.message)
-            if result.state == jobs.STATE_RETRY_WAIT:
-                run_after_ms = int(now_ms) + state.backoff_delay_ms(
-                    job.attempts + 1,
-                    base_ms=self.retry_base_ms,
-                    multiplier=self.retry_multiplier,
-                    max_ms=self.retry_max_ms,
+                self._validate_result_identity(job, result)
+                self.artifact_store.persist_result(
+                    connection,
+                    job=job,
+                    result=result,
+                    spec=spec,
+                    prepared=prepared,
+                    now_ms=int(now_ms),
                 )
-            elif result.state == jobs.STATE_BLOCKED:
-                blocking_reason = (
-                    result.error.blocking_reason if result.error else None
-                ) or (result.error.code if result.error else RUNTIME_CAPABILITY_UNAVAILABLE)
-            # ADR-0002 §6.5: progress only ever moves forward. A retry/blocked envelope may
-            # legitimately report 0.0; that must not erase what this execution reached.
-            progress: float | None = (
-                result.progress
-                if result.progress >= float(job.progress or 0.0)
-                else None
+                run_after_ms: int | None = None
+                blocking_reason: str | None = None
+                error: CatalogError | None = None
+                if result.error is not None:
+                    error = CatalogError(result.error.code, result.error.message)
+                if result.state == jobs.STATE_RETRY_WAIT:
+                    run_after_ms = int(now_ms) + state.backoff_delay_ms(
+                        job.attempts + 1,
+                        base_ms=self.retry_base_ms,
+                        multiplier=self.retry_multiplier,
+                        max_ms=self.retry_max_ms,
+                    )
+                elif result.state == jobs.STATE_BLOCKED:
+                    blocking_reason = (
+                        result.error.blocking_reason if result.error else None
+                    ) or (result.error.code if result.error else RUNTIME_CAPABILITY_UNAVAILABLE)
+                # ADR-0002 §6.5: progress only ever moves forward. A retry/blocked envelope may
+                # legitimately report 0.0; that must not erase what this execution reached.
+                progress: float | None = (
+                    result.progress
+                    if result.progress >= float(job.progress or 0.0)
+                    else None
+                )
+                jobs.finish(
+                    connection,
+                    job_id=job.job_id,
+                    lease_token=result.lease_token,
+                    state=result.state,
+                    input_revision=result.input_revision,
+                    processor_id=result.processor_id,
+                    now_ms=int(now_ms),
+                    progress=progress,
+                    error=error,
+                    run_after_ms=run_after_ms,
+                )
+                connection.execute(
+                    "UPDATE jobs SET blocking_reason = ? WHERE job_id = ?",
+                    (blocking_reason, job.job_id),
+                )
+            self.artifact_store.discard(prepared)
+            return jobs.get_job(self.catalog.connection, job.job_id)
+        except BaseException:
+            # If a file was published before SQLite rolled back, it is an unreferenced
+            # orphan and is safe to remove. Pre-existing content-addressed files stay.
+            self.artifact_store.discard(prepared, remove_published=True)
+            raise
+
+    @staticmethod
+    def _validate_result_identity(job: jobs.Job, result: JobResult) -> None:
+        if str(job.task_type) != result.task_type:
+            raise CatalogError(
+                INVALID_JOB_RESULT,
+                "JobResult.task_type does not match the leased job",
+                details={"job_id": job.job_id},
             )
-            jobs.finish(
-                connection,
-                job_id=job.job_id,
-                lease_token=result.lease_token,
-                state=result.state,
-                input_revision=result.input_revision,
-                processor_id=result.processor_id,
-                now_ms=int(now_ms),
-                progress=progress,
-                error=error,
-                run_after_ms=run_after_ms,
+        dispatched = (job.resolved_device, job.runtime_provider, job.precision)
+        reported = (result.resolved_device, result.runtime_provider, result.precision)
+        if dispatched != reported:
+            raise CatalogError(
+                RUNTIME_RESOLUTION_MISMATCH,
+                f"job {job.job_id} was dispatched as {dispatched} but reports {reported}",
+                details={
+                    "job_id": job.job_id,
+                    "dispatched": [value for value in dispatched],
+                    "reported": [value for value in reported],
+                },
             )
-            connection.execute(
-                "UPDATE jobs SET blocking_reason = ? WHERE job_id = ?",
-                (blocking_reason, job.job_id),
-            )
-            return jobs.get_job(connection, job.job_id)
 
     def cancel(self, *, job_id: int, now_ms: int, reason: str | None = None) -> jobs.Job:
         """Cancel one job; clearing the lease in the same commit refuses late results."""

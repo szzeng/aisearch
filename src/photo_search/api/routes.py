@@ -76,7 +76,7 @@ from photo_search.media.status import (
     MEDIA_STATE_UNSUPPORTED,
 )
 from photo_search.scheduler import state as scheduler_state
-from photo_search.scheduler.projection import scheduler_summary
+from photo_search.scheduler.projection import index_summary, scheduler_summary
 
 APP_VERSION = "0.1.0"
 
@@ -198,6 +198,7 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "scheduler": summary.get("scheduler"),
         "runtime": summary.get("runtime"),
         "qualification_evidence": int(summary.get("qualification_evidence") or 0),
+        "indexing": index_summary(catalog_db_path(settings.data_root)),
     }
 
 
@@ -264,6 +265,7 @@ async def stats(request: Request) -> dict[str, Any]:
         "assets_examined": int(report["assets_examined"]),
         "assets_total": int(report["assets_total"]),
         "partial": bool(report["partial"]),
+        "indexing": index_summary(service.catalog.db_path),
     }
 
 

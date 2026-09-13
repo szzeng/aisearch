@@ -70,3 +70,66 @@ def scheduler_summary(db_path: str | Path) -> dict[str, Any] | None:
         return summary
     finally:
         connection.close()
+
+
+def index_summary(db_path: str | Path) -> dict[str, Any] | None:
+    """Safe artifact/outbox/index counts; never returns paths, payloads or checksums."""
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        required = {"artifacts", "index_outbox", "index_entries", "index_generations"}
+        if not required <= tables:
+            return None
+
+        def counts(table: str, column: str) -> dict[str, int]:
+            return {
+                str(row["state"]): int(row["count"])
+                for row in connection.execute(
+                    f"SELECT {column} AS state, COUNT(*) AS count FROM {table} GROUP BY {column}"
+                )
+            }
+
+        generations = counts("index_generations", "state")
+        active = [
+            {
+                "generation_id": str(row["generation_id"]),
+                "space_id": str(row["space_id"]),
+                "state": str(row["state"]),
+            }
+            for row in connection.execute(
+                "SELECT generation_id, space_id, state FROM index_generations "
+                "WHERE is_active = 1 ORDER BY generation_id"
+            )
+        ]
+        return {
+            "artifacts": counts("artifacts", "lifecycle_state"),
+            "outbox": counts("index_outbox", "state"),
+            "entries": counts("index_entries", "state"),
+            "generations": generations,
+            "active_generations": active,
+            "semantic_ready": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM index_entries WHERE state = 'CONFIRMED'"
+                ).fetchone()[0]
+            ),
+            "pending": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM index_outbox WHERE state <> 'CONFIRMED'"
+                ).fetchone()[0]
+            ),
+            "confirmed": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM index_outbox WHERE state = 'CONFIRMED'"
+                ).fetchone()[0]
+            ),
+            "pending_repair": int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM index_entries WHERE state = 'PENDING_REPAIR'"
+                ).fetchone()[0]
+            ),
+        }
+    finally:
+        connection.close()

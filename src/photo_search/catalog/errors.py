@@ -62,6 +62,15 @@ SCHEDULER_PAUSED = "SCHEDULER_PAUSED"
 INVALID_JOB_RESULT = "INVALID_JOB_RESULT"
 SCHEDULER_EXECUTOR_ERROR = "SCHEDULER_EXECUTOR_ERROR"
 
+#: P2-03 artifact/outbox/indexing codes. These identify deterministic protocol or
+#: derived-store failures without leaking a local storage path.
+ARTIFACT_INVALID = "ARTIFACT_INVALID"
+ARTIFACT_CONFLICT = "ARTIFACT_CONFLICT"
+ARTIFACT_MISSING = "ARTIFACT_MISSING"
+SPACE_MISMATCH = "SPACE_MISMATCH"
+INDEX_SUBMISSION_FAILED = "INDEX_SUBMISSION_FAILED"
+INDEX_REPAIR_REQUIRED = "INDEX_REPAIR_REQUIRED"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

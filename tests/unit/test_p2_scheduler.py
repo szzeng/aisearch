@@ -7,6 +7,7 @@ closed loop (claim -> resolve -> dispatch -> submit -> recover) is real and pers
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -299,13 +300,14 @@ def _error_envelope(result_state: str) -> dict[str, Any]:
 
 
 def structured_artifact() -> dict[str, Any]:
+    payload = b'{"state":"ABSENT"}'
     return {
         "artifact_id": "geo-fact:asset-1:geo-extract@1",
         "artifact_type": "structured",
         "artifact_revision": "geo-fact.v1",
         "media_type": "application/json",
-        "checksum_sha256": SHA,
-        "byte_size": 2,
+        "checksum_sha256": hashlib.sha256(payload).hexdigest(),
+        "byte_size": len(payload),
         "storage_uri": None,
         "payload": {"state": "ABSENT"},
         "space_id": None,
@@ -827,12 +829,11 @@ def test_success_with_no_artifacts_is_normal_and_writes_no_vector(catalog: Catal
     scheduler = engine.Scheduler(catalog, [spec])
     scheduler.record_capability(python_capability(), now_ms=1_000)
     qualify(scheduler, spec)
-    assert _storage_tables(catalog) == set()
+    before = _storage_rows(catalog)
     enqueue(catalog)
     assert scheduler.run_until_idle(executor(artifacts=[]), worker_id="w1", now_ms=1_100) == 1
     assert scheduler.counts() == {"SUCCEEDED": 1}
-    # P2-02 must not create an artifact, outbox or vector store ahead of P2-03.
-    assert _storage_tables(catalog) == set()
+    assert _storage_rows(catalog) == before
 
 
 def test_a_structured_non_vector_result_is_accepted(catalog: Catalog) -> None:
@@ -1021,4 +1022,11 @@ def _storage_tables(catalog: Catalog) -> set[str]:
         name
         for name in schema.business_tables(catalog.connection)
         if any(token in name for token in tokens)
+    }
+
+
+def _storage_rows(catalog: Catalog) -> dict[str, int]:
+    return {
+        table: int(catalog.read_one(f"SELECT COUNT(*) FROM {table}")[0])
+        for table in _storage_tables(catalog)
     }

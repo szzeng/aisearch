@@ -41,6 +41,7 @@ GPU_PROCESSOR = "clip-image@36e679e6-fp32-v1"
 
 V1_TABLES = ("assets", "file_locations", "jobs", "metadata", "scan_runs", "source_roots")
 V2_TABLES = (*V1_TABLES, "runtime_capabilities", "runtime_qualification_evidence", "scheduler_state")
+V3_TABLES = (*V2_TABLES, "artifacts", "index_entries", "index_generations", "index_outbox")
 
 #: The exact ADR-0002 §3.6 column list whose values a v1 row must keep, byte for byte.
 V1_JOB_COLUMNS = (
@@ -397,8 +398,8 @@ def test_v1_upgrade_preserves_every_existing_row_and_writes_a_backup(tmp_path: P
     result = migrate_database(path, data_root=data_root(tmp_path))
 
     assert result.previous_version == 1
-    assert result.schema_version == 2
-    assert result.applied == (2,)
+    assert result.schema_version == 3
+    assert result.applied == (2, 3)
     assert result.backup_path is not None and result.backup_path.is_file()
     backup = open_readonly(result.backup_path)
     try:
@@ -408,15 +409,15 @@ def test_v1_upgrade_preserves_every_existing_row_and_writes_a_backup(tmp_path: P
     finally:
         backup.close()
 
-    # Every frozen column of every row survived byte for byte; the live schema is v2.
+    # Every frozen column of every row survived byte for byte; the live schema is v3.
     assert job_rows(path, V1_JOB_COLUMNS) == before
     assert all_table_rows(
         path, ("source_roots", "scan_runs", "assets", "file_locations")
     ) == other_before
     live = open_readonly(path)
     try:
-        assert set(schema.business_tables(live)) == set(V2_TABLES)
-        schema.verify_schema(live, 2)
+        assert set(schema.business_tables(live)) == set(V3_TABLES)
+        schema.verify_schema(live, 3)
     finally:
         live.close()
 
@@ -443,20 +444,20 @@ def test_an_interrupted_upgrade_rolls_back_and_keeps_every_row(tmp_path: Path, m
     directory.mkdir()
     for _, source in schema.migration_files():
         (directory / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    (directory / "0003_broken.sql").write_text(
+    (directory / "0004_broken.sql").write_text(
         "ALTER TABLE jobs ADD COLUMN probe_note TEXT;\n"
         "INSERT INTO metadata(key, value) VALUES('probe', 'yes');\n"
         "SELECT * FROM table_that_does_not_exist;\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", directory)
-    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 3)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 4)
 
     with pytest.raises(CatalogError) as error:
         migrate_database(path, data_root=data_root(tmp_path))
 
     assert error.value.code == MIGRATION_FAILED
-    assert inspect_database(path) == 2
+    assert inspect_database(path) == 3
     assert job_rows(path, V1_JOB_COLUMNS) == before
     connection = open_readonly(path)
     try:

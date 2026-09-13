@@ -27,6 +27,8 @@ MEDIA_CACHE_DIRNAME = "media"
 #: live under the data root, never inside an installation directory or a source root.
 RUNTIME_DIRNAME = "runtime"
 SESSION_CREDENTIAL_FILENAME = "session.json"
+ARTIFACTS_DIRNAME = "artifacts"
+VECTORS_DIRNAME = "vectors"
 
 
 def default_data_root() -> Path:
@@ -77,6 +79,16 @@ def media_cache_dir(data_root: str | Path | None = None) -> Path:
 def runtime_dir(data_root: str | Path | None = None) -> Path:
     """Run-time state of the local application (architecture §11.1)."""
     return resolve_data_root(data_root) / RUNTIME_DIRNAME
+
+
+def artifacts_dir(data_root: str | Path | None = None) -> Path:
+    """Durable processor artifacts, outside both the install and source roots."""
+    return resolve_data_root(data_root) / ARTIFACTS_DIRNAME
+
+
+def vectors_dir(data_root: str | Path | None = None) -> Path:
+    """Derived LanceDB generations under the application data root."""
+    return resolve_data_root(data_root) / VECTORS_DIRNAME
 
 
 def session_credential_path(data_root: str | Path | None = None) -> Path:

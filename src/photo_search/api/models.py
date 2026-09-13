@@ -94,6 +94,7 @@ class CapabilitiesResponse(BaseModel):
     scheduler: SchedulerSummary | None = None
     runtime: RuntimeHealthSummary | None = None
     qualification_evidence: int = 0
+    indexing: dict[str, Any] | None = None
 
 
 class SourceRecord(BaseModel):
@@ -144,6 +145,7 @@ class StatsResponse(BaseModel):
     assets_examined: int
     assets_total: int
     partial: bool
+    indexing: dict[str, Any] | None = None
 
 
 class LocationRef(BaseModel):

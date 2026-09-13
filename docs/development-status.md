@@ -9,7 +9,8 @@
 duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 and P2-01A are PASS
 (A-level protocol closures, no production/schema/dependency change). P2-02 is PASS (D level: a continuous
 `0001 → 0002` migration, the persistent scheduler with scheduler-owned device qualification, and named
-fault-injection/recovery cases). **P2-03 is now READY / CURRENT TASK.**
+fault-injection/recovery cases). P2-03 is PASS (D level: schema 3 artifact/outbox/index confirmation and real
+LanceDB replay/repair). **P2-03A is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -133,6 +134,27 @@ cancel/recover 闭环、只读诊断投影）和连续增量迁移
 | 重启/退避/公平 | 进程退出后过期 lease 接管 `attempts+1`、旧 worker 心跳与迟到结果被拒且零副作用；退避 `11000→13000→17000→21000`（8000 被 4000 上限截断）；pause 跨重启仍暂停而既有 RUNNING 合法完成；10 个公平窗口后旧 backlog 追平并被选中 |
 | 结果资格 | `JobResult` provider/device/precision 不匹配 → `RUNTIME_RESOLUTION_MISMATCH` 且 job 行逐字节不变；`artifacts=[]` 与结构化非向量结果均正常；协议不兼容记确定性 FAILED、执行器异常记可重试且只记异常类型 |
 | 诊断工具 | `frontend_smoke_fixture.py --too-new` 改为由 `SUPPORTED_SCHEMA_VERSION` 推导；顺带修掉该工具 `--help` 的历史崩溃（argparse 二次 `%` 格式化） |
+
+## Latest artifact/index closure — P2-03 (2026-09-13)
+
+P2-03 已完成通用 artifact/outbox/LanceDB/index_entries 可恢复闭环，报告见
+[P2-03 报告](reports/P2-03-artifact-outbox-index-submission.md)。新增连续 migration
+`0003_artifact_outbox_index.sql`，**schema_version 推进到 3**；0001/0002、冻结 ADR/JSON schema、
+依赖、worker 与打包入口均未改。
+
+`Scheduler.submit` 现在先核对 lease/revision/processor/device，再受控发布 structured/binary/embedding
+产物，并在一个 SQLite 事务写 artifact、embedding outbox、PENDING_REPAIR index entry 与 job 终态。
+LanceDB 0.38.0 使用原生 merge 幂等提交；只有 SQLite 确认后才显示 READY。删除确认、Lance 已写而
+SQLite 未确认、晚到旧 projection、artifact 回收/再执行和引用保护都有具名恢复用例。
+`schedule_projection_refresh` 已为 P2-03A 的 CatalogFilterRevision 同事务投影刷新提供稳定实现入口。
+
+| Check | Result |
+|---|---|
+| `uv run pytest -q tests/unit tests/integration` | exit 0，433 collected，432 passed / 1 skipped |
+| P2-03 专项 | exit 0，17 passed（artifact、提交/重放、migration/repair） |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| `uv lock --check` | exit 0，`Resolved 95 packages` |
+| C 级 | 未触发：未改 worker、正式环境、打包入口、依赖或新 package-data 目录 |
 
 ## Latest accepted verification
 
@@ -273,16 +295,20 @@ human-labelled semantic-search holdout.
 **P2-02 — 持久调度、设备资格与阻塞恢复实现：PASS.** 见
 [P2-02 报告](reports/P2-02-persistent-scheduler-and-device-qualification.md)。
 
-**P2-03 — 通用产物、outbox、幂等索引提交与修复.**
+**P2-03 — 通用产物、outbox、幂等索引提交与修复：PASS.** 见
+[P2-03 报告](reports/P2-03-artifact-outbox-index-submission.md)。
 
-- Status: **READY / CURRENT TASK**. P2-02 的调度/资格/阻塞恢复闭环已 PASS（D 级）。
-- Task card: `docs/tasks/P2-03.md`.
-- Recommended execution model: **C2 / GPT-5.6 Sol / high 做关键设计与审查；冻结后的普通实现按卡提示
-  DS-H / DeepSeek V4.1 Flash / 高推理**。
-- Goal: 通用 artifact/outbox 提交协议、非向量与向量结果的原子落地、LanceDB 幂等更新与
-  index_entries 修复；**不提前实施 P2-03A 地点表**。
-- Validation level: **最低 D**（完整 unit/integration + 对应失败注入/恢复；涉及打包资源再加 C）。
-- 当前任务推荐模型与本会话不同；请由用户在 Codex 中手动切换后再执行，不自动切换或启动 Agent。
+**P2-03A — 地点增量迁移、GPS 事实、目录、人工归属/撤销与纯筛选 API.**
+
+- Status: **READY / CURRENT TASK**. P2-03 的 artifact/outbox/index 修复闭环已 PASS（D 级）。
+- Task card: `docs/tasks/P2-03A.md`.
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**。
+- Goal: 从 schema 3 连续新增地点核心 migration，落地 GPS 事实、地点目录、人工 assignment/取消锁/
+  恢复自动、批量/撤销、CatalogFilterRevision 和纯 SQLite 地点 API；**不提前实施 P2-03B 地名包/
+  附近城市建议或 P2-03C 页面**。
+- Validation level: **最低 D**（完整 unit/integration + 地点事务/GPS/迁移故障注入；触发打包再加 C）。
+- 当前会话为 GPT-5.6 Sol / high，与下一任务推荐模型不同；请用户在 Codex 中手动切换后再执行，
+  不自动切换或启动 Agent。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03 的前置依赖。
