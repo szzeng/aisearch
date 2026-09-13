@@ -42,6 +42,37 @@ class MediaKindSpec(BaseModel):
     supported_input_formats: list[str]
 
 
+class SchedulerSummary(BaseModel):
+    """Persisted pause policy; carries no credential, lease or path."""
+
+    state: Literal["running", "paused"]
+    revision: int
+    aging_window_ms: int
+    updated_at: int
+
+
+class RuntimeHealthSummary(BaseModel):
+    """The latest runtime capability revision; no model path or driver DLL path."""
+
+    capability_revision: str
+    runtime_package_id: str
+    runtime_backend: str
+    health_status: Literal["healthy", "degraded", "unhealthy", "unknown"]
+    health_checked_at: int
+    measured_at: int
+
+
+class SchedulerStateResponse(BaseModel):
+    """Result of ``POST /api/v1/scheduler/pause`` / ``resume``; idempotent by design."""
+
+    state: Literal["running", "paused"]
+    revision: int
+    aging_window_ms: int
+    updated_at: int
+    changed: bool
+    reason: str | None = None
+
+
 class CapabilitiesResponse(BaseModel):
     """Build and contract facts. Contains no data-directory path and no user data."""
 
@@ -58,6 +89,11 @@ class CapabilitiesResponse(BaseModel):
     allowed_hosts: list[str]
     media: dict[str, MediaKindSpec]
     supported_input_formats: list[str]
+    #: P2-02 scheduler/runtime health. ``None`` means this catalog predates the 0002
+    #: migration; the API never guesses a device or a health verdict.
+    scheduler: SchedulerSummary | None = None
+    runtime: RuntimeHealthSummary | None = None
+    qualification_evidence: int = 0
 
 
 class SourceRecord(BaseModel):
@@ -216,6 +252,14 @@ class JobRecord(BaseModel):
     last_error_message: str | None = None
     created_at: int
     updated_at: int
+    #: P2-02 dispatch summary. The device fields are the resolved snapshot, never a request
+    #: to the client, and ``blocking`` states a stable code instead of a local path.
+    requested_device: str = "auto"
+    resolved_device: str | None = None
+    runtime_provider: str | None = None
+    precision: str | None = None
+    runtime_capability_revision: str | None = None
+    blocking_reason: str | None = None
     scan: ScanState | None = None
 
 

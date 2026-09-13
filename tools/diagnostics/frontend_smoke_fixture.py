@@ -32,6 +32,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from photo_search.catalog import schema
+
 DEFAULT_WORK_DIRNAME = "P1-05B 前端验收"
 LIBRARY_DIRNAME = "照片库 中文 空格"
 DATA_ROOT_DIRNAME = "PhotoSearchData 数据"
@@ -46,7 +48,9 @@ CORRUPT_NAME = "corrupt.jpg"
 AGE_MS = 3_600_000
 
 SCHEMA_VERSION_KEY = "schema_version"
-TOO_NEW_SCHEMA_VERSION = 2
+#: One past what this build can write, derived instead of hard coded so the fixture cannot
+#: go stale when a new migration lands (P2-02 moved the supported version to 2).
+TOO_NEW_SCHEMA_VERSION = int(schema.SUPPORTED_SCHEMA_VERSION) + 1
 
 
 def _photo_colour(index: int) -> tuple[int, int, int]:
@@ -193,7 +197,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--work-dir",
         type=Path,
         default=Path(tempfile.gettempdir()) / DEFAULT_WORK_DIRNAME,
-        help="fixture root (defaults to %%TEMP%%\\%s)" % DEFAULT_WORK_DIRNAME,
+        # argparse re-applies ``%``-formatting to every help string, so the already
+        # rendered literal has to be escaped again; without this ``--help`` raised
+        # "unsupported format character 'T'".
+        help=f"fixture root (defaults to %TEMP%\\{DEFAULT_WORK_DIRNAME})".replace("%", "%%"),
     )
     parser.add_argument("--photos", type=int, default=60, help="number of ordinary photos")
     parser.add_argument(
@@ -206,7 +213,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--too-new",
         action="store_true",
-        help="also create a schema_version=2 data root for the SCHEMA_TOO_NEW step",
+        help=(
+            f"also create a schema_version={TOO_NEW_SCHEMA_VERSION} data root for the "
+            "SCHEMA_TOO_NEW step"
+        ),
     )
     parser.add_argument(
         "--offline",

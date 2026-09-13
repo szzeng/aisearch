@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,6 +74,14 @@ JOB_FIELDS = (
     "last_error_message",
     "created_at",
     "updated_at",
+    # P2-02 dispatch snapshot: never part of the five-field logical identity.
+    "requested_device",
+    "resolved_device",
+    "runtime_provider",
+    "precision",
+    "runtime_capability_revision",
+    "dispatch_spec_revision",
+    "blocking_reason",
 )
 JOB_COLUMNS = ", ".join(JOB_FIELDS)
 
@@ -100,6 +109,13 @@ class Job:
     last_error_message: str | None
     created_at: int
     updated_at: int
+    requested_device: str
+    resolved_device: str | None
+    runtime_provider: str | None
+    precision: str | None
+    runtime_capability_revision: str | None
+    dispatch_spec_revision: str | None
+    blocking_reason: str | None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Job:
@@ -126,6 +142,13 @@ class Job:
             "last_error_message": self.last_error_message,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "requested_device": self.requested_device,
+            "resolved_device": self.resolved_device,
+            "runtime_provider": self.runtime_provider,
+            "precision": self.precision,
+            "runtime_capability_revision": self.runtime_capability_revision,
+            "dispatch_spec_revision": self.dispatch_spec_revision,
+            "blocking_reason": self.blocking_reason,
         }
 
 
@@ -145,14 +168,22 @@ def enqueue(
     priority: int = 0,
     max_attempts: int = 3,
     run_after: int | None = None,
+    requested_device: str = "auto",
 ) -> int:
     """Create the logical job once; the five-field unique key makes this idempotent."""
+    if requested_device not in ("auto", "cpu", "gpu"):
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            f"requested_device {requested_device!r} is not auto/cpu/gpu",
+            details={"requested_device": str(requested_device)},
+        )
     connection.execute(
         """
         INSERT INTO jobs (
             subject_type, subject_id, input_revision, task_type, processor_id,
-            state, priority, attempts, max_attempts, run_after, progress, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0.0, ?, ?)
+            state, priority, attempts, max_attempts, run_after, progress, created_at, updated_at,
+            requested_device
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0.0, ?, ?, ?)
         ON CONFLICT (subject_type, subject_id, input_revision, task_type, processor_id)
         DO NOTHING
         """,
@@ -168,6 +199,7 @@ def enqueue(
             now_ms if run_after is None else run_after,
             now_ms,
             now_ms,
+            requested_device,
         ),
     )
     row = connection.execute(
@@ -206,6 +238,85 @@ def _claimable_row(
         "ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1",
         parameters,
     ).fetchone()
+
+
+def _processor_filter(
+    processor_ids: Sequence[str] | None,
+) -> tuple[str, list[str]]:
+    """Build the ``processor_id IN (...)`` fragment shared by the P2 scheduler queries."""
+    if processor_ids is None:
+        return "", []
+    values = [str(value) for value in processor_ids]
+    if not values:
+        # An explicitly empty registry claims nothing; ``IN ()`` is not valid SQL.
+        return " AND processor_id IN ('')", []
+    placeholders = ", ".join("?" for _ in values)
+    return f" AND processor_id IN ({placeholders})", values
+
+
+def requeue_due_retries(
+    connection: sqlite3.Connection,
+    *,
+    now_ms: int,
+    processor_ids: Sequence[str] | None = None,
+) -> int:
+    """Move every RETRY_WAIT job whose backoff has elapsed back to QUEUED.
+
+    Backoff is persisted in ``run_after``, so "not before the deadline" is a database
+    fact and never a sleep: a caller that runs earlier simply finds nothing runnable.
+    """
+    filter_sql, parameters = _processor_filter(processor_ids)
+    cursor = connection.execute(
+        "UPDATE jobs SET state = ?, updated_at = ? WHERE state = ? AND run_after <= ?"
+        f"{filter_sql}",
+        (STATE_QUEUED, int(now_ms), STATE_RETRY_WAIT, int(now_ms), *parameters),
+    )
+    return int(cursor.rowcount or 0)
+
+
+def claimable_candidates(
+    connection: sqlite3.Connection,
+    *,
+    now_ms: int,
+    processor_ids: Sequence[str] | None,
+    aging_window_ms: int,
+    limit: int,
+) -> list[sqlite3.Row]:
+    """Runnable rows of the given processors, most eligible first.
+
+    The ordering is the deterministic fairness rule of ADR-0003 §10 / architecture §6.4:
+    a job's *effective* priority is its stored priority plus one point for every whole
+    ``aging_window_ms`` it has been waiting since it was created. A sustained stream of
+    fresh high-priority jobs therefore cannot starve an old backlog forever, because the
+    backlog's effective priority keeps rising. Ties are broken by ``created_at`` then
+    ``job_id``, so the same state always produces the same choice after a restart.
+    """
+    window = max(int(aging_window_ms), 1)
+    filter_sql, parameters = _processor_filter(processor_ids)
+    sql = (
+        f"SELECT {JOB_COLUMNS}, "
+        "(priority + ((? - created_at) / ?)) AS effective_priority "
+        "FROM jobs WHERE state = 'QUEUED' AND run_after <= ?"
+        f"{filter_sql} "
+        "UNION ALL "
+        f"SELECT {JOB_COLUMNS}, "
+        "(priority + ((? - created_at) / ?)) AS effective_priority "
+        "FROM jobs WHERE state = 'RUNNING' AND lease_expires_at <= ?"
+        f"{filter_sql} "
+        "ORDER BY effective_priority DESC, created_at ASC, job_id ASC LIMIT ?"
+    )
+    bound = [
+        int(now_ms),
+        window,
+        int(now_ms),
+        *parameters,
+        int(now_ms),
+        window,
+        int(now_ms),
+        *parameters,
+        max(int(limit), 1),
+    ]
+    return list(connection.execute(sql, tuple(bound)).fetchall())
 
 
 def _start_running(
@@ -358,10 +469,7 @@ def claim_next(
     task_type: str | None = None,
 ) -> Job | None:
     """Claim the highest-priority runnable job; ``None`` when nothing is runnable."""
-    connection.execute(
-        "UPDATE jobs SET state = ?, updated_at = ? WHERE state = ? AND run_after <= ?",
-        (STATE_QUEUED, now_ms, STATE_RETRY_WAIT, now_ms),
-    )
+    requeue_due_retries(connection, now_ms=now_ms)
     fail_exhausted_leases(connection, now_ms=now_ms, task_type=task_type)
     row = _claimable_row(connection, now_ms=now_ms, task_type=task_type)
     if row is None:
@@ -382,6 +490,7 @@ def fail_exhausted_leases(
     *,
     now_ms: int,
     task_type: str | None = None,
+    processor_ids: Sequence[str] | None = None,
 ) -> list[sqlite3.Row]:
     """Fail expired executions that have no retry budget left before claiming again.
 
@@ -390,10 +499,12 @@ def fail_exhausted_leases(
     """
     task_filter = "" if task_type is None else " AND task_type = ?"
     filter_parameters: tuple = () if task_type is None else (task_type,)
+    processor_sql, processor_parameters = _processor_filter(processor_ids)
     rows = connection.execute(
         "SELECT job_id, subject_type, subject_id, attempts, max_attempts FROM jobs "
-        f"WHERE state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts{task_filter}",
-        (STATE_RUNNING, int(now_ms), *filter_parameters),
+        f"WHERE state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts{task_filter}"
+        f"{processor_sql}",
+        (STATE_RUNNING, int(now_ms), *filter_parameters, *processor_parameters),
     ).fetchall()
     if not rows:
         return []

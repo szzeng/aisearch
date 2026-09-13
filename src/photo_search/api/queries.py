@@ -407,6 +407,12 @@ _JOB_COLUMNS = (
     "last_error_message",
     "created_at",
     "updated_at",
+    "requested_device",
+    "resolved_device",
+    "runtime_provider",
+    "precision",
+    "runtime_capability_revision",
+    "blocking_reason",
 )
 
 #: The lease token and the worker identity are deliberately not part of any projection.
@@ -441,6 +447,12 @@ def job_record(row: Any, *, redactor: Any = None) -> dict[str, Any]:
         "last_error_message": row["last_error_message"],
         "created_at": int(row["created_at"]),
         "updated_at": int(row["updated_at"]),
+        "requested_device": str(row["requested_device"]),
+        "resolved_device": row["resolved_device"],
+        "runtime_provider": row["runtime_provider"],
+        "precision": row["precision"],
+        "runtime_capability_revision": row["runtime_capability_revision"],
+        "blocking_reason": row["blocking_reason"],
         "scan": None,
     }
     if scan_id is not None:

@@ -49,6 +49,19 @@ MEDIA_INTERRUPTED = "MEDIA_INTERRUPTED"
 #: Only the first two are treated as deterministic properties of the input content.
 DETERMINISTIC_MEDIA_FAILURES = frozenset({DECODE_FAILED, FORMAT_UNSUPPORTED})
 
+#: P2-02 scheduler/runtime codes (ADR-0003 §2/§5/§6). ``DEVICE_POLICY_CONFLICT`` is a
+#: permanent configuration refusal; ``RUNTIME_CAPABILITY_UNAVAILABLE`` is a capability
+#: block that a new healthy revision may re-qualify; ``SCHEDULER_PAUSED`` refuses new
+#: claims only and never touches a live lease.
+DEVICE_POLICY_CONFLICT = "DEVICE_POLICY_CONFLICT"
+RUNTIME_CAPABILITY_UNAVAILABLE = "RUNTIME_CAPABILITY_UNAVAILABLE"
+RUNTIME_RESOLUTION_MISMATCH = "RUNTIME_RESOLUTION_MISMATCH"
+RUNTIME_CAPABILITY_REVISION_CONFLICT = "RUNTIME_CAPABILITY_REVISION_CONFLICT"
+SCHEDULER_PAUSED = "SCHEDULER_PAUSED"
+#: Extra codes with no honest equivalent in the frozen set above.
+INVALID_JOB_RESULT = "INVALID_JOB_RESULT"
+SCHEDULER_EXECUTOR_ERROR = "SCHEDULER_EXECUTOR_ERROR"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

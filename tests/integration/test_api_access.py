@@ -187,6 +187,10 @@ def test_host_header_must_be_a_loopback_spelling(api_env) -> None:
 
 
 def _too_new_database(data_root: Path) -> Path:
+    """A database whose version is one past what this build supports."""
+    from photo_search.catalog import schema
+
+    future_version = int(schema.SUPPORTED_SCHEMA_VERSION) + 1
     db_dir = data_root / "catalog"
     db_dir.mkdir(parents=True, exist_ok=True)
     path = db_dir / "catalog.db"
@@ -194,7 +198,7 @@ def _too_new_database(data_root: Path) -> Path:
     try:
         connection.executescript(
             "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-            "INSERT INTO metadata(key, value) VALUES('schema_version', '2');"
+            f"INSERT INTO metadata(key, value) VALUES('schema_version', '{future_version}');"
             "CREATE TABLE future_only (id INTEGER PRIMARY KEY);"
         )
         connection.commit()

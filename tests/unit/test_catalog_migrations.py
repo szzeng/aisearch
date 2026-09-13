@@ -27,7 +27,10 @@ CORE_TABLES = {
     "file_locations",
     "jobs",
     "metadata",
+    "runtime_capabilities",
+    "runtime_qualification_evidence",
     "scan_runs",
+    "scheduler_state",
     "source_roots",
 }
 
@@ -58,13 +61,13 @@ def test_fresh_database_migrates_to_the_supported_version(tmp_path: Path) -> Non
 
     assert result.previous_version == 0
     assert result.schema_version == schema.SUPPORTED_SCHEMA_VERSION
-    assert result.applied == (1,)
+    assert result.applied == (1, 2)
     assert result.backup_path is None
-    assert inspect_database(db_path) == 1
+    assert inspect_database(db_path) == 2
     connection = open_readonly(db_path)
     try:
         assert set(schema.business_tables(connection)) == CORE_TABLES
-        schema.verify_schema(connection, 1)
+        schema.verify_schema(connection, 2)
     finally:
         connection.close()
     writable = connect_rw(db_path)
@@ -83,7 +86,7 @@ def test_repeated_migration_is_idempotent(tmp_path: Path) -> None:
 
     second = migrate_database(db_path, data_root=_data_root(tmp_path))
 
-    assert second.previous_version == 1
+    assert second.previous_version == 2
     assert second.applied == ()
     assert second.backup_path is None
     assert _file_digest(db_path) == before
@@ -125,7 +128,7 @@ def test_too_new_schema_is_refused_before_any_write_side_effect(tmp_path: Path) 
     migrate_database(db_path, data_root=_data_root(tmp_path))
     connection = connect_rw(db_path)
     connection.execute("BEGIN IMMEDIATE")
-    connection.execute("UPDATE metadata SET value = '2' WHERE key = 'schema_version'")
+    connection.execute("UPDATE metadata SET value = '3' WHERE key = 'schema_version'")
     connection.execute("COMMIT")
     connection.close()
     before_bytes = db_path.read_bytes()
@@ -134,7 +137,7 @@ def test_too_new_schema_is_refused_before_any_write_side_effect(tmp_path: Path) 
     with pytest.raises(CatalogError) as error:
         inspect_database(db_path)
     assert error.value.code == SCHEMA_TOO_NEW
-    assert error.value.details == {"schema_version": 2, "supported_schema_version": 1}
+    assert error.value.details == {"schema_version": 3, "supported_schema_version": 2}
 
     with pytest.raises(CatalogError) as migrate_error:
         migrate_database(db_path, data_root=_data_root(tmp_path))
@@ -171,7 +174,7 @@ def test_failed_migration_rolls_back_and_keeps_the_old_version(
     directory = _fake_migrations(
         tmp_path,
         {
-            "0002_broken.sql": (
+            "0003_broken.sql": (
                 "CREATE TABLE probe_half (probe_id INTEGER PRIMARY KEY);\n"
                 "INSERT INTO metadata(key, value) VALUES('probe', 'yes');\n"
                 "SELECT * FROM table_that_does_not_exist;\n"
@@ -179,13 +182,13 @@ def test_failed_migration_rolls_back_and_keeps_the_old_version(
         },
     )
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", directory)
-    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 3)
 
     with pytest.raises(CatalogError) as error:
         migrate_database(db_path, data_root=_data_root(tmp_path))
 
     assert error.value.code == MIGRATION_FAILED
-    assert inspect_database(db_path) == 1
+    assert inspect_database(db_path) == 2
     connection = open_readonly(db_path)
     try:
         assert "probe_half" not in schema.business_tables(connection)
@@ -201,28 +204,28 @@ def test_upgrade_creates_a_consistent_backup_first(
     migrate_database(db_path, data_root=_data_root(tmp_path))
     directory = _fake_migrations(
         tmp_path,
-        {"0002_add_probe.sql": "CREATE TABLE probe_table (probe_id INTEGER PRIMARY KEY);\n"},
+        {"0003_add_probe.sql": "CREATE TABLE probe_table (probe_id INTEGER PRIMARY KEY);\n"},
     )
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", directory)
-    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 2)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 3)
 
     result = migrate_database(db_path, data_root=_data_root(tmp_path))
 
-    assert result.previous_version == 1
-    assert result.schema_version == 2
-    assert result.applied == (2,)
+    assert result.previous_version == 2
+    assert result.schema_version == 3
+    assert result.applied == (3,)
     assert result.backup_path is not None
     assert result.backup_path.parent == _data_root(tmp_path) / "backups" / "catalog"
     backup = open_readonly(result.backup_path)
     try:
-        assert schema.read_schema_version(backup) == 1
+        assert schema.read_schema_version(backup) == 2
         assert "probe_table" not in schema.business_tables(backup)
         assert set(schema.business_tables(backup)) == CORE_TABLES
     finally:
         backup.close()
     live = open_readonly(db_path)
     try:
-        assert schema.read_schema_version(live) == 2
+        assert schema.read_schema_version(live) == 3
         assert "probe_table" in schema.business_tables(live)
     finally:
         live.close()
@@ -253,9 +256,9 @@ def test_preflight_reads_a_live_wal_database_without_changing_it(tmp_path: Path)
 
         info = catalog_info(db_path, data_root=_data_root(tmp_path))
         assert info["status"] == "ok"
-        assert info["schema_version"] == 1
+        assert info["schema_version"] == 2
         assert info["journal_mode"] == "wal"
-        assert inspect_database(db_path) == 1
+        assert inspect_database(db_path) == 2
         assert db_path.read_bytes() == before
         assert writer.execute("SELECT value FROM metadata WHERE key = 'probe'").fetchone()[0] == "live"
     finally:
@@ -286,7 +289,7 @@ def test_a_build_without_migration_scripts_fails_loudly(
         schema.migration_files()
     assert failure.value.code == SCHEMA_INCONSISTENT
     assert failure.value.details["versions"] == []
-    assert failure.value.details["expected_versions"] == [1]
+    assert failure.value.details["expected_versions"] == [1, 2]
 
     fresh = tmp_path / "catalog" / "catalog.db"
     with pytest.raises(CatalogError) as open_failure:

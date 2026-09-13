@@ -7,7 +7,9 @@
 (B level + C-level packaged smoke + a recorded real-browser smoke); its non-blocking follow-up P1-05B
 (front-end verification base) is also PASS. P1-06 is PASS (D level: 16 new adversarial acceptance cases for
 duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 and P2-01A are PASS
-(A-level protocol closures, no production/schema/dependency change). P2-02 is now READY / CURRENT TASK.**
+(A-level protocol closures, no production/schema/dependency change). P2-02 is PASS (D level: a continuous
+`0001 → 0002` migration, the persistent scheduler with scheduler-owned device qualification, and named
+fault-injection/recovery cases). **P2-03 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -50,7 +52,7 @@ P1-06 (the duplicate / move / replace / offline / remap / restart acceptance clo
 [docs/reports/P1-06-identity-lifecycle-acceptance.md](reports/P1-06-identity-lifecycle-acceptance.md). 它新增
 一个测试文件 `tests/integration/test_catalog_identity_lifecycle.py`（16 个用例），**未改任何生产代码**：
 `schema_version` 仍为 1，ADR-0002、`0001_initial.sql`、`pyproject.toml`、`uv.lock` 均未改动，既有测试
-全部原样通过。主线当前任务为 P2-01。
+全部原样通过。该任务完成后主线依次进入 P2-01、P2-01A 与 P2-02。
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 4 (2026-09-13 actual-place planning).
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 3 (2026-09-13 location task chain and current-state reconciliation).
@@ -101,6 +103,36 @@ P2-01A 已冻结 [ADR-0005](decisions/ADR-0005-place-facts-assignment-and-search
 下一任务是 **P2-02 / DS-H / DeepSeek V4.1 Flash / 高推理**，任务卡
 [docs/tasks/P2-02.md](tasks/P2-02.md)。它实现持久调度、设备资格、暂停/退避/优先级与阻塞恢复，
 地点只用确定性 non-model CPU 假执行器验收，不提前实现 GPS 或地点表。
+
+## Latest scheduler closure — P2-02 (2026-09-13)
+
+P2-02 已实现持久调度闭环并通过 D 级验收，报告
+[P2-02 报告](reports/P2-02-persistent-scheduler-and-device-qualification.md)。
+起点 HEAD `bf1a652`（P2-01A），工作树干净。
+
+新增 `src/photo_search/scheduler/**`（`p2-contracts.v1` 契约实现、不可变 runtime capability 快照、
+处理器专项 evidence、唯一设备资格矩阵、持久暂停/公平窗口/指数退避、claim→dispatch→submit→
+cancel/recover 闭环、只读诊断投影）和连续增量迁移
+`catalog/migrations/0002_scheduler_runtime.sql`：**`schema_version` 推进到 2**，
+`0001_initial.sql` 未改，五字段逻辑唯一键、七态状态机、lease/attempts/迟到提交语义不变。
+`POST /api/v1/scheduler/{pause,resume}`、`GET /api/v1/jobs`（派发摘要）与
+`GET /api/v1/capabilities`（scheduler/runtime 健康摘要）已接入既有 session/Origin/CSRF/Host 边界。
+本任务未修改 `workers/**`、打包入口或依赖，因此未触发 C 级；未产生 artifact/outbox/LanceDB/向量行。
+
+| Check | Result |
+|---|---|
+| `uv run pytest tests/unit tests/integration` | exit 0，`415 passed, 1 skipped in 131.90s` |
+| `uv run pytest -q tests/unit/test_p2_scheduler.py` | exit 0，`29 passed` |
+| `uv run pytest -q tests/integration/test_p2_scheduler_recovery.py` | exit 0，`10 passed` |
+| `uv run pytest -q tests/integration/test_p2_scheduler_api.py` | exit 0，`8 passed` |
+| `uv run ruff check .` / `git diff --check` | clean / clean |
+| `uv lock --check` | exit 0，`Resolved 95 packages`（依赖未变） |
+| v1→v2 迁移 | 真实 0001 库 + 中文/空格位置 + 活动 lease 行：`applied=(2,)`、备份内 `schema_version=1` 且只有 6 张 v1 表、19 列逐行不变、新列仅 `requested_device='auto'`、旧 lease 三元组原样保留 |
+| 中断/缺件/过新 | 注入 0003 失败后整体回滚（版本仍 2、无 `probe_note`）；`DROP scheduler_state` 后 `SCHEMA_INCONSISTENT` 且主库字节不变；过新库 `SCHEMA_TOO_NEW` 且无 `-wal`/`-shm`（库与 API 两条路径） |
+| 调度/资格 | GPU 缺失/不健康/无 evidence → `GPU_REQUIRED` 阻塞且不耗 attempts、显式 GPU 不转 CPU，同队列 `CPU_PREFERRED` non-model 假任务正常 SUCCEEDED；新健康 revision 后只恢复合格任务，`DEVICE_POLICY_CONFLICT` 不复原 |
+| 重启/退避/公平 | 进程退出后过期 lease 接管 `attempts+1`、旧 worker 心跳与迟到结果被拒且零副作用；退避 `11000→13000→17000→21000`（8000 被 4000 上限截断）；pause 跨重启仍暂停而既有 RUNNING 合法完成；10 个公平窗口后旧 backlog 追平并被选中 |
+| 结果资格 | `JobResult` provider/device/precision 不匹配 → `RUNTIME_RESOLUTION_MISMATCH` 且 job 行逐字节不变；`artifacts=[]` 与结构化非向量结果均正常；协议不兼容记确定性 FAILED、执行器异常记可重试且只记异常类型 |
+| 诊断工具 | `frontend_smoke_fixture.py --too-new` 改为由 `SUPPORTED_SCHEMA_VERSION` 推导；顺带修掉该工具 `--help` 的历史崩溃（argparse 二次 `%` 格式化） |
 
 ## Latest accepted verification
 
@@ -238,18 +270,23 @@ human-labelled semantic-search holdout.
 **P2-01A — 地点事实、人工控制、数据包与搜索契约：PASS.** 见
 [P2-01A 报告](reports/P2-01A-place-contract.md)。
 
-**P2-02 — 持久调度、设备资格与阻塞恢复实现.**
+**P2-02 — 持久调度、设备资格与阻塞恢复实现：PASS.** 见
+[P2-02 报告](reports/P2-02-persistent-scheduler-and-device-qualification.md)。
 
-- Status: **READY / CURRENT TASK**. P2-01/P2-01A 的通用与地点契约均已冻结。
-- Task card: `docs/tasks/P2-02.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**。
-- Goal: 实现 lease/续约/退避、scheduler-owned 设备资格、持久暂停、公平优先级和阻塞恢复；地点只用
-  确定性 non-model CPU 假执行器验收，**不读取 GPS、不创建地点表**。
-- Validation level: **D**（完整 unit/integration + 对应迁移、lease、暂停、设备故障与恢复注入；若修改
-  worker/运行环境再加 C）。
+**P2-03 — 通用产物、outbox、幂等索引提交与修复.**
+
+- Status: **READY / CURRENT TASK**. P2-02 的调度/资格/阻塞恢复闭环已 PASS（D 级）。
+- Task card: `docs/tasks/P2-03.md`.
+- Recommended execution model: **C2 / GPT-5.6 Sol / high 做关键设计与审查；冻结后的普通实现按卡提示
+  DS-H / DeepSeek V4.1 Flash / 高推理**。
+- Goal: 通用 artifact/outbox 提交协议、非向量与向量结果的原子落地、LanceDB 幂等更新与
+  index_entries 修复；**不提前实施 P2-03A 地点表**。
+- Validation level: **最低 D**（完整 unit/integration + 对应失败注入/恢复；涉及打包资源再加 C）。
 - 当前任务推荐模型与本会话不同；请由用户在 Codex 中手动切换后再执行，不自动切换或启动 Agent。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
-排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-01 的前置依赖。
+排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03 的前置依赖。
+P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进程并发、evidence 撤销、真实端口 smoke）
+记录在 P2-02 报告 §10。
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -40,7 +40,17 @@ from photo_search.media.pipeline import MediaInterrupted
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WALL_BASE_MS = time.time_ns() // 1_000_000
 QUIET_AGE_MS = 3_600_000
-CORE_TABLES = ("metadata", "source_roots", "scan_runs", "assets", "file_locations", "jobs")
+CORE_TABLES = (
+    "metadata",
+    "source_roots",
+    "scan_runs",
+    "assets",
+    "file_locations",
+    "jobs",
+    "runtime_capabilities",
+    "runtime_qualification_evidence",
+    "scheduler_state",
+)
 
 #: Independent EXIF-orientation ground truth, mirroring the spec transform table.
 ORIENTATION_TRANSFORMS = {

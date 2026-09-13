@@ -7,8 +7,9 @@ from pathlib import Path
 
 from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 
-#: Highest schema version this build can write. P1-01 ships exactly one migration.
-SUPPORTED_SCHEMA_VERSION = 1
+#: Highest schema version this build can write. ``0001`` is the frozen P1-01 identity
+#: schema; ``0002`` adds the P2-02 scheduler/runtime facts without touching it.
+SUPPORTED_SCHEMA_VERSION = 2
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

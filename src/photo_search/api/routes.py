@@ -41,6 +41,7 @@ from photo_search.api.models import (
     JobListResponse,
     JobRecord,
     ScanRequestResponse,
+    SchedulerStateResponse,
     SessionResponse,
     SourceCreateRequest,
     SourceDetail,
@@ -64,6 +65,7 @@ from photo_search.api.session import (
 )
 from photo_search.catalog.errors import CatalogError
 from photo_search.catalog.migrate import catalog_info
+from photo_search.config import catalog_db_path
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW, SPECS, THUMBNAIL, spec_for
@@ -73,6 +75,8 @@ from photo_search.media.status import (
     MEDIA_STATE_READY,
     MEDIA_STATE_UNSUPPORTED,
 )
+from photo_search.scheduler import state as scheduler_state
+from photo_search.scheduler.projection import scheduler_summary
 
 APP_VERSION = "0.1.0"
 
@@ -174,6 +178,9 @@ async def capabilities(request: Request) -> dict[str, Any]:
             str(error.get("message") or "the catalog is not usable"),
             details=error.get("details") or None,
         )
+    # P2-02: the scheduler/runtime health summary is read through its own read-only
+    # connection, so a catalog that predates migration 0002 simply reports ``None``.
+    summary = scheduler_summary(catalog_db_path(settings.data_root)) or {}
     return {
         "app_version": APP_VERSION,
         "api_version": "v1",
@@ -188,7 +195,42 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "allowed_hosts": sorted(settings.effective_allowed_hosts()),
         "media": {kind: spec.as_dict() for kind, spec in SPECS.items()},
         "supported_input_formats": sorted(SPECS[THUMBNAIL].as_dict()["supported_input_formats"]),
+        "scheduler": summary.get("scheduler"),
+        "runtime": summary.get("runtime"),
+        "qualification_evidence": int(summary.get("qualification_evidence") or 0),
     }
+
+
+# -------------------------------------------------------------------------- scheduler
+@router.post(
+    "/scheduler/pause",
+    response_model=SchedulerStateResponse,
+    summary="Persistently stop claiming new background work",
+)
+async def pause_scheduler(request: Request) -> dict[str, Any]:
+    """Idempotent: repeating a pause that is already persisted changes nothing.
+
+    Pausing never touches a live lease, so a running execution may still heartbeat and
+    finish legally (architecture §6.2: pause is a scheduler strategy, not a job state).
+    """
+    service = service_of(request)
+    now_ms = service.catalog.now_ms()
+    with service.catalog.write() as connection:
+        snapshot, changed = scheduler_state.set_paused(connection, paused=True, now_ms=now_ms)
+    return {**snapshot.as_dict(), "changed": changed, "reason": None}
+
+
+@router.post(
+    "/scheduler/resume",
+    response_model=SchedulerStateResponse,
+    summary="Resume background claiming from the persistent queue",
+)
+async def resume_scheduler(request: Request) -> dict[str, Any]:
+    service = service_of(request)
+    now_ms = service.catalog.now_ms()
+    with service.catalog.write() as connection:
+        snapshot, changed = scheduler_state.set_paused(connection, paused=False, now_ms=now_ms)
+    return {**snapshot.as_dict(), "changed": changed, "reason": None}
 
 
 # ------------------------------------------------------------------------------- stats

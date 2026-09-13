@@ -35,7 +35,9 @@ uv run python tools/diagnostics/frontend_smoke_fixture.py --photos 60 --bulk 200
 - `--bulk 2000`：`bulk/` 下 2000 个独立 JPEG，让一次扫描慢到能观察到 `RUNNING` 进度。
   （默认 60 个文件时，扫描可能在浏览器第一次轮询前就 `SUCCEEDED`，看不到中间态。）
 - `--corrupt`：1 字节的 `corrupt.jpg`，用于第 8 步。
-- `--too-new`：额外生成 `schema_version=2` 的数据目录，用于第 10 步（不要与正常数据目录混用）。
+- `--too-new`：额外生成 `schema_version=当前支持版本+1` 的数据目录（P2-02 起为 3），
+  用于第 10 步（不要与正常数据目录混用）。该值由 `schema.SUPPORTED_SCHEMA_VERSION` 推导，
+  新增迁移后自动跟随，不需要手工改这个脚本。
 - `--offline bulk/b0007.jpg`（可重复）：删掉指定原图，用于第 6/7 步（无需重扫即可看到实时离线提示）。
 - `--reset`：只删除该脚本自己创建的库/数据目录后重建；不触碰工作目录之外的任何路径。
 
