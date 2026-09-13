@@ -40,6 +40,10 @@ It ships a dependency-free static front end (`src/photo_search/web/**` served fr
 ADR-0002 is unchanged, `pyproject.toml`/`uv.lock` are untouched, and every existing P1-04 test still passes
 unmodified.
 
+P1-05A 的服务端 Windows 路径脱敏补强为 **PASS**：完整 B 级测试（303 passed、1 skipped）、专项回归、
+真实端口损坏图片场景、Ruff 与差异检查均通过；详见
+[P1-05A 报告](reports/P1-05A-local-path-redaction.md)。主线当前任务仍为 P1-06。
+
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
 Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
 
@@ -127,7 +131,8 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
     [docs/reports/P1-05B-frontend-verification-base.md](reports/P1-05B-frontend-verification-base.md)。
   - `docs/tasks/P1-05A.md` — 本机路径脱敏补强（repr 转义与多拼写 + 未登记路径兜底），推荐
     **C1 / GPT-5.6 Terra / medium**，验收等级 **B**；唯一允许改动的生产文件是
-    `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。**状态：待执行。**
+    `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。**状态：PASS**；见
+    [P1-05A 报告](reports/P1-05A-local-path-redaction.md)。
   - `taken_at`（EXIF 拍摄时间）不写成实现卡：它属于数据语义决策，必须先交
     **C2 / GPT-5.6 Sol / high** 决策并通过 ADR-0002 §7 的加列迁移路径。
 

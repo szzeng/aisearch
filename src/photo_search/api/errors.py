@@ -10,6 +10,7 @@ line or a job listing.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -228,6 +229,10 @@ class Redactor:
             pairs.append((str(data_root), "<data_root>"))
         # Longest first so a nested root never leaves a partial path behind.
         self._pairs = tuple(sorted(pairs, key=lambda pair: len(pair[0]), reverse=True))
+        self._variants = tuple(
+            (self._root_pattern(root), replacement)
+            for root, replacement in self._pairs
+        )
 
     @classmethod
     def for_catalog(cls, catalog: Any, *, data_root: str | Path | None = None) -> Redactor:
@@ -245,18 +250,9 @@ class Redactor:
         rendered = "" if value is None else str(value)
         if not self._pairs:
             return rendered
-        lowered = rendered.lower()
-        for needle, replacement in self._pairs:
-            probe = needle.lower()
-            start = 0
-            while True:
-                index = lowered.find(probe, start)
-                if index < 0:
-                    break
-                rendered = rendered[:index] + replacement + rendered[index + len(needle) :]
-                lowered = rendered.lower()
-                start = index + len(replacement)
-        return rendered
+        for pattern, replacement in self._variants:
+            rendered = pattern.sub(replacement, rendered)
+        return _LOCAL_PATH.sub("<local_path>", rendered)
 
     def details(self, value: Any) -> Any:
         """Recursively redact a JSON-shaped value; keys are sanitised too."""
@@ -267,3 +263,28 @@ class Redactor:
         if isinstance(value, str):
             return self.text(value)
         return value
+
+    @staticmethod
+    def _root_pattern(root: str) -> re.Pattern[str]:
+        """Match Windows renderings of a logical root, plus its literal spelling."""
+        if not re.match(r"^[A-Za-z]:[\\/]", root):
+            return re.compile(re.escape(root), re.IGNORECASE)
+        parts = [part for part in re.split(r"[\\/]+", root) if part]
+        separator = r"(?:\\{1,2}|/)"
+        # Windows error messages can use a normal path, a repr-escaped path, mixed
+        # separators, or the extended-length ``\\?\`` spelling.
+        pattern = r"(?:\\\\\?\\)?" + re.escape(parts[0])
+        if len(parts) > 1:
+            pattern += separator + separator.join(re.escape(part) for part in parts[1:])
+        return re.compile(pattern, re.IGNORECASE)
+
+
+# A registered root is preferred above, but error records can contain an unexpected
+# absolute path (for example from a third-party decoder).  Keep this deliberately
+# Windows-specific: POSIX-looking text is not necessarily a local path in this app.
+_LOCAL_PATH = re.compile(
+    r"(?i)(?:\\\\\?\\UNC\\[^\\\r\n\"']+(?:\\{1,2}|/)|"
+    r"\\\\\?\\[A-Za-z]:(?:\\{1,2}|/)|"
+    r"\\\\[^\\/\r\n\"']+(?:\\{1,2}|/)|"
+    r"[A-Za-z]:(?:\\{1,2}|/))[^\r\n\"']+"
+)

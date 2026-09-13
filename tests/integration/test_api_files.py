@@ -495,6 +495,38 @@ def test_corrupt_and_unsupported_inputs_report_recorded_codes(api_env) -> None:
     assert result["broken"].content[:1] == b"{"
 
 
+def test_failed_media_records_do_not_expose_source_paths_in_api_projections(api_env) -> None:
+    """Recorded decoder errors stay useful without exposing source-root spellings."""
+    api_env.add_text_file("broken.jpg", "this is not an image at all")
+    tiff = api_env.library / "real.tiff"
+    Image.new("RGB", (32, 24), (5, 100, 200)).save(tiff, "TIFF")
+    _stamp_old(tiff)
+    api_env.scan(api_env.register_source()["source_id"])
+    ids = _asset_ids_by_name(api_env)
+
+    async def scenario(client: AsyncClient) -> dict:
+        await api_env.authenticate(client)
+        # Generate the persisted failure records before reading their projections.
+        await client.get(f"/api/v1/assets/{ids['broken.jpg']}/thumbnail")
+        await client.get(f"/api/v1/assets/{ids['real.tiff']}/thumbnail")
+        return {
+            "detail": await client.get(f"/api/v1/assets/{ids['broken.jpg']}"),
+            "assets": await client.get("/api/v1/assets"),
+            "jobs": await client.get("/api/v1/jobs"),
+        }
+
+    result = api_env.scenario(scenario)
+    root = str(api_env.library)
+    escaped_root = root.replace("\\", "\\\\")
+    for response in result.values():
+        assert root not in response.text
+        assert escaped_root not in response.text
+
+    media = result["detail"].json()["media"]["thumbnail"]
+    assert media["code"] in {"DECODE_FAILED", "FORMAT_UNSUPPORTED"}
+    assert media["message"]
+
+
 def test_unicode_space_and_long_paths_with_read_only_originals(api_env) -> None:
     root = api_env.tmp_path / "照片 库 只读"
     long_dir = root / "子 目录" / ("long-segment-0123456789" * 6)
