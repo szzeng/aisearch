@@ -37,9 +37,22 @@ from photo_search.api.models import (
     AssetDetail,
     AssetListResponse,
     AssetOrder,
+    AssetPlaceResponse,
     CapabilitiesResponse,
+    GeoFactResponse,
     JobListResponse,
     JobRecord,
+    PlaceAssignmentRequest,
+    PlaceBatchRequest,
+    PlaceCoverageResponse,
+    PlaceCreateRequest,
+    PlaceListResponse,
+    PlaceOperationListResponse,
+    PlaceOperationResponse,
+    PlacePatchRequest,
+    PlaceRecord,
+    PlaceStateFilter,
+    PlaceUndoRequest,
     ScanRequestResponse,
     SchedulerStateResponse,
     SessionResponse,
@@ -75,6 +88,9 @@ from photo_search.media.status import (
     MEDIA_STATE_READY,
     MEDIA_STATE_UNSUPPORTED,
 )
+from photo_search.places.contracts import CONTRACT_VERSION
+from photo_search.places.contracts import fail as place_fail
+from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
 from photo_search.scheduler.projection import index_summary, scheduler_summary
 
@@ -96,6 +112,11 @@ def service_of(request: Request) -> CatalogService:
 
 def cache_of(request: Request) -> MediaCache:
     return service_of(request).media_cache()
+
+
+def places_of(request: Request) -> PlaceService:
+    """One place service per request over the request thread's own catalog connection."""
+    return PlaceService(service_of(request).catalog)
 
 
 # ------------------------------------------------------------------------------ health
@@ -356,6 +377,9 @@ async def list_assets(
     availability: Literal["present", "missing", "any"] = "any",
     has_thumbnail: Literal["true", "false", "any"] = "any",
     order: AssetOrder = "asset_id",
+    place_ids: list[int] | None = Query(default=None),
+    include_descendants: bool = True,
+    place_state: PlaceStateFilter = "any",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -369,6 +393,9 @@ async def list_assets(
         availability=availability,
         has_thumbnail=has_thumbnail,
         order=order,
+        place_ids=place_ids,
+        include_descendants=include_descendants,
+        place_state=place_state,
     )
 
 
@@ -530,6 +557,185 @@ def _not_modified(request: Request, etag: str) -> bool:
         return False
     candidates = [value.strip() for value in str(header).split(",")]
     return "*" in candidates or etag in candidates
+
+
+# ------------------------------------------------------------------------------ places
+_ACTION_BY_REQUEST = {"assign": "ASSIGN", "unassign": "UNASSIGN", "restore_auto": "RESTORE_AUTO"}
+
+
+@router.get("/places", response_model=PlaceListResponse, summary="Paged place directory")
+async def list_places(
+    request: Request,
+    name: str | None = None,
+    kind: str | None = None,
+    parent: int | None = None,
+    ancestor: int | None = None,
+    lifecycle: str | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Keyset paging bound to the place-directory revision (ADR-0005 §9)."""
+    return places_of(request).list_places(
+        limit=clamp_place_limit(limit),
+        cursor=cursor,
+        name=name,
+        kind=kind,
+        parent_place_id=None if parent is None else int(parent),
+        ancestor_place_id=None if ancestor is None else int(ancestor),
+        lifecycle=lifecycle,
+    )
+
+
+@router.get("/places/coverage", response_model=PlaceCoverageResponse, summary="Place coverage")
+async def place_coverage(request: Request) -> dict[str, Any]:
+    return places_of(request).coverage()
+
+
+@router.get("/places/datasets", summary="Name dataset state (P2-03B; unavailable here)")
+async def place_datasets(request: Request) -> dict[str, Any]:
+    """An explicitly empty read-only projection: this build ships no name package.
+
+    ADR-0005 §8/§9 allows the endpoint to exist for the front-end contract as long as it
+    never pretends an ACTIVE package exists.
+    """
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "state": "unavailable",
+        "reason": "PLACE_DATASET_NOT_IMPLEMENTED",
+        "resolver_available": False,
+        "active_dataset": None,
+        "datasets": [],
+    }
+
+
+@router.post(
+    "/places",
+    response_model=PlaceRecord,
+    status_code=201,
+    summary="Create a manual city, attraction or custom place",
+)
+async def create_place(request: Request, payload: PlaceCreateRequest) -> dict[str, Any]:
+    if payload.kind == "country":
+        raise place_fail(
+            "VALIDATION_ERROR",
+            "a country place comes from a validated name dataset, not from a manual create",
+            field="kind",
+        )
+    return places_of(request).create_place(
+        kind=payload.kind,
+        canonical_name=payload.canonical_name,
+        parent_place_id=payload.parent_place_id,
+        aliases=[alias.model_dump() for alias in payload.aliases],
+    )
+
+
+@router.patch(
+    "/places/{place_id}",
+    response_model=PlaceRecord,
+    summary="Rename a place or edit its alias set (never re-parents)",
+)
+async def patch_place(
+    request: Request, place_id: int, payload: PlacePatchRequest
+) -> dict[str, Any]:
+    if "parent_place_id" in payload.model_fields_set:
+        raise place_fail(
+            "VALIDATION_ERROR",
+            "re-parenting a place is reserved for a later task and is refused here",
+            field="parent_place_id",
+        )
+    view, _changed = places_of(request).patch_place(
+        place_id=int(place_id),
+        expected_revision=int(payload.expected_revision),
+        canonical_name=payload.canonical_name,
+        aliases=None if payload.aliases is None else [alias.model_dump() for alias in payload.aliases],
+    )
+    return view
+
+
+@router.get(
+    "/assets/{asset_id}/geo",
+    response_model=GeoFactResponse,
+    summary="The exact GPS fact of one asset (session-protected detail endpoint)",
+)
+async def asset_geo(request: Request, asset_id: int) -> dict[str, Any]:
+    fact = places_of(request).asset_geo(int(asset_id))
+    if fact is None:
+        raise place_fail(
+            "PLACE_NOT_FOUND",
+            "no current GPS fact exists for this asset",
+            asset_ids=[int(asset_id)],
+        )
+    return fact
+
+
+@router.get(
+    "/assets/{asset_id}/place",
+    response_model=AssetPlaceResponse,
+    summary="Effective place, lock, exclusions and revision facts for one asset",
+)
+async def asset_place(request: Request, asset_id: int) -> dict[str, Any]:
+    return places_of(request).asset_place(int(asset_id))
+
+
+@router.put(
+    "/assets/{asset_id}/place-assignment",
+    response_model=PlaceOperationResponse,
+    summary="Assign, unassign or restore automatic place handling for one asset",
+)
+async def put_place_assignment(
+    request: Request, asset_id: int, payload: PlaceAssignmentRequest
+) -> dict[str, Any]:
+    return places_of(request).write_assignment(
+        asset_id=int(asset_id),
+        action=_ACTION_BY_REQUEST[payload.action],
+        target_place_id=payload.target_place_id,
+        request_id=payload.request_id,
+        expected_revision=int(payload.expected_revision),
+    )
+
+
+@router.post(
+    "/place-assignments/batch",
+    response_model=PlaceOperationResponse,
+    summary="Apply one atomic place operation to 1..500 assets",
+)
+async def post_place_batch(request: Request, payload: PlaceBatchRequest) -> dict[str, Any]:
+    items = [
+        {
+            "asset_id": int(item.asset_id),
+            "action": _ACTION_BY_REQUEST[item.action],
+            "target_place_id": item.target_place_id,
+            "expected_revision": int(item.expected_revision),
+        }
+        for item in payload.items
+    ]
+    return places_of(request).write_batch(items=items, request_id=payload.request_id)
+
+
+@router.get(
+    "/place-operations",
+    response_model=PlaceOperationListResponse,
+    summary="The append-only place operation log",
+)
+async def list_place_operations(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    return places_of(request).list_operations(limit=clamp_place_limit(limit), cursor=cursor)
+
+
+@router.post(
+    "/place-operations/{operation_id}/undo",
+    response_model=PlaceOperationResponse,
+    summary="Compensate one committed place operation",
+)
+async def undo_place_operation(
+    request: Request, operation_id: str, payload: PlaceUndoRequest
+) -> dict[str, Any]:
+    return places_of(request).undo(
+        operation_id=str(operation_id),
+        request_id=payload.request_id,
+        expected_operation_revision=int(payload.expected_operation_revision),
+    )
 
 
 __all__ = ["APP_VERSION", "context_of", "router", "service_of"]

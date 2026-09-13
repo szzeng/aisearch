@@ -542,6 +542,20 @@ class ArtifactStore:
 
 
 def _catalog_filter_revision(connection: sqlite3.Connection) -> int:
+    """The authoritative filter revision (0004 singleton), with the P2-03 fallback.
+
+    Before the place core landed, P2-03 read a ``metadata`` key that nothing wrote yet;
+    the 0004 migration makes the singleton table authoritative and keeps that key only as
+    a compatibility fallback for a catalog that still predates it.
+    """
+    try:
+        row = connection.execute(
+            "SELECT revision FROM catalog_filter_revision WHERE revision_id = 1"
+        ).fetchone()
+    except sqlite3.Error:
+        row = None
+    if row is not None:
+        return max(0, int(row[0] if not isinstance(row, sqlite3.Row) else row["revision"]))
     row = connection.execute(
         "SELECT value FROM metadata WHERE key = 'catalog_filter_revision'"
     ).fetchone()

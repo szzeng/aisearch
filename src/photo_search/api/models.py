@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, Field
 AvailabilityFilter = Literal["present", "missing", "any"]
 ReadyFilter = Literal["true", "false", "any"]
 AssetOrder = Literal["asset_id", "time_desc"]
+PlaceStateFilter = Literal["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+PlaceAssignmentAction = Literal["assign", "unassign", "restore_auto"]
+PlaceKind = Literal["country", "city", "attraction", "custom"]
 
 
 class ErrorResponse(BaseModel):
@@ -212,6 +215,12 @@ class AssetListResponse(BaseModel):
     source_id: int | None = None
     #: The ordering that actually produced this page; ``time_desc`` is insertion time.
     order: AssetOrder = "asset_id"
+    #: P2-03A place filter echo. ``catalog_filter_revision`` is the revision the page was
+    #: computed under, so a caller can detect that a later edit invalidated it.
+    place_ids: list[int] = Field(default_factory=list)
+    include_descendants: bool = True
+    place_state: PlaceStateFilter = "any"
+    catalog_filter_revision: int | None = None
 
 
 class ScanState(BaseModel):
@@ -267,6 +276,207 @@ class JobRecord(BaseModel):
 
 class JobListResponse(BaseModel):
     jobs: list[JobRecord]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+
+
+# --------------------------------------------------------------------------------- places
+
+
+class PlaceAliasInput(BaseModel):
+    """One alias of a place: the display text plus an optional language tag."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=200)
+    language: str | None = Field(default=None, max_length=32)
+
+
+class PlaceCreateRequest(BaseModel):
+    """Create a manual city/attraction/custom place (a country comes from a dataset)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: PlaceKind
+    canonical_name: str = Field(min_length=1, max_length=200)
+    parent_place_id: int | None = Field(default=None, ge=1)
+    aliases: list[PlaceAliasInput] = Field(default_factory=list)
+
+
+class PlacePatchRequest(BaseModel):
+    """PATCH v1 opens rename and aliases only.
+
+    ``parent_place_id`` exists in the schema purely so a re-parent attempt is answered with
+    an explicit refusal instead of a generic "unknown field" validation error.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    canonical_name: str | None = Field(default=None, min_length=1, max_length=200)
+    aliases: list[PlaceAliasInput] | None = None
+    parent_place_id: int | None = None
+    expected_revision: int = Field(ge=1)
+
+
+class PlaceRecord(BaseModel):
+    """The frozen ``Place`` projection (ADR-0005 §2)."""
+
+    contract_version: str
+    place_id: int
+    kind: str
+    canonical_name: str
+    aliases: list[dict[str, Any]]
+    parent_place_id: int | None = None
+    origin: str
+    external_refs: list[dict[str, Any]] = Field(default_factory=list)
+    lifecycle: str
+    revision: int
+    created_at: int
+    updated_at: int
+
+
+class PlaceListResponse(BaseModel):
+    places: list[PlaceRecord]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+    catalog_filter_revision: int
+
+
+class PlaceCoverageResponse(BaseModel):
+    contract_version: str
+    assets_total: int
+    gps_extracted: int
+    gps_valid: int
+    gps_absent: int
+    gps_invalid: int
+    resolver_available: bool
+    place_resolved: int
+    places_assigned: int
+    places_manual_unassigned: int
+    places_suggested: int
+    places_unclassified: int
+    catalog_filter_revision: int
+    suggestion_revision: int
+
+
+class GeoFactResponse(BaseModel):
+    """Exact coordinates. Only the session-protected per-asset ``/geo`` endpoint serves it."""
+
+    contract_version: str
+    geo_fact_id: str
+    asset_id: int
+    location_id: int | None = None
+    input_revision: str
+    fact_revision: int
+    status: str
+    source: str
+    processor_id: str
+    raw_fields_checksum_sha256: str
+    raw_gps: dict[str, Any] | None = None
+    normalized_wgs84: dict[str, Any] | None = None
+    datum_status: str
+    privacy: dict[str, bool]
+    created_at: int
+
+
+class PlaceSummary(BaseModel):
+    """The effective place of one asset, with the full chain needed to disambiguate."""
+
+    place_id: int
+    kind: str
+    canonical_name: str
+    lifecycle: str
+    ancestors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AssetPlaceResponse(BaseModel):
+    contract_version: str
+    asset_id: int
+    assignment: dict[str, Any] | None = None
+    place: PlaceSummary | None = None
+    exclusions: list[dict[str, Any]] = Field(default_factory=list)
+    suggested: dict[str, Any]
+    catalog_filter_revision: int
+    suggestion_revision: int
+    gps_state: str
+
+
+class PlaceAssignmentRequest(BaseModel):
+    """``PUT /assets/{id}/place-assignment``: one action with an idempotency key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: PlaceAssignmentAction
+    target_place_id: int | None = Field(default=None, ge=1)
+    request_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(ge=0)
+
+
+class PlaceBatchItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: int = Field(ge=1)
+    action: PlaceAssignmentAction
+    target_place_id: int | None = Field(default=None, ge=1)
+    expected_revision: int = Field(ge=0)
+
+
+class PlaceBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=64)
+    items: list[PlaceBatchItem]
+
+
+class PlaceUndoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=64)
+    expected_operation_revision: int = Field(ge=1)
+
+
+class PlaceOperationItemResponse(BaseModel):
+    asset_id: int | None = None
+    action: str
+    assignment: dict[str, Any] | None = None
+    changed: bool
+    cleared_exclusions: list[int] = Field(default_factory=list)
+
+
+class PlaceOperationResponse(BaseModel):
+    """The result of one single, batch or undo operation."""
+
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: str
+    undo_of_operation_id: str | None = None
+    changed: bool
+    catalog_filter_revision: int
+    replayed: bool
+    items: list[PlaceOperationItemResponse]
+
+
+class PlaceOperationRecord(BaseModel):
+    contract_version: str
+    operation_id: str
+    request_id: str
+    payload_sha256: str
+    operation_type: str
+    operation_revision: int
+    actor: str
+    atomic: bool
+    status: str
+    undo_of_operation_id: str | None = None
+    catalog_filter_revision: int
+    created_at: int
+    committed_at: int
+
+
+class PlaceOperationListResponse(BaseModel):
+    operations: list[PlaceOperationRecord]
     limit: int
     next_cursor: str | None = None
     has_more: bool

@@ -10,7 +10,9 @@ duplicate / move / replace / offline / remap / restart, with no production chang
 (A-level protocol closures, no production/schema/dependency change). P2-02 is PASS (D level: a continuous
 `0001 → 0002` migration, the persistent scheduler with scheduler-owned device qualification, and named
 fault-injection/recovery cases). P2-03 is PASS (D level: schema 3 artifact/outbox/index confirmation and real
-LanceDB replay/repair). **P2-03A is now READY / CURRENT TASK.**
+LanceDB replay/repair). **P2-03A is PASS** (D level: the 0004 place core, GPS facts, the place
+directory, manual assignment/unassign/restore_auto with batch and compensating undo, and the pure
+SQLite place filter API; 48 new cases). **P2-03B is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -156,6 +158,39 @@ SQLite 未确认、晚到旧 projection、artifact 回收/再执行和引用保�
 | `uv lock --check` | exit 0，`Resolved 95 packages` |
 | C 级 | 未触发：未改 worker、正式环境、打包入口、依赖或新 package-data 目录 |
 
+## Latest place-core closure — P2-03A (2026-09-13)
+
+P2-03A 已实现地点核心闭环并通过 D 级验收，报告
+[P2-03A 报告](reports/P2-03A-place-core-gps-assignment-api.md)。起点 HEAD `b9b5312`（P2-03），
+工作树干净。
+
+新增连续 `catalog/migrations/0004_place_core.sql`：**`schema_version` 推进到 4**，0001/0002/0003
+未改；新增 `places`/`place_aliases`/`place_external_refs`/`asset_geo_facts`/
+`asset_place_assignments`（+只追加 history）/`asset_place_exclusions`/`place_operations`
+（+items）/`catalog_filter_revision`（+events）/`place_suggestion_revision`，并把 SQLite 能表达的
+PK/FK RESTRICT/枚举/范围/模式组合全部下沉（含“禁止物理删除地点”“历史行只允许
+ACTIVE→SUPERSEDED”“`SOURCE_UNAVAILABLE` 不得成为当前事实”）。
+
+新增 `src/photo_search/places/**`（目录、层级矩阵与环校验、别名、人工 assign/unassign/restore_auto、
+排除、幂等/批量 500/补偿撤销、CatalogFilterRevision 与投影刷新、纯 SQLite 筛选/覆盖）与
+`src/photo_search/geo/**`（版本化 `non_model + CPU_PREFERRED` GPS 提取器、`VALID/ABSENT/INVALID/
+UNSUPPORTED_CRS` 分支、受控读取 + SHA/stat 双重复核、确定性 structured GeoFact）。
+`Scheduler.submit` 在既有事务内落当前事实；`/api/v1` 新增 10 条地点路径（OpenAPI 14 → 26），
+`GET /assets` 支持 `place_ids/include_descendants/place_state`。本任务未改 ADR-0001～0005、
+冻结 JSON schema、依赖、`workers/**` 或打包入口。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 481 例；进度行 1 个 `s`，即 480 passed / 1 skipped |
+| 本任务专项（5 个新增 + 3 个版本耦合文件） | exit 0，72 passed（新增 48 例：place_directory 14、geo_exif 12、geo_extract 12、place_api 5、place_migration 5） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| v3→v4 迁移 | 备份内 `schema_version=3` 且无地点表；单事务推进到 4；旧行逐列不变；注入损坏 0004 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
+| GPS | `(0,0)` 合法；南/西半球；非法分母/NaN/Inf/越界/未知 datum 分支；离线与读中变化 → `BLOCKED` 且**不覆盖**上一条事实；迟到 lease 零事实副作用 |
+| 人工控制 | assign→unassign→重启→restore_auto→再 assign 的锁/origin/排除/revision 逐项正确；无任何自动写路径；批量 500 全原子、501/0/重复被拒 |
+| 撤销与版本 | 无冲突 undo 递增 revision；目标被后续编辑整批 `PLACE_OPERATION_NOT_UNDOABLE` 且历史不删；触发矩阵与同事务 outbox 投影刷新实测；注入失败全回滚 |
+| 筛选与隐私 | 后代展开、同名、无地点、manual_unassigned、重复位置去重、与 source AND；`suggested` 在无解析器时确定为空；精确坐标只在会话保护 `/geo`，日志/错误/诊断/outbox/Lance 无坐标 |
+| C 判定 | 按卡**不触发**（未改 workers/打包入口/依赖/新增 package-data 目录）；仍额外执行真实 onedir 构建 + `packaged_api_smoke.py`（`status=ok`、`problems=[]`、startup 1.8 s），并审计 bundle：`photo_search.places.*` 与 4 个 migration 已入包，`geo.*`/`scheduler.engine` 未入包（应用尚未接调度器，见报告 §9） |
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -298,21 +333,28 @@ human-labelled semantic-search holdout.
 **P2-03 — 通用产物、outbox、幂等索引提交与修复：PASS.** 见
 [P2-03 报告](reports/P2-03-artifact-outbox-index-submission.md)。
 
-**P2-03A — 地点增量迁移、GPS 事实、目录、人工归属/撤销与纯筛选 API.**
+**P2-03A — 地点增量迁移、GPS 事实、目录、人工归属/撤销与纯筛选 API：PASS.** 见
+[P2-03A 报告](reports/P2-03A-place-core-gps-assignment-api.md)（D 级，48 个新增用例）。
 
-- Status: **READY / CURRENT TASK**. P2-03 的 artifact/outbox/index 修复闭环已 PASS（D 级）。
-- Task card: `docs/tasks/P2-03A.md`.
+**P2-03B — 离线地名包、GPS 附近城市建议、版本/缺包/升级恢复.**
+
+- Status: **READY / CURRENT TASK**. P2-03A 的地点核心闭环已 PASS（D 级），
+  `schema_version = 4`，migration 连续 0001～0004。
+- Task card: `docs/tasks/P2-03B.md`.
 - Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**。
-- Goal: 从 schema 3 连续新增地点核心 migration，落地 GPS 事实、地点目录、人工 assignment/取消锁/
-  恢复自动、批量/撤销、CatalogFilterRevision 和纯 SQLite 地点 API；**不提前实施 P2-03B 地名包/
-  附近城市建议或 P2-03C 页面**。
-- Validation level: **最低 D**（完整 unit/integration + 地点事务/GPS/迁移故障注入；触发打包再加 C）。
+- Goal: 连续 0005 migration 落 `geo_datasets`/`geo_dataset_files`/`active_geo_dataset`/
+  `place_resolutions`/候选；显式本地工具的包 manifest/校验/导入/原子激活/回退；只读包目录；
+  `non_model + CPU_PREFERRED` 附近城市解析器，候选固定 `SUGGESTION_ONLY`；建议状态与
+  suggestion revision；**不提前实施 P2-03C 页面或语义搜索**。
+- Validation level: **最低 D**（完整 unit/integration + 数据包/解析/回退故障注入；新增依赖、
+  `workers/**`、打包入口或新增 package-data 目录再加 C）。
 - 当前会话为 GPT-5.6 Sol / high，与下一任务推荐模型不同；请用户在 Codex 中手动切换后再执行，
   不自动切换或启动 Agent。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
-排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03 的前置依赖。
+排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03B 的前置依赖。
 P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进程并发、evidence 撤销、真实端口 smoke）
-记录在 P2-02 报告 §10。
+记录在 P2-02 报告 §10；P2-03A 未验证项（无解析器/数据包、`GET /assets` 页面非快照隔离读、
+改名未接 undo、`geo.*` 尚未进入冻结包）记录在 P2-03A 报告 §9/§10。
 
 Model switching remains manual; the repository only records the recommended model per stage.

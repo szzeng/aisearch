@@ -352,6 +352,20 @@ class Scheduler:
                     prepared=prepared,
                     now_ms=int(now_ms),
                 )
+                # P2-03A: a structured GPS fact becomes the asset's current GeoFact in the
+                # very same transaction as the artifact, the artifact row and the job
+                # terminal state. Imported lazily so the scheduler does not depend on the
+                # geo package at import time.
+                from photo_search.geo import extract as geo_extract
+
+                if str(spec.processor_id) == geo_extract.GPS_PROCESSOR_ID:
+                    geo_extract.persist_geo_fact(
+                        connection,
+                        job=job,
+                        result=result,
+                        prepared=prepared,
+                        now_ms=int(now_ms),
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None

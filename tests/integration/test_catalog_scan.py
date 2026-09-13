@@ -954,9 +954,10 @@ def test_cli_reports_json_results_and_structured_errors(tmp_path: Path) -> None:
     assert initialized.returncode == 0, initialized.stderr
     init_body = json.loads(initialized.stdout)
     assert init_body["status"] == "ok"
-    # P2-02 adds 0002; 0001 stays byte-identical (ADR-0002 §7.1 continuity).
-    assert init_body["schema_version"] == 3
-    assert init_body["applied"] == [1, 2, 3]
+    # P2-02 adds 0002, P2-03 adds 0003, P2-03A adds 0004; 0001 stays byte-identical
+    # (ADR-0002 §7.1 continuity).
+    assert init_body["schema_version"] == 4
+    assert init_body["applied"] == [1, 2, 3, 4]
 
     info = _run_cli(data_root, "info", "--json")
     assert info.returncode == 0

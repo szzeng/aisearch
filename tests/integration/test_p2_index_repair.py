@@ -61,8 +61,12 @@ def test_v2_to_v3_backup_and_migration_preserve_every_old_column(tmp_path: Path)
 
     result = migrate_database(path, data_root=root)
 
-    assert result.previous_version == 2 and result.schema_version == 3
-    assert result.applied == (3,)
+    # P2-03 shipped 0003; P2-03A continues to 0004. The point of this case is that a real
+    # v2 database upgrades continuously and keeps every old column, so it asserts the
+    # supported version rather than hard-coding the number that was current at P2-03.
+    assert result.previous_version == 2
+    assert result.schema_version == schema.SUPPORTED_SCHEMA_VERSION
+    assert result.applied[:1] == (3,)
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:
@@ -71,7 +75,7 @@ def test_v2_to_v3_backup_and_migration_preserve_every_old_column(tmp_path: Path)
     finally:
         backup.close()
     assert rows(path) == before
-    assert inspect_database(path) == 3
+    assert inspect_database(path) == schema.SUPPORTED_SCHEMA_VERSION
     live = open_readonly(path)
     try:
         assert {"artifacts", "index_outbox", "index_entries", "index_generations"} <= set(
@@ -90,7 +94,7 @@ def test_interrupted_0003_rolls_back_to_v2_without_half_tables(
     before = rows(path)
     directory = tmp_path / "broken-migrations"
     directory.mkdir()
-    for version in (1, 2):
+    for version in (1, 2, 4):
         source = next(path for number, path in schema.migration_files() if number == version)
         (directory / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     (directory / "0003_broken.sql").write_text(

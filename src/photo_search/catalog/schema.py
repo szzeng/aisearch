@@ -8,9 +8,11 @@ from pathlib import Path
 from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 
 #: Highest schema version this build can write. ``0001`` is the frozen P1-01 identity
-#: schema; ``0002`` adds scheduler/runtime facts and ``0003`` adds the recoverable
-#: artifact/outbox/index confirmation protocol without touching the frozen core tables.
-SUPPORTED_SCHEMA_VERSION = 3
+#: schema; ``0002`` adds scheduler/runtime facts, ``0003`` adds the recoverable
+#: artifact/outbox/index confirmation protocol and ``0004`` adds the ADR-0005 place
+#: core (directory, GPS facts, manual control, operations and the two revisions),
+#: without touching the frozen core tables.
+SUPPORTED_SCHEMA_VERSION = 4
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

@@ -18,6 +18,8 @@ from photo_search.catalog.errors import ASSET_NOT_FOUND, JOB_NOT_FOUND
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
+from photo_search.places import revision as revision_module
+from photo_search.places.filter import place_condition
 
 #: Opaque cursor prefix of the default ``asset_id`` ordering (P1-04, frozen).
 CURSOR_PREFIX = "v1"
@@ -173,6 +175,9 @@ def asset_page(
     availability: str = "any",
     has_thumbnail: str = "any",
     order: str = ORDER_ASSET_ID,
+    place_ids: list[int] | None = None,
+    include_descendants: bool = True,
+    place_state: str = "any",
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -180,6 +185,9 @@ def asset_page(
     ``order=time_desc`` walks ``(created_at DESC, asset_id DESC)``, where ``created_at`` is
     the *catalog insertion* time, not an EXIF capture time. Both orderings keep their own
     cursor token space, so a cursor never leaks across orderings.
+
+    The P2-03A place filter is an ADD condition on the same page: it never changes the
+    cursor space, and the authoritative rows still come from SQLite.
     """
     if availability not in ("present", "missing", "any"):
         raise ApiError(
@@ -196,6 +204,12 @@ def asset_page(
             status=422,
             details={"order": str(order)},
         )
+    place_sql, place_parameters = place_condition(
+        catalog.connection,
+        place_ids=place_ids,
+        include_descendants=include_descendants,
+        place_state=place_state,
+    )
     start: int | tuple[int, int] | None
     if order == ORDER_TIME_DESC:
         start = decode_time_cursor(cursor)
@@ -214,6 +228,8 @@ def asset_page(
             source_id=source_id,
             availability=availability,
             order=order,
+            place_sql=None if place_sql == "1" else place_sql,
+            place_parameters=place_parameters,
         )
         if not rows:
             exhausted = True
@@ -250,6 +266,10 @@ def asset_page(
         "has_thumbnail": has_thumbnail,
         "source_id": None if source_id is None else int(source_id),
         "order": order,
+        "place_ids": [int(value) for value in (place_ids or ())],
+        "include_descendants": bool(include_descendants),
+        "place_state": str(place_state or "any"),
+        "catalog_filter_revision": revision_module.read_filter_revision(catalog.connection),
     }
 
 
@@ -277,6 +297,8 @@ def _asset_chunk(
     source_id: int | None,
     availability: str,
     order: str = ORDER_ASSET_ID,
+    place_sql: str | None = None,
+    place_parameters: list[Any] | None = None,
 ) -> list[Any]:
     conditions: list[str] = []
     parameters: list[Any] = []
@@ -308,6 +330,9 @@ def _asset_chunk(
             "NOT EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = a.asset_id "
             "AND l.availability = 'PRESENT')"
         )
+    if place_sql:
+        conditions.append(place_sql)
+        parameters.extend(place_parameters or [])
     parameters.append(int(size))
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(

@@ -43,7 +43,7 @@ def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:
     body = api_env.scenario(scenario)
 
     assert body["api_version"] == "v1"
-    assert body["supported_schema_version"] == 3
+    assert body["supported_schema_version"] == 4
     assert body["controlled_reads"] is True
     assert body["session_required"] is True
     assert body["loopback_only"] is True
