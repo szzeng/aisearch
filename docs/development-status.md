@@ -6,8 +6,8 @@
 (B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is PASS
 (B level + C-level packaged smoke + a recorded real-browser smoke); its non-blocking follow-up P1-05B
 (front-end verification base) is also PASS. P1-06 is PASS (D level: 16 new adversarial acceptance cases for
-duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 is PASS
-(A-level protocol closure, no production/schema/dependency change). P2-01A is now READY / CURRENT TASK.**
+duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 and P2-01A are PASS
+(A-level protocol closures, no production/schema/dependency change). P2-02 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -84,9 +84,23 @@ CatalogFilterRevision 独立版本。机器可读伴随物为
 A 级验证：新契约测试 11 passed；Ruff 与 diff-check clean。环境无第三方 JSON Schema validator，
 测试实际执行伴随文件所用关键字子集的实例正反例，但不声称运行时拒绝已经实现。
 
-下一任务是 **P2-01A / C2 / GPT-5.6 Sol / high**，任务卡
-[docs/tasks/P2-01A.md](tasks/P2-01A.md)。它只冻结地点事实/人工控制/数据包/DDL/API/搜索详细契约，
-不实施地点功能；其后才进入 P2-02。
+其后续契约任务 **P2-01A** 也已完成；当前进入 P2-02。
+
+## Latest place contract closure — P2-01A (2026-09-13)
+
+P2-01A 已冻结 [ADR-0005](decisions/ADR-0005-place-facts-assignment-and-search-contract.md)：GPS 原始事实、
+附近城市机器建议、人工有效归属/取消锁三层分离；稳定 place_id、首版四类地点、同名与祖先层级；
+批量 500、幂等/revision、操作历史与补偿撤销；地名包 manifest/原子激活/回退；增量 DDL、`/api/v1`
+与结构化错误；SQLite 权威筛选、suggestion revision 和 CatalogFilterRevision 触发矩阵。
+
+机器可读伴随物为 [p2-place-contracts.v1.json](decisions/contracts/p2-place-contracts.v1.json)，报告见
+[P2-01A 报告](reports/P2-01A-place-contract.md)。本任务未改生产代码、migration、schema_version、
+依赖或既有测试。A 级验证：地点契约专项 21 passed，Ruff 与完整暂存差异检查 clean；schema/样例及
+显式跨项语义检查不等于数据库/API/运行时拒绝已经实现。
+
+下一任务是 **P2-02 / DS-H / DeepSeek V4.1 Flash / 高推理**，任务卡
+[docs/tasks/P2-02.md](tasks/P2-02.md)。它实现持久调度、设备资格、暂停/退避/优先级与阻塞恢复，
+地点只用确定性 non-model CPU 假执行器验收，不提前实现 GPS 或地点表。
 
 ## Latest accepted verification
 
@@ -221,15 +235,19 @@ human-labelled semantic-search holdout.
 **P2-01 — 通用处理任务、运行时与搜索配置契约：PASS.** 见
 [P2-01 报告](reports/P2-01-processing-runtime-search-profile-contract.md)。
 
-**P2-01A — 地点事实、人工控制、数据包与搜索契约.**
+**P2-01A — 地点事实、人工控制、数据包与搜索契约：PASS.** 见
+[P2-01A 报告](reports/P2-01A-place-contract.md)。
 
-- Status: **READY / CURRENT TASK**. P2-01 已冻结通用 non-model/非向量结果和筛选版本外壳。
-- Task card: `docs/tasks/P2-01A.md`.
-- Recommended execution model: **C2 / GPT-5.6 Sol / high**。
-- Goal: 冻结 ADR-0005、地点 JSON Schema 与契约正反例，覆盖 GPS 事实、机器建议、人工归属/取消锁、
-  地名包、DDL/API/错误码、CatalogFilterRevision 和权威搜索补查；**不写生产代码或 migration**。
-- Validation level: **A**（focused contract pytest + Ruff + diff-check）。
-- P2-01A 完成后生成 P2-02；当前会话模型已符合建议，可继续使用，模型切换仍只由用户手动完成。
+**P2-02 — 持久调度、设备资格与阻塞恢复实现.**
+
+- Status: **READY / CURRENT TASK**. P2-01/P2-01A 的通用与地点契约均已冻结。
+- Task card: `docs/tasks/P2-02.md`.
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**。
+- Goal: 实现 lease/续约/退避、scheduler-owned 设备资格、持久暂停、公平优先级和阻塞恢复；地点只用
+  确定性 non-model CPU 假执行器验收，**不读取 GPS、不创建地点表**。
+- Validation level: **D**（完整 unit/integration + 对应迁移、lease、暂停、设备故障与恢复注入；若修改
+  worker/运行环境再加 C）。
+- 当前任务推荐模型与本会话不同；请由用户在 Codex 中手动切换后再执行，不自动切换或启动 Agent。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-01 的前置依赖。

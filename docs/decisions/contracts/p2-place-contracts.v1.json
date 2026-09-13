@@ -1,0 +1,1006 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p2-place-contracts.v1.json",
+  "title": "Photo Search P2 place protocol companion",
+  "description": "Derived from ADR-0005; ADR-0005 is authoritative on conflict.",
+  "oneOf": [
+    { "$ref": "#/$defs/Place" },
+    { "$ref": "#/$defs/GeoFact" },
+    { "$ref": "#/$defs/PlaceResolution" },
+    { "$ref": "#/$defs/PlaceAssignment" },
+    { "$ref": "#/$defs/PlaceAssignmentSet" },
+    { "$ref": "#/$defs/PlaceOperation" },
+    { "$ref": "#/$defs/PlaceDatasetManifest" },
+    { "$ref": "#/$defs/PlaceFilter" },
+    { "$ref": "#/$defs/PlaceApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": {
+      "const": "p2-place-contracts.v1"
+    },
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "PlaceName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "StableId": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "EpochMillis": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "PlaceKind": {
+      "enum": ["country", "city", "attraction", "custom"]
+    },
+    "PlaceLifecycle": {
+      "enum": ["ACTIVE", "RETIRED"]
+    },
+    "GeoStatus": {
+      "enum": ["VALID", "ABSENT", "INVALID", "UNSUPPORTED_CRS", "SOURCE_UNAVAILABLE"]
+    },
+    "DatumStatus": {
+      "enum": ["WGS84", "ASSUMED_WGS84", "UNSUPPORTED", "ABSENT"]
+    },
+    "ResolutionStatus": {
+      "enum": ["CANDIDATES", "NO_CANDIDATE"]
+    },
+    "AssignmentMode": {
+      "enum": ["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    },
+    "AssignmentOrigin": {
+      "enum": ["NONE", "MANUAL", "CONFIRMED_SUGGESTION"]
+    },
+    "AssignmentRecordState": {
+      "enum": ["ACTIVE", "SUPERSEDED"]
+    },
+    "DatasetState": {
+      "enum": ["STAGED", "VALIDATED", "ACTIVE", "RETAINED"]
+    },
+    "PlaceAlias": {
+      "type": "object",
+      "required": ["text", "normalized", "language", "source", "lifecycle"],
+      "properties": {
+        "text": { "$ref": "#/$defs/PlaceName" },
+        "normalized": { "$ref": "#/$defs/PlaceName" },
+        "language": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "source": { "enum": ["USER", "DATASET"] },
+        "lifecycle": { "$ref": "#/$defs/PlaceLifecycle" }
+      },
+      "additionalProperties": false
+    },
+    "PlaceExternalRef": {
+      "type": "object",
+      "required": ["provider", "external_id"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/NonEmptyString" },
+        "external_id": { "$ref": "#/$defs/NonEmptyString" }
+      },
+      "additionalProperties": false
+    },
+    "Place": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "place_id",
+        "kind",
+        "canonical_name",
+        "aliases",
+        "parent_place_id",
+        "origin",
+        "external_refs",
+        "lifecycle",
+        "revision",
+        "created_at",
+        "updated_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "place_id": { "$ref": "#/$defs/StableId" },
+        "kind": { "$ref": "#/$defs/PlaceKind" },
+        "canonical_name": { "$ref": "#/$defs/PlaceName" },
+        "aliases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceAlias" },
+          "uniqueItems": true
+        },
+        "parent_place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "origin": { "enum": ["USER", "DATASET"] },
+        "external_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceExternalRef" },
+          "uniqueItems": true
+        },
+        "lifecycle": { "$ref": "#/$defs/PlaceLifecycle" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "created_at": { "$ref": "#/$defs/EpochMillis" },
+        "updated_at": { "$ref": "#/$defs/EpochMillis" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "kind": { "const": "country" } },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": { "parent_place_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "RawGps": {
+      "type": "object",
+      "required": [
+        "latitude_dms",
+        "latitude_ref",
+        "longitude_dms",
+        "longitude_ref",
+        "map_datum",
+        "altitude_m",
+        "altitude_ref",
+        "direction_deg",
+        "accuracy_m"
+      ],
+      "properties": {
+        "latitude_dms": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "latitude_ref": { "enum": ["N", "S"] },
+        "longitude_dms": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "longitude_ref": { "enum": ["E", "W"] },
+        "map_datum": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "altitude_m": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        },
+        "altitude_ref": {
+          "oneOf": [
+            { "enum": ["ABOVE_SEA_LEVEL", "BELOW_SEA_LEVEL"] },
+            { "type": "null" }
+          ]
+        },
+        "direction_deg": {
+          "oneOf": [
+            { "type": "number", "minimum": 0, "maximum": 360 },
+            { "type": "null" }
+          ]
+        },
+        "accuracy_m": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Wgs84Coordinate": {
+      "type": "object",
+      "required": ["datum", "latitude", "longitude", "altitude_m", "direction_deg", "accuracy_m"],
+      "properties": {
+        "datum": { "const": "WGS84" },
+        "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+        "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+        "altitude_m": {
+          "oneOf": [
+            { "type": "number" },
+            { "type": "null" }
+          ]
+        },
+        "direction_deg": {
+          "oneOf": [
+            { "type": "number", "minimum": 0, "maximum": 360 },
+            { "type": "null" }
+          ]
+        },
+        "accuracy_m": {
+          "oneOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CoordinatePrivacy": {
+      "type": "object",
+      "required": ["detail_endpoint_only", "loggable", "url_serializable", "feedback_serializable"],
+      "properties": {
+        "detail_endpoint_only": { "const": true },
+        "loggable": { "const": false },
+        "url_serializable": { "const": false },
+        "feedback_serializable": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "GeoFact": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "geo_fact_id",
+        "asset_id",
+        "location_id",
+        "input_revision",
+        "fact_revision",
+        "status",
+        "source",
+        "processor_id",
+        "raw_fields_checksum_sha256",
+        "raw_gps",
+        "normalized_wgs84",
+        "datum_status",
+        "privacy",
+        "created_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "geo_fact_id": { "$ref": "#/$defs/NonEmptyString" },
+        "asset_id": { "$ref": "#/$defs/StableId" },
+        "location_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "input_revision": { "$ref": "#/$defs/Sha256" },
+        "fact_revision": { "$ref": "#/$defs/Revision" },
+        "status": { "$ref": "#/$defs/GeoStatus" },
+        "source": { "const": "EXIF_GPS" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "raw_fields_checksum_sha256": { "$ref": "#/$defs/Sha256" },
+        "raw_gps": {
+          "oneOf": [
+            { "$ref": "#/$defs/RawGps" },
+            { "type": "null" }
+          ]
+        },
+        "normalized_wgs84": {
+          "oneOf": [
+            { "$ref": "#/$defs/Wgs84Coordinate" },
+            { "type": "null" }
+          ]
+        },
+        "datum_status": { "$ref": "#/$defs/DatumStatus" },
+        "privacy": { "$ref": "#/$defs/CoordinatePrivacy" },
+        "created_at": { "$ref": "#/$defs/EpochMillis" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "VALID" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "raw_gps": { "$ref": "#/$defs/RawGps" },
+              "normalized_wgs84": { "$ref": "#/$defs/Wgs84Coordinate" },
+              "datum_status": { "enum": ["WGS84", "ASSUMED_WGS84"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "ABSENT" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "raw_gps": { "type": "null" },
+              "normalized_wgs84": { "type": "null" },
+              "datum_status": { "const": "ABSENT" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["INVALID", "UNSUPPORTED_CRS", "SOURCE_UNAVAILABLE"] }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "normalized_wgs84": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PlaceResolutionCandidate": {
+      "type": "object",
+      "required": [
+        "candidate_id",
+        "dataset_place_id",
+        "local_place_id",
+        "kind",
+        "display_name",
+        "ancestor_names",
+        "rank",
+        "distance_m",
+        "match_basis",
+        "confidence_basis",
+        "disposition"
+      ],
+      "properties": {
+        "candidate_id": { "$ref": "#/$defs/NonEmptyString" },
+        "dataset_place_id": { "$ref": "#/$defs/NonEmptyString" },
+        "local_place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "kind": { "const": "city" },
+        "display_name": { "$ref": "#/$defs/PlaceName" },
+        "ancestor_names": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceName" }
+        },
+        "rank": { "type": "integer", "minimum": 1 },
+        "distance_m": { "type": "number", "minimum": 0 },
+        "match_basis": { "const": "NEARBY_CITY_POINT" },
+        "confidence_basis": { "const": "DISTANCE_ONLY" },
+        "disposition": { "const": "SUGGESTION_ONLY" }
+      },
+      "additionalProperties": false
+    },
+    "PlaceResolution": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "resolution_id",
+        "asset_id",
+        "geo_fact_id",
+        "input_revision",
+        "control_revision_seen",
+        "processor_id",
+        "dataset_id",
+        "dataset_version",
+        "config_hash",
+        "status",
+        "suggestion_revision",
+        "candidates",
+        "created_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "resolution_id": { "$ref": "#/$defs/NonEmptyString" },
+        "asset_id": { "$ref": "#/$defs/StableId" },
+        "geo_fact_id": { "$ref": "#/$defs/NonEmptyString" },
+        "input_revision": { "$ref": "#/$defs/Sha256" },
+        "control_revision_seen": { "type": "integer", "minimum": 0 },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "dataset_id": { "$ref": "#/$defs/NonEmptyString" },
+        "dataset_version": { "$ref": "#/$defs/NonEmptyString" },
+        "config_hash": { "$ref": "#/$defs/Sha256" },
+        "status": { "$ref": "#/$defs/ResolutionStatus" },
+        "suggestion_revision": { "$ref": "#/$defs/Revision" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceResolutionCandidate" },
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "created_at": { "$ref": "#/$defs/EpochMillis" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "status": { "const": "CANDIDATES" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "candidates": { "minItems": 1 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "status": { "const": "NO_CANDIDATE" } },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": { "candidates": { "maxItems": 0 } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PlaceAssignment": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "assignment_id",
+        "asset_id",
+        "place_id",
+        "mode",
+        "origin",
+        "manual_lock",
+        "resolution_id",
+        "revision",
+        "record_state",
+        "actor",
+        "operation_id",
+        "updated_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "assignment_id": { "$ref": "#/$defs/NonEmptyString" },
+        "asset_id": { "$ref": "#/$defs/StableId" },
+        "place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "mode": { "$ref": "#/$defs/AssignmentMode" },
+        "origin": { "$ref": "#/$defs/AssignmentOrigin" },
+        "manual_lock": { "type": "boolean" },
+        "resolution_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "record_state": { "$ref": "#/$defs/AssignmentRecordState" },
+        "actor": { "const": "LOCAL_USER" },
+        "operation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "updated_at": { "$ref": "#/$defs/EpochMillis" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "AUTO_ALLOWED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {
+              "place_id": { "type": "null" },
+              "origin": { "const": "NONE" },
+              "manual_lock": { "const": false },
+              "resolution_id": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {
+              "place_id": { "$ref": "#/$defs/StableId" },
+              "origin": { "enum": ["MANUAL", "CONFIRMED_SUGGESTION"] },
+              "manual_lock": { "const": true }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {
+              "place_id": { "type": "null" },
+              "origin": { "const": "MANUAL" },
+              "manual_lock": { "const": true },
+              "resolution_id": { "type": "null" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PlaceAssignmentSet": {
+      "type": "object",
+      "required": ["contract_version", "assignments"],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "assignments": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceAssignment" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "PlaceOperationItem": {
+      "type": "object",
+      "required": [
+        "item_index",
+        "asset_id",
+        "place_id",
+        "action",
+        "target_place_id",
+        "expected_revision",
+        "before_assignment",
+        "after_assignment"
+      ],
+      "properties": {
+        "item_index": { "type": "integer", "minimum": 0 },
+        "asset_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "action": { "enum": ["ASSIGN", "UNASSIGN", "RESTORE_AUTO", "RENAME_PLACE", "REPARENT_PLACE"] },
+        "target_place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "expected_revision": { "type": "integer", "minimum": 0 },
+        "before_assignment": {
+          "oneOf": [
+            { "$ref": "#/$defs/PlaceAssignment" },
+            { "type": "null" }
+          ]
+        },
+        "after_assignment": {
+          "oneOf": [
+            { "$ref": "#/$defs/PlaceAssignment" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PlaceOperation": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "operation_id",
+        "request_id",
+        "payload_sha256",
+        "operation_type",
+        "operation_revision",
+        "actor",
+        "atomic",
+        "status",
+        "undo_of_operation_id",
+        "items",
+        "created_at",
+        "committed_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "operation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "request_id": { "$ref": "#/$defs/NonEmptyString" },
+        "payload_sha256": { "$ref": "#/$defs/Sha256" },
+        "operation_type": {
+          "enum": [
+            "ASSIGN",
+            "UNASSIGN",
+            "RESTORE_AUTO",
+            "RENAME_PLACE",
+            "REPARENT_PLACE",
+            "BATCH_ASSIGN",
+            "BATCH_UNASSIGN",
+            "BATCH_RESTORE_AUTO",
+            "UNDO"
+          ]
+        },
+        "operation_revision": { "$ref": "#/$defs/Revision" },
+        "actor": { "const": "LOCAL_USER" },
+        "atomic": { "const": true },
+        "status": { "enum": ["COMMITTED", "REVERSED"] },
+        "undo_of_operation_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PlaceOperationItem" },
+          "minItems": 1,
+          "maxItems": 500
+        },
+        "created_at": { "$ref": "#/$defs/EpochMillis" },
+        "committed_at": { "$ref": "#/$defs/EpochMillis" }
+      },
+      "additionalProperties": false
+    },
+    "DatasetSource": {
+      "type": "object",
+      "required": ["provider", "source_url", "snapshot", "license_id", "license_url", "attribution"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/NonEmptyString" },
+        "source_url": { "$ref": "#/$defs/NonEmptyString" },
+        "snapshot": { "$ref": "#/$defs/NonEmptyString" },
+        "license_id": { "$ref": "#/$defs/NonEmptyString" },
+        "license_url": { "$ref": "#/$defs/NonEmptyString" },
+        "attribution": { "$ref": "#/$defs/NonEmptyString" }
+      },
+      "additionalProperties": false
+    },
+    "DatasetBuild": {
+      "type": "object",
+      "required": ["builder_id", "builder_version", "generated_at", "parameters_sha256", "parameters"],
+      "properties": {
+        "builder_id": { "$ref": "#/$defs/NonEmptyString" },
+        "builder_version": { "$ref": "#/$defs/NonEmptyString" },
+        "generated_at": { "$ref": "#/$defs/EpochMillis" },
+        "parameters_sha256": { "$ref": "#/$defs/Sha256" },
+        "parameters": {
+          "type": "object",
+          "required": ["source_files", "minimum_population", "languages", "include_aliases", "sort_order"],
+          "properties": {
+            "source_files": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/NonEmptyString" },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "minimum_population": { "type": "integer", "minimum": 0 },
+            "languages": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/NonEmptyString" },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "include_aliases": { "type": "boolean" },
+            "sort_order": { "$ref": "#/$defs/NonEmptyString" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "DatasetBounds": {
+      "type": "object",
+      "required": ["south", "west", "north", "east"],
+      "properties": {
+        "south": { "type": "number", "minimum": -90, "maximum": 90 },
+        "west": { "type": "number", "minimum": -180, "maximum": 180 },
+        "north": { "type": "number", "minimum": -90, "maximum": 90 },
+        "east": { "type": "number", "minimum": -180, "maximum": 180 }
+      },
+      "additionalProperties": false
+    },
+    "DatasetCoverage": {
+      "type": "object",
+      "required": ["country_codes", "bounds_wgs84", "languages", "alias_languages", "record_count"],
+      "properties": {
+        "country_codes": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z]{2}$" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "bounds_wgs84": { "$ref": "#/$defs/DatasetBounds" },
+        "languages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "alias_languages": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        },
+        "record_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "DatasetFile": {
+      "type": "object",
+      "required": ["relative_path", "role", "media_type", "sha256", "byte_size"],
+      "properties": {
+        "relative_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:)(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
+        },
+        "role": { "enum": ["PLACES", "ALIASES", "HIERARCHY", "LICENSE", "INDEX"] },
+        "media_type": { "$ref": "#/$defs/NonEmptyString" },
+        "sha256": { "$ref": "#/$defs/Sha256" },
+        "byte_size": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "PlaceDatasetManifest": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "manifest_schema",
+        "package_id",
+        "package_version",
+        "dataset_id",
+        "source",
+        "build",
+        "content_sha256",
+        "coordinate_reference_system",
+        "coverage",
+        "compatible_catalog_schema",
+        "files",
+        "state",
+        "previous_dataset_id",
+        "validated_at",
+        "activated_at",
+        "retained_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "manifest_schema": { "const": "photo-search-place-dataset-manifest.v1" },
+        "package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "package_version": { "$ref": "#/$defs/NonEmptyString" },
+        "dataset_id": { "$ref": "#/$defs/NonEmptyString" },
+        "source": { "$ref": "#/$defs/DatasetSource" },
+        "build": { "$ref": "#/$defs/DatasetBuild" },
+        "content_sha256": { "$ref": "#/$defs/Sha256" },
+        "coordinate_reference_system": { "const": "WGS84" },
+        "coverage": { "$ref": "#/$defs/DatasetCoverage" },
+        "compatible_catalog_schema": {
+          "type": "object",
+          "required": ["minimum", "maximum"],
+          "properties": {
+            "minimum": { "type": "integer", "minimum": 1 },
+            "maximum": { "type": "integer", "minimum": 1 }
+          },
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DatasetFile" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "state": { "$ref": "#/$defs/DatasetState" },
+        "previous_dataset_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "validated_at": {
+          "oneOf": [
+            { "$ref": "#/$defs/EpochMillis" },
+            { "type": "null" }
+          ]
+        },
+        "activated_at": {
+          "oneOf": [
+            { "$ref": "#/$defs/EpochMillis" },
+            { "type": "null" }
+          ]
+        },
+        "retained_at": {
+          "oneOf": [
+            { "$ref": "#/$defs/EpochMillis" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PlaceFilter": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "place_ids",
+        "include_descendants",
+        "place_state",
+        "catalog_filter_revision",
+        "profile_id",
+        "search_session_id",
+        "cursor",
+        "cursor_catalog_filter_revision",
+        "suggestion_revision",
+        "cursor_suggestion_revision"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "place_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StableId" },
+          "uniqueItems": true
+        },
+        "include_descendants": { "type": "boolean" },
+        "place_state": { "enum": ["any", "assigned", "unassigned", "manual_unassigned", "suggested"] },
+        "catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "profile_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "search_session_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "cursor": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "cursor_catalog_filter_revision": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "suggestion_revision": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "cursor_suggestion_revision": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "place_ids": { "minItems": 1 } },
+            "required": ["place_ids"]
+          },
+          "then": {
+            "properties": { "place_state": { "enum": ["any", "assigned"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "place_state": { "const": "suggested" } },
+            "required": ["place_state"]
+          },
+          "then": {
+            "properties": { "suggestion_revision": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "cursor": { "type": "string", "minLength": 1 } },
+            "required": ["cursor"]
+          },
+          "then": {
+            "properties": {
+              "search_session_id": { "$ref": "#/$defs/NonEmptyString" },
+              "cursor_catalog_filter_revision": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "PlaceApiErrorDetails": {
+      "type": "object",
+      "required": [
+        "asset_ids",
+        "place_id",
+        "operation_id",
+        "dataset_id",
+        "expected_revision",
+        "current_revision",
+        "max_batch_size"
+      ],
+      "properties": {
+        "asset_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/StableId" },
+          "maxItems": 500,
+          "uniqueItems": true
+        },
+        "place_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/StableId" },
+            { "type": "null" }
+          ]
+        },
+        "operation_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "dataset_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "expected_revision": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "current_revision": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "max_batch_size": { "const": 500 }
+      },
+      "additionalProperties": false
+    },
+    "PlaceApiError": {
+      "type": "object",
+      "required": ["code", "message", "request_id"],
+      "properties": {
+        "code": {
+          "enum": [
+            "PLACE_NOT_FOUND",
+            "PLACE_ASSIGNMENT_CONFLICT",
+            "PLACE_IDEMPOTENCY_CONFLICT",
+            "PLACE_BATCH_TOO_LARGE",
+            "PLACE_PARENT_CYCLE",
+            "PLACE_REFERENCED",
+            "PLACE_OPERATION_NOT_UNDOABLE",
+            "PLACE_DATASET_MISSING",
+            "PLACE_DATASET_INVALID",
+            "CATALOG_FILTER_REVISION_STALE",
+            "PLACE_SUGGESTION_REVISION_STALE",
+            "INVALID_PLACE_FILTER",
+            "GEO_COORDINATE_INVALID"
+          ]
+        },
+        "message": { "$ref": "#/$defs/NonEmptyString" },
+        "request_id": { "$ref": "#/$defs/NonEmptyString" },
+        "details": {
+          "oneOf": [
+            { "$ref": "#/$defs/PlaceApiErrorDetails" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
