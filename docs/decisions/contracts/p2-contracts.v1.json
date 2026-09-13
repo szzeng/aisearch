@@ -1,0 +1,712 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p2-contracts.v1.json",
+  "title": "Photo Search P2 stable protocol companion",
+  "description": "Derived from ADR-0003; ADR-0003 is authoritative on conflict.",
+  "oneOf": [
+    { "$ref": "#/$defs/JobRequest" },
+    { "$ref": "#/$defs/JobResult" },
+    { "$ref": "#/$defs/ProcessorSpec" },
+    { "$ref": "#/$defs/RuntimeCapabilities" },
+    { "$ref": "#/$defs/SearchProfile" },
+    { "$ref": "#/$defs/CatalogFilterRevision" }
+  ],
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ContractVersion": {
+      "const": "p2-contracts.v1"
+    },
+    "DevicePolicy": {
+      "enum": ["GPU_REQUIRED", "CPU_ALLOWED", "CPU_PREFERRED"]
+    },
+    "RequestedDevice": {
+      "enum": ["auto", "cpu", "gpu"]
+    },
+    "ResolvedDevice": {
+      "enum": ["cpu", "gpu"]
+    },
+    "JobState": {
+      "enum": [
+        "QUEUED",
+        "RUNNING",
+        "SUCCEEDED",
+        "RETRY_WAIT",
+        "BLOCKED",
+        "FAILED",
+        "CANCELLED"
+      ]
+    },
+    "JobResultState": {
+      "enum": ["SUCCEEDED", "RETRY_WAIT", "BLOCKED", "FAILED", "CANCELLED"]
+    },
+    "ProcessorKind": {
+      "enum": ["embedding_model", "reranker_model", "non_model"]
+    },
+    "InputSnapshot": {
+      "type": "object",
+      "required": [
+        "subject_revision",
+        "asset_sha256",
+        "location_id",
+        "byte_size",
+        "mtime_ns"
+      ],
+      "properties": {
+        "subject_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "asset_sha256": {
+          "oneOf": [
+            { "$ref": "#/$defs/Sha256" },
+            { "type": "null" }
+          ]
+        },
+        "location_id": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "byte_size": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "mtime_ns": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "JobRequest": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "job_id",
+        "subject_type",
+        "subject_id",
+        "input_revision",
+        "task_type",
+        "processor_id",
+        "lease_token",
+        "requested_device",
+        "resolved_device",
+        "runtime_provider",
+        "precision",
+        "runtime_capability_revision",
+        "input_snapshot"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "job_id": { "type": "integer", "minimum": 1 },
+        "subject_type": { "$ref": "#/$defs/NonEmptyString" },
+        "subject_id": { "$ref": "#/$defs/NonEmptyString" },
+        "input_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "lease_token": { "$ref": "#/$defs/NonEmptyString" },
+        "requested_device": { "$ref": "#/$defs/RequestedDevice" },
+        "resolved_device": { "$ref": "#/$defs/ResolvedDevice" },
+        "runtime_provider": { "$ref": "#/$defs/NonEmptyString" },
+        "precision": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_capability_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "input_snapshot": { "$ref": "#/$defs/InputSnapshot" }
+      },
+      "additionalProperties": false
+    },
+    "ErrorEnvelope": {
+      "type": "object",
+      "required": ["code", "message", "retryable", "blocking_reason"],
+      "properties": {
+        "code": { "$ref": "#/$defs/NonEmptyString" },
+        "message": { "$ref": "#/$defs/NonEmptyString" },
+        "retryable": { "type": "boolean" },
+        "blocking_reason": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArtifactRef": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "artifact_type",
+        "artifact_revision",
+        "media_type",
+        "checksum_sha256",
+        "byte_size",
+        "storage_uri",
+        "payload",
+        "space_id",
+        "dimension"
+      ],
+      "properties": {
+        "artifact_id": { "$ref": "#/$defs/NonEmptyString" },
+        "artifact_type": { "enum": ["embedding", "structured", "binary"] },
+        "artifact_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "media_type": { "$ref": "#/$defs/NonEmptyString" },
+        "checksum_sha256": { "$ref": "#/$defs/Sha256" },
+        "byte_size": { "type": "integer", "minimum": 0 },
+        "storage_uri": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "payload": {
+          "oneOf": [
+            { "type": "object" },
+            { "type": "null" }
+          ]
+        },
+        "space_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "dimension": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "artifact_type": { "const": "embedding" } },
+            "required": ["artifact_type"]
+          },
+          "then": {
+            "properties": {
+              "space_id": { "$ref": "#/$defs/NonEmptyString" },
+              "dimension": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "artifact_type": { "enum": ["structured", "binary"] }
+            },
+            "required": ["artifact_type"]
+          },
+          "then": {
+            "properties": {
+              "space_id": { "type": "null" },
+              "dimension": { "type": "null" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "JobResult": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "job_id",
+        "lease_token",
+        "input_revision",
+        "task_type",
+        "processor_id",
+        "state",
+        "resolved_device",
+        "runtime_provider",
+        "precision",
+        "progress",
+        "artifacts",
+        "error",
+        "completed_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "job_id": { "type": "integer", "minimum": 1 },
+        "lease_token": { "$ref": "#/$defs/NonEmptyString" },
+        "input_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "state": { "$ref": "#/$defs/JobResultState" },
+        "resolved_device": { "$ref": "#/$defs/ResolvedDevice" },
+        "runtime_provider": { "$ref": "#/$defs/NonEmptyString" },
+        "precision": { "$ref": "#/$defs/NonEmptyString" },
+        "progress": { "type": "number", "minimum": 0, "maximum": 1 },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ArtifactRef" }
+        },
+        "error": {
+          "oneOf": [
+            { "$ref": "#/$defs/ErrorEnvelope" },
+            { "type": "null" }
+          ]
+        },
+        "completed_at": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "state": { "const": "SUCCEEDED" } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "progress": { "const": 1 },
+              "error": { "type": "null" }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": { "enum": ["RETRY_WAIT", "BLOCKED", "FAILED"] }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "error": { "$ref": "#/$defs/ErrorEnvelope" }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "WeightArtifact": {
+      "type": "object",
+      "required": ["name", "revision", "sha256"],
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "revision": { "$ref": "#/$defs/NonEmptyString" },
+        "sha256": { "$ref": "#/$defs/Sha256" }
+      },
+      "additionalProperties": false
+    },
+    "ResourceMeasurement": {
+      "type": "object",
+      "required": [
+        "device",
+        "precision",
+        "batch_size",
+        "measured_at",
+        "evidence_id",
+        "peak_ram_bytes",
+        "peak_vram_bytes"
+      ],
+      "properties": {
+        "device": { "$ref": "#/$defs/ResolvedDevice" },
+        "precision": { "$ref": "#/$defs/NonEmptyString" },
+        "batch_size": { "type": "integer", "minimum": 1 },
+        "measured_at": { "type": "integer", "minimum": 0 },
+        "evidence_id": { "$ref": "#/$defs/NonEmptyString" },
+        "peak_ram_bytes": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "peak_vram_bytes": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "EmbeddingProcessorSpec": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "spec_revision",
+        "processor_id",
+        "processor_kind",
+        "task_type",
+        "config_hash",
+        "input_type",
+        "output_type",
+        "device_policy",
+        "runtime_backend",
+        "runtime_package_id",
+        "supported_devices",
+        "supported_precisions",
+        "max_batch_size",
+        "cancellation_supported",
+        "resource_measurements",
+        "model_id",
+        "model_revision",
+        "weights",
+        "image_preprocess_version",
+        "query_preprocess_version",
+        "tokenizer_version",
+        "instruction_template_version",
+        "normalization_version",
+        "dimension",
+        "metric",
+        "space_id",
+        "max_pixels",
+        "max_tokens"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "spec_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_kind": { "const": "embedding_model" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "config_hash": { "$ref": "#/$defs/Sha256" },
+        "input_type": { "$ref": "#/$defs/NonEmptyString" },
+        "output_type": { "const": "embedding" },
+        "device_policy": { "$ref": "#/$defs/DevicePolicy" },
+        "runtime_backend": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "supported_devices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResolvedDevice" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "supported_precisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_batch_size": { "type": "integer", "minimum": 1 },
+        "cancellation_supported": { "type": "boolean" },
+        "resource_measurements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResourceMeasurement" }
+        },
+        "model_id": { "$ref": "#/$defs/NonEmptyString" },
+        "model_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "weights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/WeightArtifact" },
+          "minItems": 1
+        },
+        "image_preprocess_version": { "$ref": "#/$defs/NonEmptyString" },
+        "query_preprocess_version": { "$ref": "#/$defs/NonEmptyString" },
+        "tokenizer_version": { "$ref": "#/$defs/NonEmptyString" },
+        "instruction_template_version": { "$ref": "#/$defs/NonEmptyString" },
+        "normalization_version": { "$ref": "#/$defs/NonEmptyString" },
+        "dimension": { "type": "integer", "minimum": 1 },
+        "metric": { "$ref": "#/$defs/NonEmptyString" },
+        "space_id": { "$ref": "#/$defs/NonEmptyString" },
+        "max_pixels": { "type": "integer", "minimum": 1 },
+        "max_tokens": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "RerankerProcessorSpec": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "spec_revision",
+        "processor_id",
+        "processor_kind",
+        "task_type",
+        "config_hash",
+        "input_type",
+        "output_type",
+        "device_policy",
+        "runtime_backend",
+        "runtime_package_id",
+        "supported_devices",
+        "supported_precisions",
+        "max_batch_size",
+        "cancellation_supported",
+        "resource_measurements",
+        "model_id",
+        "model_revision",
+        "weights",
+        "query_preprocess_version",
+        "candidate_preprocess_version",
+        "tokenizer_version",
+        "instruction_template_version",
+        "max_tokens"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "spec_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_kind": { "const": "reranker_model" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "config_hash": { "$ref": "#/$defs/Sha256" },
+        "input_type": { "$ref": "#/$defs/NonEmptyString" },
+        "output_type": { "const": "scores" },
+        "device_policy": { "$ref": "#/$defs/DevicePolicy" },
+        "runtime_backend": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "supported_devices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResolvedDevice" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "supported_precisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_batch_size": { "type": "integer", "minimum": 1 },
+        "cancellation_supported": { "type": "boolean" },
+        "resource_measurements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResourceMeasurement" }
+        },
+        "model_id": { "$ref": "#/$defs/NonEmptyString" },
+        "model_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "weights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/WeightArtifact" },
+          "minItems": 1
+        },
+        "query_preprocess_version": { "$ref": "#/$defs/NonEmptyString" },
+        "candidate_preprocess_version": { "$ref": "#/$defs/NonEmptyString" },
+        "tokenizer_version": { "$ref": "#/$defs/NonEmptyString" },
+        "instruction_template_version": { "$ref": "#/$defs/NonEmptyString" },
+        "max_tokens": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "NonModelProcessorSpec": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "spec_revision",
+        "processor_id",
+        "processor_kind",
+        "task_type",
+        "config_hash",
+        "input_type",
+        "output_type",
+        "device_policy",
+        "runtime_backend",
+        "runtime_package_id",
+        "supported_devices",
+        "supported_precisions",
+        "max_batch_size",
+        "cancellation_supported",
+        "resource_measurements"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "spec_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_kind": { "const": "non_model" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "config_hash": { "$ref": "#/$defs/Sha256" },
+        "input_type": { "$ref": "#/$defs/NonEmptyString" },
+        "output_type": { "$ref": "#/$defs/NonEmptyString" },
+        "device_policy": { "const": "CPU_PREFERRED" },
+        "runtime_backend": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "supported_devices": {
+          "const": ["cpu"]
+        },
+        "supported_precisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_batch_size": { "type": "integer", "minimum": 1 },
+        "cancellation_supported": { "type": "boolean" },
+        "resource_measurements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResourceMeasurement" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProcessorSpec": {
+      "oneOf": [
+        { "$ref": "#/$defs/EmbeddingProcessorSpec" },
+        { "$ref": "#/$defs/RerankerProcessorSpec" },
+        { "$ref": "#/$defs/NonModelProcessorSpec" }
+      ]
+    },
+    "RuntimeProvider": {
+      "type": "object",
+      "required": [
+        "name",
+        "device",
+        "precisions",
+        "available",
+        "health",
+        "health_checked_at",
+        "evidence_id"
+      ],
+      "properties": {
+        "name": { "$ref": "#/$defs/NonEmptyString" },
+        "device": { "$ref": "#/$defs/ResolvedDevice" },
+        "precisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "available": { "type": "boolean" },
+        "health": { "enum": ["healthy", "degraded", "unhealthy", "unknown"] },
+        "health_checked_at": { "type": "integer", "minimum": 0 },
+        "evidence_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeCapabilities": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "capability_revision",
+        "runtime_package_id",
+        "runtime_backend",
+        "runtime_package_name",
+        "runtime_package_version",
+        "python_version",
+        "platform",
+        "driver_version",
+        "providers",
+        "health_status",
+        "health_checked_at",
+        "measured_at",
+        "evidence_ids",
+        "failure_code"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "capability_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_backend": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_name": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_version": { "$ref": "#/$defs/NonEmptyString" },
+        "python_version": { "$ref": "#/$defs/NonEmptyString" },
+        "platform": { "$ref": "#/$defs/NonEmptyString" },
+        "driver_version": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RuntimeProvider" },
+          "minItems": 1
+        },
+        "health_status": { "enum": ["healthy", "degraded", "unhealthy", "unknown"] },
+        "health_checked_at": { "type": "integer", "minimum": 0 },
+        "measured_at": { "type": "integer", "minimum": 0 },
+        "evidence_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        },
+        "failure_code": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SearchProfile": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "profile_id",
+        "embedding_processor_id",
+        "space_id",
+        "image_generation_id",
+        "query_preprocess_version",
+        "query_parser_version",
+        "fts_tokenizer_version",
+        "fts_generation_id",
+        "reranker_processor_id",
+        "fusion_config",
+        "runtime_package_id",
+        "created_at"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "profile_id": { "$ref": "#/$defs/NonEmptyString" },
+        "embedding_processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "space_id": { "$ref": "#/$defs/NonEmptyString" },
+        "image_generation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "query_preprocess_version": { "$ref": "#/$defs/NonEmptyString" },
+        "query_parser_version": { "$ref": "#/$defs/NonEmptyString" },
+        "fts_tokenizer_version": { "$ref": "#/$defs/NonEmptyString" },
+        "fts_generation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "reranker_processor_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "type": "null" }
+          ]
+        },
+        "fusion_config": {
+          "type": "object",
+          "required": ["revision", "method", "parameters"],
+          "properties": {
+            "revision": { "$ref": "#/$defs/NonEmptyString" },
+            "method": { "$ref": "#/$defs/NonEmptyString" },
+            "parameters": { "type": "object" }
+          },
+          "additionalProperties": false
+        },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "created_at": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "CatalogFilterRevision": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "revision",
+        "committed_at",
+        "cause",
+        "changed_asset_ids"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "committed_at": { "type": "integer", "minimum": 0 },
+        "cause": {
+          "enum": [
+            "PLACE_EFFECTIVE_ASSIGNMENT_CHANGED",
+            "PLACE_NAME_CHANGED",
+            "PLACE_HIERARCHY_CHANGED",
+            "PERSON_EFFECTIVE_ASSIGNMENT_CHANGED",
+            "VISIBILITY_CHANGED",
+            "MANUAL_METADATA_CHANGED"
+          ]
+        },
+        "changed_asset_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -6,8 +6,8 @@
 (B level plus real-port/C-level packaged smokes and the C1 Windows-path/local-access review). P1-05 is PASS
 (B level + C-level packaged smoke + a recorded real-browser smoke); its non-blocking follow-up P1-05B
 (front-end verification base) is also PASS. P1-06 is PASS (D level: 16 new adversarial acceptance cases for
-duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 is now
-READY / CURRENT TASK.**
+duplicate / move / replace / offline / remap / restart, with no production change). **P2-01 is PASS
+(A-level protocol closure, no production/schema/dependency change). P2-01A is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -70,6 +70,23 @@ Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发
 下一任务仍为 **P2-01 / C2 / GPT-5.6 Sol / high**；增加无模型 CPU／非向量产物和权威筛选版本外壳。
 随后 **P2-01A → P2-02 → P2-03 → P2-03A/B/C → P2-04～08**。地点实现不提前到本次规划。
 拍摄时间、HEIC 与 remap 产品欠项分别排入 P4-00A/B、P4-00C、P4-05A/B。
+
+## Latest contract closure — P2-01 (2026-09-13)
+
+P2-01 已冻结 [ADR-0003](decisions/ADR-0003-p2-processing-runtime-and-search-profile-contract.md)：
+JobRequest/JobResult 五字段身份映射、三种 device_policy 与禁止隐式 fallback、RuntimeCapabilities、
+三类 ProcessorSpec、适配器边界、不可变 SearchProfile/原子切换、space 隔离、非向量成功结果和
+CatalogFilterRevision 独立版本。机器可读伴随物为
+[p2-contracts.v1.json](decisions/contracts/p2-contracts.v1.json)，报告见
+[P2-01 报告](reports/P2-01-processing-runtime-search-profile-contract.md)。
+
+本任务没有改生产代码、表/migration、schema_version、ADR-0001/0002、依赖或既有测试。
+A 级验证：新契约测试 11 passed；Ruff 与 diff-check clean。环境无第三方 JSON Schema validator，
+测试实际执行伴随文件所用关键字子集的实例正反例，但不声称运行时拒绝已经实现。
+
+下一任务是 **P2-01A / C2 / GPT-5.6 Sol / high**，任务卡
+[docs/tasks/P2-01A.md](tasks/P2-01A.md)。它只冻结地点事实/人工控制/数据包/DDL/API/搜索详细契约，
+不实施地点功能；其后才进入 P2-02。
 
 ## Latest accepted verification
 
@@ -201,22 +218,18 @@ human-labelled semantic-search holdout.
 **P1-06 — 重复、移动、替换、断盘、重映射、重启验收：PASS.** 见
 [P1-06 报告](reports/P1-06-identity-lifecycle-acceptance.md)。
 
-**P2-01 — JobRequest/Result、ProcessorSpec、device_policy、RuntimeCapabilities、EmbeddingAdapter、
-SearchProfile 契约.**
+**P2-01 — 通用处理任务、运行时与搜索配置契约：PASS.** 见
+[P2-01 报告](reports/P2-01-processing-runtime-search-profile-contract.md)。
 
-- Status: **READY / CURRENT TASK**. P1-01 … P1-06 are accepted; P2-01 has no unfinished dependency.
-- Task card: `docs/tasks/P2-01.md`.
-- Recommended execution model: **C2 / GPT-5.6 Sol / high**（V3.1 §7「C2 冻结契约」，§11 高风险任务）。
-- Goal: freeze the minimum P2 protocol before any implementation — JobRequest/JobResult identity, ProcessorSpec
-  fields, the three `device_policy` values with the no-implicit-fallback device eligibility rules,
-  RuntimeCapabilities, the EmbeddingAdapter/RerankerAdapter method contracts, and the immutable SearchProfile with
-  its atomic active pointer and `space_id` isolation — as `docs/decisions/ADR-0003-*.md` plus a machine-readable
-  JSON Schema companion and a contract test. **No production code and no table/migration change in this task.**
-- 地点前置扩展：无模型 CPU_PREFERRED processor、非向量 artifact、CatalogFilterRevision；地点详细
-  DDL/API/人工状态在下一任务 **P2-01A** 冻结，本卡完成后生成 `docs/tasks/P2-01A.md`，不直接生成 P2-02。
-- Validation level: **A** (`uv run pytest -q tests/unit/test_p2_contracts.py` + `uv run ruff check .` +
-  `git diff --check`); it escalates to D if any production code, migration or dependency is touched.
-- Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
+**P2-01A — 地点事实、人工控制、数据包与搜索契约.**
+
+- Status: **READY / CURRENT TASK**. P2-01 已冻结通用 non-model/非向量结果和筛选版本外壳。
+- Task card: `docs/tasks/P2-01A.md`.
+- Recommended execution model: **C2 / GPT-5.6 Sol / high**。
+- Goal: 冻结 ADR-0005、地点 JSON Schema 与契约正反例，覆盖 GPS 事实、机器建议、人工归属/取消锁、
+  地名包、DDL/API/错误码、CatalogFilterRevision 和权威搜索补查；**不写生产代码或 migration**。
+- Validation level: **A**（focused contract pytest + Ruff + diff-check）。
+- P2-01A 完成后生成 P2-02；当前会话模型已符合建议，可继续使用，模型切换仍只由用户手动完成。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-01 的前置依赖。
