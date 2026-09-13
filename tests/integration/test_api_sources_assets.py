@@ -9,6 +9,8 @@ from pathlib import Path
 
 from httpx import AsyncClient
 
+from photo_search.catalog import schema
+
 
 def _seed_library(api_env, count: int) -> list[Path]:
     created = []
@@ -43,7 +45,7 @@ def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:
     body = api_env.scenario(scenario)
 
     assert body["api_version"] == "v1"
-    assert body["supported_schema_version"] == 4
+    assert body["supported_schema_version"] == schema.SUPPORTED_SCHEMA_VERSION
     assert body["controlled_reads"] is True
     assert body["session_required"] is True
     assert body["loopback_only"] is True

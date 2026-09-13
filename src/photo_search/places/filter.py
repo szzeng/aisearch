@@ -15,7 +15,9 @@ from typing import Any
 
 from photo_search.catalog.errors import INVALID_PLACE_FILTER
 from photo_search.places import assignments as assignment_module
+from photo_search.places import datasets as dataset_module
 from photo_search.places import revision as revision_module
+from photo_search.places import suggestions as suggestion_module
 from photo_search.places.contracts import CONTRACT_VERSION, PLACE_STATES, fail, privacy_flags
 from photo_search.places.directory import ancestor_views, descendant_ids, get_place_row
 
@@ -31,11 +33,6 @@ MANUAL_UNASSIGNED_EXISTS = (
     "EXISTS (SELECT 1 FROM asset_place_assignments AS ap WHERE ap.asset_id = {alias}.asset_id "
     "AND ap.mode = 'MANUAL_UNASSIGNED')"
 )
-
-#: No resolver exists before P2-03B, so "has a suggestion" is deterministically empty. It is
-#: never silently widened into an effective assignment.
-SUGGESTED_EMPTY = "0"
-
 
 def place_condition(
     connection: sqlite3.Connection,
@@ -59,9 +56,10 @@ def place_condition(
                 "place_ids may only be combined with place_state any or assigned",
             )
     if state == "suggested":
-        # A suggestion-only filter must be bound to its own revision; with no resolver the
-        # visible candidate set is empty rather than "everything unassigned".
-        return SUGGESTED_EMPTY, []
+        # ADR-0005 §10: only a CANDIDATES resolution from the *active* dataset, with at least
+        # one candidate the user has not excluded, counts as "suggested". It is never widened
+        # into an unassigned/assigned claim, and no package means a deterministically empty set.
+        return suggestion_module.SUGGESTED_PREDICATE.format(alias=alias), []
     if ids:
         # "any" and "assigned" are the same predicate here: a place only ever reaches an
         # asset through its one effective control row, so an unassigned asset cannot match
@@ -176,12 +174,7 @@ def asset_place_view(
         "assignment": assignment,
         "place": place,
         "exclusions": assignment_module.exclusion_summary(connection, int(asset_id)),
-        "suggested": {
-            "state": "unavailable",
-            "reason": "PLACE_RESOLVER_NOT_AVAILABLE",
-            "resolution_status": None,
-            "candidates": [],
-        },
+        "suggested": suggestion_module.suggestion_view(connection, int(asset_id)),
         "catalog_filter_revision": revision_module.read_filter_revision(connection),
         "suggestion_revision": revision_module.read_suggestion_revision(connection),
     }
@@ -204,6 +197,8 @@ def coverage(connection: sqlite3.Connection) -> dict[str, Any]:
     manual_unassigned = scalar(
         "SELECT COUNT(*) FROM asset_place_assignments WHERE mode = 'MANUAL_UNASSIGNED'"
     )
+    suggestion_counts = suggestion_module.suggestion_counts(connection)
+    resolver_ready = dataset_module.resolver_available(connection)
     return {
         "contract_version": CONTRACT_VERSION,
         "assets_total": assets_total,
@@ -213,13 +208,13 @@ def coverage(connection: sqlite3.Connection) -> dict[str, Any]:
         "gps_invalid": scalar(
             "SELECT COUNT(*) FROM asset_geo_facts WHERE status IN ('INVALID', 'UNSUPPORTED_CRS')"
         ),
-        # P2-03B owns the resolver; reporting a placeholder here would claim a capability
-        # this build does not have.
-        "resolver_available": False,
-        "place_resolved": 0,
+        # A resolver exists in this build; it is only *available* when a validated package is
+        # the active one, and that is exactly what these counters report.
+        "resolver_available": bool(resolver_ready),
+        "place_resolved": int(suggestion_counts["place_resolved"]),
         "places_assigned": assigned,
         "places_manual_unassigned": manual_unassigned,
-        "places_suggested": 0,
+        "places_suggested": int(suggestion_counts["places_suggested"]),
         "places_unclassified": assets_total - assigned,
         "catalog_filter_revision": revision_module.read_filter_revision(connection),
         "suggestion_revision": revision_module.read_suggestion_revision(connection),

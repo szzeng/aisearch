@@ -1,0 +1,91 @@
+{
+  "activated_at": null,
+  "build": {
+    "builder_id": "photo-search-test-builder",
+    "builder_version": "1",
+    "generated_at": 1789000000000,
+    "parameters": {
+      "include_aliases": true,
+      "languages": [
+        "zh"
+      ],
+      "minimum_population": 0,
+      "sort_order": "population-desc",
+      "source_files": [
+        "mini-cities.synthetic.txt"
+      ]
+    },
+    "parameters_sha256": "995784a78ab877681d5ae1487b3be6c6f74c4a6018715ab8c21b69bf4b78f0cb"
+  },
+  "compatible_catalog_schema": {
+    "maximum": 9,
+    "minimum": 5
+  },
+  "content_sha256": "8e50bab6aa07473b60b9831668ee4544c663e93a8fe058923fdb75f92b296f55",
+  "contract_version": "p2-place-contracts.v1",
+  "coordinate_reference_system": "WGS84",
+  "coverage": {
+    "alias_languages": [
+      "en"
+    ],
+    "bounds_wgs84": {
+      "east": 135.0,
+      "north": 54.0,
+      "south": 18.0,
+      "west": 73.0
+    },
+    "country_codes": [
+      "CN"
+    ],
+    "languages": [
+      "zh"
+    ],
+    "record_count": 3
+  },
+  "dataset_id": "geo-mini-cn-example",
+  "files": [
+    {
+      "byte_size": 86,
+      "media_type": "text/plain",
+      "relative_path": "LICENSE.txt",
+      "role": "LICENSE",
+      "sha256": "fdc65ab00ac3983427c93e1e5b4d10c3750476ea68a639bb942e16febbefc05b"
+    },
+    {
+      "byte_size": 142,
+      "media_type": "application/x-ndjson",
+      "relative_path": "aliases.jsonl",
+      "role": "ALIASES",
+      "sha256": "bd61eef6f9e4bb43db5cc48d0a5e45c0cb92259a4ca113cd376e1af53748f1f0"
+    },
+    {
+      "byte_size": 96,
+      "media_type": "application/x-ndjson",
+      "relative_path": "hierarchy.jsonl",
+      "role": "HIERARCHY",
+      "sha256": "7c5aedf77fc8f909b1b1017db94460dfebb34910a291283c11c1f170e0e8793e"
+    },
+    {
+      "byte_size": 443,
+      "media_type": "application/x-ndjson",
+      "relative_path": "places.jsonl",
+      "role": "PLACES",
+      "sha256": "afea7cc779c1319794f0b507a505bda82fc9533abb50854330ecd540b9bc6ae6"
+    }
+  ],
+  "manifest_schema": "photo-search-place-dataset-manifest.v1",
+  "package_id": "photo-search-mini-cities-package",
+  "package_version": "1",
+  "previous_dataset_id": null,
+  "retained_at": null,
+  "source": {
+    "attribution": "Synthetic example data created for the P2-03B package format",
+    "license_id": "SYNTHETIC-EXAMPLE",
+    "license_url": "https://example.invalid/photo-search/mini-cities/license",
+    "provider": "synthetic-example",
+    "snapshot": "2026-09-13",
+    "source_url": "https://example.invalid/photo-search/mini-cities"
+  },
+  "state": "STAGED",
+  "validated_at": null
+}

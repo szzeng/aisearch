@@ -24,19 +24,27 @@ from photo_search.catalog.migrate import inspect_database, migrate_database
 from photo_search.catalog.sqlite_io import connect_rw, open_readonly
 
 PLACE_TABLES = {
+    "active_geo_dataset",
     "asset_geo_facts",
     "asset_place_assignment_history",
     "asset_place_assignments",
     "asset_place_exclusions",
     "catalog_filter_revision",
     "catalog_filter_revision_events",
+    "geo_dataset_files",
+    "geo_datasets",
     "place_aliases",
     "place_external_refs",
     "place_operation_items",
     "place_operations",
+    "place_resolution_candidates",
+    "place_resolutions",
     "place_suggestion_revision",
     "places",
 }
+
+REAL_MIGRATIONS_DIR = Path(schema.__file__).resolve().parent / "migrations"
+SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)
 
 V3_TABLES = {
     "artifacts",
@@ -91,8 +99,8 @@ def build_v3(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 3))
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 3)
     migrate_database(path, data_root=data_root(tmp_path))
-    monkeypatch.setattr(schema, "MIGRATIONS_DIR", Path(schema.__file__).resolve().parent / "migrations")
-    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 4)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
     connection = connect_rw(path)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -185,8 +193,8 @@ def test_v3_to_v4_is_continuous_backed_up_and_lossless(
 
     result = migrate_database(path, data_root=data_root(tmp_path))
 
-    assert result.previous_version == 3 and result.schema_version == 4
-    assert result.applied == (4,)
+    assert result.previous_version == 3 and result.schema_version == SUPPORTED
+    assert result.applied == tuple(range(4, SUPPORTED + 1))
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:
@@ -197,9 +205,9 @@ def test_v3_to_v4_is_continuous_backed_up_and_lossless(
         backup.close()
     live = open_readonly(path)
     try:
-        assert schema.read_schema_version(live) == 4
+        assert schema.read_schema_version(live) == SUPPORTED
         assert PLACE_TABLES <= set(schema.business_tables(live))
-        schema.verify_schema(live, 4)
+        schema.verify_schema(live, SUPPORTED)
         assert connection_scalar(live, "SELECT revision FROM catalog_filter_revision") == 0
         assert connection_scalar(live, "SELECT revision FROM place_suggestion_revision") == 0
     finally:
@@ -209,7 +217,11 @@ def test_v3_to_v4_is_continuous_backed_up_and_lossless(
 
     # A second migration is a no-op with no backup.
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.backup_path is None and again.previous_version == 4
+    assert (
+        again.applied == ()
+        and again.backup_path is None
+        and again.previous_version == SUPPORTED
+    )
 
 
 def connection_scalar(connection: sqlite3.Connection, sql: str) -> int:
@@ -229,6 +241,7 @@ def test_an_interrupted_0004_rolls_back_to_v3(
         encoding="utf-8",
     )
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", directory)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 4)
 
     with pytest.raises(CatalogError) as failure:
         migrate_database(path, data_root=data_root(tmp_path))
@@ -248,7 +261,7 @@ def test_an_interrupted_0004_rolls_back_to_v3(
         connection.close()
 
 
-def test_a_v4_database_missing_a_place_object_is_inconsistent(
+def test_a_migrated_database_missing_a_place_object_is_inconsistent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = build_v3(tmp_path, monkeypatch)
@@ -276,7 +289,10 @@ def test_a_newer_schema_is_refused_without_a_write(
     connection = connect_rw(path)
     try:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute("UPDATE metadata SET value = '5' WHERE key = 'schema_version'")
+        connection.execute(
+            "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+            (str(SUPPORTED + 1),),
+        )
         connection.execute("COMMIT")
     finally:
         connection.close()

@@ -29,6 +29,11 @@ RUNTIME_DIRNAME = "runtime"
 SESSION_CREDENTIAL_FILENAME = "session.json"
 ARTIFACTS_DIRNAME = "artifacts"
 VECTORS_DIRNAME = "vectors"
+#: ADR-0005 §8: offline name-dataset packages live in a read-only directory inside the
+#: application data root. Nothing else may be written there, and the install directory
+#: never carries a package.
+PLACES_DIRNAME = "places"
+DATASETS_DIRNAME = "datasets"
 
 
 def default_data_root() -> Path:
@@ -89,6 +94,11 @@ def artifacts_dir(data_root: str | Path | None = None) -> Path:
 def vectors_dir(data_root: str | Path | None = None) -> Path:
     """Derived LanceDB generations under the application data root."""
     return resolve_data_root(data_root) / VECTORS_DIRNAME
+
+
+def place_datasets_dir(data_root: str | Path | None = None) -> Path:
+    """Root of the imported, read-only offline name-dataset packages."""
+    return resolve_data_root(data_root) / PLACES_DIRNAME / DATASETS_DIRNAME
 
 
 def session_credential_path(data_root: str | Path | None = None) -> Path:

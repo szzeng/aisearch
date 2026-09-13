@@ -1,0 +1,72 @@
+{
+  "package_id": "photo-search-mini-cities-package",
+  "package_version": "1",
+  "dataset_id": "geo-mini-cn-example",
+  "source": {
+    "provider": "synthetic-example",
+    "source_url": "https://example.invalid/photo-search/mini-cities",
+    "snapshot": "2026-09-13",
+    "license_id": "SYNTHETIC-EXAMPLE",
+    "license_url": "https://example.invalid/photo-search/mini-cities/license",
+    "attribution": "Synthetic example data created for the P2-03B package format"
+  },
+  "build": {
+    "builder_id": "photo-search-test-builder",
+    "builder_version": "1",
+    "generated_at": 1789000000000,
+    "parameters_sha256": "995784a78ab877681d5ae1487b3be6c6f74c4a6018715ab8c21b69bf4b78f0cb",
+    "parameters": {
+      "source_files": ["mini-cities.synthetic.txt"],
+      "minimum_population": 0,
+      "languages": ["zh"],
+      "include_aliases": true,
+      "sort_order": "population-desc"
+    }
+  },
+  "coverage": {
+    "country_codes": ["CN"],
+    "bounds_wgs84": { "south": 18.0, "west": 73.0, "north": 54.0, "east": 135.0 },
+    "languages": ["zh"],
+    "alias_languages": ["en"],
+    "record_count": 3
+  },
+  "compatible_catalog_schema": { "minimum": 5, "maximum": 9 },
+  "state": "STAGED",
+  "previous_dataset_id": null,
+  "places": [
+    {
+      "dataset_place_id": "country-cn",
+      "kind": "country",
+      "display_name": "中国",
+      "country_code": "CN",
+      "latitude": 35.0,
+      "longitude": 105.0
+    },
+    {
+      "dataset_place_id": "city-hangzhou",
+      "kind": "city",
+      "display_name": "杭州",
+      "country_code": "CN",
+      "latitude": 30.2741,
+      "longitude": 120.1551,
+      "population": 11936010,
+      "parent_dataset_place_id": "country-cn"
+    },
+    {
+      "dataset_place_id": "city-shanghai",
+      "kind": "city",
+      "display_name": "上海",
+      "country_code": "CN",
+      "latitude": 31.2304,
+      "longitude": 121.4737,
+      "population": 24870895,
+      "parent_dataset_place_id": "country-cn"
+    }
+  ],
+  "aliases": [
+    { "dataset_place_id": "city-hangzhou", "text": "Hangzhou", "language": "en" },
+    { "dataset_place_id": "city-shanghai", "text": "Shanghai", "language": "en" }
+  ],
+  "license_text": "Synthetic example. This file is not a real place dataset and must not be used as one.\n",
+  "index": null
+}

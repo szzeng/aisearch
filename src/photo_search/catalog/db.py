@@ -25,11 +25,15 @@ class Catalog:
         connection: sqlite3.Connection,
         *,
         db_path: Path,
+        data_root: Path | None = None,
         clock: Callable[[], int] | None = None,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ) -> None:
         self.connection = connection
         self.db_path = db_path
+        #: ``<data_root>/catalog/catalog.db`` is the documented layout; the default keeps
+        #: direct constructions (tests, diagnostics) working without an extra argument.
+        self.data_root = Path(data_root) if data_root is not None else Path(db_path).parent.parent
         self.clock = clock or system_now_ms
         self.lease_seconds = lease_seconds
         self._lock = threading.RLock()
@@ -61,7 +65,13 @@ class Catalog:
         except BaseException:
             connection.close()
             raise
-        return cls(connection, db_path=path, clock=clock, lease_seconds=lease_seconds)
+        return cls(
+            connection,
+            db_path=path,
+            data_root=data_root,
+            clock=clock,
+            lease_seconds=lease_seconds,
+        )
 
     @property
     def schema_version(self) -> int:

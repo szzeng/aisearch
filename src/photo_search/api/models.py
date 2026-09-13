@@ -221,6 +221,8 @@ class AssetListResponse(BaseModel):
     include_descendants: bool = True
     place_state: PlaceStateFilter = "any"
     catalog_filter_revision: int | None = None
+    #: P2-03B: the suggestion revision a ``place_state=suggested`` page was computed under.
+    suggestion_revision: int | None = None
 
 
 class ScanState(BaseModel):
@@ -412,6 +414,48 @@ class PlaceAssignmentRequest(BaseModel):
     target_place_id: int | None = Field(default=None, ge=1)
     request_id: str = Field(min_length=1, max_length=64)
     expected_revision: int = Field(ge=0)
+    #: P2-03B: an ASSIGN that confirms a machine suggestion may record that origin.
+    origin: Literal["CONFIRMED_SUGGESTION"] | None = None
+
+
+class PlaceDatasetCompability(BaseModel):
+    minimum: int
+    maximum: int
+
+
+class PlaceDatasetRecord(BaseModel):
+    """One imported name-dataset package. Contains no local path."""
+
+    contract_version: str
+    dataset_id: str
+    package_id: str
+    package_version: str
+    provider: str
+    license_id: str
+    attribution: str
+    state: str
+    coverage: dict[str, Any]
+    compatible_catalog_schema: PlaceDatasetCompability
+    record_count: int
+    file_count: int
+    previous_dataset_id: str | None = None
+    generated_at: int
+    validated_at: int | None = None
+    activated_at: int | None = None
+    retained_at: int | None = None
+    problems: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlaceDatasetStateResponse(BaseModel):
+    """``GET /places/datasets``: the real package state, never a fabricated ACTIVE one."""
+
+    contract_version: str
+    state: str
+    reason: str | None = None
+    resolver_available: bool
+    active_dataset: PlaceDatasetRecord | None = None
+    datasets: list[PlaceDatasetRecord]
+    suggestion_revision: int
 
 
 class PlaceBatchItem(BaseModel):

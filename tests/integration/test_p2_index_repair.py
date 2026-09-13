@@ -94,7 +94,11 @@ def test_interrupted_0003_rolls_back_to_v2_without_half_tables(
     before = rows(path)
     directory = tmp_path / "broken-migrations"
     directory.mkdir()
-    for version in (1, 2, 4):
+    for version in (
+        number
+        for number, _path in schema.migration_files()
+        if number != 3
+    ):
         source = next(path for number, path in schema.migration_files() if number == version)
         (directory / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     (directory / "0003_broken.sql").write_text(

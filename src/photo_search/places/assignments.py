@@ -24,6 +24,7 @@ from photo_search.catalog.errors import (
     PLACE_REFERENCED,
 )
 from photo_search.places import revision as revision_module
+from photo_search.places import suggestions as suggestion_module
 from photo_search.places.contracts import (
     ASSIGNMENT_ACTIONS,
     OPERATION_BY_ACTION,
@@ -163,11 +164,23 @@ def _normalized_item(item: Mapping[str, Any], *, index: int) -> dict[str, Any]:
         raise fail("VALIDATION_ERROR", "ASSIGN requires target_place_id", index=index)
     if action != "ASSIGN" and target is not None:
         raise fail("VALIDATION_ERROR", f"{action} must not carry target_place_id", index=index)
+    # ADR-0005 §5: the only alternative origin is a confirmed machine suggestion. It is
+    # optional, it is only meaningful for ASSIGN, and a manual edit always wins.
+    origin = item.get("origin")
+    if origin is not None and origin != "CONFIRMED_SUGGESTION":
+        raise fail(
+            "VALIDATION_ERROR",
+            "origin must be CONFIRMED_SUGGESTION when it is supplied",
+            index=index,
+        )
+    if origin is not None and action != "ASSIGN":
+        raise fail("VALIDATION_ERROR", "only ASSIGN may confirm a suggestion", index=index)
     return {
         "asset_id": int(asset_id),
         "action": action,
         "target_place_id": None if target is None else int(target),
         "expected_revision": check_expected_revision(item.get("expected_revision")),
+        "origin": None if origin is None else str(origin),
     }
 
 
@@ -204,6 +217,7 @@ def _request_payload(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 "action": str(item["action"]),
                 "target_place_id": item["target_place_id"],
                 "expected_revision": int(item["expected_revision"]),
+                "origin": item.get("origin"),
             }
             for item in items
         ]
@@ -315,12 +329,14 @@ def operation_result(connection: sqlite3.Connection, operation: sqlite3.Row) -> 
     }
 
 
-def _target_state(action: str, target_place_id: int | None) -> dict[str, Any]:
+def _target_state(
+    action: str, target_place_id: int | None, origin: str | None = None
+) -> dict[str, Any]:
     if action == "ASSIGN":
         return {
             "mode": "MANUAL_ASSIGNED",
             "place_id": int(target_place_id),
-            "origin": "MANUAL",
+            "origin": "CONFIRMED_SUGGESTION" if origin == "CONFIRMED_SUGGESTION" else "MANUAL",
             "manual_lock": True,
             "resolution_id": None,
         }
@@ -523,16 +539,32 @@ def apply_request(
                 "expected_revision": current_revision,
                 "previous_place": previous_place,
                 "before": before,
-                "after_state": _target_state(action, target),
+                "after_state": _target_state(action, target, item.get("origin")),
                 "exclusion_deltas": deltas,
                 "cleared": [
                     delta["place_id"]
                     for delta in deltas
                     if delta["before"] == 1 and delta["after"] == 0
                 ],
-                "changed": _mode_key(before) != _mode_key(_target_state(action, target)),
+                "changed": _mode_key(before)
+                != _mode_key(_target_state(action, target, item.get("origin"))),
             }
         )
+
+    # ADR-0005 §11: a lock or an exclusion change can change which machine candidates are
+    # still visible, so the independent suggestion revision is reconciled in the same
+    # transaction. Assets whose effective state cannot move are not even inspected.
+    affected = sorted(
+        {
+            int(item["asset_id"])
+            for item in prepared
+            if item["changed"] or item["exclusion_deltas"]
+        }
+    )
+    suggestion_before = {
+        asset_id: suggestion_module.visible_signature(connection, asset_id)
+        for asset_id in affected
+    }
 
     operation_id = operation_id_for(request_id)
     operation_revision = _next_operation_revision(connection)
@@ -619,6 +651,13 @@ def apply_request(
         if changed_assets
         else revision_module.read_filter_revision(connection)
     )
+    if affected:
+        suggestion_module.reconcile_suggestion_visibility(
+            connection,
+            before=suggestion_before,
+            asset_ids=affected,
+            now_ms=int(now_ms),
+        )
     connection.execute(
         "UPDATE place_operations SET catalog_filter_revision = ? WHERE operation_id = ?",
         (int(filter_revision), operation_id),
@@ -713,6 +752,15 @@ def undo_operation(
 
     new_operation_id = operation_id_for(request_id)
     operation_revision = _next_operation_revision(connection)
+    # ADR-0005 §11: an undo that restores a lock or an exclusion can put a candidate back
+    # (or take it away), so the visible suggestion set is reconciled in this transaction too.
+    undo_affected = sorted(
+        {int(row["asset_id"]) for row in items if row["asset_id"] is not None}
+    )
+    undo_suggestion_before = {
+        asset_id: suggestion_module.visible_signature(connection, asset_id)
+        for asset_id in undo_affected
+    }
     connection.execute(
         "INSERT INTO place_operations(operation_id, request_id, payload_sha256, operation_type, "
         "operation_revision, actor, atomic, status, undo_of_operation_id, "
@@ -823,6 +871,13 @@ def undo_operation(
         if changed_assets
         else revision_module.read_filter_revision(connection)
     )
+    if undo_affected:
+        suggestion_module.reconcile_suggestion_visibility(
+            connection,
+            before=undo_suggestion_before,
+            asset_ids=undo_affected,
+            now_ms=int(now_ms),
+        )
     connection.execute(
         "UPDATE place_operations SET catalog_filter_revision = ? WHERE operation_id = ?",
         (int(filter_revision), new_operation_id),

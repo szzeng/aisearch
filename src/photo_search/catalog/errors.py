@@ -87,6 +87,10 @@ PLACE_SUGGESTION_REVISION_STALE = "PLACE_SUGGESTION_REVISION_STALE"
 INVALID_PLACE_FILTER = "INVALID_PLACE_FILTER"
 GEO_COORDINATE_INVALID = "GEO_COORDINATE_INVALID"
 
+#: P2-03B: the resolver needs a *current* GPS fact. A missing fact is a blocking condition
+#: (the GPS task may still be pending), never a "no candidate" success and never a write.
+GEO_FACT_MISSING = "GEO_FACT_MISSING"
+
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 

@@ -46,6 +46,7 @@ from photo_search.api.models import (
     PlaceBatchRequest,
     PlaceCoverageResponse,
     PlaceCreateRequest,
+    PlaceDatasetStateResponse,
     PlaceListResponse,
     PlaceOperationListResponse,
     PlaceOperationResponse,
@@ -88,7 +89,6 @@ from photo_search.media.status import (
     MEDIA_STATE_READY,
     MEDIA_STATE_UNSUPPORTED,
 )
-from photo_search.places.contracts import CONTRACT_VERSION
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
@@ -380,6 +380,7 @@ async def list_assets(
     place_ids: list[int] | None = Query(default=None),
     include_descendants: bool = True,
     place_state: PlaceStateFilter = "any",
+    suggestion_revision: int | None = Query(default=None, ge=0),
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -396,6 +397,7 @@ async def list_assets(
         place_ids=place_ids,
         include_descendants=include_descendants,
         place_state=place_state,
+        suggestion_revision=suggestion_revision,
     )
 
 
@@ -591,21 +593,18 @@ async def place_coverage(request: Request) -> dict[str, Any]:
     return places_of(request).coverage()
 
 
-@router.get("/places/datasets", summary="Name dataset state (P2-03B; unavailable here)")
+@router.get(
+    "/places/datasets",
+    response_model=PlaceDatasetStateResponse,
+    summary="Offline name-dataset state, the active package and any defect",
+)
 async def place_datasets(request: Request) -> dict[str, Any]:
-    """An explicitly empty read-only projection: this build ships no name package.
+    """The read-only dataset projection of the catalog (ADR-0005 §8/§9).
 
-    ADR-0005 §8/§9 allows the endpoint to exist for the front-end contract as long as it
-    never pretends an ACTIVE package exists.
+    With no imported package it stays ``unavailable`` and never invents an ACTIVE one; a
+    package that is present but missing/faulty is reported as ``missing``/``invalid``.
     """
-    return {
-        "contract_version": CONTRACT_VERSION,
-        "state": "unavailable",
-        "reason": "PLACE_DATASET_NOT_IMPLEMENTED",
-        "resolver_available": False,
-        "active_dataset": None,
-        "datasets": [],
-    }
+    return places_of(request).datasets()
 
 
 @router.post(
@@ -691,6 +690,7 @@ async def put_place_assignment(
         target_place_id=payload.target_place_id,
         request_id=payload.request_id,
         expected_revision=int(payload.expected_revision),
+        origin=payload.origin,
     )
 
 

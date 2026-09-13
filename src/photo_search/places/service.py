@@ -14,6 +14,7 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.places import assignments as assignment_module
+from photo_search.places import datasets as dataset_module
 from photo_search.places import directory
 from photo_search.places import filter as filter_module
 from photo_search.places import revision as revision_module
@@ -139,6 +140,12 @@ class PlaceService:
     def coverage(self) -> dict[str, Any]:
         return filter_module.coverage(self.catalog.connection)
 
+    def datasets(self) -> dict[str, Any]:
+        """The read-only dataset projection; never fabricates an active package."""
+        return dataset_module.dataset_status(
+            self.catalog.connection, data_root=self.catalog.data_root
+        )
+
     def asset_place(self, asset_id: int) -> dict[str, Any]:
         self._require_asset(int(asset_id))
         return filter_module.asset_place_view(self.catalog.connection, int(asset_id))
@@ -238,6 +245,7 @@ class PlaceService:
         request_id: str,
         expected_revision: int,
         batch: bool = False,
+        origin: str | None = None,
     ) -> dict[str, Any]:
         now_ms = int(self.clock())
         items = [
@@ -246,6 +254,7 @@ class PlaceService:
                 "action": str(action),
                 "target_place_id": target_place_id,
                 "expected_revision": expected_revision,
+                "origin": origin,
             }
         ]
         with self.catalog.write() as connection:

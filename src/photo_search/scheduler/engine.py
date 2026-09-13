@@ -366,6 +366,21 @@ class Scheduler:
                         prepared=prepared,
                         now_ms=int(now_ms),
                     )
+                # P2-03B: a qualified nearby-city result becomes the immutable machine
+                # resolution (and, when the visible set really changed, the independent
+                # suggestion revision) in the very same transaction. Imported lazily for the
+                # same reason as the geo hook: the scheduler does not depend on the resolver
+                # at import time, and this build still has no resident scheduler thread.
+                from photo_search.geo import resolver as geo_resolver
+
+                if str(spec.processor_id) == geo_resolver.RESOLVER_PROCESSOR_ID:
+                    geo_resolver.persist_resolution(
+                        connection,
+                        job=job,
+                        result=result,
+                        prepared=prepared,
+                        now_ms=int(now_ms),
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None

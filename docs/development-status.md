@@ -12,7 +12,10 @@ duplicate / move / replace / offline / remap / restart, with no production chang
 fault-injection/recovery cases). P2-03 is PASS (D level: schema 3 artifact/outbox/index confirmation and real
 LanceDB replay/repair). **P2-03A is PASS** (D level: the 0004 place core, GPS facts, the place
 directory, manual assignment/unassign/restore_auto with batch and compensating undo, and the pure
-SQLite place filter API; 48 new cases). **P2-03B is now READY / CURRENT TASK.**
+SQLite place filter API; 48 new cases). **P2-03B is PASS** (D level: the `0005` dataset/resolution
+migration, the offline name-package lifecycle, the `non_model + CPU_PREFERRED` nearby-city resolver,
+suggestion-only candidates with an independent suggestion revision, and the explicit local dataset
+tool; 65 new cases). **P2-03C is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -191,6 +194,40 @@ UNSUPPORTED_CRS` 分支、受控读取 + SHA/stat 双重复核、确定性 struc
 | 筛选与隐私 | 后代展开、同名、无地点、manual_unassigned、重复位置去重、与 source AND；`suggested` 在无解析器时确定为空；精确坐标只在会话保护 `/geo`，日志/错误/诊断/outbox/Lance 无坐标 |
 | C 判定 | 按卡**不触发**（未改 workers/打包入口/依赖/新增 package-data 目录）；仍额外执行真实 onedir 构建 + `packaged_api_smoke.py`（`status=ok`、`problems=[]`、startup 1.8 s），并审计 bundle：`photo_search.places.*` 与 4 个 migration 已入包，`geo.*`/`scheduler.engine` 未入包（应用尚未接调度器，见报告 §9） |
 
+## Latest dataset/resolution closure — P2-03B (2026-09-14)
+
+P2-03B 已实现离线地名包与 suggestion-only 附近城市解析并通过 D 级验收，报告
+[P2-03B 报告](reports/P2-03B-offline-name-dataset-and-nearby-city-suggestions.md)。
+起点 HEAD `d7229be`（P2-03A），工作树干净。
+
+新增连续 migration `catalog/migrations/0005_place_dataset_resolution.sql`：**`schema_version`
+推进到 5**，0001～0004 未改。新增 `geo_datasets`/`geo_dataset_files`/`active_geo_dataset`
+（单例，未安装时 `dataset_id IS NULL`）/`place_resolutions`（逻辑输入唯一）/
+`place_resolution_candidates`（固定 `SUGGESTION_ONLY` + `NEARBY_CITY_POINT` + `DISTANCE_ONLY`）；
+包内容不可变、`STAGED→VALIDATED→ACTIVE→RETAINED`（含 RETAINED→ACTIVE 回退）与机器产物只增不改
+都由 trigger 固定。新增 `geo/dataset.py`（manifest/校验/确定性 builder/距离）、
+`geo/resolver.py`（`geo-nearby-city@1`、`non_model + CPU_PREFERRED`、结构化 artifact 承载、
+`persist_resolution`）、`places/datasets.py`（导入/校验/激活/回退/清理保护 + 数据集地点物化）、
+`places/suggestions.py`（可见候选与独立 suggestion revision）；`Scheduler.submit` 在既有事务内落
+resolution；`/places/datasets`、`/assets/{id}/place` 建议状态、`/assets` 的
+`suggestion_revision` 绑定与 `origin=CONFIRMED_SUGGESTION` 已接入既有 session/Origin/CSRF 边界。
+显式本地工具 `tools/places/manage_dataset.py` + 可验证的 `tools/places/examples/**`（不联网、
+不改依赖、未改 `workers/**`、未改打包入口、未新增 package-data 目录）。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 546 例；进度行 1 个 `s`，即 545 passed / 1 skipped |
+| 新增专项 6 个文件 | 65 passed（manifest 23、lifecycle 13、resolver 15、place-dataset-api 7、migration 5、tool 2） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| v4→v5 迁移 | 备份内 `schema_version=4` 且无 5 张新表；单事务推进到 5；旧行逐列不变；注入损坏 0005 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写；非法状态跳转/内容改写/产物改写全部被拒 |
+| 包生命周期 | 源包→数据根 staged 目录（含 fsync）→VALIDATED→ACTIVE；提交前崩溃回滚（指针/状态/revision 不变）；被篡改的已校验包激活被拒且旧指针不变；删/改活动包 → `missing`/`invalid` 且解析 `PLACE_DATASET_MISSING`/`PLACE_DATASET_INVALID`；rollback 重新校验目标包并成功；活动/被 resolution 引用/作为回退目标的包清理返回 `PLACE_REFERENCED`；无引用 staged 包可删除 |
+| 解析分支 | `VALID`→候选（`(distance,dataset_place_id)` 排序、上限 3/10、边界含等号）；`ASSUMED_WGS84`→候选但 `assumed_datum=true`/`requires_confirmation=true`；`ABSENT`/`INVALID`/`UNSUPPORTED_CRS`/海域/`(0,0)`→成功空结果；同名城市可区分且不合并；无包/缺包只 BLOCKED，人工创建/归属/筛选/操作历史继续可用 |
+| 人工优先与版本 | 无任何机器路径写 `asset_place_assignments`；晚到解析在人工加锁后提交仍不改 assignment（`control_revision_seen=1`）；可见集合变化才 +1 suggestion revision（重放/空结果不变），`catalog_filter_revision` 全程不受数据包与解析影响；`origin=CONFIRMED_SUGGESTION` 的归属在重扫、切包与回退后保留 |
+| 故障注入 | 解析事务中断 → resolution/候选 0 行、revision 仍 0、job 仍 RUNNING；`artifacts=[]` 的合格结果仍可提交；GPU 缺失（capability 只有 cpu）时解析/建议/人工写全部正常 |
+| API 与隐私 | `/places/datasets` 无包时 `unavailable` 且不伪造 ACTIVE；`/assets/{id}/place` 只在 `/geo` 之外无坐标、无绝对路径；`place_state=suggested` 携带过期 `suggestion_revision` → 409 `PLACE_SUGGESTION_REVISION_STALE`；无 session 全部 401、跨 Origin 403 `ORIGIN_NOT_ALLOWED`、缺 CSRF 403 `CSRF_INVALID` 且零写入 |
+| C 判定 | 按卡**不触发**（未改 workers/打包入口/依赖/新增 package-data 目录）；因“继承项：接入解析执行器必须复核导入图”仍执行真实 onedir 构建 + `packaged_api_smoke.py`（`status=ok`、`problems=[]`、startup 1.0 s，中文/空格路径），并审计 bundle：`geo.dataset`/`geo.exif` 与 `places.*` 已入包、0001～0005 共 5 个 `.sql` 在包内；`geo.extract`/`geo.resolver`/`scheduler.engine` 仍未入包（无常驻调度线程，见报告 §9） |
+| 环境事件 | 打包 smoke 会把约 3.4 GB bundle 复制到 `%TEMP%`，C 盘被填满导致第二次复核以 `WinError 112` 失败；随后只清理本任务创建的 3 个 `%TEMP%\P2-03B 打包*` 目录（约 3.9 GB）并确认 C 盘恢复 3.76 GB 可用，C 级证据取自第一次成功运行 |
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -254,6 +291,14 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   `POST /sources/{id}/remap` 的**产品能力**（新根校验、来源重叠复查、映射审计、API 契约）仍缺，
   该项产品层入口标记为 `VALIDATION PENDING — 缺产品能力，不缺验收能力`。
   跨进程写者约束沿用 P1-02 记录，本任务未新增承诺。
+- **P2-03B**: 真实 GeoNames/公开地名包**未使用**，只用极小合成子集验证格式、生命周期与数值分支，
+  因此不声称任何真实城市覆盖/命中率；最近点解析是城市点线性扫描（无 RTree/网格索引），
+  冷缓存会整包重算 SHA-256，大包规模与吞吐未测；切包/回退不自动重算既有 resolution
+  （旧包产物仍作历史机器产物保留，`place_state=suggested` 只匹配活动数据集），自动刷新流程留给后续任务；
+  坏包时既有建议仍可读、只有新解析阻塞；回退链只依赖包声明的 `previous_dataset_id`，工具导入不自动
+  串联；数据集别名只新增不覆盖。`photo_search.geo.extract`/`geo.resolver`/`scheduler.engine`
+  仍不在冻结包内（无常驻调度线程），接入后台解析的任务必须重跑 C 并复核导入图。
+  C 级 smoke 会把约 3.4 GB bundle 复制到 `%TEMP%`，执行前需确认 C 盘余量（见 P2-03B 报告 §9）。
 - **P1-04**: the local session lives in memory for the process lifetime (no TTL, no logout, no LAN auth); the
   bootstrap credential file's Windows DACL could not be verified here (`icacls` was denied in this sandbox, so
   the tightening stays best-effort); the API and the scan worker use two SQLite connections in one process and only
@@ -336,25 +381,32 @@ human-labelled semantic-search holdout.
 **P2-03A — 地点增量迁移、GPS 事实、目录、人工归属/撤销与纯筛选 API：PASS.** 见
 [P2-03A 报告](reports/P2-03A-place-core-gps-assignment-api.md)（D 级，48 个新增用例）。
 
-**P2-03B — 离线地名包、GPS 附近城市建议、版本/缺包/升级恢复.**
+**P2-03B — 离线地名包、GPS 附近城市建议、版本/缺包/升级恢复：PASS.** 见
+[P2-03B 报告](reports/P2-03B-offline-name-dataset-and-nearby-city-suggestions.md)
+（D 级，65 个新增用例）。`schema_version = 5`，migration 连续 0001～0005；
+依赖/`workers/**`/打包入口未改，`geo.extract`/`geo.resolver`/`scheduler.engine` 仍不在冻结包内。
 
-- Status: **READY / CURRENT TASK**. P2-03A 的地点核心闭环已 PASS（D 级），
-  `schema_version = 4`，migration 连续 0001～0004。
-- Task card: `docs/tasks/P2-03B.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**。
-- Goal: 连续 0005 migration 落 `geo_datasets`/`geo_dataset_files`/`active_geo_dataset`/
-  `place_resolutions`/候选；显式本地工具的包 manifest/校验/导入/原子激活/回退；只读包目录；
-  `non_model + CPU_PREFERRED` 附近城市解析器，候选固定 `SUGGESTION_ONLY`；建议状态与
-  suggestion revision；**不提前实施 P2-03C 页面或语义搜索**。
-- Validation level: **最低 D**（完整 unit/integration + 数据包/解析/回退故障注入；新增依赖、
-  `workers/**`、打包入口或新增 package-data 目录再加 C）。
-- 当前会话为 GPT-5.6 Sol / high，与下一任务推荐模型不同；请用户在 Codex 中手动切换后再执行，
-  不自动切换或启动 Agent。
+**P2-03C — 静态地点页与人工整理交互.**
+
+- Status: **READY / CURRENT TASK**. P2-03B 的数据包/解析闭环已 PASS（D 级），
+  `schema_version = 5`，migration 连续 0001～0005，地点/建议/操作/撤销 API 均已可用。
+- Task card: `docs/tasks/P2-03C.md`.
+- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（批量/撤销/同名消歧等
+  复杂交互可**由用户手动**切 DS-H）。
+- Goal: `/places` 静态页面（依赖-free、无 Node/npm）——目录与同名消歧、创建/改名/别名编辑、
+  `place_state=suggested` 的批量确认（`CONFIRMED_SUGGESTION`）/取消、最近操作与 undo、
+  数据包状态面板、缺包/坏包降级；**不提前实施 FTS 或语义搜索**。
+- Validation level: **B + 真实浏览器 smoke + C**（页面是发行资源，必须证明冻结包内可 200 提供；
+  新增 package-data 目录或改打包入口必须补足 C）。
+- 当前会话为 DS-H（P2-03B 推荐档）；下一任务推荐 **DS-L**，与当前档位不同，请用户在 Codex 中
+  手动切换后再执行，不自动切换或启动 Agent。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
-排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03B 的前置依赖。
+排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
 P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进程并发、evidence 撤销、真实端口 smoke）
-记录在 P2-02 报告 §10；P2-03A 未验证项（无解析器/数据包、`GET /assets` 页面非快照隔离读、
-改名未接 undo、`geo.*` 尚未进入冻结包）记录在 P2-03A 报告 §9/§10。
+记录在 P2-02 报告 §10；P2-03A 未验证项（`GET /assets` 页面非快照隔离读、改名未接 undo）
+记录在 P2-03A 报告 §9/§10；P2-03B 未验证项（真实 GeoNames 包未使用、最近点线性扫描、
+冷缓存整包重校验、切包不自动重算、坏包时旧建议仍可读、`geo.resolver` 尚未进入冻结包）
+记录在 P2-03B 报告 §10。
 
 Model switching remains manual; the repository only records the recommended model per stage.

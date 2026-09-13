@@ -14,7 +14,11 @@ from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.catalog import store
-from photo_search.catalog.errors import ASSET_NOT_FOUND, JOB_NOT_FOUND
+from photo_search.catalog.errors import (
+    ASSET_NOT_FOUND,
+    JOB_NOT_FOUND,
+    PLACE_SUGGESTION_REVISION_STALE,
+)
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
@@ -178,6 +182,7 @@ def asset_page(
     place_ids: list[int] | None = None,
     include_descendants: bool = True,
     place_state: str = "any",
+    suggestion_revision: int | None = None,
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -210,6 +215,24 @@ def asset_page(
         include_descendants=include_descendants,
         place_state=place_state,
     )
+    # ADR-0005 §10: the ``suggested`` state has its own revision. A continuation (or a page)
+    # that was computed under a different visible candidate set must be re-queried instead of
+    # silently mixing two versions of the answer.
+    current_suggestion_revision = revision_module.read_suggestion_revision(catalog.connection)
+    if (
+        str(place_state or "any") == "suggested"
+        and suggestion_revision is not None
+        and int(suggestion_revision) != int(current_suggestion_revision)
+    ):
+        raise ApiError(
+            PLACE_SUGGESTION_REVISION_STALE,
+            "the visible suggestion set changed since this page was requested",
+            status=409,
+            details={
+                "expected_revision": int(suggestion_revision),
+                "current_revision": int(current_suggestion_revision),
+            },
+        )
     start: int | tuple[int, int] | None
     if order == ORDER_TIME_DESC:
         start = decode_time_cursor(cursor)
@@ -270,6 +293,7 @@ def asset_page(
         "include_descendants": bool(include_descendants),
         "place_state": str(place_state or "any"),
         "catalog_filter_revision": revision_module.read_filter_revision(catalog.connection),
+        "suggestion_revision": int(current_suggestion_revision),
     }
 
 

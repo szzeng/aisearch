@@ -20,6 +20,8 @@ SUGGESTION_REVISION_ID = 1
 CAUSE_EFFECTIVE_ASSIGNMENT_CHANGED = "PLACE_EFFECTIVE_ASSIGNMENT_CHANGED"
 CAUSE_NAME_CHANGED = "PLACE_NAME_CHANGED"
 CAUSE_HIERARCHY_CHANGED = "PLACE_HIERARCHY_CHANGED"
+#: The independent suggestion revision moved because the visible candidate set changed.
+CAUSE_SUGGESTION_CHANGED = "PLACE_SUGGESTION_CANDIDATES_CHANGED"
 
 #: ``refresh(connection, asset_ids=..., projection_revision=..., now_ms=...)`` - the P2-03
 #: ``IndexCoordinator.schedule_projection_refresh`` signature, injected so this module
@@ -90,6 +92,22 @@ def bump_filter_revision(
             projection_revision=revision,
             now_ms=int(now_ms),
         )
+    return revision
+
+
+def bump_suggestion_revision(connection: sqlite3.Connection, *, cause: str, now_ms: int) -> int:
+    """Move the independent suggestion revision exactly once.
+
+    ADR-0005 §4/§11: a candidate-visibility change is the only thing that moves this
+    counter, and it must never move the authoritative CatalogFilterRevision.
+    """
+    current = read_suggestion_revision(connection)
+    revision = current + 1
+    connection.execute(
+        "UPDATE place_suggestion_revision SET revision = ?, committed_at = ?, cause = ? "
+        "WHERE revision_id = ?",
+        (revision, int(now_ms), str(cause), SUGGESTION_REVISION_ID),
+    )
     return revision
 
 
