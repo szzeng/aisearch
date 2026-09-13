@@ -52,8 +52,24 @@ P1-06 (the duplicate / move / replace / offline / remap / restart acceptance clo
 `schema_version` 仍为 1，ADR-0002、`0001_initial.sql`、`pyproject.toml`、`uv.lock` 均未改动，既有测试
 全部原样通过。主线当前任务为 P2-01。
 
-Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 3.
-Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 2 (2026-09-11 mandatory CUDA / GTX 1660 minimum update).
+Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 4 (2026-09-13 actual-place planning).
+Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 3 (2026-09-13 location task chain and current-state reconciliation).
+
+## Latest planning closure — P2-00 (2026-09-13)
+
+地点规划已完成（文档交付，**地点功能尚未实现，P2-01 尚未执行**）。范围已由用户确认：国家／城市／景点／
+自定义地点，GPS 与手动归类。GPS 事实、机器建议、人工归属分离；取消后的人工锁保留；首版提供离线附近城市
+建议供确认，不把最近点当准确行政区。沿用静态前端，schema_version 仍为 1。
+
+决策：[ADR-0004](decisions/ADR-0004-place-classification-plan.md)。
+全项目规划：[P2-00 路线图](plans/P2-00-location-project-roadmap.md)。
+核对与验证：[P2-00 报告](reports/P2-00-location-project-planning.md)。
+本次文档闭环 PASS：既有迁移测试 11/11 通过、Ruff／diff-check clean、7 份文档链接通过；
+测试临时目录 ACL 限制经隔离目录和工具提权解决，完整命令在报告。未执行地点功能测试或 P2-01 契约测试。
+
+下一任务仍为 **P2-01 / C2 / GPT-5.6 Sol / high**；增加无模型 CPU／非向量产物和权威筛选版本外壳。
+随后 **P2-01A → P2-02 → P2-03 → P2-03A/B/C → P2-04～08**。地点实现不提前到本次规划。
+拍摄时间、HEIC 与 remap 产品欠项分别排入 P4-00A/B、P4-00C、P4-05A/B。
 
 ## Latest accepted verification
 
@@ -149,10 +165,8 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   current RTX 4060 Laptop GPU; earlier P0 limits for InsightFace/RapidOCR, cold CUDA start and human-labelled semantic
   quality remain carried forward.
 - Two historical P0 record inconsistencies remain recorded but unedited; see the P0-07 report §3.1.
-- **P1-05**: `GET /assets/{id}` media failure messages can still carry an absolute path because the stored
-  Pillow message uses a repr-escaped Windows path (`C:\\Users\\…`) that `errors.Redactor` does not match; the page
-  withholds such messages, but a server-side fix needs a C1/C2-reviewed follow-up (P1-05 report §8.1; task card
-  `docs/tasks/P1-05A.md`). The front end has no automated DOM tests (no Node/npm chain allowed); its behaviour
+- **P1-05 historical redaction gap is closed by P1-05A** (`b708847`); its earlier report remains historical evidence.
+  The front end has no automated DOM tests (no Node/npm chain introduced); its behaviour
   rests on the static contract assertions consolidated by P1-05B in `tests/unit/test_api_frontend.py` plus the
   repeatable manual checklist `docs/diagnostics/frontend-smoke-checklist.md`. Narrow-viewport/200% zoom was
   proxied by a 640×900 viewport (no horizontal overflow,
@@ -160,7 +174,7 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   ADR-0002 §7 additive migration + C2). A fully offline asset shows no relative path in the grid
   (`current_location` is null once every position is MISSING); the detail view still lists every position.
 
-  两个**非阻塞后续项**已按上述分工写成正式任务卡（都不改变 P1-06 作为下一主线任务）：
+  两个历史非阻塞后续项均已完成，保留任务卡／报告供追溯（不再作为下一任务）：
 
   - `docs/tasks/P1-05B.md` — 前端静态契约断言集中化 + `%TEMP%` 夹具脚本 + 浏览器 smoke 核对清单
     （不引入 Node/npm），验收等级 A。**状态：PASS**，见
@@ -169,8 +183,8 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
     **C1 / GPT-5.6 Terra / medium**，验收等级 **B**；唯一允许改动的生产文件是
     `src/photo_search/api/errors.py` 的 `Redactor`，页面守卫保留并加回归断言。**状态：PASS**；见
     [P1-05A 报告](reports/P1-05A-local-path-redaction.md)。
-  - `taken_at`（EXIF 拍摄时间）不写成实现卡：它属于数据语义决策，必须先交
-    **C2 / GPT-5.6 Sol / high** 决策并通过 ADR-0002 §7 的加列迁移路径。
+  - `taken_at`（EXIF 拍摄时间）排入 **P4-00A（C2 契约）→ P4-00B（DS-H 实现）**；
+    通过 ADR-0002 §7 的增量迁移路径，不改变现有加入时间排序。
 
 ## GPU status
 
@@ -198,12 +212,13 @@ SearchProfile 契约.**
   RuntimeCapabilities, the EmbeddingAdapter/RerankerAdapter method contracts, and the immutable SearchProfile with
   its atomic active pointer and `space_id` isolation — as `docs/decisions/ADR-0003-*.md` plus a machine-readable
   JSON Schema companion and a contract test. **No production code and no table/migration change in this task.**
+- 地点前置扩展：无模型 CPU_PREFERRED processor、非向量 artifact、CatalogFilterRevision；地点详细
+  DDL/API/人工状态在下一任务 **P2-01A** 冻结，本卡完成后生成 `docs/tasks/P2-01A.md`，不直接生成 P2-02。
 - Validation level: **A** (`uv run pytest -q tests/unit/test_p2_contracts.py` + `uv run ruff check .` +
   `git diff --check`); it escalates to D if any production code, migration or dependency is touched.
 - Every verification fixture must stay inside `%TEMP%`; never read a real photo library without explicit user authorization.
 
-Optional follow-ups recorded but not dependencies of P2-01: a **C1 / GPT-5.6 Terra / medium** review of the P1-05
-§8.1 redaction gap (and, if still open, the P1-04 packaging/migration-check fix); the P1-06 §5 product remap
-capability; and a **C2 / GPT-5.6 Sol / high** decision before adding any `taken_at`/EXIF-capture-time column.
+P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
+排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-01 的前置依赖。
 
 Model switching remains manual; the repository only records the recommended model per stage.
