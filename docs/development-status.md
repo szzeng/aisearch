@@ -25,7 +25,11 @@ candidate-ID restriction and the pending-projection top-up; 19 new cases, no mig
 stays 6). **P2-06A is now READY / CURRENT TASK**; the planned P2-06 was split into
 **P2-06A** (search protocol, `POST /api/v1/search`, sessions/cursors, `SearchProfile` binding and atomic
 activation) and **P2-06B** (explicit relevance feedback and the rerank adapter), without changing the
-overall route.
+overall route. **P2-06A is PASS** (B level + a C-level packaged smoke + the D-level migration/activation/
+expiry injections: the frozen `SearchRequest`/`SearchResult` envelopes, the process-local search sessions
+with opaque bound cursors, the immutable `search_profiles` plus its atomic single-row activation and the
+`catalog_filter_revision` staleness matrix; 52 new cases, **schema_version 6 → 7**). **P2-06B is READY /
+CURRENT TASK**.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -344,6 +348,55 @@ keyset 扫描后精确归并。融合公式 `Σ weight/(60+rank)`、权重相等
 尚未接入 `/capabilities`。`catalog/errors.py` 新增了一个 extra 码常量 `FILTER_UNSUPPORTED`（本文件
 外唯一改动，见报告 §11.1），暂无 HTTP 映射，P2-06A 接入 API 时补齐。
 
+## Latest search-protocol closure — P2-06A (2026-09-14)
+
+P2-06A 已实现搜索协议、搜索会话/游标与 profile 原子激活并通过 B + C + D 级验收，报告
+[P2-06A 报告](reports/P2-06A-search-api-session-cursor-and-profile-binding.md)。起点 HEAD `27cb006`
+（P2-05），工作树干净；实现提交即承载本行与报告的这次提交（未 push；哈希用
+`git log -1 --format=%H -- docs/reports/P2-06A-search-api-session-cursor-and-profile-binding.md` 读取）。
+
+新增 `src/photo_search/search/{contracts,sessions,profile}.py` 与连续 migration
+`catalog/migrations/0007_search_profiles.sql`：**`schema_version` 推进到 7**，`0001`～`0006` 未改。
+`SearchRequest`/`SearchResult` 是 `p2-contracts.v1` 的不可变信封（拒绝未知字段、只做形状校验、`text`
+原样交给 P2-04 的 `build_match`）；`POST /api/v1/search` 首屏跑一次 P2-05 检索并把 ≤1000 条**有序候选及其
+名次来源**冻结进**进程内**会话，续页只按 `base64url("s1:<session>:<offset>")` 的不透明游标切片，并在每页
+返回前按当前 SQLite 权威条件复核该页 id（被排除的行不出现在页里，offset 照常前进）。过期矩阵：
+他会话/他查询/他筛选/篡改/越界 → 422 `INVALID_CURSOR`；TTL 过期或进程重启 → 409
+`SEARCH_SESSION_EXPIRED`；绑定变化 → 409 `PROFILE_GENERATION_MISMATCH`；`catalog_filter_revision`
+变化 → 409 `CATALOG_FILTER_REVISION_STALE`（`place_state=suggested` 另绑 `suggestion_revision`）。
+`search_profiles` 创建后不可变（UPDATE 触发器拒绝），单行 `active_search_profile` 指针与
+`index_generations.is_active` 在**一个**事务内核对并联动；激活要求引用的 generation `READY`、
+`space_id`/`processor_id` 与 profile 一致、FTS 世代与冻结 RRF 配置可服务、P2-02 的 runtime 健康且存在
+该 processor 的专项 evidence。`GET /api/v1/search-profile` 与
+`POST /api/v1/search-profile/activate` 已接入既有 session/Origin/CSRF 边界；`/capabilities` 的
+`search` 块加性补充 `active_profile_id`/`active_image_generation_id`/`active_fts_generation_id`/
+`pending_projection`/`query_encoder_available`。本卡未改 ADR-0001～0005、冻结 JSON schema、依赖、
+`places/**`、`geo/**`、`ingestion/**`、`workers/**`、打包入口与前端；除卡内清单外仅加性改了
+`api/context.py` 与 `app.py`（进程内会话宿主 + `encoder_factory` 注入缝，见报告 §1）。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 **670** 例，进度行 1 个 `s` → **669 passed / 1 skipped** |
+| 本任务 4 个新文件 | **52 passed**（contracts 23、sessions 5、profile 迁移 6、API/协议 18） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| v6→v7 迁移 | 备份内 `schema_version=6` 且无两张新表；单事务 `applied=(7,)`；旧 8 组行逐项不变；注入损坏 `0007` 整体回滚且无半成品；缺件 `SCHEMA_INCONSISTENT`；过新库零写；不可变触发器/FK RESTRICT/`state_id` CHECK/非法 `fusion_config` 形状逐条拒绝 |
+| 激活事务 | 8 类拒绝（`PROFILE_NOT_FOUND`/`GENERATION_NOT_READY`/`CAPABILITY_MISSING`/`RUNTIME_UNHEALTHY`/`QUALIFICATION_MISSING`/`FTS_GENERATION_UNSUPPORTED`/`FUSION_CONFIG_UNSUPPORTED`/`GENERATION_SPACE_MISMATCH`）全部 409 且指针与 `is_active` 零变化；`activation_hook` 注入异常后两者全回滚且旧 profile 仍可查询；重复激活 `changed=false` |
+| 会话/游标对照 | 同一查询两次不翻页逐项一致；page_size=2 走完 3 个候选无重复无遗漏、`rank` 连续、与单页同一查询顺序一致；TTL/重启 → `SEARCH_SESSION_EXPIRED` 后重搜得到完整第一页；翻页期间地点归属 +1 → 续页过期且重搜补回新命中（`matched_text=["place_text"]`） |
+| C 级 | 真实 onedir 构建（exe 35,537,192 B）+ `packaged_api_smoke.py`（D 盘工作目录）：`status=ok`、`problems=[]`、startup 1.01 s；PYZ 内确认 `photo_search.search.{contracts,sessions,profile,service,retrieval}` 入包、`_internal` 内 `0007_search_profiles.sql` 存在；smoke 新增「未激活 profile + 显式绑定 `POST /search` → 200 `state=OK`」「带 cursor 续页同 session 无重复」「无 encoder 的文本请求 → 409 `QUERY_ENCODER_UNAVAILABLE`」「无 session → 401」，结束后删除本次 3.54 GB 工作目录（D 盘 160.98 → 164.29 GB 可用） |
+
+未验证项（报告 §11）：真实查询编码器未接入应用进程（打包应用里文本查询以 409 拒绝，不降级为纯文本页，
+`/capabilities.search.query_encoder_available=false`）；`search_profiles` 没有产品侧创建入口（测试/smoke
+按 DDL 直写）；`fusion_config` 只按冻结 RRF 校验回显、`reranker_processor_id` 只存储；
+会话仅进程内（多 worker 未测）；`page_size` 上界与 1000 候选上界只在小夹具上验证公式；`GET /assets`
+与搜索页内复核都不是快照隔离读。
+
+**C 级顺带发现的既有缺陷（未修复，需独立任务）**：`api/session.py::restrict_credential_file` 用
+`icacls ... /grant:r "<user>:(R,W)"` 后凭据文件 DACL 只剩 `(R,W)`（实测 `icacls` 输出
+`session.json TCC_SZ\28288:(R,W)`），**没有 DELETE 权限**；同一 `data_root` 第二次启动时
+`os.replace(tmp, session.json)` 抛 `PermissionError: [WinError 5]`，打包应用直接启动失败（本次由连续两次
+smoke 复现）。属 P1-04 既有行为，不在 P2-06A 允许修改面内，建议独立 **C1** 任务修复
+（候选：授予 `(R,W,D)` 或先删后写），并加一条「同一 data root 连续两次启动」的打包 smoke 断言。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -516,20 +569,19 @@ human-labelled semantic-search holdout.
 确定性检索对照 + P2-03 崩溃窗口联测，19 个新增用例）。`schema_version` 仍为 6（无新 migration）；
 ADR/冻结 JSON schema/依赖/`places/**`/`ingestion/**`/`workers/**`/打包入口/前端未改，未接 API（按卡不触发 C）。
 
-**P2-06A — 搜索协议、`POST /api/v1/search`、搜索会话/游标与 Profile 绑定.**
+**P2-06A — 搜索协议、`POST /api/v1/search`、搜索会话/游标与 Profile 绑定：PASS.** 见
+[P2-06A 报告](reports/P2-06A-search-api-session-cursor-and-profile-binding.md)（B 级 669 passed / 1 skipped +
+C 级打包 smoke `problems=[]` + D 级迁移/激活/过期故障注入，52 个新增用例）。`schema_version = 7`，
+migration 连续 0001～0007；ADR/冻结 JSON schema/依赖/`places/**`/`geo/**`/`ingestion/**`/`workers/**`/
+打包入口/前端未改（仅加性改了 `api/context.py` 与 `app.py` 两处注入缝，见报告 §1）。
 
-- Status: **READY / CURRENT TASK**. P2-05 的服务层检索（`search.search_assets`：双通道 + RRF +
-  权威候选约束 + `pending_semantic`）已 PASS，P1-04 的 session/Host/Origin/CSRF 边界与
-  P2-02 的能力/资格事实已可用。计划中的 P2-06 拆为 **P2-06A**（本卡）与 **P2-06B**
-  （显式相关性反馈与精排适配器接入），不改变总体路线。
-- Task card: `docs/tasks/P2-06A.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（协议/绑定歧义再报 C2）。
-- Goal: `SearchRequest`/`SearchResult` 协议、`POST /api/v1/search`、进程内搜索会话与游标
-  （≤1000 有序 ID、默认 10 分钟、绑定 profile/generation/`catalog_filter_revision`）、
-  `search_profiles`/`active_search_profile` 迁移与原子激活；**不得提前实施搜索页面（P2-07）**。
-- Validation level: **B + C（接入 API/打包）+ D（迁移与原子激活故障注入）**。
+**P2-06B — 显式相关性反馈与精排适配器接入.**
 
-**P2-06B — 显式相关性反馈与精排适配器接入（依赖 P2-06A）.** Task card: `docs/tasks/P2-06B.md`。
+- Status: **READY / CURRENT TASK**（依赖 P2-06A，已满足：`SUPPORTED_SCHEMA_VERSION = 7`、
+  `search_profiles`/`active_search_profile`、`POST /api/v1/search` 与会话/游标语义均可用）。
+- Task card: `docs/tasks/P2-06B.md`。
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（反馈幂等/精排分数语义歧义再报 C2）。
+- Validation level: **B + C（新增 migration 与 API/打包）+ D（迁移与反馈幂等/精排门禁故障注入）**。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -546,6 +598,15 @@ P2-04 未验证项（单次请求最多追赶 2000 资产的滞后、`rebuild_al
 扫描的规模/延迟未测、`MAX_VECTOR_BLOCKS` 安全阀未在大库触发、查询向量归一化由 processor 负责、
 混入外来 space 的拒绝路径未真实注入、中查询并发变更只标注不补命中、纯筛选查询的权威列表上界 1000、
 `pending_projection_summary` 未接 `/capabilities`、`FILTER_UNSUPPORTED` 暂无 HTTP 映射）记录在
-P2-05 报告 §11。
+P2-05 报告 §11；P2-06A 未验证项（真实查询编码器未接入应用进程致打包应用的文本查询以 409
+`QUERY_ENCODER_UNAVAILABLE` 拒绝而不降级、`search_profiles` 无产品侧创建入口、`fusion_config` 只按
+冻结 RRF 校验回显、`reranker_processor_id` 只存储、会话仅进程内/多 worker 未测、`page_size` 与 1000
+候选上界只在小夹具验证公式、搜索页内复核非快照隔离读）记录在 P2-06A 报告 §11。
+
+**待独立任务修复的既有缺陷**：`api/session.py::restrict_credential_file` 的 `icacls`
+（`/inheritance:r /grant:r "<user>:(R,W)"`）使凭据文件缺少 DELETE 权限，**同一 `data_root` 第二次启动
+打包应用会在 `bootstrap_session_credential` 抛 `PermissionError [WinError 5]` 而失败**（P2-06A 的 C 级
+smoke 连续两次运行复现，见 P2-06A 报告 §9.1）。建议独立 **C1** 任务修复并补「同一 data root 连续两次
+启动」的打包 smoke 断言；在修复前，本仓库的打包 smoke 每次必须使用新建的工作目录。
 
 Model switching remains manual; the repository only records the recommended model per stage.

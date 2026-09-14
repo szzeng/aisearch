@@ -233,3 +233,65 @@ def pending_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
         }
     finally:
         connection.close()
+
+
+def search_profile_summary(db_path: str | Path) -> dict[str, Any] | None:
+    """The active search profile of this catalog, read-only (P2-06A, architecture §11.3.5).
+
+    ``GET /api/v1/capabilities`` may report which profile is served without opening a
+    write path and without leaking a path or a token; ``active_profile_id`` is ``None``
+    both when nothing is activated and when this catalog predates migration 0007, and only
+    ``None`` for the second case when the whole block is absent. The pending vector
+    projection counter is included so a caller can tell a caught-up index from a lagging
+    one before it runs a query.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        if "search_profiles" not in tables or "active_search_profile" not in tables:
+            return None
+        row = connection.execute(
+            "SELECT profile_id FROM active_search_profile WHERE state_id = 1"
+        ).fetchone()
+        profile = None
+        if row is not None and row["profile_id"] is not None:
+            profile = connection.execute(
+                "SELECT profile_id, space_id, image_generation_id, fts_generation_id, "
+                "runtime_package_id FROM search_profiles WHERE profile_id = ?",
+                (str(row["profile_id"]),),
+            ).fetchone()
+        active = []
+        if "index_generations" in tables:
+            active = [
+                {
+                    "generation_id": str(item["generation_id"]),
+                    "space_id": str(item["space_id"]),
+                    "state": str(item["state"]),
+                }
+                for item in connection.execute(
+                    "SELECT generation_id, space_id, state FROM index_generations "
+                    "WHERE is_active = 1 ORDER BY generation_id"
+                )
+            ]
+        # The ``active_`` prefix keeps these facts apart from the derived projection's own
+        # ``fts_generation_id``: that one is the generation the stored documents were
+        # actually written with, while this one is what the served profile declares.
+        return {
+            "active_profile_id": None if profile is None else str(profile["profile_id"]),
+            "active_image_generation_id": (
+                None if profile is None else str(profile["image_generation_id"])
+            ),
+            "active_fts_generation_id": (
+                None if profile is None else str(profile["fts_generation_id"])
+            ),
+            "active_runtime_package_id": (
+                None if profile is None else str(profile["runtime_package_id"])
+            ),
+            "active_generations": active,
+            "pending_projection": pending_projection_summary(path),
+        }
+    finally:
+        connection.close()

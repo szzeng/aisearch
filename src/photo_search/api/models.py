@@ -11,6 +11,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from photo_search.search.contracts import (
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+)
+from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
+
 AvailabilityFilter = Literal["present", "missing", "any"]
 ReadyFilter = Literal["true", "false", "any"]
 AssetOrder = Literal["asset_id", "time_desc"]
@@ -549,3 +555,105 @@ class PlaceOperationListResponse(BaseModel):
     limit: int
     next_cursor: str | None = None
     has_more: bool
+
+
+# --------------------------------------------------------------------------------- search
+
+
+class SearchRequestModel(BaseModel):
+    """``POST /api/v1/search``: the frozen P2-06A request envelope.
+
+    The field names and bounds mirror ``search.contracts.SearchRequest`` exactly; the
+    service converts this validated body with ``SearchRequest.from_envelope``, so the
+    protocol is enforced once more at the transport-free layer.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["p2-contracts.v1"] = "p2-contracts.v1"
+    request_id: str = Field(min_length=1, max_length=64)
+    text: str | None = Field(default=None, max_length=256)
+    profile_id: str | None = Field(default=None, min_length=1, max_length=128)
+    space_id: str | None = Field(default=None, min_length=1, max_length=128)
+    image_generation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    dimension: int | None = Field(default=None, ge=1)
+    source_id: int | None = Field(default=None, ge=1)
+    availability: AvailabilityFilter = "any"
+    place_ids: list[int] = Field(default_factory=list)
+    include_descendants: bool = True
+    place_state: PlaceStateFilter = "any"
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
+    page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
+    search_session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    cursor: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+class SearchHitModel(BaseModel):
+    """One row of one page: identity, rank provenance and why it matched."""
+
+    asset_id: int
+    rank: int
+    score: float | None = None
+    matched_by: dict[str, int]
+    hit_reason: str
+    matched_text: list[str] = Field(default_factory=list)
+    semantic_ready: bool = False
+
+
+class SearchResultModel(BaseModel):
+    """``POST /api/v1/search`` response: one page bound to session, profile and revisions."""
+
+    contract_version: str
+    request_id: str
+    search_session_id: str
+    profile_id: str | None = None
+    image_generation_id: str | None = None
+    space_id: str | None = None
+    dimension: int | None = None
+    catalog_filter_revision: int
+    suggestion_revision: int
+    fusion_config: dict[str, Any]
+    query: dict[str, Any] | None = None
+    filters: dict[str, Any]
+    hits: list[SearchHitModel]
+    page_size: int
+    page_offset: int
+    next_cursor: str | None = None
+    has_more: bool
+    total_candidates: int
+    candidates_truncated: bool
+    channels: dict[str, Any]
+    pending_semantic: dict[str, Any] | None = None
+    search_projection: dict[str, Any]
+    state: str
+
+
+class SearchProfileActivateRequest(BaseModel):
+    """``POST /api/v1/search-profile/activate``: publish one immutable profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str = Field(min_length=1, max_length=128)
+
+
+class SearchProfileResponse(BaseModel):
+    """``GET /api/v1/search-profile``: the single active pointer and its profile."""
+
+    contract_version: str
+    profile_id: str | None = None
+    profile: dict[str, Any] | None = None
+    updated_at: int
+
+
+class SearchProfileActivationResponse(BaseModel):
+    """The result of activating a profile: idempotent, and honest about the readiness gate."""
+
+    contract_version: str
+    profile_id: str
+    image_generation_id: str
+    space_id: str
+    fts_generation_id: str
+    updated_at: int
+    changed: bool
+    state: Literal["ACTIVE", "ALREADY_ACTIVE"]
+    readiness: dict[str, Any]

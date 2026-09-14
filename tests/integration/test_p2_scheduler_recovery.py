@@ -77,6 +77,9 @@ V6_TABLES = (
     "search_documents_fts_docsize",
     "search_documents_fts_idx",
     "search_projection_queue",
+    # P2-06A: the immutable search profile and its single active pointer.
+    "active_search_profile",
+    "search_profiles",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

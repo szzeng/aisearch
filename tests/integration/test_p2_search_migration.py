@@ -24,6 +24,9 @@ from photo_search.catalog.sqlite_io import connect_rw, open_readonly
 
 REAL_MIGRATIONS_DIR = Path(schema.__file__).resolve().parent / "migrations"
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)
+#: This file is about the 0006 step itself. Pinning the target keeps "v5 -> v6" meaning the
+#: same thing after later additive migrations (0007+) append to the chain.
+V6 = 6
 
 SEARCH_TABLES = {
     "search_documents",
@@ -137,10 +140,12 @@ def snapshot(path: Path) -> dict[str, list[tuple]]:
         connection.close()
 
 
-def test_migration_scripts_are_continuous_and_0006_is_the_new_one() -> None:
+def test_migration_scripts_are_continuous_and_0006_is_the_search_layer() -> None:
     versions = [number for number, _ in schema.migration_files()]
     assert versions == list(range(1, SUPPORTED + 1))
-    assert versions[-1] == 6
+    # 0006 stays the P2-04 derived search layer; later tasks append to the chain without
+    # renumbering or rewriting it (invariant of ADR-0002 §7 and every card since).
+    assert versions[5] == 6
     assert (REAL_MIGRATIONS_DIR / "0006_search_fts.sql").is_file()
 
 
@@ -152,9 +157,16 @@ def test_v5_to_v6_is_continuous_backed_up_and_lossless(
     before = snapshot(path)
     before_bytes = path.read_bytes()
 
+    # Build the 0001..0006 directory first: ``migrations_upto`` reads the real migration
+    # list, which only validates while the supported version is still this build's.
+    only_v6 = migrations_upto(tmp_path, V6)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V6)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", only_v6)
     result = migrate_database(path, data_root=data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
 
-    assert result.previous_version == 5 and result.schema_version == SUPPORTED
+    assert result.previous_version == 5 and result.schema_version == V6
     assert result.applied == (6,)
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
@@ -166,9 +178,9 @@ def test_v5_to_v6_is_continuous_backed_up_and_lossless(
 
     live = open_readonly(path)
     try:
-        assert schema.read_schema_version(live) == SUPPORTED
+        assert schema.read_schema_version(live) == V6
         assert SEARCH_TABLES <= set(schema.business_tables(live))
-        schema.verify_schema(live, SUPPORTED)
+        schema.verify_schema(live, V6)
         # Nothing is fabricated: the derived layer starts empty and the queue is empty.
         assert live.execute("SELECT COUNT(*) FROM search_documents").fetchone()[0] == 0
         assert live.execute("SELECT COUNT(*) FROM search_projection_queue").fetchone()[0] == 0
@@ -178,8 +190,10 @@ def test_v5_to_v6_is_continuous_backed_up_and_lossless(
     assert path.read_bytes() != before_bytes  # the schema itself did change
 
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.backup_path is None
-    assert again.previous_version == SUPPORTED
+    # Continuing from there still reaches this build's supported version.
+    assert again.applied == tuple(range(V6 + 1, SUPPORTED + 1))
+    assert again.previous_version == V6
+    assert again.schema_version == SUPPORTED
 
 
 def test_the_new_tables_are_an_external_content_fts_with_a_clean_index(

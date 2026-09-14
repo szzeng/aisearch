@@ -34,6 +34,9 @@ from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
 
 #: Per-channel initial candidate bound (architecture §9.2: "初始 Top 200").
 DEFAULT_TOP_K = 200
+#: Hard ceiling of one request's candidate list, shared by the service and the protocol
+#: envelope so the two can never disagree about what "too large" means.
+MAX_TOP_K = 1000
 #: How many authoritative candidates one vector block covers. Every block costs one
 #: engine query, so the vector channel costs ``ceil(candidates / block)`` queries.
 SCOPE_BLOCK_SIZE = 1000

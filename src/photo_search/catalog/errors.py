@@ -96,6 +96,18 @@ GEO_FACT_MISSING = "GEO_FACT_MISSING"
 #: degrades into an unfiltered search (P0-02C, architecture §9.3 item 4).
 FILTER_UNSUPPORTED = "FILTER_UNSUPPORTED"
 
+#: P2-06A search protocol. ``SEARCH_SESSION_EXPIRED`` is the identifiable "this session is
+#: gone" answer (process restart or TTL) instead of an empty page or a silently new
+#: ordering; ``PROFILE_GENERATION_MISMATCH`` is the ADR-0003 §8/§10 refusal of a
+#: half-switched profile - a profile, generation, space or dimension that does not belong
+#: together is never served by computing a similarity in the wrong space.
+#: ``INVALID_CURSOR`` moved here from the API layer when the search protocol needed it: the
+#: value is unchanged, and the service layer can now refuse a foreign cursor without
+#: importing the HTTP layer.
+INVALID_CURSOR = "INVALID_CURSOR"
+SEARCH_SESSION_EXPIRED = "SEARCH_SESSION_EXPIRED"
+PROFILE_GENERATION_MISMATCH = "PROFILE_GENERATION_MISMATCH"
+
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 

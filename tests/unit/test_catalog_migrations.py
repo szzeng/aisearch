@@ -24,6 +24,7 @@ from photo_search.ingestion.service import CatalogService
 
 CORE_TABLES = {
     "active_geo_dataset",
+    "active_search_profile",
     "assets",
     "asset_geo_facts",
     "asset_place_assignment_history",
@@ -63,6 +64,8 @@ CORE_TABLES = {
     "search_documents_fts_docsize",
     "search_documents_fts_idx",
     "search_projection_queue",
+    # P2-06A: the immutable search profile and its single active pointer.
+    "search_profiles",
 }
 
 #: This build's supported version, and the next one a synthetic migration may use.

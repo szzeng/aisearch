@@ -16,6 +16,8 @@ from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
 from photo_search.api.settings import ApiSettings, generate_session_token
 from photo_search.ingestion.service import CatalogService
+from photo_search.search.embedding import QueryEncoder
+from photo_search.search.sessions import SearchSessionStore
 
 logger = logging.getLogger("photo_search.api")
 
@@ -30,6 +32,7 @@ class ApiContext:
         service_factory: Callable[[], CatalogService] | None = None,
         runner_executor: Callable[[Any, int], Any] | None = None,
         worker_id: str | None = None,
+        encoder_factory: Callable[[], QueryEncoder] | None = None,
     ) -> None:
         self.settings = settings
         token = settings.session_token or generate_session_token()
@@ -39,6 +42,12 @@ class ApiContext:
         self._service_factory = service_factory or self._default_service_factory
         self._runner_executor = runner_executor
         self._worker_id = worker_id
+        #: P2-06A: search sessions are process-local by design (architecture §9.5). A
+        #: restart drops them, and a continuation token then answers SEARCH_SESSION_EXPIRED.
+        self.search_sessions = SearchSessionStore()
+        self._encoder_factory = encoder_factory
+        self._encoder: QueryEncoder | None = None
+        self._encoder_resolved = False
         self._service: CatalogService | None = None
         self._runner: ScanRunner | None = None
 
@@ -68,6 +77,27 @@ class ApiContext:
             return Redactor(data_root=self.settings.data_root)
         return Redactor.for_catalog(service.catalog, data_root=self.settings.data_root)
 
+    def query_encoder(self) -> QueryEncoder | None:
+        """The query half of the embedding adapter, or ``None`` when none is wired.
+
+        ADR-0003 §7 keeps the heavy frameworks out of the service layer, so this build has
+        no built-in encoder: a deployment (or a test) supplies one through
+        ``encoder_factory``. ``None`` is reported honestly by ``GET /capabilities`` and
+        turns a request that needs the semantic channel into a structured refusal instead
+        of a silently text-only page.
+        """
+        if self._encoder_resolved:
+            return self._encoder
+        self._encoder_resolved = True
+        if self._encoder_factory is None:
+            return None
+        try:
+            self._encoder = self._encoder_factory()
+        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
+            logger.debug("building the query encoder failed", exc_info=True)
+            self._encoder = None
+        return self._encoder
+
     def close(self) -> None:
         """Stop the worker and release both connections; safe to call twice."""
         runner = self._runner
@@ -84,3 +114,4 @@ class ApiContext:
                 service.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("closing the catalog service failed", exc_info=True)
+        self.search_sessions.clear()

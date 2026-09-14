@@ -26,6 +26,7 @@ from p2_search_fixtures import (
 
 from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.errors import FILTER_UNSUPPORTED, CatalogError
+from photo_search.catalog.schema import SUPPORTED_SCHEMA_VERSION
 from photo_search.scheduler.projection import pending_projection_summary
 from photo_search.search.service import default_vector_index, search_assets
 
@@ -265,7 +266,7 @@ def test_a_query_is_a_pure_read_and_leaves_the_revisions_alone(env: dict[str, An
         )["value"],
     }
     assert before == after
-    assert int(before["schema"]) == 6
+    assert int(before["schema"]) == int(SUPPORTED_SCHEMA_VERSION)
 
 
 def test_the_read_only_projection_summary_reports_lag_without_paths_or_ids(

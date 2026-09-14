@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -65,13 +66,50 @@ def wait_for(sink: list[str], predicate: Any, *, timeout: float) -> str | None:
 
 
 def seed_library(root: Path) -> Path:
-    """One JPEG under a Chinese/space path, with a quiet ``mtime``."""
+    """Two JPEGs under a Chinese/space path, with a quiet ``mtime``.
+
+    The second photo exists so the packaged search can page with a real cursor; the first
+    one is the offline subject the media checks delete later.
+    """
     target = root / "子 目录 中文" / "照片 一.jpg"
     target.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (640, 480), (180, 60, 20)).save(target, "JPEG", quality=90)
+    sibling = root / "子 目录 中文" / "beach sunset.jpg"
+    image = Image.new("RGB", (320, 240), (20, 60, 180))
+    pixels = image.load()
+    for x in range(image.size[0]):
+        for y in range(image.size[1]):
+            pixels[x, y] = ((20 + x) % 256, (60 + y) % 256, 180)
+    image.save(sibling, "JPEG", quality=90)
     moment = (1_700_000_000_000 - 3_600_000) * 1_000_000
     os.utime(target, ns=(moment, moment))
+    os.utime(sibling, ns=(moment, moment))
     return target
+
+
+def seed_index_generation(data_root: Path, *, space_id: str) -> str:
+    """Insert one READY index generation into the packaged app's fixture catalog.
+
+    P2-06A serves a *bound* search only against a generation that exists; no product API
+    creates one yet (index generation management is a later task), so the smoke seeds the
+    row the same way a model-upgrade run would. Nothing outside this fixture's own
+    ``--data-root`` is touched.
+    """
+    db_path = data_root / "catalog" / "catalog.db"
+    generation_id = "image-gen-smoke"
+    connection = sqlite3.connect(str(db_path), timeout=30.0, isolation_level=None)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "INSERT INTO index_generations(generation_id, space_id, processor_id, dimension, "
+            "state, is_active, created_at, updated_at) VALUES (?, ?, 'smoke-embedding@1', 3, "
+            "'READY', 0, 1000, 1000)",
+            (generation_id, str(space_id)),
+        )
+        connection.execute("COMMIT")
+    finally:
+        connection.close()
+    return generation_id
 
 
 def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]:
@@ -231,13 +269,28 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             checks["asset_has_more"] = assets["has_more"]
             asset_id = assets["assets"][0]["asset_id"]
             checks["availability"] = assets["assets"][0]["availability"]
+            # The offline subject is picked by its *relative path*, never by row order: the
+            # listing is ordered by ``asset_id`` and a second fixture photo must not be
+            # mistaken for the file this check deletes.
+            wanted = photo.relative_to(library).as_posix()
+            offline_asset = next(
+                (
+                    item
+                    for item in assets["assets"]
+                    if str((item.get("current_location") or {}).get("relative_path") or "")
+                    .replace("\\", "/")
+                    == wanted
+                ),
+                None,
+            )
+            checks["offline_asset_id"] = None if offline_asset is None else offline_asset["asset_id"]
             # P2-04: the derived FTS projection must exist inside the frozen bundle. The
             # scan queued this asset, so the request itself has to catch up and answer.
             text_hit = client.get("/api/v1/assets", params={"text": "照片"})
             checks["text_search_status"] = text_hit.status_code
             text_body = text_hit.json() if text_hit.status_code == 200 else {}
             checks["text_search_ids"] = [item["asset_id"] for item in text_body.get("assets", [])]
-            checks["text_search_hit_asset"] = asset_id
+            checks["text_search_hit_asset"] = checks["offline_asset_id"]
             checks["text_search_summary"] = {
                 key: text_body.get("search", {}).get(key)
                 for key in ("state", "queued_assets", "tokenizer_version", "fts_generation_id", "documents")
@@ -246,6 +299,80 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 needle not in text_hit.text
                 for needle in (str(work_dir), str(data_root), str(library))
             )
+
+            # P2-06A: the frozen bundle must serve ``POST /api/v1/search`` with the
+            # explicit P2-05 binding, page a continuation with the same session, and
+            # refuse a request that would need a query encoder this build does not ship.
+            generation_id = seed_index_generation(data_root, space_id="smoke-space:v1")
+            binding = {
+                "space_id": "smoke-space:v1",
+                "image_generation_id": generation_id,
+                "dimension": 3,
+            }
+            profile = client.get("/api/v1/search-profile")
+            checks["search_profile_status"] = profile.status_code
+            checks["search_profile_active"] = profile.json().get("profile_id")
+            search_headers = {"Origin": base, "X-CSRF-Token": csrf}
+            first_page = client.post(
+                "/api/v1/search",
+                json={"request_id": "packaged-1", "page_size": 1, **binding},
+                headers=search_headers,
+            )
+            checks["search_status"] = first_page.status_code
+            first_body = first_page.json() if first_page.status_code == 200 else {}
+            checks["search_state"] = first_body.get("state")
+            checks["search_generation"] = first_body.get("image_generation_id")
+            checks["search_profile_id"] = first_body.get("profile_id")
+            checks["search_hits"] = [row["asset_id"] for row in first_body.get("hits", [])]
+            checks["search_has_more"] = first_body.get("has_more")
+            checks["search_vector_engaged"] = (
+                (first_body.get("channels") or {}).get("vector", {}).get("engaged")
+            )
+            checks["search_has_no_local_path"] = all(
+                needle not in first_page.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            continuation = client.post(
+                "/api/v1/search",
+                json={
+                    "request_id": "packaged-2",
+                    "page_size": 1,
+                    **binding,
+                    "search_session_id": first_body.get("search_session_id"),
+                    "cursor": first_body.get("next_cursor"),
+                },
+                headers=search_headers,
+            )
+            checks["search_continuation_status"] = continuation.status_code
+            second_body = continuation.json() if continuation.status_code == 200 else {}
+            checks["search_continuation_session_matches"] = (
+                second_body.get("search_session_id") == first_body.get("search_session_id")
+            )
+            checks["search_continuation_hits"] = [
+                row["asset_id"] for row in second_body.get("hits", [])
+            ]
+            checks["search_continuation_offset"] = second_body.get("page_offset")
+            # A text query would need the semantic channel; this build has no query encoder
+            # inside the API process, so it must refuse instead of answering text-only.
+            no_encoder = client.post(
+                "/api/v1/search",
+                json={"request_id": "packaged-3", "text": "照片", **binding},
+                headers=search_headers,
+            )
+            checks["search_text_without_encoder"] = no_encoder.status_code
+            checks["search_text_without_encoder_code"] = (
+                no_encoder.json().get("code") if no_encoder.status_code != 200 else None
+            )
+            checks["search_text_without_encoder_reason"] = (
+                (no_encoder.json().get("details") or {}).get("reason")
+                if no_encoder.status_code != 200
+                else None
+            )
+            # A fresh client carries no session cookie: the same body must answer 401.
+            with httpx.Client(base_url=base, timeout=60.0) as anonymous:
+                checks["search_without_session"] = anonymous.post(
+                    "/api/v1/search", json={"request_id": "packaged-4", **binding}
+                ).status_code
 
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
             checks["thumbnail"] = thumbnail.status_code
@@ -257,13 +384,24 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             with Image.open(io.BytesIO(thumbnail.content)) as image:
                 checks["thumbnail_size"] = [int(image.width), int(image.height)]
 
+            # The offline subject's thumbnail has to exist *before* its original disappears,
+            # otherwise the later request legitimately answers SOURCE_FILE_MISSING instead of
+            # proving that a published artifact survives an offline source.
+            offline_id = checks["offline_asset_id"]
+            prepared = client.get(f"/api/v1/assets/{offline_id}/thumbnail")
+            checks["offline_thumbnail_prepared"] = prepared.status_code
+            checks["offline_thumbnail_prepared_bytes"] = len(prepared.content)
+
             photo.unlink()
-            offline_media = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
+            offline_media = client.get(f"/api/v1/assets/{offline_id}/thumbnail")
             checks["offline_thumbnail"] = offline_media.status_code
+            checks["offline_thumbnail_bytes_unchanged"] = (
+                len(offline_media.content) == checks["offline_thumbnail_prepared_bytes"]
+            )
             checks["offline_original_available"] = offline_media.headers.get(
                 "X-Original-Available"
             )
-            offline_original = client.get(f"/api/v1/assets/{asset_id}/original")
+            offline_original = client.get(f"/api/v1/assets/{offline_id}/original")
             checks["offline_original_status"] = offline_original.status_code
             checks["offline_original_code"] = offline_original.json().get("code")
             checks["detail"] = client.get(f"/api/v1/assets/{asset_id}").status_code
@@ -340,25 +478,59 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("source registration")
     if checks.get("scan_request") != 202 or checks.get("scan_state") != "SUCCEEDED":
         problems.append("scan")
-    if checks.get("asset_count") != 1:
+    if checks.get("asset_count") != 2:
         problems.append("asset listing")
     text_summary = checks.get("text_search_summary") or {}
-    if checks.get("text_search_status") != 200 or checks.get("text_search_ids") != [
-        checks.get("text_search_hit_asset")
-    ]:
+    if (
+        checks.get("text_search_status") != 200
+        or checks.get("offline_asset_id") is None
+        or checks.get("text_search_ids") != [checks.get("offline_asset_id")]
+    ):
         problems.append("packaged text search")
     if text_summary.get("state") != "SYNCED" or text_summary.get("fts_generation_id") != "fts-v1":
         problems.append("packaged search projection")
     if not checks.get("text_search_has_no_local_path"):
         problems.append("text search leaked a local path")
+    if checks.get("search_profile_status") != 200 or checks.get("search_profile_active") is not None:
+        problems.append("packaged search profile")
+    if checks.get("search_status") != 200 or checks.get("search_state") != "OK":
+        problems.append("packaged search")
+    if checks.get("search_generation") != "image-gen-smoke" or checks.get("search_profile_id") is not None:
+        problems.append("packaged search binding echo")
+    if checks.get("search_hits") == [] or checks.get("search_has_more") is not True:
+        problems.append("packaged search page")
+    if checks.get("search_vector_engaged") is not False:
+        problems.append("packaged search channel")
+    if not checks.get("search_has_no_local_path"):
+        problems.append("search leaked a local path")
+    if (
+        checks.get("search_continuation_status") != 200
+        or not checks.get("search_continuation_session_matches")
+        or checks.get("search_continuation_offset") != 1
+    ):
+        problems.append("packaged search continuation")
+    if set(checks.get("search_hits") or []) & set(checks.get("search_continuation_hits") or []):
+        problems.append("packaged search repeated an asset across pages")
+    if (
+        checks.get("search_text_without_encoder") != 409
+        or checks.get("search_text_without_encoder_code") != "RUNTIME_CAPABILITY_UNAVAILABLE"
+        or checks.get("search_text_without_encoder_reason") != "QUERY_ENCODER_UNAVAILABLE"
+    ):
+        problems.append("packaged search without a query encoder")
+    if checks.get("search_without_session") != 401:
+        problems.append("packaged search without a session")
     if checks.get("thumbnail") != 200 or checks.get("thumbnail_type") != "image/jpeg":
         problems.append("thumbnail")
     if checks.get("thumbnail_original_available") != "true":
         problems.append("thumbnail availability header")
-    if checks.get("offline_thumbnail") != 200 or checks.get(
-        "offline_original_available"
-    ) != "false":
+    if checks.get("offline_thumbnail_prepared") != 200:
+        problems.append("offline thumbnail preparation")
+    if checks.get("offline_thumbnail") != 200 or not checks.get(
+        "offline_thumbnail_bytes_unchanged"
+    ):
         problems.append("offline thumbnail")
+    if checks.get("offline_original_available") != "false":
+        problems.append("offline thumbnail availability header")
     if checks.get("offline_original_code") != "SOURCE_FILE_MISSING":
         problems.append("offline original")
     if not checks.get("access_log_redacted") or not checks.get("access_log_free_of_token"):

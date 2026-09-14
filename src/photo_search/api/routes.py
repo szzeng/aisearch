@@ -56,6 +56,11 @@ from photo_search.api.models import (
     PlaceUndoRequest,
     ScanRequestResponse,
     SchedulerStateResponse,
+    SearchProfileActivateRequest,
+    SearchProfileActivationResponse,
+    SearchProfileResponse,
+    SearchRequestModel,
+    SearchResultModel,
     SessionResponse,
     SourceCreateRequest,
     SourceDetail,
@@ -95,8 +100,12 @@ from photo_search.scheduler import state as scheduler_state
 from photo_search.scheduler.projection import (
     index_summary,
     scheduler_summary,
+    search_profile_summary,
     search_projection_summary,
 )
+from photo_search.search.contracts import SearchRequest
+from photo_search.search.profile import activate_profile, profile_projection
+from photo_search.search.service import search_request
 
 APP_VERSION = "0.1.0"
 
@@ -224,8 +233,29 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "runtime": summary.get("runtime"),
         "qualification_evidence": int(summary.get("qualification_evidence") or 0),
         "indexing": index_summary(catalog_db_path(settings.data_root)),
-        # P2-04: derived-search document/queue counts (never any search text or path).
-        "search": search_projection_summary(catalog_db_path(settings.data_root)),
+        # P2-04 derived-search counts plus the P2-06A active profile (never any search
+        # text, session token, coordinate or path).
+        "search": _search_capabilities(request),
+    }
+
+
+def _search_capabilities(request: Request) -> dict[str, Any] | None:
+    """Merge the read-only search facts of this catalog, or ``None`` when none exist.
+
+    ``query_encoder_available`` is the honest answer to "can this process run the semantic
+    channel at all?": this build ships no embedding adapter inside the API process
+    (ADR-0003 §7), so a caller can disable the semantic entry instead of being refused.
+    """
+    context = context_of(request)
+    db_path = catalog_db_path(context.settings.data_root)
+    projection = search_projection_summary(db_path)
+    profile = search_profile_summary(db_path)
+    if projection is None and profile is None:
+        return None
+    return {
+        **(projection or {}),
+        **(profile or {}),
+        "query_encoder_available": context.query_encoder() is not None,
     }
 
 
@@ -744,6 +774,73 @@ async def undo_place_operation(
         request_id=payload.request_id,
         expected_operation_revision=int(payload.expected_operation_revision),
     )
+
+
+# ------------------------------------------------------------------------------ search
+@router.post(
+    "/search",
+    response_model=SearchResultModel,
+    summary="One page of a fused search bound to a session, profile and catalog revision",
+)
+async def post_search(request: Request, payload: SearchRequestModel) -> dict[str, Any]:
+    """Run or continue one search.
+
+    The first request runs the retrieval once and answers page one together with its
+    ``search_session_id`` and ``next_cursor``; a continuation repeats the same body plus
+    those two fields and receives the next slice of the very same frozen ranking. An
+    expired session, a foreign cursor, a switched profile or a moved catalog revision is
+    reported with its own stable code instead of a silently different ordering.
+    """
+    context = context_of(request)
+    envelope = SearchRequest.from_envelope(payload.model_dump())
+    return search_request(
+        context.service().catalog,
+        envelope,
+        sessions=context.search_sessions,
+        encoder=context.query_encoder(),
+    )
+
+
+@router.get(
+    "/search-profile",
+    response_model=SearchProfileResponse,
+    summary="The activated search profile (read-only; profile_id is null when unset)",
+)
+async def get_search_profile(request: Request) -> dict[str, Any]:
+    return profile_projection(service_of(request).catalog)
+
+
+@router.post(
+    "/search-profile/activate",
+    response_model=SearchProfileActivationResponse,
+    summary="Activate one immutable search profile, atomically and idempotently",
+)
+async def activate_search_profile(
+    request: Request, payload: SearchProfileActivateRequest
+) -> dict[str, Any]:
+    """Verify the whole profile bundle, then move the pointer and ``is_active`` together.
+
+    A profile whose embedding processor has no healthy, evidenced runtime, whose index
+    generation is not READY or whose FTS generation this build cannot serve is refused with
+    a structured 409 and **zero** writes, so no reader can ever observe a half-switched
+    encoder/index pair (ADR-0003 §8/§10).
+    """
+    service = service_of(request)
+    profile, changed, readiness = activate_profile(
+        service.catalog, profile_id=payload.profile_id, now_ms=service.catalog.now_ms()
+    )
+    pointer = profile_projection(service.catalog)
+    return {
+        "contract_version": profile.to_dict()["contract_version"],
+        "profile_id": profile.profile_id,
+        "image_generation_id": profile.image_generation_id,
+        "space_id": profile.space_id,
+        "fts_generation_id": profile.fts_generation_id,
+        "updated_at": int(pointer["updated_at"]),
+        "changed": bool(changed),
+        "state": "ACTIVE" if changed else "ALREADY_ACTIVE",
+        "readiness": readiness,
+    }
 
 
 __all__ = ["APP_VERSION", "context_of", "router", "service_of"]
