@@ -10,7 +10,7 @@
 | 计划模型 | DS-L（DeepSeek V4.1 Flash / 低推理）；调度/索引接线部分可标 DS-H，ONNX/Windows 疑难点转 C1 |
 | 实际执行 | 用户在本会话开始时声明「已经在 DS-L 了」；本会话无法读取客户端 `config.toml`，故只按用户声明记录，**未做、也不声称任何自动模型切换** |
 | 起始基线 | `HEAD = 3ea0cf1`（Windows Codex 环境规则），P2-08 报告提交 `446dbf7`；工作树干净 |
-| 实现提交 | `ea4ba59`（本任务；仅本地提交，未推送） |
+| 实现提交 | 本任务代码、测试与本文档同一提交（`git log --oneline --grep='P3-01'`；仅本地提交，未推送） |
 | 上一任务 | P2-08（B + D + 真实浏览器闭环，零生产改动），报告 `docs/reports/P2-08-acceptance-matrix.md` |
 | 前置复核 | `SUPPORTED_SCHEMA_VERSION = 8`、migration 连续 `0001`～`0008`、P0-04 固定权重齐备（4 文件大小/SHA-256 全匹配）、RapidOCR 1.4.4 / onnxruntime 1.30.0 已安装 |
 
