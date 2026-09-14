@@ -568,6 +568,96 @@ class PlaceOperationListResponse(BaseModel):
     has_more: bool
 
 
+# -------------------------------------------------------------------------------- persons
+
+
+class PersonAliasRecord(BaseModel):
+    """One search alias of a named person; the alias is never a merge key."""
+
+    alias: str
+    normalized_alias: str
+
+
+class PersonRecord(BaseModel):
+    """The canonical person behind one id (ADR-0006 §5).
+
+    An old id is answered with its canonical target instead of an HTTP redirect, and the
+    counts are the effective members: no face under a ``MANUAL_UNASSIGNED`` lock and no face
+    an active human denial forbids. No name, alias, box, landmark, vector or similarity of
+    an individual pair travels through this model.
+    """
+
+    contract_version: str
+    requested_person_id: int
+    canonical_person_id: int
+    redirected: bool
+    person_id: int
+    name: str | None = None
+    avatar_face_id: str | None = None
+    revision: int
+    aliases: list[PersonAliasRecord] = Field(default_factory=list)
+    face_count: int
+    asset_count: int
+    created_at: int
+    updated_at: int
+
+
+class PersonNameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=64)
+    name: str
+    expected_revision: int = Field(ge=1)
+
+
+class PersonMergeSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person_id: int = Field(ge=1)
+    expected_revision: int = Field(ge=1)
+
+
+class PersonMergeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=64)
+    target_person_id: int = Field(ge=1)
+    target_expected_revision: int = Field(ge=1)
+    #: The bound is enforced by the service (``PERSON_BATCH_TOO_LARGE``), exactly like the
+    #: place batch: a transport-level ``max_length`` would replace the frozen code with a
+    #: generic validation error and hide which limit was hit.
+    sources: list[PersonMergeSource] = Field(default_factory=list)
+
+
+class PersonUndoRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str = Field(min_length=1, max_length=64)
+    expected_operation_revision: int = Field(ge=1)
+
+
+class PersonOperationItemResponse(BaseModel):
+    entity_type: str
+    entity_id: int
+    changed: bool
+    merged_into: int | None = None
+    revision: int
+
+
+class PersonOperationResponse(BaseModel):
+    """The result of one rename, merge, batch merge or undo."""
+
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: str
+    undo_of_operation_id: str | None = None
+    changed: bool
+    catalog_filter_revision: int
+    replayed: bool
+    items: list[PersonOperationItemResponse]
+
+
 # --------------------------------------------------------------------------------- search
 
 

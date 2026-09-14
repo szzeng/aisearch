@@ -15,6 +15,7 @@ from photo_search.catalog import schema
 from photo_search.catalog.sqlite_io import open_readonly
 from photo_search.face import contract as face_contract
 from photo_search.ocr import contract as ocr_contract
+from photo_search.persons import contracts as person_contract
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:
@@ -373,6 +374,52 @@ def face_summary(
                 "SELECT COUNT(*) AS total FROM persons WHERE merged_into IS NULL"
             ).fetchone()["total"]
         )
+        # P3-03: how much of the group set a human has actually named, and how much of the
+        # human knowledge is still waiting for a decision. Counts only - never a name, an
+        # alias text or a person id.
+        named_persons = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM persons WHERE merged_into IS NULL "
+                "AND name_key IS NOT NULL"
+            ).fetchone()["total"]
+        )
+        unnamed_persons = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM persons WHERE merged_into IS NULL "
+                "AND name_key IS NULL"
+            ).fetchone()["total"]
+        )
+        aliases = (
+            int(connection.execute("SELECT COUNT(*) AS total FROM person_aliases").fetchone()["total"])
+            if "person_aliases" in tables
+            else 0
+        )
+        pending_confirmation = (
+            int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT face_id) AS total FROM face_person_links "
+                    "WHERE decision = 'SUGGESTED' AND reason IN (?, ?)",
+                    (
+                        str(person_contract.REASON_MANUAL_UNASSIGNED),
+                        str(person_contract.REASON_HUMAN_CONFLICT),
+                    ),
+                ).fetchone()["total"]
+            )
+            if "face_assignment_controls" in tables
+            else 0
+        )
+        recent_operations = (
+            min(
+                20,
+                int(
+                    connection.execute(
+                        "SELECT COUNT(*) AS total FROM person_operations"
+                    ).fetchone()["total"]
+                ),
+            )
+            if "person_operations" in tables
+            else 0
+        )
         confirmed = int(
             connection.execute(
                 "SELECT COUNT(*) AS total FROM face_person_links WHERE decision = 'CONFIRMED'"
@@ -458,6 +505,14 @@ def face_summary(
             "faces": current_faces,
             "low_quality_faces": low_quality,
             "persons": persons,
+            # P3-03 person-knowledge counts: named vs unnamed active groups, the alias rows,
+            # the suggestions a human decision is still holding back, and the size of the
+            # recent-operation window. Never a name, an alias text or a person id.
+            "named_persons": named_persons,
+            "unnamed_persons": unnamed_persons,
+            "aliases": aliases,
+            "pending_confirmation": pending_confirmation,
+            "recent_operations": recent_operations,
             "confirmed_links": confirmed,
             "suggested_links": suggested,
             "manual_links": manual,

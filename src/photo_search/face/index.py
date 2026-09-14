@@ -284,6 +284,13 @@ class FaceIndexCoordinator:
         )
         if link is None:
             return False
+        locked, excluded = blocked_face_links(self.catalog.connection)
+        if str(face["face_id"]) in locked or (
+            str(face["face_id"]),
+            int(link["person_id"]),
+        ) in excluded:
+            # Human knowledge wins over the representative ranking (ADR-0006 §6).
+            return False
         ranked = self.catalog.read_all(
             "SELECT f.face_id FROM face_person_links AS l "
             "JOIN faces AS f ON f.face_id = l.face_id "
@@ -341,6 +348,9 @@ class FaceIndexCoordinator:
             "WHERE c.generation_id = ? AND c.is_representative = 1 ORDER BY c.face_id",
             (str(generation["generation_id"]),),
         )
+        # A human lock or an active human denial is read here too, so a candidate scan can
+        # never offer a face the automatic path is forbidden to touch (ADR-0006 §6).
+        locked, excluded = blocked_face_links(self.catalog.connection)
         return [
             Candidate(
                 face_id=str(row["face_id"]),
@@ -351,6 +361,8 @@ class FaceIndexCoordinator:
                 ),
             )
             for row in rows
+            if str(row["face_id"]) not in locked
+            and (str(row["face_id"]), int(row["person_id"])) not in excluded
         ]
 
     def index_state(self) -> dict[str, Any]:
@@ -389,6 +401,44 @@ def _effective_link(connection: sqlite3.Connection, face_id: str) -> Any:
         "SELECT * FROM face_person_links WHERE face_id = ? AND decision = 'CONFIRMED'",
         (str(face_id),),
     ).fetchone()
+
+
+def human_control_tables(connection: sqlite3.Connection) -> set[str]:
+    """The human-control tables that exist in *this* catalog (P3-03's ``0011``)."""
+    names = {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    return {name for name in ("face_assignment_controls", "face_exclusions") if name in names}
+
+
+def blocked_face_links(connection: sqlite3.Connection) -> tuple[set[str], set[tuple[str, int]]]:
+    """The face links a human decision already refuses (ADR-0006 §6, ADR-0005 §5 in spirit).
+
+    A ``MANUAL_UNASSIGNED`` face must not come back through a merge, and an effective link
+    that an active exclusion forbids must not be offered as a representative either. Those
+    are the two facts P3-02's ``human_controlled_face_ids`` guards at *write* time; this is
+    the same rule at *read* time, so a candidate scan can never resurrect them.
+    """
+    tables = human_control_tables(connection)
+    locked: set[str] = set()
+    excluded: set[tuple[str, int]] = set()
+    if "face_assignment_controls" in tables:
+        locked = {
+            str(row["face_id"])
+            for row in connection.execute(
+                "SELECT face_id FROM face_assignment_controls "
+                "WHERE mode = 'MANUAL_UNASSIGNED'"
+            ).fetchall()
+        }
+    if "face_exclusions" in tables:
+        excluded = {
+            (str(row["face_id"]), int(row["person_id"]))
+            for row in connection.execute(
+                "SELECT face_id, person_id FROM face_exclusions WHERE active = 1"
+            ).fetchall()
+        }
+    return locked, excluded
 
 
 def _suggest(

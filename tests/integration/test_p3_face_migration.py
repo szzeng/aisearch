@@ -68,8 +68,10 @@ def db_path(tmp_path: Path) -> Path:
 def migrations_upto(tmp_path: Path, version: int) -> Path:
     directory = tmp_path / f"migrations-{version}"
     directory.mkdir(parents=True, exist_ok=True)
-    for number, source in schema.migration_files():
-        if number <= int(version):
+    # Read the real migration set directly: a case that pins SUPPORTED_SCHEMA_VERSION to an
+    # older version must still be able to copy that version's frozen scripts.
+    for source in sorted(REAL_MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+        if int(source.name.split("_", 1)[0]) <= int(version):
             shutil.copy2(source, directory / source.name)
     return directory
 
@@ -150,7 +152,8 @@ def test_migration_scripts_are_continuous_and_0010_is_the_face_layer() -> None:
     assert versions == list(range(1, SUPPORTED + 1))
     assert versions[9] == 10
     assert (REAL_MIGRATIONS_DIR / "0010_face_core.sql").is_file()
-    assert SUPPORTED == 10
+    # P3-03 appended 0011; this file still pins the 0010 step itself.
+    assert SUPPORTED >= V10
 
 
 def test_v9_to_v10_is_continuous_backed_up_and_lossless(

@@ -51,8 +51,12 @@ SCRFD detector and ArcFace recogniser with the P0-04 weights pinned by size and 
 (`faces`/`face_embeddings`/`persons`/`face_person_links`/`face_association_queue`), the independent face
 candidate index with its own generations and outbox, and the calibrated conservative association (merge `0.56`,
 suggest `0.29`, conflicts and low-quality faces only ever become suggestions); 87 new cases,
-**schema_version 9 → 10**). This closes the face-detection half of the P3 phase; P3-03 is the current task,
-with its C2 rules frozen in ADR-0006 and production implementation still pending.
+**schema_version 9 → 10**). This closes the face-detection half of the P3 phase.
+**P3-03 is PASS** (B + D + C level: the versioned `nfc1:` `name_key`, the one rename / same-name / explicit
+merge use case, `merged_into` canonical resolution with a bounded cycle refusal, the compensating undo with
+forward-only revisions, the human-control downgrades that keep `MANUAL_UNASSIGNED`/exclusion facts intact,
+the four `/api/v1` person paths with their frozen error codes, and the five read-only person counts in
+`face_summary`; 74 new cases, **schema_version 10 → 11**). P3-04 is the current task.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -687,6 +691,36 @@ GPU 上跑人脸）；真实年龄变化/遮挡/眼镜/强侧脸/低照度；真
 候选索引为 SQLite 派生表而非 ANN；世代切换后的新旧脸映射。若要现在就补 GPU 证据，建议手动切
 **C1 / GPT-5.6 Terra / medium** 做一次 GPU/DLL bring-up（不阻塞 P3-03）。
 
+## Latest person-knowledge closure — P3-03 (2026-09-15)
+
+P3-03 已实现人物命名、同名合并、旧 ID 重定向与补偿撤销并通过 **B + D + C** 级验收，报告
+[P3-03 报告](reports/P3-03-person-naming-merge-redirect.md)。起点 HEAD `d4eae44`（P3-03 规则冻结），工作树干净。
+
+新增 `src/photo_search/persons/**`（`nfc1:` 版本化 name_key、唯一 canonical 解析器、`PERSON_BUNDLE`
+前值/后值快照、唯一合并用例与补偿、薄 facade）与连续增量迁移
+`catalog/migrations/0011_person_knowledge.sql`：**`schema_version` 推进到 11**，`0001`～`0010` 未改；
+新增 `person_operations`（request_id 幂等唯一、五类 type、单调且唯一的 operation_revision、UNDONE 必须带
+`undone_by`）、`person_operation_items`（逐实体 before/after 快照与操作后 revision）、`person_aliases`
+（人物内唯一、跨人物可同名，永不触发合并）、`face_assignment_controls` 与 `face_exclusions`（架构必需列
+一字不多，保证 P3-02 的人工优先用例继续可用），并按 0009 的已验收范式重建 `search_projection_queue`
+只加第六个 cause `PERSON_CHANGED`（0006/0009 触发器一字未改）。`rename_person` 与 `merge_persons`
+调用**同一个** `_apply_merge`；语义 no-op 仍写 `COMMITTED` 操作但不推进任何 revision/outbox；
+撤销是新 `UNDO` 操作，所有恢复的 revision 从当前值向前递增，目标被后续编辑时整次拒绝并列出
+`entity_type/entity_id/reason`。`/api/v1` 新增 4 条人物路径（OpenAPI 31 → 35），`face_summary` 新增
+`named_persons/unnamed_persons/aliases/pending_confirmation/recent_operations` 五个只读计数。
+本任务未改 ADR-0001～0006、冻结 JSON schema、依赖、`workers/**`、`ingestion/**`、`geo/**`、
+`places/**`、前端资源或打包入口。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=1038 failures=0 errors=0 skipped=1`，324.6 s |
+| 本任务新增用例 | 74 例（contract 31、merge 9、operations 12、undo 10、api 5、migration 6、lifecycle 1） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实夹具 | `tools/diagnostics/person_smoke_fixture.py --device cpu` exit 0：4 资产/9 脸/8 个未命名分组；RENAME → MERGE_BY_NAME → UNDO → MERGE → UNDO 全部 `replayed=false`；人工未归类脸降为 `SUGGESTED/MANUAL_UNASSIGNED`、撤销后回到 `CONFIRMED/AUTO` 且人工模式行保留；`named=1 / unnamed=7 / aliases=0 / pending_confirmation=0 / recent_operations=5`；撤销后 3 张候选恢复，最终 `entries={CONFIRMED: 9}` |
+| v10→v11 迁移 | 备份内 `schema_version=10` 且无 person 表；单事务推进；旧行（含 P3-01/P3-02 行与队列行）逐列不变；队列既有 `OCR_TEXT_CHANGED` 行保留且新 cause 可用；未知 cause 仍被拒；注入损坏 0011 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
+| C 级 | 真实 onedir 重建 + `packaged_api_smoke.py --work-dir D:\PhotoSearchSmoke\P3-03-final`：`status=ok`、`problems=[]`、`startup_seconds=1.2`、`coverage_capabilities_status=200`、`coverage_has_no_local_path=true`；bundle 内含 `0001`～`0011`（`0011` 与源码 SHA-256 `0CD3DC42…A064325` 一致），打包后的 data root 实测 `schema_version=11` 且含 4 张新表 |
+| D 级注入 | 幂等重放/载荷冲突、过期 revision、批量中途失败整体回滚、重定向环、`MANUAL_UNASSIGNED` 与活动排除（含指向源的排除）降级、合并后新增成员导致撤销整体拒绝、undo an UNDO、未知操作、no-op 零副作用——全部零写入或按设计拒绝 |
+
 ## GPU status
 
 Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 / CUDA UMD 13.4):
@@ -858,10 +892,18 @@ BLOCKED, SYNCED}`，无原文、无坐标、无路径）。本任务未改 ADR/�
 87 个新增用例；真实夹具 6 资产/12 脸/8 个未命名分组；真实 onedir 重建 + 打包 smoke `problems=[]`；
 `schema_version 9 → 10`）。任务卡 `docs/tasks/P3-02.md`（历史任务卡，保留供追溯）。
 
-**当前任务是 P3-03 — 人物名称、NFC `name_key`、同名合并、旧 ID 重定向**（V3.1 §8 表 P3-03 行）。
-**C2 规则冻结已完成，生产实现尚未开始，状态为 IMPLEMENTATION PENDING。** 冻结决策见
-`docs/decisions/ADR-0006-person-naming-merge-operation-contract.md`，任务卡 `docs/tasks/P3-03.md` 已指向该
-决策。下一步推荐 **DS-H（DeepSeek V4.1 Flash / 高推理）** 按冻结规则实现；实现通过 B + D + C 后再交
-**C2 / GPT-5.6 Sol / high** 审查。模型切换由用户在 Codex 中手动完成。
+**P3-03 — 人物名称、NFC `name_key`、同名合并、旧 ID 重定向：PASS.** 见
+[P3-03 报告](reports/P3-03-person-naming-merge-redirect.md)（B + D + C 级：1038 例 0 失败 / 1 跳过，
+74 个新增用例；真实夹具 4 资产/9 脸/8 个未命名分组；真实 onedir 重建 + 打包 smoke `problems=[]`；
+`schema_version 10 → 11`）。任务卡 `docs/tasks/P3-03.md`（历史任务卡，保留供追溯）。
+冻结决策 `docs/decisions/ADR-0006-person-naming-merge-operation-contract.md` 在实现期**一字未改**；
+按任务卡要求，实现后仍需交 **C2 / GPT-5.6 Sol / high** 独立审查。
+
+**当前任务是 P3-04A — 单脸纠错、合照与人工锁定：C2 规则冻结**（V3.1 §8 表 P3-04 行；ADR-0006 §1 已把
+这些产品写入口留给 P3-04，但操作词汇/记录形状/API/撤销语义尚未冻结），任务卡
+[docs/tasks/P3-04A.md](tasks/P3-04A.md)。0011 只把 `face_assignment_controls`/`face_exclusions` 建成了
+事实载体，P3-04A 负责把单脸取消/指定/恢复自动、合照逐脸选择、排除关系与晚到结果拒绝的规则**冻结成
+ADR + 机器可读伴随物 + 契约测试**，随后由 **P3-04B** 交 **DS-H** 实现并通过 B + D（必要时加 C）。
+下一步推荐 **C2 / GPT-5.6 Sol / high** 先冻结规则。模型切换由用户在 Codex 中手动完成。
 
 Model switching remains manual; the repository only records the recommended model per stage.

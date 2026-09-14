@@ -97,6 +97,13 @@ V6_TABLES = (
     "face_person_links",
     "faces",
     "persons",
+    # P3-03: the person-knowledge layer (operation log with its before/after bundles, search
+    # aliases, and the two human control tables).
+    "face_assignment_controls",
+    "face_exclusions",
+    "person_aliases",
+    "person_operation_items",
+    "person_operations",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

@@ -28,7 +28,13 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: suggestions, and an independent face candidate index with its own generations and its
 #: own outbox. It shares no identity with the image index (``index_entries`` stays
 #: asset-level) and adds no cause to the P2-04 reprojection queue.
-SUPPORTED_SCHEMA_VERSION = 10
+#: ``0011`` adds the P3-03 person-knowledge layer: the immutable operation log with its
+#: per-person before/after bundles, the search aliases of a named person, and the two human
+#: control tables (``face_assignment_controls``/``face_exclusions``) whose *read* order
+#: P3-02 already implements. Same-name uniqueness stays the 0010 partial unique index; the
+#: only shared table this script replaces is ``search_projection_queue``, whose frozen
+#: ``CHECK`` list would otherwise refuse the sixth ``PERSON_CHANGED`` cause.
+SUPPORTED_SCHEMA_VERSION = 11
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

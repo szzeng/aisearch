@@ -1,0 +1,1097 @@
+"""The one person business use case of ADR-0006: name, merge, redirect and compensate.
+
+A rename, a same-name save and an explicit single/batch merge are *not* three
+implementations. ``rename_person`` resolves the active same-name target and, when that
+target is somebody else, calls exactly the same :func:`_apply_merge` that
+``merge_persons`` calls. That is the property the task card asks for: the UI can never
+produce a second, subtly different merge path.
+
+Every write follows the ADR-0006 §8 order inside one ``BEGIN IMMEDIATE`` transaction:
+
+1. the authoritative person/alias/link/redirect rows and the operation items;
+2. the changed-before and changed-after face and ``DISTINCT asset_id`` sets;
+3. exactly one ``catalog_filter_revision`` bump with cause ``PERSON_CHANGED`` and the P2-03
+   projection refresh for the already confirmed image vectors;
+4. the per-asset ``search_projection_queue`` upsert;
+5. ``queue_candidate()`` for every affected face, so the independent face candidate index
+   degrades to ``PENDING_REPAIR`` and catches up in the background;
+6. the operation's final ``catalog_filter_revision``.
+
+A semantic no-op (the same name saved again, or an explicit merge whose sources all resolve
+to the target) still writes a ``COMMITTED`` operation so the request is provably answered -
+but it moves no revision, writes no outbox row and touches no candidate entry.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from photo_search.catalog.errors import CatalogError
+from photo_search.face.contract import FACE_PROCESSOR_ID, FACE_SPACE_ID, FACE_SPEC_REVISION
+from photo_search.face.processor import generation_id_for, queue_candidate
+from photo_search.persons import bundle as bundle_module
+from photo_search.persons import contracts
+from photo_search.persons.contracts import (
+    PERSON_IDEMPOTENCY_CONFLICT,
+    PERSON_NOT_FOUND,
+    PERSON_OPERATION_NOT_UNDOABLE,
+    PERSON_REVISION_CONFLICT,
+    check_expected_revision,
+    check_merge_sources,
+    check_person_id,
+    check_request_id,
+    fail,
+    normalize_person_name,
+    operation_id_for,
+    payload_sha256,
+)
+from photo_search.persons.identity import (
+    active_person_id_for_name_key,
+    require_person_row,
+    resolve_canonical_person_id,
+)
+from photo_search.places import revision as revision_module
+
+#: Implementation bound for one ``IN (...)`` lookup. SQLite's default variable limit is
+#: well above this; chunking keeps a large person group's projection catch-up bounded.
+_IN_CHUNK = 400
+
+#: The person-level fields an undo restores on the ``persons`` row itself.
+_PERSON_FIELDS = ("name", "name_key", "avatar_face_id", "merged_into")
+
+
+def _chunks(values: Sequence[Any], size: int = _IN_CHUNK) -> list[list[Any]]:
+    return [list(values[index : index + size]) for index in range(0, len(values), size)]
+
+
+def _placeholders(count: int) -> str:
+    return ", ".join("?" for _ in range(int(count)))
+
+
+def _next_operation_revision(connection: sqlite3.Connection) -> int:
+    return int(
+        connection.execute(
+            "SELECT COALESCE(MAX(operation_revision), 0) + 1 FROM person_operations"
+        ).fetchone()[0]
+    )
+
+
+def _operation_columns() -> str:
+    return (
+        "operation_id, request_id, payload_sha256, type, source_person_ids_json, "
+        "target_person_id, state, operation_revision, undo_of_operation_id, undone_by, "
+        "catalog_filter_revision, created_at, committed_at"
+    )
+
+
+def operation_row(connection: sqlite3.Connection, operation_id: str) -> Any:
+    return connection.execute(
+        f"SELECT {_operation_columns()} FROM person_operations WHERE operation_id = ?",
+        (str(operation_id),),
+    ).fetchone()
+
+
+def _operation_items(connection: sqlite3.Connection, operation_id: str) -> list[Any]:
+    return list(
+        connection.execute(
+            "SELECT item_index, entity_type, entity_id, before_value_json, after_value_json, "
+            "after_revision FROM person_operation_items WHERE operation_id = ? "
+            "ORDER BY item_index",
+            (str(operation_id),),
+        ).fetchall()
+    )
+
+
+def _item_projection(row: Any) -> dict[str, Any]:
+    before = bundle_module.load_bundle(row["before_value_json"])
+    after = bundle_module.load_bundle(row["after_value_json"])
+    return {
+        "entity_type": str(row["entity_type"]),
+        "entity_id": int(row["entity_id"]),
+        "changed": bool(bundle_module.bundle_differences(after, before)),
+        "merged_into": after.get("merged_into"),
+        "revision": int(after.get("revision") or row["after_revision"]),
+    }
+
+
+def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
+    """Rebuild the documented response of an already committed operation (a replay)."""
+    items = [
+        _item_projection(row) for row in _operation_items(connection, operation["operation_id"])
+    ]
+    return {
+        "operation_id": str(operation["operation_id"]),
+        "operation_type": str(operation["type"]),
+        "operation_revision": int(operation["operation_revision"]),
+        "status": "UNDONE" if str(operation["state"]) == "UNDONE" else "COMMITTED",
+        "undo_of_operation_id": (
+            None
+            if operation["undo_of_operation_id"] is None
+            else str(operation["undo_of_operation_id"])
+        ),
+        "changed": any(bool(item["changed"]) for item in items),
+        "catalog_filter_revision": int(operation["catalog_filter_revision"]),
+        "replayed": True,
+        "items": items,
+    }
+
+
+def _replay(
+    connection: sqlite3.Connection, *, request_id: str, digest: str
+) -> dict[str, Any] | None:
+    """The idempotency gate. It runs first, before any person or revision is inspected."""
+    row = connection.execute(
+        f"SELECT {_operation_columns()} FROM person_operations WHERE request_id = ?",
+        (str(request_id),),
+    ).fetchone()
+    if row is None:
+        return None
+    if str(row["payload_sha256"]) != str(digest):
+        raise fail(
+            PERSON_IDEMPOTENCY_CONFLICT,
+            "this request_id is already bound to a different payload",
+            operation_id=str(row["operation_id"]),
+        )
+    return operation_result(connection, row)
+
+
+def _require_revision(
+    connection: sqlite3.Connection, *, canonical_person_id: int, person_id: int, expected: int
+) -> None:
+    row = require_person_row(connection, int(canonical_person_id))
+    current = int(row["revision"])
+    if current != int(expected):
+        raise fail(
+            PERSON_REVISION_CONFLICT,
+            "the current person revision is not the expected one",
+            person_id=int(person_id),
+            canonical_person_id=int(canonical_person_id),
+            expected_revision=int(expected),
+            current_revision=current,
+        )
+
+
+# --------------------------------------------------------------------------- merge core
+def _source_alias_texts(
+    connection: sqlite3.Connection, *, source: int, formal_name: str | None
+) -> list[tuple[str, str]]:
+    """The alias texts a source contributes: its aliases plus its formal display name."""
+    pairs: list[tuple[str, str]] = []
+    for row in connection.execute(
+        "SELECT alias, normalized_alias FROM person_aliases WHERE person_id = ? "
+        "ORDER BY normalized_alias, alias",
+        (int(source),),
+    ).fetchall():
+        pairs.append((str(row["alias"]), str(row["normalized_alias"])))
+    if formal_name is not None:
+        pairs.append((str(formal_name), str(formal_name)))
+    return pairs
+
+
+def _add_alias(
+    connection: sqlite3.Connection,
+    *,
+    person_id: int,
+    alias: str,
+    normalized_alias: str,
+    operation_id: str,
+    now_ms: int,
+    forbidden: str | None,
+) -> bool:
+    """Add one alias inside the target, deduplicated by its normalised form."""
+    if str(normalized_alias) == str(forbidden):
+        # ADR-0006 §6: the target's current formal name is never also its own alias.
+        return False
+    cursor = connection.execute(
+        "INSERT INTO person_aliases(person_id, alias, normalized_alias, last_operation_id, "
+        "created_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(person_id, normalized_alias) DO NOTHING",
+        (int(person_id), str(alias), str(normalized_alias), str(operation_id), int(now_ms)),
+    )
+    return bool(cursor.rowcount)
+
+
+def _manual_unassigned_faces(connection: sqlite3.Connection) -> set[str]:
+    return {
+        str(row["face_id"])
+        for row in connection.execute(
+            "SELECT face_id FROM face_assignment_controls WHERE mode = 'MANUAL_UNASSIGNED'"
+        ).fetchall()
+    }
+
+
+def _active_exclusion_pairs(
+    connection: sqlite3.Connection, face_ids: Sequence[str]
+) -> set[tuple[str, int]]:
+    """Active ``(face, canonical person)`` exclusions of the faces a merge touches."""
+    pairs: set[tuple[str, int]] = set()
+    for chunk in _chunks(sorted({str(value) for value in face_ids})):
+        rows = connection.execute(
+            "SELECT face_id, person_id FROM face_exclusions WHERE active = 1 "
+            f"AND face_id IN ({_placeholders(len(chunk))})",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            # The excluded person may itself have been merged, so it is canonicalised.
+            canonical = resolve_canonical_person_id(connection, int(row["person_id"]))
+            pairs.add((str(row["face_id"]), int(canonical)))
+    return pairs
+
+
+def _link_rank(link: Mapping[str, Any]) -> tuple[int, int]:
+    """``CONFIRMED`` beats ``SUGGESTED``; for the same decision the newer row wins."""
+    return (1 if str(link["decision"]) == "CONFIRMED" else 0, int(link["revision"]))
+
+
+def _rewrite_links(
+    connection: sqlite3.Connection,
+    *,
+    target: int,
+    sources: Sequence[int],
+    operation_id: str,
+    now_ms: int,
+) -> None:
+    """Collapse every affected link onto the target in one write-back.
+
+    The rows are collected in memory first, so the partial unique index on the effective
+    link never sees a half-moved set: one row per ``(face_id, assignment_kind)`` survives
+    (``CONFIRMED`` over ``SUGGESTED``, then the newer revision), and an effective link that
+    the human control tables forbid is downgraded to a suggestion with a frozen reason
+    instead of being applied.
+    """
+    affected = [int(target), *(int(value) for value in sources)]
+    rows = connection.execute(
+        "SELECT face_id, person_id, assignment_kind, decision, confidence, reason, revision, "
+        "last_operation_id FROM face_person_links "
+        f"WHERE person_id IN ({_placeholders(len(affected))})",
+        tuple(affected),
+    ).fetchall()
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row["face_id"]), str(row["assignment_kind"]))
+        candidate = {
+            "face_id": str(row["face_id"]),
+            "origin_person_id": int(row["person_id"]),
+            "assignment_kind": str(row["assignment_kind"]),
+            "decision": str(row["decision"]),
+            "confidence": float(row["confidence"]),
+            "reason": None if row["reason"] is None else str(row["reason"]),
+            "revision": int(row["revision"]),
+            "last_operation_id": (
+                None if row["last_operation_id"] is None else str(row["last_operation_id"])
+            ),
+        }
+        existing = grouped.get(key)
+        if existing is None or _link_rank(candidate) > _link_rank(existing):
+            grouped[key] = candidate
+
+    locked = _manual_unassigned_faces(connection)
+    excluded = _active_exclusion_pairs(connection, [key[0] for key in grouped])
+    for link in grouped.values():
+        if str(link["decision"]) != "CONFIRMED":
+            continue
+        if str(link["face_id"]) in locked:
+            link["decision"] = "SUGGESTED"
+            link["reason"] = contracts.REASON_MANUAL_UNASSIGNED
+            link["revision"] = int(link["revision"]) + 1
+        elif (str(link["face_id"]), int(target)) in excluded:
+            link["decision"] = "SUGGESTED"
+            link["reason"] = contracts.REASON_HUMAN_CONFLICT
+            link["revision"] = int(link["revision"]) + 1
+
+    connection.execute(
+        f"DELETE FROM face_person_links WHERE person_id IN ({_placeholders(len(affected))})",
+        tuple(affected),
+    )
+    for key in sorted(grouped):
+        link = grouped[key]
+        moved = int(link["origin_person_id"]) != int(target)
+        downgraded = str(link["decision"]) != "CONFIRMED"
+        last_operation_id = (
+            str(operation_id) if (moved or downgraded) else link["last_operation_id"]
+        )
+        connection.execute(
+            "INSERT INTO face_person_links(face_id, person_id, assignment_kind, decision, "
+            "confidence, reason, revision, last_operation_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(link["face_id"]),
+                int(target),
+                str(link["assignment_kind"]),
+                str(link["decision"]),
+                float(link["confidence"]),
+                link["reason"],
+                int(link["revision"]),
+                last_operation_id,
+                int(now_ms),
+                int(now_ms),
+            ),
+        )
+
+
+def _reassign_avatar(connection: sqlite3.Connection, *, target: int, now_ms: int) -> None:
+    """Pick a representative only when the target has no avatar at all.
+
+    The candidate is an effective, quality-``OK`` member inside the *current* face
+    processor's space, ranked ``face_pixels DESC, face_id ASC``. No vector is recomputed and
+    no face from another space can ever be chosen.
+    """
+    row = connection.execute(
+        "SELECT avatar_face_id FROM persons WHERE person_id = ?", (int(target),)
+    ).fetchone()
+    if row is None or row["avatar_face_id"] is not None:
+        return
+    best = connection.execute(
+        "SELECT f.face_id AS face_id FROM face_person_links AS l "
+        "JOIN faces AS f ON f.face_id = l.face_id "
+        "JOIN face_embeddings AS e ON e.face_id = f.face_id AND e.processor_id = ? "
+        "WHERE l.person_id = ? AND l.decision = 'CONFIRMED' AND f.quality_state = 'OK' "
+        "AND f.spec_revision = ? AND e.space_id = ? "
+        "ORDER BY f.face_pixels DESC, f.face_id ASC LIMIT 1",
+        (str(FACE_PROCESSOR_ID), int(target), str(FACE_SPEC_REVISION), str(FACE_SPACE_ID)),
+    ).fetchone()
+    if best is None:
+        return
+    connection.execute(
+        "UPDATE persons SET avatar_face_id = ?, updated_at = ? WHERE person_id = ?",
+        (str(best["face_id"]), int(now_ms), int(target)),
+    )
+
+
+def _apply_rename(
+    connection: sqlite3.Connection,
+    *,
+    person_id: int,
+    display_name: str,
+    name_key: str,
+    now_ms: int,
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
+    before = {int(person_id): bundle_module.read_bundle(connection, int(person_id))}
+    connection.execute(
+        "UPDATE persons SET name = ?, name_key = ?, revision = revision + 1, updated_at = ? "
+        "WHERE person_id = ?",
+        (str(display_name), str(name_key), int(now_ms), int(person_id)),
+    )
+    after = {int(person_id): bundle_module.read_bundle(connection, int(person_id))}
+    return before, after
+
+
+def _apply_merge(
+    connection: sqlite3.Connection,
+    *,
+    target: int,
+    sources: Sequence[int],
+    operation_id: str,
+    now_ms: int,
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
+    affected = [int(target), *(int(value) for value in sources)]
+    before = {person: bundle_module.read_bundle(connection, person) for person in affected}
+    target_name = before[int(target)]["name"]
+    for source in sources:
+        for alias, normalized in _source_alias_texts(
+            connection, source=int(source), formal_name=before[int(source)]["name"]
+        ):
+            _add_alias(
+                connection,
+                person_id=int(target),
+                alias=alias,
+                normalized_alias=normalized,
+                operation_id=str(operation_id),
+                now_ms=int(now_ms),
+                forbidden=target_name,
+            )
+        connection.execute("DELETE FROM person_aliases WHERE person_id = ?", (int(source),))
+    for source in sources:
+        # ADR-0006 §6: a source keeps its id and its name, only the redirect is written.
+        connection.execute(
+            "UPDATE persons SET merged_into = ?, revision = revision + 1, updated_at = ? "
+            "WHERE person_id = ?",
+            (int(target), int(now_ms), int(source)),
+        )
+    connection.execute(
+        "UPDATE persons SET revision = revision + 1, updated_at = ? WHERE person_id = ?",
+        (int(now_ms), int(target)),
+    )
+    _rewrite_links(
+        connection,
+        target=int(target),
+        sources=[int(value) for value in sources],
+        operation_id=str(operation_id),
+        now_ms=int(now_ms),
+    )
+    _reassign_avatar(connection, target=int(target), now_ms=int(now_ms))
+    after = {person: bundle_module.read_bundle(connection, person) for person in affected}
+    return before, after
+
+
+# ------------------------------------------------------------------ derived catch-up
+def _affected_faces(
+    before: Mapping[int, Mapping[str, Any]], after: Mapping[int, Mapping[str, Any]]
+) -> list[str]:
+    faces: set[str] = set()
+    for bucket in (before, after):
+        for bundle in bucket.values():
+            for link in bundle.get("links", []):
+                faces.add(str(link["face_id"]))
+    return sorted(faces)
+
+
+def _assets_of_faces(connection: sqlite3.Connection, face_ids: Sequence[str]) -> list[int]:
+    assets: set[int] = set()
+    for chunk in _chunks(sorted({str(value) for value in face_ids})):
+        rows = connection.execute(
+            "SELECT DISTINCT asset_id FROM faces "
+            f"WHERE face_id IN ({_placeholders(len(chunk))})",
+            tuple(chunk),
+        ).fetchall()
+        assets.update(int(row["asset_id"]) for row in rows)
+    return sorted(assets)
+
+
+def _queue_assets(
+    connection: sqlite3.Connection, asset_ids: Sequence[int], *, now_ms: int
+) -> None:
+    for asset_id in sorted({int(value) for value in asset_ids}):
+        connection.execute(
+            "INSERT INTO search_projection_queue(asset_id, cause, queued_at) "
+            "VALUES (?, ?, ?) ON CONFLICT(asset_id) DO UPDATE SET cause = excluded.cause, "
+            "queued_at = excluded.queued_at",
+            (int(asset_id), contracts.CAUSE_PERSON_CHANGED, int(now_ms)),
+        )
+
+
+def _repair_candidates(
+    connection: sqlite3.Connection, face_ids: Sequence[str], *, now_ms: int
+) -> None:
+    """Degrade the affected faces to ``PENDING_REPAIR`` and republish in the background."""
+    generation_id = generation_id_for(str(FACE_SPACE_ID), str(FACE_PROCESSOR_ID))
+    generation = connection.execute(
+        "SELECT generation_id FROM face_index_generations WHERE generation_id = ?",
+        (str(generation_id),),
+    ).fetchone()
+    if generation is None:
+        # No face candidate index has ever been created for this catalog: nothing to repair.
+        return
+    for face_id in sorted({str(value) for value in face_ids}):
+        entry = connection.execute(
+            "SELECT 1 FROM face_index_entries WHERE generation_id = ? AND face_id = ?",
+            (str(generation_id), str(face_id)),
+        ).fetchone()
+        if entry is None:
+            continue
+        face = connection.execute(
+            "SELECT artifact_id FROM faces WHERE face_id = ?", (str(face_id),)
+        ).fetchone()
+        if face is None:
+            continue
+        queue_candidate(
+            connection,
+            face_id=str(face_id),
+            generation_id=str(generation_id),
+            artifact_id=str(face["artifact_id"]),
+            now_ms=int(now_ms),
+        )
+
+
+def _open_operation(
+    connection: sqlite3.Connection,
+    *,
+    operation_id: str,
+    request_id: str,
+    digest: str,
+    operation_type: str,
+    source_person_ids: Sequence[int],
+    target_person_id: int | None,
+    undo_of_operation_id: str | None,
+    now_ms: int,
+) -> int:
+    """Write the operation row first.
+
+    ADR-0006 §8 item 1 makes the operation and its items part of the *authority* write, and
+    the rows the change touches (an alias, for one) reference the operation by id, so the
+    operation row exists before anything else in this transaction moves.
+    """
+    operation_revision = _next_operation_revision(connection)
+    connection.execute(
+        "INSERT INTO person_operations(operation_id, request_id, payload_sha256, type, "
+        "source_person_ids_json, target_person_id, state, operation_revision, "
+        "undo_of_operation_id, undone_by, catalog_filter_revision, created_at, committed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'COMMITTED', ?, ?, NULL, 0, ?, ?)",
+        (
+            str(operation_id),
+            str(request_id),
+            str(digest),
+            str(operation_type),
+            json.dumps(
+                sorted({int(value) for value in source_person_ids}), separators=(",", ":")
+            ),
+            None if target_person_id is None else int(target_person_id),
+            int(operation_revision),
+            None if undo_of_operation_id is None else str(undo_of_operation_id),
+            int(now_ms),
+            int(now_ms),
+        ),
+    )
+    return int(operation_revision)
+
+
+def _close_operation(
+    connection: sqlite3.Connection,
+    *,
+    operation_id: str,
+    operation_revision: int,
+    operation_type: str,
+    undo_of_operation_id: str | None,
+    before: dict[int, dict[str, Any]],
+    after: dict[int, dict[str, Any]],
+    now_ms: int,
+    refresh: revision_module.ProjectionRefresh | None,
+) -> dict[str, Any]:
+    """Write the items, queue the derived catch-up and return the operation response."""
+    affected = sorted(int(value) for value in before)
+    items: list[dict[str, Any]] = []
+    changed = False
+    for index, person_id in enumerate(affected):
+        before_bundle = before[person_id]
+        after_bundle = after[person_id]
+        item_changed = bool(bundle_module.bundle_differences(after_bundle, before_bundle))
+        changed = changed or item_changed
+        connection.execute(
+            "INSERT INTO person_operation_items(operation_id, item_index, entity_type, "
+            "entity_id, before_value_json, after_value_json, after_revision) "
+            "VALUES (?, ?, 'PERSON_BUNDLE', ?, ?, ?, ?)",
+            (
+                str(operation_id),
+                int(index),
+                int(person_id),
+                bundle_module.bundle_json(before_bundle),
+                bundle_module.bundle_json(after_bundle),
+                int(after_bundle["revision"]),
+            ),
+        )
+        items.append(
+            {
+                "entity_type": "PERSON_BUNDLE",
+                "entity_id": int(person_id),
+                "changed": bool(item_changed),
+                "merged_into": after_bundle["merged_into"],
+                "revision": int(after_bundle["revision"]),
+            }
+        )
+    if changed:
+        # ADR-0006 §8 items 2-5, in this order, inside the same transaction.
+        faces = _affected_faces(before, after)
+        assets = _assets_of_faces(connection, faces)
+        filter_revision = revision_module.bump_filter_revision(
+            connection,
+            cause=contracts.CAUSE_PERSON_CHANGED,
+            now_ms=int(now_ms),
+            asset_ids=assets,
+            refresh=refresh,
+        )
+        _queue_assets(connection, assets, now_ms=int(now_ms))
+        _repair_candidates(connection, faces, now_ms=int(now_ms))
+    else:
+        filter_revision = revision_module.read_filter_revision(connection)
+    connection.execute(
+        "UPDATE person_operations SET catalog_filter_revision = ? WHERE operation_id = ?",
+        (int(filter_revision), str(operation_id)),
+    )
+    return {
+        "operation_id": str(operation_id),
+        "operation_type": str(operation_type),
+        "operation_revision": int(operation_revision),
+        "status": "COMMITTED",
+        "undo_of_operation_id": (
+            None if undo_of_operation_id is None else str(undo_of_operation_id)
+        ),
+        "changed": bool(changed),
+        "catalog_filter_revision": int(filter_revision),
+        "replayed": False,
+        "items": items,
+    }
+
+
+# ------------------------------------------------------------------------- public API
+def rename_person(
+    connection: sqlite3.Connection,
+    *,
+    person_id: int,
+    name: Any,
+    request_id: str,
+    expected_revision: int,
+    now_ms: int,
+    refresh: revision_module.ProjectionRefresh | None = None,
+) -> dict[str, Any]:
+    """Save one display name; a same-name save merges through the same use case."""
+    request_id = check_request_id(request_id)
+    requested = check_person_id(person_id)
+    expected = check_expected_revision(expected_revision)
+    display_name, name_key = normalize_person_name(name)
+    digest = payload_sha256(
+        {
+            "type": "RENAME",
+            "person_id": int(requested),
+            "name": display_name,
+            "expected_revision": int(expected),
+        }
+    )
+    replay = _replay(connection, request_id=request_id, digest=digest)
+    if replay is not None:
+        return replay
+    canonical = resolve_canonical_person_id(connection, requested)
+    _require_revision(
+        connection, canonical_person_id=canonical, person_id=requested, expected=expected
+    )
+    operation_id = operation_id_for(request_id)
+    target = active_person_id_for_name_key(connection, name_key)
+    merging = target is not None and int(target) != int(canonical)
+    operation_type = "MERGE_BY_NAME" if merging else "RENAME"
+    target_person_id = int(target) if merging else int(canonical)
+    operation_revision = _open_operation(
+        connection,
+        operation_id=operation_id,
+        request_id=request_id,
+        digest=digest,
+        operation_type=operation_type,
+        # The recorded ids are the ones the caller named, never a canonical id.
+        source_person_ids=[int(requested)] if merging else [],
+        target_person_id=target_person_id,
+        undo_of_operation_id=None,
+        now_ms=int(now_ms),
+    )
+    if merging:
+        before, after = _apply_merge(
+            connection,
+            target=target_person_id,
+            sources=[int(canonical)],
+            operation_id=operation_id,
+            now_ms=int(now_ms),
+        )
+    elif target is not None:
+        # The same display value saved again: an answered request, not a new state.
+        unchanged = {int(canonical): bundle_module.read_bundle(connection, int(canonical))}
+        before, after = dict(unchanged), dict(unchanged)
+    else:
+        before, after = _apply_rename(
+            connection,
+            person_id=canonical,
+            display_name=display_name,
+            name_key=name_key,
+            now_ms=int(now_ms),
+        )
+    return _close_operation(
+        connection,
+        operation_id=operation_id,
+        operation_revision=operation_revision,
+        operation_type=operation_type,
+        undo_of_operation_id=None,
+        before=before,
+        after=after,
+        now_ms=int(now_ms),
+        refresh=refresh,
+    )
+
+
+def merge_persons(
+    connection: sqlite3.Connection,
+    *,
+    target_person_id: int,
+    target_expected_revision: int,
+    sources: Sequence[Mapping[str, Any]],
+    request_id: str,
+    now_ms: int,
+    refresh: revision_module.ProjectionRefresh | None = None,
+) -> dict[str, Any]:
+    """Explicit single or batch merge into one target (one atomic operation)."""
+    request_id = check_request_id(request_id)
+    requested_target = check_person_id(target_person_id, field="target_person_id")
+    target_expected = check_expected_revision(
+        target_expected_revision, field="target_expected_revision"
+    )
+    normalized = check_merge_sources(sources)
+    digest = payload_sha256(
+        {
+            "type": "MERGE",
+            "target_person_id": int(requested_target),
+            "target_expected_revision": int(target_expected),
+            "sources": normalized,
+        }
+    )
+    replay = _replay(connection, request_id=request_id, digest=digest)
+    if replay is not None:
+        return replay
+    target = resolve_canonical_person_id(connection, requested_target)
+    _require_revision(
+        connection,
+        canonical_person_id=target,
+        person_id=requested_target,
+        expected=target_expected,
+    )
+    canonical_sources: list[int] = []
+    for item in normalized:
+        canonical = resolve_canonical_person_id(connection, item["person_id"])
+        _require_revision(
+            connection,
+            canonical_person_id=canonical,
+            person_id=item["person_id"],
+            expected=item["expected_revision"],
+        )
+        if int(canonical) == int(target) or int(canonical) in canonical_sources:
+            continue
+        canonical_sources.append(int(canonical))
+    canonical_sources.sort()
+    requested_sources = [int(item["person_id"]) for item in normalized]
+    operation_id = operation_id_for(request_id)
+    # The type describes the *request shape*: one named source is a merge, several are a batch.
+    # It therefore stays stable even when every named source already resolves to the target.
+    operation_type = "MERGE" if len(normalized) == 1 else "BATCH_MERGE"
+    operation_revision = _open_operation(
+        connection,
+        operation_id=operation_id,
+        request_id=request_id,
+        digest=digest,
+        operation_type=operation_type,
+        source_person_ids=requested_sources,
+        target_person_id=int(target),
+        undo_of_operation_id=None,
+        now_ms=int(now_ms),
+    )
+    if canonical_sources:
+        before, after = _apply_merge(
+            connection,
+            target=int(target),
+            sources=canonical_sources,
+            operation_id=operation_id,
+            now_ms=int(now_ms),
+        )
+    else:
+        # Every named source already resolves to the target: an answered no-op.
+        unchanged = {int(target): bundle_module.read_bundle(connection, int(target))}
+        before, after = dict(unchanged), dict(unchanged)
+    return _close_operation(
+        connection,
+        operation_id=operation_id,
+        operation_revision=operation_revision,
+        operation_type=operation_type,
+        undo_of_operation_id=None,
+        before=before,
+        after=after,
+        now_ms=int(now_ms),
+        refresh=refresh,
+    )
+
+
+# ------------------------------------------------------------------------- compensation
+def _restore_aliases(
+    connection: sqlite3.Connection,
+    *,
+    entity: int,
+    live: Mapping[str, Any],
+    wanted: Mapping[str, Any],
+    operation_id: str,
+    now_ms: int,
+) -> bool:
+    """Restore one person's alias set exactly; returns whether anything was written."""
+    live_aliases = sorted(
+        (str(alias["normalized_alias"]), str(alias["alias"]))
+        for alias in live.get("aliases", [])
+    )
+    wanted_aliases = sorted(
+        (str(alias["normalized_alias"]), str(alias["alias"]))
+        for alias in wanted.get("aliases", [])
+    )
+    if live_aliases == wanted_aliases:
+        return False
+    connection.execute("DELETE FROM person_aliases WHERE person_id = ?", (int(entity),))
+    for normalized, alias in wanted_aliases:
+        connection.execute(
+            "INSERT INTO person_aliases(person_id, alias, normalized_alias, "
+            "last_operation_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (int(entity), str(alias), str(normalized), str(operation_id), int(now_ms)),
+        )
+    return True
+
+
+def _restore_link_rows(
+    connection: sqlite3.Connection,
+    *,
+    entity: int,
+    live: Mapping[str, Any],
+    wanted: Mapping[str, Any],
+    operation_id: str,
+    now_ms: int,
+) -> bool:
+    """Restore one person's link set; every restored revision moves forward, never back."""
+    live_links = {
+        (str(link["face_id"]), str(link["assignment_kind"])): link
+        for link in live.get("links", [])
+    }
+    wanted_links = {
+        (str(link["face_id"]), str(link["assignment_kind"])): link
+        for link in wanted.get("links", [])
+    }
+    changed = False
+    for key in sorted(set(live_links) - set(wanted_links)):
+        connection.execute(
+            "DELETE FROM face_person_links WHERE face_id = ? AND person_id = ? "
+            "AND assignment_kind = ?",
+            (str(key[0]), int(entity), str(key[1])),
+        )
+        changed = True
+    for key in sorted(wanted_links):
+        target_link = wanted_links[key]
+        current = live_links.get(key)
+        if current is not None and all(
+            current.get(field) == target_link.get(field)
+            for field in ("decision", "confidence", "reason", "last_operation_id")
+        ):
+            continue
+        floor = max(
+            int(target_link["revision"]), 0 if current is None else int(current["revision"])
+        )
+        connection.execute(
+            "INSERT INTO face_person_links(face_id, person_id, assignment_kind, decision, "
+            "confidence, reason, revision, last_operation_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(face_id, person_id, assignment_kind) DO UPDATE SET "
+            "decision = excluded.decision, confidence = excluded.confidence, "
+            "reason = excluded.reason, revision = excluded.revision, "
+            "last_operation_id = excluded.last_operation_id, updated_at = excluded.updated_at",
+            (
+                str(key[0]),
+                int(entity),
+                str(key[1]),
+                str(target_link["decision"]),
+                float(target_link["confidence"]),
+                target_link["reason"],
+                int(floor) + 1,
+                str(operation_id),
+                int(now_ms),
+                int(now_ms),
+            ),
+        )
+        changed = True
+    return changed
+
+
+def undo_person_operation(
+    connection: sqlite3.Connection,
+    *,
+    operation_id: str,
+    request_id: str,
+    expected_operation_revision: int,
+    now_ms: int,
+    refresh: revision_module.ProjectionRefresh | None = None,
+) -> dict[str, Any]:
+    """Compensate one committed operation, or refuse the whole request with zero writes."""
+    request_id = check_request_id(request_id)
+    original_id = str(operation_id)
+    expected = check_expected_revision(
+        expected_operation_revision, field="expected_operation_revision"
+    )
+    digest = payload_sha256(
+        {
+            "undo_of_operation_id": original_id,
+            "expected_operation_revision": int(expected),
+        }
+    )
+    replay = _replay(connection, request_id=request_id, digest=digest)
+    if replay is not None:
+        return replay
+    original = operation_row(connection, original_id)
+    if original is None:
+        raise fail(
+            PERSON_NOT_FOUND,
+            f"operation {original_id} does not exist",
+            operation_id=original_id,
+        )
+    if (
+        str(original["type"]) not in contracts.WRITE_OPERATION_TYPES
+        or str(original["state"]) != "COMMITTED"
+        or original["undone_by"] is not None
+        or int(original["operation_revision"]) != int(expected)
+    ):
+        raise fail(
+            PERSON_OPERATION_NOT_UNDOABLE,
+            "this operation is already reversed, is an undo itself, or its revision changed",
+            operation_id=original_id,
+            expected_revision=int(expected),
+            current_revision=int(original["operation_revision"]),
+            status=str(original["state"]),
+        )
+    pending: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    conflicts: list[dict[str, Any]] = []
+    for row in _operation_items(connection, original_id):
+        entity = int(row["entity_id"])
+        recorded_after = bundle_module.load_bundle(row["after_value_json"])
+        recorded_before = bundle_module.load_bundle(row["before_value_json"])
+        try:
+            live = bundle_module.read_bundle(connection, entity)
+        except CatalogError:
+            conflicts.append(
+                {
+                    "entity_type": str(row["entity_type"]),
+                    "entity_id": entity,
+                    "reason": "person_missing",
+                }
+            )
+            continue
+        differences = bundle_module.bundle_differences(live, recorded_after)
+        if differences:
+            conflicts.append(
+                {
+                    "entity_type": str(row["entity_type"]),
+                    "entity_id": entity,
+                    "reason": ",".join(differences),
+                }
+            )
+            continue
+        pending.append((entity, live, recorded_before))
+    if conflicts:
+        raise fail(
+            PERSON_OPERATION_NOT_UNDOABLE,
+            "a target of this operation was edited afterwards",
+            operation_id=original_id,
+            conflicts=conflicts,
+        )
+
+    new_operation_id = operation_id_for(request_id)
+    new_operation_revision = _next_operation_revision(connection)
+    connection.execute(
+        "INSERT INTO person_operations(operation_id, request_id, payload_sha256, type, "
+        "source_person_ids_json, target_person_id, state, operation_revision, "
+        "undo_of_operation_id, undone_by, catalog_filter_revision, created_at, committed_at) "
+        "VALUES (?, ?, ?, 'UNDO', ?, ?, 'COMMITTED', ?, ?, NULL, 0, ?, ?)",
+        (
+            str(new_operation_id),
+            str(request_id),
+            str(digest),
+            str(original["source_person_ids_json"]),
+            None if original["target_person_id"] is None else int(original["target_person_id"]),
+            int(new_operation_revision),
+            str(original_id),
+            int(now_ms),
+            int(now_ms),
+        ),
+    )
+    live_snapshots: dict[int, dict[str, Any]] = {}
+    restored_snapshots: dict[int, dict[str, Any]] = {}
+    changed = False
+    for entity, live, recorded_before in pending:
+        live_snapshots[entity] = live
+        row = require_person_row(connection, entity)
+        person_written = any(
+            live.get(field) != recorded_before.get(field) for field in _PERSON_FIELDS
+        )
+        if person_written:
+            connection.execute(
+                "UPDATE persons SET name = ?, name_key = ?, avatar_face_id = ?, "
+                "merged_into = ?, revision = ?, updated_at = ? WHERE person_id = ?",
+                (
+                    recorded_before["name"],
+                    recorded_before["name_key"],
+                    recorded_before["avatar_face_id"],
+                    recorded_before["merged_into"],
+                    int(row["revision"]) + 1,
+                    int(now_ms),
+                    int(entity),
+                ),
+            )
+            changed = True
+        if _restore_aliases(
+            connection,
+            entity=int(entity),
+            live=live,
+            wanted=recorded_before,
+            operation_id=new_operation_id,
+            now_ms=int(now_ms),
+        ):
+            changed = True
+    # Links are restored after every alias decision, and each set is written as one
+    # delete-then-insert, so the partial unique index on the effective link never observes a
+    # half-restored set.
+    for entity, live, recorded_before in pending:
+        if _restore_link_rows(
+            connection,
+            entity=int(entity),
+            live=live,
+            wanted=recorded_before,
+            operation_id=new_operation_id,
+            now_ms=int(now_ms),
+        ):
+            changed = True
+        restored_snapshots[entity] = bundle_module.read_bundle(connection, int(entity))
+
+    for index, (entity, _live, _recorded) in enumerate(pending):
+        connection.execute(
+            "INSERT INTO person_operation_items(operation_id, item_index, entity_type, "
+            "entity_id, before_value_json, after_value_json, after_revision) "
+            "VALUES (?, ?, 'PERSON_BUNDLE', ?, ?, ?, ?)",
+            (
+                str(new_operation_id),
+                int(index),
+                int(entity),
+                bundle_module.bundle_json(live_snapshots[entity]),
+                bundle_module.bundle_json(restored_snapshots[entity]),
+                int(restored_snapshots[entity]["revision"]),
+            ),
+        )
+    connection.execute(
+        "UPDATE person_operations SET state = 'UNDONE', undone_by = ? WHERE operation_id = ?",
+        (str(new_operation_id), str(original_id)),
+    )
+    if changed:
+        faces = _affected_faces(live_snapshots, restored_snapshots)
+        assets = _assets_of_faces(connection, faces)
+        filter_revision = revision_module.bump_filter_revision(
+            connection,
+            cause=contracts.CAUSE_PERSON_CHANGED,
+            now_ms=int(now_ms),
+            asset_ids=assets,
+            refresh=refresh,
+        )
+        _queue_assets(connection, assets, now_ms=int(now_ms))
+        _repair_candidates(connection, faces, now_ms=int(now_ms))
+    else:
+        filter_revision = revision_module.read_filter_revision(connection)
+    connection.execute(
+        "UPDATE person_operations SET catalog_filter_revision = ? WHERE operation_id = ?",
+        (int(filter_revision), str(new_operation_id)),
+    )
+    return {
+        "operation_id": str(new_operation_id),
+        "operation_type": "UNDO",
+        "operation_revision": int(new_operation_revision),
+        "status": "COMMITTED",
+        "undo_of_operation_id": str(original_id),
+        "changed": bool(changed),
+        "catalog_filter_revision": int(filter_revision),
+        "replayed": False,
+        "items": [
+            {
+                "entity_type": "PERSON_BUNDLE",
+                "entity_id": int(entity),
+                "changed": bool(
+                    bundle_module.bundle_differences(
+                        restored_snapshots[entity], live_snapshots[entity]
+                    )
+                ),
+                "merged_into": restored_snapshots[entity]["merged_into"],
+                "revision": int(restored_snapshots[entity]["revision"]),
+            }
+            for entity, _live, _recorded in pending
+        ],
+    }
+
+
+__all__ = [
+    "merge_persons",
+    "operation_result",
+    "operation_row",
+    "rename_person",
+    "undo_person_operation",
+]

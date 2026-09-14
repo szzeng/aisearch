@@ -126,6 +126,23 @@ UPLOAD_TOO_MANY_PIXELS = "UPLOAD_TOO_MANY_PIXELS"
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 
+#: P3-03 person naming/merge/redirect layer, frozen by ADR-0006 §9. As with the place
+#: family the spelling and the HTTP mapping are part of the contract, so a caller can branch
+#: on the code without parsing a message: ``PERSON_NOT_FOUND`` is the missing person or the
+#: missing operation, the name/batch refusals are caller-shape errors, and everything else
+#: is a current-state conflict that must never overwrite a later human edit.
+PERSON_NOT_FOUND = "PERSON_NOT_FOUND"
+PERSON_NAME_INVALID = "PERSON_NAME_INVALID"
+PERSON_REVISION_CONFLICT = "PERSON_REVISION_CONFLICT"
+PERSON_IDEMPOTENCY_CONFLICT = "PERSON_IDEMPOTENCY_CONFLICT"
+PERSON_BATCH_TOO_LARGE = "PERSON_BATCH_TOO_LARGE"
+PERSON_REDIRECT_CYCLE = "PERSON_REDIRECT_CYCLE"
+PERSON_OPERATION_NOT_UNDOABLE = "PERSON_OPERATION_NOT_UNDOABLE"
+
+#: ADR-0006 §5: an explicit merge names 1..500 de-duplicated source persons and commits
+#: them, with their target, in one transaction.
+MAX_PERSON_BATCH_SIZE = 500
+
 #: P3-01 OCR (ADR-0003 §2/§4 frozen shell; the weights are the P0-04 pinned files). The
 #: pinned det/cls/rec ONNX files and their ``config.yaml`` live under the user data root, so
 #: "not installed yet" and "installed but different bytes" are configuration facts with no

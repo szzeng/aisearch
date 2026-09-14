@@ -47,6 +47,11 @@ from photo_search.api.models import (
     ImageSearchResultModel,
     JobListResponse,
     JobRecord,
+    PersonMergeRequest,
+    PersonNameRequest,
+    PersonOperationResponse,
+    PersonRecord,
+    PersonUndoRequest,
     PlaceAssignmentRequest,
     PlaceBatchRequest,
     PlaceCoverageResponse,
@@ -105,6 +110,7 @@ from photo_search.media.status import (
     MEDIA_STATE_UNSUPPORTED,
 )
 from photo_search.ocr.weights import weights_present as ocr_weights_present
+from photo_search.persons.service import PersonService
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
@@ -160,6 +166,11 @@ def cache_of(request: Request) -> MediaCache:
 def places_of(request: Request) -> PlaceService:
     """One place service per request over the request thread's own catalog connection."""
     return PlaceService(service_of(request).catalog)
+
+
+def persons_of(request: Request) -> PersonService:
+    """One person service per request over the request thread's own catalog connection."""
+    return PersonService(service_of(request).catalog)
 
 
 # ------------------------------------------------------------------------------ health
@@ -815,6 +826,71 @@ async def undo_place_operation(
     request: Request, operation_id: str, payload: PlaceUndoRequest
 ) -> dict[str, Any]:
     return places_of(request).undo(
+        operation_id=str(operation_id),
+        request_id=payload.request_id,
+        expected_operation_revision=int(payload.expected_operation_revision),
+    )
+
+
+# ------------------------------------------------------------------------------ search
+@router.get(
+    "/persons/{person_id}",
+    response_model=PersonRecord,
+    summary="The canonical person behind one id, with alias and member counts",
+)
+async def get_person(request: Request, person_id: int) -> dict[str, Any]:
+    """An id that was merged away is answered with its canonical person, not a redirect."""
+    return persons_of(request).get_person(int(person_id))
+
+
+@router.put(
+    "/persons/{person_id}/name",
+    response_model=PersonOperationResponse,
+    summary="Save a display name; a name another active person owns merges into it",
+)
+async def put_person_name(
+    request: Request, person_id: int, payload: PersonNameRequest
+) -> dict[str, Any]:
+    """The single naming entry point: rename, same-name merge, never a second person."""
+    return persons_of(request).rename(
+        person_id=int(person_id),
+        name=payload.name,
+        request_id=payload.request_id,
+        expected_revision=int(payload.expected_revision),
+    )
+
+
+@router.post(
+    "/persons/merge",
+    response_model=PersonOperationResponse,
+    summary="Merge 1..500 selected persons into one target, atomically",
+)
+async def post_person_merge(
+    request: Request, payload: PersonMergeRequest
+) -> dict[str, Any]:
+    return persons_of(request).merge(
+        target_person_id=int(payload.target_person_id),
+        target_expected_revision=int(payload.target_expected_revision),
+        sources=[
+            {
+                "person_id": int(source.person_id),
+                "expected_revision": int(source.expected_revision),
+            }
+            for source in payload.sources
+        ],
+        request_id=payload.request_id,
+    )
+
+
+@router.post(
+    "/person-operations/{operation_id}/undo",
+    response_model=PersonOperationResponse,
+    summary="Compensate one committed person operation, or refuse it whole",
+)
+async def undo_person_operation(
+    request: Request, operation_id: str, payload: PersonUndoRequest
+) -> dict[str, Any]:
+    return persons_of(request).undo(
         operation_id=str(operation_id),
         request_id=payload.request_id,
         expected_operation_revision=int(payload.expected_operation_revision),

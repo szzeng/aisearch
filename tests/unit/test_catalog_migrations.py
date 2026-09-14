@@ -57,6 +57,15 @@ CORE_TABLES = {
     "index_generations",
     "index_outbox",
     "metadata",
+    # P3-03: the person-knowledge layer. ``person_operations``/``person_operation_items`` are
+    # the append-only operation log with its bounded before/after bundles, ``person_aliases``
+    # the search aliases of a named person, and ``face_assignment_controls``/
+    # ``face_exclusions`` the human locks and denials P3-02 already reads.
+    "face_assignment_controls",
+    "face_exclusions",
+    "person_aliases",
+    "person_operation_items",
+    "person_operations",
     "place_aliases",
     "place_external_refs",
     "place_operation_items",

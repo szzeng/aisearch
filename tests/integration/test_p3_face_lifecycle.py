@@ -444,22 +444,19 @@ def test_the_status_projection_never_leaks_a_coordinate_or_a_path(harness: Harne
 
 
 def test_human_knowledge_wins_over_the_automatic_path(harness: Harness) -> None:
-    """P3-03/P3-04 do not exist yet, but the reserved read order has to hold now."""
+    """The reserved read order of the human tables has to hold on every commit.
+
+    P3-03 delivers ``face_assignment_controls``/``face_exclusions`` (migration 0011), so this
+    case now seeds the real tables instead of creating two stand-ins: the columns it writes
+    are exactly the architecture-required ones, which is the compatibility the P3-03
+    migration had to keep.
+    """
     processed(harness)
     face = harness.faces_of("astronaut.png")[0]
     face_id = str(face["face_id"])
     person_id = person_of(harness, "astronaut.png")
     with harness.catalog.write() as connection:
-        # The two human tables as architecture §4.2/§8.3.4 defines them, plus a manual link.
-        connection.execute(
-            "CREATE TABLE face_assignment_controls(face_id TEXT PRIMARY KEY, mode TEXT NOT NULL, "
-            "revision INTEGER NOT NULL, last_operation_id TEXT, updated_at INTEGER NOT NULL)"
-        )
-        connection.execute(
-            "CREATE TABLE face_exclusions(face_id TEXT NOT NULL, person_id INTEGER NOT NULL, "
-            "operation_id TEXT, active INTEGER NOT NULL, created_at INTEGER NOT NULL, "
-            "PRIMARY KEY (face_id, person_id))"
-        )
+        # The two human tables of architecture §4.2/§8.3.4, plus a manual link.
         connection.execute(
             "INSERT INTO face_assignment_controls(face_id, mode, revision, last_operation_id, "
             "updated_at) VALUES (?, 'MANUAL_UNASSIGNED', 1, 'op-1', 1)",

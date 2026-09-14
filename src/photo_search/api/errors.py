@@ -52,6 +52,13 @@ from photo_search.catalog.errors import (
     MEDIA_INTERRUPTED,
     MIGRATION_FAILED,
     PATH_KEY_COLLISION,
+    PERSON_BATCH_TOO_LARGE,
+    PERSON_IDEMPOTENCY_CONFLICT,
+    PERSON_NAME_INVALID,
+    PERSON_NOT_FOUND,
+    PERSON_OPERATION_NOT_UNDOABLE,
+    PERSON_REDIRECT_CYCLE,
+    PERSON_REVISION_CONFLICT,
     PLACE_ASSIGNMENT_CONFLICT,
     PLACE_BATCH_TOO_LARGE,
     PLACE_DATASET_INVALID,
@@ -168,6 +175,17 @@ _STATUS_BY_CODE: dict[str, int] = {
     PLACE_BATCH_TOO_LARGE: 422,
     INVALID_PLACE_FILTER: 422,
     GEO_COORDINATE_INVALID: 422,
+    # P3-03 person naming/merge refusals (ADR-0006 §9). A missing person - or a missing
+    # operation - is a 404; a blank/oversized name and an oversized merge batch are
+    # caller-shape errors; a stale revision, a reused idempotency key, a redirect cycle and
+    # an operation that a later edit made non-compensable are current-state conflicts.
+    PERSON_NOT_FOUND: 404,
+    PERSON_NAME_INVALID: 422,
+    PERSON_BATCH_TOO_LARGE: 422,
+    PERSON_REVISION_CONFLICT: 409,
+    PERSON_IDEMPOTENCY_CONFLICT: 409,
+    PERSON_REDIRECT_CYCLE: 409,
+    PERSON_OPERATION_NOT_UNDOABLE: 409,
     # P2-06A search protocol refusals. An expired session, a profile that must not be
     # half-switched and a filter the vector engine refuses are all current-state
     # conflicts: the request is well formed, the current state forbids the answer.

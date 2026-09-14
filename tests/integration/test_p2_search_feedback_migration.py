@@ -60,8 +60,10 @@ def db_path(tmp_path: Path) -> Path:
 def migrations_upto(tmp_path: Path, version: int) -> Path:
     directory = tmp_path / f"migrations-{version}"
     directory.mkdir(parents=True, exist_ok=True)
-    for number, source in schema.migration_files():
-        if number <= int(version):
+    # Read the real migration set directly: a case that pins SUPPORTED_SCHEMA_VERSION to an
+    # older version must still be able to copy that version's frozen scripts.
+    for source in sorted(REAL_MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")):
+        if int(source.name.split("_", 1)[0]) <= int(version):
             (directory / source.name).write_text(
                 source.read_text(encoding="utf-8"), encoding="utf-8"
             )
