@@ -13,6 +13,7 @@ from typing import Any
 
 from photo_search.catalog import schema
 from photo_search.catalog.sqlite_io import open_readonly
+from photo_search.ocr import contract as ocr_contract
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:
@@ -171,6 +172,97 @@ def search_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
             ),
             "fts_generation_id": None if generation is None else str(generation["fts_generation_id"]),
             "state": "SYNCED" if queued == 0 else "LAGGING",
+        }
+    finally:
+        connection.close()
+
+
+def ocr_summary(
+    db_path: str | Path, *, weights_present: bool | None = None
+) -> dict[str, Any] | None:
+    """Truthful OCR readiness of this catalog: covered, stale, queued, blocked.
+
+    Read-only and text-free: no recognised text, no coordinate and no path leaves this
+    function - only how many assets carry a current OCR document, how many carry a document
+    for an older content revision (the honest "OCR is still catching up" signal, never
+    "there is no such text in this image"), and how the OCR jobs are doing.
+    ``weights_present`` is the cheap file-level fact the caller may add (the API can look at
+    the model root without importing a runtime); ``None`` means it was not checked.
+    ``None`` as a whole means this catalog predates migration 0009.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        if "asset_ocr_text" not in tables:
+            return None
+        documents = int(
+            connection.execute(
+                "SELECT COUNT(*) AS documents FROM asset_ocr_text AS t "
+                "JOIN assets AS a ON a.asset_id = t.asset_id "
+                "WHERE t.input_revision = a.sha256"
+            ).fetchone()["documents"]
+        )
+        stored = int(
+            connection.execute("SELECT COUNT(*) AS total FROM asset_ocr_text").fetchone()["total"]
+        )
+        regions = int(
+            connection.execute("SELECT COUNT(*) AS total FROM asset_ocr_regions").fetchone()[
+                "total"
+            ]
+        )
+        low = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM asset_ocr_regions WHERE confidence <= ?",
+                (float(ocr_contract.LOW_CONFIDENCE_THRESHOLD),),
+            ).fetchone()["total"]
+        )
+        jobs = {
+            str(row["state"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT state, COUNT(*) AS count FROM jobs WHERE task_type = ? GROUP BY state",
+                (str(ocr_contract.OCR_TASK_TYPE),),
+            )
+        }
+        projection_queued = 0
+        if "search_projection_queue" in tables:
+            projection_queued = int(
+                connection.execute(
+                    "SELECT COUNT(*) AS total FROM search_projection_queue WHERE cause = ?",
+                    ("OCR_TEXT_CHANGED",),
+                ).fetchone()["total"]
+            )
+        pending = sum(
+            count for state, count in jobs.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
+        )
+        blocked = int(jobs.get("BLOCKED", 0))
+        stale = stored - documents
+        if pending or stale or projection_queued:
+            state = "LAGGING"
+        elif blocked:
+            state = "BLOCKED"
+        elif documents:
+            state = "SYNCED"
+        else:
+            state = "NOT_RUN"
+        return {
+            "processor_id": ocr_contract.OCR_PROCESSOR_ID,
+            "task_type": ocr_contract.OCR_TASK_TYPE,
+            "model_fingerprint": ocr_contract.MODEL_FINGERPRINT,
+            "config_hash": ocr_contract.CONFIG_HASH,
+            "weights_present": weights_present,
+            "documents": documents,
+            "stale_documents": stale,
+            "regions": regions,
+            "low_confidence_regions": low,
+            "low_confidence_threshold": float(ocr_contract.LOW_CONFIDENCE_THRESHOLD),
+            "jobs": jobs,
+            "pending_jobs": int(pending),
+            "blocked_jobs": blocked,
+            "projection_queued": projection_queued,
+            "state": state,
         }
     finally:
         connection.close()

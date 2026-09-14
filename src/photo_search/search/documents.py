@@ -14,8 +14,16 @@ What P2-04 fills:
   ``SUGGESTION_ONLY`` candidate, an excluded place, ``MANUAL_UNASSIGNED`` and a retired
   place never reach this column.
 
-``user_text``/``ocr_text``/``caption_text``/``tag_text`` stay empty strings (P2-05/P3 own
-them); no content is ever fabricated for them.
+P3-01 fills:
+
+* ``ocr_text`` - the normalised search copy of the asset's current OCR document
+  (``asset_ocr_text.search_text``, written by the OCR processor). The *original* text and
+  the exact polygons stay in the immutable structured artifact, never in this table. A row
+  whose ``input_revision`` no longer equals ``assets.sha256`` is history and contributes
+  nothing: text recognised before a content change is never attached to the new content.
+
+``user_text``/``caption_text``/``tag_text`` stay empty strings (P2-05 and later own them);
+no content is ever fabricated for them.
 """
 
 from __future__ import annotations
@@ -53,6 +61,13 @@ _EFFECTIVE_PLACE_SQL = (
     "AND mode = 'MANUAL_ASSIGNED'"
 )
 _ASSET_EXISTS_SQL = "SELECT 1 FROM assets WHERE asset_id = ?"
+#: The current OCR search copy of one asset: only a document recognised for exactly the
+#: content revision the asset carries today may feed the derived text.
+_OCR_TEXT_SQL = (
+    "SELECT t.search_text FROM asset_ocr_text AS t "
+    "JOIN assets AS a ON a.asset_id = t.asset_id "
+    "WHERE t.asset_id = ? AND t.input_revision = a.sha256"
+)
 
 
 def basename(relative_path: str) -> str:
@@ -98,6 +113,14 @@ def place_values(connection: sqlite3.Connection, asset_id: int) -> list[str]:
     return values
 
 
+def ocr_text_value(connection: sqlite3.Connection, asset_id: int) -> str:
+    """The normalised OCR search copy of the *current* content revision, or ``''``."""
+    row = connection.execute(_OCR_TEXT_SQL, (int(asset_id),)).fetchone()
+    if row is None:
+        return ""
+    return str(row["search_text"])
+
+
 def document_source(connection: sqlite3.Connection, asset_id: int) -> dict[str, Any] | None:
     """The authoritative text of one asset, normalised for search; ``None`` if it is gone."""
     if connection.execute(_ASSET_EXISTS_SQL, (int(asset_id),)).fetchone() is None:
@@ -105,6 +128,7 @@ def document_source(connection: sqlite3.Connection, asset_id: int) -> dict[str, 
     values = {
         "filename_text": index_text(" ".join(filename_values(connection, int(asset_id)))),
         "place_text": index_text(" ".join(place_values(connection, int(asset_id)))),
+        "ocr_text": ocr_text_value(connection, int(asset_id)),
     }
     columns = {column: values.get(column, "") for column in TEXT_COLUMNS}
     return {

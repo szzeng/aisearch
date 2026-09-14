@@ -43,6 +43,10 @@ mid-processing content changes, incremental add/rename/move/delete, place/source
 correctness, session staleness codes, the offline name-package lifecycle, the old-READY-generation
 boundary and upload search under concurrency; **11 new cases and zero production changes**,
 `schema_version` stays 8). This closes the P2 phase.
+**P3-01 is PASS** (B + D + C level: the pinned PP-OCRv4 OCR processor, its bounded high-resolution
+slicing, the `0009` OCR document/region layer with the fifth projection cause, the `ocr_text`
+derived document and its same-transaction queue, a controlled CLI entry point and a truthful
+read-only OCR status; 75 new cases, **schema_version 8 → 9**). P3-02 is the current task.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -771,9 +775,37 @@ data root 第二启动 smoke 为 `status=ok`（新 token、health 200）且工�
 **P2-08 已 PASS**（B + D + 真实浏览器闭环，零生产改动），见
 [P2-08 报告](reports/P2-08-acceptance-matrix.md)；P2 阶段到此收口。
 
-**当前任务是 P3-01 — OCR 任务、原文/区域/置信度与 FTS 更新**（V3.1 §8）。任务卡
-`docs/tasks/P3-01.md`，推荐 **DS-L**（调度逻辑部分标注 DS-H；运行库疑难转 C1），验收
-**B（涉及迁移/打包再加 D/C）**。下一任务建议模型/档位与 P2-08 使用的不同，请按任务卡提示在
-Codex 中手动切换后继续。
+## Latest OCR closure — P3-01 (2026-09-14)
+
+P3-01 已实现 OCR 闭环并通过 **B + D + C** 级验收，报告
+[P3-01 报告](reports/P3-01-ocr-text-regions-confidence-fts.md)。起点 HEAD `3ea0cf1`（P2-08 报告
+提交 `446dbf7`），工作树干净。
+
+新增 `src/photo_search/ocr/**`（固定 PP-OCRv4 权重校验、有界长边 2000 px + 1280/160 切片与 IoU
+去重、确定性阅读顺序、低置信度区域保留、取消/预算检查、结构化 `ocr-document.v1` 产物、同事务
+持久化、`python -m photo_search.ocr.cli` 受控入口）与连续增量迁移
+`catalog/migrations/0009_ocr_documents.sql`：**`schema_version` 推进到 9**，`0001`～`0008` 未改；
+新增 `asset_ocr_text`（规范化检索副本 + revision/权重指纹/区域统计）与 `asset_ocr_regions`
+（顺序/box/置信度），并把 `search_projection_queue` 的 cause 扩到五值（新增 `OCR_TEXT_CHANGED`，
+0006 的 8 个触发器 SQL 一字未改）。`search_documents.ocr_text` 经既有队列/`sync_document` 投影，
+且只在 `input_revision = assets.sha256` 时生效；`/capabilities` 新增只读 `ocr` 段
+（`documents/stale_documents/regions/low_confidence_regions/jobs/state ∈ {NOT_RUN, LAGGING,
+BLOCKED, SYNCED}`，无原文、无坐标、无路径）。本任务未改 ADR/冻结 JSON schema、依赖、前端资源、
+`ingestion/**`、`places/**`、`geo/**` 或打包入口。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=877 failures=0 errors=0 skipped=1`，208.9 s |
+| 本任务新增用例 | 75 例（contract 24、geometry 20、cli 8、end-to-end 4、lifecycle 13、migration 6） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| C 级 | 真实 onedir 重建 + `packaged_api_smoke.py --work-dir D:\PhotoSearchSmoke\P3-01`：`status=ok`、`problems=[]`、`coverage_ocr_block={processor_id: ocr-text@1, state: NOT_RUN, weights_present: false}`；bundle 内含 `0001`～`0009`（0009 与源码 SHA-256 一致） |
+| 真实夹具 | `tools/diagnostics/ocr_smoke_fixture.py` exit 0（12.22 s）：发票图 5 区域/置信度 0.9719–0.9999、高密度页 20 区域/2 切片、空白页 0 区域（诚实空文档）；发票图 FTS 命中 `发票`/`1280`/`20260914` |
+| v8→v9 迁移 | 备份内 `schema_version=8` 且无 OCR 表；单事务推进；旧队列行逐列保留；未知 cause 被拒；注入损坏 0009 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
+| D 级注入 | 权重缺件/同尺寸哈希不符、提交前崩溃、内容变化后旧结果、旧 revision 文档被投影忽略、到期租约接管、用户取消、预算耗尽、强制重识别幂等——全部零副作用 |
+
+**当前任务是 P3-02 — 人脸检测对齐、特征、候选索引、保守自动关联**（V3.1 §7 表 P3-02 行）。任务卡
+`docs/tasks/P3-02.md`，推荐 **DS-H**（ONNX/Windows/性能环境问题转 C1；复用 P0-06 已验收的 GPU
+runtime，不重新做 GPU bring-up），验收 **B + D（触 worker/打包再加 C）**。下一任务建议模型/档位与
+本任务不同，请按任务卡提示在 Codex 中手动切换后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

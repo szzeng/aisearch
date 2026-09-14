@@ -126,6 +126,20 @@ UPLOAD_TOO_MANY_PIXELS = "UPLOAD_TOO_MANY_PIXELS"
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 
+#: P3-01 OCR (ADR-0003 §2/§4 frozen shell; the weights are the P0-04 pinned files). The
+#: pinned det/cls/rec ONNX files and their ``config.yaml`` live under the user data root, so
+#: "not installed yet" and "installed but different bytes" are configuration facts with no
+#: honest equivalent in the frozen set - and they must never degrade into a silent load of
+#: the wheel's own copy of the same models. ``OCR_RESULT_TOO_LARGE`` is the bounded-output
+#: refusal (more regions than one document may carry); ``OCR_DEADLINE_EXCEEDED`` is the
+#: bounded-execution refusal of the CPU budget; ``OCR_INPUT_TOO_LARGE`` refuses an image
+#: whose declared pixels or required slice count exceed the frozen limits.
+OCR_WEIGHTS_MISSING = "OCR_WEIGHTS_MISSING"
+OCR_WEIGHTS_HASH_MISMATCH = "OCR_WEIGHTS_HASH_MISMATCH"
+OCR_RESULT_TOO_LARGE = "OCR_RESULT_TOO_LARGE"
+OCR_DEADLINE_EXCEEDED = "OCR_DEADLINE_EXCEEDED"
+OCR_INPUT_TOO_LARGE = "OCR_INPUT_TOO_LARGE"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

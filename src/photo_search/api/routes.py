@@ -103,12 +103,14 @@ from photo_search.media.status import (
     MEDIA_STATE_READY,
     MEDIA_STATE_UNSUPPORTED,
 )
+from photo_search.ocr.weights import weights_present as ocr_weights_present
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.scheduler.projection import (
     index_summary,
+    ocr_summary,
     scheduler_summary,
     search_profile_summary,
     search_projection_summary,
@@ -262,6 +264,13 @@ async def capabilities(request: Request) -> dict[str, Any]:
         # P2-04 derived-search counts plus the P2-06A active profile (never any search
         # text, session token, coordinate or path).
         "search": _search_capabilities(request),
+        # P3-01: how much of the library carries a current OCR document, how much is still
+        # catching up, and whether the pinned weights are installed. Counts and states only:
+        # no recognised text and no coordinate is projected here.
+        "ocr": ocr_summary(
+            catalog_db_path(settings.data_root),
+            weights_present=ocr_weights_present(settings.data_root),
+        ),
     }
 
 

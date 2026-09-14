@@ -177,7 +177,9 @@ def test_v7_to_v8_is_continuous_backed_up_and_lossless(
     result = migrate_database(path, data_root=data_root(tmp_path))
 
     assert result.previous_version == V7 and result.schema_version == SUPPORTED
-    assert result.applied == (8,)
+    # The 0008 step is this file's subject; later additive migrations (0009+) append to the
+    # same continuous chain, so the applied list reaches the current supported version.
+    assert result.applied == tuple(range(8, SUPPORTED + 1))
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:

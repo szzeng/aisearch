@@ -18,8 +18,12 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: single ``active_search_profile`` pointer. ``0008`` adds the P2-06B append-only
 #: ``search_feedback`` audit table (explicit relevance verdicts, idempotent by
 #: ``request_id``); it records what a user said and deliberately re-ranks, hides and
-#: re-classifies nothing.
-SUPPORTED_SCHEMA_VERSION = 8
+#: re-classifies nothing. ``0009`` adds the P3-01 OCR layer: the current OCR document (the
+#: normalised search copy plus its region statistics) of every asset, its per-region
+#: metadata, and one extra ``search_projection_queue`` cause so an OCR text change joins the
+#: existing reprojection path. The original text and the exact coordinates stay in the
+#: immutable processor artifact, never in this table.
+SUPPORTED_SCHEMA_VERSION = 9
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

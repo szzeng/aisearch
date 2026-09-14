@@ -27,6 +27,9 @@ CORE_TABLES = {
     "active_search_profile",
     "assets",
     "asset_geo_facts",
+    # P3-01: the current OCR document of every asset and its per-region metadata.
+    "asset_ocr_regions",
+    "asset_ocr_text",
     "asset_place_assignment_history",
     "asset_place_assignments",
     "asset_place_exclusions",

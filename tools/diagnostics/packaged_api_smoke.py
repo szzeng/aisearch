@@ -513,6 +513,10 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 key: (coverage_capabilities.json().get("search") or {}).get(key)
                 for key in ("documents", "queued_assets", "state", "query_encoder_available")
             }
+            # P3-01: the frozen bundle must be able to describe its OCR layer. This is the
+            # behavioural proof that the new ``photo_search.ocr`` light modules really are
+            # importable inside the package (a missing module would fail the request).
+            checks["coverage_ocr_block"] = coverage_capabilities.json().get("ocr")
             checks["coverage_place_counts"] = {
                 key: coverage_places.json().get(key)
                 for key in (
@@ -800,6 +804,17 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("coverage leaked a local path or a coordinate")
     if (checks.get("coverage_search_block") or {}).get("query_encoder_available") is not False:
         problems.append("packaged coverage query encoder flag")
+    ocr_block = checks.get("coverage_ocr_block") or {}
+    if ocr_block.get("processor_id") != "ocr-text@1":
+        problems.append("packaged capabilities has no OCR block")
+    if ocr_block.get("state") != "NOT_RUN":
+        problems.append("packaged OCR block is not a fresh NOT_RUN state")
+    if not isinstance(ocr_block.get("weights_present"), bool):
+        problems.append("packaged OCR block does not report weight presence")
+    # Counts and states only: a per-region polygon or box in this block would be a leak.
+    rendered_ocr = json.dumps(ocr_block, ensure_ascii=False)
+    if "polygon" in rendered_ocr or '"box"' in rendered_ocr:
+        problems.append("packaged OCR block leaked region geometry")
     if checks.get("thumbnail") != 200 or checks.get("thumbnail_type") != "image/jpeg":
         problems.append("thumbnail")
     if checks.get("thumbnail_original_available") != "true":

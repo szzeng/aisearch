@@ -233,7 +233,15 @@ def test_duplicate_content_shares_one_asset_and_one_artifact(
     """Same bytes in several places: one asset, many positions, one machine artifact."""
     root_a = tmp_path / "来源 A"
     root_b = tmp_path / "source-b"
-    long_dir = root_a / "长 目录" / ("segment-0123456789" * 7)
+    # The fixture must really exercise a path longer than the classic Windows ceiling. The
+    # temporary root of this session may be short (``--basetemp=.pytest-tmp``), so the deep
+    # directory is padded to length instead of assuming where the temp root happens to live.
+    deep_root = root_a / "长 目录"
+    segment = "segment-0123456789" * 7
+    padding = 221 - len(str(deep_root / segment / "deep copy.jpg"))
+    if padding > 0:
+        segment = segment + "x" * padding
+    long_dir = deep_root / segment
     first = _write_jpeg(root_a / "top.jpg", color=(200, 40, 40))
     payload = first.read_bytes()
     sha = _digest(payload)

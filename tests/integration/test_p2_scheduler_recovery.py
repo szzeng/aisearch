@@ -82,6 +82,10 @@ V6_TABLES = (
     "search_profiles",
     # P2-06B: the append-only explicit-relevance feedback log.
     "search_feedback",
+    # P3-01: the current OCR document and its per-region metadata (the tuple keeps its
+    # historical name; it is the *current* table set of a fully migrated catalog).
+    "asset_ocr_regions",
+    "asset_ocr_text",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

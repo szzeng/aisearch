@@ -108,6 +108,11 @@ class CapabilitiesResponse(BaseModel):
     #: P2-04 derived-search facts (document/queue counts and the tokenizer generation);
     #: ``None`` means this catalog predates migration 0006. Contains no text and no path.
     search: dict[str, Any] | None = None
+    #: P3-01 OCR facts: how many assets carry a *current* OCR document, how many carry one
+    #: for an older content revision (still catching up), the region/confidence counts and
+    #: the OCR job states. ``None`` means this catalog predates migration 0009. Contains no
+    #: recognised text, no coordinate and no path.
+    ocr: dict[str, Any] | None = None
 
 
 class SourceRecord(BaseModel):

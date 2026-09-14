@@ -381,6 +381,23 @@ class Scheduler:
                         prepared=prepared,
                         now_ms=int(now_ms),
                     )
+                # P3-01: a qualified OCR document becomes the asset's current OCR text (the
+                # normalised search copy plus the region metadata) in the very same
+                # transaction as the artifact, the artifact row and the job terminal state.
+                # Imported lazily like the other hooks, and only the light ``contract``
+                # module is touched unless this really is an OCR submission.
+                from photo_search.ocr import contract as ocr_contract
+
+                if str(spec.processor_id) == ocr_contract.OCR_PROCESSOR_ID:
+                    from photo_search.ocr import processor as ocr_processor
+
+                    ocr_processor.persist_ocr_document(
+                        connection,
+                        job=job,
+                        result=result,
+                        prepared=prepared,
+                        now_ms=int(now_ms),
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None
