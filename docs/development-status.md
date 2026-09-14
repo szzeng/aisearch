@@ -15,7 +15,8 @@ directory, manual assignment/unassign/restore_auto with batch and compensating u
 SQLite place filter API; 48 new cases). **P2-03B is PASS** (D level: the `0005` dataset/resolution
 migration, the offline name-package lifecycle, the `non_model + CPU_PREFERRED` nearby-city resolver,
 suggestion-only candidates with an independent suggestion revision, and the explicit local dataset
-tool; 65 new cases). **P2-03C is now READY / CURRENT TASK.**
+tool; 65 new cases). **P2-03C is PASS** (B level + a recorded real-browser smoke + the C-level
+packaged smoke proving the page is inside the frozen bundle). **P2-04 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -228,6 +229,39 @@ resolution；`/places/datasets`、`/assets/{id}/place` 建议状态、`/assets` 
 | C 判定 | 按卡**不触发**（未改 workers/打包入口/依赖/新增 package-data 目录）；因“继承项：接入解析执行器必须复核导入图”仍执行真实 onedir 构建 + `packaged_api_smoke.py`（`status=ok`、`problems=[]`、startup 1.0 s，中文/空格路径），并审计 bundle：`geo.dataset`/`geo.exif` 与 `places.*` 已入包、0001～0005 共 5 个 `.sql` 在包内；`geo.extract`/`geo.resolver`/`scheduler.engine` 仍未入包（无常驻调度线程，见报告 §9） |
 | 环境事件 | 打包 smoke 会把约 3.4 GB bundle 复制到 `%TEMP%`，C 盘被填满导致第二次复核以 `WinError 112` 失败；随后只清理本任务创建的 3 个 `%TEMP%\P2-03B 打包*` 目录（约 3.9 GB）并确认 C 盘恢复 3.76 GB 可用，C 级证据取自第一次成功运行 |
 
+## Latest place-page closure — P2-03C (2026-09-14)
+
+P2-03C 已实现静态地点整理页并通过 B 级、真实浏览器 smoke 与 C 级打包验收，报告
+[P2-03C 报告](reports/P2-03C-place-page-and-manual-curation.md)。起点 HEAD `f4959a2`（P2-03B），
+工作树干净。
+
+新增依赖-free 页面 `GET /places`（`src/photo_search/web/{places.html,places.js,places.css}`，
+由 `api/web.py` 从 package data 提供，不遮蔽 `/api/v1/places`），外壳导航新增入口；页面覆盖目录
+keyset 分页与 `CATALOG_FILTER_REVISION_STALE` 提示、同名地点的完整祖先链 + 稳定 `place_id`、
+创建/改名/别名（`expected_revision` 与 `PLACE_ASSIGNMENT_CONFLICT` 的 `current_revision` 提示）、
+建议列表绑定 `suggestion_revision`、`SUGGESTION_ONLY` 候选的单条确认
+（`origin=CONFIRMED_SUGGESTION`）与 ≤500 分批的原子批量动作（逐批结果、冻结 `asset_id` 快照）、
+操作日志与撤销（含 `PLACE_OPERATION_NOT_UNDOABLE`/`PLACE_IDEMPOTENCY_CONFLICT` 提示）、
+数据包状态面板与缺包降级。未改 ADR、migration、`schema_version`（仍为 5）、触发矩阵、错误码、
+依赖或 `workers/**`；本轮未新增后端能力。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0，148.6 s；`--collect-only` 计 564 例，进度行 1 个 `s`，即 563 passed / 1 skipped |
+| 专项（前端静态契约 + 页面路由 + 页面请求形状） | exit 0，68 passed（P2-03C 新增 18 例） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实浏览器 smoke（内置浏览器 + 127.0.0.1:8732 + `%TEMP%` 合成夹具 14 张照片/14 GPS/14 resolution/12 建议） | 10 步逐条记录：落地导航、创建/改名/过期 revision、同名消歧与后代过滤、单条确认（`origin=CONFIRMED_SUGGESTION` 留存于结果区、列表 11→10）、批量确认（1 批 10 项原子提交、空目标前端拒绝且不发请求）、跨标签页 `PLACE_SUGGESTION_REVISION_STALE`、撤销成功 + `PLACE_OPERATION_NOT_UNDOABLE`、缺包 `missing`/`PLACE_DATASET_MISSING` 且人工路径可用、Tab/Enter 可达、页面文本无路径无坐标、访问日志 145 条全在 `/api/v1/*` 或 `/web/*` 且 `geo-hits = 0` |
+| smoke 期间自修并复核 | 改名后编辑标题未刷新、后代过滤保留名称条件、单条确认结果随列表刷新消失（3 处，均在最终代码上重新核对） |
+| C 级（页面是发行资源） | `build_onedir.py` exit 0（67.6 s，bundle 3,541,244,472 B，21 个 NVIDIA DLL）；bundle 内 `photo_search/web/` 含 `places.html`(12,329) `places.js`(61,297) `places.css`(2,558) 与既有三个资产、migrations 仍为 0001～0005；`packaged_api_smoke.py` exit 0 `status=ok`/`problems=[]`：`/places` 200 `text/html` 无外链无本机路径、`/web/places.js` 200、`/web/places.css` 200、外壳链接 `/places`、startup 1.0 s |
+| 磁盘与清理 | 只删除本任务创建的 `%TEMP%\P2-03C 打包页面验收`（3,541,874,021 B），C 盘 2.56 GB → 5.87 GB；其中应用用 `icacls` 收紧过 DACL 的 `runtime\session.json`（约 1 KB）在沙箱内无法删除而残留 |
+| C 判定 | 依赖/`workers/**`/打包入口未变、未新增 package-data 目录（按卡不触发）；因页面是发行资源仍执行真实 onedir 构建 + 打包 smoke + bundle 审计 |
+
+未验证项（报告 §9）：本次内置浏览器的 `viewport` 覆盖没有改变实际窗口，640×900 像素级证据用
+「0 个元素内部横向溢出 + `min(100%, …)` 网格」代理；批量接口没有 `origin` 字段，批量确认记录
+`MANUAL`（要保留 `CONFIRMED_SUGGESTION` 需先更新契约）；`PLACE_OPERATION_NOT_UNDOABLE` 的
+「目标被后续编辑」分支在页面上不可达（由 API 测试覆盖）；页面不触发后台解析；无 DOM 自动化；
+`GET /assets` 与建议列表仍非快照隔离读。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -386,20 +420,20 @@ human-labelled semantic-search holdout.
 （D 级，65 个新增用例）。`schema_version = 5`，migration 连续 0001～0005；
 依赖/`workers/**`/打包入口未改，`geo.extract`/`geo.resolver`/`scheduler.engine` 仍不在冻结包内。
 
-**P2-03C — 静态地点页与人工整理交互.**
+**P2-03C — 静态地点页与人工整理交互：PASS.** 见
+[P2-03C 报告](reports/P2-03C-place-page-and-manual-curation.md)（B 级 563 passed / 1 skipped + 真实
+浏览器 smoke 10 步 + C 级打包 smoke）。`schema_version` 仍为 5，migration/ADR/依赖未改。
 
-- Status: **READY / CURRENT TASK**. P2-03B 的数据包/解析闭环已 PASS（D 级），
-  `schema_version = 5`，migration 连续 0001～0005，地点/建议/操作/撤销 API 均已可用。
-- Task card: `docs/tasks/P2-03C.md`.
-- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（批量/撤销/同名消歧等
-  复杂交互可**由用户手动**切 DS-H）。
-- Goal: `/places` 静态页面（依赖-free、无 Node/npm）——目录与同名消歧、创建/改名/别名编辑、
-  `place_state=suggested` 的批量确认（`CONFIRMED_SUGGESTION`）/取消、最近操作与 undo、
-  数据包状态面板、缺包/坏包降级；**不提前实施 FTS 或语义搜索**。
-- Validation level: **B + 真实浏览器 smoke + C**（页面是发行资源，必须证明冻结包内可 200 提供；
-  新增 package-data 目录或改打包入口必须补足 C）。
-- 当前会话为 DS-H（P2-03B 推荐档）；下一任务推荐 **DS-L**，与当前档位不同，请用户在 Codex 中
-  手动切换后再执行，不自动切换或启动 Agent。
+**P2-04 — 文件名/备注/有效地点 FTS、祖先/别名检索与改名重投影.**
+
+- Status: **READY / CURRENT TASK**. P2-03C 的页面闭环已 PASS；目录/别名/建议/操作 API 与
+  `catalog_filter_revision`/`suggestion_revision` 触发矩阵均已冻结并实现。
+- Task card: `docs/tasks/P2-04.md`.
+- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（FTS 同步与 outbox 重投影
+  复杂时**由用户手动**切 DS-H）。本会话已是 DS-L，可直接继续，无需切换。
+- Goal: 有效地点（ACTIVE 地点目录）与文件名/备注的 FTS 检索、祖先/别名命中、改名后的投影重投影，
+  候选 `SUGGESTION_ONLY` 地名不得混为有效地点；**不提前实施语义融合或 search session**。
+- Validation level: **B**（若引入 migration 或 outbox 恢复路径，按 V3.1 升到 D 并补故障注入）。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -407,6 +441,8 @@ P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进�
 记录在 P2-02 报告 §10；P2-03A 未验证项（`GET /assets` 页面非快照隔离读、改名未接 undo）
 记录在 P2-03A 报告 §9/§10；P2-03B 未验证项（真实 GeoNames 包未使用、最近点线性扫描、
 冷缓存整包重校验、切包不自动重算、坏包时旧建议仍可读、`geo.resolver` 尚未进入冻结包）
-记录在 P2-03B 报告 §10。
+记录在 P2-03B 报告 §10；P2-03C 未验证项（内置浏览器 `viewport` 覆盖未生效致 640×900 像素级证据
+只到代理、批量接口无 `origin` 致批量确认记 `MANUAL`、`PLACE_OPERATION_NOT_UNDOABLE` 的「目标被后续
+编辑」分支页面上不可达、页面不触发后台解析、无 DOM 自动化、非快照隔离读）记录在 P2-03C 报告 §9。
 
 Model switching remains manual; the repository only records the recommended model per stage.

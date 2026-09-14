@@ -1,9 +1,10 @@
-# 前端浏览器 smoke 核对清单（P1-05 / P1-05B）
+# 前端浏览器 smoke 核对清单（P1-05 / P1-05B / P2-03C）
 
 这份清单把 P1-05 交付的前端闭环固化成可重复执行的人工核对流程。它记录 P1-05 报告 §6 实际观察过的
 10 个步骤、每步的期望观察、以及「不满足即不得标 PASS」的判据，避免每次都要重新设计夹具与步骤。
 
-适用范围：`src/photo_search/web/**` 服务的本机页面（来源页 / 按加入时间浏览 / 详情 / 离线提示）。
+适用范围：`src/photo_search/web/**` 服务的本机页面。§3-§5 是 `index.html`（来源页 / 按加入时间
+浏览 / 详情 / 离线提示）；§6 是 P2-03C 新增的 `places.html`（地点整理）。
 **所有夹具都是 `%TEMP%` 下的合成图片**；任何一步都不得读取、修改、移动或删除真实照片库。
 
 ## 0. 为什么不自动化
@@ -94,3 +95,81 @@ Object.keys(localStorage).length + Object.keys(sessionStorage).length === 0;
 - 该步标 `VALIDATION PENDING` 或 `FAIL`，不得因为其它步骤通过就整体标 PASS。
 
 参考实现：P1-05 报告 §6（10 步的实际观察）与 §8（未验证项）。
+
+## 6. 地点整理页（P2-03C）
+
+页面：`/places`（`src/photo_search/web/places.html` + `places.js` + `places.css`），由
+`src/photo_search/api/web.py` 从 package data 提供。它与 `/api/v1/places` **不是同一个路径**：
+文档是公开的，地点记录仍只来自会话保护的 `/api/v1`。
+
+同样不引入 Node/npm 与无头浏览器：可自动化的部分是 `tests/unit/test_api_frontend.py` 的静态契约
+断言（无外链、无凭证落存储、无 `innerHTML`、只经 `/api/v1` 取数、冻结词表与错误码文案）与
+`tests/integration/test_p2_place_page.py`（页面发出的每个请求形状）；浏览器内交互只能人工核对。
+本节的 10 步就是那一遍人工核对。
+
+### 6.1 生成夹具
+
+```text
+uv run --no-sync python tools/diagnostics/places_smoke_fixture.py --reset
+```
+
+- 生成 14 张合成 JPEG：12 张杭州附近（有候选）、1 张东海海上（成功空结果）、1 张无 GPS。
+- 在同一数据根里完成真实扫描、安装并激活 `tools/places/examples/mini-cities.spec.json` 构建的
+  合成地名包、跑真实 GPS 与「附近城市」处理器，并预置目录：甲市/乙市，两市下各一个「同名地点」，
+  再加一个自定义地点「我的标记」。
+- 打印启动命令、来源根目录、活动包目录（第 8 步要删的文件）与 10 步期望观察。
+- 只写自己工作目录内的合成文件，不发网络请求，不读真实图库/真实地名包；`--reset` 只删除它自己
+  创建的目录。
+
+### 6.2 启动真实端口的服务
+
+```text
+uv run --no-sync python -m photo_search --port <free-port> --data-root "<脚本打印的数据目录>"
+```
+
+打开控制台的一次性会话链接（`next=/`），再用导航里的「地点整理」进入 `/places`。
+
+### 6.3 核对步骤（逐条记录结果）
+
+| # | 操作 | 期望观察 | 不满足即不得 PASS 的判据 |
+|---|---|---|---|
+| 1 | 打开 `/places`（先走一次性链接） | 标题「地点整理」；地名包面板显示真实状态（本夹具为 `active`）；无外链、无本机路径 | 出现 `http(s)://` 外链 / 盘符路径 / 未建立会话的 401 循环 |
+| 2 | 新建 `city` 与 `custom` 各一个；再用「编辑此地点」改名 | 创建后目录出现新行；改名成功且 revision +1；**重放同一旧 `expected_revision`** → 提示 `PLACE_ASSIGNMENT_CONFLICT` 与 `current_revision`，要求重新载入 | 改名后 revision 不前进；冲突时静默覆盖或只显示无信息的失败 |
+| 3 | 名称填「同名地点」→ 查询目录 | 两条同名记录各自显示祖先链（`甲市 › 同名地点 #id` / `乙市 › …`）与稳定 `#place_id`，无自动合并；「只看它的后代」把 `ancestor` 过滤填入并只列后代 | 两条同名被合并/覆盖；无祖先链；祖先链显示猜测出的名称而不是 `#id` |
+| 4 | 建议面板「加载 / 重新加载」→ 展开一条「查看候选与当前归属」→「确认第一条建议」 | 列表显示 12 条待确认建议；候选行标注 `SUGGESTION_ONLY`、距离与依据；确认后该资产离开列表，展开里 `mode=MANUAL_ASSIGNED`、`origin=CONFIRMED_SUGGESTION`、`manual_lock=是` | 候选被展示成已归类；确认后资产仍在建议列表；origin 不是 `CONFIRMED_SUGGESTION` |
+| 5 | 「全选本页」或「冻结全部结果快照」→ 搜索地点→「选为目标 place_id」→「批量确认归属」 | 「逐批 / 单条结果」逐条给出批次、operation、`changed`、`replayed`；快照把 N 个 `asset_id` 冻结（提示含「asset_id 快照」）；把目标 place_id 清空再点（用键盘清空输入框）→ 前端拒绝且不发请求 | 提交时重跑动态查询；只显示总数不显示逐批结果；失败批被显示成部分成功 |
+| 6 | 每页条数选 10 → 加载 → 另一标签页确认一条建议 → 回本页点「冻结全部结果快照」（或「加载更多」） | 提示「建议集合已变化，需重新加载」+ `PLACE_SUGGESTION_REVISION_STALE`，列表**不**拼接两版候选 | 静默追加第二页；或把过期候选当当前候选展示 |
+| 7 | 操作日志（升序，最新在最下方）→ 对一条 COMMITTED 操作「撤销此操作」；再对同一条（现已 REVERSED）撤销一次 | 第一次成功并在「撤销结果」显示新 `UNDO` 操作与 `undo_of_operation_id`；第二次显示 `PLACE_OPERATION_NOT_UNDOABLE` 并刷新目录/建议 | 撤销删除了日志或降低了 revision；被拒时无说明 |
+| 8 | 删掉脚本打印的 `places.jsonl` →「刷新地名包状态」 | 状态变为 `missing` + `PLACE_DATASET_MISSING`；目录查询、新建/改名、人工归属、筛选照常；既有机器建议仍可读（只有新解析阻塞），不报错也不伪造 `ACTIVE` | 显示伪 `ACTIVE`；缺包导致目录或人工归属不可用；把缺包伪装成空图库 |
+| 9 | 窄视口约 640×900 + Tab/Enter 走完第 2、4、7 步 | 无横向滚动（所有元素 `scrollWidth <= clientWidth`，网格按 `min(100%, …)` 收成单列）；按 Tab 依次可达输入框/按钮/复选框，Enter 可提交 | 出现横向滚动条；控件无法用键盘到达 |
+| 10 | 观察页面文本与服务端访问日志 | 页面与响应中没有盘符/UNC 路径，也没有精确坐标；坐标只在 `/api/v1/assets/{id}/geo`；访问日志中所有请求都在 `/api/v1/*` 或 `/web/*`（页面路由 `/`、`/places`），`geo-hits = 0` | 出现绝对路径；页面请求了 `/geo` 或渲染了坐标 |
+
+### 6.4 必做的 DOM 断言（可复制，与 §4 相同）
+
+```js
+// 正文里不得出现盘符路径或用户目录形态（双反斜杠与单反斜杠都算）
+/[A-Za-z]:\\|\/Users\//.test(document.body.innerText);
+
+// 窄视口下不得横向溢出
+document.documentElement.scrollWidth <= window.innerWidth;
+
+// 页面不把令牌写进浏览器存储
+Object.keys(localStorage).length + Object.keys(sessionStorage).length === 0;
+
+// 地点页不得请求坐标端点：内置浏览器的只读求值作用域没有 performance/console，
+// 因此这一步用服务端访问日志核对（本仓库 P2-03C 报告 §6 的实际做法）：
+//   Select-String -Path <server.out.log> -Pattern 'HTTP/1.1'  → 所有路径都在 /api/v1/* 或 /web/*，且不含 /geo
+```
+
+已知限制（必须与本节一起阅读）：
+
+- 批量确认走 `/api/v1/place-assignments/batch`，而该请求体**没有** `origin` 字段（ADR-0005 §6.2
+  只冻结了资产、动作与 revision），因此批量确认记录 `origin=MANUAL`；只有单条「确认第一条建议」与
+  勾选 1 条时的语义是 `CONFIRMED_SUGGESTION`。页面把这一点写在批量面板里，不夸大 provenance。
+- 页面不触发后台解析：候选只能来自已存在的机器产物（本夹具由脚本用真实处理器预置）。
+- `GET /assets` 与建议列表都不是快照隔离读，只绑定 `suggestion_revision`（P2-03A §10.2 / P2-03B §10.7）。
+- 坏包时既有机器建议仍可读，只有新的解析阻塞（P2-03B §10.6）。
+- 第 9 步的 640×900 视口：本次内置浏览器的 `viewport` 覆盖没有改变实际窗口（`innerWidth` 仍为
+  1280），所以 640px 渲染本身没有被直接截图。可复现的代证据是「513 个元素中 0 个存在内部横向溢出
+  （`scrollWidth <= clientWidth`）」加上 `minmax(min(100%, 24rem), 1fr)` 的网格与 `max-width: 100%`
+  的输入控件；需要真实 640px 像素证据时应换用可设视口的浏览器或 C1 复核。

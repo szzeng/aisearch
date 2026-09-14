@@ -157,6 +157,28 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             checks["web_script_content_type"] = script.headers.get("Content-Type")
             checks["web_script_bytes"] = len(script.content)
             checks["web_style_status"] = client.get("/web/styles.css").status_code
+            # P2-03C: the place-curation page must be inside the frozen bundle too.
+            places_page = client.get("/places")
+            checks["places_page_status"] = places_page.status_code
+            checks["places_page_content_type"] = places_page.headers.get("Content-Type")
+            checks["places_page_cache_control"] = places_page.headers.get("Cache-Control")
+            checks["places_page_has_no_external_reference"] = (
+                "http://" not in places_page.text and "https://" not in places_page.text
+            )
+            checks["places_page_has_no_local_path"] = all(
+                needle not in places_page.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            checks["places_page_links_back_to_shell"] = 'href="/"' in places_page.text
+            places_script = client.get("/web/places.js")
+            checks["places_script_status"] = places_script.status_code
+            checks["places_script_content_type"] = places_script.headers.get("Content-Type")
+            checks["places_script_bytes"] = len(places_script.content)
+            checks["places_script_has_no_external_reference"] = (
+                "http://" not in places_script.text and "https://" not in places_script.text
+            )
+            checks["places_style_status"] = client.get("/web/places.css").status_code
+            checks["shell_links_to_places"] = 'href="/places"' in shell.text
             checks["web_missing_status"] = client.get("/web/does-not-exist.js").status_code
             checks["stats_without_session"] = client.get("/api/v1/stats").status_code
             # Follow the launcher's own single-use link: it must set both cookies and
@@ -267,6 +289,26 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("packaged script")
     if checks.get("web_style_status") != 200:
         problems.append("packaged stylesheet")
+    if checks.get("places_page_status") != 200 or "text/html" not in str(
+        checks.get("places_page_content_type")
+    ):
+        problems.append("packaged places page")
+    if not checks.get("places_page_has_no_external_reference"):
+        problems.append("places page external references")
+    if not checks.get("places_page_has_no_local_path"):
+        problems.append("places page local paths")
+    if not checks.get("places_page_links_back_to_shell"):
+        problems.append("places page navigation")
+    if not checks.get("shell_links_to_places"):
+        problems.append("shell link to the places page")
+    if checks.get("places_script_status") != 200 or "javascript" not in str(
+        checks.get("places_script_content_type")
+    ):
+        problems.append("packaged places script")
+    if not checks.get("places_script_has_no_external_reference"):
+        problems.append("places script external references")
+    if checks.get("places_style_status") != 200:
+        problems.append("packaged places stylesheet")
     if checks.get("web_missing_status") != 404:
         problems.append("unknown web asset")
     if checks.get("health") != 200:

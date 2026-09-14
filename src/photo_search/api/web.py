@@ -25,6 +25,9 @@ from photo_search.api.errors import WEB_ASSET_NOT_FOUND, ApiError
 
 WEB_PACKAGE = "photo_search.web"
 INDEX_NAME = "index.html"
+#: The place-curation page (P2-03C). It lives beside the shell, is served from the same
+#: package data and carries no user data of its own.
+PLACES_NAME = "places.html"
 
 #: The shell must always be revalidated: it names the assets of this exact build.
 SHELL_CACHE_CONTROL = "no-cache"
@@ -116,16 +119,34 @@ async def index() -> Response:
     return _serve(INDEX_NAME, cache_control=SHELL_CACHE_CONTROL)
 
 
+@router.get("/places")
+async def places_page() -> Response:
+    """The place-curation page. It never shadows ``/api/v1/places``.
+
+    The business API keeps its own prefix, so the two paths can coexist: this route only
+    answers the bare ``/places`` document, and every piece of place data still comes from
+    the session-protected ``/api/v1`` endpoints.
+    """
+    return _serve(PLACES_NAME, cache_control=SHELL_CACHE_CONTROL)
+
+
 @router.get("/web/{path:path}")
 async def static_asset(path: str) -> Response:
     """One packaged script, style or image below ``/web/``."""
-    cache_control = SHELL_CACHE_CONTROL if path == INDEX_NAME else ASSET_CACHE_CONTROL
+    # Both pages name assets of this exact build, so they are always revalidated; a
+    # script or stylesheet only changes with a build.
+    cache_control = (
+        SHELL_CACHE_CONTROL
+        if path in (INDEX_NAME, PLACES_NAME)
+        else ASSET_CACHE_CONTROL
+    )
     return _serve(path, cache_control=cache_control)
 
 
 __all__ = [
     "ASSET_CACHE_CONTROL",
     "INDEX_NAME",
+    "PLACES_NAME",
     "SHELL_CACHE_CONTROL",
     "media_type_for_name",
     "read_static",

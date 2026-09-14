@@ -97,6 +97,12 @@ a {
   gap: 0.5rem;
 }
 
+.nav-link {
+  color: var(--accent);
+  text-decoration: underline;
+  padding: 0.2rem 0.4rem;
+}
+
 .app-meta {
   margin: 0;
   color: var(--fg-muted);

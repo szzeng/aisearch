@@ -136,3 +136,49 @@ def test_an_unsafe_next_is_refused_without_burning_the_credential(api_env) -> No
         assert "location" not in refusal.headers
     assert result["accepted"].status_code == 303
     assert result["accepted"].headers["Location"] == "/sources"
+
+
+def test_the_places_page_is_public_while_its_api_stays_protected(api_env) -> None:
+    """``/places`` is the P2-03C document; ``/api/v1/places`` is still session-protected."""
+
+    async def scenario(client: AsyncClient) -> dict:
+        page = await client.get("/places")
+        script = await client.get("/web/places.js")
+        style = await client.get("/web/places.css")
+        shell = await client.get("/")
+        anonymous = await client.get("/api/v1/places")
+        await api_env.authenticate(client)
+        authenticated = await client.get("/api/v1/places")
+        return {
+            "page": page,
+            "script": script,
+            "style": style,
+            "shell": shell,
+            "anonymous": anonymous,
+            "authenticated": authenticated,
+        }
+
+    result = api_env.scenario(scenario)
+
+    page = result["page"]
+    assert page.status_code == 200, page.text
+    assert page.headers["Content-Type"].startswith("text/html")
+    assert "no-cache" in page.headers["Cache-Control"]
+    assert "http://" not in page.text and "https://" not in page.text
+    assert "地点整理" in page.text
+    assert str(api_env.library) not in page.text
+    assert str(api_env.data_root) not in page.text
+    assert TOKEN not in page.text
+
+    assert result["script"].status_code == 200
+    assert "javascript" in result["script"].headers["Content-Type"]
+    assert result["style"].status_code == 200
+    assert result["style"].headers["Content-Type"].startswith("text/css")
+    # The shell links to the page, so the navigation goes both ways.
+    assert 'href="/places"' in result["shell"].text
+
+    # The document is public; the frozen place records are not.
+    assert result["anonymous"].status_code == 401
+    assert result["anonymous"].json()["code"] == "SESSION_REQUIRED"
+    assert result["authenticated"].status_code == 200
+    assert "places" in result["authenticated"].json()

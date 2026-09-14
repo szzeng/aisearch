@@ -1,0 +1,152 @@
+/* Place-curation page styles. Offline-only: system fonts, relative units, no external
+ * reference. Everything is single-column friendly so a 640px viewport never scrolls
+ * sideways. */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: flex-end;
+}
+
+.filters p {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.filter-actions {
+  flex-direction: row !important;
+  gap: 0.5rem !important;
+}
+
+textarea {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
+  width: 100%;
+  max-width: 100%;
+  resize: vertical;
+}
+
+.place-list {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr));
+}
+
+.place-row {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.place-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  align-items: center;
+  margin: 0 0 0.25rem;
+}
+
+.chip {
+  font-size: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  color: var(--fg-muted);
+}
+
+.chip-kind {
+  color: var(--accent);
+}
+
+.chip-id {
+  font-family: "Cascadia Mono", Consolas, monospace;
+}
+
+.chip-suggest {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.chain {
+  margin: 0.1rem 0 0.35rem;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+}
+
+.log {
+  list-style: none;
+  margin: 0.35rem 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.log li {
+  overflow-wrap: anywhere;
+}
+
+.candidate {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.5rem;
+}
+
+.candidate-list {
+  margin: 0.35rem 0 0;
+}
+
+.check-line {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.suggestion-detail {
+  margin-top: 0.35rem;
+}
+
+.dataset-headline {
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+
+.picker {
+  border-top: 1px solid var(--line);
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+}
+
+.picker .place-list {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+}

@@ -14,7 +14,7 @@ from photo_search.api.queries import (
     encode_time_cursor,
 )
 from photo_search.api.session import safe_redirect_target
-from photo_search.api.web import INDEX_NAME, media_type_for_name, read_static
+from photo_search.api.web import INDEX_NAME, PLACES_NAME, media_type_for_name, read_static
 
 
 def _blob(text: str) -> str:
@@ -226,3 +226,111 @@ def test_frontend_copy_stays_honest_about_time_and_offline_media() -> None:
     # A refused artifact shows the server-supplied code as visible text, never a broken image.
     assert "badge-code" in script
     assert "result.code" in script
+
+
+# ---------------------------------------------------------------------------------------
+# P2-03C: the place-curation page. It is a separate document in the same package-data
+# directory, so it keeps the P1-05 rules and adds the frozen ADR-0005 vocabulary verbatim.
+# ---------------------------------------------------------------------------------------
+PLACES_DOCUMENTS = ("places.html", "places.js", "places.css")
+
+
+def _places_documents() -> tuple[str, str, str]:
+    shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
+    script = (read_static("places.js") or b"").decode("utf-8")
+    style = (read_static("places.css") or b"").decode("utf-8")
+    assert shell and script and style
+    return shell, script, style
+
+
+@pytest.mark.parametrize("relative", PLACES_DOCUMENTS)
+def test_the_places_page_assets_are_packaged(relative: str) -> None:
+    payload = read_static(relative)
+    assert payload and len(payload) > 0
+
+
+def test_the_places_page_route_never_shadows_the_place_api() -> None:
+    """``/places`` is a document; every place record still comes from ``/api/v1/places``."""
+    from photo_search.api.routes import router as api_router
+    from photo_search.api.web import router as web_router
+
+    api_paths = {route.path for route in api_router.routes}
+    web_paths = {route.path for route in web_router.routes}
+    assert PLACES_NAME == "places.html"
+    assert "/places" in web_paths
+    assert "/api/v1/places" in api_paths
+    assert "/places" not in api_paths
+
+
+def test_the_places_page_has_no_external_reference_credential_or_html_sink() -> None:
+    shell, script, style = _places_documents()
+
+    for document in (shell, script, style):
+        assert "http://" not in document
+        assert "https://" not in document
+    assert 'lang="zh-CN"' in shell
+    assert "/web/places.js" in shell
+    assert "/web/styles.css" in shell
+    assert "/web/places.css" in shell
+    # The page can go back to the shell, which links here in turn.
+    assert 'href="/"' in shell
+    assert "ps_csrf" in script
+    assert "X-CSRF-Token" in script
+    assert 'credentials: "same-origin"' in script
+    assert "localStorage" not in script
+    assert "sessionStorage" not in script
+    assert "console." not in script
+    assert "innerHTML" not in script
+    assert "token=" not in script
+    assert "csrf_token" not in script
+    assert "错误详情包含本机路径" in script
+    assert "PATH_LIKE" in script
+
+
+def test_the_places_page_reaches_data_only_through_the_protected_api() -> None:
+    _, script, _ = _places_documents()
+
+    assert 'var API = "/api/v1";' in script
+    assert script.count("fetch(") == script.count("fetch(API +")
+    assert "sqlite" not in script.lower()
+    assert "catalog.db" not in script
+
+
+def test_the_places_page_never_asks_for_coordinates_or_a_stored_root_path() -> None:
+    """Exact coordinates stay on the session-protected ``/geo`` endpoint only."""
+    _, script, _ = _places_documents()
+
+    assert "/geo" not in script
+    assert "root_path" not in script
+    assert "normalized_wgs84" not in script
+    assert "latitude" not in script
+
+
+def test_the_places_page_keeps_the_frozen_place_vocabulary() -> None:
+    shell, script, _ = _places_documents()
+
+    # Revision binding and the two "reload instead of mixing versions" prompts.
+    assert "CATALOG_FILTER_REVISION_STALE" in script
+    assert "PLACE_SUGGESTION_REVISION_STALE" in script
+    assert "目录已变化，需重新加载" in script
+    assert "建议集合已变化，需重新加载" in script
+    # The frozen write vocabulary is used as-is, including the origin of a confirmation.
+    assert "CONFIRMED_SUGGESTION" in script
+    assert 'origin: "CONFIRMED_SUGGESTION",' in script
+    assert "restore_auto" in script
+    assert "PLACE_OPERATION_NOT_UNDOABLE" in script
+    assert "PLACE_IDEMPOTENCY_CONFLICT" in script
+    assert "PLACE_ASSIGNMENT_CONFLICT" in script
+    assert "PLACE_BATCH_TOO_LARGE" in script
+    assert "expected_revision: revision," in script
+    assert "expected_operation_revision" in script
+    assert "MAX_BATCH = 500" in script
+    # A candidate is never shown as a conclusion.
+    assert "SUGGESTION_ONLY" in script
+    assert "冻结全部结果快照" in shell
+    assert "asset_id 快照" in shell + script
+    # Batch provenance is stated honestly instead of being silently upgraded.
+    assert "批量确认记录的 origin 是" in shell
+    assert "单条确认" in shell
+    # The page admits that re-parenting is refused by the server instead of hiding it.
+    assert "不提供改父级" in shell
