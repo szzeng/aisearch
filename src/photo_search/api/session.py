@@ -204,8 +204,10 @@ def restrict_credential_file(path: Path) -> str:
 
     The file lives inside the user's own data root, so the baseline already excludes other
     accounts. A POSIX mode of ``0600`` and a Windows DACL that drops inheritance are both
-    attempted; a failure (a locked-down account, a sandbox, a missing binary) is reported
-    instead of being silently claimed as success.
+    attempted. The Windows entry retains ``DELETE`` for the owning user: replacing a prior
+    one-time credential uses ``os.replace``, which must be able to delete its old target.
+    A failure (a locked-down account, a sandbox, a missing binary) is reported instead of
+    being silently claimed as success.
     """
     if os.name != "nt":
         try:
@@ -218,7 +220,7 @@ def restrict_credential_file(path: Path) -> str:
         return "inherited:no-username"
     try:
         completed = subprocess.run(
-            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W)"],
+            ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:(R,W,D)"],
             capture_output=True,
             timeout=15,
             check=False,

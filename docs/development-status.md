@@ -674,13 +674,11 @@ P2-05 报告 §11；P2-06A 未验证项（真实查询编码器未接入应用�
 reranker 的 capability-missing/unhealthy 分支因共用 runtime package 不可达、反馈表规模/并发写入未测、
 精排候选上界只在 ≤4 候选夹具验证）记录在 P2-06B 报告 §11。
 
-**待独立任务修复的既有缺陷**：`api/session.py::restrict_credential_file` 的 `icacls`
-（`/inheritance:r /grant:r "<user>:(R,W)"`）使凭据文件缺少 DELETE 权限，**同一 `data_root` 第二次启动
-打包应用会在 `bootstrap_session_credential` 抛 `PermissionError [WinError 5]` 而失败**（P2-06A 的 C 级
-smoke 连续两次运行复现，见 P2-06A 报告 §9.1）；P2-06B §9.1 又实测到同一 DACL 让凭据文件对普通用户
-**不可删除也不可重新授权**（smoke 工作目录删除后残留两个 112 B 的 `session.json`，`Remove-Item` 与
-`icacls /grant` 都被拒绝）。建议独立 **C1** 任务修复（授予 `(R,W,D)` 或先删后写）并补「同一 data root
-连续两次启动」与「临时数据目录可完整清理」两条打包 smoke 断言；在修复前，本仓库的打包 smoke 每次
-必须使用新建的工作目录，且删除该目录需要 takeown 或管理员权限。
+**P1-07 Windows 凭据 ACL 轮换修复为 PASS**：`restrict_credential_file` 仍移除继承并仅授予当前用户，
+但由 `(R,W)` 改为 `(R,W,D)`，使原子 `os.replace` 能替换旧 `session.json`，临时 data root 也可由普通
+用户回收。专项 31 passed、完整单元/集成套件 100% 无失败、Ruff/diff/lock clean；真实新 onedir 的同一
+data root 第二启动 smoke 为 `status=ok`（新 token、health 200）且工作目录可完整删除。详见
+[P1-07 报告](reports/P1-07-windows-credential-acl-rotation.md)。旧版本遗留的 `(R,W)` 文件不会被本任务
+擅自接管或删除，仍可能需要所有者/管理员人工清理。P2-07 仍为 CURRENT TASK。
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -481,6 +481,53 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
         for reader in readers:
             reader.join(timeout=10.0)
 
+    # The credential DACL is deliberately tightened after each launch.  Start the frozen
+    # app again against exactly the same data root to prove that atomic credential rotation
+    # can replace that protected target on Windows.
+    restart_port = free_port()
+    restart_stdout: list[str] = []
+    restart_stderr: list[str] = []
+    restart = subprocess.Popen(
+        [str(executable), "--port", str(restart_port), "--data-root", str(data_root)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(installation),
+    )
+    restart_readers = [
+        threading.Thread(target=drain, args=(restart.stdout, restart_stdout), daemon=True),
+        threading.Thread(target=drain, args=(restart.stderr, restart_stderr), daemon=True),
+    ]
+    for reader in restart_readers:
+        reader.start()
+    try:
+        restart_bootstrap = wait_for(restart_stdout, lambda line: "token=" in line, timeout=timeout)
+        checks["credential_rotation_second_startup"] = restart_bootstrap is not None
+        if restart_bootstrap is not None:
+            restart_match = re.search(r"https?://\S+", restart_bootstrap)
+            restart_query = parse_qs(urlsplit(restart_match.group(0)).query) if restart_match else {}
+            restart_token = (restart_query.get("token") or [""])[0]
+            checks["credential_rotation_uses_fresh_token"] = bool(restart_token) and restart_token != token
+            checks["credential_rotation_health"] = httpx.get(
+                f"http://127.0.0.1:{restart_port}/api/v1/health", timeout=timeout
+            ).status_code
+        else:
+            checks["credential_rotation_uses_fresh_token"] = False
+            checks["credential_rotation_health"] = None
+    finally:
+        restart.terminate()
+        try:
+            restart.wait(timeout=60)
+        except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+            restart.kill()
+        for reader in restart_readers:
+            reader.join(timeout=10.0)
+    checks["credential_rotation_stderr_free_of_token"] = all(
+        token not in line for line in restart_stderr
+    )
+
     access_lines = [line for line in stdout if "HTTP/1.1" in line]
     checks["access_log_lines"] = len(access_lines)
     checks["access_log_redacted"] = any("token=<redacted>" in line for line in access_lines)
@@ -534,6 +581,13 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("health")
     if checks.get("stats_without_session") != 401:
         problems.append("unauthenticated read")
+    if (
+        checks.get("credential_rotation_second_startup") is not True
+        or checks.get("credential_rotation_uses_fresh_token") is not True
+        or checks.get("credential_rotation_health") != 200
+        or checks.get("credential_rotation_stderr_free_of_token") is not True
+    ):
+        problems.append("credential rotation on a reused data root")
     if checks.get("session_exchange") != 303 or checks.get("session_redirect_location") != "/":
         problems.append("session redirect")
     if not checks.get("session_cookie_httponly") or not checks.get("csrf_cookie_readable"):

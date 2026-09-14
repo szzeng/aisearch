@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import photo_search.api.session as session_module
 from photo_search.api.errors import (
     ACCESS_DENIED,
     ApiError,
@@ -28,6 +30,7 @@ from photo_search.api.session import (
     CREDENTIAL_SCHEMA,
     SessionManager,
     bootstrap_session_credential,
+    restrict_credential_file,
 )
 from photo_search.api.settings import ApiSettings, BindNotAllowed, is_loopback_host
 from photo_search.config import session_credential_path
@@ -81,6 +84,47 @@ def test_bootstrap_writes_a_credential_file_under_the_data_root(tmp_path: Path) 
     # The credential never lives inside a source directory or an install directory.
     assert path.parent.name == "runtime"
     assert bootstrap.permission
+
+
+def test_bootstrap_rotates_the_credential_under_the_same_data_root(tmp_path: Path) -> None:
+    """A restarted launcher replaces, rather than reuses, its bootstrap credential."""
+    data_root = tmp_path / "PhotoSearchData"
+    first = bootstrap_session_credential(ApiSettings(data_root=data_root))
+    second = bootstrap_session_credential(ApiSettings(data_root=data_root))
+
+    path = session_credential_path(data_root)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert first.token != second.token
+    assert payload["token"] == second.token
+
+
+def test_windows_credential_acl_retains_delete_for_atomic_rotation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The restricted DACL still permits replacing and later removing the credential."""
+    calls: list[list[str]] = []
+
+    def fake_run(arguments: list[str], **_kwargs: object) -> SimpleNamespace:
+        calls.append(arguments)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        session_module,
+        "os",
+        SimpleNamespace(name="nt", environ={"USERNAME": "photo-search-user"}),
+    )
+    monkeypatch.setattr(session_module.subprocess, "run", fake_run)
+
+    assert restrict_credential_file(tmp_path / "session.json") == "windows-restricted-acl"
+    assert calls == [
+        [
+            "icacls",
+            str(tmp_path / "session.json"),
+            "/inheritance:r",
+            "/grant:r",
+            "photo-search-user:(R,W,D)",
+        ]
+    ]
 
 
 def test_explicit_token_override_does_not_write_a_file(tmp_path: Path) -> None:
