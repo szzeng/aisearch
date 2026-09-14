@@ -13,6 +13,7 @@ from typing import Any
 
 from photo_search.catalog import schema
 from photo_search.catalog.sqlite_io import open_readonly
+from photo_search.face import contract as face_contract
 from photo_search.ocr import contract as ocr_contract
 
 
@@ -262,6 +263,219 @@ def ocr_summary(
             "pending_jobs": int(pending),
             "blocked_jobs": blocked,
             "projection_queued": projection_queued,
+            "state": state,
+        }
+    finally:
+        connection.close()
+
+
+def face_summary(
+    db_path: str | Path, *, weights_present: bool | None = None
+) -> dict[str, Any] | None:
+    """Truthful face-readiness of this catalog: analysed, pending, grouped, suggested.
+
+    Read-only and free of personal data: no bbox, no landmark, no vector, no similarity of
+    an individual pair and no path leaves this function. What it does expose is the honest
+    answer to "has this library been looked at?": how many assets carry faces *for their
+    current content revision*, how many were analysed before the content changed (still
+    catching up), how many are still queued, and how the independent candidate index and the
+    conservative association are doing. ``weights_present`` is the cheap file-level fact the
+    caller may add; ``None`` means it was not checked. ``None`` as a whole means this catalog
+    predates migration 0010.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        required = {
+            "faces",
+            "face_embeddings",
+            "persons",
+            "face_person_links",
+            "face_association_queue",
+        }
+        if not required <= tables:
+            return None
+        task_type = str(face_contract.FACE_TASK_TYPE)
+        processor_id = str(face_contract.FACE_PROCESSOR_ID)
+        library_assets = int(
+            connection.execute(
+                "SELECT COUNT(DISTINCT a.asset_id) AS total FROM assets AS a "
+                "JOIN file_locations AS f ON f.asset_id = a.asset_id "
+                "AND f.availability = 'PRESENT'"
+            ).fetchone()["total"]
+        )
+        current_faces = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM faces AS f JOIN assets AS a "
+                "ON a.asset_id = f.asset_id WHERE f.input_revision = a.sha256 "
+                "AND f.spec_revision = ?",
+                (str(face_contract.FACE_SPEC_REVISION),),
+            ).fetchone()["total"]
+        )
+        assets_with_faces = int(
+            connection.execute(
+                "SELECT COUNT(DISTINCT f.asset_id) AS total FROM faces AS f "
+                "JOIN assets AS a ON a.asset_id = f.asset_id WHERE f.input_revision = a.sha256 "
+                "AND f.spec_revision = ?",
+                (str(face_contract.FACE_SPEC_REVISION),),
+            ).fetchone()["total"]
+        )
+        low_quality = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM faces AS f JOIN assets AS a "
+                "ON a.asset_id = f.asset_id WHERE f.input_revision = a.sha256 "
+                "AND f.spec_revision = ? AND f.quality_state <> 'OK'",
+                (str(face_contract.FACE_SPEC_REVISION),),
+            ).fetchone()["total"]
+        )
+        analyzed = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM jobs AS j JOIN assets AS a "
+                "ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+                "WHERE j.task_type = ? AND j.processor_id = ? AND j.state = 'SUCCEEDED' "
+                "AND j.subject_type = 'asset' AND j.input_revision = a.sha256",
+                (task_type, processor_id),
+            ).fetchone()["total"]
+        )
+        stale = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM jobs AS j JOIN assets AS a "
+                "ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+                "WHERE j.task_type = ? AND j.processor_id = ? AND j.state = 'SUCCEEDED' "
+                "AND j.subject_type = 'asset' AND j.input_revision <> a.sha256",
+                (task_type, processor_id),
+            ).fetchone()["total"]
+        )
+        degraded = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM jobs WHERE task_type = ? AND processor_id = ? "
+                "AND state = 'SUCCEEDED' AND resolved_device = 'cpu'",
+                (task_type, processor_id),
+            ).fetchone()["total"]
+        )
+        jobs = {
+            str(row["state"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT state, COUNT(*) AS count FROM jobs WHERE task_type = ? "
+                "AND processor_id = ? GROUP BY state",
+                (task_type, processor_id),
+            )
+        }
+        pending = sum(
+            count for state, count in jobs.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
+        )
+        blocked = int(jobs.get("BLOCKED", 0))
+        persons = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM persons WHERE merged_into IS NULL"
+            ).fetchone()["total"]
+        )
+        confirmed = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM face_person_links WHERE decision = 'CONFIRMED'"
+            ).fetchone()["total"]
+        )
+        suggested = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM face_person_links WHERE decision = 'SUGGESTED'"
+            ).fetchone()["total"]
+        )
+        manual = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM face_person_links WHERE assignment_kind = 'MANUAL'"
+            ).fetchone()["total"]
+        )
+        conflicts = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM face_person_links WHERE decision = 'SUGGESTED' "
+                "AND reason = ?",
+                (str(face_contract.REASON_SAME_IMAGE_CONFLICT),),
+            ).fetchone()["total"]
+        )
+        associations_queued = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM face_association_queue WHERE spec_revision = ?",
+                (str(face_contract.FACE_SPEC_REVISION),),
+            ).fetchone()["total"]
+        )
+        index: dict[str, Any] | None = None
+        if "face_index_generations" in tables:
+            generation = connection.execute(
+                "SELECT * FROM face_index_generations WHERE space_id = ? ORDER BY created_at DESC "
+                "LIMIT 1",
+                (str(face_contract.FACE_SPACE_ID),),
+            ).fetchone()
+            entries = {
+                str(row["state"]): int(row["count"])
+                for row in connection.execute(
+                    "SELECT state, COUNT(*) AS count FROM face_index_entries GROUP BY state"
+                )
+            }
+            outbox = {
+                str(row["state"]): int(row["count"])
+                for row in connection.execute(
+                    "SELECT state, COUNT(*) AS count FROM face_index_outbox GROUP BY state"
+                )
+            }
+            index = {
+                "generation_id": None if generation is None else str(generation["generation_id"]),
+                "state": None if generation is None else str(generation["state"]),
+                "is_active": bool(generation is not None and int(generation["is_active"])),
+                "space_id": None if generation is None else str(generation["space_id"]),
+                "dimension": None if generation is None else int(generation["dimension"]),
+                "entries": entries,
+                "outbox": outbox,
+                "pending_candidates": sum(
+                    count for state, count in outbox.items() if state != "CONFIRMED"
+                ),
+            }
+        pending_index = 0 if index is None else int(index["pending_candidates"])
+        if pending or stale or associations_queued or pending_index:
+            state = "LAGGING"
+        elif blocked:
+            state = "BLOCKED"
+        elif analyzed:
+            state = "SYNCED"
+        else:
+            state = "NOT_RUN"
+        return {
+            "processor_id": processor_id,
+            "task_type": task_type,
+            "spec_revision": str(face_contract.FACE_SPEC_REVISION),
+            "space_id": str(face_contract.FACE_SPACE_ID),
+            "model_fingerprint": str(face_contract.MODEL_FINGERPRINT),
+            "config_hash": str(face_contract.CONFIG_HASH),
+            "dimension": int(face_contract.FACE_DIMENSION),
+            "weights_present": weights_present,
+            "library_assets": library_assets,
+            "analyzed_assets": analyzed,
+            "pending_assets": max(0, library_assets - analyzed),
+            "stale_assets": stale,
+            "assets_with_faces": assets_with_faces,
+            "faces": current_faces,
+            "low_quality_faces": low_quality,
+            "persons": persons,
+            "confirmed_links": confirmed,
+            "suggested_links": suggested,
+            "manual_links": manual,
+            "same_image_conflicts": conflicts,
+            "associations_queued": associations_queued,
+            "degraded_jobs": degraded,
+            "jobs": jobs,
+            "pending_jobs": int(pending),
+            "blocked_jobs": blocked,
+            "index": index,
+            "thresholds": {
+                "merge": float(face_contract.MERGE_THRESHOLD),
+                "suggest": float(face_contract.SUGGEST_THRESHOLD),
+                "near_tie_margin": float(face_contract.NEAR_TIE_MARGIN),
+                "min_face_pixels": float(face_contract.MIN_FACE_PIXELS),
+                "min_blur_variance": float(face_contract.MIN_BLUR_VARIANCE),
+                "low_detection_score": float(face_contract.LOW_DETECTION_SCORE),
+            },
             "state": state,
         }
     finally:

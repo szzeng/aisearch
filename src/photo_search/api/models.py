@@ -113,6 +113,11 @@ class CapabilitiesResponse(BaseModel):
     #: the OCR job states. ``None`` means this catalog predates migration 0009. Contains no
     #: recognised text, no coordinate and no path.
     ocr: dict[str, Any] | None = None
+    #: P3-02 face facts: how many assets carry *current* face facts, how many are still
+    #: queued, the unnamed group/suggestion counts, the independent candidate-index state and
+    #: the calibrated thresholds this build applies. ``None`` means this catalog predates
+    #: migration 0010. Contains no bbox, no landmark, no vector and no path.
+    faces: dict[str, Any] | None = None
 
 
 class SourceRecord(BaseModel):

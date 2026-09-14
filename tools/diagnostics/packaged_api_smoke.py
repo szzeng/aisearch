@@ -517,6 +517,11 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             # behavioural proof that the new ``photo_search.ocr`` light modules really are
             # importable inside the package (a missing module would fail the request).
             checks["coverage_ocr_block"] = coverage_capabilities.json().get("ocr")
+            # P3-02: the frozen bundle must be able to describe its face layer as well. This is
+            # the behavioural proof that the light ``photo_search.face.contract``/``weights``
+            # modules and migration 0010 really are inside the package (a missing module would
+            # fail the request, and a missing migration would make the catalog unusable).
+            checks["coverage_faces_block"] = coverage_capabilities.json().get("faces")
             checks["coverage_place_counts"] = {
                 key: coverage_places.json().get(key)
                 for key in (

@@ -398,6 +398,27 @@ class Scheduler:
                         prepared=prepared,
                         now_ms=int(now_ms),
                     )
+                # P3-02: a qualified face document becomes the asset's current face facts
+                # (the detection rows, the canonical vectors and the durable association
+                # queue row) in the very same transaction as the artifact, the artifact row
+                # and the job terminal state. The conservative *grouping* deliberately runs
+                # later, once the independent face candidate index is confirmed, so a crash
+                # can neither lose the facts nor silently report a face as grouped. Imported
+                # lazily like the other hooks: the scheduler does not depend on the face
+                # package at import time, and this build still has no resident scheduler
+                # thread.
+                from photo_search.face import contract as face_contract
+
+                if str(spec.processor_id) == face_contract.FACE_PROCESSOR_ID:
+                    from photo_search.face import processor as face_processor
+
+                    face_processor.persist_face_document(
+                        connection,
+                        job=job,
+                        result=result,
+                        prepared=prepared,
+                        now_ms=int(now_ms),
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None

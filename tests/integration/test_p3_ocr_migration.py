@@ -118,7 +118,8 @@ def test_migration_scripts_are_continuous_and_0009_is_the_ocr_layer() -> None:
     assert versions == list(range(1, SUPPORTED + 1))
     assert versions[8] == 9
     assert (REAL_MIGRATIONS_DIR / "0009_ocr_documents.sql").is_file()
-    assert SUPPORTED == 9
+    # Later additive migrations append to the chain, so the supported version only grows.
+    assert SUPPORTED >= V9
 
 
 def test_v8_to_v9_is_continuous_backed_up_and_lossless(

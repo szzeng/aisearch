@@ -46,7 +46,12 @@ boundary and upload search under concurrency; **11 new cases and zero production
 **P3-01 is PASS** (B + D + C level: the pinned PP-OCRv4 OCR processor, its bounded high-resolution
 slicing, the `0009` OCR document/region layer with the fifth projection cause, the `ocr_text`
 derived document and its same-transaction queue, a controlled CLI entry point and a truthful
-read-only OCR status; 75 new cases, **schema_version 8 → 9**). P3-02 is the current task.
+read-only OCR status; 75 new cases, **schema_version 8 → 9**). **P3-02 is PASS** (B + D + C level: the pinned
+SCRFD detector and ArcFace recogniser with the P0-04 weights pinned by size and SHA-256, the `0010` face core
+(`faces`/`face_embeddings`/`persons`/`face_person_links`/`face_association_queue`), the independent face
+candidate index with its own generations and outbox, and the calibrated conservative association (merge `0.56`,
+suggest `0.29`, conflicts and low-quality faces only ever become suggestions); 87 new cases,
+**schema_version 9 → 10**). This closes the face-detection half of the P3 phase; P3-03 is the current task.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -648,6 +653,39 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
   - `taken_at`（EXIF 拍摄时间）排入 **P4-00A（C2 契约）→ P4-00B（DS-H 实现）**；
     通过 ADR-0002 §7 的增量迁移路径，不改变现有加入时间排序。
 
+## Latest face closure — P3-02 (2026-09-14)
+
+P3-02 已实现人脸检测/对齐/特征/独立候选索引/保守自动关联并通过 **B + D + C** 级验收，报告
+[P3-02 报告](reports/P3-02-face-detect-align-index-association.md)。起点 HEAD `34db5e3`（P3-01 报告
+提交），工作树干净。
+
+新增 `src/photo_search/face/**`（P0-04 固定权重校验、SCRFD 640 画布检测 + 锚点/NMS、ArcFace 5 点相似对齐
+112×112、512 维 L2 特征与三项质量口径、确定性 `face_id`、`face-document.v1` 结构化产物、同事务事实持久化、
+独立人脸候选索引、按真实夹具校准的保守关联、受控 CLI）与连续增量迁移 `0010_face_core.sql`：
+**`schema_version` 推进到 10**，`0001`～`0009` 未改；新增 `faces`（当前检测事实）、`face_embeddings`
+（规范 512 维向量）、`persons`（未命名分组）、`face_person_links`（每脸至多一个有效归属 + 任意条建议）、
+`face_association_queue`，以及**独立**的 `face_index_generations/_entries/_outbox`/`face_candidates`
+（自己的世代与主键，绝不共用图片索引的资产级身份）。`/api/v1/capabilities` 新增只读 `faces` 段；
+`photo_search.face.cli` 提供 weights/status/enqueue/run/index/group/detect。本任务未改 `workers/**`、
+打包入口、依赖、前端资源、`geo/**`、`places/**`、`ingestion/**`，也未改动 P3-01 OCR 契约。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=964 failures=0 errors=0 skipped=1`，297.6 s |
+| 本任务新增用例 | 87 例（contract 27、geometry 17、association 12、migration 6、cli 9、lifecycle 16） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| C 级 | 真实 onedir 重建（3.30 GB）+ `packaged_api_smoke.py --work-dir D:\PhotoSearchSmoke\P3-02-final`：`status=ok`、`problems=[]`、`startup_seconds=1`、`/capabilities` 200、`coverage_has_no_local_path=true`；bundle 内含 `0001`～`0010`（`0010` 与源码 SHA-256 一致），`faces` 段返回真值（`state=NOT_RUN`、`thresholds.merge=0.56`） |
+| 真实夹具 | `tools/diagnostics/face_smoke_fixture.py --device cpu` exit 0：6 张资产/12 张脸/8 个未命名分组；宇航员与增亮变体同组（0.9723）、42% 缩放脸 `LOW/SMALL` 只出建议（0.7826）、同图两张同人为 1 成员 + 1 条 `SAME_IMAGE_CONFLICT`、六人合影 6 个不同分组、112 px 紧裁人像独立成组（验证"小于画布不放大"规则） |
+| 阈值校准 | 用产品引擎复测并断言与 `contract.CALIBRATION` 一致：异人 28 对 max 0.2061；同人整图变化 40 对 min 0.8527；同人裁剪几何变化 32 对 min 0.6433 ⇒ `MERGE=0.56`、`SUGGEST=0.29`（推导公式写入契约，明确不是通用常数 0.45） |
+| v9→v10 迁移 | 备份内 `schema_version=9` 且无 face 表；单事务推进；旧行（含 P3-01 OCR 行与队列行）逐列不变；注入损坏 0010 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
+| D 级注入 | 权重缺件/哈希不符、租约到期接管与迟到结果、内容变化前后旧结果、来源不可用、重跑同内容不产生第二套脸/第二个分组、候选索引写而未确认窗口、人工优先、显式 GPU 不隐式转 CPU——全部零副作用或按设计阻塞 |
+
+未验证项：真实 GPU 人脸推理（本机 venv 的 CUDA 会话因缺 `cublasLt64_13.dll` 搜索路径无法创建；打包
+`PhotoSearch.spec` 已把 NVIDIA DLL 复制成 `nvidia_dlls/`，P0-06 亦在打包产物上验收过 CUDA，但本任务未在
+GPU 上跑人脸）；真实年龄变化/遮挡/眼镜/强侧脸/低照度；真实家庭照片库规模、聚类纯度与代表上限调参；
+候选索引为 SQLite 派生表而非 ANN；世代切换后的新旧脸映射。若要现在就补 GPU 证据，建议手动切
+**C1 / GPT-5.6 Terra / medium** 做一次 GPU/DLL bring-up（不阻塞 P3-03）。
+
 ## GPU status
 
 Model GPU execution is verified on this machine (RTX 4060 Laptop GPU / 8188 MiB / driver 616.56 / CUDA UMD 13.4):
@@ -765,6 +803,17 @@ P2-08 未验证项（真实编码器/语义质量、浏览器侧 `SEMANTIC`/`TEX
 故障、地名包进程内 warm cache 边界、产品 remap/profile/generation 入口与模型升级状态机缺口）记录在
 [P2-08 报告](reports/P2-08-acceptance-matrix.md) §5/§6/§7。
 
+P3-01 未验证项（真实复杂版面/手写/竖排/多语言与真实截图库规模、引擎去空格对数字段检索的保真度、
+tokenizer 世代切换无法重新分词既有 OCR 文本、产品侧自动排队与常驻调度尚未接入、区域元数据尚无服务入口、
+跨进程并发与大库吞吐未压测、真实 USB/SMB 断盘未验证）记录在
+[P3-01 报告](reports/P3-01-ocr-text-regions-confidence-fts.md) §8/§10。
+
+P3-02 未验证项（真实 GPU 人脸推理：本机 venv 的 CUDA 会话因 `cublasLt64_13.dll` 不在搜索路径而无法创建，
+打包产物已带 `nvidia_dlls/` 但本次 smoke 的数据根没有固定权重因此未触发；真实年龄变化/遮挡/口罩/眼镜/强侧脸/
+低照度；真实家庭照片库规模、聚类纯度与代表上限调参；候选索引为 SQLite 派生表而非 ANN；`MAX_FACES` 只在小夹具
+验证；世代切换后的新旧脸映射未实现；质量阈值仅由 8 个真实脸的下界推出安全余量；跨进程并发与取消的抢占语义
+未测）记录在 [P3-02 报告](reports/P3-02-face-detect-align-index-association.md) §14。
+
 **P1-07 Windows 凭据 ACL 轮换修复为 PASS**：`restrict_credential_file` 仍移除继承并仅授予当前用户，
 但由 `(R,W)` 改为 `(R,W,D)`，使原子 `os.replace` 能替换旧 `session.json`，临时 data root 也可由普通
 用户回收。专项 31 passed、完整单元/集成套件 100% 无失败、Ruff/diff/lock clean；真实新 onedir 的同一
@@ -803,9 +852,14 @@ BLOCKED, SYNCED}`，无原文、无坐标、无路径）。本任务未改 ADR/�
 | v8→v9 迁移 | 备份内 `schema_version=8` 且无 OCR 表；单事务推进；旧队列行逐列保留；未知 cause 被拒；注入损坏 0009 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
 | D 级注入 | 权重缺件/同尺寸哈希不符、提交前崩溃、内容变化后旧结果、旧 revision 文档被投影忽略、到期租约接管、用户取消、预算耗尽、强制重识别幂等——全部零副作用 |
 
-**当前任务是 P3-02 — 人脸检测对齐、特征、候选索引、保守自动关联**（V3.1 §7 表 P3-02 行）。任务卡
-`docs/tasks/P3-02.md`，推荐 **DS-H**（ONNX/Windows/性能环境问题转 C1；复用 P0-06 已验收的 GPU
-runtime，不重新做 GPU bring-up），验收 **B + D（触 worker/打包再加 C）**。下一任务建议模型/档位与
-本任务不同，请按任务卡提示在 Codex 中手动切换后继续。
+**P3-02 — 人脸检测对齐、特征、候选索引、保守自动关联：PASS.** 见
+[P3-02 报告](reports/P3-02-face-detect-align-index-association.md)（B + D + C 级：964 例 0 失败 / 1 跳过，
+87 个新增用例；真实夹具 6 资产/12 脸/8 个未命名分组；真实 onedir 重建 + 打包 smoke `problems=[]`；
+`schema_version 9 → 10`）。任务卡 `docs/tasks/P3-02.md`（历史任务卡，保留供追溯）。
+
+**当前任务是 P3-03 — 人物名称、NFC `name_key`、同名合并、旧 ID 重定向**（V3.1 §7 表 P3-03 行）。任务卡
+`docs/tasks/P3-03.md`，推荐 **C2 / GPT-5.6 Sol / high** 先冻结命名与合并规则，再由 **DS-H** 实现，最后交
+**C2** 审查；ONNX/Windows/性能类环境问题转 C1；验收 **B + D（触 worker/打包再加 C）**。
+下一任务推荐模型/档位与本任务不同，请按任务卡提示在 Codex 中手动切换后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

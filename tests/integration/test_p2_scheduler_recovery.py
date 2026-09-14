@@ -86,6 +86,17 @@ V6_TABLES = (
     # historical name; it is the *current* table set of a fully migrated catalog).
     "asset_ocr_regions",
     "asset_ocr_text",
+    # P3-02: the face layer (current facts, canonical vectors, unnamed groups with their
+    # automatic links and suggestions) plus its independent candidate index.
+    "face_association_queue",
+    "face_candidates",
+    "face_embeddings",
+    "face_index_entries",
+    "face_index_generations",
+    "face_index_outbox",
+    "face_person_links",
+    "faces",
+    "persons",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

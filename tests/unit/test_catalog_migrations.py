@@ -36,6 +36,19 @@ CORE_TABLES = {
     "artifacts",
     "catalog_filter_revision",
     "catalog_filter_revision_events",
+    # P3-02: the face layer. ``faces``/``face_embeddings`` carry the current detection facts
+    # and the canonical vectors, ``persons``/``face_person_links`` the unnamed groups with
+    # their automatic links and suggestions, and the ``face_index_*``/``face_candidates``
+    # family is the independent face candidate index (its own generations, never the
+    # asset-keyed image index).
+    "face_association_queue",
+    "face_candidates",
+    "face_embeddings",
+    "face_index_entries",
+    "face_index_generations",
+    "face_index_outbox",
+    "face_person_links",
+    "faces",
     "file_locations",
     "geo_dataset_files",
     "geo_datasets",
@@ -52,6 +65,7 @@ CORE_TABLES = {
     "place_resolutions",
     "place_suggestion_revision",
     "places",
+    "persons",
     "runtime_capabilities",
     "runtime_qualification_evidence",
     "scan_runs",

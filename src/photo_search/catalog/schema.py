@@ -23,7 +23,12 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: metadata, and one extra ``search_projection_queue`` cause so an OCR text change joins the
 #: existing reprojection path. The original text and the exact coordinates stay in the
 #: immutable processor artifact, never in this table.
-SUPPORTED_SCHEMA_VERSION = 9
+#: ``0010`` adds the P3-02 face layer: the current detection facts of every asset, the
+#: canonical face vector store, the unnamed person groups with their automatic links and
+#: suggestions, and an independent face candidate index with its own generations and its
+#: own outbox. It shares no identity with the image index (``index_entries`` stays
+#: asset-level) and adds no cause to the P2-04 reprojection queue.
+SUPPORTED_SCHEMA_VERSION = 10
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

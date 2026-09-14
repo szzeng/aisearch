@@ -140,6 +140,22 @@ OCR_RESULT_TOO_LARGE = "OCR_RESULT_TOO_LARGE"
 OCR_DEADLINE_EXCEEDED = "OCR_DEADLINE_EXCEEDED"
 OCR_INPUT_TOO_LARGE = "OCR_INPUT_TOO_LARGE"
 
+#: P3-02 face layer (ADR-0003 §2/§4 frozen shell; the weights are the P0-04 pinned
+#: ``buffalo_l`` detection/recognition graphs). The family mirrors the P3-01 OCR codes
+#: one-for-one for the same reasons: a pinned file that is not installed or has different
+#: bytes is a configuration fact that must never degrade into a silent load of another
+#: copy, the bounded-input/bounded-output refusals are caller-shape facts rather than
+#: image statements (``DECODE_FAILED``), and running out of the wall-clock budget is a
+#: transient condition rather than a verdict about the picture. ``FACE_DEVICE_UNAVAILABLE``
+#: is the "this process cannot open the resolved execution provider" refusal: a GPU fault
+#: never becomes a silent CPU run (ADR-0001/ADR-0003 §2).
+FACE_WEIGHTS_MISSING = "FACE_WEIGHTS_MISSING"
+FACE_WEIGHTS_HASH_MISMATCH = "FACE_WEIGHTS_HASH_MISMATCH"
+FACE_RESULT_TOO_LARGE = "FACE_RESULT_TOO_LARGE"
+FACE_DEADLINE_EXCEEDED = "FACE_DEADLINE_EXCEEDED"
+FACE_INPUT_TOO_LARGE = "FACE_INPUT_TOO_LARGE"
+FACE_DEVICE_UNAVAILABLE = "FACE_DEVICE_UNAVAILABLE"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

@@ -94,6 +94,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.catalog.migrate import catalog_info
 from photo_search.config import catalog_db_path
+from photo_search.face.weights import weights_present as face_weights_present
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW, SPECS, THUMBNAIL, spec_for
@@ -109,6 +110,7 @@ from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.scheduler.projection import (
+    face_summary,
     index_summary,
     ocr_summary,
     scheduler_summary,
@@ -270,6 +272,14 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "ocr": ocr_summary(
             catalog_db_path(settings.data_root),
             weights_present=ocr_weights_present(settings.data_root),
+        ),
+        # P3-02: how many assets carry *current* face facts, how many are still queued, how
+        # the unnamed groups/suggestions and the independent candidate index are doing, and
+        # which calibrated thresholds this build applies. Counts, states and thresholds only:
+        # no bbox, no landmark, no vector and no path is projected here.
+        "faces": face_summary(
+            catalog_db_path(settings.data_root),
+            weights_present=face_weights_present(settings.data_root),
         ),
     }
 
