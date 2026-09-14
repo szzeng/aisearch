@@ -8,6 +8,9 @@ __pycache__/
 .ruff_cache/
 .uv-cache/
 
+# Test reports
+test-results/
+
 # Build output
 build/
 dist/
