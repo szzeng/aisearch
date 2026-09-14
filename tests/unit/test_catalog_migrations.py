@@ -53,6 +53,16 @@ CORE_TABLES = {
     "scan_runs",
     "scheduler_state",
     "source_roots",
+    # P2-04: the derived search layer. ``search_documents_fts`` is an FTS5 virtual table
+    # and the ``_data``/``_idx``/``_docsize``/``_config`` rows are the shadow tables SQLite
+    # creates for it; they are part of the frozen schema, which is why they are listed.
+    "search_documents",
+    "search_documents_fts",
+    "search_documents_fts_config",
+    "search_documents_fts_data",
+    "search_documents_fts_docsize",
+    "search_documents_fts_idx",
+    "search_projection_queue",
 }
 
 #: This build's supported version, and the next one a synthetic migration may use.

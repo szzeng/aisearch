@@ -231,6 +231,21 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             checks["asset_has_more"] = assets["has_more"]
             asset_id = assets["assets"][0]["asset_id"]
             checks["availability"] = assets["assets"][0]["availability"]
+            # P2-04: the derived FTS projection must exist inside the frozen bundle. The
+            # scan queued this asset, so the request itself has to catch up and answer.
+            text_hit = client.get("/api/v1/assets", params={"text": "照片"})
+            checks["text_search_status"] = text_hit.status_code
+            text_body = text_hit.json() if text_hit.status_code == 200 else {}
+            checks["text_search_ids"] = [item["asset_id"] for item in text_body.get("assets", [])]
+            checks["text_search_hit_asset"] = asset_id
+            checks["text_search_summary"] = {
+                key: text_body.get("search", {}).get(key)
+                for key in ("state", "queued_assets", "tokenizer_version", "fts_generation_id", "documents")
+            }
+            checks["text_search_has_no_local_path"] = all(
+                needle not in text_hit.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
 
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
             checks["thumbnail"] = thumbnail.status_code
@@ -327,6 +342,15 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("scan")
     if checks.get("asset_count") != 1:
         problems.append("asset listing")
+    text_summary = checks.get("text_search_summary") or {}
+    if checks.get("text_search_status") != 200 or checks.get("text_search_ids") != [
+        checks.get("text_search_hit_asset")
+    ]:
+        problems.append("packaged text search")
+    if text_summary.get("state") != "SYNCED" or text_summary.get("fts_generation_id") != "fts-v1":
+        problems.append("packaged search projection")
+    if not checks.get("text_search_has_no_local_path"):
+        problems.append("text search leaked a local path")
     if checks.get("thumbnail") != 200 or checks.get("thumbnail_type") != "image/jpeg":
         problems.append("thumbnail")
     if checks.get("thumbnail_original_available") != "true":

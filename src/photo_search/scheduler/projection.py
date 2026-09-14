@@ -133,3 +133,44 @@ def index_summary(db_path: str | Path) -> dict[str, Any] | None:
         }
     finally:
         connection.close()
+
+
+def search_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
+    """Counts of the derived P2-04 search layer, and the lag a caller can see.
+
+    Read-only and text-free: no search text, no place name and no path is returned - only
+    how many documents exist, how many assets are still queued for re-derivation and which
+    tokenizer generation wrote them. ``None`` means this catalog predates migration 0006.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        if "search_documents" not in tables or "search_projection_queue" not in tables:
+            return None
+        row = connection.execute(
+            "SELECT COUNT(*) AS documents, "
+            "COUNT(DISTINCT tokenizer_version || ':' || fts_generation_id) AS generations "
+            "FROM search_documents"
+        ).fetchone()
+        queued = int(
+            connection.execute("SELECT COUNT(*) FROM search_projection_queue").fetchone()[0]
+        )
+        generation = connection.execute(
+            "SELECT tokenizer_version, fts_generation_id FROM search_documents "
+            "ORDER BY updated_at DESC, asset_id DESC LIMIT 1"
+        ).fetchone()
+        return {
+            "documents": int(row["documents"]),
+            "queued_assets": queued,
+            "generations": int(row["generations"]),
+            "tokenizer_version": (
+                None if generation is None else int(generation["tokenizer_version"])
+            ),
+            "fts_generation_id": None if generation is None else str(generation["fts_generation_id"]),
+            "state": "SYNCED" if queued == 0 else "LAGGING",
+        }
+    finally:
+        connection.close()

@@ -67,6 +67,18 @@ V5_TABLES = (
     "place_resolutions",
 )
 
+#: P2-04 adds the derived search layer; the FTS5 virtual table brings its own shadow tables.
+V6_TABLES = (
+    *V5_TABLES,
+    "search_documents",
+    "search_documents_fts",
+    "search_documents_fts_config",
+    "search_documents_fts_data",
+    "search_documents_fts_docsize",
+    "search_documents_fts_idx",
+    "search_projection_queue",
+)
+
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)
 NEXT_VERSION = SUPPORTED + 1
 
@@ -443,7 +455,7 @@ def test_v1_upgrade_preserves_every_existing_row_and_writes_a_backup(tmp_path: P
     ) == other_before
     live = open_readonly(path)
     try:
-        assert set(schema.business_tables(live)) == set(V5_TABLES)
+        assert set(schema.business_tables(live)) == set(V6_TABLES)
         schema.verify_schema(live, SUPPORTED)
     finally:
         live.close()

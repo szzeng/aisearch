@@ -98,6 +98,9 @@ class CapabilitiesResponse(BaseModel):
     runtime: RuntimeHealthSummary | None = None
     qualification_evidence: int = 0
     indexing: dict[str, Any] | None = None
+    #: P2-04 derived-search facts (document/queue counts and the tokenizer generation);
+    #: ``None`` means this catalog predates migration 0006. Contains no text and no path.
+    search: dict[str, Any] | None = None
 
 
 class SourceRecord(BaseModel):
@@ -205,6 +208,26 @@ class AssetDetail(BaseModel):
     media: dict[str, MediaState]
 
 
+class SearchProjectionSummary(BaseModel):
+    """The echo of one ``GET /assets?text=`` query and the freshness of its projection.
+
+    ``state=LAGGING`` means the derived text index still has queued assets after the
+    bounded catch-up; the authoritative SQLite filters were applied regardless, and every
+    text hit here came from a document that was re-derived from SQLite in this request.
+    """
+
+    query: str
+    terms: list[str] = Field(default_factory=list)
+    match_expression: str
+    tokenizer_version: int
+    fts_generation_id: str
+    documents: int
+    queued_assets: int
+    stale_documents: int
+    processed_assets: int
+    state: Literal["SYNCED", "LAGGING"]
+
+
 class AssetListResponse(BaseModel):
     assets: list[AssetSummary]
     limit: int
@@ -223,6 +246,8 @@ class AssetListResponse(BaseModel):
     catalog_filter_revision: int | None = None
     #: P2-03B: the suggestion revision a ``place_state=suggested`` page was computed under.
     suggestion_revision: int | None = None
+    #: P2-04: present only when ``text`` was used, and honest about projection lag.
+    search: SearchProjectionSummary | None = None
 
 
 class ScanState(BaseModel):

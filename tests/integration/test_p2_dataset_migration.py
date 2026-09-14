@@ -139,8 +139,8 @@ def test_v4_to_v5_is_continuous_backed_up_and_lossless(
 
     result = migrate_database(path, data_root=data_root(tmp_path))
 
-    assert result.previous_version == 4 and result.schema_version == 5
-    assert result.applied == (5,)
+    assert result.previous_version == 4 and result.schema_version == SUPPORTED
+    assert result.applied == tuple(range(5, SUPPORTED + 1))
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:
@@ -150,9 +150,9 @@ def test_v4_to_v5_is_continuous_backed_up_and_lossless(
         backup.close()
     live = open_readonly(path)
     try:
-        assert schema.read_schema_version(live) == 5
+        assert schema.read_schema_version(live) == SUPPORTED
         assert V5_TABLES <= set(schema.business_tables(live))
-        schema.verify_schema(live, 5)
+        schema.verify_schema(live, SUPPORTED)
         # No package is installed and nothing was fabricated.
         pointer = live.execute(
             "SELECT dataset_id, revision FROM active_geo_dataset WHERE singleton = 1"
@@ -166,7 +166,7 @@ def test_v4_to_v5_is_continuous_backed_up_and_lossless(
     assert path.read_bytes() != before_bytes
 
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.backup_path is None and again.previous_version == 5
+    assert again.applied == () and again.backup_path is None and again.previous_version == SUPPORTED
 
 
 def test_an_interrupted_0005_rolls_back_to_v4(

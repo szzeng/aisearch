@@ -92,7 +92,11 @@ from photo_search.media.status import (
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
-from photo_search.scheduler.projection import index_summary, scheduler_summary
+from photo_search.scheduler.projection import (
+    index_summary,
+    scheduler_summary,
+    search_projection_summary,
+)
 
 APP_VERSION = "0.1.0"
 
@@ -220,6 +224,8 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "runtime": summary.get("runtime"),
         "qualification_evidence": int(summary.get("qualification_evidence") or 0),
         "indexing": index_summary(catalog_db_path(settings.data_root)),
+        # P2-04: derived-search document/queue counts (never any search text or path).
+        "search": search_projection_summary(catalog_db_path(settings.data_root)),
     }
 
 
@@ -381,6 +387,7 @@ async def list_assets(
     include_descendants: bool = True,
     place_state: PlaceStateFilter = "any",
     suggestion_revision: int | None = Query(default=None, ge=0),
+    text: str | None = Query(default=None),
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -398,6 +405,7 @@ async def list_assets(
         include_descendants=include_descendants,
         place_state=place_state,
         suggestion_revision=suggestion_revision,
+        text=text,
     )
 
 

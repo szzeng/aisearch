@@ -16,7 +16,10 @@ SQLite place filter API; 48 new cases). **P2-03B is PASS** (D level: the `0005` 
 migration, the offline name-package lifecycle, the `non_model + CPU_PREFERRED` nearby-city resolver,
 suggestion-only candidates with an independent suggestion revision, and the explicit local dataset
 tool; 65 new cases). **P2-03C is PASS** (B level + a recorded real-browser smoke + the C-level
-packaged smoke proving the page is inside the frozen bundle). **P2-04 is now READY / CURRENT TASK.**
+packaged smoke proving the page is inside the frozen bundle). **P2-04 is PASS** (B level + the D-level
+projection fault injection + a C-level packaged smoke: the `0006` derived search layer, the versioned
+tokenizer/controlled MATCH, the effective-place text projection and rename reprojection; 35 new cases,
+schema_version 5 → 6). **P2-05 is now READY / CURRENT TASK.**
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -262,6 +265,41 @@ keyset 分页与 `CATALOG_FILTER_REVISION_STALE` 提示、同名地点的完整�
 「目标被后续编辑」分支在页面上不可达（由 API 测试覆盖）；页面不触发后台解析；无 DOM 自动化；
 `GET /assets` 与建议列表仍非快照隔离读。
 
+## Latest search/fts closure — P2-04 (2026-09-14)
+
+P2-04 已实现文件名／有效地点 FTS 与改名重投影并通过 B 级、D 级故障注入与 C 级打包验收，报告
+[P2-04 报告](reports/P2-04-fts-and-rename-reprojection.md)。起点 HEAD `6cc75a9`（P2-03C），工作树干净。
+
+新增连续 `catalog/migrations/0006_search_fts.sql`：**`schema_version` 推进到 6**，0001～0005 未改。
+新增 `src/photo_search/search/**`（`tokens.py` 版本化分词与受控 MATCH、`documents.py` 派生文档与
+受影响集队列、`query.py` 绑定谓词与滞后摘要）。`search_documents` 以 `asset_id` 为主键，六列文本
+按主架构 §4.3 分开，本任务只写 `filename_text`（PRESENT 位置的 basename）与 `place_text`
+（`MANUAL_ASSIGNED` 的有效地点 + 完整祖先链 + ACTIVE 别名，含数据包别名）；FTS5 是外部内容表、
+`rowid = asset_id`，由触发器在同一事务维护（级联删除也清理索引）。受影响集由触发器在事实变更的
+同一短事务写入 `search_projection_queue`（文件名、归属、地点改名/退休、别名增改，含递归子树展开），
+重投影按批派生，`GET /assets?text=` 先做有界 catch-up 再 MATCH 并返回
+`search={state SYNCED|LAGGING, queued_assets, processed_assets, documents, tokenizer_version,
+fts_generation_id, terms, match_expression}`；`GET /capabilities` 新增只读 `search` 投影摘要。
+地点条件仍完全由 SQLite 权威过滤，文本命中不证明拍摄地。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 **599** 例，进度行 1 个 `s`，即 **598 passed / 1 skipped** |
+| 新增 5 个测试文件 | **35 passed**（tokenizer 11、migration 7、document 8、projection 5、api 4） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| v5→v6 迁移 | 备份内 `schema_version=5` 且无 7 张新表；单事务 `applied=(6,)`；旧行逐列不变；注入损坏 0006 整体回滚；缺 `search_projection_queue` → `SCHEMA_INCONSISTENT`；过新库 `SCHEMA_TOO_NEW` 零写 |
+| FTS 一致性 | 插入/更新/删除后无孤儿行；改名后旧词条 0 命中、新词条 1 命中；删除资产级联清空索引；`integrity-check` 通过；重扫改名只留新名称 |
+| 重投影与恢复 | 改名在同一事务持久记录子树受影响集、`catalog_filter_revision` 恰好 +1、`suggestion_revision` 不变；批次中途注入异常 → 整批回滚、重跑无重复无遗漏；`LAGGING/SYNCED` 信号与权威 SQLite 过滤同时正确 |
+| 候选隔离与 MATCH 边界 | 只有候选的资产 `place_text` 为空且候选地名 0 命中；空/特殊字符/超长查询 → 422 `VALIDATION_ERROR`；中英数字混排、全半角、显式短语、停用词按报告 §3 策略逐条断言 |
+| C 级（改了应用导入图 + 新 migration） | `build_onedir.py` exit 0（约 59 s，bundle 3,541,272,714 B）；bundle 内 migrations 含 0001～0006，归档含 `photo_search.search{,.documents,.query,.tokens}`；`packaged_api_smoke.py` exit 0 `status=ok`/`problems=[]`，新增 `GET /assets?text=照片` → 200、命中 `[1]`、`state=SYNCED`、`fts_generation_id=fts-v1`、startup 1.0 s |
+| 磁盘与清理 | smoke 工作目录放在 D 盘（`dist\p2-04-smoke`）以避开 C 盘压力；结束后只删除本任务创建的该目录（约 3.5 GB），其中 `runtime\session.json`（约 1 KB，应用收紧过 DACL）在沙箱内无法删除而残留 |
+
+未验证项（报告 §10）：单次请求最多追赶 2000 个资产（更大规模改名需后续请求或 P2-05 后台追赶）；
+`rebuild_all` 尚未接 CLI/调度；`filename_text` 只取 PRESENT 位置（整库离线资产按名称检索不到）；
+同一资产多 PRESENT 名称之间存在短语跨界理论命中；停用词表为固定小表且「只含停用词」按 422 拒绝；
+`search` 是加性响应字段（不带 `text=` 时只有显式 `"search": null`）；候选链路为直接写行（解析器由
+P2-03B 验收）；前端尚未接 `text=`（无需浏览器 smoke）；`GET /assets` 仍非快照隔离读。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -424,16 +462,22 @@ human-labelled semantic-search holdout.
 [P2-03C 报告](reports/P2-03C-place-page-and-manual-curation.md)（B 级 563 passed / 1 skipped + 真实
 浏览器 smoke 10 步 + C 级打包 smoke）。`schema_version` 仍为 5，migration/ADR/依赖未改。
 
-**P2-04 — 文件名/备注/有效地点 FTS、祖先/别名检索与改名重投影.**
+**P2-04 — 文件名/有效地点 FTS、受控 MATCH 与改名重投影：PASS.** 见
+[P2-04 报告](reports/P2-04-fts-and-rename-reprojection.md)（B 级 598 passed / 1 skipped + D 级
+投影故障注入 + C 级打包 smoke，35 个新增用例）。`schema_version` 推进到 6，migration 连续
+0001～0006；ADR/冻结 JSON schema/依赖/`places/**`/`ingestion/**`/`workers/**`/打包入口未改。
 
-- Status: **READY / CURRENT TASK**. P2-03C 的页面闭环已 PASS；目录/别名/建议/操作 API 与
-  `catalog_filter_revision`/`suggestion_revision` 触发矩阵均已冻结并实现。
-- Task card: `docs/tasks/P2-04.md`.
-- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（FTS 同步与 outbox 重投影
-  复杂时**由用户手动**切 DS-H）。本会话已是 DS-L，可直接继续，无需切换。
-- Goal: 有效地点（ACTIVE 地点目录）与文件名/备注的 FTS 检索、祖先/别名命中、改名后的投影重投影，
-  候选 `SUGGESTION_ONLY` 地名不得混为有效地点；**不提前实施语义融合或 search session**。
-- Validation level: **B**（若引入 migration 或 outbox 恢复路径，按 V3.1 升到 D 并补故障注入）。
+**P2-05 — 图文 + FTS 并行召回、RRF 融合、地点候选预过滤与权威补查.**
+
+- Status: **READY / CURRENT TASK**. P2-04 的派生检索层（`search_documents`/FTS/受影响集队列）与
+  加性 `text=` 检索面已 PASS；P2-03 的 artifact/outbox/`index_entries` 与 P2-02 的调度/设备资格已可用。
+- Task card: `docs/tasks/P2-05.md`.
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（跨通道融合与权威补查的
+  投影滞后语义复杂时**由用户手动**保持/切到 DS-H；契约歧义再报 C2）。本会话是 DS-L，
+  **请手动切换后继续**。
+- Goal: 文本通道与图文向量通道并行召回、RRF 融合、地点候选预过滤与权威补查、可识别的投影滞后与
+  过期信号；**不提前实施 search session/游标（P2-06）与搜索页面（P2-07）**。
+- Validation level: **B + 确定性检索对照**（涉及 outbox 恢复或 migration 时按 V3.1 升到 D）。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -443,6 +487,9 @@ P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进�
 冷缓存整包重校验、切包不自动重算、坏包时旧建议仍可读、`geo.resolver` 尚未进入冻结包）
 记录在 P2-03B 报告 §10；P2-03C 未验证项（内置浏览器 `viewport` 覆盖未生效致 640×900 像素级证据
 只到代理、批量接口无 `origin` 致批量确认记 `MANUAL`、`PLACE_OPERATION_NOT_UNDOABLE` 的「目标被后续
-编辑」分支页面上不可达、页面不触发后台解析、无 DOM 自动化、非快照隔离读）记录在 P2-03C 报告 §9。
+编辑」分支页面上不可达、页面不触发后台解析、无 DOM 自动化、非快照隔离读）记录在 P2-03C 报告 §9；
+P2-04 未验证项（单次请求最多追赶 2000 资产的滞后、`rebuild_all` 未接 CLI/调度、
+`filename_text` 只取 PRESENT 位置、多 PRESENT 名称的短语跨界、停用词固定小表、`search` 为加性字段、
+候选链路直接写行、前端未接 `text=`、非快照隔离读）记录在 P2-04 报告 §10。
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -12,8 +12,10 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: artifact/outbox/index confirmation protocol, ``0004`` adds the ADR-0005 place core
 #: (directory, GPS facts, manual control, operations and the two revisions) and ``0005``
 #: adds the offline name-dataset registry and the immutable suggestion-only resolution
-#: products, without touching any frozen core table.
-SUPPORTED_SCHEMA_VERSION = 5
+#: products. ``0006`` adds the P2-04 derived search layer (``search_documents`` plus its
+#: external content FTS5 index and the durable reprojection queue), again without touching
+#: any frozen core table.
+SUPPORTED_SCHEMA_VERSION = 6
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

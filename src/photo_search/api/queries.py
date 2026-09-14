@@ -24,6 +24,8 @@ from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
 from photo_search.places import revision as revision_module
 from photo_search.places.filter import place_condition
+from photo_search.search import documents as search_documents
+from photo_search.search import query as search_query
 
 #: Opaque cursor prefix of the default ``asset_id`` ordering (P1-04, frozen).
 CURSOR_PREFIX = "v1"
@@ -183,6 +185,7 @@ def asset_page(
     include_descendants: bool = True,
     place_state: str = "any",
     suggestion_revision: int | None = None,
+    text: str | None = None,
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -193,6 +196,12 @@ def asset_page(
 
     The P2-03A place filter is an ADD condition on the same page: it never changes the
     cursor space, and the authoritative rows still come from SQLite.
+
+    ``text`` is the P2-04 add-on: a bound FTS5 MATCH over the derived search document
+    (file names of PRESENT locations plus the *effective* place). It is another AND
+    condition on the same page, so the cursor space and every authoritative place filter
+    stay exactly as they were. Before the match runs, the projection is caught up in
+    bounded batches, and the response states how much lag is left.
     """
     if availability not in ("present", "missing", "any"):
         raise ApiError(
@@ -209,6 +218,11 @@ def asset_page(
             status=422,
             details={"order": str(order)},
         )
+    # An unusable text query is refused before anything is written (structured 422).
+    text_match = None if text is None else search_query.build_match(text)
+    text_sql: str | None = None
+    text_parameters: list[Any] = []
+    search_block: dict[str, Any] | None = None
     place_sql, place_parameters = place_condition(
         catalog.connection,
         place_ids=place_ids,
@@ -233,6 +247,15 @@ def asset_page(
                 "current_revision": int(current_suggestion_revision),
             },
         )
+    if text_match is not None:
+        # Architecture §9.3/§4.5.3: a lagging projection is caught up (bounded, in short
+        # transactions) before the query runs, and whatever lag remains is reported
+        # instead of being silently ignored.
+        catch_up = search_documents.catch_up(catalog)
+        text_sql, text_parameters = search_query.text_condition(text_match)
+        search_block = search_query.search_summary(
+            catalog.connection, text_match, catch_up=catch_up
+        )
     start: int | tuple[int, int] | None
     if order == ORDER_TIME_DESC:
         start = decode_time_cursor(cursor)
@@ -253,6 +276,8 @@ def asset_page(
             order=order,
             place_sql=None if place_sql == "1" else place_sql,
             place_parameters=place_parameters,
+            text_sql=text_sql,
+            text_parameters=text_parameters,
         )
         if not rows:
             exhausted = True
@@ -294,6 +319,7 @@ def asset_page(
         "place_state": str(place_state or "any"),
         "catalog_filter_revision": revision_module.read_filter_revision(catalog.connection),
         "suggestion_revision": int(current_suggestion_revision),
+        "search": search_block,
     }
 
 
@@ -323,6 +349,8 @@ def _asset_chunk(
     order: str = ORDER_ASSET_ID,
     place_sql: str | None = None,
     place_parameters: list[Any] | None = None,
+    text_sql: str | None = None,
+    text_parameters: list[Any] | None = None,
 ) -> list[Any]:
     conditions: list[str] = []
     parameters: list[Any] = []
@@ -357,6 +385,9 @@ def _asset_chunk(
     if place_sql:
         conditions.append(place_sql)
         parameters.extend(place_parameters or [])
+    if text_sql:
+        conditions.append(text_sql)
+        parameters.extend(text_parameters or [])
     parameters.append(int(size))
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(
