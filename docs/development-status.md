@@ -51,7 +51,8 @@ SCRFD detector and ArcFace recogniser with the P0-04 weights pinned by size and 
 (`faces`/`face_embeddings`/`persons`/`face_person_links`/`face_association_queue`), the independent face
 candidate index with its own generations and outbox, and the calibrated conservative association (merge `0.56`,
 suggest `0.29`, conflicts and low-quality faces only ever become suggestions); 87 new cases,
-**schema_version 9 → 10**). This closes the face-detection half of the P3 phase; P3-03 is the current task.
+**schema_version 9 → 10**). This closes the face-detection half of the P3 phase; P3-03 is the current task,
+with its C2 rules frozen in ADR-0006 and production implementation still pending.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -857,9 +858,10 @@ BLOCKED, SYNCED}`，无原文、无坐标、无路径）。本任务未改 ADR/�
 87 个新增用例；真实夹具 6 资产/12 脸/8 个未命名分组；真实 onedir 重建 + 打包 smoke `problems=[]`；
 `schema_version 9 → 10`）。任务卡 `docs/tasks/P3-02.md`（历史任务卡，保留供追溯）。
 
-**当前任务是 P3-03 — 人物名称、NFC `name_key`、同名合并、旧 ID 重定向**（V3.1 §7 表 P3-03 行）。任务卡
-`docs/tasks/P3-03.md`，推荐 **C2 / GPT-5.6 Sol / high** 先冻结命名与合并规则，再由 **DS-H** 实现，最后交
-**C2** 审查；ONNX/Windows/性能类环境问题转 C1；验收 **B + D（触 worker/打包再加 C）**。
-下一任务推荐模型/档位与本任务不同，请按任务卡提示在 Codex 中手动切换后继续。
+**当前任务是 P3-03 — 人物名称、NFC `name_key`、同名合并、旧 ID 重定向**（V3.1 §8 表 P3-03 行）。
+**C2 规则冻结已完成，生产实现尚未开始，状态为 IMPLEMENTATION PENDING。** 冻结决策见
+`docs/decisions/ADR-0006-person-naming-merge-operation-contract.md`，任务卡 `docs/tasks/P3-03.md` 已指向该
+决策。下一步推荐 **DS-H（DeepSeek V4.1 Flash / 高推理）** 按冻结规则实现；实现通过 B + D + C 后再交
+**C2 / GPT-5.6 Sol / high** 审查。模型切换由用户在 Codex 中手动完成。
 
 Model switching remains manual; the repository only records the recommended model per stage.
