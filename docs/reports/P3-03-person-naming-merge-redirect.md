@@ -9,6 +9,8 @@
 
 起始基线：HEAD `d4eae44`（P3-03 规则冻结提交），工作树干净。
 
+任务提交：`3e89387`（B + D + C 验收通过后的实现提交；本报告随后单独提交）。
+
 ## 1. 交付物与边界
 
 新增：
@@ -199,7 +201,7 @@ reason: "revision,links"}]`、数据库逐字节不变。撤销在**新进程**�
 
 | 命令 | 退出码 | 结果 |
 |---|---|---|
-| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | 0 | JUnit `tests=1038 failures=0 errors=0 skipped=1`，324.6 s |
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | 0 | JUnit `tests=1038 failures=0 errors=0 skipped=1`（实现期 324.6 s；提交后在已提交的树上复跑一次 327.7 s） |
 | 本任务新增用例 | 0 | 74 例（contract 31、merge 9、operations 12、undo 10、api 5、migration 6、lifecycle 1） |
 | `uv run --no-sync ruff check .` | 0 | `All checks passed!` |
 | `git diff --check` | 0 | clean |

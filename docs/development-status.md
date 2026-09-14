@@ -713,7 +713,7 @@ P3-03 已实现人物命名、同名合并、旧 ID 重定向与补偿撤销并�
 
 | Check | Result |
 |---|---|
-| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=1038 failures=0 errors=0 skipped=1`，324.6 s |
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=1038 failures=0 errors=0 skipped=1`（提交后在已提交的树上复跑一次，327.7 s） |
 | 本任务新增用例 | 74 例（contract 31、merge 9、operations 12、undo 10、api 5、migration 6、lifecycle 1） |
 | `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
 | 真实夹具 | `tools/diagnostics/person_smoke_fixture.py --device cpu` exit 0：4 资产/9 脸/8 个未命名分组；RENAME → MERGE_BY_NAME → UNDO → MERGE → UNDO 全部 `replayed=false`；人工未归类脸降为 `SUGGESTED/MANUAL_UNASSIGNED`、撤销后回到 `CONFIRMED/AUTO` 且人工模式行保留；`named=1 / unnamed=7 / aliases=0 / pending_confirmation=0 / recent_operations=5`；撤销后 3 张候选恢复，最终 `entries={CONFIRMED: 9}` |
