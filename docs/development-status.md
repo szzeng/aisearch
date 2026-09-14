@@ -36,7 +36,13 @@ candidate scores never enter RRF/BM25/距离, and the reranker qualification gat
 C-level packaged smoke: the dependency-free `/search` page with frozen hit-reason rendering, the
 `POST /api/v1/search/image` multipart endpoint with byte/pixel/decode-time/format hard limits and
 two-path temp-file cleanup, the place filter and the four-category coverage view; 70 new cases, no
-migration, `schema_version` stays 8). **P2-08 is READY / CURRENT TASK**.
+migration, `schema_version` stays 8). **P2-08 is PASS** (B level + D-level named fault injection +
+a recorded real-browser closure: 11 adversarial cases covering scan/restart recovery, the pre-commit
+crash window, the Lance-written/unconfirmed window, expired leases and late place results,
+mid-processing content changes, incremental add/rename/move/delete, place/source filter
+correctness, session staleness codes, the offline name-package lifecycle, the old-READY-generation
+boundary and upload search under concurrency; **11 new cases and zero production changes**,
+`schema_version` stays 8). This closes the P2 phase.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -710,11 +716,17 @@ migration 连续 0001～0008；ADR/冻结 JSON schema/依赖/资格矩阵语义/
 
 **P2-08 — 恢复、过滤、增量、后台竞争与地点人工锁/投影/缺包综合验收.**
 
-- Status: **READY / CURRENT TASK**（依赖 P2-07，已满足：`SUPPORTED_SCHEMA_VERSION = 8`、
-  migration 连续 `0001`～`0008`、P2-02～P2-07 全部 PASS）。
-- Task card: `docs/tasks/P2-08.md`。
-- Recommended execution model: **DS-H 执行 + C2 high 独立审查**（V3.1 §7 表 P2-08 行）。
-- Validation level: **B + D；若改动前端资源/打包入口/依赖/`workers/**` 或修复涉及发行行为再加 C**。
+- Status: **PASS**（B 级 801 passed / 1 skipped + D 级 11 条具名故障注入/恢复用例 + 真实浏览器闭环
+  10 步；**未改任何生产代码**）。见
+  [P2-08 报告](reports/P2-08-acceptance-matrix.md)。三条新测试文件：
+  `tests/integration/test_p2_acceptance_{recovery,search,datasets}.py`（5 + 5 + 1 例）与共享夹具
+  `tests/p2_acceptance_fixtures.py`。`schema_version` 仍为 8，migration `0001`～`0008`、ADR、
+  冻结 JSON schema、依赖、`src/photo_search/**`、前端与打包入口均零改动。
+  报告 §5 记录两处行为事实（地名包进程内 warm cache 边界；人工地点编辑先把向量条目降级为
+  `PENDING_REPAIR` 的投影追赶语义），均不构成最小修复触发条件。
+- Task card: `docs/tasks/P2-08.md`（历史任务卡，保留供追溯）。
+- P2 阶段收口：报告 §6 明确区分「P2 已实现并验收」/「P2 未实现（真实编码器、产品侧 profile/
+  generation 入口、模型升级状态机等）」/「排入 P3/P4 的欠项」。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -743,11 +755,25 @@ reranker 的 capability-missing/unhealthy 分支因共用 runtime package 不可
 非抢占式强杀、自有 multipart 读取器未做第三方客户端互操作验证、分页/上界只在小夹具验证公式、
 页面无 DOM 自动化）记录在 P2-07 报告 §11。
 
+P2-08 未验证项（真实编码器/语义质量、浏览器侧 `SEMANTIC`/`TEXT+SEMANTIC` 行仍不可达、无 DOM 自动化、
+会话仅进程内并以 `fresh_app`/`clear_content_cache` 在进程内模拟「新进程」、非快照隔离读、规模与
+16 MiB/60 MP 上传上限未测、真实 GeoNames 包未使用、断盘仍以 `os.replace` 模拟而非真实 USB/SMB 卷级
+故障、地名包进程内 warm cache 边界、产品 remap/profile/generation 入口与模型升级状态机缺口）记录在
+[P2-08 报告](reports/P2-08-acceptance-matrix.md) §5/§6/§7。
+
 **P1-07 Windows 凭据 ACL 轮换修复为 PASS**：`restrict_credential_file` 仍移除继承并仅授予当前用户，
 但由 `(R,W)` 改为 `(R,W,D)`，使原子 `os.replace` 能替换旧 `session.json`，临时 data root 也可由普通
 用户回收。专项 31 passed、完整单元/集成套件 100% 无失败、Ruff/diff/lock clean；真实新 onedir 的同一
 data root 第二启动 smoke 为 `status=ok`（新 token、health 200）且工作目录可完整删除。详见
 [P1-07 报告](reports/P1-07-windows-credential-acl-rotation.md)。旧版本遗留的 `(R,W)` 文件不会被本任务
-擅自接管或删除，仍可能需要所有者/管理员人工清理。P2-07 已 PASS；当前任务是 **P2-08**。
+擅自接管或删除，仍可能需要所有者/管理员人工清理。
+
+**P2-08 已 PASS**（B + D + 真实浏览器闭环，零生产改动），见
+[P2-08 报告](reports/P2-08-acceptance-matrix.md)；P2 阶段到此收口。
+
+**当前任务是 P3-01 — OCR 任务、原文/区域/置信度与 FTS 更新**（V3.1 §8）。任务卡
+`docs/tasks/P3-01.md`，推荐 **DS-L**（调度逻辑部分标注 DS-H；运行库疑难转 C1），验收
+**B（涉及迁移/打包再加 D/C）**。下一任务建议模型/档位与 P2-08 使用的不同，请按任务卡提示在
+Codex 中手动切换后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.
