@@ -12,3 +12,56 @@
 - Use Python 3.12.10 and `uv`; update `uv.lock` whenever Python dependencies change.
 - For backend changes run the validation level required by the current task card and V3.1 strategy. Prefer quiet summaries (`pytest -q`) on success; inspect detailed logs only for failures. A task cannot be marked PASS while a required validation is still pending.
 - Keep detailed commands, results, and unverified items in the task report; keep only the latest concise verification summary and report link in `docs/development-status.md`.
+
+## Windows Codex Environment Rules
+
+### Project Location
+
+- All project files must remain under:
+  `D:\SZ\project`
+
+- Do not create or modify project files outside the project directory unless explicitly requested.
+
+### Filesystem Rules
+
+- Do not use junctions or symbolic links for `.codex` or project management directories.
+
+- Do not use user-level cache directories for project dependencies, builds, or temporary data.
+
+- Prefer project-local temporary directories.
+
+### Python / uv Environment
+
+- uv cache must use:
+  `.uv-cache`
+
+- pytest temporary files must use:
+  `.pytest-tmp`
+
+- Avoid using `uv run` for simple single-file syntax validation.
+  Prefer direct interpreter checks when no project environment execution is required.
+
+### Testing Rules
+
+- Test reports must be generated using JUnit XML format.
+
+- Never infer test success or failure from missing terminal output.
+
+- `pytest --collect-only` results only indicate test collection status.
+  They do not indicate tests passed.
+
+### Windows Permission Safety
+
+- Do not modify Windows ACL permissions automatically.
+
+- If permission changes are required, explicitly request confirmation before applying changes.
+
+### AI Model and Data Rules
+
+- Do not store AI models inside source code directories.
+
+- AI model files must use project-defined data directories.
+
+- Do not download large model files without explicit confirmation.
+
+- Generated indexes, databases, and embeddings must remain separated from source code.
