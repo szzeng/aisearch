@@ -1,8 +1,14 @@
 """P2-04 search projection: deterministic tokenisation, the derived document, MATCH.
 
-The frozen protocol is the architecture §4.3/§4.5.3/§4.5.4/§9.4-9.5 plus ADR-0005 §10/§11.
+The frozen protocol is the architecture §4.3/§4.5.3/§4.5.4/§9.4-§9.5 plus ADR-0005 §10/§11.
 Nothing here decides place semantics: SQLite stays authoritative for every filter, and a
 text hit never proves where a photo was taken.
+
+P2-05's retrieval lives beside this module (``search.retrieval``/``search.fusion``/
+``search.embedding``/``search.service``) and is deliberately **not** imported here: the API
+process imports this package through ``photo_search.api.queries``, and keeping the new
+service modules out of it leaves that import graph unchanged until the search endpoint
+(P2-06) wires them and re-runs the packaged smoke.
 """
 
 from photo_search.search.documents import (

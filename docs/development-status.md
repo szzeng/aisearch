@@ -19,7 +19,13 @@ tool; 65 new cases). **P2-03C is PASS** (B level + a recorded real-browser smoke
 packaged smoke proving the page is inside the frozen bundle). **P2-04 is PASS** (B level + the D-level
 projection fault injection + a C-level packaged smoke: the `0006` derived search layer, the versioned
 tokenizer/controlled MATCH, the effective-place text projection and rename reprojection; 35 new cases,
-schema_version 5 → 6). **P2-05 is now READY / CURRENT TASK.**
+schema_version 5 → 6). **P2-05 is PASS** (B level + the deterministic retrieval comparison + a replay
+against the P2-03 crash window: the two bounded recall channels, the pure RRF fusion, the authoritative
+candidate-ID restriction and the pending-projection top-up; 19 new cases, no migration, schema_version
+stays 6). **P2-06A is now READY / CURRENT TASK**; the planned P2-06 was split into
+**P2-06A** (search protocol, `POST /api/v1/search`, sessions/cursors, `SearchProfile` binding and atomic
+activation) and **P2-06B** (explicit relevance feedback and the rerank adapter), without changing the
+overall route.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -300,6 +306,44 @@ fts_generation_id, terms, match_expression}`；`GET /capabilities` 新增只读 
 `search` 是加性响应字段（不带 `text=` 时只有显式 `"search": null`）；候选链路为直接写行（解析器由
 P2-03B 验收）；前端尚未接 `text=`（无需浏览器 smoke）；`GET /assets` 仍非快照隔离读。
 
+## Latest retrieval closure — P2-05 (2026-09-14)
+
+P2-05 已实现双通道并行召回、RRF 融合、权威候选预过滤与投影滞后补查，并通过 B 级完整测试与
+确定性检索对照验收，报告
+[P2-05 报告](reports/P2-05-vector-fts-fusion-and-authoritative-topup.md)。起点 HEAD `fdfd13b`
+（P2-04），工作树干净。
+
+新增 `src/photo_search/search/**`（`fusion.py` 纯函数 RRF、`embedding.py` 查询侧
+`EmbeddingAdapter` 切片、`retrieval.py` 权威谓词/两通道/补查、`service.py` 服务层编排）。
+文本通道复用 P2-04 的 `build_match` + `search_documents_fts`（`bm25, asset_id`），向量通道复用
+P2-03 的 `LanceVectorIndex`（新增加性 `search`/`search_candidates`，`asset_id IN` 下推预过滤）；
+每通道有界 `DEFAULT_TOP_K=200`，向量候选按 CONFIRMED `index_entries` ∩ 权威条件每块 1000 个
+keyset 扫描后精确归并。融合公式 `Σ weight/(60+rank)`、权重相等、去重、排序
+「score 降序 → 命中通道数降序 → asset_id 升序」。查询必须显式绑定 `space_id`+`generation_id`+
+维度（否则结构化拒绝），文本只编码一次；`catalog_filter_revision` 变化在返回前复核并标注
+`FILTER_REVISION_CHANGED`。补查路径把「绑定 generation 下没有已确认投射」的权威资产显式列进
+`pending_semantic`，因此改名/新归类后第一次查询即命中，向量未确认时 `matched_by` 只记 `fts` 且
+`semantic_ready=false`。未改 migration（`schema_version` 仍 6）、ADR/冻结 JSON schema、依赖、
+`places/**`、`ingestion/**`、`workers/**`、打包入口、前端；未接 API，故按卡不触发 C 级。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 **618** 例，进度行 1 个 `s`，即 **617 passed / 1 skipped** |
+| 新增 4 个测试文件（+ 共享夹具） | **19 passed**（fusion 6、channels 5、authority 5、topup 3） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 确定性通道与融合 | 假 `EmbeddingAdapter` + 真 LanceDB generation：FTS `[sunset]`、向量 `[sunset, IMG_0001, 西湖]`（距离 `0.0/0.02/2.0`）、融合 `[sunset, IMG_0001, 西湖]`；同一查询两次 `json.dumps` 字节一致；查询文本只编码一次 |
+| 过滤正确性 | 后代展开/`include_descendants=false`/`place_ids` OR/`place_state` 与原语义一致；`place_ids=[空地点]` 时两通道均 0 行（全库最近邻不可达，证明非「Top-K 后过滤」）；非法 `where()` 列 → 结构化 `FILTER_UNSUPPORTED` 且不回退未过滤检索；空候选集不打开引擎 |
+| 补查与绑定 | 文本命中但向量未确认的资产仍出现并被 `pending_semantic` 指名（`PENDING_REPAIR`/`pending_events=1`/`in_ranked_hits`）；未知 generation/foreign space/错误维度/半绑定/非法 `top_k` 全部结构化拒绝；旧 READY generation 仍可查，新 PENDING generation 向量通道为空且不宣称新照片已入语义检索 |
+| P2-03 崩溃窗口联测 | `after_lance` 注入后引擎有行、outbox 零 CONFIRMED、向量通道为空；重启重放同一逻辑事件成功且不产生第二条逻辑向量，之后才进入向量通道 |
+| 既有不变量与隐私 | 两次查询前后 `schema_version=6`、两个 revision、`outbox`/`entries`/`documents` 行数与每个 `assets.created_at` 逐项不变；响应无本机路径、无坐标、无 `request_id`；既有测试原样通过 |
+
+未验证项（报告 §11）：候选分块扫描的规模/延迟只在 ≤4 资产夹具上实测 1 个块（`MAX_VECTOR_BLOCKS=1000`
+只是安全阀，触发时如实报 `vector_scan.truncated`）；无真实模型与人工标注，不声称召回质量；查询向量
+归一化由 processor 负责；混入外来 space 的拒绝路径未构造真实注入；中查询并发变更只标注状态、不自动
+补新命中；纯筛选查询给有界权威列表（≤1000 个 id，`top_k` 只约束通道）；`pending_projection_summary`
+尚未接入 `/capabilities`。`catalog/errors.py` 新增了一个 extra 码常量 `FILTER_UNSUPPORTED`（本文件
+外唯一改动，见报告 §11.1），暂无 HTTP 映射，P2-06A 接入 API 时补齐。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -467,17 +511,25 @@ human-labelled semantic-search holdout.
 投影故障注入 + C 级打包 smoke，35 个新增用例）。`schema_version` 推进到 6，migration 连续
 0001～0006；ADR/冻结 JSON schema/依赖/`places/**`/`ingestion/**`/`workers/**`/打包入口未改。
 
-**P2-05 — 图文 + FTS 并行召回、RRF 融合、地点候选预过滤与权威补查.**
+**P2-05 — 图文 + FTS 并行召回、RRF 融合、地点候选预过滤与权威补查：PASS.** 见
+[P2-05 报告](reports/P2-05-vector-fts-fusion-and-authoritative-topup.md)（B 级 617 passed / 1 skipped +
+确定性检索对照 + P2-03 崩溃窗口联测，19 个新增用例）。`schema_version` 仍为 6（无新 migration）；
+ADR/冻结 JSON schema/依赖/`places/**`/`ingestion/**`/`workers/**`/打包入口/前端未改，未接 API（按卡不触发 C）。
 
-- Status: **READY / CURRENT TASK**. P2-04 的派生检索层（`search_documents`/FTS/受影响集队列）与
-  加性 `text=` 检索面已 PASS；P2-03 的 artifact/outbox/`index_entries` 与 P2-02 的调度/设备资格已可用。
-- Task card: `docs/tasks/P2-05.md`.
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（跨通道融合与权威补查的
-  投影滞后语义复杂时**由用户手动**保持/切到 DS-H；契约歧义再报 C2）。本会话是 DS-L，
-  **请手动切换后继续**。
-- Goal: 文本通道与图文向量通道并行召回、RRF 融合、地点候选预过滤与权威补查、可识别的投影滞后与
-  过期信号；**不提前实施 search session/游标（P2-06）与搜索页面（P2-07）**。
-- Validation level: **B + 确定性检索对照**（涉及 outbox 恢复或 migration 时按 V3.1 升到 D）。
+**P2-06A — 搜索协议、`POST /api/v1/search`、搜索会话/游标与 Profile 绑定.**
+
+- Status: **READY / CURRENT TASK**. P2-05 的服务层检索（`search.search_assets`：双通道 + RRF +
+  权威候选约束 + `pending_semantic`）已 PASS，P1-04 的 session/Host/Origin/CSRF 边界与
+  P2-02 的能力/资格事实已可用。计划中的 P2-06 拆为 **P2-06A**（本卡）与 **P2-06B**
+  （显式相关性反馈与精排适配器接入），不改变总体路线。
+- Task card: `docs/tasks/P2-06A.md`.
+- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（协议/绑定歧义再报 C2）。
+- Goal: `SearchRequest`/`SearchResult` 协议、`POST /api/v1/search`、进程内搜索会话与游标
+  （≤1000 有序 ID、默认 10 分钟、绑定 profile/generation/`catalog_filter_revision`）、
+  `search_profiles`/`active_search_profile` 迁移与原子激活；**不得提前实施搜索页面（P2-07）**。
+- Validation level: **B + C（接入 API/打包）+ D（迁移与原子激活故障注入）**。
+
+**P2-06B — 显式相关性反馈与精排适配器接入（依赖 P2-06A）.** Task card: `docs/tasks/P2-06B.md`。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -490,6 +542,10 @@ P2-02 未验证项（无常驻调度线程、真实模型设备对接、跨进�
 编辑」分支页面上不可达、页面不触发后台解析、无 DOM 自动化、非快照隔离读）记录在 P2-03C 报告 §9；
 P2-04 未验证项（单次请求最多追赶 2000 资产的滞后、`rebuild_all` 未接 CLI/调度、
 `filename_text` 只取 PRESENT 位置、多 PRESENT 名称的短语跨界、停用词固定小表、`search` 为加性字段、
-候选链路直接写行、前端未接 `text=`、非快照隔离读）记录在 P2-04 报告 §10。
+候选链路直接写行、前端未接 `text=`、非快照隔离读）记录在 P2-04 报告 §10；P2-05 未验证项（候选分块
+扫描的规模/延迟未测、`MAX_VECTOR_BLOCKS` 安全阀未在大库触发、查询向量归一化由 processor 负责、
+混入外来 space 的拒绝路径未真实注入、中查询并发变更只标注不补命中、纯筛选查询的权威列表上界 1000、
+`pending_projection_summary` 未接 `/capabilities`、`FILTER_UNSUPPORTED` 暂无 HTTP 映射）记录在
+P2-05 报告 §11。
 
 Model switching remains manual; the repository only records the recommended model per stage.

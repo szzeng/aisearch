@@ -174,3 +174,62 @@ def search_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
         }
     finally:
         connection.close()
+
+
+def pending_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
+    """Read-only view of the P2-03 vector projection: what is confirmed, what is late.
+
+    P2-05 needs a truthful answer to "is the image-text index caught up?" before it can
+    claim that a photo is (or is not) in semantic recall. Counts only: no artifact path,
+    payload, checksum, vector or asset id leaves this function. ``None`` means the catalog
+    predates migration 0003, so the facts do not exist yet.
+    """
+    path = Path(db_path)
+    if not path.exists():
+        return None
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        required = {"index_outbox", "index_entries", "index_generations"}
+        if not required <= tables:
+            return None
+
+        def counts(table: str, column: str) -> dict[str, int]:
+            return {
+                str(row["state"]): int(row["count"])
+                for row in connection.execute(
+                    f"SELECT {column} AS state, COUNT(*) AS count FROM {table} GROUP BY {column}"
+                )
+            }
+
+        outbox = counts("index_outbox", "state")
+        entries = counts("index_entries", "state")
+        generations = counts("index_generations", "state")
+        active = [
+            {
+                "generation_id": str(row["generation_id"]),
+                "space_id": str(row["space_id"]),
+                "dimension": int(row["dimension"]),
+                "processor_id": str(row["processor_id"]),
+                "state": str(row["state"]),
+            }
+            for row in connection.execute(
+                "SELECT generation_id, space_id, dimension, processor_id, state "
+                "FROM index_generations WHERE is_active = 1 ORDER BY generation_id"
+            )
+        ]
+        pending_events = sum(
+            count for state, count in outbox.items() if state != "CONFIRMED"
+        )
+        return {
+            "generations": generations,
+            "entries": entries,
+            "outbox": outbox,
+            "active_generations": active,
+            "pending_events": int(pending_events),
+            "pending_entries": int(entries.get("PENDING_REPAIR", 0)),
+            "confirmed_entries": int(entries.get("CONFIRMED", 0)),
+            "state": "SYNCED" if pending_events == 0 else "LAGGING",
+        }
+    finally:
+        connection.close()

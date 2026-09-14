@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +13,10 @@ from photo_search.artifacts.store import ArtifactStore
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     ARTIFACT_MISSING,
+    FILTER_UNSUPPORTED,
+    INDEX_REPAIR_REQUIRED,
     INDEX_SUBMISSION_FAILED,
+    RUNTIME_RESOLUTION_MISMATCH,
     SPACE_MISMATCH,
     CatalogError,
 )
@@ -22,6 +27,22 @@ def _table_name(generation_id: str) -> str:
     import hashlib
 
     return f"vectors_{hashlib.sha256(generation_id.encode()).hexdigest()[:24]}"
+
+
+def _lance_literal(value: str) -> str:
+    """One quoted SQL literal for a Lance filter, or a structured refusal.
+
+    The engine filter is SQL text, so an identifier that could change the meaning of the
+    expression is refused instead of escaped: this application only ever filters by
+    values it generated itself (``space_id``/``generation_id``/``asset_id``).
+    """
+    text = str(value)
+    if not text or "'" in text or "\x00" in text:
+        raise CatalogError(
+            SPACE_MISMATCH,
+            "a derived-store filter value is not usable in the engine filter",
+        )
+    return f"'{text}'"
 
 
 class LanceVectorIndex:
@@ -105,6 +126,139 @@ class LanceVectorIndex:
         if any(str(row["space_id"]) != str(space_id) for row in rows):
             raise CatalogError(SPACE_MISMATCH, "a Lance generation contains a foreign space")
         return len(rows)
+
+    def search(
+        self,
+        *,
+        generation_id: str,
+        dimension: int,
+        query_vector: Sequence[float],
+        limit: int,
+        where: str | None = None,
+        space_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Nearest rows of one generation, ranked deterministic and space-checked.
+
+        ``where`` is handed to the engine as the documented pre-filter: P0-02C verified
+        for this locked version that a filtered search ranks *inside* the filter (the
+        global nearest neighbour cannot be returned when the filter excludes it) and that
+        an unusable filter column raises instead of degrading into an unfiltered search.
+
+        Nothing here decides a filter: the caller passes the authoritative candidate ids
+        of the bound space. Every returned row is checked against the generation and the
+        expected space, so two equal-dimension spaces can never be mixed by accident.
+        """
+        vector = self._query_vector(dimension=dimension, query_vector=query_vector)
+        table = self._table(
+            generation_id=str(generation_id), dimension=int(dimension), create=False
+        )
+        if table is None:
+            return []
+        builder = table.search(vector).limit(int(limit))
+        if where:
+            builder = builder.where(str(where))
+        try:
+            raw_rows = builder.to_arrow().to_pylist()
+        except CatalogError:
+            raise
+        except Exception as error:
+            # P0-02C: an impossible filter column surfaces as a ValueError from the engine.
+            # A refused filter is a structured failure with zero rows - never an unfiltered
+            # search - while any other engine failure is an index problem of this build.
+            refused_filter = isinstance(error, ValueError) and bool(where)
+            raise CatalogError(
+                FILTER_UNSUPPORTED if refused_filter else INDEX_REPAIR_REQUIRED,
+                (
+                    "the vector engine refused the requested pre-filter"
+                    if refused_filter
+                    else "the vector engine could not read this generation"
+                ),
+                details={"reason": type(error).__name__},
+            ) from error
+
+        rows: list[dict[str, Any]] = []
+        spaces: set[str] = set()
+        for raw in raw_rows:
+            row_space = str(raw["space_id"])
+            spaces.add(row_space)
+            if str(raw["generation_id"]) != str(generation_id):
+                raise CatalogError(
+                    SPACE_MISMATCH, "a Lance generation returned a foreign generation row"
+                )
+            rows.append(
+                {
+                    "record_id": str(raw["record_id"]),
+                    "asset_id": int(raw["asset_id"]),
+                    "space_id": row_space,
+                    "generation_id": str(raw["generation_id"]),
+                    "projection_revision": int(raw["projection_revision"]),
+                    "distance": float(raw["_distance"]),
+                    "visible": bool(raw["visible"]),
+                }
+            )
+        if space_id is not None:
+            if spaces - {str(space_id)}:
+                raise CatalogError(SPACE_MISMATCH, "a Lance generation returned a foreign space")
+        elif len(spaces) > 1:
+            raise CatalogError(
+                SPACE_MISMATCH, "one Lance generation holds more than one embedding space"
+            )
+        rows.sort(key=lambda item: (item["distance"], item["asset_id"]))
+        return rows
+
+    def search_candidates(
+        self,
+        *,
+        generation_id: str,
+        dimension: int,
+        query_vector: Sequence[float],
+        asset_ids: Sequence[int],
+        limit: int,
+        space_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """The architecture §7.4 candidate-ID path: rank only inside a bounded id set.
+
+        An empty candidate set returns nothing without touching the engine: a query with
+        no authoritative candidate cannot fall back to "everything".
+        """
+        ids = sorted({int(value) for value in asset_ids})
+        if not ids:
+            return []
+        conditions = ["asset_id IN (" + ", ".join(str(value) for value in ids) + ")"]
+        if space_id is not None:
+            conditions.append(f"space_id = {_lance_literal(str(space_id))}")
+        return self.search(
+            generation_id=str(generation_id),
+            dimension=int(dimension),
+            query_vector=query_vector,
+            limit=int(limit),
+            where=" AND ".join(conditions),
+            space_id=space_id,
+        )
+
+    @staticmethod
+    def _query_vector(*, dimension: int, query_vector: Sequence[float]) -> list[float]:
+        values: list[float] = []
+        for value in query_vector:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise CatalogError(
+                    RUNTIME_RESOLUTION_MISMATCH,
+                    "the resolved query embedding contains a value that is not a number",
+                )
+            number = float(value)
+            if not math.isfinite(number):
+                raise CatalogError(
+                    RUNTIME_RESOLUTION_MISMATCH,
+                    "the resolved query embedding is not finite",
+                )
+            values.append(number)
+        if len(values) != int(dimension):
+            raise CatalogError(
+                SPACE_MISMATCH,
+                "the resolved query embedding does not match the bound dimension",
+                details={"expected_dimension": int(dimension), "actual_dimension": len(values)},
+            )
+        return values
 
 
 class IndexCoordinator:

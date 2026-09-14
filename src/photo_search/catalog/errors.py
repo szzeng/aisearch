@@ -91,6 +91,11 @@ GEO_COORDINATE_INVALID = "GEO_COORDINATE_INVALID"
 #: (the GPS task may still be pending), never a "no candidate" success and never a write.
 GEO_FACT_MISSING = "GEO_FACT_MISSING"
 
+#: P2-05 retrieval: the vector engine refused the requested pre-filter expression. A
+#: refused filter is a structured failure with zero rows; the engine never silently
+#: degrades into an unfiltered search (P0-02C, architecture §9.3 item 4).
+FILTER_UNSUPPORTED = "FILTER_UNSUPPORTED"
+
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 
