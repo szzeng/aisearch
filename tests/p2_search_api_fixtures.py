@@ -61,6 +61,8 @@ class SearchEnv:
     encoder: FakeEncoder
     app: Any
     settings: ApiSettings
+    #: P2-06B: the deterministic reranker adapter this application was built with (if any).
+    reranker: Any = None
     session_token: str = SESSION_TOKEN
     session_id: str | None = None
     csrf_token: str | None = None
@@ -198,8 +200,12 @@ class SearchEnv:
         }
 
 
-def build_search_env(tmp_path: Path) -> SearchEnv:
-    """Write three photos, scan them, vectorise them and build the application."""
+def build_search_env(tmp_path: Path, *, reranker: Any = None) -> SearchEnv:
+    """Write three photos, scan them, vectorise them and build the application.
+
+    ``reranker`` is injected through the documented ``reranker_factory`` seam exactly like
+    the query encoder: it is a deterministic stand-in, never a real model.
+    """
     library = build_library(tmp_path, PHOTOS)
     spec = embedding_spec()
     scheduler = configured_scheduler(library.catalog, [spec])
@@ -236,7 +242,11 @@ def build_search_env(tmp_path: Path) -> SearchEnv:
         session_token=SESSION_TOKEN,
         allowed_hosts=ALLOWED_HOSTS,
     )
-    app = create_app(settings=settings, encoder_factory=lambda: encoder)
+    app = create_app(
+        settings=settings,
+        encoder_factory=lambda: encoder,
+        reranker_factory=(None if reranker is None else (lambda: reranker)),
+    )
     return SearchEnv(
         library=library,
         spec=spec,
@@ -245,13 +255,34 @@ def build_search_env(tmp_path: Path) -> SearchEnv:
         encoder=encoder,
         app=app,
         settings=settings,
+        reranker=reranker,
     )
 
 
 def fresh_app(env: SearchEnv) -> Any:
     """A second application over the same data root: a restarted process, no sessions."""
     return create_app(
-        settings=env.settings, encoder_factory=lambda: env.encoder
+        settings=env.settings,
+        encoder_factory=lambda: env.encoder,
+        reranker_factory=(None if env.reranker is None else (lambda: env.reranker)),
+    )
+
+
+def record_reranker_evidence(env: SearchEnv, spec: Any, *, now_ms: int = 1_000) -> None:
+    """Qualify one reranker processor on this machine (the P2-02 evidence row).
+
+    The healthy capability snapshot for the runtime package is already recorded by
+    ``configured_scheduler``; this adds the per-processor/device/precision evidence the
+    ADR-0003 §5 gate needs before a profile naming that reranker may be activated.
+    """
+    env.scheduler.record_qualification(
+        processor_id=str(spec.processor_id),
+        spec_revision=str(spec.spec_revision),
+        device="cpu",
+        precision=str(spec.supported_precisions[0]),
+        provider_name="CPUExecutionProvider",
+        runtime_package_id=str(spec.runtime_package_id),
+        now_ms=int(now_ms),
     )
 
 

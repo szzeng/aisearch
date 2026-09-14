@@ -108,6 +108,12 @@ INVALID_CURSOR = "INVALID_CURSOR"
 SEARCH_SESSION_EXPIRED = "SEARCH_SESSION_EXPIRED"
 PROFILE_GENERATION_MISMATCH = "PROFILE_GENERATION_MISMATCH"
 
+#: P2-06B: explicit relevance feedback. ``FEEDBACK_IDEMPOTENCY_CONFLICT`` reuses the
+#: P2-03A idempotency semantics (same ``request_id`` + different payload = structured
+#: conflict, zero writes) under its own stable code, because the feedback resource is not a
+#: place operation and a caller must be able to branch on it without parsing a message.
+FEEDBACK_IDEMPOTENCY_CONFLICT = "FEEDBACK_IDEMPOTENCY_CONFLICT"
+
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 

@@ -368,6 +368,72 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 if no_encoder.status_code != 200
                 else None
             )
+            # P2-06B: explicit relevance feedback. It must be recorded, replay idempotently
+            # and be readable, while the packaged build has no reranker adapter - so a
+            # requested rerank answers ``UNAVAILABLE`` instead of silently ignoring it.
+            feedback_headers = {"Origin": base, "X-CSRF-Token": csrf}
+            feedback_body = {
+                "contract_version": "p2-contracts.v1",
+                "request_id": "packaged-fb-1",
+                "search_session_id": first_body.get("search_session_id"),
+                "asset_id": (checks.get("search_hits") or [asset_id])[0],
+                "rank": 1,
+                "relevance": "RELEVANT",
+                "note": "打包 smoke",
+            }
+            feedback = client.post(
+                "/api/v1/search/feedback", json=feedback_body, headers=feedback_headers
+            )
+            checks["feedback_status"] = feedback.status_code
+            feedback_json = feedback.json() if feedback.status_code in (200, 201) else {}
+            checks["feedback_replayed"] = feedback_json.get("replayed")
+            checks["feedback_record"] = feedback_json.get("feedback")
+            replay = client.post(
+                "/api/v1/search/feedback", json=feedback_body, headers=feedback_headers
+            )
+            checks["feedback_replay_status"] = replay.status_code
+            checks["feedback_replay_same_id"] = (
+                replay.json().get("feedback") == checks.get("feedback_record")
+                if replay.status_code == 200
+                else False
+            )
+            conflict = client.post(
+                "/api/v1/search/feedback",
+                json={**feedback_body, "relevance": "NOT_RELEVANT"},
+                headers=feedback_headers,
+            )
+            checks["feedback_conflict_status"] = conflict.status_code
+            checks["feedback_conflict_code"] = (
+                conflict.json().get("code") if conflict.status_code != 200 else None
+            )
+            listed_feedback = client.get("/api/v1/search/feedback", params={"limit": 10})
+            checks["feedback_list_status"] = listed_feedback.status_code
+            listed_body = listed_feedback.json() if listed_feedback.status_code == 200 else {}
+            checks["feedback_list_count"] = len(listed_body.get("feedback") or [])
+            checks["feedback_has_no_local_path"] = all(
+                needle not in feedback.text + replay.text + listed_feedback.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            with httpx.Client(base_url=base, timeout=60.0) as anonymous:
+                checks["feedback_without_session"] = anonymous.post(
+                    "/api/v1/search/feedback", json=feedback_body
+                ).status_code
+            rerank_request = client.post(
+                "/api/v1/search",
+                json={
+                    "request_id": "packaged-5",
+                    "page_size": 1,
+                    "rerank": True,
+                    **binding,
+                },
+                headers=search_headers,
+            )
+            checks["rerank_status"] = rerank_request.status_code
+            rerank_body = rerank_request.json() if rerank_request.status_code == 200 else {}
+            checks["rerank_state"] = rerank_body.get("rerank_state")
+            checks["rerank_reason"] = (rerank_body.get("reranked") or {}).get("reason")
+            checks["rerank_rows"] = (rerank_body.get("reranked") or {}).get("rows")
+            checks["rerank_keeps_base_hits"] = rerank_body.get("hits") == first_body.get("hits")
             # A fresh client carries no session cookie: the same body must answer 401.
             with httpx.Client(base_url=base, timeout=60.0) as anonymous:
                 checks["search_without_session"] = anonymous.post(
@@ -517,6 +583,29 @@ def summarize(report: dict[str, Any]) -> list[str]:
         or checks.get("search_text_without_encoder_reason") != "QUERY_ENCODER_UNAVAILABLE"
     ):
         problems.append("packaged search without a query encoder")
+    # P2-06B: feedback is recorded, idempotent and readable; a requested rerank is reported
+    # as UNAVAILABLE (this build ships no reranker) without changing the base page.
+    if checks.get("feedback_status") != 201 or checks.get("feedback_replayed") is not False:
+        problems.append("packaged feedback record")
+    if checks.get("feedback_replay_status") != 200 or not checks.get("feedback_replay_same_id"):
+        problems.append("packaged feedback idempotency")
+    if (
+        checks.get("feedback_conflict_status") != 409
+        or checks.get("feedback_conflict_code") != "FEEDBACK_IDEMPOTENCY_CONFLICT"
+    ):
+        problems.append("packaged feedback conflict")
+    if checks.get("feedback_list_status") != 200 or (checks.get("feedback_list_count") or 0) < 1:
+        problems.append("packaged feedback listing")
+    if not checks.get("feedback_has_no_local_path"):
+        problems.append("feedback leaked a local path")
+    if checks.get("feedback_without_session") != 401:
+        problems.append("packaged feedback without a session")
+    if checks.get("rerank_status") != 200 or checks.get("rerank_state") != "UNAVAILABLE":
+        problems.append("packaged rerank state")
+    if checks.get("rerank_rows") != [] or checks.get("rerank_reason") is None:
+        problems.append("packaged rerank rows")
+    if checks.get("rerank_keeps_base_hits") is not True:
+        problems.append("packaged rerank changed the base page")
     if checks.get("search_without_session") != 401:
         problems.append("packaged search without a session")
     if checks.get("thumbnail") != 200 or checks.get("thumbnail_type") != "image/jpeg":

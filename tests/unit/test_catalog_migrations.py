@@ -66,6 +66,8 @@ CORE_TABLES = {
     "search_projection_queue",
     # P2-06A: the immutable search profile and its single active pointer.
     "search_profiles",
+    # P2-06B: the append-only explicit-relevance feedback log.
+    "search_feedback",
 }
 
 #: This build's supported version, and the next one a synthetic migration may use.

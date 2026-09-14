@@ -80,6 +80,8 @@ V6_TABLES = (
     # P2-06A: the immutable search profile and its single active pointer.
     "active_search_profile",
     "search_profiles",
+    # P2-06B: the append-only explicit-relevance feedback log.
+    "search_feedback",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

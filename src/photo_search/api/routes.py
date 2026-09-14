@@ -39,6 +39,9 @@ from photo_search.api.models import (
     AssetOrder,
     AssetPlaceResponse,
     CapabilitiesResponse,
+    FeedbackListResponseModel,
+    FeedbackRequestModel,
+    FeedbackResponseModel,
     GeoFactResponse,
     JobListResponse,
     JobRecord,
@@ -103,9 +106,14 @@ from photo_search.scheduler.projection import (
     search_profile_summary,
     search_projection_summary,
 )
-from photo_search.search.contracts import SearchRequest
+from photo_search.search.contracts import FeedbackRequest, SearchRequest
 from photo_search.search.profile import activate_profile, profile_projection
-from photo_search.search.service import search_request
+from photo_search.search.service import (
+    feedback_limit,
+    list_feedback,
+    search_request,
+    submit_feedback,
+)
 
 APP_VERSION = "0.1.0"
 
@@ -798,6 +806,44 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
         envelope,
         sessions=context.search_sessions,
         encoder=context.query_encoder(),
+        reranker=context.reranker(),
+    )
+
+
+@router.post(
+    "/search/feedback",
+    response_model=FeedbackResponseModel,
+    status_code=201,
+    summary="Record one explicit relevance verdict (idempotent by request_id)",
+)
+async def post_search_feedback(
+    request: Request, payload: FeedbackRequestModel
+) -> Response:
+    """Store one verdict and answer ``201``; an identical replay answers ``200``.
+
+    The verdict is an audit fact: it never hides an asset, never changes the authoritative
+    place/person filters and never feeds back into ranking in this phase. A repeated
+    ``request_id`` with the same payload returns the recorded row; a repeated
+    ``request_id`` with a different payload is a structured 409 and writes nothing.
+    """
+    envelope = FeedbackRequest.from_envelope(payload.model_dump())
+    result = submit_feedback(service_of(request).catalog, envelope)
+    return JSONResponse(
+        status_code=200 if bool(result.get("replayed")) else 201, content=result
+    )
+
+
+@router.get(
+    "/search/feedback",
+    response_model=FeedbackListResponseModel,
+    summary="Paged, read-only view of the recorded relevance verdicts",
+)
+async def get_search_feedback(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    """The audit view of the feedback log: its own fields, keyset paged, nothing else."""
+    return list_feedback(
+        service_of(request).catalog, limit=feedback_limit(limit), cursor=cursor
     )
 
 

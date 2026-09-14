@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from photo_search.search.contracts import (
     DEFAULT_PAGE_SIZE,
+    MAX_NOTE_CHARS,
     MAX_PAGE_SIZE,
 )
 from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
@@ -584,6 +585,8 @@ class SearchRequestModel(BaseModel):
     place_state: PlaceStateFilter = "any"
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
+    #: P2-06B: ask for the optional candidate rerank. Additive and off by default.
+    rerank: bool = False
     search_session_id: str | None = Field(default=None, min_length=1, max_length=128)
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
@@ -625,6 +628,9 @@ class SearchResultModel(BaseModel):
     channels: dict[str, Any]
     pending_semantic: dict[str, Any] | None = None
     search_projection: dict[str, Any]
+    #: P2-06B: the candidate-score block, kept apart from ``hits[].score`` on purpose.
+    rerank_state: Literal["NOT_REQUESTED", "OK", "UNAVAILABLE", "FAILED"]
+    reranked: dict[str, Any] | None = None
     state: str
 
 
@@ -657,3 +663,48 @@ class SearchProfileActivationResponse(BaseModel):
     changed: bool
     state: Literal["ACTIVE", "ALREADY_ACTIVE"]
     readiness: dict[str, Any]
+
+
+class FeedbackRequestModel(BaseModel):
+    """``POST /api/v1/search/feedback``: one explicit relevance verdict, idempotent by key."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["p2-contracts.v1"] = "p2-contracts.v1"
+    request_id: str = Field(min_length=1, max_length=64)
+    search_session_id: str = Field(min_length=1, max_length=128)
+    asset_id: int = Field(ge=1)
+    rank: int = Field(ge=1)
+    relevance: Literal["RELEVANT", "NOT_RELEVANT"]
+    note: str | None = Field(default=None, max_length=MAX_NOTE_CHARS)
+
+
+class FeedbackRecordModel(BaseModel):
+    """One stored verdict: its own fields only (no place, coordinate, path or query text)."""
+
+    feedback_id: int
+    request_id: str
+    search_session_id: str
+    asset_id: int
+    rank: int
+    relevance: Literal["RELEVANT", "NOT_RELEVANT"]
+    note: str | None = None
+    created_at: int
+
+
+class FeedbackResponseModel(BaseModel):
+    """``201`` for a new verdict, ``200`` when an identical ``request_id`` replays it."""
+
+    contract_version: str
+    replayed: bool
+    feedback: FeedbackRecordModel
+
+
+class FeedbackListResponseModel(BaseModel):
+    """``GET /api/v1/search/feedback``: a read-only keyset page of the audit log."""
+
+    contract_version: str
+    feedback: list[FeedbackRecordModel]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool

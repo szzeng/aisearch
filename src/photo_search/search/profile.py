@@ -275,6 +275,12 @@ def validate_profile_readiness(
     runtime package that is currently healthy and (b) qualification evidence for that
     processor whose provider/precision is available and healthy in that very snapshot. A
     listed provider alone is never enough (ADR-0003 §5), and no device is chosen here.
+
+    P2-06B adds the same requirement, additively, for a profile that names a
+    ``reranker_processor_id``: the optional reranker may only be published once this process
+    can prove it healthy and qualified. A profile that names no reranker is unaffected, and
+    the device-qualification matrix itself is not redefined - the reranker is checked with
+    exactly the same rule as the embedding processor.
     """
     capability = latest_capability(connection, runtime_package_id=str(profile.runtime_package_id))
     if capability is None:
@@ -311,7 +317,7 @@ def validate_profile_readiness(
     }
     for row in evidence:
         if (str(row.provider_name), str(row.device), str(row.precision)) in healthy:
-            return {
+            readiness = {
                 "capability_revision": str(capability.capability_revision),
                 "device": str(row.device),
                 "provider_name": str(row.provider_name),
@@ -319,6 +325,10 @@ def validate_profile_readiness(
                 "evidence_id": str(row.evidence_id),
                 "checked_at": int(now_ms),
             }
+            reranker = reranker_readiness(connection, profile)
+            if reranker is not None:
+                readiness["reranker"] = reranker
+            return readiness
     raise CatalogError(
         RUNTIME_CAPABILITY_UNAVAILABLE,
         "no recorded qualification evidence covers this profile's embedding processor and "
@@ -328,6 +338,79 @@ def validate_profile_readiness(
             "processor_id": profile.embedding_processor_id,
             "runtime_package_id": profile.runtime_package_id,
             "capability_revision": str(capability.capability_revision),
+        },
+    )
+
+
+def reranker_readiness(
+    connection: sqlite3.Connection, profile: SearchProfile
+) -> dict[str, Any] | None:
+    """The reranker half of the readiness gate, or ``None`` when the profile names none.
+
+    ``None`` is not a refusal: a profile without a reranker is a complete configuration.
+    When a reranker *is* named, it needs exactly the same two facts the embedding processor
+    needs - a healthy capability snapshot for the profile's runtime package, and
+    qualification evidence for that processor whose provider/device/precision is available
+    and healthy in that snapshot - and a failure is the same
+    ``RUNTIME_CAPABILITY_UNAVAILABLE`` refusal with a reranker-specific ``reason``. The same
+    function is used by the request-time rerank path, so a profile cannot be activated with
+    a qualified reranker and then silently rerank with something else.
+    """
+    processor_id = profile.reranker_processor_id
+    if processor_id is None or str(processor_id) == "":
+        return None
+    capability = latest_capability(connection, runtime_package_id=str(profile.runtime_package_id))
+    if capability is None:
+        raise CatalogError(
+            RUNTIME_CAPABILITY_UNAVAILABLE,
+            "no runtime capability snapshot is recorded for this profile's runtime package",
+            details={
+                "reason": "CAPABILITY_MISSING",
+                "runtime_package_id": profile.runtime_package_id,
+                "processor_id": str(processor_id),
+                "role": "reranker",
+            },
+        )
+    if str(capability.health_status) != "healthy":
+        raise CatalogError(
+            RUNTIME_CAPABILITY_UNAVAILABLE,
+            "the runtime capability snapshot for this profile is not healthy",
+            details={
+                "reason": "RUNTIME_UNHEALTHY",
+                "runtime_package_id": profile.runtime_package_id,
+                "health_status": str(capability.health_status),
+                "processor_id": str(processor_id),
+                "role": "reranker",
+            },
+        )
+    healthy = {
+        (provider.name, provider.device, precision)
+        for provider in capability.providers
+        if provider.available and provider.health == "healthy"
+        for precision in provider.precisions
+    }
+    for row in qualification_evidence(connection, processor_id=str(processor_id)):
+        if str(row.runtime_package_id) != str(profile.runtime_package_id):
+            continue
+        if (str(row.provider_name), str(row.device), str(row.precision)) in healthy:
+            return {
+                "capability_revision": str(capability.capability_revision),
+                "device": str(row.device),
+                "provider_name": str(row.provider_name),
+                "precision": str(row.precision),
+                "evidence_id": str(row.evidence_id),
+                "processor_id": str(processor_id),
+            }
+    raise CatalogError(
+        RUNTIME_CAPABILITY_UNAVAILABLE,
+        "no recorded qualification evidence covers this profile's reranker on a healthy "
+        "provider of its runtime package",
+        details={
+            "reason": "RERANKER_QUALIFICATION_MISSING",
+            "processor_id": str(processor_id),
+            "runtime_package_id": profile.runtime_package_id,
+            "capability_revision": str(capability.capability_revision),
+            "role": "reranker",
         },
     )
 
@@ -398,6 +481,7 @@ __all__ = [
     "check_profile_servable",
     "load_profile",
     "profile_projection",
+    "reranker_readiness",
     "resolve_profile_binding",
     "validate_profile_readiness",
 ]

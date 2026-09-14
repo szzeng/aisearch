@@ -32,6 +32,7 @@ from photo_search.catalog.errors import (
     DECODE_FAILED,
     DEVICE_POLICY_CONFLICT,
     DISK_SPACE_INSUFFICIENT,
+    FEEDBACK_IDEMPOTENCY_CONFLICT,
     FILE_READ_ERROR,
     FILTER_UNSUPPORTED,
     FORMAT_UNSUPPORTED,
@@ -171,6 +172,9 @@ _STATUS_BY_CODE: dict[str, int] = {
     SEARCH_SESSION_EXPIRED: 409,
     PROFILE_GENERATION_MISMATCH: 409,
     FILTER_UNSUPPORTED: 409,
+    # P2-06B: a repeated feedback ``request_id`` with a different payload is a current-state
+    # conflict (the recorded fact already exists), never a silent overwrite.
+    FEEDBACK_IDEMPOTENCY_CONFLICT: 409,
     # Caller errors.
     INVALID_PATH: 422,
     INVALID_CURSOR: 422,

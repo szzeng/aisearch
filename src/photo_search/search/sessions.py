@@ -110,6 +110,10 @@ class SearchSession:
     pending_semantic: dict[str, Any] | None
     search_projection: dict[str, Any]
     state: str
+    #: P2-06B: the rerank block computed for this frozen ranking. A continuation page echo
+    #: the very same block, so flipping pages can never look like a second rerank happened.
+    rerank_state: str = "NOT_REQUESTED"
+    reranked: dict[str, Any] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -161,6 +165,8 @@ class SearchSessionStore:
         search_projection: dict[str, Any],
         state: str,
         candidates_truncated: bool = False,
+        rerank_state: str = "NOT_REQUESTED",
+        reranked: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> SearchSession:
         """Cache one search. Only the first :attr:`max_ids` ordered entries are kept."""
@@ -186,6 +192,8 @@ class SearchSessionStore:
             channels=dict(channels),
             pending_semantic=None if pending_semantic is None else dict(pending_semantic),
             search_projection=dict(search_projection),
+            rerank_state=str(rerank_state),
+            reranked=None if reranked is None else dict(reranked),
             state=str(state),
             extra=dict(extra or {}),
         )

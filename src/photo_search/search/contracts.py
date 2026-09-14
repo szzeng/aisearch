@@ -20,6 +20,7 @@ from typing import Any
 
 from photo_search.catalog.errors import CatalogError
 from photo_search.scheduler.contracts import CONTRACT_VERSION
+from photo_search.search.rerank import RERANK_STATES
 from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
 from photo_search.search.tokens import VALIDATION_ERROR
 
@@ -35,6 +36,19 @@ MAX_PAGE_SIZE = 100
 #: fresher answer may exist (P2-05 semantics, carried through the protocol unchanged).
 RESULT_STATES = ("OK", "FILTER_REVISION_CHANGED")
 
+#: P2-06B explicit relevance feedback. Two stable verdicts only: "relevant" and "not
+#: relevant" are what a user can honestly say about one result, and neither hides the asset.
+RELEVANCE_VALUES = ("RELEVANT", "NOT_RELEVANT")
+#: The audit note is bounded free text; the API and the DDL enforce the same ceiling.
+MAX_NOTE_CHARS = 500
+#: The two identifier ceilings of the feedback log. The envelope, the pydantic model and the
+#: DDL all use the same numbers so a value that fits the protocol always fits storage.
+MAX_FEEDBACK_REQUEST_ID_CHARS = 64
+MAX_FEEDBACK_SESSION_CHARS = 128
+#: One page of the feedback log. It is a plain keyset page over an append-only table.
+DEFAULT_FEEDBACK_PAGE_SIZE = 50
+MAX_FEEDBACK_PAGE_SIZE = 200
+
 _REQUEST_REQUIRED = ("contract_version", "request_id")
 _REQUEST_OPTIONAL = (
     "text",
@@ -49,6 +63,7 @@ _REQUEST_OPTIONAL = (
     "place_state",
     "top_k",
     "page_size",
+    "rerank",
     "search_session_id",
     "cursor",
 )
@@ -84,6 +99,8 @@ _RESULT_FIELDS = (
     "channels",
     "pending_semantic",
     "search_projection",
+    "rerank_state",
+    "reranked",
     "state",
 )
 
@@ -128,6 +145,14 @@ def _text(value: Any, *, where: str) -> str:
 
 def _optional_text(value: Any, *, where: str) -> str | None:
     return None if value is None else _text(value, where=where)
+
+
+def _bounded_text(value: Any, *, where: str, maximum: int) -> str:
+    """A non-empty string with an explicit ceiling (never silently truncated)."""
+    text = _text(value, where=where)
+    if len(text) > int(maximum):
+        raise fail(f"{where} must be at most {maximum} characters", where=where)
+    return text
 
 
 def _integer(value: Any, *, where: str, minimum: int = 0, maximum: int | None = None) -> int:
@@ -193,6 +218,9 @@ class SearchRequest:
     place_state: str = "any"
     top_k: int = DEFAULT_TOP_K
     page_size: int = DEFAULT_PAGE_SIZE
+    #: P2-06B: ask for the optional rerank of the returned candidates. It is additive and
+    #: off by default, so a P2-06A caller keeps exactly the P2-05 answer it used to get.
+    rerank: bool = False
     search_session_id: str | None = None
     cursor: str | None = None
     contract_version: str = CONTRACT_VERSION
@@ -241,6 +269,7 @@ class SearchRequest:
                 minimum=1,
                 maximum=MAX_PAGE_SIZE,
             ),
+            rerank=_boolean(body.get("rerank", False), where="rerank"),
             search_session_id=_optional_text(
                 body.get("search_session_id"), where="search_session_id"
             ),
@@ -264,6 +293,7 @@ class SearchRequest:
             "place_state": self.place_state,
             "top_k": self.top_k,
             "page_size": self.page_size,
+            "rerank": bool(self.rerank),
             "search_session_id": self.search_session_id,
             "cursor": self.cursor,
         }
@@ -368,6 +398,12 @@ class SearchResult:
     pending_semantic: dict[str, Any] | None
     search_projection: dict[str, Any]
     state: str
+    #: P2-06B rerank block. ``rerank_state`` is one of the frozen rerank states and
+    #: ``reranked`` carries the candidate-score rows (or ``None`` when nobody asked). The
+    #: scores inside it are never added to ``hits[].score``: they are a different kind of
+    #: number and the envelope keeps them apart on purpose.
+    rerank_state: str = "NOT_REQUESTED"
+    reranked: dict[str, Any] | None = None
     contract_version: str = CONTRACT_VERSION
 
     @classmethod
@@ -419,6 +455,8 @@ class SearchResult:
             else _object(body["pending_semantic"], where="pending_semantic"),
             search_projection=_object(body["search_projection"], where="search_projection"),
             state=_enum(body["state"], RESULT_STATES, where="state"),
+            rerank_state=_enum(body["rerank_state"], RERANK_STATES, where="rerank_state"),
+            reranked=None if body["reranked"] is None else _object(body["reranked"], where="reranked"),
             contract_version=version,
         )
 
@@ -448,16 +486,264 @@ class SearchResult:
             if self.pending_semantic is None
             else dict(self.pending_semantic),
             "search_projection": dict(self.search_projection),
+            "rerank_state": str(self.rerank_state),
+            "reranked": None if self.reranked is None else dict(self.reranked),
             "state": str(self.state),
         }
         return payload
 
 
+# ------------------------------------------------------------------- P2-06B feedback
+
+_FEEDBACK_REQUEST_REQUIRED = (
+    "contract_version",
+    "request_id",
+    "search_session_id",
+    "asset_id",
+    "rank",
+    "relevance",
+)
+_FEEDBACK_REQUEST_OPTIONAL = ("note",)
+_FEEDBACK_FIELDS = (
+    "feedback_id",
+    "request_id",
+    "search_session_id",
+    "asset_id",
+    "rank",
+    "relevance",
+    "note",
+    "created_at",
+)
+_FEEDBACK_RESPONSE_FIELDS = ("contract_version", "replayed", "feedback")
+_FEEDBACK_PAGE_FIELDS = ("contract_version", "feedback", "limit", "next_cursor", "has_more")
+
+
+def _note(value: Any) -> str | None:
+    """The one free-text field of the feedback log: bounded, never silently truncated."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise fail("note must be a string", where="note")
+    if len(value) > MAX_NOTE_CHARS:
+        raise fail(f"note must be at most {MAX_NOTE_CHARS} characters", where="note")
+    return value
+
+
+@dataclass(frozen=True)
+class FeedbackRequest:
+    """One explicit relevance verdict on one result of one search session.
+
+    ``request_id`` is the idempotency key: replaying the same key with the same payload
+    returns the recorded verdict, and replaying it with a different payload is a structured
+    conflict instead of an overwrite.
+    """
+
+    request_id: str
+    search_session_id: str
+    asset_id: int
+    rank: int
+    relevance: str
+    note: str | None = None
+    contract_version: str = CONTRACT_VERSION
+
+    @classmethod
+    def from_envelope(cls, payload: Mapping[str, Any]) -> FeedbackRequest:
+        body = _object(payload, where="FeedbackRequest")
+        _closed(
+            body,
+            where="FeedbackRequest",
+            required=_FEEDBACK_REQUEST_REQUIRED,
+            optional=_FEEDBACK_REQUEST_OPTIONAL,
+        )
+        version = _text(body["contract_version"], where="contract_version")
+        if version != CONTRACT_VERSION:
+            raise fail(
+                "the request declares a different contract version",
+                contract_version=version,
+                expected=CONTRACT_VERSION,
+            )
+        return cls(
+            request_id=_bounded_text(
+                body["request_id"],
+                where="request_id",
+                maximum=MAX_FEEDBACK_REQUEST_ID_CHARS,
+            ),
+            search_session_id=_bounded_text(
+                body["search_session_id"],
+                where="search_session_id",
+                maximum=MAX_FEEDBACK_SESSION_CHARS,
+            ),
+            asset_id=_integer(body["asset_id"], where="asset_id", minimum=1),
+            rank=_integer(body["rank"], where="rank", minimum=1),
+            relevance=_enum(body["relevance"], RELEVANCE_VALUES, where="relevance"),
+            note=_note(body.get("note")),
+            contract_version=version,
+        )
+
+    def to_envelope(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "request_id": str(self.request_id),
+            "search_session_id": str(self.search_session_id),
+            "asset_id": int(self.asset_id),
+            "rank": int(self.rank),
+            "relevance": str(self.relevance),
+            "note": self.note,
+        }
+
+    def payload_identity(self) -> tuple[Any, ...]:
+        """The recorded facts a repeated ``request_id`` has to reproduce exactly."""
+        return (
+            str(self.search_session_id),
+            int(self.asset_id),
+            int(self.rank),
+            str(self.relevance),
+            self.note,
+        )
+
+
+@dataclass(frozen=True)
+class FeedbackRecord:
+    """One stored verdict. It carries no place, coordinate, path or query text."""
+
+    feedback_id: int
+    request_id: str
+    search_session_id: str
+    asset_id: int
+    rank: int
+    relevance: str
+    note: str | None
+    created_at: int
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> FeedbackRecord:
+        return cls(
+            feedback_id=int(row["feedback_id"]),
+            request_id=str(row["request_id"]),
+            search_session_id=str(row["search_session_id"]),
+            asset_id=int(row["asset_id"]),
+            rank=int(row["rank"]),
+            relevance=str(row["relevance"]),
+            note=None if row["note"] is None else str(row["note"]),
+            created_at=int(row["created_at"]),
+        )
+
+    @classmethod
+    def from_envelope(cls, payload: Mapping[str, Any]) -> FeedbackRecord:
+        body = _object(payload, where="FeedbackRecord")
+        _closed(body, where="FeedbackRecord", required=_FEEDBACK_FIELDS)
+        return cls(
+            feedback_id=_integer(body["feedback_id"], where="feedback_id", minimum=1),
+            request_id=_text(body["request_id"], where="request_id"),
+            search_session_id=_text(body["search_session_id"], where="search_session_id"),
+            asset_id=_integer(body["asset_id"], where="asset_id", minimum=1),
+            rank=_integer(body["rank"], where="rank", minimum=1),
+            relevance=_enum(body["relevance"], RELEVANCE_VALUES, where="relevance"),
+            note=_note(body["note"]),
+            created_at=_integer(body["created_at"], where="created_at"),
+        )
+
+    def to_envelope(self) -> dict[str, Any]:
+        return {
+            "feedback_id": int(self.feedback_id),
+            "request_id": str(self.request_id),
+            "search_session_id": str(self.search_session_id),
+            "asset_id": int(self.asset_id),
+            "rank": int(self.rank),
+            "relevance": str(self.relevance),
+            "note": self.note,
+            "created_at": int(self.created_at),
+        }
+
+
+@dataclass(frozen=True)
+class FeedbackResponse:
+    """The result of one ``POST /search/feedback``: the stored verdict, honestly replayed."""
+
+    feedback: FeedbackRecord
+    replayed: bool = False
+    contract_version: str = CONTRACT_VERSION
+
+    @classmethod
+    def from_envelope(cls, payload: Mapping[str, Any]) -> FeedbackResponse:
+        body = _object(payload, where="FeedbackResponse")
+        _closed(body, where="FeedbackResponse", required=_FEEDBACK_RESPONSE_FIELDS)
+        version = _text(body["contract_version"], where="contract_version")
+        if version != CONTRACT_VERSION:
+            raise fail(
+                "the response declares a different contract version",
+                contract_version=version,
+                expected=CONTRACT_VERSION,
+            )
+        return cls(
+            feedback=FeedbackRecord.from_envelope(_object(body["feedback"], where="feedback")),
+            replayed=_boolean(body["replayed"], where="replayed"),
+            contract_version=version,
+        )
+
+    def to_envelope(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "replayed": bool(self.replayed),
+            "feedback": self.feedback.to_envelope(),
+        }
+
+
+@dataclass(frozen=True)
+class FeedbackPage:
+    """One read-only keyset page of the feedback log."""
+
+    feedback: tuple[FeedbackRecord, ...]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool = False
+    contract_version: str = CONTRACT_VERSION
+
+    @classmethod
+    def from_envelope(cls, payload: Mapping[str, Any]) -> FeedbackPage:
+        body = _object(payload, where="FeedbackPage")
+        _closed(body, where="FeedbackPage", required=_FEEDBACK_PAGE_FIELDS)
+        rows = body["feedback"]
+        if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+            raise fail("feedback must be a JSON array", where="feedback")
+        version = _text(body["contract_version"], where="contract_version")
+        if version != CONTRACT_VERSION:
+            raise fail(
+                "the page declares a different contract version",
+                contract_version=version,
+                expected=CONTRACT_VERSION,
+            )
+        return cls(
+            feedback=tuple(FeedbackRecord.from_envelope(row) for row in rows),
+            limit=_integer(body["limit"], where="limit", minimum=1),
+            next_cursor=_optional_text(body["next_cursor"], where="next_cursor"),
+            has_more=_boolean(body["has_more"], where="has_more"),
+            contract_version=version,
+        )
+
+    def to_envelope(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "feedback": [row.to_envelope() for row in self.feedback],
+            "limit": int(self.limit),
+            "next_cursor": self.next_cursor,
+            "has_more": bool(self.has_more),
+        }
+
+
 __all__ = [
     "AVAILABILITY_VALUES",
+    "DEFAULT_FEEDBACK_PAGE_SIZE",
     "DEFAULT_PAGE_SIZE",
+    "FeedbackPage",
+    "FeedbackRecord",
+    "FeedbackRequest",
+    "FeedbackResponse",
+    "MAX_FEEDBACK_PAGE_SIZE",
+    "MAX_NOTE_CHARS",
     "MAX_PAGE_SIZE",
     "PLACE_STATE_VALUES",
+    "RELEVANCE_VALUES",
     "RESULT_STATES",
     "SearchHit",
     "SearchRequest",

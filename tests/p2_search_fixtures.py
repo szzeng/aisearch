@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,7 @@ PACKAGE = "onnxruntime-cpu@test"
 DIMENSION = 3
 SPACE = "test-space:a1"
 PROCESSOR = "test-embedding@1"
+RERANKER = "test-reranker@1"
 
 
 def stamp(path: Path, *, age_ms: int = QUIET_AGE_MS) -> Path:
@@ -195,6 +197,101 @@ class FakeEncoder:
     ) -> list[list[float]]:
         self.calls.extend(str(text) for text in texts)
         return [list(self._vectors[str(text)]) for text in texts]
+
+
+def reranker_spec(
+    *,
+    processor_id: str = RERANKER,
+    runtime_package_id: str = PACKAGE,
+) -> ProcessorSpec:
+    """A test reranker processor: candidate scores only, no embedding space, no model.
+
+    ADR-0003 §4.2 keeps ``reranker_model`` distinct from ``embedding_model``: its output is
+    ``scores`` and the spec must *not* invent a dimension, a metric or a ``space_id``.
+    """
+    return ProcessorSpec.from_envelope(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "spec_revision": "test-reranker-v1",
+            "processor_id": processor_id,
+            "processor_kind": "reranker_model",
+            "task_type": "candidate_rerank",
+            "config_hash": SHA,
+            "input_type": "query_and_candidates",
+            "output_type": "scores",
+            "device_policy": "CPU_ALLOWED",
+            "runtime_backend": "onnxruntime",
+            "runtime_package_id": str(runtime_package_id),
+            "supported_devices": ["cpu"],
+            "supported_precisions": ["FP32"],
+            "max_batch_size": 4,
+            "cancellation_supported": True,
+            "resource_measurements": [],
+            "model_id": "test/reranker",
+            "model_revision": "r1",
+            "weights": [{"name": "reranker.onnx", "revision": "r1", "sha256": SHA}],
+            "query_preprocess_version": "query-v1",
+            "candidate_preprocess_version": "candidate-v1",
+            "tokenizer_version": "tokenizer-v1",
+            "instruction_template_version": "none-v1",
+            "max_tokens": 4,
+        }
+    )
+
+
+class FakeReranker:
+    """The deterministic stand-in for the ADR-0003 §7 ``RerankerAdapter``.
+
+    It can be told to be slow (to exercise the bounded wait), to raise (to exercise the
+    ``FAILED`` path) or to return arbitrary rows (to exercise the result validation) - all
+    without any model, GPU or network access.
+    """
+
+    def __init__(
+        self,
+        spec: ProcessorSpec,
+        *,
+        scores: dict[int, float] | None = None,
+        delay_ms: int = 0,
+        failure: BaseException | None = None,
+        rows: Sequence[dict[str, Any]] | None = None,
+    ) -> None:
+        self._spec = spec
+        self._scores = {int(key): float(value) for key, value in (scores or {}).items()}
+        self.delay_ms = int(delay_ms)
+        self.failure = failure
+        self.rows = None if rows is None else [dict(row) for row in rows]
+        self.calls: list[tuple[str, tuple[int, ...]]] = []
+        self.cancellations: list[Any] = []
+
+    def spec(self) -> ProcessorSpec:
+        return self._spec
+
+    def set_scores(self, scores: dict[int, float]) -> None:
+        """Fix the candidate scores once the fixture's asset ids are known."""
+        self._scores.update({int(key): float(value) for key, value in scores.items()})
+
+    def score(
+        self,
+        query: str,
+        candidates: Sequence[Any],
+        cancellation: Any = None,
+    ) -> list[dict[str, Any]]:
+        self.calls.append((str(query), tuple(int(item.asset_id) for item in candidates)))
+        self.cancellations.append(cancellation)
+        if self.delay_ms:
+            time.sleep(self.delay_ms / 1000.0)
+        if self.failure is not None:
+            raise self.failure
+        if self.rows is not None:
+            return [dict(row) for row in self.rows]
+        return [
+            {
+                "asset_id": int(item.asset_id),
+                "reranker_score": float(self._scores.get(int(item.asset_id), 0.0)),
+            }
+            for item in candidates
+        ]
 
 
 def capability(package: str, backend: str, provider: str, precision: str) -> RuntimeCapabilities:

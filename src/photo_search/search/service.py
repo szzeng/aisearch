@@ -21,11 +21,14 @@ Order of work for one request:
 
 from __future__ import annotations
 
+import base64
+import binascii
 from collections.abc import Sequence
 from typing import Any
 
 from photo_search.catalog.errors import (
     CATALOG_FILTER_REVISION_STALE,
+    FEEDBACK_IDEMPOTENCY_CONFLICT,
     INVALID_CURSOR,
     PLACE_SUGGESTION_REVISION_STALE,
     PROFILE_GENERATION_MISMATCH,
@@ -37,7 +40,18 @@ from photo_search.indexing.store import LanceVectorIndex
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.search import documents as search_documents
 from photo_search.search import retrieval as retrieval_module
-from photo_search.search.contracts import SearchHit, SearchRequest, SearchResult, fail
+from photo_search.search.contracts import (
+    DEFAULT_FEEDBACK_PAGE_SIZE,
+    MAX_FEEDBACK_PAGE_SIZE,
+    FeedbackPage,
+    FeedbackRecord,
+    FeedbackRequest,
+    FeedbackResponse,
+    SearchHit,
+    SearchRequest,
+    SearchResult,
+    fail,
+)
 from photo_search.search.embedding import QueryEncoder, encode_query
 from photo_search.search.fusion import (
     DEFAULT_CHANNEL_WEIGHTS,
@@ -52,6 +66,19 @@ from photo_search.search.profile import (
     active_profile,
     check_profile_servable,
     load_profile,
+    reranker_readiness,
+)
+from photo_search.search.rerank import (
+    DEFAULT_RERANK_CANDIDATES,
+    DEFAULT_RERANK_TIMEOUT_MS,
+    REASON_NO_PROFILE_RERANKER,
+    REASON_NO_QUERY_TEXT,
+    REASON_QUALIFICATION_MISSING,
+    RERANK_STATE_NOT_REQUESTED,
+    RerankCandidate,
+    not_requested_outcome,
+    rerank_hits,
+    unavailable_outcome,
 )
 from photo_search.search.retrieval import (
     AUTHORITY_PAGE_LIMIT,
@@ -467,6 +494,60 @@ def _filters_echo(payload: dict[str, Any], binding: VectorBinding | None) -> dic
     return echoed
 
 
+def _rerank_outcome(
+    catalog: Any,
+    request: SearchRequest,
+    *,
+    profile: SearchProfile | None,
+    match: MatchQuery | None,
+    entries: Sequence[SessionEntry],
+    reranker: Any,
+    timeout_ms: int,
+) -> Any:
+    """The optional rerank block of one *new* page, or the honest reason there is none.
+
+    The candidates are the frozen order of the session that is about to be created, so a
+    reranked row always names a real candidate of this search. Every refusal path returns
+    zero rows; the base hits are computed before this runs and are never touched here.
+    """
+    if not request.rerank:
+        return not_requested_outcome()
+    candidates = tuple(
+        RerankCandidate(asset_id=int(entry.asset_id), rank=index + 1)
+        for index, entry in enumerate(entries)
+    )
+    context: dict[str, Any] = {
+        "candidates": len(candidates),
+        "limit": DEFAULT_RERANK_CANDIDATES,
+        "timeout_ms": int(timeout_ms),
+    }
+    if profile is None or profile.reranker_processor_id is None:
+        # No activated profile declares a reranker (or no profile is active at all): there
+        # is nothing to run, and the answer says so instead of quietly returning the base
+        # order as if a model had confirmed it.
+        return unavailable_outcome(REASON_NO_PROFILE_RERANKER, **context)
+    processor_id = str(profile.reranker_processor_id)
+    context["processor_id"] = processor_id
+    if match is None:
+        # A pure filter query has no query text for a reranker to score against.
+        return unavailable_outcome(REASON_NO_QUERY_TEXT, **context)
+    try:
+        reranker_readiness(catalog.connection, profile)
+    except CatalogError as refusal:
+        # The same evidence rule the activation gate applies (ADR-0003 §5): a reranker that
+        # this process cannot prove healthy and qualified for does not score anything.
+        return unavailable_outcome(
+            str(refusal.details.get("reason") or REASON_QUALIFICATION_MISSING), **context
+        )
+    return rerank_hits(
+        reranker,
+        query=match.raw,
+        candidates=candidates,
+        expected_processor_id=processor_id,
+        timeout_ms=int(timeout_ms),
+    )
+
+
 def _render_page(
     catalog: Any,
     scope: SearchScope,
@@ -629,6 +710,8 @@ def _result_envelope(
         if session.pending_semantic is None
         else dict(session.pending_semantic),
         search_projection=dict(session.search_projection),
+        rerank_state=str(session.rerank_state),
+        reranked=None if session.reranked is None else dict(session.reranked),
         state=str(session.state),
     ).to_envelope()
 
@@ -640,12 +723,16 @@ def search_request(
     sessions: SearchSessionStore,
     encoder: QueryEncoder | None = None,
     vector_index: LanceVectorIndex | None = None,
+    reranker: Any = None,
+    rerank_timeout_ms: int = DEFAULT_RERANK_TIMEOUT_MS,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
     The first page runs the P2-05 retrieval exactly once and freezes its ordered candidates
     plus their provenance in the session; every later page is a slice of that same ranking,
-    re-checked against the current SQLite authority.
+    re-checked against the current SQLite authority. The optional P2-06B rerank runs on that
+    frozen order *after* the base page exists, and its scores are reported in their own
+    block - they are never folded into ``hits[].score``.
     """
     scope = SearchScope.build(
         source_id=request.source_id,
@@ -712,6 +799,15 @@ def search_request(
         vector_index=vector_index,
     )
     entries = _entries_of(payload)
+    outcome = _rerank_outcome(
+        catalog,
+        request,
+        profile=profile,
+        match=match,
+        entries=entries,
+        reranker=reranker,
+        timeout_ms=int(rerank_timeout_ms),
+    )
     session = sessions.create(
         query_hash=digest,
         entries=entries,
@@ -731,6 +827,10 @@ def search_request(
         ),
         pending_semantic=payload["pending_semantic"],
         search_projection=payload["search_projection"],
+        rerank_state=str(outcome.state),
+        reranked=(
+            None if str(outcome.state) == RERANK_STATE_NOT_REQUESTED else outcome.to_envelope()
+        ),
         state=str(payload["state"]),
         candidates_truncated=len(entries) >= MAX_SESSION_IDS,
     )
@@ -753,9 +853,147 @@ def search_request(
     )
 
 
+# ------------------------------------------------------------------ P2-06B feedback
+
+#: The feedback log is paged by an opaque keyset token; it never exposes a row offset.
+FEEDBACK_CURSOR_PREFIX = "fb1"
+
+
+def feedback_limit(limit: int | None) -> int:
+    """The page bound of the feedback log, defaulted and clamped like every other listing."""
+    if limit is None:
+        return DEFAULT_FEEDBACK_PAGE_SIZE
+    value = int(limit)
+    if value < 1:
+        raise fail("limit must be at least 1", field="limit")
+    return min(value, MAX_FEEDBACK_PAGE_SIZE)
+
+
+def _decode_feedback_cursor(text: str | None) -> int:
+    if text is None or str(text).strip() == "":
+        return 0
+    raw = str(text).strip()
+    try:
+        decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("ascii")
+    except (binascii.Error, UnicodeDecodeError, ValueError) as error:
+        raise _refuse(INVALID_CURSOR, "the feedback cursor is not valid") from error
+    prefix, _, value = decoded.partition(":")
+    if prefix != FEEDBACK_CURSOR_PREFIX or not value.isdigit():
+        raise _refuse(INVALID_CURSOR, "the feedback cursor is not valid")
+    return int(value)
+
+
+def _encode_feedback_cursor(feedback_id: int) -> str:
+    payload = f"{FEEDBACK_CURSOR_PREFIX}:{int(feedback_id)}"
+    return base64.urlsafe_b64encode(payload.encode("ascii")).decode("ascii").rstrip("=")
+
+
+def submit_feedback(
+    catalog: Any,
+    request: FeedbackRequest,
+    *,
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Record one explicit verdict, idempotently and without touching any ranking input.
+
+    * an unknown ``asset_id`` is a caller error (422): feedback never creates or resurrects
+      an asset;
+    * the same ``request_id`` with the same payload returns the recorded row and writes
+      nothing (``replayed=true``);
+    * the same ``request_id`` with a different payload is a structured
+      ``FEEDBACK_IDEMPOTENCY_CONFLICT`` and writes nothing - the first verdict stays the one
+      on record rather than being silently overwritten;
+    * nothing here changes ``catalog_filter_revision``, ``suggestion_revision``,
+      ``search_documents``, visibility or any vector row. Marking a photo "not relevant"
+      does not remove it from later searches; that would be a new product decision.
+    """
+    asset = catalog.read_one(
+        "SELECT asset_id FROM assets WHERE asset_id = ?", (int(request.asset_id),)
+    )
+    if asset is None:
+        raise fail(
+            "the feedback refers to an asset that does not exist",
+            field="asset_id",
+            asset_id=int(request.asset_id),
+        )
+    moment = int(catalog.now_ms() if now_ms is None else now_ms)
+    with catalog.write() as connection:
+        existing = connection.execute(
+            "SELECT * FROM search_feedback WHERE request_id = ?", (str(request.request_id),)
+        ).fetchone()
+        if existing is not None:
+            record = FeedbackRecord.from_row(existing)
+            stored = (
+                record.search_session_id,
+                record.asset_id,
+                record.rank,
+                record.relevance,
+                record.note,
+            )
+            requested = request.payload_identity()
+            if stored != requested:
+                names = (
+                    "search_session_id",
+                    "asset_id",
+                    "rank",
+                    "relevance",
+                    "note",
+                )
+                raise _refuse(
+                    FEEDBACK_IDEMPOTENCY_CONFLICT,
+                    "this request_id already recorded a different feedback payload",
+                    request_id=str(request.request_id),
+                    existing_feedback_id=int(record.feedback_id),
+                    different_fields=[
+                        name
+                        for name, before, after in zip(names, stored, requested, strict=True)
+                        if before != after
+                    ],
+                )
+            return FeedbackResponse(feedback=record, replayed=True).to_envelope()
+        cursor = connection.execute(
+            "INSERT INTO search_feedback(request_id, search_session_id, asset_id, rank, "
+            "relevance, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(request.request_id),
+                str(request.search_session_id),
+                int(request.asset_id),
+                int(request.rank),
+                str(request.relevance),
+                request.note,
+                moment,
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM search_feedback WHERE feedback_id = ?", (int(cursor.lastrowid),)
+        ).fetchone()
+        return FeedbackResponse(feedback=FeedbackRecord.from_row(row), replayed=False).to_envelope()
+
+
+def list_feedback(catalog: Any, *, limit: int, cursor: str | None = None) -> dict[str, Any]:
+    """One keyset page of the append-only feedback log (its own fields, nothing else)."""
+    after = _decode_feedback_cursor(cursor)
+    rows = catalog.read_all(
+        "SELECT * FROM search_feedback WHERE feedback_id > ? ORDER BY feedback_id LIMIT ?",
+        (int(after), int(limit) + 1),
+    )
+    has_more = len(rows) > int(limit)
+    page = rows[: int(limit)]
+    return FeedbackPage(
+        feedback=tuple(FeedbackRecord.from_row(row) for row in page),
+        limit=int(limit),
+        next_cursor=(
+            _encode_feedback_cursor(int(page[-1]["feedback_id"])) if has_more and page else None
+        ),
+        has_more=has_more,
+    ).to_envelope()
+
+
 __all__ = [
     "MAX_TOP_K",
     "default_vector_index",
+    "list_feedback",
     "search_assets",
     "search_request",
+    "submit_feedback",
 ]

@@ -33,6 +33,7 @@ def create_app(
     service_factory: Callable[[], Any] | None = None,
     runner_executor: Callable[[Any, int], Any] | None = None,
     encoder_factory: Callable[[], Any] | None = None,
+    reranker_factory: Callable[[], Any] | None = None,
 ) -> FastAPI:
     """Build one application instance over the given local settings."""
     resolved = settings or ApiSettings.create()
@@ -41,6 +42,7 @@ def create_app(
         service_factory=service_factory,
         runner_executor=runner_executor,
         encoder_factory=encoder_factory,
+        reranker_factory=reranker_factory,
     )
 
     @asynccontextmanager

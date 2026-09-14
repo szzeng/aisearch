@@ -15,8 +15,11 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: products. ``0006`` adds the P2-04 derived search layer (``search_documents`` plus its
 #: external content FTS5 index and the durable reprojection queue), again without touching
 #: any frozen core table. ``0007`` adds the P2-06A immutable ``search_profiles`` and the
-#: single ``active_search_profile`` pointer; it does not touch ``0001``～``0006`` either.
-SUPPORTED_SCHEMA_VERSION = 7
+#: single ``active_search_profile`` pointer. ``0008`` adds the P2-06B append-only
+#: ``search_feedback`` audit table (explicit relevance verdicts, idempotent by
+#: ``request_id``); it records what a user said and deliberately re-ranks, hides and
+#: re-classifies nothing.
+SUPPORTED_SCHEMA_VERSION = 8
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

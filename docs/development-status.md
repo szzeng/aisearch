@@ -28,8 +28,11 @@ activation) and **P2-06B** (explicit relevance feedback and the rerank adapter),
 overall route. **P2-06A is PASS** (B level + a C-level packaged smoke + the D-level migration/activation/
 expiry injections: the frozen `SearchRequest`/`SearchResult` envelopes, the process-local search sessions
 with opaque bound cursors, the immutable `search_profiles` plus its atomic single-row activation and the
-`catalog_filter_revision` staleness matrix; 52 new cases, **schema_version 6 → 7**). **P2-06B is READY /
-CURRENT TASK**.
+`catalog_filter_revision` staleness matrix; 52 new cases, **schema_version 6 → 7**). **P2-06B is PASS**
+(B level + a C-level packaged smoke + the D-level migration/idempotency/gate injections: the append-only
+`search_feedback` audit log with `request_id` idempotency, the optional rerank adapter boundary whose
+candidate scores never enter RRF/BM25/距离, and the reranker qualification gate on profile activation;
+49 new cases, **schema_version 7 → 8**). **P2-07 is READY / CURRENT TASK**.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -397,6 +400,55 @@ P2-06A 已实现搜索协议、搜索会话/游标与 profile 原子激活并通
 smoke 复现）。属 P1-04 既有行为，不在 P2-06A 允许修改面内，建议独立 **C1** 任务修复
 （候选：授予 `(R,W,D)` 或先删后写），并加一条「同一 data root 连续两次启动」的打包 smoke 断言。
 
+## Latest feedback/rerank closure — P2-06B (2026-09-14)
+
+P2-06B 已实现显式相关性反馈与精排适配器接入并通过 B + C + D 级验收，报告
+[P2-06B 报告](reports/P2-06B-search-feedback-and-rerank-adapter.md)。起点 HEAD `75d467b`（P2-06A），
+工作树干净；实现提交即承载本行与报告的这次提交（未 push；哈希用
+`git log -1 --format=%H -- docs/reports/P2-06B-search-feedback-and-rerank-adapter.md` 读取）。
+
+新增连续 migration `catalog/migrations/0008_search_feedback.sql`：**`schema_version` 推进到 8**，
+`0001`～`0007` 未改。`search_feedback` 只追加（`UPDATE`/`DELETE` 由触发器拒绝）：`request_id` 唯一
+（幂等键）、`search_session_id`、`asset_id` FK RESTRICT、`rank ≥ 1`、`relevance IN
+('RELEVANT','NOT_RELEVANT')`、`note ≤ 500`、`created_at ≥ 0`。`POST /api/v1/search/feedback` 新键
+`201`、同载荷重放 `200`（同一 `feedback_id`、零写）、不同载荷 `409 FEEDBACK_IDEMPOTENCY_CONFLICT`
+（零写）；未知 asset/非法枚举/越界/超长/缺字段 `422`；无 session `401`、缺 CSRF 或外来 Origin `403`。
+`GET /api/v1/search/feedback` 是只读 keyset 分页（游标 `fb1`），只返回反馈自身字段。反馈**不改变**
+`catalog_filter_revision`、`suggestion_revision`、`search_documents`、`assets.created_at`、向量/outbox
+行数或可见性，被标 `NOT_RELEVANT` 的照片仍出现在下一次查询。
+
+新增 `src/photo_search/search/rerank.py`（ADR-0003 §7 的 `spec()`/`score()` 边界，业务层不 import
+ONNX/PyTorch）：`SearchRequest` 加性新增 `rerank: bool = false`，`SearchResult` 加性新增
+`rerank_state`（`NOT_REQUESTED`/`OK`/`UNAVAILABLE`/`FAILED`）与 `reranked` 块（`state`/`reason`/
+`processor_id`/`candidates`/`limit`/`timeout_ms`/`elapsed_ms`/`rows`/`error`）。`score()` 在 daemon
+线程里最多等待 `timeout_ms`（默认 2000 ms，`Cancellation` 同步 deadline）；超时/异常/结果违约/spec
+违约都返回**零行**并如实标注，基础 `hits` 与不请求精排时逐字段相同。`rows` 只含
+`asset_id`/`rank`/`reranker_score`/`reranker_processor_id`，**没有** `score`，绝不与 RRF/BM25/距离
+相加；候选头 `DEFAULT_RERANK_CANDIDATES=50`、硬上限 100，续页回显同一块。`reranker_processor_id`
+非空的 profile 只有在健康 capability + 该 processor 的专项 evidence 齐备时才允许激活，否则 409
+`RUNTIME_CAPABILITY_UNAVAILABLE`（`reason=RERANKER_QUALIFICATION_MISSING`）且零写（指针与 `is_active`
+不动），注入中途异常整体回滚。本卡未改 ADR-0001～0005、冻结 JSON schema、`0001`～`0007`、依赖、
+资格矩阵语义、`places/**`、`geo/**`、`ingestion/**`、`workers/**`、打包入口与前端；除卡内清单外仅
+加性改了 `api/context.py` 与 `app.py`（`reranker_factory` 注入缝，见报告 §1）。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 **719** 例，进度行 1 个 `s` → **718 passed / 1 skipped** |
+| 本任务 5 个新文件 | **49 passed**（契约 19、精排边界 15、反馈迁移 6、反馈 API 3、精排/门禁 API 6） |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| v7→v8 迁移 | 备份内 `schema_version=7` 且无 `search_feedback`；单事务 `applied=(8,)`；7 组冻结行（含已激活 profile 指针）逐项不变；损坏 `0008` 整体回滚且无半成品；缺件 `SCHEMA_INCONSISTENT`；过新库零写；唯一键/FK RESTRICT/枚举/`rank`/`note`/时间 CHECK 与两个只追加触发器逐条拒绝 |
+| 反馈幂等与权威 | 新键 201 → 同键同载荷 200 同一行、行数 1 → 同键不同载荷 409 且原值不变；未知 asset 422（`field=asset_id`）；写入前后 revision/`search_documents`/`assets.created_at`/向量与 outbox 行数逐项相同，下一次同查询 `hits` 逐字段一致 |
+| 精排门禁与失败面 | 无 evidence 的 reranker profile 激活 409 且指针/`is_active` 零变化；`activation_hook` 注入异常后两者全回滚；无适配器/抛异常/超预算三例 `rerank_state` 分别 `UNAVAILABLE`/`FAILED`/`FAILED`，`hits`/`channels`/`total_candidates`/`state` 与不请求精排时完全相同且 `rows=[]` |
+| 分数分离与确定性 | `reranked.rows` 只含 `asset_id`/`rank`/`reranker_score`/`reranker_processor_id`；重复请求 `rows` 逐位相同；假适配器分数 `0.9/0.5/0.1` 复算一致而基础名次为 `3/2/1`（两套顺序可区分）；续页块与首页块完全相同 |
+| 继承回归 | P2-06A 的会话过期/游标隔离/切换后过期/profile 激活用例**未改一行**并原样通过；唯一机械改动是 `test_p2_search_profile_migration.py` 的 `applied` 期望改为 `range(7, SUPPORTED+1)` |
+| C 级 | 真实 onedir 构建（exe 35,557,186 B）+ `packaged_api_smoke.py`（D 盘工作目录）：`status=ok`、`problems=[]`、startup 1.0 s；PYZ 内确认 `photo_search.search.rerank` 入包、`_internal` 内 `0008_search_feedback.sql` 存在；smoke 新增「反馈 201 → 重放 200 同一 id → 不同载荷 409」「反馈列表 200」「无 session 401」「`rerank: true` → 200 `UNAVAILABLE`/`PROFILE_HAS_NO_RERANKER` 且基础 `hits` 不变」 |
+
+未验证项（报告 §11）：真实精排/VLM 模型与 GPU 精排未接入，未测质量与延迟；在线学习/反馈驱动排序
+未实现（反馈只记录）；超时是有界等待而非抢占式强杀；reranker 的 capability-missing/unhealthy 分支
+因与嵌入处理器共用 runtime package 而不可达；反馈表规模/并发写入未测；精排候选上界只在 ≤4 候选夹具
+上验证。凭据文件 DACL 缺陷新增一个可观察症状：同一缺陷让凭据文件对普通用户**不可删除**（smoke 后
+残留两个 112 B 的 `session.json`，见报告 §9.1）。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -448,6 +500,14 @@ P1-03 shipped contract: thumbnail `catalog-thumbnail@1` (long edge 320, JPEG q85
 
 ## Carried-forward limits / follow-ups
 
+- **P2-06B**: 真实精排/VLM 权重未接入（`search/rerank.py` 只有 ADR-0003 §7 的边界与确定性假适配器，
+  打包应用里 `rerank: true` 固定答 `UNAVAILABLE`/`PROFILE_HAS_NO_RERANKER`），因此没有 GPU 精排延迟或
+  排序质量结论；反馈只被记录，**不**影响权威筛选、可见性或后续排序（在线学习属新的产品决策）；超时是
+  有界等待（daemon 线程 + `Cancellation` deadline），**不是**抢占式强杀；reranker 的
+  `CAPABILITY_MISSING`/`RUNTIME_UNHEALTHY` 分支因与嵌入处理器共用 `runtime_package_id` 而结构上不可达
+  （可达且已实测的是 `RERANKER_QUALIFICATION_MISSING`）；`search_feedback` 的规模/并发写入未测，
+  精排候选上界 50/100 只在 ≤4 候选夹具上验证。凭据文件 DACL 缺陷新增症状：普通用户无法删除该文件，
+  因此 smoke 临时目录会残留 112 B 的 `session.json`（见 P2-06B 报告 §9.1）。
 - **P1-06**: 对抗性验收**未发现**与 ADR-0002 冲突的真实缺陷，故无生产代码改动。三项残留边界已实测记录：
   (a) 若内容被替换但字节数不变且 `mtime` 被还原，扫描层的变化提示不会触发，此时若扫描被中断，位置会
   在**下一次完整扫描**前保留上一次观测（旧 `asset_id`/旧 size/mtime）；ADR-0002 §5.1 明确 size/mtime
@@ -575,13 +635,21 @@ C 级打包 smoke `problems=[]` + D 级迁移/激活/过期故障注入，52 个
 migration 连续 0001～0007；ADR/冻结 JSON schema/依赖/`places/**`/`geo/**`/`ingestion/**`/`workers/**`/
 打包入口/前端未改（仅加性改了 `api/context.py` 与 `app.py` 两处注入缝，见报告 §1）。
 
-**P2-06B — 显式相关性反馈与精排适配器接入.**
+**P2-06B — 显式相关性反馈与精排适配器接入：PASS.** 见
+[P2-06B 报告](reports/P2-06B-search-feedback-and-rerank-adapter.md)（B 级 718 passed / 1 skipped +
+C 级打包 smoke `problems=[]` + D 级迁移/幂等/门禁故障注入，49 个新增用例）。`schema_version = 8`，
+migration 连续 0001～0008；ADR/冻结 JSON schema/依赖/资格矩阵语义/`places/**`/`geo/**`/`ingestion/**`/
+`workers/**`/打包入口/前端未改（仅加性改了 `api/context.py` 与 `app.py` 两处注入缝，见报告 §1）。
 
-- Status: **READY / CURRENT TASK**（依赖 P2-06A，已满足：`SUPPORTED_SCHEMA_VERSION = 7`、
-  `search_profiles`/`active_search_profile`、`POST /api/v1/search` 与会话/游标语义均可用）。
-- Task card: `docs/tasks/P2-06B.md`。
-- Recommended execution model: **DS-H / DeepSeek V4.1 Flash / 高推理**（反馈幂等/精排分数语义歧义再报 C2）。
-- Validation level: **B + C（新增 migration 与 API/打包）+ D（迁移与反馈幂等/精排门禁故障注入）**。
+**P2-07 — 搜索页、上传搜图、地点筛选、命中原因与分项覆盖率.**
+
+- Status: **READY / CURRENT TASK**（依赖 P2-06B，已满足：`SUPPORTED_SCHEMA_VERSION = 8`、
+  `POST /api/v1/search` 含 `rerank`/`rerank_state`、`POST/GET /api/v1/search/feedback`、`GET /assets`
+  的地点筛选与 `text=` 文本检索、P1-05 静态前端与 P2-03C 地点页均可用）。
+- Task card: `docs/tasks/P2-07.md`。
+- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（前端与页面契约为主；
+  命中原因/覆盖率语义或发行资源变化则按卡升级）。
+- Validation level: **B + 真实浏览器 smoke；发行资源变化再加 C**。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -601,12 +669,18 @@ P2-04 未验证项（单次请求最多追赶 2000 资产的滞后、`rebuild_al
 P2-05 报告 §11；P2-06A 未验证项（真实查询编码器未接入应用进程致打包应用的文本查询以 409
 `QUERY_ENCODER_UNAVAILABLE` 拒绝而不降级、`search_profiles` 无产品侧创建入口、`fusion_config` 只按
 冻结 RRF 校验回显、`reranker_processor_id` 只存储、会话仅进程内/多 worker 未测、`page_size` 与 1000
-候选上界只在小夹具验证公式、搜索页内复核非快照隔离读）记录在 P2-06A 报告 §11。
+候选上界只在小夹具验证公式、搜索页内复核非快照隔离读）记录在 P2-06A 报告 §11；P2-06B 未验证项
+（真实精排/VLM 模型与 GPU 精排未接入、在线学习与反馈驱动排序未实现、超时是有界等待而非抢占式强杀、
+reranker 的 capability-missing/unhealthy 分支因共用 runtime package 不可达、反馈表规模/并发写入未测、
+精排候选上界只在 ≤4 候选夹具验证）记录在 P2-06B 报告 §11。
 
 **待独立任务修复的既有缺陷**：`api/session.py::restrict_credential_file` 的 `icacls`
 （`/inheritance:r /grant:r "<user>:(R,W)"`）使凭据文件缺少 DELETE 权限，**同一 `data_root` 第二次启动
 打包应用会在 `bootstrap_session_credential` 抛 `PermissionError [WinError 5]` 而失败**（P2-06A 的 C 级
-smoke 连续两次运行复现，见 P2-06A 报告 §9.1）。建议独立 **C1** 任务修复并补「同一 data root 连续两次
-启动」的打包 smoke 断言；在修复前，本仓库的打包 smoke 每次必须使用新建的工作目录。
+smoke 连续两次运行复现，见 P2-06A 报告 §9.1）；P2-06B §9.1 又实测到同一 DACL 让凭据文件对普通用户
+**不可删除也不可重新授权**（smoke 工作目录删除后残留两个 112 B 的 `session.json`，`Remove-Item` 与
+`icacls /grant` 都被拒绝）。建议独立 **C1** 任务修复（授予 `(R,W,D)` 或先删后写）并补「同一 data root
+连续两次启动」与「临时数据目录可完整清理」两条打包 smoke 断言；在修复前，本仓库的打包 smoke 每次
+必须使用新建的工作目录，且删除该目录需要 takeown 或管理员权限。
 
 Model switching remains manual; the repository only records the recommended model per stage.

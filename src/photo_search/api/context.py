@@ -33,6 +33,7 @@ class ApiContext:
         runner_executor: Callable[[Any, int], Any] | None = None,
         worker_id: str | None = None,
         encoder_factory: Callable[[], QueryEncoder] | None = None,
+        reranker_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.settings = settings
         token = settings.session_token or generate_session_token()
@@ -48,6 +49,12 @@ class ApiContext:
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
         self._encoder_resolved = False
+        #: P2-06B: the optional reranker adapter, injected exactly like the query encoder.
+        #: This build ships none, and a request that asks for a rerank is then answered with
+        #: the base page plus ``rerank_state=UNAVAILABLE`` instead of a silent no-op.
+        self._reranker_factory = reranker_factory
+        self._reranker: Any = None
+        self._reranker_resolved = False
         self._service: CatalogService | None = None
         self._runner: ScanRunner | None = None
 
@@ -97,6 +104,25 @@ class ApiContext:
             logger.debug("building the query encoder failed", exc_info=True)
             self._encoder = None
         return self._encoder
+
+    def reranker(self) -> Any:
+        """The reranker half of the ADR-0003 §7 boundary, or ``None`` when none is wired.
+
+        Same rule as :meth:`query_encoder`: the service layer never imports a heavy
+        framework, a deployment supplies the adapter, and an absent or broken adapter is
+        reported honestly (``rerank_state=UNAVAILABLE``) rather than faked.
+        """
+        if self._reranker_resolved:
+            return self._reranker
+        self._reranker_resolved = True
+        if self._reranker_factory is None:
+            return None
+        try:
+            self._reranker = self._reranker_factory()
+        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
+            logger.debug("building the reranker adapter failed", exc_info=True)
+            self._reranker = None
+        return self._reranker
 
     def close(self) -> None:
         """Stop the worker and release both connections; safe to call twice."""
