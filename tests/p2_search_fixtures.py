@@ -199,6 +199,40 @@ class FakeEncoder:
         return [list(self._vectors[str(text)]) for text in texts]
 
 
+class FakeImageEncoder(FakeEncoder):
+    """The deterministic stand-in for the ADR-0003 image tower (P2-07 upload search).
+
+    It is one adapter with both halves, exactly like the frozen ADR-0003 §7 boundary: the
+    text half answers from a lookup table and the image half returns one pinned vector, so a
+    test can say "this uploaded image is semantically equal to <asset>". It records the
+    decoded sizes it was handed, which is how the EXIF-orientation and decode-bound
+    assertions stay observable without any real model.
+    """
+
+    def __init__(
+        self,
+        spec: ProcessorSpec,
+        *,
+        vectors: dict[str, list[float]] | None = None,
+        image_vector: Sequence[float] = (1.0, 0.0, 0.0),
+        image_error: Exception | None = None,
+    ) -> None:
+        super().__init__(spec, vectors=dict(vectors or {}))
+        self.image_vector = [float(value) for value in image_vector]
+        self.image_error = image_error
+        self.image_calls = 0
+        self.image_sizes: list[tuple[int, int]] = []
+
+    def encode_images(
+        self, asset_inputs: Sequence[Any], cancellation: Any = None
+    ) -> list[list[float]]:
+        self.image_calls += 1
+        self.image_sizes = [(int(item.width), int(item.height)) for item in asset_inputs]
+        if self.image_error is not None:
+            raise self.image_error
+        return [list(self.image_vector) for _ in asset_inputs]
+
+
 def reranker_spec(
     *,
     processor_id: str = RERANKER,

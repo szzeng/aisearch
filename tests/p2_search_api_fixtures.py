@@ -58,7 +58,9 @@ class SearchEnv:
     spec: Any
     scheduler: Any
     generation: str
-    encoder: FakeEncoder
+    #: The served ADR-0003 §7 adapter. ``FakeEncoder`` has only the text half; P2-07 tests
+    #: inject ``FakeImageEncoder`` (which has both) to exercise the upload path.
+    encoder: Any
     app: Any
     settings: ApiSettings
     #: P2-06B: the deterministic reranker adapter this application was built with (if any).
@@ -200,11 +202,17 @@ class SearchEnv:
         }
 
 
-def build_search_env(tmp_path: Path, *, reranker: Any = None) -> SearchEnv:
+def build_search_env(
+    tmp_path: Path, *, reranker: Any = None, image_encoder: Any = None
+) -> SearchEnv:
     """Write three photos, scan them, vectorise them and build the application.
 
     ``reranker`` is injected through the documented ``reranker_factory`` seam exactly like
     the query encoder: it is a deterministic stand-in, never a real model.
+
+    ``image_encoder`` (P2-07) replaces the served adapter with one that also has the image
+    half of ADR-0003 §7; without it this application behaves like the packaged build, which
+    has no image tower at all.
     """
     library = build_library(tmp_path, PHOTOS)
     spec = embedding_spec()
@@ -234,7 +242,9 @@ def build_search_env(tmp_path: Path, *, reranker: Any = None) -> SearchEnv:
         vector=[0.1, 0.1, 0.9],
         artifact_id="art-image",
     )
-    encoder = FakeEncoder(spec, vectors=QUERY_VECTORS)
+    encoder: Any = (
+        FakeEncoder(spec, vectors=QUERY_VECTORS) if image_encoder is None else image_encoder
+    )
     settings = ApiSettings(
         data_root=library.data_root,
         bind_host="127.0.0.1",

@@ -10,6 +10,7 @@ connection is never touched from a second thread.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from email.utils import formatdate
 from typing import Any, Literal
 
@@ -43,6 +44,7 @@ from photo_search.api.models import (
     FeedbackRequestModel,
     FeedbackResponseModel,
     GeoFactResponse,
+    ImageSearchResultModel,
     JobListResponse,
     JobRecord,
     PlaceAssignmentRequest,
@@ -85,7 +87,11 @@ from photo_search.api.session import (
     SESSION_COOKIE,
     safe_redirect_target,
 )
-from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.errors import (
+    RUNTIME_CAPABILITY_UNAVAILABLE,
+    UPLOAD_TOO_LARGE,
+    CatalogError,
+)
 from photo_search.catalog.migrate import catalog_info
 from photo_search.config import catalog_db_path
 from photo_search.ingestion.service import CatalogService
@@ -100,6 +106,7 @@ from photo_search.media.status import (
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.scheduler import state as scheduler_state
+from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.scheduler.projection import (
     index_summary,
     scheduler_summary,
@@ -107,12 +114,23 @@ from photo_search.scheduler.projection import (
     search_projection_summary,
 )
 from photo_search.search.contracts import FeedbackRequest, SearchRequest
+from photo_search.search.contracts import fail as search_fail
 from photo_search.search.profile import activate_profile, profile_projection
 from photo_search.search.service import (
     feedback_limit,
     list_feedback,
+    resolve_request_binding,
     search_request,
     submit_feedback,
+)
+from photo_search.search.upload import (
+    DEFAULT_LIMITS,
+    UploadedImage,
+    encode_image_query,
+    image_encoder_of,
+    image_query_identity,
+    parse_multipart_form,
+    stage_upload,
 )
 
 APP_VERSION = "0.1.0"
@@ -808,6 +826,219 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
         encoder=context.query_encoder(),
         reranker=context.reranker(),
     )
+
+
+#: The multipart fields ``POST /search/image`` defines. ``text`` is deliberately absent: an
+#: uploaded image has no text, and accepting one would let a caller mix two query kinds
+#: under a single ranking.
+_IMAGE_FORM_FIELDS = frozenset(
+    {
+        "request_id",
+        "contract_version",
+        "profile_id",
+        "space_id",
+        "image_generation_id",
+        "dimension",
+        "source_id",
+        "availability",
+        "place_ids",
+        "include_descendants",
+        "place_state",
+        "top_k",
+        "page_size",
+        "search_session_id",
+        "cursor",
+    }
+)
+_IMAGE_TEXT_FIELDS = (
+    "contract_version",
+    "profile_id",
+    "space_id",
+    "image_generation_id",
+    "availability",
+    "place_state",
+    "search_session_id",
+    "cursor",
+)
+_IMAGE_INT_FIELDS = ("dimension", "source_id", "top_k", "page_size")
+
+
+@router.post(
+    "/search/image",
+    response_model=ImageSearchResultModel,
+    summary="Find similar photos for one uploaded image",
+)
+async def post_search_image(request: Request) -> dict[str, Any]:
+    """Search with one uploaded image, reusing the frozen binding and ranking path.
+
+    The upload is validated against the architecture §10.3 hard bounds (byte ceiling, pixel
+    ceiling, format allow-list, decode time) and its temporary file is removed before the
+    response is sent, on the success and the failure path alike. The image never becomes an
+    asset: no ``assets`` row, no index row, no search document and no feedback row is written
+    for it, and the returned page is produced by the very same retrieval, RRF and
+    authoritative re-check that serves a text query.
+    """
+    context = context_of(request)
+    body = await _read_bounded_body(request, limit=DEFAULT_LIMITS.max_body_bytes)
+    form = parse_multipart_form(
+        request.headers.get("content-type"),
+        body,
+        max_body_bytes=DEFAULT_LIMITS.max_body_bytes,
+    )
+    upload = form.files.get("image")
+    if upload is None:
+        raise search_fail(
+            "the request must carry one multipart file field named image", field="image"
+        )
+    envelope = _image_search_request(form.fields)
+    catalog = context.service().catalog
+    binding = resolve_request_binding(catalog, envelope)
+    if binding is None:
+        raise search_fail(
+            "an image query needs a bound space_id, image_generation_id and dimension "
+            "(or an activated search profile)",
+            field="profile_id",
+        )
+    encoder = image_encoder_of(context.query_encoder())
+    # Decoding and encoding are the only heavy steps here, so they run in a worker thread:
+    # the catalog connection stays on the request thread (as in the media endpoints) and the
+    # event loop is never blocked by a large photo.
+    facts, vector = await asyncio.to_thread(
+        _prepare_upload,
+        upload.payload,
+        encoder,
+        str(binding.space_id),
+        int(binding.dimension),
+        envelope.cursor is not None,
+    )
+    if vector is None and envelope.cursor is None:
+        # No image tower in this process (ADR-0003 §7). The text channel is *not* used as a
+        # stand-in: "no image encoder" and "nothing looked similar" must stay different.
+        raise CatalogError(
+            RUNTIME_CAPABILITY_UNAVAILABLE,
+            "this process has no image encoder for the bound embedding space",
+            details={
+                "reason": "IMAGE_ENCODER_UNAVAILABLE",
+                "generation_id": binding.generation_id,
+                "space_id": binding.space_id,
+            },
+        )
+    result = search_request(
+        catalog,
+        envelope,
+        sessions=context.search_sessions,
+        query_vector=vector,
+        query_identity=image_query_identity(facts),
+    )
+    result["image_query"] = facts.to_envelope(limits=DEFAULT_LIMITS)
+    return result
+
+
+def _image_search_request(fields: Mapping[str, str]) -> SearchRequest:
+    """The frozen ``SearchRequest`` one multipart image query declares, or a 422.
+
+    The multipart fields are converted into the *same* envelope a JSON caller sends, so the
+    frozen shape (closed keys, bounds, the all-or-nothing binding triple) is enforced once,
+    by :meth:`SearchRequest.from_envelope`, instead of by a second set of rules here.
+    """
+    unexpected = sorted(set(str(name) for name in fields) - _IMAGE_FORM_FIELDS)
+    if unexpected:
+        raise search_fail(
+            "this endpoint does not define those multipart fields", fields=unexpected
+        )
+    body: dict[str, Any] = {
+        "contract_version": str(fields.get("contract_version") or CONTRACT_VERSION),
+        "request_id": str(fields.get("request_id") or ""),
+    }
+    for name in _IMAGE_TEXT_FIELDS:
+        if name in ("contract_version",):
+            continue
+        value = fields.get(name)
+        if value:
+            body[name] = str(value)
+    for name in _IMAGE_INT_FIELDS:
+        if name in fields:
+            body[name] = _form_integer(fields[name], field=name)
+    if "include_descendants" in fields:
+        body["include_descendants"] = _form_boolean(
+            fields["include_descendants"], field="include_descendants"
+        )
+    if "place_ids" in fields:
+        body["place_ids"] = _form_integer_list(fields["place_ids"], field="place_ids")
+    return SearchRequest.from_envelope(body)
+
+
+def _form_integer(value: str, *, field: str) -> int:
+    text = str(value).strip()
+    try:
+        return int(text)
+    except ValueError as error:
+        raise search_fail(f"{field} must be an integer", field=field) from error
+
+
+def _form_integer_list(value: str, *, field: str) -> list[int]:
+    text = str(value).strip()
+    if not text:
+        return []
+    return [_form_integer(part, field=field) for part in text.split(",") if part.strip() != ""]
+
+
+def _form_boolean(value: str, *, field: str) -> bool:
+    text = str(value).strip().lower()
+    if text in ("true", "1"):
+        return True
+    if text in ("false", "0"):
+        return False
+    raise search_fail(f"{field} must be true or false", field=field)
+
+
+def _prepare_upload(
+    payload: bytes,
+    encoder: Any,
+    space_id: str,
+    dimension: int,
+    continuation: bool,
+) -> tuple[UploadedImage, list[float] | None]:
+    """Validate one upload in its temporary directory and encode it when needed.
+
+    Runs off the event loop. The temporary directory is created and removed inside
+    :func:`stage_upload`, so this function cannot leak one whatever it raises.
+    """
+    with stage_upload(payload, limits=DEFAULT_LIMITS) as staged:
+        vector: list[float] | None = None
+        if encoder is not None and not continuation:
+            vector = encode_image_query(
+                encoder, staged.image, space_id=str(space_id), dimension=int(dimension)
+            )
+        return staged.facts, vector
+
+
+async def _read_bounded_body(request: Request, *, limit: int) -> bytes:
+    """Read the request body with a hard ceiling, whatever ``Content-Length`` claims."""
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > int(limit):
+                raise CatalogError(
+                    UPLOAD_TOO_LARGE,
+                    "the uploaded image is larger than this build accepts",
+                    details={"byte_size": int(declared), "max_bytes": int(limit)},
+                )
+        except ValueError:
+            # A malformed length is not trusted either way; the read ceiling below decides.
+            pass
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > int(limit):
+            raise CatalogError(
+                UPLOAD_TOO_LARGE,
+                "the uploaded image is larger than this build accepts",
+                details={"byte_size": int(total), "max_bytes": int(limit)},
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 @router.post(

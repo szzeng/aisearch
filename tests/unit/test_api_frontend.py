@@ -14,7 +14,13 @@ from photo_search.api.queries import (
     encode_time_cursor,
 )
 from photo_search.api.session import safe_redirect_target
-from photo_search.api.web import INDEX_NAME, PLACES_NAME, media_type_for_name, read_static
+from photo_search.api.web import (
+    INDEX_NAME,
+    PLACES_NAME,
+    SEARCH_NAME,
+    media_type_for_name,
+    read_static,
+)
 
 
 def _blob(text: str) -> str:
@@ -334,3 +340,185 @@ def test_the_places_page_keeps_the_frozen_place_vocabulary() -> None:
     assert "单条确认" in shell
     # The page admits that re-parenting is refused by the server instead of hiding it.
     assert "不提供改父级" in shell
+
+
+# ---------------------------------------------------------------------------------------
+# P2-07: the search page. Same package-data rules as the two documents above, plus one
+# assertion per promise the page makes about *how* it shows a search result.
+# ---------------------------------------------------------------------------------------
+SEARCH_DOCUMENTS = ("search.html", "search.js", "search.css")
+
+
+def _search_documents() -> tuple[str, str, str]:
+    shell = (read_static(SEARCH_NAME) or b"").decode("utf-8")
+    script = (read_static("search.js") or b"").decode("utf-8")
+    style = (read_static("search.css") or b"").decode("utf-8")
+    assert shell and script and style
+    return shell, script, style
+
+
+@pytest.mark.parametrize("relative", SEARCH_DOCUMENTS)
+def test_the_search_page_assets_are_packaged(relative: str) -> None:
+    payload = read_static(relative)
+    assert payload and len(payload) > 0
+
+
+def test_the_search_page_route_never_shadows_the_search_api() -> None:
+    """``/search`` is a document; the results still come from ``/api/v1/search``."""
+    from photo_search.api.routes import router as api_router
+    from photo_search.api.web import router as web_router
+
+    api_paths = {route.path for route in api_router.routes}
+    web_paths = {route.path for route in web_router.routes}
+    assert SEARCH_NAME == "search.html"
+    assert "/search" in web_paths
+    assert "/api/v1/search" in api_paths
+    assert "/api/v1/search/image" in api_paths
+    assert "/search" not in api_paths
+
+
+def test_the_search_page_has_no_external_reference_or_credential() -> None:
+    shell, script, style = _search_documents()
+
+    for document in (shell, script, style):
+        assert "http://" not in document
+        assert "https://" not in document
+    assert 'lang="zh-CN"' in shell
+    assert "/web/search.js" in shell
+    assert "/web/styles.css" in shell
+    assert "/web/search.css" in shell
+    assert "ps_csrf" in script
+    assert "X-CSRF-Token" in script
+    assert 'credentials: "same-origin"' in script
+    assert "localStorage" not in script
+    assert "sessionStorage" not in script
+    assert "console." not in script
+    assert "innerHTML" not in script
+    assert "token=" not in script
+    assert "csrf_token" not in script
+    assert "错误详情包含本机路径" in script
+    assert "PATH_LIKE" in script
+
+
+def test_the_search_page_reaches_data_only_through_the_protected_api() -> None:
+    _, script, _ = _search_documents()
+
+    assert 'var API = "/api/v1";' in script
+    assert script.count("fetch(") == script.count("fetch(API +")
+    assert "sqlite" not in script.lower()
+    assert "catalog.db" not in script
+    # The exact endpoints this page is allowed to use.
+    for path in ("/search", "/search/image", "/capabilities", "/places/coverage", "/stats", "/sources"):
+        assert '"' + path in script
+    # Exact coordinates stay on the session-protected per-asset /geo endpoint only.
+    assert "/geo" not in script
+    assert "latitude" not in script
+    assert "normalized_wgs84" not in script
+
+
+def test_the_search_page_keeps_the_frozen_hit_reason_vocabulary() -> None:
+    shell, script, _ = _search_documents()
+
+    # The four frozen reasons are shown verbatim, never re-worded into a score.
+    for reason in ("TEXT:", "SEMANTIC:", '"TEXT+SEMANTIC"', "FILTER_ONLY"):
+        assert reason in script
+    assert "命中原因" in shell + script
+    assert "matched_text" in script
+    assert "semantic_ready" in script
+    assert "hit_reason" in script
+    # The page never reads a raw score, so it cannot turn one into an accuracy.
+    assert ".score" not in script
+    assert "reranker_score" not in script
+    assert "toFixed" not in script
+    assert "不把它当成准确率" in script
+    assert "整体 AI 准确率" in script
+
+
+def test_the_search_page_states_every_non_success_state_instead_of_downgrading_it() -> None:
+    _, script, _ = _search_documents()
+
+    # A missing encoder must be said out loud, in both of its two spellings.
+    assert "语义通道未运行" in script
+    assert "QUERY_ENCODER_UNAVAILABLE" in script
+    assert "IMAGE_ENCODER_UNAVAILABLE" in script
+    assert "RUNTIME_CAPABILITY_UNAVAILABLE" in script
+    assert "没有用文本通道或「零命中」冒充结果" in script
+    # Session/cursor/revision refusals keep the query and offer a re-run.
+    for code in (
+        "SEARCH_SESSION_EXPIRED",
+        "INVALID_CURSOR",
+        "PROFILE_GENERATION_MISMATCH",
+        "CATALOG_FILTER_REVISION_STALE",
+        "PLACE_SUGGESTION_REVISION_STALE",
+    ):
+        assert code in script
+    assert "重新搜索" in script
+    assert "query-retry" in script
+    # Lagging projection and truncation are reported with their counts.
+    assert "语义索引仍在追赶" in script
+    assert "pending_semantic" in script
+    assert "search_projection" in script
+    assert "文本投影仍在追赶" in script
+    assert "candidates_truncated" in script
+    assert "truncated" in script
+
+
+def test_the_search_page_keeps_the_p2_03_place_filter_semantics() -> None:
+    shell, script, _ = _search_documents()
+
+    for field in ("place_ids", "include_descendants", "place_state"):
+        assert field in script
+    # The page never mints a revision: the search session binds the authoritative ones.
+    assert "suggestion_revision" not in script
+    assert "catalog_filter_revision" not in script
+    assert "suggested" in shell
+    assert "人工未归类" in shell
+    # A machine candidate is never presented as an effective place.
+    assert "机器候选不参与有效地点过滤" in shell + script
+
+
+def test_the_search_page_uploads_without_adding_anything_to_the_catalog() -> None:
+    shell, script, _ = _search_documents()
+
+    assert "FormData" in script
+    assert 'form.append("image"' in script
+    # The browser owns the multipart boundary; the page never sets Content-Type by hand.
+    assert 'headers["Content-Type"] = "application/json";' in script
+    assert "multipart/form-data" not in script
+    assert "不新增资产" in shell
+    assert "临时目录" in shell
+    assert "UPLOAD_TOO_LARGE" in script
+    assert "UPLOAD_TOO_MANY_PIXELS" in script
+    assert "FORMAT_UNSUPPORTED" in script
+    assert "DECODE_FAILED" in script
+    # A refused upload is never reported as a success: the submit handler branches on the
+    # outcome the search returned instead of assuming the request resolved.
+    assert "promise.then(function (succeeded) {" in script
+    assert "上传图查询没有成功" in script
+
+
+def test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy() -> None:
+    shell, script, _ = _search_documents()
+
+    assert "分项覆盖率" in shell
+    for title in (
+        "文本投影覆盖",
+        "语义索引覆盖",
+        "地点覆盖",
+        "来源可用性",
+    ):
+        assert title in script
+    # Every card states its own basis instead of being folded into one number.
+    assert "口径：" in script
+    assert "本页不把任何一个换算成「整体 AI 准确率」" in script
+
+
+def test_the_three_documents_navigate_to_each_other() -> None:
+    shell, _, _ = _web_documents()
+    places_shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
+    search_shell, _, _ = _search_documents()
+
+    assert 'href="/search"' in shell
+    assert 'href="/search"' in places_shell
+    assert 'href="/"' in search_shell
+    assert 'href="/places"' in search_shell

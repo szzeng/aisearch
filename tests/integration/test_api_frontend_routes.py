@@ -182,3 +182,57 @@ def test_the_places_page_is_public_while_its_api_stays_protected(api_env) -> Non
     assert result["anonymous"].json()["code"] == "SESSION_REQUIRED"
     assert result["authenticated"].status_code == 200
     assert "places" in result["authenticated"].json()
+
+
+def test_the_search_page_is_public_while_its_api_stays_protected(api_env) -> None:
+    """``/search`` is the P2-07 document; ``/api/v1/search`` is still session-protected."""
+
+    async def scenario(client: AsyncClient) -> dict:
+        page = await client.get("/search")
+        script = await client.get("/web/search.js")
+        style = await client.get("/web/search.css")
+        shell = await client.get("/")
+        places = await client.get("/places")
+        anonymous = await client.post("/api/v1/search", json={"request_id": "r1"})
+        image = await client.post("/api/v1/search/image")
+        await api_env.authenticate(client)
+        profile = await client.get("/api/v1/search-profile")
+        return {
+            "page": page,
+            "script": script,
+            "style": style,
+            "shell": shell,
+            "places": places,
+            "anonymous": anonymous,
+            "image": image,
+            "profile": profile,
+        }
+
+    result = api_env.scenario(scenario)
+
+    page = result["page"]
+    assert page.status_code == 200, page.text
+    assert page.headers["Content-Type"].startswith("text/html")
+    assert "no-cache" in page.headers["Cache-Control"]
+    assert "http://" not in page.text and "https://" not in page.text
+    assert "搜索" in page.text
+    assert str(api_env.library) not in page.text
+    assert str(api_env.data_root) not in page.text
+    assert TOKEN not in page.text
+
+    assert result["script"].status_code == 200
+    assert "javascript" in result["script"].headers["Content-Type"]
+    assert result["style"].status_code == 200
+    assert result["style"].headers["Content-Type"].startswith("text/css")
+
+    # The three documents link to each other.
+    assert 'href="/search"' in result["shell"].text
+    assert 'href="/search"' in result["places"].text
+    assert 'href="/places"' in page.text
+
+    # The document is public; both search endpoints are not.
+    assert result["anonymous"].status_code == 401
+    assert result["anonymous"].json()["code"] == "SESSION_REQUIRED"
+    assert result["image"].status_code == 401
+    assert result["image"].json()["code"] == "SESSION_REQUIRED"
+    assert result["profile"].status_code == 200

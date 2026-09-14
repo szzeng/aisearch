@@ -81,6 +81,8 @@ from photo_search.catalog.errors import (
     SPACE_MISMATCH,
     STALE_INPUT_REVISION,
     STALE_LEASE,
+    UPLOAD_TOO_LARGE,
+    UPLOAD_TOO_MANY_PIXELS,
 )
 
 #: Session/transport-level codes raised by the API layer itself.
@@ -175,6 +177,11 @@ _STATUS_BY_CODE: dict[str, int] = {
     # P2-06B: a repeated feedback ``request_id`` with a different payload is a current-state
     # conflict (the recorded fact already exists), never a silent overwrite.
     FEEDBACK_IDEMPOTENCY_CONFLICT: 409,
+    # P2-07 upload-search bounds. The byte ceiling is what HTTP 413 means, so it is not
+    # hidden behind 422; the pixel ceiling is a caller-shape refusal of an otherwise
+    # readable body.
+    UPLOAD_TOO_LARGE: 413,
+    UPLOAD_TOO_MANY_PIXELS: 422,
     # Caller errors.
     INVALID_PATH: 422,
     INVALID_CURSOR: 422,

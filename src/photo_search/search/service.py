@@ -102,6 +102,7 @@ from photo_search.search.sessions import (
     query_hash,
 )
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery, build_match
+from photo_search.search.upload import checked_query_vector
 
 _HIT_REASON_BY_CHANNELS = {
     (FTS_CHANNEL,): "TEXT",
@@ -189,6 +190,7 @@ def search_assets(
     include_descendants: bool = True,
     place_state: str = "any",
     vector_index: LanceVectorIndex | None = None,
+    query_vector: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -196,6 +198,11 @@ def search_assets(
     Supplying the encoder and the bound generation as well adds the image-text channel:
     then the query is encoded once and both channels are fused. Filters alone answer with
     the authoritative list, still without a GPU.
+
+    P2-07 adds exactly one alternative to "encode this text": a caller that already holds a
+    validated query vector (the uploaded-image path) may pass it as ``query_vector``. The
+    ranking, the RRF formula and the authoritative re-check are the same code either way —
+    an image query is not a second kind of search.
     """
     limit = int(top_k)
     if limit < 1 or limit > MAX_TOP_K:
@@ -212,13 +219,15 @@ def search_assets(
         place_state=place_state,
     )
     match = build_match(text) if text is not None else None
+    # The image path brings a vector instead of a text to encode: exactly one of the two
+    # satisfies the "encoder" slot of the binding gate below.
     vector_enabled = _require_full_vector_binding(
-        encoder=encoder,
+        encoder=encoder if encoder is not None else query_vector,
         space_id=space_id,
         generation_id=generation_id,
         dimension=dimension,
     )
-    if vector_enabled and match is None:
+    if vector_enabled and match is None and query_vector is None:
         raise CatalogError(
             VALIDATION_ERROR,
             "a semantic channel needs search text to encode",
@@ -227,7 +236,9 @@ def search_assets(
     filters = scope_view(catalog.connection, scope)
     revision_at_start = int(filters["catalog_filter_revision"])
     binding: VectorBinding | None = None
-    query_vector: list[float] | None = None
+    #: The vector this retrieval actually ranks with: the caller's (already validated) image
+    #: vector, or the one encoded here from the query text.
+    vector: list[float] | None = None
     if vector_enabled:
         binding = resolve_binding(
             catalog,
@@ -235,20 +246,24 @@ def search_assets(
             space_id=str(space_id),
             dimension=int(dimension),
         )
-        query_vector = encode_query(
-            encoder, str(text), space_id=str(space_id), dimension=int(dimension)
+        vector = (
+            encode_query(encoder, str(text), space_id=str(space_id), dimension=int(dimension))
+            if query_vector is None
+            # An uploaded-image vector is re-checked here as well: the service layer never
+            # trusts a vector it did not see validated, whatever produced it.
+            else checked_query_vector(query_vector, dimension=int(dimension))
         )
 
     catch_up = search_documents.catch_up(catalog) if match is not None else None
     text_hits = fts_channel(catalog, match, scope, top_k=limit) if match is not None else []
     vector_block: dict[str, Any] | None = None
-    if binding is not None and query_vector is not None:
+    if binding is not None and vector is not None:
         index = vector_index if vector_index is not None else default_vector_index(catalog)
         vector_block = vector_channel(
             catalog,
             index=index,
             binding=binding,
-            query_vector=query_vector,
+            query_vector=vector,
             scope=scope,
             top_k=limit,
         )
@@ -259,9 +274,11 @@ def search_assets(
         VECTOR_CHANNEL: [int(row["asset_id"]) for row in vector_hits],
     }
     fused = reciprocal_rank_fusion(channels)
-    if not fused and match is None:
+    if not fused and match is None and vector is None:
         # A pure filter query: the authoritative list *is* the answer (architecture §9.2
-        # "纯筛选查询走 SQLite 分页，无须生成文本向量").
+        # "纯筛选查询走 SQLite 分页，无须生成文本向量"). An image query never takes this
+        # branch: when its vector channel finds nothing, the honest answer is "no candidate
+        # is semantically close", not an arbitrary list of authoritative assets.
         authority = authoritative_page(catalog, scope, limit=AUTHORITY_PAGE_LIMIT)
         hits = [
             {
@@ -437,18 +454,35 @@ def _require_binding_for_text(binding: VectorBinding | None, match: MatchQuery |
         )
 
 
+def resolve_request_binding(catalog: Any, request: SearchRequest) -> VectorBinding | None:
+    """The binding one request will be served under, resolved exactly as the search does.
+
+    P2-07's upload path has to know the bound space *before* it can encode an image, and it
+    has to reach the same decision the search itself would: the same profile resolution, the
+    same explicit-triple agreement check and therefore the same refusal codes. This exposes
+    that one decision (``None`` = a pure-filter request with no semantic channel at all).
+    """
+    return _resolve_binding(catalog, request, _resolve_profile(catalog, request))
+
+
 def _channel_summary(
     payload: dict[str, Any],
     *,
     match: MatchQuery | None,
     binding: VectorBinding | None,
     top_k: int,
+    image_query: bool = False,
 ) -> dict[str, Any]:
-    """Per-channel candidate count and honest truncation, plus the authority bound."""
+    """Per-channel candidate count and honest truncation, plus the authority bound.
+
+    ``image_query`` names the P2-07 case where the vector channel is engaged by an uploaded
+    image rather than by a text query: it ran, so it is reported as engaged, but the text
+    channel did not and says so.
+    """
     text_count = len(payload["channels"][FTS_CHANNEL])
     vector_count = len(payload["channels"][VECTOR_CHANNEL])
     scan = payload["vector_scan"] or {}
-    engaged = match is not None and binding is not None
+    engaged = binding is not None and (match is not None or bool(image_query))
     return {
         FTS_CHANNEL: {
             "engaged": match is not None,
@@ -725,6 +759,8 @@ def search_request(
     vector_index: LanceVectorIndex | None = None,
     reranker: Any = None,
     rerank_timeout_ms: int = DEFAULT_RERANK_TIMEOUT_MS,
+    query_vector: Sequence[float] | None = None,
+    query_identity: str | None = None,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -733,6 +769,11 @@ def search_request(
     re-checked against the current SQLite authority. The optional P2-06B rerank runs on that
     frozen order *after* the base page exists, and its scores are reported in their own
     block - they are never folded into ``hits[].score``.
+
+    P2-07 reuses this whole path for an uploaded image: ``query_vector`` replaces the text
+    that would have been encoded (there is none), and ``query_identity`` replaces the text in
+    the session digest, so a cursor minted for one image can never be replayed against
+    another while the binding, revision and page semantics stay exactly the same.
     """
     scope = SearchScope.build(
         source_id=request.source_id,
@@ -744,8 +785,17 @@ def search_request(
     match = build_match(request.text) if request.text is not None else None
     profile = _resolve_profile(catalog, request)
     binding = _resolve_binding(catalog, request, profile)
+    if query_vector is not None and binding is None:
+        # An image query has no text to fall back on, so it must be bound to one space.
+        raise fail(
+            "an image query needs a bound space_id, image_generation_id and dimension "
+            "(or an activated search profile)",
+            field="profile_id",
+        )
     digest = query_hash(
-        text=request.text,
+        # The digest is "the conditions that must stay identical across pages"; for an
+        # uploaded image the image itself is that condition, and it has no text.
+        text=request.text if query_identity is None else str(query_identity),
         source_id=request.source_id,
         availability=request.availability,
         place_ids=request.place_ids,
@@ -769,9 +819,9 @@ def search_request(
             INVALID_CURSOR,
             "a search_session_id alone is not a continuation; send its cursor too",
             field="cursor",
-        )
+    )
     _require_binding_for_text(binding, match)
-    if match is not None and binding is not None and encoder is None:
+    if match is not None and binding is not None and encoder is None and query_vector is None:
         raise _refuse(
             RUNTIME_CAPABILITY_UNAVAILABLE,
             "this process has no query encoder for the bound embedding space",
@@ -780,16 +830,19 @@ def search_request(
             space_id=binding.space_id,
         )
 
+    # The semantic channel runs when the session is bound *and* there is something to encode:
+    # query text (P2-06A) or an already validated query vector (P2-07 image query).
+    uses_vector_channel = binding is not None and (match is not None or query_vector is not None)
     payload = search_assets(
         catalog,
         text=request.text,
-        encoder=encoder if match is not None and binding is not None else None,
+        encoder=encoder if match is not None and uses_vector_channel else None,
         # The vector channel engages only when there is both a text query and a resolved
         # binding: a filter-only request is served from the authoritative list alone, even
         # when the session is pinned to a profile (P2-05's "纯筛选查询" path).
-        space_id=None if binding is None or match is None else binding.space_id,
-        generation_id=None if binding is None or match is None else binding.generation_id,
-        dimension=None if binding is None or match is None else int(binding.dimension),
+        space_id=None if not uses_vector_channel else binding.space_id,
+        generation_id=None if not uses_vector_channel else binding.generation_id,
+        dimension=None if not uses_vector_channel else int(binding.dimension),
         top_k=int(request.top_k),
         source_id=request.source_id,
         availability=request.availability,
@@ -797,6 +850,9 @@ def search_request(
         include_descendants=request.include_descendants,
         place_state=request.place_state,
         vector_index=vector_index,
+        # Exactly one of "text to encode" and "an already validated vector" reaches the
+        # retrieval, and only when the session is actually bound to a space.
+        query_vector=list(query_vector) if query_vector is not None and uses_vector_channel else None,
     )
     entries = _entries_of(payload)
     outcome = _rerank_outcome(
@@ -823,7 +879,11 @@ def search_request(
         query=payload["query"],
         filters=_filters_echo(payload, binding),
         channels=_channel_summary(
-            payload, match=match, binding=binding, top_k=int(request.top_k)
+            payload,
+            match=match,
+            binding=binding,
+            top_k=int(request.top_k),
+            image_query=query_vector is not None,
         ),
         pending_semantic=payload["pending_semantic"],
         search_projection=payload["search_projection"],
@@ -993,6 +1053,7 @@ __all__ = [
     "MAX_TOP_K",
     "default_vector_index",
     "list_feedback",
+    "resolve_request_binding",
     "search_assets",
     "search_request",
     "submit_feedback",

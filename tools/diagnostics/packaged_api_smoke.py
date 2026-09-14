@@ -217,6 +217,31 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             )
             checks["places_style_status"] = client.get("/web/places.css").status_code
             checks["shell_links_to_places"] = 'href="/places"' in shell.text
+            # P2-07: the search page must be inside the frozen bundle as well, and all three
+            # documents have to navigate to each other.
+            search_page = client.get("/search")
+            checks["search_page_status"] = search_page.status_code
+            checks["search_page_content_type"] = search_page.headers.get("Content-Type")
+            checks["search_page_cache_control"] = search_page.headers.get("Cache-Control")
+            checks["search_page_has_no_external_reference"] = (
+                "http://" not in search_page.text and "https://" not in search_page.text
+            )
+            checks["search_page_has_no_local_path"] = all(
+                needle not in search_page.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            checks["search_page_links_back_to_shell"] = 'href="/"' in search_page.text
+            checks["search_page_links_to_places"] = 'href="/places"' in search_page.text
+            search_script = client.get("/web/search.js")
+            checks["search_script_status"] = search_script.status_code
+            checks["search_script_content_type"] = search_script.headers.get("Content-Type")
+            checks["search_script_bytes"] = len(search_script.content)
+            checks["search_script_has_no_external_reference"] = (
+                "http://" not in search_script.text and "https://" not in search_script.text
+            )
+            checks["search_style_status"] = client.get("/web/search.css").status_code
+            checks["shell_links_to_search"] = 'href="/search"' in shell.text
+            checks["places_page_links_to_search"] = 'href="/search"' in places_page.text
             checks["web_missing_status"] = client.get("/web/does-not-exist.js").status_code
             checks["stats_without_session"] = client.get("/api/v1/stats").status_code
             # Follow the launcher's own single-use link: it must set both cookies and
@@ -440,6 +465,75 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                     "/api/v1/search", json={"request_id": "packaged-4", **binding}
                 ).status_code
 
+            # P2-07: the upload endpoint exists, is protected and answers honestly. This
+            # build ships no image tower, so it must refuse structurally instead of
+            # pretending the text channel found something - and it must leave the catalog
+            # exactly as it was (no asset, no index row, no leftover temporary file).
+            upload_headers = {"Origin": base, "X-CSRF-Token": csrf}
+            upload_request = client.post(
+                "/api/v1/search/image",
+                data={"request_id": "packaged-img-1", **binding},
+                files={"image": ("上传 图片.jpg", photo.read_bytes(), "image/jpeg")},
+                headers=upload_headers,
+            )
+            checks["upload_status"] = upload_request.status_code
+            upload_body = (
+                upload_request.json() if upload_request.status_code != 500 else {}
+            )
+            checks["upload_code"] = upload_body.get("code")
+            checks["upload_reason"] = (upload_body.get("details") or {}).get("reason")
+            checks["upload_refused_as_a_capability_block"] = (
+                upload_request.status_code == 409
+                and upload_body.get("code") == "RUNTIME_CAPABILITY_UNAVAILABLE"
+            )
+            checks["upload_has_no_local_path"] = all(
+                needle not in upload_request.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            assets_after_upload = client.get("/api/v1/assets").json()
+            checks["upload_added_no_asset"] = len(assets_after_upload["assets"]) == checks.get(
+                "asset_count"
+            )
+            with httpx.Client(base_url=base, timeout=60.0) as anonymous:
+                checks["upload_without_session"] = anonymous.post(
+                    "/api/v1/search/image",
+                    data={"request_id": "packaged-img-2", **binding},
+                    files={"image": ("a.jpg", photo.read_bytes(), "image/jpeg")},
+                ).status_code
+
+            # P2-07: the per-category coverage view is a pure read of three existing
+            # endpoints and must carry no path and no coordinate.
+            coverage_capabilities = client.get("/api/v1/capabilities")
+            coverage_places = client.get("/api/v1/places/coverage")
+            coverage_stats = client.get("/api/v1/stats")
+            checks["coverage_capabilities_status"] = coverage_capabilities.status_code
+            checks["coverage_places_status"] = coverage_places.status_code
+            checks["coverage_stats_status"] = coverage_stats.status_code
+            checks["coverage_search_block"] = {
+                key: (coverage_capabilities.json().get("search") or {}).get(key)
+                for key in ("documents", "queued_assets", "state", "query_encoder_available")
+            }
+            checks["coverage_place_counts"] = {
+                key: coverage_places.json().get(key)
+                for key in (
+                    "assets_total",
+                    "gps_extracted",
+                    "places_assigned",
+                    "places_suggested",
+                    "places_unclassified",
+                )
+            }
+            checks["coverage_source_counts"] = {
+                key: (coverage_stats.json().get("counts") or {}).get(key)
+                for key in ("sources", "assets", "locations_present", "locations_missing")
+            }
+            checks["coverage_has_no_local_path"] = all(
+                needle not in (
+                    coverage_capabilities.text + coverage_places.text + coverage_stats.text
+                )
+                for needle in (str(work_dir), str(data_root), str(library))
+            ) and "latitude" not in coverage_places.text
+
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
             checks["thumbnail"] = thumbnail.status_code
             checks["thumbnail_type"] = thumbnail.headers.get("Content-Type")
@@ -567,6 +661,30 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("places page navigation")
     if not checks.get("shell_links_to_places"):
         problems.append("shell link to the places page")
+    if checks.get("search_page_status") != 200 or "text/html" not in str(
+        checks.get("search_page_content_type")
+    ):
+        problems.append("packaged search page")
+    if checks.get("search_page_cache_control") != "no-cache":
+        problems.append("search page cache control")
+    if not checks.get("search_page_has_no_external_reference"):
+        problems.append("search page external references")
+    if not checks.get("search_page_has_no_local_path"):
+        problems.append("search page local paths")
+    if not checks.get("search_page_links_back_to_shell") or not checks.get(
+        "search_page_links_to_places"
+    ):
+        problems.append("search page navigation")
+    if not checks.get("shell_links_to_search") or not checks.get("places_page_links_to_search"):
+        problems.append("shell/places link to the search page")
+    if checks.get("search_script_status") != 200 or "javascript" not in str(
+        checks.get("search_script_content_type")
+    ):
+        problems.append("packaged search script")
+    if not checks.get("search_script_has_no_external_reference"):
+        problems.append("search script external references")
+    if checks.get("search_style_status") != 200:
+        problems.append("packaged search stylesheet")
     if checks.get("places_script_status") != 200 or "javascript" not in str(
         checks.get("places_script_content_type")
     ):
@@ -662,6 +780,26 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("packaged rerank changed the base page")
     if checks.get("search_without_session") != 401:
         problems.append("packaged search without a session")
+    if not checks.get("upload_refused_as_a_capability_block"):
+        problems.append("packaged upload did not answer a structured capability refusal")
+    if checks.get("upload_reason") not in (None, "IMAGE_ENCODER_UNAVAILABLE"):
+        problems.append("packaged upload reason")
+    if not checks.get("upload_has_no_local_path"):
+        problems.append("upload leaked a local path")
+    if checks.get("upload_added_no_asset") is not True:
+        problems.append("packaged upload added an asset")
+    if checks.get("upload_without_session") != 401:
+        problems.append("packaged upload without a session")
+    if (
+        checks.get("coverage_capabilities_status") != 200
+        or checks.get("coverage_places_status") != 200
+        or checks.get("coverage_stats_status") != 200
+    ):
+        problems.append("packaged coverage view")
+    if not checks.get("coverage_has_no_local_path"):
+        problems.append("coverage leaked a local path or a coordinate")
+    if (checks.get("coverage_search_block") or {}).get("query_encoder_available") is not False:
+        problems.append("packaged coverage query encoder flag")
     if checks.get("thumbnail") != 200 or checks.get("thumbnail_type") != "image/jpeg":
         problems.append("thumbnail")
     if checks.get("thumbnail_original_available") != "true":

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>搜索图片</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/web/styles.css" />
+    <link rel="stylesheet" href="/web/search.css" />
+    <script src="/web/search.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <header class="app-header">
+      <h1>搜索图片</h1>
+      <nav class="app-nav" aria-label="页面导航">
+        <a class="nav-link" href="/">返回「本机图片搜索」</a>
+        <a class="nav-link" href="/places">地点整理</a>
+        <a class="nav-link" href="#panel-upload">上传搜图</a>
+        <a class="nav-link" href="#panel-coverage">分项覆盖率</a>
+      </nav>
+      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
+    </header>
+
+    <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <main id="main" tabindex="-1">
+      <p class="hint">
+        本页只把查询文本原样交给后端（不做自然语言条件解析），并且只展示后端给回的字段：
+        命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成
+        “准确率”或百分比。
+      </p>
+
+      <section id="panel-query" class="panel" aria-labelledby="query-title">
+        <h2 id="query-title">查询与筛选</h2>
+        <form id="search-form" class="filters" novalidate>
+          <p class="wide">
+            <label for="query-text">查询文本</label>
+            <input
+              id="query-text"
+              name="text"
+              type="search"
+              maxlength="256"
+              autocomplete="off"
+              placeholder="留空 = 纯筛选查询（不生成任何查询向量）"
+            />
+          </p>
+          <p>
+            <label for="query-source">来源</label>
+            <select id="query-source">
+              <option value="">全部来源</option>
+            </select>
+          </p>
+          <p>
+            <label for="query-availability">可用性</label>
+            <select id="query-availability">
+              <option value="any">全部</option>
+              <option value="present">在库</option>
+              <option value="missing">原文件不可用</option>
+            </select>
+          </p>
+          <p>
+            <label for="query-place-state">地点状态</label>
+            <select id="query-place-state">
+              <option value="any">不限</option>
+              <option value="assigned">已归类</option>
+              <option value="unassigned">未归类</option>
+              <option value="manual_unassigned">人工未归类</option>
+              <option value="suggested">待确认建议</option>
+            </select>
+          </p>
+          <p>
+            <label for="query-place-ids">地点 place_id</label>
+            <input
+              id="query-place-ids"
+              type="text"
+              inputmode="numeric"
+              maxlength="200"
+              autocomplete="off"
+              placeholder="多个用逗号分隔，例如 3,4"
+            />
+          </p>
+          <p>
+            <label for="query-descendants">包含后代地点</label>
+            <select id="query-descendants">
+              <option value="true">是</option>
+              <option value="false">否</option>
+            </select>
+          </p>
+          <p>
+            <label for="query-page-size">每页数量</label>
+            <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />
+          </p>
+          <p class="filter-actions">
+            <button type="submit">搜索</button>
+            <button type="button" id="query-reset">清空筛选</button>
+          </p>
+        </form>
+        <p class="hint" id="binding-hint"></p>
+        <p class="hint">
+          地点筛选按 P2-03A/B 的语义：<code>place_state=suggested</code> 只列出「待确认建议」，
+          机器候选不参与有效地点过滤；要按有效归属筛选请选「已归类」等状态。
+        </p>
+        <div id="query-status" class="state-block" role="status" aria-live="polite"></div>
+        <div id="query-actions" class="row-actions" hidden>
+          <button type="button" id="query-retry">按当前条件重搜</button>
+        </div>
+      </section>
+
+      <section id="panel-results" class="panel" aria-labelledby="results-title">
+        <h2 id="results-title">结果</h2>
+        <div id="result-notices" class="notices" role="status" aria-live="polite"></div>
+        <ol id="result-grid" class="grid" aria-label="搜索结果"></ol>
+        <p>
+          <button type="button" id="load-more" hidden>加载下一页</button>
+        </p>
+      </section>
+
+      <section id="panel-upload" class="panel" aria-labelledby="upload-title">
+        <h2 id="upload-title">上传图片找相似</h2>
+        <p class="hint">
+          上传的图片只用于本次查询：服务端会把它写进一个临时目录、校验后立即删除，
+          不新增资产、不写任何索引行。当前筛选条件同样生效。没有接入图像编码器时服务端会
+          以结构化错误明确拒绝，而不是用文本通道冒充结果。
+        </p>
+        <form id="upload-form" class="filters" novalidate>
+          <p class="wide">
+            <label for="upload-file">本地图片</label>
+            <input
+              id="upload-file"
+              name="image"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,image/jpeg,image/png,image/webp,image/bmp,image/gif"
+            />
+          </p>
+          <p class="filter-actions">
+            <button type="submit">用这张图搜索</button>
+          </p>
+        </form>
+        <div id="upload-status" class="state-block" role="status" aria-live="polite"></div>
+      </section>
+
+      <section id="panel-coverage" class="panel" aria-labelledby="coverage-title">
+        <h2 id="coverage-title">分项覆盖率（分类别，不合成一个准确率）</h2>
+        <p class="hint">
+          下面每一项都来自只读接口，各自标注口径与来源。它们**不**构成一个“整体 AI 准确率”：
+          文本投影覆盖高不代表语义模型好，语义索引覆盖高也不代表地点归类完整。
+        </p>
+        <div id="coverage-body" class="coverage" role="status" aria-live="polite">
+          正在读取覆盖率…
+        </div>
+        <p>
+          <button type="button" id="coverage-reload">刷新覆盖率</button>
+        </p>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>
+    </noscript>
+  </body>
+</html>

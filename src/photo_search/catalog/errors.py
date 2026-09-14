@@ -114,6 +114,15 @@ PROFILE_GENERATION_MISMATCH = "PROFILE_GENERATION_MISMATCH"
 #: place operation and a caller must be able to branch on it without parsing a message.
 FEEDBACK_IDEMPOTENCY_CONFLICT = "FEEDBACK_IDEMPOTENCY_CONFLICT"
 
+#: P2-07 upload-media boundary (architecture §10.3: "上传图有大小、像素数和解码时间限制").
+#: Both are *caller-shape* refusals with no honest equivalent in the frozen set: a body over
+#: the byte ceiling and an image over the pixel ceiling are different facts from an
+#: undecodable file (``DECODE_FAILED``) and from a format this build refuses
+#: (``FORMAT_UNSUPPORTED``). ``RUNTIME_CAPABILITY_UNAVAILABLE`` stays the code for "this
+#: process has no image encoder", so a caller can tell "too big" from "cannot run".
+UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"
+UPLOAD_TOO_MANY_PIXELS = "UPLOAD_TOO_MANY_PIXELS"
+
 #: ADR-0005 §6.2: a batch is 1..500 de-duplicated assets, committed in one transaction.
 MAX_PLACE_BATCH_SIZE = 500
 

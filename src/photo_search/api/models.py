@@ -634,6 +634,43 @@ class SearchResultModel(BaseModel):
     state: str
 
 
+class ImageQueryLimitsModel(BaseModel):
+    """The hard bounds this build enforces on one uploaded image (architecture §10.3)."""
+
+    max_bytes: int
+    max_pixels: int
+    decode_budget_ms: int
+    decode_long_edge: int
+
+
+class ImageQuerySummaryModel(BaseModel):
+    """What the accepted upload actually was: measured facts, never a local path.
+
+    ``digest`` is the SHA-256 of the uploaded bytes and is what a continuation is bound to;
+    ``decode_ms`` is the measured decode time so a caller can see how close the input came to
+    the budget instead of having to guess.
+    """
+
+    byte_size: int
+    width: int
+    height: int
+    format: str
+    digest: str
+    decode_ms: int
+    limits: ImageQueryLimitsModel
+
+
+class ImageSearchResultModel(SearchResultModel):
+    """``POST /api/v1/search/image``: the frozen page envelope plus the upload's own facts.
+
+    The image endpoint answers with the *same* page shape ``POST /search`` uses - same
+    session, binding, revisions, channels and hits - and adds one block describing the query
+    image. ``SearchRequest``/``SearchResult`` themselves are untouched and stay frozen.
+    """
+
+    image_query: ImageQuerySummaryModel
+
+
 class SearchProfileActivateRequest(BaseModel):
     """``POST /api/v1/search-profile/activate``: publish one immutable profile."""
 

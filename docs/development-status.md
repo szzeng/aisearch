@@ -32,7 +32,11 @@ with opaque bound cursors, the immutable `search_profiles` plus its atomic singl
 (B level + a C-level packaged smoke + the D-level migration/idempotency/gate injections: the append-only
 `search_feedback` audit log with `request_id` idempotency, the optional rerank adapter boundary whose
 candidate scores never enter RRF/BM25/距离, and the reranker qualification gate on profile activation;
-49 new cases, **schema_version 7 → 8**). **P2-07 is READY / CURRENT TASK**.
+49 new cases, **schema_version 7 → 8**). **P2-07 is PASS** (B level + a recorded real-browser smoke + the
+C-level packaged smoke: the dependency-free `/search` page with frozen hit-reason rendering, the
+`POST /api/v1/search/image` multipart endpoint with byte/pixel/decode-time/format hard limits and
+two-path temp-file cleanup, the place filter and the four-category coverage view; 70 new cases, no
+migration, `schema_version` stays 8). **P2-08 is READY / CURRENT TASK**.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -449,6 +453,60 @@ ONNX/PyTorch）：`SearchRequest` 加性新增 `rerank: bool = false`，`SearchR
 上验证。凭据文件 DACL 缺陷新增一个可观察症状：同一缺陷让凭据文件对普通用户**不可删除**（smoke 后
 残留两个 112 B 的 `session.json`，见报告 §9.1）。
 
+## Latest search-page closure — P2-07 (2026-09-14)
+
+P2-07 已实现搜索页、上传搜图、地点筛选与分项覆盖率并通过 B + 真实浏览器 smoke + C 级验收，报告
+[P2-07 报告](reports/P2-07-search-page-upload-and-coverage.md)。起点 HEAD `e281925`（P1-07），
+工作树干净；实现提交即承载本行与报告的这次提交（未 push；哈希用
+`git log -1 --format=%H -- docs/reports/P2-07-search-page-upload-and-coverage.md` 读取）。
+
+新增 `src/photo_search/web/{search.html,search.js,search.css}`（零依赖、无外链、无绝对本地路径、
+窄视口可重排、键盘可达）与 `api/web.py` 的 `GET /search` 文档路由；`index.html` 与 `places.html`
+互相加链，三个文档互通。页面只呈现后端字段：`hit_reason` 四个冻结取值逐行显示、
+`matched_text`/`semantic_ready` 如实呈现、`matched_by` 只显示通道名次；**从不读取**
+`hit.score`/`reranker_score`，没有百分比或「准确率」换算。必须显式呈现的非成功状态都各自成句：
+缺查询编码器（`RUNTIME_CAPABILITY_UNAVAILABLE`/`QUERY_ENCODER_UNAVAILABLE`，文案写明「语义通道未运行」
+且「这不是「没有结果」」）、缺图像编码器（`IMAGE_ENCODER_UNAVAILABLE`，声明没有用文本通道或「零命中」
+冒充）、五类会话/游标/版本过期码、`search_projection=LAGGING`、`pending_semantic` 计数、
+`candidates_truncated`/`channels.*.truncated` 与 `state=FILTER_REVISION_CHANGED`。
+
+新增 `src/photo_search/search/upload.py` 与 `POST /api/v1/search/image`（multipart，无新增依赖：
+自有的严格 RFC 7578 读取器）。上传图与 `SearchRequest` 同一套绑定语义（激活 profile 或显式
+`space_id`/`image_generation_id`/`dimension`），复用同一条 `search_assets(..., query_vector=)`
+通道/RRF/权威复核路径，没有第二套排序；向量通道无命中时**不**退化成权威列表。硬限制逐项服务端执行：
+16 MiB 字节上限（`413 UPLOAD_TOO_LARGE`）、60 MP 像素上限（解码前按文件头判定，`422
+UPLOAD_TOO_MANY_PIXELS`，两个新码的映射在 `api/errors.py`）、20 s 解码预算
+（`409 DECODE_FAILED`/`reason=DECODE_TIME_BUDGET_EXCEEDED`）、与 P1-03 一致的格式白名单
+（`409 FORMAT_UNSUPPORTED`）与解码失败分类（`409 DECODE_FAILED`），另加 JPEG DCT 解码长边 1600 与
+EXIF Orientation 归一化。上传落盘在私有 `%TEMP%\photo-search-upload-*` 目录，成功与失败**两条路径**
+都删除（用例对六条路径做调用前后目录集合相等的断言）；整条路径不新增 `assets`/位置/artifact/索引/
+文档/反馈行，不改两个 revision 与 `assets.created_at`；会话摘要绑定上传字节的 SHA-256，因此不同图片
+不能续用同一游标（`422 INVALID_CURSOR`）。缺图像编码器时输入限制仍然先执行，然后返回结构化 409。
+
+分项覆盖率按卡的「优先复用」**不新增端点**：页面用 `GET /api/v1/capabilities`、
+`/api/v1/places/coverage`、`/api/v1/stats` 与 `/api/v1/sources` 组装四项，
+（1）文本投影覆盖（`search_documents`/`search_projection_queue`）、（2）语义索引覆盖
+（CONFIRMED `index_entries`/`pending_projection`）、（3）地点覆盖（GPS 事实/已归类/未归类/待确认建议）、
+（4）来源可用性，各自列出并写明「口径」，末行声明不合成「整体 AI 准确率」。本卡**未新增 migration**
+（`schema_version` 仍为 8，`0001`～`0008` 未改），也未改 ADR-0001～0005、冻结 JSON schema、依赖、
+`places/**`、`geo/**`、`ingestion/**`、`workers/**`、打包入口与 `api/context.py`；除卡内清单外新增
+一个生产模块 `search/upload.py`（见报告 §1 的理由）。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；`--collect-only` 计 **791** 例，进度行 1 个 `s` → **790 passed / 1 skipped** |
+| 本任务新文件 | **57 passed**（上传边界 45、上传端点 12）+ 前端静态契约新增 12 例 + 路由新增 1 例 |
+| `uv run ruff check .` / `git diff --check` / `uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实浏览器 smoke（内置浏览器 + `%TEMP%` 夹具 + 真实端口） | 10 步逐步观察：303 落到 `/` 且三文档互链；无编码器 409 提示与「按当前条件重搜」；纯筛选 6 行（含缩略图、命中原因「仅筛选」、「语义就绪：否」、通道名次）；「文本投影仍在追赶」提示；每页 2 行 + 续页无重复；`place_state=assigned` 收窄到人工归属的 1 个资产；上传 → 409 `IMAGE_ENCODER_UNAVAILABLE`；四项覆盖率与口径；640×900 无横向滚动（网格 3 列）且 Tab 焦点顺序正确 |
+| 浏览器 smoke 发现并修复的缺陷 | 上传失败时页面曾显示「上传图查询成功」（失败分支未标记失败）；已改为按结果布尔分支并加静态回归断言，新端口复测显示「上传图查询没有成功」 |
+| C 级 | 真实 onedir 构建（exe **35,576,110 B**）+ `packaged_api_smoke.py`（D 盘工作目录）：`status=ok`、`problems=[]`、startup **1.0 s**；`/search`、`/web/search.js`（37,953 B）、`/web/search.css` 均在冻结包内可取，shell/places 均链接到 `/search`；上传端点 409 + 零新增资产 + 无 session 401 + 无路径；三项覆盖率只读接口 200 且不含路径/坐标；PYZ 内确认 `photo_search.search.upload` 入包 |
+
+未验证项（报告 §11）：真实文本/图像编码器仍未接入，因此浏览器里看不到 `SEMANTIC`/`TEXT+SEMANTIC`
+行与「语义索引仍在追赶」提示（其数据路径由集成用例覆盖）；覆盖率视图是客户端组装的三次只读请求，
+没有服务端一次性视图或快照隔离；上传限制只在 32×24 与注入的小上限夹具上验证，未测真实 16 MiB/60 MP；
+解码时间预算是测量后拒绝而非抢占式强杀；自有 multipart 读取器未与第三方客户端怪癖互操作验证；
+分页/上界只在小夹具验证公式；页面无 DOM 自动化；搜索页仍非快照隔离读。
+
 ## Latest accepted verification
 
 P1-06 的完整 D 级验收（`docs/tasks/P1-06.md` 要求的基础等级 + 6 类故障注入/恢复场景）：
@@ -643,13 +701,20 @@ migration 连续 0001～0008；ADR/冻结 JSON schema/依赖/资格矩阵语义/
 
 **P2-07 — 搜索页、上传搜图、地点筛选、命中原因与分项覆盖率.**
 
-- Status: **READY / CURRENT TASK**（依赖 P2-06B，已满足：`SUPPORTED_SCHEMA_VERSION = 8`、
-  `POST /api/v1/search` 含 `rerank`/`rerank_state`、`POST/GET /api/v1/search/feedback`、`GET /assets`
-  的地点筛选与 `text=` 文本检索、P1-05 静态前端与 P2-03C 地点页均可用）。
-- Task card: `docs/tasks/P2-07.md`。
-- Recommended execution model: **DS-L / DeepSeek V4.1 Flash / 低推理**（前端与页面契约为主；
-  命中原因/覆盖率语义或发行资源变化则按卡升级）。
-- Validation level: **B + 真实浏览器 smoke；发行资源变化再加 C**。
+- Status: **PASS**（B 级 790 passed / 1 skipped + 真实浏览器 smoke 10 步 + C 级打包 smoke
+  `problems=[]`，70 个新增用例）。见
+  [P2-07 报告](reports/P2-07-search-page-upload-and-coverage.md)。交付 `/search` 页面、
+  `POST /api/v1/search/image`（硬限制 + 临时文件双路径回收 + 同一条通道/RRF/权威路径）、
+  地点筛选与四项分项覆盖率视图；`schema_version` 仍为 8，无新 migration。
+- Task card: `docs/tasks/P2-07.md`（历史任务卡，保留供追溯）。
+
+**P2-08 — 恢复、过滤、增量、后台竞争与地点人工锁/投影/缺包综合验收.**
+
+- Status: **READY / CURRENT TASK**（依赖 P2-07，已满足：`SUPPORTED_SCHEMA_VERSION = 8`、
+  migration 连续 `0001`～`0008`、P2-02～P2-07 全部 PASS）。
+- Task card: `docs/tasks/P2-08.md`。
+- Recommended execution model: **DS-H 执行 + C2 high 独立审查**（V3.1 §7 表 P2-08 行）。
+- Validation level: **B + D；若改动前端资源/打包入口/依赖/`workers/**` 或修复涉及发行行为再加 C**。
 
 P1-05A 已关闭脱敏缺口；P1-04 打包/迁移检查的建议复核保留到发行检查。P1-06 §5 product remap
 排入 P4-05A/B，拍摄时间排入 P4-00A/B，HEIC 排入 P4-00C；均不是 P2-03C 的前置依赖。
@@ -672,13 +737,17 @@ P2-05 报告 §11；P2-06A 未验证项（真实查询编码器未接入应用�
 候选上界只在小夹具验证公式、搜索页内复核非快照隔离读）记录在 P2-06A 报告 §11；P2-06B 未验证项
 （真实精排/VLM 模型与 GPU 精排未接入、在线学习与反馈驱动排序未实现、超时是有界等待而非抢占式强杀、
 reranker 的 capability-missing/unhealthy 分支因共用 runtime package 不可达、反馈表规模/并发写入未测、
-精排候选上界只在 ≤4 候选夹具验证）记录在 P2-06B 报告 §11。
+精排候选上界只在 ≤4 候选夹具验证）记录在 P2-06B 报告 §11；P2-07 未验证项（真实文本/图像编码器
+仍未接入致浏览器里看不到 `SEMANTIC`/`TEXT+SEMANTIC` 行与「语义索引仍在追赶」提示、覆盖率视图为
+客户端组装的三次只读请求且无快照隔离、上传限制只在 32×24 与小上限夹具验证、解码预算为测量后拒绝而
+非抢占式强杀、自有 multipart 读取器未做第三方客户端互操作验证、分页/上界只在小夹具验证公式、
+页面无 DOM 自动化）记录在 P2-07 报告 §11。
 
 **P1-07 Windows 凭据 ACL 轮换修复为 PASS**：`restrict_credential_file` 仍移除继承并仅授予当前用户，
 但由 `(R,W)` 改为 `(R,W,D)`，使原子 `os.replace` 能替换旧 `session.json`，临时 data root 也可由普通
 用户回收。专项 31 passed、完整单元/集成套件 100% 无失败、Ruff/diff/lock clean；真实新 onedir 的同一
 data root 第二启动 smoke 为 `status=ok`（新 token、health 200）且工作目录可完整删除。详见
 [P1-07 报告](reports/P1-07-windows-credential-acl-rotation.md)。旧版本遗留的 `(R,W)` 文件不会被本任务
-擅自接管或删除，仍可能需要所有者/管理员人工清理。P2-07 仍为 CURRENT TASK。
+擅自接管或删除，仍可能需要所有者/管理员人工清理。P2-07 已 PASS；当前任务是 **P2-08**。
 
 Model switching remains manual; the repository only records the recommended model per stage.
