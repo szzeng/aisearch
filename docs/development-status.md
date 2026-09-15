@@ -56,7 +56,9 @@ suggest `0.29`, conflicts and low-quality faces only ever become suggestions); 8
 merge use case, `merged_into` canonical resolution with a bounded cycle refusal, the compensating undo with
 forward-only revisions, the human-control downgrades that keep `MANUAL_UNASSIGNED`/exclusion facts intact,
 the four `/api/v1` person paths with their frozen error codes, and the five read-only person counts in
-`face_summary`; 74 new cases, **schema_version 10 → 11**). P3-04 is the current task.
+`face_summary`; 74 new cases, **schema_version 10 → 11**). **P3-04A is PASS** (A-level C2 contract freeze:
+ADR-0007, the machine-readable face-correction companion and 26 contract cases; no production/schema/
+dependency change). **P3-04B is READY / CURRENT TASK** for the DS-H implementation.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -919,11 +921,22 @@ BLOCKED, SYNCED}`，无原文、无坐标、无路径）。本任务未改 ADR/�
 冻结决策 `docs/decisions/ADR-0006-person-naming-merge-operation-contract.md` 在实现期**一字未改**；
 按任务卡要求，实现后仍需交 **C2 / GPT-5.6 Sol / high** 独立审查。
 
-**当前任务是 P3-04A — 单脸纠错、合照与人工锁定：C2 规则冻结**（V3.1 §8 表 P3-04 行；ADR-0006 §1 已把
-这些产品写入口留给 P3-04，但操作词汇/记录形状/API/撤销语义尚未冻结），任务卡
-[docs/tasks/P3-04A.md](tasks/P3-04A.md)。0011 只把 `face_assignment_controls`/`face_exclusions` 建成了
-事实载体，P3-04A 负责把单脸取消/指定/恢复自动、合照逐脸选择、排除关系与晚到结果拒绝的规则**冻结成
-ADR + 机器可读伴随物 + 契约测试**，随后由 **P3-04B** 交 **DS-H** 实现并通过 B + D（必要时加 C）。
-下一步推荐 **C2 / GPT-5.6 Sol / high** 先冻结规则。模型切换由用户在 Codex 中手动完成。
+## Latest face-correction contract closure — P3-04A (2026-09-15)
+
+**P3-04A — 单脸纠错、合照与人工锁定：C2 规则冻结已 PASS。** 见
+[P3-04A 报告](reports/P3-04A-face-correction-contract.md)与
+[ADR-0007](decisions/ADR-0007-face-correction-lock-exclusion-contract.md)。本任务冻结共享
+`person_operations` 操作权威的 `FACE_ASSIGN/FACE_UNASSIGN/FACE_RESTORE_AUTO/BATCH_FACE_EDIT`、
+`FACE_CONTROL` 快照、无控制行 logical revision 0、逐脸模式/排除矩阵、1～500 mixed batch、全局
+request_id 幂等、向前补偿撤销、API/错误/隐私、四个只读计数，以及复用 `PERSON_CHANGED` 的权威→派生
+顺序。机器可读伴随物为
+[p3-face-correction-contracts.v1.json](decisions/contracts/p3-face-correction-contracts.v1.json)。A 级验证为
+26 个新契约用例 + 完整 unit/integration + Ruff/diff/lock（详见报告）；未改生产代码、migration、
+schema_version、依赖、既有 ADR/JSON、打包或前端。
+
+**当前任务是 P3-04B — 单脸纠错、合照与人工锁定：DS-H 实现**，任务卡
+[docs/tasks/P3-04B.md](tasks/P3-04B.md)。它按 ADR-0007 新增且只新增 0012、脸级服务/API/错误、自动晚到
+门禁、幂等/批量/撤销与派生追赶，验收 B + D + C；冻结 ADR/JSON 不得在实现阶段自行改变。
+下一步推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请在 Codex 中手动切换模型/推理档后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

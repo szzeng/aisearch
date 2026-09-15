@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p3-face-correction-contracts.v1.json",
+  "title": "Photo Search P3 face correction protocol companion",
+  "description": "Derived from ADR-0007; ADR-0007 is authoritative on conflict.",
+  "oneOf": [
+    { "$ref": "#/$defs/FaceCorrectionRequest" },
+    { "$ref": "#/$defs/FaceCorrectionBatchRequest" },
+    { "$ref": "#/$defs/FaceControlState" },
+    { "$ref": "#/$defs/FaceOperation" },
+    { "$ref": "#/$defs/FaceApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p3-face-correction-contracts.v1" },
+    "FaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "PersonId": { "type": "integer", "minimum": 1 },
+    "Revision": { "type": "integer", "minimum": 0 },
+    "StoredRevision": { "type": "integer", "minimum": 1 },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[!-~]+$"
+    },
+    "OperationId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "Action": { "enum": ["assign", "unassign", "restore_auto"] },
+    "ControlMode": {
+      "enum": ["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    },
+    "OperationType": {
+      "enum": [
+        "FACE_ASSIGN",
+        "FACE_UNASSIGN",
+        "FACE_RESTORE_AUTO",
+        "BATCH_FACE_EDIT",
+        "UNDO"
+      ]
+    },
+    "NullablePersonId": {
+      "oneOf": [
+        { "$ref": "#/$defs/PersonId" },
+        { "type": "null" }
+      ]
+    },
+    "CorrectionItem": {
+      "type": "object",
+      "required": ["face_id", "action", "target_person_id", "expected_revision"],
+      "properties": {
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "action": { "$ref": "#/$defs/Action" },
+        "target_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "expected_revision": { "$ref": "#/$defs/Revision" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "assign" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": { "target_person_id": { "$ref": "#/$defs/PersonId" } }
+          },
+          "else": {
+            "properties": { "target_person_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "FaceCorrectionRequest": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "request_id",
+        "action",
+        "target_person_id",
+        "expected_revision"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "request_id": { "$ref": "#/$defs/RequestId" },
+        "action": { "$ref": "#/$defs/Action" },
+        "target_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "expected_revision": { "$ref": "#/$defs/Revision" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "action": { "const": "assign" } },
+            "required": ["action"]
+          },
+          "then": {
+            "properties": { "target_person_id": { "$ref": "#/$defs/PersonId" } }
+          },
+          "else": {
+            "properties": { "target_person_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "FaceCorrectionBatchRequest": {
+      "type": "object",
+      "required": ["contract_version", "request_id", "items"],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "request_id": { "$ref": "#/$defs/RequestId" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CorrectionItem" },
+          "minItems": 1,
+          "maxItems": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExclusionState": {
+      "type": "object",
+      "required": ["person_id", "active"],
+      "properties": {
+        "person_id": { "$ref": "#/$defs/PersonId" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "FaceControlState": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "face_id",
+        "mode",
+        "revision",
+        "assigned_person_id",
+        "active_exclusions",
+        "suggestions_available"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "mode": { "$ref": "#/$defs/ControlMode" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "assigned_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "active_exclusions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "uniqueItems": true
+        },
+        "suggestions_available": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "$ref": "#/$defs/PersonId" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "ExclusionChanges": {
+      "type": "object",
+      "required": ["activated", "deactivated"],
+      "properties": {
+        "activated": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "uniqueItems": true
+        },
+        "deactivated": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "FaceOperationItem": {
+      "type": "object",
+      "required": [
+        "entity_type",
+        "face_id",
+        "changed",
+        "mode",
+        "revision",
+        "assigned_person_id",
+        "exclusions"
+      ],
+      "properties": {
+        "entity_type": { "const": "FACE_CONTROL" },
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "changed": { "type": "boolean" },
+        "mode": { "$ref": "#/$defs/ControlMode" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "assigned_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "exclusions": { "$ref": "#/$defs/ExclusionChanges" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "$ref": "#/$defs/PersonId" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "FaceOperation": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "operation_id",
+        "operation_type",
+        "operation_revision",
+        "status",
+        "undo_of_operation_id",
+        "changed",
+        "catalog_filter_revision",
+        "replayed",
+        "items"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "operation_id": { "$ref": "#/$defs/OperationId" },
+        "operation_type": { "$ref": "#/$defs/OperationType" },
+        "operation_revision": { "$ref": "#/$defs/StoredRevision" },
+        "status": { "enum": ["COMMITTED", "UNDONE"] },
+        "undo_of_operation_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/OperationId" },
+            { "type": "null" }
+          ]
+        },
+        "changed": { "type": "boolean" },
+        "catalog_filter_revision": { "$ref": "#/$defs/Revision" },
+        "replayed": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/FaceOperationItem" },
+          "minItems": 1,
+          "maxItems": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "FaceApiError": {
+      "type": "object",
+      "required": ["code", "message", "request_id", "details"],
+      "properties": {
+        "code": {
+          "enum": [
+            "FACE_NOT_FOUND",
+            "PERSON_NOT_FOUND",
+            "FACE_ASSIGNMENT_CONFLICT",
+            "FACE_IDEMPOTENCY_CONFLICT",
+            "FACE_BATCH_TOO_LARGE",
+            "FACE_STATE_CONFLICT",
+            "FACE_OPERATION_NOT_UNDOABLE",
+            "PERSON_REDIRECT_CYCLE",
+            "VALIDATION_ERROR"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "details": { "type": "object" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
