@@ -101,8 +101,28 @@ P1-06 (the duplicate / move / replace / offline / remap / restart acceptance clo
 `schema_version` 仍为 1，ADR-0002、`0001_initial.sql`、`pyproject.toml`、`uv.lock` 均未改动，既有测试
 全部原样通过。该任务完成后主线依次进入 P2-01、P2-01A 与 P2-02。
 
-Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 4 (2026-09-13 actual-place planning).
-Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 3 (2026-09-13 location task chain and current-state reconciliation).
+Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 5 (2026-09-15 300k formal capacity alignment).
+Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 4 (2026-09-15 300k capacity/P4 acceptance alignment).
+
+## Latest architecture alignment — requirement revision 5 (2026-09-15)
+
+The product's formal supported library scale is now **300,000 image assets**. Capacity, performance, recovery,
+and release PASS claims use 300k as the formal target. **350k–400k** may be used only as optional synthetic
+stress observation to find performance cliffs; it is not a support promise and does not create a hard rejection
+at asset 300001.
+
+The core architecture is unchanged: SQLite/WAL/FTS5, LanceDB, the persistent scheduler/outbox/replay/repair
+path, one bounded GPU worker, CUDA/GTX 1660 6 GB baseline, and existing person/OCR/place/model-upgrade
+contracts remain in force. No production code, dependency, schema or migration changes are required by this
+alignment, and completed P1/P2/P3 acceptance is not reopened.
+
+P4 is correspondingly narrowed: P4-01 benchmarks exact/ANN behavior at the supported scale and only tunes ANN
+when 300k evidence shows a bottleneck; P4-02 becomes 10k → 100k → 300k formal validation, with 350k–400k
+optional stress observation. Do not introduce distributed scheduling, Redis/Celery, multi-GPU, another vector
+backend, manual sharding or other million-scale complexity without a separate measured need and architecture
+decision.
+
+Alignment report: [2026-09-15 300k capacity alignment](reports/2026-09-15-300k-capacity-alignment.md).
 
 ## Latest planning closure — P2-00 (2026-09-13)
 
