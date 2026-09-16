@@ -17,11 +17,6 @@ from photo_search.face.contract import FACE_SPEC_REVISION
 
 CONTRACT_VERSION = "p3-face-correction-contracts.v1"
 
-MUTATING_ROUTES = (
-    ("put", "/api/v1/faces/{face}/assignment"),
-    ("post", "/api/v1/face-assignments/batch"),
-)
-
 #: Anything that would identify a local file, a face geometry or a per-pair similarity. A
 #: response that contains one of these strings has leaked something it must not.
 FORBIDDEN_FRAGMENTS = (

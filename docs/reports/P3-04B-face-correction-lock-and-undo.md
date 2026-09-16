@@ -4,7 +4,7 @@
 
 按 [ADR-0007](../decisions/ADR-0007-face-correction-lock-exclusion-contract.md) 实现以 `face_id` 为最小单位的
 取消归类／手动指定／恢复自动、人工排除、幂等、revision、批量、补偿撤销、自动晚到门禁、权威→派生顺序、
-四条 `/api/v1` 路径、稳定 `FACE_*` 错误与四个只读计数。**B + D + C** 三级验收。
+四条 `/api/v1` 路径（3 条新增 + 扩展既有 undo）、稳定 `FACE_*` 错误与四个只读计数。**B + D + C** 三级验收。
 
 | 项 | 内容 |
 |---|---|
