@@ -9,6 +9,7 @@
 | 项 | 内容 |
 |---|---|
 | 开始前 HEAD | `5a17418`（P3-04A 契约冻结），工作树干净 |
+| 本任务提交 | `980f41d`（实现 + 报告 + 状态 + 下一任务卡） |
 | 新 migration | `catalog/migrations/0012_face_correction_operations.sql`，**`schema_version` 11 → 12** |
 | 新增源码 | `src/photo_search/persons/face_correction.py` |
 | 加性修改 | `persons/{contracts,operations,service}.py`、`face/index.py`、`catalog/{schema,errors}.py`、`scheduler/projection.py`、`api/{models,routes,errors}.py` |

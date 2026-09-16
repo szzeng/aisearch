@@ -944,7 +944,8 @@ schema_version、依赖、既有 ADR/JSON、打包或前端。
 ## Latest face-correction implementation closure — P3-04B (2026-09-16)
 
 **P3-04B — 单脸纠错、合照与人工锁定：DS-H 实现已 PASS（B + D + C）。** 见
-[P3-04B 报告](reports/P3-04B-face-correction-lock-and-undo.md)。起点 `5a17418`（P3-04A），工作树干净。
+[P3-04B 报告](reports/P3-04B-face-correction-lock-and-undo.md)。起点 `5a17418`（P3-04A），
+本任务提交 `980f41d`，工作树干净。
 
 新增连续 `catalog/migrations/0012_face_correction_operations.sql`：**`schema_version` 推进到 12**，
 `0001`～`0011` 逐字节未改；0012 **不新增任何表**，只重建 `person_operations`/`person_operation_items`
