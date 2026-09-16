@@ -32,6 +32,12 @@ from photo_search.catalog.errors import (
     DECODE_FAILED,
     DEVICE_POLICY_CONFLICT,
     DISK_SPACE_INSUFFICIENT,
+    FACE_ASSIGNMENT_CONFLICT,
+    FACE_BATCH_TOO_LARGE,
+    FACE_IDEMPOTENCY_CONFLICT,
+    FACE_NOT_FOUND,
+    FACE_OPERATION_NOT_UNDOABLE,
+    FACE_STATE_CONFLICT,
     FEEDBACK_IDEMPOTENCY_CONFLICT,
     FILE_READ_ERROR,
     FILTER_UNSUPPORTED,
@@ -186,6 +192,17 @@ _STATUS_BY_CODE: dict[str, int] = {
     PERSON_IDEMPOTENCY_CONFLICT: 409,
     PERSON_REDIRECT_CYCLE: 409,
     PERSON_OPERATION_NOT_UNDOABLE: 409,
+    # P3-04B single-face correction refusals (ADR-0007 §6). A missing face or face-level
+    # operation is a 404; the batch-size and action/target refusals are caller-shape errors;
+    # a stale logical control revision, a reused idempotency key, an inconsistent authority
+    # bundle and a face operation a later human edit made non-compensable are current-state
+    # conflicts.
+    FACE_NOT_FOUND: 404,
+    FACE_BATCH_TOO_LARGE: 422,
+    FACE_ASSIGNMENT_CONFLICT: 409,
+    FACE_IDEMPOTENCY_CONFLICT: 409,
+    FACE_STATE_CONFLICT: 409,
+    FACE_OPERATION_NOT_UNDOABLE: 409,
     # P2-06A search protocol refusals. An expired session, a profile that must not be
     # half-switched and a filter the vector engine refuses are all current-state
     # conflicts: the request is well formed, the current state forbids the answer.

@@ -638,7 +638,10 @@ class PersonUndoRequest(BaseModel):
 
 class PersonOperationItemResponse(BaseModel):
     entity_type: str
-    entity_id: int
+    #: A ``PERSON_BUNDLE`` item names an integer person; a ``FACE_CONTROL`` item of
+    #: ADR-0007 names a ``face_id`` instead. The union of the two responses below keeps
+    #: each item shape exact, so this model is only ever populated by one of them.
+    entity_id: int | None = None
     changed: bool
     merged_into: int | None = None
     revision: int
@@ -656,6 +659,93 @@ class PersonOperationResponse(BaseModel):
     catalog_filter_revision: int
     replayed: bool
     items: list[PersonOperationItemResponse]
+
+
+# ---------------------------------------------------------------------------------- faces
+
+
+class FaceExclusionChanges(BaseModel):
+    """The person ids one face operation activated and lifted (ADR-0007 §6)."""
+
+    activated: list[int] = Field(default_factory=list)
+    deactivated: list[int] = Field(default_factory=list)
+
+
+class FaceControlState(BaseModel):
+    """``GET /api/v1/faces/{face_id}/assignment``: mode, revision, person, denials.
+
+    No similarity, no box, no landmark, no vector and no path is part of this projection.
+    """
+
+    contract_version: str
+    face_id: str
+    mode: str
+    revision: int
+    assigned_person_id: int | None = None
+    active_exclusions: list[int] = Field(default_factory=list)
+    suggestions_available: bool
+
+
+class FaceCorrectionRequest(BaseModel):
+    """``PUT /api/v1/faces/{face_id}/assignment``: one face, one action, one revision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    request_id: str = Field(min_length=1, max_length=64)
+    action: str
+    #: Required by ``assign`` and refused otherwise; the service owns that rule so the
+    #: frozen ``VALIDATION_ERROR`` is answered instead of a transport-level shape error.
+    target_person_id: int | None = None
+    expected_revision: int = Field(ge=0)
+
+
+class FaceCorrectionItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    face_id: str
+    action: str
+    target_person_id: int | None = None
+    expected_revision: int = Field(ge=0)
+
+
+class FaceCorrectionBatchRequest(BaseModel):
+    """``POST /api/v1/face-assignments/batch``: 1..500 explicit face items."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    request_id: str = Field(min_length=1, max_length=64)
+    #: The 500 bound and the duplicate refusal are the service's, so the frozen
+    #: ``FACE_BATCH_TOO_LARGE``/``VALIDATION_ERROR`` codes are what a caller sees.
+    items: list[FaceCorrectionItem] = Field(default_factory=list)
+
+
+class FaceOperationItemResponse(BaseModel):
+    """One ``FACE_CONTROL`` item of a face operation answer (ADR-0007 §6)."""
+
+    entity_type: str
+    face_id: str
+    changed: bool
+    mode: str
+    revision: int
+    assigned_person_id: int | None = None
+    exclusions: FaceExclusionChanges
+
+
+class FaceOperationResponse(BaseModel):
+    """The result of one face correction or of the compensation of one."""
+
+    contract_version: str
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: str
+    undo_of_operation_id: str | None = None
+    changed: bool
+    catalog_filter_revision: int
+    replayed: bool
+    items: list[FaceOperationItemResponse]
 
 
 # --------------------------------------------------------------------------------- search

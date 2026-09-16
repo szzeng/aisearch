@@ -12,10 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from photo_search.catalog import schema
+from photo_search.catalog.errors import CatalogError
 from photo_search.catalog.sqlite_io import open_readonly
 from photo_search.face import contract as face_contract
 from photo_search.ocr import contract as ocr_contract
 from photo_search.persons import contracts as person_contract
+from photo_search.persons.identity import resolve_canonical_person_id
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:
@@ -420,6 +422,59 @@ def face_summary(
             if "person_operations" in tables
             else 0
         )
+        # P3-04B single-face correction counts (ADR-0007 §9), all computed from the current
+        # SQLite authority and all reduced to plain integers: how much of the face set a
+        # human actually *locked*, and how many denials are currently in force. Unnamed
+        # groups are never counted as "waiting to be sorted out", a suggestion is never
+        # counted as an assignment, the two exclusion counts are distinct faces vs distinct
+        # canonical pairs, and a face with several denials is still one face.
+        manual_assigned_faces = (
+            int(
+                connection.execute(
+                    "SELECT COUNT(DISTINCT l.face_id) AS total FROM face_person_links AS l "
+                    "JOIN face_assignment_controls AS c ON c.face_id = l.face_id "
+                    "AND c.mode = 'MANUAL_ASSIGNED' "
+                    "WHERE l.assignment_kind = 'MANUAL' AND l.decision = 'CONFIRMED'"
+                ).fetchone()["total"]
+            )
+            if "face_assignment_controls" in tables
+            else 0
+        )
+        manual_unassigned_faces = (
+            int(
+                connection.execute(
+                    "SELECT COUNT(*) AS total FROM face_assignment_controls "
+                    "WHERE mode = 'MANUAL_UNASSIGNED'"
+                ).fetchone()["total"]
+            )
+            if "face_assignment_controls" in tables
+            else 0
+        )
+        faces_with_active_exclusions = 0
+        active_face_exclusions = 0
+        if "face_exclusions" in tables:
+            # A denial is one *canonical* (face, person) relation: the row may still name a
+            # person that a P3-03 merge moved, and two spellings of the same person are one
+            # denial, not two. The walk reuses the single redirect resolver, so a longer
+            # merge chain cannot be counted by a one-hop SQL join.
+            pairs = {
+                (str(row["face_id"]), int(row["person_id"]))
+                for row in connection.execute(
+                    "SELECT face_id, person_id FROM face_exclusions WHERE active = 1"
+                )
+            }
+            faces_with_active_exclusions = len({face_id for face_id, _ in pairs})
+            canonical_pairs: set[tuple[str, int]] = set()
+            for face_id, person_id in pairs:
+                try:
+                    canonical_pairs.add(
+                        (face_id, resolve_canonical_person_id(connection, person_id))
+                    )
+                except CatalogError:
+                    # A dangling target cannot be resolved; counting the raw pair keeps the
+                    # summary total instead of turning a corrupt row into a failed read.
+                    canonical_pairs.add((face_id, person_id))
+            active_face_exclusions = len(canonical_pairs)
         confirmed = int(
             connection.execute(
                 "SELECT COUNT(*) AS total FROM face_person_links WHERE decision = 'CONFIRMED'"
@@ -513,6 +568,12 @@ def face_summary(
             "aliases": aliases,
             "pending_confirmation": pending_confirmation,
             "recent_operations": recent_operations,
+            # P3-04B human-control counts: locked faces, faces waiting to be sorted out,
+            # faces with at least one active denial, and active canonical denial pairs.
+            "manual_assigned_faces": manual_assigned_faces,
+            "manual_unassigned_faces": manual_unassigned_faces,
+            "faces_with_active_exclusions": faces_with_active_exclusions,
+            "active_face_exclusions": active_face_exclusions,
             "confirmed_links": confirmed,
             "suggested_links": suggested,
             "manual_links": manual,

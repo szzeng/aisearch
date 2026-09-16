@@ -153,7 +153,8 @@ def test_migration_scripts_are_continuous_and_0011_is_the_person_layer() -> None
     assert versions == list(range(1, SUPPORTED + 1))
     assert versions[10] == 11
     assert (REAL_MIGRATIONS_DIR / "0011_person_knowledge.sql").is_file()
-    assert SUPPORTED == 11
+    # The person layer is version 11; a later migration may raise the supported version.
+    assert SUPPORTED >= V11
 
 
 def test_v10_to_v11_is_continuous_backed_up_and_lossless(
@@ -210,7 +211,13 @@ def test_v10_to_v11_is_continuous_backed_up_and_lossless(
     assert snapshot(path) == before
     assert path.read_bytes() != before_bytes
 
+    # Still pinned to the 0011 target: a later migration (0012) is a separate step and must
+    # not be pulled in by this case's "already at the target" idempotency check.
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V11)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V11))
     again = migrate_database(path, data_root=data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
     assert again.applied == () and again.previous_version == V11
 
 

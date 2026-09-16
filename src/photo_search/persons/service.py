@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from photo_search.catalog.db import Catalog
-from photo_search.persons import contracts
+from photo_search.persons import contracts, face_correction
 from photo_search.persons import operations as operation_module
 from photo_search.persons.contracts import person_view
 from photo_search.persons.identity import (
@@ -153,6 +153,55 @@ class PersonService:
                 refresh=self.refresh,
             )
 
+    # ----------------------------------------------------------------- face control
+    def face_assignment(self, face_id: str) -> dict[str, Any]:
+        """ADR-0007 §6: the read projection of one face's human control."""
+        return face_correction.control_state(self.catalog.connection, str(face_id))
+
+    def set_face_assignment(
+        self,
+        *,
+        face_id: str,
+        contract_version: str,
+        action: str,
+        target_person_id: int | None,
+        expected_revision: int,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """One explicit ``face_id`` correction, in its own authority transaction."""
+        now_ms = int(self.clock())
+        with self.catalog.write() as connection:
+            return face_correction.apply_single(
+                connection,
+                face_id=face_id,
+                contract_version=contract_version,
+                action=action,
+                target_person_id=target_person_id,
+                expected_revision=expected_revision,
+                request_id=request_id,
+                now_ms=now_ms,
+                refresh=self.refresh,
+            )
+
+    def edit_face_assignments(
+        self,
+        *,
+        items: Sequence[Mapping[str, Any]],
+        contract_version: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """1..500 explicit face items, all-or-nothing, in one authority transaction."""
+        now_ms = int(self.clock())
+        with self.catalog.write() as connection:
+            return face_correction.apply_batch(
+                connection,
+                items=list(items),
+                contract_version=contract_version,
+                request_id=request_id,
+                now_ms=now_ms,
+                refresh=self.refresh,
+            )
+
     def operation(self, operation_id: str) -> dict[str, Any] | None:
         """A read-only echo of one recorded operation (0 personal data)."""
         row = operation_module.operation_row(self.catalog.connection, str(operation_id))
@@ -161,4 +210,4 @@ class PersonService:
         return operation_module.operation_result(self.catalog.connection, row)
 
 
-__all__ = ["PersonService", "contracts"]
+__all__ = ["PersonService", "contracts", "face_correction"]

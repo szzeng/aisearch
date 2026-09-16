@@ -34,7 +34,12 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: P3-02 already implements. Same-name uniqueness stays the 0010 partial unique index; the
 #: only shared table this script replaces is ``search_projection_queue``, whose frozen
 #: ``CHECK`` list would otherwise refuse the sixth ``PERSON_CHANGED`` cause.
-SUPPORTED_SCHEMA_VERSION = 11
+#: ``0012`` adds the P3-04B single-face correction layer. It adds no fact table: the human
+#: locks and denials already exist, and what ADR-0007 §10 needs is a wider *closed* type
+#: vocabulary on the one person operation log plus the ``FACE_CONTROL`` item shape. Those
+#: two tables are therefore rebuilt row-for-row (including their undo and alias references)
+#: with four face operation types and the mutually exclusive ``entity_id``/``entity_key``.
+SUPPORTED_SCHEMA_VERSION = 12
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

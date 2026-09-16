@@ -61,6 +61,9 @@ CORE_TABLES = {
     # the append-only operation log with its bounded before/after bundles, ``person_aliases``
     # the search aliases of a named person, and ``face_assignment_controls``/
     # ``face_exclusions`` the human locks and denials P3-02 already reads.
+    # P3-04B (0012) adds no table at all: it rebuilds ``person_operations`` and
+    # ``person_operation_items`` in place to widen their closed CHECK vocabulary, so this set
+    # is deliberately unchanged by that migration.
     "face_assignment_controls",
     "face_exclusions",
     "person_aliases",

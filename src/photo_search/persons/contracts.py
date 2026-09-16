@@ -24,6 +24,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from photo_search.catalog.errors import (
+    FACE_IDEMPOTENCY_CONFLICT,
     MAX_PERSON_BATCH_SIZE,
     PERSON_BATCH_TOO_LARGE,
     PERSON_IDEMPOTENCY_CONFLICT,
@@ -54,6 +55,24 @@ MAX_MERGE_SOURCES = int(MAX_PERSON_BATCH_SIZE)
 OPERATION_TYPES = ("RENAME", "MERGE_BY_NAME", "MERGE", "BATCH_MERGE", "UNDO")
 #: The operation types this build can perform, i.e. everything an undo may compensate.
 WRITE_OPERATION_TYPES = ("RENAME", "MERGE_BY_NAME", "MERGE", "BATCH_MERGE")
+
+#: ADR-0007 §2/§7: the face-level types of the *same* operation log. A single-face request
+#: derives its type from the action; a batch is always ``BATCH_FACE_EDIT`` even when it
+#: carries one item, because the type describes the request entry point. ``UNDO`` stays the
+#: shared compensation type.
+FACE_OPERATION_TYPES = (
+    "FACE_ASSIGN",
+    "FACE_UNASSIGN",
+    "FACE_RESTORE_AUTO",
+    "BATCH_FACE_EDIT",
+)
+#: Everything the shared ``/person-operations/{id}/undo`` endpoint may compensate.
+UNDOABLE_OPERATION_TYPES = WRITE_OPERATION_TYPES + FACE_OPERATION_TYPES
+
+#: ADR-0007 §2: the two mutually exclusive shapes of one operation item. A person bundle is
+#: keyed by an integer ``person_id``; a face control is keyed by its ``face_id`` text.
+ENTITY_TYPE_PERSON_BUNDLE = "PERSON_BUNDLE"
+ENTITY_TYPE_FACE_CONTROL = "FACE_CONTROL"
 
 CONTROL_MODES = ("AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED")
 
@@ -257,6 +276,10 @@ __all__ = [
     "CONTRACT_VERSION",
     "CAUSE_PERSON_CHANGED",
     "CONTROL_MODES",
+    "ENTITY_TYPE_FACE_CONTROL",
+    "ENTITY_TYPE_PERSON_BUNDLE",
+    "FACE_IDEMPOTENCY_CONFLICT",
+    "FACE_OPERATION_TYPES",
     "MAX_MERGE_SOURCES",
     "MAX_PERSON_NAME_CHARS",
     "MAX_REQUEST_ID_CHARS",
@@ -273,6 +296,7 @@ __all__ = [
     "PERSON_REVISION_CONFLICT",
     "REASON_HUMAN_CONFLICT",
     "REASON_MANUAL_UNASSIGNED",
+    "UNDOABLE_OPERATION_TYPES",
     "WRITE_OPERATION_TYPES",
     "canonical_json",
     "check_expected_revision",

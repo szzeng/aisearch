@@ -58,7 +58,14 @@ forward-only revisions, the human-control downgrades that keep `MANUAL_UNASSIGNE
 the four `/api/v1` person paths with their frozen error codes, and the five read-only person counts in
 `face_summary`; 74 new cases, **schema_version 10 → 11**). **P3-04A is PASS** (A-level C2 contract freeze:
 ADR-0007, the machine-readable face-correction companion and 26 contract cases; no production/schema/
-dependency change). **P3-04B is READY / CURRENT TASK** for the DS-H implementation.
+dependency change). **P3-04B is PASS** (B + D + C level: the `0012` operation-log rebuild that widens the
+closed CHECK vocabulary without adding a table, the single-face assign/unassign/restore_auto matrix with
+canonical exclusions, the 1..500 mixed batch, the global `request_id` gate ahead of every revision check,
+the `FACE_CONTROL` before/after snapshots with a forward-only compensating undo, the logical
+control-revision gate the automatic association now proves inside its own write transaction, the four
+`/api/v1` paths with their frozen `FACE_*` errors, and the four read-only human-control counts in
+`face_summary`; 50 new cases, **schema_version 11 → 12**). **P3-04C is READY / CURRENT TASK** — the
+independent C2 review of P3-04 (review plus the smallest necessary fix, no new behaviour by default).
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -934,9 +941,41 @@ request_id 幂等、向前补偿撤销、API/错误/隐私、四个只读计数�
 26 个新契约用例 + 完整 unit/integration + Ruff/diff/lock（详见报告）；未改生产代码、migration、
 schema_version、依赖、既有 ADR/JSON、打包或前端。
 
-**当前任务是 P3-04B — 单脸纠错、合照与人工锁定：DS-H 实现**，任务卡
-[docs/tasks/P3-04B.md](tasks/P3-04B.md)。它按 ADR-0007 新增且只新增 0012、脸级服务/API/错误、自动晚到
-门禁、幂等/批量/撤销与派生追赶，验收 B + D + C；冻结 ADR/JSON 不得在实现阶段自行改变。
-下一步推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请在 Codex 中手动切换模型/推理档后继续。
+## Latest face-correction implementation closure — P3-04B (2026-09-16)
+
+**P3-04B — 单脸纠错、合照与人工锁定：DS-H 实现已 PASS（B + D + C）。** 见
+[P3-04B 报告](reports/P3-04B-face-correction-lock-and-undo.md)。起点 `5a17418`（P3-04A），工作树干净。
+
+新增连续 `catalog/migrations/0012_face_correction_operations.sql`：**`schema_version` 推进到 12**，
+`0001`～`0011` 逐字节未改；0012 **不新增任何表**，只重建 `person_operations`/`person_operation_items`
+两张操作表，把闭合 CHECK 扩到 ADR-0007 的四个脸级 type 与互斥的 `entity_id`/`entity_key`
+（`FACE_CONTROL` 用 `entity_key = face_id`），并逐列保留既有 operation、item、UNDO 与
+`person_aliases.last_operation_id` 引用。扩展 `search_projection_queue` 与新增 cause **都不需要**：
+`PERSON_CHANGED` 已准确覆盖。
+
+新增 `src/photo_search/persons/face_correction.py`（模式/排除矩阵、canonical 排除、`FACE_CONTROL`
+before/after 快照、全局 `request_id` 幂等门、1～500 mixed batch、向前补偿撤销），加性修改
+`persons/{contracts,operations,service}.py`（`publish_derived` 与 `operation_family`）、`face/index.py`
+（写事务内的 logical control revision 门禁 `_control_revision_gate` + canonical 排除过滤）、
+`catalog/{schema,errors}.py`、`scheduler/projection.py`（四个只读计数，canonical pair 去重复用同一个
+redirect 解析器）、`api/{models,routes,errors}.py`（3 条新路径 + 扩展 undo，OpenAPI 35 → 37）。
+未改 ADR-0001～0007/冻结 JSON、依赖（95 包）、`PhotoSearch.spec`、前端、`places/**`、`geo/**`、
+`ingestion/**`、`workers/**`。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration` | exit 0；JUnit `tests=1114 failures=0 errors=0 skipped=1`（326.5 s）；`test-results/p3-04b-full.xml` |
+| 本任务新增用例 | 50 例（lifecycle 21、undo 11、migration 6、api 5、unit contract 7） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实夹具 | `tools/diagnostics/face_correction_smoke_fixture.py --device cpu` exit 0：4 资产/9 脸/8 个未命名分组；取消→指定→恢复→撤销全部 `replayed=false`；`siblings_unchanged=true`；重新关联 `human_controlled=1` 且被排除人物未回归；重启后 mode/revision/归属/排除与撤销后一致；候选 entry `CONFIRMED` |
+| v11→v12 迁移 | 真实 v11 库（3 operation/4 item/1 UNDO/3 alias 引用）逐列保留；备份内 `schema_version=11` 且无 `entity_key`；注入损坏 0012 整体回滚（无残留 `*_backup` 表）；缺件 `SCHEMA_INCONSISTENT`；过新库零写 |
+| C 级 | 真实 onedir 重建 + `packaged_api_smoke.py --work-dir D:\PhotoSearchSmoke\P3-04B-final`：`status=ok`、`problems=[]`、`startup_seconds=2.41`、`coverage_capabilities_status=200`、`coverage_has_no_local_path=true`；bundle 内含 `0001`～`0012`（`0012` 与源码 SHA-256 `6E4E56F0…1CF12` 一致），打包后的 data root 实测 `schema_version=12`、`entity_key` 列存在、type CHECK 含 `FACE_UNASSIGN` |
+| D 级注入 | 过期 revision 零写、幂等门早于 revision、晚到自动结果 `LATE_CONTROL_CONFLICT` 零写、批量中途失败全回滚、批量重复/501 拒绝、撤销冲突整批拒绝且 revision 不倒退、undo an UNDO 拒绝、no-op 撤销零副作用、P3-03 合并交叉冲突、快照指向的脸消失具名冲突 |
+| 非生产机械更新 | `SUPPORTED_SCHEMA_VERSION` 12；`tests/unit/test_catalog_migrations.py` 注释；`tests/integration/test_p3_person_migration.py` 钉回 0011；`tools/places/examples/mini-cities.{spec,manifest}.json` 的 `compatible_catalog_schema.maximum` 11 → 12 |
+
+**当前任务是 P3-04C — P3-04 独立 C2 审查（含必要最小修复）**，任务卡
+[docs/tasks/P3-04C.md](tasks/P3-04C.md)。它只做审查与必要最小修复，必须独立复现 6 组关键行为，
+不改 ADR-0007/companion；只要改动了 `src/photo_search/**` 就必须重跑 C 级。
+下一步推荐 **C2 / GPT-5.6 Sol / high**，请在 Codex 中手动切换模型/推理档后继续；审查通过后才进入 P3-05。
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import struct
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +45,9 @@ from photo_search.catalog.errors import (
 )
 from photo_search.face import contract
 from photo_search.face.processor import generation_id_for, queue_candidate
+
+#: Implementation bound for one ``IN (...)`` lookup (mirrors the person/place modules).
+_IN_CHUNK = 400
 
 
 @dataclass(frozen=True)
@@ -626,6 +629,12 @@ def reconcile(
         "human_controlled": sum(
             1 for item in decisions if item["action"] == "HUMAN_CONTROLLED"
         ),
+        # ADR-0007 §4: the automatic pass refused these faces because their logical control
+        # revision moved after the pass read it. The count is honest about a refusal that
+        # wrote nothing, instead of reporting the face as freshly grouped.
+        "late_control_conflicts": sum(
+            1 for item in decisions if item["action"] == "LATE_CONTROL_CONFLICT"
+        ),
     }
 
 
@@ -639,18 +648,115 @@ def _index_complete(catalog: Catalog, index: FaceIndexCoordinator, *, asset_id: 
     return int(row["total"]) == 0
 
 
+def _control_revision_gate(
+    connection: sqlite3.Connection,
+    observed: Mapping[str, int],
+    face_ids: Sequence[str],
+) -> set[str]:
+    """The faces whose logical control revision moved since this pass observed it.
+
+    ADR-0007 §4: an automatic result that was computed against an older logical revision is
+    a *stable conflict*, not a licence to overwrite the newer human fact. Comparing inside
+    the authority transaction is what makes the check true rather than merely likely, and
+    the caller skips exactly these faces - every other face of the photo is still grouped
+    normally, because one human decision never widens to its neighbours.
+    """
+    if not observed:
+        return set()
+    from photo_search.persons import face_correction
+
+    current = face_correction.logical_control_revisions(connection, list(face_ids))
+    return {
+        str(face_id)
+        for face_id, revision in observed.items()
+        if int(current.get(str(face_id), 0)) != int(revision)
+    }
+
+
+def _active_exclusion_persons(
+    connection: sqlite3.Connection, face_ids: Sequence[str]
+) -> dict[str, set[int]]:
+    """Per face, the person ids its active human denials name (still possibly unmerged)."""
+    excluded: dict[str, set[int]] = {}
+    unique = sorted({str(face_id) for face_id in face_ids})
+    for index in range(0, len(unique), _IN_CHUNK):
+        chunk = unique[index : index + _IN_CHUNK]
+        if not chunk:
+            continue
+        placeholders = ", ".join("?" for _ in chunk)
+        rows = connection.execute(
+            f"SELECT face_id, person_id FROM face_exclusions WHERE active = 1 "
+            f"AND face_id IN ({placeholders})",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            excluded.setdefault(str(row["face_id"]), set()).add(int(row["person_id"]))
+    return excluded
+
+
+def _canonical_person_map(
+    connection: sqlite3.Connection, person_ids: Sequence[int]
+) -> dict[int, int]:
+    """Map every named person id to its active person, following P3-03 merges once."""
+    from photo_search.persons.face_correction import canonical_person
+
+    mapping: dict[int, int] = {}
+    for person_id in sorted({int(value) for value in person_ids}):
+        try:
+            mapping[int(person_id)] = canonical_person(connection, int(person_id))
+        except CatalogError:
+            # A dangling id cannot be resolved; treating it as its own person keeps the
+            # comparison total instead of turning a corrupt row into a crash.
+            mapping[int(person_id)] = int(person_id)
+    return mapping
+
+
+def reconcile_asset(
+    catalog: Catalog,
+    *,
+    asset_id: int,
+    coordinator: FaceIndexCoordinator | None = None,
+    spec_revision: str = contract.FACE_SPEC_REVISION,
+    observed_controls: Mapping[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Group one already-queued asset's faces, with the ADR-0007 §4 control gate.
+
+    ``observed_controls`` is the logical revision this pass saw when it claimed the asset;
+    ``None`` means "read it now". Supplying an older mapping is how a late result is
+    reproduced without a second process.
+    """
+    index = coordinator or FaceIndexCoordinator(catalog, spec_revision=str(spec_revision))
+    return _reconcile_asset(
+        catalog,
+        index=index,
+        asset_id=int(asset_id),
+        spec_revision=str(spec_revision),
+        observed_controls=observed_controls,
+    )
+
+
 def _reconcile_asset(
     catalog: Catalog,
     *,
     index: FaceIndexCoordinator,
     asset_id: int,
     spec_revision: str,
+    observed_controls: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     from photo_search.face.processor import human_controlled_face_ids
+    from photo_search.persons import face_correction
 
     candidates = index.candidates()
     faces = asset_faces(catalog.connection, asset_id=asset_id, spec_revision=str(spec_revision))
-    protected = human_controlled_face_ids(catalog.connection, asset_id=asset_id)
+    face_ids = [str(face["face_id"]) for face in faces]
+    # ADR-0007 §4: the logical control revision that was observed when this pass claimed the
+    # asset. Re-reading it inside the authority transaction is what proves an automatic
+    # result is not overwriting a human decision that landed in the meantime.
+    observed = (
+        face_correction.logical_control_revisions(catalog.connection, face_ids)
+        if observed_controls is None
+        else {str(key): int(value) for key, value in observed_controls.items()}
+    )
     decisions: list[dict[str, Any]] = []
     changed: list[str] = []
     #: Faces of this picture that already received a person *in this pass*: the mirror and
@@ -658,6 +764,20 @@ def _reconcile_asset(
     #: person inside a single photo.
     assigned_in_asset: list[tuple[int, tuple[float, ...]]] = []
     with catalog.write() as connection:
+        # Both human facts are read again *inside* the write transaction: the control and
+        # denial tables are the authority, and the candidate set above was only a snapshot.
+        late = _control_revision_gate(connection, observed, face_ids)
+        protected = human_controlled_face_ids(connection, asset_id=asset_id)
+        excluded_by_face = _active_exclusion_persons(connection, face_ids)
+        canonical_of_person = _canonical_person_map(
+            connection,
+            [int(candidate.person_id) for candidate in candidates]
+            + [
+                int(person)
+                for persons in excluded_by_face.values()
+                for person in persons
+            ],
+        )
         person_in_asset = {
             int(row["person_id"])
             for row in connection.execute(
@@ -669,6 +789,19 @@ def _reconcile_asset(
         }
         for face in faces:
             face_id = str(face["face_id"])
+            if face_id in late:
+                # A human decision moved this face's logical revision after this pass read
+                # it: the computed result is stale, so nothing about the face is written.
+                decisions.append(
+                    {
+                        "face_id": face_id,
+                        "action": "LATE_CONTROL_CONFLICT",
+                        "person_id": None,
+                        "similarity": None,
+                        "reason": None,
+                    }
+                )
+                continue
             if face_id in protected:
                 # Human knowledge wins: the automatic path does not touch this face at all.
                 decisions.append(
@@ -688,10 +821,22 @@ def _reconcile_asset(
             if blob is None:
                 continue
             vector = blob_to_vector(bytes(blob), dimension=contract.FACE_DIMENSION)
+            # ADR-0007 §4: an AUTO_ALLOWED face still refuses the persons a human denied
+            # for it - including a person the denial was recorded against before a merge.
+            denied = {
+                canonical_of_person.get(person, int(person))
+                for person in excluded_by_face.get(face_id, ())
+            }
+            usable = [
+                candidate
+                for candidate in candidates
+                if canonical_of_person.get(int(candidate.person_id), int(candidate.person_id))
+                not in denied
+            ]
             decision = decide_for_face(
                 quality_state=str(face["quality_state"]),
                 vector=vector,
-                candidates=candidates,
+                candidates=usable,
                 person_in_asset=person_in_asset,
                 in_asset=assigned_in_asset,
             )

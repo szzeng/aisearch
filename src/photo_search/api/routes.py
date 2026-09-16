@@ -40,6 +40,10 @@ from photo_search.api.models import (
     AssetOrder,
     AssetPlaceResponse,
     CapabilitiesResponse,
+    FaceControlState,
+    FaceCorrectionBatchRequest,
+    FaceCorrectionRequest,
+    FaceOperationResponse,
     FeedbackListResponseModel,
     FeedbackRequestModel,
     FeedbackResponseModel,
@@ -884,16 +888,73 @@ async def post_person_merge(
 
 @router.post(
     "/person-operations/{operation_id}/undo",
-    response_model=PersonOperationResponse,
+    response_model=PersonOperationResponse | FaceOperationResponse,
     summary="Compensate one committed person operation, or refuse it whole",
 )
 async def undo_person_operation(
     request: Request, operation_id: str, payload: PersonUndoRequest
 ) -> dict[str, Any]:
+    """The one compensation endpoint of ADR-0006 and ADR-0007: either family.
+
+    The answer shape follows the family of the operation being compensated - a person
+    bundle item or a ``FACE_CONTROL`` item - and both branches carry the same frozen
+    ``operation_id``/``status``/``changed``/``catalog_filter_revision`` envelope.
+    """
     return persons_of(request).undo(
         operation_id=str(operation_id),
         request_id=payload.request_id,
         expected_operation_revision=int(payload.expected_operation_revision),
+    )
+
+
+# ------------------------------------------------------------------------ face control
+@router.get(
+    "/faces/{face_id}/assignment",
+    response_model=FaceControlState,
+    summary="The mode, logical revision, effective person and denials of one face",
+)
+async def get_face_assignment(request: Request, face_id: str) -> dict[str, Any]:
+    return persons_of(request).face_assignment(str(face_id))
+
+
+@router.put(
+    "/faces/{face_id}/assignment",
+    response_model=FaceOperationResponse,
+    summary="Assign, unassign or restore one face without touching its photo's other faces",
+)
+async def put_face_assignment(
+    request: Request, face_id: str, payload: FaceCorrectionRequest
+) -> dict[str, Any]:
+    return persons_of(request).set_face_assignment(
+        face_id=str(face_id),
+        contract_version=payload.contract_version,
+        action=payload.action,
+        target_person_id=payload.target_person_id,
+        expected_revision=int(payload.expected_revision),
+        request_id=payload.request_id,
+    )
+
+
+@router.post(
+    "/face-assignments/batch",
+    response_model=FaceOperationResponse,
+    summary="Apply 1..500 explicit face corrections atomically, or nothing at all",
+)
+async def post_face_assignment_batch(
+    request: Request, payload: FaceCorrectionBatchRequest
+) -> dict[str, Any]:
+    return persons_of(request).edit_face_assignments(
+        items=[
+            {
+                "face_id": item.face_id,
+                "action": item.action,
+                "target_person_id": item.target_person_id,
+                "expected_revision": int(item.expected_revision),
+            }
+            for item in payload.items
+        ],
+        contract_version=payload.contract_version,
+        request_id=payload.request_id,
     )
 
 

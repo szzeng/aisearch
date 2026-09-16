@@ -173,6 +173,24 @@ FACE_DEADLINE_EXCEEDED = "FACE_DEADLINE_EXCEEDED"
 FACE_INPUT_TOO_LARGE = "FACE_INPUT_TOO_LARGE"
 FACE_DEVICE_UNAVAILABLE = "FACE_DEVICE_UNAVAILABLE"
 
+#: P3-04B single-face correction, frozen by ADR-0007 §6. The spelling and the HTTP mapping
+#: are part of the contract: a missing face (or a missing face-level operation) is a 404, an
+#: oversized batch and a malformed action/target combination are caller-shape errors, and
+#: everything else is a current-state conflict that must never overwrite a later human edit
+#: or a changed logical control revision. ``PERSON_NOT_FOUND``/``PERSON_REDIRECT_CYCLE`` are
+#: reused from ADR-0006 for the assign target, on purpose: it is the same person resolver.
+FACE_NOT_FOUND = "FACE_NOT_FOUND"
+FACE_ASSIGNMENT_CONFLICT = "FACE_ASSIGNMENT_CONFLICT"
+FACE_IDEMPOTENCY_CONFLICT = "FACE_IDEMPOTENCY_CONFLICT"
+FACE_BATCH_TOO_LARGE = "FACE_BATCH_TOO_LARGE"
+FACE_STATE_CONFLICT = "FACE_STATE_CONFLICT"
+FACE_OPERATION_NOT_UNDOABLE = "FACE_OPERATION_NOT_UNDOABLE"
+
+#: ADR-0007 §5: a batch carries 1..500 distinct ``face_id`` items. Unlike the person merge
+#: the bound is checked before and after de-duplication, and a duplicate is a refusal rather
+#: than a silent collapse, so the two constants are separate on purpose.
+MAX_FACE_BATCH_SIZE = 500
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

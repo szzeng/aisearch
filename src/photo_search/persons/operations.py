@@ -35,6 +35,7 @@ from photo_search.face.processor import generation_id_for, queue_candidate
 from photo_search.persons import bundle as bundle_module
 from photo_search.persons import contracts
 from photo_search.persons.contracts import (
+    FACE_IDEMPOTENCY_CONFLICT,
     PERSON_IDEMPOTENCY_CONFLICT,
     PERSON_NOT_FOUND,
     PERSON_OPERATION_NOT_UNDOABLE,
@@ -97,8 +98,8 @@ def operation_row(connection: sqlite3.Connection, operation_id: str) -> Any:
 def _operation_items(connection: sqlite3.Connection, operation_id: str) -> list[Any]:
     return list(
         connection.execute(
-            "SELECT item_index, entity_type, entity_id, before_value_json, after_value_json, "
-            "after_revision FROM person_operation_items WHERE operation_id = ? "
+            "SELECT item_index, entity_type, entity_id, entity_key, before_value_json, "
+            "after_value_json, after_revision FROM person_operation_items WHERE operation_id = ? "
             "ORDER BY item_index",
             (str(operation_id),),
         ).fetchall()
@@ -106,6 +107,12 @@ def _operation_items(connection: sqlite3.Connection, operation_id: str) -> list[
 
 
 def _item_projection(row: Any) -> dict[str, Any]:
+    if str(row["entity_type"]) == contracts.ENTITY_TYPE_FACE_CONTROL:
+        # ADR-0007 §2 keeps the face-level snapshot in the same log; its projection is
+        # built by the face module so both the replay and the live answer share one shape.
+        from photo_search.persons import face_correction
+
+        return face_correction.recorded_item_projection(row)
     before = bundle_module.load_bundle(row["before_value_json"])
     after = bundle_module.load_bundle(row["after_value_json"])
     return {
@@ -140,7 +147,11 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
 
 
 def _replay(
-    connection: sqlite3.Connection, *, request_id: str, digest: str
+    connection: sqlite3.Connection,
+    *,
+    request_id: str,
+    digest: str,
+    conflict_code: str = PERSON_IDEMPOTENCY_CONFLICT,
 ) -> dict[str, Any] | None:
     """The idempotency gate. It runs first, before any person or revision is inspected."""
     row = connection.execute(
@@ -151,7 +162,7 @@ def _replay(
         return None
     if str(row["payload_sha256"]) != str(digest):
         raise fail(
-            PERSON_IDEMPOTENCY_CONFLICT,
+            conflict_code,
             "this request_id is already bound to a different payload",
             operation_id=str(row["operation_id"]),
         )
@@ -496,6 +507,35 @@ def _repair_candidates(
         )
 
 
+def publish_derived(
+    connection: sqlite3.Connection,
+    *,
+    faces: Sequence[str],
+    now_ms: int,
+    refresh: revision_module.ProjectionRefresh | None,
+) -> int:
+    """ADR-0006 §8 / ADR-0007 §8 items 2-5: the one authority→derived catch-up.
+
+    Exactly one ``catalog_filter_revision`` bump with the shared cause, one
+    ``search_projection_queue`` row per affected asset and a ``queue_candidate()`` call for
+    every affected face that is already published in the current face generation. It is a
+    separate function because the face-level correction of ADR-0007 must run the same
+    sequence, in the same order, inside its own authority transaction - and must not be able
+    to invent a second, subtly different one.
+    """
+    assets = _assets_of_faces(connection, list(faces))
+    filter_revision = revision_module.bump_filter_revision(
+        connection,
+        cause=contracts.CAUSE_PERSON_CHANGED,
+        now_ms=int(now_ms),
+        asset_ids=assets,
+        refresh=refresh,
+    )
+    _queue_assets(connection, assets, now_ms=int(now_ms))
+    _repair_candidates(connection, list(faces), now_ms=int(now_ms))
+    return int(filter_revision)
+
+
 def _open_operation(
     connection: sqlite3.Connection,
     *,
@@ -583,17 +623,12 @@ def _close_operation(
         )
     if changed:
         # ADR-0006 §8 items 2-5, in this order, inside the same transaction.
-        faces = _affected_faces(before, after)
-        assets = _assets_of_faces(connection, faces)
-        filter_revision = revision_module.bump_filter_revision(
+        filter_revision = publish_derived(
             connection,
-            cause=contracts.CAUSE_PERSON_CHANGED,
+            faces=_affected_faces(before, after),
             now_ms=int(now_ms),
-            asset_ids=assets,
             refresh=refresh,
         )
-        _queue_assets(connection, assets, now_ms=int(now_ms))
-        _repair_candidates(connection, faces, now_ms=int(now_ms))
     else:
         filter_revision = revision_module.read_filter_revision(connection)
     connection.execute(
@@ -786,6 +821,23 @@ def merge_persons(
 
 
 # ------------------------------------------------------------------------- compensation
+def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
+    """``"face"`` or ``"person"``: the vocabulary an operation (and its undo) answers in.
+
+    An ``UNDO`` row is family-agnostic, so it inherits the family of the operation it
+    compensates. That keeps "undo an UNDO" answered with the frozen code of the family the
+    caller was working in, instead of always falling back to the P3-03 vocabulary.
+    """
+    operation_type = str(operation["type"])
+    if operation_type in contracts.FACE_OPERATION_TYPES:
+        return "face"
+    if operation_type == "UNDO" and operation["undo_of_operation_id"] is not None:
+        parent = operation_row(connection, str(operation["undo_of_operation_id"]))
+        if parent is not None and str(parent["type"]) in contracts.FACE_OPERATION_TYPES:
+            return "face"
+    return "person"
+
+
 def _restore_aliases(
     connection: sqlite3.Connection,
     *,
@@ -899,15 +951,37 @@ def undo_person_operation(
             "expected_operation_revision": int(expected),
         }
     )
-    replay = _replay(connection, request_id=request_id, digest=digest)
+    # ADR-0006 §7 and ADR-0007 §7 both put the idempotency gate ahead of *every* revision
+    # check, including the one on the operation being compensated. Reading the operation row
+    # is not a revision check - it only decides which frozen vocabulary a mismatch uses, so
+    # a key already owned by the face family answers with FACE_IDEMPOTENCY_CONFLICT.
+    original = operation_row(connection, original_id)
+    is_face = original is not None and operation_family(connection, original) == "face"
+    conflict_code = FACE_IDEMPOTENCY_CONFLICT if is_face else PERSON_IDEMPOTENCY_CONFLICT
+    replay = _replay(
+        connection, request_id=request_id, digest=digest, conflict_code=conflict_code
+    )
     if replay is not None:
         return replay
-    original = operation_row(connection, original_id)
     if original is None:
         raise fail(
             PERSON_NOT_FOUND,
             f"operation {original_id} does not exist",
             operation_id=original_id,
+        )
+    if is_face:
+        # The face family owns its own eligibility and snapshot checks, so a refused
+        # compensation of a face operation answers in the ADR-0007 vocabulary.
+        from photo_search.persons import face_correction
+
+        return face_correction.undo_face_operation(
+            connection,
+            original=original,
+            request_id=request_id,
+            digest=digest,
+            expected_operation_revision=int(expected),
+            now_ms=int(now_ms),
+            refresh=refresh,
         )
     if (
         str(original["type"]) not in contracts.WRITE_OPERATION_TYPES
@@ -1045,17 +1119,12 @@ def undo_person_operation(
         (str(new_operation_id), str(original_id)),
     )
     if changed:
-        faces = _affected_faces(live_snapshots, restored_snapshots)
-        assets = _assets_of_faces(connection, faces)
-        filter_revision = revision_module.bump_filter_revision(
+        filter_revision = publish_derived(
             connection,
-            cause=contracts.CAUSE_PERSON_CHANGED,
+            faces=_affected_faces(live_snapshots, restored_snapshots),
             now_ms=int(now_ms),
-            asset_ids=assets,
             refresh=refresh,
         )
-        _queue_assets(connection, assets, now_ms=int(now_ms))
-        _repair_candidates(connection, faces, now_ms=int(now_ms))
     else:
         filter_revision = revision_module.read_filter_revision(connection)
     connection.execute(
@@ -1090,8 +1159,10 @@ def undo_person_operation(
 
 __all__ = [
     "merge_persons",
+    "operation_family",
     "operation_result",
     "operation_row",
+    "publish_derived",
     "rename_person",
     "undo_person_operation",
 ]
