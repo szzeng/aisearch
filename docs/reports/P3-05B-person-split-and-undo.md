@@ -4,7 +4,8 @@
 - 日期：2026-09-20
 - 实际模型：DS-H（DeepSeek V4.1 Flash / 高推理），由用户在 Codex 中手动选择；未发生自动模型切换
 - 起点 HEAD：`7ba4c12`（P3-05A 文档冻结），开始时工作树干净
-- 本任务提交：`12a14a1`（实现 + 测试 + 报告 + 状态 + 下一任务卡），提交后工作树干净
+- 本任务提交：实现提交 `12a14a1`（实现 + 测试 + 报告 + 状态 + 下一任务卡），其后只有 2 个收尾提交
+  （提交号回填、新增 2 例并刷新 B/C 证据）；交付时工作树干净，实际以 `git log` 输出为准
 - 权威决策：[ADR-0008](../decisions/ADR-0008-person-split-operation-contract.md) 与
   [companion](../decisions/contracts/p3-person-split-contracts.v1.json)（本任务**一字未改**）
 - 下一任务：[P3-05C](../tasks/P3-05C.md)
@@ -217,7 +218,7 @@ unauthorized operation”），且 pytest 会以 `mode=0o700` 创建 basetemp/`t
 
 ```text
 任务 ID / 状态：P3-05B / PASS（B + D + C）
-起点 HEAD：7ba4c12（P3-05A）；本任务提交：12a14a1；schema_version 12 → 13
+起点 HEAD：7ba4c12（P3-05A）；实现提交：12a14a1（另有 2 个收尾提交）；schema_version 12 → 13
 新增：0013_person_split_operations.sql、persons/split.py、4 个测试文件 + tests/p3_split_fixtures.py、
   tests/unit/test_p3_person_split_unit.py、tools/diagnostics/person_split_smoke_fixture.py
 加性：persons/{contracts,operations,service}.py、catalog/{errors,schema}.py、api/{models,routes,errors}.py、
