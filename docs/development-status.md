@@ -1121,7 +1121,7 @@ ACL 环境事实）记录在 [P3-06 报告](reports/P3-06-persons-ui.md) §7。
 [P3-07A 报告](reports/P3-07A-person-search-contract.md)、
 [ADR-0009](decisions/ADR-0009-person-place-combined-search-contract.md) 与
 [companion](decisions/contracts/p3-person-search-contracts.v1.json)。起点 `87ad5c7`（P3-06 收尾），
-开始时工作树干净。
+开始时工作树干净；本任务提交 `e6b1f7e`。
 
 冻结 `POST /api/v1/search` 的两个**加性可选**字段 `person_ids`（1..100 个、每个 `>= 1`）与
 `person_match`（缺省 `any`）：空/缺省**不产生**人物条件；原始重复/非整数/非正数/超界与非法枚举各有固定
