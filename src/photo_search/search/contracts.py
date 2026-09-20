@@ -18,10 +18,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.errors import INVALID_PERSON_FILTER, CatalogError
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.search.rerank import RERANK_STATES
-from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
+from photo_search.search.retrieval import (
+    DEFAULT_TOP_K,
+    MAX_PERSON_IDS,
+    MAX_TOP_K,
+    PERSON_MATCH_VALUES,
+)
 from photo_search.search.tokens import VALIDATION_ERROR
 
 #: The availability spellings the asset listing and the retrieval scope already accept.
@@ -61,6 +66,8 @@ _REQUEST_OPTIONAL = (
     "place_ids",
     "include_descendants",
     "place_state",
+    "person_ids",
+    "person_match",
     "top_k",
     "page_size",
     "rerank",
@@ -193,6 +200,25 @@ def _integer_list(value: Any, *, where: str) -> tuple[int, ...]:
     return tuple(items)
 
 
+def _person_id_list(value: Any, *, where: str) -> tuple[int, ...]:
+    """The raw ``person_ids`` array: shape only, never silently de-duplicated.
+
+    ADR-0009 §2.2 separates two events that look alike. A *repeated raw id* is a caller
+    contradicting itself and is refused here, exactly like a non-integer, a boolean or a
+    value below 1. Two *different* ids that the catalog has since merged into one person are
+    a legitimate condition and are folded later, on the resolved canonical ids.
+    """
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise fail(f"{where} must be a JSON array", where=where)
+    items: list[int] = []
+    for index, item in enumerate(value):
+        number = _integer(item, where=f"{where}[{index}]", minimum=1)
+        if number in items:
+            raise fail(f"{where} must not repeat a person id", where=where, person_id=number)
+        items.append(number)
+    return tuple(items)
+
+
 def _number_or_none(value: Any, *, where: str) -> float | None:
     if value is None:
         return None
@@ -216,6 +242,12 @@ class SearchRequest:
     place_ids: tuple[int, ...] = ()
     include_descendants: bool = True
     place_state: str = "any"
+    #: P3-07B (ADR-0009 §2): the additive person condition. ``person_ids`` is the *raw*
+    #: caller list - each element >= 1, no repeats, at most :data:`MAX_PERSON_IDS` - and the
+    #: canonical/de-duplicated/ascending form is resolved by the service in one read-only
+    #: snapshot. An empty tuple means "no person condition", never "a photo without people".
+    person_ids: tuple[int, ...] = ()
+    person_match: str = "any"
     top_k: int = DEFAULT_TOP_K
     page_size: int = DEFAULT_PAGE_SIZE
     #: P2-06B: ask for the optional rerank of the returned candidates. It is additive and
@@ -242,6 +274,29 @@ class SearchRequest:
                 expected=CONTRACT_VERSION,
             )
         dimension = _optional_integer(body.get("dimension"), where="dimension", minimum=1)
+        person_ids = _person_id_list(body.get("person_ids", ()), where="person_ids")
+        if len(person_ids) > MAX_PERSON_IDS:
+            # ADR-0009 §2.2: over the frozen ceiling is its own code, with the bound named,
+            # so a caller can tell "too many" from "that value is not a person id".
+            raise CatalogError(
+                INVALID_PERSON_FILTER,
+                f"a person filter carries at most {MAX_PERSON_IDS} person ids",
+                details={
+                    "reason": "person_filter_too_large",
+                    "max_person_ids": MAX_PERSON_IDS,
+                },
+            )
+        person_match = _enum(
+            body.get("person_match", "any"), PERSON_MATCH_VALUES, where="person_match"
+        )
+        if person_match == "all" and not person_ids:
+            # ``all`` over an empty set would silently widen to "no condition"; ADR-0009
+            # §2.2 fixes that input as an explicit refusal instead.
+            raise CatalogError(
+                INVALID_PERSON_FILTER,
+                "person_match all needs at least one person id",
+                details={"reason": "person_match_all_requires_ids", "person_match": "all"},
+            )
         return cls(
             request_id=_text(body["request_id"], where="request_id"),
             text=_optional_text(body.get("text"), where="text"),
@@ -262,6 +317,8 @@ class SearchRequest:
             place_state=_enum(
                 body.get("place_state", "any"), PLACE_STATE_VALUES, where="place_state"
             ),
+            person_ids=person_ids,
+            person_match=person_match,
             top_k=_integer(body.get("top_k", DEFAULT_TOP_K), where="top_k", minimum=1, maximum=MAX_TOP_K),
             page_size=_integer(
                 body.get("page_size", DEFAULT_PAGE_SIZE),
@@ -291,6 +348,8 @@ class SearchRequest:
             "place_ids": list(self.place_ids),
             "include_descendants": self.include_descendants,
             "place_state": self.place_state,
+            "person_ids": list(self.person_ids),
+            "person_match": self.person_match,
             "top_k": self.top_k,
             "page_size": self.page_size,
             "rerank": bool(self.rerank),

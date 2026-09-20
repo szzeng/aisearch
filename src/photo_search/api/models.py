@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from photo_search.search.contracts import (
     DEFAULT_PAGE_SIZE,
@@ -22,6 +22,7 @@ AvailabilityFilter = Literal["present", "missing", "any"]
 ReadyFilter = Literal["true", "false", "any"]
 AssetOrder = Literal["asset_id", "time_desc"]
 PlaceStateFilter = Literal["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+PersonMatchFilter = Literal["all", "any"]
 PlaceAssignmentAction = Literal["assign", "unassign", "restore_auto"]
 PlaceKind = Literal["country", "city", "attraction", "custom"]
 
@@ -942,6 +943,12 @@ class SearchRequestModel(BaseModel):
     The field names and bounds mirror ``search.contracts.SearchRequest`` exactly; the
     service converts this validated body with ``SearchRequest.from_envelope``, so the
     protocol is enforced once more at the transport-free layer.
+
+    ``person_ids`` (P3-07B, ADR-0009 §2) is deliberately the one list without a transport
+    bound: an over-long list has to be answered with the frozen ``INVALID_PERSON_FILTER``
+    (which names ``max_person_ids``), not with a generic pydantic refusal, so the count is
+    checked by the envelope. ``StrictInt`` still refuses ``true``/``1.0``/``"3"``/
+    ``null`` here, and a repeated id is refused by the envelope as well.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -958,6 +965,8 @@ class SearchRequestModel(BaseModel):
     place_ids: list[int] = Field(default_factory=list)
     include_descendants: bool = True
     place_state: PlaceStateFilter = "any"
+    person_ids: list[StrictInt] = Field(default_factory=list)
+    person_match: PersonMatchFilter = "any"
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
     #: P2-06B: ask for the optional candidate rerank. Additive and off by default.

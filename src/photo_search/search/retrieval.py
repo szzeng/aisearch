@@ -26,8 +26,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from photo_search.catalog.errors import PROCESSOR_MISMATCH, SPACE_MISMATCH, CatalogError
+from photo_search.catalog.errors import (
+    INVALID_PERSON_FILTER,
+    PROCESSOR_MISMATCH,
+    SPACE_MISMATCH,
+    CatalogError,
+)
 from photo_search.indexing.store import LanceVectorIndex
+from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places.filter import place_condition, place_filter_summary
 from photo_search.search import query as search_query
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
@@ -49,6 +55,12 @@ AUTHORITY_PAGE_LIMIT = 1000
 TOPUP_LIMIT = 200
 #: The availability spellings the asset listing already accepts (P1-04).
 AVAILABILITY_VALUES = ("present", "missing", "any")
+#: ADR-0009 §2.2: the frozen ceiling of one ``person_ids`` condition. It lives beside the
+#: other retrieval bounds so the envelope, the pydantic model and the predicate all quote
+#: the same number.
+MAX_PERSON_IDS = 100
+#: ADR-0009 §2.1: the two spellings of ``person_match``.
+PERSON_MATCH_VALUES = ("all", "any")
 
 _CONFIRMED_BLOCK_SQL = (
     "SELECT e.asset_id FROM index_entries AS e JOIN assets AS a ON a.asset_id = e.asset_id "
@@ -71,6 +83,11 @@ class SearchScope:
     place_ids: tuple[int, ...] = ()
     include_descendants: bool = True
     place_state: str = "any"
+    #: ADR-0009 §3: the *canonical* person ids of the request, already de-duplicated and
+    #: sorted by the caller, plus how they combine. An empty tuple means "no person
+    #: condition at all" - it never means "a photo without people".
+    person_ids: tuple[int, ...] = ()
+    person_match: str = "any"
 
     @classmethod
     def build(
@@ -81,6 +98,8 @@ class SearchScope:
         place_ids: Sequence[int] | None = None,
         include_descendants: bool = True,
         place_state: str = "any",
+        person_ids: Sequence[int] | None = None,
+        person_match: str = "any",
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -89,12 +108,39 @@ class SearchScope:
                 "availability must be present, missing or any",
                 details={"availability": value},
             )
+        people = tuple(sorted({int(item) for item in (person_ids or ())}))
+        mode = str(person_match or "any")
+        if mode not in PERSON_MATCH_VALUES:
+            raise CatalogError(
+                VALIDATION_ERROR,
+                "person_match must be all or any",
+                details={"person_match": mode},
+            )
+        if len(people) > MAX_PERSON_IDS:
+            raise CatalogError(
+                INVALID_PERSON_FILTER,
+                f"a person condition carries at most {MAX_PERSON_IDS} person ids",
+                details={
+                    "reason": "person_filter_too_large",
+                    "max_person_ids": MAX_PERSON_IDS,
+                },
+            )
+        if mode == "all" and not people:
+            # ``all`` over an empty set would silently widen to "no condition"; ADR-0009
+            # §2.2 fixes that input as an explicit refusal instead.
+            raise CatalogError(
+                INVALID_PERSON_FILTER,
+                "person_match all needs at least one person id",
+                details={"reason": "person_match_all_requires_ids", "person_match": "all"},
+            )
         return cls(
             source_id=None if source_id is None else int(source_id),
             availability=value,
             place_ids=tuple(int(item) for item in (place_ids or ())),
             include_descendants=bool(include_descendants),
             place_state=str(place_state or "any"),
+            person_ids=people,
+            person_match=mode,
         )
 
 
@@ -206,6 +252,10 @@ def scope_condition(
             "NOT EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = "
             f"{alias}.asset_id AND l.availability = 'PRESENT')"
         )
+    person_sql, person_parameters = person_condition(scope, alias=alias)
+    if person_sql != "1":
+        conditions.append(person_sql)
+        parameters.extend(person_parameters)
     place_sql, place_parameters = place_condition(
         connection,
         place_ids=scope.place_ids,
@@ -217,6 +267,37 @@ def scope_condition(
         conditions.append(place_sql)
         parameters.extend(place_parameters)
     return (" AND ".join(conditions) if conditions else "1"), parameters
+
+
+def person_condition(scope: SearchScope, *, alias: str = "a") -> tuple[str, list[Any]]:
+    """ADR-0009 §3: the photo-level person predicate over ``<alias>.asset_id``.
+
+    A photo belongs to a person exactly when it has at least one *effective member face* of
+    that person, so the fragment reused here is ``persons/members.py``'s single
+    ``MEMBER_PREDICATE`` - the same one ``GET /api/v1/persons/{id}`` counts with. There is no
+    second copy of "which face counts as assigned" in the retrieval layer.
+
+    ``any`` is one ``EXISTS`` over the requested people; ``all`` is one ``EXISTS`` per
+    person, ANDed. Both are authoritative SQLite predicates that every channel and the
+    pre-page re-check apply, never a derived projection.
+    """
+    if not scope.person_ids:
+        return "1", []
+
+    def exists(person_parameter: str) -> str:
+        return (
+            "EXISTS (SELECT 1 FROM face_person_links AS l JOIN faces AS f "
+            "ON f.face_id = l.face_id WHERE f.asset_id = "
+            f"{alias}.asset_id AND l.person_id {person_parameter} AND {MEMBER_PREDICATE})"
+        )
+
+    if scope.person_match == "all":
+        return (
+            " AND ".join(exists("= ?") for _ in scope.person_ids),
+            [int(person_id) for person_id in scope.person_ids],
+        )
+    placeholders = ", ".join("?" for _ in scope.person_ids)
+    return exists(f"IN ({placeholders})"), [int(person_id) for person_id in scope.person_ids]
 
 
 def scope_view(connection: sqlite3.Connection, scope: SearchScope) -> dict[str, Any]:
@@ -236,6 +317,10 @@ def scope_view(connection: sqlite3.Connection, scope: SearchScope) -> dict[str, 
         "expanded_place_ids": summary["expanded_place_ids"],
         "catalog_filter_revision": summary["catalog_filter_revision"],
         "suggestion_revision": summary["suggestion_revision"],
+        # ADR-0009 §7.1: the two person keys are always present; without a person condition
+        # they are ``[]``/``"any"``. The ids echoed are the canonical, ascending ones.
+        "person_ids": [int(value) for value in scope.person_ids],
+        "person_match": str(scope.person_match),
     }
 
 

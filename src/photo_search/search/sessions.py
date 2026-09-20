@@ -54,12 +54,18 @@ def query_hash(
     place_state: str,
     top_k: int,
     page_size: int,
+    person_ids: Sequence[int] = (),
+    person_match: str = "any",
 ) -> str:
     """A stable digest of the conditions that must stay identical across the pages.
 
     The binding (profile/generation) is *not* part of this digest on purpose: a profile
     switch is a different failure with its own code (``PROFILE_GENERATION_MISMATCH``), and
     folding it in here would report it as a malformed cursor instead.
+
+    ADR-0009 §6.2 adds the person condition, and it is the caller's job to pass the
+    *canonical*, de-duplicated, ascending ids: two different person conditions that resolve
+    to the same person must share one digest, while two different conditions must never.
     """
     payload = {
         "text": None if text is None else str(text),
@@ -70,6 +76,8 @@ def query_hash(
         "place_state": str(place_state),
         "top_k": int(top_k),
         "page_size": int(page_size),
+        "person_ids": [int(value) for value in person_ids],
+        "person_match": str(person_match),
     }
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()

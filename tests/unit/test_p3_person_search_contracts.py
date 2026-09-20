@@ -3,9 +3,12 @@
 These tests validate the draft-2020-12 subset used by the checked-in JSON companion, the
 cross-item rules JSON Schema cannot express (canonical de-duplication, the ``SYNCED``
 projection identity, the person-filter error reasons) and a reference model of the frozen
-semantics. They are contract evidence only: P3-07A adds no production code, so nothing here
-claims that the search endpoint already accepts ``person_ids`` or answers
-``INVALID_PERSON_FILTER``.
+semantics.
+
+P3-07A itself added no production code. P3-07B implements the contract, so the last section
+below additionally pins the *implementation* to the frozen shapes: the two request fields,
+the two error reasons, the bounds and the echoed key set. Those assertions are additive -
+they never weaken the P3-07A reference model above them.
 """
 
 from __future__ import annotations
@@ -20,7 +23,13 @@ from typing import Any
 
 import pytest
 
+from photo_search.catalog.errors import INVALID_PERSON_FILTER, CatalogError
 from photo_search.persons.members import MEMBER_PREDICATE, member_counts
+from photo_search.search.contracts import MAX_PERSON_IDS as REQUEST_MAX_PERSON_IDS
+from photo_search.search.contracts import SearchRequest
+from photo_search.search.retrieval import MAX_PERSON_IDS as RETRIEVAL_MAX_PERSON_IDS
+from photo_search.search.retrieval import SearchScope, scope_view
+from photo_search.search.sessions import SESSION_TTL_MS as SESSION_TTL_MS_IMPL
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = (
@@ -901,3 +910,100 @@ def test_adr_states_the_document_only_phase_boundary() -> None:
         "P3-07B",
     ):
         assert phrase in ADR
+
+
+# ------------------------------------- P3-07B: the implementation matches the freeze
+def test_the_frozen_request_fields_are_the_implemented_request_fields() -> None:
+    """The two additive fields exist, default as frozen and refuse exactly as frozen."""
+    assert REQUEST_MAX_PERSON_IDS == RETRIEVAL_MAX_PERSON_IDS == MAX_PERSON_IDS
+    assert SearchRequest.from_envelope(
+        {"contract_version": "p2-contracts.v1", "request_id": "r"}
+    ).person_ids == ()
+    assert SearchRequest.from_envelope(
+        {"contract_version": "p2-contracts.v1", "request_id": "r", "person_ids": [3]}
+    ).person_ids == (3,)
+    for overrides, expected in (
+        ({"person_match": "all"}, INVALID_PERSON_FILTER),
+        ({"person_ids": [], "person_match": "all"}, INVALID_PERSON_FILTER),
+        ({"person_ids": list(range(1, MAX_PERSON_IDS + 2))}, INVALID_PERSON_FILTER),
+        ({"person_ids": [3, 3]}, "VALIDATION_ERROR"),
+        ({"person_ids": [0]}, "VALIDATION_ERROR"),
+        ({"person_ids": "3"}, "VALIDATION_ERROR"),
+        ({"person_match": "some"}, "VALIDATION_ERROR"),
+        ({"surprise": 1}, "VALIDATION_ERROR"),
+    ):
+        with pytest.raises(CatalogError) as error:
+            SearchRequest.from_envelope(
+                {"contract_version": "p2-contracts.v1", "request_id": "r", **overrides}
+            )
+        assert error.value.code == expected, overrides
+
+
+def test_the_frozen_reasons_and_ceiling_are_the_implemented_ones() -> None:
+    with pytest.raises(CatalogError) as all_refusal:
+        SearchRequest.from_envelope(
+            {"contract_version": "p2-contracts.v1", "request_id": "r", "person_match": "all"}
+        )
+    assert all_refusal.value.details["reason"] == "person_match_all_requires_ids"
+    with pytest.raises(CatalogError) as big_refusal:
+        SearchRequest.from_envelope(
+            {
+                "contract_version": "p2-contracts.v1",
+                "request_id": "r",
+                "person_ids": list(range(1, MAX_PERSON_IDS + 2)),
+            }
+        )
+    assert big_refusal.value.details == {
+        "reason": "person_filter_too_large",
+        "max_person_ids": MAX_PERSON_IDS,
+    }
+    reasons = set(SCHEMA["$defs"]["PersonFilterReason"]["enum"])
+    assert {all_refusal.value.details["reason"], big_refusal.value.details["reason"]} == reasons
+    assert INVALID_PERSON_FILTER in SCHEMA["$defs"]["PersonSearchApiError"]["properties"][
+        "code"
+    ]["enum"]
+
+
+def test_the_frozen_echo_keys_are_the_implemented_echo_keys() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            "CREATE TABLE catalog_filter_revision (revision_id INTEGER PRIMARY KEY, "
+            "revision INTEGER);"
+            "CREATE TABLE place_suggestion_revision (revision_id INTEGER PRIMARY KEY, "
+            "revision INTEGER);"
+            "INSERT INTO catalog_filter_revision VALUES (1, 0);"
+            "INSERT INTO place_suggestion_revision VALUES (1, 0);"
+        )
+        echo = scope_view(connection, SearchScope.build())
+    finally:
+        connection.close()
+    # ``binding`` is added by the service when it shapes the response, so the two sets are
+    # compared with that one key accounted for.
+    assert set(echo) | {"binding"} == set(
+        SCHEMA["$defs"]["SearchFiltersEcho"]["required"]
+    )
+    assert echo["person_ids"] == [] and echo["person_match"] == "any"
+
+
+def test_the_frozen_bounds_are_the_implemented_bounds() -> None:
+    assert REQUEST_MAX_PERSON_IDS == SCHEMA["$defs"]["MaxPersonFilterIds"]["const"]
+    assert SESSION_TTL_MS == SESSION_TTL_MS_IMPL == SCHEMA["$defs"]["SessionTtlMs"]["const"]
+    from photo_search.search.retrieval import AUTHORITY_PAGE_LIMIT, TOPUP_LIMIT
+
+    assert AUTHORITY_PAGE_LIMIT == SCHEMA["$defs"]["MaxAuthorityPageAssets"]["const"]
+    assert TOPUP_LIMIT == SCHEMA["$defs"]["MaxTopUpEntries"]["const"]
+
+
+def test_the_person_predicate_uses_the_single_member_definition() -> None:
+    """ADR-0009 §3.1: the retrieval predicate reuses ``MEMBER_PREDICATE``, not a copy."""
+    from photo_search.search.retrieval import person_condition
+
+    for scope in (
+        SearchScope.build(person_ids=[3]),
+        SearchScope.build(person_ids=[3], person_match="all"),
+    ):
+        sql, _ = person_condition(scope)
+        assert MEMBER_PREDICATE in sql
+        assert "face_person_links AS l" in sql and "faces AS f" in sql

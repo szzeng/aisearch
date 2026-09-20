@@ -37,6 +37,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.config import resolve_data_root, vectors_dir
 from photo_search.indexing.store import LanceVectorIndex
+from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.search import documents as search_documents
 from photo_search.search import retrieval as retrieval_module
@@ -189,6 +190,8 @@ def search_assets(
     place_ids: Sequence[int] | None = None,
     include_descendants: bool = True,
     place_state: str = "any",
+    person_ids: Sequence[int] | None = None,
+    person_match: str = "any",
     vector_index: LanceVectorIndex | None = None,
     query_vector: Sequence[float] | None = None,
 ) -> dict[str, Any]:
@@ -217,6 +220,10 @@ def search_assets(
         place_ids=place_ids,
         include_descendants=include_descendants,
         place_state=place_state,
+        # ADR-0009 §3: the person condition is one more authoritative condition of the same
+        # scope, so every channel, the authoritative page and the pre-page re-check apply it.
+        person_ids=person_ids,
+        person_match=person_match,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -528,6 +535,27 @@ def _filters_echo(payload: dict[str, Any], binding: VectorBinding | None) -> dic
     return echoed
 
 
+def _canonical_person_ids(catalog: Any, request: SearchRequest) -> tuple[int, ...]:
+    """ADR-0009 §4: resolve every submitted id in one read-only snapshot.
+
+    The result is the canonical, de-duplicated, ascending id set that the predicate, the
+    ``filters`` echo and the continuation digest all use. Resolution reuses the one redirect
+    walker (``persons/identity.resolve_canonical_person_id``); the retrieval layer never
+    follows ``merged_into`` itself. Any id that does not resolve refuses the whole request
+    with its own code, so no id is dropped and no partial answer is ever produced.
+    """
+    if not request.person_ids:
+        return ()
+    return tuple(
+        sorted(
+            {
+                int(resolve_canonical_person_id(catalog.connection, int(person_id)))
+                for person_id in request.person_ids
+            }
+        )
+    )
+
+
 def _rerank_outcome(
     catalog: Any,
     request: SearchRequest,
@@ -646,6 +674,33 @@ def _continue_session(
             offset=int(offset),
             candidates=len(session.entries),
         )
+    # The two revision checks come *before* the digest comparison on purpose. ADR-0005 §10
+    # binds a session to the CatalogFilterRevision it was created under and answers
+    # ``CATALOG_FILTER_REVISION_STALE`` when it moved; ADR-0009 §4.4/§6.2 keeps that answer
+    # for every person edit, including a merge that also changes the *canonical* id a raw
+    # condition resolves to (the digest alone would report that as a malformed cursor). A
+    # genuinely different condition with an unchanged revision is still refused below.
+    revision_now = int(scope_view(catalog.connection, scope)["catalog_filter_revision"])
+    if int(session.catalog_filter_revision) != revision_now:
+        raise _refuse(
+            CATALOG_FILTER_REVISION_STALE,
+            "the effective place of at least one asset changed after this search started",
+            reason="CATALOG_FILTER_REVISION_CHANGED",
+            search_session_id=session.session_id,
+            session_catalog_filter_revision=int(session.catalog_filter_revision),
+            current_catalog_filter_revision=revision_now,
+        )
+    if request.place_state == "suggested":
+        suggestion_now = int(scope_view(catalog.connection, scope)["suggestion_revision"])
+        if int(session.suggestion_revision) != suggestion_now:
+            raise _refuse(
+                PLACE_SUGGESTION_REVISION_STALE,
+                "the visible place suggestions changed after this search started",
+                reason="SUGGESTION_REVISION_CHANGED",
+                search_session_id=session.session_id,
+                session_suggestion_revision=int(session.suggestion_revision),
+                current_suggestion_revision=suggestion_now,
+            )
     if session.query_hash != digest:
         raise _refuse(
             INVALID_CURSOR,
@@ -669,27 +724,6 @@ def _continue_session(
             current_profile_id=current[0],
             current_generation_id=current[1],
         )
-    revision_now = int(scope_view(catalog.connection, scope)["catalog_filter_revision"])
-    if int(session.catalog_filter_revision) != revision_now:
-        raise _refuse(
-            CATALOG_FILTER_REVISION_STALE,
-            "the effective place of at least one asset changed after this search started",
-            reason="CATALOG_FILTER_REVISION_CHANGED",
-            search_session_id=session.session_id,
-            session_catalog_filter_revision=int(session.catalog_filter_revision),
-            current_catalog_filter_revision=revision_now,
-        )
-    if request.place_state == "suggested":
-        suggestion_now = int(scope_view(catalog.connection, scope)["suggestion_revision"])
-        if int(session.suggestion_revision) != suggestion_now:
-            raise _refuse(
-                PLACE_SUGGESTION_REVISION_STALE,
-                "the visible place suggestions changed after this search started",
-                reason="SUGGESTION_REVISION_CHANGED",
-                search_session_id=session.session_id,
-                session_suggestion_revision=int(session.suggestion_revision),
-                current_suggestion_revision=suggestion_now,
-            )
     hits, next_offset, has_more, token = _render_page(
         catalog,
         scope,
@@ -781,6 +815,11 @@ def search_request(
         place_ids=request.place_ids,
         include_descendants=request.include_descendants,
         place_state=request.place_state,
+        # ADR-0009 §4: the person ids are resolved to their canonical persons *before* the
+        # scope exists, so the predicate, the echo and the digest cannot disagree about
+        # which people the request named.
+        person_ids=_canonical_person_ids(catalog, request),
+        person_match=request.person_match,
     )
     match = build_match(request.text) if request.text is not None else None
     profile = _resolve_profile(catalog, request)
@@ -801,6 +840,10 @@ def search_request(
         place_ids=request.place_ids,
         include_descendants=request.include_descendants,
         place_state=request.place_state,
+        # ADR-0009 §6.2: the canonical person condition is part of the continuation digest,
+        # so a cursor minted for one person condition is never accepted for another.
+        person_ids=scope.person_ids,
+        person_match=scope.person_match,
         top_k=int(request.top_k),
         page_size=int(request.page_size),
     )
@@ -849,6 +892,11 @@ def search_request(
         place_ids=request.place_ids,
         include_descendants=request.include_descendants,
         place_state=request.place_state,
+        # The person condition is the canonical one the scope and the digest were built
+        # from; a pure person filter therefore answers from the authoritative list alone,
+        # with no profile, no encoder and no GPU (ADR-0009 §3.3/§5.5).
+        person_ids=scope.person_ids,
+        person_match=scope.person_match,
         vector_index=vector_index,
         # Exactly one of "text to encode" and "an already validated vector" reaches the
         # retrieval, and only when the session is actually bound to a space.

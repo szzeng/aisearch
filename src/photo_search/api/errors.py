@@ -50,6 +50,7 @@ from photo_search.catalog.errors import (
     INVALID_CURSOR,
     INVALID_JOB_RESULT,
     INVALID_PATH,
+    INVALID_PERSON_FILTER,
     INVALID_PLACE_FILTER,
     INVALID_STATE_TRANSITION,
     JOB_NOT_FOUND,
@@ -181,6 +182,10 @@ _STATUS_BY_CODE: dict[str, int] = {
     PLACE_NOT_FOUND: 404,
     PLACE_BATCH_TOO_LARGE: 422,
     INVALID_PLACE_FILTER: 422,
+    # ADR-0009 §7.3: the person counterpart of ``INVALID_PLACE_FILTER``. A person condition
+    # that is over its ceiling, or ``all`` without any id, is a caller error - never a
+    # missing resource and never a current-state conflict.
+    INVALID_PERSON_FILTER: 422,
     GEO_COORDINATE_INVALID: 422,
     # P3-03 person naming/merge refusals (ADR-0006 §9). A missing person - or a missing
     # operation - is a 404; a blank/oversized name and an oversized merge batch are

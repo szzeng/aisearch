@@ -85,9 +85,14 @@ undo; **45 new cases, no migration, `schema_version` stays 13**. **P3-07A is PAS
 person `all`/`any` × place AND search contract — `ADR-0009`, the machine-readable companion
 `p3-person-search-contracts.v1.json` and 41 contract cases, with **zero production/schema/dependency
 change**; 1271 full cases with 0 failures / 0 errors / 48 environment skips). **P3-07B is READY / CURRENT
-TASK** — the planned P3-07 was split into **P3-07A** (the freeze above) and **P3-07B** (its
-implementation: canonical ids, authoritative re-check and cache/session invalidation), without changing
-the overall route; new/old detection `face_id` mapping remains P3-08.
+TASK** → **P3-07B is PASS** (B + D level: `person_ids`/`person_match` on `POST /api/v1/search`, the single
+`MEMBER_PREDICATE`-based authoritative person condition combined with every other condition by AND, canonical
+resolution/de-duplication, the person condition in the continuation digest, `INVALID_PERSON_FILTER` (422) and
+the `filters` echo; **63 new cases, no migration, `schema_version` stays 13**). The planned P3-07 was split
+into **P3-07A** (the freeze above) and **P3-07B** (its implementation), without changing the overall route;
+**P3-07C** (independent new-session DS-H full engineering review, plus a C2 / GPT-5.6 Sol / high focused review
+of the canonical / revision / cache-invalidation boundaries) is **READY / CURRENT TASK**, and new/old detection
+`face_id` mapping remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1150,5 +1155,57 @@ ACL 环境事实）记录在 [P3-06 报告](reports/P3-06-persons-ui.md) §7。
 新会话 DS-H 做全量工程主审（仅按 V3.1 §2.2 六类条件升 DeepSeek max），canonical/revision/缓存失效三条
 边界交 **C2 / GPT-5.6 Sol / high 聚焦终审**；请手动切换模型/推理档后在新对话继续。Windows/PyInstaller/
 浏览器环境问题升级 C1。
+
+## Latest person-search implementation closure — P3-07B (2026-09-20)
+
+**P3-07B — 人物 all/any × 地点 AND 组合搜索实现：PASS（B + D；未触发 C）。** 见
+[P3-07B 报告](reports/P3-07B-person-search-implementation.md)。起点 `6fbe68e`（P3-07A 收尾，工作树干净）。
+
+`SearchRequest`/`SearchRequestModel` 加性新增两个可选字段（`person_ids`、`person_match`），
+`p2-contracts.v1` 的既有字段、默认值、上下界与版本号一字未改；判定表逐行落地（缺省/空不产生条件；
+原始重复、非整数、`<1` 与非数组为 422 `VALIDATION_ERROR`；`all` 无 id 与 101 项为 422
+`INVALID_PERSON_FILTER`，后者带 `max_person_ids=100`）。传输层用 `StrictInt` 拒绝 `true`/浮点/字符串/
+`null`，但**故意不设** `maxItems`，以保证超界答的是冻结码而不是通用形状错误。
+
+新增 `search/retrieval.py` 的 `person_condition()`：内联 `persons/members.MEMBER_PREDICATE`（**只有一份**
+有效成员口径）、`any` 一个 `EXISTS … IN (…)`、`all` 每人一个 `EXISTS … = ?` AND，并作为权威谓词进入
+`scope_condition`，因此 FTS/向量通道、提交前复核与补查页同时受约束；人物条件不进入命中原因或排序通道。
+`sessions.query_hash` 纳入 canonical、去重、升序的人物条件；canonical 解析复用
+`persons/identity.resolve_canonical_person_id`（404 `PERSON_NOT_FOUND` / 409 `PERSON_REDIRECT_CYCLE`，
+整请求拒绝）；`scope_view` 始终回显 `person_ids`（canonical 升序，无条件时 `[]`）与 `person_match`
+（无条件时 `"any"`），`/search/image` 固定为空回显且不新增 multipart 字段。
+
+一处**刻意的判断顺序收敛**：`_continue_session` 现先比 `catalog_filter_revision`（与 suggestion
+revision）再比 `query_hash`。理由是合并会把 link 改写到目标人物、使旧 id 的 canonical 身份改变，
+旧顺序会把「合并后的旧会话续页」答成 `INVALID_CURSOR`，而 ADR-0005 §10 与 ADR-0009 §4.4/§6.2 要求
+`CATALOG_FILTER_REVISION_STALE`；revision 未变时的不同条件续页仍答 `INVALID_CURSOR`（P2-06A 既有断言
+原样通过）。**该条列为 P3-07C 主审的重点问题。**
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-07B-full --junitxml=test-results/p3-07b-full.xml` | exit 0；JUnit `tests=1334 failures=0 errors=0 skipped=48`（237.4 s）；基线 1271 → 1334（+63） |
+| 本任务专项（scope 21 + contracts 46 + integration 37） | exit 0；JUnit `tests=104 failures=0 errors=0 skipped=0`（19.3 s） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实夹具冒烟 `tools/diagnostics/person_search_smoke_fixture.py` | exit 0；`status=ok`、`problems=[]`：`person_ids=[p]` 命中数逐人等于 `GET /persons/{p}` 的 `asset_count`（2/2/0）、`any`={3 张}、`all`={1 张}、merge 后旧会话 `CATALOG_FILTER_REVISION_STALE`、旧 id 重搜回显 canonical、undo 恢复、重启后旧游标 `SEARCH_SESSION_EXPIRED` |
+| D 级注入 | 判定表全表 422 且零写零会话；`any`/`all` × 地点/来源/可用性/语义矩阵；旧 id/折叠/不存在/成环/悬挂；`SUGGESTED`/`MANUAL_UNASSIGNED`/活动排除都不命中且同图 sibling 不受影响；改名/合并/拆分/纠错/撤销后旧会话 stale 且新请求正确；不同人物条件续页 `INVALID_CURSOR`；TTL 到期 `SEARCH_SESSION_EXPIRED`；投影滞后不复活已移除命中；隐私负向扫描；四个既有 companion SHA-256 与 `0001`～`0013`/`schema_version` 13 未改 |
+
+未改动：`ADR-0009` 与 companion、四个既有 companion、`catalog/migrations/**`、`schema_version`（13）、
+依赖、`PhotoSearch.spec`、前端、`places/**`、`geo/**`、`ocr/**`、`ingestion/**`、`workers/**`、
+`face/**`；`persons/**` 只读复用（`identity`/`members`）。既有测试只**新增**用例，唯一编辑是
+`tests/unit/test_p3_person_search_contracts.py` 的文档字符串与 5 条实现↔冻结件漂移检查（原 41 例断言逐字保留）。
+
+开发期发现（**超范围、未修**）：当合并目标的 `person_id` 大于源人物时，撤销该合并会因
+`face_person_links` 的部分唯一索引触发 `IntegrityError`（反向顺序正常）。最小复现与成因见报告 §6；
+该缺陷属 `persons/operations.py` 的人物撤销语义，不在本卡允许范围，建议 P3-08 或单开卡处理。
+
+未验证项（30 万容量下人物条件延迟与索引使用、多进程并发、脸级口径、解析器 `person_mode` 映射、
+时间条件、`GET /api/v1/assets` 的人物筛选、C 级打包）记录在
+[P3-07B 报告](reports/P3-07B-person-search-implementation.md) §7。`.pytest-tmp` 受限令牌 ACL 环境事实
+沿用 P3-05B/P3-06/P3-07A，本次未改任何 ACL。
+
+下一任务是 **P3-07C — P3-07 独立新会话 DS-H 全量工程主审（含 canonical / revision / 缓存失效聚焦终审）**，
+任务卡 [docs/tasks/P3-07C.md](tasks/P3-07C.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**（仅按
+V3.1 §2.2 六类条件升 DeepSeek max），收敛后将三条边界交 **C2 / GPT-5.6 Sol / high 聚焦终审**；
+之后才是 **P3-08**。请手动切换模型/推理档后在新对话继续。Windows/PyInstaller/浏览器环境问题升级 C1。
 
 Model switching remains manual; the repository only records the recommended model per stage.

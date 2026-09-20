@@ -87,6 +87,14 @@ PLACE_SUGGESTION_REVISION_STALE = "PLACE_SUGGESTION_REVISION_STALE"
 INVALID_PLACE_FILTER = "INVALID_PLACE_FILTER"
 GEO_COORDINATE_INVALID = "GEO_COORDINATE_INVALID"
 
+#: ADR-0009 §7.3: the one *new* code of the P3-07 person-search filter, and the person
+#: counterpart of ``INVALID_PLACE_FILTER``. The request shape is otherwise well formed, but
+#: the person condition itself cannot be evaluated: ``person_match=all`` without any id, or
+#: more ids than the frozen ceiling. Every other person failure reuses an existing code on
+#: purpose, because the person and place conditions share one ``catalog_filter_revision``
+#: and a second code would suggest two independent revisions.
+INVALID_PERSON_FILTER = "INVALID_PERSON_FILTER"
+
 #: P2-03B: the resolver needs a *current* GPS fact. A missing fact is a blocking condition
 #: (the GPS task may still be pending), never a "no candidate" success and never a write.
 GEO_FACT_MISSING = "GEO_FACT_MISSING"
