@@ -4,6 +4,7 @@
 - 日期：2026-09-20
 - 实际模型：DS-H（DeepSeek V4.1 Flash / 高推理），由用户在 Codex 中手动选择；未发生自动模型切换
 - 起点 HEAD：`6fbe68e`（P3-07A 收尾，开始时工作树干净）
+- 本任务提交：`733f1a3`（7 个 src 文件 + 1 个既有测试的加性更新 + 4 个新文件；无 migration/schema/依赖变化）
 - 协议依据：[ADR-0009](../decisions/ADR-0009-person-place-combined-search-contract.md) 与
   [p3-person-search-contracts.v1.json](../decisions/contracts/p3-person-search-contracts.v1.json)（未改动）
 - 上一任务：[P3-07A 报告](P3-07A-person-search-contract.md)

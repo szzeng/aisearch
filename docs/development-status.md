@@ -1159,7 +1159,8 @@ ACL 环境事实）记录在 [P3-06 报告](reports/P3-06-persons-ui.md) §7。
 ## Latest person-search implementation closure — P3-07B (2026-09-20)
 
 **P3-07B — 人物 all/any × 地点 AND 组合搜索实现：PASS（B + D；未触发 C）。** 见
-[P3-07B 报告](reports/P3-07B-person-search-implementation.md)。起点 `6fbe68e`（P3-07A 收尾，工作树干净）。
+[P3-07B 报告](reports/P3-07B-person-search-implementation.md)。起点 `6fbe68e`（P3-07A 收尾，工作树干净），
+本任务提交 `733f1a3`。
 
 `SearchRequest`/`SearchRequestModel` 加性新增两个可选字段（`person_ids`、`person_match`），
 `p2-contracts.v1` 的既有字段、默认值、上下界与版本号一字未改；判定表逐行落地（缺省/空不产生条件；
