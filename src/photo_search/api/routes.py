@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from email.utils import formatdate
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
@@ -43,6 +44,7 @@ from photo_search.api.models import (
     FaceControlState,
     FaceCorrectionBatchRequest,
     FaceCorrectionRequest,
+    FaceListResponse,
     FaceOperationResponse,
     FeedbackListResponseModel,
     FeedbackRequestModel,
@@ -51,8 +53,10 @@ from photo_search.api.models import (
     ImageSearchResultModel,
     JobListResponse,
     JobRecord,
+    PersonListResponse,
     PersonMergeRequest,
     PersonNameRequest,
+    PersonOperationListResponse,
     PersonOperationResponse,
     PersonRecord,
     PersonSplitOperationResponse,
@@ -99,6 +103,7 @@ from photo_search.api.session import (
     safe_redirect_target,
 )
 from photo_search.catalog.errors import (
+    FACE_NOT_FOUND,
     RUNTIME_CAPABILITY_UNAVAILABLE,
     UPLOAD_TOO_LARGE,
     CatalogError,
@@ -108,7 +113,20 @@ from photo_search.config import catalog_db_path
 from photo_search.face.weights import weights_present as face_weights_present
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
-from photo_search.media.contract import PREVIEW, SPECS, THUMBNAIL, spec_for
+from photo_search.media.contract import (
+    FACE_CROP_PROCESSOR_ID,
+    PREVIEW,
+    PREVIEW_SPEC,
+    SPECS,
+    THUMBNAIL,
+    spec_for,
+)
+from photo_search.media.face_crop import (
+    crop_key,
+    parse_bbox,
+    probe_original_frame,
+    render_crop,
+)
 from photo_search.media.pipeline import MediaInterrupted
 from photo_search.media.status import (
     MEDIA_STATE_FAILED,
@@ -116,6 +134,14 @@ from photo_search.media.status import (
     MEDIA_STATE_UNSUPPORTED,
 )
 from photo_search.ocr.weights import weights_present as ocr_weights_present
+from photo_search.persons.read import (
+    clamp_page_limit as clamp_person_limit,
+)
+from photo_search.persons.read import (
+    face_page,
+    operation_page,
+    person_page,
+)
 from photo_search.persons.service import PersonService
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
@@ -840,6 +866,84 @@ async def undo_place_operation(
 
 # ------------------------------------------------------------------------------ search
 @router.get(
+    "/persons",
+    response_model=PersonListResponse,
+    summary="Paged active canonical persons with their effective counts",
+)
+async def list_persons(
+    request: Request,
+    kind: Literal["all", "named", "unnamed"] = "all",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """The person list of the P3-06 page.
+
+    Only *active canonical* persons are listed, so a merged id is never shown twice: the row
+    it used to be resolves to the person the list already carries. The counts are the
+    effective members of ADR-0006 §5 (no ``MANUAL_UNASSIGNED`` face, no actively denied
+    one), the ordering is the stable ``person_id``, and the page never materialises the
+    library in memory.
+    """
+    return person_page(
+        service_of(request).catalog,
+        limit=clamp_person_limit(limit),
+        cursor=cursor,
+        kind=kind,
+    )
+
+
+@router.get(
+    "/faces",
+    response_model=FaceListResponse,
+    summary="Paged faces: one person's effective members, or the manual-unassigned queue",
+)
+async def list_faces(
+    request: Request,
+    person_id: int | None = None,
+    assignment_state: Literal["manual_unassigned"] | None = None,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Two mutually exclusive views, exactly as the page uses them.
+
+    ``person_id=<id>`` resolves to the canonical person and lists that person's current
+    effective member faces; ``assignment_state=manual_unassigned`` lists the faces a human
+    deliberately took out of every automatic assignment. Asking for both (or neither) is a
+    caller-shape error, and a face is identified by ``face_id`` alone: no geometry, embedding,
+    score or local path leaves the catalog through this projection.
+    """
+    return face_page(
+        service_of(request).catalog,
+        limit=clamp_person_limit(limit),
+        cursor=cursor,
+        person_id=None if person_id is None else int(person_id),
+        assignment_state=None if assignment_state is None else str(assignment_state),
+    )
+
+
+@router.get(
+    "/person-operations",
+    response_model=PersonOperationListResponse,
+    summary="The append-only person operation log, newest first",
+)
+async def list_person_operations(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    """Read-only history of rename/merge/split/face-control operations and their undos.
+
+    The page gets the ``operation_id``/``operation_revision`` the shared compensation
+    endpoint needs, and nothing it must not see: no ``request_id``, no payload hash, no
+    before/after snapshot, no name, alias or face geometry. Whether an operation can still be
+    compensated is decided by the server, never predicted here.
+    """
+    return operation_page(
+        service_of(request).catalog,
+        limit=clamp_person_limit(limit),
+        cursor=cursor,
+    )
+
+
+@router.get(
     "/persons/{person_id}",
     response_model=PersonRecord,
     summary="The canonical person behind one id, with alias and member counts",
@@ -990,6 +1094,114 @@ async def post_face_assignment_batch(
         contract_version=payload.contract_version,
         request_id=payload.request_id,
     )
+
+
+@router.get(
+    "/faces/{face_id}/thumbnail",
+    summary="Bounded face-avatar crop, rendered from the safe preview of its photo",
+)
+async def face_thumbnail(request: Request, face_id: str) -> Response:
+    """Serve the avatar of one face, cropped server-side from the published preview.
+
+    The client names a ``face_id`` and nothing else: it cannot supply a path, a box or a
+    size. The authoritative box comes from ``faces``, the pixels from the frozen P1-03
+    preview (generated on demand through the same controlled boundary the asset endpoints
+    use), and the result is published into the rebuildable face-crop cache. A missing face is
+    a structured 404, an offline source or an undecodable input keeps its own stable code,
+    and the photo's other faces are never involved.
+    """
+    return await _face_crop_response(request, str(face_id))
+
+
+@router.head("/faces/{face_id}/thumbnail", include_in_schema=False)
+async def face_thumbnail_head(request: Request, face_id: str) -> Response:
+    return await _face_crop_response(request, str(face_id))
+
+
+async def _face_crop_response(request: Request, face_id: str) -> Response:
+    service = service_of(request)
+    catalog = service.catalog
+    cache = service.media_cache()
+    row = catalog.read_one(
+        "SELECT face_id, asset_id, bbox_json FROM faces WHERE face_id = ?", (str(face_id),)
+    )
+    if row is None:
+        raise ApiError(
+            FACE_NOT_FOUND,
+            f"face {str(face_id)} does not exist",
+            details={"face_id": str(face_id)},
+        )
+    # A stored box that is not a finite four-number rectangle is a catalog defect, not a
+    # request error; it is reported as a state conflict instead of being guessed at.
+    box = parse_bbox(row["bbox_json"])
+    asset_id = int(row["asset_id"])
+    asset = catalog.read_one(
+        "SELECT sha256 FROM assets WHERE asset_id = ?", (asset_id,)
+    )
+    if asset is None:
+        raise ApiError(
+            FACE_NOT_FOUND,
+            "the face refers to an asset that no longer exists",
+            details={"face_id": str(face_id)},
+        )
+    sha256 = str(asset["sha256"])
+    key = crop_key(face_id=str(row["face_id"]), box=box, sha256=sha256)
+    path = cache.face_crop_path(key=key)
+    etag = f'"{FACE_CROP_PROCESSOR_ID}:{key}"'
+    headers = {"ETag": etag, "Cache-Control": ARTIFACT_CACHE_CONTROL}
+    if not cache.is_published(path):
+        # 1. the source must still be a registered position that passes every boundary check
+        location = resolve_present_location(catalog, asset_id)
+        # 2. the frozen preview is published first, exactly like ``/assets/{id}/preview``
+        preview = _ensure_preview(service, asset_id, sha256)
+        # 3. the crop is rendered off the event loop, then published atomically
+        source_size = await asyncio.to_thread(probe_original_frame, location.absolute_path)
+        payload = await asyncio.to_thread(
+            render_crop, preview, box=box, source_size=source_size
+        )
+        cache.publish(path, payload)
+    if _not_modified(request, etag):
+        return Response(status_code=304, headers=headers)
+    payload = await asyncio.to_thread(path.read_bytes)
+    headers["Content-Length"] = str(len(payload))
+    if request.method.upper() == "HEAD":
+        return Response(status_code=200, headers=headers, media_type="image/jpeg")
+    return Response(content=payload, status_code=200, headers=headers, media_type="image/jpeg")
+
+
+def _ensure_preview(service: CatalogService, asset_id: int, sha256: str) -> Path:
+    """Publish (once) the frozen P1-03 preview of one asset, or refuse with its own code.
+
+    The state machine is the one ``GET /assets/{id}/preview`` already implements: a recorded
+    deterministic failure is reported from its record instead of re-decoding the same bytes,
+    and generation only starts after a registered position passed the controlled boundary.
+    """
+    catalog = service.catalog
+    cache = service.media_cache()
+    state = media_state(catalog, cache, int(asset_id), PREVIEW)
+    if state["state"] in (MEDIA_STATE_FAILED, MEDIA_STATE_UNSUPPORTED):
+        raise ApiError(
+            str(state["code"]),
+            str(
+                (state["record"] or {}).get("message")
+                or "this input cannot be decoded into a derived artifact"
+            ),
+            details={"asset_id": int(asset_id), "kind": PREVIEW, "state": state["state"]},
+        )
+    if state["state"] != MEDIA_STATE_READY:
+        resolve_present_location(catalog, int(asset_id))
+        _generate_one(service, int(asset_id), PREVIEW)
+        state = media_state(catalog, cache, int(asset_id), PREVIEW)
+    if state["state"] != MEDIA_STATE_READY:
+        raise ApiError(
+            str(state["code"] or MEDIA_NOT_READY),
+            str(
+                (state["record"] or {}).get("message")
+                or "no usable preview could be produced for this asset"
+            ),
+            details={"asset_id": int(asset_id), "kind": PREVIEW, "state": state["state"]},
+        )
+    return cache.artifact_path(spec=PREVIEW_SPEC, sha256=str(sha256))
 
 
 # ------------------------------------------------------------------------------ search

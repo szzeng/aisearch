@@ -32,6 +32,7 @@ from photo_search.config import (
     thumbnails_dir,
 )
 from photo_search.media.contract import (
+    FACE_CROP_PROCESSOR_ID,
     FAILURE_SUFFIX,
     JPEG_SUFFIX,
     PREVIEW,
@@ -43,6 +44,9 @@ from photo_search.media.contract import (
 SHA256_LENGTH = 64
 _HEX_DIGITS = frozenset("0123456789abcdef")
 FAILURE_RECORD_SCHEMA = 1
+#: Rebuildable face-avatar crops live beside the failure records, under ``cache/``: they are
+#: derived from the published preview and can be deleted at any time without losing a fact.
+FACE_CROPS_DIRNAME = "face-crops"
 
 
 def require_sha256(value: str) -> str:
@@ -69,10 +73,16 @@ class MediaCache:
         thumbnails_root: Path,
         previews_root: Path,
         failures_root: Path,
+        face_crops_root: Path | None = None,
     ) -> None:
         self.thumbnails_root = Path(thumbnails_root)
         self.previews_root = Path(previews_root)
         self.failures_root = Path(failures_root)
+        self.face_crops_root = (
+            Path(face_crops_root)
+            if face_crops_root is not None
+            else Path(failures_root).parent / FACE_CROPS_DIRNAME
+        )
 
     @classmethod
     def open(cls, data_root: str | Path | None = None) -> MediaCache:
@@ -81,6 +91,7 @@ class MediaCache:
             thumbnails_root=thumbnails_dir(root),
             previews_root=previews_dir(root),
             failures_root=media_cache_dir(root),
+            face_crops_root=media_cache_dir(root).parent / FACE_CROPS_DIRNAME,
         )
 
     # ------------------------------------------------------------------- locations
@@ -106,6 +117,17 @@ class MediaCache:
         return (
             self.failure_shard_dir(spec=spec, sha256=sha256)
             / f"{require_sha256(sha256)}{FAILURE_SUFFIX}"
+        )
+
+    def face_crop_path(self, *, key: str) -> Path:
+        """Published face-avatar crop for one (face, geometry, content) identity."""
+        digest = require_sha256(key)
+        return (
+            self.face_crops_root
+            / FACE_CROP_PROCESSOR_ID
+            / digest[:2]
+            / digest[2:4]
+            / f"{digest}{JPEG_SUFFIX}"
         )
 
     # -------------------------------------------------------------------- artifacts

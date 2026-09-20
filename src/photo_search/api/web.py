@@ -31,6 +31,9 @@ PLACES_NAME = "places.html"
 #: The search page (P2-07). Same rule as the place page: a public document whose every piece
 #: of data still comes from the session-protected ``/api/v1`` endpoints.
 SEARCH_NAME = "search.html"
+#: The person-curation page (P3-06). It never shadows ``/api/v1/persons`` or
+#: ``/api/v1/person-operations``: this route only answers the bare ``/persons`` document.
+PERSONS_NAME = "persons.html"
 
 #: The shell must always be revalidated: it names the assets of this exact build.
 SHELL_CACHE_CONTROL = "no-cache"
@@ -144,6 +147,17 @@ async def search_page() -> Response:
     return _serve(SEARCH_NAME, cache_control=SHELL_CACHE_CONTROL)
 
 
+@router.get("/persons")
+async def persons_page() -> Response:
+    """The person-curation page.
+
+    The business API keeps its own prefix, so ``/persons`` and ``/api/v1/persons`` coexist:
+    this route only answers the document, and every person, face, count and operation still
+    comes from the session-protected ``/api/v1`` endpoints.
+    """
+    return _serve(PERSONS_NAME, cache_control=SHELL_CACHE_CONTROL)
+
+
 @router.get("/web/{path:path}")
 async def static_asset(path: str) -> Response:
     """One packaged script, style or image below ``/web/``."""
@@ -151,7 +165,7 @@ async def static_asset(path: str) -> Response:
     # script or stylesheet only changes with a build.
     cache_control = (
         SHELL_CACHE_CONTROL
-        if path in (INDEX_NAME, PLACES_NAME, SEARCH_NAME)
+        if path in (INDEX_NAME, PLACES_NAME, SEARCH_NAME, PERSONS_NAME)
         else ASSET_CACHE_CONTROL
     )
     return _serve(path, cache_control=cache_control)
@@ -160,6 +174,7 @@ async def static_asset(path: str) -> Response:
 __all__ = [
     "ASSET_CACHE_CONTROL",
     "INDEX_NAME",
+    "PERSONS_NAME",
     "PLACES_NAME",
     "SEARCH_NAME",
     "SHELL_CACHE_CONTROL",

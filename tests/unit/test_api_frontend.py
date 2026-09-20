@@ -16,6 +16,7 @@ from photo_search.api.queries import (
 from photo_search.api.session import safe_redirect_target
 from photo_search.api.web import (
     INDEX_NAME,
+    PERSONS_NAME,
     PLACES_NAME,
     SEARCH_NAME,
     media_type_for_name,
@@ -522,3 +523,169 @@ def test_the_three_documents_navigate_to_each_other() -> None:
     assert 'href="/search"' in places_shell
     assert 'href="/"' in search_shell
     assert 'href="/places"' in search_shell
+
+
+# ---------------------------------------------------------------------------------------
+# P3-06: the person-curation page. Same package-data rules as the three documents above, plus
+# one assertion per promise the page makes about the frozen person/face/split surface.
+# ---------------------------------------------------------------------------------------
+PERSONS_DOCUMENTS = ("persons.html", "persons.js", "persons.css")
+
+
+def _persons_documents() -> tuple[str, str, str]:
+    shell = (read_static(PERSONS_NAME) or b"").decode("utf-8")
+    script = (read_static("persons.js") or b"").decode("utf-8")
+    style = (read_static("persons.css") or b"").decode("utf-8")
+    assert shell and script and style
+    return shell, script, style
+
+
+@pytest.mark.parametrize("relative", PERSONS_DOCUMENTS)
+def test_the_persons_page_assets_are_packaged(relative: str) -> None:
+    payload = read_static(relative)
+    assert payload and len(payload) > 0
+
+
+def test_the_persons_page_route_never_shadows_the_person_api() -> None:
+    """``/persons`` is a document; the data still comes from ``/api/v1``."""
+    from photo_search.api.routes import router as api_router
+    from photo_search.api.web import router as web_router
+
+    api_paths = {route.path for route in api_router.routes}
+    web_paths = {route.path for route in web_router.routes}
+    assert PERSONS_NAME == "persons.html"
+    assert "/persons" in web_paths
+    assert "/api/v1/persons" in api_paths
+    assert "/api/v1/faces" in api_paths
+    assert "/api/v1/faces/{face_id}/thumbnail" in api_paths
+    assert "/api/v1/person-operations" in api_paths
+    assert "/persons" not in api_paths
+
+
+def test_the_persons_page_has_no_external_reference_credential_or_html_sink() -> None:
+    shell, script, style = _persons_documents()
+
+    for document in (shell, script, style):
+        assert "http://" not in document
+        assert "https://" not in document
+    assert 'lang="zh-CN"' in shell
+    assert "/web/persons.js" in shell
+    assert "/web/styles.css" in shell
+    assert "/web/persons.css" in shell
+    assert 'href="/"' in shell
+    assert "ps_csrf" in script
+    assert "X-CSRF-Token" in script
+    assert 'credentials: "same-origin"' in script
+    assert "localStorage" not in script
+    assert "sessionStorage" not in script
+    assert "console." not in script
+    assert "innerHTML" not in script
+    assert "token=" not in script
+    assert "csrf_token" not in script
+    assert "错误详情包含本机路径" in script
+    assert "PATH_LIKE" in script
+    # The page states what it will not do instead of hiding it.
+    assert "本页不提供的动作" in shell
+    assert "不触发任何模型推理" in shell
+
+
+def test_the_persons_page_reaches_data_only_through_the_protected_api() -> None:
+    _, script, _ = _persons_documents()
+
+    assert 'var API = "/api/v1";' in script
+    assert script.count("fetch(") == script.count("fetch(API +")
+    assert "sqlite" not in script.lower()
+    assert "catalog.db" not in script
+    # Exactly the endpoints this page is allowed to use.
+    for path in (
+        "/persons",
+        "/faces",
+        "/face-assignments/batch",
+        "/person-operations",
+        "/capabilities",
+    ):
+        assert '"' + path in script, path
+    # The avatar URL is always the one the server handed out, never one the page builds.
+    assert "image.src = person.thumbnail_url;" in script
+    assert "image.src = face.thumbnail_url;" in script
+    # No coordinates, no stored root path, no private field name.
+    for fragment in (
+        "/geo",
+        "latitude",
+        "normalized_wgs84",
+        "root_path",
+        "bbox",
+        "landmark",
+        "vector",
+        "similarity",
+        "confidence",
+        "name_key",
+        "snapshot",
+    ):
+        assert fragment not in script, fragment
+
+
+def test_the_persons_page_keeps_the_frozen_person_vocabulary() -> None:
+    shell, script, _ = _persons_documents()
+
+    # Every refusal the page can meet is shown with the server's own code.
+    for code in (
+        "PERSON_REVISION_CONFLICT",
+        "PERSON_IDEMPOTENCY_CONFLICT",
+        "PERSON_NOT_FOUND",
+        "PERSON_REDIRECT_CYCLE",
+        "PERSON_SPLIT_CONFLICT",
+        "FACE_ASSIGNMENT_CONFLICT",
+        "FACE_IDEMPOTENCY_CONFLICT",
+        "FACE_STATE_CONFLICT",
+        "FACE_NOT_FOUND",
+        "FACE_OPERATION_NOT_UNDOABLE",
+        "PERSON_OPERATION_NOT_UNDOABLE",
+        "INVALID_CURSOR",
+    ):
+        assert code in script, code
+    # The frozen contract versions and the write vocabulary are used as-is.
+    assert "p3-person-split-contracts.v1" in script
+    assert "p3-face-correction-contracts.v1" in script
+    assert "MAX_BATCH = 500" in script
+    assert "restore_auto" in script
+    assert '"assign"' in script
+    assert '"unassign"' in script
+    assert "expected_revision" in script
+    assert "source_expected_revision" in script
+    assert "expected_control_revision" in script
+    assert "expected_assignment_revision" in script
+    assert "expected_operation_revision" in script
+    assert "request_id" in script
+    # The three views, the human lock vocabulary and the honest non-claims.
+    assert "manual_unassigned" in script
+    assert "MANUAL_UNASSIGNED" in shell + script
+    assert "同一张照片的其他脸不会被自动带入" in shell
+    assert "不会因为同一张照片的其它脸而联动" in shell
+    assert "同名合并" in shell + script
+    assert "能否撤销由服务器的冲突矩阵" in shell
+    assert "缺模型" in shell + script or "缺少模型权重" in shell
+    assert "服务端按权威人脸框裁剪" in shell
+
+
+def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists() -> None:
+    """The entry is hidden by default and revealed from ``/capabilities``."""
+    shell, script, _ = _web_documents()
+    places_shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
+    search_shell = (read_static(SEARCH_NAME) or b"").decode("utf-8")
+    places_script = (read_static("places.js") or b"").decode("utf-8")
+    search_script = (read_static("search.js") or b"").decode("utf-8")
+    persons_shell = (read_static(PERSONS_NAME) or b"").decode("utf-8")
+
+    for document in (shell, places_shell, search_shell):
+        assert 'id="nav-persons" href="/persons" hidden' in document
+    for code in (script, places_script, search_script):
+        assert "function revealPersonsNav(body)" in code
+        assert 'link.hidden = !usable;' in code
+        # The gate is the schema the person read layer needs, not the presence of a model.
+        assert "version >= 13" in code
+        assert 'schema_status' in code
+    # The page itself navigates back to the other three documents.
+    assert 'href="/"' in persons_shell
+    assert 'href="/search"' in persons_shell
+    assert 'href="/places"' in persons_shell

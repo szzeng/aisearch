@@ -937,12 +937,30 @@
     text(els.bindingHint, lines.join(" "));
   }
 
+  //: The person page is only offered when the read layer it needs really exists in this
+  //: catalog: the P3-05B schema (person controls, the widened operation log, the split
+  //: vocabulary). Missing face models never hide it - browsing and curating the person data
+  //: that already exists works without a model.
+  function revealPersonsNav(body) {
+    var link = document.getElementById("nav-persons");
+    if (!link) {
+      return;
+    }
+    var version = Number(body && body.schema_version);
+    var usable =
+      isFinite(version) && version >= 13 && String(body && body.schema_status) === "ok";
+    link.hidden = !usable;
+  }
+
   function loadCapabilities() {
+    // The person navigation entry reads the same capabilities document; it stays hidden
+    // until the catalog really carries the person read layer.
     return request("/capabilities").then(
       function (result) {
         var body = result.body || {};
         state.capabilities = body;
         clearNotice();
+        revealPersonsNav(body);
         var schema =
           body.schema_version === null || body.schema_version === undefined
             ? "尚未初始化"

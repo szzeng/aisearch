@@ -22,19 +22,8 @@ from photo_search.persons.identity import (
     resolve_canonical_person_id,
     resolve_redirect,
 )
+from photo_search.persons.members import MEMBER_SQL as _MEMBER_SQL
 from photo_search.places import revision as revision_module
-
-#: A member face is one *effective* link that neither the human lock nor an active human
-#: denial forbids. A photo count is that same set counted by distinct ``asset_id``.
-_MEMBER_SQL = (
-    "SELECT COUNT({aggregate}) AS total FROM face_person_links AS l "
-    "JOIN faces AS f ON f.face_id = l.face_id "
-    "WHERE l.person_id = ? AND l.decision = 'CONFIRMED' "
-    "AND NOT EXISTS (SELECT 1 FROM face_assignment_controls AS c "
-    " WHERE c.face_id = l.face_id AND c.mode = 'MANUAL_UNASSIGNED') "
-    "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e "
-    " WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1)"
-)
 
 
 class PersonService:

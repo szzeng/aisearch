@@ -251,6 +251,33 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             )
             checks["places_style_status"] = client.get("/web/places.css").status_code
             checks["shell_links_to_places"] = 'href="/places"' in shell.text
+            # P3-06: the person-curation page must be inside the frozen bundle as well, and the
+            # navigation entry for it must ship (hidden by default, revealed from
+            # /capabilities) on all three existing documents.
+            persons_page = client.get("/persons")
+            checks["persons_page_status"] = persons_page.status_code
+            checks["persons_page_content_type"] = persons_page.headers.get("Content-Type")
+            checks["persons_page_cache_control"] = persons_page.headers.get("Cache-Control")
+            checks["persons_page_has_no_external_reference"] = (
+                "http://" not in persons_page.text and "https://" not in persons_page.text
+            )
+            checks["persons_page_has_no_local_path"] = all(
+                needle not in persons_page.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            checks["persons_page_links_back_to_shell"] = 'href="/"' in persons_page.text
+            checks["persons_page_links_to_search_and_places"] = (
+                'href="/search"' in persons_page.text and 'href="/places"' in persons_page.text
+            )
+            persons_script = client.get("/web/persons.js")
+            checks["persons_script_status"] = persons_script.status_code
+            checks["persons_script_content_type"] = persons_script.headers.get("Content-Type")
+            checks["persons_script_bytes"] = len(persons_script.content)
+            checks["persons_script_has_no_external_reference"] = (
+                "http://" not in persons_script.text
+                and "https://" not in persons_script.text
+            )
+            checks["persons_style_status"] = client.get("/web/persons.css").status_code
             # P2-07: the search page must be inside the frozen bundle as well, and all three
             # documents have to navigate to each other.
             search_page = client.get("/search")
@@ -276,6 +303,12 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             checks["search_style_status"] = client.get("/web/search.css").status_code
             checks["shell_links_to_search"] = 'href="/search"' in shell.text
             checks["places_page_links_to_search"] = 'href="/search"' in places_page.text
+            # P3-06: all three documents offer the person page (hidden until
+            # /capabilities proves the catalog carries the person read layer).
+            checks["nav_offers_persons"] = all(
+                'id="nav-persons" href="/persons"' in document.text
+                for document in (shell, places_page, search_page)
+            )
             checks["web_missing_status"] = client.get("/web/does-not-exist.js").status_code
             checks["stats_without_session"] = client.get("/api/v1/stats").status_code
             # Follow the launcher's own single-use link: it must set both cookies and
@@ -614,6 +647,77 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                         "faces": [],
                     },
                 ).status_code
+
+            # P3-06: the four read surfaces the person page needs must exist inside the frozen
+            # bundle and stay session-protected. The catalog here carries no faces at all, so
+            # the honest answers are an empty page, an empty log and a structured 404 - never a
+            # 500 and never a leaked path.
+            persons_list = client.get("/api/v1/persons", params={"limit": 5})
+            checks["persons_list_status"] = persons_list.status_code
+            persons_body = persons_list.json() if persons_list.status_code == 200 else {}
+            checks["persons_list_shape"] = {
+                "kind": persons_body.get("kind"),
+                "persons": len(persons_body.get("persons") or []),
+                "has_more": persons_body.get("has_more"),
+            }
+            faces_list = client.get("/api/v1/faces", params={"person_id": 1, "limit": 5})
+            checks["faces_list_status"] = faces_list.status_code
+            # This fixture library has no person at all, so naming one is an honest 404 rather
+            # than an empty page that pretends the person exists.
+            checks["faces_list_code"] = (
+                (faces_list.json() or {}).get("code") if faces_list.status_code != 200 else None
+            )
+            manual_list = client.get(
+                "/api/v1/faces", params={"assignment_state": "manual_unassigned", "limit": 5}
+            )
+            checks["manual_faces_status"] = manual_list.status_code
+            manual_body = manual_list.json() if manual_list.status_code == 200 else {}
+            checks["manual_faces_view"] = manual_body.get("view")
+            checks["manual_faces_rows"] = len(manual_body.get("faces") or [])
+            operations_list = client.get("/api/v1/person-operations", params={"limit": 5})
+            checks["person_operations_status"] = operations_list.status_code
+            operations_body = (
+                operations_list.json() if operations_list.status_code == 200 else {}
+            )
+            checks["person_operations_shape"] = {
+                "operations": len(operations_body.get("operations") or []),
+                "has_more": operations_body.get("has_more"),
+            }
+            face_crop = client.get("/api/v1/faces/" + "0" * 64 + "/thumbnail")
+            checks["face_crop_missing_status"] = face_crop.status_code
+            checks["face_crop_missing_code"] = (
+                face_crop.json().get("code") if face_crop.status_code != 200 else None
+            )
+            checks["person_read_has_no_private_fact"] = all(
+                needle not in rendered
+                for rendered in (
+                    persons_list.text,
+                    faces_list.text,
+                    manual_list.text,
+                    operations_list.text,
+                    face_crop.text,
+                )
+                for needle in (
+                    str(work_dir),
+                    str(data_root),
+                    str(library),
+                    "bbox",
+                    "landmark",
+                    "name_key",
+                    "payload_sha256",
+                )
+            )
+            with httpx.Client(base_url=base, timeout=60.0) as anonymous:
+                checks["persons_without_session"] = anonymous.get("/api/v1/persons").status_code
+                checks["faces_without_session"] = anonymous.get(
+                    "/api/v1/faces", params={"person_id": 1}
+                ).status_code
+                checks["person_operations_without_session"] = anonymous.get(
+                    "/api/v1/person-operations"
+                ).status_code
+                checks["face_crop_without_session"] = anonymous.get(
+                    "/api/v1/faces/" + "0" * 64 + "/thumbnail"
+                ).status_code
             checks["packaged_person_schema"] = packaged_person_schema(data_root)
 
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
@@ -775,6 +879,31 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("places script external references")
     if checks.get("places_style_status") != 200:
         problems.append("packaged places stylesheet")
+    # P3-06: the person page, its assets and the navigation entry must all be in the bundle.
+    if checks.get("persons_page_status") != 200 or "text/html" not in str(
+        checks.get("persons_page_content_type")
+    ):
+        problems.append("packaged persons page")
+    if checks.get("persons_page_cache_control") != "no-cache":
+        problems.append("persons page cache control")
+    if not checks.get("persons_page_has_no_external_reference"):
+        problems.append("persons page external references")
+    if not checks.get("persons_page_has_no_local_path"):
+        problems.append("persons page local paths")
+    if not checks.get("persons_page_links_back_to_shell") or not checks.get(
+        "persons_page_links_to_search_and_places"
+    ):
+        problems.append("persons page navigation")
+    if checks.get("persons_script_status") != 200 or "javascript" not in str(
+        checks.get("persons_script_content_type")
+    ):
+        problems.append("packaged persons script")
+    if not checks.get("persons_script_has_no_external_reference"):
+        problems.append("persons script external references")
+    if checks.get("persons_style_status") != 200:
+        problems.append("packaged persons stylesheet")
+    if not checks.get("nav_offers_persons"):
+        problems.append("navigation entry for the persons page")
     if checks.get("web_missing_status") != 404:
         problems.append("unknown web asset")
     if checks.get("health") != 200:
@@ -888,6 +1017,37 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("split refusal leaked a local path")
     if checks.get("split_without_session") != 401:
         problems.append("packaged split without a session")
+    # P3-06 read surfaces: an empty catalog must answer with empty pages, not with a 500.
+    if checks.get("persons_list_status") != 200:
+        problems.append("packaged persons list")
+    if (checks.get("persons_list_shape") or {}).get("kind") != "all":
+        problems.append("packaged persons list shape")
+    if checks.get("faces_list_status") != 404 or checks.get("faces_list_code") != "PERSON_NOT_FOUND":
+        problems.append("packaged faces list")
+    if checks.get("manual_faces_status") != 200:
+        problems.append("packaged manual-unassigned list")
+    if checks.get("manual_faces_view") != "manual_unassigned" or checks.get(
+        "manual_faces_rows"
+    ) != 0:
+        problems.append("packaged manual-unassigned list shape")
+    if checks.get("person_operations_status") != 200:
+        problems.append("packaged person operation log")
+    if "operations" not in (checks.get("person_operations_shape") or {}):
+        problems.append("packaged person operation log shape")
+    if checks.get("face_crop_missing_status") != 404 or checks.get(
+        "face_crop_missing_code"
+    ) != "FACE_NOT_FOUND":
+        problems.append("packaged face crop route")
+    if not checks.get("person_read_has_no_private_fact"):
+        problems.append("person read surface leaked a private fact or a local path")
+    for key in (
+        "persons_without_session",
+        "faces_without_session",
+        "person_operations_without_session",
+        "face_crop_without_session",
+    ):
+        if checks.get(key) != 401:
+            problems.append(f"packaged {key}")
     person_schema = checks.get("packaged_person_schema") or {}
     if (
         person_schema.get("schema_version") != 13

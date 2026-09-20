@@ -691,6 +691,115 @@ class PersonOperationResponse(BaseModel):
     items: list[PersonOperationItemResponse]
 
 
+class PersonSummary(BaseModel):
+    """One card of ``GET /api/v1/persons`` (P3-06).
+
+    Only the fields a person card paints are part of it: identity, revision and the two
+    *effective* counts. ``name_key``, the alias spelling, a face box and every vector stay
+    inside the catalog. ``thumbnail_url`` is a relative controlled API path, never a local
+    path, and it is ``None`` for a person without an avatar face.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    person_id: int
+    name: str | None = None
+    revision: int
+    avatar_face_id: str | None = None
+    face_count: int
+    asset_count: int
+    thumbnail_url: str | None = None
+
+
+class PersonListResponse(BaseModel):
+    """A bounded page of active canonical persons in stable ``person_id`` order."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    persons: list[PersonSummary]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+    kind: Literal["all", "named", "unnamed"]
+
+
+class FaceSummary(BaseModel):
+    """One row of ``GET /api/v1/faces``: the page's own view of one face.
+
+    The control projection mirrors ``GET /api/v1/faces/{face_id}/assignment``: a face
+    without a control row is ``AUTO_ALLOWED`` at revision 0. No box, landmark, embedding,
+    candidate score, similarity or path is part of this model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    face_id: str
+    asset_id: int
+    mode: Literal["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    control_revision: int
+    assigned_person_id: int | None = None
+    assignment_revision: int | None = None
+    suggestions_available: bool
+    thumbnail_url: str
+
+
+class FaceListResponse(BaseModel):
+    """One of the two mutually exclusive face views: a person's members or the manual queue."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    faces: list[FaceSummary]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+    view: Literal["person", "manual_unassigned"]
+    requested_person_id: int | None = None
+    canonical_person_id: int | None = None
+    redirected: bool = False
+    #: The canonical person's current revision, so a page can submit a rename without
+    #: inventing one. It is ``None`` for the manual-unassigned queue.
+    person_revision: int | None = None
+
+
+class PersonOperationSummary(BaseModel):
+    """One line of ``GET /api/v1/person-operations``.
+
+    The log itself is the authority for idempotency and history, but a page only needs the
+    identity, the status and *which ids* an operation touched. ``request_id``,
+    ``payload_sha256``, the before/after snapshots, names, aliases and face geometry are
+    deliberately absent, and no "can this be undone?" verdict is predicted here: the shared
+    compensation endpoint decides that against the frozen conflict matrix.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: Literal["COMMITTED", "UNDONE"]
+    undo_of_operation_id: str | None = None
+    undone_by_operation_id: str | None = None
+    target_person_id: int | None = None
+    changed: bool
+    item_count: int
+    person_ids: list[int] = Field(default_factory=list)
+    face_ids: list[str] = Field(default_factory=list)
+    catalog_filter_revision: int
+    created_at: int
+    committed_at: int
+
+
+class PersonOperationListResponse(BaseModel):
+    """A bounded page of the append-only person operation log, newest first."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operations: list[PersonOperationSummary]
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+
+
 # ---------------------------------------------------------------------------------- faces
 
 

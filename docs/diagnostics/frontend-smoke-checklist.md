@@ -173,3 +173,83 @@ Object.keys(localStorage).length + Object.keys(sessionStorage).length === 0;
   1280），所以 640px 渲染本身没有被直接截图。可复现的代证据是「513 个元素中 0 个存在内部横向溢出
   （`scrollWidth <= clientWidth`）」加上 `minmax(min(100%, 24rem), 1fr)` 的网格与 `max-width: 100%`
   的输入控件；需要真实 640px 像素证据时应换用可设视口的浏览器或 C1 复核。
+
+## 7. 人物整理页（P3-06）
+
+页面：`/persons`（`src/photo_search/web/persons.html` + `persons.js` + `persons.css`），由
+`src/photo_search/api/web.py` 从 package data 提供。它与 `/api/v1/persons`、`/api/v1/faces`、
+`/api/v1/person-operations` **不是同一个路径**：文档是公开的，人物/脸/操作记录仍只来自会话保护的
+`/api/v1`。可自动化的部分仍是静态契约（`tests/unit/test_api_frontend.py` 的 P3-06 段）与页面发出的
+每个请求形状（`tests/integration/test_p3_persons_page.py`、`test_p3_persons_read_api.py`、
+`test_p3_face_thumbnail.py`），浏览器内交互只能人工核对，本节就是那一遍人工核对。
+
+### 7.1 生成夹具
+
+```text
+uv run --no-sync python tools/diagnostics/persons_page_smoke_fixture.py --reset
+```
+
+- 在 `%TEMP%\PhotoSearchPersonsSmoke` 下生成 17 张合成 JPEG（中文/空格目录名）、真实扫描，然后
+  **直接 seed** 23 张权威脸行、15 个人物（2 个已命名、13 个未命名分组）与 1 张
+  `MANUAL_UNASSIGNED` 脸（与冻结的 unassign 写入形态一致：无有效 link + 人工锁 + 活动排除）。
+- 不下载任何模型：本机没有 buffalo_l 权重，页面需要一个**已存在**的人物目录，因此夹具 seed 权威事实
+  而不是跑检测；真实检测链路仍由 P3-02/P3-03 的报告覆盖。
+- 只写自己 `%TEMP%` 目录内的合成文件；`--reset` 只删除它自己创建的目录。
+
+### 7.2 启动真实端口的服务
+
+```text
+$env:PHOTO_SEARCH_DATA_ROOT = "<脚本打印的 data_root>"   # 中文/空格路径直接用环境变量传，避免参数编码
+.\.venv\Scripts\python.exe -m photo_search --port <free-port>
+```
+
+控制台打印一次性会话链接（`?next=/&token=…`）。这是凭证唯一允许出现的地方：访问日志里记为
+`token=<redacted>`。
+
+### 7.3 核对步骤（逐条记录结果）
+
+| # | 操作 | 期望观察 | 不满足即不得 PASS 的判据 |
+|---|---|---|---|
+| 1 | 打开一次性链接（`next=/persons`） | 303 落到 `/persons`；标题「人物整理」；`app-meta` 报 `schema v13（ok）`；导航含返回/搜索/地点 | 落到空白页 / 无限重试 / 401 循环 |
+| 2 | 「已命名人物」视图 | 人物卡显示真实裁剪头像、`#id`、revision 与「有效成员：脸 N · 照片 N」 | 出现盘符路径 / 破图 / 计数与 `#id` 详情不一致 |
+| 3 | 「未命名分组」视图 | 未命名人物显示「暂无头像」占位而不是破图 | 无空态说明；把无头像当错误 |
+| 4 | 每页条数改 10 → 点「加载更多（沿用当前游标）」 | 第一页 10 条「还有更多」，第二页 3 条「已到末尾」，合计行数正确且 `#id` 不重复 | 翻页重复/漏行；游标被当成新查询 |
+| 5 | 「待手动归类」视图 | 只列 `MANUAL_UNASSIGNED` 脸，显示「人工取消归类（带锁）」「有效归属 无」 | 列出普通成员脸；把建议当成已归属 |
+| 6 | 点某人的「载入此人的脸」 | 逐张脸显示 face_id 前缀、模式、控制 revision、所属 asset 与有效归属 | 勾选粒度粗于 face_id；同图其它脸被自动带入 |
+| 7 | 删掉夹具里某张原图后再点「载入此人的脸」 | 该脸显示「脸图不可用」占位；服务端返回 409 结构化错误；页面不出现任何路径 | 破图 / 空白 / 显示绝对路径 |
+| 8 | 「保存名字 / 同名合并」用**过期 revision** 提交 | 页面显示服务器 `[PERSON_REVISION_CONFLICT]`（含 request_id）并刷新，不静默覆盖 | 静默写入；失败被显示成成功 |
+| 9 | 用一个已属于别人物的名字保存 | 服务器执行同名合并，页面显示「#old 已同名合并到 #new」，列表刷新后旧 id 不再单独出现 | 前端自行判断同名；合并结果不显示 canonical |
+| 10 | 「加载 / 刷新操作日志」→「撤销此操作」 | 日志含类型/状态/revision/时间/影响项数；撤销后给出新操作并刷新日志（原操作变「已撤销」） | 撤销删除日志或回退 revision；失败无说明 |
+| 11 | 缩到 640 px 与 481 px，再放到 1280 px | 三个宽度下 `documentElement.scrollWidth <= clientWidth`，卡片从多列收成单列 | 出现横向滚动条 |
+| 12 | 用 Tab/Enter 走一遍表单与按钮 | 焦点依次可达 skip 链接、导航、按钮与输入框；每个输入控件有 `label[for]`，每张图有 `alt` | 控件无法用键盘到达；无 `alt` |
+| 13 | 页面内 DOM 断言（见 §7.4） | 正文无盘符/UNC/用户目录；无 `http(s)://` 外链；`img src` 全是相对 `/api/v1/faces/{id}/thumbnail` | 出现绝对路径；出现外链；`img` 指向非受控 URL |
+| 14 | 服务端访问日志 | 全部请求在 `/api/v1/*`、`/persons`、`/`；凭证记成 `token=<redacted>`；`/geo` 命中 0 次 | 页面请求 `/geo` 或任何非 `/api/v1` 数据路径 |
+
+### 7.4 必做的 DOM 断言（可复制）
+
+```js
+// 正文里不得出现盘符路径或用户目录形态（双反斜杠与单反斜杠都算）
+/[A-Za-z]:\\|\\\\\?\\|\/Users\//.test(document.body.innerText);   // 期望 false
+
+// 窄视口下不得横向溢出（clientWidth 已扣掉滚动条）
+document.documentElement.scrollWidth <= document.documentElement.clientWidth;   // 期望 true
+
+// 每个控件都有 label，每张图都有 alt，且图片只指向受控 id
+Array.from(document.querySelectorAll("input, select, textarea")).every((c) => !!document.querySelector('label[for="' + c.id + '"]'));
+Array.from(document.querySelectorAll("img")).map((i) => i.getAttribute("src"));
+
+// 页面不请求坐标端点：内置只读求值作用域没有 performance/console/fetch，
+// 因此该条用服务端访问日志核对（P3-06 报告 §5 第 14 步）：
+//   Select-String -Path <server.out.log> -Pattern 'HTTP/1.1'  → 全在 /api/v1/* 或 /persons、/，且不含 /geo
+```
+
+### 7.5 已知限制
+
+- 本机没有 buffalo_l/PP-OCRv4 权重，夹具直接 seed 权威人物/脸事实；**页面与只读接口不依赖模型**，
+  但「真实检测→分组→页面显示」的整链不在本次观察范围内（沿用 P3-02/P3-03 记录）。
+- 导航入口默认 `hidden`，由 `/capabilities` 的 `schema_version >= 13 && schema_status == "ok"` 决定
+  是否显示。本次只观察到「schema 13 → 显示」一侧；旧库保持隐藏只有静态断言。
+- 内置浏览器的只读求值作用域没有 `localStorage`/`sessionStorage`，运行时读取不可用；该条按「脚本
+  静态契约 + 无写入代码」判定。
+- 窄视口用浏览器 `viewport` 覆盖得到（本次 640/481/1280 三个宽度都实测通过），不是操作系统级
+  200% 缩放。

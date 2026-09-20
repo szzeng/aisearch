@@ -20,11 +20,21 @@ KINDS = (THUMBNAIL, PREVIEW)
 #: source is larger than the target (never an upscale).
 THUMBNAIL_PROCESSOR_ID = "catalog-thumbnail@1"
 PREVIEW_PROCESSOR_ID = "catalog-preview@1"
+#: P3-06 face avatars. The crop is rendered from the published preview, so its own identity
+#: covers the geometry and the source content: a re-detection that moves a face box produces
+#: a different cache entry instead of reusing the old pixels.
+FACE_CROP_PROCESSOR_ID = "face-crop@1"
 
 THUMBNAIL_LONG_EDGE = 320
 PREVIEW_LONG_EDGE = 1600
 THUMBNAIL_JPEG_QUALITY = 85
 PREVIEW_JPEG_QUALITY = 88
+#: A square-ish avatar bound: at most 256 px on the long edge, never enlarged, JPEG q85.
+FACE_CROP_LONG_EDGE = 256
+FACE_CROP_JPEG_QUALITY = 85
+#: How much margin (as a fraction of the face box) is kept around the face before cropping.
+#: It only ever widens the request; the crop is clamped into the preview frame afterwards.
+FACE_CROP_MARGIN = 0.35
 
 JPEG_SUFFIX = ".jpg"
 FAILURE_SUFFIX = ".json"

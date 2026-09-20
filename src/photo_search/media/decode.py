@@ -214,7 +214,13 @@ def probe_capabilities() -> dict[str, object]:
     }
 
 
-def _read_orientation(source: Image.Image) -> int:
+def read_orientation(source: Image.Image) -> int:
+    """The EXIF orientation of an opened image, normalised to ``1..8`` (``1`` when unknown).
+
+    Public because the P3-06 face crop has to measure the *orientation-normalised* size of
+    an original from its header alone, and it must apply exactly the rule
+    :func:`load_normalized` applies to the pixels.
+    """
     try:
         exif = source.getexif()
     except Exception:  # pragma: no cover - defensive: a broken EXIF block is not fatal
@@ -226,6 +232,10 @@ def _read_orientation(source: Image.Image) -> int:
     except (TypeError, ValueError):
         return 1
     return value if 1 <= value <= 8 else 1
+
+
+def _read_orientation(source: Image.Image) -> int:
+    return read_orientation(source)
 
 
 def _unsupported(label: str, *, path: str | None = None) -> CatalogError:

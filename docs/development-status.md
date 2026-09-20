@@ -76,9 +76,16 @@ conflict matrix, the closed API/error surface and the real CPU detect→merge→
 fixture; `schema_version 12 → 13`). **P3-05C is PASS** (independent C2 review plus four minimal correctness fixes:
 forward-only split/undo link revisions, strict contiguous operation-item validation, and closed split response
 schemas; error details also returned to the frozen field set; 80 focused/cross-regression cases and 1185 full
-cases, A + D + C revalidated). **P3-06 is READY / CURRENT TASK** — the persons page, same-name prompt,
-manual-unassigned queue, face selection, recent operations and undo UI; new/old detection `face_id` mapping
-remains P3-08.
+cases, A + D + C revalidated). **P3-06 is PASS** (B + C level + a recorded real-browser smoke): the three
+new read lists (`GET /persons`, `GET /faces`, `GET /person-operations`), the server-side bounded
+face-avatar crop rendered from the authoritative box and the frozen preview
+(`GET /faces/{id}/thumbnail`), and the dependency-free `/persons` page with its same-name prompt,
+manual-unassigned queue, face-level selection, batch assign/unassign/restore_auto, split and the shared
+undo; **45 new cases, no migration, `schema_version` stays 13**. **P3-07A is READY / CURRENT TASK** — the
+planned P3-07 was split into **P3-07A** (freeze the person `all`/`any` × place AND search contract: an ADR,
+a machine-readable companion and contract cases, with **zero production change**) and **P3-07B** (its
+implementation: canonical ids, authoritative re-check and cache/session invalidation), without changing
+the overall route; new/old detection `face_id` mapping remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1071,9 +1078,46 @@ P3-05B 未验证项（真实大规模拆分与 500 face 批量延迟、多进程
 本机当前没有 buffalo_l/PP-OCRv4 权重，本次未下载模型、未重跑 P3-05B 的真实 CPU 检测夹具；这项沿用
 P3-05B 已有证据并在报告列为本次未验证，不影响本次针对拆分权威语义的 80 项独立回归。
 
-**当前任务是 P3-06 — 人物页、同名提示、待归类、脸框、最近操作和撤销 UI**，任务卡
-[docs/tasks/P3-06.md](tasks/P3-06.md)。推荐 **DS-L / DeepSeek V4.1 Flash / low**；请手动切换模型/推理档
-后在新对话继续。若需独立审查，先由新会话 DS-H 做全量工程主审；仅命中 V3.1 §2.2 条件才升 max；
-冻结协议风险由 Sol high 聚焦终审；Windows/PyInstaller/浏览器环境问题升级 C1。
+## Latest person-page closure — P3-06 (2026-09-20)
+
+**P3-06 — 人物页、同名提示、待归类、脸框、最近操作和撤销 UI：PASS（B + C + 真实浏览器 smoke）。**
+见 [P3-06 报告](reports/P3-06-persons-ui.md)。起点 `84876b8`（P3-05C 审查收尾），工作树干净。
+
+新增 `src/photo_search/persons/read.py`（三个 keyset 列表：三套互不通用的 cursor token 空间、canonical/
+redirect 解析、有效成员计数）与 `src/photo_search/persons/members.py`（「有效成员」谓词的唯一定义，
+`service.py` 改用它、行为逐字不变），加性公开 `persons/operations.item_projection()`；新增
+`src/photo_search/media/face_crop.py`（bbox 校验、方向归一尺寸探测、单因子帧映射、有界不放大裁剪、
+内容+几何+face 的缓存摘要）以及 `media/contract.py`/`cache.py` 的加性常量与 `face_crop_path()`；
+新增 `api/routes.py` 的四个只读端点与 `GET|HEAD /api/v1/faces/{face_id}/thumbnail`；新增前端
+`web/persons.html|js|css` 与 `web.py` 的 `/persons` 文档路由，三个既有页面增加**默认隐藏**、由
+`/capabilities`（`schema_version >= 13 && schema_status == "ok"`）揭示的导航入口。
+**未新增/修改任何 migration**，`schema_version` 仍为 13，`0001`～`0013` 逐字节未改；ADR-0001～0008、
+companion、人物写接口闭集、依赖（95 包）、`PhotoSearch.spec` 的输入集合、`places/**`、`geo/**`、
+`ingestion/**`、`workers/**`、`face/**`、`ocr/**`、`search/**` 均未改动。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-06-full --junitxml=test-results/p3-06-full.xml` | exit 0；JUnit `tests=1230 failures=0 errors=0 skipped=48`（216.8 s；48 项为缺模型权重/未启用 GPU 的显式环境 skip）；基线 1185 → 1230 |
+| 本任务新增用例 | 45 例（读模型/裁剪几何 unit 16、只读 API 8、头像端点 8、页面写入闭环 5、前端静态契约 8） |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 只读面 | 三个列表排序/分页无重无漏；跨列表 cursor 一律 `INVALID_CURSOR`；同名合并后旧 id 不再列出而 `person_id=<旧 id>` 仍解析到 canonical；`MANUAL_UNASSIGNED` 队列只含人工取消归类的脸；活动排除从列表与详情计数同时消失 |
+| 头像端点 | 双色合成图上左右脸的裁剪颜色各自正确（证明取的是该脸的框）、两脸字节不同；ETag/304/HEAD；120×90 图上的 20 px 脸裁成 34 px（不放大到 256）；EXIF orientation 6 的图按 `exif_transpose` 参考帧取色；源离线 `SOURCE_FILE_MISSING`、坏媒体 `DECODE_FAILED`、`FACE_NOT_FOUND`、坏几何 `FACE_STATE_CONFLICT(bbox_arity)` 四种拒绝都不留裁剪文件、不泄露路径 |
+| OpenAPI/隐私 | 四个新响应模型 `additionalProperties: false`；查询参数集合闭合；响应负向扫描覆盖 `name_key`/alias/bbox/landmark/embedding/vector/similarity/confidence/快照/`payload_sha256`/`request_id`/本地路径 |
+| D 级写回归 | 过期 revision 拒绝且状态逐字未变；同 `request_id` 逐字重放 `replayed=true` 不写入、同 key 不同 payload `FACE_IDEMPOTENCY_CONFLICT`；501 项 `FACE_BATCH_TOO_LARGE`；被后续人工编辑改变的操作 `FACE_OPERATION_NOT_UNDOABLE`、撤销重放返回已记录 UNDO；401/CSRF/Origin/Host 四种拒绝零副作用 |
+| 重启恢复 | 同一 data root 重建应用后人物列表、操作日志（同一 `operation_id`）、成员脸与头像裁剪都从权威事实重新得到 |
+| 真实浏览器 smoke | 内置浏览器逐条人工核对 14 步（三视图、10+3 分页无重复、脸图失败占位、同名合并展示 canonical、撤销、481/640/1280 px 三宽度 `scrollWidth <= clientWidth`、键盘可达、正文无路径、无外链、`img` 只指向受控 id、访问日志 `token=<redacted>` 且 `/geo` 命中 0）；截图 `test-results/p3-06-persons-wide.png`、`test-results/p3-06-persons-narrow.png`；清单见 `docs/diagnostics/frontend-smoke-checklist.md` §7 |
+| C 级 | 最终源码修订后真实 onedir 重建 + `packaged_api_smoke.py --work-dir "D:\PhotoSearchSmoke\P3-06 中文 空格"`：`status=ok`、`problems=[]`；`/persons` 与 `persons.js/css` 在 bundle 内且 `nav_offers_persons=true`；四个新只读面与 401 边界就位；打包 data root `schema_version=13`；bundle `0001`～`0013` 连续且与源码逐个 SHA-256 一致（`0013 = 9DEA2D67…CCBDE4`） |
+| 开发期真实缺陷（已修） | 浏览器里发现 `AUTO_ALLOWED` 人脸标签与「有效归属」矛盾、撤销成功后操作日志不刷新、`#name-result` 的 64 位 operation id 在 481 px 下撑出横向滚动；三处分别改为「自动（没有人工锁）」、撤销后重载日志、给长 token 容器加 `overflow-wrap: anywhere` |
+
+P3-06 未验证项（真实库规模与延迟、真实 buffalo_l 检测→分组链路、旧 schema 隐藏入口、无 DOM 自动化、
+运行时 `localStorage` 读数、多进程并发、接近 500 face 的拆分/批量延迟、头像主观质量、`.pytest-tmp`
+ACL 环境事实）记录在 [P3-06 报告](reports/P3-06-persons-ui.md) §7。
+
+P3-07 已按仓库既有拆分方式拆成 **P3-07A**（契约冻结，零生产变化）与 **P3-07B**（实现），总体路线不变。
+**当前任务是 P3-07A — 人物 all/any 与地点 AND 搜索契约冻结（ADR + companion + 契约用例）**，任务卡
+[docs/tasks/P3-07A.md](tasks/P3-07A.md)。推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；请手动切换模型/
+推理档后在新对话继续。若本卡出现无法调和的冻结冲突，先由新会话 DS-H 做全量工程主审；仅命中 V3.1 §2.2
+条件才升 max；canonical/revision/缓存失效边界由 Sol high 聚焦终审；Windows/PyInstaller/浏览器环境问题
+升级 C1。
 
 Model switching remains manual; the repository only records the recommended model per stage.

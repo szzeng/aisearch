@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>人物整理</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/web/styles.css" />
+    <link rel="stylesheet" href="/web/persons.css" />
+    <script src="/web/persons.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <header class="app-header">
+      <h1>人物整理</h1>
+      <nav class="app-nav" aria-label="页面导航">
+        <a class="nav-link" href="/">返回「本机图片搜索」</a>
+        <a class="nav-link" href="/search">搜索图片</a>
+        <a class="nav-link" href="/places">地点整理</a>
+        <a class="nav-link" href="#panel-persons">人物列表</a>
+        <a class="nav-link" href="#panel-faces">脸与拆分</a>
+        <a class="nav-link" href="#panel-operations">最近操作与撤销</a>
+      </nav>
+      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
+    </header>
+
+    <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <main id="main" tabindex="-1">
+      <p class="hint">
+        本页只做人工整理：人物、人工锁、排除与操作日志的权威都在本机 SQLite 里，页面读到的每个字段
+        都来自会话保护的 <code>/api/v1</code>。页面不显示任何人脸坐标、向量、相似度或本机绝对路径；
+        同名是否合并、revision 是否过期、能否撤销，全部由服务器判定，页面只如实展示结果。
+      </p>
+
+      <section id="panel-persons" class="panel" aria-labelledby="persons-title">
+        <h2 id="persons-title">人物列表</h2>
+        <p class="hint">
+          三个视图都在这里：已命名人物、未命名分组、待手动归类（MANUAL_UNASSIGNED）。
+          头像来自服务端按权威人脸框裁剪的小图；同一张照片的其他脸不会被自动带入。
+        </p>
+        <div class="tabs" role="tablist" aria-label="视图">
+          <button type="button" id="tab-named" class="tab" role="tab" data-view="named">
+            已命名人物
+          </button>
+          <button type="button" id="tab-unnamed" class="tab" role="tab" data-view="unnamed">
+            未命名分组
+          </button>
+          <button
+            type="button"
+            id="tab-unassigned"
+            class="tab"
+            role="tab"
+            data-view="manual_unassigned"
+          >
+            待手动归类
+          </button>
+        </div>
+        <div class="filters">
+          <p>
+            <label for="persons-limit">每页条数</label>
+            <select id="persons-limit">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="200">200</option>
+            </select>
+          </p>
+          <p class="filter-actions">
+            <button type="button" id="persons-reload">加载 / 重新加载</button>
+            <button type="button" id="persons-more" disabled>加载更多（沿用当前游标）</button>
+          </p>
+        </div>
+        <div id="persons-status" class="state-block" role="status" aria-live="polite"></div>
+        <ul id="persons-list" class="person-list" aria-label="人物列表"></ul>
+        <ul id="faces-list" class="person-list" aria-label="待手动归类的人脸" hidden></ul>
+      </section>
+
+      <section id="panel-name" class="panel" aria-labelledby="name-title">
+        <h2 id="name-title">保存名字</h2>
+        <p class="hint" id="same-name-hint">
+          服务器规则：如果这个名字已经属于另一个人物，保存名字会执行「同名合并」，两个人物会合并成
+          一个（旧 id 之后都会解析到合并后的那个人）。页面不自己判断同名，只如实展示服务器的结果。
+        </p>
+        <form id="name-form" class="card" novalidate>
+          <p>
+            <label for="name-person-id">person_id</label>
+            <input id="name-person-id" type="text" inputmode="numeric" required />
+          </p>
+          <p>
+            <label for="name-value">姓名</label>
+            <input id="name-value" type="text" maxlength="200" autocomplete="off" required />
+          </p>
+          <p>
+            <label for="name-revision">expected_revision</label>
+            <input id="name-revision" type="text" inputmode="numeric" required />
+          </p>
+          <p class="check-line">
+            <input id="name-same-confirm" type="checkbox" />
+            <label for="name-same-confirm">我知道同名时会执行合并，确认保存。</label>
+          </p>
+          <p>
+            <button type="submit">保存名字</button>
+          </p>
+          <p class="error" id="name-error" role="alert" hidden></p>
+          <p class="hint" id="name-result"></p>
+        </form>
+      </section>
+
+      <section id="panel-faces" class="panel" aria-labelledby="faces-title">
+        <h2 id="faces-title">某个人的脸 / 批量操作 / 拆分</h2>
+        <p class="hint">
+          选择精确到 face_id：勾选哪几张脸，就只有这几张脸会被改动；服务器仍按每张脸的当前
+          revision 和人工锁判定，冲突时不会静默覆盖。
+        </p>
+        <form id="faces-form" class="filters" novalidate>
+          <p>
+            <label for="faces-person-id">person_id</label>
+            <input id="faces-person-id" type="text" inputmode="numeric" required />
+          </p>
+          <p class="filter-actions">
+            <button type="submit">载入此人的脸</button>
+            <button type="button" id="faces-select-page">全选本页脸</button>
+            <button type="button" id="faces-clear">清空选择</button>
+            <button type="button" id="faces-select-merge">把此人加入「批量合并」选择</button>
+          </p>
+        </form>
+        <div id="faces-status" class="state-block" role="status" aria-live="polite"></div>
+        <p>
+          <button type="button" id="faces-more" disabled>加载更多脸</button>
+          <span class="hint" id="faces-summary"></span>
+        </p>
+        <ul id="person-faces" class="face-grid" aria-label="此人当前的成员脸"></ul>
+
+        <h3>对所选脸执行</h3>
+        <form id="face-batch-form" class="card" novalidate>
+          <p>
+            <label for="batch-target-person-id">目标 person_id（指定归属时必填）</label>
+            <input id="batch-target-person-id" type="text" inputmode="numeric" />
+          </p>
+          <p class="row-actions">
+            <button type="button" id="batch-assign">批量指定归属（assign）</button>
+            <button type="button" id="batch-unassign">批量取消归类（unassign）</button>
+            <button type="button" id="batch-restore">批量恢复自动（restore_auto）</button>
+          </p>
+          <p class="hint">
+            批量接口一次最多 500 项、一个 request_id、整批原子：任何一项的 revision 过期或被人为锁定，
+            整批都不会写入。
+          </p>
+          <p class="error" id="face-batch-error" role="alert" hidden></p>
+        </form>
+
+        <h3>拆分到新人物</h3>
+        <form id="split-form" class="card" novalidate>
+          <p class="hint">
+            从所选脸中挑 1～500 张，拆成一个新的「未命名」人物：被拆出的脸在源人物上会被记为排除，
+            不会因为同一张照片的其它脸而联动。
+          </p>
+          <p>
+            <label for="split-confirm">确认拆分所选脸</label>
+            <input id="split-confirm" type="checkbox" />
+          </p>
+          <p>
+            <button type="submit">拆分所选脸</button>
+          </p>
+          <p class="error" id="split-error" role="alert" hidden></p>
+          <p class="hint" id="split-result"></p>
+        </form>
+      </section>
+
+      <section id="panel-merge" class="panel" aria-labelledby="merge-title">
+        <h2 id="merge-title">显式批量合并</h2>
+        <p class="hint">
+          合并只在这里发生，并且需要明确的目标人物：先在人脸列表里逐个「把此人加入批量合并选择」，
+          再填目标 person_id 提交。同名合并不在这一条路径上，它只由保存名字触发。
+        </p>
+        <p class="hint" id="merge-summary">尚未选择任何人物。</p>
+        <form id="merge-form" class="card" novalidate>
+          <p>
+            <label for="merge-target">目标 person_id</label>
+            <input id="merge-target" type="text" inputmode="numeric" required />
+          </p>
+          <p class="row-actions">
+            <button type="button" id="merge-clear">清空合并选择</button>
+            <button type="submit">合并到目标人物</button>
+          </p>
+          <p class="error" id="merge-error" role="alert" hidden></p>
+          <p class="hint" id="merge-result"></p>
+        </form>
+      </section>
+
+      <section id="panel-operations" class="panel" aria-labelledby="operations-title">
+        <h2 id="operations-title">最近操作与撤销</h2>
+        <p class="hint">
+          操作日志只追加、不删除（最新的在最上方）。撤销是新的补偿操作；能否撤销由服务器的冲突矩阵
+          决定，页面不预测结果。
+        </p>
+        <p>
+          <button type="button" id="operations-load">加载 / 刷新操作日志</button>
+          <button type="button" id="operations-more" disabled>加载更多操作</button>
+        </p>
+        <div id="operations-status" class="state-block" role="status" aria-live="polite"></div>
+        <ul id="operations-list" class="place-list" aria-label="人物操作日志"></ul>
+        <h3>撤销结果</h3>
+        <ul id="undo-log" class="log" aria-label="撤销结果"></ul>
+      </section>
+
+      <section id="panel-limits" class="panel" aria-labelledby="limits-title">
+        <h2 id="limits-title">本页不提供的动作</h2>
+        <p class="hint">
+          本页不提供人物或脸的物理删除、不提供人脸框坐标编辑、不触发任何模型推理（人脸检测/识别、
+          OCR、地点解析都不从这里启动），也不写出任何图片向量。缺少模型权重时，已有人物数据照常
+          浏览与整理。
+        </p>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>
+    </noscript>
+  </body>
+</html>

@@ -132,6 +132,16 @@ def _item_projection(row: Any) -> dict[str, Any]:
     }
 
 
+def item_projection(row: Any) -> dict[str, Any]:
+    """Public alias of the frozen per-item projection.
+
+    The P3-06 read model answers ``changed`` for an already recorded operation through the
+    very projection a replay uses, so a page can never disagree with the write path about
+    what an operation did (and never has to parse a before/after snapshot itself).
+    """
+    return _item_projection(row)
+
+
 def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
     """Rebuild the documented response of an already committed operation (a replay)."""
     items = [
@@ -1203,6 +1213,7 @@ def undo_person_operation(
 
 
 __all__ = [
+    "item_projection",
     "merge_persons",
     "operation_family",
     "operation_result",
