@@ -124,7 +124,7 @@ P1-06 (the duplicate / move / replace / offline / remap / restart acceptance clo
 全部原样通过。该任务完成后主线依次进入 P2-01、P2-01A 与 P2-02。
 
 Current architecture: `个人图片搜索系统_V3.0_开发主架构.md`, requirement revision 5 (2026-09-15 300k formal capacity alignment).
-Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 4 (2026-09-15 300k capacity/P4 acceptance alignment).
+Current execution strategy: `个人图片搜索系统_V3.1_Codex_DeepSeek_开发执行策略.md`, revision 5 (2026-09-20 remaining-task review-routing alignment).
 
 ## Latest architecture alignment — requirement revision 5 (2026-09-15)
 
@@ -145,6 +145,16 @@ backend, manual sharding or other million-scale complexity without a separate me
 decision.
 
 Alignment report: [2026-09-15 300k capacity alignment](reports/2026-09-15-300k-capacity-alignment.md).
+
+## Latest review-routing alignment — strategy revision 5 (2026-09-20)
+
+从 P3-06 起，剩余任务的独立全量工程主审优先交新会话 **DS-H**；只有 V3.1 §2.2 六类具名条件成立时，
+才手动升 **DeepSeek max**。**GPT-5.6 Sol / high** 不再重复全仓主审，只接收 DS-H/DS-MAX 已收敛的
+高风险不变量、ADR 差异、未决矛盾、关键 diff 和最小反例，做聚焦终审或最终冻结。C1 继续负责
+Windows/ONNX/PyInstaller/HEIC/实机发行环境证据。
+
+该调整不改变任务顺序、产品架构、冻结协议、验收等级或 PASS 门槛；历史已 PASS 的任务卡/报告不追改。
+详见 [2026-09-20 审查路由对齐报告](reports/2026-09-20-review-routing-alignment.md)。
 
 ## Latest planning closure — P2-00 (2026-09-13)
 
@@ -1063,6 +1073,7 @@ P3-05B 已有证据并在报告列为本次未验证，不影响本次针对拆�
 
 **当前任务是 P3-06 — 人物页、同名提示、待归类、脸框、最近操作和撤销 UI**，任务卡
 [docs/tasks/P3-06.md](tasks/P3-06.md)。推荐 **DS-L / DeepSeek V4.1 Flash / low**；请手动切换模型/推理档
-后在新对话继续。若只读 API 牵动冻结协议则升级 C2，Windows/PyInstaller/浏览器环境问题升级 C1。
+后在新对话继续。若需独立审查，先由新会话 DS-H 做全量工程主审；仅命中 V3.1 §2.2 条件才升 max；
+冻结协议风险由 Sol high 聚焦终审；Windows/PyInstaller/浏览器环境问题升级 C1。
 
 Model switching remains manual; the repository only records the recommended model per stage.
