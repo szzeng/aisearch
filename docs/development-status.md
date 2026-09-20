@@ -81,9 +81,11 @@ new read lists (`GET /persons`, `GET /faces`, `GET /person-operations`), the ser
 face-avatar crop rendered from the authoritative box and the frozen preview
 (`GET /faces/{id}/thumbnail`), and the dependency-free `/persons` page with its same-name prompt,
 manual-unassigned queue, face-level selection, batch assign/unassign/restore_auto, split and the shared
-undo; **45 new cases, no migration, `schema_version` stays 13**. **P3-07A is READY / CURRENT TASK** — the
-planned P3-07 was split into **P3-07A** (freeze the person `all`/`any` × place AND search contract: an ADR,
-a machine-readable companion and contract cases, with **zero production change**) and **P3-07B** (its
+undo; **45 new cases, no migration, `schema_version` stays 13**. **P3-07A is PASS** (A level: the frozen
+person `all`/`any` × place AND search contract — `ADR-0009`, the machine-readable companion
+`p3-person-search-contracts.v1.json` and 41 contract cases, with **zero production/schema/dependency
+change**; 1271 full cases with 0 failures / 0 errors / 48 environment skips). **P3-07B is READY / CURRENT
+TASK** — the planned P3-07 was split into **P3-07A** (the freeze above) and **P3-07B** (its
 implementation: canonical ids, authoritative re-check and cache/session invalidation), without changing
 the overall route; new/old detection `face_id` mapping remains P3-08.
 
@@ -1113,11 +1115,40 @@ P3-06 未验证项（真实库规模与延迟、真实 buffalo_l 检测→分组
 运行时 `localStorage` 读数、多进程并发、接近 500 face 的拆分/批量延迟、头像主观质量、`.pytest-tmp`
 ACL 环境事实）记录在 [P3-06 报告](reports/P3-06-persons-ui.md) §7。
 
-P3-07 已按仓库既有拆分方式拆成 **P3-07A**（契约冻结，零生产变化）与 **P3-07B**（实现），总体路线不变。
-**当前任务是 P3-07A — 人物 all/any 与地点 AND 搜索契约冻结（ADR + companion + 契约用例）**，任务卡
-[docs/tasks/P3-07A.md](tasks/P3-07A.md)。推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；请手动切换模型/
-推理档后在新对话继续。若本卡出现无法调和的冻结冲突，先由新会话 DS-H 做全量工程主审；仅命中 V3.1 §2.2
-条件才升 max；canonical/revision/缓存失效边界由 Sol high 聚焦终审；Windows/PyInstaller/浏览器环境问题
-升级 C1。
+## Latest combined-search contract closure — P3-07A (2026-09-20)
+
+**P3-07A — 人物 all/any 与地点 AND 搜索契约冻结：PASS（A 级，零生产变化）。** 见
+[P3-07A 报告](reports/P3-07A-person-search-contract.md)、
+[ADR-0009](decisions/ADR-0009-person-place-combined-search-contract.md) 与
+[companion](decisions/contracts/p3-person-search-contracts.v1.json)。起点 `87ad5c7`（P3-06 收尾），
+开始时工作树干净。
+
+冻结 `POST /api/v1/search` 的两个**加性可选**字段 `person_ids`（1..100 个、每个 `>= 1`）与
+`person_match`（缺省 `any`）：空/缺省**不产生**人物条件；原始重复/非整数/非正数/超界与非法枚举各有固定
+判定（422 `VALIDATION_ERROR`，或新增的 422 `INVALID_PERSON_FILTER`）；canonical 解析复用
+`persons/identity.py`，合并后的重复条件静默去重，旧 id 仍可用于重搜；`all`/`any` 的判定对象是
+`persons/members.py` 的 `MEMBER_PREDICATE` 有效成员（`CONFIRMED`、非 `MANUAL_UNASSIGNED`、无活动排除），
+与其他条件一律 AND，人物只作筛选、不作命中原因；人物条件是权威 SQLite 谓词，**不新增 migration**
+（`schema_version` 仍为 13）；人物与地点共享**一个** `catalog_filter_revision`，续页过期复用
+`CATALOG_FILTER_REVISION_STALE`，游标摘要必须含 canonical 人物条件；`search_projection` 与
+`pending_semantic` 的字段集合与上界（1000 / 200）被字段级冻结，并写明 `LAGGING` 只代表派生文本索引在
+追赶。
+
+新增契约用例 41 例；完整 unit/integration JUnit 为 `tests=1271 failures=0 errors=0 skipped=48`
+（173.5 s；48 项为缺模型权重/未启用 GPU 的显式环境 skip）；`uv run --no-sync ruff check .`、
+`git diff --check`、`uv run --no-sync uv lock --check`（95 packages）全部 clean / exit 0。
+`src/photo_search/**`、`catalog/migrations/**`、`schema_version`、依赖、`PhotoSearch.spec`、前端与既有测试
+**均未改动**（`git diff --stat` 为空，只有 3 个新增未跟踪文件）。`.pytest-tmp` 的受限令牌 ACL 环境事实
+沿用 P3-05B/P3-06，本次未改任何 ACL。
+
+未验证项（检索实现是否按冻结谓词组合、`INVALID_PERSON_FILTER` 是否已生效、30 万容量下人物条件延迟、
+解析器 `person_mode` 与协议字段的映射、脸级口径、时间条件）记录在
+[P3-07A 报告](reports/P3-07A-person-search-contract.md) §6。
+
+下一任务是 **P3-07B — 人物 all/any × 地点 AND 组合搜索实现**，任务卡
+[docs/tasks/P3-07B.md](tasks/P3-07B.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；实现完成后由独立
+新会话 DS-H 做全量工程主审（仅按 V3.1 §2.2 六类条件升 DeepSeek max），canonical/revision/缓存失效三条
+边界交 **C2 / GPT-5.6 Sol / high 聚焦终审**；请手动切换模型/推理档后在新对话继续。Windows/PyInstaller/
+浏览器环境问题升级 C1。
 
 Model switching remains manual; the repository only records the recommended model per stage.

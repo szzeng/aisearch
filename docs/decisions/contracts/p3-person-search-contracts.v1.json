@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p3-person-search-contracts.v1.json",
+  "title": "Photo Search P3 person+place combined search protocol companion",
+  "description": "Derived from ADR-0009; ADR-0009 is authoritative on conflict. This companion freezes the additive person-filter extension of the frozen p2-contracts.v1 search envelope, the response echo and projection blocks of POST /api/v1/search, and the person-filter error surface. It does not restate or replace p2-contracts.v1, and it authorises no migration.",
+  "oneOf": [
+    { "$ref": "#/$defs/PersonCondition" },
+    { "$ref": "#/$defs/SearchFiltersEcho" },
+    { "$ref": "#/$defs/SearchProjectionBlock" },
+    { "$ref": "#/$defs/PendingSemanticPage" },
+    { "$ref": "#/$defs/PersonSearchApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p3-person-search-contracts.v1" },
+    "SearchContractVersion": { "const": "p2-contracts.v1" },
+    "MaxPersonFilterIds": { "const": 100 },
+    "MaxAuthorityPageAssets": { "const": 1000 },
+    "MaxTopUpEntries": { "const": 200 },
+    "SessionTtlMs": { "const": 600000 },
+    "PersonId": { "type": "integer", "minimum": 1 },
+    "PersonMatch": { "enum": ["all", "any"] },
+    "PersonIds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PersonId" },
+      "maxItems": 100,
+      "uniqueItems": true
+    },
+    "PersonCondition": {
+      "type": "object",
+      "properties": {
+        "person_ids": { "$ref": "#/$defs/PersonIds" },
+        "person_match": { "$ref": "#/$defs/PersonMatch" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "person_match": { "const": "all" } },
+            "required": ["person_match"]
+          },
+          "then": {
+            "required": ["person_ids"],
+            "properties": { "person_ids": { "minItems": 1 } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "VectorBindingEcho": {
+      "type": "object",
+      "required": [
+        "generation_id",
+        "space_id",
+        "dimension",
+        "processor_id",
+        "generation_state",
+        "is_active",
+        "semantic_complete"
+      ],
+      "properties": {
+        "generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "dimension": { "type": "integer", "minimum": 1 },
+        "processor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_state": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "is_active": { "type": "boolean" },
+        "semantic_complete": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "SearchFiltersEcho": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "availability",
+        "place_ids",
+        "include_descendants",
+        "place_state",
+        "expanded_place_ids",
+        "catalog_filter_revision",
+        "suggestion_revision",
+        "binding",
+        "person_ids",
+        "person_match"
+      ],
+      "properties": {
+        "source_id": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "availability": { "enum": ["present", "missing", "any"] },
+        "place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "include_descendants": { "type": "boolean" },
+        "place_state": {
+          "enum": ["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+        },
+        "expanded_place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "suggestion_revision": { "type": "integer", "minimum": 0 },
+        "binding": {
+          "oneOf": [
+            { "$ref": "#/$defs/VectorBindingEcho" },
+            { "type": "null" }
+          ]
+        },
+        "person_ids": { "$ref": "#/$defs/PersonIds" },
+        "person_match": { "$ref": "#/$defs/PersonMatch" }
+      },
+      "additionalProperties": false
+    },
+    "SearchProjectionBlock": {
+      "type": "object",
+      "required": [
+        "documents",
+        "queued_assets",
+        "stale_documents",
+        "tokenizer_version",
+        "fts_generation_id",
+        "state",
+        "processed_assets"
+      ],
+      "properties": {
+        "documents": { "type": "integer", "minimum": 0 },
+        "queued_assets": { "type": "integer", "minimum": 0 },
+        "stale_documents": { "type": "integer", "minimum": 0 },
+        "tokenizer_version": { "type": "integer", "minimum": 1 },
+        "fts_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "enum": ["SYNCED", "LAGGING"] },
+        "processed_assets": { "type": "integer", "minimum": 0 },
+        "terms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "maxItems": 64
+        },
+        "match_expression": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "additionalProperties": false
+    },
+    "PendingSemanticEntry": {
+      "type": "object",
+      "required": [
+        "asset_id",
+        "entry_state",
+        "pending_events",
+        "generation_state",
+        "semantic_ready"
+      ],
+      "properties": {
+        "asset_id": { "type": "integer", "minimum": 1 },
+        "entry_state": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 32 },
+            { "type": "null" }
+          ]
+        },
+        "pending_events": { "type": "integer", "minimum": 0 },
+        "generation_state": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "semantic_ready": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "PendingSemanticPage": {
+      "type": "object",
+      "required": [
+        "entries",
+        "count",
+        "limit",
+        "truncated",
+        "generation_id",
+        "generation_state",
+        "reason"
+      ],
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PendingSemanticEntry" },
+          "maxItems": 200
+        },
+        "count": { "type": "integer", "minimum": 0, "maximum": 200 },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "truncated": { "type": "boolean" },
+        "generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_state": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "reason": { "enum": ["GENERATION_NOT_READY", "ENTRY_NOT_CONFIRMED"] }
+      },
+      "additionalProperties": false
+    },
+    "ValidationProblem": {
+      "type": "object",
+      "required": ["loc", "msg", "type"],
+      "properties": {
+        "loc": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+        "msg": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "type": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "additionalProperties": false
+    },
+    "PersonFilterReason": {
+      "enum": ["person_match_all_requires_ids", "person_filter_too_large"]
+    },
+    "PersonSearchErrorDetails": {
+      "type": "object",
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ValidationProblem" },
+          "maxItems": 32
+        },
+        "where": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "missing": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "unexpected": { "type": "array", "items": { "type": "string" }, "maxItems": 32 },
+        "value": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "person_id": { "$ref": "#/$defs/PersonId" },
+        "person_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "maxItems": 100
+        },
+        "person_match": { "$ref": "#/$defs/PersonMatch" },
+        "max_person_ids": { "const": 100 },
+        "steps": { "type": "integer", "minimum": 1 },
+        "missing_person_id": { "$ref": "#/$defs/PersonId" },
+        "search_session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "session_catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "current_catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "ttl_ms": { "type": "integer", "minimum": 1 },
+        "field": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "candidates": { "type": "integer", "minimum": 0 },
+        "place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "place_state": {
+          "enum": ["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersonSearchApiError": {
+      "type": "object",
+      "required": ["code", "message", "request_id"],
+      "properties": {
+        "code": {
+          "enum": [
+            "VALIDATION_ERROR",
+            "INVALID_PERSON_FILTER",
+            "PERSON_NOT_FOUND",
+            "PERSON_REDIRECT_CYCLE",
+            "CATALOG_FILTER_REVISION_STALE",
+            "SEARCH_SESSION_EXPIRED",
+            "INVALID_CURSOR",
+            "SCHEMA_TOO_NEW",
+            "SCHEMA_INCONSISTENT",
+            "INVALID_PLACE_FILTER"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "details": { "$ref": "#/$defs/PersonSearchErrorDetails" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
