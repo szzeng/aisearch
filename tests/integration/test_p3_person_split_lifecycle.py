@@ -176,17 +176,21 @@ def test_the_source_avatar_is_rechosen_and_the_created_avatar_comes_from_the_new
 def test_a_manual_confirmed_face_becomes_a_human_member_of_the_new_person(
     env: SplitHarness,
 ) -> None:
-    seeded = env.seed_group(face_count=2, assignment_kind="MANUAL")
+    seeded = env.seed_group(face_count=2, assignment_kind="MANUAL", link_revision=41)
     dad = seeded["person"]
     target, sibling = seeded["faces"]
     # An unrelated denial on another person must survive the split untouched.
     other = env.add_person(name="叔叔")
     env.set_exclusion(sibling, other, active=True)
 
-    answer = env.split(dad, [env.selection(target, assignment=3)])
+    answer = env.split(dad, [env.selection(target, assignment=41)])
 
-    assert env.effective_link(target)["assignment_kind"] == "MANUAL"
-    assert int(env.effective_link(target)["person_id"]) == int(answer["new_person_id"])
+    link = env.effective_link(target)
+    assert link["assignment_kind"] == "MANUAL"
+    assert int(link["person_id"]) == int(answer["new_person_id"])
+    # Ending a MANUAL link deletes that row. Its revision must still remain the floor for
+    # the new assignment; otherwise a well-aged human token could silently move backwards.
+    assert int(link["revision"]) == 42
     assert {
         (int(row["person_id"]), str(row["assignment_kind"]), str(row["decision"]))
         for row in env.face_links(target)

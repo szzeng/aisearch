@@ -101,10 +101,10 @@ def test_undoing_a_split_restores_the_face_source_and_avatar_and_redirects_creat
     assert env.control(target)["mode"] == "AUTO_ALLOWED"
     restored = env.effective_link(target)
     assert (int(restored["person_id"]), str(restored["assignment_kind"])) == (dad, "AUTO")
-    # 3 (split) -> 4 (downgraded suggestion) -> 5 (split's human link) -> 6 is *not* used
-    # here: the restored automatic link takes the same "strictly above everything live"
-    # rule, so it lands above the 4 the split left behind.
-    assert int(restored["revision"]) == 5
+    # 3 (seed) -> 4 (downgraded suggestion) -> 5 (split's human link) -> 6 (restored
+    # automatic link). Compensation must advance beyond the live effective assignment,
+    # not merely beyond the surviving suggestion row.
+    assert int(restored["revision"]) == 6
     assert env.active_exclusions(target) == []
     assert env.members(dad) == set(seeded["faces"])
     assert env.avatar(dad) == target == before["avatar_face_id"]
@@ -184,6 +184,7 @@ def test_a_second_undo_and_an_undo_of_an_undo_are_refused_with_zero_writes(
     with pytest.raises(CatalogError) as again:
         env.undo(str(answer["operation_id"]), "undo-b", int(answer["operation_revision"]))
     assert again.value.code == PERSON_OPERATION_NOT_UNDOABLE
+    assert "status" not in again.value.details
     assert state(env) == snapshot
 
     with pytest.raises(CatalogError) as chained:
@@ -200,6 +201,35 @@ def test_a_second_undo_and_an_undo_of_an_undo_are_refused_with_zero_writes(
     with pytest.raises(CatalogError) as unknown:
         env.undo("f" * 64, "undo-e", 1)
     assert unknown.value.code == "PERSON_NOT_FOUND"
+    assert state(env) == snapshot
+
+
+def test_a_split_undo_refuses_a_non_contiguous_item_sequence(
+    env: SplitHarness,
+) -> None:
+    seeded = env.seed_group(face_count=2)
+    answer = env.split(
+        seeded["person"],
+        [env.selection(seeded["faces"][0], assignment=3)],
+        request_id="item-gap-split",
+    )
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE person_operation_items SET item_index = 3 "
+            "WHERE operation_id = ? AND item_index = 2",
+            (str(answer["operation_id"]),),
+        )
+    snapshot = state(env)
+
+    with pytest.raises(CatalogError) as error:
+        env.undo(
+            str(answer["operation_id"]),
+            "item-gap-undo",
+            int(answer["operation_revision"]),
+        )
+
+    assert error.value.code == PERSON_OPERATION_NOT_UNDOABLE
+    assert error.value.details["reason"] == "item_order"
     assert state(env) == snapshot
 
 

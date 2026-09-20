@@ -599,6 +599,15 @@ def _move_face(
     link is numbered strictly above *every* link the face still carries, so a client that
     confirmed against an older assignment revision can never see its own token come back.
     """
+    # Capture the floor before ending the effective link. A MANUAL link is deleted by the
+    # shared ADR-0007 writer, so calculating the floor only afterwards would forget its
+    # revision and could make the new assignment token move backwards.
+    floor = int(
+        connection.execute(
+            "SELECT COALESCE(MAX(revision), 0) FROM face_person_links WHERE face_id = ?",
+            (str(face_id),),
+        ).fetchone()[0]
+    )
     for link in face_module._confirmed_links(connection, str(face_id)):
         face_module._end_effective_link(
             connection,
@@ -607,11 +616,14 @@ def _move_face(
             operation_id=str(operation_id),
             now_ms=int(now_ms),
         )
-    floor = int(
-        connection.execute(
-            "SELECT COALESCE(MAX(revision), 0) FROM face_person_links WHERE face_id = ?",
-            (str(face_id),),
-        ).fetchone()[0]
+    floor = max(
+        floor,
+        int(
+            connection.execute(
+                "SELECT COALESCE(MAX(revision), 0) FROM face_person_links WHERE face_id = ?",
+                (str(face_id),),
+            ).fetchone()[0]
+        ),
     )
     face_module._write_exclusion(
         connection,
@@ -953,6 +965,10 @@ def _validate_split_items(
 
     if len(rows) < 3 or len(rows) > MAX_SPLIT_FACES + 2:
         raise refuse("item_count")
+    if [int(row["item_index"]) for row in rows] != list(range(len(rows))):
+        # The order is part of the frozen snapshot family. Merely sorting whatever rows
+        # remain would let a missing/renumbered item pass as a valid operation.
+        raise refuse("item_order")
     source_row, created_row = rows[0], rows[1]
     if (
         str(source_row["entity_type"]) != ENTITY_TYPE_SPLIT_GROUP
@@ -1013,7 +1029,6 @@ def undo_split_operation(
             operation_id=original_id,
             expected_revision=int(expected_operation_revision),
             current_revision=int(original["operation_revision"]),
-            status=str(original["state"]),
         )
     source_row, created_row, face_rows = _validate_split_items(connection, original_id)
     source_id = int(source_row["entity_id"])

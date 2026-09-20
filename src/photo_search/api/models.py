@@ -697,6 +697,8 @@ class PersonOperationResponse(BaseModel):
 class FaceExclusionChanges(BaseModel):
     """The person ids one face operation activated and lifted (ADR-0007 §6)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     activated: list[int] = Field(default_factory=list)
     deactivated: list[int] = Field(default_factory=list)
 
@@ -754,6 +756,8 @@ class FaceCorrectionBatchRequest(BaseModel):
 class FaceOperationItemResponse(BaseModel):
     """One ``FACE_CONTROL`` item of a face operation answer (ADR-0007 §6)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     entity_type: str
     face_id: str
     changed: bool
@@ -785,6 +789,8 @@ class SplitGroupItemResponse(BaseModel):
     created group now points. No name, alias, member list or similarity is part of it.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     entity_type: str
     entity_id: int
     role: str
@@ -800,6 +806,8 @@ class PersonSplitOperationResponse(BaseModel):
     items sorted by ``face_id``; the union below keeps each shape exact so a group item can
     never be read as a face control or the other way round.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     contract_version: str
     operation_id: str

@@ -1145,6 +1145,20 @@ def restore_control_bundle(
                 now_ms=now_ms,
             )
         if wanted_assignment is not None:
+            # The current effective row may have a different key and may just have been
+            # deleted (MANUAL) or downgraded (AUTO). Include both its recorded revision and
+            # every surviving row in the floor so compensation is strictly forward for the
+            # face, not merely forward for the row being re-established.
+            live_assignment_revision = (
+                0 if live_assignment is None else int(live_assignment["revision"])
+            )
+            surviving_revision = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(revision), 0) FROM face_person_links "
+                    "WHERE face_id = ?",
+                    (str(face_id),),
+                ).fetchone()[0]
+            )
             _establish_link(
                 connection,
                 face_id=face_id,
@@ -1152,7 +1166,11 @@ def restore_control_bundle(
                 assignment_kind=str(wanted_assignment["assignment_kind"]),
                 operation_id=operation_id,
                 now_ms=now_ms,
-                revision_floor=int(wanted_assignment["revision"]),
+                revision_floor=max(
+                    int(wanted_assignment["revision"]),
+                    live_assignment_revision,
+                    surviving_revision,
+                ),
             )
     for person_id in pending_exclusions:
         _write_exclusion(

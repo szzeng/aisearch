@@ -73,8 +73,12 @@ no production/schema/dependency change). **P3-05B is PASS** (B + D + C level: 44
 split — the `0013` operation-log rebuild, the eligibility/revision matrix, the unnamed created person, the
 fixed `SPLIT_GROUP`+`FACE_CONTROL` items, the global-request-id gate, the compensating undo with its
 conflict matrix, the closed API/error surface and the real CPU detect→merge→split→restart→undo→restart
-fixture; `schema_version 12 → 13`). **P3-05C is READY / CURRENT TASK** — the independent C2 review of
-ADR-0008's implementation; new/old detection `face_id` mapping remains P3-08.
+fixture; `schema_version 12 → 13`). **P3-05C is PASS** (independent C2 review plus four minimal correctness fixes:
+forward-only split/undo link revisions, strict contiguous operation-item validation, and closed split response
+schemas; error details also returned to the frozen field set; 80 focused/cross-regression cases and 1185 full
+cases, A + D + C revalidated). **P3-06 is READY / CURRENT TASK** — the persons page, same-name prompt,
+manual-unassigned queue, face selection, recent operations and undo UI; new/old detection `face_id` mapping
+remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1040,9 +1044,25 @@ P3-05B 未验证项（真实大规模拆分与 500 face 批量延迟、多进程
 模型重跑后的新旧 `face_id` 映射属 P3-08、`.pytest-tmp` ACL 环境事实、P2-06B 精排计时断言偶发）记录在
 [P3-05B 报告](reports/P3-05B-person-split-and-undo.md) §12。
 
-**当前任务是 P3-05C — P3-05 人物拆分与通用撤销独立 C2 审查**，任务卡
-[docs/tasks/P3-05C.md](tasks/P3-05C.md)。审查通过后回到 P3 路线下一任务（P3-06 人物页与脸框选择，
-执行时按 `docs/development-status.md` 与 V3.1 §8 表确认）。
-下一任务推荐 **C2 / GPT-5.6 Sol / high**，请手动切换模型/推理档后继续。
+## Latest independent person-split review — P3-05C (2026-09-20)
+
+**P3-05C — P3-05 人物拆分与通用撤销独立 C2 审查：PASS（修复后 A + D + C）。** 见
+[P3-05C 报告](reports/P3-05C-c2-review.md)。审查发现并最小修复 4 类已冻结语义的实现偏差：拆分覆盖
+人工 link 前先保留其 revision floor；撤销恢复 link 时把当前有效 assignment 与全部幸存 link 纳入 floor；
+拆分 operation item 必须使用连续 index，不能用 gap 绕过 family/order 校验；split 响应及嵌套 schema
+统一闭合 `additionalProperties: false`。另删除一个不在 companion 中的 undo error `status` 详情字段。
+
+`schema_version` 仍为 13；ADR-0008、companion、`0001`～`0013`、依赖、`PhotoSearch.spec` 和前端均未改。
+80 个定向/交叉回归全部通过；完整 unit/integration 收集 1185 项，JUnit 为
+`tests=1185 failures=0 errors=0 skipped=48`（185.861 s），48 项均为缺模型权重/artifact 或未启用 GPU 的
+显式环境 skip，P3-05C 定向批为 0 skip。Ruff、diff-check、lock-check、真实 onedir 重建、新 D 盘中文/
+空格目录打包 API smoke 和 bundle migration/hash 核对全部通过。
+
+本机当前没有 buffalo_l/PP-OCRv4 权重，本次未下载模型、未重跑 P3-05B 的真实 CPU 检测夹具；这项沿用
+P3-05B 已有证据并在报告列为本次未验证，不影响本次针对拆分权威语义的 80 项独立回归。
+
+**当前任务是 P3-06 — 人物页、同名提示、待归类、脸框、最近操作和撤销 UI**，任务卡
+[docs/tasks/P3-06.md](tasks/P3-06.md)。推荐 **DS-L / DeepSeek V4.1 Flash / low**；请手动切换模型/推理档
+后在新对话继续。若只读 API 牵动冻结协议则升级 C2，Windows/PyInstaller/浏览器环境问题升级 C1。
 
 Model switching remains manual; the repository only records the recommended model per stage.

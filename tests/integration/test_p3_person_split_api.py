@@ -394,3 +394,11 @@ def test_openapi_declares_the_split_path_and_no_private_fact(api_env) -> None:
         "source_expected_revision",
         "faces",
     }
+    schemas = api_env.app.openapi()["components"]["schemas"]
+    for name in (
+        "PersonSplitOperationResponse",
+        "SplitGroupItemResponse",
+        "FaceOperationItemResponse",
+        "FaceExclusionChanges",
+    ):
+        assert schemas[name]["additionalProperties"] is False
