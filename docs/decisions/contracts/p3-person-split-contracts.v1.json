@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p3-person-split-contracts.v1.json",
+  "title": "Photo Search P3 person split protocol companion",
+  "description": "Derived from ADR-0008; ADR-0008 is authoritative on conflict.",
+  "oneOf": [
+    { "$ref": "#/$defs/PersonSplitRequest" },
+    { "$ref": "#/$defs/PersonOperationUndoRequest" },
+    { "$ref": "#/$defs/PersonSplitOperation" },
+    { "$ref": "#/$defs/PersonSplitApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p3-person-split-contracts.v1" },
+    "FaceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "PersonId": { "type": "integer", "minimum": 1 },
+    "Revision": { "type": "integer", "minimum": 0 },
+    "StoredRevision": { "type": "integer", "minimum": 1 },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[!-~]+$"
+    },
+    "OperationId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "NullableOperationId": {
+      "oneOf": [
+        { "$ref": "#/$defs/OperationId" },
+        { "type": "null" }
+      ]
+    },
+    "NullablePersonId": {
+      "oneOf": [
+        { "$ref": "#/$defs/PersonId" },
+        { "type": "null" }
+      ]
+    },
+    "ControlMode": {
+      "enum": ["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    },
+    "SplitFaceSelection": {
+      "type": "object",
+      "required": [
+        "face_id",
+        "expected_control_revision",
+        "expected_assignment_revision"
+      ],
+      "properties": {
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "expected_control_revision": { "$ref": "#/$defs/Revision" },
+        "expected_assignment_revision": { "$ref": "#/$defs/StoredRevision" }
+      },
+      "additionalProperties": false
+    },
+    "PersonSplitRequest": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "request_id",
+        "source_expected_revision",
+        "faces"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "request_id": { "$ref": "#/$defs/RequestId" },
+        "source_expected_revision": { "$ref": "#/$defs/StoredRevision" },
+        "faces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SplitFaceSelection" },
+          "minItems": 1,
+          "maxItems": 500
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersonOperationUndoRequest": {
+      "type": "object",
+      "required": ["request_id", "expected_operation_revision"],
+      "properties": {
+        "request_id": { "$ref": "#/$defs/RequestId" },
+        "expected_operation_revision": { "$ref": "#/$defs/StoredRevision" }
+      },
+      "additionalProperties": false
+    },
+    "ExclusionChanges": {
+      "type": "object",
+      "required": ["activated", "deactivated"],
+      "properties": {
+        "activated": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "uniqueItems": true
+        },
+        "deactivated": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PersonId" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "SplitGroupItem": {
+      "type": "object",
+      "required": [
+        "entity_type",
+        "entity_id",
+        "role",
+        "changed",
+        "revision",
+        "merged_into"
+      ],
+      "properties": {
+        "entity_type": { "const": "SPLIT_GROUP" },
+        "entity_id": { "$ref": "#/$defs/PersonId" },
+        "role": { "enum": ["SOURCE", "CREATED"] },
+        "changed": { "type": "boolean" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "merged_into": { "$ref": "#/$defs/NullablePersonId" }
+      },
+      "additionalProperties": false
+    },
+    "SplitFaceItem": {
+      "type": "object",
+      "required": [
+        "entity_type",
+        "face_id",
+        "changed",
+        "mode",
+        "revision",
+        "assigned_person_id",
+        "exclusions"
+      ],
+      "properties": {
+        "entity_type": { "const": "FACE_CONTROL" },
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "changed": { "type": "boolean" },
+        "mode": { "$ref": "#/$defs/ControlMode" },
+        "revision": { "$ref": "#/$defs/Revision" },
+        "assigned_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "exclusions": { "$ref": "#/$defs/ExclusionChanges" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "$ref": "#/$defs/PersonId" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "type": "null" } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "SplitOperationItem": {
+      "oneOf": [
+        { "$ref": "#/$defs/SplitGroupItem" },
+        { "$ref": "#/$defs/SplitFaceItem" }
+      ]
+    },
+    "PersonSplitOperation": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "operation_id",
+        "operation_type",
+        "operation_revision",
+        "status",
+        "undo_of_operation_id",
+        "requested_source_person_id",
+        "canonical_source_person_id",
+        "new_person_id",
+        "changed",
+        "catalog_filter_revision",
+        "replayed",
+        "items"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "operation_id": { "$ref": "#/$defs/OperationId" },
+        "operation_type": { "enum": ["SPLIT", "UNDO"] },
+        "operation_revision": { "$ref": "#/$defs/StoredRevision" },
+        "status": { "enum": ["COMMITTED", "UNDONE"] },
+        "undo_of_operation_id": { "$ref": "#/$defs/NullableOperationId" },
+        "requested_source_person_id": { "$ref": "#/$defs/PersonId" },
+        "canonical_source_person_id": { "$ref": "#/$defs/PersonId" },
+        "new_person_id": { "$ref": "#/$defs/PersonId" },
+        "changed": { "const": true },
+        "catalog_filter_revision": { "$ref": "#/$defs/StoredRevision" },
+        "replayed": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SplitOperationItem" },
+          "minItems": 3,
+          "maxItems": 502
+        }
+      },
+      "additionalProperties": false
+    },
+    "SplitConflictReason": {
+      "enum": [
+        "face_not_confirmed",
+        "face_owned_by_other_person",
+        "assignment_revision",
+        "face_manual_unassigned",
+        "face_state_inconsistent",
+        "source_would_be_empty"
+      ]
+    },
+    "SplitUndoConflict": {
+      "type": "object",
+      "required": ["entity_type", "reason"],
+      "properties": {
+        "entity_type": { "enum": ["SPLIT_GROUP", "FACE_CONTROL"] },
+        "entity_id": { "$ref": "#/$defs/NullablePersonId" },
+        "face_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/FaceId" },
+            { "type": "null" }
+          ]
+        },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "SplitErrorDetails": {
+      "type": "object",
+      "properties": {
+        "person_id": { "$ref": "#/$defs/PersonId" },
+        "canonical_person_id": { "$ref": "#/$defs/PersonId" },
+        "face_id": { "$ref": "#/$defs/FaceId" },
+        "operation_id": { "$ref": "#/$defs/OperationId" },
+        "entity_type": { "enum": ["SPLIT_GROUP", "FACE_CONTROL"] },
+        "entity_id": { "$ref": "#/$defs/PersonId" },
+        "expected_revision": { "$ref": "#/$defs/Revision" },
+        "current_revision": { "$ref": "#/$defs/Revision" },
+        "max_batch_size": { "const": 500 },
+        "item_count": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "conflicts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SplitUndoConflict" },
+          "maxItems": 502
+        }
+      },
+      "additionalProperties": false
+    },
+    "PersonSplitApiError": {
+      "type": "object",
+      "required": ["code", "message", "request_id", "details"],
+      "properties": {
+        "code": {
+          "enum": [
+            "PERSON_NOT_FOUND",
+            "FACE_NOT_FOUND",
+            "PERSON_REVISION_CONFLICT",
+            "FACE_ASSIGNMENT_CONFLICT",
+            "PERSON_SPLIT_CONFLICT",
+            "PERSON_IDEMPOTENCY_CONFLICT",
+            "PERSON_REDIRECT_CYCLE",
+            "PERSON_OPERATION_NOT_UNDOABLE",
+            "SCHEMA_INCONSISTENT",
+            "SCHEMA_TOO_NEW",
+            "PERSON_BATCH_TOO_LARGE",
+            "VALIDATION_ERROR"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "details": { "$ref": "#/$defs/SplitErrorDetails" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

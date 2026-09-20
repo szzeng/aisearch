@@ -67,9 +67,11 @@ control-revision gate the automatic association now proves inside its own write 
 `face_summary`; 50 new cases, **schema_version 11 → 12**). **P3-04C is PASS** (independent C2 review plus
 five minimal correctness fixes: persisted replay revision, stable face undo replay envelope, forward-only
 restored link revisions, reachable AUTO_ALLOWED canonical exclusion filtering, and no image-vector refresh
-from face correction; 52 focused cases and 1116 full cases, A + D + C revalidated). **P3-05A is READY /
-CURRENT TASK** — first freeze the high-risk person-split/idempotency/snapshot/compensating-undo contract;
-new/old detection `face_id` mapping remains P3-08.
+from face correction; 52 focused cases and 1116 full cases, A + D + C revalidated). **P3-05A is PASS**
+(A-level C2 contract freeze: ADR-0008, the machine-readable person-split companion and 22 contract cases;
+no production/schema/dependency change). **P3-05B is READY / CURRENT TASK** — implement the frozen split,
+mixed `SPLIT_GROUP`/`FACE_CONTROL` snapshots, shared compensating undo and `0013`; new/old detection
+`face_id` mapping remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -990,9 +992,22 @@ AUTO_ALLOWED 活动排除只过滤 canonical 候选而不锁死整脸、脸级�
 `tests=1116 failures=0 errors=0 skipped=1`（419.408 s）。Ruff、diff-check、lock-check、真实 CPU 夹具、
 真实 onedir 重建、新 D 盘目录打包 API smoke 和 bundle migration/hash 核对全部通过。
 
-**当前任务是 P3-05A — 人物拆分、通用撤销与 revision 冲突契约冻结**，任务卡
-[docs/tasks/P3-05A.md](tasks/P3-05A.md)。P3-05 的高风险协议尚未冻结，因此按 V3.1 的 C2 主导路线先做
-独立 A 级契约闭环；新旧检测 `face_id` 映射仍留给 P3-08，不混入人物拆分。
-下一任务继续推荐 **C2 / GPT-5.6 Sol / high**，当前模型可直接继续。
+## Latest person-split contract closure — P3-05A (2026-09-20)
+
+**P3-05A — 人物拆分、通用撤销与 revision 冲突契约冻结：PASS（A 级，零生产变化）。** 见
+[P3-05A 报告](reports/P3-05A-person-split-contract.md)、[ADR-0008](decisions/ADR-0008-person-split-operation-contract.md)
+与 [companion](decisions/contracts/p3-person-split-contracts.v1.json)。冻结唯一
+`POST /api/v1/persons/{source_person_id}/split`、source/control/assignment 三 revision、全局 request_id
+幂等、未命名新人物、所选脸 MANUAL_ASSIGNED + source exclusion、`SPLIT_GROUP + FACE_CONTROL` 混合快照、
+created ID 撤销后 redirect、后续 rename/merge/face edit/second split/effective-member 冲突，以及一次
+`PERSON_CHANGED` + face `PENDING_REPAIR` 且不写图片向量的派生边界。
+
+新增契约用例 22/22 通过；既有 P3-03/P3-04 contract 回归 64/64 通过；Ruff、diff-check、lock-check clean。
+`schema_version` 仍为 12，`0001`～`0012`、`src/photo_search/**`、依赖、打包与前端均未改。
+
+**当前任务是 P3-05B — 人物拆分与通用撤销实现**，任务卡
+[docs/tasks/P3-05B.md](tasks/P3-05B.md)。按 ADR-0008 实现 `0013`、split API/事务/故障恢复与 B + D + C
+验收；完成后再做 P3-05C 独立 C2 审查。新旧检测 `face_id` 映射仍留给 P3-08，不混入人物拆分。
+下一任务推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请手动切换模型/推理档后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.
