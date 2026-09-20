@@ -18,7 +18,7 @@
     "parameters_sha256": "995784a78ab877681d5ae1487b3be6c6f74c4a6018715ab8c21b69bf4b78f0cb"
   },
   "compatible_catalog_schema": {
-    "maximum": 12,
+    "maximum": 13,
     "minimum": 5
   },
   "content_sha256": "8e50bab6aa07473b60b9831668ee4544c663e93a8fe058923fdb75f92b296f55",

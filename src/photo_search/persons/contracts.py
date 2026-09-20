@@ -66,13 +66,21 @@ FACE_OPERATION_TYPES = (
     "FACE_RESTORE_AUTO",
     "BATCH_FACE_EDIT",
 )
+#: ADR-0008 §5: splitting a person group is the third writer of the *same* operation log.
+#: It brings one operation type and one item shape, so it gets its own tuple exactly like
+#: the face family does - ``OPERATION_TYPES`` stays the frozen P3-03 person vocabulary.
+SPLIT_OPERATION_TYPES = ("SPLIT",)
 #: Everything the shared ``/person-operations/{id}/undo`` endpoint may compensate.
+OPERATION_TYPE_SPLIT = SPLIT_OPERATION_TYPES[0]
 UNDOABLE_OPERATION_TYPES = WRITE_OPERATION_TYPES + FACE_OPERATION_TYPES
 
 #: ADR-0007 §2: the two mutually exclusive shapes of one operation item. A person bundle is
 #: keyed by an integer ``person_id``; a face control is keyed by its ``face_id`` text.
 ENTITY_TYPE_PERSON_BUNDLE = "PERSON_BUNDLE"
 ENTITY_TYPE_FACE_CONTROL = "FACE_CONTROL"
+#: ADR-0008 §5: a split group *reads* like a person bundle (a positive integer ``entity_id``)
+#: but records a group that a transaction may have just created, so it is its own type.
+ENTITY_TYPE_SPLIT_GROUP = "SPLIT_GROUP"
 
 CONTROL_MODES = ("AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED")
 
@@ -278,6 +286,7 @@ __all__ = [
     "CONTROL_MODES",
     "ENTITY_TYPE_FACE_CONTROL",
     "ENTITY_TYPE_PERSON_BUNDLE",
+    "ENTITY_TYPE_SPLIT_GROUP",
     "FACE_IDEMPOTENCY_CONFLICT",
     "FACE_OPERATION_TYPES",
     "MAX_MERGE_SOURCES",
@@ -286,6 +295,7 @@ __all__ = [
     "NAME_KEY_PREFIX",
     "NAME_KEY_VERSION",
     "OPERATION_TYPES",
+    "OPERATION_TYPE_SPLIT",
     "PENDING_CONFIRMATION_REASONS",
     "PERSON_BATCH_TOO_LARGE",
     "PERSON_IDEMPOTENCY_CONFLICT",
@@ -296,6 +306,7 @@ __all__ = [
     "PERSON_REVISION_CONFLICT",
     "REASON_HUMAN_CONFLICT",
     "REASON_MANUAL_UNASSIGNED",
+    "SPLIT_OPERATION_TYPES",
     "UNDOABLE_OPERATION_TYPES",
     "WRITE_OPERATION_TYPES",
     "canonical_json",

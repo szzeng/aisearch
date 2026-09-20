@@ -65,6 +65,7 @@ from photo_search.catalog.errors import (
     PERSON_OPERATION_NOT_UNDOABLE,
     PERSON_REDIRECT_CYCLE,
     PERSON_REVISION_CONFLICT,
+    PERSON_SPLIT_CONFLICT,
     PLACE_ASSIGNMENT_CONFLICT,
     PLACE_BATCH_TOO_LARGE,
     PLACE_DATASET_INVALID,
@@ -192,6 +193,12 @@ _STATUS_BY_CODE: dict[str, int] = {
     PERSON_IDEMPOTENCY_CONFLICT: 409,
     PERSON_REDIRECT_CYCLE: 409,
     PERSON_OPERATION_NOT_UNDOABLE: 409,
+    # P3-05B split refusals (ADR-0008 §9). A selected face that carries no single
+    # ``CONFIRMED`` link to the canonical source, was denied by the human, belongs to
+    # somebody else, moved since the caller confirmed it, or would empty the source, is a
+    # current-state conflict with a fixed ``details.reason``; the code is never reused from
+    # the rename/merge family, so a caller can branch on it without parsing a message.
+    PERSON_SPLIT_CONFLICT: 409,
     # P3-04B single-face correction refusals (ADR-0007 §6). A missing face or face-level
     # operation is a 404; the batch-size and action/target refusals are caller-shape errors;
     # a stale logical control revision, a reused idempotency key, an inconsistent authority

@@ -139,6 +139,13 @@ PERSON_BATCH_TOO_LARGE = "PERSON_BATCH_TOO_LARGE"
 PERSON_REDIRECT_CYCLE = "PERSON_REDIRECT_CYCLE"
 PERSON_OPERATION_NOT_UNDOABLE = "PERSON_OPERATION_NOT_UNDOABLE"
 
+#: ADR-0008 §9: the one *new* code of the P3-05 split family. Stale source/control revisions
+#: keep their P3-03/P3-04 codes and an unqualified selected face (no single ``CONFIRMED``
+#: link, owned by somebody else, manually unassigned, inconsistent or the last member of the
+#: source) is this one, with a fixed ``details.reason`` from the frozen closed set. A split
+#: therefore never answers with a code that would let a caller mistake it for a rename.
+PERSON_SPLIT_CONFLICT = "PERSON_SPLIT_CONFLICT"
+
 #: ADR-0006 §5: an explicit merge names 1..500 de-duplicated source persons and commits
 #: them, with their target, in one transaction.
 MAX_PERSON_BATCH_SIZE = 500

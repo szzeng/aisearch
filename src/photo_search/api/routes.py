@@ -55,6 +55,8 @@ from photo_search.api.models import (
     PersonNameRequest,
     PersonOperationResponse,
     PersonRecord,
+    PersonSplitOperationResponse,
+    PersonSplitRequest,
     PersonUndoRequest,
     PlaceAssignmentRequest,
     PlaceBatchRequest,
@@ -887,8 +889,40 @@ async def post_person_merge(
 
 
 @router.post(
+    "/persons/{source_person_id}/split",
+    response_model=PersonSplitOperationResponse,
+    summary="Split selected faces of one person into a new unnamed person, atomically",
+)
+async def post_person_split(
+    request: Request, source_person_id: int, payload: PersonSplitRequest
+) -> dict[str, Any]:
+    """The only split entry point of ADR-0008: 1..500 explicit ``face_id``s, or nothing.
+
+    The request never widens to the other faces of a photo, and a rejected split leaves the
+    catalog byte-identical: the server validates every selected face, every revision and the
+    remaining members before it writes the operation row or creates the new person.
+    """
+    return persons_of(request).split(
+        source_person_id=int(source_person_id),
+        contract_version=payload.contract_version,
+        source_expected_revision=int(payload.source_expected_revision),
+        faces=[
+            {
+                "face_id": selection.face_id,
+                "expected_control_revision": int(selection.expected_control_revision),
+                "expected_assignment_revision": int(selection.expected_assignment_revision),
+            }
+            for selection in payload.faces
+        ],
+        request_id=payload.request_id,
+    )
+
+
+@router.post(
     "/person-operations/{operation_id}/undo",
-    response_model=PersonOperationResponse | FaceOperationResponse,
+    response_model=(
+        PersonOperationResponse | FaceOperationResponse | PersonSplitOperationResponse
+    ),
     summary="Compensate one committed person operation, or refuse it whole",
 )
 async def undo_person_operation(

@@ -69,9 +69,12 @@ five minimal correctness fixes: persisted replay revision, stable face undo repl
 restored link revisions, reachable AUTO_ALLOWED canonical exclusion filtering, and no image-vector refresh
 from face correction; 52 focused cases and 1116 full cases, A + D + C revalidated). **P3-05A is PASS**
 (A-level C2 contract freeze: ADR-0008, the machine-readable person-split companion and 22 contract cases;
-no production/schema/dependency change). **P3-05B is READY / CURRENT TASK** — implement the frozen split,
-mixed `SPLIT_GROUP`/`FACE_CONTROL` snapshots, shared compensating undo and `0013`; new/old detection
-`face_id` mapping remains P3-08.
+no production/schema/dependency change). **P3-05B is PASS** (B + D + C level: 44 new cases for the frozen
+split — the `0013` operation-log rebuild, the eligibility/revision matrix, the unnamed created person, the
+fixed `SPLIT_GROUP`+`FACE_CONTROL` items, the global-request-id gate, the compensating undo with its
+conflict matrix, the closed API/error surface and the real CPU detect→merge→split→restart→undo→restart
+fixture; `schema_version 12 → 13`). **P3-05C is READY / CURRENT TASK** — the independent C2 review of
+ADR-0008's implementation; new/old detection `face_id` mapping remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1005,9 +1008,40 @@ created ID 撤销后 redirect、后续 rename/merge/face edit/second split/effec
 新增契约用例 22/22 通过；既有 P3-03/P3-04 contract 回归 64/64 通过；Ruff、diff-check、lock-check clean。
 `schema_version` 仍为 12，`0001`～`0012`、`src/photo_search/**`、依赖、打包与前端均未改。
 
-**当前任务是 P3-05B — 人物拆分与通用撤销实现**，任务卡
-[docs/tasks/P3-05B.md](tasks/P3-05B.md)。按 ADR-0008 实现 `0013`、split API/事务/故障恢复与 B + D + C
-验收；完成后再做 P3-05C 独立 C2 审查。新旧检测 `face_id` 映射仍留给 P3-08，不混入人物拆分。
-下一任务推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请手动切换模型/推理档后继续。
+## Latest person-split implementation closure — P3-05B (2026-09-20)
+
+**P3-05B — 人物拆分与通用撤销实现：PASS（B + D + C）。** 见
+[P3-05B 报告](reports/P3-05B-person-split-and-undo.md)。起点 `7ba4c12`（P3-05A 文档冻结），工作树干净。
+
+新增 `src/photo_search/persons/split.py` 与连续 `catalog/migrations/0013_person_split_operations.sql`：
+**`schema_version` 推进到 13**，`0001`～`0012` 逐字节未改；0013 与 0012 同构，只重建
+`person_operations`（加 `SPLIT`）与 `person_operation_items`（加 `SPLIT_GROUP`，形状改为「只有
+`FACE_CONTROL` 带 `entity_key`」），不新增事实表、不新增 queue cause，`PERSON_CHANGED` 继续覆盖。
+实现 `POST /api/v1/persons/{source_person_id}/split` 与 split family 的共享撤销：source/control/assignment
+三 revision 预检、全局 request_id 幂等门先于一切实体/revision 检查、未命名无 alias 新人物、所选脸
+`MANUAL_ASSIGNED` + source exclusion + 严格向前的 `MANUAL/CONFIRMED` link、固定
+`source SPLIT_GROUP → created SPLIT_GROUP → 按 face_id 排序 FACE_CONTROL` 顺序、七类具名撤销冲突、
+created 撤销后 redirect 到 source。派生顺序复用 `publish_derived`（一次 `PERSON_CHANGED` + 队列 +
+`PENDING_REPAIR`）且**不调用**图片 projection refresh。
+
+| Check | Result |
+|---|---|
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-05B-full2 --junitxml=test-results/p3-05b-full.xml` | exit 0；JUnit `tests=1182 failures=0 errors=0 skipped=1`（374.5 s）；首轮唯一失败为既有 P2-06B 计时断言偶发（该文件本次未改、不在允许范围） |
+| 本任务新增用例 | 44 例（unit 7、lifecycle 10、undo 15、api 4、migration 8），JUnit `test-results/p3-05b-focused.xml`；另加 P3-03/P3-04/P2-03B/P3-05 回归批 231 例 0 失败 |
+| `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
+| 真实夹具 | `tools/diagnostics/person_split_smoke_fixture.py --device cpu` exit 0：真实检测→合并→命名→拆分→重启→撤销→重启，`status=ok`、`problems=[]`，`filter_delta=1`、`image_outbox_delta=0`、`siblings_unchanged=true` |
+| v12→v13 迁移 | 真实 v12 库（RENAME/UNDO/MERGE_BY_NAME/BATCH_FACE_EDIT + PERSON_BUNDLE/FACE_CONTROL + alias 引用）逐列保留；备份拒绝 `SPLIT`；损坏 0013 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写；重复迁移 `applied=()` |
+| C 级 | 真实 onedir 重建 + `packaged_api_smoke.py --work-dir "D:\PhotoSearchSmoke\P3-05B 中文 空格"`：`status=ok`、`problems=[]`、`startup_seconds=1.8`；bundle 内含 `0001`～`0013`（`0013` 与源码 SHA-256 `9DEA2D67…CCBDE4` 一致），打包 data root 实测 `schema_version=13` 且 CHECK 含 `SPLIT`/`SPLIT_GROUP`/`FACE_ASSIGN`/`FACE_CONTROL` |
+| 环境事实 | `.pytest-tmp` 对受限令牌不可读，pytest 的 `mode=0o700` basetemp 在该令牌下 `WinError 5`；按任务卡未改任何 ACL，全部 pytest 改由已授权的正常 Windows 权限路由执行，basetemp 仍为 `.pytest-tmp/P3-05B-*` |
+| 非生产机械更新 | `SUPPORTED_SCHEMA_VERSION` 13；`tools/places/examples/mini-cities.{spec,manifest}.json` 兼容上限 12 → 13；`tests/integration/test_p3_face_correction_migration.py` 两处钉回 0012；`tests/integration/test_p3_person_migration.py` 的未知类型样例 `SPLIT` → `MOVE_FACE`；`tools/diagnostics/packaged_api_smoke.py` 新增 split route/schema 13 检查 |
+
+P3-05B 未验证项（真实大规模拆分与 500 face 批量延迟、多进程并发、产品侧入口与新人物再拆分、
+模型重跑后的新旧 `face_id` 映射属 P3-08、`.pytest-tmp` ACL 环境事实、P2-06B 精排计时断言偶发）记录在
+[P3-05B 报告](reports/P3-05B-person-split-and-undo.md) §12。
+
+**当前任务是 P3-05C — P3-05 人物拆分与通用撤销独立 C2 审查**，任务卡
+[docs/tasks/P3-05C.md](tasks/P3-05C.md)。审查通过后回到 P3 路线下一任务（P3-06 人物页与脸框选择，
+执行时按 `docs/development-status.md` 与 V3.1 §8 表确认）。
+下一任务推荐 **C2 / GPT-5.6 Sol / high**，请手动切换模型/推理档后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

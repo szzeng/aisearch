@@ -112,6 +112,40 @@ def seed_index_generation(data_root: Path, *, space_id: str) -> str:
     return generation_id
 
 
+def packaged_person_schema(data_root: Path) -> dict[str, Any]:
+    """The packaged catalog's person-operation vocabulary, read straight from SQLite.
+
+    This is the C-level proof that migration ``0013`` is inside the bundle: the packaged data
+    root has to be at ``schema_version = 13`` with the widened ``SPLIT``/``SPLIT_GROUP``
+    CHECK lists, next to the P3-04 ``FACE_ASSIGN`` value it must not have lost.
+    """
+    db_path = data_root / "catalog" / "catalog.db"
+    connection = sqlite3.connect(str(db_path), timeout=30.0)
+    try:
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        operations = str(
+            connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'person_operations'"
+            ).fetchone()[0]
+        )
+        items = str(
+            connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'person_operation_items'"
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+    return {
+        "schema_version": int(version),
+        "has_split": "SPLIT" in operations,
+        "has_face_assign": "FACE_ASSIGN" in operations,
+        "has_split_group": "SPLIT_GROUP" in items,
+        "has_face_control": "FACE_CONTROL" in items,
+    }
+
+
 def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]:
     report: dict[str, Any] = {"bundle": str(bundle), "work_dir": str(work_dir), "checks": {}}
     checks: dict[str, Any] = report["checks"]
@@ -543,6 +577,45 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 for needle in (str(work_dir), str(data_root), str(library))
             ) and "latitude" not in coverage_places.text
 
+            # P3-05B: the split route must exist inside the frozen bundle, be guarded like
+            # every other write, and answer the frozen closed code - and the packaged data
+            # root must really carry the 0013 vocabulary (a missing migration would make the
+            # catalog unusable, and a stale CHECK would refuse a legitimate split).
+            split_probe = client.post(
+                "/api/v1/persons/999999/split",
+                json={
+                    "contract_version": "p3-person-split-contracts.v1",
+                    "request_id": "packaged-split-1",
+                    "source_expected_revision": 1,
+                    "faces": [
+                        {
+                            "face_id": "0" * 64,
+                            "expected_control_revision": 0,
+                            "expected_assignment_revision": 1,
+                        }
+                    ],
+                },
+                headers=headers,
+            )
+            checks["split_missing_person_status"] = split_probe.status_code
+            split_probe_body = split_probe.json() if split_probe.status_code != 500 else {}
+            checks["split_missing_person_code"] = split_probe_body.get("code")
+            checks["split_has_no_local_path"] = all(
+                needle not in split_probe.text
+                for needle in (str(work_dir), str(data_root), str(library))
+            )
+            with httpx.Client(base_url=base, timeout=60.0) as anonymous:
+                checks["split_without_session"] = anonymous.post(
+                    "/api/v1/persons/999999/split",
+                    json={
+                        "contract_version": "p3-person-split-contracts.v1",
+                        "request_id": "packaged-split-2",
+                        "source_expected_revision": 1,
+                        "faces": [],
+                    },
+                ).status_code
+            checks["packaged_person_schema"] = packaged_person_schema(data_root)
+
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
             checks["thumbnail"] = thumbnail.status_code
             checks["thumbnail_type"] = thumbnail.headers.get("Content-Type")
@@ -807,6 +880,23 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("packaged coverage view")
     if not checks.get("coverage_has_no_local_path"):
         problems.append("coverage leaked a local path or a coordinate")
+    if checks.get("split_missing_person_status") != 404 or checks.get(
+        "split_missing_person_code"
+    ) != "PERSON_NOT_FOUND":
+        problems.append("packaged split route")
+    if not checks.get("split_has_no_local_path"):
+        problems.append("split refusal leaked a local path")
+    if checks.get("split_without_session") != 401:
+        problems.append("packaged split without a session")
+    person_schema = checks.get("packaged_person_schema") or {}
+    if (
+        person_schema.get("schema_version") != 13
+        or not person_schema.get("has_split")
+        or not person_schema.get("has_face_assign")
+        or not person_schema.get("has_split_group")
+        or not person_schema.get("has_face_control")
+    ):
+        problems.append("packaged person-operation schema")
     if (checks.get("coverage_search_block") or {}).get("query_encoder_available") is not False:
         problems.append("packaged coverage query encoder flag")
     ocr_block = checks.get("coverage_ocr_block") or {}

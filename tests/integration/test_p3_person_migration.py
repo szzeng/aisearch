@@ -244,7 +244,7 @@ def test_the_person_tables_enforce_the_p3_03_invariants(
             connection.execute(
                 "INSERT INTO person_operations(operation_id, request_id, payload_sha256, type, "
                 "target_person_id, state, operation_revision, created_at, committed_at) "
-                "VALUES ('op-2', 'req-2', ?, 'SPLIT', 7, 'COMMITTED', 2, 1, 1)",
+                "VALUES ('op-2', 'req-2', ?, 'MOVE_FACE', 7, 'COMMITTED', 2, 1, 1)",
                 ("c" * 64,),
             )
         with pytest.raises(Exception):

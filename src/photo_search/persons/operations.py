@@ -113,6 +113,14 @@ def _item_projection(row: Any) -> dict[str, Any]:
         from photo_search.persons import face_correction
 
         return face_correction.recorded_item_projection(row)
+    if str(row["entity_type"]) == contracts.ENTITY_TYPE_SPLIT_GROUP:
+        # ADR-0008 §6: a group item answers in the split envelope, so a replay of a split is
+        # rebuilt by the module that owns that envelope instead of being guessed here.
+        from photo_search.persons import split as split_module
+
+        before = split_module.load_group_bundle(row["before_value_json"])
+        after = split_module.load_group_bundle(row["after_value_json"])
+        return split_module.group_item_answer(str(after.get("role")), before, after)
     before = bundle_module.load_bundle(row["before_value_json"])
     after = bundle_module.load_bundle(row["after_value_json"])
     return {
@@ -129,6 +137,14 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
     items = [
         _item_projection(row) for row in _operation_items(connection, operation["operation_id"])
     ]
+    family = operation_family(connection, operation)
+    if family == "split":
+        # The shared undo endpoint rebuilds idempotent responses here. A split-family replay
+        # keeps its own frozen envelope (requested/canonical source, created person) instead
+        # of the P3-03 person shape, and never re-reads live state to do it.
+        from photo_search.persons import split as split_module
+
+        return split_module.split_operation_result(operation, items)
     result = {
         "operation_id": str(operation["operation_id"]),
         "operation_type": str(operation["type"]),
@@ -144,7 +160,7 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
         "replayed": True,
         "items": items,
     }
-    if operation_family(connection, operation) == "face":
+    if family == "face":
         # The shared undo endpoint rebuilds idempotent responses here. A face-family replay
         # must retain the frozen face envelope instead of accidentally validating as the
         # looser P3-03 response union and losing its FACE_CONTROL fields.
@@ -830,7 +846,7 @@ def merge_persons(
 
 # ------------------------------------------------------------------------- compensation
 def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
-    """``"face"`` or ``"person"``: the vocabulary an operation (and its undo) answers in.
+    """``"face"``, ``"split"`` or ``"person"``: the vocabulary an operation answers in.
 
     An ``UNDO`` row is family-agnostic, so it inherits the family of the operation it
     compensates. That keeps "undo an UNDO" answered with the frozen code of the family the
@@ -839,10 +855,16 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
     operation_type = str(operation["type"])
     if operation_type in contracts.FACE_OPERATION_TYPES:
         return "face"
+    if operation_type in contracts.SPLIT_OPERATION_TYPES:
+        return "split"
     if operation_type == "UNDO" and operation["undo_of_operation_id"] is not None:
         parent = operation_row(connection, str(operation["undo_of_operation_id"]))
-        if parent is not None and str(parent["type"]) in contracts.FACE_OPERATION_TYPES:
-            return "face"
+        if parent is not None:
+            parent_type = str(parent["type"])
+            if parent_type in contracts.FACE_OPERATION_TYPES:
+                return "face"
+            if parent_type in contracts.SPLIT_OPERATION_TYPES:
+                return "split"
     return "person"
 
 
@@ -964,7 +986,8 @@ def undo_person_operation(
     # is not a revision check - it only decides which frozen vocabulary a mismatch uses, so
     # a key already owned by the face family answers with FACE_IDEMPOTENCY_CONFLICT.
     original = operation_row(connection, original_id)
-    is_face = original is not None and operation_family(connection, original) == "face"
+    family = "person" if original is None else operation_family(connection, original)
+    is_face = family == "face"
     conflict_code = FACE_IDEMPOTENCY_CONFLICT if is_face else PERSON_IDEMPOTENCY_CONFLICT
     replay = _replay(
         connection, request_id=request_id, digest=digest, conflict_code=conflict_code
@@ -983,6 +1006,20 @@ def undo_person_operation(
         from photo_search.persons import face_correction
 
         return face_correction.undo_face_operation(
+            connection,
+            original=original,
+            request_id=request_id,
+            digest=digest,
+            expected_operation_revision=int(expected),
+            now_ms=int(now_ms),
+            refresh=refresh,
+        )
+    if family == "split":
+        # ADR-0008 §7 keeps the *same* endpoint: the split family owns its own eligibility,
+        # snapshot comparison and compensation, and answers in the split envelope.
+        from photo_search.persons import split as split_module
+
+        return split_module.undo_split_operation(
             connection,
             original=original,
             request_id=request_id,

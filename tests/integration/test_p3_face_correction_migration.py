@@ -299,7 +299,13 @@ def test_v11_to_v12_is_continuous_backed_up_and_lossless(
         )
     ] == [(1, "op-3"), (2, None), (3, "op-1")]
 
+    # Still pinned to the 0012 target: a later migration (0013) is a separate step and must
+    # not be pulled in by this case's "already at the target" idempotency check.
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V12)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V12))
     again = migrate_database(path, data_root=data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
     assert again.applied == () and again.previous_version == V12
 
 
@@ -307,7 +313,14 @@ def test_the_rebuilt_item_table_enforces_the_two_entity_shapes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = build_v11(tmp_path, monkeypatch)
+    # Still pinned to the 0012 target: this case is about the closed vocabulary *0012*
+    # installs, so the later 0013 step (which legitimately widens it again with SPLIT/
+    # SPLIT_GROUP) is a separate migration and its own file.
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V12)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V12))
     migrate_database(path, data_root=data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
     connection = connect_rw(path)
     try:
         connection.execute("BEGIN IMMEDIATE")
@@ -422,4 +435,3 @@ def test_a_missing_item_table_is_inconsistent_and_a_newer_schema_is_refused(
         migrate_database(path, data_root=data_root(tmp_path))
     assert too_new.value.code == SCHEMA_TOO_NEW
     assert path.read_bytes() == before
-

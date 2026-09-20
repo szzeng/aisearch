@@ -636,6 +636,36 @@ class PersonUndoRequest(BaseModel):
     expected_operation_revision: int = Field(ge=1)
 
 
+class PersonSplitFaceSelection(BaseModel):
+    """One face of ``POST /api/v1/persons/{source_person_id}/split`` (ADR-0008 §2).
+
+    Both revisions are part of the request on purpose: the logical control revision proves
+    the human control did not move, and the effective link revision proves the membership
+    the caller saw is still the current one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    face_id: str
+    expected_control_revision: int = Field(ge=0)
+    expected_assignment_revision: int = Field(ge=1)
+
+
+class PersonSplitRequest(BaseModel):
+    """``POST /api/v1/persons/{source_person_id}/split``: 1..500 explicit faces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    request_id: str = Field(min_length=1, max_length=64)
+    source_expected_revision: int = Field(ge=1)
+    #: The 1..500 bound, the empty refusal and the duplicate refusal belong to the service,
+    #: so the frozen ``PERSON_BATCH_TOO_LARGE``/``VALIDATION_ERROR`` codes are what a caller
+    #: sees instead of a transport-level shape error. The list itself is required, exactly
+    #: like the companion: omitting it is a caller-shape error, not an empty selection.
+    faces: list[PersonSplitFaceSelection]
+
+
 class PersonOperationItemResponse(BaseModel):
     entity_type: str
     #: A ``PERSON_BUNDLE`` item names an integer person; a ``FACE_CONTROL`` item of
@@ -746,6 +776,44 @@ class FaceOperationResponse(BaseModel):
     catalog_filter_revision: int
     replayed: bool
     items: list[FaceOperationItemResponse]
+
+
+class SplitGroupItemResponse(BaseModel):
+    """One ``SPLIT_GROUP`` item of a split answer (ADR-0008 §6).
+
+    It names a person id, its role in the transaction and - after a compensation - where a
+    created group now points. No name, alias, member list or similarity is part of it.
+    """
+
+    entity_type: str
+    entity_id: int
+    role: str
+    changed: bool
+    revision: int
+    merged_into: int | None = None
+
+
+class PersonSplitOperationResponse(BaseModel):
+    """The result of one split or of the compensation of one (``p3-person-split-contracts.v1``).
+
+    ``items`` mixes exactly two group items (source, then created) with 1..500 ``FACE_CONTROL``
+    items sorted by ``face_id``; the union below keeps each shape exact so a group item can
+    never be read as a face control or the other way round.
+    """
+
+    contract_version: str
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: str
+    undo_of_operation_id: str | None = None
+    requested_source_person_id: int
+    canonical_source_person_id: int
+    new_person_id: int
+    changed: bool
+    catalog_filter_revision: int
+    replayed: bool
+    items: list[SplitGroupItemResponse | FaceOperationItemResponse]
 
 
 # --------------------------------------------------------------------------------- search

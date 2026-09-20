@@ -16,6 +16,7 @@ from typing import Any
 from photo_search.catalog.db import Catalog
 from photo_search.persons import contracts, face_correction
 from photo_search.persons import operations as operation_module
+from photo_search.persons import split as split_module
 from photo_search.persons.contracts import person_view
 from photo_search.persons.identity import (
     resolve_canonical_person_id,
@@ -153,6 +154,30 @@ class PersonService:
                 refresh=self.refresh,
             )
 
+    # ------------------------------------------------------------------ split
+    def split(
+        self,
+        *,
+        source_person_id: int,
+        contract_version: str,
+        source_expected_revision: int,
+        faces: Sequence[Mapping[str, Any]],
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Split 1..500 explicit faces of one person into a new unnamed person (ADR-0008)."""
+        now_ms = int(self.clock())
+        with self.catalog.write() as connection:
+            return split_module.split_person(
+                connection,
+                source_person_id=source_person_id,
+                contract_version=contract_version,
+                source_expected_revision=source_expected_revision,
+                faces=list(faces),
+                request_id=request_id,
+                now_ms=now_ms,
+                refresh=self.refresh,
+            )
+
     # ----------------------------------------------------------------- face control
     def face_assignment(self, face_id: str) -> dict[str, Any]:
         """ADR-0007 §6: the read projection of one face's human control."""
@@ -210,4 +235,4 @@ class PersonService:
         return operation_module.operation_result(self.catalog.connection, row)
 
 
-__all__ = ["PersonService", "contracts", "face_correction"]
+__all__ = ["PersonService", "contracts", "face_correction", "split_module"]
