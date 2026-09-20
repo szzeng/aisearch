@@ -347,7 +347,14 @@ def control_bundle_differences(
     if (live_assignment is None) != (recorded_assignment is None):
         differences.append("assignment")
     elif live_assignment is not None and recorded_assignment is not None:
-        for field in ("person_id", "assignment_kind", "decision", "reason", "last_operation_id"):
+        for field in (
+            "person_id",
+            "assignment_kind",
+            "decision",
+            "reason",
+            "revision",
+            "last_operation_id",
+        ):
             if live_assignment.get(field) != recorded_assignment.get(field):
                 differences.append(f"assignment.{field}")
     if _exclusion_keys(live) != _exclusion_keys(recorded):
@@ -565,27 +572,33 @@ def _establish_link(
     assignment_kind: str,
     operation_id: str,
     now_ms: int,
+    revision_floor: int = 0,
 ) -> None:
     """Upsert one effective link; an existing row keeps its similarity as bookkeeping."""
     existing = connection.execute(
-        "SELECT confidence FROM face_person_links WHERE face_id = ? AND person_id = ? "
+        "SELECT confidence, revision FROM face_person_links WHERE face_id = ? AND person_id = ? "
         "AND assignment_kind = ?",
         (str(face_id), int(person_id), str(assignment_kind)),
     ).fetchone()
     confidence = 0.0 if existing is None else float(existing["confidence"])
+    revision = max(
+        int(revision_floor),
+        0 if existing is None else int(existing["revision"]),
+    ) + 1
     connection.execute(
         "INSERT INTO face_person_links(face_id, person_id, assignment_kind, decision, "
         "confidence, reason, revision, last_operation_id, created_at, updated_at) "
-        "VALUES (?, ?, ?, 'CONFIRMED', ?, NULL, 1, ?, ?, ?) "
+        "VALUES (?, ?, ?, 'CONFIRMED', ?, NULL, ?, ?, ?, ?) "
         "ON CONFLICT(face_id, person_id, assignment_kind) DO UPDATE SET "
         "decision = 'CONFIRMED', reason = NULL, "
-        "revision = face_person_links.revision + 1, "
+        "revision = excluded.revision, "
         "last_operation_id = excluded.last_operation_id, updated_at = excluded.updated_at",
         (
             str(face_id),
             int(person_id),
             str(assignment_kind),
             confidence,
+            int(revision),
             str(operation_id),
             int(now_ms),
             int(now_ms),
@@ -805,10 +818,18 @@ def _close_face_operation(
             connection,
             faces=[str(result["face_id"]) for result in results],
             now_ms=int(now_ms),
-            refresh=refresh,
+            # ADR-0007 §8 explicitly forbids a face correction from writing the image
+            # vector ``index_outbox``. The shared helper still owns the filter revision,
+            # search-document queue and face-candidate repair; only the optional P2 image
+            # projection refresh is disabled for this operation family.
+            refresh=None,
         )
     else:
         filter_revision = revision_module.read_filter_revision(connection)
+    connection.execute(
+        "UPDATE person_operations SET catalog_filter_revision = ? WHERE operation_id = ?",
+        (int(filter_revision), str(operation_id)),
+    )
     return {
         "contract_version": CONTRACT_VERSION,
         "operation_id": str(operation_id),
@@ -1131,6 +1152,7 @@ def restore_control_bundle(
                 assignment_kind=str(wanted_assignment["assignment_kind"]),
                 operation_id=operation_id,
                 now_ms=now_ms,
+                revision_floor=int(wanted_assignment["revision"]),
             )
     for person_id in pending_exclusions:
         _write_exclusion(

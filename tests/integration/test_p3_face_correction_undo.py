@@ -82,6 +82,14 @@ def test_undoing_a_restore_auto_puts_the_manual_lock_back(
 ) -> None:
     seeded = env.seeded_pair()
     env.edit(seeded["face"], "assign", expected_revision=0, target_person_id=seeded["other"])
+    # A restored link must advance from the recorded before revision even when restore_auto
+    # deleted the MANUAL row and there is no live row from which to derive a floor.
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_person_links SET revision = 7 WHERE face_id = ? "
+            "AND person_id = ? AND assignment_kind = 'MANUAL'",
+            (seeded["face"], seeded["other"]),
+        )
     restore = env.edit(seeded["face"], "restore_auto", expected_revision=1)
     outcome = env.undo(restore["operation_id"], env.next_request_id("undo"), 2)
     item = outcome["items"][0]
@@ -91,6 +99,7 @@ def test_undoing_a_restore_auto_puts_the_manual_lock_back(
     assert env.active_exclusions(seeded["face"]) == [seeded["dad"]]
     link = env.effective_link(seeded["face"])
     assert link["assignment_kind"] == "MANUAL" and link["person_id"] == seeded["other"]
+    assert int(link["revision"]) == 8
 
 
 def test_undo_refuses_the_whole_request_when_a_face_was_edited_afterwards(
@@ -193,6 +202,8 @@ def test_an_undo_replay_answers_with_the_recorded_operation(
     assert replay["replayed"] is True
     assert replay["operation_id"] == first["operation_id"]
     assert replay["items"] == first["items"]
+    assert replay["contract_version"] == "p3-face-correction-contracts.v1"
+    assert replay["catalog_filter_revision"] == first["catalog_filter_revision"]
     assert len(env.operations()) == operations
     # A *person* operation was never involved; the mismatch still answers with a 409 code.
     with pytest.raises(CatalogError) as conflict:

@@ -120,6 +120,10 @@ def test_the_same_request_id_replays_before_any_revision_check(
     assert replay["operation_id"] == first["operation_id"]
     assert replay["changed"] is True
     assert replay["items"] == first["items"]
+    assert replay["catalog_filter_revision"] == first["catalog_filter_revision"]
+    assert int(env.operation(first["operation_id"])["catalog_filter_revision"]) == int(
+        first["catalog_filter_revision"]
+    )
     assert len(env.operations()) == len(operations)
     assert env.filter_revision() == filter_after_first
 
@@ -310,6 +314,7 @@ def test_a_denied_person_is_not_re_adopted_by_the_automatic_path(
     env: FaceCorrectionHarness,
 ) -> None:
     """ADR-0007 §11.13: AUTO_ALLOWED still refuses an actively denied person."""
+    from photo_search.face.contract import FACE_DIMENSION, FACE_PROCESSOR_ID
     from photo_search.face.index import FaceIndexCoordinator
 
     seeded = env.seeded_pair()
@@ -317,6 +322,15 @@ def test_a_denied_person_is_not_re_adopted_by_the_automatic_path(
     env.edit(seeded["face"], "restore_auto", expected_revision=1)
     assert env.active_exclusions(seeded["face"]) == [seeded["dad"]]
     assert env.effective_link(seeded["face"]) is None
+
+    # The general person harness uses a one-byte placeholder because its normal tests never
+    # run cosine matching. This case deliberately enters the automatic path, so give the
+    # target face a dimension-valid synthetic vector (no model or real photo is involved).
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_embeddings SET vector_blob = ? WHERE face_id = ? AND processor_id = ?",
+            (bytes(4 * int(FACE_DIMENSION)), seeded["face"], str(FACE_PROCESSOR_ID)),
+        )
 
     with env.catalog.write() as connection:
         connection.execute(
@@ -327,12 +341,90 @@ def test_a_denied_person_is_not_re_adopted_by_the_automatic_path(
         )
     decisions = env.reconcile_asset(seeded["asset_id"])
     by_face = {decision["face_id"]: decision for decision in decisions}
-    # The face is free to be grouped again, but never onto the person a human denied.
-    if seeded["face"] in by_face:
-        assert by_face[seeded["face"]]["person_id"] != seeded["dad"]
+    # AUTO_ALLOWED means the face is actually free to be grouped again; an active denial
+    # filters only the denied canonical person and is not a whole-face MANUAL lock.
+    assert by_face[seeded["face"]]["action"] != "HUMAN_CONTROLLED"
+    assert by_face[seeded["face"]]["person_id"] != seeded["dad"]
     link = env.effective_link(seeded["face"])
     assert link is None or int(link["person_id"]) != seeded["dad"]
     assert FaceIndexCoordinator(env.catalog).active_generation() is not None
+
+
+def test_a_face_correction_never_schedules_an_image_vector_refresh(
+    env: FaceCorrectionHarness,
+) -> None:
+    """ADR-0007 §8: only search/face-derived queues move, never image ``index_outbox``."""
+    seeded = env.seeded_pair()
+    calls: list[dict] = []
+
+    def image_refresh(*_args, **kwargs) -> int:
+        calls.append(dict(kwargs))
+        return 1
+
+    env.service.refresh = image_refresh
+    outcome = env.edit(seeded["face"], "unassign", expected_revision=0)
+    assert outcome["changed"] is True
+    assert calls == []
+    assert env.index_outbox_rows() == 0
+
+
+def test_an_auto_allowed_face_filters_a_denial_through_a_canonical_merge(
+    env: FaceCorrectionHarness,
+) -> None:
+    """ADR-0007 §4: A->B redirects cannot make an old denial miss canonical B."""
+    import hashlib
+    import struct
+
+    from photo_search.face.contract import FACE_DIMENSION, FACE_PROCESSOR_ID
+
+    seeded = env.seeded_pair()
+    env.edit(seeded["face"], "assign", expected_revision=0, target_person_id=seeded["other"])
+    env.edit(seeded["face"], "restore_auto", expected_revision=1)
+
+    candidate_asset = env.add_asset("另一个人物.jpg")
+    candidate_face = env.add_face(candidate_asset)
+    env.add_embedding(candidate_face)
+    env.add_link(
+        candidate_face,
+        seeded["other"],
+        decision="CONFIRMED",
+        assignment_kind="AUTO",
+        confidence=0.99,
+    )
+    generation_id = env.seed_candidate_index([seeded["face"], candidate_face])
+    vector_blob = struct.pack("<f", 1.0) + bytes(4 * (int(FACE_DIMENSION) - 1))
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_embeddings SET vector_blob = ? WHERE face_id IN (?, ?) "
+            "AND processor_id = ?",
+            (vector_blob, seeded["face"], candidate_face, str(FACE_PROCESSOR_ID)),
+        )
+        connection.execute(
+            "INSERT INTO face_candidates(generation_id, face_id, is_representative, "
+            "quality_state, vector_blob, vector_sha256, published_at) "
+            "VALUES (?, ?, 1, 'OK', ?, ?, 1)",
+            (
+                generation_id,
+                candidate_face,
+                vector_blob,
+                hashlib.sha256(vector_blob).hexdigest(),
+            ),
+        )
+
+    # The stored denial still names dad, but dad now redirects to other. The automatic
+    # matcher must filter the candidate for other through that canonical equivalence.
+    env.merge(
+        seeded["other"],
+        [(seeded["dad"], env.revision_of(seeded["dad"]))],
+        "canonical-denial-merge",
+        target_revision=env.revision_of(seeded["other"]),
+    )
+    decisions = env.reconcile_asset(seeded["asset_id"])
+    decision = {item["face_id"]: item for item in decisions}[seeded["face"]]
+    assert decision["action"] == "NEW_GROUP"
+    link = env.effective_link(seeded["face"])
+    assert link is not None
+    assert int(link["person_id"]) not in {seeded["dad"], seeded["other"]}
 
 
 def test_a_late_automatic_result_conflicts_instead_of_overwriting_a_lock(

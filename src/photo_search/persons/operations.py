@@ -129,7 +129,7 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
     items = [
         _item_projection(row) for row in _operation_items(connection, operation["operation_id"])
     ]
-    return {
+    result = {
         "operation_id": str(operation["operation_id"]),
         "operation_type": str(operation["type"]),
         "operation_revision": int(operation["operation_revision"]),
@@ -144,6 +144,14 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
         "replayed": True,
         "items": items,
     }
+    if operation_family(connection, operation) == "face":
+        # The shared undo endpoint rebuilds idempotent responses here. A face-family replay
+        # must retain the frozen face envelope instead of accidentally validating as the
+        # looser P3-03 response union and losing its FACE_CONTROL fields.
+        from photo_search.persons.face_correction import CONTRACT_VERSION
+
+        result = {"contract_version": CONTRACT_VERSION, **result}
+    return result
 
 
 def _replay(

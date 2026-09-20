@@ -64,8 +64,12 @@ canonical exclusions, the 1..500 mixed batch, the global `request_id` gate ahead
 the `FACE_CONTROL` before/after snapshots with a forward-only compensating undo, the logical
 control-revision gate the automatic association now proves inside its own write transaction, the four
 `/api/v1` paths with their frozen `FACE_*` errors, and the four read-only human-control counts in
-`face_summary`; 50 new cases, **schema_version 11 → 12**). **P3-04C is READY / CURRENT TASK** — the
-independent C2 review of P3-04 (review plus the smallest necessary fix, no new behaviour by default).
+`face_summary`; 50 new cases, **schema_version 11 → 12**). **P3-04C is PASS** (independent C2 review plus
+five minimal correctness fixes: persisted replay revision, stable face undo replay envelope, forward-only
+restored link revisions, reachable AUTO_ALLOWED canonical exclusion filtering, and no image-vector refresh
+from face correction; 52 focused cases and 1116 full cases, A + D + C revalidated). **P3-05A is READY /
+CURRENT TASK** — first freeze the high-risk person-split/idempotency/snapshot/compensating-undo contract;
+new/old detection `face_id` mapping remains P3-08.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -974,9 +978,21 @@ redirect 解析器）、`api/{models,routes,errors}.py`（3 条新路径 + 扩�
 | D 级注入 | 过期 revision 零写、幂等门早于 revision、晚到自动结果 `LATE_CONTROL_CONFLICT` 零写、批量中途失败全回滚、批量重复/501 拒绝、撤销冲突整批拒绝且 revision 不倒退、undo an UNDO 拒绝、no-op 撤销零副作用、P3-03 合并交叉冲突、快照指向的脸消失具名冲突 |
 | 非生产机械更新 | `SUPPORTED_SCHEMA_VERSION` 12；`tests/unit/test_catalog_migrations.py` 注释；`tests/integration/test_p3_person_migration.py` 钉回 0011；`tools/places/examples/mini-cities.{spec,manifest}.json` 的 `compatible_catalog_schema.maximum` 11 → 12 |
 
-**当前任务是 P3-04C — P3-04 独立 C2 审查（含必要最小修复）**，任务卡
-[docs/tasks/P3-04C.md](tasks/P3-04C.md)。它只做审查与必要最小修复，必须独立复现 6 组关键行为，
-不改 ADR-0007/companion；只要改动了 `src/photo_search/**` 就必须重跑 C 级。
-下一步推荐 **C2 / GPT-5.6 Sol / high**，请在 Codex 中手动切换模型/推理档后继续；审查通过后才进入 P3-05。
+## Latest independent face-correction review — P3-04C (2026-09-20)
+
+**P3-04C — P3-04 独立 C2 审查：PASS（修复后 A + D + C）。** 见
+[P3-04C 报告](reports/P3-04C-c2-review.md)。审查修复 5 类已冻结语义的实现偏差：operation 持久化实际
+filter revision、脸级 undo replay 保持 contract envelope、控制 bundle 恢复的 link revision 严格向前、
+AUTO_ALLOWED 活动排除只过滤 canonical 候选而不锁死整脸、脸级纠错不刷新图片向量 outbox。
+
+`schema_version` 仍为 12；ADR-0007、companion、`0001`～`0012`、依赖、`PhotoSearch.spec` 和前端均未改。
+52 个 P3-04 专项、6 个独立关键复现及完整 unit/integration 全部通过；完整 JUnit 为
+`tests=1116 failures=0 errors=0 skipped=1`（419.408 s）。Ruff、diff-check、lock-check、真实 CPU 夹具、
+真实 onedir 重建、新 D 盘目录打包 API smoke 和 bundle migration/hash 核对全部通过。
+
+**当前任务是 P3-05A — 人物拆分、通用撤销与 revision 冲突契约冻结**，任务卡
+[docs/tasks/P3-05A.md](tasks/P3-05A.md)。P3-05 的高风险协议尚未冻结，因此按 V3.1 的 C2 主导路线先做
+独立 A 级契约闭环；新旧检测 `face_id` 映射仍留给 P3-08，不混入人物拆分。
+下一任务继续推荐 **C2 / GPT-5.6 Sol / high**，当前模型可直接继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

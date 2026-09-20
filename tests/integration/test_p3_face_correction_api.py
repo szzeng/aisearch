@@ -394,6 +394,11 @@ def test_the_shared_undo_endpoint_answers_in_the_family_of_the_operation(api_env
             json={"request_id": "family-2", "expected_operation_revision": 1},
             headers=headers,
         )
+        face_undo_replay = await client.post(
+            f"/api/v1/person-operations/{face_op.json()['operation_id']}/undo",
+            json={"request_id": "family-2", "expected_operation_revision": 1},
+            headers=headers,
+        )
         person_op = await client.put(
             f"/api/v1/persons/{seeded['persons']['爸爸']}/name",
             json={"request_id": "family-3", "name": "老爸", "expected_revision": 1},
@@ -410,6 +415,8 @@ def test_the_shared_undo_endpoint_answers_in_the_family_of_the_operation(api_env
         return {
             "face_undo_status": face_undo.status_code,
             "face_undo": body_of(face_undo),
+            "face_undo_replay_status": face_undo_replay.status_code,
+            "face_undo_replay": body_of(face_undo_replay),
             "person_undo_status": person_undo.status_code,
             "person_undo": body_of(person_undo),
         }
@@ -427,6 +434,13 @@ def test_the_shared_undo_endpoint_answers_in_the_family_of_the_operation(api_env
         "assigned_person_id",
         "exclusions",
     }
+    assert result["face_undo_replay_status"] == 200
+    assert result["face_undo_replay"]["contract_version"] == CONTRACT_VERSION
+    assert result["face_undo_replay"]["replayed"] is True
+    assert result["face_undo_replay"]["items"] == result["face_undo"]["items"]
+    assert result["face_undo_replay"]["catalog_filter_revision"] == result["face_undo"][
+        "catalog_filter_revision"
+    ]
     assert result["person_undo_status"] == 200
     assert "contract_version" not in result["person_undo"]
     assert result["person_undo"]["operation_type"] == "UNDO"

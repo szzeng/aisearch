@@ -694,6 +694,28 @@ def _active_exclusion_persons(
     return excluded
 
 
+def _manually_locked_face_ids(
+    connection: sqlite3.Connection, *, asset_id: int
+) -> set[str]:
+    """Faces whose MANUAL mode forbids every automatic assignment.
+
+    An active exclusion alone is deliberately not a whole-face lock: ADR-0007 §3/§4
+    says an ``AUTO_ALLOWED`` face may still be grouped, but never into an excluded canonical
+    person. The processor's broader ``human_controlled_face_ids()`` remains correct for
+    preserving old detection anchors during re-detection; association needs this narrower
+    mode-only view.
+    """
+    return {
+        str(row["face_id"])
+        for row in connection.execute(
+            "SELECT c.face_id FROM face_assignment_controls AS c "
+            "JOIN faces AS f ON f.face_id = c.face_id WHERE f.asset_id = ? "
+            "AND c.mode IN ('MANUAL_ASSIGNED', 'MANUAL_UNASSIGNED')",
+            (int(asset_id),),
+        ).fetchall()
+    }
+
+
 def _canonical_person_map(
     connection: sqlite3.Connection, person_ids: Sequence[int]
 ) -> dict[int, int]:
@@ -743,7 +765,6 @@ def _reconcile_asset(
     spec_revision: str,
     observed_controls: Mapping[str, int] | None = None,
 ) -> list[dict[str, Any]]:
-    from photo_search.face.processor import human_controlled_face_ids
     from photo_search.persons import face_correction
 
     candidates = index.candidates()
@@ -767,7 +788,7 @@ def _reconcile_asset(
         # Both human facts are read again *inside* the write transaction: the control and
         # denial tables are the authority, and the candidate set above was only a snapshot.
         late = _control_revision_gate(connection, observed, face_ids)
-        protected = human_controlled_face_ids(connection, asset_id=asset_id)
+        protected = _manually_locked_face_ids(connection, asset_id=asset_id)
         excluded_by_face = _active_exclusion_persons(connection, face_ids)
         canonical_of_person = _canonical_person_map(
             connection,

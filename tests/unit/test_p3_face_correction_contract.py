@@ -174,6 +174,7 @@ def test_the_snapshot_ignores_clocks_and_reports_semantic_moves() -> None:
         mode: str = fc.MODE_MANUAL_ASSIGNED,
         revision: int = 2,
         person: int | None = 7,
+        assignment_revision: int = 3,
         exclusions: list[tuple[int, bool]] | None = None,
         updated_at: int = 100,
     ) -> dict:
@@ -193,7 +194,7 @@ def test_the_snapshot_ignores_clocks_and_reports_semantic_moves() -> None:
                     "assignment_kind": "MANUAL",
                     "decision": "CONFIRMED",
                     "reason": None,
-                    "revision": 3,
+                    "revision": assignment_revision,
                     "last_operation_id": "op-1",
                     "created_at": 5,
                     "updated_at": updated_at,
@@ -224,6 +225,9 @@ def test_the_snapshot_ignores_clocks_and_reports_semantic_moves() -> None:
     assert fc.control_bundle_differences(base, bundle(revision=3, exclusions=[(9, True)])) == [
         "control.revision"
     ]
+    assert fc.control_bundle_differences(
+        base, bundle(assignment_revision=4, exclusions=[(9, True)])
+    ) == ["assignment.revision"]
 
 
 def test_the_item_answer_reports_only_the_frozen_fields() -> None:
