@@ -145,16 +145,19 @@ unauthorized operation”），且 pytest 会以 `mode=0o700` 创建 basetemp/`t
 
 | 命令 | 结果 |
 |---|---|
-| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-05B-full2 --junitxml=test-results/p3-05b-full.xml` | exit 0；JUnit `tests=1182 failures=0 errors=0 skipped=1`，374.5 s |
-| `uv run --no-sync python -m pytest -q … tests/unit/test_p3_person_split_unit.py tests/integration/test_p3_person_split_{lifecycle,undo,api,migration}.py --basetemp=.pytest-tmp/P3-05B-focused --junitxml=test-results/p3-05b-focused.xml` | exit 0；`tests=44 failures=0 errors=0 skipped=0`，2.72 s |
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-05B-full4 --junitxml=test-results/p3-05b-full.xml` | exit 0；JUnit `tests=1184 failures=0 errors=0 skipped=1`，373.8 s |
+| `uv run --no-sync python -m pytest -q … tests/unit/test_p3_person_split_unit.py tests/integration/test_p3_person_split_{lifecycle,undo,api,migration}.py --basetemp=.pytest-tmp/P3-05B-focused --junitxml=test-results/p3-05b-focused.xml` | exit 0；`tests=46 failures=0 errors=0 skipped=0`，2.86 s |
 | P3-03/P3-04/P2-03B/P3-05 回归批（21 个文件，`--junitxml=test-results/p3-05b-regression2.xml`） | exit 0；`tests=231 failures=0`，22.9 s |
 | `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（`Resolved 95 packages`，依赖未变） |
-| 本任务新增用例 | 44 例（unit 7、lifecycle 10、undo 15、api 4、migration 8）；另有 `SUPPORTED_SCHEMA_VERSION`、两处版本钉扎与 `MOVE_FACE` 类型替换、地名示例兼容上限 12 → 13 等机械修改 |
+| 本任务新增用例 | 46 例（unit 7、lifecycle 12、undo 15、api 4、migration 8）；另有 `SUPPORTED_SCHEMA_VERSION`、两处版本钉扎与 `MOVE_FACE` 类型替换、地名示例兼容上限 12 → 13 等机械修改 |
 
-第一次完整套件运行（`--junitxml=test-results/p3-05b-full.xml` 覆写前）出现 1 例**与本任务无关**的失败：
+完整套件的 4 次运行中有 2 次出现同一例**与本任务无关**的失败：
 `tests/unit/test_p2_search_rerank.py::test_scored_rows_are_deterministic_candidate_scores_only` 断言两次
-连续调用的完整 envelope 相等，其中含实测 `elapsed_ms`（机器连续满载时得到 `15` vs `0`）。该断言与
-P2-06B 精排代码本次均未改动、也不在允许修改范围内，因此未改动它们；随后完整重跑同一命令 exit 0。
+连续调用的完整 envelope 相等，而 envelope 含实测 `elapsed_ms`（连续满载时分别得到 `15` vs `0` 与
+`0` vs `15`）。该测试与被它覆盖的 `src/photo_search/search/rerank.py` 最近一次修改都是 `dfb4c3b`
+（P2-06B），`git diff 7ba4c12..HEAD -- src/photo_search/search tests/unit/test_p2_search_rerank.py` 为空，
+且两者都不在 P3-05B 允许修改的范围内（改搜索排序协议被明确禁止），因此本任务不改动它们；在同一最终树上
+重跑完整命令 exit 0（上表）。这是既有的计时断言脆弱性，P3-05C 审查时同样可能遇到。
 
 ## 9. 真实 CPU 夹具（`%TEMP%`，公共领域/合成图）
 
@@ -206,7 +209,8 @@ P2-06B 精排代码本次均未改动、也不在允许修改范围内，因此�
 - **旧检测 `face_id` 映射**：模型重跑后的新旧锚点仍属 P3-08，本任务明确不碰。
 - **`.pytest-tmp` ACL** 环境事实未修复（按 AGENTS/任务卡不得自动改 ACL）；所有 pytest 均由正常 Windows
   权限路由执行。
-- **P2-06B 精排计时断言偶发**：见 §8，未修（不属于本任务范围）。
+- **P2-06B 精排计时断言偶发**：见 §8（4 次完整套件运行中 2 次命中），未修（不属于本任务范围，且改动它会
+  触及被禁止的搜索排序协议）。
 - 浏览器/DOM 自动化、人物页与选择器、最近操作列表属 P3-06；本任务无 UI 改动。
 
 ## 13. 交接记录

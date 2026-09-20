@@ -1027,8 +1027,8 @@ created 撤销后 redirect 到 source。派生顺序复用 `publish_derived`（�
 
 | Check | Result |
 |---|---|
-| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-05B-full2 --junitxml=test-results/p3-05b-full.xml` | exit 0；JUnit `tests=1182 failures=0 errors=0 skipped=1`（374.5 s）；首轮唯一失败为既有 P2-06B 计时断言偶发（该文件本次未改、不在允许范围） |
-| 本任务新增用例 | 44 例（unit 7、lifecycle 10、undo 15、api 4、migration 8），JUnit `test-results/p3-05b-focused.xml`；另加 P3-03/P3-04/P2-03B/P3-05 回归批 231 例 0 失败 |
+| `uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integration --basetemp=.pytest-tmp/P3-05B-full4 --junitxml=test-results/p3-05b-full.xml` | exit 0；JUnit `tests=1184 failures=0 errors=0 skipped=1`（373.8 s）；4 次完整套件运行中有 2 次命中既有 P2-06B 计时断言偶发（`elapsed_ms` 0 vs 15，该文件与精排代码自 `dfb4c3b` 起未改、不在允许范围），最终树上的同一命令 exit 0 |
+| 本任务新增用例 | 46 例（unit 7、lifecycle 12、undo 15、api 4、migration 8），JUnit `test-results/p3-05b-focused.xml`；另加 P3-03/P3-04/P2-03B/P3-05 回归批 231 例 0 失败 |
 | `uv run --no-sync ruff check .` / `git diff --check` / `uv run --no-sync uv lock --check` | clean / clean / exit 0（95 packages，依赖未变） |
 | 真实夹具 | `tools/diagnostics/person_split_smoke_fixture.py --device cpu` exit 0：真实检测→合并→命名→拆分→重启→撤销→重启，`status=ok`、`problems=[]`，`filter_delta=1`、`image_outbox_delta=0`、`siblings_unchanged=true` |
 | v12→v13 迁移 | 真实 v12 库（RENAME/UNDO/MERGE_BY_NAME/BATCH_FACE_EDIT + PERSON_BUNDLE/FACE_CONTROL + alias 引用）逐列保留；备份拒绝 `SPLIT`；损坏 0013 整体回滚；缺件 `SCHEMA_INCONSISTENT`；过新库零写；重复迁移 `applied=()` |

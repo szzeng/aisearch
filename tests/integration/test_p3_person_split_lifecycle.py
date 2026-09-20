@@ -15,6 +15,7 @@ from photo_search.catalog.errors import (
     FACE_NOT_FOUND,
     PERSON_BATCH_TOO_LARGE,
     PERSON_IDEMPOTENCY_CONFLICT,
+    PERSON_REDIRECT_CYCLE,
     PERSON_REVISION_CONFLICT,
     PERSON_SPLIT_CONFLICT,
     CatalogError,
@@ -498,3 +499,52 @@ def test_a_split_survives_a_restart_and_the_created_id_keeps_resolving(
     assert env.canonical(new_person) == dad
     assert env.members(dad) == {target, seeded["faces"][1]}
     assert env.control(target)["mode"] == "AUTO_ALLOWED"
+
+
+def test_an_old_source_id_is_split_into_its_canonical_person(env: SplitHarness) -> None:
+    """ADR-0008 §2: a merged-away id is still a legal source, and it stays *requested*."""
+    seeded = env.seed_group(face_count=2, name="爸爸")
+    dad = seeded["person"]
+    target = seeded["faces"][0]
+    old = env.add_person()  # an unnamed group that is merged into the named one
+    env.merge(dad, [(old, env.revision_of(old))], "fold-old-1", target_revision=1)
+    assert env.canonical(old) == dad
+
+    answer = env.split(
+        old,
+        [env.selection(target, assignment=3)],
+        request_id="old-id-1",
+        expected_revision=env.revision_of(dad),
+    )
+
+    assert answer["requested_source_person_id"] == old
+    assert answer["canonical_source_person_id"] == dad
+    assert env.group_item(answer, "SOURCE")["entity_id"] == dad
+    assert env.group_item(answer, "CREATED")["entity_id"] == answer["new_person_id"]
+    # The recorded ids are the ones the caller named, never a canonical id.
+    assert str(env.operation(str(answer["operation_id"]))["source_person_ids_json"]) == (
+        f"[{old}]"
+    )
+    assert env.members(dad) == {seeded["faces"][1]}
+
+
+def test_a_broken_source_redirect_chain_keeps_its_own_code(env: SplitHarness) -> None:
+    seeded = env.seed_group(face_count=2)
+    dad = seeded["person"]
+    other = env.add_person()
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE persons SET merged_into = ? WHERE person_id = ?", (int(other), int(dad))
+        )
+        connection.execute(
+            "UPDATE persons SET merged_into = ? WHERE person_id = ?", (int(dad), int(other))
+        )
+    snapshot = library_state(env)
+
+    with pytest.raises(CatalogError, match="PERSON_REDIRECT_CYCLE") as error:
+        env.split(
+            dad, [env.selection(seeded["faces"][0], assignment=3)], request_id="cycle-1"
+        )
+
+    assert error.value.code == PERSON_REDIRECT_CYCLE
+    assert library_state(env) == snapshot
