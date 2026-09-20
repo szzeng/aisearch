@@ -1011,7 +1011,8 @@ created ID 撤销后 redirect、后续 rename/merge/face edit/second split/effec
 ## Latest person-split implementation closure — P3-05B (2026-09-20)
 
 **P3-05B — 人物拆分与通用撤销实现：PASS（B + D + C）。** 见
-[P3-05B 报告](reports/P3-05B-person-split-and-undo.md)。起点 `7ba4c12`（P3-05A 文档冻结），工作树干净。
+[P3-05B 报告](reports/P3-05B-person-split-and-undo.md)。起点 `7ba4c12`（P3-05A 文档冻结），
+本任务提交 `12a14a1`，工作树干净。
 
 新增 `src/photo_search/persons/split.py` 与连续 `catalog/migrations/0013_person_split_operations.sql`：
 **`schema_version` 推进到 13**，`0001`～`0012` 逐字节未改；0013 与 0012 同构，只重建
