@@ -10,6 +10,7 @@ import pytest
 from photo_search.catalog import store
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import INVALID_STATE_TRANSITION, CatalogError
+from photo_search.places import revision as revision_module
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
@@ -289,3 +290,42 @@ def test_scan_run_has_no_generic_running_self_loop(catalog: Catalog) -> None:
         with pytest.raises(CatalogError) as error:
             store.set_scan_state(connection, scan_id=scan_id, state="RUNNING", now_ms=1)
         assert error.value.code == INVALID_STATE_TRANSITION
+
+
+# ------------------------------------------------- the one-state read-snapshot guarantee
+def test_a_read_snapshot_holds_one_state_across_a_concurrent_commit(catalog: Catalog) -> None:
+    """``Catalog.read_snapshot()`` is ONE SQLite snapshot, not a sequence of statements.
+
+    ADR-0009 §4.2 requires several canonical resolutions - and the ``catalog_filter_revision``
+    they are anchored to - to come out of one read-only snapshot. ``Catalog.connection`` runs
+    in autocommit mode, so this primitive is what makes that true: a commit from a *second*
+    connection between two reads inside the block stays invisible until the block exits, while
+    the block itself never writes.
+    """
+    second = Catalog.open(catalog.db_path)
+    try:
+        before = int(catalog.read_one("SELECT revision FROM catalog_filter_revision")["revision"])
+        with catalog.read_snapshot() as connection:
+            first = int(
+                connection.execute(
+                    "SELECT revision FROM catalog_filter_revision WHERE revision_id = 1"
+                ).fetchone()["revision"]
+            )
+            with second.write() as writer:
+                revision_module.bump_filter_revision(writer, cause="PERSON_CHANGED", now_ms=1)
+            second_read = int(
+                connection.execute(
+                    "SELECT revision FROM catalog_filter_revision WHERE revision_id = 1"
+                ).fetchone()["revision"]
+            )
+            # A write of this process must not silently join an open read snapshot either:
+            # ``search_documents.catch_up`` is the one search-time writer, and it has to run
+            # outside the block.
+            with pytest.raises(RuntimeError):
+                with catalog.write():
+                    pass
+        after = int(catalog.read_one("SELECT revision FROM catalog_filter_revision")["revision"])
+    finally:
+        second.close()
+    assert first == second_read == before
+    assert after == before + 1

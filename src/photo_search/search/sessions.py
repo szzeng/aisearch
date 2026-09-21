@@ -177,11 +177,65 @@ class SearchSessionStore:
         reranked: dict[str, Any] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> SearchSession:
-        """Cache one search. Only the first :attr:`max_ids` ordered entries are kept."""
+        """Build *and* register one search (the one-call form of the two steps below)."""
+        session = self.build_session(
+            query_hash=query_hash,
+            entries=entries,
+            profile_id=profile_id,
+            image_generation_id=image_generation_id,
+            space_id=space_id,
+            dimension=dimension,
+            catalog_filter_revision=catalog_filter_revision,
+            suggestion_revision=suggestion_revision,
+            fusion_config=fusion_config,
+            query=query,
+            filters=filters,
+            channels=channels,
+            pending_semantic=pending_semantic,
+            search_projection=search_projection,
+            state=state,
+            candidates_truncated=candidates_truncated,
+            rerank_state=rerank_state,
+            reranked=reranked,
+            extra=extra,
+        )
+        return self.register(session)
+
+    def build_session(
+        self,
+        *,
+        query_hash: str,
+        entries: Sequence[SessionEntry],
+        profile_id: str | None,
+        image_generation_id: str | None,
+        space_id: str | None,
+        dimension: int | None,
+        catalog_filter_revision: int,
+        suggestion_revision: int,
+        fusion_config: dict[str, Any],
+        query: dict[str, Any] | None,
+        filters: dict[str, Any],
+        channels: dict[str, Any],
+        pending_semantic: dict[str, Any] | None,
+        search_projection: dict[str, Any],
+        state: str,
+        candidates_truncated: bool = False,
+        rerank_state: str = "NOT_REQUESTED",
+        reranked: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> SearchSession:
+        """Construct one session **without** publishing it into the store.
+
+        Only the first :attr:`max_ids` ordered entries are kept. A caller that still has to
+        prove the page is answerable (the service re-reads the authority revisions after the
+        first page has been rendered) prepares the session here and calls :meth:`register`
+        only once it is sure - so a discarded attempt can never leave a session behind, and
+        can never evict a live one either.
+        """
         ordered = tuple(entries[: self.max_ids])
         truncated = bool(candidates_truncated) or len(entries) > self.max_ids
         now = int(self._now_ms())
-        session = SearchSession(
+        return SearchSession(
             session_id=secrets.token_urlsafe(18),
             query_hash=str(query_hash),
             profile_id=profile_id,
@@ -205,6 +259,11 @@ class SearchSessionStore:
             state=str(state),
             extra=dict(extra or {}),
         )
+
+    def register(self, session: SearchSession) -> SearchSession:
+        """Publish one prepared session and keep the store inside its bounds."""
+        now = int(self._now_ms())
+        session.last_used_ms = now
         with self._lock:
             self._evict_expired_locked(now)
             self._sessions[session.session_id] = session

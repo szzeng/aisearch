@@ -90,9 +90,18 @@ TASK** → **P3-07B is PASS** (B + D level: `person_ids`/`person_match` on `POST
 resolution/de-duplication, the person condition in the continuation digest, `INVALID_PERSON_FILTER` (422) and
 the `filters` echo; **63 new cases, no migration, `schema_version` stays 13**). The planned P3-07 was split
 into **P3-07A** (the freeze above) and **P3-07B** (its implementation), without changing the overall route;
-**P3-07C** (independent new-session DS-H full engineering review, plus a C2 / GPT-5.6 Sol / high focused review
-of the canonical / revision / cache-invalidation boundaries) is **READY / CURRENT TASK**, and new/old detection
-`face_id` mapping remains P3-08.
+**P3-07C** (two-session staged review: independent DS-H full engineering review, then a separate C2 /
+GPT-5.6 Sol / high focused review of the canonical / revision / cache-invalidation boundaries) is
+**PASS（C2 final short re-review）**. DS-H closed the two canonical publication races with a read snapshot,
+same-snapshot authority pre-binding, bounded re-anchor, a post-render publication gate and publish-only session
+registration; the third fix preserves the actual moved counter so exhausted retries return filter stale or
+suggestion stale with the established filter-first priority. DS-H full evidence is **1341 tests / 0 failures /
+0 errors / 48 environment skips**; Sol independently reran the five direct error/publication regressions with
+**5 / 0 / 0 / 0**, and Ruff, lock-check and diff-check are clean. See
+[the final focused review §9](reports/P3-07C-sol-focused-review.md).
+**P3-08A is READY / CURRENT TASK**: freeze the reviewable old/new `face_id` mapping and the P3 fault-acceptance
+matrix before implementation. P3-08 is split into A contract freeze, B implementation + D/browser closure,
+and C independent staged review; P3-07B report §6's merge/undo ordering defect is mandatory P3-08B scope.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -160,12 +169,18 @@ decision.
 
 Alignment report: [2026-09-15 300k capacity alignment](reports/2026-09-15-300k-capacity-alignment.md).
 
-## Latest review-routing alignment — strategy revision 5 (2026-09-20)
+## Latest review-routing alignment — strategy revision 6 (2026-09-20)
 
 从 P3-06 起，剩余任务的独立全量工程主审优先交新会话 **DS-H**；只有 V3.1 §2.2 六类具名条件成立时，
 才手动升 **DeepSeek max**。**GPT-5.6 Sol / high** 不再重复全仓主审，只接收 DS-H/DS-MAX 已收敛的
 高风险不变量、ADR 差异、未决矛盾、关键 diff 和最小反例，做聚焦终审或最终冻结。C1 继续负责
 Windows/ONNX/PyInstaller/HEIC/实机发行环境证据。
+
+含 DS-H 主审与 Sol 终审的闭环现在固定拆成两个独立新会话：DS-H 运行完整工程审查并落盘压缩交接包；Sol
+只读点名的高风险边界。Sol 为必选时，DS-H 阶段只能写
+`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`，不得提前 PASS 或生成下一卡。DS-H 可草拟和工程
+预审契约，§11 高风险协议及任务表点名项目仍由 Sol 作最终冻结；无高风险语义变化/未决项的非必选任务记录
+`SOL_NOT_REQUIRED` 后不调用 Sol。
 
 该调整不改变任务顺序、产品架构、冻结协议、验收等级或 PASS 门槛；历史已 PASS 的任务卡/报告不追改。
 详见 [2026-09-20 审查路由对齐报告](reports/2026-09-20-review-routing-alignment.md)。
@@ -1204,9 +1219,206 @@ revision）再比 `query_hash`。理由是合并会把 link 改写到目标人�
 [P3-07B 报告](reports/P3-07B-person-search-implementation.md) §7。`.pytest-tmp` 受限令牌 ACL 环境事实
 沿用 P3-05B/P3-06/P3-07A，本次未改任何 ACL。
 
-下一任务是 **P3-07C — P3-07 独立新会话 DS-H 全量工程主审（含 canonical / revision / 缓存失效聚焦终审）**，
-任务卡 [docs/tasks/P3-07C.md](tasks/P3-07C.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**（仅按
-V3.1 §2.2 六类条件升 DeepSeek max），收敛后将三条边界交 **C2 / GPT-5.6 Sol / high 聚焦终审**；
-之后才是 **P3-08**。请手动切换模型/推理档后在新对话继续。Windows/PyInstaller/浏览器环境问题升级 C1。
+下一任务是 **P3-07C — P3-07 两会话分阶段审查（DS-H 全量主审 → Sol 高风险聚焦终审）**，
+任务卡 [docs/tasks/P3-07C.md](tasks/P3-07C.md)。
+
+## Latest staged review, stage A — P3-07C DS-H engineering review (2026-09-20)
+
+**P3-07C 阶段 A（DS-H 对 P3-07B 的全量工程主审）：`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。**
+见 [P3-07C 阶段 A 报告](reports/P3-07C-dsh-engineering-review.md)。起点 `6fbe68e`（P3-07A 收尾），审查对象
+`733f1a3`（+ `033e3ca` 报告收尾）；阶段 A **未做任何最小修复**，未改任何生产代码、测试、冻结件或迁移。
+
+11 项审查范围逐条给出结论：diff 走查逐文件落到 ADR-0009 的具体条款；判定表逐行三方对照（**原始重复 =
+形状错误**与 **canonical 折叠 = 合法去重**确为两条独立路径；传输层**故意不设** `maxItems`，101 项答冻结码
+`INVALID_PERSON_FILTER` 并公开 `max_person_ids=100`）；检索层只内联 `persons/members.MEMBER_PREDICATE`
+（全仓唯一定义），`any`/`all` 的 SQL 与 ADR §3.2 等价（`|P|=1` 时等价）；人物条件进入 scope 后同时约束
+FTS、向量、提交前复核与补查页，且不成为命中原因/排序通道/RRF 输入；canonical 解析、回显、摘要同用
+`Catalog.connection`，任一 ID 失败整请求拒绝；三条高风险边界（canonical / revision / 缓存失效）均通过；
+`search_documents` 六个文本列无人物列，`cache/face-crops` 键不含 `person_id`；隐私闭集与 `/search/image`
+空回显通过；ADR-0009 与 companion、四个既有 companion、`0001`～`0013`、依赖 95 包、`PhotoSearch.spec`、
+前端均逐字节未改。
+
+**顺序收敛（`_continue_session`：revision → suggestion → digest → binding）判定：一致。** ADR-0005 §10、
+ADR-0003 §9、ADR-0009 §4.4/§6.2 都要求续页在 revision 差异时答 `CATALOG_FILTER_REVISION_STALE`，而合并会
+改写旧 id 的 canonical 身份，旧顺序会把这种续页误答成 `INVALID_CURSOR`。审查期独立探针（真实扫描夹具 +
+合成库，运行后删除）实测：revision 未变 + 条件不同仍 422 `INVALID_CURSOR`；revision 未变 + 仅 profile 切换仍
+409 `PROFILE_GENERATION_MISMATCH`；merge 后旧会话 409 `STALE`、旧 id 重搜 200 且 `filters.person_ids` 回显
+canonical。唯一外延是「revision 已变且 profile 同时切换」现在答 `STALE`（旧顺序答 `PROFILE_GENERATION
+MISMATCH`），两者都是要求重搜的 409，已按 ADR 判定为符合冻结件并列入 Sol 必审边界。
+
+实测：完整 JUnit `tests=1334 failures=0 errors=0 skipped=48`（207.6 s，`test-results/p3-07c-full.xml`）；
+专项 104 例 0 skip（`test-results/p3-07c-focused.xml`）；Ruff、diff-check、lock-check 全 clean。本卡**不触发
+DeepSeek max**（V3.1 §2.2 六类条件逐条未命中，理由写在报告文首）。越界发现核实：P3-07B 报告 §6 的
+「合并目标 id 大于源人物时 undo 触发 `face_person_links` 唯一索引冲突」独立复现成功，确认属
+`persons/operations.py` 的既有撤销顺序缺陷、与本任务改动无关，**本卡不修**，建议随 P3-08 处理。
+
+下一阶段当时是 **P3-07C 阶段 B — C2 / GPT-5.6 Sol / high 聚焦终审**（已执行，结果见下）。阶段 A 的
+「同连接 = 同快照」推论已被阶段 B 更正，并在阶段 A 报告内保留了更正注；请以阶段 B 与
+[阶段 A 补轮报告](reports/P3-07C-dsh-canonical-fix.md) 为准。Windows/PyInstaller/浏览器环境问题升级 C1。
+
+## Latest focused review, stage B — P3-07C Sol boundary review (2026-09-20)
+
+**P3-07C 阶段 B：`SOL FOCUSED REVIEW FAIL / DS-H FIX REQUIRED`。** 见
+[阶段 B 报告](reports/P3-07C-sol-focused-review.md)。revision 与缓存失效两条边界通过；canonical 边界不通过。
+
+失败反例使用第二个正常 `Catalog` 连接，在 `[source,target]` 的第一个 id 解析后提交合法 merge。实现随后回显
+合并前集合 `[source,target]`，却用合并后的 link 执行 `all` 谓词，得到空命中；这既不是合并前应有的共现照片，
+也不是合并后应有的 canonical 目标并集。根因是 `_canonical_person_ids()` 与后续检索只是共用 autocommit
+连接，没有覆盖整个请求的一致只读快照；`search_assets()` 又在 canonical 解析之后才记录 revision 起点，无法
+检测该窗口。阶段 B 现有最小受影响批 12 例全部通过，但新增并发快照探针按预期暴露缺陷（1 test / 1 failure）；
+临时测试代码已删除，失败 JUnit 保存在 `test-results/p3-07c-sol-probe.xml`。
+
+当前仍是 **P3-07C**：按报告 §6 退回 **DS-H / DeepSeek V4.1 Flash / 高推理**，只修 canonical
+snapshot/revision 一致性并补持久回归；不得改 `persons/**` 语义、ADR/companion、migration/schema、依赖或
+前端。修复后再交独立 C2 短审失败边界及 revision/cache 直接回归面。**P3-08 未生成，也不得提前开始。**
+请在 Codex 中手动切换模型/推理档后继续。
+
+## Latest canonical fix, stage A follow-up — P3-07C (2026-09-20)
+
+**P3-07C 阶段 A 补轮（DS-H canonical 一致性最小修复）：已应用，等待 Sol 短审。** 见
+[阶段 A 补轮报告](reports/P3-07C-dsh-canonical-fix.md)。起点 `033e3ca`，仍属 P3-07C，未生成 P3-08 卡。
+
+改动面只有 4 个文件：`src/photo_search/catalog/db.py` 新增 `Catalog.read_snapshot()`（`BEGIN DEFERRED`
+固定快照、块内只读，并让同进程 `write()` 与嵌套快照直接报错，从而把搜索期唯一写者
+`search_documents.catch_up()` 留在快照外）；`src/photo_search/search/service.py` 把解析改为
+`_person_authority_base()`（在**同一个**快照里读 `catalog_filter_revision` 并用唯一解析器解析全部 id），
+新搜索分支改为 `SEARCH_PUBLISH_ATTEMPTS = 3` 的有界重锚：前置绑定与检索末尾 revision 不等即丢弃本次尝试
+（不建会话、不渲染），重解析后重跑，三次都用尽则 409 `CATALOG_FILTER_REVISION_STALE`
+（`reason=CATALOG_FILTER_REVISION_CHANGED`，details 只用冻结键）。**未新增人物 revision，未改
+`search_assets()` 自身语义（其直接调用者仍按 P2-05 如实报告 `state=FILTER_REVISION_CHANGED`）。**
+
+反例转持久回归 3 例（unit 1 + integration 2）：`test_a_read_snapshot_holds_one_state_across_a_concurrent_commit`、
+`test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer`（第二连接在第一次解析后提交合法 merge，
+结果必须一致，排除 `([A,B], ∅)`）、`test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing`
+（每次解析都提交真实 rename → 结构化拒绝且零会话）。对照实测：模拟修复前锚点语义时，丢弃的那次尝试返回的
+`([A,B], []) @rev3` 与旧实现发布的混合页逐字相同；修复后该尝试被丢弃、重锚尝试返回 `([B], {1,2,3})`。
+
+实测：完整 JUnit `tests=1337 failures=0 errors=0 skipped=48`（229.1 s，`test-results/p3-07c-fix-full.xml`，
+阶段 A 基线 1334 → +3）；修复专项批 134 例 0 skip（`test-results/p3-07c-fix-focused.xml`）；Ruff、diff-check、
+lock-check 全 clean。ADR-0009/companion、四个既有 companion、`0001`～`0013`、`schema_version` 13、依赖 95 包、
+`PhotoSearch.spec`、前端、`places/**`、`geo/**`、`ocr/**`、`ingestion/**`、`workers/**`、`face/**` 与
+`persons/**` 语义均未改（P3-07B 报告 §6 的 merge/undo 顺序缺陷仍未修，仍建议随 P3-08 处理）。
+
+下一步：**P3-07C 阶段 B 短审**——独立新会话 **C2 / GPT-5.6 Sol / high** 只审修复后的 canonical 边界及
+revision/cache 直接回归面（输入为阶段 A 补轮报告 §9 交接包）；通过后才标 P3-07C PASS 并生成 **P3-08**。
+未验证项（多进程压测、30 万下重试成本、`place_state=suggested` 的同类窗口、`search_assets()` 直接调用者、
+C 级打包、UI）记录在补轮报告 §7。请手动切换模型/推理档后在新对话继续。
+
+## Latest Sol short re-review — P3-07C canonical publication window (2026-09-20)
+
+**P3-07C Sol 短审补轮：`FAIL / DS-H SECOND FIX REQUIRED`。** 更新结论见
+[阶段 B 报告 §7](reports/P3-07C-sol-focused-review.md)。第一轮修复的 `read_snapshot()`、canonical + revision
+同快照 pre-binding 与检索期三次有界重锚均成立，也关闭了原始反例窗口；但一致性门在
+`search_assets()` 返回时结束，未覆盖后续 `_entries_of`、rerank、`sessions.create()` 与 `_render_page()`。
+
+短审用第二个正常 `Catalog` 连接，在最后一次 revision 比较后、唯一 `_entries_of(payload)` 调用内提交合法
+merge；实测仍为 HTTP 200、`filters.person_ids=[1,2]`、`hits=[]`，不是任何单一快照的结果。失败 JUnit：
+`test-results/p3-07c-sol-rereview-probe.xml`（1 test / 1 failure / 0 errors / 0 skipped）；临时测试代码已删除。
+
+当前仍为 **P3-07C**。下一步建议 **DS-H / DeepSeek V4.1 Flash / 高推理**只把一致性边界延长到首页最后一次
+权威读取与安全会话发布，并把这个 late-window merge 变成持久回归；不得改 ADR/companion、migration/schema、
+依赖、`persons/**` 语义或前端。修复后再交 C2 短审。**P3-08 未生成。**请手动切换模型/推理档后继续。
+
+## Latest second fix, publication gate — P3-07C (2026-09-20)
+
+**P3-07C 第二轮修复（DS-H 发布闸门）：已应用，等待 Sol 短审补轮。** 见
+[修复报告 §10](reports/P3-07C-dsh-canonical-fix.md)。起点为第一轮修复后的工作树，仍属 P3-07C，
+未生成 P3-08、未标 PASS。
+
+改动面 3 个文件：`src/photo_search/search/service.py` 让解析锚点同时带上独立
+`place_suggestion_revision`（`_AuthorityBase`），新增 `_authority_holds()` 并在**首页渲染完成之后**重读
+冻结计数器作为发布闸门（filter revision 对每个请求；suggestion revision 仅当 `place_state=suggested`，
+与 `_continue_session` 的绑定口径一致），把首页构建抽成 `publish_once()`：
+`run_retrieval → _entries_of → rerank → build_session → _render_page → 闸门 → register + 返回`；闸门不通过则
+本次尝试不注册任何会话（因此不泄漏、也不会挤掉 LRU 里的既有会话）并重锚重跑，三次用尽才 409
+`CATALOG_FILTER_REVISION_STALE`。`src/photo_search/search/sessions.py` 把 `create()` 拆成
+`build_session()`（构造、不注册）+ `register()`（注册并维持上界），`create()` 保留为二者组合，LRU/TTL 行为不变。
+
+反例转持久回归 2 例：`test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page`（第二连接在
+`_entries_of()` 内提交合法 merge，即 Sol §7.2 的窗口；断言结果一致、尝试数 ≥ 2、会话数恰好 +1）与
+`test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page`（同一注入点 +1
+`place_suggestion_revision`；断言回显 revision 等于变更后的数据库值）。对照实测（只把 `_authority_holds`
+替换为恒真以复现修复前发布行为）：merge 注入 → `[1,2]`/`[]`（混合页）；suggestion 注入 → 回显 0 而数据库 1；
+开启闸门后分别得到 `[2]`/`[1,2,3]` 与回显 1，两条新断言在最左列必然失败。
+
+实测：完整 JUnit `tests=1339 failures=0 errors=0 skipped=48`（221.8 s，`test-results/p3-07c-fix2-full.xml`，
+第一轮 1337 → +2）；第二轮专项批 64 例 0 skip（`test-results/p3-07c-fix2-focused.xml`）；Ruff、diff-check、
+lock-check 全 clean。第一轮的 `read_snapshot()`、同快照解析/pre-binding、三次有界重锚、continuation 顺序与
+stale 四键、缓存键与 SQLite 同源读面全部保留；未改 ADR/companion、migration、`schema_version` 13、
+依赖 95 包、`PhotoSearch.spec`、前端、`places/**`、`geo/**`、`ocr/**`、`ingestion/**`、`workers/**`、
+`face/**` 与 `persons/**` 语义。
+
+下一步：**Sol 短审补轮**——独立新会话 **C2 / GPT-5.6 Sol / high** 只审发布窗口与第一轮成果是否被削弱
+（输入为修复报告 §10.6 交接包）；通过后才标 P3-07C PASS 并生成 **P3-08**。未验证项（多进程压测、30 万下
+重试成本、`search_assets()` 直接调用者仍如实报告 `state=FILTER_REVISION_CHANGED`、C 级打包、UI）见报告 §7。
+请手动切换模型/推理档后在新对话继续。
+
+## Latest second Sol short re-review — P3-07C retry error surface (2026-09-20)
+
+**P3-07C 第二次 Sol 短审补轮：`FAIL / DS-H ERROR-SURFACE FIX REQUIRED`。** 详见
+[阶段 B 报告 §8](reports/P3-07C-sol-focused-review.md)。第二轮发布闸门本身通过：late merge 与单次
+suggestion bump 两条持久回归独立复跑为 2 tests / 0 failures / 0 errors / 0 skipped，未注册 session 后校验、
+通过后才发布的顺序成立，第一轮同快照 canonical 锚点未被削弱。
+
+新增的临时反例让每次 bounded attempt 只递增 `place_suggestion_revision`，目录 filter revision 保持不变。
+三次耗尽后接口虽返回 409，却固定报 `CATALOG_FILTER_REVISION_STALE` /
+`CATALOG_FILTER_REVISION_CHANGED`，而 details 中 session/current filter revision 都是 `2`。冻结 ADR-0005 与既有
+continuation 路径要求这种 suggestion-only 过期返回 `PLACE_SUGGESTION_REVISION_STALE` /
+`SUGGESTION_REVISION_CHANGED`。失败 JUnit：`test-results/p3-07c-sol-rereview2-probe.xml`
+（1 test / 1 failure / 0 errors / 0 skipped）；临时测试代码已删除。
+
+当前仍是 **P3-07C**，P3-08 未生成。下一步由 **DS-H / DeepSeek V4.1 Flash / 高推理**只修
+`src/photo_search/search/service.py` 的重试耗尽分类并补“连续 suggestion-only 漂移、正确错误码/details、
+filter revision 未变、零 session”持久回归；保留连续人物 rename 的 catalog-stale 回归和 filter-first 优先级。
+修复后 C2 仅短审该错误面及四条直接回归。
+
+## Latest third fix, retry-exhaustion error surface — P3-07C (2026-09-21)
+
+**P3-07C 第三轮修复（DS-H 重试耗尽错误面分类）：已应用，等待 Sol 短审补轮。** 见
+[修复报告 §11](reports/P3-07C-dsh-canonical-fix.md)。仍属 P3-07C，未生成 P3-08、未标 PASS。
+
+改动面**只有 1 个生产文件**：`src/photo_search/search/service.py` 把 `_authority_holds()`（只返回布尔）改为
+`_authority_drift() -> "filter" | "suggestion" | None`（先 filter，再仅对 `place_state=suggested` 看
+suggestion，与 `_continue_session` 同序），并新增 `_publication_refusal()` 作为**重试耗尽**的唯一出口：
+重新读取两个冻结计数器后按既有优先级分类——filter revision 不同（或请求不是 suggested）→
+`CATALOG_FILTER_REVISION_STALE` / `CATALOG_FILTER_REVISION_CHANGED` + 既有两 revision details；否则 →
+`PLACE_SUGGESTION_REVISION_STALE` / `SUGGESTION_REVISION_CHANGED` + `session_suggestion_revision` /
+`current_suggestion_revision`（与续页路径既有形态一致，新搜索不带 `search_session_id`）。未新增错误码，
+快照、`build_session()`/`register()`、三次有界重锚与发布闸门位置全部未改。
+
+反例转持久回归 **+2 例（参数化）**：`test_an_exhausted_retry_names_the_counter_that_moved[suggestion|both]`——
+每次 `_entries_of()` 后提交真实 suggestion bump（`both` 再叠一次真实人物 rename）使每次尝试都撞上变化；
+`suggestion` 断言 409 `PLACE_SUGGESTION_REVISION_STALE`、details 恰为三键、`current > session`、
+**filter revision 未变**、`moves == SEARCH_PUBLISH_ATTEMPTS`、**零 session**；`both` 断言
+`CATALOG_FILTER_REVISION_STALE` 且 filter revision 确实增加，锁定 filter-first 优先级。既有的「每次人物
+rename」用例保留为 catalog 类的对照。对照实测（只把 `_publication_refusal` 换回旧出口）：旧出口返回
+`CATALOG_FILTER_REVISION_STALE` 且 `session/current filter revision = 2/2`（自相矛盾），修复后返回
+`PLACE_SUGGESTION_REVISION_STALE` 且 `2 → 3`；两次都恰好 3 次有界尝试。
+
+实测：完整 JUnit `tests=1341 failures=0 errors=0 skipped=48`（220.7 s，`test-results/p3-07c-fix3-full.xml`，
+第二轮 1339 → +2）；第三轮专项批 71 例 0 skip（`test-results/p3-07c-fix3-focused.xml`）；Ruff、diff-check、
+lock-check 全 clean。未改 ADR/companion、migration、`schema_version` 13、依赖 95 包、`PhotoSearch.spec`、
+前端、`places/**`、`geo/**`、`ocr/**`、`ingestion/**`、`workers/**`、`face/**` 与 `persons/**` 语义。
+
+下一步：**Sol 短审补轮（第三次）**——独立新会话 **C2 / GPT-5.6 Sol / high** 只审该错误面分类与四条直接
+回归（输入为修复报告 §11.5 交接包）；通过后才标 P3-07C PASS 并生成 **P3-08**。未验证项（多进程压测、
+30 万下重试成本、`search_assets()` 直接调用者、C 级打包、UI）见报告 §7。请手动切换模型/推理档后继续。
+
+## Latest final Sol short re-review — P3-07C closure (2026-09-21)
+
+**P3-07C：PASS（C2 final short re-review）。** 最终结论见
+[阶段 B 报告 §9](reports/P3-07C-sol-focused-review.md)。第三轮修复的 `_authority_drift()` 与
+`_publication_refusal()` 正确保留 filter/suggestion 的独立错误面与 filter-first 优先级；没有新增错误码、
+revision、migration、依赖或人物缓存。
+
+Sol 独立复跑 5 个直接案例（suggestion-only、both、连续 rename、late merge、单次 suggestion bump），JUnit
+`test-results/p3-07c-sol-final-rereview.xml` 为 5 tests / 0 failures / 0 errors / 0 skipped；DS-H 完整 JUnit
+`test-results/p3-07c-fix3-full.xml` 为 1341 / 0 / 0 / 48 environment skips；Ruff、lock-check、diff-check clean。
+canonical、revision、缓存失效三条必审边界全部通过。
+
+下一任务为 **P3-08A — 新旧 `face_id` 可审查映射契约与 P3 故障验收矩阵冻结**，任务卡
+[docs/tasks/P3-08A.md](tasks/P3-08A.md)。由于 mapping authority 尚未冻结，而 P3-08 还包含实现、D 级故障全集、
+真实浏览器与独立两阶段终审，按粒度拆为 P3-08A/B/C；P3-07B 报告 §6 的 merge target 高 id undo 缺陷进入
+P3-08B 必修范围。P3-08A 阶段 A 推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请手动切换后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.

@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import binascii
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from photo_search.catalog.errors import (
@@ -38,6 +39,7 @@ from photo_search.catalog.errors import (
 from photo_search.config import resolve_data_root, vectors_dir
 from photo_search.indexing.store import LanceVectorIndex
 from photo_search.persons.identity import resolve_canonical_person_id
+from photo_search.places import revision as place_revision
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.search import documents as search_documents
 from photo_search.search import retrieval as retrieval_module
@@ -110,6 +112,14 @@ _HIT_REASON_BY_CHANNELS = {
     (VECTOR_CHANNEL,): "SEMANTIC",
     (FTS_CHANNEL, VECTOR_CHANNEL): "TEXT+SEMANTIC",
 }
+
+#: How many times one *new* search may re-run when the authoritative filter revision moved
+#: under it - that is, when a person/place edit committed between the canonical resolution
+#: and the retrieval. ADR-0005 §10 forbids answering with a page that mixes two authority
+#: versions, so a moved revision discards the attempt instead of publishing it; three
+#: bounded attempts keep the (rare) race cheap and still end in a structured
+#: ``CATALOG_FILTER_REVISION_STALE`` refusal rather than in a mixed answer.
+SEARCH_PUBLISH_ATTEMPTS = 3
 
 
 def _require_full_vector_binding(**values: Any) -> bool:
@@ -535,24 +545,106 @@ def _filters_echo(payload: dict[str, Any], binding: VectorBinding | None) -> dic
     return echoed
 
 
-def _canonical_person_ids(catalog: Any, request: SearchRequest) -> tuple[int, ...]:
-    """ADR-0009 §4: resolve every submitted id in one read-only snapshot.
+@dataclass(frozen=True)
+class _AuthorityBase:
+    """The authority state one new search is anchored to (ADR-0003 §9, ADR-0009 §4.2)."""
+
+    canonical_person_ids: tuple[int, ...]
+    filter_revision: int
+    suggestion_revision: int
+
+
+def _person_authority_base(catalog: Any, request: SearchRequest) -> _AuthorityBase:
+    """ADR-0009 §4.1～§4.3: the canonical id set AND its revisions, from ONE read snapshot.
 
     The result is the canonical, de-duplicated, ascending id set that the predicate, the
     ``filters`` echo and the continuation digest all use. Resolution reuses the one redirect
     walker (``persons/identity.resolve_canonical_person_id``); the retrieval layer never
     follows ``merged_into`` itself. Any id that does not resolve refuses the whole request
     with its own code, so no id is dropped and no partial answer is ever produced.
+
+    Both halves come out of ``Catalog.read_snapshot()``: the connection is in autocommit
+    mode, so resolving several ids with bare statements would let a merge committed by
+    another connection land *between* two of them and yield "the pre-merge resolution of id
+    1 plus the post-merge resolution of id 2" - a set no single state ever contained. The
+    same snapshot also yields the ``catalog_filter_revision`` (and the independent
+    ``place_suggestion_revision``) this answer is published against, so the caller can
+    reject any attempt that straddled an edit.
     """
-    if not request.person_ids:
-        return ()
-    return tuple(
-        sorted(
-            {
-                int(resolve_canonical_person_id(catalog.connection, int(person_id)))
-                for person_id in request.person_ids
-            }
+    with catalog.read_snapshot() as connection:
+        base = _AuthorityBase(
+            canonical_person_ids=(),
+            filter_revision=int(place_revision.read_filter_revision(connection)),
+            suggestion_revision=int(place_revision.read_suggestion_revision(connection)),
         )
+        if not request.person_ids:
+            return base
+        canonical = tuple(
+            sorted(
+                {
+                    int(resolve_canonical_person_id(connection, int(person_id)))
+                    for person_id in request.person_ids
+                }
+            )
+        )
+    return _AuthorityBase(
+        canonical_person_ids=canonical,
+        filter_revision=base.filter_revision,
+        suggestion_revision=base.suggestion_revision,
+    )
+
+
+def _authority_drift(catalog: Any, request: SearchRequest, base: _AuthorityBase) -> str | None:
+    """Which frozen counter moved under the page that was just built, or ``None``.
+
+    ADR-0005 §10 forbids publishing a page whose parts were read from two different catalog
+    versions. Every authority fact this boundary covers moves a frozen counter in the same
+    transaction that changes it (ADR-0005 §11, ADR-0006/0007/0008 §8), so re-reading the
+    counters is the proof: no drift means nothing changed under the page.
+
+    The filter revision moves for place assignments and for every person edit; the
+    independent suggestion revision moves when the visible *suggested* candidates change, so
+    it is inspected exactly for the one request shape whose predicate depends on it
+    (``place_state=suggested``), the same way ``_continue_session`` binds it. The filter
+    revision is inspected first, which is also the priority the refusal keeps.
+    """
+    connection = catalog.connection
+    if int(place_revision.read_filter_revision(connection)) != base.filter_revision:
+        return "filter"
+    if str(request.place_state) == "suggested" and (
+        int(place_revision.read_suggestion_revision(connection)) != base.suggestion_revision
+    ):
+        return "suggestion"
+    return None
+
+
+def _publication_refusal(catalog: Any, request: SearchRequest, base: _AuthorityBase) -> CatalogError:
+    """The structured refusal for a new search whose page could never be published.
+
+    ADR-0005 §9/§10 keep the two frozen counters distinct, and so does the error surface: a
+    moved ``catalog_filter_revision`` (a place assignment, or any person edit) is
+    ``CATALOG_FILTER_REVISION_STALE``; a ``place_state=suggested`` search whose filter
+    revision never moved is ``PLACE_SUGGESTION_REVISION_STALE``. Both codes, reasons and
+    detail keys are the ones the continuation path already answers with, and the filter
+    revision wins when both moved - the same order ``_continue_session`` compares them in.
+    No session exists yet, so neither refusal names one.
+    """
+    connection = catalog.connection
+    filter_now = int(place_revision.read_filter_revision(connection))
+    if filter_now != base.filter_revision or str(request.place_state) != "suggested":
+        return _refuse(
+            CATALOG_FILTER_REVISION_STALE,
+            "the authoritative filter revision changed while this search ran",
+            reason="CATALOG_FILTER_REVISION_CHANGED",
+            session_catalog_filter_revision=base.filter_revision,
+            current_catalog_filter_revision=filter_now,
+        )
+    return _refuse(
+        PLACE_SUGGESTION_REVISION_STALE,
+        "the visible place suggestions changed while this search ran",
+        reason="SUGGESTION_REVISION_CHANGED",
+        session_suggestion_revision=base.suggestion_revision,
+        current_suggestion_revision=int(place_revision.read_suggestion_revision(connection)),
     )
 
 
@@ -809,18 +901,24 @@ def search_request(
     the session digest, so a cursor minted for one image can never be replayed against
     another while the binding, revision and page semantics stay exactly the same.
     """
-    scope = SearchScope.build(
-        source_id=request.source_id,
-        availability=request.availability,
-        place_ids=request.place_ids,
-        include_descendants=request.include_descendants,
-        place_state=request.place_state,
-        # ADR-0009 §4: the person ids are resolved to their canonical persons *before* the
-        # scope exists, so the predicate, the echo and the digest cannot disagree about
-        # which people the request named.
-        person_ids=_canonical_person_ids(catalog, request),
-        person_match=request.person_match,
-    )
+    # ADR-0009 §4.1～§4.3: the canonical ids and the ``catalog_filter_revision`` they are
+    # anchored to are read in ONE snapshot, before the scope exists, so the predicate, the
+    # echo and the digest cannot disagree about which people the request named - and cannot
+    # mix two authority states either. The revision is the pre-binding of this new search.
+    base = _person_authority_base(catalog, request)
+
+    def build_scope(people: tuple[int, ...]) -> SearchScope:
+        return SearchScope.build(
+            source_id=request.source_id,
+            availability=request.availability,
+            place_ids=request.place_ids,
+            include_descendants=request.include_descendants,
+            place_state=request.place_state,
+            person_ids=people,
+            person_match=request.person_match,
+        )
+
+    scope = build_scope(base.canonical_person_ids)
     match = build_match(request.text) if request.text is not None else None
     profile = _resolve_profile(catalog, request)
     binding = _resolve_binding(catalog, request, profile)
@@ -831,22 +929,26 @@ def search_request(
             "(or an activated search profile)",
             field="profile_id",
         )
-    digest = query_hash(
-        # The digest is "the conditions that must stay identical across pages"; for an
-        # uploaded image the image itself is that condition, and it has no text.
-        text=request.text if query_identity is None else str(query_identity),
-        source_id=request.source_id,
-        availability=request.availability,
-        place_ids=request.place_ids,
-        include_descendants=request.include_descendants,
-        place_state=request.place_state,
-        # ADR-0009 §6.2: the canonical person condition is part of the continuation digest,
-        # so a cursor minted for one person condition is never accepted for another.
-        person_ids=scope.person_ids,
-        person_match=scope.person_match,
-        top_k=int(request.top_k),
-        page_size=int(request.page_size),
-    )
+    def digest_of(current: SearchScope) -> str:
+        return query_hash(
+            # The digest is "the conditions that must stay identical across pages"; for an
+            # uploaded image the image itself is that condition, and it has no text.
+            text=request.text if query_identity is None else str(query_identity),
+            source_id=request.source_id,
+            availability=request.availability,
+            place_ids=request.place_ids,
+            include_descendants=request.include_descendants,
+            place_state=request.place_state,
+            # ADR-0009 §6.2: the canonical person condition is part of the continuation
+            # digest, so a cursor minted for one person condition is never accepted for
+            # another.
+            person_ids=current.person_ids,
+            person_match=current.person_match,
+            top_k=int(request.top_k),
+            page_size=int(request.page_size),
+        )
+
+    digest = digest_of(scope)
     if request.cursor is not None:
         return _continue_session(
             catalog,
@@ -876,89 +978,128 @@ def search_request(
     # The semantic channel runs when the session is bound *and* there is something to encode:
     # query text (P2-06A) or an already validated query vector (P2-07 image query).
     uses_vector_channel = binding is not None and (match is not None or query_vector is not None)
-    payload = search_assets(
-        catalog,
-        text=request.text,
-        encoder=encoder if match is not None and uses_vector_channel else None,
-        # The vector channel engages only when there is both a text query and a resolved
-        # binding: a filter-only request is served from the authoritative list alone, even
-        # when the session is pinned to a profile (P2-05's "纯筛选查询" path).
-        space_id=None if not uses_vector_channel else binding.space_id,
-        generation_id=None if not uses_vector_channel else binding.generation_id,
-        dimension=None if not uses_vector_channel else int(binding.dimension),
-        top_k=int(request.top_k),
-        source_id=request.source_id,
-        availability=request.availability,
-        place_ids=request.place_ids,
-        include_descendants=request.include_descendants,
-        place_state=request.place_state,
-        # The person condition is the canonical one the scope and the digest were built
-        # from; a pure person filter therefore answers from the authoritative list alone,
-        # with no profile, no encoder and no GPU (ADR-0009 §3.3/§5.5).
-        person_ids=scope.person_ids,
-        person_match=scope.person_match,
-        vector_index=vector_index,
-        # Exactly one of "text to encode" and "an already validated vector" reaches the
-        # retrieval, and only when the session is actually bound to a space.
-        query_vector=list(query_vector) if query_vector is not None and uses_vector_channel else None,
-    )
-    entries = _entries_of(payload)
-    outcome = _rerank_outcome(
-        catalog,
-        request,
-        profile=profile,
-        match=match,
-        entries=entries,
-        reranker=reranker,
-        timeout_ms=int(rerank_timeout_ms),
-    )
-    session = sessions.create(
-        query_hash=digest,
-        entries=entries,
-        profile_id=None if profile is None else profile.profile_id,
-        image_generation_id=None if binding is None else binding.generation_id,
-        space_id=None if binding is None else binding.space_id,
-        dimension=None if binding is None else int(binding.dimension),
-        catalog_filter_revision=int(payload["catalog_filter_revision"]),
-        suggestion_revision=int(payload["filters"]["suggestion_revision"]),
-        fusion_config=(
-            dict(DEFAULT_FUSION_CONFIG) if profile is None else dict(profile.fusion_config)
-        ),
-        query=payload["query"],
-        filters=_filters_echo(payload, binding),
-        channels=_channel_summary(
-            payload,
-            match=match,
-            binding=binding,
+
+    def run_retrieval() -> dict[str, Any]:
+        """One retrieval over the scope the attempt currently holds."""
+        return search_assets(
+            catalog,
+            text=request.text,
+            encoder=encoder if match is not None and uses_vector_channel else None,
+            # The vector channel engages only when there is both a text query and a resolved
+            # binding: a filter-only request is served from the authoritative list alone,
+            # even when the session is pinned to a profile (P2-05's "纯筛选查询" path).
+            space_id=None if not uses_vector_channel else binding.space_id,
+            generation_id=None if not uses_vector_channel else binding.generation_id,
+            dimension=None if not uses_vector_channel else int(binding.dimension),
             top_k=int(request.top_k),
-            image_query=query_vector is not None,
-        ),
-        pending_semantic=payload["pending_semantic"],
-        search_projection=payload["search_projection"],
-        rerank_state=str(outcome.state),
-        reranked=(
-            None if str(outcome.state) == RERANK_STATE_NOT_REQUESTED else outcome.to_envelope()
-        ),
-        state=str(payload["state"]),
-        candidates_truncated=len(entries) >= MAX_SESSION_IDS,
-    )
-    hits, next_offset, has_more, token = _render_page(
-        catalog,
-        scope,
-        session,
-        sessions=sessions,
-        page_size=int(request.page_size),
-        offset=0,
-    )
-    return _result_envelope(
-        request,
-        session,
-        hits=hits,
-        offset=0,
-        next_offset=next_offset,
-        has_more=has_more,
-        token=token,
-    )
+            source_id=request.source_id,
+            availability=request.availability,
+            place_ids=request.place_ids,
+            include_descendants=request.include_descendants,
+            place_state=request.place_state,
+            # The person condition is the canonical one the scope and the digest were built
+            # from; a pure person filter therefore answers from the authoritative list alone,
+            # with no profile, no encoder and no GPU (ADR-0009 §3.3/§5.5).
+            person_ids=scope.person_ids,
+            person_match=scope.person_match,
+            vector_index=vector_index,
+            # Exactly one of "text to encode" and "an already validated vector" reaches the
+            # retrieval, and only when the session is actually bound to a space.
+            query_vector=(
+                list(query_vector) if query_vector is not None and uses_vector_channel else None
+            ),
+        )
+
+    # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a
+    # committed authority change. The anchor (canonical ids + revisions) was read in one
+    # snapshot *before* the scope existed; the page is then built - retrieval, rerank, and
+    # finally ``_render_page``, which re-reads the authority once more to re-verify every row
+    # it is about to publish - and only after that last read is the result accepted. A moved
+    # counter means the parts of this page came from two catalog versions, so the whole
+    # attempt is discarded (its session is never registered) and re-anchored. The re-runs are
+    # bounded and end in a structured refusal, never in a mixed page.
+    def publish_once() -> dict[str, Any] | None:
+        """Build and render one first page, or ``None`` if it straddled an authority change."""
+        candidate = run_retrieval()
+        if int(candidate["catalog_filter_revision"]) != base.filter_revision:
+            return None  # the cheap early discard: nothing is built or rendered
+        entries = _entries_of(candidate)
+        outcome = _rerank_outcome(
+            catalog,
+            request,
+            profile=profile,
+            match=match,
+            entries=entries,
+            reranker=reranker,
+            timeout_ms=int(rerank_timeout_ms),
+        )
+        # Prepared, *not* published: a session may only exist once its page is known to be an
+        # answer about one catalog version, so a discarded attempt cannot leak (or evict) one.
+        session = sessions.build_session(
+            query_hash=digest,
+            entries=entries,
+            profile_id=None if profile is None else profile.profile_id,
+            image_generation_id=None if binding is None else binding.generation_id,
+            space_id=None if binding is None else binding.space_id,
+            dimension=None if binding is None else int(binding.dimension),
+            catalog_filter_revision=int(candidate["catalog_filter_revision"]),
+            suggestion_revision=int(candidate["filters"]["suggestion_revision"]),
+            fusion_config=(
+                dict(DEFAULT_FUSION_CONFIG) if profile is None else dict(profile.fusion_config)
+            ),
+            query=candidate["query"],
+            filters=_filters_echo(candidate, binding),
+            channels=_channel_summary(
+                candidate,
+                match=match,
+                binding=binding,
+                top_k=int(request.top_k),
+                image_query=query_vector is not None,
+            ),
+            pending_semantic=candidate["pending_semantic"],
+            search_projection=candidate["search_projection"],
+            rerank_state=str(outcome.state),
+            reranked=(
+                None if str(outcome.state) == RERANK_STATE_NOT_REQUESTED else outcome.to_envelope()
+            ),
+            state=str(candidate["state"]),
+            candidates_truncated=len(entries) >= MAX_SESSION_IDS,
+        )
+        hits, next_offset, has_more, token = _render_page(
+            catalog,
+            scope,
+            session,
+            sessions=sessions,
+            page_size=int(request.page_size),
+            offset=0,
+        )
+        # The publication gate runs *after* the page exists, because ``_render_page`` performs
+        # the last authoritative read of this response (it re-verifies every row it is about
+        # to publish). A pass here means every part of the page - canonical ids, echo, digest,
+        # revision binding and the verified rows themselves - belongs to one catalog version.
+        if _authority_drift(catalog, request, base) is not None:
+            return None
+        sessions.register(session)
+        return _result_envelope(
+            request,
+            session,
+            hits=hits,
+            offset=0,
+            next_offset=next_offset,
+            has_more=has_more,
+            token=token,
+        )
+
+    for attempt in range(SEARCH_PUBLISH_ATTEMPTS):
+        page = publish_once()
+        if page is not None:
+            return page
+        if attempt + 1 >= SEARCH_PUBLISH_ATTEMPTS:
+            break
+        base = _person_authority_base(catalog, request)
+        scope = build_scope(base.canonical_person_ids)
+        digest = digest_of(scope)
+    raise _publication_refusal(catalog, request, base)
 
 
 # ------------------------------------------------------------------ P2-06B feedback

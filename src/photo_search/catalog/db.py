@@ -38,6 +38,7 @@ class Catalog:
         self.lease_seconds = lease_seconds
         self._lock = threading.RLock()
         self._in_write = False
+        self._in_read_snapshot = False
         self._closed = False
 
     @classmethod
@@ -99,6 +100,8 @@ class Catalog:
                 raise CatalogError(CATALOG_UNREADABLE, "catalog connection is closed")
             if self._in_write:
                 raise RuntimeError("catalog write transactions must not be nested")
+            if self._in_read_snapshot:
+                raise RuntimeError("a catalog write must not run inside a read snapshot")
             self._in_write = True
             try:
                 try:
@@ -123,6 +126,45 @@ class Catalog:
                     ) from error
             finally:
                 self._in_write = False
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator[sqlite3.Connection]:
+        """Run several reads against ONE SQLite snapshot (a WAL read transaction).
+
+        The connection is in autocommit mode (``isolation_level=None``), so every bare
+        ``SELECT`` is its own implicit transaction. That is fine for a single lookup, but two
+        reads that must agree - resolving several canonical person ids, or reading the
+        ``catalog_filter_revision`` those resolutions are anchored to - can otherwise straddle
+        a commit from another connection and produce a set no single state ever contained.
+
+        ``BEGIN DEFERRED`` fixes the snapshot at the first read and holds it until the block
+        exits. Nothing here writes: the read transaction only pins WAL pages, other processes
+        keep writing (readers never block a WAL writer), and this process's own writers are
+        kept out by the single-writer lock for the (short) duration of the block.
+        """
+        with self._lock:
+            if self._closed:
+                raise CatalogError(CATALOG_UNREADABLE, "catalog connection is closed")
+            if self._in_write:
+                raise RuntimeError("a catalog read snapshot must not nest inside a write")
+            if self._in_read_snapshot:
+                raise RuntimeError("catalog read snapshots must not be nested")
+            try:
+                self.connection.execute("BEGIN DEFERRED")
+            except sqlite3.Error as error:
+                raise CatalogError(
+                    CATALOG_UNREADABLE,
+                    f"cannot start a catalog read snapshot: {error}",
+                ) from error
+            self._in_read_snapshot = True
+            try:
+                yield self.connection
+            finally:
+                self._in_read_snapshot = False
+                try:
+                    self.connection.execute("COMMIT")
+                except sqlite3.Error:
+                    self._rollback_quietly()
 
     def _rollback_quietly(self) -> None:
         try:

@@ -33,16 +33,21 @@ from p2_search_fixtures import (
 from p3_person_search_fixtures import PersonSearchEnv, build_person_search_env
 
 from photo_search.api.errors import ApiError
+from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     CATALOG_FILTER_REVISION_STALE,
     INVALID_CURSOR,
     INVALID_PERSON_FILTER,
     PERSON_NOT_FOUND,
     PERSON_REDIRECT_CYCLE,
+    PLACE_SUGGESTION_REVISION_STALE,
 )
 from photo_search.catalog.schema import SUPPORTED_SCHEMA_VERSION
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.persons.read import person_page
+from photo_search.persons.service import PersonService
+from photo_search.places import revision as place_revision
+from photo_search.search import service as search_service
 from photo_search.search.contracts import MAX_PERSON_IDS
 from photo_search.search.sessions import SESSION_TTL_MS, SearchSessionStore
 from photo_search.search.tokens import VALIDATION_ERROR
@@ -503,6 +508,331 @@ def test_a_dangling_redirect_target_is_refused_whole(seeded: Seeded) -> None:
     assert response.status_code == 409
     assert response.json()["code"] == PERSON_REDIRECT_CYCLE
     assert response.json()["details"]["missing_person_id"] == 999_999
+
+
+def test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer(
+    seeded: Seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0009 §4.2/§4.3: one request resolves its ids in ONE read snapshot.
+
+    A merge committed by a *second* Catalog connection (another process) right after the first
+    id has been resolved must not yield "the pre-merge canonical set with the post-merge
+    membership" - the mixed ``([A, B], {})`` neither state can produce. Both consistent
+    answers are accepted; the mixed one is not.
+    """
+    state = seeded
+    second = Catalog.open(db_path=state.env.catalog.db_path)
+    try:
+        persons = PersonService(second, clock=second.now_ms)
+        merged: dict[str, Any] = {}
+        real_resolve = search_service.resolve_canonical_person_id
+
+        def commit_merge() -> None:
+            rows = second.read_all(
+                "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
+                (int(state.a), int(state.b)),
+            )
+            revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
+            merged["result"] = persons.merge(
+                target_person_id=int(state.b),
+                target_expected_revision=revisions[int(state.b)],
+                sources=[
+                    {
+                        "person_id": int(state.a),
+                        "expected_revision": revisions[int(state.a)],
+                    }
+                ],
+                request_id="req-second-connection-merge",
+            )
+
+        def spy(connection: Any, person_id: int) -> int:
+            value = real_resolve(connection, person_id)
+            if not merged:
+                commit_merge()
+            return value
+
+        monkeypatch.setattr(search_service, "resolve_canonical_person_id", spy)
+
+        async def scenario(client: AsyncClient) -> Any:
+            csrf = await state.search.authenticate(client)
+            return await post(
+                client,
+                state,
+                csrf,
+                person_ids=[state.a, state.b],
+                person_match="all",
+            )
+
+        response = state.search.scenario(scenario)
+    finally:
+        second.close()
+    assert merged, "the second connection must really have committed the merge"
+    assert response.status_code == 200, response.text
+    observed = (
+        list(response.json()["filters"]["person_ids"]),
+        hit_set(response),
+    )
+    pre_merge = ([int(state.a), int(state.b)], {int(state.sunset)})
+    post_merge = ([int(state.b)], {int(state.sunset), int(state.lake), int(state.image)})
+    assert observed in (pre_merge, post_merge), observed
+
+
+def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
+    seeded: Seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bounded re-run still ends in a structured refusal, never in a mixed page."""
+    state = seeded
+    second = Catalog.open(db_path=state.env.catalog.db_path)
+    try:
+        persons = PersonService(second, clock=second.now_ms)
+        moves = {"count": 0}
+        real_resolve = search_service.resolve_canonical_person_id
+
+        def rename_every_time() -> None:
+            moves["count"] += 1
+            row = second.read_one(
+                "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
+            )
+            persons.rename(
+                person_id=int(state.b),
+                name=f"Alice {moves['count']}",
+                request_id=f"req-moving-{moves['count']}",
+                expected_revision=int(row["revision"]),
+            )
+
+        def spy(connection: Any, person_id: int) -> int:
+            value = real_resolve(connection, person_id)
+            rename_every_time()
+            return value
+
+        monkeypatch.setattr(search_service, "resolve_canonical_person_id", spy)
+        sessions_before = len(state.search.context.search_sessions)
+
+        async def scenario(client: AsyncClient) -> Any:
+            csrf = await state.search.authenticate(client)
+            return await post(client, state, csrf, person_ids=[state.b])
+
+        response = state.search.scenario(scenario)
+        sessions_after = len(state.search.context.search_sessions)
+    finally:
+        second.close()
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    assert payload["code"] == CATALOG_FILTER_REVISION_STALE
+    details = payload["details"]
+    assert details["reason"] == "CATALOG_FILTER_REVISION_CHANGED"
+    assert set(details) == {
+        "reason",
+        "session_catalog_filter_revision",
+        "current_catalog_filter_revision",
+    }
+    assert details["current_catalog_filter_revision"] > details["session_catalog_filter_revision"]
+    # One edit per bounded attempt, and no session is ever published for a discarded search.
+    assert moves["count"] == search_service.SEARCH_PUBLISH_ATTEMPTS
+    assert sessions_after == sessions_before
+
+
+def _second_connection_merger(state: Seeded, second: Catalog) -> Any:
+    """A callable that commits one legitimate merge (target higher) on a second connection."""
+    persons = PersonService(second, clock=second.now_ms)
+    merged: dict[str, Any] = {}
+
+    def commit() -> None:
+        rows = second.read_all(
+            "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
+            (int(state.a), int(state.b)),
+        )
+        revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
+        merged["result"] = persons.merge(
+            target_person_id=int(state.b),
+            target_expected_revision=revisions[int(state.b)],
+            sources=[
+                {"person_id": int(state.a), "expected_revision": revisions[int(state.a)]}
+            ],
+            request_id="req-second-connection-merge",
+        )
+
+    return commit, merged
+
+
+def test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page(
+    seeded: Seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The publication gate covers the first page's *render*, not only the retrieval.
+
+    ``_render_page`` re-verifies every row against the current authority, so a merge landing
+    right after ``search_assets()`` returned - the window that starts when the last retrieval
+    revision was compared - would otherwise publish the old canonical echo with the
+    post-merge membership. The gate therefore runs after the page is rendered, and the
+    session is registered only once the page is known to be publishable.
+    """
+    state = seeded
+    second = Catalog.open(db_path=state.env.catalog.db_path)
+    try:
+        commit, merged = _second_connection_merger(state, second)
+        real_entries_of = search_service._entries_of
+        attempts = {"count": 0}
+
+        def spy(payload: dict[str, Any]) -> Any:
+            value = real_entries_of(payload)
+            attempts["count"] += 1
+            if not merged:
+                commit()
+            return value
+
+        monkeypatch.setattr(search_service, "_entries_of", spy)
+        sessions_before = len(state.search.context.search_sessions)
+
+        async def scenario(client: AsyncClient) -> Any:
+            csrf = await state.search.authenticate(client)
+            return await post(
+                client,
+                state,
+                csrf,
+                person_ids=[state.a, state.b],
+                person_match="all",
+            )
+
+        response = state.search.scenario(scenario)
+        sessions_after = len(state.search.context.search_sessions)
+    finally:
+        second.close()
+    assert merged, "the second connection must really have committed the merge"
+    assert response.status_code == 200, response.text
+    observed = (list(response.json()["filters"]["person_ids"]), hit_set(response))
+    pre_merge = ([int(state.a), int(state.b)], {int(state.sunset)})
+    post_merge = ([int(state.b)], {int(state.sunset), int(state.lake), int(state.image)})
+    assert observed in (pre_merge, post_merge), observed
+    # The straddling attempt was really discarded (a page was built, then rejected), and it
+    # left exactly one session behind: the published one.
+    assert attempts["count"] >= 2
+    assert sessions_after == sessions_before + 1
+
+
+def test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page(
+    seeded: Seeded, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same gate covers the independent suggestion revision the suggested page depends on."""
+    state = seeded
+    second = Catalog.open(db_path=state.env.catalog.db_path)
+    try:
+        moved: dict[str, int] = {}
+        real_entries_of = search_service._entries_of
+
+        def spy(payload: dict[str, Any]) -> Any:
+            value = real_entries_of(payload)
+            if not moved:
+                with second.write() as connection:
+                    moved["revision"] = place_revision.bump_suggestion_revision(
+                        connection,
+                        cause=place_revision.CAUSE_SUGGESTION_CHANGED,
+                        now_ms=1,
+                    )
+            return value
+
+        monkeypatch.setattr(search_service, "_entries_of", spy)
+
+        async def scenario(client: AsyncClient) -> Any:
+            csrf = await state.search.authenticate(client)
+            return await post(client, state, csrf, place_state="suggested")
+
+        response = state.search.scenario(scenario)
+    finally:
+        second.close()
+    assert moved, "the second connection must really have moved the suggestion revision"
+    assert response.status_code == 200, response.text
+    # The answered page is anchored to the state its predicate was verified against, not to
+    # the pre-bump revision the retrieval had read.
+    assert response.json()["filters"]["suggestion_revision"] == moved["revision"]
+    assert response.json()["suggestion_revision"] == moved["revision"]
+
+
+@pytest.mark.parametrize("mutation", ["suggestion", "both"])
+def test_an_exhausted_retry_names_the_counter_that_moved(
+    seeded: Seeded, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """A bounded re-run that never wins must not blame the wrong revision.
+
+    ADR-0005 §9/§10 keep the two frozen counters - and therefore their staleness codes -
+    distinct: a search whose page only ever straddles a *suggestion* change answers
+    ``PLACE_SUGGESTION_REVISION_STALE``, not ``CATALOG_FILTER_REVISION_STALE`` (whose details
+    would then claim a change that its own two values disprove). When both move, the filter
+    revision wins, exactly as ``_continue_session`` orders them.
+    """
+    state = seeded
+    second = Catalog.open(db_path=state.env.catalog.db_path)
+    try:
+        persons = PersonService(second, clock=second.now_ms)
+        moves = {"count": 0}
+        real_entries_of = search_service._entries_of
+
+        def mutate() -> None:
+            moves["count"] += 1
+            if mutation == "both":
+                row = second.read_one(
+                    "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
+                )
+                persons.rename(
+                    person_id=int(state.b),
+                    name=f"Alice {moves['count']}",
+                    request_id=f"req-moving-{moves['count']}",
+                    expected_revision=int(row["revision"]),
+                )
+            with second.write() as connection:
+                place_revision.bump_suggestion_revision(
+                    connection,
+                    cause=place_revision.CAUSE_SUGGESTION_CHANGED,
+                    now_ms=moves["count"],
+                )
+
+        def spy(payload: dict[str, Any]) -> Any:
+            value = real_entries_of(payload)
+            mutate()
+            return value
+
+        monkeypatch.setattr(search_service, "_entries_of", spy)
+        filter_before = state.env.filter_revision()
+        sessions_before = len(state.search.context.search_sessions)
+
+        async def scenario(client: AsyncClient) -> Any:
+            csrf = await state.search.authenticate(client)
+            return await post(client, state, csrf, place_state="suggested")
+
+        response = state.search.scenario(scenario)
+        filter_after = state.env.filter_revision()
+        sessions_after = len(state.search.context.search_sessions)
+    finally:
+        second.close()
+    assert response.status_code == 409, response.text
+    payload = response.json()
+    details = payload["details"]
+    assert details["reason"] == (
+        "CATALOG_FILTER_REVISION_CHANGED"
+        if mutation == "both"
+        else "SUGGESTION_REVISION_CHANGED"
+    )
+    if mutation == "both":
+        assert payload["code"] == CATALOG_FILTER_REVISION_STALE
+        assert set(details) == {
+            "reason",
+            "session_catalog_filter_revision",
+            "current_catalog_filter_revision",
+        }
+        assert details["current_catalog_filter_revision"] > details["session_catalog_filter_revision"]
+        assert filter_after > filter_before
+    else:
+        assert payload["code"] == PLACE_SUGGESTION_REVISION_STALE
+        assert set(details) == {
+            "reason",
+            "session_suggestion_revision",
+            "current_suggestion_revision",
+        }
+        assert details["current_suggestion_revision"] > details["session_suggestion_revision"]
+        # The authoritative filter revision really did not move: the refusal has to say so.
+        assert filter_after == filter_before
+    # One collision per bounded attempt, and a search that never published leaves no session.
+    assert moves["count"] == search_service.SEARCH_PUBLISH_ATTEMPTS
+    assert sessions_after == sessions_before
 
 
 # --------------------------------------------------- 4. same source as the person reads
