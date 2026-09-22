@@ -178,6 +178,7 @@ no_person_condition:[1..6]}`（由生产 `search_request` 实测）。
 
 ```text
 任务 ID / 状态：P3-08D / PASS（B + 记录式真实浏览器 smoke；SOL_NOT_REQUIRED）
+收口提交：d4afd96（P3-08B/C/D 合并提交；本卡工作树起点 c7fa68b）
 改动面：src/photo_search/web/search.{html,css,js}、tests/unit/test_api_frontend.py、
         docs/diagnostics/frontend-smoke-checklist.md、tools/diagnostics/search_person_smoke_fixture.py、
         本报告、docs/development-status.md、docs/tasks/P4-00A.md
