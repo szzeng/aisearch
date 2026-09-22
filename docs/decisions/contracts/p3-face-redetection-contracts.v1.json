@@ -1,0 +1,705 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p3-face-redetection-contracts.v1.json",
+  "title": "Photo Search P3 face redetection mapping protocol companion",
+  "description": "Derived from ADR-0010; ADR-0010 is authoritative on conflict.",
+  "oneOf": [
+    { "$ref": "#/$defs/MappingPage" },
+    { "$ref": "#/$defs/MappingGroup" },
+    { "$ref": "#/$defs/DecisionRequest" },
+    { "$ref": "#/$defs/MappingOperation" },
+    { "$ref": "#/$defs/MappingApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p3-face-redetection-contracts.v1" },
+    "FaceId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "MappingId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "AssetId": { "type": "integer", "minimum": 1 },
+    "PersonId": { "type": "integer", "minimum": 1 },
+    "Revision": { "type": "integer", "minimum": 0 },
+    "StoredRevision": { "type": "integer", "minimum": 1 },
+    "SpecRevision": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[!-~]+$"
+    },
+    "OperationId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "NullablePersonId": {
+      "oneOf": [
+        { "$ref": "#/$defs/PersonId" },
+        { "type": "null" }
+      ]
+    },
+    "ControlMode": {
+      "enum": ["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    },
+    "MatchState": { "enum": ["HIGH", "WEAK"] },
+    "QualityState": { "enum": ["OK", "LOW"] },
+    "MappingState": { "enum": ["SUGGESTED", "CONFIRMED", "REJECTED", "STALE"] },
+    "GroupState": { "enum": ["OPEN", "CONFIRMED", "REJECTED"] },
+    "CandidateState": {
+      "enum": ["NO_CANDIDATE", "UNIQUE_HIGH", "UNIQUE_WEAK", "AMBIGUOUS"]
+    },
+    "Decision": { "enum": ["confirm", "reject"] },
+    "MappingOperationType": {
+      "enum": ["FACE_MAPPING_CONFIRM", "FACE_MAPPING_REJECT", "UNDO"]
+    },
+    "ThumbnailUrl": {
+      "type": "string",
+      "pattern": "^/api/v1/faces/[0-9a-f]{64}/thumbnail$"
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "MappingConflict": {
+      "type": "object",
+      "required": ["entity_type", "entity_key", "reason"],
+      "properties": {
+        "entity_type": { "const": "FACE_MAPPING_GROUP" },
+        "entity_key": { "$ref": "#/$defs/FaceId" },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "MappingLimits": {
+      "const": {
+        "max_decisions_per_request": 200,
+        "max_targets_per_decision": 16,
+        "default_page_limit": 50,
+        "max_page_limit": 200,
+        "cursor_prefix": "fm1",
+        "match_iou_high": 0.5,
+        "match_landmark_high": 0.12,
+        "match_iou_min": 0.3,
+        "match_landmark_max": 0.25
+      }
+    },
+    "MappingCandidate": {
+      "type": "object",
+      "required": [
+        "new_face_id",
+        "new_spec_revision",
+        "match_state",
+        "quality_state",
+        "state",
+        "revision",
+        "thumbnail_url"
+      ],
+      "properties": {
+        "new_face_id": { "$ref": "#/$defs/FaceId" },
+        "new_spec_revision": { "$ref": "#/$defs/SpecRevision" },
+        "match_state": { "$ref": "#/$defs/MatchState" },
+        "quality_state": { "$ref": "#/$defs/QualityState" },
+        "state": { "$ref": "#/$defs/MappingState" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "thumbnail_url": { "$ref": "#/$defs/ThumbnailUrl" }
+      },
+      "additionalProperties": false
+    },
+    "MappingGroupSummary": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "old_face_id",
+        "asset_id",
+        "old_spec_revision",
+        "candidate_state",
+        "state",
+        "revision",
+        "control_mode",
+        "control_revision",
+        "assigned_person_id",
+        "candidate_count",
+        "thumbnail_url"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "old_face_id": { "$ref": "#/$defs/FaceId" },
+        "asset_id": { "$ref": "#/$defs/AssetId" },
+        "old_spec_revision": { "$ref": "#/$defs/SpecRevision" },
+        "candidate_state": { "$ref": "#/$defs/CandidateState" },
+        "state": { "$ref": "#/$defs/GroupState" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "control_mode": { "$ref": "#/$defs/ControlMode" },
+        "control_revision": { "$ref": "#/$defs/Revision" },
+        "assigned_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "thumbnail_url": { "$ref": "#/$defs/ThumbnailUrl" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "control_mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["control_mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "type": "null" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "control_mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["control_mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "$ref": "#/$defs/PersonId" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "NO_CANDIDATE" } },
+            "required": ["candidate_state"]
+          },
+          "then": { "properties": { "candidate_count": { "const": 0 } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "candidate_state": { "enum": ["UNIQUE_HIGH", "UNIQUE_WEAK"] }
+            },
+            "required": ["candidate_state"]
+          },
+          "then": { "properties": { "candidate_count": { "const": 1 } } }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "AMBIGUOUS" } },
+            "required": ["candidate_state"]
+          },
+          "then": { "properties": { "candidate_count": { "minimum": 2 } } }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "MappingGroup": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "old_face_id",
+        "asset_id",
+        "old_spec_revision",
+        "candidate_state",
+        "state",
+        "revision",
+        "control_mode",
+        "control_revision",
+        "assigned_person_id",
+        "candidate_count",
+        "thumbnail_url",
+        "candidates"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "old_face_id": { "$ref": "#/$defs/FaceId" },
+        "asset_id": { "$ref": "#/$defs/AssetId" },
+        "old_spec_revision": { "$ref": "#/$defs/SpecRevision" },
+        "candidate_state": { "$ref": "#/$defs/CandidateState" },
+        "state": { "$ref": "#/$defs/GroupState" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "control_mode": { "$ref": "#/$defs/ControlMode" },
+        "control_revision": { "$ref": "#/$defs/Revision" },
+        "assigned_person_id": { "$ref": "#/$defs/NullablePersonId" },
+        "candidate_count": { "type": "integer", "minimum": 0 },
+        "thumbnail_url": { "$ref": "#/$defs/ThumbnailUrl" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MappingCandidate" },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "control_mode": { "const": "MANUAL_UNASSIGNED" } },
+            "required": ["control_mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "type": "null" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "control_mode": { "const": "MANUAL_ASSIGNED" } },
+            "required": ["control_mode"]
+          },
+          "then": {
+            "properties": { "assigned_person_id": { "$ref": "#/$defs/PersonId" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "NO_CANDIDATE" } },
+            "required": ["candidate_state"]
+          },
+          "then": {
+            "properties": {
+              "candidates": { "maxItems": 0 },
+              "candidate_count": { "const": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "candidate_state": { "enum": ["UNIQUE_HIGH", "UNIQUE_WEAK"] }
+            },
+            "required": ["candidate_state"]
+          },
+          "then": {
+            "properties": {
+              "candidates": {
+                "minItems": 1,
+                "maxItems": 1
+              },
+              "candidate_count": { "const": 1 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "UNIQUE_HIGH" } },
+            "required": ["candidate_state"]
+          },
+          "then": {
+            "properties": {
+              "candidates": {
+                "items": { "properties": { "match_state": { "const": "HIGH" } } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "UNIQUE_WEAK" } },
+            "required": ["candidate_state"]
+          },
+          "then": {
+            "properties": {
+              "candidates": {
+                "items": { "properties": { "match_state": { "const": "WEAK" } } }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "candidate_state": { "const": "AMBIGUOUS" } },
+            "required": ["candidate_state"]
+          },
+          "then": {
+            "properties": {
+              "candidates": { "minItems": 2 },
+              "candidate_count": { "minimum": 2 }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "MappingPage": {
+      "type": "object",
+      "required": ["contract_version", "limit", "next_cursor", "has_more", "groups"],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "next_cursor": {
+          "oneOf": [
+            { "$ref": "#/$defs/Cursor" },
+            { "type": "null" }
+          ]
+        },
+        "has_more": { "type": "boolean" },
+        "groups": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MappingGroupSummary" },
+          "minItems": 0,
+          "maxItems": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "DecisionTarget": {
+      "type": "object",
+      "required": ["new_face_id", "inherits_person"],
+      "properties": {
+        "new_face_id": { "$ref": "#/$defs/FaceId" },
+        "inherits_person": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "GroupDecision": {
+      "type": "object",
+      "required": ["old_face_id", "expected_review_revision", "decision", "targets"],
+      "properties": {
+        "old_face_id": { "$ref": "#/$defs/FaceId" },
+        "expected_review_revision": { "$ref": "#/$defs/StoredRevision" },
+        "decision": { "$ref": "#/$defs/Decision" },
+        "targets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DecisionTarget" },
+          "minItems": 0,
+          "maxItems": 16
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "decision": { "const": "confirm" } },
+            "required": ["decision"]
+          },
+          "then": {
+            "properties": { "targets": { "minItems": 1 } }
+          },
+          "else": {
+            "properties": { "targets": { "maxItems": 0 } }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "DecisionRequest": {
+      "type": "object",
+      "required": ["contract_version", "request_id", "asset_id", "decisions"],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "request_id": { "$ref": "#/$defs/RequestId" },
+        "asset_id": { "$ref": "#/$defs/AssetId" },
+        "decisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/GroupDecision" },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "OperationCandidate": {
+      "type": "object",
+      "required": ["new_face_id", "state", "revision", "inherits_person"],
+      "properties": {
+        "new_face_id": { "$ref": "#/$defs/FaceId" },
+        "state": { "$ref": "#/$defs/MappingState" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "inherits_person": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "MappingOperationItem": {
+      "type": "object",
+      "required": [
+        "entity_type",
+        "old_face_id",
+        "changed",
+        "state",
+        "revision",
+        "candidate_state",
+        "candidates"
+      ],
+      "properties": {
+        "entity_type": { "const": "FACE_MAPPING_GROUP" },
+        "old_face_id": { "$ref": "#/$defs/FaceId" },
+        "changed": { "type": "boolean" },
+        "state": { "$ref": "#/$defs/GroupState" },
+        "revision": { "$ref": "#/$defs/StoredRevision" },
+        "candidate_state": { "$ref": "#/$defs/CandidateState" },
+        "candidates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/OperationCandidate" },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "additionalProperties": false
+    },
+    "MappingOperation": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "operation_id",
+        "operation_type",
+        "operation_revision",
+        "status",
+        "undo_of_operation_id",
+        "changed",
+        "catalog_filter_revision",
+        "replayed",
+        "items"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "operation_id": { "$ref": "#/$defs/OperationId" },
+        "operation_type": { "$ref": "#/$defs/MappingOperationType" },
+        "operation_revision": { "$ref": "#/$defs/StoredRevision" },
+        "status": { "enum": ["COMMITTED", "UNDONE"] },
+        "undo_of_operation_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/OperationId" },
+            { "type": "null" }
+          ]
+        },
+        "changed": { "type": "boolean" },
+        "catalog_filter_revision": { "$ref": "#/$defs/Revision" },
+        "replayed": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MappingOperationItem" },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "MappingApiError": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_NOT_FOUND" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["old_face_id"],
+              "properties": {
+                "old_face_id": { "$ref": "#/$defs/FaceId" },
+                "new_face_id": { "$ref": "#/$defs/FaceId" },
+                "asset_id": { "$ref": "#/$defs/AssetId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_NOT_FOUND" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "properties": {
+                "old_face_id": { "$ref": "#/$defs/FaceId" },
+                "new_face_id": { "$ref": "#/$defs/FaceId" },
+                "asset_id": { "$ref": "#/$defs/AssetId" }
+              },
+              "anyOf": [
+                { "required": ["old_face_id"] },
+                { "required": ["new_face_id"] }
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "PERSON_NOT_FOUND" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["person_id"],
+              "properties": {
+                "person_id": { "$ref": "#/$defs/PersonId" },
+                "old_face_id": { "$ref": "#/$defs/FaceId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "PERSON_REDIRECT_CYCLE" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["person_id"],
+              "properties": { "person_id": { "$ref": "#/$defs/PersonId" } },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_CONFLICT" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["reason"],
+              "properties": {
+                "reason": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "old_face_id": { "$ref": "#/$defs/FaceId" },
+                "new_face_id": { "$ref": "#/$defs/FaceId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_STALE" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": [
+                "old_face_id",
+                "expected_review_revision",
+                "current_review_revision"
+              ],
+              "properties": {
+                "old_face_id": { "$ref": "#/$defs/FaceId" },
+                "expected_review_revision": { "$ref": "#/$defs/Revision" },
+                "current_review_revision": { "$ref": "#/$defs/Revision" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_TARGET_CONTROLLED" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["new_face_id"],
+              "properties": {
+                "new_face_id": { "$ref": "#/$defs/FaceId" },
+                "old_face_id": { "$ref": "#/$defs/FaceId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_IDEMPOTENCY_CONFLICT" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["asset_id"],
+              "properties": {
+                "asset_id": { "$ref": "#/$defs/AssetId" },
+                "old_face_id": { "$ref": "#/$defs/FaceId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_BATCH_TOO_LARGE" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["max_decisions"],
+              "properties": {
+                "max_decisions": { "const": 200 },
+                "max_targets": { "const": 16 }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "FACE_MAPPING_OPERATION_NOT_UNDOABLE" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["operation_id", "conflicts"],
+              "properties": {
+                "operation_id": { "$ref": "#/$defs/OperationId" },
+                "expected_operation_revision": { "$ref": "#/$defs/StoredRevision" },
+                "current_operation_revision": { "$ref": "#/$defs/StoredRevision" },
+                "status": { "enum": ["COMMITTED", "UNDONE"] },
+                "conflicts": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/MappingConflict" },
+                  "minItems": 1,
+                  "maxItems": 64
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "INVALID_CURSOR" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "properties": {},
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["code", "message", "request_id", "details"],
+          "properties": {
+            "code": { "const": "VALIDATION_ERROR" },
+            "message": { "type": "string", "minLength": 1 },
+            "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "details": {
+              "type": "object",
+              "required": ["reason"],
+              "properties": {
+                "reason": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "old_face_id": { "$ref": "#/$defs/FaceId" },
+                "new_face_id": { "$ref": "#/$defs/FaceId" },
+                "asset_id": { "$ref": "#/$defs/AssetId" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

@@ -99,9 +99,14 @@ suggestion stale with the established filter-first priority. DS-H full evidence 
 0 errors / 48 environment skips**; Sol independently reran the five direct error/publication regressions with
 **5 / 0 / 0 / 0**, and Ruff, lock-check and diff-check are clean. See
 [the final focused review §9](reports/P3-07C-sol-focused-review.md).
-**P3-08A is READY / CURRENT TASK**: freeze the reviewable old/new `face_id` mapping and the P3 fault-acceptance
-matrix before implementation. P3-08 is split into A contract freeze, B implementation + D/browser closure,
-and C independent staged review; P3-07B report §6's merge/undo ordering defect is mandatory P3-08B scope.
+**P3-08A is PASS（Sol final short re-review）**: ADR-0010 is **Accepted** after DS-H contract drafting, two bounded
+correction rounds and Sol focused review. The final re-review proves `undo → OPEN` restores the hold rather than
+releasing it, and the 12 error codes now have strict per-code `oneOf` details shapes; all three negative probes are
+rejected and both positive controls pass. Final contract evidence is **58 / 0 / 0 / 0**, with Ruff, diff-check and
+lock-check clean. See [the final freeze report §10](reports/P3-08A-sol-contract-freeze.md). The current/next task is
+**P3-08B**, card [docs/tasks/P3-08B.md](tasks/P3-08B.md): implement the frozen mapping, repair merge/undo ordering,
+and complete D-level fault coverage plus the recorded real-browser closure. Recommended model: **DS-H / DeepSeek
+V4.1 Flash / high reasoning**; model switching remains manual.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1422,3 +1427,159 @@ canonical、revision、缓存失效三条必审边界全部通过。
 P3-08B 必修范围。P3-08A 阶段 A 推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，请手动切换后继续。
 
 Model switching remains manual; the repository only records the recommended model per stage.
+
+## Latest contract review, stage A — P3-08A DS-H contract draft (2026-09-22)
+
+**P3-08A 阶段 A：`ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`。** 见
+[P3-08A 阶段 A 报告](reports/P3-08A-dsh-contract-review.md)。起点 `7dd392d`（工作树干净），本阶段只新增
+四个文件并更新状态：ADR-0010（**Proposed**）、
+[p3-face-redetection-contracts.v1.json](decisions/contracts/p3-face-redetection-contracts.v1.json)、
+[p3-acceptance-matrix.v1.json](decisions/contracts/p3-acceptance-matrix.v1.json)（56 条稳定 ID 场景）与
+[契约测试](../tests/unit/test_p3_face_redetection_contracts.py)（33 例）。
+
+**冻结要点。** 映射身份是 `mapping_id = sha256(canonical JSON{asset_id, old_face_id, new_face_id,
+old_spec_revision, new_spec_revision})`，跨资产候选永不生成，ordinal/cluster/`person_id` 不得冒充身份；
+候选由方向修正后的 bbox + 5 landmarks 几何计算（合格 `iou>=0.30` 且 `landmark_ratio<=0.25`，高强度
+`iou>=0.50` 且 `landmark_ratio<=0.12`，低质量脸永不 `HIGH`），**服务端永不自动确认**；携带人工知识的
+旧脸在 `OPEN` 期间对其候选新脸施加**临时保持**，实现方式是扩展 `human_controlled_face_ids()` 的来源，
+不新增第四种 control mode。确认按“每新脸至多一个继承者、其余保守 `MANUAL_UNASSIGNED`、exclusion 取并集、
+肯定/否定冲突整批拒绝、已被人工编辑的目标拒绝覆盖”的矩阵转移人工知识；审核状态写进既有
+`person_operations`（新增 `FACE_MAPPING_CONFIRM`/`FACE_MAPPING_REJECT`/`FACE_MAPPING_GROUP`），全局
+`request_id` 幂等门先于 revision 检查，撤销取 `max(before, live)+1` 且不倒退；只有人工事实实际变化时才
+推进一次 `catalog_filter_revision`（cause 仍为 `PERSON_CHANGED`），不写图片向量 `index_outbox`。
+API 冻结 11 个错误码与只读审核面，响应/错误/日志不含 bbox、landmark、IoU、向量、confidence、路径、坐标、
+内部快照。P3-07B §6 的 merge/undo 顺序缺陷被冻结为 P3-08B 必修不变量（两点式恢复、影响集合严格来自快照、
+五条回归）。
+
+矩阵覆盖主架构 §12.4 的人物第 **8、14～22** 项与地点交叉第 **29～33** 项，并含映射生命周期（生成、
+确认、拒绝、撤销、重启、重扫、升级失败、回退、晚到 worker、备份恢复）、人物/地点交错顺序、
+merge/undo 缺陷族与真实浏览器闭环计划。证据状态为 `existing 16` / `must_rerun 10` /
+`not_implemented 30`，契约测试禁止把未跑项写成 PASS。
+
+实测：契约专项 `test-results/p3-08a-contract.xml` **33 tests / 0 failures / 0 errors / 0 skipped**；完整
+`tests/unit` `test-results/p3-08a-unit.xml` **792 / 0 / 0 / 0**；Ruff、`git diff --check`、`uv lock --check`
+（95 packages）全 clean。`.pytest-tmp` 对受限令牌仍为 `WinError 5`（既有环境事实），完整单测经已授权的
+正常 Windows 权限路由执行，basetemp 仍在项目内，**未改 ACL**。未验证项（30 万容量下候选成本、`0014`
+迁移耗时、多进程并发、真实权重的升级/回退、C 级打包、真实浏览器闭环）记录在阶段 A 报告 §7。
+
+下一阶段为 **P3-08A 阶段 B — C2 / GPT-5.6 Sol / high 聚焦终审并冻结**（输入为阶段 A 报告 §9 的压缩交接包，
+只审未确认映射不转移人工 authority、事务/revision/幂等/撤销边界、身份/歧义/升级回退/备份恢复、API 与故障
+矩阵是否足以直接生成 P3-08B，以及 §10 缺陷是否被正确纳入）。通过后才把 ADR-0010 转 Accepted、输出
+`docs/reports/P3-08A-sol-contract-freeze.md`、标 P3-08A PASS 并生成 `docs/tasks/P3-08B.md`。**P3-08B 未生成。**
+请手动切换模型/推理档后在新会话继续。
+
+## Latest stage B review and DS-H correction — P3-08A (2026-09-22)
+
+**P3-08A 阶段 B 初次终审：`SOL FOCUSED REVIEW FAIL / DS-H CONTRACT CORRECTION REQUIRED`。** 见
+[阶段 B 报告](reports/P3-08A-sol-contract-freeze.md)。Sol high 指出四条普通且可界定的契约缺陷：①`1 → N`
+允许把人工人物 authority 复制到多个新脸（契约测试还断言了与 ADR §12 相反的分支）；②临时保持没接到真实
+自动关联写门（`face/index.py::_reconcile_asset()` 事务内读的是 `_manually_locked_face_ids()`），且
+`face_association_queue` 在关联遍末尾被无条件删除，解除保持后没有恢复路径；③`MAP-001` 的“同内容同 spec
+未变化重跑会产生新脸”与稳定 `face_id` 冲突，且未拒自映射；④error `details`、`candidate_state` 与候选
+数组、`limit`/`fm1` 游标都不是闭集。ADR-0010 未转 Accepted，P3-08A 未 PASS，P3-08B 未生成；不升级
+DeepSeek max（四条均可由最小反例界定）。
+
+**阶段 B 修复（DS-H）：`CORRECTIONS APPLIED / SOL SHORT RE-REVIEW PENDING`。** 见
+[修复报告](reports/P3-08A-dsh-contract-fix.md)。改动面严格限于 Sol 允许集合：ADR-0010、两份 companion、
+契约测试与报告/任务卡/状态元数据；未改 `src/photo_search/**`、migration、依赖、`PhotoSearch.spec`、前端与
+既有测试语义。修复要点：
+
+- **双向继承基数**（ADR §4.1）：每个旧脸至多一个 `inherits_person=true`
+  （`multiple_targets_without_single_inheritor`），每个新脸跨 group 至多一个继承来源；允许零继承者的保守
+  分支（目标按 §4.3 处理）。
+- **保持与队列**（ADR §3.4、§5.3、§7、§9）：显式区分**检测行保留集合**（`persist_face_document()` 的
+  删除门）与**自动关联保持集合**（`_reconcile_asset()` 写事务内与 `_manually_locked_face_ids()` 同点读）；
+  冻结判定顺序“写/退休 → 候选 → 失效 `STALE` → 保持”；冻结 `face_association_queue` 在保持期内保留、
+  在 confirm/reject/undo 释放时**重新排队**且决策事务不替用户选人物。
+- **身份边界**（ADR §2.1、§3.1、§7）：自映射永不生成（提交答 `FACE_MAPPING_NOT_FOUND`）；v1 的唯一
+  生成面是跨世代（`old_spec_revision != new_spec_revision`）；同内容同 spec 未变化重跑**零新脸、零映射行、
+  零新 group**；v1 不定义同 spec 的新旧映射。
+- **公开闭集**（ADR §8.1、§8.2）：逐码冻结 `details` 允许/必填键、`conflicts` 形状、`candidate_state` ↔
+  候选数组/计数约束、`limit` 1..200（`maximum` 进入 schema）与 `fm1` 游标（越界 limit 答
+  `VALIDATION_ERROR`，外来游标答既有 `INVALID_CURSOR`）。
+- 矩阵扩到 **65 条**（新增/更新 `MAP-001` 跨世代夹具与 `MAP-027`～`MAP-035`），契约测试扩到 **43 例**；
+  四条反例探针修复后分别被拒（`at most one inheritor per old face`、`$.details: unexpected bbox`、
+  `group: UNIQUE_HIGH needs exactly one HIGH candidate`、`$.limit: maximum` +
+  `page: next_cursor must decode to fm1:<old_face_id>`）。阶段 A 报告 59→56 的计数笔误同轮更正。
+
+实测：契约专项 `test-results/p3-08a-contract-fix.xml` **43 tests / 0 failures / 0 errors / 0 skipped**；
+完整 `tests/unit` `test-results/p3-08a-unit.xml` **802 / 0 / 0 / 0**；Ruff（首轮 I001 已修）、
+`git diff --check`、`uv lock --check`（95 packages）全 clean。`.pytest-tmp` 的 `WinError 5` 环境事实沿用，
+未改 ACL，未触碰真实照片库。
+
+下一阶段仍为 **P3-08A 阶段 B 短审 — C2 / GPT-5.6 Sol / high**：只审四条失败边界及其直接回归（输入为修复
+报告 §9）。通过后才把 ADR-0010 转 Accepted、写出阶段 B 补轮结论、标 P3-08A PASS 并生成
+`docs/tasks/P3-08B.md`。**P3-08B 未生成。** 请手动切换模型/推理档后在新会话继续。
+
+## Latest focused review, stage B — P3-08A Sol contract freeze (2026-09-22)
+
+**P3-08A 阶段 B：`SOL FOCUSED REVIEW FAIL / DS-H CONTRACT CORRECTION REQUIRED`。** 详见
+[阶段 B 报告](reports/P3-08A-sol-contract-freeze.md)。ADR-0010 保持 Proposed，P3-08A 未 PASS，P3-08B 未生成。
+
+四个最小失败边界：① ADR §12/MAP-007 要求一个旧脸在 `1→N` 中至多一个继承者，但契约测试明确接受两个不同
+新脸都 `inherits_person=true`；② §3.4 把临时保持只接到 `human_controlled_face_ids()`，实际自动关联写门使用
+`_manually_locked_face_ids()` 且处理后删除 association queue，解除保持后的重试与候选失效顺序也未冻结；
+③ MAP-001 要求同内容同 spec 重跑写入“新脸”，与稳定 `face_id`/既有幂等重跑语义冲突且未拒绝 self-mapping；
+④ companion 允许隐私字段进入 error details、允许 UNIQUE_HIGH 携带两个 WEAK 候选，并接受 limit 999 与非
+`fm1` 游标。阶段 A 报告末尾的“59 条”也是计数笔误，实际矩阵为 56 条。
+
+现有契约套件独立复跑仍为 `test-results/p3-08a-sol-review.xml` **33 / 0 / 0 / 0**，说明缺陷在冻结规则与
+断言覆盖本身，不是已有测试红灯。下一步回到 **DS-H / DeepSeek V4.1 Flash / 高推理**，仅修 ADR-0010、两份
+companion、contract tests 与交接元数据；不得改生产代码/migration/依赖/前端，不得生成 P3-08B。本轮问题均已
+有最小反例，未命中 V3.1 §2.2 的 max 条件。修复后 C2 / Sol high 只短审这四条失败边界及直接回归面。
+
+## Latest first Sol short re-review after DS-H correction — P3-08A (2026-09-22)
+
+**P3-08A：`SOL SHORT RE-REVIEW FAIL / SECOND DS-H CONTRACT CORRECTION REQUIRED`。** 详见
+[阶段 B 报告 §8～§9](reports/P3-08A-sol-contract-freeze.md)。第一轮四条缺陷中的双向继承基数、
+unchanged/self-mapping 身份边界，以及 candidate-state / limit / `fm1` cursor 已闭合；剩余两个普通且可界定的
+阻塞点：
+
+- ADR §3.4 把 `undo → OPEN` 写成释放保持，而 §5.3、§12 与 `MAP-032` 要求重新施加保持并禁止自动归类；
+- companion 只关闭了错误 `details` 的全局键并集，没有逐 code 关闭：跨 code 的安全键、空
+  `FACE_NOT_FOUND` details、带 `old_face_id` 的 `INVALID_CURSOR` details 仍通过。
+
+独立复跑 `test-results/p3-08a-sol-rereview.xml` 为 **43 / 0 / 0 / 0**，Ruff、diff-check、lock-check clean；
+全绿说明现有用例缺少上述两个负向断言。ADR-0010 仍为 Proposed，P3-08A 未 PASS，P3-08B 未生成；不升级
+DeepSeek max。下一步由 DS-H 只修这两个契约点、直接回归与交接元数据，修复后 Sol 只复核两个反例。
+
+## Latest second correction — P3-08A (2026-09-22, DS-H)
+
+**第二轮契约修正：`CORRECTIONS APPLIED / SOL FINAL SHORT RE-REVIEW PENDING`。** 见
+[修复报告 §11](reports/P3-08A-dsh-contract-fix.md)。改动仍严格限于 Sol 允许面（ADR-0010、两份 companion、
+契约测试与交接元数据），未改 `src/photo_search/**`、migration、依赖、`PhotoSearch.spec`、前端或既有测试语义。
+
+- **`undo → OPEN` 语义**：ADR §3.4 把释放集合显式收窄为“只有 `confirm` / `reject`（以及 `confirm` 未选
+  候选）”，并新增独立条款“`undo` 回到 `OPEN` 不是释放”——它恢复 `OPEN` 保持（候选新脸重新被关联遍跳过），
+  只保留/重新排队队列行等待下一次决策。新增静态契约断言 `test_undo_is_never_part_of_the_release_set`
+  （释放条款切片内不得出现 `undo`/“撤销”），避免回归。
+- **错误 `details` 逐码闭集**：删除“所有安全键的并集 + 逐码追加必填键”的弱形状，`MappingApiError` 改为
+  **12 个逐码分支的严格 `oneOf`**，每个分支同时冻结 `code`、允许键与必填键（`additionalProperties: false`）；
+  `FACE_NOT_FOUND` 用 `anyOf` 要求 `old_face_id` / `new_face_id` 至少一个；`INVALID_CURSOR` 的 `details`
+  必须是空对象。ADR §8.2 同步写明禁止回退到键并集写法。
+- Sol 的三个反例探针现在分别返回 `['$: oneOf matched 0']`（`FACE_MAPPING_NOT_FOUND + person_id`、
+  `FACE_NOT_FOUND {}`、`INVALID_CURSOR + old_face_id`），正向对照仍返回 `[]`。
+
+实测：契约专项 `test-results/p3-08a-contract-fix2.xml` **58 tests / 0 failures / 0 errors / 0 skipped**；
+完整 `tests/unit` `test-results/p3-08a-unit.xml` **817 / 0 / 0 / 0**；Ruff、`git diff --check`、
+`uv lock --check`（95 packages）全 clean。矩阵仍为 65 条（本轮未增删场景）。未升级 DeepSeek max
+（两点均有最小反例，未命中 V3.1 §2.2）。
+
+下一步仍为 **P3-08A 阶段 B 终审 — C2 / GPT-5.6 Sol / high**：只复核 §11.1 的 undo/hold 语义与 §11.2 的
+逐码 `details` 闭集（含正向对照）。通过后才把 ADR-0010 转 Accepted、补阶段 B 结论、标 P3-08A PASS 并生成
+`docs/tasks/P3-08B.md`。**P3-08B 未生成。** 请手动切换模型/推理档后在新会话继续。
+
+## Latest final Sol short re-review — P3-08A closure (2026-09-22)
+
+**P3-08A：PASS / ADR-0010 ACCEPTED。** 最终结论见
+[阶段 B 报告 §10](reports/P3-08A-sol-contract-freeze.md)。第二轮 DS-H 修正后的两个直接边界全部通过：
+`undo → OPEN` 明确恢复保持而不是释放；`MappingApiError` 的 12 个 code 使用逐码严格 `oneOf`，三个跨码/空对象
+负向反例均被拒，两个正向对照仍通过。
+
+Sol 独立复跑 `test-results/p3-08a-sol-final-rereview.xml` 为 **58 tests / 0 failures / 0 errors / 0 skipped**；
+Ruff、`git diff --check`、`uv lock --check`（95 packages）均 clean。ADR 状态及契约测试断言已同步转为 Accepted。
+本任务未改生产代码、migration、依赖、前端、ACL 或真实照片库。
+
+下一任务为 **P3-08B — 新旧人脸映射实现、merge/undo 顺序修复与 P3 故障/浏览器闭环**，任务卡
+[docs/tasks/P3-08B.md](tasks/P3-08B.md)。推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；请在 Codex 中手动
+切换模型/推理档后继续。P3-08B 完成后才进入 P3-08C 的独立 DS-H 主审与 Sol 聚焦终审。
