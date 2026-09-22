@@ -30,6 +30,7 @@ import hashlib
 import io
 import json
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -79,7 +80,20 @@ class FaceBox:
 
 
 def parse_bbox(raw: Any) -> FaceBox:
-    """Validate one stored ``bbox_json``; a broken row is a state conflict, never a guess."""
+    """Validate one stored ``bbox_json``; a broken row is a state conflict, never a guess.
+
+    Two shapes are read, and both are produced by this repository:
+
+    * a plain ``[left, top, right, bottom]`` list, which is what every P3-06 fixture and the
+      crop cache key have always used, and
+    * ``{"bbox": [...]}``, which is the shape the P3-02 processor writes into
+      ``faces.bbox_json`` through ``_upsert_face()``.
+
+    Before this tolerance existed the two disagreed, so a face written by the real detection
+    pipeline could never be cropped (``FACE_STATE_CONFLICT``/``bbox_not_a_list``); a
+    production row is therefore accepted here instead of being reported as a catalog defect.
+    Anything else keeps its frozen refusal.
+    """
     try:
         payload = json.loads(raw) if isinstance(raw, (str, bytes, bytearray)) else raw
     except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -88,6 +102,8 @@ def parse_bbox(raw: Any) -> FaceBox:
             "the recorded face geometry is not readable",
             details={"reason": "bbox_not_json"},
         ) from error
+    if isinstance(payload, Mapping):
+        payload = payload.get("bbox")
     if not isinstance(payload, Sequence) or isinstance(payload, (str, bytes, bytearray)):
         raise CatalogError(
             FACE_STATE_CONFLICT,

@@ -828,6 +828,76 @@ class FaceControlState(BaseModel):
     suggestions_available: bool
 
 
+class MappingCandidate(BaseModel):
+    """One candidate of a review group (ADR-0010 §8.1; no geometry, ever)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    new_face_id: str
+    new_spec_revision: str
+    match_state: Literal["HIGH", "WEAK"]
+    quality_state: Literal["OK", "LOW"]
+    state: Literal["SUGGESTED", "CONFIRMED", "REJECTED", "STALE"]
+    revision: int
+    thumbnail_url: str
+
+
+class MappingGroupSummary(BaseModel):
+    """One row of the ``GET /api/v1/face-mappings`` review list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    old_face_id: str
+    asset_id: int
+    old_spec_revision: str
+    candidate_state: Literal["NO_CANDIDATE", "UNIQUE_HIGH", "UNIQUE_WEAK", "AMBIGUOUS"]
+    state: Literal["OPEN", "CONFIRMED", "REJECTED"]
+    revision: int
+    control_mode: Literal["AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED"]
+    control_revision: int
+    assigned_person_id: int | None = None
+    candidate_count: int
+    thumbnail_url: str
+
+
+class MappingGroup(MappingGroupSummary):
+    """One review group with its live candidate array."""
+
+    candidates: list[MappingCandidate] = Field(default_factory=list)
+
+
+class MappingListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    limit: int
+    next_cursor: str | None = None
+    has_more: bool
+    groups: list[MappingGroupSummary] = Field(default_factory=list)
+
+
+class MappingOperationCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_face_id: str
+    state: Literal["SUGGESTED", "CONFIRMED", "REJECTED", "STALE"]
+    revision: int
+    inherits_person: bool
+
+
+class MappingGroupItemResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_type: Literal["FACE_MAPPING_GROUP"]
+    old_face_id: str
+    changed: bool
+    state: Literal["OPEN", "CONFIRMED", "REJECTED"]
+    revision: int
+    candidate_state: Literal["NO_CANDIDATE", "UNIQUE_HIGH", "UNIQUE_WEAK", "AMBIGUOUS"]
+    candidates: list[MappingOperationCandidate] = Field(default_factory=list)
+
+
 class FaceCorrectionRequest(BaseModel):
     """``PUT /api/v1/faces/{face_id}/assignment``: one face, one action, one revision."""
 
@@ -890,6 +960,30 @@ class FaceOperationResponse(BaseModel):
     catalog_filter_revision: int
     replayed: bool
     items: list[FaceOperationItemResponse]
+
+
+class MappingOperationResponse(BaseModel):
+    """The ADR-0010 §5 response: group items plus the transferred face-control items.
+
+    The mapping family shares the compensation endpoint and the envelope fields of the other
+    families; the item list keeps the two frozen shapes it may carry (``FACE_MAPPING_GROUP``
+    and the ADR-0007 ``FACE_CONTROL``), so an undo answer can be read by the same page.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    operation_id: str
+    operation_type: str
+    operation_revision: int
+    status: str
+    undo_of_operation_id: str | None = None
+    changed: bool
+    catalog_filter_revision: int
+    replayed: bool
+    items: list[MappingGroupItemResponse | FaceOperationItemResponse] = Field(
+        default_factory=list
+    )
 
 
 class SplitGroupItemResponse(BaseModel):

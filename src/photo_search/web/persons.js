@@ -19,6 +19,7 @@
   var PERSON_LIMIT = 25;
   var FACE_LIMIT = 50;
   var OPERATION_LIMIT = 25;
+  var MAPPING_LIMIT = 50;
   var MAX_BATCH = 500;
 
   var VIEW_TEXT = {
@@ -44,6 +45,22 @@
     FACE_RESTORE_AUTO: "恢复自动",
     BATCH_FACE_EDIT: "批量脸纠错",
     SPLIT: "拆分",
+    FACE_MAPPING_CONFIRM: "重检测映射确认",
+    FACE_MAPPING_REJECT: "重检测映射拒绝",
+  };
+  var CANDIDATE_STATE_TEXT = {
+    NO_CANDIDATE: "没有合格候选（只能拒绝确认）",
+    UNIQUE_HIGH: "唯一高强度候选（仍需人工确认）",
+    UNIQUE_WEAK: "唯一但证据较弱",
+    AMBIGUOUS: "多个候选，需要人工选择",
+  };
+  var MATCH_TEXT = { HIGH: "强匹配", WEAK: "弱匹配" };
+  var MAPPING_STATE_TEXT = { OPEN: "待确认", CONFIRMED: "已确认", REJECTED: "已拒绝" };
+  var MAPPING_ROW_STATE_TEXT = {
+    SUGGESTED: "建议（未决定）",
+    CONFIRMED: "已确认",
+    REJECTED: "已拒绝",
+    STALE: "已失效（候选已被后续检测删除）",
   };
   var STATUS_TEXT = { COMMITTED: "已提交", UNDONE: "已撤销（已被补偿）" };
   var SESSION_HINT = "请使用启动器打印的一次性链接建立会话。";
@@ -65,6 +82,13 @@
     FACE_NOT_FOUND: true,
     PERSON_OPERATION_NOT_UNDOABLE: true,
     FACE_OPERATION_NOT_UNDOABLE: true,
+    FACE_MAPPING_NOT_FOUND: true,
+    FACE_MAPPING_CONFLICT: true,
+    FACE_MAPPING_STALE: true,
+    FACE_MAPPING_TARGET_CONTROLLED: true,
+    FACE_MAPPING_IDEMPOTENCY_CONFLICT: true,
+    FACE_MAPPING_OPERATION_NOT_UNDOABLE: true,
+    FACE_NOT_FOUND: true,
     INVALID_CURSOR: true,
   };
 
@@ -84,6 +108,16 @@
     },
     unassigned: { limit: FACE_LIMIT, cursor: null, hasMore: false, loading: false },
     operations: { limit: OPERATION_LIMIT, cursor: null, hasMore: false, loading: false },
+    mappings: {
+      hasSupport: false,
+      limit: MAPPING_LIMIT,
+      cursor: null,
+      hasMore: false,
+      loading: false,
+      state: "open",
+      lastOperation: null,
+      open: {},
+    },
     index: {},
     faceSelection: {},
     mergeSelection: {},
@@ -331,6 +365,19 @@
             ? "尚未初始化"
             : "v" + body.schema_version;
         var faces = body.faces || {};
+        // ADR-0010 §8.3: the mapping review only exists when the catalog really carries the
+        // 0014 layer, which is exactly what the four additive counts say. Without them the
+        // panel stays hidden instead of offering an action the server would refuse.
+        state.mappings.hasSupport = Object.prototype.hasOwnProperty.call(
+          faces,
+          "open_face_mappings"
+        );
+        if (els.mappingsPanel) {
+          els.mappingsPanel.hidden = !state.mappings.hasSupport;
+        }
+        if (state.mappings.hasSupport) {
+          loadMappings(true);
+        }
         text(
           els.appMeta,
           "版本 " +
@@ -341,6 +388,9 @@
             body.schema_status +
             "） · 人脸事实资产 " +
             (faces.assets_with_faces === undefined ? "未知" : faces.assets_with_faces) +
+            (state.mappings.hasSupport
+              ? " · 重检测待确认 " + faces.open_face_mappings
+              : "") +
             " · 只读受控访问 + 本机人工整理"
         );
       })
@@ -1162,6 +1212,329 @@
   }
 
   // ---------------------------------------------------------------------- refresh
+  // ------------------------------------------------------- redetection review list
+  function loadMappings(reset) {
+    if (!state.mappings.hasSupport || state.mappings.loading) {
+      return;
+    }
+    if (reset) {
+      state.mappings.cursor = null;
+      clear(els.mappingsList);
+    }
+    state.mappings.loading = true;
+    var query =
+      "/face-mappings?state=" +
+      encodeURIComponent(state.mappings.state) +
+      "&limit=" +
+      encodeURIComponent(state.mappings.limit);
+    if (state.mappings.cursor) {
+      query += "&cursor=" + encodeURIComponent(state.mappings.cursor);
+    }
+    request(query)
+      .then(function (result) {
+        var body = result.body || {};
+        var groups = body.groups || [];
+        groups.forEach(function (group) {
+          state.mappings.open[group.old_face_id] = group;
+          els.mappingsList.appendChild(buildMappingCard(group));
+        });
+        state.mappings.cursor = body.next_cursor || null;
+        state.mappings.hasMore = Boolean(body.has_more);
+        els.mappingsMore.disabled = !state.mappings.hasMore;
+        var open = groups.filter(function (group) {
+          return group.state === "OPEN";
+        }).length;
+        setStatus(
+          els.mappingsStatus,
+          "本页 " +
+            groups.length +
+            " 组 · " +
+            (state.mappings.state === "open" ? "待确认" : "全部") +
+            " · 本页待确认 " +
+            open +
+            (state.mappings.hasMore ? " · 还有更多" : " · 已到末尾"),
+          null
+        );
+      })
+      .catch(function (failure) {
+        setStatus(els.mappingsStatus, "读取待确认列表失败：" + describe(failure), "error");
+        if (failure.code === "VALIDATION_ERROR" || failure.code === "INVALID_CURSOR") {
+          state.mappings.cursor = null;
+        }
+      })
+      .finally(function () {
+        state.mappings.loading = false;
+      });
+  }
+
+  function mappingAvatar(faceId) {
+    var image = element("img", "avatar");
+    image.alt = "人脸裁剪";
+    image.loading = "lazy";
+    image.src = API + "/faces/" + encodeURIComponent(faceId) + "/thumbnail";
+    image.addEventListener("error", function () {
+      var placeholder = element("div", "avatar-placeholder", "脸图不可用");
+      if (image.parentNode) {
+        image.parentNode.replaceChild(placeholder, image);
+      }
+    });
+    return image;
+  }
+
+  function buildMappingCard(group) {
+    var card = element("li", "person-card face-card");
+    card.dataset.oldFaceId = group.old_face_id;
+    card.appendChild(mappingAvatar(group.old_face_id));
+    var head = element("p", "card-head");
+    head.appendChild(element("span", "chip chip-id", "旧脸 " + group.old_face_id));
+    head.appendChild(
+      element("span", "chip", MAPPING_STATE_TEXT[group.state] || group.state)
+    );
+    head.appendChild(
+      element(
+        "span",
+        "chip",
+        CANDIDATE_STATE_TEXT[group.candidate_state] || group.candidate_state
+      )
+    );
+    head.appendChild(element("span", "chip", "revision " + group.revision));
+    card.appendChild(head);
+    card.appendChild(
+      element(
+        "p",
+        "hint",
+        "照片 #" +
+          group.asset_id +
+          " · " +
+          (MODE_TEXT[group.control_mode] || group.control_mode) +
+          " · 控制 revision " +
+          group.control_revision +
+          " · 有效归属 " +
+          (group.assigned_person_id === null || group.assigned_person_id === undefined
+            ? "无"
+            : "#" + group.assigned_person_id) +
+          " · 候选 " +
+          group.candidate_count
+      )
+    );
+    var actions = element("p", "row-actions");
+    var load = element("button", null, "载入候选");
+    load.type = "button";
+    load.addEventListener("click", function () {
+      loadMappingGroup(group.old_face_id, card, group);
+    });
+    actions.appendChild(load);
+    if (group.state === "OPEN" && group.candidate_count === 0) {
+      var rejectOnly = element("button", null, "拒绝确认（人脸消失）");
+      rejectOnly.type = "button";
+      rejectOnly.addEventListener("click", function () {
+        submitMappingDecision(group, []);
+      });
+      actions.appendChild(rejectOnly);
+    }
+    card.appendChild(actions);
+    var detail = element("ul", "log");
+    detail.dataset.role = "candidates";
+    card.appendChild(detail);
+    return card;
+  }
+
+  function loadMappingGroup(oldFaceId, card, group) {
+    var detail = card.querySelector('ul[data-role="candidates"]');
+    clear(detail);
+    request("/face-mappings/" + encodeURIComponent(oldFaceId))
+      .then(function (result) {
+        var body = result.body || {};
+        var candidates = body.candidates || [];
+        if (!candidates.length) {
+          detail.appendChild(element("li", null, "没有合格候选；只能「拒绝确认」。"));
+          return;
+        }
+        candidates.forEach(function (candidate) {
+          var row = element("li", null);
+          var line = element("span", "card-head");
+          line.appendChild(mappingAvatar(candidate.new_face_id));
+          line.appendChild(element("span", "chip chip-id", "新脸 " + candidate.new_face_id));
+          line.appendChild(
+            element("span", "chip", MATCH_TEXT[candidate.match_state] || candidate.match_state)
+          );
+          line.appendChild(element("span", "chip", "质量 " + candidate.quality_state));
+          line.appendChild(
+            element(
+              "span",
+              "chip",
+              MAPPING_ROW_STATE_TEXT[candidate.state] || candidate.state
+            )
+          );
+          line.appendChild(element("span", "chip", "revision " + candidate.revision));
+          row.appendChild(line);
+          if (group.state === "OPEN") {
+            var pick = element("span", "check-line");
+            var check = document.createElement("input");
+            check.type = "checkbox";
+            check.id = "map-pick-" + candidate.new_face_id;
+            check.dataset.newFaceId = candidate.new_face_id;
+            check.dataset.role = "pick";
+            var label = element("label", null, "本次确认命中这张新脸");
+            label.setAttribute("for", check.id);
+            pick.appendChild(check);
+            pick.appendChild(label);
+            row.appendChild(pick);
+            if (group.control_mode === "MANUAL_ASSIGNED") {
+              var inheritLine = element("span", "check-line");
+              var inherit = document.createElement("input");
+              inherit.type = "checkbox";
+              inherit.id = "map-inherit-" + candidate.new_face_id;
+              inherit.dataset.newFaceId = candidate.new_face_id;
+              inherit.dataset.role = "inherit";
+              var inheritLabel = element("label", null, "把人工人物继承给这张新脸");
+              inheritLabel.setAttribute("for", inherit.id);
+              inheritLine.appendChild(inherit);
+              inheritLine.appendChild(inheritLabel);
+              row.appendChild(inheritLine);
+            }
+          }
+          detail.appendChild(row);
+        });
+        if (group.state === "OPEN") {
+          var actions = element("li", "row-actions");
+          var confirm = element("button", null, "确认所选新脸");
+          confirm.type = "button";
+          confirm.addEventListener("click", function () {
+            var targets = [];
+            detail
+              .querySelectorAll('input[data-role="pick"]')
+              .forEach(function (pick) {
+                if (!pick.checked) {
+                  return;
+                }
+                var inherit = detail.querySelector(
+                  'input[data-role="inherit"][data-new-face-id="' + pick.dataset.newFaceId + '"]'
+                );
+                targets.push({
+                  new_face_id: pick.dataset.newFaceId,
+                  inherits_person: Boolean(inherit && inherit.checked),
+                });
+              });
+            submitMappingDecision(group, targets);
+          });
+          var reject = element("button", null, "拒绝整组");
+          reject.type = "button";
+          reject.addEventListener("click", function () {
+            submitMappingDecision(group, []);
+          });
+          actions.appendChild(confirm);
+          actions.appendChild(reject);
+          detail.appendChild(actions);
+        }
+      })
+      .catch(function (failure) {
+        setError(els.mappingsError, "读取候选失败：" + describe(failure));
+      });
+  }
+
+  function submitMappingDecision(group, targets) {
+    setError(els.mappingsError, null);
+    var requestId = newRequestId("map");
+    var body = {
+      contract_version: "p3-face-redetection-contracts.v1",
+      request_id: requestId,
+      asset_id: group.asset_id,
+      decisions: [
+        {
+          old_face_id: group.old_face_id,
+          expected_review_revision: group.revision,
+          decision: targets.length ? "confirm" : "reject",
+          targets: targets,
+        },
+      ],
+    };
+    request("/face-mappings/decisions", {
+      method: "POST",
+      body: body,
+      write: true,
+    })
+      .then(function (result) {
+        var decision = result.body || {};
+        appendMappingLog(
+          "[" +
+            (decision.operation_type || "") +
+            "] changed=" +
+            String(decision.changed) +
+            " · catalog_filter_revision=" +
+            decision.catalog_filter_revision +
+            " · operation_revision=" +
+            decision.operation_revision,
+          false
+        );
+        if (decision.changed === false) {
+          appendMappingLog("本次决策只改变了审核状态，没有改动任何人工归属或排除。", false);
+        }
+        state.mappings.lastOperation = {
+          operation_id: decision.operation_id,
+          operation_revision: decision.operation_revision,
+        };
+        els.mappingsUndo.disabled = false;
+        text(
+          els.mappingsResult,
+          "最后一次决策：" +
+            (decision.operation_type || "") +
+            " · 操作 " +
+            (decision.operation_id || "") +
+            "（可在下面撤销）"
+        );
+        loadMappings(true);
+        loadOperations(true);
+      })
+      .catch(function (failure) {
+        setError(els.mappingsError, "决策被拒绝：" + describe(failure));
+        appendMappingLog(describe(failure), true);
+        handleConflict(failure, els.mappingsError);
+        loadMappings(true);
+      });
+  }
+
+  function appendMappingLog(message, failed) {
+    var item = element("li", failed ? "error" : null, safeText(message));
+    els.mappingsLog.insertBefore(item, els.mappingsLog.firstChild);
+  }
+
+  function undoLastMapping() {
+    var last = state.mappings.lastOperation;
+    if (!last) {
+      return;
+    }
+    request("/person-operations/" + encodeURIComponent(last.operation_id) + "/undo", {
+      method: "POST",
+      body: {
+        request_id: newRequestId("map-undo"),
+        expected_operation_revision: last.operation_revision,
+      },
+      write: true,
+    })
+      .then(function (result) {
+        var undo = result.body || {};
+        appendMappingLog(
+          "撤销成功：新操作 " +
+            undo.operation_id +
+            " · changed=" +
+            String(undo.changed) +
+            "（再次确认前，该组回到「待确认」并继续保护新脸）",
+          false
+        );
+        els.mappingsUndo.disabled = true;
+        state.mappings.lastOperation = null;
+        loadMappings(true);
+        loadOperations(true);
+      })
+      .catch(function (failure) {
+        setError(els.mappingsError, "撤销被拒绝：" + describe(failure));
+        appendMappingLog(describe(failure), true);
+        handleConflict(failure, els.mappingsError);
+      });
+  }
+
+  // ---------------------------------------------------------------------- refresh
   function refreshAll() {
     if (state.view === "manual_unassigned") {
       loadUnassigned(true);
@@ -1172,6 +1545,9 @@
       loadFaces(state.faces.personId, true);
     }
     loadOperations(true);
+    if (state.mappings.hasSupport) {
+      loadMappings(true);
+    }
   }
 
   // ------------------------------------------------------------------------- boot
@@ -1226,6 +1602,17 @@
       operationsStatus: document.getElementById("operations-status"),
       operationsList: document.getElementById("operations-list"),
       undoLog: document.getElementById("undo-log"),
+      mappingsPanel: document.getElementById("panel-mappings"),
+      mappingsState: document.getElementById("mappings-state"),
+      mappingsLimit: document.getElementById("mappings-limit"),
+      mappingsReload: document.getElementById("mappings-reload"),
+      mappingsMore: document.getElementById("mappings-more"),
+      mappingsStatus: document.getElementById("mappings-status"),
+      mappingsList: document.getElementById("mappings-list"),
+      mappingsError: document.getElementById("mappings-error"),
+      mappingsResult: document.getElementById("mappings-result"),
+      mappingsUndo: document.getElementById("mappings-undo"),
+      mappingsLog: document.getElementById("mappings-log"),
     };
 
     Object.keys(els.tabs).forEach(function (name) {
@@ -1319,6 +1706,21 @@
     els.operationsMore.addEventListener("click", function () {
       loadOperations(false);
     });
+    els.mappingsState.addEventListener("change", function () {
+      state.mappings.state = els.mappingsState.value === "all" ? "all" : "open";
+      loadMappings(true);
+    });
+    els.mappingsLimit.addEventListener("change", function () {
+      state.mappings.limit = Number(els.mappingsLimit.value) || MAPPING_LIMIT;
+      loadMappings(true);
+    });
+    els.mappingsReload.addEventListener("click", function () {
+      loadMappings(true);
+    });
+    els.mappingsMore.addEventListener("click", function () {
+      loadMappings(false);
+    });
+    els.mappingsUndo.addEventListener("click", undoLastMapping);
 
     probeCapabilities();
     selectView("named");

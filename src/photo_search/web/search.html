@@ -90,6 +90,40 @@
               <option value="false">否</option>
             </select>
           </p>
+          <fieldset id="person-filter" class="person-filter wide">
+            <legend>人物筛选（只作用于普通搜索）</legend>
+            <p class="hint" id="person-hint">
+              人物只来自受会话保护的 <code>GET /api/v1/persons</code>：它只列 active canonical
+              人物，并按 <code>person_id</code> 稳定分页。只有真的选中人物时，普通搜索才会带上
+              <code>person_ids</code> 与 <code>person_match</code>，并与地点、来源、可用性按 AND
+              组合；同名人物各按自己的 <code>#person_id</code> 计，本页不做任何本地命中或二次过滤。
+              上传搜图不发送人物条件。
+            </p>
+            <div class="person-controls">
+              <p>
+                <label for="query-person-match">人物匹配方式</label>
+                <select id="query-person-match">
+                  <option value="any">任一（any）</option>
+                  <option value="all">全部（all）</option>
+                </select>
+              </p>
+              <p class="filter-actions">
+                <button type="button" id="person-clear">清空人物选择</button>
+                <button type="button" id="person-reload">重新载入人物</button>
+              </p>
+            </div>
+            <p class="hint" id="person-selection"></p>
+            <ul
+              id="person-options"
+              class="person-options"
+              aria-label="可选人物（active canonical，按 person_id 稳定排序）"
+            ></ul>
+            <p>
+              <button type="button" id="person-more" hidden>加载更多人物（沿用当前游标）</button>
+            </p>
+            <p class="hint" id="person-echo"></p>
+            <p class="state-block" id="person-status" role="status" aria-live="polite"></p>
+          </fieldset>
           <p>
             <label for="query-page-size">每页数量</label>
             <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />
@@ -125,6 +159,10 @@
           上传的图片只用于本次查询：服务端会把它写进一个临时目录、校验后立即删除，
           不新增资产、不写任何索引行。当前筛选条件同样生效。没有接入图像编码器时服务端会
           以结构化错误明确拒绝，而不是用文本通道冒充结果。
+        </p>
+        <p class="hint">
+          人物筛选只作用于普通搜索：这个上传请求不携带
+          <code>person_ids</code>/<code>person_match</code>（服务端的 multipart 闭集里没有这两个字段）。
         </p>
         <form id="upload-form" class="filters" novalidate>
           <p class="wide">

@@ -20,6 +20,7 @@
         <a class="nav-link" href="/search">搜索图片</a>
         <a class="nav-link" href="/places">地点整理</a>
         <a class="nav-link" href="#panel-persons">人物列表</a>
+        <a class="nav-link" href="#panel-mappings">重检测待确认</a>
         <a class="nav-link" href="#panel-faces">脸与拆分</a>
         <a class="nav-link" href="#panel-operations">最近操作与撤销</a>
       </nav>
@@ -205,6 +206,45 @@
         <ul id="operations-list" class="place-list" aria-label="人物操作日志"></ul>
         <h3>撤销结果</h3>
         <ul id="undo-log" class="log" aria-label="撤销结果"></ul>
+      </section>
+
+      <section id="panel-mappings" class="panel" aria-labelledby="mappings-title" hidden>
+        <h2 id="mappings-title">重检测待确认</h2>
+        <p class="hint">
+          模型重新检测后，旧脸会被换成新的 <code>face_id</code>。带人工知识（人工指定、人工取消、
+          排除）的旧脸在这里逐条确认：服务端永不自动确认，确认前新脸不会被自动归类；确认只转移人工
+          知识，不复制机器判断。页面只显示受控 ID、状态、revision 与头像裁剪，不显示任何坐标。
+        </p>
+        <div class="filters">
+          <p>
+            <label for="mappings-state">查看范围</label>
+            <select id="mappings-state">
+              <option value="open" selected>待确认</option>
+              <option value="all">全部（含已决定）</option>
+            </select>
+          </p>
+          <p>
+            <label for="mappings-limit">每页条数（1–200）</label>
+            <select id="mappings-limit">
+              <option value="10">10</option>
+              <option value="50" selected>50</option>
+              <option value="200">200</option>
+            </select>
+          </p>
+          <p class="filter-actions">
+            <button type="button" id="mappings-reload">加载 / 重新加载</button>
+            <button type="button" id="mappings-more" disabled>加载更多（沿用当前游标）</button>
+          </p>
+        </div>
+        <div id="mappings-status" class="state-block" role="status" aria-live="polite"></div>
+        <ul id="mappings-list" class="face-grid person-list" aria-label="重检测待确认组"></ul>
+        <p class="error" id="mappings-error" role="alert" hidden></p>
+        <h3>决策结果与撤销</h3>
+        <p class="hint" id="mappings-result"></p>
+        <p class="row-actions">
+          <button type="button" id="mappings-undo" disabled>撤销这次决策</button>
+        </p>
+        <ul id="mappings-log" class="log" aria-label="重检测决策结果"></ul>
       </section>
 
       <section id="panel-limits" class="panel" aria-labelledby="limits-title">

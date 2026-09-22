@@ -15,7 +15,9 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.persons import contracts, face_correction
+from photo_search.persons import mapping as mapping_module
 from photo_search.persons import operations as operation_module
+from photo_search.persons import read as read_module
 from photo_search.persons import split as split_module
 from photo_search.persons.contracts import person_view
 from photo_search.persons.identity import (
@@ -222,6 +224,45 @@ class PersonService:
         if row is None:
             return None
         return operation_module.operation_result(self.catalog.connection, row)
+
+    # ------------------------------------------------------- face-redetection mapping
+    def mapping_page(
+        self, *, limit: Any, cursor: str | None = None, state: Any = "open"
+    ) -> dict[str, Any]:
+        """ADR-0010 §8.1: the read-only review list of the pending old/new mapping.
+
+        ``limit``/``state`` are forwarded as received: the read layer owns the frozen
+        ``VALIDATION_ERROR`` closure of §8.2, so an unparsable bound must not be coerced (or
+        rejected) here with a different body.
+        """
+        return read_module.mapping_page(self.catalog, limit=limit, cursor=cursor, state=state)
+
+    def mapping_group(self, old_face_id: str) -> dict[str, Any]:
+        """ADR-0010 §8.1: one review group with its live candidate array."""
+        return read_module.mapping_group(self.catalog, str(old_face_id))
+
+    def decide_face_mappings(
+        self,
+        *,
+        payload: Any,
+        contract_version: Any,
+        request_id: Any,
+        asset_id: Any,
+        decisions: Any,
+    ) -> dict[str, Any]:
+        """One bounded, all-or-nothing decision request, in its own authority transaction."""
+        now_ms = int(self.clock())
+        with self.catalog.write() as connection:
+            return mapping_module.decide_face_mappings(
+                connection,
+                payload=payload,
+                contract_version=contract_version,
+                request_id=request_id,
+                asset_id=asset_id,
+                decisions=decisions,
+                now_ms=now_ms,
+                refresh=self.refresh,
+            )
 
 
 __all__ = ["PersonService", "contracts", "face_correction", "split_module"]

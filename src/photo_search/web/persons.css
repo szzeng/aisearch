@@ -196,6 +196,30 @@
   overflow-wrap: anywhere;
 }
 
+/* P3-08B: the redetection review reuses the person/face cards; the candidate list of one
+ * group is a nested list, so it needs its own indentation and must still never widen the
+ * page on a narrow viewport. */
+#panel-mappings .person-list {
+  margin-top: 0;
+}
+
+#panel-mappings ul[data-role="candidates"] {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0 0 0 0.5rem;
+  border-left: 2px solid var(--line);
+  display: grid;
+  gap: 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+#panel-mappings .card-head .avatar,
+#panel-mappings .card-head .avatar-placeholder {
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 0.65rem;
+}
+
 @media (max-width: 40rem) {
   .filters p,
   .filters p.wide {

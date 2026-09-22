@@ -70,6 +70,9 @@ async def _api_error(request: Request, error: ApiError) -> JSONResponse:
         status=error.status,
         details=details,
         headers=error.headers,
+        # ADR-0010 §8.2: a refusal that owns a frozen closure renders its ``details`` exactly
+        # as frozen - including the empty object of ``INVALID_CURSOR``.
+        closure_details=error.closure_details,
     )
 
 

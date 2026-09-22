@@ -29,7 +29,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.errors import FACE_MAPPING_IDEMPOTENCY_CONFLICT, CatalogError
 from photo_search.face.contract import FACE_PROCESSOR_ID, FACE_SPACE_ID, FACE_SPEC_REVISION
 from photo_search.face.processor import generation_id_for, queue_candidate
 from photo_search.persons import bundle as bundle_module
@@ -121,6 +121,13 @@ def _item_projection(row: Any) -> dict[str, Any]:
         before = split_module.load_group_bundle(row["before_value_json"])
         after = split_module.load_group_bundle(row["after_value_json"])
         return split_module.group_item_answer(str(after.get("role")), before, after)
+    if str(row["entity_type"]) == contracts.ENTITY_TYPE_MAPPING_GROUP:
+        # ADR-0010 §5.1: a mapping group answers in its own frozen envelope, built by the
+        # module that owns that envelope instead of being guessed here. The stored snapshot is
+        # a group state, never a name, a box, a vector or a path.
+        from photo_search.persons import mapping as mapping_module
+
+        return mapping_module.group_item_projection(row)
     before = bundle_module.load_bundle(row["before_value_json"])
     after = bundle_module.load_bundle(row["after_value_json"])
     return {
@@ -148,6 +155,12 @@ def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str
         _item_projection(row) for row in _operation_items(connection, operation["operation_id"])
     ]
     family = operation_family(connection, operation)
+    if family == "mapping":
+        # A mapping replay keeps the ADR-0010 envelope (its own ``contract_version`` and the
+        # two item shapes) instead of being squeezed into the P3-03 person response.
+        from photo_search.persons import mapping as mapping_module
+
+        return mapping_module.mapping_operation_result(connection, operation)
     if family == "split":
         # The shared undo endpoint rebuilds idempotent responses here. A split-family replay
         # keeps its own frozen envelope (requested/canonical source, created person) instead
@@ -195,6 +208,18 @@ def _replay(
     if row is None:
         return None
     if str(row["payload_sha256"]) != str(digest):
+        if conflict_code == FACE_MAPPING_IDEMPOTENCY_CONFLICT:
+            # ADR-0010 §8.2 keeps the mapping details closed to ``asset_id``/``old_face_id``,
+            # so the asset is resolved from the *recorded* operation instead of echoing the
+            # operation id the person family reports.
+            from photo_search.persons import mapping as mapping_module
+
+            asset_id = mapping_module.operation_asset_id(connection, str(row["operation_id"]))
+            raise fail(
+                conflict_code,
+                "this request_id is already bound to a different payload",
+                asset_id=int(asset_id),
+            )
         raise fail(
             conflict_code,
             "this request_id is already bound to a different payload",
@@ -867,6 +892,8 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
         return "face"
     if operation_type in contracts.SPLIT_OPERATION_TYPES:
         return "split"
+    if operation_type in contracts.MAPPING_OPERATION_TYPES:
+        return "mapping"
     if operation_type == "UNDO" and operation["undo_of_operation_id"] is not None:
         parent = operation_row(connection, str(operation["undo_of_operation_id"]))
         if parent is not None:
@@ -875,6 +902,8 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
                 return "face"
             if parent_type in contracts.SPLIT_OPERATION_TYPES:
                 return "split"
+            if parent_type in contracts.MAPPING_OPERATION_TYPES:
+                return "mapping"
     return "person"
 
 
@@ -916,8 +945,17 @@ def _restore_link_rows(
     wanted: Mapping[str, Any],
     operation_id: str,
     now_ms: int,
+    forced_keys: set[tuple[str, str]] | None = None,
+    revision_hints: Mapping[str, int] | None = None,
 ) -> bool:
-    """Restore one person's link set; every restored revision moves forward, never back."""
+    """Restore one person's link set; every restored revision moves forward, never back.
+
+    ``forced_keys`` marks the ``(face_id, assignment_kind)`` rows that an earlier, *shared*
+    delete already removed inside this compensation. Without it the "the live row already
+    looks like the wanted one" shortcut would silently drop a row that is no longer there
+    (ADR-0010 §10.1: the restoration is order-independent because every effective row of the
+    affected faces is deleted once, before any of them is written back).
+    """
     live_links = {
         (str(link["face_id"]), str(link["assignment_kind"])): link
         for link in live.get("links", [])
@@ -926,6 +964,8 @@ def _restore_link_rows(
         (str(link["face_id"]), str(link["assignment_kind"])): link
         for link in wanted.get("links", [])
     }
+    forced = forced_keys or set()
+    hints = revision_hints or {}
     changed = False
     for key in sorted(set(live_links) - set(wanted_links)):
         connection.execute(
@@ -937,13 +977,15 @@ def _restore_link_rows(
     for key in sorted(wanted_links):
         target_link = wanted_links[key]
         current = live_links.get(key)
-        if current is not None and all(
+        if key not in forced and current is not None and all(
             current.get(field) == target_link.get(field)
             for field in ("decision", "confidence", "reason", "last_operation_id")
         ):
             continue
         floor = max(
-            int(target_link["revision"]), 0 if current is None else int(current["revision"])
+            int(target_link["revision"]),
+            0 if current is None else int(current["revision"]),
+            int(hints.get(str(key[0]), 0)),
         )
         connection.execute(
             "INSERT INTO face_person_links(face_id, person_id, assignment_kind, decision, "
@@ -968,6 +1010,70 @@ def _restore_link_rows(
         )
         changed = True
     return changed
+
+
+def _faces_needing_link_restore(
+    pending: Sequence[tuple[int, dict[str, Any], dict[str, Any]]],
+) -> list[str]:
+    """Only the faces whose recorded link set really differs from the live one.
+
+    The shared clear below is what makes the restoration order-independent (ADR-0010 §10.1),
+    but it must stay *narrow*: a semantic no-op operation has to be compensated by moving
+    nothing at all, exactly as it was before this task. Faces whose live and recorded bundles
+    already agree are therefore left completely alone.
+    """
+    faces: set[str] = set()
+    for _entity, live, recorded_before in pending:
+        live_links = {
+            (str(link["face_id"]), str(link["assignment_kind"])): (
+                str(link["decision"]),
+                float(link["confidence"]),
+                link["reason"],
+                link["last_operation_id"],
+            )
+            for link in live.get("links", [])
+        }
+        wanted_links = {
+            (str(link["face_id"]), str(link["assignment_kind"])): (
+                str(link["decision"]),
+                float(link["confidence"]),
+                link["reason"],
+                link["last_operation_id"],
+            )
+            for link in recorded_before.get("links", [])
+        }
+        for key in set(live_links) | set(wanted_links):
+            if live_links.get(key) != wanted_links.get(key):
+                faces.add(str(key[0]))
+    return sorted(faces)
+
+
+def _clear_effective_links(
+    connection: sqlite3.Connection, face_ids: Sequence[str]
+) -> dict[str, int]:
+    """Remove every ``CONFIRMED`` row of the affected faces once; return the revision floor.
+
+    The returned per-face floor is the highest revision the effective rows had *before* the
+    delete, so the rows written back immediately afterwards can only ever move forward
+    (ADR-0010 §10.3).
+    """
+    floor: dict[str, int] = {}
+    unique = sorted({str(value) for value in face_ids})
+    for chunk in _chunks(unique):
+        placeholders = _placeholders(len(chunk))
+        rows = connection.execute(
+            f"SELECT face_id, MAX(revision) AS revision FROM face_person_links "
+            f"WHERE decision = 'CONFIRMED' AND face_id IN ({placeholders}) GROUP BY face_id",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            floor[str(row["face_id"])] = int(row["revision"])
+        connection.execute(
+            f"DELETE FROM face_person_links WHERE decision = 'CONFIRMED' "
+            f"AND face_id IN ({placeholders})",
+            tuple(chunk),
+        )
+    return floor
 
 
 def undo_person_operation(
@@ -998,7 +1104,12 @@ def undo_person_operation(
     original = operation_row(connection, original_id)
     family = "person" if original is None else operation_family(connection, original)
     is_face = family == "face"
-    conflict_code = FACE_IDEMPOTENCY_CONFLICT if is_face else PERSON_IDEMPOTENCY_CONFLICT
+    if family == "mapping":
+        conflict_code = FACE_MAPPING_IDEMPOTENCY_CONFLICT
+    elif is_face:
+        conflict_code = FACE_IDEMPOTENCY_CONFLICT
+    else:
+        conflict_code = PERSON_IDEMPOTENCY_CONFLICT
     replay = _replay(
         connection, request_id=request_id, digest=digest, conflict_code=conflict_code
     )
@@ -1016,6 +1127,21 @@ def undo_person_operation(
         from photo_search.persons import face_correction
 
         return face_correction.undo_face_operation(
+            connection,
+            original=original,
+            request_id=request_id,
+            digest=digest,
+            expected_operation_revision=int(expected),
+            now_ms=int(now_ms),
+            refresh=refresh,
+        )
+    if family == "mapping":
+        # ADR-0010 §5.4 keeps the *same* compensation endpoint. The mapping family owns its
+        # own eligibility, snapshot comparison and hold restoration, and answers in the
+        # ADR-0010 envelope (``FACE_MAPPING_OPERATION_NOT_UNDOABLE`` on a conflict).
+        from photo_search.persons import mapping as mapping_module
+
+        return mapping_module.undo_face_mapping_operation(
             connection,
             original=original,
             request_id=request_id,
@@ -1088,6 +1214,16 @@ def undo_person_operation(
             conflicts=conflicts,
         )
 
+    # ADR-0010 §10.1: restoring the recorded link sets must not depend on the person id order.
+    # Every effective row of the faces this operation touched is therefore removed **once**,
+    # before any of them is written back, so no statement boundary can ever observe two
+    # ``CONFIRMED`` rows for one face (``ux_face_person_links_effective``). The affected set
+    # is exactly the one the recorded before/after snapshots name - nothing else is touched.
+    restoring_faces = set(_faces_needing_link_restore(pending))
+    revision_hints = (
+        _clear_effective_links(connection, sorted(restoring_faces)) if restoring_faces else {}
+    )
+
     new_operation_id = operation_id_for(request_id)
     new_operation_revision = _next_operation_revision(connection)
     connection.execute(
@@ -1144,6 +1280,10 @@ def undo_person_operation(
     # delete-then-insert, so the partial unique index on the effective link never observes a
     # half-restored set.
     for entity, live, recorded_before in pending:
+        wanted_links = {
+            (str(link["face_id"]), str(link["assignment_kind"])): link
+            for link in recorded_before.get("links", [])
+        }
         if _restore_link_rows(
             connection,
             entity=int(entity),
@@ -1151,6 +1291,13 @@ def undo_person_operation(
             wanted=recorded_before,
             operation_id=new_operation_id,
             now_ms=int(now_ms),
+            forced_keys={
+                key
+                for key, link in wanted_links.items()
+                if str(link["decision"]) == "CONFIRMED"
+                and str(key[0]) in restoring_faces
+            },
+            revision_hints=revision_hints,
         ):
             changed = True
         restored_snapshots[entity] = bundle_module.read_bundle(connection, int(entity))

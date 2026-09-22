@@ -19,6 +19,8 @@ import sqlite3
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
+from photo_search.catalog.errors import FACE_MAPPING_NOT_FOUND, CatalogError
+from photo_search.persons import mapping as mapping_module
 from photo_search.persons import operations as operation_module
 from photo_search.persons.contracts import ENTITY_TYPE_FACE_CONTROL
 from photo_search.persons.identity import resolve_canonical_person_id, resolve_redirect
@@ -28,6 +30,12 @@ from photo_search.persons.members import MEMBER_PREDICATE, member_counts
 PERSON_CURSOR_PREFIX = "pp1"
 FACE_CURSOR_PREFIX = "pf1"
 OPERATION_CURSOR_PREFIX = "po1"
+#: ADR-0010 §8.1: the mapping review list pages in its own independent cursor space.
+MAPPING_CURSOR_PREFIX = "fm1"
+
+#: ADR-0010 §8.1: the mapping list *rejects* an out-of-range limit instead of clamping it,
+#: because the caller's bound is part of the frozen surface of that endpoint.
+MAPPING_STATES = ("open", "all")
 
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
@@ -85,6 +93,10 @@ def encode_operation_cursor(operation_revision: int) -> str:
     return _encode(OPERATION_CURSOR_PREFIX, (str(int(operation_revision)),))
 
 
+def encode_mapping_cursor(old_face_id: str) -> str:
+    return _encode(MAPPING_CURSOR_PREFIX, (str(old_face_id),))
+
+
 def decode_person_cursor(text: str | None) -> int | None:
     values = _decode(text, prefix=PERSON_CURSOR_PREFIX, arity=1)
     if values is None:
@@ -121,6 +133,35 @@ def decode_operation_cursor(text: str | None) -> int | None:
     return value
 
 
+def decode_mapping_cursor(text: str | None) -> str | None:
+    try:
+        values = _decode(text, prefix=MAPPING_CURSOR_PREFIX, arity=1)
+    except ApiError as error:
+        # ADR-0010 §8.2 freezes ``INVALID_CURSOR`` as an *empty object* of a required field, so
+        # this list has to hand the envelope an explicit empty closure instead of letting the
+        # shared "an empty optional ``details`` is omitted" rule drop it. The other lists keep
+        # their historical body.
+        if error.code != INVALID_CURSOR:
+            raise
+        raise ApiError(
+            INVALID_CURSOR,
+            error.message,
+            details={},
+            closure_details=True,
+        ) from error
+    if values is None:
+        return None
+    value = values[0]
+    if len(value) != 64 or any(char not in _HEX_DIGITS for char in value):
+        raise ApiError(
+            INVALID_CURSOR,
+            "the pagination cursor is not valid",
+            details={},
+            closure_details=True,
+        )
+    return value
+
+
 def clamp_page_limit(
     limit: int | None, *, default: int = DEFAULT_PAGE_LIMIT, maximum: int = MAX_PAGE_LIMIT
 ) -> int:
@@ -130,6 +171,30 @@ def clamp_page_limit(
     if int(limit) < 1:
         raise ApiError(VALIDATION_ERROR, "limit must be at least 1", status=422)
     return min(int(limit), int(maximum))
+
+
+def check_mapping_limit(limit: Any) -> int:
+    """ADR-0010 §8.1/§8.2: 1..200 with a default of 50; anything else is a caller error.
+
+    The bound is part of the frozen public surface, so the refusal has to answer in the frozen
+    ``VALIDATION_ERROR`` closure: the only key is the required short ``reason``. A non-numeric
+    ``limit`` is therefore parsed *here* rather than being handed to the transport validator,
+    whose generic ``{"errors": [...]}`` body is outside that closure.
+    """
+    if limit is None:
+        return int(DEFAULT_PAGE_LIMIT)
+    try:
+        value = int(str(limit).strip())
+    except (TypeError, ValueError):
+        value = None
+    if value is None or value < 1 or value > int(MAX_PAGE_LIMIT):
+        raise ApiError(
+            VALIDATION_ERROR,
+            f"limit must be between 1 and {MAX_PAGE_LIMIT}",
+            status=422,
+            details={"reason": "limit"},
+        )
+    return value
 
 
 # ------------------------------------------------------------------------------- persons
@@ -341,6 +406,82 @@ def face_page(
 
 
 # ---------------------------------------------------------------------- operations log
+# ------------------------------------------------------------------ mapping review list
+def mapping_page(
+    catalog: Any, *, limit: Any, cursor: str | None = None, state: Any = "open"
+) -> dict[str, Any]:
+    """One bounded page of the face-redetection review list (ADR-0010 §8.1).
+
+    The ordering is the canonical ``old_face_id`` order of the companion, the cursor is the
+    independent ``fm1`` space, and every row is a *group summary*: ids, states, the existing
+    human-control projection of the old face, a candidate count and a controlled crop URL. No
+    box, landmark, IoU, vector, similarity or path can reach a caller through this projection.
+    """
+    if str(state) not in MAPPING_STATES:
+        raise ApiError(
+            VALIDATION_ERROR,
+            "state must be open or all",
+            status=422,
+            details={"reason": "state"},
+        )
+    # The bound is part of the frozen surface, so it is enforced here as well as at the
+    # transport: an over-large limit must never be silently clamped into a valid answer.
+    limit = check_mapping_limit(limit)
+    after = decode_mapping_cursor(cursor)
+    conditions = ["g.old_face_id > ?"]
+    parameters: list[Any] = ["" if after is None else str(after)]
+    if str(state) == "open":
+        conditions.append("g.state = 'OPEN'")
+    parameters.append(int(limit) + 1)
+    rows = list(
+        catalog.read_all(
+            "SELECT g.old_face_id AS old_face_id, g.asset_id AS asset_id, "
+            "g.old_spec_revision AS old_spec_revision, g.candidate_state AS candidate_state, "
+            "g.state AS state, g.revision AS revision FROM face_redetection_groups AS g "
+            f"WHERE {' AND '.join(conditions)} ORDER BY g.old_face_id LIMIT ?",
+            tuple(parameters),
+        )
+    )
+    has_more = len(rows) > int(limit)
+    rows = rows[: int(limit)]
+    return {
+        "contract_version": mapping_module.CONTRACT_VERSION,
+        "limit": int(limit),
+        "next_cursor": (
+            encode_mapping_cursor(str(rows[-1]["old_face_id"])) if has_more and rows else None
+        ),
+        "has_more": has_more,
+        "groups": [mapping_module.group_summary(catalog.connection, row) for row in rows],
+    }
+
+
+def mapping_group(catalog: Any, old_face_id: str) -> dict[str, Any]:
+    """One review group with its live candidate array (ADR-0010 §8.1)."""
+    try:
+        checked = mapping_module.check_face_id(old_face_id, field="old_face_id")
+    except CatalogError as error:
+        if str(error.code) != VALIDATION_ERROR:
+            raise
+        # §8.2 freezes ``reason`` as the *required* key of a ``VALIDATION_ERROR``, so a shape
+        # failure of the path parameter has to carry it instead of answering with a bare message.
+        raise ApiError(
+            VALIDATION_ERROR,
+            error.message,
+            status=422,
+            details={"reason": str(error.details.get("reason") or "old_face_id")},
+        ) from error
+    row = mapping_module.group_row(catalog.connection, checked)
+    if row is None:
+        raise ApiError(
+            FACE_MAPPING_NOT_FOUND,
+            "this old face has no reviewable redetection group",
+            status=404,
+            details={"old_face_id": checked},
+        )
+    return mapping_module.group_detail(catalog.connection, row)
+
+
+# ---------------------------------------------------------------------- operations log
 _OPERATION_COLUMNS = (
     "operation_id, type, state, operation_revision, undo_of_operation_id, undone_by, "
     "target_person_id, catalog_filter_revision, created_at, committed_at"
@@ -459,6 +600,8 @@ __all__ = [
     "FACE_CURSOR_PREFIX",
     "FACE_THUMBNAIL_TEMPLATE",
     "MANUAL_UNASSIGNED",
+    "MAPPING_CURSOR_PREFIX",
+    "MAPPING_STATES",
     "MAX_PAGE_LIMIT",
     "OPERATION_CURSOR_PREFIX",
     "PERSON_CURSOR_PREFIX",
@@ -466,14 +609,19 @@ __all__ = [
     "VIEW_MANUAL_UNASSIGNED",
     "VIEW_PERSON",
     "clamp_page_limit",
+    "check_mapping_limit",
+    "decode_mapping_cursor",
     "decode_face_cursor",
     "decode_operation_cursor",
     "decode_person_cursor",
+    "encode_mapping_cursor",
     "encode_face_cursor",
     "encode_operation_cursor",
     "encode_person_cursor",
     "face_page",
     "face_summary",
+    "mapping_group",
+    "mapping_page",
     "operation_page",
     "operation_summary",
     "person_page",

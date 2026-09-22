@@ -44,7 +44,13 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: and the ``PERSON_CHANGED`` cause, and only needs one more operation type (``SPLIT``) plus
 #: the third item shape (``SPLIT_GROUP``). The same two tables are rebuilt row-for-row once
 #: more, with every P3-03/P3-04 row and alias reference preserved verbatim.
-SUPPORTED_SCHEMA_VERSION = 13
+#: ``0014`` adds the P3-08B face-redetection mapping layer of ADR-0010: the review group of
+#: one surviving human-owned old face (``face_redetection_groups``) and its candidate pairs
+#: with the stable ``mapping_id`` (``face_redetection_mappings``), plus a third rebuild of
+#: the shared operation log for the two ``FACE_MAPPING_*`` types and the
+#: ``FACE_MAPPING_GROUP`` item shape. No queue cause is added: a confirmed transfer reuses
+#: ``PERSON_CHANGED`` like every other human fact, and the image-vector index is untouched.
+SUPPORTED_SCHEMA_VERSION = 14
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

@@ -206,6 +206,28 @@ FACE_OPERATION_NOT_UNDOABLE = "FACE_OPERATION_NOT_UNDOABLE"
 #: than a silent collapse, so the two constants are separate on purpose.
 MAX_FACE_BATCH_SIZE = 500
 
+#: ADR-0010 §8.2: the closed error vocabulary of the P3-08B face-redetection mapping. Two
+#: codes are genuinely new (``FACE_MAPPING_NOT_FOUND`` for a pair/group this asset does not
+#: own, ``FACE_MAPPING_TARGET_CONTROLLED`` for "the target was already edited by a human")
+#: and the rest answer in the vocabulary the family already owns: a *missing* face or person
+#: stays ``FACE_NOT_FOUND``/``PERSON_NOT_FOUND``/``PERSON_REDIRECT_CYCLE``, an unusable
+#: cursor stays ``INVALID_CURSOR``, and the caller-shape refusals stay ``VALIDATION_ERROR``.
+#: ``FACE_MAPPING_CONFLICT`` covers an already-decided group, an illegal target combination
+#: and the affirm/deny conflict; ``FACE_MAPPING_STALE`` the optimistic review revision or a
+#: changed candidate set; ``FACE_MAPPING_BATCH_TOO_LARGE`` the 1..200 / 1..16 bounds and
+#: ``FACE_MAPPING_OPERATION_NOT_UNDOABLE`` a later human edit that invalidates the snapshot.
+FACE_MAPPING_NOT_FOUND = "FACE_MAPPING_NOT_FOUND"
+FACE_MAPPING_CONFLICT = "FACE_MAPPING_CONFLICT"
+FACE_MAPPING_STALE = "FACE_MAPPING_STALE"
+FACE_MAPPING_TARGET_CONTROLLED = "FACE_MAPPING_TARGET_CONTROLLED"
+FACE_MAPPING_IDEMPOTENCY_CONFLICT = "FACE_MAPPING_IDEMPOTENCY_CONFLICT"
+FACE_MAPPING_BATCH_TOO_LARGE = "FACE_MAPPING_BATCH_TOO_LARGE"
+FACE_MAPPING_OPERATION_NOT_UNDOABLE = "FACE_MAPPING_OPERATION_NOT_UNDOABLE"
+
+#: ADR-0010 §5.2: one decision request carries 1..200 groups and at most 16 targets each.
+MAX_MAPPING_DECISIONS = 200
+MAX_MAPPING_TARGETS = 16
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

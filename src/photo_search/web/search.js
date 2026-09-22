@@ -21,6 +21,9 @@
   var MIN_PAGE_SIZE = 1;
   var MAX_PAGE_SIZE = 100;
   var DEFAULT_PAGE_SIZE = 20;
+  //: One page of the person picker. The page never materialises the whole person list: the
+  //: server's own keyset cursor drives "加载更多人物", so a large catalog stays a paged read.
+  var PERSON_LIMIT = 25;
 
   var HIT_REASON_TEXT = {
     TEXT: "文本命中（文件名 / 有效地点文本）",
@@ -41,7 +44,8 @@
     PROFILE_GENERATION_MISMATCH:
       "搜索配置或索引世代在翻页期间发生了变化；旧会话不再有效，请重新搜索。",
     CATALOG_FILTER_REVISION_STALE:
-      "地点或可见性在翻页期间发生了变化，旧会话不再有效；请重新搜索。",
+      "人物、地点或可见性在翻页期间发生了变化（它们共用同一个权威筛选 revision）；" +
+      "旧会话不再有效，请重新搜索。",
     PLACE_SUGGESTION_REVISION_STALE:
       "可见地点建议在翻页期间发生了变化，旧会话不再有效；请重新搜索。",
     UPLOAD_TOO_LARGE: "上传的图片超过了服务端允许的字节上限。",
@@ -50,6 +54,12 @@
     DECODE_FAILED: "上传的图片无法解码（可能已损坏，或解码超过了时间预算）。",
     VALIDATION_ERROR: "请求参数不被接受，请检查上面的筛选条件。",
     SESSION_REQUIRED: "本地会话已失效。",
+    INVALID_PERSON_FILTER:
+      "人物条件不被接受（例如选了「全部」却没有选中任何人物，或人物数量超过 100）；请检查上面的选择后重搜。",
+    PERSON_NOT_FOUND: "所选人物已经不存在；请按服务器的回显重新载入人物并重选。",
+    PERSON_REDIRECT_CYCLE: "人物重定向链异常（成环或悬挂）；本次查询已被整请求拒绝，请重新载入人物。",
+    SCHEMA_TOO_NEW: "图库的 schema 版本高于本程序支持的版本；请升级程序或改用匹配的数据目录。",
+    SCHEMA_INCONSISTENT: "图库 schema 状态不一致，服务端拒绝发布分页；请检查数据目录。",
   };
   var SESSION_HINT = "请使用启动器打印的一次性链接建立会话。";
   //: A drive-absolute or UNC spelling inside server-side text is never rendered.
@@ -67,10 +77,24 @@
       total: null,
       loading: false,
       mode: "text",
+      //: The condition digest this session is bound to (null while no session is open).
+      binding: null,
     },
     requestCounter: 0,
     objectUrls: [],
     observer: null,
+    person: {
+      //: person_id -> the row the server last sent for it (the source of an option label).
+      rows: {},
+      //: person_id -> the current selection. Keyed by the *id*, so two people who share a
+      //: name stay two entries and paging or redrawing can never drop a chosen id.
+      selected: {},
+      cursor: null,
+      hasMore: false,
+      loading: false,
+      enabled: false,
+      reason: "",
+    },
   };
 
   var els = {};
@@ -463,12 +487,21 @@
     if (places.problem) {
       return { problem: places.problem };
     }
+    var personIds = selectedPersonIds();
+    var personMatch = els.queryPersonMatch.value === "all" ? "all" : "any";
+    if (!personIds.length) {
+      // No person selected is *not* "nobody's face": the page drops the condition entirely
+      // instead of sending an empty list with "all".
+      personMatch = "any";
+    }
     return {
       sourceId: els.querySource.value ? Number(els.querySource.value) : null,
       availability: els.queryAvailability.value,
       placeIds: places.values,
       placeState: els.queryPlaceState.value,
       includeDescendants: els.queryDescendants.value === "true",
+      personIds: personIds,
+      personMatch: personMatch,
       pageSize: pageSize,
     };
   }
@@ -476,6 +509,267 @@
   function newRequestId(prefix) {
     state.requestCounter += 1;
     return prefix + "-" + Date.now().toString(36) + "-" + state.requestCounter;
+  }
+
+  // ----------------------------------------------------------------- person filter
+  // The picker is a *read* of the authoritative person list: it never guesses an internal id,
+  // never reads the catalog directly and never folds two people who share a name into one.
+  // The selection is keyed by person_id and lives outside the DOM, so loading the next page or
+  // redrawing a page cannot lose a choice that has already been made.
+
+  function personKey(value) {
+    return String(value);
+  }
+
+  function personDisplayName(person) {
+    var name = person && person.name ? String(person.name) : "";
+    return name || "未命名人物";
+  }
+
+  function personOptionText(person) {
+    return (
+      personDisplayName(person) +
+      " #" +
+      number(person.person_id) +
+      "（照片 " +
+      number(person.asset_count) +
+      " · 脸 " +
+      number(person.face_count) +
+      "）"
+    );
+  }
+
+  function selectedPersonIds() {
+    var ids = Object.keys(state.person.selected).map(function (key) {
+      return Number(key);
+    });
+    ids = ids.filter(function (value) {
+      return isFinite(value) && value >= 1 && Math.floor(value) === value;
+    });
+    ids.sort(function (left, right) {
+      return left - right;
+    });
+    return ids;
+  }
+
+  function sameIdList(left, right) {
+    if (left.length !== right.length) {
+      return false;
+    }
+    for (var index = 0; index < left.length; index += 1) {
+      if (Number(left[index]) !== Number(right[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function updatePersonSelection() {
+    var ids = selectedPersonIds();
+    var parts = ids.map(function (id) {
+      var row = state.person.selected[personKey(id)];
+      return "#" + id + " " + personDisplayName(row);
+    });
+    text(
+      els.personSelection,
+      ids.length
+        ? "已选择 " +
+            ids.length +
+            " 个人物（canonical）：" +
+            parts.join("、") +
+            "。同名人物各按 #person_id 计，请求按 person_id 升序去重；以服务端回显为准。"
+        : "未选择人物：普通搜索不会发送 person_ids，也不会发送 person_match=all。"
+    );
+    syncPersonControls();
+  }
+
+  function syncPersonControls() {
+    var usable = state.person.enabled;
+    var ids = selectedPersonIds();
+    els.queryPersonMatch.disabled = !usable;
+    var allOption = els.queryPersonMatch.querySelector('option[value="all"]');
+    if (allOption) {
+      allOption.disabled = !usable || !ids.length;
+    }
+    if (!ids.length && els.queryPersonMatch.value === "all") {
+      // "all" without any id is refused by the frozen shape, so the page never builds it.
+      els.queryPersonMatch.value = "any";
+    }
+    els.personClear.disabled = !usable || !ids.length;
+    els.personReload.disabled = !usable || state.person.loading;
+    els.personMore.disabled = !usable || state.person.loading || !state.person.hasMore;
+    els.personMore.hidden = !usable || !state.person.hasMore;
+    if (!usable) {
+      setStatus(
+        els.personStatus,
+        state.person.reason || "正在读取程序能力与人物列表…",
+        state.person.reason ? "error" : ""
+      );
+    }
+  }
+
+  function disablePersonFilter(reason) {
+    state.person.enabled = false;
+    state.person.reason = reason;
+    state.person.selected = {};
+    state.person.rows = {};
+    state.person.cursor = null;
+    state.person.hasMore = false;
+    clear(els.personOptions);
+    text(els.personEcho, "");
+    syncPersonControls();
+  }
+
+  function renderPersonOptions(rows, reset) {
+    if (reset) {
+      clear(els.personOptions);
+    }
+    rows.forEach(function (person) {
+      var personId = Number(person.person_id);
+      var key = personKey(personId);
+      state.person.rows[key] = person;
+      var item = element("li", "person-option");
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.id = "person-option-" + key;
+      box.value = key;
+      box.checked = Object.prototype.hasOwnProperty.call(state.person.selected, key);
+      box.disabled = !state.person.enabled;
+      box.addEventListener("change", function () {
+        togglePerson(personId, box.checked);
+      });
+      var label = document.createElement("label");
+      label.setAttribute("for", box.id);
+      text(label, personOptionText(person));
+      item.appendChild(box);
+      item.appendChild(label);
+      els.personOptions.appendChild(item);
+    });
+  }
+
+  function togglePerson(personId, checked) {
+    var key = personKey(personId);
+    if (checked) {
+      var row = state.person.rows[key] || {
+        person_id: personId,
+        name: null,
+        face_count: 0,
+        asset_count: 0,
+      };
+      state.person.selected[key] = {
+        person_id: personId,
+        name: row.name === undefined ? null : row.name,
+        face_count: number(row.face_count),
+        asset_count: number(row.asset_count),
+      };
+    } else {
+      delete state.person.selected[key];
+    }
+    // A changed selection makes the previous echo a statement about a different query.
+    text(els.personEcho, "");
+    updatePersonSelection();
+  }
+
+  function clearPersonSelection() {
+    state.person.selected = {};
+    var boxes = els.personOptions.querySelectorAll("input[type=checkbox]");
+    for (var index = 0; index < boxes.length; index += 1) {
+      boxes[index].checked = false;
+    }
+    text(els.personEcho, "");
+    updatePersonSelection();
+  }
+
+  function loadPersons(reset) {
+    if (!state.person.enabled || state.person.loading) {
+      return Promise.resolve(false);
+    }
+    if (reset) {
+      state.person.cursor = null;
+      state.person.hasMore = false;
+    }
+    state.person.loading = true;
+    setStatus(
+      els.personStatus,
+      reset ? "正在读取人物（active canonical，按 person_id 分页）…" : "正在读取更多人物…"
+    );
+    var query = "?kind=all&limit=" + PERSON_LIMIT;
+    if (!reset && state.person.cursor) {
+      query += "&cursor=" + encodeURIComponent(state.person.cursor);
+    }
+    syncPersonControls();
+    return request("/persons" + query).then(
+      function (result) {
+        var body = result.body || {};
+        var rows = body.persons || [];
+        state.person.loading = false;
+        renderPersonOptions(rows, reset);
+        state.person.cursor = body.next_cursor || null;
+        state.person.hasMore = Boolean(body.has_more);
+        setStatus(
+          els.personStatus,
+          rows.length === 0
+            ? reset
+              ? "这个图库还没有 active canonical 人物（是空列表，不是读取失败）。"
+              : "没有更多人物。"
+            : "本页 " +
+                rows.length +
+                " 个人物（active canonical）" +
+                (body.has_more ? " · 还有更多" : " · 已到末尾")
+        );
+        updatePersonSelection();
+        return true;
+      },
+      function (failure) {
+        state.person.loading = false;
+        disablePersonFilter(
+          "人物列表读取失败：" +
+            describe(failure) +
+            "；人物筛选已禁用，本次不会发送人物条件（这不代表图库里没有人物）。"
+        );
+        return false;
+      }
+    );
+  }
+
+  function renderPersonEcho(filters, mode) {
+    var body = filters || {};
+    var ids = Array.isArray(body.person_ids) ? body.person_ids.map(Number) : [];
+    var match = body.person_match === "all" ? "all" : "any";
+    var lines = [];
+    if (mode === "image") {
+      lines.push(
+        "上传搜图不携带人物条件：服务端的回显是 person_ids=[]、person_match=any" +
+          "（人物筛选只作用于普通搜索）。"
+      );
+    } else if (!ids.length) {
+      lines.push("后端回显：person_ids=[]、person_match=any（本次查询没有人物条件）。");
+    } else {
+      lines.push(
+        "后端回显（canonical）：person_ids=[" + ids.join(", ") + "]、person_match=" + match + "。"
+      );
+      if (!sameIdList(ids, selectedPersonIds())) {
+        lines.push("服务端把提交的 id 解析并折叠成了上面的 canonical 人物；本页照回显显示。");
+      }
+    }
+    text(els.personEcho, lines.join(" "));
+  }
+
+  //: The condition set one search session is bound to. Continuing an old cursor after any of
+  //: these changed would ask the server to mix two queries, so the page refuses and offers a
+  //: fresh search instead of sending the old cursor with new conditions.
+  function conditionFingerprint(filters) {
+    return JSON.stringify({
+      text: els.queryText.value.trim(),
+      source: filters.sourceId,
+      availability: filters.availability,
+      places: filters.placeIds,
+      descendants: filters.includeDescendants,
+      placeState: filters.placeState,
+      persons: filters.personIds,
+      personMatch: filters.personIds.length ? filters.personMatch : "any",
+      pageSize: filters.pageSize,
+    });
   }
 
   // ---------------------------------------------------------------------- search
@@ -493,6 +787,7 @@
     state.search.cursor = null;
     state.search.count = 0;
     state.search.total = null;
+    state.search.binding = null;
     releaseObjectUrls();
     clear(els.resultGrid);
     renderNotices(els.resultNotices, []);
@@ -516,6 +811,22 @@
     }
     if (continuation && (!state.search.sessionId || !state.search.cursor)) {
       return;
+    }
+    if (continuation) {
+      if (state.search.binding && conditionFingerprint(filters) !== state.search.binding) {
+        setStatus(
+          els.queryStatus,
+          "人物、地点或其它条件已经改变：旧会话的游标只能沿用首次查询绑定的条件，不能续页。" +
+            "请按当前条件重新搜索。",
+          "error"
+        );
+        els.queryActions.hidden = false;
+        return Promise.resolve(false);
+      }
+    } else {
+      // The digest of the conditions this session is opened with; a later continuation is
+      // only allowed while they are unchanged.
+      state.search.binding = conditionFingerprint(filters);
     }
     state.search.loading = true;
     setStatus(els.queryStatus, continuation ? "正在加载下一页…" : "正在搜索…");
@@ -557,6 +868,12 @@
     }
     if (filters.placeIds.length) {
       body.place_ids = filters.placeIds;
+    }
+    if (filters.personIds.length) {
+      // Sent only for a real selection: ascending, de-duplicated positive ids plus the
+      // chosen match mode. The server echoes the canonical set it actually used.
+      body.person_ids = filters.personIds;
+      body.person_match = filters.personMatch;
     }
     if (continuation) {
       body.search_session_id = state.search.sessionId;
@@ -627,6 +944,7 @@
     els.loadMore.hidden = !body.has_more;
     els.queryActions.hidden = true;
     renderNotices(els.resultNotices, successNotices(body));
+    renderPersonEcho(body.filters, state.search.mode);
     var parts = [
       "已显示 " + state.search.count + " 行",
       "候选共 " + number(body.total_candidates) + " 个",
@@ -952,6 +1270,15 @@
     link.hidden = !usable;
   }
 
+  //: The person filter needs exactly the read layer the person page needs: the P3-05B schema
+  //: in a healthy catalog. A missing face model never disables it - listing and choosing the
+  //: persons that already exist needs no inference at all. An unusable read layer disables the
+  //: control *and* says so; it is never rendered as "there are no people".
+  function personFilterUsable(body) {
+    var version = Number(body && body.schema_version);
+    return isFinite(version) && version >= 13 && String(body && body.schema_status) === "ok";
+  }
+
   function loadCapabilities() {
     // The person navigation entry reads the same capabilities document; it stays hidden
     // until the catalog really carries the person read layer.
@@ -961,6 +1288,22 @@
         state.capabilities = body;
         clearNotice();
         revealPersonsNav(body);
+        if (personFilterUsable(body)) {
+          state.person.enabled = true;
+          state.person.reason = "";
+          syncPersonControls();
+          loadPersons(true);
+        } else {
+          disablePersonFilter(
+            "本图库还没有人物读层（schema " +
+              (body.schema_version === null || body.schema_version === undefined
+                ? "未知"
+                : "v" + body.schema_version) +
+              " / " +
+              String(body.schema_status) +
+              "）：人物筛选已禁用，本次不会发送人物条件。"
+          );
+        }
         var schema =
           body.schema_version === null || body.schema_version === undefined
             ? "尚未初始化"
@@ -978,6 +1321,11 @@
         renderBindingHint(body);
       },
       function (failure) {
+        disablePersonFilter(
+          "读取程序能力失败：" +
+            describe(failure) +
+            "；人物筛选已禁用，本次不会发送人物条件。"
+        );
         if (failure.code === "SCHEMA_TOO_NEW") {
           showNotice(
             "图库的 schema 版本高于本程序支持的版本（" +
@@ -1030,6 +1378,7 @@
     state.search.sessionId = null;
     state.search.cursor = null;
     state.search.count = 0;
+    state.search.binding = null;
     releaseObjectUrls();
     clear(els.resultGrid);
     renderNotices(els.resultNotices, []);
@@ -1056,6 +1405,7 @@
     els.queryPlaceIds.value = "";
     els.queryDescendants.value = "true";
     els.queryPageSize.value = String(DEFAULT_PAGE_SIZE);
+    clearPersonSelection();
     setStatus(els.queryStatus, "");
     renderNotices(els.resultNotices, []);
   }
@@ -1076,6 +1426,14 @@
       queryPlaceIds: document.getElementById("query-place-ids"),
       queryDescendants: document.getElementById("query-descendants"),
       queryPageSize: document.getElementById("query-page-size"),
+      queryPersonMatch: document.getElementById("query-person-match"),
+      personOptions: document.getElementById("person-options"),
+      personMore: document.getElementById("person-more"),
+      personClear: document.getElementById("person-clear"),
+      personReload: document.getElementById("person-reload"),
+      personSelection: document.getElementById("person-selection"),
+      personEcho: document.getElementById("person-echo"),
+      personStatus: document.getElementById("person-status"),
       resultNotices: document.getElementById("result-notices"),
       resultGrid: document.getElementById("result-grid"),
       loadMore: document.getElementById("load-more"),
@@ -1094,10 +1452,23 @@
       sendSearch(false);
     });
     els.loadMore.addEventListener("click", continueSearch);
+    els.personMore.addEventListener("click", function () {
+      loadPersons(false);
+    });
+    els.personClear.addEventListener("click", clearPersonSelection);
+    els.personReload.addEventListener("click", function () {
+      loadPersons(true);
+    });
+    els.queryPersonMatch.addEventListener("change", function () {
+      text(els.personEcho, "");
+      updatePersonSelection();
+    });
     els.uploadForm.addEventListener("submit", submitUpload);
     document.getElementById("coverage-reload").addEventListener("click", loadCoverage);
 
     state.observer = buildObserver();
+    updatePersonSelection();
+    syncPersonControls();
     loadCapabilities().then(loadCoverage);
     loadSources();
   }

@@ -32,6 +32,69 @@
   gap: 0.5rem !important;
 }
 
+.person-filter {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.person-filter legend {
+  padding: 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+.person-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: flex-end;
+}
+
+.person-controls p {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.person-options {
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.person-option {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 0.15rem 0.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+
+.person-option:focus-within {
+  border-color: var(--accent);
+}
+
+.person-option label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
 .row-actions {
   display: flex;
   flex-wrap: wrap;
@@ -148,7 +211,8 @@
 
 @media (max-width: 40rem) {
   .filters p,
-  .filters p.wide {
+  .filters p.wide,
+  .person-controls p {
     flex: 1 1 100%;
   }
 }

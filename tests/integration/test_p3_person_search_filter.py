@@ -1347,14 +1347,15 @@ def test_the_frozen_contracts_migrations_and_schema_version_are_untouched(
         path.name
         for path in (ROOT / "src" / "photo_search" / "catalog" / "migrations").glob("*.sql")
     )
-    # The chain is still exactly 0001..0013: P3-07B adds no schema.
-    assert len(migrations) == 13
+    # The chain is still continuous from 0001 to whatever this build supports. P3-07B adds no
+    # schema of its own (``0013`` stays present and byte-frozen); P3-08B appends ``0014``.
+    assert len(migrations) == SUPPORTED_SCHEMA_VERSION
     assert [name[:4] for name in migrations] == [
-        f"{index:04d}" for index in range(1, 14)
+        f"{index:04d}" for index in range(1, SUPPORTED_SCHEMA_VERSION + 1)
     ]
     assert migrations[0] == "0001_initial.sql"
-    assert migrations[-1] == "0013_person_split_operations.sql"
-    assert int(state.env.catalog.schema_version) == SUPPORTED_SCHEMA_VERSION == 13
+    assert "0013_person_split_operations.sql" in migrations
+    assert int(state.env.catalog.schema_version) == SUPPORTED_SCHEMA_VERSION
     # The frozen envelopes keep their own version strings.
     assert COMPANION["$defs"]["SearchContractVersion"]["const"] == "p2-contracts.v1"
     assert COMPANION["$defs"]["SessionTtlMs"]["const"] == SESSION_TTL_MS

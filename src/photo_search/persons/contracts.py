@@ -70,6 +70,10 @@ FACE_OPERATION_TYPES = (
 #: It brings one operation type and one item shape, so it gets its own tuple exactly like
 #: the face family does - ``OPERATION_TYPES`` stays the frozen P3-03 person vocabulary.
 SPLIT_OPERATION_TYPES = ("SPLIT",)
+#: ADR-0010 §5.1: a decision on a face-redetection mapping is the fourth writer of the same
+#: log. It brings the two ``FACE_MAPPING_*`` types and the ``FACE_MAPPING_GROUP`` item shape,
+#: so it gets its own tuple for exactly the same reason the face and split families do.
+MAPPING_OPERATION_TYPES = ("FACE_MAPPING_CONFIRM", "FACE_MAPPING_REJECT")
 #: Everything the shared ``/person-operations/{id}/undo`` endpoint may compensate.
 OPERATION_TYPE_SPLIT = SPLIT_OPERATION_TYPES[0]
 UNDOABLE_OPERATION_TYPES = WRITE_OPERATION_TYPES + FACE_OPERATION_TYPES
@@ -81,6 +85,9 @@ ENTITY_TYPE_FACE_CONTROL = "FACE_CONTROL"
 #: ADR-0008 §5: a split group *reads* like a person bundle (a positive integer ``entity_id``)
 #: but records a group that a transaction may have just created, so it is its own type.
 ENTITY_TYPE_SPLIT_GROUP = "SPLIT_GROUP"
+#: ADR-0010 §5.1: a mapping group is keyed by the old ``face_id`` (text ``entity_key``), the
+#: same shape a ``FACE_CONTROL`` item uses and mutually exclusive with the integer key.
+ENTITY_TYPE_MAPPING_GROUP = "FACE_MAPPING_GROUP"
 
 CONTROL_MODES = ("AUTO_ALLOWED", "MANUAL_ASSIGNED", "MANUAL_UNASSIGNED")
 
@@ -285,6 +292,7 @@ __all__ = [
     "CAUSE_PERSON_CHANGED",
     "CONTROL_MODES",
     "ENTITY_TYPE_FACE_CONTROL",
+    "ENTITY_TYPE_MAPPING_GROUP",
     "ENTITY_TYPE_PERSON_BUNDLE",
     "ENTITY_TYPE_SPLIT_GROUP",
     "FACE_IDEMPOTENCY_CONFLICT",
@@ -292,6 +300,7 @@ __all__ = [
     "MAX_MERGE_SOURCES",
     "MAX_PERSON_NAME_CHARS",
     "MAX_REQUEST_ID_CHARS",
+    "MAPPING_OPERATION_TYPES",
     "NAME_KEY_PREFIX",
     "NAME_KEY_VERSION",
     "OPERATION_TYPES",

@@ -303,8 +303,13 @@ def test_v12_to_v13_is_continuous_backed_up_and_lossless(
         )
     ] == [(1, "op-3"), (2, None), (3, "op-1")]
 
+    # The chain continues from the frozen v13 tip to whatever this build supports (P3-08B
+    # added ``0014``); once there, a repeated migrate applies nothing and rewrites nothing.
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.previous_version == V13
+    assert again.applied == tuple(range(V13 + 1, SUPPORTED + 1))
+    assert again.previous_version == V13 and again.schema_version == SUPPORTED
+    settled = migrate_database(path, data_root=data_root(tmp_path))
+    assert settled.applied == () and settled.previous_version == SUPPORTED
 
 
 def test_the_rebuilt_tables_enforce_the_three_item_shapes(

@@ -821,6 +821,18 @@ def persist_face_document(
             generation_id=generation_id,
             now_ms=int(now_ms),
         )
+    # ADR-0010 §3.1/§3.4: the reviewable old/new mapping of this asset is refreshed in the
+    # very transaction that wrote the new rows, and *after* the retirement above - so a
+    # removed candidate is already gone when the candidates are recomputed and can never be
+    # kept alive by the provisional hold.
+    from photo_search.persons import mapping as mapping_module
+
+    mapping_module.generate_candidates_for_asset(
+        connection,
+        asset_id=asset_id,
+        new_face_ids=sorted(new_ids),
+        now_ms=int(now_ms),
+    )
     connection.execute(
         "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, queued_at) "
         "VALUES (?, ?, ?, ?) "
@@ -850,6 +862,12 @@ def _retire_stale_faces(
         for row in rows
         if str(row["face_id"]) not in keep and str(row["face_id"]) not in protected
     ]
+    if stale:
+        # ADR-0010 §3.4/§7: a removed candidate leaves a ``STALE`` mapping row behind, and a
+        # removed old anchor loses its now-meaningless group before its ``faces`` row goes.
+        from photo_search.persons import mapping as mapping_module
+
+        mapping_module.retire_mapping_faces(connection, face_ids=stale, now_ms=int(now_ms))
     for face_id in stale:
         connection.execute("DELETE FROM face_candidates WHERE face_id = ?", (face_id,))
         connection.execute("DELETE FROM face_index_entries WHERE face_id = ?", (face_id,))

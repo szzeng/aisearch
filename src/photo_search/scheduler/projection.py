@@ -543,7 +543,7 @@ def face_summary(
             state = "SYNCED"
         else:
             state = "NOT_RUN"
-        return {
+        payload: dict[str, Any] = {
             "processor_id": processor_id,
             "task_type": task_type,
             "spec_revision": str(face_contract.FACE_SPEC_REVISION),
@@ -594,8 +594,37 @@ def face_summary(
             },
             "state": state,
         }
+        # P3-08B mapping counts (ADR-0010 §8.3). They are *additive* and only present when the
+        # 0014 tables really exist, so a catalog that predates the mapping layer never claims
+        # to support it; an existing but empty review queue reports honest zeros.
+        if {"face_redetection_groups", "face_redetection_mappings"} <= tables:
+            payload.update(_mapping_counts(connection))
+        return payload
     finally:
         connection.close()
+
+
+def _mapping_counts(connection: sqlite3.Connection) -> dict[str, int]:
+    """The four read-only review counts of ADR-0010 §8.3 - ids, states and integers only."""
+
+    def one(query: str) -> int:
+        return int(connection.execute(query).fetchone()["total"])
+
+    return {
+        "open_face_mappings": one(
+            "SELECT COUNT(*) AS total FROM face_redetection_groups WHERE state = 'OPEN'"
+        ),
+        "ambiguous_face_mappings": one(
+            "SELECT COUNT(*) AS total FROM face_redetection_groups "
+            "WHERE state = 'OPEN' AND candidate_state = 'AMBIGUOUS'"
+        ),
+        "stale_face_mappings": one(
+            "SELECT COUNT(*) AS total FROM face_redetection_mappings WHERE state = 'STALE'"
+        ),
+        "confirmed_face_mappings": one(
+            "SELECT COUNT(*) AS total FROM face_redetection_groups WHERE state = 'CONFIRMED'"
+        ),
+    }
 
 
 def pending_projection_summary(db_path: str | Path) -> dict[str, Any] | None:

@@ -35,6 +35,13 @@ from photo_search.catalog.errors import (
     FACE_ASSIGNMENT_CONFLICT,
     FACE_BATCH_TOO_LARGE,
     FACE_IDEMPOTENCY_CONFLICT,
+    FACE_MAPPING_BATCH_TOO_LARGE,
+    FACE_MAPPING_CONFLICT,
+    FACE_MAPPING_IDEMPOTENCY_CONFLICT,
+    FACE_MAPPING_NOT_FOUND,
+    FACE_MAPPING_OPERATION_NOT_UNDOABLE,
+    FACE_MAPPING_STALE,
+    FACE_MAPPING_TARGET_CONTROLLED,
     FACE_NOT_FOUND,
     FACE_OPERATION_NOT_UNDOABLE,
     FACE_STATE_CONFLICT,
@@ -215,6 +222,18 @@ _STATUS_BY_CODE: dict[str, int] = {
     FACE_IDEMPOTENCY_CONFLICT: 409,
     FACE_STATE_CONFLICT: 409,
     FACE_OPERATION_NOT_UNDOABLE: 409,
+    # P3-08B face-redetection mapping refusals (ADR-0010 §8.2). A pair or group this asset
+    # does not own and a face/person that does not exist are 404s; the 1..200 / 1..16 bounds
+    # and the per-code ``VALIDATION_ERROR`` shapes are caller errors; an already-decided
+    # group, an affirm/deny conflict, a stale review revision, a target a human already
+    # edited, a reused idempotency key and a snapshot a later edit invalidated are conflicts.
+    FACE_MAPPING_NOT_FOUND: 404,
+    FACE_MAPPING_TARGET_CONTROLLED: 409,
+    FACE_MAPPING_CONFLICT: 409,
+    FACE_MAPPING_STALE: 409,
+    FACE_MAPPING_IDEMPOTENCY_CONFLICT: 409,
+    FACE_MAPPING_OPERATION_NOT_UNDOABLE: 409,
+    FACE_MAPPING_BATCH_TOO_LARGE: 422,
     # P2-06A search protocol refusals. An expired session, a profile that must not be
     # half-switched and a filter the vector engine refuses are all current-state
     # conflicts: the request is well formed, the current state forbids the answer.
@@ -265,12 +284,18 @@ class ApiError(Exception):
         status: int | None = None,
         details: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
+        closure_details: bool = False,
     ) -> None:
         self.code = str(code)
         self.message = str(message)
         self.status = int(status) if status is not None else status_for_code(self.code)
         self.details = dict(details) if details else {}
         self.headers = dict(headers) if headers else {}
+        #: ``True`` when ``details`` is the *complete frozen closure* of a published contract
+        #: (ADR-0010 §8.2), where an empty object is the required shape of that code and has to
+        #: be rendered as such. Every other endpoint keeps the historical envelope, which
+        #: omits an empty optional ``details``.
+        self.closure_details = bool(closure_details)
         super().__init__(f"{self.code}: {self.message}")
 
 
@@ -291,13 +316,15 @@ def error_payload(
     message: str,
     request_id: str,
     details: Mapping[str, Any] | None = None,
+    closure_details: bool = False,
 ) -> dict[str, Any]:
     """The one envelope shape every failing endpoint returns."""
     payload: dict[str, Any] = {"code": str(code), "message": str(message), "request_id": str(request_id)}
-    if details:
-        trimmed = _bounded(dict(details))
-        if trimmed:
-            payload["details"] = trimmed
+    if details is None and not closure_details:
+        return payload
+    trimmed = _bounded(dict(details or {}))
+    if trimmed or closure_details:
+        payload["details"] = trimmed
     return payload
 
 
@@ -309,13 +336,20 @@ def error_response(
     status: int | None = None,
     details: Mapping[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
+    closure_details: bool = False,
 ) -> JSONResponse:
     response_headers = {REQUEST_ID_HEADER: str(request_id)}
     if headers:
         response_headers.update({str(key): str(value) for key, value in headers.items()})
     return JSONResponse(
         status_code=int(status) if status is not None else status_for_code(code),
-        content=error_payload(code=code, message=message, request_id=request_id, details=details),
+        content=error_payload(
+            code=code,
+            message=message,
+            request_id=request_id,
+            details=details,
+            closure_details=closure_details,
+        ),
         headers=response_headers,
     )
 

@@ -291,6 +291,39 @@ def test_the_places_page_has_no_external_reference_credential_or_html_sink() -> 
     assert "token=" not in script
     assert "csrf_token" not in script
     assert "错误详情包含本机路径" in script
+
+
+def test_the_persons_page_carries_the_redetection_review_view() -> None:
+    """P3-08B: the review view exists, is capability-gated, and keeps the privacy promise."""
+    shell, script, style = _persons_documents()
+    assert 'id="panel-mappings"' in shell
+    assert 'id="panel-mappings"' in shell and 'hidden' in shell
+    assert 'href="#panel-mappings"' in shell
+    for element_id in (
+        "mappings-state",
+        "mappings-limit",
+        "mappings-list",
+        "mappings-undo",
+        "mappings-error",
+    ):
+        assert 'id="' + element_id + '"' in shell
+    for endpoint in (
+        "/face-mappings?state=",
+        "/face-mappings/",
+        "/face-mappings/decisions",
+        "/person-operations/",
+    ):
+        assert endpoint in script
+    # The four derived candidate states are rendered from the frozen vocabulary, and the
+    # page never receives or names a geometric field.
+    for token in ("NO_CANDIDATE", "UNIQUE_HIGH", "UNIQUE_WEAK", "AMBIGUOUS"):
+        assert token in script
+    # The page may *mention* the words in its own promise text, so the leak check is about the
+    # field names it could actually read or send.
+    for forbidden in ('"bbox"', '"landmarks"', '"iou"', '"embedding"', '"similarity"'):
+        assert forbidden not in script
+    assert "open_face_mappings" in script
+    assert "panel-mappings" in style
     assert "PATH_LIKE" in script
 
 
@@ -409,7 +442,15 @@ def test_the_search_page_reaches_data_only_through_the_protected_api() -> None:
     assert "sqlite" not in script.lower()
     assert "catalog.db" not in script
     # The exact endpoints this page is allowed to use.
-    for path in ("/search", "/search/image", "/capabilities", "/places/coverage", "/stats", "/sources"):
+    for path in (
+        "/search",
+        "/search/image",
+        "/capabilities",
+        "/places/coverage",
+        "/stats",
+        "/sources",
+        "/persons",
+    ):
         assert '"' + path in script
     # Exact coordinates stay on the session-protected per-asset /geo endpoint only.
     assert "/geo" not in script
@@ -689,3 +730,162 @@ def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists(
     assert 'href="/"' in persons_shell
     assert 'href="/search"' in persons_shell
     assert 'href="/places"' in persons_shell
+
+
+# ---------------------------------------------------------------------------------------
+# P3-08D: the person condition on the search page. The page only re-uses the frozen
+# ADR-0009 surface: it reads the paged person list, sends ``person_ids``/``person_match``
+# only for a real selection, echoes the server's canonical answer and never turns a refusal
+# into an empty grid. Every assertion here guards one promise of the task card.
+# ---------------------------------------------------------------------------------------
+
+
+def test_the_search_page_reads_the_person_choice_from_the_paged_person_api() -> None:
+    _, script, _ = _search_documents()
+
+    assert 'request("/persons" + query)' in script
+    assert '"?kind=all&limit=" + PERSON_LIMIT' in script
+    assert 'query += "&cursor=" + encodeURIComponent(state.person.cursor);' in script
+    # One bounded page at a time: the whole person list is never materialised in the DOM.
+    assert "var PERSON_LIMIT = 25;" in script
+    assert "els.personOptions.appendChild(item);" in script
+    # The page never resolves a merged id itself and never reaches past the read API.
+    assert "merged_into" not in script
+    assert "name_key" not in script
+    assert "state.person.selected" in script
+
+
+def test_the_search_page_keeps_the_selection_by_id_and_never_merges_same_names() -> None:
+    shell, script, _ = _search_documents()
+
+    # The option text carries the stable id next to a possibly empty name, so two people who
+    # share a name are two options instead of one.
+    assert "number(person.person_id)" in script
+    assert "未命名人物" in script
+    assert "同名人物各按 #person_id 计" in shell + script
+    # The selection lives outside the DOM and is re-applied whenever a page is drawn again.
+    assert "box.checked = Object.prototype.hasOwnProperty.call(state.person.selected, key);" in script
+    assert "function togglePerson(personId, checked)" in script
+    assert "function clearPersonSelection()" in script
+
+
+def test_the_search_page_sends_the_person_condition_only_for_a_real_selection() -> None:
+    _, script, _ = _search_documents()
+
+    assert "var personIds = selectedPersonIds();" in script
+    assert 'var personMatch = els.queryPersonMatch.value === "all" ? "all" : "any";' in script
+    assert 'personMatch = "any";' in script
+    # Ascending and de-duplicated before it is sent, and only when something is selected.
+    assert "ids.sort(function (left, right) {" in script
+    assert "if (filters.personIds.length) {" in script
+    assert "body.person_ids = filters.personIds;" in script
+    assert "body.person_match = filters.personMatch;" in script
+    # "all" without any selected person is never built by the page.
+    assert "allOption.disabled = !usable || !ids.length;" in script
+
+
+def test_the_search_page_keeps_the_upload_request_free_of_person_fields() -> None:
+    shell, script, _ = _search_documents()
+
+    upload = script.split("function sendImageSearch(", 1)[1].split("\n  function ", 1)[0]
+    assert 'form.append("image"' in upload
+    assert "person_ids" not in upload
+    assert "person_match" not in upload
+    assert "人物筛选只作用于普通搜索" in shell
+    assert "上传搜图不携带人物条件" in script
+
+
+def test_the_search_page_echoes_the_canonical_person_filter_from_the_server() -> None:
+    _, script, _ = _search_documents()
+
+    assert "renderPersonEcho(body.filters, state.search.mode);" in script
+    assert "Array.isArray(body.person_ids)" in script
+    assert 'body.person_match === "all" ? "all" : "any"' in script
+    assert "后端回显（canonical）：person_ids=[" in script
+    assert "服务端把提交的 id 解析并折叠成了上面的 canonical 人物" in script
+    # The page renders what the server returned instead of filtering the hits locally.
+    assert "hits.filter(" not in script
+
+
+def test_the_search_page_shows_every_person_refusal_instead_of_an_empty_grid() -> None:
+    shell, script, _ = _search_documents()
+
+    for code in (
+        "INVALID_PERSON_FILTER",
+        "PERSON_NOT_FOUND",
+        "PERSON_REDIRECT_CYCLE",
+        "CATALOG_FILTER_REVISION_STALE",
+        "SEARCH_SESSION_EXPIRED",
+        "INVALID_CURSOR",
+    ):
+        assert code in script, code
+    # A failure keeps the conditions and offers the re-run button instead of a blank grid.
+    assert "query-retry" in shell
+    assert "按当前条件重搜" in shell
+    assert "els.queryActions.hidden = false;" in script
+    # The shared-revision copy names people too: ADR-0009 §6.1 reuses the one counter.
+    assert "人物、地点或可见性在翻页期间发生了变化" in script
+
+
+def test_the_search_page_never_continues_a_cursor_after_the_condition_changed() -> None:
+    _, script, _ = _search_documents()
+
+    assert "function conditionFingerprint(filters)" in script
+    assert "state.search.binding = conditionFingerprint(filters);" in script
+    assert "conditionFingerprint(filters) !== state.search.binding" in script
+    assert "旧会话的游标只能沿用首次查询绑定的条件，不能续页" in script
+    # The condition digest covers the person condition, not only the place one.
+    assert "persons: filters.personIds," in script
+    assert "personMatch: filters.personIds.length ? filters.personMatch : \"any\"," in script
+
+
+def test_the_search_page_disables_the_person_filter_without_the_person_read_layer() -> None:
+    _, script, _ = _search_documents()
+
+    assert "function personFilterUsable(body)" in script
+    assert "version >= 13" in script
+    assert "schema_status" in script
+    assert "人物筛选已禁用" in script
+    # An unusable read layer is stated, never rendered as "this library has no people".
+    assert "这不代表图库里没有人物" in script
+    assert "这个图库还没有 active canonical 人物（是空列表，不是读取失败）。" in script
+
+
+def test_the_search_page_person_picker_is_labelled_keyboard_reachable_and_narrow_safe() -> None:
+    shell, script, style = _search_documents()
+
+    for element_id in (
+        "person-filter",
+        "query-person-match",
+        "person-options",
+        "person-more",
+        "person-clear",
+        "person-reload",
+        "person-selection",
+        "person-echo",
+        "person-status",
+    ):
+        assert 'id="' + element_id + '"' in shell, element_id
+    assert 'for="query-person-match"' in shell
+    # Every rendered option is a labelled checkbox, so the picker is keyboard operable.
+    assert 'box.type = "checkbox";' in script
+    assert 'label.setAttribute("for", box.id);' in script
+    # Narrow viewports: the option grid collapses to one column and never overflows.
+    assert "grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));" in style
+    assert "overflow-wrap: anywhere;" in style
+
+
+def test_the_search_page_keeps_the_person_choice_out_of_the_url_and_the_html_sink() -> None:
+    _, script, _ = _search_documents()
+
+    for fragment in (
+        "innerHTML",
+        "insertAdjacentHTML",
+        "URLSearchParams",
+        "location.search",
+        "location.hash",
+        "history.pushState",
+    ):
+        assert fragment not in script, fragment
+    # Every string the picker paints goes through textContent.
+    assert "text(label, personOptionText(person));" in script

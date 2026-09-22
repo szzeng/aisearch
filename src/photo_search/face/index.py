@@ -716,6 +716,26 @@ def _manually_locked_face_ids(
     }
 
 
+def _mapping_hold_face_ids(connection: sqlite3.Connection, *, asset_id: int) -> set[str]:
+    """ADR-0010 §3.4: the *association* hold, deliberately separate from row retention.
+
+    The detection-row retention predicate of ``processor.human_controlled_face_ids()`` is
+    read only when old rows are about to be deleted; the write gate of this pass is the human
+    locks plus the active denials. An ``OPEN`` mapping review adds a third *provisional*
+    source here - the new faces whose human knowledge is still waiting for a decision - and
+    nothing else: it writes no control row and never widens to the other faces of the photo.
+    """
+    tables = {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "face_redetection_groups" not in tables or "face_redetection_mappings" not in tables:
+        return set()
+    from photo_search.persons import mapping as mapping_module
+
+    return mapping_module.hold_face_ids(connection, asset_id=int(asset_id))
+
+
 def _canonical_person_map(
     connection: sqlite3.Connection, person_ids: Sequence[int]
 ) -> dict[int, int]:
@@ -789,6 +809,10 @@ def _reconcile_asset(
         # denial tables are the authority, and the candidate set above was only a snapshot.
         late = _control_revision_gate(connection, observed, face_ids)
         protected = _manually_locked_face_ids(connection, asset_id=asset_id)
+        # ADR-0010 §3.4: read the provisional hold at the very same point - and inside the
+        # same ``BEGIN IMMEDIATE`` - as the human locks and the active denials, so an
+        # automatic result can never be written behind an undecided redetection review.
+        held = _mapping_hold_face_ids(connection, asset_id=asset_id)
         excluded_by_face = _active_exclusion_persons(connection, face_ids)
         canonical_of_person = _canonical_person_map(
             connection,
@@ -823,12 +847,12 @@ def _reconcile_asset(
                     }
                 )
                 continue
-            if face_id in protected:
+            if face_id in protected or face_id in held:
                 # Human knowledge wins: the automatic path does not touch this face at all.
                 decisions.append(
                     {
                         "face_id": face_id,
-                        "action": "HUMAN_CONTROLLED",
+                        "action": "HUMAN_CONTROLLED" if face_id in protected else "PROVISIONAL_HOLD",
                         "person_id": None,
                         "similarity": None,
                         "reason": None,
@@ -933,10 +957,35 @@ def _reconcile_asset(
                         "reason": None,
                     }
                 )
-        connection.execute(
-            "DELETE FROM face_association_queue WHERE asset_id = ? AND spec_revision = ?",
-            (int(asset_id), str(spec_revision)),
-        )
+        # ADR-0010 §3.4: while this asset still has a face under the provisional hold (or a
+        # decision was skipped because a human fact landed mid-pass) the durable queue row is
+        # kept, so releasing the hold can run the association again. Only a pass that leaves
+        # nothing pending may drain the row.
+        if held or late:
+            connection.execute(
+                "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, "
+                "queued_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(asset_id) DO UPDATE SET spec_revision = excluded.spec_revision, "
+                "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
+                (
+                    int(asset_id),
+                    str(spec_revision),
+                    int(
+                        connection.execute(
+                            "SELECT COALESCE(MAX(face_revision), 1) AS revision FROM faces "
+                            "WHERE asset_id = ? AND spec_revision = ?",
+                            (int(asset_id), str(spec_revision)),
+                        ).fetchone()["revision"]
+                    )
+                    + 1,
+                    int(catalog.now_ms()),
+                ),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM face_association_queue WHERE asset_id = ? AND spec_revision = ?",
+                (int(asset_id), str(spec_revision)),
+            )
         # An assignment change changes which faces are representatives, so the affected
         # candidate rows are downgraded to PENDING_REPAIR and republished by the caller - the
         # same "human knowledge first, machine product catches up" semantics P2-03A

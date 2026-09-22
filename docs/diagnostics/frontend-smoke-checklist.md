@@ -253,3 +253,84 @@ Array.from(document.querySelectorAll("img")).map((i) => i.getAttribute("src"));
   静态契约 + 无写入代码」判定。
 - 窄视口用浏览器 `viewport` 覆盖得到（本次 640/481/1280 三个宽度都实测通过），不是操作系统级
   200% 缩放。
+
+## 8. 搜索页的人物筛选（P3-08D）
+
+页面：`/search`（`src/photo_search/web/search.html` + `search.js` + `search.css`）。人物条件复用
+ADR-0009 已冻结的 `person_ids`/`person_match`，选择来自会话保护的 `GET /api/v1/persons?kind=all`
+分页读；本页不读数据库、不猜内部 id、不按名字合并。可自动化的部分仍是静态契约
+（`tests/unit/test_api_frontend.py` 的 P3-08D 段）与 API 级等价证据
+（`tests/integration/test_p3_person_search_filter.py`、`test_p3_person_place_interleave.py`），
+浏览器内交互只能人工核对，本节就是那一遍人工核对。
+
+### 8.1 生成夹具
+
+```text
+uv run --no-sync python tools/diagnostics/search_person_smoke_fixture.py --reset
+```
+
+- 先调用 `search_smoke_fixture` 生成可搜索的合成图库（6 张 JPEG、1 个已激活 `SearchProfile`、
+  1 个已人工归类的地点），再 seed 人物权威：`爸爸 #1`（2 张照片，含地点那 1 张）、`叔叔 #2`
+  （与 `爸爸` 共享 1 张照片，因此 any/all 不同）、2 个**都显示「未命名人物」**的人（`#3`/`#4`）、
+  以及若干未命名人物，共 30 个 active canonical 人物（> 一页 25 个，所以有第二页）。
+- 脚本同时用生产 `search_request` 跑出权威期望集合并打印，浏览器观察要与它一致：
+  `dad=[1,6]`、`any(A,B)=[1,6]`、`all(A,B)=[1]`、`dad+place#1=[6]`、无人物条件 `=[1..6]`。
+- 不下载模型、不读真实图库；`--reset` 只删除脚本自己的目录。人物权威本身拒绝两个
+  `name_key` 相同的 active canonical 人物（P3-03 同名合并），因此「同一显示标签」的现实形态是
+  未命名占位，而不是重名。
+
+### 8.2 启动真实端口的服务
+
+```text
+$env:PHOTO_SEARCH_DATA_ROOT = "<脚本打印的 data_root>"   # 中文/空格路径用环境变量传，避免参数编码
+.\.venv\Scripts\python.exe -m photo_search --port <free-port>
+```
+
+打开控制台打印的一次性链接（`?next=/search&token=…`）。这是凭证唯一允许出现的地方：访问日志里记为
+`token=<redacted>`。
+
+> 受限令牌下服务端可能无法在系统 `%TEMP%` 建上传暂存目录（`stage_upload` 报 `PermissionError`）；
+> 这是环境限制。按仓库既有做法改用项目内临时目录（设置 `TEMP`/`TMP`）或经正常 Windows 权限路由启动，
+> 不要把该 500 当产品结论。
+
+### 8.3 核对步骤（逐条记录结果）
+
+| # | 操作 | 期望观察 | 不满足即不得 PASS 的判据 |
+|---|---|---|---|
+| 1 | 打开 `/search` | 人物面板出现；标题「人物筛选（只作用于普通搜索）」；状态行「本页 25 个人物（active canonical） · 还有更多」；每个选项显示受控名称占位 + `#person_id` + 照片/脸计数 | 面板缺失；一次性物化全部人物到 DOM；选项只有名字没有 `#id` |
+| 2 | 未选人时看「人物匹配方式」 | `全部（all）` 是 disabled，`清空人物选择` 是 disabled；提交只发 `person_ids` 缺失的请求 | `all + []` 可被选/可被提交 |
+| 3 | 勾 `爸爸 #1` → 搜索 | 后端回显 `person_ids=[1]、person_match=any`；结果为资产 `#1`、`#6` | 回显缺失或在页面本地过滤出结果 |
+| 4 | 再勾 `叔叔 #2` → 选 `全部（all）` → 搜索 | 回显 `person_ids=[1, 2]、person_match=all`；结果只剩资产 `#1`（`all` 是 AND 收窄） | `all` 被降级成 `any`；顺序/去重不稳定 |
+| 5 | 回到 `任一（any）`，地点 `place_id=1` → 搜索 | 结果只剩资产 `#6`（人物 × 地点 AND，与 §8.1 期望一致） | 两组条件互相覆盖或本地二次过滤 |
+| 6 | 每页数量改 1 → 搜索；在第二个标签页把 `#1` 改名并保存 | 第一页给出「候选共 2 个 · 还有下一页」；改名返回新 revision 且 `changed=true` | 翻页无游标；改名被静默忽略 |
+| 7 | 回搜索页点「加载下一页」 | 结构化 `[CATALOG_FILTER_REVISION_STALE]` + 「请重新搜索」；人物/地点条件与上一轮回显**保留** | 静默拼接两版结果；条件被清空；降级成空网格 |
+| 8 | 点「重新载入人物」→「按当前条件重搜」 | 选项标签更新为改名后的人名，已选 `#1` 仍在；重搜成功并给出当前 canonical 回显 | 选择在重绘后丢失；回显用的是旧 id 或本地猜测 |
+| 9 | 清空人物选择 → 搜索 | 回显 `person_ids=[]、person_match=any`，结果回到无人物条件（本夹具 6 行） | 清空后仍发送人物条件/仍按人物收窄 |
+| 10 | 键盘：`Tab` 进人物匹配方式与复选框，`Space` 勾选，`Enter` 提交 | 焦点依次可达 `人物匹配方式 → 清空人物选择 → 重新载入人物 → 人物选项`；`Space` 只改被聚焦的那一项（`#3` 与 `#4` 不联动） | 控件不可键盘到达；同标签的两个人被一起勾选 |
+| 11 | 选一个人物后「上传搜图」提交一张合成图 | 结构化 `RUNTIME_CAPABILITY_UNAVAILABLE / IMAGE_ENCODER_UNAVAILABLE`（或成功），**不是** 422「multipart 未定义字段」——证明上传请求没有带人物字段 | 返回 `VALIDATION_ERROR`/multipart 未知字段；页面把上传当成人物筛选生效 |
+| 12 | 窄视口（约 640px 及以下）+ 页面内 DOM 断言（见 §8.4） | `documentElement.scrollWidth <= clientWidth`、无内部横向溢出的元素、人物面板收成单列 | 出现横向滚动条 |
+| 13 | 观察页面文本、URL 与服务端访问日志 | 正文无盘符/UNC/用户目录；URL 只有 `/search`（无 `token=`、无 person id）；请求全在 `/api/v1/*`、`/search`、`/persons`、`/web/*`；凭证记成 `token=<redacted>`；`/geo` 命中 0 | 出现绝对路径；URL 带 token 或 person id；页面请求 `/geo` |
+
+### 8.4 必做的 DOM 断言（可复制）
+
+```js
+// 正文里不得出现盘符路径或用户目录形态（双反斜杠与单反斜杠都算）
+/[A-Za-z]:\\|\\\\\?\\|\/Users\//.test(document.body.innerText);   // 期望 false
+
+// 窄视口下不得横向溢出
+document.documentElement.scrollWidth <= document.documentElement.clientWidth;   // 期望 true
+
+// URL 不得带凭证，也不得带人物 id
+location.href === location.origin + "/search";                                   // 期望 true
+
+// 每个选项都有显式 label，且文本里带稳定 #person_id
+Array.from(document.querySelectorAll("#person-options input")).every((c) => !!document.querySelector('label[for="' + c.id + '"]'));
+```
+
+### 8.5 已知限制
+
+- 内置浏览器的 `viewport` 覆盖在本机不改变实际窗口尺寸（P2-03C §6.3、P3-06 §7.5 的同一事实），
+  因此窄宽证据是「真实内置浏览器视口（本次约 395 CSS px，窄于 640）+ 无横向溢出」，不是设备级模拟。
+- 没有图像编码器时上传查询只能观察到结构化拒绝；「上传请求不带人物字段」由该拒绝码 +
+  `tests/unit/test_api_frontend.py` 的静态断言 + `test_p2_search_image.py` 的未知字段 422 共同判定。
+- 人物页的改名步骤复用 `/persons` 的「保存名字」表单（需要勾选「我知道同名时会执行合并」）。

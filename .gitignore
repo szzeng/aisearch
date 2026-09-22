@@ -5,6 +5,9 @@ __pycache__/
 # Python tools cache
 .pytest_cache/
 .pytest-tmp/
+# Fallback basetemp when the restricted token cannot write `.pytest-tmp` (WinError 5 on this
+# machine): still a project-local, throw-away directory, never part of the source tree.
+.pytest-basetemp-*/
 .ruff_cache/
 .uv-cache/
 

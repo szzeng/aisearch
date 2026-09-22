@@ -103,10 +103,24 @@ suggestion stale with the established filter-first priority. DS-H full evidence 
 correction rounds and Sol focused review. The final re-review proves `undo → OPEN` restores the hold rather than
 releasing it, and the 12 error codes now have strict per-code `oneOf` details shapes; all three negative probes are
 rejected and both positive controls pass. Final contract evidence is **58 / 0 / 0 / 0**, with Ruff, diff-check and
-lock-check clean. See [the final freeze report §10](reports/P3-08A-sol-contract-freeze.md). The current/next task is
-**P3-08B**, card [docs/tasks/P3-08B.md](tasks/P3-08B.md): implement the frozen mapping, repair merge/undo ordering,
-and complete D-level fault coverage plus the recorded real-browser closure. Recommended model: **DS-H / DeepSeek
-V4.1 Flash / high reasoning**; model switching remains manual.
+lock-check clean. See [the final freeze report §10](reports/P3-08A-sol-contract-freeze.md). **P3-08B is PASS**
+(B + D + recorded real-browser smoke), and its independent two-stage review **P3-08C is PASS
+（C2 final short re-review）** after DS-H closed the real HTTP error envelopes and the `STALE` reappearance boundary.
+Sol independently verified the per-code `details` closure (including `closure_details` for the required empty
+`INVALID_CURSOR` object), hold/release/queue plus §10 undo ordering, and `STALE → SUGGESTED` only for live eligible
+`OPEN` groups; focused evidence is **22 / 0 / 0 / 0**. See
+[the final focused review](reports/P3-08C-sol-focused-review.md). **P3-08D is READY / CURRENT TASK**: add the frozen
+person `any/all` filters to `/search` and close the still-unrun BROW-002 person+place browser path. **P3-08D is
+PASS** (B level + one recorded real-browser smoke, `SOL_NOT_REQUIRED`): the `/search` page now reads the paged
+`GET /api/v1/persons` list for its person choice, sends `person_ids`/`person_match` only for a real selection,
+echoes the server's canonical `filters`, refuses to continue an old cursor once the conditions changed, and the
+recorded in-app-browser closure completed the previously unrun **BROW-002** (person any/all × place AND → person
+rename → `CATALOG_FILTER_REVISION_STALE` → re-search). 10 new static contract cases; focused **131 / 0 / 0 / 0**
+and full **1461 / 0 / 0 / 48** (48 environment skips), Ruff / `git diff --check` / `uv lock --check` clean. This
+closes the P3 phase. The next task is **P4-00A — 拍摄时间/时区/回退来源/新 order 契约**
+([docs/tasks/P4-00A.md](tasks/P4-00A.md)), whose stage A is contract drafting and the full engineering pre-review
+by an independent **DS-H / DeepSeek V4.1 Flash / high reasoning** session, followed by a mandatory stage B
+**C2 / GPT-5.6 Sol / high** focused freeze. Model switching remains manual.
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1583,3 +1597,203 @@ Ruff、`git diff --check`、`uv lock --check`（95 packages）均 clean。ADR �
 下一任务为 **P3-08B — 新旧人脸映射实现、merge/undo 顺序修复与 P3 故障/浏览器闭环**，任务卡
 [docs/tasks/P3-08B.md](tasks/P3-08B.md)。推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；请在 Codex 中手动
 切换模型/推理档后继续。P3-08B 完成后才进入 P3-08C 的独立 DS-H 主审与 Sol 聚焦终审。
+
+## Latest implementation — P3-08B face-redetection mapping and fault/browser closure (2026-09-22)
+
+**P3-08B：PASS（B + D + 一次记录的真实浏览器闭环）。** 详细报告见
+[P3-08B 报告](reports/P3-08B-face-redetection-mapping-and-fault-closure.md)。起点 `c7fa68b`（工作树干净）。
+
+本卡实现 ADR-0010 的全部生产面：`0014` 两表（`face_redetection_groups` /
+`face_redetection_mappings`）与共享操作日志的第三次 `CHECK` 重建（`FACE_MAPPING_CONFIRM` /
+`FACE_MAPPING_REJECT` / `FACE_MAPPING_GROUP`），`schema_version 13 → 14`；候选生成与失效在被写入脸文档的
+**同一事务**内完成并严格“退休 → 候选 → 失效 → 保持”；`persons/mapping.py` 落实稳定 `mapping_id`、
+五个冻结几何常量、四态候选、永不自动确认、双向继承基数与保守未归类、肯定/否定冲突、目标受控拒绝、
+幂等门先于 revision 检查、一次确认一次 `PERSON_CHANGED`（不写图片向量 outbox）与 `max(before,live)+1`
+补偿撤销；`face/index.py` 在自动关联写事务内新增**临时保持**来源（与人工锁/活动排除同一时点读取）并把
+`face_association_queue` 从“无条件删除”改为保持期保留、confirm/reject 释放后重排队，`undo → OPEN`
+恢复保持；`/persons` 新增“重检测待确认”能力门控视图；三条 `/api/v1/face-mappings*` 路径与四个
+`face_summary` 计数上线。
+
+同时按 ADR-0010 §10 修复 P3-07B §6 的 merge/undo 顺序缺陷：撤销先把操作影响集合内的有效 `CONFIRMED`
+行整体删除一次，再按 before 快照写回（`max(before,live)+1`，每张脸任何语句边界至多一条有效行），并用
+“只有 live 与 before 真的不同”的收窄保证语义 no-op 的撤销仍零改动。浏览器闭环中发现并最小修复了一处
+真实接缝缺陷：生产写入的 `bbox_json` 形状（`{"bbox":[…]}`）与 P3-06 裁剪读取（`[l,t,r,b]`）不一致，
+导致真实检测行永远裁剪失败（`FACE_STATE_CONFLICT/bbox_not_a_list`）；`media/face_crop.py` 现同时接受
+两种形状，坏行拒绝语义不变。
+
+实测：专项 **`test-results/p3-08b-focused.xml` 108 / 0 / 0 / 0**（任务卡点名 11 个文件）；
+完整 **`test-results/p3-08b-full.xml` 1450 / 0 / 0 / 48**（199.1 s，48 skip 全为未装 pinned 权重的
+环境跳过）；Ruff、`git diff --check`、`uv lock --check`（95 packages）均 clean。65 条验收矩阵的
+ID→证据映射与真实结论见报告 §5。真实浏览器 smoke（Codex 内置浏览器，非 Playwright/Selenium PASS）：
+`/persons` 确认 → 全部视图 → 撤销 → 后编辑后撤销冲突 → 拒绝，`/places` 目录纠错，
+`/search` 地点筛选重搜 + 人物纠错后旧会话明确 stale，360×640 覆盖无横向溢出、键盘可达、
+DOM/URL/访问日志隐私扫描干净；详见报告 §6。
+
+未验证项（报告 §7，不得当 PASS）：`/search` 页面**没有人物条件输入**（P3-07B 只交付了 API 与地点筛选），
+因此矩阵 BROW-002 的“人物+地点 AND 浏览器重搜”未执行，API 级等价证据为
+`tests/integration/test_p3_person_search_filter.py` 与本卡 `test_p3_person_place_interleave.py`；
+`/places` 的资产归属页面入口只服务待确认建议队列，本夹具无 GPS 事实故未走该路径；
+30 万容量/多进程/真实权重升级回退/`0014` 实测迁移耗时/C 级打包未执行。
+`.pytest-tmp` 对受限令牌仍为 `PermissionError [WinError 5]`（既有环境事实，未改 ACL），本卡测试改用项目内
+全新 basetemp 并经正常 Windows 权限路由执行。
+
+下一任务为 **P3-08C — P3-08B 的独立两阶段审查**，任务卡 [docs/tasks/P3-08C.md](tasks/P3-08C.md)：
+**阶段 A：独立新会话 DS-H / DeepSeek V4.1 Flash / 高推理做全量工程主审**（完整 diff、migration、
+测试证据、ADR-0010/任务卡一致性、跨模块影响、未验证项裁定），仅命中 V3.1 §2.2 六类具名条件才建议升
+DS-MAX；**阶段 B：独立新会话 C2 / GPT-5.6 Sol / high 聚焦终审**（临时保持与写门、人工知识转移矩阵、
+revision/幂等/撤销、`STALE` 与队列生命周期、公开闭集与隐私的最小反例）。两阶段必须分别在两个新会话中
+完成；模型切换由用户在 Codex 中手动完成。
+
+## Latest independent engineering review, stage A — P3-08C DS-H (2026-09-22)
+
+**P3-08C 阶段 A：`ENGINEERING REVIEW FAIL`。** 见
+[阶段 A 报告](reports/P3-08C-dsh-engineering-review.md)。起点 `c7fa68b` + P3-08B 全部未提交改动
+（`git status --short` = 25 modified + 18 untracked）。本卡是审查卡，未改生产代码/migration/ADR/companion/
+既有测试语义；临时反例探针放在被忽略的 `.pytest-basetemp-p308c/`。
+
+**通过面。** `0014` 两表（真实外键 `old_face_id`、故意无外键 `new_face_id`、自映射 `CHECK`、
+`UNIQUE(old_face_id,new_face_id)`、闭集 `state`/`candidate_state`）与第三次日志重建正确，`0001`～`0013`
+逐字节未动，`schema_version 13 → 14`；ADR-0010 §2.1～§2.3、§3.1、§3.2、§3.4、§4、§5.1～§5.4、§6、§7、§10
+的对应实现均有一致证据（两谓词分离与同事务同时点读取、判定顺序、释放集合只含 confirm/reject、`undo → OPEN`
+恢复保持、双向继承基数、保守 `MANUAL_UNASSIGNED`、肯定/否定冲突整批拒绝、幂等先于 revision、
+`max(before,live)+1`、一次人工事实变化一次 `PERSON_CHANGED` 且不写图片向量 outbox）；§10 顺序修复用
+`_faces_needing_link_restore()` + `_clear_effective_links()` + `forced_keys`/`revision_hints` 落地，且
+"语义 no-op 的撤销仍零改动"的既有用例未改通过。`media/face_crop.py` 的读取容忍经探针确认不掩盖坏数据
+（arity/degenerate/not-a-list 仍原码拒绝）。地名包示例上界 `13 → 14` 恰当（`content_sha256` 是文件清单
+哈希，与兼容区间无关）。证据：专项 `test-results/p3-08c-dsh-focused.xml` **108 / 0 / 0 / 0**；完整
+`test-results/p3-08c-full.xml` **1450 / 0 / 0 / 48**（189.0 s，48 skip 为未装 pinned 权重的环境跳过）；
+Ruff、`git diff --check`、`uv lock --check`（95 packages）全 clean。
+
+**失败面（必须修）。** 映射错误面没有做到 §8.2 的"逐码旁闭"：真实 HTTP 响应
+`GET /api/v1/face-mappings?limit=999` 答 `details={"field":"limit","maximum":200}`、
+`GET /api/v1/face-mappings/not-a-face-id` **完全没有 `details`**、
+`?limit=many` 与 `?state=decided` 透传通用 `details={"errors":[...]}`。四个响应都被本卡自带校验器
+（`contract_errors(body, "MappingApiError")`）判为 `$: oneOf matched 0`：`VALIDATION_ERROR` 的冻结允许键
+只有 `reason`/`old_face_id`/`new_face_id`/`asset_id` 且 `reason` 必填。根因是
+`persons/read.py:157-168`（`check_mapping_limit` 自造 `field`/`maximum`）、`persons/read.py:389-397`
+（state 校验同形）、`persons/read.py:429-439`（`mapping_group()` 丢掉 `CatalogError` 的 `reason`）与
+`api/routes.py:951-972`（`state: Literal[...]`/`limit: int | None` 让传输层先答）。现有用例只断言
+status 与 `code`，从未读取这些响应的 `details`，因此全绿没有拦住。修复面固定为上述两文件 + 两处测试断言，
+不得放宽 companion、不得改 ADR/迁移/前端/其它端点约定。
+
+**需裁定面。** 探针显示"同一对脸在 `STALE` 之后被再次写入"时，映射行永久停留 `STALE`
+（`live_candidate_rows()` 排除 `STALE`，`_upsert_mapping_row()` 只刷新证据/`updated_at`），group 报
+`NO_CANDIDATE` 且该对脸无法确认；而 §3.3 把 `NO_CANDIDATE` 定义为"本次检测没有匹配脸"、§7 回退条要求
+"重新建候选"。该行为保守（不转移/不创建/不删除 authority、不推进 filter revision），但必须在修复轮内
+二选一并落盘：在契约轮把 `STALE` 注明为终态，或实现"存活且合格即复活 + 新用例"。
+
+**未验证项裁定。** P3-08B 报告 §7 五条均可接受：`BROW-002` 的 `/search` 人物条件输入属 P3-07B 未交付的
+新界面范围（API 级等价证据存在，建议登记为 P3-08D 候选，不在本卡夹带）；`/places` 资产归属入口属地点
+功能面；30 万容量/多进程/真实权重升级回退/`0014` 实测耗时/C 级打包不在本卡验收等级（B + D + 记录式
+浏览器闭环）内，报告也未标 PASS；矩阵建议的 `test_p3_person_search_sessions.py` 在仓库不存在，§5 已注明
+替换为既有 `test_p3_person_search_filter.py`；窄宽检查为内置浏览器 viewport 覆盖。
+
+**下一步（不生成 P3-08D）。** 回到 **DS-H / DeepSeek V4.1 Flash / 高推理**新会话，只修
+`persons/read.py`、`api/routes.py` 与对应两处测试断言的错误面，并裁定 `STALE` 终态；修复后由
+**C2 / GPT-5.6 Sol / high** 新会话只短审这三条边界（真实 422 的逐码闭集、
+保持/释放/队列与 §10 顺序修复未被波及），通过后才标 P3-08C PASS 并生成 `docs/tasks/P3-08D.md`。
+未升级 DeepSeek max：两条问题都有最小反例与明确修复面，未命中 V3.1 §2.2 任何具名条件。
+模型切换始终由用户在 Codex 中手动完成。
+
+## Latest correction round — P3-08C (2026-09-22, DS-H)
+
+**P3-08C 修复轮：`CORRECTIONS APPLIED / SOL SHORT RE-REVIEW PENDING`。** 见
+[修复轮报告](reports/P3-08C-dsh-correction-round.md)。起点 `c7fa68b` + P3-08B 全部未提交改动；未改
+ADR-0010、两份 companion、65 条矩阵、migration `0001`～`0014`、依赖、`PhotoSearch.spec`、`web/**`。
+
+- **阶段 A §5.4 的四个真实 422 反例全部闭合**：`?limit=999`/`?limit=many` 答
+  `details={"reason":"limit"}`、`?state=decided` 答 `{"reason":"state"}`、坏 `old_face_id` 答
+  `{"reason":"old_face_id"}`；根因（`check_mapping_limit` 自造 `field`/`maximum`、state 校验同形、
+  `mapping_group()` 丢 `reason`、`api/routes.py` 让传输层先答）按固定面收口，`list_face_mappings()` 的
+  `state`/`limit` 改为 `str` 透传、由读取层校验；`PersonService.mapping_page()` 同步改为原样转发。
+- **同类第五处一并修好**：`INVALID_CURSOR` 的冻结形状是**空对象**，共享信封却把空 `details` 当可选项
+  丢弃，真实 422 因此缺必填字段。不能全局改信封（`PlaceApiErrorDetails` 只接受 7 键对象或 `null`，且阶段 A
+  明令不得改其它端点约定），故新增显式 `ApiError(closure_details=True)` 选项，仅映射读取层使用；
+  `SESSION_REQUIRED`、`/persons`、`/faces`、`/places` 响应实测逐字节不变，`/face-mappings` 的
+  `INVALID_CURSOR` 补上 `details={}`。
+- **§6.3 裁定：实现复活（选项 2）**。同一对脸存活且本次合格时，`OPEN` group 的映射行由 `STALE` 回到
+  `SUGGESTED`（`+1` revision，不倒退），group 由既有 `_recompute_group()` 重算 `candidate_state`；
+  已决策 group 不复活（§7 不许重检测改写人工决定），重复提交仍答 `FACE_MAPPING_CONFLICT`。被改写的既有
+  断言只有 `test_removed_candidate_becomes_stale` 末段（原钉住“复写不复活”），并新增
+  `test_a_decided_group_is_not_reopened_by_a_reappearing_pair`。
+
+实测：专项 `test-results/p3-08c-fix-focused.xml` **109 / 0 / 0 / 0**；完整
+`test-results/p3-08c-fix-full.xml` **1451 / 0 / 0 / 48**（227.3 s，48 skip 全为未装 pinned 权重的环境
+跳过）；Ruff、`git diff --check`、`uv lock --check`（95 packages）全 clean；真实 HTTP 闭包探针 6/6
+`VALID`（阶段 A 的四个反例 + 外来游标 + 未知 group），信封范围探针证明 4 个其它端点逐字节不变。
+
+**P3-08C 仍未 PASS，`docs/tasks/P3-08D.md` 仍未生成**；未升级 DeepSeek max（两点都有最小反例与固定
+修复面，未命中 V3.1 §2.2）。下一步为**阶段 B — C2 / GPT-5.6 Sol / high 新会话**：只读修复轮报告 §6 的压缩
+交接包，短审“真实 422 的逐码闭集（含新引入的 `closure_details` 机制）、保持/释放/队列与 §10 顺序修复未被
+波及、`STALE → SUGGESTED` 复活与 `OPEN` 边界”三条；通过后才标 P3-08C PASS 并生成
+`docs/tasks/P3-08D.md`。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest final Sol short re-review — P3-08C closure (2026-09-22)
+
+**P3-08C：PASS（C2 FINAL SHORT RE-REVIEW）。** 最终结论见
+[Sol 聚焦终审报告](reports/P3-08C-sol-focused-review.md)。阶段 B 严格只审修复轮 §6 点名的三条边界，没有
+重复阶段 A 全量主审：
+
+- 真实 HTTP 的 `limit=999`、`limit=many`、`state=decided`、坏 `old_face_id`、外来游标、未知 group、
+  `FACE_MAPPING_STALE` 与 `FACE_NOT_FOUND` 均落在 ADR-0010 §8.2 的逐码严格 `oneOf`；新增
+  `closure_details` 默认关闭，只在映射 `INVALID_CURSOR` 需要必填空对象时显式启用，未改变其它端点信封。
+- 保持仍与人工锁/活动排除在自动关联写事务的同一时点读取；confirm/reject 释放后重排队，`undo → OPEN`
+  恢复保持；§10 merge/undo 仍先整体清除影响集合内有效链接，再按 before 快照前向恢复。
+- 存活且重新合格的 pair 只在 group 仍为 `OPEN` 时由 `STALE → SUGGESTED`，revision `+1` 且不自动确认；
+  已决策 group 不被重检测重开，再次提交仍拒绝。
+
+Sol 独立聚焦 JUnit `test-results/p3-08c-sol-focused.xml` 为 **22 tests / 0 failures / 0 errors / 0 skipped**。
+首次 basetemp 尝试遇到既有 Windows ACL `PermissionError [WinError 5]`；未改 ACL，使用全新的项目内 basetemp
+并经正常权限路由后通过。阶段 A/修复轮完整证据 **1451 / 0 / 0 / 48 environment skips** 仅引用、未在 Sol
+阶段重复运行；`git diff --check` 与 `uv lock --check`（95 packages）clean。未触碰真实照片库。
+
+P3-08C 未把范围外证据改写为 PASS：30 万容量、多进程、真实权重升级/回退、`0014` 实测迁移耗时与 C 级
+打包仍按既有裁定后置；P3-08B 修复轮未改前端。`/search` 页面尚无人物条件输入，所以 `BROW-002` 的
+“人物 any/all × 地点 AND → 人物纠错后旧会话 stale → 重搜”仍未执行，现已独立排入下一任务。
+
+下一任务为 **P3-08D — 搜索页人物筛选与 BROW-002 真实浏览器闭环**，任务卡
+[docs/tasks/P3-08D.md](tasks/P3-08D.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**。它只复用已冻结的
+ADR-0009/API 做前端接线和记录式浏览器验证；若需要修改 API/人物 authority，必须停止并另行裁定。请在
+Codex 中手动切换模型/推理档后继续。
+
+## Latest implementation — P3-08D search-page person filter and BROW-002 browser closure (2026-09-22)
+
+**P3-08D：PASS（B + 一次记录的真实浏览器 smoke；`SOL_NOT_REQUIRED`）。** 详细报告
+[P3-08D 报告](reports/P3-08D-search-person-filter-browser-closure.md)。起点 `c7fa68b` + P3-08B/P3-08C 的全部
+未提交改动（开始前 25 modified + 18 untracked，全部保留）。
+
+`/search` 页面接入 P3-07B 已实现、但 UI 缺失的人物条件：人物选择只来自受会话保护的
+`GET /api/v1/persons?kind=all&limit=25[&cursor=…]`（一页一读、不物化全表、不读库、不自行解析 `merged_into`），
+选项显示「名称或未命名占位 + `#person_id` + 照片/脸计数」并带显式 `label[for]`；`person_ids`/`person_match`
+只在真选中时按升序去重发送（未选人时 `all` 选项 disabled 且强制 `any`），成功后显示服务端 canonical 回显；
+条件指纹（文本/来源/可用性/地点/后代/地点状态/人物集合与匹配方式/每页数量）变化后拒绝用旧游标续页并要求重搜；
+schema <13 或人物读 API 不可用时人物控件明确禁用并说明原因；上传搜图请求不含任何人物字段。
+
+同时把 `CATALOG_FILTER_REVISION_STALE` 的页面文案改为同时点名人物（该 revision 为人物/地点/可见性共用）。
+改动面：`web/search.{html,css,js}`、`tests/unit/test_api_frontend.py`（+10 个静态契约用例）、
+`docs/diagnostics/frontend-smoke-checklist.md` 新增 §8、新夹具
+`tools/diagnostics/search_person_smoke_fixture.py`。未改 ADR-0009/0010、companion、API/search service、
+persons/**、migration/schema、依赖、`uv.lock`、`PhotoSearch.spec` 或其它页面。
+
+实测：专项 `test-results/p3-08d-focused.xml` **131 / 0 / 0 / 0**；完整 `test-results/p3-08d-full.xml`
+**1461 / 0 / 0 / 48**（221.9 s，48 skip 全为未装 pinned 权重的环境跳过）；Ruff、`git diff --check`、
+`uv lock --check`（95 packages）clean。记录式真实浏览器（Codex 内置浏览器，非 Playwright/Selenium PASS）：
+`any`=资产 #1/#6、`all`=资产 #1、`人物 #1 × 地点 #1`=资产 #6（与夹具用生产 `search_request` 记录的期望集合
+逐条一致）、分页 25→30 且已选 id 不丢、第二标签页改名后旧 continuation 明确
+`CATALOG_FILTER_REVISION_STALE` 并保留条件、重搜得到更新后的 canonical 回显、清空人物恢复无人物条件、
+同标签的 `#3`/`#4` 各自独立、键盘 `Tab`/`Space`/`Enter` 可达可用、窄宽（内置浏览器实际视口
+`clientWidth=380`）无横向溢出；DOM/URL 无路径、无 token、无 person id，访问日志全在
+`/api/v1/*`、`/search`、`/persons`、`/web/*`，`/geo` 命中 0，凭证只在启动器横幅与 `token=<redacted>` 出现。
+
+未验证项（见报告 §7，不得当 PASS）：30 万容量下人物条件延迟、多进程会话、`/search` 自然语言解析器、
+C 级打包；窄宽为内置浏览器真实视口（`viewport` 覆盖在本机不改变窗口尺寸），非设备级模拟；上传路径在无
+图像编码器时只观察到结构化 409。环境事实：受限令牌下 pytest 与服务端都无法使用系统 `%TEMP%`
+（既有 `WinError 5`），本卡全部测试与浏览器服务改经正常 Windows 权限路由（并把 `TEMP`/`TMP` 指向项目内
+临时目录）执行，未改 ACL。
+
+本卡未改任何冻结协议语义，故按任务卡记录 `SOL_NOT_REQUIRED`；**P4 阶段由此开始**。下一任务为
+**P4-00A — 拍摄时间/时区/回退来源/新 order 契约**，任务卡 [docs/tasks/P4-00A.md](tasks/P4-00A.md)：
+**阶段 A 由独立新会话 DS-H / DeepSeek V4.1 Flash / 高推理草拟并工程预审契约**（A 级），随后
+**阶段 B 必须由独立新会话 C2 / GPT-5.6 Sol / high 聚焦终审并冻结**（任务表点名 Sol，不可跳过）。
+阶段 A 结束时状态只能写 `ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`，不得提前 PASS，
+也不得生成 P4-00B。模型切换始终由用户在 Codex 中手动完成。

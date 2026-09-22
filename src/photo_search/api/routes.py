@@ -15,7 +15,7 @@ from email.utils import formatdate
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from photo_search.api.context import ApiContext
@@ -53,6 +53,9 @@ from photo_search.api.models import (
     ImageSearchResultModel,
     JobListResponse,
     JobRecord,
+    MappingGroup,
+    MappingListResponse,
+    MappingOperationResponse,
     PersonListResponse,
     PersonMergeRequest,
     PersonNameRequest,
@@ -944,6 +947,65 @@ async def list_person_operations(
 
 
 @router.get(
+    "/face-mappings",
+    response_model=MappingListResponse,
+    summary="Paged face-redetection review groups (open or all)",
+)
+async def list_face_mappings(
+    request: Request,
+    state: str = "open",
+    limit: str | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """The review list of ADR-0010 §8.1.
+
+    ``state=open`` shows the groups a human still has to decide; ``state=all`` adds the
+    decided ones. The limit is *validated* (1..200, default 50) rather than clamped, the
+    cursor is the independent ``fm1`` space, and every field is an id, a state, a revision, a
+    count or a controlled crop URL - never a box, a landmark, a similarity or a path.
+
+    Both parameters are typed as plain strings on purpose: ADR-0010 §8.2 freezes the refusal
+    body of this surface, and the transport validator would answer first with its generic
+    ``{"errors": [...]}`` shape. The read layer therefore parses ``limit`` and checks ``state``
+    itself, so every 422 of this path is the frozen ``VALIDATION_ERROR`` closure.
+    """
+    return persons_of(request).mapping_page(limit=limit, cursor=cursor, state=str(state))
+
+
+@router.get(
+    "/face-mappings/{old_face_id}",
+    response_model=MappingGroup,
+    summary="One face-redetection review group and its live candidates",
+)
+async def get_face_mapping(request: Request, old_face_id: str) -> dict[str, Any]:
+    return persons_of(request).mapping_group(str(old_face_id))
+
+
+@router.post(
+    "/face-mappings/decisions",
+    response_model=MappingOperationResponse,
+    summary="Confirm or reject 1..200 review groups atomically, or nothing at all",
+)
+async def post_face_mapping_decisions(
+    request: Request, payload: Any = Body(default=None)
+) -> dict[str, Any]:
+    """The one mapping write of ADR-0010 §5.2.
+
+    The body is validated by the mapping module - not by the transport - so every refusal
+    answers in the frozen per-code ``details`` closure (``VALIDATION_ERROR.reason``,
+    ``FACE_MAPPING_STALE`` revision pair, ...) instead of a transport-shaped error list.
+    """
+    body = payload if isinstance(payload, Mapping) else {}
+    return persons_of(request).decide_face_mappings(
+        payload=payload,
+        contract_version=body.get("contract_version"),
+        request_id=body.get("request_id"),
+        asset_id=body.get("asset_id"),
+        decisions=body.get("decisions"),
+    )
+
+
+@router.get(
     "/persons/{person_id}",
     response_model=PersonRecord,
     summary="The canonical person behind one id, with alias and member counts",
@@ -1025,7 +1087,10 @@ async def post_person_split(
 @router.post(
     "/person-operations/{operation_id}/undo",
     response_model=(
-        PersonOperationResponse | FaceOperationResponse | PersonSplitOperationResponse
+        PersonOperationResponse
+        | FaceOperationResponse
+        | PersonSplitOperationResponse
+        | MappingOperationResponse
     ),
     summary="Compensate one committed person operation, or refuse it whole",
 )

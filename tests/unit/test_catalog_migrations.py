@@ -48,6 +48,11 @@ CORE_TABLES = {
     "face_index_generations",
     "face_index_outbox",
     "face_person_links",
+    # P3-08B: the reviewable old/new face mapping of one asset (ADR-0010). The group row is
+    # the review unit keyed by the surviving old face, the mapping row one stable candidate
+    # pair; both are additive to the frozen 0010/0011 tables.
+    "face_redetection_groups",
+    "face_redetection_mappings",
     "faces",
     "file_locations",
     "geo_dataset_files",
