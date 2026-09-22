@@ -90,6 +90,47 @@
               <option value="false">否</option>
             </select>
           </p>
+          <fieldset id="capture-filter" class="capture-filter wide">
+            <legend>拍摄时间范围（只作用于普通搜索）</legend>
+            <p class="hint" id="capture-hint">
+              条件只命中「拍摄时间」（文件自己声明的 EXIF 原始/数字化时间），左闭右开：
+              包含起始时刻、不包含结束时刻。只写日期时按当天 00:00:00.000 处理；
+              带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）会被服务端以
+              <code>INVALID_TIME_RANGE</code> 明确拒绝，因为拍摄时间没有唯一时区。
+              没有拍摄时间的照片（只有文件时间）永远不参与这个条件；上传搜图也不携带它。
+            </p>
+            <div class="capture-controls">
+              <p>
+                <label for="query-capture-from">从（含）</label>
+                <input
+                  id="query-capture-from"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="32"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="YYYY-MM-DD"
+                />
+              </p>
+              <p>
+                <label for="query-capture-to">到（不含）</label>
+                <input
+                  id="query-capture-to"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="32"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="YYYY-MM-DD"
+                />
+              </p>
+              <p class="filter-actions">
+                <button type="button" id="capture-clear">清空拍摄时间</button>
+              </p>
+            </div>
+            <p class="hint" id="capture-echo"></p>
+            <p class="state-block" id="capture-state" role="status" aria-live="polite"></p>
+          </fieldset>
           <fieldset id="person-filter" class="person-filter wide">
             <legend>人物筛选（只作用于普通搜索）</legend>
             <p class="hint" id="person-hint">
@@ -163,6 +204,8 @@
         <p class="hint">
           人物筛选只作用于普通搜索：这个上传请求不携带
           <code>person_ids</code>/<code>person_match</code>（服务端的 multipart 闭集里没有这两个字段）。
+          拍摄时间范围同理：multipart 闭集里没有 <code>capture_from</code>/<code>capture_to_exclusive</code>，
+          上传图搜索不会收到也不会发送任何拍摄时间条件。
         </p>
         <form id="upload-form" class="filters" novalidate>
           <p class="wide">

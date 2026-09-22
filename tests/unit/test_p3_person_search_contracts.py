@@ -981,10 +981,29 @@ def test_the_frozen_echo_keys_are_the_implemented_echo_keys() -> None:
         connection.close()
     # ``binding`` is added by the service when it shapes the response, so the two sets are
     # compared with that one key accounted for.
-    assert set(echo) | {"binding"} == set(
-        SCHEMA["$defs"]["SearchFiltersEcho"]["required"]
+    #
+    # P4-00B (ADR-0011 §8.2) extends this one assertion - and only by adding keys: the live
+    # echo is now ``SearchFiltersEchoV2``, i.e. the frozen ADR-0009 eleven keys plus exactly
+    # ``capture_from``/``capture_to_exclusive``. The P3 companion itself is untouched, as the
+    # hash check above requires, so both the historical key set and the live superset are
+    # asserted here.
+    live = set(echo) | {"binding"}
+    assert live == set(SCHEMA["$defs"]["SearchFiltersEcho"]["required"]) | {
+        "capture_from",
+        "capture_to_exclusive",
+    }
+    p4_schema = json.loads(
+        (
+            ROOT
+            / "docs"
+            / "decisions"
+            / "contracts"
+            / "p4-time-contracts.v1.json"
+        ).read_text(encoding="utf-8")
     )
+    assert set(p4_schema["$defs"]["SearchFiltersEchoV2"]["required"]) == live
     assert echo["person_ids"] == [] and echo["person_match"] == "any"
+    assert echo["capture_from"] is None and echo["capture_to_exclusive"] is None
 
 
 def test_the_frozen_bounds_are_the_implemented_bounds() -> None:

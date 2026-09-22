@@ -121,6 +121,28 @@ closes the P3 phase. The next task is **P4-00A — 拍摄时间/时区/回退来
 ([docs/tasks/P4-00A.md](tasks/P4-00A.md)), whose stage A is contract drafting and the full engineering pre-review
 by an independent **DS-H / DeepSeek V4.1 Flash / high reasoning** session, followed by a mandatory stage B
 **C2 / GPT-5.6 Sol / high** focused freeze. Model switching remains manual.
+**P4-00A is PASS** (A level: ADR-0011 **Accepted** after DS-H drafting, two bounded correction rounds and Sol
+focused freeze; companion SHA-256 `80189349bb4ea306225f9eae77ae9266c6d81c42de52c0b72bdc940a0702afd7`,
+final evidence **58 / 0 / 0 / 0**). **P4-00B is PASS（独立 DS-H 全量工程主审；`SOL_NOT_REQUIRED`）**:
+`0015_taken_time.sql` +
+`SUPPORTED_SCHEMA_VERSION 14 → 15`, the pure-CPU `taken_time_extract` chain
+(`EXIF_ORIGINAL → EXIF_DIGITIZED → EXIF_ROOT → FILE_MTIME`, civil key without offsets, one
+`CAPTURE_TIME_CHANGED` per transaction), `capture_desc` + `capture_from`/`capture_to_exclusive` on the
+asset listing and the search envelope (filters echo **11 + 2 = 13** keys), the conditional `taken_time`
+honesty block and the closed detail object, the `/` + `/search` capture UI, the `taken_time` CLI and the
+browser-smoke fixture. Focused **268 / 0 / 0 / 0**, full **1598 / 0 / 0 / 48**, D-level 8 injections,
+a real onedir rebuild whose bundle carries `0001`～`0015` SHA-256-identical to source, a packaged smoke with
+`status=ok`/`problems=[]` and packaged `schema_version=15`, the missing-0015 counterexample
+(`409 SCHEMA_INCONSISTENT`, zero writes) and the recorded in-app-browser closure of ADR-0011 §10's eight
+steps. See [the P4-00B report](reports/P4-00B-taken-time-implementation.md).
+The independent DS-H full engineering review re-ran the complete suite (**1598 / 0 / 0 / 48**), a focused
+**353 / 0 / 0 / 0**, rebuilt the onedir (all 15 migrations and all 27 packaged `photo_search` data resources
+byte-identical to source, closing a stale packaged `web/app.js` that the implementation's C-level evidence
+predated), re-ran the packaged smoke (`status=ok`, `problems=[]`, packaged `schema_version=15`, rules_version 1)
+and the missing-0015 counterexample (`409 SCHEMA_INCONSISTENT`, zero writes), and re-ran key recorded-browser
+steps including the half-open capture bounds; see [the DS-H review](reports/P4-00B-dsh-engineering-review.md).
+The next task is **P4-00C-A — HEIC 业务实现** ([docs/tasks/P4-00C-A.md](tasks/P4-00C-A.md)), followed by the
+environment-only stage **P4-00C-B** ([docs/tasks/P4-00C-B.md](tasks/P4-00C-B.md)).
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1800,3 +1822,180 @@ P3-08D 的 focused 前端契约套件（85 / 0 / 0 / 0）确认收口状态与�
 **阶段 B 必须由独立新会话 C2 / GPT-5.6 Sol / high 聚焦终审并冻结**（任务表点名 Sol，不可跳过）。
 阶段 A 结束时状态只能写 `ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`，不得提前 PASS，
 也不得生成 P4-00B。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest contract draft, stage A — P4-00A DS-H (2026-09-22)
+
+**P4-00A 阶段 A：`ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`。** 见
+[阶段 A 报告](reports/P4-00A-dsh-contract-draft.md)。起点 `8e48fc7`（工作树干净）。
+
+本卡只冻结契约（A 级），交付 ADR-0011（**Proposed**）、伴随物
+`docs/decisions/contracts/p4-time-contracts.v1.json`（修复轮后 SHA-256
+`80189349bb4ea306225f9eae77ae9266c6d81c42de52c0b72bdc940a0702afd7`）与
+`tests/unit/test_p4_time_contracts.py`（修复轮后 39 用例）；未改任何生产代码、migration、`schema_version`、
+依赖、`uv.lock`、`PhotoSearch.spec`、`web/**` 或既有 companion，未读真实照片库。
+
+冻结要点：`asset_metadata` 主键 + 六列与 §4.2 逐列一致；`taken_at_sort` 是**非负 civil 键**
+（原点 `0001-01-01T00:00:00.000`，**不是** instant，偏移永不参与计算），展示值定宽且与键同序；来源
+闭集 `EXIF_ORIGINAL → EXIF_DIGITIZED → EXIF_ROOT → FILE_MTIME` 逐级吞掉坏值、禁止扫描时间/当前时间
+兜底，其中只有前两级是「拍摄时间」，`EXIF_ROOT`/`FILE_MTIME` 必须显示「文件时间」且不参与时间过滤；
+新 `order=capture_desc` 使用 `c1` arity 4 独立游标并绑定**同一个** `catalog_filter_revision`
+（失配 409 stale，不新造 revision）；时间条件以 `capture_from`/`capture_to_exclusive` 左闭右开进入
+同一 AND 集合与同一 `query_hash`；新增 cause `CAPTURE_TIME_CHANGED`；`filters` 回显按
+`SearchFiltersEchoV2`（ADR-0009 的 **11** 键 + 2 = 13 键）**加性取代**并声明任何既有 companion 文件
+都不修改；新增错误码
+`INVALID_TIME_RANGE` 只用既有 details 键；`0015_taken_time.sql` 只建表 + 索引 + 库级规则版本键、
+`SUPPORTED_SCHEMA_VERSION 14 → 15`、`0001`～`0014` 逐字节不变、未抽取旧库的既有字段逐字不变；因为
+`0015` 是打包数据资源（`collect_data_files('photo_search')` + `migration_files()` 连续覆盖要求），
+**P4-00B 必须加 C 级打包验收**。P4-00B 前置清单（8 条 D 级故障注入 + 3 条 C 级打包 + 8 条记录式浏览器
+步骤 + 命令模板）已写入 ADR §10。
+
+实测：专项 `test-results/p4-00a-contracts.xml` **39 / 0 / 0 / 0**（修复轮后）；Ruff、`git diff --check`、
+`uv lock --check`（95 packages）clean。环境事实：受限令牌下 pytest 的 basetemp/`tmp_path` 目录枚举仍是
+既有 `PermissionError [WinError 5]`，本卡测试改经正常 Windows 权限路由执行（未改 ACL）；同一受限环境下
+`ruff check .` 会打印一条 `os error 5` 遍历警告，正常权限路由下无警告且通过。
+
+未验证项（不得当 PASS）：30 万容量下的 `capture_desc`/时间过滤延迟与最终索引列序、全库抽取耗时、
+多进程并发、`0015` 实测迁移耗时、真实内部存储样本覆盖率、GTX 1660 实机；本卡也未跑
+`tests/unit tests/integration` 全量套件（A 级不要求）。
+
+阶段 A 收口状态为 `ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`；**阶段 B 判定
+`FAIL / DO NOT FREEZE`**，四条边界不通过（见
+[Sol 聚焦终审报告](reports/P4-00A-sol-contract-freeze.md)）：游标不变量未冻结、C 级判定错误、
+`filters` 回显键数写成 13 + 2、`taken_time` 四态不是三计数纯函数。
+
+## Latest correction round — P4-00A DS-H (2026-09-22)
+
+**P4-00A 修复轮：`CORRECTIONS APPLIED / SOL SHORT RE-REVIEW PENDING`。** 见
+[阶段 A 报告 §9](reports/P4-00A-dsh-contract-draft.md)。只改契约层（ADR-0011、P4 伴随物、契约测试、
+报告与状态），未触碰生产代码、migration、`schema_version`、依赖、`uv.lock`、`PhotoSearch.spec`、
+`web/**`、ADR-0001～0010、既有 companion 或既有测试语义。
+
+- **边界 3**：`CaptureCursor` 改为三字段 `prefix`/`arity`/`values`，用 `prefixItems` 逐位冻结
+  `known ∈ {0,1}`、`asset_id ≥ 1`、revision ≥ 0，并用 `allOf`+`if/then` 冻结尾部桶 sort 元素恒为 0；
+  删除重复的 `catalog_filter_revision` 字段。阶段 B 的三条探针复跑结果由 `[]` 变为
+  `$.values[0]: enum`、`$.values[1]: const`、`$.values[2]: minimum`，多余字段得到 `unexpected`。
+- **边界 5**：ADR §9/§10 纠正为“`0015` 是打包数据资源”，删除“不触发 C 级”，并把 C 级真实打包 smoke
+  （bundle 内 `0001`～`0015` 逐个 SHA-256 一致、`packaged_api_smoke.py`、打包 data root
+  `schema_version=15`、缺件必须报 `SCHEMA_INCONSISTENT`）写入 P4-00B 前置清单。
+- **边界 6**：`filters` 回显基数纠正为 **11 + 2 = 13**（P3 `SearchFiltersEcho.required` 实测 11 键）。
+- **边界 7**：`extracted_assets` 定义改为“按当前 `taken_time_rules_version` 可信的已抽取资产数”，
+  版本失配时与 `capture_time_assets` 一并规范化为 `0`，`state` 真正只是三计数纯函数；补失配最小反例。
+
+修复轮证据：专项 `test-results/p4-00a-contracts.xml` **39 / 0 / 0 / 0**；Ruff、`git diff --check`、
+`uv lock --check`（95 packages）clean；伴随物哈希更新为
+`80189349bb4ea306225f9eae77ae9266c6d81c42de52c0b72bdc940a0702afd7`（ADR §13 同步）。阶段 B 判定通过的
+边界 1/2/4 语义未变、无需重审。未命中 V3.1 §2.2 六类条件，不升 DS-MAX。
+
+**P4-00A 仍未 PASS、ADR-0011 仍为 Proposed、`docs/tasks/P4-00B.md` 仍未生成。** 下一步为
+**C2 / GPT-5.6 Sol / high 新会话**只短审上述四条失败边界及其直接回归面；通过后才把 ADR 转 Accepted、
+标 P4-00A PASS、补状态并生成 `docs/tasks/P4-00B.md`。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest contract freeze — P4-00A PASS (2026-09-22)
+
+**P4-00A：PASS（A 级契约冻结；非实现 PASS）。** [Sol 阶段 B 报告](reports/P4-00A-sol-contract-freeze.md)
+已追加修复轮短审 §5，ADR-0011 状态转为 **Accepted**。
+
+短审只复核首次失败的 4 条边界，均已闭合：`CaptureCursor` 用三字段形状与逐位/尾桶约束拒绝原反例并消除
+双 revision；`0015` 明确是打包数据资源，P4-00B 必须执行 C 级真实冻结包验收；filters 回显纠正为
+**11 + 2 = 13**；规则版本失配时可信抽取/拍摄计数规范化为 0，四态继续是块内三计数纯函数。首次已通过的
+时区/civil 键、回退诚实性、单一 AND/revision/摘要语义未改。
+
+Sol 复核证据：原反例探针分别得到 `enum`/`const`/`unexpected`/`minimum` 拒绝；专项 JUnit
+`test-results/p4-00a-sol-rereview.xml` 为 **39 / 0 / 0 / 0**；Ruff、`git diff --check`、
+`uv lock --check`（95 packages）均 exit 0。pytest 使用全新的项目内 basetemp 并走正常 Windows 权限路由，
+未改 ACL。伴随物 SHA-256 为
+`80189349bb4ea306225f9eae77ae9266c6d81c42de52c0b72bdc940a0702afd7`。
+
+未验证项不变：30 万容量下的查询/索引形状、全库抽取耗时、多进程、真实 `0015` 迁移、真实内部样本、
+GTX 1660；P4-00B 的 D + C + 记录式真实浏览器验收也尚未执行。
+
+下一任务为 **P4-00B — 拍摄时间迁移、增量抽取、API/UI 与打包闭环**，任务卡
+[docs/tasks/P4-00B.md](tasks/P4-00B.md)。推荐 **DS-H 实现 + 独立 DS-H 全量工程主审**；必须执行
+**D + C + 记录式真实浏览器**。请在 Codex 中手动切换到 DS-H / DeepSeek V4.1 Flash / 高推理的新会话继续。
+
+## Latest implementation — P4-00B taken-time migration, extraction, API/UI and packaging (2026-09-22)
+
+**P4-00B：IMPLEMENTATION + ACCEPTANCE COMPLETE / INDEPENDENT DS-H ENGINEERING REVIEW PENDING
+（未标 PASS，未生成下一卡）。** 详细报告
+[P4-00B 报告](reports/P4-00B-taken-time-implementation.md)。起点 `8e48fc7` + P4-00A 全部未提交契约交付物；
+本卡改动同样未提交（不加 commit）。
+
+交付：`0015_taken_time.sql`（`asset_metadata` 主键 + 六列 + 表级 CHECK + capture 索引 + 库级
+`taken_time_rules_version=1`，不回填、不碰 `0001`～`0014`）；`SUPPORTED_SCHEMA_VERSION 14 → 15`；
+新的纯 CPU `taken_time_extract` 处理器（复用 P1-04 受控边界与 P2-02 调度，按 `EXIF_ORIGINAL →
+EXIF_DIGITIZED → EXIF_ROOT → FILE_MTIME` 逐级吞掉坏值，civil key 不含偏移，观察守卫前后各一次，
+提交事务内写行并**至多一次**推进 `CAPTURE_TIME_CHANGED`）；`GET /api/v1/assets` 的
+`capture_desc`/`capture_from`/`capture_to_exclusive` 与条件性 `taken_time` 四态块；详情闭合
+`taken_time` 对象（无 `taken_at_raw`）；`POST /api/v1/search` 的同一对条件进同一 AND 集合与同一
+`query_hash`，filters 回显加性升级为 **11 + 2 = 13** 键；`/` 与 `/search` 的拍摄时间范围、
+`capture_desc`、文件时间标注与诚实空结果提示；`taken_time` CLI 与浏览器 smoke 夹具。
+
+实测：专项 `test-results/p4-00b-focused.xml` **268 / 0 / 0 / 0**；完整
+`test-results/p4-00b-full.xml` **1598 / 0 / 0 / 48**（196.7 s，48 skip 全为未装 pinned 权重的环境跳过）；
+Ruff、`git diff --check` clean，`uv lock --check` 仍 95 packages。D 级按 ADR-0011 §10 逐条执行
+（有数据升级、未提交/失败迁移回滚、抽取中断重启、读中变化不采纳且留待重抽、来源离线/位置 MISSING、
+多位置确定性、规则版本门禁、抽取写入后 `c1` 游标 stale 且重开不重不漏）。C 级：真实重建 onedir，
+bundle 内 `0001`～`0015` 逐个 SHA-256 与源码一致；`packaged_api_smoke.py` 在中文/空格目录
+`status=ok`/`problems=[]`、打包 data root `schema_version=15`（含 `asset_metadata`/capture 索引/
+规则版本）；独立副本删掉 0015 后真实 HTTP 请求得 `409 SCHEMA_INCONSISTENT`（versions 1..14 vs 期望
+1..15）且 data root 零写。记录式真实浏览器（内置浏览器）完成 §10 的 8 项：规范化范围回显与左闭右开、
+`capture_desc` 尾桶「文件时间」、有/无偏移显示、空结果 READY 与 PENDING 两种诚实措辞、第二标签页
+改地点后 409 stale 并保留条件、上传路径不含 capture 字段、键盘可达 + 380 px 无横向溢出、DOM/URL/日志
+隐私扫描（`/geo` 命中 0、访问日志 `token=<redacted>`）。
+
+本卡的三处契约留白裁定与两处兼容处理记录在报告 §9（失配时详情 `null`；输入修订 = 内容哈希 + 录制观察
+摘要；失配时 `capture_desc` 仍确定性排序；示例地名包 `compatible_catalog_schema.maximum` 14 → 15；
+非模型处理器记录 `photo-search-runtime@1` 能力）。
+
+未验证项（不得当 PASS）：30 万容量下的 `capture_desc`/时间过滤延迟与索引列序、全库抽取耗时、多进程
+并发、`0015` 真实库迁移耗时、真实内部样本覆盖率、GTX 1660 实机；窄宽为内置浏览器真实视口而非设备级模拟。
+
+**停止点**：下一步请在**新会话**用 **DS-H / DeepSeek V4.1 Flash / 高推理**做全量工程主审（完整 diff、
+含未提交文件、迁移/事务/revision/重启状态、API/search/UI 依赖面、测试真实性、bundle 资源清单、
+ADR-0011/任务卡一致性）；通过后才标 P4-00B PASS、更新本文件并生成下一任务卡。模型切换始终由用户在
+Codex 中手动完成。
+
+## Latest independent DS-H engineering review — P4-00B PASS (2026-09-22)
+
+**P4-00B：PASS（独立 DS-H 全量工程主审；`SOL_NOT_REQUIRED`，未命中 V3.1 §2.2、未升 DS-MAX）。**
+完整主审报告 [docs/reports/P4-00B-dsh-engineering-review.md](reports/P4-00B-dsh-engineering-review.md)；
+上文 P4-00B 实现段落的「停止点」已被本阶段满足。观察基线是 `8e48fc7` + P4-00A/P4-00B 全部未提交交付物
+（主审开始与结束时被审交付物均为 29 modified + 16 untracked = 45 项；本阶段只新增主审报告与
+`P4-00C-A`/`P4-00C-B` 任务卡）。**P4-00A/P4-00B 收口提交已完成**：全部交付物 + 主审报告 + 两张下一任务卡
+已作为**一个版本**入库（提交信息 `P4-00A/B: ADR-0011 taken-time contract, 0015 migration, extraction,
+API/UI, packaged closure and DS-H review`，父提交 `8e48fc7`；当前提交号用 `git log -1` 获取），工作树干净。
+
+主审独立复现（不引用被审报告的结论）：完整套件 `test-results/p4-00b-review-full.xml` **1598 / 0 / 0 / 48**
+（205.9 s）；聚焦套件 `test-results/p4-00b-review-focused.xml` **353 / 0 / 0 / 0**；Ruff / `git diff --check` /
+`uv lock --check`（95 packages）在正常 Windows 权限路由下全 clean。C 级用最终源码**真实重建** onedir：
+15 个迁移与 27 个 `photo_search` 数据资源**逐个 SHA-256 与源码一致**；中文/空格目录
+`packaged_api_smoke` `status=ok`/`problems=[]`、打包 data root `schema_version=15` 且
+`asset_metadata`/闭集来源/capture 索引/`taken_time_rules_version=1` 齐全
+（`test-results/p4-00b-review-packaged-smoke.json`）；独立副本删掉 `0015` 后真实 HTTP 得
+**409 `SCHEMA_INCONSISTENT`**（`versions=[1..14]` vs `expected_versions=[1..15]`）且 data root 零写
+（`test-results/p4-00b-review-missing-0015.json`）。夹具独立重建后 `expected` 块与记录文件逐字段相同；
+主审另用真实内置浏览器复跑关键步骤，并补测 ADR §11.4 的「左端含、右端不含」最小反例
+（`from=2022-07-05T18:31:07.000 ⇒ {#8,#1}`、`to_exclusive=同一时刻 ⇒ {#2}`）。
+
+主审唯一阻断级发现是**证据陈旧**（非实现缺陷）：实现阶段的 C 级 bundle 构建于 19:51，而
+`src/photo_search/web/app.js` 在 19:57 又被修过一次，包内 `app.js` 为 43369 B ≠ 源码 45629 B；
+根因是新增的包内检查只比对 migration 脚本，不覆盖 `collect_data_files('photo_search')` 的其它资源。
+主审已在本会话内真实重建并重跑 C 级三条闭环，缺陷关闭；建议把包内检查扩展为全部数据资源（报告 §5 R1）。
+另有四条非阻断建议（`/search` 的 `#capture-state` 从不写入、超长 capture 边界答 `VALIDATION_ERROR`、
+任务卡/ADR §10 的 `tools/build_onedir.py` 应为 `tools/packaging/build_onedir.py`、
+`EXIF_ORIGINAL+HIGH ⇒ offset` 只在载荷校验器强制）与一条覆盖率建议（右端相等的最小用例）。
+报告 §9 的六处契约留白裁定全部被主审**接受**，理由见主审报告 §6。
+
+下一任务按用户要求重新规划为**两段式**（一次会话只用一个模型）：
+
+- **P4-00C-A — HEIC 业务实现：格式策略、方向/GPS/拍摄时间复用与坏文件隔离**，任务卡
+  [docs/tasks/P4-00C-A.md](tasks/P4-00C-A.md)：**DS-H / DeepSeek V4.1 Flash / 高推理** 做业务实现与
+  **B + D** 验收（新增固定版本 `pillow-heif` + `uv.lock`；不得碰 spec/打包工具/打包 smoke）。
+- **P4-00C-B — HEIC 环境与正式包兼容（C1 只做环境）**，任务卡
+  [docs/tasks/P4-00C-B.md](tasks/P4-00C-B.md)：**C1 / GPT-5.6 Terra / medium** 做 onedir 重建、pillow-heif/
+  libheif 进包、打包 HEIC 端到端、降级 fail-closed 反例、`packaged_api_smoke` 扩展（含 P4-00B 主审建议 R1 的
+  全量数据资源审计）；**C 级**。C1 不得改业务语义，发现业务缺陷只交回最小反例。
+
+两段都完成后**另开独立 DS-H 会话**做 A+B 全量工程主审，通过后才标 **P4-00C PASS** 并生成 P4-01。
+当前建议：**直接继续使用当前的 DS-H 档**完成 P4-00C-A；之后请在 Codex 中手动切换到 C1 / GPT-5.6 Terra /
+medium 执行 P4-00C-B。

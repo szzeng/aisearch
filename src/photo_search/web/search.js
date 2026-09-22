@@ -37,6 +37,15 @@
     filter: "权威列表次序",
   };
   var PROJECTION_STATE_TEXT = { SYNCED: "已同步", LAGGING: "仍在追赶" };
+  //: P4-00B: the honest reading of the capture-time block (ADR-0011 §8.1). A capture search
+  //: that returns nothing must say *why*: "the extraction has not run yet" is a different
+  //: fact from "nothing matches".
+  var CAPTURE_STATE_TEXT = {
+    PENDING: "拍摄时间尚未抽取：现在的时间条件命中为空，并不代表没有这些照片。",
+    PARTIAL: "拍摄时间还在抽取中：时间条件的命中可能不完整。",
+    READY: "拍摄时间已抽取完成。",
+    NO_CAPTURE_TIME: "图库里没有任何可用的拍摄时间（只有文件时间），时间条件不会命中任何照片。",
+  };
   var FAILURE_HINT = {
     SEARCH_SESSION_EXPIRED:
       "这个搜索会话已经过期（进程重启或超过有效期）；查询条件已保留，请重新搜索。",
@@ -56,6 +65,9 @@
     SESSION_REQUIRED: "本地会话已失效。",
     INVALID_PERSON_FILTER:
       "人物条件不被接受（例如选了「全部」却没有选中任何人物，或人物数量超过 100）；请检查上面的选择后重搜。",
+    INVALID_TIME_RANGE:
+      "拍摄时间范围不被接受：只支持 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS[.毫秒] 的墙上时间写法，" +
+      "不接受时区后缀（Z 或 ±HH:MM），且起始必须早于结束（左闭右开，空区间会被拒绝）。请修正上面的输入后重搜。",
     PERSON_NOT_FOUND: "所选人物已经不存在；请按服务器的回显重新载入人物并重选。",
     PERSON_REDIRECT_CYCLE: "人物重定向链异常（成环或悬挂）；本次查询已被整请求拒绝，请重新载入人物。",
     SCHEMA_TOO_NEW: "图库的 schema 版本高于本程序支持的版本；请升级程序或改用匹配的数据目录。",
@@ -304,6 +316,13 @@
   function successNotices(body) {
     var lines = [];
     var projection = body.search_projection || {};
+    var capture = captureCondition(body);
+    if (capture.present) {
+      var notice = captureNotice(capture.block, (body.hits || []).length);
+      if (notice) {
+        lines.push({ kind: notice.kind, text: notice.text });
+      }
+    }
     if (projection.state === "LAGGING") {
       lines.push({
         kind: "",
@@ -410,6 +429,63 @@
     return lines;
   }
 
+  //: P4-00B: whether this response carried a capture condition, and its honesty block.
+  function captureCondition(body) {
+    var filters = (body && body.filters) || {};
+    var from = filters.capture_from;
+    var to = filters.capture_to_exclusive;
+    var present =
+      (from !== null && from !== undefined) || (to !== null && to !== undefined);
+    return { present: present, block: (body && body.taken_time) || null };
+  }
+
+  //: ADR-0011 §8.1/§8.4: the honest sentence for a capture-conditioned page. It never turns
+  //: "the extraction has not run" into "there is no match", and it never prints a UTC
+  //: instant - the echoed bounds are wall-clock spellings.
+  function captureNotice(block, hits) {
+    if (!block) {
+      return null;
+    }
+    if (!hits && block.state !== "READY" && block.state !== "NO_CAPTURE_TIME") {
+      return {
+        kind: "",
+        text:
+          (CAPTURE_STATE_TEXT[block.state] || String(block.state)) +
+          "（已抽取 " +
+          number(block.extracted_assets) +
+          "/" +
+          number(block.assets_total) +
+          "，其中有拍摄时间 " +
+          number(block.capture_time_assets) +
+          "）：这一页为空说明拍摄时间还没跟上，不代表这些照片不存在。",
+      };
+    }
+    if (!hits && block.state === "NO_CAPTURE_TIME") {
+      return {
+        kind: "",
+        text:
+          CAPTURE_STATE_TEXT.NO_CAPTURE_TIME +
+          "（资产 " +
+          number(block.assets_total) +
+          " 个，已抽取 " +
+          number(block.extracted_assets) +
+          " 个，可用的拍摄时间 0 个）。",
+      };
+    }
+    return {
+      kind: "informational",
+      text:
+        (CAPTURE_STATE_TEXT[block.state] || String(block.state)) +
+        "（已抽取 " +
+        number(block.extracted_assets) +
+        "/" +
+        number(block.assets_total) +
+        "，其中有拍摄时间 " +
+        number(block.capture_time_assets) +
+        "）。",
+    };
+  }
+
   function failureLines(failure) {
     var lines = [];
     var reason = (failure.details || {}).reason;
@@ -502,6 +578,8 @@
       includeDescendants: els.queryDescendants.value === "true",
       personIds: personIds,
       personMatch: personMatch,
+      captureFrom: els.queryCaptureFrom.value.trim(),
+      captureTo: els.queryCaptureTo.value.trim(),
       pageSize: pageSize,
     };
   }
@@ -768,8 +846,37 @@
       placeState: filters.placeState,
       persons: filters.personIds,
       personMatch: filters.personIds.length ? filters.personMatch : "any",
+      captureFrom: filters.captureFrom,
+      captureTo: filters.captureTo,
       pageSize: filters.pageSize,
     });
+  }
+
+  //: P4-00B: the condition is echoed exactly as the server normalized it (fixed-width
+  //: wall-clock spelling), never as a local guess and never as a UTC instant.
+  function renderCaptureEcho(filters, mode) {
+    var body = filters || {};
+    var from = body.capture_from === undefined ? null : body.capture_from;
+    var to = body.capture_to_exclusive === undefined ? null : body.capture_to_exclusive;
+    if (mode === "image") {
+      text(
+        els.captureEcho,
+        "上传搜图不携带拍摄时间条件：服务端 multipart 闭集里没有 capture_from / capture_to_exclusive。"
+      );
+      return;
+    }
+    if (from === null && to === null) {
+      text(els.captureEcho, "后端回显：本次查询没有拍摄时间条件（两个键都为 null）。");
+      return;
+    }
+    text(
+      els.captureEcho,
+      "后端回显（规范化墙上时间，左闭右开）：capture_from=" +
+        (from === null ? "null" : safeText(from)) +
+        "，capture_to_exclusive=" +
+        (to === null ? "null" : safeText(to)) +
+        "。"
+    );
   }
 
   // ---------------------------------------------------------------------- search
@@ -791,6 +898,8 @@
     releaseObjectUrls();
     clear(els.resultGrid);
     renderNotices(els.resultNotices, []);
+    text(els.captureEcho, "");
+    setStatus(els.captureState, "");
     els.loadMore.hidden = true;
     els.queryActions.hidden = true;
     sendSearch(false);
@@ -875,6 +984,12 @@
       body.person_ids = filters.personIds;
       body.person_match = filters.personMatch;
     }
+    if (filters.captureFrom) {
+      body.capture_from = filters.captureFrom;
+    }
+    if (filters.captureTo) {
+      body.capture_to_exclusive = filters.captureTo;
+    }
     if (continuation) {
       body.search_session_id = state.search.sessionId;
       body.cursor = state.search.cursor;
@@ -922,6 +1037,10 @@
     }
     setStatus(els.queryStatus, "本次查询没有成功：" + describe(failure), "error");
     renderNotices(els.resultNotices, failureLines(failure));
+    // A failed request is not a statement about the capture-time state; the previous echo
+    // and block belong to a different query, so they are cleared instead of left standing.
+    text(els.captureEcho, "");
+    setStatus(els.captureState, "");
     // The query is preserved and the page offers a re-run, instead of silently showing an
     // empty grid.
     els.queryActions.hidden = false;
@@ -945,13 +1064,21 @@
     els.queryActions.hidden = true;
     renderNotices(els.resultNotices, successNotices(body));
     renderPersonEcho(body.filters, state.search.mode);
+    renderCaptureEcho(body.filters, state.search.mode);
     var parts = [
       "已显示 " + state.search.count + " 行",
       "候选共 " + number(body.total_candidates) + " 个",
       body.has_more ? "还有下一页" : "已到末尾",
     ];
     if (!hits.length) {
-      parts.push("这一页没有命中的行");
+      var capture = captureCondition(body);
+      if (capture.present && capture.block && capture.block.state !== "READY") {
+        parts.push("这一页没有命中的行（拍摄时间状态见上方说明，不代表没有这些照片）");
+      } else if (capture.present) {
+        parts.push("这一页没有命中的行（拍摄时间已抽取完成，这个范围内确实没有命中）");
+      } else {
+        parts.push("这一页没有命中的行");
+      }
     }
     setStatus(els.queryStatus, parts.join(" · "));
   }
@@ -1404,10 +1531,21 @@
     els.queryPlaceState.value = "any";
     els.queryPlaceIds.value = "";
     els.queryDescendants.value = "true";
+    els.queryCaptureFrom.value = "";
+    els.queryCaptureTo.value = "";
+    setStatus(els.captureState, "");
+    text(els.captureEcho, "");
     els.queryPageSize.value = String(DEFAULT_PAGE_SIZE);
     clearPersonSelection();
     setStatus(els.queryStatus, "");
     renderNotices(els.resultNotices, []);
+  }
+
+  function clearCaptureRange() {
+    els.queryCaptureFrom.value = "";
+    els.queryCaptureTo.value = "";
+    text(els.captureEcho, "");
+    setStatus(els.captureState, "");
   }
 
   function boot() {
@@ -1425,6 +1563,10 @@
       queryPlaceState: document.getElementById("query-place-state"),
       queryPlaceIds: document.getElementById("query-place-ids"),
       queryDescendants: document.getElementById("query-descendants"),
+      queryCaptureFrom: document.getElementById("query-capture-from"),
+      queryCaptureTo: document.getElementById("query-capture-to"),
+      captureEcho: document.getElementById("capture-echo"),
+      captureState: document.getElementById("capture-state"),
       queryPageSize: document.getElementById("query-page-size"),
       queryPersonMatch: document.getElementById("query-person-match"),
       personOptions: document.getElementById("person-options"),
@@ -1448,6 +1590,7 @@
       submitSearch();
     });
     document.getElementById("query-reset").addEventListener("click", resetFilters);
+    document.getElementById("capture-clear").addEventListener("click", clearCaptureRange);
     document.getElementById("query-retry").addEventListener("click", function () {
       sendSearch(false);
     });

@@ -108,6 +108,8 @@ V6_TABLES = (
     # 0010/0011 tables; the tuple keeps its historical name as the *current* table set.
     "face_redetection_groups",
     "face_redetection_mappings",
+    # P4-00B: the derived taken-time fact of every already-processed asset (ADR-0011 §2).
+    "asset_metadata",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

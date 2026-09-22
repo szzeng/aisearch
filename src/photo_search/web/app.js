@@ -33,6 +33,20 @@
     ONLINE: "在线",
     OFFLINE: "离线",
   };
+  //: P4-00B: the honest reading of the capture-time block (ADR-0011 §8.1). "PENDING" and
+  //: "PARTIAL" mean the empty result is not evidence that nothing matches.
+  var CAPTURE_STATE_TEXT = {
+    PENDING: "拍摄时间尚未抽取：现在的时间条件命中为空，并不代表没有这些照片。",
+    PARTIAL: "拍摄时间还在抽取中：时间条件的命中可能不完整。",
+    READY: "拍摄时间已抽取完成。",
+    NO_CAPTURE_TIME: "图库里没有任何可用的拍摄时间（只有文件时间），时间条件不会命中任何照片。",
+  };
+  var TIME_SOURCE_TEXT = {
+    EXIF_ORIGINAL: "EXIF 原始时间",
+    EXIF_DIGITIZED: "EXIF 数字化时间",
+    EXIF_ROOT: "EXIF 根时间（文件时间）",
+    FILE_MTIME: "文件修改时间",
+  };
   var SESSION_HINT = "请使用启动器打印的一次性链接建立会话。";
   //: A drive-absolute or UNC spelling inside server-side text is never rendered.
   var PATH_LIKE = /(?:[A-Za-z]:[\\/])|(?:\\\\[^\s'"])/;
@@ -43,11 +57,25 @@
     sources: [],
     browse: {
       sourceId: "",
+      order: "time_desc",
+      captureFrom: "",
+      captureTo: "",
+      //: The condition fingerprint this page-load is bound to; a changed control must not
+      //: continue an old cursor (the server would refuse it, and the page would look broken).
+      binding: null,
       cursor: null,
       hasMore: false,
       loading: false,
       loaded: false,
       count: 0,
+      //: A control can change while a page is still in flight; the reload it owes is served
+      //: as soon as that request settles, so the grid never keeps an older condition.
+      owed: false,
+      //: The honesty state of the last capture-conditioned page (``null`` when the page
+      //: carried no time condition). Used to word an empty result honestly.
+      captureState: null,
+      //: Per-asset taken-time projections, fetched lazily for the visible tiles.
+      timeCache: {},
     },
     pollTimer: null,
     objectUrls: [],
@@ -569,8 +597,29 @@
   }
 
   // --------------------------------------------------------------------- browse
+  function captureConditionActive() {
+    return (
+      state.browse.order === "capture_desc" ||
+      state.browse.captureFrom !== "" ||
+      state.browse.captureTo !== ""
+    );
+  }
+
+  function browseFingerprint() {
+    return JSON.stringify({
+      source: state.browse.sourceId,
+      order: state.browse.order,
+      captureFrom: state.browse.captureFrom,
+      captureTo: state.browse.captureTo,
+    });
+  }
+
   function loadBrowse(reset) {
     if (state.browse.loading) {
+      state.browse.owed = true;
+      return;
+    }
+    if (continuationRefused(reset)) {
       return;
     }
     state.browse.loading = true;
@@ -579,14 +628,22 @@
       state.browse.cursor = null;
       state.browse.hasMore = false;
       state.browse.count = 0;
+      state.browse.timeCache = {};
+      setStatus(els.browseCaptureState, "");
       els.assetGrid.textContent = "";
     }
     setStatus(els.browseStatus, reset ? "正在加载图片…" : "正在加载下一页…");
     var params = new URLSearchParams();
-    params.set("order", "time_desc");
+    params.set("order", state.browse.order);
     params.set("limit", String(PAGE_SIZE));
     if (state.browse.sourceId) {
       params.set("source_id", state.browse.sourceId);
+    }
+    if (state.browse.captureFrom) {
+      params.set("capture_from", state.browse.captureFrom);
+    }
+    if (state.browse.captureTo) {
+      params.set("capture_to_exclusive", state.browse.captureTo);
     }
     if (state.browse.cursor) {
       params.set("cursor", state.browse.cursor);
@@ -603,28 +660,190 @@
         state.browse.hasMore = Boolean(body.has_more);
         state.browse.loaded = true;
         state.browse.loading = false;
+        renderCaptureState(body);
         setStatus(els.browseStatus, browseSummary());
         els.loadMore.hidden = !state.browse.hasMore;
         els.gridSentinel.hidden = !state.browse.hasMore;
+        if (state.browse.owed) {
+          state.browse.owed = false;
+          loadBrowse(true);
+        }
       })
       .catch(function (failure) {
         state.browse.loading = false;
         els.loadMore.hidden = true;
         els.gridSentinel.hidden = true;
-        setStatus(els.browseStatus, "加载图片失败：" + describe(failure), "error");
+        var hint = "";
+        if (failure.code === "INVALID_TIME_RANGE") {
+          hint =
+            "拍摄时间范围只支持 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS[.毫秒] 的墙上时间写法，" +
+            "不接受时区后缀，且起始必须早于结束（左闭右开）。";
+        } else if (failure.code === "CATALOG_FILTER_REVISION_STALE") {
+          hint =
+            "拍摄时间列表绑定的权威 revision 在这次翻页期间变化了：服务端拒绝续页以避免重页或漏页，" +
+            "请点“刷新”从第一页重新开始。";
+        }
+        setStatus(
+          els.browseStatus,
+          "加载图片失败：" + describe(failure) + (hint ? "\n" + hint : ""),
+          "error"
+        );
+        if (state.browse.owed) {
+          state.browse.owed = false;
+          loadBrowse(true);
+        }
       });
   }
 
+  function continuationRefused(reset) {
+    if (reset) {
+      state.browse.binding = browseFingerprint();
+      return false;
+    }
+    if (state.browse.binding && state.browse.binding !== browseFingerprint()) {
+      setStatus(
+        els.browseStatus,
+        "筛选条件已经改变：旧游标只能沿用首次加载时的条件，不能续页。请点“刷新”按当前条件重新开始。",
+        "error"
+      );
+      return true;
+    }
+    return false;
+  }
+
+  function renderCaptureState(body) {
+    var payload = body || {};
+    var block = payload.taken_time || null;
+    state.browse.captureState = block === null ? null : String(block.state);
+    var lines = [];
+    // The server's normalized echo: the fixed-width wall-clock spelling of what it *used*,
+    // which is the honest answer when the user typed the short ``2022-01-01`` form.
+    var from = payload.capture_from === undefined ? null : payload.capture_from;
+    var to = payload.capture_to_exclusive === undefined ? null : payload.capture_to_exclusive;
+    if (from !== null || to !== null) {
+      lines.push(
+        "服务端回显（规范化墙上时间，左闭右开）：capture_from=" +
+          (from === null ? "null" : safeText(from)) +
+          "，capture_to_exclusive=" +
+          (to === null ? "null" : safeText(to)) +
+          "。"
+      );
+    }
+    if (block) {
+      lines.push(
+        "拍摄时间状态：" +
+          (CAPTURE_STATE_TEXT[block.state] || String(block.state)) +
+          "（已抽取 " +
+          Number(block.extracted_assets) +
+          "/" +
+          Number(block.assets_total) +
+          "，其中有拍摄时间 " +
+          Number(block.capture_time_assets) +
+          "）"
+      );
+    }
+    setStatus(els.browseCaptureState, lines.join(" "));
+  }
+
   function browseSummary() {
+    var orderText =
+      state.browse.order === "capture_desc"
+        ? "按拍摄时间从新到旧，无拍摄时间的排在最后"
+        : state.browse.order === "asset_id"
+          ? "按资产编号"
+          : "按加入时间从新到旧";
     if (!state.browse.count) {
-      return "图库在这个筛选下还没有图片。先在“来源与扫描”里注册来源并扫描。";
+      var captureActive = state.browse.captureFrom !== "" || state.browse.captureTo !== "";
+      var captureState = state.browse.captureState;
+      if (captureActive && (captureState === "PENDING" || captureState === "PARTIAL")) {
+        // "Not extracted yet" must never be reported as "no match".
+        return (
+          "这个时间范围内暂时没有结果，但" +
+          (CAPTURE_STATE_TEXT[captureState] || String(captureState)) +
+          "：先完成拍摄时间抽取，再判断是否真的没有命中。" +
+          orderText +
+          "排序仍然有效。"
+        );
+      }
+      if (captureActive && (captureState === "READY" || captureState === "NO_CAPTURE_TIME")) {
+        return (
+          "这个时间范围内确实没有命中的照片（" +
+          (CAPTURE_STATE_TEXT[captureState] || String(captureState)) +
+          "）。"
+        );
+      }
+      return (
+        "图库在这个筛选下还没有图片（" +
+        orderText +
+        "）。先在“来源与扫描”里注册来源并扫描。"
+      );
     }
     return (
       "已加载 " +
       state.browse.count +
-      " 张（按加入时间从新到旧）" +
+      " 张（" +
+      orderText +
+      "）" +
       (state.browse.hasMore ? "，还有更多。" : "，已经到底。")
     );
+  }
+
+  //: One normalized offset. A row without a recorded offset is never shown as UTC.
+  function offsetText(minutes) {
+    if (minutes === null || minutes === undefined) {
+      return "";
+    }
+    var value = Number(minutes);
+    if (!isFinite(value)) {
+      return "";
+    }
+    var sign = value < 0 ? "-" : "+";
+    var absolute = Math.abs(value);
+    var hours = Math.floor(absolute / 60);
+    var rest = Math.round(absolute % 60);
+    var pad = function (part) {
+      return (part < 10 ? "0" : "") + part;
+    };
+    return "（" + sign + pad(hours) + ":" + pad(rest) + "）";
+  }
+
+  //: The one sentence a tile or the detail view shows for a taken-time projection.
+  function captureLine(view) {
+    if (!view) {
+      return "拍摄时间未抽取";
+    }
+    var source = TIME_SOURCE_TEXT[view.time_source] || String(view.time_source || "未知来源");
+    if (view.label === "capture") {
+      return (
+        "拍摄时间 " +
+        String(view.taken_at) +
+        offsetText(view.timezone_offset_minutes) +
+        "（" +
+        String(view.time_confidence) +
+        " · " +
+        source +
+        "）"
+      );
+    }
+    return "文件时间" + (view.taken_at ? " " + String(view.taken_at) : "") + "（" + source + "）";
+  }
+
+  function paintCaptureTime(assetId, node) {
+    var key = String(assetId);
+    if (Object.prototype.hasOwnProperty.call(state.browse.timeCache, key)) {
+      text(node, captureLine(state.browse.timeCache[key]));
+      return;
+    }
+    text(node, "拍摄时间读取中…");
+    request("/assets/" + encodeURIComponent(key))
+      .then(function (result) {
+        var view = (result.body || {}).taken_time || null;
+        state.browse.timeCache[key] = view;
+        text(node, captureLine(view));
+      })
+      .catch(function (failure) {
+        text(node, "拍摄时间读取失败：" + describe(failure));
+      });
   }
 
   function buildTile(asset) {
@@ -652,6 +871,15 @@
         " 个位置"
     );
     caption.appendChild(meta);
+    if (captureConditionActive()) {
+      // ADR-0011 §8.1: the list carries the honesty block, not a per-row time projection, so
+      // the per-row sentence comes from the closed detail object of that same asset. It is
+      // fetched lazily for the tiles the user actually looks at.
+      var timeLine = element("span", "tile-time", "");
+      timeLine.setAttribute("data-capture-time", String(asset.asset_id));
+      caption.appendChild(timeLine);
+      paintCaptureTime(asset.asset_id, timeLine);
+    }
     var open = element("button", "tile-link", asset.availability === "missing" ? "查看离线详情" : "查看详情");
     open.type = "button";
     open.addEventListener("click", function () {
@@ -754,6 +982,54 @@
     });
     facts.appendChild(factsList);
     els.detailBody.appendChild(facts);
+
+    var capture = element("section", "detail-section");
+    capture.appendChild(element("h3", null, "拍摄时间（EXIF）"));
+    var captureList = element("dl", "media-list");
+    var time = body.taken_time || null;
+    [
+      [
+        "结论",
+        time === null
+          ? "未抽取（或本程序不信任当前规则版本的既有结果）"
+          : time.label === "capture"
+            ? "拍摄时间"
+            : "文件时间（不是拍摄时间）",
+      ],
+      ["规范化墙上时间", time === null || !time.taken_at ? "（无）" : String(time.taken_at)],
+      [
+        "记录时区",
+        time === null || time.timezone_offset_minutes === null
+          ? "文件未记录（不会显示或推断为 UTC）"
+          : offsetText(time.timezone_offset_minutes),
+      ],
+      [
+        "来源",
+        time === null
+          ? "（无）"
+          : TIME_SOURCE_TEXT[time.time_source] || String(time.time_source || "未知"),
+      ],
+      ["置信度", time === null ? "（无）" : String(time.time_confidence || "未知")],
+      ["相机", time === null || !time.camera ? "（无记录）" : String(time.camera)],
+      [
+        "排序键（civil key）",
+        time === null || time.taken_at_sort === null || time.taken_at_sort === undefined
+          ? "（无，排在拍摄时间列表末尾）"
+          : String(time.taken_at_sort),
+      ],
+    ].forEach(function (pair) {
+      captureList.appendChild(element("dt", null, pair[0]));
+      captureList.appendChild(element("dd", null, pair[1]));
+    });
+    capture.appendChild(captureList);
+    capture.appendChild(
+      element(
+        "p",
+        "hint",
+        "原始 EXIF 时间文本不会通过接口返回；这里显示的是规范化后的墙上时间，排序键也不是 UTC 时刻。"
+      )
+    );
+    els.detailBody.appendChild(capture);
 
     var locations = element("section", "detail-section");
     locations.appendChild(element("h3", null, "全部文件位置"));
@@ -966,6 +1242,10 @@
       sourceRoot: document.getElementById("source-root"),
       browseStatus: document.getElementById("browse-status"),
       browseSource: document.getElementById("browse-source"),
+      browseOrder: document.getElementById("browse-order"),
+      browseCaptureFrom: document.getElementById("browse-capture-from"),
+      browseCaptureTo: document.getElementById("browse-capture-to"),
+      browseCaptureState: document.getElementById("browse-capture-state"),
       assetGrid: document.getElementById("asset-grid"),
       loadMore: document.getElementById("load-more"),
       gridSentinel: document.getElementById("grid-sentinel"),
@@ -993,6 +1273,18 @@
     });
     els.browseSource.addEventListener("change", function () {
       state.browse.sourceId = els.browseSource.value;
+      loadBrowse(true);
+    });
+    els.browseOrder.addEventListener("change", function () {
+      state.browse.order = els.browseOrder.value;
+      loadBrowse(true);
+    });
+    els.browseCaptureFrom.addEventListener("change", function () {
+      state.browse.captureFrom = els.browseCaptureFrom.value.trim();
+      loadBrowse(true);
+    });
+    els.browseCaptureTo.addEventListener("change", function () {
+      state.browse.captureTo = els.browseCaptureTo.value.trim();
       loadBrowse(true);
     });
     els.loadMore.addEventListener("click", function () {

@@ -37,6 +37,8 @@ from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places.filter import place_condition, place_filter_summary
 from photo_search.search import query as search_query
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
+from photo_search.taken_time import contract as time_contract
+from photo_search.taken_time import read as time_read
 
 #: Per-channel initial candidate bound (architecture §9.2: "初始 Top 200").
 DEFAULT_TOP_K = 200
@@ -88,6 +90,10 @@ class SearchScope:
     #: condition at all" - it never means "a photo without people".
     person_ids: tuple[int, ...] = ()
     person_match: str = "any"
+    #: ADR-0011 §6: the optional capture-time range. It is one more authoritative condition
+    #: of the same AND set, applied by every channel, the authoritative page and the pre-page
+    #: re-check - and it may only ever match a ``label = capture`` row.
+    capture: time_contract.CaptureRange | None = None
 
     @classmethod
     def build(
@@ -100,6 +106,7 @@ class SearchScope:
         place_state: str = "any",
         person_ids: Sequence[int] | None = None,
         person_match: str = "any",
+        capture: time_contract.CaptureRange | None = None,
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -141,6 +148,7 @@ class SearchScope:
             place_state=str(place_state or "any"),
             person_ids=people,
             person_match=mode,
+            capture=capture,
         )
 
 
@@ -256,6 +264,10 @@ def scope_condition(
     if person_sql != "1":
         conditions.append(person_sql)
         parameters.extend(person_parameters)
+    capture_sql, capture_parameters = capture_condition(connection, scope, alias=alias)
+    if capture_sql != "1":
+        conditions.append(capture_sql)
+        parameters.extend(capture_parameters)
     place_sql, place_parameters = place_condition(
         connection,
         place_ids=scope.place_ids,
@@ -267,6 +279,20 @@ def scope_condition(
         conditions.append(place_sql)
         parameters.extend(place_parameters)
     return (" AND ".join(conditions) if conditions else "1"), parameters
+
+
+def capture_condition(
+    connection: sqlite3.Connection, scope: SearchScope, *, alias: str = "a"
+) -> tuple[str, list[Any]]:
+    """ADR-0011 §6.4: the half-open capture range over ``<alias>.asset_id``.
+
+    The condition is the *authoritative* SQLite predicate of a time query, never a filter on
+    a ranked list: it is pushed into the text channel's MATCH, the vector channel's candidate
+    walk and the authoritative page alike. The fragment itself is
+    ``taken_time.read.capture_predicate`` - the very same one ``GET /api/v1/assets`` applies -
+    so the listing and the search can never drift into two interpretations.
+    """
+    return time_read.capture_predicate(connection, scope.capture, alias=alias)
 
 
 def person_condition(scope: SearchScope, *, alias: str = "a") -> tuple[str, list[Any]]:
@@ -321,6 +347,9 @@ def scope_view(connection: sqlite3.Connection, scope: SearchScope) -> dict[str, 
         # they are ``[]``/``"any"``. The ids echoed are the canonical, ascending ones.
         "person_ids": [int(value) for value in scope.person_ids],
         "person_match": str(scope.person_match),
+        # ADR-0011 §8.1/§6.3: the two capture keys are always present too, as the normalized
+        # fixed-width wall-clock spelling or ``null`` when no condition was given.
+        **time_contract.capture_echo(scope.capture),
     }
 
 

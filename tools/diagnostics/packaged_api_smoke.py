@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -116,8 +117,9 @@ def packaged_person_schema(data_root: Path) -> dict[str, Any]:
     """The packaged catalog's person-operation vocabulary, read straight from SQLite.
 
     This is the C-level proof that migration ``0013`` is inside the bundle: the packaged data
-    root has to be at ``schema_version = 13`` with the widened ``SPLIT``/``SPLIT_GROUP``
-    CHECK lists, next to the P3-04 ``FACE_ASSIGN`` value it must not have lost.
+    root has to carry the widened ``SPLIT``/``SPLIT_GROUP`` CHECK lists, next to the P3-04
+    ``FACE_ASSIGN`` value it must not have lost. The exact schema version is checked by
+    :func:`packaged_taken_time_schema`, which owns the current tip of the chain.
     """
     db_path = data_root / "catalog" / "catalog.db"
     connection = sqlite3.connect(str(db_path), timeout=30.0)
@@ -146,6 +148,61 @@ def packaged_person_schema(data_root: Path) -> dict[str, Any]:
     }
 
 
+def packaged_taken_time_schema(data_root: Path) -> dict[str, Any]:
+    """The packaged catalog's taken-time layer (P4-00B, ADR-0011 §2/§9).
+
+    ``0015_taken_time.sql`` is a *packaged data resource*: a frozen build that shipped without
+    it would still declare support for schema 15, so ``migration_files()`` would raise
+    ``SCHEMA_INCONSISTENT`` at the first open. This check therefore proves three things about
+    the packaged data root - the version, the derived table with its closed source vocabulary
+    and the capture index, and the library-level rule-version key.
+    """
+    db_path = data_root / "catalog" / "catalog.db"
+    connection = sqlite3.connect(str(db_path), timeout=30.0)
+    try:
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        table_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'asset_metadata'"
+        ).fetchone()
+        rules_row = connection.execute(
+            "SELECT value FROM metadata WHERE key = 'taken_time_rules_version'"
+        ).fetchone()
+        indexes = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = "
+                "'asset_metadata'"
+            )
+        }
+    finally:
+        connection.close()
+    table = "" if table_row is None else str(table_row[0])
+    return {
+        "schema_version": int(version),
+        "has_asset_metadata": table_row is not None,
+        "has_closed_sources": "EXIF_ORIGINAL" in table and "FILE_MTIME" in table,
+        "has_capture_index": "idx_asset_metadata_capture" in indexes,
+        "rules_version": None if rules_row is None else int(str(rules_row[0])),
+    }
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def bundled_migrations(installation: Path) -> dict[str, str]:
+    """``file name -> sha256`` of every migration script inside the frozen bundle."""
+    for candidate in (
+        installation / "_internal" / "photo_search" / "catalog" / "migrations",
+        installation / "photo_search" / "catalog" / "migrations",
+    ):
+        if candidate.is_dir():
+            return {path.name: _digest(path) for path in sorted(candidate.glob("*.sql"))}
+    return {}
+
+
 def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]:
     report: dict[str, Any] = {"bundle": str(bundle), "work_dir": str(work_dir), "checks": {}}
     checks: dict[str, Any] = report["checks"]
@@ -158,6 +215,16 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
     executable = installation / "PhotoSearch.exe"
     checks["bundled_executable_bytes"] = executable.stat().st_size
     checks["installed_under_non_ascii_path"] = True
+    # P4-00B: the migration scripts are packaged data. Every script from 0001 to the build's
+    # supported version has to be inside the bundle, byte for byte identical to the source.
+    bundled = bundled_migrations(installation)
+    source_dir = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "catalog" / "migrations"
+    source = {path.name: _digest(path) for path in sorted(source_dir.glob("*.sql"))}
+    checks["bundled_migrations"] = {
+        "names": sorted(bundled),
+        "expected_names": sorted(source),
+        "matches_source": bundled == source,
+    }
 
     data_root = work_dir / "PhotoSearchData 数据 目录"
     library = work_dir / "照片 库 中文 空格"
@@ -719,6 +786,7 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                     "/api/v1/faces/" + "0" * 64 + "/thumbnail"
                 ).status_code
             checks["packaged_person_schema"] = packaged_person_schema(data_root)
+            checks["packaged_taken_time_schema"] = packaged_taken_time_schema(data_root)
 
             thumbnail = client.get(f"/api/v1/assets/{asset_id}/thumbnail")
             checks["thumbnail"] = thumbnail.status_code
@@ -1050,13 +1118,27 @@ def summarize(report: dict[str, Any]) -> list[str]:
             problems.append(f"packaged {key}")
     person_schema = checks.get("packaged_person_schema") or {}
     if (
-        person_schema.get("schema_version") != 13
+        int(person_schema.get("schema_version") or 0) < 13
         or not person_schema.get("has_split")
         or not person_schema.get("has_face_assign")
         or not person_schema.get("has_split_group")
         or not person_schema.get("has_face_control")
     ):
         problems.append("packaged person-operation schema")
+    taken_time_schema = checks.get("packaged_taken_time_schema") or {}
+    if (
+        taken_time_schema.get("schema_version") != 15
+        or not taken_time_schema.get("has_asset_metadata")
+        or not taken_time_schema.get("has_closed_sources")
+        or not taken_time_schema.get("has_capture_index")
+        or taken_time_schema.get("rules_version") != 1
+    ):
+        problems.append("packaged taken-time schema")
+    migrations = checks.get("bundled_migrations") or {}
+    if not migrations.get("matches_source") or migrations.get("names") != migrations.get(
+        "expected_names"
+    ):
+        problems.append("packaged migration data resources")
     if (checks.get("coverage_search_block") or {}).get("query_encoder_available") is not False:
         problems.append("packaged coverage query encoder flag")
     ocr_block = checks.get("coverage_ocr_block") or {}

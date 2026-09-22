@@ -497,7 +497,15 @@ async def get_job(request: Request, job_id: int) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------ assets
-@router.get("/assets", response_model=AssetListResponse, summary="Paged asset list")
+@router.get(
+    "/assets",
+    response_model=AssetListResponse,
+    # ``taken_time`` is *conditional* by contract (ADR-0011 §8.1): it appears only when the
+    # request carried a capture bound. ``exclude_unset`` keeps that promise without changing
+    # any other key, because ``asset_page`` always returns every other field explicitly.
+    response_model_exclude_unset=True,
+    summary="Paged asset list",
+)
 async def list_assets(
     request: Request,
     source_id: int | None = None,
@@ -509,6 +517,8 @@ async def list_assets(
     place_state: PlaceStateFilter = "any",
     suggestion_revision: int | None = Query(default=None, ge=0),
     text: str | None = Query(default=None),
+    capture_from: str | None = Query(default=None, max_length=32),
+    capture_to_exclusive: str | None = Query(default=None, max_length=32),
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -527,6 +537,8 @@ async def list_assets(
         place_state=place_state,
         suggestion_revision=suggestion_revision,
         text=text,
+        capture_from=capture_from,
+        capture_to_exclusive=capture_to_exclusive,
     )
 
 
@@ -1273,6 +1285,10 @@ def _ensure_preview(service: CatalogService, asset_id: int, sha256: str) -> Path
 @router.post(
     "/search",
     response_model=SearchResultModel,
+    # ADR-0011 §8.1: the ``taken_time`` honesty block is conditional (a capture-conditioned
+    # query only), so unset keys are not serialised. Every other field is always returned by
+    # the service, so this changes nothing else in the frozen envelope.
+    response_model_exclude_unset=True,
     summary="One page of a fused search bound to a session, profile and catalog revision",
 )
 async def post_search(request: Request, payload: SearchRequestModel) -> dict[str, Any]:
@@ -1333,6 +1349,7 @@ _IMAGE_INT_FIELDS = ("dimension", "source_id", "top_k", "page_size")
 @router.post(
     "/search/image",
     response_model=ImageSearchResultModel,
+    response_model_exclude_unset=True,
     summary="Find similar photos for one uploaded image",
 )
 async def post_search_image(request: Request) -> dict[str, Any]:

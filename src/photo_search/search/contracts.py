@@ -28,6 +28,7 @@ from photo_search.search.retrieval import (
     PERSON_MATCH_VALUES,
 )
 from photo_search.search.tokens import VALIDATION_ERROR
+from photo_search.taken_time.contract import CaptureRange, parse_capture_range
 
 #: The availability spellings the asset listing and the retrieval scope already accept.
 AVAILABILITY_VALUES = ("present", "missing", "any")
@@ -68,6 +69,8 @@ _REQUEST_OPTIONAL = (
     "place_state",
     "person_ids",
     "person_match",
+    "capture_from",
+    "capture_to_exclusive",
     "top_k",
     "page_size",
     "rerank",
@@ -110,6 +113,10 @@ _RESULT_FIELDS = (
     "reranked",
     "state",
 )
+#: ADR-0011 §8.1/§8.2: the honesty block is a *sibling* of the frozen result fields and only
+#: appears when the request carried at least one capture bound, so it is an optional key
+#: rather than a new required one. The frozen fields themselves are untouched.
+_RESULT_OPTIONAL = ("taken_time",)
 
 
 def fail(message: str, **details: Any) -> CatalogError:
@@ -248,6 +255,11 @@ class SearchRequest:
     #: snapshot. An empty tuple means "no person condition", never "a photo without people".
     person_ids: tuple[int, ...] = ()
     person_match: str = "any"
+    #: ADR-0011 §6: the optional capture-time range. ``None`` (the default) means "no time
+    #: condition"; the two canonical spellings are what the echo and the continuation digest
+    #: carry, so two spellings of one interval can never split into two sessions.
+    capture_from: str | None = None
+    capture_to_exclusive: str | None = None
     top_k: int = DEFAULT_TOP_K
     page_size: int = DEFAULT_PAGE_SIZE
     #: P2-06B: ask for the optional rerank of the returned candidates. It is additive and
@@ -297,6 +309,13 @@ class SearchRequest:
                 "person_match all needs at least one person id",
                 details={"reason": "person_match_all_requires_ids", "person_match": "all"},
             )
+        # ADR-0011 §6.2/§6.3: both capture bounds are parsed and normalized here, so a
+        # malformed bound, a timezone suffix, an out-of-range year and a non-ascending
+        # interval are the frozen 422 ``INVALID_TIME_RANGE`` (reason + field) - never a
+        # Python traceback and never a silently widened query.
+        capture = parse_capture_range(
+            body.get("capture_from"), body.get("capture_to_exclusive")
+        )
         return cls(
             request_id=_text(body["request_id"], where="request_id"),
             text=_optional_text(body.get("text"), where="text"),
@@ -319,6 +338,8 @@ class SearchRequest:
             ),
             person_ids=person_ids,
             person_match=person_match,
+            capture_from=None if capture is None else capture.from_text,
+            capture_to_exclusive=None if capture is None else capture.to_text,
             top_k=_integer(body.get("top_k", DEFAULT_TOP_K), where="top_k", minimum=1, maximum=MAX_TOP_K),
             page_size=_integer(
                 body.get("page_size", DEFAULT_PAGE_SIZE),
@@ -350,12 +371,21 @@ class SearchRequest:
             "place_state": self.place_state,
             "person_ids": list(self.person_ids),
             "person_match": self.person_match,
+            "capture_from": self.capture_from,
+            "capture_to_exclusive": self.capture_to_exclusive,
             "top_k": self.top_k,
             "page_size": self.page_size,
             "rerank": bool(self.rerank),
             "search_session_id": self.search_session_id,
             "cursor": self.cursor,
         }
+
+    @property
+    def capture_range(self) -> CaptureRange | None:
+        """The parsed (and normalized) capture condition of this request, if any."""
+        if self.capture_from is None and self.capture_to_exclusive is None:
+            return None
+        return parse_capture_range(self.capture_from, self.capture_to_exclusive)
 
     @property
     def explicit_binding(self) -> tuple[str, str, int] | None:
@@ -463,12 +493,21 @@ class SearchResult:
     #: number and the envelope keeps them apart on purpose.
     rerank_state: str = "NOT_REQUESTED"
     reranked: dict[str, Any] | None = None
+    #: ADR-0011 §8.1: the honesty block that accompanies a capture-conditioned query. It is
+    #: a sibling of the frozen fields (never merged into ``search_projection``) and is present
+    #: only when the request really carried a time condition.
+    taken_time: dict[str, Any] | None = None
     contract_version: str = CONTRACT_VERSION
 
     @classmethod
     def from_envelope(cls, payload: Mapping[str, Any]) -> SearchResult:
         body = _object(payload, where="SearchResult")
-        _closed(body, where="SearchResult", required=_RESULT_FIELDS)
+        _closed(
+            body,
+            where="SearchResult",
+            required=_RESULT_FIELDS,
+            optional=_RESULT_OPTIONAL,
+        )
         hits = body["hits"]
         if not isinstance(hits, Sequence) or isinstance(hits, (str, bytes)):
             raise fail("hits must be a JSON array", where="hits")
@@ -516,6 +555,9 @@ class SearchResult:
             state=_enum(body["state"], RESULT_STATES, where="state"),
             rerank_state=_enum(body["rerank_state"], RERANK_STATES, where="rerank_state"),
             reranked=None if body["reranked"] is None else _object(body["reranked"], where="reranked"),
+            taken_time=None
+            if body.get("taken_time") is None
+            else _object(body["taken_time"], where="taken_time"),
             contract_version=version,
         )
 
@@ -549,6 +591,10 @@ class SearchResult:
             "reranked": None if self.reranked is None else dict(self.reranked),
             "state": str(self.state),
         }
+        if self.taken_time is not None:
+            # Conditional on purpose: ADR-0011 §8.1 publishes this block only for a query
+            # that carried at least one capture bound.
+            payload["taken_time"] = dict(self.taken_time)
         return payload
 
 

@@ -95,6 +95,15 @@ GEO_COORDINATE_INVALID = "GEO_COORDINATE_INVALID"
 #: and a second code would suggest two independent revisions.
 INVALID_PERSON_FILTER = "INVALID_PERSON_FILTER"
 
+#: ADR-0011 §8.3: the one *new* code of the P4-00B taken-time family. A capture bound that
+#: is malformed, carries a timezone suffix, is out of range, or forms an empty/descending
+#: interval is a caller-shape error (HTTP 422) whose ``details`` reuse only the frozen
+#: ADR-0009 keys (``reason`` + ``field``). Every other time failure reuses an existing code:
+#: the ``capture_desc`` continuation keeps ``CATALOG_FILTER_REVISION_STALE``, because the
+#: capture ordering binds the one existing ``catalog_filter_revision`` and never invents a
+#: second counter.
+INVALID_TIME_RANGE = "INVALID_TIME_RANGE"
+
 #: P2-03B: the resolver needs a *current* GPS fact. A missing fact is a blocking condition
 #: (the GPS task may still be pending), never a "no candidate" success and never a write.
 GEO_FACT_MISSING = "GEO_FACT_MISSING"

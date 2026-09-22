@@ -50,7 +50,12 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: the shared operation log for the two ``FACE_MAPPING_*`` types and the
 #: ``FACE_MAPPING_GROUP`` item shape. No queue cause is added: a confirmed transfer reuses
 #: ``PERSON_CHANGED`` like every other human fact, and the image-vector index is untouched.
-SUPPORTED_SCHEMA_VERSION = 14
+#: ``0015`` adds the P4-00B taken-time layer of ADR-0011: the derived ``asset_metadata``
+#: fact table (the six frozen columns, one row per already-processed asset) and the
+#: library-level ``taken_time_rules_version`` key. It is additive only - no fact table, no
+#: search document, no queue cause and no vector namespace changes - and it backfills
+#: nothing, because the extraction is its own idempotent, resumable task.
+SUPPORTED_SCHEMA_VERSION = 15
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

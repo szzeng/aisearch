@@ -60,6 +60,7 @@ from photo_search.catalog.errors import (
     INVALID_PERSON_FILTER,
     INVALID_PLACE_FILTER,
     INVALID_STATE_TRANSITION,
+    INVALID_TIME_RANGE,
     JOB_NOT_FOUND,
     LEASE_CONFLICT,
     LEASE_EXPIRED,
@@ -193,6 +194,11 @@ _STATUS_BY_CODE: dict[str, int] = {
     # that is over its ceiling, or ``all`` without any id, is a caller error - never a
     # missing resource and never a current-state conflict.
     INVALID_PERSON_FILTER: 422,
+    # ADR-0011 §8.3: a capture bound/interval that cannot be interpreted is a caller-shape
+    # error, exactly like the person-filter counterpart above. The ``capture_desc``
+    # continuation keeps ``CATALOG_FILTER_REVISION_STALE`` (409) because it binds the one
+    # existing filter revision.
+    INVALID_TIME_RANGE: 422,
     GEO_COORDINATE_INVALID: 422,
     # P3-03 person naming/merge refusals (ADR-0006 §9). A missing person - or a missing
     # operation - is a 404; a blank/oversized name and an oversized merge batch are

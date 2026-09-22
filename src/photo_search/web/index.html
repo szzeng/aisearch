@@ -69,17 +69,57 @@
       </section>
 
       <section id="view-browse" class="view" hidden aria-labelledby="view-browse-title">
-        <h2 id="view-browse-title">按加入时间浏览</h2>
+        <h2 id="view-browse-title">浏览图片</h2>
         <p class="hint">
           “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。
+          「拍摄时间」只来自文件自身声明的时间（EXIF 原始/数字化时间）；文件系统修改时间
+          与 EXIF 根时间一律显示为「文件时间」，不参与拍摄时间范围筛选，也绝不被伪装成拍摄时间。
         </p>
         <div class="browse-controls">
           <label for="browse-source">来源筛选</label>
           <select id="browse-source">
             <option value="">全部来源</option>
           </select>
+          <label for="browse-order">排序</label>
+          <select id="browse-order">
+            <option value="time_desc">按加入时间（入库时间，从新到旧）</option>
+            <option value="capture_desc">按拍摄时间（无拍摄时间的排最后）</option>
+            <option value="asset_id">按资产编号</option>
+          </select>
+          <label for="browse-capture-from">拍摄时间从</label>
+          <input
+            id="browse-capture-from"
+            type="text"
+            inputmode="numeric"
+            maxlength="32"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="YYYY-MM-DD"
+          />
+          <label for="browse-capture-to">到（不含）</label>
+          <input
+            id="browse-capture-to"
+            type="text"
+            inputmode="numeric"
+            maxlength="32"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="YYYY-MM-DD"
+          />
           <button type="button" id="browse-reload">刷新</button>
         </div>
+        <p class="hint">
+          拍摄时间范围是左闭右开：包含起始时刻，不包含结束时刻。留空表示该端不限。
+          只写日期时按当天 00:00:00.000 处理；带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）
+          会被服务端明确拒绝，因为拍摄时间没有唯一时区。
+        </p>
+        <div
+          id="browse-capture-state"
+          class="state-block"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
         <div id="browse-status" class="state-block" role="status" aria-live="polite"></div>
         <ol id="asset-grid" class="grid" aria-label="按加入时间排列的图片"></ol>
         <div id="grid-sentinel" class="sentinel" hidden></div>

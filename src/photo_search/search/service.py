@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,6 +106,8 @@ from photo_search.search.sessions import (
 )
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery, build_match
 from photo_search.search.upload import checked_query_vector
+from photo_search.taken_time import contract as time_contract
+from photo_search.taken_time import read as time_read
 
 _HIT_REASON_BY_CHANNELS = {
     (FTS_CHANNEL,): "TEXT",
@@ -202,6 +204,7 @@ def search_assets(
     place_state: str = "any",
     person_ids: Sequence[int] | None = None,
     person_match: str = "any",
+    capture: time_contract.CaptureRange | None = None,
     vector_index: LanceVectorIndex | None = None,
     query_vector: Sequence[float] | None = None,
 ) -> dict[str, Any]:
@@ -234,6 +237,9 @@ def search_assets(
         # scope, so every channel, the authoritative page and the pre-page re-check apply it.
         person_ids=person_ids,
         person_match=person_match,
+        # ADR-0011 §6.5: the capture range joins the very same AND set, and only
+        # ``label = capture`` rows may satisfy it.
+        capture=capture,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -539,10 +545,30 @@ def _entries_of(payload: dict[str, Any]) -> tuple[SessionEntry, ...]:
 
 
 def _filters_echo(payload: dict[str, Any], binding: VectorBinding | None) -> dict[str, Any]:
-    """The applied conditions plus the binding, with no path, coordinate or token."""
+    """The applied conditions plus the binding, with no path, coordinate or token.
+
+    ADR-0011 §8.1/§8.2: the capture keys arrive from ``scope_view`` (they are part of the
+    scope's own echo), so the live ``filters`` object is the frozen 11-key ADR-0009 shape
+    plus exactly ``capture_from``/``capture_to_exclusive`` and the service-added ``binding``.
+    """
     echoed = dict(payload["filters"])
     echoed["binding"] = None if binding is None else binding.to_dict()
     return echoed
+
+
+def _taken_time_block(catalog: Any, filters: Mapping[str, Any]) -> dict[str, Any] | None:
+    """ADR-0011 §8.1: the honesty block for a capture-conditioned query, or ``None``.
+
+    It stays out of the frozen ``search_projection`` block and out of a query that carries no
+    time condition, and it is read live (the counts describe the catalog right now) rather
+    than frozen in the session: that is what lets an empty page say "the extraction has not
+    run yet" instead of pretending there is no match.
+    """
+    if filters.get(time_contract.FIELD_FROM) is None and (
+        filters.get(time_contract.FIELD_TO) is None
+    ):
+        return None
+    return time_read.state_block(catalog.connection)
 
 
 @dataclass(frozen=True)
@@ -832,6 +858,9 @@ def _continue_session(
         next_offset=next_offset,
         has_more=has_more,
         token=token,
+        # ADR-0011 §8.1: a continuation of a capture-conditioned search carries the same
+        # honesty block, recomputed live like the frozen session's own echo.
+        taken_time=_taken_time_block(catalog, session.filters),
     )
 
 
@@ -844,6 +873,7 @@ def _result_envelope(
     next_offset: int,
     has_more: bool,
     token: str | None,
+    taken_time: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One page as the frozen ``SearchResult`` envelope (the session carries the rest)."""
     return SearchResult(
@@ -872,6 +902,7 @@ def _result_envelope(
         search_projection=dict(session.search_projection),
         rerank_state=str(session.rerank_state),
         reranked=None if session.reranked is None else dict(session.reranked),
+        taken_time=None if taken_time is None else dict(taken_time),
         state=str(session.state),
     ).to_envelope()
 
@@ -906,6 +937,8 @@ def search_request(
     # echo and the digest cannot disagree about which people the request named - and cannot
     # mix two authority states either. The revision is the pre-binding of this new search.
     base = _person_authority_base(catalog, request)
+    # ADR-0011 §6.5: the capture condition is part of the same AND set and the same digest.
+    capture = request.capture_range
 
     def build_scope(people: tuple[int, ...]) -> SearchScope:
         return SearchScope.build(
@@ -916,6 +949,7 @@ def search_request(
             place_state=request.place_state,
             person_ids=people,
             person_match=request.person_match,
+            capture=capture,
         )
 
     scope = build_scope(base.canonical_person_ids)
@@ -944,6 +978,8 @@ def search_request(
             # another.
             person_ids=current.person_ids,
             person_match=current.person_match,
+            capture_from=request.capture_from,
+            capture_to_exclusive=request.capture_to_exclusive,
             top_k=int(request.top_k),
             page_size=int(request.page_size),
         )
@@ -1002,6 +1038,9 @@ def search_request(
             # with no profile, no encoder and no GPU (ADR-0009 §3.3/§5.5).
             person_ids=scope.person_ids,
             person_match=scope.person_match,
+            # ADR-0011 §6.5: the same capture condition, applied by every channel and by the
+            # authoritative page; only ``label = capture`` rows can satisfy it.
+            capture=scope.capture,
             vector_index=vector_index,
             # Exactly one of "text to encode" and "an already validated vector" reaches the
             # retrieval, and only when the session is actually bound to a space.
@@ -1035,6 +1074,7 @@ def search_request(
         )
         # Prepared, *not* published: a session may only exist once its page is known to be an
         # answer about one catalog version, so a discarded attempt cannot leak (or evict) one.
+        filters_echo = _filters_echo(candidate, binding)
         session = sessions.build_session(
             query_hash=digest,
             entries=entries,
@@ -1048,7 +1088,7 @@ def search_request(
                 dict(DEFAULT_FUSION_CONFIG) if profile is None else dict(profile.fusion_config)
             ),
             query=candidate["query"],
-            filters=_filters_echo(candidate, binding),
+            filters=filters_echo,
             channels=_channel_summary(
                 candidate,
                 match=match,
@@ -1073,6 +1113,9 @@ def search_request(
             page_size=int(request.page_size),
             offset=0,
         )
+        # ADR-0011 §8.1: read the honesty block of this capture-conditioned page *before* the
+        # publication gate, so a discarded attempt never becomes the block a caller sees.
+        taken_time = _taken_time_block(catalog, filters_echo)
         # The publication gate runs *after* the page exists, because ``_render_page`` performs
         # the last authoritative read of this response (it re-verifies every row it is about
         # to publish). A pass here means every part of the page - canonical ids, echo, digest,
@@ -1088,6 +1131,7 @@ def search_request(
             next_offset=next_offset,
             has_more=has_more,
             token=token,
+            taken_time=taken_time,
         )
 
     for attempt in range(SEARCH_PUBLISH_ATTEMPTS):

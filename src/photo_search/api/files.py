@@ -102,6 +102,27 @@ def resolve_present_location(catalog: Any, asset_id: int) -> ControlledLocation:
     raise _preferred_problem(problems)
 
 
+def resolve_present_locations(catalog: Any, asset_id: int) -> list[ControlledLocation]:
+    """Every usable ``PRESENT`` position, ascending by ``location_id`` (P4-00B helper).
+
+    ``resolve_present_location`` keeps its frozen P1-04 contract ("the first usable
+    position, or a structured refusal"); ADR-0011 §4.2 needs the whole deterministic walk
+    instead, because a multi-position asset must take its EXIF evidence from the smallest
+    ``location_id`` that really parses. The four boundary checks are the same private
+    ``_resolve_row`` used by the single-position entry point - this never re-implements
+    them, and a position that fails any of them is simply not part of the walk.
+    """
+    resolved: list[ControlledLocation] = []
+    for row in list_asset_locations(catalog, int(asset_id)):
+        if str(row["availability"]) != "PRESENT":
+            continue
+        try:
+            resolved.append(_resolve_row(row))
+        except (ApiError, CatalogError):
+            continue
+    return resolved
+
+
 def resolve_optional_location(catalog: Any, asset_id: int) -> ControlledLocation | None:
     """The same resolution, but ``None`` instead of an error for the status header."""
     try:

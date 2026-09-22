@@ -1279,10 +1279,18 @@ def test_the_filters_echo_is_the_frozen_closed_key_set(seeded: Seeded) -> None:
         return {"with_person": with_person, "without": without}
 
     outcomes = state.search.scenario(scenario)
-    required = set(COMPANION["$defs"]["SearchFiltersEcho"]["required"])
+    # P4-00B (ADR-0011 §8.2) extends the live echo, and only by adding keys: the frozen
+    # ADR-0009 eleven keys plus ``capture_from``/``capture_to_exclusive``. The P3 companion
+    # keeps its historical shape and the P4 companion freezes the V2 superset.
+    required = set(COMPANION["$defs"]["SearchFiltersEcho"]["required"]) | {
+        "capture_from",
+        "capture_to_exclusive",
+    }
     for key in ("with_person", "without"):
         payload = outcomes[key].json()
         assert set(payload["filters"]) == required
+        assert payload["filters"]["capture_from"] is None
+        assert payload["filters"]["capture_to_exclusive"] is None
     assert outcomes["with_person"].json()["filters"]["person_ids"] == [state.b]
     assert outcomes["with_person"].json()["filters"]["person_match"] == "any"
     assert outcomes["without"].json()["filters"]["person_ids"] == []

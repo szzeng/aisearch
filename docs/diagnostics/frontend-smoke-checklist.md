@@ -334,3 +334,80 @@ Array.from(document.querySelectorAll("#person-options input")).every((c) => !!do
 - 没有图像编码器时上传查询只能观察到结构化拒绝；「上传请求不带人物字段」由该拒绝码 +
   `tests/unit/test_api_frontend.py` 的静态断言 + `test_p2_search_image.py` 的未知字段 422 共同判定。
 - 人物页的改名步骤复用 `/persons` 的「保存名字」表单（需要勾选「我知道同名时会执行合并」）。
+
+## 9. 拍摄时间范围与 `capture_desc`（P4-00B）
+
+页面：`/`（`index.html` + `app.js`）与 `/search`（`search.html` + `search.js`）。拍摄时间是
+ADR-0011 冻结的新维度：清单只命中「拍摄时间」（EXIF 原始/数字化时间），范围左闭右开，
+`capture_desc` 把没有拍摄时间的资产放到尾部并按 `asset_id` 倒序。可自动化的部分见
+`tests/unit/test_p4_taken_time.py`、`tests/unit/test_api_frontend.py` 的 P4-00B 段与
+`tests/integration/test_p4_taken_time_{api,extract,faults}.py`；本节记录必须人工看一眼的那一遍。
+
+### 9.1 生成夹具
+
+```text
+uv run --no-sync python tools/diagnostics/taken_time_smoke_fixture.py --reset
+```
+
+- 先调用 `search_smoke_fixture` 生成可搜索的合成图库（8 张 JPEG、1 个已激活 `SearchProfile`、
+  1 个已人工归类的地点），再把其中 4 张写成带 EXIF 时间的照片（`_write_jpeg` 被替换为写 EXIF 的
+  变体），然后用生产 `taken_time` 服务抽取拍摄时间（`enqueue_targets` + `run_queue`）。
+- 期望（脚本用生产 `asset_page`/`search_request` 打印，浏览器观察要与之逐条一致）：
+  `capture_range_2022=[1,8]`、`capture_desc_order=[8,1,2,3,7,6,5,4]`、
+  `capture_desc_tail=[7,6,5,4]`（文件时间尾桶，`asset_id` 倒序）、`file_time_assets=[3,4,5,6,7]`、
+  `empty_range_assets=[]`、`search_hits_2022=[1,8]`；`#8` 有偏移 `+08:00`、`#1` 无偏移；
+  `#3` 只有 EXIF 根时间（`label=file_time`）、`#4..#7` 只有文件时间。
+- 想观察「尚未抽取/不可信」的诚实状态时，用 `--rules-version 99` 再跑一次同一工作目录（不加
+  `--reset`）：抽取已经完成、行仍在库里，只是规则版本失配 → 任何时间条件都命中 0 行且状态为
+  `PENDING`；再加 `--rules-version 1` 跑一次即可恢复。
+- 不下载模型、不读真实图库；`--reset` 只删除脚本自己的目录。
+
+### 9.2 启动真实端口的服务
+
+```text
+$env:PHOTO_SEARCH_DATA_ROOT = "<脚本打印的 data_root>"
+.\.venv\Scripts\python.exe -m photo_search --port <free-port>
+```
+
+### 9.3 核对步骤（逐条记录结果）
+
+| # | 操作 | 期望观察 | 不满足即不得 PASS 的判据 |
+|---|---|---|---|
+| 1 | `/` 选「按拍摄时间」+ 范围 `2022-01-01`~`2023-01-01`，翻页浏览 | 回显为规范化定宽串 `2022-01-01T00:00:00.000` / `2023-01-01T00:00:00.000`；结果恰好 `#1`、`#8`（起点包含、终点不含）；状态块显示「拍摄时间已抽取完成」且计数 8/8、其中 3 | 边界日多出/少掉一行；回显是原样输入或带时区；状态块缺失 |
+| 2 | `/` 只选排序「按拍摄时间（无拍摄时间的排最后）」，不填范围 | 顺序为 `8,1,2,3,7,6,5,4`；尾部的 `#7..#4` 每张卡的拍摄时间行显示「文件时间」；`#3` 也显示「文件时间」 | 无拍摄时间的行混在中间；尾部行被显示成「拍摄时间」 |
+| 3 | 打开 `#8` 与 `#1` 的详情 | `#8` 显示 `2022-07-05T18:31:07.000（+08:00）` 与相机 `SmokeMake SmokeModel`；`#1` 显示同一墙上时间但**没有**任何时区、也不显示 UTC；两者的排序键相同 | 无偏移的行显示 `+00:00`/UTC；把偏移算进排序键 |
+| 4 | 范围改成 `2000-01-01`~`2001-01-01`（再按 §9.1 用 `--rules-version 99` 重建一次） | 第一次：空结果 + 「拍摄时间已抽取完成（…确实没有命中）」；第二次：空结果 + `state=PENDING` 的「拍摄时间尚未抽取…不代表没有这些照片」 | 两种空结果写法完全相同（把「还没抽取」伪装成「没有命中」） |
+| 5 | 第二个标签页在 `/places` 把任意一张照片改到另一个地点；回到第一个标签页点「加载下一页」 | 结构化 `[CATALOG_FILTER_REVISION_STALE]` + 提示「请点“刷新”从第一页重新开始」；筛选条件保留 | 静默续页；条件被清空；降级成空网格 |
+| 6 | `/search` 用范围 `2022-01-01`~`2023-01-01` 搜索；再用「上传搜图」提交一张合成图 | 普通搜索回显 `capture_from`/`capture_to_exclusive` 的规范化串，命中 `#1`、`#8`；上传请求**不带**任何 capture 字段（服务端 multipart 闭集里没有它们） | 上传请求带 capture 字段或返回「未知字段」是页面自己发的 |
+| 7 | 键盘 `Tab`/`Space`/`Enter` 走一遍筛选与排序控件；缩窄窗口 | 全部可达可用；窄视口无横向溢出 | 控件不可键盘到达；出现横向滚动条 |
+| 8 | 页面文本、URL、访问日志、DOM 扫描（见 §9.4） | 无 `taken_at_raw`、无 `2022:07:05 18:31:07`、无盘符路径、无坐标；请求全在 `/api/v1/*`、`/`、`/search`、`/places`、`/web/*` | 出现原始 EXIF 文本、绝对路径或坐标 |
+
+### 9.4 必做的 DOM 断言（可复制）
+
+```js
+// 正文里不得出现原始 EXIF 时间文本、盘符路径或用户目录
+/2022:07:05 18:31:07|[A-Za-z]:\\|\\\\\?\\|\/Users\//.test(document.body.innerText);   // 期望 false
+
+// 「文件时间」必须真的出现在尾部卡片上（步骤 2）
+Array.from(document.querySelectorAll("#asset-grid .tile-time"))
+  .filter((node) => node.textContent.includes("文件时间")).length > 0;                 // 期望 true
+
+// 无偏移的照片不得显示时区
+(() => { const t = document.querySelectorAll("#asset-grid .tile-time");
+         return !Array.from(t).some((n) => n.textContent.includes("+00:00")); })();   // 期望 true
+
+// 窄视口下不得横向溢出
+document.documentElement.scrollWidth <= document.documentElement.clientWidth;         // 期望 true
+
+// URL 不得带凭证或筛选以外的内容
+location.href.indexOf("token=") < 0;                                                  // 期望 true
+```
+
+### 9.5 已知限制
+
+- 列表响应按 ADR-0011 §8.1 只带**条件性**的状态块，不带逐行时间投影；因此每张卡的
+  「拍摄时间/文件时间」一行来自该资产**详情接口**的闭集对象（页面按可见卡片懒加载）。
+  浏览器 smoke 因此同时覆盖列表状态块与详情对象两条路径。
+- 规则版本失配时，列表的**筛选**为空、详情为 `null`（不可信的行不发布），但 `capture_desc`
+  的**排序**仍按已存储的键给出确定性顺序（ADR-0011 §2 只排除「状态与过滤」；报告 §6 记录了该裁定）。
+- 内置浏览器 `viewport` 覆盖不改变实际窗口尺寸，窄宽证据同上（§8.5）。

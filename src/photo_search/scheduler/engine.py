@@ -419,6 +419,22 @@ class Scheduler:
                         prepared=prepared,
                         now_ms=int(now_ms),
                     )
+                # P4-00B: a qualified taken-time fact becomes the asset's current
+                # ``asset_metadata`` row (and, when it really changed, the one
+                # ``CAPTURE_TIME_CHANGED`` increment of the shared filter revision) in the
+                # very same transaction as the artifact, the artifact row and the job
+                # terminal state. Imported lazily like the other hooks: the scheduler does
+                # not depend on the taken-time package at import time.
+                from photo_search.taken_time import extract as taken_time_extract
+
+                if str(spec.processor_id) == taken_time_extract.TAKEN_TIME_PROCESSOR_ID:
+                    taken_time_extract.persist_taken_time_row(
+                        connection,
+                        job=job,
+                        result=result,
+                        prepared=prepared,
+                        now_ms=int(now_ms),
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None

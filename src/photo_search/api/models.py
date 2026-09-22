@@ -20,7 +20,7 @@ from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
 
 AvailabilityFilter = Literal["present", "missing", "any"]
 ReadyFilter = Literal["true", "false", "any"]
-AssetOrder = Literal["asset_id", "time_desc"]
+AssetOrder = Literal["asset_id", "time_desc", "capture_desc"]
 PlaceStateFilter = Literal["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
 PersonMatchFilter = Literal["all", "any"]
 PlaceAssignmentAction = Literal["assign", "unassign", "restore_auto"]
@@ -211,6 +211,46 @@ class AssetSummary(BaseModel):
     current_location: LocationRef | None = None
 
 
+class TakenTimeBlock(BaseModel):
+    """ADR-0011 §8.1: the honesty block that explains a capture-conditioned empty page.
+
+    It carries exactly four keys, and ``state`` is a pure function of the three counts it
+    contains: a library whose stored ``taken_time_rules_version`` is not this build's reports
+    ``extracted_assets``/``capture_time_assets`` as ``0`` (the rows stay in the catalog but
+    are not trusted), so the same counts can never yield two different states. It never
+    carries a raw EXIF value, a path, a coordinate or an instant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"]
+    assets_total: int
+    extracted_assets: int
+    capture_time_assets: int
+
+
+class AssetTakenTime(BaseModel):
+    """ADR-0011 §8.1 item 3: the closed per-asset taken-time object of the detail endpoint.
+
+    ``taken_at`` is the normalized *wall clock* string (``YYYY-MM-DDTHH:MM:SS.mmm``) and is
+    present exactly when the row has a civil key; ``timezone_offset_minutes`` is present only
+    when the file recorded one, so an offset-less row is never shown as UTC. ``taken_at_raw``
+    is deliberately absent: the internal EXIF evidence text never leaves the catalog.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    taken_at: str | None = None
+    taken_at_sort: int | None = None
+    time_source: Literal["EXIF_ORIGINAL", "EXIF_DIGITIZED", "EXIF_ROOT", "FILE_MTIME"] | None = (
+        None
+    )
+    time_confidence: Literal["HIGH", "MEDIUM", "LOW"] | None = None
+    timezone_offset_minutes: int | None = None
+    label: Literal["capture", "file_time"] | None = None
+    camera: str | None = None
+
+
 class AssetDetail(BaseModel):
     asset_id: int
     sha256: str
@@ -224,6 +264,10 @@ class AssetDetail(BaseModel):
     location_count: int
     locations: list[AssetLocation]
     media: dict[str, MediaState]
+    #: P4-00B: ``null`` means "no taken-time row has been published for this asset" (never
+    #: extracted, or the library's rule version does not match this build). The object itself
+    #: is closed and never carries the raw EXIF evidence.
+    taken_time: AssetTakenTime | None = None
 
 
 class SearchProjectionSummary(BaseModel):
@@ -264,6 +308,14 @@ class AssetListResponse(BaseModel):
     catalog_filter_revision: int | None = None
     #: P2-03B: the suggestion revision a ``place_state=suggested`` page was computed under.
     suggestion_revision: int | None = None
+    #: P4-00B: the normalized capture condition this page ran under. Both keys are always
+    #: present (``null`` when no condition was given), exactly like the frozen place keys.
+    capture_from: str | None = None
+    capture_to_exclusive: str | None = None
+    #: P4-00B: how much of the library carries a trustworthy taken time. It appears only when
+    #: at least one capture bound was given, and it exists so an empty page can say "the
+    #: extraction has not run yet" instead of pretending there is no match.
+    taken_time: TakenTimeBlock | None = None
     #: P2-04: present only when ``text`` was used, and honest about projection lag.
     search: SearchProjectionSummary | None = None
 
@@ -1061,6 +1113,12 @@ class SearchRequestModel(BaseModel):
     place_state: PlaceStateFilter = "any"
     person_ids: list[StrictInt] = Field(default_factory=list)
     person_match: PersonMatchFilter = "any"
+    #: ADR-0011 §6: the optional capture-time range. Both bounds are wall-clock spellings
+    #: (``YYYY-MM-DD`` / ``YYYY-MM-DDTHH:MM:SS[.f{1,3}]``); a timezone suffix is refused by
+    #: the envelope with the frozen ``INVALID_TIME_RANGE``, because a capture time has no
+    #: single timezone and accepting one would pretend the server converted it.
+    capture_from: str | None = Field(default=None, max_length=32)
+    capture_to_exclusive: str | None = Field(default=None, max_length=32)
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
     page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
     #: P2-06B: ask for the optional candidate rerank. Additive and off by default.
@@ -1106,6 +1164,9 @@ class SearchResultModel(BaseModel):
     channels: dict[str, Any]
     pending_semantic: dict[str, Any] | None = None
     search_projection: dict[str, Any]
+    #: P4-00B: the honesty block of a capture-conditioned query. It is a sibling of the frozen
+    #: ``search_projection`` block and appears only when the request carried a capture bound.
+    taken_time: TakenTimeBlock | None = None
     #: P2-06B: the candidate-score block, kept apart from ``hits[].score`` on purpose.
     rerank_state: Literal["NOT_REQUESTED", "OK", "UNAVAILABLE", "FAILED"]
     reranked: dict[str, Any] | None = None

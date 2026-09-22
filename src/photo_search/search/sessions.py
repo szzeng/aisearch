@@ -56,6 +56,8 @@ def query_hash(
     page_size: int,
     person_ids: Sequence[int] = (),
     person_match: str = "any",
+    capture_from: str | None = None,
+    capture_to_exclusive: str | None = None,
 ) -> str:
     """A stable digest of the conditions that must stay identical across the pages.
 
@@ -66,6 +68,12 @@ def query_hash(
     ADR-0009 §6.2 adds the person condition, and it is the caller's job to pass the
     *canonical*, de-duplicated, ascending ids: two different person conditions that resolve
     to the same person must share one digest, while two different conditions must never.
+
+    ADR-0011 §6.5 adds the two capture bounds to the frozen payload. They arrive already
+    normalized by ``taken_time.contract.parse_capture_range`` (the fixed-width wall-clock
+    spelling), so two spellings of the same interval share one digest and two different
+    intervals never do. There is deliberately no time revision in this payload: the capture
+    condition binds the one existing ``catalog_filter_revision``.
     """
     payload = {
         "text": None if text is None else str(text),
@@ -78,6 +86,10 @@ def query_hash(
         "page_size": int(page_size),
         "person_ids": [int(value) for value in person_ids],
         "person_match": str(person_match),
+        "capture_from": None if capture_from is None else str(capture_from),
+        "capture_to_exclusive": None
+        if capture_to_exclusive is None
+        else str(capture_to_exclusive),
     }
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()

@@ -43,6 +43,38 @@
   gap: 0.35rem;
 }
 
+.capture-filter {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.capture-filter legend {
+  padding: 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+.capture-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: flex-end;
+}
+
+.capture-controls p {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
 .person-filter legend {
   padding: 0 0.25rem;
   font-size: 0.85rem;
@@ -212,7 +244,8 @@
 @media (max-width: 40rem) {
   .filters p,
   .filters p.wide,
-  .person-controls p {
+  .person-controls p,
+  .capture-controls p {
     flex: 1 1 100%;
   }
 }

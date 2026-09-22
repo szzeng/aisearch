@@ -303,6 +303,15 @@ main {
   font-size: 0.78rem;
 }
 
+/* P4-00B: the per-tile taken-time sentence. It is read from the closed detail object of the
+ * asset (the listing carries the honesty block, not a per-row time projection), so it wraps
+ * instead of ever forcing a horizontal scrollbar. */
+.tile-caption .tile-time {
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
 .tile-link {
   background: none;
   border: none;

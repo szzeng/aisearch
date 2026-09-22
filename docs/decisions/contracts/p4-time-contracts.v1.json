@@ -1,0 +1,386 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p4-time-contracts.v1.json",
+  "title": "Photo Search P4 capture-time / timezone / fallback-source / capture-order protocol companion",
+  "description": "Derived from ADR-0011-taken-time-timezone-and-order-contract.md; ADR-0011 is authoritative on conflict. This companion freezes (a) the asset_metadata column semantics and the closed time_source / time_confidence vocabulary, (b) the civil wall-clock sort key and its relationship to the recorded timezone offset, (c) the two capture-time range bounds with their closed refusal reasons, (d) the capture_desc order with its own opaque cursor space, and (e) the additive capture keys carried by the live search filters echo plus the taken_time honesty block. It declares exactly one additive supersession: SearchFiltersEchoV2 is the live POST /api/v1/search filters echo, that is the p3-person-search-contracts.v1.json SearchFiltersEcho plus exactly two capture keys. No existing companion file is edited by P4-00A or P4-00B, and no second revision is introduced.",
+  "oneOf": [
+    { "$ref": "#/$defs/TimeSourceRule" },
+    { "$ref": "#/$defs/CaptureBoundNormalized" },
+    { "$ref": "#/$defs/CaptureCondition" },
+    { "$ref": "#/$defs/CaptureCursor" },
+    { "$ref": "#/$defs/SearchFiltersEchoV2" },
+    { "$ref": "#/$defs/TakenTimeBlock" },
+    { "$ref": "#/$defs/AssetTakenTimeBlock" },
+    { "$ref": "#/$defs/TimeApiError" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p4-time-contracts.v1" },
+    "SearchContractVersion": { "const": "p2-contracts.v1" },
+    "PersonSearchContractVersion": { "const": "p3-person-search-contracts.v1" },
+    "RulesVersion": { "const": 1 },
+    "CivilSortKeyEpoch": { "const": "0001-01-01T00:00:00.000" },
+    "MinOffsetMinutes": { "const": -720 },
+    "MaxOffsetMinutes": { "const": 840 },
+    "CaptureOrderValue": { "const": "capture_desc" },
+    "CaptureCursorPrefix": { "const": "c1" },
+    "CaptureCursorArity": { "const": 4 },
+    "AssetOrder": { "enum": ["asset_id", "time_desc", "capture_desc"] },
+    "TimeSource": {
+      "enum": ["EXIF_ORIGINAL", "EXIF_DIGITIZED", "EXIF_ROOT", "FILE_MTIME"]
+    },
+    "TimeConfidence": { "enum": ["HIGH", "MEDIUM", "LOW"] },
+    "CaptureLabel": { "enum": ["capture", "file_time"] },
+    "TimeSourceRule": {
+      "type": "object",
+      "required": [
+        "time_source",
+        "label",
+        "capture_confidence",
+        "participates_in_capture_filter",
+        "sort_bucket",
+        "fallback_rank"
+      ],
+      "properties": {
+        "time_source": { "$ref": "#/$defs/TimeSource" },
+        "label": { "$ref": "#/$defs/CaptureLabel" },
+        "capture_confidence": { "$ref": "#/$defs/TimeConfidence" },
+        "participates_in_capture_filter": { "type": "boolean" },
+        "sort_bucket": { "enum": ["ordered", "tail"] },
+        "fallback_rank": { "type": "integer", "minimum": 1, "maximum": 4 }
+      },
+      "additionalProperties": false
+    },
+    "TimeSourceRules": {
+      "type": "object",
+      "required": ["EXIF_ORIGINAL", "EXIF_DIGITIZED", "EXIF_ROOT", "FILE_MTIME"],
+      "properties": {
+        "EXIF_ORIGINAL": {
+          "const": {
+            "time_source": "EXIF_ORIGINAL",
+            "label": "capture",
+            "capture_confidence": "HIGH",
+            "participates_in_capture_filter": true,
+            "sort_bucket": "ordered",
+            "fallback_rank": 1
+          }
+        },
+        "EXIF_DIGITIZED": {
+          "const": {
+            "time_source": "EXIF_DIGITIZED",
+            "label": "capture",
+            "capture_confidence": "MEDIUM",
+            "participates_in_capture_filter": true,
+            "sort_bucket": "ordered",
+            "fallback_rank": 2
+          }
+        },
+        "EXIF_ROOT": {
+          "const": {
+            "time_source": "EXIF_ROOT",
+            "label": "file_time",
+            "capture_confidence": "LOW",
+            "participates_in_capture_filter": false,
+            "sort_bucket": "ordered",
+            "fallback_rank": 3
+          }
+        },
+        "FILE_MTIME": {
+          "const": {
+            "time_source": "FILE_MTIME",
+            "label": "file_time",
+            "capture_confidence": "LOW",
+            "participates_in_capture_filter": false,
+            "sort_bucket": "tail",
+            "fallback_rank": 4
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "TimezoneOffsetMinutes": {
+      "oneOf": [
+        { "type": "integer", "minimum": -720, "maximum": 840 },
+        { "type": "null" }
+      ]
+    },
+    "CaptureBoundRaw": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 23,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,3})?)?$"
+    },
+    "CaptureBoundNormalized": {
+      "type": "string",
+      "minLength": 23,
+      "maxLength": 23,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$"
+    },
+    "CaptureCursorKnown": { "enum": [0, 1] },
+    "CaptureCondition": {
+      "type": "object",
+      "required": ["capture_from", "capture_to_exclusive"],
+      "properties": {
+        "capture_from": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureBoundNormalized" }, { "type": "null" }]
+        },
+        "capture_to_exclusive": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureBoundNormalized" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    },
+    "CaptureCursor": {
+      "type": "object",
+      "description": "The opaque capture_desc keyset cursor. values is exactly [known, sort_key_or_0, asset_id, catalog_filter_revision]: known is 1 in the ordered bucket and 0 in the tail bucket, the tail bucket writes 0 in the sort element (it is not interpreted there), asset_id is at least 1, and the fourth element IS the bound catalog_filter_revision. There is deliberately no separate revision property, so the bound revision and the fourth element can never disagree.",
+      "required": ["prefix", "arity", "values"],
+      "properties": {
+        "prefix": { "$ref": "#/$defs/CaptureCursorPrefix" },
+        "arity": { "$ref": "#/$defs/CaptureCursorArity" },
+        "values": {
+          "type": "array",
+          "prefixItems": [
+            { "$ref": "#/$defs/CaptureCursorKnown" },
+            { "type": "integer", "minimum": 0 },
+            { "type": "integer", "minimum": 1 },
+            { "type": "integer", "minimum": 0 }
+          ],
+          "minItems": 4,
+          "maxItems": 4
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "values": { "prefixItems": [{ "const": 0 }] } },
+            "required": ["values"]
+          },
+          "then": {
+            "properties": {
+              "values": {
+                "type": "array",
+                "prefixItems": [{ "const": 0 }, { "const": 0 }],
+                "minItems": 4,
+                "maxItems": 4
+              }
+            }
+          }
+        }
+      ]
+    },
+    "VectorBindingEcho": {
+      "type": "object",
+      "required": [
+        "generation_id",
+        "space_id",
+        "dimension",
+        "processor_id",
+        "generation_state",
+        "is_active",
+        "semantic_complete"
+      ],
+      "properties": {
+        "generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "dimension": { "type": "integer", "minimum": 1 },
+        "processor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_state": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "is_active": { "type": "boolean" },
+        "semantic_complete": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "SearchFiltersEchoV2": {
+      "type": "object",
+      "required": [
+        "source_id",
+        "availability",
+        "place_ids",
+        "include_descendants",
+        "place_state",
+        "expanded_place_ids",
+        "catalog_filter_revision",
+        "suggestion_revision",
+        "binding",
+        "person_ids",
+        "person_match",
+        "capture_from",
+        "capture_to_exclusive"
+      ],
+      "properties": {
+        "source_id": {
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
+        },
+        "availability": { "enum": ["present", "missing", "any"] },
+        "place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "include_descendants": { "type": "boolean" },
+        "place_state": {
+          "enum": ["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+        },
+        "expanded_place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "suggestion_revision": { "type": "integer", "minimum": 0 },
+        "binding": {
+          "oneOf": [{ "$ref": "#/$defs/VectorBindingEcho" }, { "type": "null" }]
+        },
+        "person_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "person_match": { "enum": ["all", "any"] },
+        "capture_from": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureBoundNormalized" }, { "type": "null" }]
+        },
+        "capture_to_exclusive": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureBoundNormalized" }, { "type": "null" }]
+        }
+      },
+      "additionalProperties": false
+    },
+    "TakenTimeBlock": {
+      "type": "object",
+      "description": "The capture-time honesty block that accompanies a capture-conditioned query. extracted_assets counts only the assets whose asset_metadata row is trustworthy under this build's taken_time_rules_version: when the catalog's stored rules version differs, the rows are not trusted and both extracted_assets and capture_time_assets are reported as 0, so state stays the pure function of the three counts it carries.",
+      "required": ["state", "assets_total", "extracted_assets", "capture_time_assets"],
+      "properties": {
+        "state": { "enum": ["PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"] },
+        "assets_total": { "type": "integer", "minimum": 0 },
+        "extracted_assets": { "type": "integer", "minimum": 0 },
+        "capture_time_assets": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "AssetTakenTimeBlock": {
+      "type": "object",
+      "required": [
+        "taken_at",
+        "taken_at_sort",
+        "time_source",
+        "time_confidence",
+        "timezone_offset_minutes",
+        "label",
+        "camera"
+      ],
+      "properties": {
+        "taken_at": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureBoundNormalized" }, { "type": "null" }]
+        },
+        "taken_at_sort": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "maximum": 315537897599999 },
+            { "type": "null" }
+          ]
+        },
+        "time_source": {
+          "oneOf": [{ "$ref": "#/$defs/TimeSource" }, { "type": "null" }]
+        },
+        "time_confidence": {
+          "oneOf": [{ "$ref": "#/$defs/TimeConfidence" }, { "type": "null" }]
+        },
+        "timezone_offset_minutes": { "$ref": "#/$defs/TimezoneOffsetMinutes" },
+        "label": {
+          "oneOf": [{ "$ref": "#/$defs/CaptureLabel" }, { "type": "null" }]
+        },
+        "camera": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 128 },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "TimeRangeReason": {
+      "enum": [
+        "capture_bound_malformed",
+        "capture_bound_has_offset",
+        "capture_bound_out_of_range",
+        "capture_range_not_ascending"
+      ]
+    },
+    "TimeErrorDetails": {
+      "type": "object",
+      "properties": {
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["loc", "msg", "type"],
+            "properties": {
+              "loc": { "type": "array", "items": { "type": "string" }, "maxItems": 16 },
+              "msg": { "type": "string", "minLength": 1, "maxLength": 256 },
+              "type": { "type": "string", "minLength": 1, "maxLength": 64 }
+            },
+            "additionalProperties": false
+          },
+          "maxItems": 32
+        },
+        "where": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "missing": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 32
+        },
+        "unexpected": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 32
+        },
+        "value": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "field": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "search_session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "session_catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "current_catalog_filter_revision": { "type": "integer", "minimum": 0 },
+        "ttl_ms": { "type": "integer", "minimum": 1 },
+        "place_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "uniqueItems": true
+        },
+        "place_state": {
+          "enum": ["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
+        },
+        "person_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "person_match": { "enum": ["all", "any"] },
+        "max_person_ids": { "const": 100 }
+      },
+      "additionalProperties": false
+    },
+    "TimeApiError": {
+      "type": "object",
+      "required": ["code", "message", "request_id"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_TIME_RANGE",
+            "VALIDATION_ERROR",
+            "CATALOG_FILTER_REVISION_STALE",
+            "SEARCH_SESSION_EXPIRED",
+            "INVALID_CURSOR",
+            "SCHEMA_TOO_NEW",
+            "SCHEMA_INCONSISTENT"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "details": { "$ref": "#/$defs/TimeErrorDetails" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

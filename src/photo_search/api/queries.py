@@ -16,6 +16,7 @@ from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.catalog import store
 from photo_search.catalog.errors import (
     ASSET_NOT_FOUND,
+    CATALOG_FILTER_REVISION_STALE,
     JOB_NOT_FOUND,
     PLACE_SUGGESTION_REVISION_STALE,
 )
@@ -26,6 +27,8 @@ from photo_search.places import revision as revision_module
 from photo_search.places.filter import place_condition
 from photo_search.search import documents as search_documents
 from photo_search.search import query as search_query
+from photo_search.taken_time import contract as time_contract
+from photo_search.taken_time import read as time_read
 
 #: Opaque cursor prefix of the default ``asset_id`` ordering (P1-04, frozen).
 CURSOR_PREFIX = "v1"
@@ -33,10 +36,17 @@ CURSOR_PREFIX = "v1"
 #: different token spaces, so a cursor minted by one ordering is rejected by the other
 #: (``INVALID_CURSOR``) instead of silently resuming at a meaningless position.
 TIME_CURSOR_PREFIX = "t1"
+#: Opaque cursor prefix of the ``capture_desc`` ordering. It is a third, independent token
+#: space: a ``v1``/``t1`` cursor must never be reinterpreted as a capture position, and vice
+#: versa (ADR-0011 §5.2).
+CAPTURE_CURSOR_PREFIX = "c1"
 #: ``order`` values the asset listing accepts. ``asset_id`` is the P1-04 default.
 ORDER_ASSET_ID = "asset_id"
 ORDER_TIME_DESC = "time_desc"
-ORDERS = (ORDER_ASSET_ID, ORDER_TIME_DESC)
+#: ADR-0011 §5.1: ``capture_desc`` browses by the *capture* time (the civil key), with the
+#: rows that have no civil key collected at the tail.
+ORDER_CAPTURE_DESC = "capture_desc"
+ORDERS = (ORDER_ASSET_ID, ORDER_TIME_DESC, ORDER_CAPTURE_DESC)
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
 #: How many asset rows one chunk examines; keeps memory bounded while still letting a
@@ -104,6 +114,36 @@ def decode_time_cursor(text: str | None) -> tuple[int, int] | None:
     """Decode a ``time_desc`` cursor; ``None`` means "start at the newest asset"."""
     numbers = _decode_cursor(text, prefix=TIME_CURSOR_PREFIX, arity=2)
     return None if numbers is None else (numbers[0], numbers[1])
+
+
+def encode_capture_cursor(known: int, sort_key: int, asset_id: int, revision: int) -> str:
+    """Opaque ``capture_desc`` cursor: ``[known, sort_key_or_0, asset_id, revision]``.
+
+    ADR-0011 §5.2: the fourth element *is* the ``catalog_filter_revision`` the cursor was
+    minted under, so there is deliberately no second revision field that could disagree with
+    it. ``known`` distinguishes the ordered bucket (``1``, ``sort_key`` is the civil key) from
+    the tail bucket (``0``, whose sort element is always exactly ``0``).
+    """
+    return _encode_cursor(
+        CAPTURE_CURSOR_PREFIX,
+        (int(known), int(sort_key), int(asset_id), int(revision)),
+    )
+
+
+def decode_capture_cursor(text: str | None) -> tuple[int, int, int, int] | None:
+    """Decode a ``capture_desc`` cursor, refusing every shape ADR-0011 §5.2 forbids."""
+    numbers = _decode_cursor(text, prefix=CAPTURE_CURSOR_PREFIX, arity=4)
+    if numbers is None:
+        return None
+    known, sort_key, asset_id, revision = numbers
+    if known not in (0, 1):
+        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+    if known == 0 and sort_key != 0:
+        # The tail bucket writes 0 in the sort element; it is not a free-form value.
+        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+    if asset_id < 1:
+        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+    return (known, sort_key, asset_id, revision)
 
 
 def clamp_limit(limit: int | None, *, default: int = DEFAULT_PAGE_LIMIT) -> int:
@@ -186,6 +226,8 @@ def asset_page(
     place_state: str = "any",
     suggestion_revision: int | None = None,
     text: str | None = None,
+    capture_from: str | None = None,
+    capture_to_exclusive: str | None = None,
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -202,6 +244,14 @@ def asset_page(
     condition on the same page, so the cursor space and every authoritative place filter
     stay exactly as they were. Before the match runs, the projection is caught up in
     bounded batches, and the response states how much lag is left.
+
+    ``order=capture_desc`` and the optional ``capture_from``/``capture_to_exclusive`` pair
+    are the P4-00B add-on of ADR-0011. The range is one more authoritative AND condition -
+    it only ever matches a ``label = capture`` row, and it is satisfied by no row at all
+    while the library's ``taken_time_rules_version`` is not this build's. The ordering keeps
+    its own ``c1`` cursor space and binds the one existing ``catalog_filter_revision``: a
+    moved revision refuses the continuation with the established 409 code instead of
+    publishing a page that mixes two catalog versions.
     """
     if availability not in ("present", "missing", "any"):
         raise ApiError(
@@ -214,10 +264,20 @@ def asset_page(
     if order not in ORDERS:
         raise ApiError(
             VALIDATION_ERROR,
-            "order must be asset_id or time_desc",
+            "order must be asset_id, time_desc or capture_desc",
             status=422,
             details={"order": str(order)},
         )
+    # ADR-0011 §6.2/§6.3: both bounds are parsed once, up front, so a malformed bound, a
+    # timezone suffix or a non-ascending interval is the frozen 422 and nothing is written.
+    capture = time_contract.parse_capture_range(capture_from, capture_to_exclusive)
+    # The one filter revision this page is computed under: it is read once, echoed once and -
+    # for ``capture_desc`` - bound into the cursor, so the echo and the cursor can never
+    # disagree about which version answered the page.
+    filter_revision = int(revision_module.read_filter_revision(catalog.connection))
+    capture_sql, capture_parameters = time_read.capture_predicate(
+        catalog.connection, capture
+    )
     # An unusable text query is refused before anything is written (structured 422).
     text_match = None if text is None else search_query.build_match(text)
     text_sql: str | None = None
@@ -257,7 +317,19 @@ def asset_page(
             catalog.connection, text_match, catch_up=catch_up
         )
     start: int | tuple[int, int] | None
-    if order == ORDER_TIME_DESC:
+    if order == ORDER_CAPTURE_DESC:
+        start = decode_capture_cursor(cursor)
+        if start is not None and int(start[3]) != filter_revision:
+            raise ApiError(
+                CATALOG_FILTER_REVISION_STALE,
+                "the capture ordering moved since this page was requested",
+                status=409,
+                details={
+                    "reason": "CATALOG_FILTER_REVISION_CHANGED",
+                    "current_catalog_filter_revision": int(filter_revision),
+                },
+            )
+    elif order == ORDER_TIME_DESC:
         start = decode_time_cursor(cursor)
     else:
         start = decode_cursor(cursor)
@@ -278,13 +350,15 @@ def asset_page(
             place_parameters=place_parameters,
             text_sql=text_sql,
             text_parameters=text_parameters,
+            capture_sql=None if capture_sql == "1" else capture_sql,
+            capture_parameters=capture_parameters,
         )
         if not rows:
             exhausted = True
             break
         grouped = locations_by_asset(catalog, [int(row["asset_id"]) for row in rows])
         for row in rows:
-            examined_last = _cursor_position(row, order)
+            examined_last = _cursor_position(row, order, revision=filter_revision)
             summary = summarize_asset(
                 cache,
                 asset_id=int(row["asset_id"]),
@@ -305,10 +379,14 @@ def asset_page(
                 exhausted = True
                 break
     has_more = not exhausted
-    return {
+    payload: dict[str, Any] = {
         "assets": matched,
         "limit": page_limit,
-        "next_cursor": _encode_position(examined_last, order) if has_more else None,
+        "next_cursor": (
+            _encode_position(examined_last, order, revision=filter_revision)
+            if has_more
+            else None
+        ),
         "has_more": has_more,
         "availability": availability,
         "has_thumbnail": has_thumbnail,
@@ -317,25 +395,40 @@ def asset_page(
         "place_ids": [int(value) for value in (place_ids or ())],
         "include_descendants": bool(include_descendants),
         "place_state": str(place_state or "any"),
-        "catalog_filter_revision": revision_module.read_filter_revision(catalog.connection),
+        "catalog_filter_revision": filter_revision,
         "suggestion_revision": int(current_suggestion_revision),
         "search": search_block,
+        # ADR-0011 §8.1: both capture keys are always present, and the honesty block only
+        # accompanies a page that really carried a time condition.
+        **time_contract.capture_echo(capture),
     }
+    if capture is not None:
+        payload["taken_time"] = time_read.state_block(catalog.connection)
+    return payload
 
 
-def _cursor_position(row: Any, order: str) -> Any:
+def _cursor_position(row: Any, order: str, *, revision: int) -> Any:
     """The keyset position of one examined row, in the requested ordering."""
     if order == ORDER_TIME_DESC:
         return (int(row["created_at"]), int(row["asset_id"]))
+    if order == ORDER_CAPTURE_DESC:
+        sort_key = row["capture_sort"]
+        if sort_key is None:
+            # The tail bucket writes exactly 0 in the sort element (ADR-0011 §5.2).
+            return (0, 0, int(row["asset_id"]), int(revision))
+        return (1, int(sort_key), int(row["asset_id"]), int(revision))
     return int(row["asset_id"])
 
 
-def _encode_position(position: Any, order: str) -> str | None:
+def _encode_position(position: Any, order: str, *, revision: int) -> str | None:
     if position is None:  # pragma: no cover - defensive: has_more implies a position
         return None
     if order == ORDER_TIME_DESC:
         created_at, asset_id = position
         return encode_time_cursor(created_at, asset_id)
+    if order == ORDER_CAPTURE_DESC:
+        known, sort_key, asset_id, bound_revision = position
+        return encode_capture_cursor(known, sort_key, asset_id, bound_revision)
     return encode_cursor(position)
 
 
@@ -351,10 +444,32 @@ def _asset_chunk(
     place_parameters: list[Any] | None = None,
     text_sql: str | None = None,
     text_parameters: list[Any] | None = None,
+    capture_sql: str | None = None,
+    capture_parameters: list[Any] | None = None,
 ) -> list[Any]:
     conditions: list[str] = []
     parameters: list[Any] = []
-    if order == ORDER_TIME_DESC:
+    join = ""
+    selection = "a.asset_id, a.sha256, a.byte_size, a.created_at"
+    if order == ORDER_CAPTURE_DESC:
+        # ADR-0011 §5.1: the capture ordering reads the derived fact table. A missing row is
+        # equivalent to ``taken_at_sort IS NULL`` (it belongs to the tail bucket).
+        join = " LEFT JOIN asset_metadata AS m ON m.asset_id = a.asset_id"
+        selection += ", m.taken_at_sort AS capture_sort"
+        if after is not None:
+            known, sort_key, asset_id, _bound_revision = after
+            if int(known) == 1:
+                # The rest of the ordered bucket, then the whole tail bucket.
+                conditions.append(
+                    "((m.taken_at_sort IS NOT NULL AND (m.taken_at_sort < ? OR "
+                    "(m.taken_at_sort = ? AND a.asset_id < ?))) OR m.taken_at_sort IS NULL)"
+                )
+                parameters.extend([int(sort_key), int(sort_key), int(asset_id)])
+            else:
+                conditions.append("(m.taken_at_sort IS NULL AND a.asset_id < ?)")
+                parameters.append(int(asset_id))
+        ordering = "(m.taken_at_sort IS NULL), m.taken_at_sort DESC, a.asset_id DESC"
+    elif order == ORDER_TIME_DESC:
         if after is not None:
             created_at, asset_id = after
             conditions.append(
@@ -388,11 +503,14 @@ def _asset_chunk(
     if text_sql:
         conditions.append(text_sql)
         parameters.extend(text_parameters or [])
+    if capture_sql:
+        conditions.append(capture_sql)
+        parameters.extend(capture_parameters or [])
     parameters.append(int(size))
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(
         catalog.read_all(
-            "SELECT a.asset_id, a.sha256, a.byte_size, a.created_at FROM assets AS a "
+            f"SELECT {selection} FROM assets AS a{join}"
             f"{where} ORDER BY {ordering} LIMIT ?",
             tuple(parameters),
         )
@@ -432,6 +550,10 @@ def asset_detail(
         ),
         "location_count": len(locations),
         "locations": locations,
+        # P4-00B (ADR-0011 §8.1 item 3): the closed per-asset taken-time object, or ``null``
+        # when this build has no trustworthy row for the asset. ``taken_at_raw`` never leaves
+        # the catalog.
+        "taken_time": time_read.asset_view(catalog.connection, int(asset_id)),
         "media": {
             kind: {
                 "kind": state["kind"],

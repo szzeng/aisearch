@@ -889,3 +889,141 @@ def test_the_search_page_keeps_the_person_choice_out_of_the_url_and_the_html_sin
         assert fragment not in script, fragment
     # Every string the picker paints goes through textContent.
     assert "text(label, personOptionText(person));" in script
+
+
+# ---------------------------------------------------------------------------------------
+# P4-00B: the capture-time dimension. The listing gains a capture order and a half-open
+# range; the search page gains the same range; both must state the honest "not extracted"
+# state instead of presenting an empty page as "no match", and neither may invent a timezone
+# the file did not record.
+# ---------------------------------------------------------------------------------------
+def test_the_browse_page_binds_the_capture_order_and_the_two_bounds() -> None:
+    shell, script, _ = _web_documents()
+
+    for element_id in (
+        "browse-order",
+        "browse-capture-from",
+        "browse-capture-to",
+        "browse-capture-state",
+    ):
+        assert 'id="' + element_id + '"' in shell, element_id
+    assert "按拍摄时间（无拍摄时间的排最后）" in shell
+    assert 'params.set("order", state.browse.order);' in script
+    assert 'params.set("capture_from", state.browse.captureFrom);' in script
+    assert 'params.set("capture_to_exclusive", state.browse.captureTo);' in script
+    # A changed condition must not continue an old cursor: the fingerprint refuses it.
+    assert "function browseFingerprint()" in script
+    assert "function continuationRefused(reset)" in script
+    # A condition changed while the previous page was in flight is never silently dropped.
+    assert "state.browse.owed = true;" in script
+    assert "if (state.browse.owed) {" in script
+    assert "旧游标只能沿用首次加载时的条件，不能续页" in script
+    assert "capture_from" in script and "capture_to_exclusive" in script
+
+
+def test_the_browse_page_labels_file_time_and_never_invents_a_timezone() -> None:
+    _, script, _ = _web_documents()
+
+    # The per-tile sentence comes from the closed detail object of that same asset.
+    assert 'request("/assets/" + encodeURIComponent(key))' in script
+    assert 'var view = (result.body || {}).taken_time || null;' in script
+    assert "function captureLine(view)" in script
+    assert "拍摄时间 " in script and "文件时间" in script
+    assert "拍摄时间未抽取" in script
+    assert "EXIF 根时间（文件时间）" in script
+    assert "文件修改时间" in script
+    # The wall-clock string is rendered verbatim and the offset comes from the recorded
+    # minutes; the page never re-derives either from the browser's clock or timezone.
+    assert 'String(view.taken_at)' in script
+    assert "function offsetText(minutes)" in script
+    assert "getTimezoneOffset" not in script
+    assert "toISOString" not in script
+    # "UTC" appears only inside the two honesty sentences that say it is *not* used; the
+    # capture rendering itself never derives or prints one.
+    assert "A row without a recorded offset is never shown as UTC." in script
+    assert "文件未记录（不会显示或推断为 UTC）" in script
+
+
+def test_the_browse_page_states_the_honest_capture_state_and_refusals() -> None:
+    _, script, _ = _web_documents()
+
+    for state in ("PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"):
+        assert state + ":" in script, state
+    # The server's normalized echo is what the page shows for the active condition.
+    assert "服务端回显（规范化墙上时间，左闭右开）：capture_from=" in script
+    assert 'payload.capture_to_exclusive === undefined ? null' in script
+    assert "拍摄时间尚未抽取：现在的时间条件命中为空，并不代表没有这些照片。" in script
+    assert "拍摄时间还在抽取中：时间条件的命中可能不完整。" in script
+    assert "图库里没有任何可用的拍摄时间（只有文件时间），时间条件不会命中任何照片。" in script
+    # An empty page is never reported as "no match" when the extraction has not caught up.
+    assert "这个时间范围内暂时没有结果，但" in script
+    assert "先完成拍摄时间抽取，再判断是否真的没有命中。" in script
+    assert "这个时间范围内确实没有命中的照片（" in script
+    assert "INVALID_TIME_RANGE" in script
+    assert "CATALOG_FILTER_REVISION_STALE" in script
+    assert "不接受时区后缀" in script
+    assert "请点“刷新”从第一页重新开始" in script
+
+
+def test_the_asset_detail_view_shows_the_capture_truth_without_the_raw_text() -> None:
+    _, script, _ = _web_documents()
+
+    assert 'capture.appendChild(element("h3", null, "拍摄时间（EXIF）"));' in script
+    assert "规范化墙上时间" in script
+    assert "文件未记录（不会显示或推断为 UTC）" in script
+    assert "排序键（civil key）" in script
+    assert "原始 EXIF 时间文本不会通过接口返回" in script
+    for document in ("index.html", "app.js", "styles.css", "search.html", "search.js", "search.css"):
+        payload = (read_static(document) or b"").decode("utf-8")
+        assert "taken_at_raw" not in payload, document
+
+
+def test_the_search_page_sends_the_capture_bounds_only_for_the_text_search() -> None:
+    shell, script, _ = _search_documents()
+
+    for element_id in (
+        "capture-filter",
+        "capture-hint",
+        "query-capture-from",
+        "query-capture-to",
+        "capture-clear",
+        "capture-echo",
+        "capture-state",
+    ):
+        assert 'id="' + element_id + '"' in shell, element_id
+    assert 'for="query-capture-from"' in shell and 'for="query-capture-to"' in shell
+    text_search = script.split("function sendTextSearch(", 1)[1].split("\n  function ", 1)[0]
+    assert "body.capture_from = filters.captureFrom;" in text_search
+    assert "body.capture_to_exclusive = filters.captureTo;" in text_search
+    upload = script.split("function sendImageSearch(", 1)[1].split("\n  function ", 1)[0]
+    for field in ("capture_from", "capture_to_exclusive"):
+        assert field not in upload, field
+    assert "上传搜图也不携带它" in shell
+
+
+def test_the_search_page_echoes_the_normalized_capture_condition() -> None:
+    _, script, _ = _search_documents()
+
+    assert "function renderCaptureEcho(filters, mode)" in script
+    assert "renderCaptureEcho(body.filters, state.search.mode);" in script
+    assert "后端回显（规范化墙上时间，左闭右开）：capture_from=" in script
+    assert "本次查询没有拍摄时间条件（两个键都为 null）" in script
+    assert "上传搜图不携带拍摄时间条件" in script
+    # The continuation fingerprint covers the capture condition like every other condition.
+    assert "captureFrom: filters.captureFrom," in script
+    assert "captureTo: filters.captureTo," in script
+    # A failed request clears the echo instead of leaving a stale statement standing.
+    assert "text(els.captureEcho, \"\");" in script
+
+
+def test_the_search_page_distinguishes_an_empty_page_from_an_unextracted_library() -> None:
+    _, script, _ = _search_documents()
+
+    assert "function captureCondition(body)" in script
+    assert "function captureNotice(block, hits)" in script
+    assert "taken_time" in script
+    assert "这一页为空说明拍摄时间还没跟上，不代表这些照片不存在。" in script
+    assert "这一页没有命中的行（拍摄时间已抽取完成，这个范围内确实没有命中）" in script
+    assert "拍摄时间范围不被接受：只支持 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS[.毫秒] 的墙上时间写法" in script
+    for state in ("PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"):
+        assert state + ":" in script, state

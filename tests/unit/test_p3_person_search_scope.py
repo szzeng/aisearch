@@ -180,10 +180,15 @@ def test_the_filters_echo_always_carries_the_two_frozen_person_keys() -> None:
         assert empty["person_ids"] == [] and empty["person_match"] == "any"
         scoped = scope_view(connection, SearchScope.build(person_ids=[7, 3]))
         assert scoped["person_ids"] == [3, 7] and scoped["person_match"] == "any"
-        # The echo key set is exactly what ADR-0009 §7.1 fixed (the binding key is added by
-        # the service, so it is checked there).
+        # The echo key set is what ADR-0009 §7.1 fixed plus - from P4-00B (ADR-0011 §8.2) -
+        # exactly the two capture keys (``binding`` is added by the service, so it is checked
+        # there). The P3 companion itself keeps its eleven keys; only the live echo grew.
         required = set(COMPANION["$defs"]["SearchFiltersEcho"]["required"])
-        assert set(scoped) | {"binding"} == required
+        assert set(scoped) | {"binding"} == required | {
+            "capture_from",
+            "capture_to_exclusive",
+        }
+        assert scoped["capture_from"] is None and scoped["capture_to_exclusive"] is None
     finally:
         connection.close()
 
