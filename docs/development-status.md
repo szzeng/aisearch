@@ -2139,3 +2139,54 @@ GTX 1660、30 万规模）。
 [docs/tasks/P4-01.md](tasks/P4-01.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**（与当前档一致，可继续
 使用当前模型）；验收等级 **B + D**（涉及打包再加 C）；max 仅按 §2.2，无法解释的 Windows 性能异常转 C1。
 模型切换始终由用户在 Codex 中手动完成。
+
+## Latest benchmark closure — P4-01 scale bottleneck measurement (2026-09-23)
+
+**P4-01：测量闭环 PASS（B + D），命中停止条件 1 → 30 万瓶颈交回，生产代码零改动。** 完整报告
+[P4-01 报告](reports/P4-01-ann-scale-benchmark.md)。起始基线 `0f4a47c`（用户已把 P4-00C 收口入库，工作树
+干净）；本卡新增 `tools/diagnostics/ann_scale_benchmark.py`、`tests/integration/test_p4_01_index_scale.py`、
+本报告、`docs/tasks/P4-01B.md`，**未改任何生产代码/迁移/契约/打包面**，`SUPPORTED_SCHEMA_VERSION` 仍为 15。
+
+夹具：项目内 `tmp/p4-01-基准 空格`（中文 + 空格路径）真 SQLite + 真 Lance generation（生产 `_schema`）+
+真 `jobs`/`artifacts`/载荷文件/`index_entries`；10 万与 30 万两档都真实建库（30 万档 300 000 行，
+catalog 1.32 GB、vectors 619 MB、artifacts 3.23 GB）。查询集 1 000 + 50 边界查询，seed 20260923。
+**未装 pinned 权重，向量为确定性合成向量（clustered 为主、uniform 为对照）；GTX 1660 记 BLOCKED。**
+
+实测（RTX 4060 Laptop / 32 逻辑核 / 31.7 GB）：
+
+1. **检索路径 `O(N²/1000)`**：生产 `vector_channel` 按 1 000 候选一块、每块一次全表扫描 ⇒ 10 万
+   **11 520 ms**（100 块，Recall@20=1.000），30 万 **112 177 ms**（300 块，Recall@20=1.000）；
+   §12.2 的 1.5 s 目标在 30 万差约 **75×**。冷缓存首查 110 939 ms，与热值同量级。
+2. **当前 IVF_PQ 不能替代**：30 万（585 分区/64 子向量，构建 18.2 s）后遍历 10 965 ms 但 Recall@20
+   只有 **0.100**；引擎单次全库查询 374 ms（精确）→ 17.1 ms（ANN，Recall@20 0.077）。20 000 行独立新表
+   单变量归因：`num_sub_vectors` 64→128 把 Recall@20 从 0.229 提到 0.395（clustered）/0.241→0.408
+   （uniform），`partitions` 39→9 只到 0.276/0.283，**数据分布不是主因**；锁定版 `LanceQueryBuilder`
+   不暴露 `nprobes`。30 万档无索引引擎扫描与 numpy 暴力 top-20 **160/160 全等**。
+3. **索引维护**：逐事件 `merge_insert` 50.9 ms/行（10 万档 39.3 ms/行）vs 同数据批量写入
+   **0.0051 ms/行**（30 万 1.53 s）；按实测 19.6 行/s，30 万行从零约 4.25 小时。`process_next` 重放
+   50.6 ms/事件、`semantic_ready` 5/5、generation READY；`audit_and_schedule_repairs` 因 `has()`→`rows()`
+   全量物化为 `O(资产数 × 行数)`（200 资产 = 3 052 ms）。
+4. **D 级四项注入**（200 资产全真路径）：中断重启零逻辑重复/零丢失；「Lance 已写、outbox 未确认」重放
+   幂等；内容变更期间旧向量不可命中、重放后新向量可命中；位置离线后幽灵行存在但不可达。投影滞后补回
+   亦验证（`in_topup=true` / `returned_as_hit=false`）。
+5. **过滤分布**：wide 72%（10 万 1 808 ms / 30 万 8 236 ms，blocks 与 `ceil(候选/1000)` 完全一致、
+   越权命中 0）、narrow 10%（339 ms / 1 513 ms）；**half（来源 + 地点后代）与 thin（地点 + 人物 all）
+   两档的权威 SQL 在两档规模上都 >60 s 未返回**（同夹具 wide 只 151 ms、narrow 146 ms），并使 30 万档
+   §12.4 第 32 条组合校验无法测量 —— 交回为查询计划级异常。
+6. **并发**（3 万档，后台独立进程 200 事件重放 + 前台真实 `search_assets`）：前台 P50 4 693 ms /
+   **P95 5 014 ms（目标 ≤1 500 ms，未达标）**，后台 19.9 事件/s、剩余 0。
+
+验收：全量 `test-results/p4-01-full.xml` **1639 / 0 / 0 / 48**（265.9 s，48 skip 为既有未装权重环境跳过）；
+本卡专项 `test-results/p4-01-scale.xml` **6 / 0 / 0 / 0**；Ruff `All checks passed!`、`git diff --check`
+与 `uv lock --check`（96 packages）退出码 0；机器可读结论 `test-results/p4-01-ann-scale.json`
+（scales 100000 + 300000、attribution、injections、concurrency）。测试用项目内 basetemp，沙箱内临时目录
+`WinError 5` 按既有做法改走正常 Windows 权限路由，未改 ACL。
+
+**停止点（任务卡停止条件 1）**：上述瓶颈的修复需要在「批量/分片写入、索引维护策略、索引参数与召回承诺、
+可能的检索路径选择」之间做一次设计决策，已触及改检索语义/支持承诺的边界，因此本卡**未做任何生产修改**，
+只交回最小反例与测量数据。下一任务为 **P4-01B — 检索路径与索引维护瓶颈的修复设计与最小实现**
+（[docs/tasks/P4-01B.md](tasks/P4-01B.md)），推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**；完成后另开独立
+DS-H 全量工程主审，若改动触及检索语义/召回承诺则补 **C2 / GPT-5.6 Sol / high** 聚焦终审。两条环境/引擎级
+异常（同表第三次 `create_index(replace=True)` >9 min 无进展；AND 过滤 SQL 从 150 ms 退化到 >60 s）按
+V3.1 §2.2 建议转 **C1**。**P4-02（1 万→10 万→30 万正式容量验证）在瓶颈决策前不应启动**，否则只会重测
+同一堵墙。模型切换始终由用户在 Codex 中手动完成。
