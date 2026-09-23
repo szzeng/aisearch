@@ -2521,3 +2521,42 @@ F2 冻结领取协议下并发维护者**不分工**（第二个维护者领取�
 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`），随后由 **C2 / GPT-5.6 Sol / high** 聚焦终审
 （入口真实性、并发口径、旧 revision 不回滚、busy-timeout 边界）。通过后才标 P4-02A PASS 并启动
 **P4-02B**（卡已存在，本轮已补入口命令与 F1/F2）。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest independent DS-H engineering review — P4-02A (2026-09-24)
+
+**P4-02A：`ENGINEERING REVIEW FAIL`（独立 DS-H 全量工程主审）；未标 PASS、未进入 Sol 聚焦终审、
+未启动 P4-02B。** 主审报告 [P4-02A-dsh-engineering-review.md](reports/P4-02A-dsh-engineering-review.md)；
+观察基线 `9e42b66`（工作树干净）；主审**未修改任何 `src`/测试/工具代码**。
+
+主审独立复现（不引用被审报告结论）：全量 `test-results/p4-02a-review-full.xml` **1658 / 0 / 0 / 48**
+（204.5 s）、focused `p4-02a-review-focused.xml` **35 / 0 / 0 / 0**（23.3 s）、证据工具
+`p4-02a-review-maintenance.json` 五场景 `ok=true`、Ruff / `git diff --check` / `uv lock --check` 全 exit 0；
+禁止面（migration、ADR/companion、`api/web/face/persons/search/places/scheduler/artifacts`、
+`PhotoSearch.spec`、`tools/packaging`、`pyproject.toml`、`uv.lock`）相对基线**零改动**，
+`SUPPORTED_SCHEMA_VERSION` 仍 15。派生状态指纹在「中断重启 / 不中断 / crash 窗口重放」三者间逐字节一致
+（`2ba50ddd…`）；`two_maintainers` 第二维护者实测被串行化（锁等待 434.7 ms）而跳过，合计 applied =
+事件数；`contention` 前台 30 修订写 + 10 发布全部提交且计数逐一相等；`busy_timeout` 实测
+5 480.6 ms 结构化拒绝 + 有界重试后全部确认。主审另做 3 处变异（去重试识别 / 去可观测性 / 入口不应用）
+→ 对应用例各 1 失败（测试非空转），并发两用例连跑 5 轮 10 次执行 0 失败。
+
+**未通过项**：
+- **A1（本卡范围内，最小修复项）**：重试循环用 `applied = process_all(...)` 覆盖而非累加，
+  当 `busy_timeout` 拒绝发生在「已有批次落地」之后，入口自报 `applied` 少于真实确认数
+  （确定性反例：`applied=3` vs `confirmed_delta=5`，outbox 状态本身正确）。
+  修法：`applied += process_all(limit=limit-applied)`，并在 docstring/CLI 帮助写明语义；
+  复核口径：该探针 + `--mode busy-timeout` + focused。
+- **A2（既有面，须另立卡/前置）**：一个不可读工件会让整条 drain **永久停住**
+  （整批原子 + 最早优先领取 ⇒ 同批互相拖累；`--repair` 置 RECLAIMED/PENDING_REPAIR 后事件仍留 outbox），
+  且架构 §7.2 所述的恢复入口 `ArtifactStore.republish_reclaimed` 目前**只有测试调用点**。
+  失败关闭、无静默丢失，但无受支持的生产恢复路径。
+- **A3（与 A2 同卡）**：`audit_and_schedule_repairs` 每次运行都为未确认条目以
+  `MAX(projection_revision)+1` 新建事件（`PENDING 3 → 5 → 7`），在 drain 被卡住时无界放大 backlog。
+- 非阻断观察：实现报告 F1 的「约 2 倍离散」表述已就地更正（同一代码两测 7.99 / 7.912 ms 每工件）；
+  前台侧本轮 0 次真实拒绝（同一条 `Catalog.write` 路径 + drain 侧实测支撑）；两维护者用例的
+  10 ms 阈值存在极窄抖动窗口（5 轮未复现，建议下一轮改用工具同款判据）。
+
+未命中 V3.1 §2.2 六类升级条件（不升 DS-MAX），无需转 C1。
+
+**停止点**：按 §6.1 做最小修复 → 重跑 §6.1 探针、`--mode busy-timeout`、focused 与全量 →
+更新报告/状态 → 再由 **C2 / GPT-5.6 Sol / high** 聚焦终审；A2/A3 另立小卡（建议优先于 P4-02B 容量宣称）。
+模型切换始终由用户在 Codex 中手动完成。
