@@ -2425,6 +2425,39 @@ Ruff / `git diff --check` / `uv lock --check` 全 exit 0。新增用例同时断
 并发重领同一事件）及其直接回归；B1/B2 已收口，R3/R5/R6 与未验证项口径不变。通过后才标
 **P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。
 
+## Latest closure — P4-01C PASS (2026-09-23)
+
+**P4-01C：PASS（收口）。** 收口依据：**C2 / GPT-5.6 Sol / high 对第二轮修复提交 `479f397` 的短复审
+为 `SOL SHORT RE-REVIEW PASS`**（[终审报告 §8](reports/P4-01C-sol-focused-review.md)）。本卡的三段审查
+（独立 DS-H 全量工程主审 → Sol 聚焦终审 FAIL → 两轮最小修复 → Sol 短复审）至此全部收敛。
+
+最终证据：全量 `test-results/p4-01c-fix2-full.xml` **1648 / 0 / 0 / 48**（214.5 s）、专项
+`p4-01c-fix2-focused.xml` **9 / 0 / 0**、受影响测试面 `p4-01c-fix2-boundaries.xml` **46 / 0 / 0**、
+Sol 短复审实测 `p4-01c-sol-rereview2.xml` **46 / 0 / 0**、30 万重建夹具
+`p4-01c-fix2-ann-scale.json`（生产遍历 18 080 ms / 60 块 / Recall@20 = Recall@50 = 1.000，
+四档过滤、候选数与 §12.4 组合校验不变，维护 31.25 ms/行、28.39 ms/事件）、
+Ruff / `git diff --check` / `uv lock --check` 全 exit 0、禁用面零改动（`schema_version` 仍 15）。
+唯一语义变化：完全并列距离时结果被钉在 `(distance, asset_id)` 全序（修复前随块大小变化），
+即任务卡不变量 1 要求的方向。
+
+交付链（同一工作树，未 push）：`48cca93`（实现 + 独立 DS-H 全量工程主审 + 实现报告）→
+`a457cba`（第一轮反例：并列距离确定性 / 并发重领 / 索引目录拒绝 + Sol 终审报告）→
+`479f397`（第二轮反例：检查/引擎写/确认同一写事务，旧 revision 不再后落盘）。
+收口提交＝本文件所在提交；其实际提交号由 **P4-02A 会话**在起始基线处记录（执行第一步先
+`git log -1 --oneline`）。完整收口记录见
+[P4-01C 实现报告 §9](reports/P4-01C-bottleneck-implementation.md)。
+
+**下一任务：P4-02A — 语义 outbox 生产维护入口接线与长写事务争用边界（P4-02 前置）**，
+任务卡 [docs/tasks/P4-02A.md](tasks/P4-02A.md)；推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**
+（与当前档一致，可继续使用当前模型），完成后另开独立 DS-H 全量工程主审，**Sol high 聚焦终审必选**
+（改生产维护入口的提交顺序/并发边界，V3.1 §11）。
+
+其后为 **P4-02B — 1 万→10 万→30 万正式容量验证（35～40 万可选压力观察）**，
+任务卡 [docs/tasks/P4-02B.md](tasks/P4-02B.md)，推荐 **DS-L / DeepSeek V4.1 Flash / 低推理** 执行 +
+独立 DS-H 全量工程主审（默认 `SOL_NOT_REQUIRED`）。P4-02B 的硬依赖是 P4-02A PASS：
+R5 要求的「语义 outbox 生产维护入口」未接通前，容量数字只能是夹具数字。
+模型切换始终由用户在 Codex 中手动完成。
+
 ### Latest C2 / Sol short re-review — P4-01C repair `a457cba` (2026-09-23)
 
 **现行状态：`SOL SHORT RE-REVIEW FAIL`；P4-01C 未标 PASS，未生成 P4-02。**
@@ -2435,3 +2468,19 @@ B1 的 5 001 行全并列探针在块 1 000/5 000 下都返回 `[1, 2]`；B2 的
 已准备的 revision 1 写回 Lance 后跳过已确认事件。最终 outbox 两条均 `CONFIRMED`、
 `index_entries.confirmation_revision=2`，Lance `projection_revision=1`，`semantic_ready=True`。
 按 V3.1 §11 将这条确定性交错交回 DS-H 做最小修复；Sol 下次只复审该失败边界和直接回归。
+
+### Latest C2 / Sol second short re-review — P4-01C repair `479f397` (2026-09-23)
+
+**P4-01C：`PASS`（C2 / Sol 第二轮短复审 `SOL SHORT RE-REVIEW PASS`）。**
+报告：[P4-01C Sol 聚焦终审 §8](reports/P4-01C-sol-focused-review.md)。DS-H 第二轮修复把权威复读、
+superseded 检查、Lance 写和确认放进同一 `BEGIN IMMEDIATE` 事务；领取事务仍先提交，保留 `after_lance`
+的 `IN_FLIGHT` 重放窗口。C2 独立重放旧/新 revision 交错：另一个 SQLite 写者和同进程发布者均被挡在
+检查→写入窗口之外，随后处理新事件，最终两条 outbox `CONFIRMED`、
+`index_entries.confirmation_revision = Lance.projection_revision = 2` 且 `semantic_ready=True`。
+同一事件并发重领的直接回归亦通过；本轮受影响测试 `test-results/p4-01c-sol-rereview2.xml`
+**46 / 0 / 0 / 0**。DS-H 全量 JUnit 经核对 **1648 / 0 / 0 / 48**，30 万重测见实现报告 §8；
+本短审未重复全量。B1/B2 与谓词等价保持 PASS。
+
+**P4-02 尚未生成**（遵照终审任务边界）。生成下一卡时须把 R5“语义 outbox 的生产维护入口”列为
+正式容量验证前置项，并验证新写事务的生产争用/busy-timeout；R3/R6 与真模型向量、ANN 质量、
+API P95、A3、多世代混批、GTX 1660、thin 真数据集合等仍按终审报告的未验证口径记录。

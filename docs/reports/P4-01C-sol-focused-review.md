@@ -1,5 +1,7 @@
 # P4-01C — C2 / Sol high 聚焦终审报告
 
+**现行结论：`SOL SHORT RE-REVIEW PASS`，P4-01C PASS（修复提交 `479f397`）；见 §8。** 下文 §1～7 保留前两轮 FAIL 的原始反例与裁决记录。
+
 **结论：`SOL FOCUSED REVIEW FAIL`。** 被审提交 `48cca93`，父提交 `cd84bcb`。本次仅审 P4-01C 任务卡规定的 §11 幂等与提交顺序、检索参数、谓词等价，以及 DS-H 主审的 R3/R5/R6 和未验证项；未复做全量工程主审。未改生产代码、迁移、契约、错误码或打包面，未 push，未生成 P4-02。
 
 ## 1. 读取与验证范围
@@ -132,3 +134,25 @@ semantic_ready=True
 **交回 DS-H 的最小受影响测试：**在 `tests/integration/test_p4_01c_retrieval_blocks.py` 中把上述两 revision 交错加入 A1 的直接回归，断言最终 `index_entries.confirmation_revision == Lance.projection_revision == 2`、outbox 均确认且 `semantic_ready` 只对应最新派生行；同时保持 `tests/integration/test_p2_index_submission.py::test_late_old_projection_event_reads_latest_state_and_cannot_rollback` 的逐事件语义。仅在确认阶段重查 SQLite 状态不足以阻止已发生的旧 Lance 写；修法需覆盖“旧写者最后落盘”的顺序。本终审不接管修复。
 
 **状态：P4-01C 仍不能标 PASS；不得生成 P4-02。** 依 V3.1 §11 再交回 DS-H 处理此 A1 反例，修复后的 Sol 短审只复核该交错及直接回归。R5 的生产维护入口和单/多维护者口径仍须列为 P4-02 前置项。
+
+## 8. 对 DS-H 第二轮修复提交 `479f397` 的 Sol 短复审（2026-09-23）
+
+**结论：`SOL SHORT RE-REVIEW PASS`，可落库为 `P4-01C PASS`。** 本轮只复审 §7.2 的“旧 revision 最后落盘”及直接回归，同时核对 §7.1 已收口的 B1/B2 没有被新 diff 改动。被审提交 `479f397` 的父提交为 `a457cba`；修复只改 `src/photo_search/indexing/store.py`、直接测试和文档。禁改的迁移/契约/API/错误码/打包/依赖面相对父提交无改动。
+
+### 8.1 A1 两种顺序的判定
+
+`process_next` 和 `process_batch` 仍先用独立事务领取并提交 `IN_FLIGHT`。随后用**同一个 `BEGIN IMMEDIATE` 写事务**覆盖权威复读、`_is_superseded`、Lance 写入、逐事件确认与 `_make_generation_ready`：
+
+1. **另一协调器在该事务开始前已重领并确认同一事件**：批路径先筛掉非 `IN_FLIGHT` 的被领事件，不再写或确认它；自己剩余的事件正常写与确认。新增交错用例断言第二协调器成功确认 1 条、本批返回 1、两条 outbox 都 `CONFIRMED`、向量表无重复逻辑行。
+2. **甲的旧事件先进入写事务，发布者欲插入新 revision**：SQLite 写锁使发布者及第二协调器无法跨越检查→Lance 写入窗口；甲提交后发布新 revision，再处理新事件，最后写入的一定是新 revision。独立重放 §7.2 的真实 `publish_embedding` 两资产探针输出：`other_writer=blocked`、`same_catalog=blocked`，`first_applied=1`、`second_applied=1`，outbox `{'CONFIRMED': 2}`，`index_entries.confirmation_revision=2`、Lance `projection_revision=2`、`semantic_ready=True`。新测试同时比较了所存向量与新旧向量的方向。
+3. **新 revision 在甲写事务开始前已出现**：甲在该事务内重做 `_is_superseded`，会只确认旧事件而不写旧行；新事件待写或已由另一协调器写入。先前“旧记录已算好、乙先确认新 revision、甲最后回写旧行”的窗口不再存在。
+
+`after_lance` 仍在引擎写后、SQLite 确认前抛出；该写事务回滚，先前已提交的领取事务保留 `IN_FLIGHT`，重放仍以 `record_id` 幂等。确认阶段抛错的全批回滚及 `PENDING` 重放路径未改。这里接受 DS-H 将引擎写纳入 SQLite 写事务这一提交顺序调整；写锁持有时间与 5 秒 busy timeout 在真实生产维护入口接线后的容量/争用验证中继续测量，不能用本卡合成夹具推导生产延迟承诺。
+
+### 8.2 直接验证与未决口径
+
+本轮实跑 `uv run --no-sync python -m pytest -q -p no:cacheprovider`，目标为 P4-01C 专项、P2 提交/恢复/补查、P3 人物搜索五个文件，`--basetemp=.pytest-tmp/p401c-sol-focused/rereview2`，JUnit `test-results/p4-01c-sol-rereview2.xml`：**46 / 0 failures / 0 errors / 0 skips**，exit 0。DS-H 全量 JUnit `test-results/p4-01c-fix2-full.xml` 经本轮读取确认为 **1648 / 0 / 0 / 48**；专项 9/0/0、其受影响面 46/0/0。DS-H 30 万重建夹具证据为 18 080 ms / 60 块、Recall@20/@50 = 1.000，四档过滤和组合计数不变；本短审未重跑全量与 30 万档。`git diff --check` exit 0。
+
+B1 的全并列距离与 B2 的索引目录拒绝保持 §7.1 的 PASS；C 的谓词等价保持 §4 的 PASS。R3（ADR 下次补集合形式注释）、R6（未来 DELETE 生产者前去重）、§5 列出的真模型向量、ANN 质量、API P95、A3、多世代混批、GTX 1660、thin 真数据等未验证项均不因本轮通过而变为已验证。**R5 仍必须成为 P4-02 前置项**：接通语义 outbox 的生产维护入口，并验证此新长写事务在生产并发/容量下的争用与 busy-timeout 边界。
+
+**最终裁决：P4-01C PASS。** 本轮未修改生产代码、未 push。遵照本终审任务的既定边界，本会话不生成 P4-02；生成下一卡须另有用户指示。模型切换仍由用户手动完成。
