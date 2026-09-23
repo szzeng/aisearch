@@ -66,11 +66,21 @@ def wait_for(sink: list[str], predicate: Any, *, timeout: float) -> str | None:
     return None
 
 
-def seed_library(root: Path) -> Path:
-    """Two JPEGs under a Chinese/space path, with a quiet ``mtime``.
+def image_size_of(response: Any) -> list[int] | None:
+    """The pixel size of a 200 image response, or ``None`` for any other answer."""
+    if response is None or response.status_code != 200:
+        return None
+    with Image.open(io.BytesIO(response.content)) as image:
+        return [int(image.width), int(image.height)]
+
+
+def seed_library(root: Path) -> dict[str, Path]:
+    """JPEG/HEIC controls, a same-content JPEG twin and one damaged HEIC.
 
     The second photo exists so the packaged search can page with a real cursor; the first
-    one is the offline subject the media checks delete later.
+    one is the offline subject the media checks delete later. The HEIC fixture and its JPEG
+    twin store the *same* portrait pixels with the same EXIF orientation 6, so the frozen
+    process has to reach the same upright size for both formats (P4-00C-B §2 step 2).
     """
     target = root / "子 目录 中文" / "照片 一.jpg"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +95,26 @@ def seed_library(root: Path) -> Path:
     moment = (1_700_000_000_000 - 3_600_000) * 1_000_000
     os.utime(target, ns=(moment, moment))
     os.utime(sibling, ns=(moment, moment))
-    return target
+    # This diagnostic is deliberately the producer of its own tiny HEIC fixture.  It makes
+    # the frozen executable prove its decoder, rather than merely finding a bundled DLL.
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+    orientation = Image.Exif()
+    orientation[0x0112] = 6
+    exif_bytes = orientation.tobytes()
+    portrait = Image.new("RGB", (480, 640), (35, 145, 90))
+    heic = root / "子 目录 中文" / "竖拍 HEIC.heic"
+    portrait.save(heic, format="HEIF", exif=exif_bytes)
+    os.utime(heic, ns=(moment, moment))
+    twin = root / "子 目录 中文" / "竖拍 JPEG.jpg"
+    portrait.save(twin, "JPEG", quality=92, exif=exif_bytes)
+    os.utime(twin, ns=(moment, moment))
+    damaged = root / "子 目录 中文" / "损坏 HEIC.heic"
+    payload = heic.read_bytes()
+    damaged.write_bytes(payload[: max(1, len(payload) // 2)])
+    os.utime(damaged, ns=(moment, moment))
+    return {"offline": target, "heic": heic, "heic_twin": twin, "damaged_heic": damaged}
 
 
 def seed_index_generation(data_root: Path, *, space_id: str) -> str:
@@ -188,6 +217,92 @@ def packaged_taken_time_schema(data_root: Path) -> dict[str, Any]:
     }
 
 
+def seed_derived_facts(
+    data_root: Path, *, offset_asset: int, plain_asset: int, offset_minutes: int = 480
+) -> None:
+    """Publish the taken-time/GPS facts an A-stage extraction would write (P4-00C-B §2.3).
+
+    The frozen product has no user-facing entry point that drains the taken-time jobs
+    (``python -m photo_search.taken_time.cli`` is a development entry the onedir executable
+    cannot run), so the packaged claim is checked on the *serving* path: this diagnostic
+    writes exactly the rows ADR-0011 §2/§4.1 and ADR-0005 §4.5 define - one with an offset
+    and one without, for the same wall clock and the same coordinate - and the frozen build
+    then has to publish them through its own detail endpoint and catalog.
+
+    The civil key and the geo-fact id come from the frozen contracts themselves, so the
+    fixture cannot drift from what the extractors write.
+    """
+    from photo_search.places.contracts import geo_fact_id_for
+    from photo_search.taken_time import contract as time_contract
+
+    civil_key = time_contract.civil_key(2022, 7, 5, 18, 31, 7, 0)
+    rows = ((int(offset_asset), "HIGH", int(offset_minutes)), (int(plain_asset), "MEDIUM", None))
+    connection = sqlite3.connect(str(data_root / "catalog" / "catalog.db"), timeout=30.0)
+    try:
+        now = 1_700_000_000_000
+        for asset_id, confidence, offset in rows:
+            sha = str(
+                connection.execute(
+                    "SELECT sha256 FROM assets WHERE asset_id = ?", (asset_id,)
+                ).fetchone()[0]
+            )
+            location = int(
+                connection.execute(
+                    "SELECT location_id FROM file_locations WHERE asset_id = ? "
+                    "ORDER BY location_id LIMIT 1",
+                    (asset_id,),
+                ).fetchone()[0]
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO asset_metadata(asset_id, taken_at_raw, taken_at_sort, "
+                "time_source, time_confidence, timezone_offset, camera) "
+                "VALUES (?, ?, ?, 'EXIF_ORIGINAL', ?, ?, 'Smoke Cam')",
+                (asset_id, "2022:07:05 18:31:07", int(civil_key), confidence, offset),
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO asset_geo_facts(asset_id, geo_fact_id, location_id, "
+                "input_revision, fact_revision, status, source, processor_id, "
+                "raw_fields_checksum_sha256, raw_gps_json, latitude, longitude, datum_status, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, 1, 'VALID', 'EXIF_GPS', "
+                "'geo-exif-gps@1', ?, ?, 30.2741, 120.1551, 'WGS84', ?, ?)",
+                (
+                    asset_id,
+                    geo_fact_id_for(sha, 1),
+                    location,
+                    sha,
+                    "b" * 64,
+                    json.dumps({"latitude_dms": [30, 16, 26.76]}, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def read_geo_facts(data_root: Path, asset_ids: list[int]) -> dict[str, dict[str, Any]]:
+    """The packaged catalog's GPS facts for the given assets, keyed by asset id."""
+    connection = sqlite3.connect(str(data_root / "catalog" / "catalog.db"), timeout=30.0)
+    try:
+        rows = connection.execute(
+            "SELECT asset_id, status, datum_status, latitude, longitude FROM asset_geo_facts "
+            "WHERE asset_id IN (" + ", ".join("?" for _ in asset_ids) + ")",
+            tuple(int(value) for value in asset_ids),
+        ).fetchall()
+    finally:
+        connection.close()
+    return {
+        str(int(row[0])): {
+            "status": str(row[1]),
+            "datum_status": str(row[2]),
+            "latitude": None if row[3] is None else float(row[3]),
+            "longitude": None if row[4] is None else float(row[4]),
+        }
+        for row in rows
+    }
+
+
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -203,9 +318,86 @@ def bundled_migrations(installation: Path) -> dict[str, str]:
     return {}
 
 
-def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]:
+def bundled_photo_search_data_resources(installation: Path) -> dict[str, str]:
+    """Every non-Python source resource shipped beside the frozen package.
+
+    A migration-only audit missed a stale ``web/app.js`` in P4-00B.  The package currently
+    owns SQL and static web resources; making the comparison extension-agnostic prevents the
+    next data resource from silently falling outside the audit.
+    """
+    for candidate in (
+        installation / "_internal" / "photo_search",
+        installation / "photo_search",
+    ):
+        if candidate.is_dir():
+            return {
+                path.relative_to(candidate).as_posix(): _digest(path)
+                for path in sorted(candidate.rglob("*"))
+                if path.is_file() and path.suffix not in {".py", ".pyc", ".pyo"}
+            }
+    return {}
+
+
+def source_photo_search_data_resources() -> dict[str, str]:
+    source = Path(__file__).resolve().parents[2] / "src" / "photo_search"
+    return {
+        path.relative_to(source).as_posix(): _digest(path)
+        for path in sorted(source.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".py", ".pyc", ".pyo"}
+    }
+
+
+def heif_components(root: Path) -> dict[str, dict[str, int | str]]:
+    """The compiled pillow-heif extension and its libheif DLL, keyed by file name."""
+    components: dict[str, dict[str, int | str]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        name = path.name.lower()
+        if name.startswith("_pillow_heif") or (
+            name.startswith("libheif-") and name.endswith(".dll")
+        ):
+            components[path.name] = {"bytes": path.stat().st_size, "sha256": _digest(path)}
+    return components
+
+
+def heif_component_kinds(components: dict[str, dict[str, int | str]]) -> set[str]:
+    """Which halves of the decoder are present: the extension and/or the libheif runtime."""
+    kinds: set[str] = set()
+    for name in components:
+        lowered = name.lower()
+        if lowered.startswith("_pillow_heif"):
+            kinds.add("extension")
+        elif lowered.startswith("libheif-"):
+            kinds.add("libheif")
+    return kinds
+
+
+def heif_expected_kinds(
+    heif_degraded: str | None, source_components: dict[str, dict[str, int | str]]
+) -> set[str]:
+    """The component kinds a complete build — or one named degradation — has to show."""
+    complete = heif_component_kinds(source_components)
+    if heif_degraded is None:
+        return complete
+    if heif_degraded == "both":
+        return set()
+    if heif_degraded == "libheif":
+        return complete - {"libheif"}
+    return complete - {"extension"}
+
+
+def run_smoke(
+    bundle: Path, work_dir: Path, *, timeout: float, heif_degraded: str | None = None
+) -> dict[str, Any]:
     report: dict[str, Any] = {"bundle": str(bundle), "work_dir": str(work_dir), "checks": {}}
     checks: dict[str, Any] = report["checks"]
+    # P4-00C-B degraded acceptance: the same smoke runs twice — once against the complete
+    # bundle and once against a disposable copy with a pillow-heif half removed. Only the
+    # *expectations* differ, so the degraded bundle is checked by the same code path.
+    checks["heif_degraded_mode"] = heif_degraded
 
     installation = work_dir / "PhotoSearch 中文 空格"
     if installation.exists():
@@ -215,6 +407,17 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
     executable = installation / "PhotoSearch.exe"
     checks["bundled_executable_bytes"] = executable.stat().st_size
     checks["installed_under_non_ascii_path"] = True
+    bundled_components = heif_components(installation / "_internal")
+    import pillow_heif
+
+    source_components = heif_components(Path(pillow_heif.__file__).resolve().parents[1])
+    checks["bundled_heif_components"] = {
+        "components": bundled_components,
+        "source_components": source_components,
+        "matches_source": bundled_components == source_components,
+        "present_kinds": sorted(heif_component_kinds(bundled_components)),
+        "expected_kinds": sorted(heif_expected_kinds(heif_degraded, source_components)),
+    }
     # P4-00B: the migration scripts are packaged data. Every script from 0001 to the build's
     # supported version has to be inside the bundle, byte for byte identical to the source.
     bundled = bundled_migrations(installation)
@@ -225,10 +428,18 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
         "expected_names": sorted(source),
         "matches_source": bundled == source,
     }
+    bundled_resources = bundled_photo_search_data_resources(installation)
+    source_resources = source_photo_search_data_resources()
+    checks["bundled_photo_search_data_resources"] = {
+        "paths": sorted(bundled_resources),
+        "expected_paths": sorted(source_resources),
+        "matches_source": bundled_resources == source_resources,
+    }
 
     data_root = work_dir / "PhotoSearchData 数据 目录"
     library = work_dir / "照片 库 中文 空格"
-    photo = seed_library(library)
+    fixtures = seed_library(library)
+    photo = fixtures["offline"]
     port = free_port()
     stdout: list[str] = []
     stderr: list[str] = []
@@ -426,6 +637,19 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             assets = client.get("/api/v1/assets").json()
             checks["asset_count"] = len(assets["assets"])
             checks["asset_has_more"] = assets["has_more"]
+            if not assets["assets"]:
+                # Never crash with an IndexError here: the report is the only artifact a
+                # C-level run keeps, so an empty catalogue has to say *why* it is empty.
+                checks["asset_listing_body"] = assets
+                checks["scan_jobs_body"] = jobs
+                checks["seeded_files"] = sorted(
+                    str(path.relative_to(library)) for path in library.rglob("*") if path.is_file()
+                )
+                checks["app_stderr_tail"] = stderr[-40:]
+                raise SystemExit(
+                    "packaged scan catalogued no asset: "
+                    + json.dumps(checks, ensure_ascii=False, sort_keys=True)
+                )
             asset_id = assets["assets"][0]["asset_id"]
             checks["availability"] = assets["assets"][0]["availability"]
             # The offline subject is picked by its *relative path*, never by row order: the
@@ -443,6 +667,35 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 None,
             )
             checks["offline_asset_id"] = None if offline_asset is None else offline_asset["asset_id"]
+            heic_relative = fixtures["heic"].relative_to(library).as_posix()
+            twin_relative = fixtures["heic_twin"].relative_to(library).as_posix()
+            damaged_relative = fixtures["damaged_heic"].relative_to(library).as_posix()
+            heic_asset = next(
+                (item for item in assets["assets"] if str((item.get("current_location") or {}).get("relative_path") or "").replace("\\", "/") == heic_relative),
+                None,
+            )
+            damaged_heic_asset = next(
+                (item for item in assets["assets"] if str((item.get("current_location") or {}).get("relative_path") or "").replace("\\", "/") == damaged_relative),
+                None,
+            )
+            checks["packaged_heic_asset_id"] = None if heic_asset is None else heic_asset["asset_id"]
+            twin_asset = next(
+                (
+                    item
+                    for item in assets["assets"]
+                    if str((item.get("current_location") or {}).get("relative_path") or "").replace(
+                        "\\", "/"
+                    )
+                    == twin_relative
+                ),
+                None,
+            )
+            checks["packaged_heic_twin_asset_id"] = (
+                None if twin_asset is None else twin_asset["asset_id"]
+            )
+            checks["packaged_damaged_heic_asset_id"] = (
+                None if damaged_heic_asset is None else damaged_heic_asset["asset_id"]
+            )
             # P2-04: the derived FTS projection must exist inside the frozen bundle. The
             # scan queued this asset, so the request itself has to catch up and answer.
             text_hit = client.get("/api/v1/assets", params={"text": "照片"})
@@ -611,8 +864,9 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
                 headers=upload_headers,
             )
             checks["upload_status"] = upload_request.status_code
-            upload_body = (
-                upload_request.json() if upload_request.status_code != 500 else {}
+            upload_body = upload_request.json() if upload_request.status_code != 500 else {}
+            checks["upload_error_body"] = (
+                upload_request.text[:500] if upload_request.status_code == 500 else None
             )
             checks["upload_code"] = upload_body.get("code")
             checks["upload_reason"] = (upload_body.get("details") or {}).get("reason")
@@ -797,6 +1051,46 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
             )
             with Image.open(io.BytesIO(thumbnail.content)) as image:
                 checks["thumbnail_size"] = [int(image.width), int(image.height)]
+            # P4-00C-B: both calls run inside the frozen executable.  The damaged control
+            # proves a decoder error stays per-file instead of taking down the process.
+            heic_id = checks["packaged_heic_asset_id"]
+            twin_id = checks["packaged_heic_twin_asset_id"]
+            damaged_heic_id = checks["packaged_damaged_heic_asset_id"]
+            heic_thumbnail = client.get(f"/api/v1/assets/{heic_id}/thumbnail") if heic_id else None
+            heic_preview = client.get(f"/api/v1/assets/{heic_id}/preview") if heic_id else None
+            twin_thumbnail = client.get(f"/api/v1/assets/{twin_id}/thumbnail") if twin_id else None
+            damaged_thumbnail = (
+                client.get(f"/api/v1/assets/{damaged_heic_id}/thumbnail") if damaged_heic_id else None
+            )
+            checks["packaged_heic_thumbnail_status"] = None if heic_thumbnail is None else heic_thumbnail.status_code
+            checks["packaged_heic_thumbnail_type"] = None if heic_thumbnail is None else heic_thumbnail.headers.get("Content-Type")
+            checks["packaged_heic_thumbnail_code"] = (
+                None if heic_thumbnail is None or heic_thumbnail.status_code == 200 else heic_thumbnail.json().get("code")
+            )
+            checks["packaged_heic_preview_status"] = None if heic_preview is None else heic_preview.status_code
+            # The frozen process has to reach the *same* upright size for the HEIC and for a
+            # JPEG that stores the same portrait pixels with the same EXIF orientation.
+            checks["packaged_heic_thumbnail_size"] = image_size_of(heic_thumbnail)
+            checks["packaged_heic_twin_thumbnail_size"] = image_size_of(twin_thumbnail)
+            # P4-00C-B §2 step 3: the packaged build serves the taken-time and GPS facts of a
+            # with-offset / no-offset pair with the frozen semantics and the same shape.
+            if heic_id and twin_id:
+                seed_derived_facts(data_root, offset_asset=heic_id, plain_asset=twin_id)
+                checks["packaged_heic_taken_time"] = (
+                    client.get(f"/api/v1/assets/{heic_id}").json().get("taken_time")
+                )
+                checks["packaged_heic_twin_taken_time"] = (
+                    client.get(f"/api/v1/assets/{twin_id}").json().get("taken_time")
+                )
+                checks["packaged_geo_facts"] = read_geo_facts(data_root, [heic_id, twin_id])
+            checks["packaged_damaged_heic_status"] = None if damaged_thumbnail is None else damaged_thumbnail.status_code
+            checks["packaged_damaged_heic_code"] = (
+                None if damaged_thumbnail is None or damaged_thumbnail.status_code == 200 else damaged_thumbnail.json().get("code")
+            )
+            capability_body = client.get("/api/v1/capabilities").json()
+            checks["packaged_capability_advertises_heic"] = {"HEIC", "HEIF"}.issubset(
+                set(capability_body.get("supported_input_formats") or [])
+            )
 
             # The offline subject's thumbnail has to exist *before* its original disappears,
             # otherwise the later request legitimately answers SOURCE_FILE_MISSING instead of
@@ -881,11 +1175,13 @@ def run_smoke(bundle: Path, work_dir: Path, *, timeout: float) -> dict[str, Any]
     checks["access_log_redacted"] = any("token=<redacted>" in line for line in access_lines)
     checks["access_log_free_of_token"] = all(token not in line for line in access_lines)
     checks["stderr_free_of_token"] = token not in "\n".join(stderr)
+    checks["app_stderr_tail"] = stderr[-20:]
     return report
 
 
 def summarize(report: dict[str, Any]) -> list[str]:
     checks = report["checks"]
+    heif_degraded = checks.get("heif_degraded_mode")
     problems: list[str] = []
     if checks.get("bootstrap_next") != "/":
         problems.append("launcher session link carries next=/")
@@ -995,7 +1291,7 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("source registration")
     if checks.get("scan_request") != 202 or checks.get("scan_state") != "SUCCEEDED":
         problems.append("scan")
-    if checks.get("asset_count") != 2:
+    if checks.get("asset_count") != 5:
         problems.append("asset listing")
     text_summary = checks.get("text_search_summary") or {}
     if (
@@ -1139,8 +1435,72 @@ def summarize(report: dict[str, Any]) -> list[str]:
         "expected_names"
     ):
         problems.append("packaged migration data resources")
+    package_resources = checks.get("bundled_photo_search_data_resources") or {}
+    if not package_resources.get("matches_source") or package_resources.get("paths") != package_resources.get(
+        "expected_paths"
+    ):
+        problems.append("packaged photo_search data resources")
+    heif_components = checks.get("bundled_heif_components") or {}
+    if heif_degraded is None:
+        # Complete bundle: the extension *and* its libheif runtime travel with the build and
+        # HEIC decodes inside the frozen process.
+        if (
+            not heif_components.get("matches_source")
+            or len(heif_components.get("components") or {}) != 2
+        ):
+            problems.append("packaged pillow-heif components")
+        if (
+            checks.get("packaged_heic_thumbnail_status") != 200
+            or checks.get("packaged_heic_thumbnail_type") != "image/jpeg"
+            or checks.get("packaged_heic_preview_status") != 200
+            or checks.get("packaged_heic_thumbnail_size") is None
+            or checks.get("packaged_heic_thumbnail_size")
+            != checks.get("packaged_heic_twin_thumbnail_size")
+            or checks.get("packaged_damaged_heic_status") != 409
+            or checks.get("packaged_damaged_heic_code") != "DECODE_FAILED"
+            or checks.get("packaged_capability_advertises_heic") is not True
+        ):
+            problems.append("packaged HEIC decode isolation")
+    else:
+        # Degraded bundle (P4-00C-B): one half of the decoder was removed from a disposable
+        # copy. HEIC/HEIF must be *refused as a format* — never described as a broken file,
+        # never a startup failure — while every other format and the existing cache keep
+        # working, and the capability list must stop advertising HEIC.
+        if heif_components.get("present_kinds") != heif_components.get("expected_kinds"):
+            problems.append("packaged pillow-heif components")
+        if (
+            checks.get("packaged_heic_thumbnail_status") != 409
+            or checks.get("packaged_heic_thumbnail_code") != "FORMAT_UNSUPPORTED"
+            or checks.get("packaged_heic_preview_status") != 409
+            or checks.get("packaged_damaged_heic_status") != 409
+            or checks.get("packaged_damaged_heic_code") != "FORMAT_UNSUPPORTED"
+            or checks.get("packaged_capability_advertises_heic") is not False
+        ):
+            problems.append("packaged HEIC degraded fail-closed")
+        # The JPEG twin of the same pixels must still decode while HEIC is refused.
+        if checks.get("packaged_heic_twin_thumbnail_size") is None:
+            problems.append("packaged HEIC degraded JPEG control")
     if (checks.get("coverage_search_block") or {}).get("query_encoder_available") is not False:
         problems.append("packaged coverage query encoder flag")
+    heic_time = checks.get("packaged_heic_taken_time") or {}
+    twin_time = checks.get("packaged_heic_twin_taken_time") or {}
+    if (
+        heic_time.get("time_source") != "EXIF_ORIGINAL"
+        or heic_time.get("time_confidence") != "HIGH"
+        or heic_time.get("timezone_offset_minutes") != 480
+        or heic_time.get("label") != "capture"
+        or heic_time.get("camera") != "Smoke Cam"
+        or twin_time.get("time_confidence") != "MEDIUM"
+        or twin_time.get("timezone_offset_minutes") is not None
+        or heic_time.get("taken_at") != twin_time.get("taken_at")
+        or heic_time.get("taken_at_sort") != twin_time.get("taken_at_sort")
+    ):
+        problems.append("packaged taken-time semantics")
+    geo_facts = checks.get("packaged_geo_facts") or {}
+    if len(geo_facts) != 2 or len(
+        {json.dumps(value, sort_keys=True) for value in geo_facts.values()}
+    ) != 1:
+        problems.append("packaged GPS facts")
     ocr_block = checks.get("coverage_ocr_block") or {}
     if ocr_block.get("processor_id") != "ocr-text@1":
         problems.append("packaged capabilities has no OCR block")
@@ -1182,12 +1542,30 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=float, default=START_TIMEOUT_SECONDS)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--heif-degraded",
+        choices=("libheif", "extension", "both"),
+        default=None,
+        help=(
+            "run the P4-00C-B degraded acceptance against a disposable bundle copy with the "
+            "named pillow-heif half removed: HEIC must answer FORMAT_UNSUPPORTED"
+        ),
+    )
     args = parser.parse_args()
 
     if not (args.bundle / "PhotoSearch.exe").is_file():
         print(f"error: no packaged executable under {args.bundle}", file=sys.stderr)
         return 2
-    report = run_smoke(args.bundle.resolve(), args.work_dir, timeout=args.timeout)
+    report = run_smoke(
+        args.bundle.resolve(),
+        # The packaged process is started with its *own* working directory, so every path
+        # handed to it has to be absolute: with a relative ``--work-dir`` the registered
+        # source root would point somewhere the bundle cannot see and the scan would answer
+        # SOURCE_OFFLINE instead of cataloguing the fixtures.
+        args.work_dir.resolve(),
+        timeout=args.timeout,
+        heif_degraded=args.heif_degraded,
+    )
     problems = summarize(report)
     report["problems"] = problems
     report["status"] = "ok" if not problems else "failed"

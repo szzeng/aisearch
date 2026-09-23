@@ -44,6 +44,7 @@ from photo_search.catalog.errors import (
     SOURCE_FILE_MISSING,
     CatalogError,
 )
+from photo_search.media import heif
 from photo_search.media.contract import (
     FACE_CROP_JPEG_QUALITY,
     FACE_CROP_LONG_EDGE,
@@ -161,6 +162,9 @@ def probe_original_frame(path: str | Path) -> tuple[int, int]:
     decoding pixels, so a 100-megapixel original costs the same as a small one here.
     """
     candidate = Path(path)
+    # A HEIC original is only measurable once the one pillow-heif registration point has
+    # run; the orientation rule itself is the shared one in ``media.decode`` (P4-00C-A).
+    heif.ensure_heif_support()
     try:
         with Image.open(candidate) as image:
             size = (int(image.size[0]), int(image.size[1]))

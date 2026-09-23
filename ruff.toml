@@ -1,6 +1,11 @@
 target-version = "py312"
 line-length = 100
 
+# Local throw-away copies of the frozen bundle (degraded HEIC acceptance) hold a complete
+# `_internal` Python tree. Linting them is meaningless and rewriting them destroys the very
+# bytes a C-level run is supposed to inspect, so they stay outside the lint scope.
+exclude = [".packaged-heif-degraded-*", ".pytest-basetemp-*", ".p4-00c-a-scratch"]
+
 [lint]
 select = ["E", "F", "I"]
 ignore = ["E501", "E731"]

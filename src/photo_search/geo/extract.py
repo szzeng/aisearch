@@ -282,6 +282,11 @@ def _hash_file(path: Path, *, chunk_bytes: int = 1024 * 1024) -> str:
 def _read_exif(path: Path) -> dict[int, Any] | None:
     from PIL import Image, UnidentifiedImageError
 
+    # HEIC/HEIF metadata is only reachable once the one pillow-heif registration point has
+    # run; it is idempotent and fails closed by leaving HEIF undecodable (P4-00C-A).
+    from photo_search.media import heif
+
+    heif.ensure_heif_support()
     try:
         with Image.open(path) as image:
             return read_gps_fields(image.getexif())

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from photo_search.media import heif
+
 THUMBNAIL = "thumbnail"
 PREVIEW = "preview"
 KINDS = (THUMBNAIL, PREVIEW)
@@ -40,18 +42,19 @@ JPEG_SUFFIX = ".jpg"
 FAILURE_SUFFIX = ".json"
 TEMP_SUFFIX = ".tmp"
 
-#: Input formats this build decodes, all measured on this machine (P1-03 report §4).
-SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
+#: Input formats this build decodes with Pillow alone, all measured on this machine
+#: (P1-03 report §4).
+BASE_SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
 
 #: Formats that are recognised and deliberately refused until their handling is verified.
 #: The contract forbids reporting them as a finished thumbnail (architecture §5.4), even
-#: where Pillow happens to be able to read them (it can read TIFF).
-UNSUPPORTED_INPUT_FORMATS = frozenset(
+#: where Pillow happens to be able to read them (it can read TIFF). ``AVIF`` stays here on
+#: purpose: pillow-heif's opener accepts only the HEIF brands, so an AVIF file is still a
+#: recognised-but-refused family rather than a decode attempt (P4-00C-A report §2).
+REFUSED_INPUT_FORMATS = frozenset(
     {
         "TIFF",
         "MPO",
-        "HEIF",
-        "HEIC",
         "AVIF",
         "JXL",
         "ICO",
@@ -65,6 +68,31 @@ UNSUPPORTED_INPUT_FORMATS = frozenset(
         "RAW",
     }
 )
+
+
+def supported_input_formats() -> frozenset[str]:
+    """Every format this build can *decode*, never just recognise (architecture §5.4).
+
+    HEIC/HEIF join the set only when the pinned ``pillow-heif`` plugin and its libheif
+    runtime really loaded in this process (P4-00C-A). A build that cannot decode HEIC must
+    not advertise it, so the capability lists and the refusal detail read this live value.
+    """
+    if heif.heif_available():
+        return BASE_SUPPORTED_INPUT_FORMATS | heif.HEIF_INPUT_FORMATS
+    return BASE_SUPPORTED_INPUT_FORMATS
+
+
+def refused_input_formats() -> frozenset[str]:
+    """Every format that is recognised and refused with a structured error."""
+    if heif.heif_available():
+        return REFUSED_INPUT_FORMATS
+    return REFUSED_INPUT_FORMATS | heif.HEIF_INPUT_FORMATS
+
+
+#: Import-time snapshots of the two lists above. They are what most callers want; the
+#: functions exist for the capability report, which has to state the live answer.
+SUPPORTED_INPUT_FORMATS = supported_input_formats()
+UNSUPPORTED_INPUT_FORMATS = refused_input_formats()
 
 
 @dataclass(frozen=True)
@@ -83,7 +111,7 @@ class MediaSpec:
             "long_edge": self.long_edge,
             "output_format": "JPEG",
             "jpeg_quality": self.jpeg_quality,
-            "supported_input_formats": sorted(SUPPORTED_INPUT_FORMATS),
+            "supported_input_formats": sorted(supported_input_formats()),
         }
 
 

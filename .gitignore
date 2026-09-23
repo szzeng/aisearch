@@ -14,6 +14,10 @@ __pycache__/
 # Test reports
 test-results/
 
+# Throw-away copies of the frozen bundle used by the C-level degraded acceptance
+# (tools/diagnostics/heif_degraded_bundle.py): a full onedir tree, never a source artifact.
+.packaged-*/
+
 # Build output
 build/
 dist/

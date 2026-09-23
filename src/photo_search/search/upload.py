@@ -50,8 +50,9 @@ from photo_search.catalog.errors import (
     UPLOAD_TOO_MANY_PIXELS,
     CatalogError,
 )
-from photo_search.media.contract import SUPPORTED_INPUT_FORMATS, UNSUPPORTED_INPUT_FORMATS
-from photo_search.media.decode import HEADER_BYTES, plugin_format_decision, sniff_format
+from photo_search.media import heif
+from photo_search.media.contract import refused_input_formats
+from photo_search.media.decode import HEADER_BYTES, sniff_format
 from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.search.embedding import check_encoder_binding
 from photo_search.search.tokens import VALIDATION_ERROR
@@ -74,6 +75,11 @@ UPLOAD_DECODE_LONG_EDGE = 1600
 #: The private staging directory prefix; every one of them is removed before the response
 #: is sent, so a leftover directory is a defect a test can see.
 TEMP_DIRECTORY_PREFIX = "photo-search-upload-"
+#: The frozen P2-07 whitelist of this *query* input. It is deliberately its own list and
+#: not the library's decode capability: an upload is never catalogued, and widening this
+#: boundary is an additive protocol change that P2-07's static and integration assertions
+#: have to state explicitly (P4-00C-A report §5 keeps it unchanged).
+UPLOAD_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
 #: A multipart body may carry at most this many parts (one image plus the declared fields).
 MULTIPART_MAX_PARTS = 32
 #: The body ceiling includes the multipart framing, so it is the image ceiling plus room
@@ -322,9 +328,9 @@ def _decode_upload(
     started = time.monotonic()
     try:
         with Image.open(path) as source:
-            label, decodable = plugin_format_decision(source.format)
-            if not decodable:
-                raise _unsupported(label)
+            label = str(source.format or "").upper()
+            if label not in UPLOAD_INPUT_FORMATS:
+                raise _unsupported(label or "UNKNOWN")
             width, height = int(source.size[0]), int(source.size[1])
             pixels = width * height
             if pixels > int(limits.max_pixels):
@@ -349,7 +355,7 @@ def _decode_upload(
         raise
     except UnidentifiedImageError as error:
         sniffed = _sniff(path)
-        if sniffed is not None and sniffed in UNSUPPORTED_INPUT_FORMATS:
+        if sniffed is not None and sniffed in upload_refused_families():
             raise _unsupported(sniffed) from error
         raise _decode_failed(
             f"the upload is not a readable image ({type(error).__name__})"
@@ -399,6 +405,16 @@ def _sniff(path: Path) -> str | None:
             return sniff_format(stream.read(HEADER_BYTES))
     except OSError:  # pragma: no cover - the file was just written by this process
         return None
+
+
+def upload_refused_families() -> frozenset[str]:
+    """Families this boundary recognises and refuses with ``FORMAT_UNSUPPORTED``.
+
+    Everything the library refuses, plus the HEIF family: HEIC/HEIF are decodable by the
+    library (P4-00C-A) but are still outside this endpoint's frozen whitelist, so a HEIC
+    upload gets the same structured refusal instead of drifting into ``DECODE_FAILED``.
+    """
+    return refused_input_formats() | heif.HEIF_INPUT_FORMATS
 
 
 # ------------------------------------------------------------------- image query vector
@@ -504,7 +520,7 @@ def _unsupported(label: str) -> CatalogError:
         f"format {label} is not supported by this build yet",
         details={
             "format": str(label),
-            "supported_formats": sorted(SUPPORTED_INPUT_FORMATS),
+            "supported_formats": sorted(UPLOAD_INPUT_FORMATS),
         },
     )
 
@@ -522,6 +538,7 @@ __all__ = [
     "MULTIPART_MAX_PARTS",
     "MULTIPART_OVERHEAD_BYTES",
     "TEMP_DIRECTORY_PREFIX",
+    "UPLOAD_INPUT_FORMATS",
     "UPLOAD_DECODE_LONG_EDGE",
     "ImageEncoder",
     "MultipartFile",
@@ -535,4 +552,5 @@ __all__ = [
     "image_query_identity",
     "parse_multipart_form",
     "stage_upload",
+    "upload_refused_families",
 ]

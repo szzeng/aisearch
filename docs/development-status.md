@@ -141,8 +141,26 @@ byte-identical to source, closing a stale packaged `web/app.js` that the impleme
 predated), re-ran the packaged smoke (`status=ok`, `problems=[]`, packaged `schema_version=15`, rules_version 1)
 and the missing-0015 counterexample (`409 SCHEMA_INCONSISTENT`, zero writes), and re-ran key recorded-browser
 steps including the half-open capture bounds; see [the DS-H review](reports/P4-00B-dsh-engineering-review.md).
-The next task is **P4-00C-A — HEIC 业务实现** ([docs/tasks/P4-00C-A.md](tasks/P4-00C-A.md)), followed by the
-environment-only stage **P4-00C-B** ([docs/tasks/P4-00C-B.md](tasks/P4-00C-B.md)).
+**P4-00C-A is PASS（B + D level：HEIC 业务实现；`SOL_NOT_REQUIRED`）**: `pillow-heif==1.8.0` (+ bundled
+libheif 1.23.4) is pinned, `HEIC`/`HEIF` join the supported set only when the plugin really loads, the EXIF
+orientation pillow-heif clears is restored only when the container carries no `irot`/`imir`, broken HEIC files
+are per-file `DECODE_FAILED`, and the P2-07 upload whitelist stays explicitly unchanged. Focused
+**85 / 0 / 0 / 0** and full **1632 / 0 / 0 / 48**, with existing-format artifacts byte-identical before/after;
+see [the P4-00C-A report](reports/P4-00C-A-heic-business-implementation.md) (with the A-layer correction of
+§12). **P4-00C-B is PASS（C level：HEIC 环境与正式包兼容；`SOL_NOT_REQUIRED`）**: the onedir bundle carries
+the pillow-heif extension and its libheif runtime byte-identical to the `.venv` source (plus the R1 audit of all
+27 packaged `photo_search` data resources), the packaged process decodes HEIC to the same upright 320×240 frame
+as its JPEG twin and serves the frozen taken-time/GPS semantics, and the three degraded variants
+(libheif / extension / both removed from a disposable copy) all answer the structured
+`FORMAT_UNSUPPORTED` while JPEG and the existing cache stay intact — a defect the C1 review caught and the A
+layer fixed by making the plugin registration atomic. Evidence: full **1633 / 0 / 0 / 48**, healthy smoke
+`status=ok`/`problems=[]`, three degraded smokes `status=ok`/`problems=[]`; see
+[the P4-00C-B report](reports/P4-00C-B-heic-packaging.md). **P4-00C is PASS**（独立 DS-H A+B 全量工程主审，
+`SOL_NOT_REQUIRED`，未命中 V3.1 §2.2、不升 DS-MAX），见
+[the DS-H review](reports/P4-00C-dsh-engineering-review.md)：主审独立重跑全量 **1633 / 0 / 0 / 48**、聚焦
+**98 / 0 / 0 / 0**、真实重建 onedir 与健康/降级四个打包 smoke、D-5 产物指纹与全部冻结面差分，并补做
+「缺 libde265/libx265 仍 fail closed」探针。下一任务为 **P4-01 — 10 万/30 万 exact/ANN 对照、索引维护、
+过滤分布与并发调度基准**（[docs/tasks/P4-01.md](tasks/P4-01.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**）。
 
 P1-01 history (frozen contract `docs/decisions/ADR-0002-catalog-identity-migration-scan-contract.md`):
 
@@ -1999,3 +2017,124 @@ API/UI, packaged closure and DS-H review`，父提交 `8e48fc7`；当前提交�
 两段都完成后**另开独立 DS-H 会话**做 A+B 全量工程主审，通过后才标 **P4-00C PASS** 并生成 P4-01。
 当前建议：**直接继续使用当前的 DS-H 档**完成 P4-00C-A；之后请在 Codex 中手动切换到 C1 / GPT-5.6 Terra /
 medium 执行 P4-00C-B。
+
+## Latest implementation — P4-00C-A HEIC business layer (2026-09-22, DS-H)
+
+**P4-00C-A：PASS（B + D level；`SOL_NOT_REQUIRED`）。** 完整报告
+[P4-00C-A 报告](reports/P4-00C-A-heic-business-implementation.md)。起点 `2b8a751`（工作树干净）；
+本卡改动未提交（9 modified + 5 untracked，另加本报告与状态两处文档更新）。
+
+交付：新增 `src/photo_search/media/heif.py` 作为**唯一** pillow-heif 注册点（幂等、失败即 fail closed）；
+`SUPPORTED_INPUT_FORMATS` 改为按真实可解码能力计算，`HEIC`/`HEIF` 仅在插件与 libheif 真的加载时进入支持闭集，
+`AVIF/TIFF/JXL/MPO/RAW/PSD/PDF` 等继续拒绝；HEIC 走与 JPEG **完全相同**的解码/方向归一化/resize 路径；
+坏 HEIC 每文件 `DECODE_FAILED` 且不阻断批次；`geo`、`taken_time`、`face_crop` 各加一行幂等注册调用。
+依赖：固定 `pillow-heif==1.8.0`（PyPI win_amd64 wheel，内置 libheif 1.23.4；`Requires-Dist: pillow>=11.1.0`
+与本项目 Pillow 11.3.0 配对，未升级 Pillow），`uv.lock` 95 → 96 packages。
+
+关键实测（报告 §3）：pillow-heif 会把 EXIF 方向读出后把标签改写为 1，并只在容器同时可写时留下 `irot`。
+实测两种文件形态——容器有 `irot`（libheif 已旋转像素）与容器无变换（像素未旋转、标签已被清掉）——
+若照抄 JPEG 路径，后者会被静默发布成横向错图。实现按容器是否带 `irot`/`imir` 判别，只在前者缺席时把
+`original_orientation` 写回内存 EXIF，再交给**同一个** `exif_transpose`；`read_orientation()` 用同一规则，
+因此 `probe_original_frame()` 与解码帧在两种形态下一致。
+
+上传面裁定：**`POST /api/v1/search/image` 仍拒绝 HEIC**（P2-07 白名单显式化为 `UPLOAD_INPUT_FORMATS`，
+语义不变）。理由与真实 HTTP 样本（409 `FORMAT_UNSUPPORTED`、details 列出上传白名单）见报告 §5；
+让上传面跟随库内能力属独立的加性协议变更，需同步改 P2-07 断言并要求 Sol 聚焦终审。
+
+实测：专项单元 `test-results/p4-00c-a-focused-unit.xml` **85 / 0 / 0 / 0**；本卡新增两文件
+`test-results/p4-00c-a-d-level.xml` **31 / 0 / 0 / 0**；完整 `test-results/p4-00c-a-full.xml`
+**1632 / 0 / 0 / 48**（190.0 s，48 skip 全为未装 pinned 权重的既有环境跳过）；Ruff、`git diff --check`
+clean，`uv lock --check` Resolved 96 packages。D 级六条逐条有证据（报告 §8）：坏文件同批隔离、
+写入期被替换/删除、同内容双位置确定性、插件不可用的 fail closed、**存量 JPEG/PNG/WebP/BMP/GIF 产物改动前后
+逐字节相同**（`tools/diagnostics/media_artifact_fingerprint.py`，「改动前」由 `git archive 2b8a751 src`
+复现；两侧 18 行载荷哈希文件 sha256 均为 `b8df55b5afc164919530fd95aaed61586c8088db52b1f5f1d4477a36514e7b9c`）
+⇒ **不递增 processor id**、`0001`～`0015`/全部 companion/ADR 相对基线零改动。
+
+未验证项（不得当 PASS）：30 万容量下的 HEIC 吞吐/内存、真实设备 HEIC 样本（本机无）、
+容器 `irot` 与 EXIF 方向同时非 1 的非规范文件、10/12-bit/网格/多帧/带 alpha 的 HEIC 变体、
+HEIC 的 XMP 方向、大 HEIC 真实耗时、多进程并发、**C 级打包（属 P4-00C-B）**、GTX 1660 实机。
+
+**停止点**：本卡不生成 P4-01、不碰 `PhotoSearch.spec`/`tools/packaging/**`/`packaged_api_smoke`。
+请用户在 Codex 中手动切换到 **C1 / GPT-5.6 Terra / medium** 的新会话执行
+[P4-00C-B](tasks/P4-00C-B.md)；两段都完成后另开**独立 DS-H 会话**做 A+B 全量工程主审，
+通过后才标 **P4-00C PASS**。未命中 V3.1 §2.2 六类条件，不升 DS-MAX。
+
+## Latest C1 environmental stage + repair round — P4-00C-B (2026-09-23)
+
+**P4-00C-B：PASS（C 级：HEIC 环境与正式包兼容；`SOL_NOT_REQUIRED`）。** 完整报告
+[P4-00C-B 报告](reports/P4-00C-B-heic-packaging.md)。起点为 A 段全部未提交交付物 + C1 段环境改动；
+本段落改动未提交（环境面 + 一处 A 层业务修正，见下）。
+
+C1 段交付：`tools/packaging/build_onedir.py` 只加 `--collect-all pillow_heif`（PyInstaller 看不到
+「先探测能力再动态 import」，且该 wheel 的扩展与 libheif DLL 是同级两个文件）；
+`packaged_api_smoke.py` 新增 HEIC 组件清单/哈希、打包 HEIC 缩略图/预览/坏文件断言与 P4-00B 主审建议
+R1（包内 `photo_search` **全部**数据资源逐字节一致）。
+
+**审核失败点与修复**：降级副本（去掉包内 libheif DLL）里 HEIC 得到 `DECODE_FAILED`，违反
+「必须结构化 `FORMAT_UNSUPPORTED`」。根因是 `register_heif_opener()` **先注册 Pillow 打开器、后查
+C 扩展能力**，运行库缺失时异常发生在注册之后，留下「已注册但不可用」的半成品插件。
+修复（A 层，`src/photo_search/media/heif.py`）：注册前快照 Pillow 的六个注册表、在 try 内强制读一次
+`libheif_version()`、失败即**原地回滚**；并新增忠实复现该形态的单元回归（临时禁用回滚时确实失败）。
+对照证据：回滚关闭 `HEIF_in_Pillow=True → DECODE_FAILED`；回滚开启 `HEIF_in_Pillow=False →
+FORMAT_UNSUPPORTED`。
+
+实测：真实重建 onedir（21 个 NVIDIA DLL）后
+`test-results/p4-00c-b-packaged-smoke.json` **status=ok / problems=[]**——包内
+`_pillow_heif.cp312-win_amd64.pyd`（59904 B，sha256 `58ccecb7…`）与
+`libheif-30fc1b3c…dll`（2201088 B，sha256 `6223de11…`）与 `.venv` 来源逐个哈希一致；
+27 个包内数据资源与 15 个迁移脚本与源码逐字节一致；打包进程里 HEIC 缩略图/预览 200 `image/jpeg` 且尺寸
+**与同像素同方向的 JPEG 孪生一致（均 320×240）**；同墙钟「有偏移 / 无偏移」对照对经打包详情端点发布为
+`EXIF_ORIGINAL/HIGH(+480min)` 与 `EXIF_ORIGINAL/MEDIUM(null)`，civil key 相同，GPS 事实 VALID/WGS84 一致；
+损坏 HEIC 409 `DECODE_FAILED` 且进程不崩。
+降级三变体 `test-results/p4-00c-b-degraded-{libheif,extension,both}-smoke.json` 全部
+**status=ok / problems=[]**：HEIC 三种请求均 409 `FORMAT_UNSUPPORTED`、能力清单不宣传 HEIC、
+JPEG 缩略图仍 200 且既有缓存字节不变。业务全量 `test-results/p4-00c-b-full.xml` **1633 / 0 / 0 / 48**；
+Ruff、`git diff --check` clean，`uv lock --check` Resolved 96 packages。
+
+未验证项：真实设备 HEIC 样本与 10/12-bit/网格/多帧变体、大 HEIC 在包内的内存/耗时、pillow-heif 版本错配、
+打包进程的 taken-time **生产**路径（`python -m photo_search.taken_time.cli` 无法在 onedir 里运行，本段只验证了
+服务/读回语义，生产者侧由 A 段真实调度器证据覆盖）、真实用户环境的安装/升级/卸载回归、GTX 1660 实机。
+
+**停止点**：本段不生成 P4-01。请用户在 Codex 中**另开独立 DS-H / DeepSeek V4.1 Flash / 高推理**会话做
+**A+B 全量工程主审**（A 的业务 diff、B 的环境 diff、包内资源与哈希、D/C 证据真实性、ADR/任务卡一致性、
+V3.1 §2.2 六类条件）；该主审通过后才标 **P4-00C PASS** 并生成下一卡（预期 **P4-01**）。
+本段未改 upload 白名单与任何已冻结信封/错误码集合，故按卡记 `SOL_NOT_REQUIRED`。
+
+## Latest independent DS-H A+B engineering review — P4-00C PASS (2026-09-23)
+
+**P4-00C：PASS（独立 DS-H / DeepSeek V4.1 Flash / 高推理全量工程主审；`SOL_NOT_REQUIRED`；未命中
+V3.1 §2.2 六类条件、未升 DS-MAX、不需要额外 Sol 阶段）。** 完整主审报告
+[docs/reports/P4-00C-dsh-engineering-review.md](reports/P4-00C-dsh-engineering-review.md)。观察基线
+`2b8a751` + P4-00C-A/B 全部未提交交付物（14 modified + 9 untracked）；本阶段只新增主审报告与
+`docs/tasks/P4-01.md`，并更新本文件。**A/B 交付物与本主审报告仍未提交**（不加 commit）。
+
+主审独立复现（不引用被审报告结论）：完整套件 `test-results/p4-00c-review-full.xml`
+**1633 / 0 / 0 / 48**（203.5 s）；聚焦套件 `p4-00c-review-focused.xml` **98 / 0 / 0 / 0**；
+Ruff / `git diff --check` / `uv lock --check`（96 packages）全 clean（受限令牌下 Ruff 仍打印一条既有
+`os error 5` 遍历警告，结论为 `All checks passed!`）；真实重建 onedir 后
+`p4-00c-review-packaged-smoke.json` **status=ok / problems=[]**（HEIC 缩略图/预览 200，与 JPEG 孪生同为
+320×240，损坏 HEIC 409 `DECODE_FAILED`，能力清单宣传 HEIC，打包 data root `schema_version=15`、
+`rules_version=1`），三份降级变体 `p4-00c-review-degraded-{libheif,extension,both}-smoke.json` 全
+**status=ok / problems=[]**（HEIC 三者 409 `FORMAT_UNSUPPORTED`、不宣传 HEIC、JPEG 与既有缓存不变）。
+主审直接核对包内哈希（`_pillow_heif` 59904 B `58ccecb7…`、`libheif` 2201088 B `6223de11…`、
+`web/app.js`、`search.js`、`0015_taken_time.sql` 与源码逐个一致），R1 的全量数据资源审计（27 个路径）
+成立；D-5 指纹由主审重跑两侧 18 行、sha256 均为
+`b8df55b5afc164919530fd95aaed61586c8088db52b1f5f1d4477a36514e7b9c`，并验证「改动前」一侧确实加载了
+基线源码树（无 `media/heif.py`、支持集不含 HEIC）⇒ 不递增 processor id 的裁定成立；禁止面
+（ADR-0001～0011、全部伴随物、`0001`～`0015`、`taken_time` 契约、`web/**`、`PhotoSearch.spec`）
+相对基线零改动。
+
+主审新增独立探针：在独立副本中删除 `libde265`/`libx265`（保留扩展与 `libheif`）后，HEIC 仍
+`409 FORMAT_UNSUPPORTED`、不宣传 HEIC、JPEG 孪生仍 320×240 —— 降级面比被审报告声称的更强。
+
+主审发现：**无阻断级**。三条非阻断建议 —— R1（打包组件审计只覆盖扩展 + libheif，实际包内还有 5 个
+delvewheel 同级运行库，建议在 P4-07 扩展清单并增加「缺 codec DLL」变体）、R2（`contract` 的能力常量是
+import 时快照，生产调用点已全部改读函数，建议收敛）、R3（方向判别器读不到私有句柄时偏向 pillow-heif 的
+声明，依赖版本钉死 + 两形态断言守住，升级时须复核）。未验证项继承 A/B 报告（真实设备 HEIC、10/12-bit/
+网格/多帧变体、XMP 方向、大 HEIC 耗时/内存、多进程、打包 taken-time 生产路径、真实安装/升级/卸载回归、
+GTX 1660、30 万规模）。
+
+下一任务：**P4-01 — 10 万/30 万 exact/ANN 对照、索引维护、过滤分布与并发调度基准**，任务卡
+[docs/tasks/P4-01.md](tasks/P4-01.md)，推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**（与当前档一致，可继续
+使用当前模型）；验收等级 **B + D**（涉及打包再加 C）；max 仅按 §2.2，无法解释的 Windows 性能异常转 C1。
+模型切换始终由用户在 Codex 中手动完成。

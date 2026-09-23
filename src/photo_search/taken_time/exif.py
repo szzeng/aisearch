@@ -84,6 +84,11 @@ def read_time_fields(path: str | Path) -> ExifTimeFields:
     """
     from PIL import Image
 
+    # The HEIF container is only openable once the single pillow-heif registration point
+    # has run (idempotent, and it fails closed by leaving HEIC undecodable) - P4-00C-A.
+    from photo_search.media import heif
+
+    heif.ensure_heif_support()
     with Image.open(path) as image:
         exif = image.getexif()
         sub: dict[int, Any] = {}

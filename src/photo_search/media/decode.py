@@ -25,9 +25,10 @@ from photo_search.catalog.errors import (
     SOURCE_FILE_MISSING,
     CatalogError,
 )
+from photo_search.media import heif
 from photo_search.media.contract import (
-    SUPPORTED_INPUT_FORMATS,
-    UNSUPPORTED_INPUT_FORMATS,
+    refused_input_formats,
+    supported_input_formats,
 )
 
 ORIENTATION_TAG = 0x0112
@@ -108,7 +109,7 @@ def plugin_format_decision(pil_format: str | None) -> tuple[str, bool]:
     opportunistically, because its orientation/colour handling has not been verified.
     """
     label = str(pil_format or "").upper()
-    if label in SUPPORTED_INPUT_FORMATS:
+    if label in supported_input_formats():
         return label, True
     return (label or "UNKNOWN"), False
 
@@ -119,6 +120,9 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
     The returned image is fully loaded and owned by the caller, so the source file can be
     closed immediately and the image can be resized in place.
     """
+    # Pillow has no HEIF decoder; the single registration point is
+    # :mod:`photo_search.media.heif` and it fails closed when the plugin is unavailable.
+    heif.ensure_heif_support()
     try:
         with Image.open(path) as source:
             label, decodable = plugin_format_decision(source.format)
@@ -127,7 +131,11 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
             if label == "JPEG":
                 # Must happen before ``exif_transpose`` loads the pixels.
                 source.draft(source.mode, (long_edge, long_edge))
-            orientation = _read_orientation(source)
+            # Restore the orientation pillow-heif cleared so HEIC is normalised by exactly
+            # the same ``exif_transpose`` call as every other format.
+            orientation = _restore_recorded_orientation(source)
+            if orientation is None:
+                orientation = _read_orientation(source)
             upright = ImageOps.exif_transpose(source)
             upright.load()
             width, height = upright.size
@@ -138,8 +146,11 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
         # Pillow could not identify the file at all. Only a recognised-but-refused family
         # is a format statement; anything else (empty file, text, damaged header) is an
         # honest decode failure, never a silent "unsupported".
+        # Only a family that is *recognised and refused* is a format statement. A decodable
+        # format whose bytes are broken (a truncated HEIC, say) is an honest decode failure
+        # and must never be reported as "this build does not support HEIC".
         sniffed = sniff_format(read_header(path))
-        if sniffed is not None and sniffed in UNSUPPORTED_INPUT_FORMATS:
+        if sniffed is not None and sniffed in refused_input_formats():
             raise _unsupported(sniffed, path=str(path)) from error
         raise _decode_failed(path, f"cannot identify the file as an image: {error}") from error
     except Image.DecompressionBombError as error:
@@ -209,8 +220,9 @@ def probe_capabilities() -> dict[str, object]:
         "exif_writer": hasattr(Image, "Exif"),
         "max_image_pixels": Image.MAX_IMAGE_PIXELS,
         "jpeg_draft_reduce": True,
-        "supported_input_formats": sorted(SUPPORTED_INPUT_FORMATS),
-        "refused_input_formats": sorted(UNSUPPORTED_INPUT_FORMATS),
+        "supported_input_formats": sorted(supported_input_formats()),
+        "refused_input_formats": sorted(refused_input_formats()),
+        "heif_support": heif.runtime_fact(),
     }
 
 
@@ -220,28 +232,76 @@ def read_orientation(source: Image.Image) -> int:
     Public because the P3-06 face crop has to measure the *orientation-normalised* size of
     an original from its header alone, and it must apply exactly the rule
     :func:`load_normalized` applies to the pixels.
+
+    A HEIF image needs the second half of the rule: pillow-heif moves the orientation out of
+    the EXIF block (it rewrites the tag to ``1`` and reports the removed value in
+    ``info["original_orientation"]``), so the tag alone would claim "no rotation" for a
+    portrait HEIC. The recorded value is the honest answer there and keeps this function in
+    agreement with what :func:`load_normalized` publishes.
     """
     try:
         exif = source.getexif()
     except Exception:  # pragma: no cover - defensive: a broken EXIF block is not fatal
         return 1
-    if not exif:
-        return 1
-    try:
-        value = int(exif.get(ORIENTATION_TAG, 1))
-    except (TypeError, ValueError):
-        return 1
-    return value if 1 <= value <= 8 else 1
+    value = 1
+    if exif:
+        try:
+            value = int(exif.get(ORIENTATION_TAG, 1))
+        except (TypeError, ValueError):
+            value = 1
+    if not 1 <= value <= 8:
+        value = 1
+    if value != 1:
+        return value
+    recorded = heif.recorded_orientation(source)
+    if recorded is None:
+        return value
+    # Only a HEIF whose container carries *no* irot/imir transform still needs the recorded
+    # orientation applied; when libheif already rotated the pixels, the honest answer is 1.
+    if heif.container_orientation_applied(source) is False:
+        return recorded
+    return value
 
 
 def _read_orientation(source: Image.Image) -> int:
     return read_orientation(source)
 
 
+def _restore_recorded_orientation(source: Image.Image) -> int | None:
+    """Put back the orientation pillow-heif removed, so one path normalises every format.
+
+    Returns the effective orientation when the tag was restored, and ``None`` when this
+    image needs no restoration: it is not a HEIF image, its container already carries the
+    ``irot``/``imir`` transform libheif applied, or the container property list could not
+    be read (the caller then reads the tag with :func:`read_orientation`).
+    """
+    recorded = heif.recorded_orientation(source)
+    if recorded is None:
+        return None
+    if heif.container_orientation_applied(source) is not False:
+        return None
+    try:
+        exif = source.getexif()
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if not exif:
+        return None
+    try:
+        if int(exif.get(ORIENTATION_TAG, 1)) != 1:
+            return None
+    except (TypeError, ValueError):
+        return None
+    try:
+        exif[ORIENTATION_TAG] = recorded
+    except Exception:  # pragma: no cover - an unwritable EXIF block is not fatal
+        return None
+    return recorded
+
+
 def _unsupported(label: str, *, path: str | None = None) -> CatalogError:
     details: dict[str, object] = {
         "format": label,
-        "supported_formats": sorted(SUPPORTED_INPUT_FORMATS),
+        "supported_formats": sorted(supported_input_formats()),
     }
     if path is not None:
         details["path"] = path

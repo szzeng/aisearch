@@ -52,6 +52,11 @@ def main() -> int:
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "PhotoSearch",
         "--paths", str(root / "src"), "--add-data", f"{manifest};tools/prepare_models/manifests",
         "--collect-binaries", "onnxruntime", "--collect-data", "tokenizers",
+        # ``pillow_heif`` is imported only after the media capability probe.  PyInstaller
+        # cannot see that dynamic import, and the wheel has both a top-level extension and
+        # a sibling libheif DLL.  Collecting the package as a unit keeps the frozen build
+        # capability-identical to the locked development environment (P4-00C-B).
+        "--collect-all", "pillow_heif",
         "--exclude-module", "torch", "--exclude-module", "torchvision",
         # The catalog migrations are ``.sql`` data files inside the package: without them a
         # frozen build would start with no schema at all (P1-04 report §6.1).

@@ -170,21 +170,51 @@ def test_transparency_is_composited_on_white(tmp_path: Path) -> None:
 def test_unverified_formats_are_reported_as_unsupported(tmp_path: Path) -> None:
     tiff = tmp_path / "scan.tif"
     quadrants(60, 40).save(tiff, "TIFF")
-    heif = tmp_path / "photo.heic"
-    heif.write_bytes(b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1")
     # RAW families: TIFF-based (NEF/ARW/DNG/CR2) and ISO-BMFF-based (CR3) are both
     # recognised and refused instead of being decoded opportunistically.
     nef = tmp_path / "camera.nef"
     nef.write_bytes(b"II*\x00" + b"\x00" * 28)
     cr3 = tmp_path / "camera.cr3"
     cr3.write_bytes(b"\x00\x00\x00\x18ftypcrx \x00\x00\x00\x00crx isom")
+    avif = tmp_path / "modern.avif"
+    avif.write_bytes(b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1")
 
-    for path, label in ((tiff, "TIFF"), (heif, "HEIF"), (nef, "TIFF"), (cr3, "RAW")):
+    for path, label in (
+        (tiff, "TIFF"),
+        (avif, "AVIF"),
+        (nef, "TIFF"),
+        (cr3, "RAW"),
+    ):
         with pytest.raises(CatalogError) as error:
             decode.load_normalized(path, long_edge=320)
         assert error.value.code == FORMAT_UNSUPPORTED
         assert error.value.details["format"] == label
         assert "JPEG" in error.value.details["supported_formats"]
+
+
+@pytest.mark.parametrize(
+    ("name", "payload"),
+    [
+        ("header-only.heic", b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00heicmif1"),
+        ("empty.heic", b""),
+        ("text.heic", b"this is not a HEIC file despite the extension"),
+    ],
+)
+def test_a_supported_format_with_broken_bytes_is_a_decode_failure(
+    tmp_path: Path, name: str, payload: bytes
+) -> None:
+    """P4-00C-A: HEIC is decodable now, so broken HEIC bytes are a *decode* failure.
+
+    Reporting ``FORMAT_UNSUPPORTED`` here would claim this build cannot read HEIC at all,
+    which is exactly the confusion the format policy exists to prevent.
+    """
+    path = tmp_path / name
+    path.write_bytes(payload)
+
+    with pytest.raises(CatalogError) as error:
+        decode.load_normalized(path, long_edge=320)
+
+    assert error.value.code == DECODE_FAILED
 
 
 @pytest.mark.parametrize("kind", ["truncated", "empty", "text"])
@@ -232,7 +262,8 @@ def test_pixel_safety_limit_becomes_a_structured_failure(
 def test_plugin_format_policy_never_guesses_from_the_extension() -> None:
     assert decode.plugin_format_decision("JPEG") == ("JPEG", True)
     assert decode.plugin_format_decision("png") == ("PNG", True)
-    for refused in ("TIFF", "MPO", "HEIF", "AVIF", "PSD"):
+    assert decode.plugin_format_decision("HEIF") == ("HEIF", True)
+    for refused in ("TIFF", "MPO", "AVIF", "PSD"):
         label, decodable = decode.plugin_format_decision(refused)
         assert (label, decodable) == (refused, False)
     assert decode.plugin_format_decision(None) == ("UNKNOWN", False)
@@ -258,3 +289,7 @@ def test_capability_probe_reports_measured_facts() -> None:
     assert probe["exif_orientation_read"] is True
     assert probe["supported_input_formats"] == sorted(contract.SUPPORTED_INPUT_FORMATS)
     assert "TIFF" in probe["refused_input_formats"]
+    assert "HEIC" in probe["supported_input_formats"]
+    assert probe["heif_support"]["available"] is True
+    assert probe["heif_support"]["module_version"]
+    assert probe["heif_support"]["libheif_version"]
