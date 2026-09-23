@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from collections.abc import Sequence
+import time
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -379,6 +381,11 @@ class IndexCoordinator:
     #: and a batch either writes and confirms all of its events or leaves them all PENDING.
     BATCH_SIZE = 200
 
+    #: Upper bound on the per-transaction timing samples kept for the maintenance entry
+    #: (P4-02A). They are pure observability - no protocol step reads them - and the cap keeps
+    #: a long drain from growing a process's memory without bound.
+    MAX_WRITE_SAMPLES = 4096
+
     def __init__(
         self,
         catalog: Catalog,
@@ -393,10 +400,67 @@ class IndexCoordinator:
         self.index = vector_index or LanceVectorIndex(vectors_dir(root))
         #: Last ``ensure_scalar_indexes`` outcome, for diagnostics and tests.
         self.scalar_index_report: dict[str, dict[str, Any]] = {}
+        #: ``{"phase", "wait_ms", "hold_ms"}`` per drain transaction: how long the writer
+        #: waited for the single-writer lock and how long it then held it (P4-02A evidence).
+        self.write_samples: list[dict[str, Any]] = []
+        #: Uncapped count of the drain transactions that really ran, per phase. The sample
+        #: list above is bounded, so a report must take its *counts* from here.
+        self.write_transaction_counts: dict[str, int] = {}
+        #: Structured ``busy_timeout`` refusals observed by the drain path. Each entry is a
+        #: ``{"phase", "code", "message", "waited_ms"}`` claim that nothing was written.
+        self.write_rejections: list[dict[str, Any]] = []
+
+    @contextmanager
+    def _timed_write(self, phase: str) -> Iterator[sqlite3.Connection]:
+        """One catalog write transaction of the drain path, timed for maintenance.
+
+        The yielded connection and the commit/rollback behaviour are exactly
+        :meth:`Catalog.write`'s; this only measures the acquisition and hold times and turns a
+        refusal *before* the body ran into a recorded, retryable fact. ``Catalog.write``
+        reports an expired ``busy_timeout`` as ``CATALOG_UNREADABLE`` ("cannot start a catalog
+        write transaction: database is locked"); a maintenance caller has to be able to tell
+        that transient claim apart from a real protocol failure, so it is captured here
+        without changing what is raised.
+        """
+        started = time.perf_counter()
+        entered = False
+        acquired = started
+        try:
+            with self.catalog.write() as connection:
+                entered = True
+                acquired = time.perf_counter()
+                yield connection
+        except CatalogError as error:
+            if not entered:
+                self.write_rejections.append(
+                    {
+                        "phase": str(phase),
+                        "code": str(error.code),
+                        "message": str(error.message),
+                        "waited_ms": round((time.perf_counter() - started) * 1000, 3),
+                    }
+                )
+            raise
+        finally:
+            if entered:
+                key = str(phase)
+                self.write_transaction_counts[key] = self.write_transaction_counts.get(key, 0) + 1
+                self._record_write_sample(phase=phase, started=started, acquired=acquired)
+
+    def _record_write_sample(self, *, phase: str, started: float, acquired: float) -> None:
+        if len(self.write_samples) < self.MAX_WRITE_SAMPLES:
+            finished = time.perf_counter()
+            self.write_samples.append(
+                {
+                    "phase": str(phase),
+                    "wait_ms": round((acquired - started) * 1000, 3),
+                    "hold_ms": round((finished - acquired) * 1000, 3),
+                }
+            )
 
     def process_next(self, *, now_ms: int, failpoint: str | None = None) -> bool:
         """Apply one event. ``after_lance`` simulates the documented crash window."""
-        with self.catalog.write() as connection:
+        with self._timed_write("claim") as connection:
             event = connection.execute(
                 "SELECT * FROM index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
                 "ORDER BY created_at, event_id LIMIT 1"
@@ -418,7 +482,7 @@ class IndexCoordinator:
             # revision, claim this event or confirm it, so a lower revision can never land on
             # top of a newer one (P4-01C focused review A1: "the old writer must not land
             # last").
-            with self.catalog.write() as connection:
+            with self._timed_write("apply") as connection:
                 current = connection.execute(
                     "SELECT state FROM index_outbox WHERE event_id = ?", (event_id,)
                 ).fetchone()
@@ -489,7 +553,7 @@ class IndexCoordinator:
         except _InjectedCrash:
             raise
         except Exception as error:
-            with self.catalog.write() as connection:
+            with self._timed_write("revert") as connection:
                 connection.execute(
                     "UPDATE index_outbox SET state = 'PENDING', last_error_code = ?, updated_at = ? "
                     "WHERE event_id = ? AND state = 'IN_FLIGHT'",
@@ -561,7 +625,7 @@ class IndexCoordinator:
         claimed = int(max_events)
         if claimed < 1:
             return 0
-        with self.catalog.write() as connection:
+        with self._timed_write("claim") as connection:
             rows = connection.execute(
                 "SELECT event_id FROM index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
                 "ORDER BY created_at, event_id LIMIT ?",
@@ -577,7 +641,7 @@ class IndexCoordinator:
                 (now_ms, *event_ids),
             )
         try:
-            with self.catalog.write() as connection:
+            with self._timed_write("apply") as connection:
                 # ``BEGIN IMMEDIATE`` already holds the single-writer lock: read which of the
                 # claimed events are still ours, and treat the rest as somebody else's work.
                 ours = {
@@ -683,7 +747,7 @@ class IndexCoordinator:
         except _InjectedCrash:
             raise
         except Exception as error:
-            with self.catalog.write() as connection:
+            with self._timed_write("revert") as connection:
                 connection.execute(
                     "UPDATE index_outbox SET state = 'PENDING', last_error_code = ?, "
                     f"updated_at = ? WHERE event_id IN ({placeholders}) AND state = 'IN_FLIGHT'",

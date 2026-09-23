@@ -2484,3 +2484,40 @@ superseded 检查、Lance 写和确认放进同一 `BEGIN IMMEDIATE` 事务；�
 **P4-02 尚未生成**（遵照终审任务边界）。生成下一卡时须把 R5“语义 outbox 的生产维护入口”列为
 正式容量验证前置项，并验证新写事务的生产争用/busy-timeout；R3/R6 与真模型向量、ANN 质量、
 API P95、A3、多世代混批、GTX 1660、thin 真数据集合等仍按终审报告的未验证口径记录。
+
+## Latest task — P4-02A 语义 outbox 生产维护入口接线（2026-09-23）
+
+**P4-02A：`IMPLEMENTED / VALIDATION COMPLETE（B + D）`，`ENGINEERING REVIEW PENDING`——
+未标 PASS、未启动 P4-02B。** 报告 [P4-02A-maintenance-entry.md](reports/P4-02A-maintenance-entry.md)；
+基线 `3386f39`（执行前工作树干净）。
+
+交付：新生产入口 `src/photo_search/indexing/maintenance.py::drain_semantic_outbox` 与受控 CLI
+`python -m photo_search.indexing.cli {status,drain}`（JSON、退出码 0/1/2、不新增服务/依赖/线程）；
+`IndexCoordinator` **只加可观测性**（`write_samples`/`write_rejections`/`_timed_write`；状态机、
+确认顺序、引擎写与检索参数零变化）；诊断工具 `tools/diagnostics/index_maintenance_probe.py`
+（机器可读 JSON）；10 个新用例。禁止面零改动：`SUPPORTED_SCHEMA_VERSION` 仍 15，migration/ADR/
+伴随物/API/Web/打包面未触碰。
+
+实测（`test-results/p4-02a-maintenance.json`，工具退出码 0）：400 资产 + 300 真实工件 →
+入口 applied 300 / 2 批 / 328.7 ms、锁等待 p50 0.025 ms / p95 0.033 ms、持锁 p50 2.662 / p95 192.464 ms、
+第二次调用 applied 0（幂等）；争用场景（真实前台修订写 30 次 + 内容变更发布 10 次并发）drain
+applied 303、锁等待 p95 22.5 ms，前台全部提交且 `catalog_filter_revision` 与事件行数**与实际提交次数
+逐一相等**（不静默失败）；`busy_timeout` 实测 **5 498.3 ms** 结构化 `CATALOG_UNREADABLE`（locked）
+拒绝 + 有界重试后全部确认；D-1 中途重启、D-2 crash 窗口重放、D-3 内容变更、D-4 两个维护者并发
+四项全部成立，且重启 / crash / 不中断三者的派生状态指纹一致。
+
+验收：focused `test-results/p4-02a-focused.xml` **35 / 0 / 0 / 0**；全量 `test-results/p4-02a-full.xml`
+**1658 / 0 / 0 / 48**（210.8 s；基线 1648 + 10 新用例）；Ruff / `git diff --check` /
+`uv lock --check` 全 exit 0。本机受限令牌下 `--basetemp` 走正常 Windows 权限路由，未改 ACL。
+
+**发现（须交 P4-02B）**：F1 修复审计 `audit_and_schedule_repairs` 实测 13.7 ms/工件
+（224 工件 5 480.2 ms），故 `drain` 默认 `repair=False`，30 万档审计成本未测；
+F2 冻结领取协议下并发维护者**不分工**（第二个维护者领取在途集合后被串行化、随后跳过），
+正确但不提升吞吐，若 P4-02B 要并行维护需另立裁决；F3 冻结包内该 CLI 入口未验证（未触碰打包面，
+接启动器将触发 C 级）。
+
+**停止点**：请在新会话用 **DS-H / DeepSeek V4.1 Flash / 高推理**做全量工程主审并写
+`docs/reports/P4-02A-dsh-engineering-review.md`（通过则状态写
+`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`），随后由 **C2 / GPT-5.6 Sol / high** 聚焦终审
+（入口真实性、并发口径、旧 revision 不回滚、busy-timeout 边界）。通过后才标 P4-02A PASS 并启动
+**P4-02B**（卡已存在，本轮已补入口命令与 F1/F2）。模型切换始终由用户在 Codex 中手动完成。
