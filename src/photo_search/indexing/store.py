@@ -409,6 +409,11 @@ class IndexCoordinator:
         #: Structured ``busy_timeout`` refusals observed by the drain path. Each entry is a
         #: ``{"phase", "code", "message", "waited_ms"}`` claim that nothing was written.
         self.write_rejections: list[dict[str, Any]] = []
+        #: Outbox events this coordinator confirmed. A failed ``process_all`` never returns its
+        #: count, so a maintenance caller reads this instead of losing the batches that landed
+        #: before a ``busy_timeout`` refusal (P4-02A review A1). Only real confirmations count:
+        #: finding an event already ``CONFIRMED`` by somebody else is not one of ours.
+        self.applied_events = 0
 
     @contextmanager
     def _timed_write(self, phase: str) -> Iterator[sqlite3.Connection]:
@@ -522,6 +527,7 @@ class IndexCoordinator:
                     self._make_generation_ready(
                         connection, str(event["generation_id"]), now_ms
                     )
+                    self.applied_events += 1
                     return True
                 record = self._record(event, artifact, generation)
                 self.index.upsert(generation=generation, record=record)
@@ -549,6 +555,7 @@ class IndexCoordinator:
                     (now_ms, event_id),
                 )
                 self._make_generation_ready(connection, str(event["generation_id"]), now_ms)
+            self.applied_events += 1
             return True
         except _InjectedCrash:
             raise
@@ -743,6 +750,7 @@ class IndexCoordinator:
                     )
                 for generation_id in sorted(touched):
                     self._make_generation_ready(connection, generation_id, now_ms)
+            self.applied_events += len(events)
             return len(events)
         except _InjectedCrash:
             raise

@@ -221,6 +221,51 @@ def test_a_refused_write_leaves_the_events_claimable(tmp_path: Path) -> None:
         fixture.catalog.close()
 
 
+def test_a_refusal_after_partial_progress_still_reports_every_confirmed_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P4-02A review A1: a retry must add to ``applied``, never replace it.
+
+    A ``busy_timeout`` refusal can land on a *later* batch of the same call, after earlier
+    batches were already confirmed. Those confirmations are exactly the events the entry
+    reports as its own work - the number P4-02B quotes - so the retry has to accumulate them
+    (and re-attempt the rest with the remaining ``limit``) instead of overwriting the count.
+    """
+    fixture = build(tmp_path, events=5)
+    try:
+        original = Catalog.write
+        calls = {"writes": 0, "refused": 0}
+
+        @contextmanager
+        def flaky_write(self: Any) -> Any:
+            calls["writes"] += 1
+            # #1 claim(1-2), #2 apply(1-2), #3 claim(3-4), #4 apply(3-4) <- refused once
+            if calls["writes"] == 4:
+                calls["refused"] += 1
+                raise CatalogError(
+                    CATALOG_UNREADABLE,
+                    "cannot start a catalog write transaction: database is locked",
+                )
+            with original(self) as connection:
+                yield connection
+
+        monkeypatch.setattr(Catalog, "write", flaky_write)
+        report = maintenance.drain_semantic_outbox(
+            fixture.catalog, batch_size=2, retry_limit=1, retry_backoff_ms=0
+        )
+
+        assert calls["refused"] == 1
+        assert report["write_rejections"]["count"] == 1
+        assert report["write_rejections"]["retries"] == 1
+        # The first attempt confirmed the first two events, the retry the remaining three.
+        assert report["applied"] == report["confirmed_delta"] == 5
+        assert report["applied"] <= report["limit"]
+        assert probe.state_digest(fixture)["outbox"] == {"CONFIRMED": 5}
+        assert probe.semantic_ready(fixture) == 45
+    finally:
+        fixture.catalog.close()
+
+
 # ------------------------------------------------------------------------ D-level cases
 def test_a_mid_drain_restart_converges_to_the_uninterrupted_state(tmp_path: Path) -> None:
     """D-1: stop halfway, restart the process, and land on exactly the uninterrupted state."""

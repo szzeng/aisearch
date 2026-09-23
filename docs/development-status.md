@@ -2560,3 +2560,27 @@ F2 冻结领取协议下并发维护者**不分工**（第二个维护者领取�
 **停止点**：按 §6.1 做最小修复 → 重跑 §6.1 探针、`--mode busy-timeout`、focused 与全量 →
 更新报告/状态 → 再由 **C2 / GPT-5.6 Sol / high** 聚焦终审；A2/A3 另立小卡（建议优先于 P4-02B 容量宣称）。
 模型切换始终由用户在 Codex 中手动完成。
+
+## Latest fix round — P4-02A A1（2026-09-24）
+
+**A1 已修复并复核；A2/A3 未纳入本卡（须另立小卡）。状态：`SOL FOCUSED REVIEW PENDING`
+——未标 P4-02A PASS、未启动 P4-02B。** 记录见
+[实现报告 §12](reports/P4-02A-maintenance-entry.md) 与
+[主审报告 §6.1](reports/P4-02A-dsh-engineering-review.md)。
+
+修复：`IndexCoordinator` 增加结果计数 `applied_events`（只计真的确认：`process_batch` 的批量确认与
+`process_next` 的两条确认分支；「别人已确认而跳过」不计），入口 `drain_semantic_outbox` 以它报告
+`applied`（本次调用确认的事件数，含被拒尝试前已落地的批次，且不超过 `limit`）、以
+`confirmed_delta` 报告净确认数，并把剩余额度（`limit - applied`）传给重试。
+
+复核（最终冻结工作树）：修复前的同一反例在临时还原后仍失败（`assert 3 == 5`，
+`test-results/p4-02a-fix-a1-prefix.xml`），修复后该用例通过（`p4-02a-fix-a1.xml` 2/0/0）；
+focused `p4-02a-fix-focused.xml` **36 / 0 / 0 / 0**（25.0 s）；全量 `p4-02a-fix-full.xml`
+**1659 / 0 / 0 / 48**（207.5 s）；证据工具 `p4-02a-fix-maintenance.json` 五场景 `ok=true`
+（entry applied 300 = confirmed_delta 300、第二次 0；two_maintainers 合计 25；contention applied 300
+收尾 +10；busy_timeout 1 次结构化拒绝 5 480.8 ms + 重试后 `{CONFIRMED 24}`；派生指纹仍 `2ba50ddd…`）；
+Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
+
+**停止点**：请在**新会话**用 **C2 / GPT-5.6 Sol / high** 做聚焦终审（只审入口真实性、并发口径、
+旧 revision 不回滚、`busy-timeout` 边界，**含本次 A1 修复边界**与其直接回归；A2/A3 不在其范围，
+另立小卡）；通过后才标 **P4-02A PASS** 并启动 **P4-02B**。模型切换始终由用户在 Codex 中手动完成。

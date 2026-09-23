@@ -49,8 +49,10 @@ generation `READY`）只经由该路径推进。
 + 真实内容变更发布）与 drain 并发。两处都读到：事件恰好确认一次、Lance 行无重复、
 `stored row revision == index_entries.confirmation_revision == MAX(事件 revision)`。
 
-**入口参数**：`limit`（本批最多应用多少事件，可分批续跑）、`batch_size`（多少事件共享一次引擎写；
-逐事件确认与整批原子性不变）、`repair`（默认**关闭**，理由见 §8 F1）、
+**入口参数**：`limit`（本次调用最多确认多少事件，可分批续跑；`applied` 即本次调用确认的事件数，
+**含被拒尝试之前已落地的批次**且不超过 `limit`——语义与修复见 §12 A1）、
+`batch_size`（多少事件共享一次引擎写；逐事件确认与整批原子性不变）、
+`repair`（默认**关闭**，理由见 §8 F1）、
 `retry_limit`/`retry_backoff_ms`（只针对 `busy_timeout` 拒绝，见 §7）。
 
 ## 3. `store.py` 的改动只是可观测性
@@ -237,3 +239,33 @@ D 级注入真实性、与 P2-03/P4-01C 报告一致性、F1～F3 与未验证�
 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`；随后由 **C2 / GPT-5.6 Sol / high** 只审
 「入口是否真正接线、并发口径、旧 revision 不回滚、busy-timeout 边界」及其直接回归；
 通过后才标 **P4-02A PASS** 并启动 **P4-02B**。模型切换始终由用户在 Codex 中手动完成。
+
+## 12. 主审结果与 A1 修复轮（2026-09-24）
+
+独立 DS-H 全量工程主审的结论是 **`ENGINEERING REVIEW FAIL`**（报告
+[P4-02A-dsh-engineering-review.md](P4-02A-dsh-engineering-review.md)）：本卡范围内 1 条最小修复项 A1，
+另有 2 条既有面未决项 A2/A3（非本卡引入、超出本卡允许修改范围，主审报告给了最小反例与数据）。
+
+**A1（已修复并复核）**：`drain_semantic_outbox` 的重试循环原先以 `process_all` 的返回值覆盖 `applied`，
+而失败的那一次尝试永不返回——于是在「`busy_timeout` 拒绝发生在已有批次落地之后」时，入口自报的
+`applied` 少于真实确认数（主审反例：`applied=3` / `confirmed_delta=5`，outbox 状态本身正确）。
+最小修复：`IndexCoordinator` 增加**结果计数** `applied_events`（只计真的确认——`process_batch` 的批量确认
+与 `process_next` 的两条确认分支；「别人已确认而跳过」不计），入口用它与 `confirmed_delta` 分别报告
+「本次调用确认的事件数」与「净确认数」，并据此把剩余额度交给重试（`limit - applied`，故仍不超过 `limit`）。
+
+复核证据（最终冻结工作树）：
+
+| 项 | 结果 |
+|---|---|
+| 新增回归用例 `test_a_refusal_after_partial_progress_still_reports_every_confirmed_event` | 在**临时还原的修复前逻辑**上失败（`assert 3 == 5`，`test-results/p4-02a-fix-a1-prefix.xml`），修复后通过（`p4-02a-fix-a1.xml` 2 / 0 / 0）|
+| focused `test-results/p4-02a-fix-focused.xml` | **36 / 0 / 0 / 0**（25.0 s；含该用例）|
+| 全量 `test-results/p4-02a-fix-full.xml` | **1659 / 0 / 0 / 48**（207.5 s）|
+| 证据工具 `test-results/p4-02a-fix-maintenance.json` | 五场景 `ok=true`：entry applied 300 = `confirmed_delta` 300、第二次 0；`two_maintainers` 合计 25；`contention` applied 300（收尾 +10）；`busy_timeout` 1 次结构化拒绝（5 480.8 ms）+ 有界重试后 `{CONFIRMED 24}`；派生指纹仍为 `2ba50ddd…` |
+| Ruff / `git diff --check` / `uv lock --check` | 全 exit 0 |
+
+**A2/A3 未纳入本卡**：不可读工件会让 drain 永久停住（整批原子 + 最早优先领取），且每次 `--repair`
+审计都会为未确认条目新建事件（`PENDING 3→5→7`）；两者属 P2-03 既有语义，改动等于改状态机/确认语义，
+超出本卡允许范围，建议作为 P4-02B 的前置决策（主审报告 §6.2/§6.3）。
+
+**现状**：A1 修复轮完成、验收全绿；**未标 P4-02A PASS**——按任务卡仍需 **C2 / GPT-5.6 Sol / high**
+聚焦终审（本次应覆盖 A1 修复边界、入口真实性、并发口径、旧 revision 不回滚、`busy_timeout` 边界）。

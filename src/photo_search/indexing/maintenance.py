@@ -117,9 +117,13 @@ def drain_semantic_outbox(
 ) -> dict[str, Any]:
     """Apply the pending semantic outbox events and return the maintenance report.
 
-    ``limit`` bounds how many events one call applies, ``batch_size`` only decides how many of
-    them share one engine write (every event is still confirmed individually and a batch is
-    still all-or-nothing), and ``repair`` additionally runs the P2-03 repair audit first.
+    ``limit`` bounds how many events one call applies, and the returned ``applied`` is the
+    number of events *this call* confirmed: a bounded retry after a ``busy_timeout`` refusal
+    adds what the refused attempt had already confirmed instead of replacing it, so ``applied``
+    never exceeds ``limit`` and never understates the work the call did (P4-02A review A1).
+    ``batch_size`` only decides how many events share one engine write (every event is still
+    confirmed individually and a batch is still all-or-nothing), and ``repair`` additionally
+    runs the P2-03 repair audit first.
     The audit is *off by default* on purpose: it visits every embedding artifact with one
     engine point query, so on a full library it is a separate, measured decision rather than
     something a routine drain pays for.
@@ -155,7 +159,11 @@ def drain_semantic_outbox(
     rejected = 0
     while True:
         try:
-            applied = coordinator.process_all(now_ms=timestamp, limit=int(limit))
+            # ``applied_events`` is the coordinator's own tally, so a refused attempt's already
+            # confirmed batches stay counted even though ``process_all`` raised before returning
+            # (P4-02A review A1); the retry then gets the remaining budget only.
+            applied = int(coordinator.applied_events)
+            coordinator.process_all(now_ms=timestamp, limit=int(limit) - applied)
             break
         except CatalogError as error:
             if not is_busy_rejection(error) or retries >= int(retry_limit):
@@ -170,6 +178,7 @@ def drain_semantic_outbox(
             )
             if retry_backoff_ms:
                 waiter(int(retry_backoff_ms) / 1000)
+    applied = int(coordinator.applied_events)
     duration_ms = (time.perf_counter() - started) * 1000
     after = index_summary(catalog.db_path)
     #: Counts come from the uncapped per-phase counter; the timing *distribution* comes from a

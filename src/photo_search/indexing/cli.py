@@ -11,8 +11,9 @@ Commands
 ``status``  read-only semantic index facts (schema version, outbox/entry/generation counts).
 ``drain``   the production maintenance entry: apply pending semantic outbox events, confirm
             the events whose derived row is already written, and report what the run cost -
-            applied events, write transactions, lock-wait and hold-time distributions, and
-            any structured ``busy_timeout`` refusal with its bounded retry outcome.
+            the events this call confirmed (including the batches that landed before a bounded
+            retry), write transactions, lock-wait and hold-time distributions, and any
+            structured ``busy_timeout`` refusal with its retry outcome.
 
 ``drain`` is safe to run twice, and safe to run while another maintainer or a foreground
 writer is active: nothing here takes an exclusive lock, so an event another maintainer
