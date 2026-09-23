@@ -219,3 +219,15 @@ P4-07 评估是否排除该 DLL（需先确认 libheif 不依赖它加载）。
 
 一次性材料（`.packaged-*` 降级副本、`.packaged-review-*` smoke 工作目录、`.p4-00c-a-scratch` 基线树）
 只是可丢弃验证材料，已被 `.gitignore`/`ruff.toml` 排除，主审结束前清理。
+
+## 11. 收口提交
+
+主审通过后，P4-00C-A/B 的全部交付物（14 modified + 10 new，含两份阶段报告、本主审报告、
+`docs/tasks/P4-01.md` 与 `docs/development-status.md`）作为**一个版本**入库：
+
+```text
+9b1ff20 P4-00C: HEIC decode/GPS/orientation isolation, packaged closure, DS-H A+B review and P4-01 card
+        （父提交 2b8a751；24 files changed, 3100 insertions(+), 46 deletions(-)）
+```
+
+提交后工作树不再包含本卡任何未提交交付物；`git show --check 9b1ff20` 无空白错误。未推送（推送需单独授权）。

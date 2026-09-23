@@ -216,7 +216,8 @@ P4-00A/B 契约测试与 companion/迁移哈希不变。
 
 ## 11. 真实 Git 状态与下一步
 
-- 起点：`2b8a751`（工作树干净）。本卡全部改动**未提交**（不加 commit）。相对基线的改动集为
+- 起点：`2b8a751`（工作树干净）。本卡改动在本阶段结束时未提交，随后**已随 P4-00C 收口提交 `9b1ff20` 入库**。
+  相对基线的改动集为
   **9 modified**（`pyproject.toml`、`uv.lock` + 6 个生产文件 + `tests/unit/test_media_decode.py`）
   **+ 5 untracked**（`src/photo_search/media/heif.py`、`tests/unit/test_p4_heic_media.py`、
   `tests/integration/test_p4_heic_pipeline.py`、`tests/p4_heic_fixtures.py`、

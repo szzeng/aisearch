@@ -2106,7 +2106,8 @@ V3.1 §2.2 六类条件）；该主审通过后才标 **P4-00C PASS** 并生成�
 V3.1 §2.2 六类条件、未升 DS-MAX、不需要额外 Sol 阶段）。** 完整主审报告
 [docs/reports/P4-00C-dsh-engineering-review.md](reports/P4-00C-dsh-engineering-review.md)。观察基线
 `2b8a751` + P4-00C-A/B 全部未提交交付物（14 modified + 9 untracked）；本阶段只新增主审报告与
-`docs/tasks/P4-01.md`，并更新本文件。**A/B 交付物与本主审报告仍未提交**（不加 commit）。
+`docs/tasks/P4-01.md`，并更新本文件。**收口提交：`9b1ff20`**（P4-00C-A/B 交付物 + 本主审报告 +
+`docs/tasks/P4-01.md` + 本文件，一次入库；提交后工作树只剩 P4-01 会话尚未提交的新文件）。
 
 主审独立复现（不引用被审报告结论）：完整套件 `test-results/p4-00c-review-full.xml`
 **1633 / 0 / 0 / 48**（203.5 s）；聚焦套件 `p4-00c-review-focused.xml` **98 / 0 / 0 / 0**；

@@ -9,7 +9,8 @@
 `cannot decode the image (ImportError): DLL load failed while importing _pillow_heif`），
 **由 A 层修复轮关闭**（见 §3），随后本卡全部 C 级证据重跑至绿。
 
-观察起点：A 段全部未提交交付物 + C1 段的环境改动；本卡结束时的真实改动集见 §8。未提交（不加 commit）。
+观察起点：A 段全部未提交交付物 + C1 段的环境改动；本卡结束时的真实改动集见 §8。本卡结束时未提交，
+随后**已随 P4-00C 收口提交 `9b1ff20` 入库**。
 
 ## 1. 改动文件与最小差异
 
@@ -162,7 +163,8 @@ uv run --no-sync python -m pytest -q -p no:cacheprovider tests/unit tests/integr
 - 相对起点（`2b8a751` + A 段与 C1 段全部未提交交付物）本卡新增/修改：
   `tools/packaging/build_onedir.py`、`tools/diagnostics/packaged_api_smoke.py`、
   `tools/diagnostics/heif_degraded_bundle.py`（新）、`ruff.toml`、`.gitignore`、`src/photo_search/media/heif.py`、
-  `tests/unit/test_p4_heic_media.py`、本报告与 `docs/development-status.md`。不加 commit。
+  `tests/unit/test_p4_heic_media.py`、本报告与 `docs/development-status.md`。当时不加 commit，
+  这些改动随后随 P4-00C 收口提交 `9b1ff20` 一并入库。
 - 一次性 `.packaged-*` 降级副本与 smoke 工作目录只是丢弃式验证材料，已被 `.gitignore` 忽略。
 - **停止点**：状态写为 `P4-00C-A PASS / P4-00C-B PASS / INDEPENDENT DS-H REVIEW PENDING`。请用户在 Codex 中
   **手动切换**并**另开独立 DS-H / DeepSeek V4.1 Flash / 高推理**会话做 A+B 全量工程主审（A 的业务 diff +
