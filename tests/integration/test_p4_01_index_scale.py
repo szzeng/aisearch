@@ -135,7 +135,9 @@ def test_filter_tiers_agree_with_the_sql_authority(tmp_path: Path) -> None:
                 fixture, scope=scope, queries=queries, limit=200, index=index
             )
             assert set(walk["ranked"][0]) <= set(ids)
-            assert walk["blocks"] == [benchmark.math.ceil(len(ids) / 1000)]
+            assert walk["blocks"] == [
+                benchmark.math.ceil(len(ids) / int(retrieval.SCOPE_BLOCK_SIZE))
+            ]
 
         combination = benchmark._combination_check(
             fixture,

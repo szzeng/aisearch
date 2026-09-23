@@ -2265,3 +2265,80 @@ B2 粗筛+精确重排排后续，B3 换索引类型/B4 下调 §12.3 承诺需�
 三个失败都是那份在制品的**测试期望**问题（块数被 `MAX_VECTOR_BLOCKS=1000` 截断、monkeypatch 目标没生效、
 `has()` 快路径成功所以回退未触发）；排除该在制品文件后的 P4-01B 范围为 **1639 / 0 / 0 / 48**
 （`test-results/p4-01b-scope-full.xml`）。P4-01C 的验收应由它自己的会话完成。
+
+## Latest implementation — P4-01C bottleneck repair (2026-09-23)
+
+**P4-01C：IMPLEMENTATION + ACCEPTANCE COMPLETE / INDEPENDENT DS-H ENGINEERING REVIEW PENDING
+（未标 PASS，未生成 P4-02）。** 报告 [P4-01C 报告](reports/P4-01C-bottleneck-implementation.md)。
+→ **该阶段的独立 DS-H 全量工程主审已于 2026-09-23 通过**，现行状态为
+**`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`**
+（[主审报告](reports/P4-01C-dsh-engineering-review.md)，摘要见本文件末尾）；Sol 聚焦终审仍未做。
+起始基线 `cd84bcb`；按用户「按推荐继续」执行 P4-01B §10 的推荐：A1 + A2 / B1 / C1 + C2 / D2。
+上一段提到的并行 P4-01C 在制品已按用户要求删除（备份在 `tmp/p401c-wip-backup/`），本卡由本会话重新实现。
+
+交付：`retrieval.py` 的 `SCOPE_BLOCK_SIZE` 1 000 → **5 000**（访问路径参数，结果不变）与
+`source`/`person` 相关 `EXISTS` → 等价 `asset_id IN (SELECT ...)`；`store.py` 的 `has()` 定点查询、
+`ensure_scalar_index*`（`BTree`、幂等、拒绝即报告，只在维护侧调用）、`upsert_batch` 与
+`IndexCoordinator.process_batch`（一批一次批写、一起确认、失败全批回 `PENDING`）；新增 5 个专项用例，
+并同步两处断言。**未加 A3，未改任何 ANN 方案，未改迁移/契约/错误码/打包面**，schema_version 仍 15。
+
+30 万实测（同机同查询集）：生产遍历（无 ANN 向量索引）**112 177 ms → 19 489 ms**（300 → 60 块，
+Recall@20/@50 仍 **1.000**，引擎扫描 ↔ 暴力 top-20 仍 **160/160**）；**四档过滤全部跑通**——
+half 从「>60 s 超时」变为 **1 430 ms（scope）/3 536 ms（walk）**、114 000 候选、23 块，
+thin 从「>60 s 超时」变为 **3 740 ms / 991 ms**、2 000 候选、1 块；§12.4 第 32 条组合校验（6 397 候选）
+首次完成且 `sql_agrees=true`、无越权命中、投影滞后补回成立。EXPLAIN：half 计数 >20 s → **135 ms**、
+thin 计数/分页 >20 s → **888 / 797 ms**。维护：一次写 500 行 **0.118 ms/行 vs 逐行 43.69 ms/行（369×）**，
+`process_all` 重放 25 事件 = **1 次引擎写**，崩溃窗口注入（`after_lance`）后重放零逻辑重复，
+`asset_id` 标量索引 60.1 ms 建好且四态可报告（`no_table`/`created`/`present`/`unavailable`）。
+
+验收：专项 `test-results/p4-01c-focused.xml` **5 / 0 / 0**；全量 `test-results/p4-01c-full.xml`
+**1644 / 0 / 0 / 48**（216.7 s）；Ruff / `git diff --check` / `uv lock --check` 全部 exit 0；
+证据 `test-results/p4-01c-ann-scale.json`、`test-results/p4-01c-design.json`。
+
+**停止点**：下一步请在**新会话**用 **DS-H / DeepSeek V4.1 Flash / 高推理**做全量工程主审
+（`docs/reports/P4-01C-dsh-engineering-review.md`：完整 diff、块合并精确性、标量索引回退、
+`process_batch` 的领取/确认/幂等边界、谓词等价含 NULL 与人工状态、ADR/§9.2/§9.3 一致性、未验证项），
+通过后写 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`；随后由 **C2 / GPT-5.6 Sol / high**
+聚焦终审（§11 幂等/提交顺序 + 检索参数），通过后才标 **P4-01C PASS** 并生成 **P4-02**。
+未验证项：真模型向量下的效果、A3、索引策略调整（本构建内 ANN 30 万 Recall@20 仍 ~0.15）、
+GTX 1660 实机、多世代混批注入。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest independent DS-H engineering review — P4-01C (2026-09-23)
+
+**P4-01C：`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`（独立 DS-H / DeepSeek V4.1 Flash / 高推理
+全量工程主审；未标总任务 PASS、未生成 P4-02）。** 主审报告
+[docs/reports/P4-01C-dsh-engineering-review.md](reports/P4-01C-dsh-engineering-review.md)。观察基线 `cd84bcb`
++ P4-01C 全部未提交交付物（6 modified + 2 untracked）；本阶段只新增主审报告、更正实现报告的
+**三处事实性误述**（§2.1 标题、§2.3 第 5 行、§3.1 第 1 条，只改表述、不改数字与结论）并更新本文件。
+**未生成 P4-02**（等 Sol 终审通过）。
+
+主审独立复现（不引用被审报告结论）：全量 `test-results/p4-01c-review-full.xml` **1644 / 0 / 0 / 48**
+（202.4 s）、专项 `test-results/p4-01c-review-focused.xml` **5 / 0 / 0**；Ruff `All checks passed!`、
+`git diff --check`、`uv lock --check`（96 packages）全 exit 0；禁止面（`0001`～`0015` 与
+`SUPPORTED_SCHEMA_VERSION`、全部 ADR 与伴随物、`taken_time`、`web/**`、`api/**`、`persons/**`、
+`face/**`、`PhotoSearch.spec`、`tools/packaging/**`、`pyproject.toml`、`uv.lock`）相对基线**零改动**。
+
+最强证据是用 `git archive cd84bcb src` 解出的**基线真代码**做 before/after：同一探针、同一夹具、同一索引
+状态下，修复前（块 1 000 与 5 000）与修复后的 top-200 摘要完全相同（`900de11d…`）、top-20 与 numpy 暴力
+结果 **20/20**（`p4-01c-review-walk-{before,after}.json`）；12 行块大小扫描（显式钉住索引状态）在两种
+**精确**索引状态下的 8 行全部复现基线 top-20（`p4-01c-review-sweep.json`），ANN 列与精确结果重叠仅
+**1～7/20**（B1 的独立确认）；`half` 分页 2000 行摘要在两侧相同（`c76226b4…`），修复前 `half`/`thin`
+计数 >120 s、`thin` 受限计数 >240 s，修复后 135/888 ms 与 **266**（`p4-01c-review-probe-*.json`）；
+独立集合计数与生产 SQL 四档全一致（`p4-01c-review-sets.json`，215 998 / 114 000 / 30 000 / 2 000）。
+
+主审发现：**无阻断级**。R1（§2.3 把 `process_next` 逐事件成绩归给批处理）与 R2（§2.1/§3.1 的
+「12 组合 top-20 全同」对 ANN 列不成立）已由主审就地更正；R3 ADR-0009 §3.1 的 `EXISTS` 形状差异需在
+下次触碰 ADR 时记录（语义等价已证）；R4 诊断工具三相位共享一张表的索引状态、建议显式记录；
+**R5 A2 的生产兑现点**：`src/` 目前没有 `IndexCoordinator.process_all`/`process_next` 的生产调用点
+（P2-03 起即如此，非本卡缺陷），「30 万 3.5～4 s」只有在维护侧真正运行时才出现，请把
+**「语义 outbox 的生产维护入口」列为 P4-02 前置项**（否则 P4-02 会把未接线误读成已达成）；
+R6 若将来新增 `DELETE_VECTOR` 生产者，批内需先按 `record_id` 去重。未命中 V3.1 §2.2 六类条件
+（不升 DS-MAX）；两条引擎/环境异常仍建议按 §2.2 转 C1。
+
+未验证项：真模型向量、ANN 质量（§12.3 的 0.95）、§12.2 的 P95 ≤ 1 s（30 万现为 19.5 s 无索引 /
+约 3.5～4 s 有标量索引）、A3、多世代混批注入、GTX 1660 实机、`thin` 档真实数据集合等价
+（由边界夹具 + `half` 真数据共同支撑）。
+
+**下一阶段（必选）**：请在**新会话**用 **C2 / GPT-5.6 Sol / high** 做聚焦终审（只读压缩交接包：本主审报告、
+未决项、关键 diff、最小反例与受影响测试；覆盖 §11 幂等/提交顺序与检索参数），通过后才标
+**P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。

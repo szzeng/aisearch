@@ -486,7 +486,9 @@ def _reuse_fixture(work: Path, *, scale: int, distribution: str, seed: int) -> S
         for row in catalog.read_all("SELECT person_id FROM persons ORDER BY person_id")
     )
     counts = _row_counts(catalog)
-    if counts["assets"] != scale or matrix.shape[0] != scale or len(sources) != 2:
+    # A fixture grown by an earlier stage's maintenance samples is still the same fixture;
+    # only the vector matrix (one row per fixture asset) must match exactly.
+    if counts["assets"] < scale or matrix.shape[0] != scale or len(sources) != 2:
         raise RuntimeError(
             f"the fixture under {work} is not the expected {scale}-asset shape: {counts}"
         )
@@ -986,8 +988,29 @@ def open_engine_table(index: LanceVectorIndex, *, generation_id: str = GENERATIO
     return index._table(generation_id=generation_id, dimension=DIM, create=False)
 
 
+def list_index_names(fixture: ScaleFixture, *, generation_id: str = GENERATION_ID) -> list[str]:
+    import lancedb
+
+    from photo_search.indexing.store import _table_name
+
+    database = lancedb.connect(str(fixture.vectors_dir))
+    name = _table_name(generation_id)
+    if name not in set(database.list_tables().tables):
+        return []
+    table = database.open_table(name)
+    names = sorted(str(getattr(item, "name", item)) for item in table.list_indices())
+    del table
+    del database
+    return names
+
+
 def drop_ann_index(fixture: ScaleFixture, *, generation_id: str = GENERATION_ID) -> list[str]:
-    """Remove every ANN index from a generation, so an "unindexed" label stays true."""
+    """Remove the ANN *vector* index from a generation.
+
+    Scalar indexes (``asset_id_idx``) are deliberately kept: they are the P4-01C maintenance
+    artifact the candidate-ID block query benefits from, and dropping them would make an
+    "unindexed" measurement mean something the product never runs.
+    """
     import lancedb
 
     from photo_search.indexing.store import _table_name
@@ -1000,8 +1023,9 @@ def drop_ann_index(fixture: ScaleFixture, *, generation_id: str = GENERATION_ID)
     dropped: list[str] = []
     for existing in table.list_indices():
         index_name = str(getattr(existing, "name", existing))
-        table.drop_index(index_name)
-        dropped.append(index_name)
+        if index_name.startswith("vector_idx"):
+            table.drop_index(index_name)
+            dropped.append(index_name)
     del table
     del database
     return dropped
@@ -2127,9 +2151,11 @@ def scale_report(
 
         index = LanceVectorIndex(fixture.vectors_dir)
         walk_queries = probe_queries[: max(1, int(args.walk_queries))]
+        index_names_before = list_index_names(fixture)
         dropped_before = drop_ann_index(fixture)
         log(
-            f"scale {scale}: measured with no ANN index (dropped {dropped_before or 'none'})"
+            f"scale {scale}: measured with no ANN index (had {index_names_before}, "
+            f"dropped {dropped_before or 'none'})"
         )
         # The engine's own unfiltered scan, compared against brute force *without* an index:
         # this is the "the exact path and the engine agree" evidence the ANN numbers rest on.
@@ -2255,8 +2281,12 @@ def scale_report(
                 ),
             },
             "index_state_before_measurement": {
+                "indices_before": index_names_before,
                 "dropped": dropped_before,
-                "note": "the unindexed walk was measured with no ANN index present",
+                "note": (
+                    "the unindexed walk was measured with no ANN vector index present; "
+                    "scalar indexes are kept"
+                ),
             },
             "exact_reference": {
                 "method": "numpy brute force over the authoritative candidate set",

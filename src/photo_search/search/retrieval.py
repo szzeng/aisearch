@@ -45,9 +45,15 @@ DEFAULT_TOP_K = 200
 #: Hard ceiling of one request's candidate list, shared by the service and the protocol
 #: envelope so the two can never disagree about what "too large" means.
 MAX_TOP_K = 1000
-#: How many authoritative candidates one vector block covers. Every block costs one
-#: engine query, so the vector channel costs ``ceil(candidates / block)`` queries.
-SCOPE_BLOCK_SIZE = 1000
+#: How many authoritative candidates one vector block covers. Every block costs one engine
+#: query and each of those scans the generation, so the vector channel costs
+#: ``ceil(candidates / block)`` whole-generation scans. P4-01 measured a 300 000-row
+#: generation at 92 s per search with a 1 000-row block and 19.8 s with a 5 000-row block
+#: (3.6 s once the ``asset_id`` scalar index exists). The merged answer is *identical*
+#: either way - :func:`vector_channel` merges the per-block top-k exactly, so every global
+#: top-k member is found in its own block's top-k - which is why this bound is an
+#: access-path parameter and never a recall parameter.
+SCOPE_BLOCK_SIZE = 5000
 #: Safety valve for a runaway scan; an incomplete scan is reported, never hidden.
 MAX_VECTOR_BLOCKS = 1000
 #: How many ids the authoritative page publishes (architecture §9.5: at most 1000
@@ -245,9 +251,15 @@ def scope_condition(
     conditions: list[str] = []
     parameters: list[Any] = []
     if scope.source_id is not None:
+        # Set membership instead of a correlated ``EXISTS``: P4-01B measured the correlated
+        # form at 19.4 s for ONE block of a 20 000-row generation (and >60 s at 300 000),
+        # because SQLite drove the sub-query from ``source_id`` and re-scanned every
+        # location of that source per asset. Both forms select exactly the assets that have
+        # a location in that source, and ``file_locations.asset_id`` may be NULL, which
+        # ``IN`` treats the same way ``EXISTS ... = `` does (a NULL never matches).
         conditions.append(
-            "EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = "
-            f"{alias}.asset_id AND l.source_id = ?)"
+            f"{alias}.asset_id IN (SELECT l.asset_id FROM file_locations AS l "
+            "WHERE l.source_id = ?)"
         )
         parameters.append(int(scope.source_id))
     if scope.availability == "present":
@@ -303,18 +315,25 @@ def person_condition(scope: SearchScope, *, alias: str = "a") -> tuple[str, list
     ``MEMBER_PREDICATE`` - the same one ``GET /api/v1/persons/{id}`` counts with. There is no
     second copy of "which face counts as assigned" in the retrieval layer.
 
-    ``any`` is one ``EXISTS`` over the requested people; ``all`` is one ``EXISTS`` per
-    person, ANDed. Both are authoritative SQLite predicates that every channel and the
-    pre-page re-check apply, never a derived projection.
+    ``any`` is one sub-query over the requested people; ``all`` is one sub-query per person,
+    ANDed. Both are authoritative SQLite predicates that every channel and the pre-page
+    re-check apply, never a derived projection.
+
+    They are written as ``asset_id IN (SELECT f.asset_id ...)`` rather than as a correlated
+    ``EXISTS``: P4-01B measured the correlated form at 143 s for ONE block of a 20 000-row
+    generation (and >60 s at 300 000), because SQLite drove it from ``person_id`` and
+    re-scanned that person's faces per asset. The selected photo set is identical - a photo
+    matches exactly when it has at least one effective member face of that person - and
+    ``faces.asset_id`` is ``NOT NULL``, so ``IN`` and ``EXISTS`` cannot disagree.
     """
     if not scope.person_ids:
         return "1", []
 
     def exists(person_parameter: str) -> str:
         return (
-            "EXISTS (SELECT 1 FROM face_person_links AS l JOIN faces AS f "
-            "ON f.face_id = l.face_id WHERE f.asset_id = "
-            f"{alias}.asset_id AND l.person_id {person_parameter} AND {MEMBER_PREDICATE})"
+            f"{alias}.asset_id IN (SELECT f.asset_id FROM face_person_links AS l "
+            "JOIN faces AS f ON f.face_id = l.face_id WHERE "
+            f"l.person_id {person_parameter} AND {MEMBER_PREDICATE})"
         )
 
     if scope.person_match == "all":

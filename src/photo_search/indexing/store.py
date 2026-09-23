@@ -29,6 +29,15 @@ def _table_name(generation_id: str) -> str:
     return f"vectors_{hashlib.sha256(generation_id.encode()).hexdigest()[:24]}"
 
 
+#: The one scalar index the candidate-ID block query benefits from. P4-01 measured a
+#: 300 000-row generation at 6 618 ms -> 3 602 ms per search once this BTREE index existed
+#: (and 92 195 ms -> 19 757 ms from the block-size change alone, P4-01C). It is a
+#: *maintenance* artifact only: a missing or refused index merely means the engine scans the
+#: generation, which stays correct, so no read path depends on it.
+ASSET_SCALAR_INDEX = "asset_id_idx"
+ASSET_SCALAR_COLUMN = "asset_id"
+
+
 def _lance_literal(value: str) -> str:
     """One quoted SQL literal for a Lance filter, or a structured refusal.
 
@@ -92,22 +101,40 @@ class LanceVectorIndex:
         return database.create_table(name, schema=self._schema(pa, int(dimension)))
 
     def upsert(self, *, generation: Any, record: dict[str, Any]) -> None:
-        if str(record["space_id"]) != str(generation["space_id"]):
-            raise CatalogError(SPACE_MISMATCH, "record and generation spaces differ")
-        vector = record["vector"]
-        if len(vector) != int(generation["dimension"]):
-            raise CatalogError(SPACE_MISMATCH, "record and generation dimensions differ")
+        self.upsert_batch(generation=generation, records=[record])
+
+    def upsert_batch(self, *, generation: Any, records: Sequence[dict[str, Any]]) -> int:
+        """Idempotently merge many records for one generation in a single engine write.
+
+        Per-record semantics are exactly :meth:`upsert`'s - the same space/dimension checks,
+        the same ``record_id`` merge key, matched rows updated and unmatched rows inserted -
+        so a replayed batch is a no-op on already-written rows. P4-01 measured one
+        ``merge_insert`` per row at 48.87 ms/row on a 300 000-row generation against
+        0.115 ms/row for a single 500-row write (424x), which is why the coordinator drains
+        the outbox in batches.
+        """
+        if not records:
+            return 0
+        for record in records:
+            if str(record["space_id"]) != str(generation["space_id"]):
+                raise CatalogError(SPACE_MISMATCH, "record and generation spaces differ")
+            if len(record["vector"]) != int(generation["dimension"]):
+                raise CatalogError(
+                    SPACE_MISMATCH, "record and generation dimensions differ"
+                )
+        _, pa = self._dependencies()
         table = self._table(
             generation_id=str(generation["generation_id"]),
             dimension=int(generation["dimension"]),
             create=True,
         )
-        (
-            table.merge_insert("record_id")
-            .when_matched_update_all()
-            .when_not_matched_insert_all()
-            .execute([record])
+        table.merge_insert("record_id").when_matched_update_all().when_not_matched_insert_all().execute(
+            pa.Table.from_pylist(
+                [dict(record) for record in records],
+                schema=self._schema(pa, int(generation["dimension"])),
+            )
         )
+        return len(records)
 
     def rows(self, *, generation_id: str, dimension: int) -> list[dict[str, Any]]:
         table = self._table(generation_id=generation_id, dimension=dimension, create=False)
@@ -116,10 +143,55 @@ class LanceVectorIndex:
         return list(table.to_arrow().to_pylist())
 
     def has(self, *, generation_id: str, dimension: int, asset_id: int) -> bool:
-        return any(
-            int(row["asset_id"]) == int(asset_id)
-            for row in self.rows(generation_id=generation_id, dimension=dimension)
+        """Whether this generation holds a row for one asset, without materialising it.
+
+        ``rows()`` builds a Python row (vector list included) for *every* row of the
+        generation, which made ``audit_and_schedule_repairs`` ``O(artifacts x rows)``: P4-01
+        measured 13.6 ms per call at 200 rows. The filtered count is a point query - served
+        by the ``asset_id`` scalar index when it exists, a plain engine scan when it does
+        not - and the materialising path stays only as the fallback for an engine that
+        refuses the filter.
+        """
+        table = self._table(
+            generation_id=str(generation_id), dimension=int(dimension), create=False
         )
+        if table is None:
+            return False
+        try:
+            return int(table.count_rows(filter=f"{ASSET_SCALAR_COLUMN} = {int(asset_id)}")) > 0
+        except Exception:  # noqa: BLE001 - a refused filter falls back to the exact scan
+            return any(
+                int(row["asset_id"]) == int(asset_id)
+                for row in self.rows(generation_id=generation_id, dimension=dimension)
+            )
+
+    def ensure_scalar_index(self, *, generation_id: str, dimension: int) -> dict[str, Any]:
+        """Idempotently create this generation's ``asset_id`` scalar index (maintenance).
+
+        Every state below is a *reported* outcome and no caller may turn it into a failure:
+        a generation without the index still answers correctly, just slower.
+        ``present``/``created`` both mean the index is usable; ``unavailable`` means the
+        engine refused it and the candidate-ID path stays in its scan mode.
+        """
+        table = self._table(
+            generation_id=str(generation_id), dimension=int(dimension), create=False
+        )
+        if table is None:
+            return {"state": "no_table", "index": ASSET_SCALAR_INDEX}
+        names = {str(getattr(item, "name", item)) for item in table.list_indices()}
+        if ASSET_SCALAR_INDEX in names:
+            return {"state": "present", "index": ASSET_SCALAR_INDEX}
+        try:
+            import lancedb.index as lance_index
+
+            table.create_index(ASSET_SCALAR_COLUMN, config=lance_index.BTree())
+        except Exception as error:  # noqa: BLE001 - a refused index must not fail a write
+            return {
+                "state": "unavailable",
+                "index": ASSET_SCALAR_INDEX,
+                "reason": type(error).__name__,
+            }
+        return {"state": "created", "index": ASSET_SCALAR_INDEX}
 
     def count(self, *, generation_id: str, dimension: int, space_id: str) -> int:
         rows = self.rows(generation_id=generation_id, dimension=dimension)
@@ -264,6 +336,13 @@ class LanceVectorIndex:
 class IndexCoordinator:
     """Replay pending events; SQLite confirmation alone controls readiness."""
 
+    #: How many outbox events one engine write covers. P4-01 measured a single-row
+    #: ``merge_insert`` at 48.87 ms/row on a 300 000-row generation against 0.115 ms/row for
+    #: one 500-row write, so draining in batches is what makes maintenance tractable. The
+    #: event-by-event semantics do not change: every event is still confirmed individually,
+    #: and a batch either writes and confirms all of its events or leaves them all PENDING.
+    BATCH_SIZE = 200
+
     def __init__(
         self,
         catalog: Catalog,
@@ -276,6 +355,8 @@ class IndexCoordinator:
         root = resolve_data_root(data_root or catalog.db_path.parent.parent)
         self.artifacts = artifact_store or ArtifactStore.open(root)
         self.index = vector_index or LanceVectorIndex(vectors_dir(root))
+        #: Last ``ensure_scalar_indexes`` outcome, for diagnostics and tests.
+        self.scalar_index_report: dict[str, dict[str, Any]] = {}
 
     def process_next(self, *, now_ms: int, failpoint: str | None = None) -> bool:
         """Apply one event. ``after_lance`` simulates the documented crash window."""
@@ -364,10 +445,172 @@ class IndexCoordinator:
             ) from error
 
     def process_all(self, *, now_ms: int, limit: int = 10_000) -> int:
+        # The one maintenance-side, optional index: creating it here (never on a read path)
+        # is what turns the candidate-ID block query from a whole-generation scan into an
+        # indexed lookup. "ensure_scalar_indexes" reports its outcome and cannot raise, and it
+        # cannot change readiness.
+        self.scalar_index_report = self.ensure_scalar_indexes()
         count = 0
-        while count < int(limit) and self.process_next(now_ms=now_ms):
-            count += 1
+        while count < int(limit):
+            applied = self.process_batch(
+                now_ms=now_ms, max_events=min(self.BATCH_SIZE, int(limit) - count)
+            )
+            if not applied:
+                break
+            count += applied
         return count
+
+    def ensure_scalar_indexes(self) -> dict[str, dict[str, Any]]:
+        """Best-effort ``asset_id`` scalar index for every non-retired generation."""
+        report: dict[str, dict[str, Any]] = {}
+        for row in self.catalog.read_all(
+            "SELECT generation_id, dimension FROM index_generations "
+            "WHERE state <> 'RETIRED' ORDER BY generation_id"
+        ):
+            generation_id = str(row["generation_id"])
+            report[generation_id] = self.index.ensure_scalar_index(
+                generation_id=generation_id, dimension=int(row["dimension"])
+            )
+        return report
+
+    def process_batch(
+        self, *, now_ms: int, max_events: int, failpoint: str | None = None
+    ) -> int:
+        """Apply up to ``max_events`` events with one engine write per generation.
+
+        The observable protocol is the event protocol of :meth:`process_next`: claim under a
+        short write transaction, write the derived rows, then confirm every claimed event in
+        one write transaction. What changes is only how many events share one engine write.
+
+        Failure semantics are deliberately all-or-nothing per batch: if the engine write or
+        the confirmation raises, no event of the batch is confirmed and every claimed event
+        goes back to ``PENDING`` with the error code, exactly as the single-event path does.
+        ``failpoint="after_lance"`` still simulates the documented crash window after the
+        engine write and before any confirmation.
+        """
+        claimed = int(max_events)
+        if claimed < 1:
+            return 0
+        with self.catalog.write() as connection:
+            rows = connection.execute(
+                "SELECT event_id FROM index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
+                "ORDER BY created_at, event_id LIMIT ?",
+                (claimed,),
+            ).fetchall()
+            if not rows:
+                return 0
+            event_ids = [str(row["event_id"]) for row in rows]
+            placeholders = ", ".join("?" for _ in event_ids)
+            connection.execute(
+                "UPDATE index_outbox SET state = 'IN_FLIGHT', attempts = attempts + 1, "
+                f"last_error_code = NULL, updated_at = ? WHERE event_id IN ({placeholders})",
+                (now_ms, *event_ids),
+            )
+        try:
+            events = self.catalog.read_all(
+                f"SELECT * FROM index_outbox WHERE event_id IN ({placeholders}) "
+                "ORDER BY created_at, event_id",
+                tuple(event_ids),
+            )
+            writable: dict[str, list[dict[str, Any]]] = {}
+            touched: set[str] = set()
+            confirmed_without_write: list[str] = []
+            for event in events:
+                event_id = str(event["event_id"])
+                artifact = self.catalog.read_one(
+                    "SELECT * FROM artifacts WHERE artifact_id = ?",
+                    (event["artifact_id"],),
+                )
+                generation = self.catalog.read_one(
+                    "SELECT * FROM index_generations WHERE generation_id = ?",
+                    (event["generation_id"],),
+                )
+                if artifact is None or generation is None:
+                    raise CatalogError(
+                        INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
+                    )
+                self._validate_event_payload(event)
+                self._validate_space(event, artifact, generation)
+                touched.add(str(event["generation_id"]))
+                if self._is_superseded(event):
+                    confirmed_without_write.append(event_id)
+                    continue
+                writable.setdefault(str(event["generation_id"]), []).append(
+                    self._record(event, artifact, generation)
+                )
+            for generation_id, records in writable.items():
+                generation = self.catalog.read_one(
+                    "SELECT * FROM index_generations WHERE generation_id = ?",
+                    (generation_id,),
+                )
+                if generation is None:
+                    raise CatalogError(
+                        INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
+                    )
+                self.index.upsert_batch(generation=generation, records=records)
+            if failpoint == "after_lance":
+                raise _InjectedCrash("after_lance")
+            with self.catalog.write() as connection:
+                for event in events:
+                    event_id = str(event["event_id"])
+                    current = connection.execute(
+                        "SELECT state FROM index_outbox WHERE event_id = ?", (event_id,)
+                    ).fetchone()
+                    if current is None or str(current["state"]) != "IN_FLIGHT":
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
+                        )
+                    if event_id in confirmed_without_write:
+                        connection.execute(
+                            "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? "
+                            "WHERE event_id = ?",
+                            (now_ms, event_id),
+                        )
+                        continue
+                    entry = connection.execute(
+                        "SELECT artifact_id FROM index_entries WHERE space_id = ? "
+                        "AND asset_id = ? AND generation_id = ?",
+                        (event["space_id"], event["asset_id"], event["generation_id"]),
+                    ).fetchone()
+                    if entry is not None and str(entry["artifact_id"]) == str(
+                        event["artifact_id"]
+                    ):
+                        connection.execute(
+                            "UPDATE index_entries SET confirmation_revision = ?, "
+                            "confirmed_at = ?, state = 'CONFIRMED' WHERE space_id = ? "
+                            "AND asset_id = ? AND generation_id = ?",
+                            (
+                                event["projection_revision"],
+                                now_ms,
+                                event["space_id"],
+                                event["asset_id"],
+                                event["generation_id"],
+                            ),
+                        )
+                    connection.execute(
+                        "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? "
+                        "WHERE event_id = ?",
+                        (now_ms, event_id),
+                    )
+                for generation_id in sorted(touched):
+                    self._make_generation_ready(connection, generation_id, now_ms)
+            return len(events)
+        except _InjectedCrash:
+            raise
+        except Exception as error:
+            with self.catalog.write() as connection:
+                connection.execute(
+                    "UPDATE index_outbox SET state = 'PENDING', last_error_code = ?, "
+                    f"updated_at = ? WHERE event_id IN ({placeholders}) AND state = 'IN_FLIGHT'",
+                    (getattr(error, "code", INDEX_SUBMISSION_FAILED), now_ms, *event_ids),
+                )
+            if isinstance(error, CatalogError):
+                raise
+            raise CatalogError(
+                INDEX_SUBMISSION_FAILED,
+                "derived index submission failed",
+                details={"reason": type(error).__name__},
+            ) from error
 
     @staticmethod
     def _validate_event_payload(event: Any) -> None:

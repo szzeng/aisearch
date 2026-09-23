@@ -153,7 +153,12 @@ def test_the_person_predicate_reuses_the_single_member_definition() -> None:
     sql, parameters = person_condition(all_scope)
     assert sql.count("FROM face_person_links AS l") == 2
     assert " AND " in sql and " OR " not in sql
-    assert "= ?" in sql and "IN (" not in sql
+    # ``all`` is one sub-query per person, each carrying its own equality on
+    # ``l.person_id``; the shared IN-list is what distinguishes ``any`` above. (P4-01C
+    # rewrote both forms from a correlated EXISTS to ``asset_id IN (SELECT ...)`` for the
+    # query plan, so the *shape* check moved to the per-person equality.)
+    assert sql.count("l.person_id = ?") == 2
+    assert "l.person_id IN (" not in sql
     assert parameters == [3, 9]
 
     # A scope with no person condition is the neutral predicate, never "no face".
