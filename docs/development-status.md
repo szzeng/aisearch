@@ -2584,3 +2584,17 @@ Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
 **停止点**：请在**新会话**用 **C2 / GPT-5.6 Sol / high** 做聚焦终审（只审入口真实性、并发口径、
 旧 revision 不回滚、`busy-timeout` 边界，**含本次 A1 修复边界**与其直接回归；A2/A3 不在其范围，
 另立小卡）；通过后才标 **P4-02A PASS** 并启动 **P4-02B**。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest C2 focused review — P4-02A（2026-09-24）
+
+**P4-02A：`PASS`（`SOL FOCUSED REVIEW PASS`，审查基线 `95c7104`）；P4-02B 尚未启动。**
+报告：[P4-02A-sol-focused-review.md](reports/P4-02A-sol-focused-review.md)。C2 仅复核生产 CLI 入口、
+两维护者与前台写并发、旧 revision 不回滚、`busy_timeout` 和 A1 的部分进展后拒绝；定向 JUnit
+`test-results/p4-02a-sol-focused.xml` **7 / 0 / 0 / 0**，`git diff --check` exit 0。
+主审修复轮全量 JUnit 经核对 **1659 / 0 / 0 / 48**，本轮未重跑全量。首次受限令牌无法创建
+`.pytest-tmp`，属 setup 环境错误；按正常 Windows 权限路径重跑通过，未改 ACL。
+
+**A2/A3 仍未解决**：不可读工件可永久卡住 drain，反复 `--repair` 可无界增加未确认事件；
+它们超出 P4-02A 允许修改范围，本次聚焦通过不等于异常恢复通过。P4-02B 正式容量 PASS 前须另立小卡
+收口恢复入口和审计幂等；真实模型、ANN/API P95、GTX 1660、冻结包 CLI 等未验证项仍按报告口径保留。
+模型切换始终由用户在 Codex 中手动完成。
