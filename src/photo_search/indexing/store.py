@@ -37,6 +37,21 @@ def _table_name(generation_id: str) -> str:
 ASSET_SCALAR_INDEX = "asset_id_idx"
 ASSET_SCALAR_COLUMN = "asset_id"
 
+#: The columns one candidate-block query reads. The vector column is deliberately excluded:
+#: a block may return up to one row per authoritative candidate id (see
+#: :meth:`LanceVectorIndex.search_candidates`), and carrying 512 floats per row for rows the
+#: caller only ranks by their distance is pure transfer cost. ``_distance`` must be listed -
+#: the engine warns (and will stop auto-projecting it) when a projection omits it.
+CANDIDATE_ROW_COLUMNS = (
+    "record_id",
+    "asset_id",
+    "generation_id",
+    "space_id",
+    "projection_revision",
+    "visible",
+    "_distance",
+)
+
 
 def _lance_literal(value: str) -> str:
     """One quoted SQL literal for a Lance filter, or a structured refusal.
@@ -171,19 +186,23 @@ class LanceVectorIndex:
         Every state below is a *reported* outcome and no caller may turn it into a failure:
         a generation without the index still answers correctly, just slower.
         ``present``/``created`` both mean the index is usable; ``unavailable`` means the
-        engine refused it and the candidate-ID path stays in its scan mode.
+        engine refused it - or refused to even list its index catalogue - and the
+        candidate-ID path stays in its scan mode. The catalogue read is inside the same
+        guard on purpose: a maintenance step may never abort the outbox drain because index
+        metadata is unreadable (P4-01C review B2). ``_table`` stays outside, so a missing or
+        dimension-mismatched table is still a structured catalog failure.
         """
         table = self._table(
             generation_id=str(generation_id), dimension=int(dimension), create=False
         )
         if table is None:
             return {"state": "no_table", "index": ASSET_SCALAR_INDEX}
-        names = {str(getattr(item, "name", item)) for item in table.list_indices()}
-        if ASSET_SCALAR_INDEX in names:
-            return {"state": "present", "index": ASSET_SCALAR_INDEX}
         try:
             import lancedb.index as lance_index
 
+            names = {str(getattr(item, "name", item)) for item in table.list_indices()}
+            if ASSET_SCALAR_INDEX in names:
+                return {"state": "present", "index": ASSET_SCALAR_INDEX}
             table.create_index(ASSET_SCALAR_COLUMN, config=lance_index.BTree())
         except Exception as error:  # noqa: BLE001 - a refused index must not fail a write
             return {
@@ -208,6 +227,7 @@ class LanceVectorIndex:
         limit: int,
         where: str | None = None,
         space_id: str | None = None,
+        columns: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Nearest rows of one generation, ranked deterministic and space-checked.
 
@@ -219,6 +239,12 @@ class LanceVectorIndex:
         Nothing here decides a filter: the caller passes the authoritative candidate ids
         of the bound space. Every returned row is checked against the generation and the
         expected space, so two equal-dimension spaces can never be mixed by accident.
+
+        ``columns`` projects the answer down to the fields the caller reads. P4-01C's review
+        added it for the candidate-ID path, where one block may now return up to
+        ``SCOPE_BLOCK_SIZE`` rows: without the projection each of those rows would carry its
+        full vector, which is exactly the transfer cost the block walk must not pay. The
+        engine always keeps ``_distance`` in the projection.
         """
         vector = self._query_vector(dimension=dimension, query_vector=query_vector)
         table = self._table(
@@ -227,6 +253,8 @@ class LanceVectorIndex:
         if table is None:
             return []
         builder = table.search(vector).limit(int(limit))
+        if columns:
+            builder = builder.select(list(columns))
         if where:
             builder = builder.where(str(where))
         try:
@@ -292,6 +320,12 @@ class LanceVectorIndex:
 
         An empty candidate set returns nothing without touching the engine: a query with
         no authoritative candidate cannot fall back to "everything".
+
+        The engine is asked for **one row per candidate id**, never for ``limit`` rows: a
+        block whose rows all tie on distance would otherwise be truncated by the engine
+        *before* the caller's ``(distance, asset_id)`` total order is applied, and the merged
+        global top-k would then change with the block size (P4-01C review B1). The block bound
+        is therefore applied here, after the deterministic order.
         """
         ids = sorted({int(value) for value in asset_ids})
         if not ids:
@@ -299,14 +333,16 @@ class LanceVectorIndex:
         conditions = ["asset_id IN (" + ", ".join(str(value) for value in ids) + ")"]
         if space_id is not None:
             conditions.append(f"space_id = {_lance_literal(str(space_id))}")
-        return self.search(
+        rows = self.search(
             generation_id=str(generation_id),
             dimension=int(dimension),
             query_vector=query_vector,
-            limit=int(limit),
+            limit=len(ids),
             where=" AND ".join(conditions),
             space_id=space_id,
+            columns=CANDIDATE_ROW_COLUMNS,
         )
+        return rows[: int(limit)]
 
     @staticmethod
     def _query_vector(*, dimension: int, query_vector: Sequence[float]) -> list[float]:
@@ -487,6 +523,15 @@ class IndexCoordinator:
         goes back to ``PENDING`` with the error code, exactly as the single-event path does.
         ``failpoint="after_lance"`` still simulates the documented crash window after the
         engine write and before any confirmation.
+
+        Concurrent coordinators are safe **per event**, not by exclusion: this protocol has no
+        claim token, so another coordinator may legitimately re-claim an ``IN_FLIGHT`` event
+        (that reassignment *is* the documented crash-recovery path) and confirm it while this
+        batch is writing. Both writers derive the same row for that event, per-event
+        confirmation is idempotent, and an event the other coordinator already confirmed is
+        skipped rather than reported as a lost claim. What is all-or-nothing is this batch's
+        *own* attempt: a real failure reverts exactly the events it claimed, so no event is
+        ever confirmed twice and none is left without its derived row.
         """
         claimed = int(max_events)
         if claimed < 1:
@@ -556,7 +601,20 @@ class IndexCoordinator:
                     current = connection.execute(
                         "SELECT state FROM index_outbox WHERE event_id = ?", (event_id,)
                     ).fetchone()
-                    if current is None or str(current["state"]) != "IN_FLIGHT":
+                    if current is None:
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
+                        )
+                    if str(current["state"]) == "CONFIRMED":
+                        # Another coordinator claimed this event after this batch did (the
+                        # protocol lets ``process_next`` re-claim ``IN_FLIGHT`` rows; there is
+                        # no claim token) and confirmed it. It wrote the same derived row this
+                        # batch wrote, and confirmation is idempotent per event, so the honest
+                        # outcome is "already done": skipping keeps the batch from reporting a
+                        # false INDEX_SUBMISSION_FAILED while every event still ends CONFIRMED
+                        # exactly once. P4-01C focused review A1.
+                        continue
+                    if str(current["state"]) != "IN_FLIGHT":
                         raise CatalogError(
                             INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
                         )

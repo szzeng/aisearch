@@ -311,3 +311,26 @@ A2 的 `asset_id` 标量索引只在维护侧（`process_all` → `ensure_scalar
 
 除上表外，主审未改动被审交付物的任何数字、结论或状态行；报告的状态仍停在
 `IMPLEMENTATION + ACCEPTANCE COMPLETE`，由本报告给出 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。
+
+## 12. 后续记录：聚焦终审结果与主审最小修复（2026-09-23，同日）
+
+本报告的 `PASS` 是**主审阶段**结论。随后由 **C2 / GPT-5.6 Sol / high** 做的聚焦终审为
+**`SOL FOCUSED REVIEW FAIL`**（[终审报告](P4-01C-sol-focused-review.md)），C 段（SQL 谓词等价）PASS，
+A/B 段给出三条本主审阶段**未覆盖**的真实最小反例，并按 V3.1 §11 交回本主审修复：
+
+1. **A1**：`process_next` 可重领 `IN_FLIGHT`（无 claim token），第二个协调器在批写中途重领并确认一条后，
+   批的确认报 `INDEX_SUBMISSION_FAILED` → 本主审「批内不会混合确认」的判断在**可交错**前提下不成立；
+2. **B1**：`search_candidates` 让引擎按 `top_k` 先截断、再在 Python 排序，**完全并列距离**时块大小会改变
+   返回的 `asset_id` 序列 → 本主审 §3.1 的「块大小只是访问路径」在并列档位不成立（主审的 30 万合成夹具
+   没有并列距离，专项用例也没有）；
+3. **B2**：`ensure_scalar_index` 的 `list_indices()` 在 try 之外，目录被拒时直接抛出并中断 `process_all` →
+   本主审 §4.5「从不抛错」的核对只覆盖了 `create_index` 与过滤器两条拒绝路径。
+
+三条已按最小范围修复（只改 `src/photo_search/indexing/store.py` 与新用例），复现/修复/验证记录见
+[实现报告 §7](P4-01C-bottleneck-implementation.md)：三条新用例在临时回退修复后 **3/3 失败**，修复后专项
+**8/0/0**、终审受影响测试面 **42/0/0**、全量 **1647/0/0/48**，30 万重测与修复前同量级且两种精确索引状态下
+的 top-20 逐条相同。
+
+**对主审结论的修正**：本报告的 `ENGINEERING REVIEW PASS` 应理解为「主审阶段未发现阻断级问题」，
+其中 §3.1（不变量 1 的覆盖范围）与 §4.5（拒绝即报告的覆盖范围）的**证据边界**过宽，已由上述修复补齐；
+P4-01C 的 PASS 仍取决于 Sol 短复审。此记录不改动本报告上文的任何数字与结论。

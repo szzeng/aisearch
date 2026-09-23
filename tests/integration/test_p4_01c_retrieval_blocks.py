@@ -98,6 +98,81 @@ def test_block_size_is_an_access_path_parameter(tmp_path: Path) -> None:
         fixture.catalog.close()
 
 
+def test_a_block_of_tied_distances_cannot_be_decided_by_the_engine_cut(
+    tmp_path: Path,
+) -> None:
+    """P4-01C focused review B1: ties must not let the block size choose the answer.
+
+    With every row at the same distance, an engine-side ``limit`` truncates *before* the
+    caller's ``(distance, asset_id)`` order exists, so a 1 000-row block and a 5 000-row block
+    would return different asset ids for the same query. The candidate path therefore asks
+    the engine for one row per candidate id and applies the block bound afterwards.
+    """
+
+    scale = 30
+    fixture = build(tmp_path, scale, name="scale-30-ties", seed=31)
+    try:
+        index = LanceVectorIndex(fixture.vectors_dir)
+        identical = [1.0] + [0.0] * (benchmark.DIM - 1)
+        for asset_id in range(scale, 0, -1):
+            index.upsert(
+                generation={
+                    "generation_id": benchmark.GENERATION_ID,
+                    "space_id": benchmark.SPACE_ID,
+                    "dimension": benchmark.DIM,
+                },
+                record={
+                    "record_id": f"{benchmark.GENERATION_ID}:{asset_id}",
+                    "asset_id": asset_id,
+                    "generation_id": benchmark.GENERATION_ID,
+                    "space_id": benchmark.SPACE_ID,
+                    "artifact_revision": "rev-tied",
+                    "projection_revision": 0,
+                    "vector": identical,
+                    "source_ids": [fixture.source_ids[0]],
+                    "visible": True,
+                },
+            )
+
+        binding = retrieval.resolve_binding(
+            fixture.catalog,
+            generation_id=benchmark.GENERATION_ID,
+            space_id=benchmark.SPACE_ID,
+            dimension=benchmark.DIM,
+        )
+        observed: list[tuple[list[int], int]] = []
+        for block_size in (5, 8, 1000, 5000):
+            block = retrieval.vector_channel(
+                fixture.catalog,
+                index=index,
+                binding=binding,
+                query_vector=identical,
+                scope=retrieval.SearchScope.build(),
+                top_k=2,
+                block_size=block_size,
+            )
+            ids = [int(row["asset_id"]) for row in block["hits"]]
+            assert block["truncated"] is False
+            observed.append((ids, int(block["blocks"])))
+
+        # Every block size saw every candidate (the walk is complete) ...
+        assert [blocks for _, blocks in observed] == [6, 4, 1, 1]
+        # ... and the answer is the same fully ordered top-2, not whatever the engine cut off.
+        assert {tuple(ids) for ids, _ in observed} == {(1, 2)}
+        assert {round(float(row["distance"]), 6) for row in
+                retrieval.vector_channel(
+                    fixture.catalog,
+                    index=index,
+                    binding=binding,
+                    query_vector=identical,
+                    scope=retrieval.SearchScope.build(),
+                    top_k=2,
+                    block_size=5,
+                )["hits"]} == {0.0}
+    finally:
+        fixture.catalog.close()
+
+
 # --------------------------------------------------------------------- scalar index states
 def test_ensure_scalar_index_reports_every_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -139,6 +214,59 @@ def test_ensure_scalar_index_reports_every_state(
         declined = index.ensure_scalar_index(generation_id=other, dimension=benchmark.DIM)
         assert declined["state"] == "unavailable"
         assert declined["reason"] == "RuntimeError"
+
+        # P4-01C focused review B2: an unreadable index *catalogue* is reported, never raised.
+        def refuse_catalogue(self: Any, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("index metadata unavailable")
+
+        monkeypatch.setattr(type(table), "list_indices", refuse_catalogue)
+        unreadable = index.ensure_scalar_index(
+            generation_id=benchmark.GENERATION_ID, dimension=benchmark.DIM
+        )
+        assert unreadable["state"] == "unavailable"
+        assert unreadable["reason"] == "RuntimeError"
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_refused_index_catalogue_never_blocks_the_outbox_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P4-01C focused review B2: maintenance must still drain when the catalogue is refused."""
+
+    fixture = build(tmp_path, 30, name="scale-30-refused", seed=37)
+    try:
+        index = LanceVectorIndex(fixture.vectors_dir)
+        table = index._table(
+            generation_id=benchmark.GENERATION_ID,
+            dimension=benchmark.DIM,
+            create=False,
+        )
+        assert table is not None
+
+        def refuse_catalogue(self: Any, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("index metadata unavailable")
+
+        monkeypatch.setattr(type(table), "list_indices", refuse_catalogue)
+        vectors = benchmark.synthetic_vectors(1, seed=41, distribution="clustered")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id="p4-01c-refused-catalogue",
+            asset_id=1,
+            vector=vectors[0],
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"refused-catalogue").hexdigest(),
+        )
+        assert benchmark.outbox_counts(fixture) == {"PENDING": 1}
+
+        coordinator = IndexCoordinator(fixture.catalog)
+        assert coordinator.process_all(now_ms=benchmark.now_ms()) == 1
+        assert benchmark.outbox_counts(fixture) == {"CONFIRMED": 1}
+        assert coordinator.scalar_index_report
+        assert all(
+            report["state"] in {"unavailable", "no_table"}
+            for report in coordinator.scalar_index_report.values()
+        )
     finally:
         fixture.catalog.close()
 
@@ -294,6 +422,87 @@ def test_batched_replay_is_idempotent_and_survives_the_crash_window(tmp_path: Pa
                 asset_id=base + 1 + offset,
                 generation_id=benchmark.GENERATION_ID,
             )
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure(
+    tmp_path: Path,
+) -> None:
+    """P4-01C focused review A1: a second coordinator re-claiming one event is not a failure.
+
+    ``process_next`` may re-claim an ``IN_FLIGHT`` event (that is the documented crash-recovery
+    path, there is no claim token). This test interleaves a second coordinator *inside* the
+    batch's engine write: it confirms one of the events the batch holds. The batch must still
+    end with every event confirmed exactly once and must not report a false
+    ``INDEX_SUBMISSION_FAILED``.
+    """
+
+    fixture = build(tmp_path, 20, name="scale-20-reclaim", seed=43)
+    try:
+        base = fixture.scale
+        added = 2
+        vectors = benchmark.synthetic_vectors(added, seed=47, distribution="clustered")
+        with fixture.catalog.write() as connection:
+            for offset in range(added):
+                asset_id = base + 1 + offset
+                connection.execute(
+                    "INSERT INTO assets(sha256, byte_size, width, height, format, "
+                    "created_at, state) VALUES (?, 2000000, 4032, 3024, 'JPEG', ?, 'ACTIVE')",
+                    (f"{asset_id:064x}", benchmark.now_ms()),
+                )
+                connection.execute(
+                    "INSERT INTO file_locations(source_id, relative_path, path_key, "
+                    "asset_id, size, mtime_ns, last_seen_scan_id, availability) "
+                    "VALUES (?, ?, ?, ?, 2000000, 1700000000000000000, NULL, 'PRESENT')",
+                    (
+                        fixture.source_ids[0],
+                        f"reclaim/photo-{asset_id:08d}.jpg",
+                        f"reclaim/photo-{asset_id:08d}.jpg",
+                        asset_id,
+                    ),
+                )
+        for offset in range(added):
+            benchmark.publish_embedding(
+                fixture,
+                artifact_id=f"p4-01c-reclaim-{base + 1 + offset}",
+                asset_id=base + 1 + offset,
+                vector=vectors[offset],
+                now=benchmark.now_ms(),
+                input_revision=hashlib.sha256(f"reclaim-{offset}".encode()).hexdigest(),
+            )
+        assert benchmark.outbox_counts(fixture) == {"PENDING": added}
+
+        coordinator = IndexCoordinator(fixture.catalog)
+        original_batch = LanceVectorIndex.upsert_batch
+        steal: dict[str, Any] = {"attempted": False, "claimed": None}
+
+        def stealing(self: Any, *, generation: Any, records: Any) -> Any:
+            # The batch already holds both claims here; a second coordinator re-claims one.
+            if not steal["attempted"]:
+                steal["attempted"] = True
+                steal["claimed"] = IndexCoordinator(fixture.catalog).process_next(
+                    now_ms=benchmark.now_ms()
+                )
+            return original_batch(self, generation=generation, records=records)
+
+        with pytest.MonkeyPatch.context() as patched:
+            patched.setattr(LanceVectorIndex, "upsert_batch", stealing)
+            applied = coordinator.process_batch(now_ms=benchmark.now_ms(), max_events=added)
+
+        assert steal["claimed"] is True
+        assert applied == added
+        assert benchmark.outbox_counts(fixture) == {"CONFIRMED": added}
+        for offset in range(added):
+            assert coordinator.semantic_ready(
+                space_id=benchmark.SPACE_ID,
+                asset_id=base + 1 + offset,
+                generation_id=benchmark.GENERATION_ID,
+            )
+        rows = coordinator.index.rows(
+            generation_id=benchmark.GENERATION_ID, dimension=benchmark.DIM
+        )
+        assert len({int(row["asset_id"]) for row in rows}) == len(rows)
     finally:
         fixture.catalog.close()
 

@@ -162,3 +162,92 @@ uv run --no-sync ruff check . ; git diff --check ; uv lock --check
    关键 diff、最小反例与受影响测试；通过后才标 **P4-01C PASS** 并生成 **P4-02**。
 3. 两条引擎/环境级异常仍建议转 **C1**：同表连续第三次 `create_index(replace=True)` 无进展、
    `COUNT(*)`/相关 EXISTS 计划退化（后者已由本卡改写消除，但机制本身属查询计划层面）。
+
+## 7. 聚焦终审（C2 / Sol / high）失败边界的最小修复（2026-09-23）
+
+终审报告：[P4-01C-sol-focused-review.md](P4-01C-sol-focused-review.md) —— **`SOL FOCUSED REVIEW FAIL`**，
+给出三条真实最小反例（A1 并发重领导致批的假失败、B1 完全并列距离时块大小改变返回序列、B2 索引目录读取被拒
+直接抛错）。本节按 V3.1 §11「把最小反例交回 DS-H 做最小修复」执行：**未改** `0001`～`0015`/
+`SUPPORTED_SCHEMA_VERSION`、任何 ADR/伴随物、`SearchFiltersEchoV2`/`search_projection`、
+`POST /api/v1/search` 信封/`query_hash`/游标/错误码、RRF/BM25/距离公式、打包面，`schema_version` 仍 15。
+改动只落在 `src/photo_search/indexing/store.py` 与 `tests/integration/test_p4_01c_retrieval_blocks.py`。
+
+### 7.1 先复现（把三处修复临时回退，三条新用例必须失败）
+
+`test-results/p4-01c-fix-prefix-sensitivity.xml`：**3 tests / 3 failures**。
+
+| 反例 | 修复前实测（同一断言/同一注入） |
+|---|---|
+| B1 | `assert {(4, 5), (7, 8), (29, 30)} == {(1, 2)}`：块 5 → `(4,5)`、块 8 → `(7,8)`、块 1000/5000 → `(29,30)`，答案由块大小/引擎截断决定 |
+| A1 | `CatalogError(INDEX_SUBMISSION_FAILED): outbox claim was lost before confirmation`：批内一条被第二个协调器确认后，本批被报成失败 |
+| B2 | `RuntimeError: index metadata unavailable`：`list_indices()` 被拒时直接抛出并中断 `process_all` |
+
+### 7.2 修复（三处最小改动，全部在 `src/photo_search/indexing/store.py`）
+
+1. **B1**：`search_candidates` 改为向引擎请求**每个候选 ID 一行**（`limit=len(ids)`，块上限由过滤条件自身
+   界定），并在 `search()` 既有的 `(distance, asset_id)` 全序排序**之后**才截断 `[:limit]` —— 并列距离不再
+   由引擎截断决定。同时新增 `CANDIDATE_ROW_COLUMNS` 投影（`_distance` 在列内），候选块不再回传 512 维向量，
+   这是「每块返回整块」不付出传输代价的前提。
+2. **A1**：`process_batch` 确认阶段遇到**已被其它协调器确认为 `CONFIRMED`** 的事件时跳过，而不是报
+   `INDEX_SUBMISSION_FAILED`。`process_next` 可重领 `IN_FLIGHT` 是 P2-03 既有的崩溃恢复路径（协议无
+   claim token），两个写者产生同一条派生行、逐事件确认幂等，因此「已经做完」才是诚实结论；本批自身的真实
+   失败仍整批回 `PENDING`（回退只覆盖仍为 `IN_FLIGHT` 的行）。`process_batch` 的 docstring 现在写明
+   「并发按事件安全、不是靠排他」的前提与边界。
+3. **B2**：`ensure_scalar_index` 把 `list_indices()` 一并纳入 try，目录不可读时返回
+   `{"state": "unavailable", "reason": ...}`；`_table` 仍在 try 之外（表缺失/维度不符仍是结构化失败）。
+
+### 7.3 修复后的验证
+
+| 项目 | 结果 |
+|---|---|
+| 本卡专项（8 用例＝原 5 + 新 3） | **8 / 0 / 0**（`test-results/p4-01c-fix-focused.xml`） |
+| 终审受影响测试面（专项 + `test_p2_index_submission` + `test_p2_acceptance_recovery` + `test_p3_person_search_scope`） | **42 / 0 / 0**（`test-results/p4-01c-fix-sol-boundaries.xml`） |
+| 全量 B 级 | **1647 / 0 / 0 / 48**（`test-results/p4-01c-fix-full.xml`，210.2 s；修复前 1644） |
+| Ruff / `git diff --check` / `uv lock --check` | 全部 exit 0 |
+
+30 万档重测（修复后，两种证据互补）：
+
+**① 卡上原命令、重建夹具（300 000 行）、`test-results/p4-01c-fix-ann-scale.json`**：生产遍历
+（无 ANN 向量索引、块 5 000）**19 653 ms / 60 块 / 300 000 候选 / Recall@20 = Recall@50 = 1.000**
+（修复前 19 489 ms / 60 块 / 1.000）；引擎扫描 ↔ 暴力 top-20 交叉校验 `all_equal=true`；
+四档过滤全部跑通（wide 2 139 ms/44 块、half 3 517 ms/23 块、narrow 446 ms/6 块、thin 926 ms/1 块；
+候选数仍是 215 998 / 114 000 / 30 000 / 2 000）；§12.4 第 32 条组合校验 6 397 + `sql_agrees=true`；
+维护逐行 `merge_insert` 40.6 ms/行、`process_next` 重放 38.83 ms/事件（同一路径，与修复前 35.8/38.18 同量级）。
+
+**② 同夹具块大小扫描复查（`test-results/p4-01c-fix-design.json`）**：
+
+| 块大小 | 无任何索引 | + `asset_id` 标量索引 | + ANN 向量索引 |
+|---:|---:|---:|---:|
+| 1 000 | 81 963 ms（301 块） | 7 145 ms | 9 091 ms |
+| **5 000（新默认）** | **20 252 ms**（61 块） | **4 279 ms** | 3 437 ms |
+| 25 000 | 8 467 ms | 3 899 ms | 2 566 ms |
+| 100 000 | 7 186 ms | 4 130 ms | 2 548 ms |
+
+与修复前同量级（修复前：85 449 / 20 524 / 7 973 / 6 688；7 964 / 3 993 / 3 305 / 3 343；
+9 359 / 3 612 / 2 467 / 2 527），且**两种精确索引状态下的 8 行 top-20 与修复前 JSON 逐条相同**
+（`same_list_to_old=true`）：修复没有改变「距离互不相同」查询的结果。
+过滤计划（EXPLAIN + 计时）仍全部跑通：wide 81/1.8 ms、half 175/48.8 ms、narrow 90/0.1 ms、thin 822/730 ms。
+
+**语义变化（唯一一处，且是本卡不变量 1 所要求的方向）**：完全并列距离时，结果现在被钉在
+`(distance, asset_id)` 全序；修复前它由引擎截断决定、随块大小变化（块 5/8/1000/5000 分别给出
+`(4,5)`/`(7,8)`/`(29,30)`/`(29,30)`）。距离互不相同的查询结果逐条不变（上表）。
+
+### 7.4 新增用例
+
+- `test_a_block_of_tied_distances_cannot_be_decided_by_the_engine_cut`（B1：真实 Lance 表、全部向量相同、
+  块 5/8/1000/5000 必须给出同一 `(1, 2)`）
+- `test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure`（A1：第二个协调器在批写中途重领并
+  确认一条，批必须返回 2、outbox 全部 CONFIRMED、无重复逻辑行）
+- `test_a_refused_index_catalogue_never_blocks_the_outbox_drain`（B2：`list_indices` 拒绝时维护仍把 outbox
+  排空）+ 既有状态用例内的 `list_indices` 拒绝注入
+
+### 7.5 未验证项与工具面提示（追加）
+
+- **并发面**：只覆盖「两个协调器在同一进程内确定性交错」。真正的多进程/多客户端并发、以及
+  「单维护者 or 多维护者 + 逐事件幂等」的最终口径仍未定；协议层没有 claim token 或排他租约。
+  R5 的「语义 outbox 生产维护入口」在接线时必须连同这个口径一起裁定并给证据（P4-02 前置项）。
+- **工具面**：`--mode scale --reuse-fixture` 在夹具被维护阶段增长过（+5 行）后再跑，会在 `exact_top_k`
+  处 `IndexError`（`matrix` 仍是旧行数）。本次 30 万重测按卡上原命令**不带 `--reuse-fixture`**（重建夹具）
+  执行；建议 P4-02 前修掉该复用路径或让工具记录/校验 `assets == matrix` 行数（属工具面，不影响产品）。
+- 其余未验证项与 §5 相同（真模型向量、ANN §12.3 的 0.95、§12.2 P95、A3、多世代混批注入、GTX 1660；
+  并列距离只在合成夹具上验证）。

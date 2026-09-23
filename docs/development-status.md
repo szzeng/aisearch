@@ -2270,9 +2270,9 @@ B2 粗筛+精确重排排后续，B3 换索引类型/B4 下调 §12.3 承诺需�
 
 **P4-01C：IMPLEMENTATION + ACCEPTANCE COMPLETE / INDEPENDENT DS-H ENGINEERING REVIEW PENDING
 （未标 PASS，未生成 P4-02）。** 报告 [P4-01C 报告](reports/P4-01C-bottleneck-implementation.md)。
-→ **该阶段的独立 DS-H 全量工程主审已于 2026-09-23 通过**，现行状态为
-**`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`**
-（[主审报告](reports/P4-01C-dsh-engineering-review.md)，摘要见本文件末尾）；Sol 聚焦终审仍未做。
+→ 独立 DS-H 全量工程主审通过（`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`）后，
+**C2 / GPT-5.6 Sol 聚焦终审为 FAIL（A1/B1/B2 三条真实最小反例）**；DS-H 已完成最小修复，
+**现行状态见本文件末尾：`SOL SHORT RE-REVIEW PENDING`（未标 P4-01C PASS、未生成 P4-02）**。
 起始基线 `cd84bcb`；按用户「按推荐继续」执行 P4-01B §10 的推荐：A1 + A2 / B1 / C1 + C2 / D2。
 上一段提到的并行 P4-01C 在制品已按用户要求删除（备份在 `tmp/p401c-wip-backup/`），本卡由本会话重新实现。
 
@@ -2341,4 +2341,46 @@ R6 若将来新增 `DELETE_VECTOR` 生产者，批内需先按 `record_id` 去�
 
 **下一阶段（必选）**：请在**新会话**用 **C2 / GPT-5.6 Sol / high** 做聚焦终审（只读压缩交接包：本主审报告、
 未决项、关键 diff、最小反例与受影响测试；覆盖 §11 幂等/提交顺序与检索参数），通过后才标
+**P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。
+
+### C2 / Sol 聚焦终审结果与最小修复（2026-09-23，同日后续）
+
+**C2 / Sol 聚焦终审：`SOL FOCUSED REVIEW FAIL`**（[终审报告](reports/P4-01C-sol-focused-review.md)；
+被审提交 `48cca93`）。终审未复做全量主审，只审 §11 幂等/提交顺序、检索参数、谓词等价与主审 R3/R5/R6，
+其自身聚焦 39 / 0 / 0 / 0；C 段（SQL 谓词等价）**PASS**，A/B 段给出三条真实最小反例：
+
+- **A1**：`process_next` 可重领 `IN_FLIGHT`（P2-03 崩溃恢复路径，无 claim token），第二个协调器在批写中途
+  重领并确认其中一条后，批的确认阶段报 `INDEX_SUBMISSION_FAILED`，观测到「批内混合确认」。
+- **B1**：`search_candidates` 让引擎先按 `top_k` 截断、再在 Python 排序，**完全并列距离**时答案随块大小变化
+  （块 1 000 → `(999,1000)`、块 5 000 → `(4999,5000)`），直接违反不变量 1。
+- **B2**：`ensure_scalar_index` 只把 `create_index()` 放进 try，`list_indices()` 被拒时直接抛出并中断
+  `process_all`，与「拒绝即报告、不得失败」不符。
+
+**DS-H 最小修复（按 V3.1 §11 交回修复；只改 `src/photo_search/indexing/store.py` 与新用例）**：
+① B1：`search_candidates` 向引擎请求**每个候选 ID 一行**（`limit=len(ids)`），在既有的
+`(distance, asset_id)` 全序排序**之后**才截断，并新增 `CANDIDATE_ROW_COLUMNS` 投影（不回传 512 维向量）；
+② A1：确认阶段遇到已被其它协调器置为 `CONFIRMED` 的事件即跳过（同一条派生行、逐事件确认幂等），
+本批真实失败仍整批回 `PENDING`，docstring 写明「并发按事件安全、非排他」的前提；
+③ B2：`list_indices()` 纳入 try → 目录不可读时返回 `unavailable`，`_table` 仍在 try 之外。
+**未改** schema/migration/`SUPPORTED_SCHEMA_VERSION`（仍 15）、ADR/伴随物、信封/错误码/游标、
+RRF/BM25/距离公式、打包面。
+
+修复证据：三条新用例在**临时回退修复**后全部失败（`test-results/p4-01c-fix-prefix-sensitivity.xml`
+**3 / 3 failures**：B1 `{(4,5),(7,8),(29,30)} != {(1,2)}`、A1 `INDEX_SUBMISSION_FAILED: outbox claim was
+lost before confirmation`、B2 `RuntimeError: index metadata unavailable`），修复后专项
+`test-results/p4-01c-fix-focused.xml` **8 / 0 / 0**、终审受影响测试面
+`test-results/p4-01c-fix-sol-boundaries.xml` **42 / 0 / 0**、全量 `test-results/p4-01c-fix-full.xml`
+**1647 / 0 / 0 / 48**（210.2 s）；Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
+30 万重测（修复后、重建夹具、卡上原命令）：生产遍历 **19 653 ms / 60 块 / Recall@20 = Recall@50 = 1.000**
+（修复前 19 489 ms / 60 块 / 1.000），四档过滤 2 139（44 块）/3 517（23 块）/446（6 块）/926（1 块）ms、
+候选数不变，组合校验 6 397 + `sql_agrees=true`（`test-results/p4-01c-fix-ann-scale.json`）；
+同夹具块大小扫描复查：无索引 81 963 / 20 252 / 8 467 / 7 186 ms（块 1 000/5 000/25 000/100 000）、
++标量索引 7 145 / 4 279 / 3 899 / 4 130 ms、+ANN 9 091 / 3 437 / 2 566 / 2 548 ms，
+**与修复前同量级**，且两种精确索引状态下的 8 行 top-20 与修复前 JSON **逐条相同**
+（`test-results/p4-01c-fix-design.json`）。唯一语义变化：完全并列距离时
+结果被钉在 `(distance, asset_id)` 全序（修复前随块大小变化），这正是不变量 1 要求的方向。
+
+**现行状态：`SOL SHORT RE-REVIEW PENDING`（未标 P4-01C PASS、未生成 P4-02）。**
+请按 V3.1 §11 在**新会话**用 **C2 / GPT-5.6 Sol / high** 只复审失败边界及其直接回归
+（A1 交错确认、B1 并列距离、B2 目录拒绝；加上 §7.5 新增的并发/工具面边界），通过后才标
 **P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。
