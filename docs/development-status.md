@@ -2271,8 +2271,10 @@ B2 粗筛+精确重排排后续，B3 换索引类型/B4 下调 §12.3 承诺需�
 **P4-01C：IMPLEMENTATION + ACCEPTANCE COMPLETE / INDEPENDENT DS-H ENGINEERING REVIEW PENDING
 （未标 PASS，未生成 P4-02）。** 报告 [P4-01C 报告](reports/P4-01C-bottleneck-implementation.md)。
 → 独立 DS-H 全量工程主审通过（`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`）后，
-**C2 / GPT-5.6 Sol 聚焦终审为 FAIL（A1/B1/B2 三条真实最小反例）**；DS-H 已完成最小修复，
-**现行状态见本文件末尾：`SOL SHORT RE-REVIEW PENDING`（未标 P4-01C PASS、未生成 P4-02）**。
+**C2 / GPT-5.6 Sol 聚焦终审为 FAIL（A1/B1/B2 三条真实最小反例）**，DS-H 完成第一轮最小修复后，
+**第二轮短复审仍为 FAIL（B1/B2 已收口；A1 给出「旧 revision 后落盘回写」的更强反例）**，
+DS-H 已完成第二轮最小修复。**现行状态见本文件末尾：`SOL SHORT RE-REVIEW PENDING（第二轮）`
+（未标 P4-01C PASS、未生成 P4-02）**。
 起始基线 `cd84bcb`；按用户「按推荐继续」执行 P4-01B §10 的推荐：A1 + A2 / B1 / C1 + C2 / D2。
 上一段提到的并行 P4-01C 在制品已按用户要求删除（备份在 `tmp/p401c-wip-backup/`），本卡由本会话重新实现。
 
@@ -2380,7 +2382,56 @@ lost before confirmation`、B2 `RuntimeError: index metadata unavailable`），�
 （`test-results/p4-01c-fix-design.json`）。唯一语义变化：完全并列距离时
 结果被钉在 `(distance, asset_id)` 全序（修复前随块大小变化），这正是不变量 1 要求的方向。
 
-**现行状态：`SOL SHORT RE-REVIEW PENDING`（未标 P4-01C PASS、未生成 P4-02）。**
+**（第一轮）现行状态：`SOL SHORT RE-REVIEW PENDING`（未标 P4-01C PASS、未生成 P4-02）。**
 请按 V3.1 §11 在**新会话**用 **C2 / GPT-5.6 Sol / high** 只复审失败边界及其直接回归
 （A1 交错确认、B1 并列距离、B2 目录拒绝；加上 §7.5 新增的并发/工具面边界），通过后才标
 **P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。
+
+### 第二轮短复审（Sol）结果与最小修复：旧 revision 回写（2026-09-23，同日后续）
+
+**C2 / Sol 第二轮短复审：`SOL SHORT RE-REVIEW FAIL`**（[终审报告 §7](reports/P4-01C-sol-focused-review.md)；
+被审提交 `a457cba`）。B1（并列距离）与 B2（索引目录拒绝）**PASS**；A1 仍阻断，并给出比第一轮更严重的
+反例——「较新 revision 先落盘、旧写者后落盘」：甲在 `_is_superseded` 之后、引擎写之前被暂停，乙此间处理了
+较新 revision 并确认；甲恢复后仍把**已算好的旧 revision** 写进 Lance 并跳过确认 ⇒ SQLite 宣布 revision 2
+已确认且 `semantic_ready`，实际向量行被回退到 revision 1，而 `vector_channel` 只按
+`index_entries.state='CONFIRMED'` 取候选，会发布这条旧向量行（违反任务卡不变量 2/3 与 P2-03
+「旧投影事件不得回滚最新状态」）。Sol 的结论：仅在确认阶段重查 SQLite 不足以阻止已发生的旧 Lance 写，
+修法必须覆盖「旧写者最后落盘」的顺序。
+
+**DS-H 第二轮最小修复（`src/photo_search/indexing/store.py`，`process_next` 与 `process_batch` 同一纪律）**：
+① 领取仍单独提交（保持 `after_lance` 崩溃窗口＝`IN_FLIGHT` 的 P2-03 语义）；
+② 用**同一个 `BEGIN IMMEDIATE` 事务**覆盖「权威复读 → `_is_superseded` → 引擎写 → 逐事件确认 →
+`_make_generation_ready`」，因此第二个协调器或 `publish_embedding` 都无法把更新的 revision 插进窗口，
+旧 revision 不再可能最后落盘；③ 批路径在同一事务开头按 `state='IN_FLIGHT'` 过滤「仍属于自己的事件」，
+别人已确认的事件不写、不确认、也不报假失败；本批真实失败仍整批回滚后回 `PENDING`。
+代价：写锁在事务期间被持有（批写约 25～150 ms/批、30 万表单行约 40 ms；`busy_timeout = 5 s`，读路径走 WAL
+不受影响）。**未改** schema/migration/契约/错误码/排序公式/打包面（`schema_version` 仍 15）。
+
+**复现与验证**：用 `git archive a457cba src` 解出的旧树强制置于 `sys.path[0]`，当前测试文件跑两条直接回归，
+旧代码上分别失败于 `assert state["blocked"] is True`（第二个写者能直接进入检查→写入窗口）与
+`assert applied == added - 1`（旧实现把被重领的事件算成自己应用）；修复后专项
+`test-results/p4-01c-fix2-focused.xml` **9 / 0 / 0**、受影响测试面（+`test_p2_search_topup`）
+`p4-01c-fix2-boundaries.xml` **46 / 0 / 0**、全量 `p4-01c-fix2-full.xml` **1648 / 0 / 0 / 48**（214.5 s），
+Ruff / `git diff --check` / `uv lock --check` 全 exit 0。新增用例同时断言：窗口对第二个 SQLite 连接
+（跨进程模型）与本进程发布者都关闭，且较新 revision 最终一定落在派生行上
+（`index_entries.confirmation_revision == Lance.projection_revision == 2`、outbox 全确认、`semantic_ready`
+对应最新派生行、存储向量与最新向量同向）。30 万重测（重建夹具）与修复前同量级：生产遍历
+**18 080 ms / 60 块 / Recall@20 = Recall@50 = 1.000**、四档过滤 1 878 / 3 295 / 399 / 887 ms、候选数
+215 998 / 114 000 / 30 000 / 2 000 与组合校验（6 397 + `sql_agrees`）全不变、维护 31.25 ms/行与
+28.39 ms/事件（`test-results/p4-01c-fix2-ann-scale.json`）。
+
+**现行状态：`SOL SHORT RE-REVIEW PENDING（第二轮）`（未标 P4-01C PASS、未生成 P4-02）。**
+请按 V3.1 §11 在**新会话**用 **C2 / GPT-5.6 Sol / high** 只复审 A1 的两个顺序（旧写者最后落盘、
+并发重领同一事件）及其直接回归；B1/B2 已收口，R3/R5/R6 与未验证项口径不变。通过后才标
+**P4-01C PASS** 并生成 **P4-02**。模型切换始终由用户在 Codex 中手动完成。
+
+### Latest C2 / Sol short re-review — P4-01C repair `a457cba` (2026-09-23)
+
+**现行状态：`SOL SHORT RE-REVIEW FAIL`；P4-01C 未标 PASS，未生成 P4-02。**
+详见 [Sol 聚焦终审报告 §7](reports/P4-01C-sol-focused-review.md)。C2 只复审先前 A1/B1/B2 失败边界及直接回归：
+B1 的 5 001 行全并列探针在块 1 000/5 000 下都返回 `[1, 2]`；B2 的索引目录拒绝已报告 `unavailable`
+且不阻断 outbox 维护；受影响测试 `test-results/p4-01c-sol-rereview.xml` **42 / 0 / 0 / 0**。
+**A1 仍阻断**：用真实 `publish_embedding` 产生同一资产 revision 1/2，乙先写并确认 revision 2，甲随后把
+已准备的 revision 1 写回 Lance 后跳过已确认事件。最终 outbox 两条均 `CONFIRMED`、
+`index_entries.confirmation_revision=2`，Lance `projection_revision=1`，`semantic_ready=True`。
+按 V3.1 §11 将这条确定性交错交回 DS-H 做最小修复；Sol 下次只复审该失败边界和直接回归。

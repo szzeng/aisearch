@@ -251,3 +251,87 @@ uv run --no-sync ruff check . ; git diff --check ; uv lock --check
   执行；建议 P4-02 前修掉该复用路径或让工具记录/校验 `assets == matrix` 行数（属工具面，不影响产品）。
 - 其余未验证项与 §5 相同（真模型向量、ANN §12.3 的 0.95、§12.2 P95、A3、多世代混批注入、GTX 1660；
   并列距离只在合成夹具上验证）。
+
+## 8. 第二轮短复审（Sol）失败边界的最小修复：旧 revision 回写（2026-09-23）
+
+短复审结论见 [P4-01C-sol-focused-review.md](P4-01C-sol-focused-review.md) §7：
+**B1/B2 PASS**，但 **A1 仍为阻断**，且给出了比第一轮更严重的反例——「较新 revision 先落盘、旧写者后落盘」：
+甲在 `_is_superseded` 检查之后、引擎写入之前被暂停；此间乙处理了较新 revision 并确认；甲恢复后仍把
+先前算好的**旧** revision 写进 Lance 并跳过确认 ⇒ SQLite 宣布 revision 2 已确认且 `semantic_ready`，
+实际向量行却被回退到 revision 1，`vector_channel` 只按 `index_entries.state='CONFIRMED'` 取候选，
+因此会发布这条旧向量行（违反任务卡不变量 2/3 与 P2-03「旧投影事件不得回滚最新状态」）。
+Sol 的判断：「仅在确认阶段重查 SQLite 状态不足以阻止已发生的旧 Lance 写；修法需覆盖『旧写者最后落盘』的顺序」。
+
+### 8.1 根因与最小修复
+
+根因不是「跳过已确认事件」这一条，而是**检查与写入不在同一个事务里**：领取（`BEGIN IMMEDIATE`）随即
+提交，随后的权威复读、`_is_superseded`、引擎写入、确认分处两个事务，中间窗口可被第二个写者（或
+`publish_embedding` 产生的新 revision）插入。
+
+修复（`src/photo_search/indexing/store.py`，`process_next` 与 `process_batch` 同一纪律）：
+
+1. **领取仍单独提交**（保持 `after_lance` 崩溃窗口 = 行为 `IN_FLIGHT` 的既有语义与 P2-03 断言）；
+2. **用同一个 `BEGIN IMMEDIATE` 事务覆盖「权威复读 → `_is_superseded` → 引擎写 → 逐事件确认 →
+   `_make_generation_ready`」**。SQLite 的写锁在事务开始时即取得，因此：别的协调器无法在窗口内领取/确认；
+   `publish_embedding` 这类写者也无法插入更新的 revision ⇒ **旧 revision 不可能最后落盘**；
+3. 批路径在同一事务开头按 `state='IN_FLIGHT'` 过滤「仍属于自己的事件」，别人已确认的事件既不写也不确认，
+   也不报假失败；本批真实失败仍是整批回滚（随后按既有语义回 `PENDING`）。
+
+代价与边界：写锁在事务期间被持有（批写约 25～150 ms/批、30 万表单行约 40 ms；本机 `busy_timeout = 5 s`），
+读路径走 WAL 不受影响。**未改** schema/migration/契约/错误码/排序公式/打包面。
+
+### 8.2 复现（对上一提交 `a457cba` 的旧代码树）
+
+`git archive a457cba src` 解出旧树并强制置于 `sys.path[0]`（探针断言加载的确是被归档的旧包），再用**当前**
+测试文件跑两条直接回归：
+
+```text
+test_a_stale_projection_revision_can_never_land_after_a_newer_one: FAILED
+    assert state["blocked"] is True          # 第二个写者能直接进入检查→写入窗口
+test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure: FAILED
+    assert applied == added - 1              # 旧实现把被重领的事件也算成自己应用
+```
+
+### 8.3 修复后的验证
+
+| 项目 | 结果 |
+|---|---|
+| 本卡专项（9 用例＝原 8 + 新 1） | **9 / 0 / 0**（`test-results/p4-01c-fix2-focused.xml`） |
+| 受影响测试面（专项 + `test_p2_index_submission` + `test_p2_acceptance_recovery` + `test_p2_search_topup` + `test_p3_person_search_scope`） | **46 / 0 / 0**（`test-results/p4-01c-fix2-boundaries.xml`） |
+| 全量 B 级 | **1648 / 0 / 0 / 48**（`test-results/p4-01c-fix2-full.xml`，214.5 s） |
+| Ruff / `git diff --check` / `uv lock --check` | 全部 exit 0 |
+
+新增用例 `test_a_stale_projection_revision_can_never_land_after_a_newer_one` 同时固定两件事：
+① 在「检查→引擎写」之间，第二个 SQLite 连接（跨进程模型）与本进程发布者都**进不来**；
+② 较新 revision 最终一定落在派生行上（`index_entries.confirmation_revision == Lance.projection_revision == 2`、
+outbox 全确认、`semantic_ready` 对应最新派生行、存储向量与最新向量同向）。
+30 万档重测见 §8.4：与修复前同量级，结果、候选数、召回与状态机全部不变。
+
+### 8.4 30 万档重测（修复后，卡上原命令、重建夹具，`test-results/p4-01c-fix2-ann-scale.json`）
+
+| 指标 | 本轮（第二轮修复后） | 上一轮（第一轮修复后） | 原始 P4-01C |
+|---|---:|---:|---:|
+| 生产遍历（无 ANN、块 5 000） | **18 080 ms / 60 块** | 19 653 ms / 60 块 | 19 489 ms / 60 块 |
+| Recall@20 / @50 | **1.000 / 1.000** | 1.000 / 1.000 | 1.000 / 1.000 |
+| 引擎扫描 ↔ 暴力 top-20 | `all_equal=true` | `true` | `160/160` |
+| 四档过滤 walk（wide/half/narrow/thin） | 1 878 / 3 295 / 399 / 887 ms | 2 139 / 3 517 / 446 / 926 ms | 2 406 / 3 536 / 523 / 991 ms |
+| 候选数（wide/half/narrow/thin） | 215 998 / 114 000 / 30 000 / 2 000 | 同 | 同 |
+| §12.4 第 32 条组合校验 | 6 397 + `sql_agrees=true` | 同 | 同 |
+| 维护：逐行 `merge_insert` / `process_next` 重放 | 31.25 ms/行 / 28.39 ms/事件 | 40.6 / 38.83 | 35.8 / 38.18 |
+| `semantic_ready` / generation | 5/5、READY + active | 同 | 同 |
+
+把引擎写纳入写事务**没有**带来可测的维护或检索回归（同一量级，差异在夹具重建与页缓存噪声内）。
+本轮只改写路径，检索面的 12 行块大小扫描沿用 §7.3 的修复后结果（本轮 scale 复测与之相符）。
+
+### 8.5 未验证项（追加）
+
+- 并发保护依赖**同一个 SQLite 目录库的写锁**：这一点对「同进程多线程、跨进程多客户端」都成立
+  （后者由文件锁保证，本次用第二个连接做了模型化验证），但**没有**真正的多进程端到端注入；
+  协议层仍没有 claim token 或租约，`process_next` 仍允许重领 `IN_FLIGHT`（崩溃恢复语义不变）。
+- R5（生产维护入口、单/多维护者口径）仍是 P4-02 前置项；本次修复使「多维护者」在语义上安全，
+  但没有把它变成已接线的事实。
+- **同模式的其它协调器（本卡范围外，建议后续复核）**：`src/photo_search/face/index.py` 的
+  `FaceIndexCoordinator` 使用同样的「短领取事务 → 引擎写 → 独立确认事务」形态，理论上存在同一类
+  「检查→写入窗口」。P4-01C 的范围是图像向量索引（`indexing/store.py`），本卡**未改**面索引；
+  建议在下一张触碰面索引/维护协议的卡里按本次同一纪律复核，并在 P4-02 的维护口径里明确
+  「单维护者 or 多维护者 + 原子写窗口」。

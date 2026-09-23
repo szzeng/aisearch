@@ -23,12 +23,14 @@ import importlib.util
 import math
 import sqlite3
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 import pytest
 
+from photo_search.catalog.db import Catalog
 from photo_search.indexing.store import ASSET_SCALAR_INDEX, IndexCoordinator, LanceVectorIndex
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.search import retrieval
@@ -432,10 +434,11 @@ def test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure(
     """P4-01C focused review A1: a second coordinator re-claiming one event is not a failure.
 
     ``process_next`` may re-claim an ``IN_FLIGHT`` event (that is the documented crash-recovery
-    path, there is no claim token). This test interleaves a second coordinator *inside* the
-    batch's engine write: it confirms one of the events the batch holds. The batch must still
-    end with every event confirmed exactly once and must not report a false
-    ``INDEX_SUBMISSION_FAILED``.
+    path, there is no claim token). The interleaving point used here is the only legal one
+    left after the review: the batch's claim transaction has committed and its engine-write
+    transaction has not started yet, so a second coordinator really can step in and confirm
+    one of the claimed events. The batch must then leave that event alone, still finish its
+    own event exactly once, and never report a false ``INDEX_SUBMISSION_FAILED``.
     """
 
     fixture = build(tmp_path, 20, name="scale-20-reclaim", seed=43)
@@ -474,24 +477,29 @@ def test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure(
         assert benchmark.outbox_counts(fixture) == {"PENDING": added}
 
         coordinator = IndexCoordinator(fixture.catalog)
-        original_batch = LanceVectorIndex.upsert_batch
-        steal: dict[str, Any] = {"attempted": False, "claimed": None}
+        original_write = Catalog.write
+        steal: dict[str, Any] = {"writes": 0, "claimed": None}
 
-        def stealing(self: Any, *, generation: Any, records: Any) -> Any:
-            # The batch already holds both claims here; a second coordinator re-claims one.
-            if not steal["attempted"]:
-                steal["attempted"] = True
+        @contextmanager
+        def stealing_write(self: Any) -> Any:
+            steal["writes"] += 1
+            if steal["writes"] == 2 and steal["claimed"] is None:
+                # Write #1 was the batch's claim (already committed); write #2 is its
+                # engine-write/confirmation transaction, which has not begun yet.
                 steal["claimed"] = IndexCoordinator(fixture.catalog).process_next(
                     now_ms=benchmark.now_ms()
                 )
-            return original_batch(self, generation=generation, records=records)
+            with original_write(self) as connection:
+                yield connection
 
         with pytest.MonkeyPatch.context() as patched:
-            patched.setattr(LanceVectorIndex, "upsert_batch", stealing)
+            patched.setattr(type(fixture.catalog), "write", stealing_write)
             applied = coordinator.process_batch(now_ms=benchmark.now_ms(), max_events=added)
 
         assert steal["claimed"] is True
-        assert applied == added
+        # The batch applied the one event that was still its own; the second coordinator
+        # applied the other, so the event is never written or confirmed twice.
+        assert applied == added - 1
         assert benchmark.outbox_counts(fixture) == {"CONFIRMED": added}
         for offset in range(added):
             assert coordinator.semantic_ready(
@@ -503,6 +511,141 @@ def test_a_concurrent_reclaim_cannot_turn_a_batch_into_a_false_failure(
             generation_id=benchmark.GENERATION_ID, dimension=benchmark.DIM
         )
         assert len({int(row["asset_id"]) for row in rows}) == len(rows)
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_stale_projection_revision_can_never_land_after_a_newer_one(
+    tmp_path: Path,
+) -> None:
+    """P4-01C focused review A1 (second round): the old writer must not land last.
+
+    The review showed that when a newer projection revision appears between a writer's
+    supersede check and its engine write, the *older* revision can be written last: SQLite
+    reports revision 2 as confirmed and ``semantic_ready`` while the derived row still holds
+    revision 1 for that asset. The supersede check, the engine write and the confirmation now
+    share one ``BEGIN IMMEDIATE`` transaction, so that window does not exist. This test tries
+    to slip a newer revision in at exactly that point, requires the attempt to be refused, and
+    then proves the newer revision still ends up in the derived row.
+    """
+
+    fixture = build(tmp_path, 20, name="scale-20-stale", seed=53)
+    try:
+        older = benchmark.synthetic_vectors(1, seed=59, distribution="clustered")[0]
+        newer = benchmark.synthetic_vectors(1, seed=61, distribution="clustered")[0]
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id="p4-01c-stale-old",
+            asset_id=1,
+            vector=older,
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"stale-old").hexdigest(),
+        )
+        assert benchmark.outbox_counts(fixture) == {"PENDING": 1}
+
+        coordinator = IndexCoordinator(fixture.catalog)
+        original_batch = LanceVectorIndex.upsert_batch
+        state: dict[str, Any] = {
+            "interleaving": False,
+            "slipped_in": None,
+            "second_applied": None,
+            "blocked": None,
+        }
+
+        def slip_in_newer_revision() -> bool:
+            """Publish revision 2 from *inside* the writer's check→write window."""
+            probe = sqlite3.connect(
+                str(fixture.catalog.db_path), isolation_level=None, timeout=0.2
+            )
+            try:
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                except sqlite3.OperationalError:
+                    # The cross-process model: the writer's transaction locks us out.
+                    state["blocked"] = True
+                else:
+                    state["blocked"] = False
+                    probe.execute("ROLLBACK")
+            finally:
+                probe.close()
+            try:
+                benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+            except RuntimeError:
+                # In-process: a nested write is refused because the write transaction that
+                # spans the supersede check is already open.
+                return False
+            benchmark.publish_embedding(
+                fixture,
+                artifact_id="p4-01c-stale-new",
+                asset_id=1,
+                vector=newer,
+                now=benchmark.now_ms(),
+                input_revision=hashlib.sha256(b"stale-new").hexdigest(),
+            )
+            state["second_applied"] = IndexCoordinator(fixture.catalog).process_batch(
+                now_ms=benchmark.now_ms(), max_events=2
+            )
+            return True
+
+        def hooked(self: Any, *, generation: Any, records: Any) -> Any:
+            # The engine write is the last step before the confirmation: this is the exact
+            # point the review used to let the older revision land last.
+            if not state["interleaving"]:
+                # Set before the attempt: the second coordinator's own engine write re-enters
+                # this hook, and it must not try to interleave again.
+                state["interleaving"] = True
+                state["slipped_in"] = slip_in_newer_revision()
+            return original_batch(self, generation=generation, records=records)
+
+        with pytest.MonkeyPatch.context() as patched:
+            patched.setattr(LanceVectorIndex, "upsert_batch", hooked)
+            applied = coordinator.process_batch(now_ms=benchmark.now_ms(), max_events=1)
+
+        assert state["blocked"] is True
+        assert state["slipped_in"] is False
+        assert state["second_applied"] is None
+        assert applied == 1
+
+        # The newer revision, published afterwards as it would be in production, always wins.
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id="p4-01c-stale-new",
+            asset_id=1,
+            vector=newer,
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"stale-new").hexdigest(),
+        )
+        assert (
+            IndexCoordinator(fixture.catalog).process_batch(
+                now_ms=benchmark.now_ms(), max_events=2
+            )
+            == 1
+        )
+        assert benchmark.outbox_counts(fixture) == {"CONFIRMED": 2}
+        entry = fixture.catalog.read_one(
+            "SELECT state, confirmation_revision FROM index_entries "
+            "WHERE space_id = ? AND asset_id = 1 AND generation_id = ?",
+            (benchmark.SPACE_ID, benchmark.GENERATION_ID),
+        )
+        assert str(entry["state"]) == "CONFIRMED"
+        assert int(entry["confirmation_revision"]) == 2
+        row = next(
+            item
+            for item in coordinator.index.rows(
+                generation_id=benchmark.GENERATION_ID, dimension=benchmark.DIM
+            )
+            if int(item["asset_id"]) == 1
+        )
+        assert int(row["projection_revision"]) == int(entry["confirmation_revision"]) == 2
+        stored = [float(value) for value in row["vector"]]
+        assert sum(a * b for a, b in zip(stored, newer, strict=True)) > sum(
+            a * b for a, b in zip(stored, older, strict=True)
+        )
+        assert coordinator.semantic_ready(
+            space_id=benchmark.SPACE_ID, asset_id=1, generation_id=benchmark.GENERATION_ID
+        )
     finally:
         fixture.catalog.close()
 

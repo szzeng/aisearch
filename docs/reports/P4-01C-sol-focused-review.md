@@ -96,3 +96,39 @@ DS-H §8 的未验证项均**接受其诚实标注，但不接受将其算作已
 ## 6. 裁决与交回
 
 **`SOL FOCUSED REVIEW FAIL`。** 至少 A1、B1 已给出真实最小反例；B2 是额外的维护失败边界。依 V3.1 §11 把这些反例和直接受影响测试交回 DS-H 做最小修复，再由 C2 只复审失败边界及直接回归。本会话不接管实现。P4-01C 不能落为 PASS，P4-02 不能生成；`docs/development-status.md` 的既有 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING` 是终审前状态，应由后续收口流程根据本报告更新。
+
+## 7. 对 DS-H 修复提交 `a457cba` 的 Sol 短复审（2026-09-23）
+
+**结论：`SOL SHORT RE-REVIEW FAIL`。** 本节只复审 §2～3 的失败边界及其直接回归；原 §4 的谓词等价 PASS 与 §5 的 R3/R5/R6、未验证项口径不变。被审修复是 `a457cba`（父提交 `48cca93`），工作树无生产文件改动。DS-H 记录的全量 1647 / 0 / 0 / 48 与 30 万重测作为其工程证据引用，本短复审未重复。
+
+### 7.1 B1/B2：原反例已收口
+
+- **B1 PASS**：`search_candidates` 让 Lance 返回至多 `len(ids)` 行，并在 Python 的 `(distance, asset_id)` 排序之后才取请求的 `top_k`；`CANDIDATE_ROW_COLUMNS` 排除了向量列。用本报告原来的 5,001 行全并列、倒序写入探针调用实际 `vector_channel`：块 1,000 与 5,000 都返回 `[1, 2]`，分别遍历 6/2 块，均 `truncated=False`。新专项用例也覆盖块 5/8/1000/5000 的并列排序。
+- **B2 PASS**：`list_indices()` 已纳入索引维护的异常保护，元数据目录被拒时报告 `unavailable`；新增用例验证此时 `process_all` 仍把 outbox 排空。缺表 `no_table` 与成功 `created → present` 的既有口径不变。
+
+同一受影响测试命令（见 §1，`--basetemp=.pytest-tmp/p401c-sol-focused/rereview`、`--junitxml=test-results/p4-01c-sol-rereview.xml`）实跑 **42 / 0 failures / 0 errors / 0 skips**，exit 0。绿灯覆盖原 A1 的“两个写者处理同一 revision”，但不覆盖下述“较新 revision 先落盘、旧写者后落盘”。
+
+### 7.2 A1：修复引入可观测的旧 revision 回写，仍为阻断
+
+修复后的 `process_batch` 在预处理时仅检查一次 `_is_superseded(event)`，随后到 Lance 批写之间没有保护。确认阶段遇到同一事件已 `CONFIRMED` 就跳过，但此时**本批可能已经把较旧 revision 写回 Lance**。用项目内两资产真实 catalog/Lance 夹具和真实 `publish_embedding` 生产路径确定性交错：
+
+1. 提升 `catalog_filter_revision` 至 1，为资产 1 发布旧 artifact，形成 revision 1 事件。甲 `process_batch(max_events=1)` 领取事件、通过 `_is_superseded`、算好 revision 1 的记录。
+2. 在甲的 `upsert_batch` 入口先暂停甲：再提升 revision 至 2，并用 `publish_embedding` 发布新 artifact。乙 `process_batch(max_events=2)` 重领旧事件并处理新事件，跳过旧写入、写 revision 2、确认两条。
+3. 甲恢复，执行先前已经准备好的 revision 1 `upsert_batch`。确认时见旧事件为 `CONFIRMED`，按新逻辑跳过并成功返回。
+
+实际输出：
+
+```text
+second_applied 2
+first_applied 1
+outbox [(1, 'CONFIRMED'), (2, 'CONFIRMED')]
+entry revision=2, state=CONFIRMED
+lance projection_revision=1
+semantic_ready=True
+```
+
+也就是说，SQLite 宣称 revision 2 已确认且 `semantic_ready=True`，实际向量行却被甲回退到 revision 1。`vector_channel` 的候选遍历只看 `index_entries.state='CONFIRMED'`，因此可发布这条旧向量行。这直接违反任务卡不变量 2/3、P2-03 的“旧投影事件不得回滚最新状态”，且比原始“批内假失败”更严重。根因在 `src/photo_search/indexing/store.py` 的 `_is_superseded`（批写前单次检查）、`upsert_batch` 和“已确认即跳过”的确认分支之间；当前新并发测试仅固定同一 revision 的重领。
+
+**交回 DS-H 的最小受影响测试：**在 `tests/integration/test_p4_01c_retrieval_blocks.py` 中把上述两 revision 交错加入 A1 的直接回归，断言最终 `index_entries.confirmation_revision == Lance.projection_revision == 2`、outbox 均确认且 `semantic_ready` 只对应最新派生行；同时保持 `tests/integration/test_p2_index_submission.py::test_late_old_projection_event_reads_latest_state_and_cannot_rollback` 的逐事件语义。仅在确认阶段重查 SQLite 状态不足以阻止已发生的旧 Lance 写；修法需覆盖“旧写者最后落盘”的顺序。本终审不接管修复。
+
+**状态：P4-01C 仍不能标 PASS；不得生成 P4-02。** 依 V3.1 §11 再交回 DS-H 处理此 A1 反例，修复后的 Sol 短审只复核该交错及直接回归。R5 的生产维护入口和单/多维护者口径仍须列为 P4-02 前置项。

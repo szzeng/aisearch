@@ -411,35 +411,58 @@ class IndexCoordinator:
             event_id = str(event["event_id"])
 
         try:
-            event = self.catalog.read_one("SELECT * FROM index_outbox WHERE event_id = ?", (event_id,))
-            artifact = self.catalog.read_one(
-                "SELECT * FROM artifacts WHERE artifact_id = ?", (event["artifact_id"],)
-            )
-            generation = self.catalog.read_one(
-                "SELECT * FROM index_generations WHERE generation_id = ?",
-                (event["generation_id"],),
-            )
-            if artifact is None or generation is None:
-                raise CatalogError(INDEX_SUBMISSION_FAILED, "outbox references are incomplete")
-            self._validate_event_payload(event)
-            self._validate_space(event, artifact, generation)
-            if self._is_superseded(event):
-                with self.catalog.write() as connection:
-                    connection.execute(
-                        "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? WHERE event_id = ?",
-                        (now_ms, event_id),
-                    )
-                return True
-            record = self._record(event, artifact, generation)
-            self.index.upsert(generation=generation, record=record)
-            if failpoint == "after_lance":
-                raise _InjectedCrash("after_lance")
+            # One ``BEGIN IMMEDIATE`` transaction spans the authority re-read, the supersede
+            # check, the engine write and the confirmation. The claim above is already
+            # committed - which is what keeps the documented ``after_lance`` crash window at
+            # IN_FLIGHT - but from here on no other writer can publish a newer projection
+            # revision, claim this event or confirm it, so a lower revision can never land on
+            # top of a newer one (P4-01C focused review A1: "the old writer must not land
+            # last").
             with self.catalog.write() as connection:
                 current = connection.execute(
                     "SELECT state FROM index_outbox WHERE event_id = ?", (event_id,)
                 ).fetchone()
-                if current is None or str(current["state"]) != "IN_FLIGHT":
-                    raise CatalogError(INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation")
+                if current is None:
+                    raise CatalogError(INDEX_SUBMISSION_FAILED, "outbox event disappeared")
+                if str(current["state"]) == "CONFIRMED":
+                    # A second coordinator claimed and confirmed this event before this
+                    # transaction began: the work is done and nothing of ours may be written
+                    # on top of it.
+                    return True
+                if str(current["state"]) != "IN_FLIGHT":
+                    raise CatalogError(
+                        INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
+                    )
+                event = self.catalog.read_one(
+                    "SELECT * FROM index_outbox WHERE event_id = ?", (event_id,)
+                )
+                artifact = self.catalog.read_one(
+                    "SELECT * FROM artifacts WHERE artifact_id = ?", (event["artifact_id"],)
+                )
+                generation = self.catalog.read_one(
+                    "SELECT * FROM index_generations WHERE generation_id = ?",
+                    (event["generation_id"],),
+                )
+                if artifact is None or generation is None:
+                    raise CatalogError(
+                        INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
+                    )
+                self._validate_event_payload(event)
+                self._validate_space(event, artifact, generation)
+                if self._is_superseded(event):
+                    connection.execute(
+                        "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? "
+                        "WHERE event_id = ?",
+                        (now_ms, event_id),
+                    )
+                    self._make_generation_ready(
+                        connection, str(event["generation_id"]), now_ms
+                    )
+                    return True
+                record = self._record(event, artifact, generation)
+                self.index.upsert(generation=generation, record=record)
+                if failpoint == "after_lance":
+                    raise _InjectedCrash("after_lance")
                 entry = connection.execute(
                     "SELECT artifact_id FROM index_entries WHERE space_id = ? AND asset_id = ? "
                     "AND generation_id = ?",
@@ -524,14 +547,16 @@ class IndexCoordinator:
         ``failpoint="after_lance"`` still simulates the documented crash window after the
         engine write and before any confirmation.
 
-        Concurrent coordinators are safe **per event**, not by exclusion: this protocol has no
-        claim token, so another coordinator may legitimately re-claim an ``IN_FLIGHT`` event
-        (that reassignment *is* the documented crash-recovery path) and confirm it while this
-        batch is writing. Both writers derive the same row for that event, per-event
-        confirmation is idempotent, and an event the other coordinator already confirmed is
-        skipped rather than reported as a lost claim. What is all-or-nothing is this batch's
-        *own* attempt: a real failure reverts exactly the events it claimed, so no event is
-        ever confirmed twice and none is left without its derived row.
+        Concurrency is handled by making the write critical section atomic, not by hoping the
+        protocol is single-writer: the claim above is committed (that is what keeps the
+        documented ``after_lance`` crash window at ``IN_FLIGHT``), and then **one**
+        ``BEGIN IMMEDIATE`` transaction spans the authority re-read, the supersede check, the
+        engine write and every confirmation. A second coordinator - or a publisher creating a
+        newer projection revision - is serialised behind that transaction, so a *lower*
+        revision can never land on top of a newer one (P4-01C focused review A1: "the old
+        writer must not land last"). An event another coordinator claimed and confirmed before
+        this transaction began is simply not ours any more: it is skipped, never written and
+        never reported as a lost claim.
         """
         claimed = int(max_events)
         if claimed < 1:
@@ -552,73 +577,75 @@ class IndexCoordinator:
                 (now_ms, *event_ids),
             )
         try:
-            events = self.catalog.read_all(
-                f"SELECT * FROM index_outbox WHERE event_id IN ({placeholders}) "
-                "ORDER BY created_at, event_id",
-                tuple(event_ids),
-            )
-            writable: dict[str, list[dict[str, Any]]] = {}
-            touched: set[str] = set()
-            confirmed_without_write: list[str] = []
-            for event in events:
-                event_id = str(event["event_id"])
-                artifact = self.catalog.read_one(
-                    "SELECT * FROM artifacts WHERE artifact_id = ?",
-                    (event["artifact_id"],),
-                )
-                generation = self.catalog.read_one(
-                    "SELECT * FROM index_generations WHERE generation_id = ?",
-                    (event["generation_id"],),
-                )
-                if artifact is None or generation is None:
-                    raise CatalogError(
-                        INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
-                    )
-                self._validate_event_payload(event)
-                self._validate_space(event, artifact, generation)
-                touched.add(str(event["generation_id"]))
-                if self._is_superseded(event):
-                    confirmed_without_write.append(event_id)
-                    continue
-                writable.setdefault(str(event["generation_id"]), []).append(
-                    self._record(event, artifact, generation)
-                )
-            for generation_id, records in writable.items():
-                generation = self.catalog.read_one(
-                    "SELECT * FROM index_generations WHERE generation_id = ?",
-                    (generation_id,),
-                )
-                if generation is None:
-                    raise CatalogError(
-                        INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
-                    )
-                self.index.upsert_batch(generation=generation, records=records)
-            if failpoint == "after_lance":
-                raise _InjectedCrash("after_lance")
             with self.catalog.write() as connection:
+                # ``BEGIN IMMEDIATE`` already holds the single-writer lock: read which of the
+                # claimed events are still ours, and treat the rest as somebody else's work.
+                ours = {
+                    str(row["event_id"])
+                    for row in connection.execute(
+                        f"SELECT event_id FROM index_outbox WHERE event_id IN ({placeholders}) "
+                        "AND state = 'IN_FLIGHT'",
+                        tuple(event_ids),
+                    ).fetchall()
+                }
+                if not ours:
+                    return 0
+                events = [
+                    event
+                    for event in self.catalog.read_all(
+                        f"SELECT * FROM index_outbox WHERE event_id IN ({placeholders}) "
+                        "ORDER BY created_at, event_id",
+                        tuple(event_ids),
+                    )
+                    if str(event["event_id"]) in ours
+                ]
+                writable: dict[str, list[dict[str, Any]]] = {}
+                writable_ids: set[str] = set()
+                touched: set[str] = set()
+                for event in events:
+                    artifact = self.catalog.read_one(
+                        "SELECT * FROM artifacts WHERE artifact_id = ?",
+                        (event["artifact_id"],),
+                    )
+                    generation = self.catalog.read_one(
+                        "SELECT * FROM index_generations WHERE generation_id = ?",
+                        (event["generation_id"],),
+                    )
+                    if artifact is None or generation is None:
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
+                        )
+                    self._validate_event_payload(event)
+                    self._validate_space(event, artifact, generation)
+                    touched.add(str(event["generation_id"]))
+                    if self._is_superseded(event):
+                        continue
+                    writable_ids.add(str(event["event_id"]))
+                    writable.setdefault(str(event["generation_id"]), []).append(
+                        self._record(event, artifact, generation)
+                    )
+                for generation_id, records in writable.items():
+                    generation = self.catalog.read_one(
+                        "SELECT * FROM index_generations WHERE generation_id = ?",
+                        (generation_id,),
+                    )
+                    if generation is None:
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
+                        )
+                    self.index.upsert_batch(generation=generation, records=records)
+                if failpoint == "after_lance":
+                    raise _InjectedCrash("after_lance")
                 for event in events:
                     event_id = str(event["event_id"])
                     current = connection.execute(
                         "SELECT state FROM index_outbox WHERE event_id = ?", (event_id,)
                     ).fetchone()
-                    if current is None:
+                    if current is None or str(current["state"]) != "IN_FLIGHT":
                         raise CatalogError(
                             INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
                         )
-                    if str(current["state"]) == "CONFIRMED":
-                        # Another coordinator claimed this event after this batch did (the
-                        # protocol lets ``process_next`` re-claim ``IN_FLIGHT`` rows; there is
-                        # no claim token) and confirmed it. It wrote the same derived row this
-                        # batch wrote, and confirmation is idempotent per event, so the honest
-                        # outcome is "already done": skipping keeps the batch from reporting a
-                        # false INDEX_SUBMISSION_FAILED while every event still ends CONFIRMED
-                        # exactly once. P4-01C focused review A1.
-                        continue
-                    if str(current["state"]) != "IN_FLIGHT":
-                        raise CatalogError(
-                            INDEX_SUBMISSION_FAILED, "outbox claim was lost before confirmation"
-                        )
-                    if event_id in confirmed_without_write:
+                    if event_id not in writable_ids:
                         connection.execute(
                             "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? "
                             "WHERE event_id = ?",
