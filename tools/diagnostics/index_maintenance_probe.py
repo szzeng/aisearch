@@ -16,6 +16,11 @@ instead of prose:
                 connection) raced against the maintenance drain: lock-wait P50/P95 for both
                 sides, the structured ``busy_timeout`` refusals with their retry outcome, and
                 proof that a foreground write is never silently half-applied.
+``recovery``    P4-02C: one artifact whose bytes no longer verify is isolated once the repair
+                audit has reclaimed it (it may not pin the whole outbox), repeated audits cannot
+                enlarge the backlog, a genuinely lost confirmation is still scheduled, and the
+                production re-execution entry republishes the identical bytes so that the *same*
+                event confirms afterwards.
 ``cli``         One real command-line invocation of ``status`` and ``drain`` in a subprocess,
                 captured as the operator-facing evidence.
 
@@ -49,6 +54,7 @@ for _extra in (str(PROJECT_ROOT / "src"), str(TOOLS_DIR)):
 
 import ann_scale_benchmark as benchmark  # noqa: E402  (shares the P4-01 fixture builder)
 
+from photo_search.artifacts.store import ArtifactStore  # noqa: E402
 from photo_search.catalog.db import Catalog  # noqa: E402
 from photo_search.catalog.errors import CatalogError  # noqa: E402
 from photo_search.indexing import maintenance  # noqa: E402
@@ -1004,6 +1010,216 @@ def scenario_cli(work: Path, args: argparse.Namespace) -> dict[str, Any]:
         fixture.catalog.close()
 
 
+# ------------------------------------------------------------------------------- recovery
+class StubImageEncoder:
+    """The deterministic stand-in for the ADR-0003 image tower during a re-execution.
+
+    It is keyed by the source file's name, so the proof stays about *the same input*: the vector
+    it returns is the one read out of the published artifact before its bytes were corrupted.
+    """
+
+    def __init__(self, vectors: dict[str, Sequence[float]]) -> None:
+        self.vectors = {
+            str(name): [float(value) for value in vector] for name, vector in vectors.items()
+        }
+        self.calls: list[str] = []
+
+    def encode_image(self, path: str) -> list[float]:
+        name = Path(path).name
+        self.calls.append(name)
+        return list(self.vectors[name])
+
+
+def corrupt_artifact(fixture: Any, artifact_id: str) -> tuple[Path, list[float], bytes]:
+    """Break the published bytes; return the path, the deterministic re-run vector and the bytes."""
+    row = fixture.catalog.read_one(
+        "SELECT * FROM artifacts WHERE artifact_id = ?", (str(artifact_id),)
+    )
+    if row is None:
+        raise RuntimeError(f"artifact {artifact_id} is not in the fixture")
+    path = ArtifactStore.open(fixture.data_root).resolve_uri(str(row["storage_uri"]))
+    published = path.read_bytes()
+    payload = json.loads(published.decode("utf-8"))
+    path.write_bytes(b"these bytes no longer verify against the recorded checksum")
+    return path, [float(value) for value in payload["vector"]], published
+
+
+def give_the_asset_a_real_source_file(fixture: Any, work: Path, asset_id: int) -> Path:
+    """Point the asset's source root at a real project-local file.
+
+    The shared benchmark fixture records synthetic locations under ``D:\\synthetic\\...`` with no
+    files behind them, so the recovery path - which only reads a PRESENT location - needs one
+    honest file inside this run's work directory. The stand-in encoder never decodes it.
+    """
+    location = fixture.catalog.read_one(
+        "SELECT source_id, relative_path FROM file_locations WHERE asset_id = ? "
+        "ORDER BY location_id LIMIT 1",
+        (int(asset_id),),
+    )
+    if location is None:
+        raise RuntimeError(f"asset {asset_id} has no location")
+    root = (work / "library").resolve()
+    with fixture.catalog.write() as connection:
+        connection.execute(
+            "UPDATE source_roots SET root_path = ? WHERE source_id = ?",
+            (str(root), int(location["source_id"])),
+        )
+    path = root / str(location["relative_path"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"synthetic source image (never decoded by the stand-in encoder)")
+    return path
+
+
+def scenario_recovery(work: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """A2/A3 from the P4-02A engineering review: isolation, bounded audits, supported recovery."""
+    scale = max(int(args.injection_assets), 30)
+    fixture = fresh_fixture(work, scale=scale, seed=int(args.seed) + 21, distribution=args.distribution)
+    try:
+        events = 3
+        grow_library(fixture, events=events, seed=int(args.seed) + 22, prefix="p4-02c")
+        first = int(fixture.scale) + 1
+        target = first + 1
+        target_artifact = f"p4-02c-{target}"
+        other_artifact = f"p4-02c-{first}"
+        path, vector, published_bytes = corrupt_artifact(fixture, target_artifact)
+
+        refusal: dict[str, Any] | None = None
+        try:
+            maintenance.drain_semantic_outbox(fixture.catalog)
+        except CatalogError as error:
+            refusal = {"code": str(error.code), "message": str(error.message)}
+        states_after_refusal = outbox_states(fixture)
+
+        isolation = maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+        states_after_repair = outbox_states(fixture)
+        audit_growth: list[dict[str, Any]] = []
+        for _ in range(3):
+            report = maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+            audit_growth.append(
+                {
+                    "applied": int(report["applied"]),
+                    "scheduled": int(report["repair"]["scheduled"]),
+                    "requires_reexecution": int(report["repair"]["requires_reexecution"]),
+                    "outbox_rows": _outbox_rows(fixture),
+                    "outbox": outbox_states(fixture),
+                }
+            )
+        # A genuinely lost confirmation must still be scheduled, even though the auditor is
+        # idempotent on the stuck state above.
+        with fixture.catalog.write() as connection:
+            connection.execute(
+                "DELETE FROM index_entries WHERE space_id = ? AND asset_id = ? AND generation_id = ?",
+                (SPACE_ID, first, GENERATION_ID),
+            )
+        real_repair = maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+
+        source = give_the_asset_a_real_source_file(fixture, work, target)
+        encoder = StubImageEncoder({source.name: vector})
+        digest_before = state_digest(fixture)["sha256"]
+        recovery = maintenance.reexecute_reclaimed_artifacts(fixture.catalog, encoder=encoder)
+        republished_bytes = path.read_bytes()
+        lifecycle = str(
+            fixture.catalog.read_one(
+                "SELECT lifecycle_state FROM artifacts WHERE artifact_id = ?", (target_artifact,)
+            )["lifecycle_state"]
+        )
+        digest_without_drain = state_digest(fixture)["sha256"]
+        final = maintenance.drain_semantic_outbox(fixture.catalog)
+        audit_after = IndexCoordinator(fixture.catalog).audit_and_schedule_repairs(
+            now_ms=benchmark.now_ms()
+        )
+        row = _row_for(fixture, target) or {}
+        entry = _entry_revision(fixture, target)
+        ready = semantic_ready(fixture)
+        expected_ready = int(fixture.scale) + events
+        digest_after = state_digest(fixture)
+
+        dry_run = _run_cli(["reexecute", "--data-root", str(fixture.data_root), "--dry-run", "--json"])
+        digest_after_dry_run = state_digest(fixture)["sha256"]
+        missing_model = _run_cli(
+            [
+                "reexecute",
+                "--data-root",
+                str(fixture.data_root),
+                "--model-dir",
+                str(work / "no-model-here"),
+                "--manifest",
+                str(work / "no-manifest.json"),
+                "--device",
+                "cpu",
+                "--json",
+            ]
+        )
+        without_model = _run_cli(["reexecute", "--data-root", str(fixture.data_root), "--json"])
+
+        checks = {
+            "one_bad_artifact_refuses_the_drain": refusal is not None
+            and refusal["code"] == "ARTIFACT_MISSING"
+            and states_after_refusal == {"PENDING": events},
+            "the_reclaimed_event_is_isolated_not_dropped": int(isolation["applied"]) == events - 1
+            and int(isolation["awaiting_reexecution"]["count"]) == 1
+            and int(isolation["index"]["after"]["pending"]) == 1
+            and states_after_repair == {"CONFIRMED": events - 1, "PENDING": 1}
+            and isolation["awaiting_reexecution"]["sample"][0]["artifact_id"] == target_artifact,
+            "repeated_audits_do_not_grow_the_backlog": all(
+                item["outbox_rows"] == events and item["outbox"] == states_after_repair
+                for item in audit_growth
+            ),
+            "a_real_loss_is_still_scheduled": int(real_repair["repair"]["scheduled"]) == 1
+            and _outbox_rows(fixture) == events + 1,
+            "reexecution_republishes_the_identical_bytes": int(recovery["republished"]) == 1
+            and lifecycle == "PUBLISHED"
+            and republished_bytes == published_bytes,
+            "the_republish_alone_projects_nothing": digest_without_drain == digest_before,
+            "the_same_event_confirms_afterwards": int(final["applied"]) == 1
+            and int(final["awaiting_reexecution"]["count"]) == 0
+            and int(row["projection_revision"]) == int(entry["confirmation_revision"])
+            and str(entry["state"]) == "CONFIRMED"
+            and ready == expected_ready,
+            "audit_after_recovery_is_clean": not audit_after["scheduled"]
+            and not audit_after["requires_reexecution"],
+            "dry_run_lists_without_writing": int(dry_run["returncode"]) == 0
+            and int((dry_run["payload"] or {}).get("targets", -1)) == 0
+            and digest_after_dry_run == digest_after["sha256"],
+            "the_cli_refuses_without_an_explicit_model": int(without_model["returncode"]) == 2
+            and int(missing_model["returncode"]) == 1
+            and str(((missing_model["payload"] or {}).get("error") or {}).get("code"))
+            == "RUNTIME_CAPABILITY_UNAVAILABLE",
+        }
+        return {
+            "ok": all(checks.values()),
+            "assets": int(fixture.scale),
+            "events": events,
+            "target_asset": target,
+            "target_artifact": target_artifact,
+            "other_artifact": other_artifact,
+            "refusal": refusal,
+            "isolation": isolation,
+            "audit_growth": audit_growth,
+            "real_repair": real_repair["repair"],
+            "recovery": recovery,
+            "final_drain": {
+                "applied": int(final["applied"]),
+                "awaiting_reexecution": final["awaiting_reexecution"],
+                "index_after": final["index"]["after"],
+            },
+            "digests": {
+                "before_recovery": digest_before,
+                "after_republish": digest_without_drain,
+                "after_drain": digest_after["sha256"],
+                "after_dry_run": digest_after_dry_run,
+            },
+            "cli": {"dry_run": dry_run, "without_model": without_model, "missing_model": missing_model},
+            "checks": checks,
+        }
+    finally:
+        fixture.catalog.close()
+
+
+def _outbox_rows(fixture: Any) -> int:
+    return int(fixture.catalog.read_one("SELECT COUNT(*) AS total FROM index_outbox")["total"])
+
+
 def _run_cli(argv: Sequence[str]) -> dict[str, Any]:
     completed = subprocess.run(
         [sys.executable, "-m", "photo_search.indexing.cli", *argv],
@@ -1035,7 +1251,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         default="all",
-        choices=("all", "entry", "injections", "contention", "busy-timeout", "cli"),
+        choices=("all", "entry", "injections", "contention", "busy-timeout", "recovery", "cli"),
         help="which scenarios to run",
     )
     parser.add_argument("--work-dir", type=Path, required=True)
@@ -1086,6 +1302,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ("injections", scenario_injections),
         ("contention", scenario_contention),
         ("busy_timeout", scenario_busy_timeout),
+        ("recovery", scenario_recovery),
         ("cli", scenario_cli),
     )
     for name, scenario in modes:

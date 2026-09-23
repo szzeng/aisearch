@@ -1,4 +1,10 @@
-"""Idempotent P2-03 outbox consumer and index repair coordinator."""
+"""Idempotent P2-03 outbox consumer and index repair coordinator.
+
+P4-02C adds exactly two rules to that consumer, both documented on
+:data:`CLAIMABLE_EVENT_PREDICATE` and :meth:`IndexCoordinator._schedule_existing`: an event
+whose artifact is waiting for re-execution is not claimable, and the repair audit reuses the
+pending event that already represents its own work instead of allocating a new revision.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +29,30 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.config import resolve_data_root, vectors_dir
+
+#: The claim predicate shared by both replay paths (:meth:`IndexCoordinator.process_next` and
+#: :meth:`IndexCoordinator.process_batch`).
+#:
+#: An event whose artifact is ``RECLAIMED`` is *waiting for re-execution*. P2-03 writes that
+#: lifecycle state only from the repair audit (or an explicit ``reclaim``) after deciding that
+#: the published bytes cannot be reused, and ``ArtifactStore.republish_reclaimed`` is the only
+#: way back. Such an event can never be applied, so it must not be claimed either: the claim is
+#: oldest-first and the batch is all-or-nothing, which means one reclaimed artifact would
+#: otherwise pin the head of the outbox and stop the whole drain forever (P4-02A engineering
+#: review A2). The row itself is untouched - it stays unconfirmed with its ``last_error_code``,
+#: so nothing is dropped, silently confirmed or hidden; the maintenance entry reports it as
+#: ``awaiting_reexecution`` and the same event confirms normally once the artifact is
+#: republished.
+#:
+#: This is deliberately *not* a "skip the bad file" rule. An artifact that is still
+#: ``PUBLISHED`` while its bytes no longer verify is claimed exactly as before and fails closed
+#: with a structured ``ARTIFACT_MISSING``; that refusal is what tells the operator to run the
+#: repair audit, and the isolation only starts once the audit has recorded ``RECLAIMED``.
+CLAIMABLE_EVENT_PREDICATE = (
+    "state IN ('PENDING', 'IN_FLIGHT') AND NOT EXISTS ("
+    "SELECT 1 FROM artifacts AS a WHERE a.artifact_id = index_outbox.artifact_id "
+    "AND a.lifecycle_state = 'RECLAIMED')"
+)
 
 
 def _table_name(generation_id: str) -> str:
@@ -371,6 +401,35 @@ class LanceVectorIndex:
         return values
 
 
+def _mark_entry_pending_repair(
+    connection: sqlite3.Connection,
+    *,
+    artifact: Any,
+    generation: Any,
+    asset_id: int,
+    revision: int,
+) -> None:
+    """Record that one (space, asset, generation) is waiting for its projection again.
+
+    Shared by both scheduling paths of :meth:`IndexCoordinator._schedule_existing` so that a
+    reused event and a freshly allocated one leave the same honest entry state
+    (``PENDING_REPAIR``, no ``confirmed_at``, the revision the event carries).
+    """
+    connection.execute(
+        "INSERT INTO index_entries(space_id, asset_id, generation_id, artifact_id, "
+        "confirmation_revision, confirmed_at, state) VALUES (?, ?, ?, ?, ?, NULL, 'PENDING_REPAIR') "
+        "ON CONFLICT(space_id, asset_id, generation_id) DO UPDATE SET artifact_id = excluded.artifact_id, "
+        "confirmation_revision = excluded.confirmation_revision, confirmed_at = NULL, state = 'PENDING_REPAIR'",
+        (
+            artifact["space_id"],
+            asset_id,
+            generation["generation_id"],
+            artifact["artifact_id"],
+            int(revision),
+        ),
+    )
+
+
 class IndexCoordinator:
     """Replay pending events; SQLite confirmation alone controls readiness."""
 
@@ -464,10 +523,14 @@ class IndexCoordinator:
             )
 
     def process_next(self, *, now_ms: int, failpoint: str | None = None) -> bool:
-        """Apply one event. ``after_lance`` simulates the documented crash window."""
+        """Apply one event. ``after_lance`` simulates the documented crash window.
+
+        The claimed event is the oldest *claimable* one: an event whose artifact is waiting for
+        re-execution is left where it is (see :data:`CLAIMABLE_EVENT_PREDICATE`).
+        """
         with self._timed_write("claim") as connection:
             event = connection.execute(
-                "SELECT * FROM index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
+                f"SELECT * FROM index_outbox WHERE {CLAIMABLE_EVENT_PREDICATE} "
                 "ORDER BY created_at, event_id LIMIT 1"
             ).fetchone()
             if event is None:
@@ -628,13 +691,18 @@ class IndexCoordinator:
         writer must not land last"). An event another coordinator claimed and confirmed before
         this transaction began is simply not ours any more: it is skipped, never written and
         never reported as a lost claim.
+
+        The batch is bounded by *claimable* events only: an event whose artifact is waiting for
+        re-execution (``RECLAIMED``) is not claimed at all, so one reclaimed artifact can no
+        longer stop every other event behind it. See :data:`CLAIMABLE_EVENT_PREDICATE` for why
+        that is an isolation rule and not a way to skip an unreadable file.
         """
         claimed = int(max_events)
         if claimed < 1:
             return 0
         with self._timed_write("claim") as connection:
             rows = connection.execute(
-                "SELECT event_id FROM index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
+                f"SELECT event_id FROM index_outbox WHERE {CLAIMABLE_EVENT_PREDICATE} "
                 "ORDER BY created_at, event_id LIMIT ?",
                 (claimed,),
             ).fetchall()
@@ -993,19 +1061,64 @@ class IndexCoordinator:
         now_ms: int,
         projection_revision: int | None = None,
     ) -> bool:
+        """Queue "project this artifact" for an unchanged (artifact, generation).
+
+        Two callers need opposite things from the revision and both are served here:
+
+        * :meth:`schedule_projection_refresh` passes the authority transaction's own
+          ``projection_revision``, and the event has to be created with exactly that revision;
+        * :meth:`audit_and_schedule_repairs` passes nothing, and this method allocates the next
+          revision. That is the path P4-02A's engineering review (A3) found non-idempotent:
+          every audit run allocated ``MAX(projection_revision) + 1`` again, so an outbox that
+          could not drain - for example because one artifact had become unreadable - grew by
+          one unconfirmed event per artifact per audit run, while the drain kept failing on the
+          oldest event. The audit therefore *reuses* the unconfirmed event that already carries
+          exactly this work whenever that event is the newest one for the triple, and only
+          allocates a new revision when it is not.
+
+        A genuine repair still schedules: a deleted confirmation, a missing engine row or a
+        replaced artifact leaves either no unconfirmed event or a newer one, so the audit
+        behaves exactly as P2-03 documents. Repeated audits over an unchanged state allocate
+        nothing and cannot enlarge the backlog.
+        """
         import hashlib
 
-        revision = (
-            int(projection_revision)
-            if projection_revision is not None
-            else int(
+        revision: int
+        if projection_revision is not None:
+            revision = int(projection_revision)
+        else:
+            newest = int(
                 connection.execute(
-                    "SELECT COALESCE(MAX(projection_revision), 0) + 1 FROM index_outbox "
+                    "SELECT COALESCE(MAX(projection_revision), 0) FROM index_outbox "
                     "WHERE space_id = ? AND asset_id = ? AND generation_id = ?",
                     (artifact["space_id"], asset_id, generation["generation_id"]),
                 ).fetchone()[0]
             )
-        )
+            reusable = connection.execute(
+                "SELECT projection_revision FROM index_outbox "
+                "WHERE space_id = ? AND asset_id = ? AND generation_id = ? "
+                "AND event_type = 'UPSERT_VECTOR' AND state <> 'CONFIRMED' "
+                "AND artifact_id = ? ORDER BY projection_revision DESC LIMIT 1",
+                (
+                    artifact["space_id"],
+                    asset_id,
+                    generation["generation_id"],
+                    artifact["artifact_id"],
+                ),
+            ).fetchone()
+            if reusable is not None and int(reusable["projection_revision"]) >= newest:
+                # The pending event already is this work: it confirms as soon as the artifact
+                # is readable again, so there is nothing to allocate. The entry still records
+                # the honest "not yet re-projected" state.
+                _mark_entry_pending_repair(
+                    connection,
+                    artifact=artifact,
+                    generation=generation,
+                    asset_id=asset_id,
+                    revision=int(reusable["projection_revision"]),
+                )
+                return False
+            revision = newest + 1
         payload = {
             "artifact_id": str(artifact["artifact_id"]),
             "asset_id": asset_id,
@@ -1043,18 +1156,12 @@ class IndexCoordinator:
             ).fetchone()
             if existing is not None and str(existing["state"]) == "CONFIRMED":
                 return False
-        connection.execute(
-            "INSERT INTO index_entries(space_id, asset_id, generation_id, artifact_id, "
-            "confirmation_revision, confirmed_at, state) VALUES (?, ?, ?, ?, ?, NULL, 'PENDING_REPAIR') "
-            "ON CONFLICT(space_id, asset_id, generation_id) DO UPDATE SET artifact_id = excluded.artifact_id, "
-            "confirmation_revision = excluded.confirmation_revision, confirmed_at = NULL, state = 'PENDING_REPAIR'",
-            (
-                artifact["space_id"],
-                asset_id,
-                generation["generation_id"],
-                artifact["artifact_id"],
-                revision,
-            ),
+        _mark_entry_pending_repair(
+            connection,
+            artifact=artifact,
+            generation=generation,
+            asset_id=asset_id,
+            revision=revision,
         )
         return True
 

@@ -2598,3 +2598,44 @@ Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
 它们超出 P4-02A 允许修改范围，本次聚焦通过不等于异常恢复通过。P4-02B 正式容量 PASS 前须另立小卡
 收口恢复入口和审计幂等；真实模型、ANN/API P95、GTX 1660、冻结包 CLI 等未验证项仍按报告口径保留。
 模型切换始终由用户在 Codex 中手动完成。
+
+## Latest task — P4-02C 语义索引恢复面与审计幂等（2026-09-24）
+
+**P4-02C：`IMPLEMENTED / VALIDATION COMPLETE（B + D）`，`ENGINEERING REVIEW PENDING`
+—— 未标 PASS、未启动 P4-02B、未改动 P4-02B 的依赖结论。** 本卡即 P4-02A 主审 A2/A3 的收口卡
+（[任务卡](tasks/P4-02C.md)）：基线 **`36b8d81`**（先把上一轮 P4-02A 收口产物入库），报告
+[P4-02C-recovery-and-audit-idempotency.md](reports/P4-02C-recovery-and-audit-idempotency.md)。
+
+交付：① **A2-a 隔离**——`process_next`/`process_batch` 共用
+`CLAIMABLE_EVENT_PREDICATE`（不领取工件已 `RECLAIMED` 的事件；`PUBLISHED` 但校验失败仍失败关闭），
+被隔离事件保持未确认并由 `drain` 报告的 `awaiting_reexecution = {count, sample, sample_truncated}`
+结构化上报；② **A3 审计幂等**——`_schedule_existing` 审计路径复用同一 artifact 的最新未确认事件，
+不再每次 `MAX+1` 造新行（真实缺失仍排程）；③ **A2-b 生产恢复入口**——
+`maintenance.reexecute_reclaimed_artifacts` + 受控 `python -m photo_search.indexing.cli reexecute`
+（`--dry-run`/显式 `--model-dir`/`--manifest`/`--device`，无静默默认与静默 CPU 回退，
+非逐字节等价的重执行被 `ARTIFACT_INVALID` 拒绝）。禁止面零改动：`SUPPORTED_SCHEMA_VERSION` 仍 15、
+outbox/entry 状态词表未变、migration/ADR/companion/API/Web/打包面/依赖未触碰。
+
+实测：`test-results/p4-02c-recovery.json`（工具 exit 0、10/10 检查为真）——坏工件先
+`ARTIFACT_MISSING` 零进展 → `--repair` 后 applied 2 / `{CONFIRMED 2, PENDING 1}` / awaiting 1 →
+注入编码器重执行（与原字节逐字节相同）→ 同一事件确认、`confirmation_revision == Lance
+projection_revision == 0`、`semantic_ready = 43`；连续三次 `--repair` 的 outbox 行数**恒为 3**
+（主审曾实测 3→5→7→9），而真实丢失的确认仍被排程；数值漂移/维度不足/NaN 三种重执行全部被结构化拒绝
+且零落地。验收：focused `p4-02c-focused.xml` **7 / 0 / 0 / 0**、受影响面
+`p4-02c-boundaries.xml` **36 / 0 / 0 / 0**、全量 `p4-02c-full.xml` **1666 / 0 / 0 / 48**（217.7 s）、
+`--mode all` 探针六场景 `ok=true`（entry applied 300 / 第二次 0 / 持锁 p95 119.6 ms / 审计 9.24 ms/工件；
+contention applied 301；busy_timeout 1 次拒绝后全部确认），Ruff / `git diff --check` /
+`uv lock --check` 全 exit 0。
+
+**BLOCKED**：真实中文 CLIP 权重的端到端重执行未跑——默认模型目录
+`%LOCALAPPDATA%\PhotoSearchData\models` 与 `D:\PhotoSearchData` 实测均不存在，
+故重执行语义只用确定性注入编码器证明；真实模型等价性/耗时/显存、CLI 正路径、
+30 万档对领取谓词与审计成本的影响均按报告 §9 保留为未验证项。
+
+**停止点**：请按 V3.1 §11 在**新会话**用 **DS-H / DeepSeek V4.1 Flash / 高推理**做主审并写
+`docs/reports/P4-02C-dsh-engineering-review.md`（完整 diff、隔离谓词与审计幂等语义、
+D 级注入真实性、禁止面核对、≥3 处变异测试）；通过后状态写
+`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。随后由 **C2 / GPT-5.6 Sol / high**
+聚焦终审（领取谓词、revision/幂等、旧 revision 不回滚、恢复链与失败关闭边界）——
+**Sol 必选**；通过后才标 P4-02C PASS，并把 **P4-02B**（[任务卡](tasks/P4-02B.md)，推荐
+DS-L / DeepSeek V4.1 Flash / 低推理）的前置更新为「A2/A3 已收口」。模型切换始终由用户在 Codex 中手动完成。
