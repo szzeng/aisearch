@@ -135,7 +135,24 @@
 | 验收 | 命令 | 结果 |
 |---|---|---|
 | 设计探针 | `--mode design --scale 300000 --query-budget-seconds 20` | 计划 8 条 + 块扫描 12 条 + 批量写入 2 条，见 `test-results/p4-01b-design.json` |
-| 全量套件 | `pytest -q tests/unit tests/integration` | **1639 / 0 / 0 / 48**（环境跳过），见 `test-results/p4-01b-full.xml` |
+| 全量套件（P4-01B 范围） | `pytest -q tests/unit tests/integration --ignore=tests/integration/test_p4_01c_retrieval_blocks.py` | **1639 / 0 / 0 / 48**（环境跳过），202.5 s，见 `test-results/p4-01b-scope-full.xml` |
+| 全量套件（原样，含并行在制品） | `pytest -q tests/unit tests/integration` | 1643 / **3 failures** / 0 / 48，见 `test-results/p4-01b-full.xml`（3 个失败全部来自并行进行的 P4-01C 在制品测试，见下） |
+
+**并行工作树说明（2026-09-23 19:03 起）**：本轮分析期间，同一工作树里出现了另一个会话正在进行的
+P4-01C 实现（`src/photo_search/search/retrieval.py` 的 `SCOPE_BLOCK_SIZE=5000`、
+`src/photo_search/indexing/store.py` 的 `has()` 定点查询与 `ensure_scalar_index*`、
+新文件 `tests/integration/test_p4_01c_retrieval_blocks.py`）。**本报告与本节所有结论都只基于 P4-01B
+的分析，未触碰、未修改、未回滚这些文件。** 原样全量的 3 个失败全部来自那份在制品的测试期望：
+
+1. `test_block_size_is_an_access_path_parameter`：断言 `blocks == ceil(1200/block_size)`，但小块下
+   真实块数被 `MAX_VECTOR_BLOCKS = 1000` 截断（实测 `[1000] != [1200]`）——断言需要把安全阀算进去；
+2. `test_process_all_survives_a_refused_scalar_index`：monkeypatch 的目标方法与实现实际调用的路径不一致，
+   于是真实 `create_scalar_index` 成功执行、报告为 `created`（期望 `unavailable`）；
+3. `test_has_is_a_point_query_with_a_correct_fallback`：`has()` 走了 `count_rows(filter=...)` 快路径，
+   回退分支自然没有被调用（期望调用 `rows()` 两次）。
+
+这三条属于**测试期望问题，不是实现缺陷**；本卡不代改别人在制品的测试（按任务边界交回）。若该实现并入
+主线，它的验收应由 P4-01C 自己跑（含本次分析新增的 `--mode strategy` 证据）。
 | Ruff / diff / lock | `ruff check .`、`git diff --check`、`uv lock --check` | 全部 exit 0 |
 
 ## 8. 未验证项与停止点
@@ -147,3 +164,113 @@
   以及本次的 `COUNT(*)` 计划退化（若要按 D2 深入，属于 SQLite 计划层面的专项）。
 - **停止点**：用户裁决前不进实现；若裁决选择 D1/D3（协议面）或 B4（下调承诺），执行前必须补
   `C2 / GPT-5.6 Sol / high` 聚焦终审，不得直接实现。
+
+## 9. 补充分析（按用户指定重点：修 300 次查询、filter+vector 顺序、ANN 方案比较）
+
+本节证据来自 `--mode strategy`：`test-results/p4-01b-strategy-20k.json`、
+`test-results/p4-01b-strategy-300k.json`、`test-results/p4-01b-strategy-300k-p16.json`。
+全部为只读查询 + 在派生表上另建新表的实验，`src/photo_search/**` 仍未改动。
+
+### 9.1 「300 次引擎查询」问题的量化与修法
+
+根因是 `vector_channel` 的候选分块遍历：`blocks = ceil(候选数 / SCOPE_BLOCK_SIZE)`，而**每块一次引擎查询都要
+扫描整张 generation**（无 ANN 索引时），于是总成本 ≈ `blocks × 全表扫描`，即 `O(候选数 × 行数 / 块大小)`。
+30 万全库查询 = 300 块 × 全表扫描。
+
+三个独立杠杆（30 万，同一查询，**top-20 与基线逐条一致**）：
+
+| 杠杆 | 配置 | 单次搜索 | 相对基线 |
+|---|---|---:|---:|
+| 基线 | 块 1 000，无索引 | 92 195 ms | 1× |
+| ① 放大块 | 块 5 000 | 19 757 ms | 4.7× |
+| ① 放大块 | 块 25 000 | 7 282 ms | 12.7× |
+| ① 放大块 | 块 100 000（=3 块） | 5 466 ms | 16.9× |
+| ② + `asset_id` 标量索引（80 ms 建好） | 块 5 000 | 3 602 ms | 25.6× |
+| ② + 标量索引 | 块 100 000 | 3 518 ms | 26.2× |
+| ③ 有 ANN 索引时 | 块 100 000 | 2 077 ms | 44.4× |
+| ④ 换成**一次**全局查询（仅无过滤适用） | 1 块 | **374 ms**（精确） | 246× |
+
+**结论**：①②是纯参数/索引层修法，结果不变、零新依赖，合计把 30 万全库搜索从 92 s 降到 ~3.5 s；
+④再降到 ~0.37 s，但它只在 `scope` 恒真时与语义等价（有过滤时就是「全库 Top-K 后过滤」，违反 §9.3 第 4 条），
+因此必须由用户单独授权并限定触发条件。③不推荐靠它达标（见 9.3）。
+
+### 9.2 filter + vector 的顺序分析
+
+先把「谁能下推到向量引擎」查清楚（30 万，`--mode strategy` 的 `engine_pushdown`）：
+
+| 探针 | 20 000 行 | 300 000 行 |
+|---|---:|---:|
+| 引擎无过滤扫描（1 次查询） | 24.7 ms | 317～369 ms |
+| 引擎内 `array_contains(source_ids, 1)` 过滤 | 27.4 ms | 449 ms（**比不过滤更慢**） |
+| `create_scalar_index("source_ids", index_type="LabelList")` | — | **被拒绝**：`Unknown index type LabelList` |
+
+而 `place`/`person`/`capture` 这三类权威条件**根本不在派生投影里**（P2-03 的 Lance schema 只有
+`asset_id`/`vector`/`source_ids`/`visible`/revision 等），所以它们只能留在 SQLite 侧，
+**不可能**通过「向量引擎预过滤」实现。顺序分析因此收敛为：
+
+1. **权威先行（现状）是唯一正确顺序**：SQLite 决定成员 → 候选 `asset_id` 流按块交给引擎排序 → 合并
+   → 回 SQLite 复核。任何「向量先行再过滤」的写法在有条件时都会缺结果，违反 §9.3 第 4 条。
+2. **真正的代价不在「顺序」，而在过滤谓词的查询计划**。同一 `--mode strategy` 在 30 万上用
+   块 5 000 实测：wide（72%）215 998 候选 / 44 块 / **18 085 ms**；narrow（10%）30 000 / 6 块 / **2 754 ms**；
+   而 half（来源 + 地点后代）与 thin（地点 + 人物 all）**连一块都取不出来**（>60 s 被中断）。
+   在 20 000 行上更能看清量级：wide 3 块 400 ms、narrow 1 块 62 ms，但 **half 2 块 19 380 ms**、
+   **thin 1 块 143 406 ms**。
+3. 与 §5 的 `COUNT(*)` 现象合并看：同一条件在不同语句上的表现是 wide/half/narrow/thin =
+   `COUNT` 375 ms / >20 s / 600 ms / >20 s、分页 12 ms / **0.2 ms** / 0.1 ms / >20 s、遍历 18.1 s /
+   >60 s / 2.8 s / >60 s。也就是说 **`file_locations`（source）与 `face_person_links`（person）
+   这两个相关 EXISTS 子查询的计划是共同病灶**：它们让「按资产逐行重扫来源/人物集合」的成本叠加到
+   每一条用到该谓词的语句上。
+4. 因此顺序分析给出的实际修复顺序是：**先修谓词计划（D2），再谈块大小与索引**。在谓词仍是坏计划时，
+   放大块只能救 wide/narrow，救不了 half/thin。
+
+### 9.3 ANN 方案比较：「优化现有检索路径」vs「替换 ANN」
+
+同一夹具、同一查询集、每个方案一张全新表（`--mode strategy --scheme-list`）：
+
+**20 000 行（39 分区，200 查询，clustered）**
+
+| 方案 | Recall@20 | Recall@50 | 查询 P50 | 建索引 |
+|---|---:|---:|---:|---:|
+| 无索引（精确） | **1.000** | **1.000** | 28.0 ms | 0 ms |
+| `IVF_PQ` 64 子向量（现状） | 0.232 | 0.271 | 13.1 ms | 4 299 ms |
+| `IVF_PQ` 128 子向量 | 0.408 | 0.433 | 11.3 ms | 8 507 ms |
+| `IVF_FLAT` | **0.671** | 0.660 | 11.1 ms | **229 ms** |
+| `IVF_SQ` | 0.654 | 0.644 | 10.7 ms | 225 ms |
+| `IVF_HNSW_FLAT` | 0.638 | 0.646 | 11.0 ms | 623 ms |
+| `HNSW_FLAT` | 0.642 | 0.662 | 10.9 ms | 630 ms |
+
+**300 000 行（100 查询）**
+
+| 方案 | 分区 | Recall@20 | 查询 P50 | 建索引 |
+|---|---:|---:|---:|---:|
+| 无索引（精确） | — | **1.000** | 300 ms | 0 ms |
+| `IVF_FLAT` | 585（默认） | 0.150 | 15.3 ms | 4 353 ms |
+| `IVF_SQ` | 585 | 0.157 | 13.4 ms | 3 558 ms |
+| `IVF_FLAT` | 16（单变量） | 0.150 | 16.1 ms | 3 847 ms |
+| `IVF_SQ` | 16（单变量） | 0.147 | 13.4 ms | 3 400 ms |
+
+**读法（不要过度解读）**：
+
+1. 在 20 000 行上，**换掉 `IVF_PQ` 是明显划算的**：`IVF_FLAT`/`IVF_SQ` 把 Recall@20 从 0.232 提到
+   0.65～0.67，且建索引快 19 倍（229 ms vs 4 299 ms）；HNSW 系列同档。
+2. 在 300 000 行上，**所有被测方案都掉到 0.15 附近**，而且把分区从 585 降到 16 并不改善
+   （0.150 → 0.150）——说明在锁定版里主导因素既不是量化精度也不是分区数，而是**查询实际覆盖到的
+   数据比例，而控制它的 `nprobes`/`ef_search` 开关在这个 API 里没有暴露**。
+3. 因此按主架构 §12.3 的 `Recall@20 ≥ 0.95`：**本构建内没有任何 ANN 方案达标**；而「优化现有检索路径」
+   保持 Recall = 1.000，同时在 30 万上把无过滤搜索从 92 s 压到 ~3.5 s（或 0.37 s，若授权 ④）。
+4. 附带结论（供后续索引策略参考，不是本卡建议立刻实施）：若将来确实需要 ANN 加速，
+   **`IVF_FLAT`/`IVF_SQ` 应优先于当前 `IVF_PQ`**（同延迟下召回更高、建索引快 19 倍）；
+   是否把 ANN 作为默认路径，应等真实模型向量复测后再决定。
+
+## 10. 更新后的建议与待裁决项（替代 §6 的推荐口径）
+
+| # | 决策 | 更新后的建议 | 依据 |
+|---|---|---|---|
+| 1 | 修「300 次查询」 | **A1 + A2**：`SCOPE_BLOCK_SIZE` 1 000 → 5 000，并建 `asset_id` 标量索引（缺失时确定性回退）。**A3（无过滤时走一次全局查询）单独授权**，因它改变检索选择策略（结果仍等价） | §9.1 |
+| 2 | filter + vector 顺序 | **保持权威先行**（唯一符合 §9.3 的顺序）；**不引入向量引擎预过滤**（`array_contains` 更慢、`LabelList` 索引被拒、place/person/capture 不在投影里）；把「先修过滤谓词计划（D2）」提到块大小调优之前 | §9.2 |
+| 3 | ANN 方案 / 索引策略 | **暂不调整索引策略**：不把 ANN 作为主路径，保持精确路径（Recall 1.000）；若将来需要 ANN，用 `IVF_FLAT`/`IVF_SQ` 而非 `IVF_PQ`；§12.3 的 0.95 必须在真实模型向量 + 能调 `nprobes` 的引擎上复测 | §9.3 |
+| 4 | 过滤计数 | 仍按 **D2 优先**（不改语义地修计划）。补充：D2 的目标谓词已锁定为 `source`（`file_locations`）与 `person`（`face_person_links`）两个相关 EXISTS 子查询，改成等价的 `asset_id IN (SELECT ...)` 集合成员判断；若改完仍不达标再裁决 D1/D3 | §9.2、§5 |
+
+**要请用户拍板的只有两件事**：① 是否授权 **A3**（无过滤时一次全局查询，30 万 0.37 s）；
+② 是否同意 **暂不调整索引策略**（本卡结论），并把 ANN 复测排到真实模型权重就绪之后。
+其余三项（A1+A2、权威先行不变、D2 优先）按本报告执行即可。

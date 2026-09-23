@@ -2227,3 +2227,41 @@ B2 粗筛+精确重排排后续，B3 换索引类型/B4 下调 §12.3 承诺需�
 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。两条引擎/环境异常（同表第三次
 `create_index(replace=True)` 无进展；`COUNT(*)` 计划退化）仍建议按 §2.2 转 **C1**。
 **P4-02 在 P4-01C 收口前不启动**。模型切换始终由用户在 Codex 中手动完成。
+
+## P4-01B 补充分析（按用户指定重点：300 次查询 / filter+vector 顺序 / ANN 方案比较）
+
+**仍在 P4-01B 内，纯分析，`src/photo_search/**` 零改动。** 报告已追加 §9/§10
+（[P4-01B 报告](reports/P4-01B-bottleneck-decision.md)）；证据 `test-results/p4-01b-strategy-20k.json`、
+`...-300k.json`、`...-300k-p16.json`，工具新增 `--mode strategy`（过滤×向量顺序矩阵、引擎下推探针、
+单次全局查询上界、ANN 方案对照）、`--fixture-dir`、`--scheme-list/--scheme-partitions`。
+
+1. **修「300 次引擎查询」**（30 万、同一查询、top-20 与基线逐条一致）：块 1 000 无索引 92 195 ms →
+   块 5 000 = 19 757 ms → 块 25 000 = 7 282 ms → 块 100 000 = 5 466 ms；再加 `asset_id` 标量索引
+   （80 ms 建好）后块 5 000 = 3 602 ms、块 100 000 = 3 518 ms；有 ANN 时块 100 000 = 2 077 ms；
+   **一次全局查询（仅无过滤等价）374 ms**。结论：A1（块 1 000→5 000）+ A2（标量索引）是纯参数/索引层修法，
+   结果不变；A3（一次全局查询）需单独授权。
+2. **filter + vector 顺序**：`place`/`person`/`capture` 不在派生投影里，引擎内 `array_contains(source_ids,1)`
+   在 30 万上比不过滤更慢（449 ms vs 317～369 ms）且 `LabelList` 标量索引被引擎拒绝 ⇒ **不引入向量引擎预过滤，
+   保持权威先行**。真正的代价是过滤谓词的**查询计划**：30 万块 5 000 下 wide 44 块 18 085 ms、narrow 6 块
+   2 754 ms，而 **half/thin 连一块都取不出来（>60 s 中断）**；在 20 000 行上同样可见：half 2 块 19 380 ms、
+   thin 1 块 143 406 ms。病灶锁定为 `source`（`file_locations`）与 `person`（`face_person_links`）两个相关
+   EXISTS 子查询，必须**先修谓词计划再做块大小调优**。
+3. **ANN 方案比较**：20 000 行上 `IVF_PQ`(64) Recall@20 0.232 / 建索引 4 299 ms，而 `IVF_FLAT` 0.671 /
+   229 ms、`IVF_SQ` 0.654 / 225 ms、`IVF_HNSW_FLAT` 0.638、`HNSW_FLAT` 0.642（查询都在 11 ms 级），
+   精确路径 1.000 / 28 ms；300 000 行上 `IVF_FLAT`/`IVF_SQ` 无论 585 还是 16 个分区都只有 **0.150/0.147**，
+   精确路径 1.000 / 300 ms ⇒ **本构建内没有 ANN 方案达到 §12.3 的 0.95**（`nprobes`/`ef_search` 未暴露）。
+   结论：**暂不调整索引策略**（不把 ANN 当主路径）；若将来需要 ANN，选 `IVF_FLAT`/`IVF_SQ` 而非 `IVF_PQ`；
+   0.95 需在真实模型向量 + 可调 `nprobes` 的引擎上复测。
+
+**需要用户拍板的两件事**：① 是否授权 A3（无过滤时一次全局查询，30 万 0.37 s）；② 是否同意
+**暂不调整索引策略**并把 ANN 复测排到真实权重就绪之后。其余三项（A1+A2、权威先行、D2 优先）按报告执行。
+下一任务仍是 **P4-01C**（[docs/tasks/P4-01C.md](tasks/P4-01C.md)），推荐档位不变
+（DS-H / DeepSeek V4.1 Flash / 高推理；完成后 Sol high 聚焦终审必选）。模型切换始终由用户手动完成。
+
+**并行工作树提示（2026-09-23 19:03 起）**：同一工作树里出现了另一个会话正在进行的 P4-01C 实现
+（`retrieval.py` 的 `SCOPE_BLOCK_SIZE=5000`、`store.py` 的 `has()` 定点查询与 `ensure_scalar_index*`、
+新测试 `tests/integration/test_p4_01c_retrieval_blocks.py`），方向与 P4-01B §10 的推荐一致。本会话
+**未触碰**这些文件。原样全量套件现为 1643 / **3 failures** / 0 / 48（`test-results/p4-01b-full.xml`），
+三个失败都是那份在制品的**测试期望**问题（块数被 `MAX_VECTOR_BLOCKS=1000` 截断、monkeypatch 目标没生效、
+`has()` 快路径成功所以回退未触发）；排除该在制品文件后的 P4-01B 范围为 **1639 / 0 / 0 / 48**
+（`test-results/p4-01b-scope-full.xml`）。P4-01C 的验收应由它自己的会话完成。

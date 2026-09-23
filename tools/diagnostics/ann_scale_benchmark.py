@@ -1015,6 +1015,7 @@ def production_walk(
     limit: int,
     index: LanceVectorIndex | None = None,
     warmup: bool = False,
+    block_size: int | None = None,
 ) -> dict[str, Any]:
     """The unchanged production candidate walk (``vector_channel``) for each query.
 
@@ -1039,6 +1040,7 @@ def production_walk(
             query_vector=[float(value) for value in query],
             scope=scope,
             top_k=int(limit),
+            **({} if block_size is None else {"block_size": int(block_size)}),
         )
         elapsed = (time.perf_counter() - started) * 1000
         return (
@@ -1545,6 +1547,534 @@ def design_report(work: Path, *, args: argparse.Namespace, seed: int) -> dict[st
     return report
 
 
+def _index_variant_config(label: str, *, partitions: int) -> Any:
+    """One ANN configuration from the pinned engine's own index catalogue."""
+    from lancedb import index as lance_index
+
+    factories: dict[str, Any] = {
+        "ivf_pq_64": lambda: lance_index.IvfPq(
+            distance_type="cosine", num_partitions=partitions, num_sub_vectors=64
+        ),
+        "ivf_pq_128": lambda: lance_index.IvfPq(
+            distance_type="cosine", num_partitions=partitions, num_sub_vectors=128
+        ),
+        "ivf_pq_32": lambda: lance_index.IvfPq(
+            distance_type="cosine", num_partitions=partitions, num_sub_vectors=32
+        ),
+        "ivf_sq": lambda: lance_index.IvfSq(
+            distance_type="cosine", num_partitions=partitions
+        ),
+        "ivf_flat": lambda: lance_index.IvfFlat(
+            distance_type="cosine", num_partitions=partitions
+        ),
+        "ivf_hnsw_flat": lambda: lance_index.IvfHnswFlat(
+            distance_type="cosine", num_partitions=partitions, m=20, ef_construction=300
+        ),
+        "hnsw_flat": lambda: lance_index.HnswFlat(
+            distance_type="cosine", m=20, ef_construction=300
+        ),
+        "hnsw_sq": lambda: lance_index.HnswSq(
+            distance_type="cosine", m=20, ef_construction=300
+        ),
+    }
+    if label not in factories:
+        raise ValueError(f"unknown index variant {label!r}")
+    return factories[label]()
+
+
+def build_variant_index(
+    fixture: ScaleFixture, *, label: str, partitions: int, generation_id: str = GENERATION_ID
+) -> dict[str, Any]:
+    """Drop every vector index on the generation, then create the requested variant."""
+    import lancedb
+
+    from photo_search.indexing.store import _table_name
+
+    database = lancedb.connect(str(fixture.vectors_dir))
+    table = database.open_table(_table_name(generation_id))
+    dropped = []
+    for existing in table.list_indices():
+        name = str(getattr(existing, "name", existing))
+        table.drop_index(name)
+        dropped.append(name)
+    config = _index_variant_config(label, partitions=partitions)
+    started = time.perf_counter()
+    error = None
+    try:
+        table.create_index("vector", config=config)
+        table.wait_for_index(["vector_idx"], timeout=timedelta(minutes=45))
+    except Exception as failure:  # noqa: BLE001 - a refused/unfinishable variant is a finding
+        error = f"{type(failure).__name__}: {failure}"
+    build_ms = round((time.perf_counter() - started) * 1000, 1)
+    indices = [str(item) for item in table.list_indices()]
+    try:
+        stats = str(table.index_stats("vector_idx"))
+    except Exception as failure:  # noqa: BLE001
+        stats = f"{type(failure).__name__}: {failure}"
+    del table
+    del database
+    return {
+        "label": label,
+        "config": str(config),
+        "dropped": dropped,
+        "build_ms": build_ms,
+        "error": error,
+        "indices": indices,
+        "index_stats": stats,
+        "size_bytes": directory_bytes(fixture.vectors_dir),
+    }
+
+
+def index_compare_report(work: Path, *, args: argparse.Namespace, seed: int) -> dict[str, Any]:
+    """Route A (optimise the existing path) vs route B (replace the ANN), same fixture/queries."""
+    import lancedb
+
+    from photo_search.indexing.store import _table_name
+
+    scales = [int(value) for value in str(args.scale).split(",") if value.strip()]
+    scale = scales[0]
+    fixture = build_fixture(
+        work / f"scale-{scale}",
+        scale=scale,
+        seed=seed,
+        distribution=args.distribution,
+        reuse=True,
+    )
+    report: dict[str, Any] = {"scale": scale, "route_a": {}, "route_b": {}}
+    try:
+        ids = fixture.scope_ids(retrieval.SearchScope.build())
+        query_count = int(args.queries)
+        queries = synthetic_vectors(query_count, seed=seed + 7, distribution=args.distribution)
+        boundaries = boundary_vectors(fixture.matrix, count=args.boundary_queries, seed=seed + 11)
+        probe = np.concatenate([queries, boundaries], axis=0)
+        started = time.perf_counter()
+        exact20 = exact_top_k(fixture.matrix, ids, probe, 20)
+        exact50 = exact_top_k(fixture.matrix, ids, probe, 50)
+        report["exact_reference_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        report["queries"] = int(probe.shape[0])
+
+        index = LanceVectorIndex(fixture.vectors_dir)
+        blocks = [int(value) for value in args.sweep_block_sizes.split(",")]
+        one = probe[:1]
+
+        # ---------------- route A: exact path, then the two recommended parameters ---------
+        report["route_a"]["dropped_vector_index"] = drop_ann_index(fixture)
+        walked = []
+        for size in blocks:
+            started = time.perf_counter()
+            block = retrieval.vector_channel(
+                fixture.catalog,
+                index=index,
+                binding=retrieval.resolve_binding(
+                    fixture.catalog,
+                    generation_id=GENERATION_ID,
+                    space_id=SPACE_ID,
+                    dimension=DIM,
+                ),
+                query_vector=[float(value) for value in one[0]],
+                scope=retrieval.SearchScope.build(),
+                top_k=200,
+                block_size=int(size),
+            )
+            walked.append(
+                {
+                    "block_size": int(size),
+                    "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "blocks": int(block["blocks"]),
+                    "scanned_assets": int(block["scanned_assets"]),
+                    "top20": [int(row["asset_id"]) for row in block["hits"][:20]],
+                }
+            )
+            log(f"  route A exact walk B={size}: {walked[-1]['ms']} ms / {block['blocks']} blocks")
+        report["route_a"]["exact_walk"] = walked
+        report["route_a"]["global_exact_timings"] = summarize(
+            _timed(lambda query: engine_search(index, vector=query, limit=200), probe[:20])
+        )
+
+        scalar = {}
+        try:
+            database = lancedb.connect(str(fixture.vectors_dir))
+            table = database.open_table(_table_name(GENERATION_ID))
+            started = time.perf_counter()
+            table.create_scalar_index("asset_id", index_type="BTREE", replace=True)
+            scalar = {
+                "created_ms": round((time.perf_counter() - started) * 1000, 1),
+                "indices": [str(item.name) for item in table.list_indices()],
+            }
+            del table
+            del database
+        except Exception as failure:  # noqa: BLE001
+            scalar = {"error": f"{type(failure).__name__}: {failure}"}
+        report["route_a"]["scalar_index"] = scalar
+        with_scalar = []
+        for size in blocks:
+            started = time.perf_counter()
+            block = retrieval.vector_channel(
+                fixture.catalog,
+                index=index,
+                binding=retrieval.resolve_binding(
+                    fixture.catalog,
+                    generation_id=GENERATION_ID,
+                    space_id=SPACE_ID,
+                    dimension=DIM,
+                ),
+                query_vector=[float(value) for value in one[0]],
+                scope=retrieval.SearchScope.build(),
+                top_k=200,
+                block_size=int(size),
+            )
+            with_scalar.append(
+                {
+                    "block_size": int(size),
+                    "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "blocks": int(block["blocks"]),
+                    "top20": [int(row["asset_id"]) for row in block["hits"][:20]],
+                }
+            )
+            log(f"  route A exact+scalar walk B={size}: {with_scalar[-1]['ms']} ms")
+        report["route_a"]["exact_with_scalar_walk"] = with_scalar
+
+        # ---------------- route B: replace the ANN ------------------------------------------
+        partitions = (
+            int(args.scheme_partitions)
+            if int(args.scheme_partitions) > 0
+            else default_partitions(scale)
+        )
+        entries = []
+        for label in [value for value in args.index_variants.split(",") if value.strip()]:
+            built = build_variant_index(fixture, label=label, partitions=partitions)
+            log(
+                f"  route B {label}: build {built['build_ms']} ms"
+                + (f" error={built['error']}" if built["error"] else "")
+            )
+            if built["error"]:
+                entries.append({"index": built, "skipped": built["error"]})
+                continue
+            handle = open_engine_table(index)
+            hits20, hits50 = ann_hits(index, probe, table=handle)
+            global_recall = {
+                "recall_at_20": recall(exact20, hits20, k=20),
+                "recall_at_50": recall(exact50, hits50, k=50),
+                "families": family_recall(
+                    exact20, exact50, hits20, hits50, split=int(query_count)
+                ),
+                "timings": summarize(
+                    _timed(
+                        lambda query: engine_search(index, vector=query, limit=200, table=handle),
+                        probe[:20],
+                    )
+                ),
+            }
+            walk_size = int(args.index_compare_block_size)
+            started = time.perf_counter()
+            block = retrieval.vector_channel(
+                fixture.catalog,
+                index=index,
+                binding=retrieval.resolve_binding(
+                    fixture.catalog,
+                    generation_id=GENERATION_ID,
+                    space_id=SPACE_ID,
+                    dimension=DIM,
+                ),
+                query_vector=[float(value) for value in one[0]],
+                scope=retrieval.SearchScope.build(),
+                top_k=200,
+                block_size=walk_size,
+            )
+            walk_ms = round((time.perf_counter() - started) * 1000, 1)
+            walk_hits = {int(row["asset_id"]) for row in block["hits"][:20]}
+            log(
+                f"  route B {label}: global recall@20 {global_recall['recall_at_20']['recall']}, "
+                f"walk B={walk_size} {walk_ms} ms"
+            )
+            entries.append(
+                {
+                    "index": built,
+                    "global": global_recall,
+                    "walk": {
+                        "block_size": walk_size,
+                        "ms": walk_ms,
+                        "blocks": int(block["blocks"]),
+                        "recall_at_20": recall(exact20[:1], [walk_hits], k=20),
+                    },
+                }
+            )
+        report["route_b"]["variants"] = entries
+    finally:
+        fixture.catalog.close()
+    return report
+
+
+SCHEME_SPECS: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("exact_no_index", {}),
+    ("ivf_pq_64", {"index_type": "IvfPq", "num_sub_vectors": 64}),
+    ("ivf_pq_128", {"index_type": "IvfPq", "num_sub_vectors": 128}),
+    ("ivf_flat", {"index_type": "IvfFlat"}),
+    ("ivf_sq", {"index_type": "IvfSq"}),
+    ("ivf_hnsw_flat", {"index_type": "IvfHnswFlat"}),
+    ("hnsw_flat", {"index_type": "HnswFlat"}),
+)
+
+
+def engine_query_ms(
+    table: Any,
+    vector: Sequence[float],
+    clause: str | None,
+    *,
+    repeats: int = 5,
+    limit: int = 200,
+) -> float:
+    """Median wall time of one engine query, optionally with an engine-side filter."""
+    samples: list[float] = []
+    for _ in range(int(repeats)):
+        started = time.perf_counter()
+        builder = table.search(list(vector)).limit(int(limit))
+        if clause:
+            builder = builder.where(str(clause))
+        builder.to_arrow()
+        samples.append((time.perf_counter() - started) * 1000)
+    samples.sort()
+    return round(samples[len(samples) // 2], 2)
+
+
+def build_scheme_index(
+    fixture: ScaleFixture,
+    *,
+    generation_id: str,
+    index_type: str,
+    partitions: int,
+    sub_vectors: int | None = None,
+    m: int | None = None,
+    ef_construction: int | None = None,
+) -> dict[str, Any]:
+    """Create one named vector-index scheme with the new (non-deprecated) config API."""
+    import lancedb
+    import lancedb.index as lance_index
+
+    from photo_search.indexing.store import _table_name
+
+    database = lancedb.connect(str(fixture.vectors_dir))
+    table = database.open_table(_table_name(generation_id))
+    config_class = getattr(lance_index, index_type)
+    options: dict[str, Any] = {"distance_type": "cosine", "num_partitions": int(partitions)}
+    if sub_vectors is not None:
+        options["num_sub_vectors"] = int(sub_vectors)
+    if m is not None:
+        options["m"] = int(m)
+    if ef_construction is not None:
+        options["ef_construction"] = int(ef_construction)
+    config = config_class(**options)
+    for existing in table.list_indices():
+        table.drop_index(str(getattr(existing, "name", existing)))
+    started = time.perf_counter()
+    table.create_index("vector", config=config)
+    build_ms = (time.perf_counter() - started) * 1000
+    stats: Any = None
+    try:
+        stats = str(table.index_stats("vector_idx"))
+    except Exception as error:  # noqa: BLE001
+        stats = f"{type(error).__name__}: {error}"
+    report = {
+        "index_type": index_type,
+        "options": {key: value for key, value in options.items() if value is not None},
+        "build_ms": round(build_ms, 1),
+        "index_stats": stats,
+        "size_bytes": directory_bytes(fixture.vectors_dir),
+    }
+    del table
+    del database
+    return report
+
+
+def strategy_report(work: Path, *, args: argparse.Namespace, seed: int) -> dict[str, Any]:
+    """P4-01B follow-up: block-walk repair, filter/vector ordering, ANN scheme comparison."""
+    scale = int(args.scale)
+    fixture_dir = (
+        Path(args.fixture_dir)
+        if args.fixture_dir is not None
+        else work / f"scale-{scale}"
+    )
+    fixture = build_fixture(
+        fixture_dir, scale=scale, seed=seed, distribution=args.distribution, reuse=True
+    )
+    report: dict[str, Any] = {"scale": scale, "fixture_dir": str(fixture_dir)}
+    try:
+        index = LanceVectorIndex(fixture.vectors_dir)
+        report["dropped_vector_index"] = drop_ann_index(fixture)
+        block_size = int(args.sweep_block_sizes.split(",")[1]) if "," in args.sweep_block_sizes else 5000
+        report["filter_block_size"] = block_size
+
+        # A. filter x vector ordering: the same production walk at a fixed block size, per tier.
+        query = synthetic_vectors(1, seed=seed + 91, distribution=args.distribution)
+        tier_rows: list[dict[str, Any]] = []
+        for tier in TIERS:
+            place_ids = fixture.city_ids[: int(tier["cities"])] if tier["cities"] else ()
+            capture = (
+                None
+                if tier["share"] is None
+                else _capture_range_for_share(tier["share"], scale=fixture.scale)
+            )
+            scope = retrieval.SearchScope.build(
+                source_id=tier["source_id"],
+                place_ids=place_ids,
+                person_ids=tier["persons"],
+                person_match=tier["match"],
+                capture=capture,
+            )
+            walk, timeout = bounded_query(
+                fixture.catalog,
+                lambda: production_walk(
+                    fixture, scope=scope, queries=query, limit=200, index=index
+                ),
+                seconds=args.query_budget_seconds,
+            )
+            if walk is None:
+                tier_rows.append(
+                    {
+                        "tier": tier["label"],
+                        "timeout": timeout,
+                        "conditions": {
+                            "source_id": tier["source_id"],
+                            "place_ids": list(place_ids),
+                            "person_ids": list(tier["persons"]),
+                            "person_match": tier["match"],
+                        },
+                    }
+                )
+                log(f"  ordering {tier['label']}: {timeout}")
+                continue
+            tier_rows.append(
+                {
+                    "tier": tier["label"],
+                    "candidates": walk["scanned_assets"][0],
+                    "blocks": walk["blocks"][0],
+                    "expected_blocks": math.ceil(walk["scanned_assets"][0] / block_size),
+                    "ms": walk["timings"]["median_ms"],
+                    "distinct_hits": len(walk["ranked"][0]),
+                    "conditions": {
+                        "source_id": tier["source_id"],
+                        "place_ids": list(place_ids),
+                        "person_ids": list(tier["persons"]),
+                        "person_match": tier["match"],
+                    },
+                }
+            )
+            log(
+                f"  ordering {tier['label']}: {walk['scanned_assets'][0]} candidates, "
+                f"{walk['blocks'][0]} blocks, {walk['timings']['median_ms']} ms"
+            )
+        report["filter_ordering"] = {"block_size": block_size, "rows": tier_rows}
+
+        # B. can the derived projection pre-filter inside the engine at all?
+        pushdown: dict[str, Any] = {}
+        try:
+            import lancedb
+
+            from photo_search.indexing.store import _table_name
+
+            database = lancedb.connect(str(fixture.vectors_dir))
+            table = database.open_table(_table_name(GENERATION_ID))
+            vector = [float(value) for value in query[0]]
+
+            pushdown["engine_scan_ms"] = engine_query_ms(table, vector, None)
+            pushdown["engine_array_contains_ms"] = engine_query_ms(
+                table, vector, "array_contains(source_ids, 1)"
+            )
+            try:
+                started = time.perf_counter()
+                table.create_scalar_index("source_ids", index_type="LabelList", replace=True)
+                pushdown["label_list_index_ms"] = round((time.perf_counter() - started) * 1000, 1)
+                pushdown["engine_array_contains_with_index_ms"] = engine_query_ms(
+                    table, vector, "array_contains(source_ids, 1)"
+                )
+            except Exception as error:  # noqa: BLE001
+                pushdown["label_list_index_error"] = f"{type(error).__name__}: {error}"
+            del table
+            del database
+        except Exception as error:  # noqa: BLE001
+            pushdown["error"] = f"{type(error).__name__}: {error}"
+        report["engine_pushdown"] = pushdown
+        log(f"  pushdown: {json.dumps(pushdown, ensure_ascii=False)}")
+
+        # C. the "one query instead of hundreds" bound (a bound, not a proposal: with any
+        #    real filter it would be a post-filter and violate architecture §9.3 item 4).
+        bound_samples = _timed(
+            lambda value: engine_search(index, vector=value, limit=200),
+            synthetic_vectors(5, seed=seed + 93, distribution=args.distribution),
+        )
+        report["vector_first_bound"] = summarize(bound_samples)
+
+        # D. ANN scheme comparison (fresh table per scheme; exact = no index).
+        schemes = [
+            (label, spec)
+            for label, spec in SCHEME_SPECS
+            if label in {value.strip() for value in args.scheme_list.split(",")}
+        ]
+        probe_queries = synthetic_vectors(
+            int(args.scheme_queries), seed=seed + 97, distribution=args.distribution
+        )
+        ids = fixture.scope_ids(retrieval.SearchScope.build())
+        exact20 = exact_top_k(fixture.matrix, ids, probe_queries, 20)
+        exact50 = exact_top_k(fixture.matrix, ids, probe_queries, 50)
+        scheme_rows: list[dict[str, Any]] = []
+        partitions = default_partitions(scale)
+        for label, spec in schemes:
+            generation = f"{GENERATION_ID}-{label}"
+            written = write_generation_table(fixture, generation_id=generation)
+            built: dict[str, Any] = {"index_type": None, "options": {}, "build_ms": 0.0}
+            if spec:
+                built = build_scheme_index(
+                    fixture,
+                    generation_id=generation,
+                    index_type=str(spec["index_type"]),
+                    partitions=partitions,
+                    sub_vectors=spec.get("num_sub_vectors"),
+                )
+            handle = open_engine_table(index, generation_id=generation)
+            hits20 = [
+                set(
+                    engine_search(
+                        index, vector=value, limit=20, table=handle, generation_id=generation
+                    )
+                )
+                for value in probe_queries
+            ]
+            hits50 = [
+                set(
+                    engine_search(
+                        index, vector=value, limit=50, table=handle, generation_id=generation
+                    )
+                )
+                for value in probe_queries
+            ]
+            latencies = _timed(
+                lambda value: engine_search(
+                    index, vector=value, limit=200, table=handle, generation_id=generation
+                ),
+                probe_queries[: min(20, probe_queries.shape[0])],
+            )
+            scheme_rows.append(
+                {
+                    "label": label,
+                    "index": built,
+                    "write_ms": written["write_ms"],
+                    "recall_at_20": recall(exact20, hits20, k=20),
+                    "recall_at_50": recall(exact50, hits50, k=50),
+                    "query_ms": summarize(latencies),
+                    "size_bytes": directory_bytes(fixture.vectors_dir),
+                }
+            )
+            log(
+                f"  scheme {label}: recall@20={scheme_rows[-1]['recall_at_20']['recall']} "
+                f"query={scheme_rows[-1]['query_ms']['median_ms']} ms "
+                f"build={built['build_ms']} ms"
+            )
+        report["ann_schemes"] = {"queries": int(args.scheme_queries), "rows": scheme_rows}
+    finally:
+        fixture.catalog.close()
+    return report
+
+
 def scale_report(
     work: Path,
     *,
@@ -1887,7 +2417,9 @@ def filter_report(
                     "scanned_assets": walk["scanned_assets"],
                     "recall_at_20": walk_recall(exact, walk["ranked"], k=20),
                     "hits_outside_authority": outside,
-                    "expected_blocks": math.ceil(len(ids) / 1000) if ids else 0,
+                    "expected_blocks": (
+                        math.ceil(len(ids) / int(retrieval.SCOPE_BLOCK_SIZE)) if ids else 0
+                    ),
                 },
             }
         )
@@ -2639,6 +3171,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "scale",
             "attribution",
             "design",
+            "strategy",
             "maintenance",
             "concurrency",
             "drain-worker",
@@ -2650,6 +3183,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--sweep-block-sizes",
         default="1000,5000,25000,100000",
         help="candidate SCOPE_BLOCK_SIZE values for the design block-size sweep",
+    )
+    parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        default=None,
+        help="reuse an existing fixture directory (e.g. attribution-clustered) instead of scale-<N>",
+    )
+    parser.add_argument(
+        "--scheme-list",
+        default="exact_no_index,ivf_pq_64,ivf_pq_128,ivf_flat,ivf_sq,ivf_hnsw_flat,hnsw_flat",
+        help="comma-separated ANN schemes to compare in --mode strategy",
+    )
+    parser.add_argument("--scheme-queries", type=int, default=200)
+    parser.add_argument(
+        "--scheme-partitions",
+        type=int,
+        default=0,
+        help="override num_partitions for every scheme in --mode strategy (0 = auto)",
     )
     parser.add_argument("--work-dir", type=Path, default=Path("tmp/p4-01-benchmark"))
     parser.add_argument("--output", type=Path, default=None)
@@ -2710,8 +3261,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     work = Path(args.work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    # `design` probes an *existing* fixture, so it must never trigger the throw-away cleanup.
-    if not args.keep and not args.reuse_fixture and args.mode != "design":
+    # `design`/`strategy` probe an *existing* fixture, so they must never clean it away.
+    if not args.keep and not args.reuse_fixture and args.mode not in ("design", "strategy"):
         for leftover in work.glob("scale-*"):
             shutil.rmtree(leftover, ignore_errors=True)
         for leftover in work.glob("concurrent-*"):
@@ -2745,6 +3296,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         write_report(args, report)
     if args.mode in ("design",):
         report["design"] = design_report(work, args=args, seed=args.seed)
+        write_report(args, report)
+    if args.mode in ("strategy",):
+        report["strategy"] = strategy_report(work, args=args, seed=args.seed)
         write_report(args, report)
     if args.mode in ("all", "maintenance"):
         report["maintenance_injections"] = maintenance_injections(work, args=args)
