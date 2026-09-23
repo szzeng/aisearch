@@ -1329,6 +1329,222 @@ def attribution_report(work: Path, *, args: argparse.Namespace, seed: int) -> di
     return report
 
 
+def explain_filter_plans(
+    fixture: ScaleFixture, *, args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    """``EXPLAIN QUERY PLAN`` plus a bounded timing for each filter tier.
+
+    The P4-01 report found that two AND combinations take minutes while two comparable ones
+    take ~150 ms. A decided repair needs the planner's own account of that, so the plans are
+    recorded verbatim next to the timings.
+    """
+    rows: list[dict[str, Any]] = []
+    for tier in TIERS:
+        place_ids = fixture.city_ids[: int(tier["cities"])] if tier["cities"] else ()
+        capture = (
+            None
+            if tier["share"] is None
+            else _capture_range_for_share(tier["share"], scale=fixture.scale)
+        )
+        scope = retrieval.SearchScope.build(
+            source_id=tier["source_id"],
+            place_ids=place_ids,
+            person_ids=tier["persons"],
+            person_match=tier["match"],
+            capture=capture,
+        )
+        where, parameters = retrieval.scope_condition(fixture.catalog.connection, scope)
+        statements = {
+            "count": f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}",
+            "page": f"SELECT a.asset_id FROM assets AS a WHERE {where} ORDER BY a.asset_id LIMIT 5",
+        }
+        for name, sql in statements.items():
+            plan = [
+                " | ".join(str(value) for value in row)
+                for row in fixture.catalog.read_all(f"EXPLAIN QUERY PLAN {sql}", tuple(parameters))
+            ]
+            started = time.perf_counter()
+            timed, timeout = bounded_query(
+                fixture.catalog, lambda: len(fixture.catalog.read_all(sql, tuple(parameters))), seconds=args.query_budget_seconds
+            )
+            rows.append(
+                {
+                    "tier": tier["label"],
+                    "statement": name,
+                    "conditions": {
+                        "source_id": tier["source_id"],
+                        "place_ids": list(place_ids),
+                        "person_ids": list(tier["persons"]),
+                        "person_match": tier["match"],
+                        "capture_from_key": None if capture is None else capture.from_key,
+                    },
+                    "sql": sql,
+                    "ms": round((time.perf_counter() - started) * 1000, 1),
+                    "rows": timed,
+                    "timeout": timeout,
+                    "plan": plan,
+                }
+            )
+            log(
+                f"  explain {tier['label']}/{name}: "
+                f"{rows[-1]['ms']} ms"
+                + (f" {timeout}" if timeout else "")
+            )
+    return rows
+
+
+def block_size_sweep(
+    fixture: ScaleFixture, *, args: argparse.Namespace
+) -> dict[str, Any]:
+    """Is the production block size the lever? Same query, identical results, fewer blocks."""
+    queries = synthetic_vectors(1, seed=args.seed + 71, distribution=args.distribution)
+    scope = retrieval.SearchScope.build()
+    index = LanceVectorIndex(fixture.vectors_dir)
+    report: dict[str, Any] = {"sizes": [int(value) for value in args.sweep_block_sizes.split(",")]}
+
+    def walk(block_size: int) -> dict[str, Any]:
+        started = time.perf_counter()
+        block = retrieval.vector_channel(
+            fixture.catalog,
+            index=index,
+            binding=retrieval.resolve_binding(
+                fixture.catalog, generation_id=GENERATION_ID, space_id=SPACE_ID, dimension=DIM
+            ),
+            query_vector=[float(value) for value in queries[0]],
+            scope=scope,
+            top_k=200,
+            block_size=int(block_size),
+        )
+        return {
+            "block_size": int(block_size),
+            "ms": round((time.perf_counter() - started) * 1000, 1),
+            "blocks": int(block["blocks"]),
+            "scanned_assets": int(block["scanned_assets"]),
+            "top20": [int(row["asset_id"]) for row in block["hits"][:20]],
+        }
+
+    def phase(label: str) -> list[dict[str, Any]]:
+        entries = [walk(size) for size in report["sizes"]]
+        baseline = entries[0]["top20"]
+        for entry in entries:
+            entry["same_top20_as_first"] = entry["top20"] == baseline
+            entry["phase"] = label
+        log(
+            f"  sweep {label}: "
+            + ", ".join(f"B={item['block_size']} {item['ms']} ms/{item['blocks']} blocks" for item in entries)
+        )
+        return entries
+
+    dropped = drop_ann_index(fixture)
+    report["dropped_vector_index"] = dropped
+    report["no_vector_index"] = phase("no_vector_index")
+
+    scalar_state: dict[str, Any] = {}
+    try:
+        import lancedb
+
+        from photo_search.indexing.store import _table_name
+
+        database = lancedb.connect(str(fixture.vectors_dir))
+        table = database.open_table(_table_name(GENERATION_ID))
+        started = time.perf_counter()
+        table.create_scalar_index("asset_id", index_type="BTREE", replace=True)
+        scalar_state = {
+            "created_ms": round((time.perf_counter() - started) * 1000, 1),
+            "indices": [str(item.name) for item in table.list_indices()],
+        }
+        del table
+        del database
+    except Exception as error:  # noqa: BLE001 - a refused scalar index is a finding, not a crash
+        scalar_state = {"error": f"{type(error).__name__}: {error}"}
+    report["scalar_index"] = scalar_state
+    if "error" not in scalar_state:
+        report["with_scalar_index"] = phase("with_scalar_index")
+
+    ann = build_ann_index(fixture, **{"partitions": default_partitions(fixture.scale), "sub_vectors": 64})
+    report["ann_index"] = ann
+    report["with_ann_index"] = phase("with_ann_index")
+    return report
+
+
+def write_batching_report(fixture: ScaleFixture, *, args: argparse.Namespace) -> dict[str, Any]:
+    """One ``merge_insert`` per row vs one per batch, on the same derived table."""
+    import lancedb
+    import pyarrow as pa
+
+    from photo_search.indexing.store import _table_name
+
+    generation = f"{GENERATION_ID}-batching"
+    written = write_generation_table(fixture, generation_id=generation)
+    database = lancedb.connect(str(fixture.vectors_dir))
+    table = database.open_table(_table_name(generation))
+    schema = LanceVectorIndex._schema(pa, DIM)
+
+    def record(asset_id: int) -> dict[str, Any]:
+        return {
+            "record_id": f"{generation}:{asset_id}",
+            "asset_id": asset_id,
+            "generation_id": generation,
+            "space_id": SPACE_ID,
+            "artifact_revision": "batch-probe",
+            "projection_revision": 0,
+            "vector": fixture.matrix[asset_id - 1].tolist(),
+            "source_ids": [1],
+            "visible": True,
+        }
+
+    single = 20
+    started = time.perf_counter()
+    for offset in range(single):
+        table.merge_insert("record_id").when_matched_update_all().when_not_matched_insert_all().execute(
+            [record(offset + 1)]
+        )
+    single_ms = (time.perf_counter() - started) * 1000
+
+    batch = 500
+    started = time.perf_counter()
+    table.merge_insert("record_id").when_matched_update_all().when_not_matched_insert_all().execute(
+        pa.Table.from_pylist([record(1000 + offset) for offset in range(batch)], schema=schema)
+    )
+    batch_ms = (time.perf_counter() - started) * 1000
+    del table
+    del database
+    return {
+        "scratch_rows": written["rows"],
+        "single_row_writes": {
+            "rows": single,
+            "total_ms": round(single_ms, 1),
+            "ms_per_row": round(single_ms / single, 2),
+        },
+        "batched_write": {
+            "rows": batch,
+            "total_ms": round(batch_ms, 1),
+            "ms_per_row": round(batch_ms / batch, 3),
+        },
+        "speedup": round((single_ms / single) / max(batch_ms / batch, 1e-6), 1),
+    }
+
+
+def design_report(work: Path, *, args: argparse.Namespace, seed: int) -> dict[str, Any]:
+    """P4-01B design probes on an already materialised fixture (read-mostly)."""
+    scales = [int(value) for value in str(args.scale).split(",") if value.strip()]
+    report: dict[str, Any] = {"scale": scales[0], "query_budget_seconds": args.query_budget_seconds}
+    fixture = build_fixture(
+        work / f"scale-{scales[0]}",
+        scale=scales[0],
+        seed=seed,
+        distribution=args.distribution,
+        reuse=True,
+    )
+    try:
+        report["filter_plans"] = explain_filter_plans(fixture, args=args)
+        report["block_sweep"] = block_size_sweep(fixture, args=args)
+        report["write_batching"] = write_batching_report(fixture, args=args)
+    finally:
+        fixture.catalog.close()
+    return report
+
+
 def scale_report(
     work: Path,
     *,
@@ -2422,6 +2638,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "all",
             "scale",
             "attribution",
+            "design",
             "maintenance",
             "concurrency",
             "drain-worker",
@@ -2429,6 +2646,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--scale", default="100000,300000")
     parser.add_argument("--attribution-scale", type=int, default=20000)
+    parser.add_argument(
+        "--sweep-block-sizes",
+        default="1000,5000,25000,100000",
+        help="candidate SCOPE_BLOCK_SIZE values for the design block-size sweep",
+    )
     parser.add_argument("--work-dir", type=Path, default=Path("tmp/p4-01-benchmark"))
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--data-root", type=Path, default=None)
@@ -2488,7 +2710,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     work = Path(args.work_dir).resolve()
     work.mkdir(parents=True, exist_ok=True)
-    if not args.keep and not args.reuse_fixture:
+    # `design` probes an *existing* fixture, so it must never trigger the throw-away cleanup.
+    if not args.keep and not args.reuse_fixture and args.mode != "design":
         for leftover in work.glob("scale-*"):
             shutil.rmtree(leftover, ignore_errors=True)
         for leftover in work.glob("concurrent-*"):
@@ -2519,6 +2742,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             write_report(args, report)
     if args.mode in ("all", "attribution"):
         report["attribution"] = attribution_report(work, args=args, seed=args.seed)
+        write_report(args, report)
+    if args.mode in ("design",):
+        report["design"] = design_report(work, args=args, seed=args.seed)
         write_report(args, report)
     if args.mode in ("all", "maintenance"):
         report["maintenance_injections"] = maintenance_injections(work, args=args)

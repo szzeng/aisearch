@@ -2190,3 +2190,40 @@ DS-H 全量工程主审，若改动触及检索语义/召回承诺则补 **C2 / 
 异常（同表第三次 `create_index(replace=True)` >9 min 无进展；AND 过滤 SQL 从 150 ms 退化到 >60 s）按
 V3.1 §2.2 建议转 **C1**。**P4-02（1 万→10 万→30 万正式容量验证）在瓶颈决策前不应启动**，否则只会重测
 同一堵墙。模型切换始终由用户在 Codex 中手动完成。
+
+## Latest design phase — P4-01B bottleneck decision (2026-09-23)
+
+**P4-01B：设计阶段完成（DESIGN HANDED BACK），实现未开始，生产代码零改动。** 决策报告
+[P4-01B 报告](reports/P4-01B-bottleneck-decision.md)。基线 `8af86f8`；本卡新增报告、`docs/tasks/P4-01C.md`、
+本状态段，以及 `tools/diagnostics/ann_scale_benchmark.py` 的 `--mode design` 设计探针。`src/photo_search/**`
+未改一行，schema_version 仍为 15。设计证据：`test-results/p4-01b-design.json`。
+
+设计探针（30 万夹具）给出的三条决定性证据：
+
+1. **块大小就是杠杆，且结果不变**：同一查询在 300 000 行上，无索引时块 1 000 = 92 195 ms（300 块）、
+   块 5 000 = 19 757 ms、块 25 000 = 7 282 ms、块 100 000 = 5 466 ms；加 `asset_id` 标量索引（BTREE，
+   80 ms 建好）后块 1 000 = 6 618 ms、块 5 000 = 3 602 ms、块 100 000 = 3 518 ms；带 IVF_PQ 时
+   块 100 000 = 2 077 ms。**12 种组合的 top-20 与基线逐条相同**（`same_top20_as_first=true`），
+   因为 `vector_channel` 合并的是每块 top-k，放大块不改变结果。参考值：引擎单次**无过滤**全库查询
+   374 ms（精确）。
+2. **过滤退化点被定位到 `COUNT(*)`**：`EXPLAIN QUERY PLAN` + 计时显示 half（来源 1 + 城市 1..5 后代）
+   的 `COUNT(*)` >20 s 未返回，而**同条件的 `ORDER BY asset_id LIMIT 5` 只要 0.2 ms**；narrow 的计数
+   600 ms、分页 0.1 ms；thin 两者都超时。即瓶颈在「为算 `total` 做的整表计数」，不在过滤谓词。
+3. **批量写入快 424×**：30 万行派生表上逐行 `merge_insert` 48.87 ms/行（20 行 977 ms）vs 一次写 500 行
+   0.115 ms/行（57.6 ms）。加上 `has()`→`rows()` 的 `O(N²)` 审计，维护面有一组不动外部契约的修法。
+
+待用户裁决的四项（报告 §6，均给出推荐，可直接照推荐执行）：**决策 1** A1 + A2（块 1 000→5 000 +
+`asset_id` 标量索引；推荐不做 A3 全局查询快路径）｜**决策 2** B1（暂不引入 ANN，保持召回 1.000；
+B2 粗筛+精确重排排后续，B3 换索引类型/B4 下调 §12.3 承诺需另行裁决）｜**决策 3** C1 + C2（批量
+`merge_insert` + `has()` 定点查询）｜**决策 4** D2 优先（不改语义地修计数计划；D1 改 `total` 语义或 D3
+超时降级属协议面，需 Sol 聚焦终审）。
+
+验收：全量 `test-results/p4-01b-full.xml` **1639 / 0 / 0 / 48**（219.8 s）；Ruff `All checks passed!`、
+`git diff --check` 与 `uv lock --check`（96 packages）退出码 0。
+
+下一任务：**P4-01C — 按裁决实现瓶颈修复**（[docs/tasks/P4-01C.md](tasks/P4-01C.md)），推荐
+**DS-H / DeepSeek V4.1 Flash / 高推理**（与当前档一致，可继续使用当前模型）；本卡会改
+`IndexCoordinator` 写路径，故完成后 **C2 / GPT-5.6 Sol / high 聚焦终审必选**，主审通过后先写
+`ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。两条引擎/环境异常（同表第三次
+`create_index(replace=True)` 无进展；`COUNT(*)` 计划退化）仍建议按 §2.2 转 **C1**。
+**P4-02 在 P4-01C 收口前不启动**。模型切换始终由用户在 Codex 中手动完成。
