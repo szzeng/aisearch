@@ -2875,3 +2875,115 @@ DS-H 容量证据专项审查 PENDING。** 详见 [P4-02B 报告](reports/P4-02B
 **下一任务**：[P4-03](tasks/P4-03.md)（UpgradeRun/targets、预算、暂停恢复、profile 原子激活）。
 推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，且 **Sol 必选**（命中 V3.1 §11 高风险清单）。
 若先处理 F1/F2，建议另开「语义发布积压领取」与「检索延迟（候选块/A3）」两张卡，不占用 P4-03 范围。
+
+## Latest engineering review — P4-02B DS-H 容量证据专项审查与修复设计（2026-09-24）
+
+**P4-02B：`DS-H EVIDENCE REVIEW PASS（变更面 / 产品入口 / B+D 证据已独立复现）`
++ `F1 已复现并给出最小修设计` + `F2 未达标、修复设计待 Sol high 聚焦终审` + `P4-02B NOT PASS`。**
+见 [DS-H 审查与修复设计](reports/P4-02B-dsh-engineering-review.md)（基线 `b32d33a`，被审实现 `0808c64`）。
+
+**变更面**：`0d13023 → 0808c64` 只新增 `tools/diagnostics/capacity_validation.py`、
+`tests/integration/test_p4_02_capacity_validation.py`、报告、状态与下一卡；`src/**`、`0001`～`0015`、
+`SUPPORTED_SCHEMA_VERSION`、ADR/companion、信封/错误码/检索语义、打包面、`pyproject.toml`、`uv.lock`
+**零 diff**，符合卡面边界，未扩大为完整受影响面主审。
+
+**主审独立复现**（本轮自跑，证据在 `test-results/p4-02b-dsh-*.xml|json`）：B 级全量
+`1682 / 0 / 0 / 48`、本卡 focused `11 / 0 / 0 / 0`（与 DS-L 留存 JUnit 逐数相同）；在另一
+「中文+空格」工作目录自跑 800 档全阶段（scan 444.5 件/秒、`semantic_ready=800`、`asset_id_idx=created`、
+service P95 18.5 ms、维护同时前台 P95 14.25 ms）+ 五项 D 级注入（中途杀 drain 的
+`CONFIRMED 100 / IN_FLIGHT 10 / PENDING 686`、恢复 `applied=696` 且 `entries=engine_rows=796`；
+`after_lance` 重放 1 次；内容变更以新向量取代旧向量；离线无幽灵命中；确认后立即可检索）。
+测量工具逐段核对确认全部走产品入口（`CatalogService`/`search.documents`/`jobs.enqueue`+`Scheduler`+
+`ArtifactStore`/`photo_search.indexing.cli drain`/`search_assets`/真实 ASGI+CSRF），向量为已声明的
+确定性替身；三档 10 万/30 万阶段数据与 F3 的两次 10 万对照为**仅核读**，主审未重跑。
+
+**F1 已复现并给出最小修**（`tmp/p402b-dsh/f1_claim_probe.py` → `test-results/p4-02b-dsh-f1-claim.json`）：
+真实 catalog 上现行领取 SQL 两侧都是 `USE TEMP B-TREE FOR ORDER BY`，每次领取耗时随积压线性增长
+（10 000/50 000/100 000/300 000 积压 = 2.30 / 11.13 / 21.85 / **117.95 ms**，30 万 ≈ 8.5 件/秒，
+与 DS-L 突发的 47.3 件/秒@10 万积压直接吻合）；主审设计的「`(side, priority)` 各类最旧 `limit` 行
+候选上界 + 原公式与三排序键精确裁决」在带 `(state, priority, created_at, job_id)` 覆盖索引时把
+30 万积压压到 **0.94 ms/次**，并在 **4 320 次随机页比较（240 状态 × 6 limit × 3 aging 窗口）中
+逐项相同**；无覆盖索引时反而更慢（157.9 ms）⇒ 最小修必须新增一次 additive migration。
+
+**F2 在同一代真实 data root 上被拆开测量**（`tmp/p402b-dsh/f2_block_probe.py` →
+`test-results/p4-02b-dsh-f2-blocks.json`，10 000 档）：块大小 250/1 000/5 000/20 000 返回**完全相同的
+top-20 页**（块约束是访问路径参数），引擎耗时 ≈ `131 ms + 12.6 ms × 块数`（每调用固定开销即
+`search_candidates` 重复 `lancedb.connect`/`open_table`），SQLite keyset walk 仅 5.8～51.5 ms，
+不带候选约束的单次 pass 12.48 ms（诊断下界，**不等于** A3 授权）。**新增发现 F4**：
+`asset_id_idx` 只在创建当刻覆盖行（真实 10 万档 `num_indexed_rows=5000 / num_unindexed_rows=5000`，
+`ensure_scalar_index` 见到同名索引即返回 `present` 而从不重建），而 P4-01 基准用的是在完整表上
+`replace=True` 建索引 ⇒ 这条变量成为 P4-01 的 3.6 s 与 P4-02B 30 万档 125 s 那 35 倍差距的
+**首要待验项**（尚未证明是唯一原因），已写入 P4-02D/P4-02F 的必测项。
+
+**未达标 / 未验证（不得记 PASS）**：§12.2 30 万暖机文字搜索 P95 125 174.8 ms（3 样本，目标 ≤ 1 s）、
+后台建库同时前台 10 万档单次 12 622.7 ms（应改称「单次超标观察」）；A3 未授权未实现、
+ANN Recall 0.95 未验证；真实模型吞吐/显存、含真实文本塔的完整 API P95、GTX 1660 最低配置
+保持 **BLOCKED**；30 万档 HTTP、冷 OS 缓存与长时 soak 未测。
+
+**路由与下一步（新开三张卡，不占用 P4-03 范围）**：
+
+1. [P4-02D](tasks/P4-02D.md) — F3 同规模检索时延受控归因（纯测量，两形状 data root + A/B/B/A +
+   索引覆盖对照）。执行 **DS-L**，审查 **DS-H 有界专项复核**，`SOL_NOT_REQUIRED`。
+   可与 P4-02F 阶段 0 合并执行，但受控变量不得省略。
+2. [P4-02E](tasks/P4-02E.md) — F1 语义积压领取有界化（有界候选 + 精确裁决 + `0016` 覆盖索引，
+   `SUPPORTED_SCHEMA_VERSION 15 → 16`）。执行与独立审查均为 **DS-H**（完整受影响面主审）；
+   默认 `SOL_NOT_REQUIRED`，一旦改公平/窗口语义即升 Sol 聚焦终审。
+3. [P4-02F](tasks/P4-02F.md) — F2 检索延迟（阶段 0 归因 → 阶段 1 决策闸门 A 无契约变更 /
+   闸门 B A3 策略化）。**Sol high 聚焦终审必选**；闸门 B 在等价性与 A/B 反例关闭前**不授权实现**；
+   两条路都达不到 ≤ 1 s 时停止并交回用户做性能决策，**不得放宽 §12.2**。
+
+模型切换始终由用户在 Codex 中手动完成；本轮未命中 V3.1 §2.2 六类条件，不升 DS-MAX。
+受限令牌下 `--basetemp` 的 `WinError 5`/`WinError 3` 已按正常 Windows 权限路由绕过，未改 ACL。
+
+## Latest measurement closure — P4-02D F3 同规模检索时延受控归因（2026-09-24）
+
+**P4-02D 归因完成（纯测量）：主因 = `asset_id` 标量索引覆盖率；另有第二个反向小变量。**
+见 [P4-02D 归因报告](reports/P4-02D-attribution.md)（基线 `b32d33a`）。`src/**`、`0001`～`0015`、
+`SUPPORTED_SCHEMA_VERSION`、ADR/companion、信封/错误码/检索语义、打包面、`pyproject.toml`、`uv.lock` **零 diff**。
+
+**受控对（10 万、同 `--seed 20260924`、同夹具、同替身编码器、同查询 `西湖 sunset 全家福`、同 `top_k=20`）**：
+除写入形状外参数完全相同，数据在 `tmp/p402d 归因 验证/`（可丢弃、`tmp/` 被忽略）。同夹具与同一检索由
+`assets` 列表 sha256、`index_entries` sha256、64 点实存向量距离、以及 84 次采样返回**同一页**
+（`page_sha256=25ac38b4…`）自证；`test-results/p4-02b-*.json` 只存聚合时延、无命中页，故不引用其页。
+
+**两条 root 唯一的状态差异是索引覆盖率**：A（突发，一次性投递 10 万）`asset_id_idx`
+`num_indexed_rows=100000 / num_unindexed_rows=0`；B（20 波、每波 5 000）`5000 / 95000`（5%）。
+行数、fragment 文件数（各 500）、单 fragment 字节（≈423 KB）、fragment 总字节、表 version 量级都相同。
+机制读代码即可确认：`ensure_scalar_index` 见到同名索引即返回 `present`，**从不重建**，波次形状的索引在
+第 2 波（表内 5 000 行）建立后再不覆盖后续 19 波追加的行。
+
+**A/B/B/A（20 样本/轮，共 84 次查询）** 中位：3 760.5 / 15 085.7 / 15 024.6 / 4 427.6 ms ⇒ **B/A=3.68**
+（合并 P50 3.58×、P95 3.43×）。**阶段拆分**把差异全部钉在 Lance 引擎层：SQLite `read_all` 与候选 keyset
+walk 两侧都是 276–291 ms，`other`（FTS/融合/渲染）37–39 ms；引擎合计 4 232.2（A）vs 14 518.4 ms（B）。
+**逐块证据**：B 的 20 个块耗时几乎相同——**包括索引确实覆盖的 block#1（ids 1..5000，中位 730.2 ms）**，
+A 的 block#1 为 185.5 ms ⇒ 部分覆盖的标量索引**完全不生效**，每块退化为整代过滤扫描。
+字节核算吻合：B 每次查询读 **3 852 MB ≈ 20 × 211.55 MB × 0.91**，A 480 MB、B 重建后 279 MB。
+
+**F4 单变量对照（同一张表上 `replace` 重建，只用于归因）**：B `5000/95000 → 100000/0`
+（索引 33 513 → 707 126 B），service 中位 **14 897.3 → 2 444.7 ms（6.09×）**，返回页**完全相同**；
+对已全覆盖的 A 做同样重建为 4 596.0 → 4 366.0 ms（−5.0%，噪声），同样同页。
+
+**第二个（反向）变量**：等覆盖（两条都 100%）复采样 `B,A,A,B` 得合并 P50 4 052.5（A）vs 2 053.6 ms（B）
+⇒ **A/B=0.507**；用「两条 root 都先 `drop` 再 `create`」的对称协议复核（`p4-02d-candidate-shapes.json`）：
+5 000 连续 id 1.88×、200 连续 id 1.48×、5 000 散布 id 1.02×、整代 100 000 id 1.00×、删索引后 1.07×；
+整代无过滤 pass 反而是 A 更快（50.6 vs 76.2 ms）。⇒ 差异只在「小规模连续候选集 + 标量索引」这条路径上，
+**物理原因未定位**（不写成「Lance 布局敏感」结论）；已排除 SQLite、候选集内容、fragment 布局、索引来源/实例、
+整代扫描路径、融合/渲染。对 F3 的量化贡献：覆盖率约 **+9.0 s/次查询**，第二变量约 **−2.0 s**，与实测 +7.3 s 吻合。
+
+**与 P4-02B 的 3 484.4 / 8 317.8 ms（2.39×）对照**：机制相同、倍数受环境影响。其 10 万波次档用的是工具
+默认 `--burst-sample 20000`（`wave_size=5000, burst_sample=20000`），即那一对**本身混进了第二个变量**；
+且部分覆盖一侧每次查询要多读近一个数量级字节，对 OS 缓存/磁盘更敏感（本卡等覆盖复采样里同一 root 同一查询
+两轮相差最多 36%）。原始 data root 未保留，无法重测其覆盖率，故只作差异记录。
+
+**验收与未验证**：B 级不回归 `1682 / 0 / 0 / 48`（`test-results/p4-02d-full.xml`）；
+`ruff check .`、`git diff --check`、`uv lock --check` 全 exit 0。真实中文 CLIP 权重/吞吐/显存、
+含真实文本塔的 API P95、GTX 1660、ANN Recall 0.95、冷 OS 缓存与长时 soak 仍 **BLOCKED/未测**；
+**本卡是归因，不授予 V3.1 §12.2 达标结论**。未命中 §2.2 六类条件 ⇒ 不升 DS-MAX；无系统级异常 ⇒ 不转 C1；
+归因未改产品代码 ⇒ 未触发交回条件。受限令牌下 `--basetemp` 的 `WinError 5` 按正常权限路由重跑，**未改 ACL**。
+
+**停止点与下一步**：本卡无 `src/**` 改动，因此**不是** PASS、也不是容量达标结论——它是 P4-02F 阶段 0/阶段 1
+的输入。下一步交 **DS-H 有界专项复核** P4-02D（只审新增工具/探针/报告完整 diff 与机器可读证据：是否只改测量面、
+两 root 是否同夹具、交替顺序是否真的受控、索引覆盖是否被记录；一旦改 `src/**` 或测量绕开产品入口即扩大为
+完整受影响面主审），`SOL_NOT_REQUIRED`。复核通过后按 **P4-02E（F1 语义积压领取有界化）** 与
+**P4-02F（F2 检索延迟：阶段 0 归因 → 阶段 1 决策闸门）** 独立推进；索引「建一次不再重建」的产品修法
+（重建/替换时机与维护预算）属 **P4-02F** 范围，本卡只给出归因证据，不静默扩大维护预算。

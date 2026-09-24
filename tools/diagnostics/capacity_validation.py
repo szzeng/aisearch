@@ -492,12 +492,25 @@ def semantic_status(data_root: Path) -> dict[str, Any]:
     return maintenance.semantic_index_status(catalog_db_path(data_root))
 
 
+def scale_directory(scale: int, args: argparse.Namespace) -> str:
+    """The per-scale tree name inside ``--work-dir``.
+
+    ``--label`` keeps two otherwise identical generations of the *same* scale in one work
+    directory, which is what a controlled A/B comparison needs (P4-02D): without it the
+    second build would overwrite the first. The label changes nothing about the fixture,
+    the seed, the query or the write shape - only where the tree is written.
+    """
+    label = getattr(args, "label", None)
+    suffix = "" if not label else f"-{label}"
+    return f"scale-{scale}{suffix}"
+
+
 # --------------------------------------------------------------------------- stages
 def capacity_scale(
     report: dict[str, Any], work: Path, scale: int, args: argparse.Namespace
 ) -> dict[str, Any]:
     """One full capacity scale through the product path (fills ``report`` in place)."""
-    base = work / f"scale-{scale}"
+    base = work / scale_directory(scale, args)
     library = base / "library"
     data_root = base / "data"
     measured_at = now_ms()
@@ -953,7 +966,9 @@ def reuse_query_scale(
 # --------------------------------------------------------------------------- injections
 def injection_fixture(work: Path, args: argparse.Namespace) -> tuple[Path, list[int]]:
     """A small synthetic library plus scan for the D-level injections."""
-    base = work / f"injections-{args.injection_scale}"
+    label = getattr(args, "label", None)
+    suffix = "" if not label else f"-{label}"
+    base = work / f"injections-{args.injection_scale}{suffix}"
     library = base / "library"
     data_root = base / "data"
     if not catalog_db_path(data_root).exists():
@@ -1370,6 +1385,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scales", default="10000,100000,300000")
     parser.add_argument("--work-dir", type=Path, default=Path("tmp") / "p402b-capacity")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--label",
+        default=None,
+        help=(
+            "suffix for the per-scale tree name inside --work-dir (e.g. 'wave'/'burst'), so "
+            "two shapes of the same scale can be kept side by side (P4-02D)"
+        ),
+    )
     parser.add_argument("--image-size", default=DEFAULT_IMAGE_SIZE)
     parser.add_argument("--seed", type=int, default=20260924)
     parser.add_argument("--queries", type=int, default=DEFAULT_QUERIES)
