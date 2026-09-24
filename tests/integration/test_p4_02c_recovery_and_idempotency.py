@@ -17,8 +17,10 @@ the same real catalog instead of standing up a second harness.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 import threading
 from contextlib import contextmanager
@@ -33,6 +35,7 @@ from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     ARTIFACT_INVALID,
     ARTIFACT_MISSING,
+    INDEX_SUBMISSION_FAILED,
     RUNTIME_CAPABILITY_UNAVAILABLE,
     RUNTIME_RESOLUTION_MISMATCH,
     CatalogError,
@@ -322,6 +325,249 @@ def test_repeated_audits_do_not_grow_the_backlog_but_a_real_loss_still_schedules
         fixture.catalog.close()
 
 
+def test_one_generation_with_two_artifacts_keeps_the_audit_bounded(tmp_path: Path) -> None:
+    """P4-02C review F1: a content change leaves a second artifact on the same generation.
+
+    A projection is per ``(space, asset, generation)``, so an audit must not allocate one event
+    per artifact of that triple: with two published artifacts on one generation the delivered fix
+    still grew the outbox on every pass (3 -> 5 -> 7). The decisive fact is the triple, not the
+    artifact count.
+    """
+    fixture = build(tmp_path, events=2)
+    try:
+        asset_id = int(fixture.scale) + 1
+        stale = json.loads(
+            artifact_path(fixture, f"p4-02c-{asset_id}").read_text(encoding="utf-8")
+        )["vector"]
+        newer = benchmark.synthetic_vectors(1, seed=20260924, distribution="clustered")[0]
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id=f"p4-02c-{asset_id}-changed",
+            asset_id=asset_id,
+            vector=newer,
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"p4-02c-content-changed").hexdigest(),
+        )
+        # The triple really owns two published artifacts and both events target one generation.
+        artifacts = fixture.catalog.read_all(
+            "SELECT a.lifecycle_state FROM artifacts AS a JOIN jobs AS j ON j.job_id = a.job_id "
+            "WHERE j.subject_id = ? ORDER BY a.artifact_id",
+            (str(asset_id),),
+        )
+        assert [str(row["lifecycle_state"]) for row in artifacts] == ["PUBLISHED", "PUBLISHED"]
+        generations = {
+            str(row["generation_id"])
+            for row in fixture.catalog.read_all(
+                "SELECT generation_id FROM index_outbox WHERE asset_id = ?", (asset_id,)
+            )
+        }
+        assert generations == {benchmark.GENERATION_ID}
+        before = outbox_rows(fixture)
+        assert before == 3
+
+        # Repeated audits over that unchanged state allocate nothing at all.
+        for _ in range(3):
+            audit = IndexCoordinator(fixture.catalog).audit_and_schedule_repairs(
+                now_ms=benchmark.now_ms()
+            )
+            assert audit == {"scheduled": [], "requires_reexecution": []}
+            assert outbox_rows(fixture) == before
+            assert probe.outbox_states(fixture) == {"PENDING": before}
+
+        # The drain lands the newest artifact's vector and nothing else.
+        drained = maintenance.drain_semantic_outbox(fixture.catalog)
+        assert drained["applied"] == before
+        assert probe.outbox_states(fixture) == {"CONFIRMED": before}
+        entry = probe._entry_revision(fixture, asset_id)
+        row = probe._row_for(fixture, asset_id) or {}
+        assert str(entry["state"]) == "CONFIRMED"
+        assert int(entry["confirmation_revision"]) == int(row["projection_revision"]) == 1
+        assert probe._asset_distance(fixture, query=newer, asset_id=asset_id) <= 1e-6
+        # The stale artifact was superseded, so it never reached the engine.
+        assert probe._asset_distance(fixture, query=stale, asset_id=asset_id) > 0.0
+        assert str(
+            fixture.catalog.read_one(
+                "SELECT state FROM index_outbox WHERE artifact_id = ?", (f"p4-02c-{asset_id}",)
+            )["state"]
+        ) == "CONFIRMED"
+
+        # A confirmation that really disappeared is still repaired on that same triple, once.
+        with fixture.catalog.write() as connection:
+            connection.execute(
+                "DELETE FROM index_entries WHERE space_id = ? AND asset_id = ? AND generation_id = ?",
+                (benchmark.SPACE_ID, asset_id, benchmark.GENERATION_ID),
+            )
+        repaired = maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+        assert repaired["repair"]["scheduled"] == 1
+        assert outbox_rows(fixture) == before + 1
+        entry = probe._entry_revision(fixture, asset_id)
+        assert str(entry["state"]) == "CONFIRMED"
+        assert int(entry["confirmation_revision"]) == probe._max_event_revision(fixture, asset_id)
+        assert probe._asset_distance(fixture, query=newer, asset_id=asset_id) <= 1e-6
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_stuck_drain_does_not_grow_through_repeated_repairs(tmp_path: Path) -> None:
+    """P4-02C review F1 (stuck variant): the audit must not amplify a backlog that cannot drain.
+
+    One event's payload no longer verifies, which is the fail-closed guard
+    ``_validate_event_payload`` enforces and the repair audit does not repair: the drain refuses
+    on every attempt, so the state is unchanged between passes except for what the audit itself
+    writes. With a second artifact on the same generation that used to be two more rows per pass.
+    """
+    fixture = build(tmp_path, events=2)
+    try:
+        asset_id = int(fixture.scale) + 1
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id=f"p4-02c-{asset_id}-changed",
+            asset_id=asset_id,
+            vector=benchmark.synthetic_vectors(1, seed=4242, distribution="clustered")[0],
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"p4-02c-stuck-changed").hexdigest(),
+        )
+        oldest = fixture.catalog.read_all(
+            "SELECT event_id FROM index_outbox ORDER BY created_at, event_id LIMIT 1"
+        )[0]
+        with fixture.catalog.write() as connection:
+            connection.execute(
+                "UPDATE index_outbox SET payload_checksum = ? WHERE event_id = ?",
+                ("0" * 64, str(oldest["event_id"])),
+            )
+        before = outbox_rows(fixture)
+        assert before == 3
+
+        for _ in range(3):
+            with pytest.raises(CatalogError) as refused:
+                maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+            assert refused.value.code == INDEX_SUBMISSION_FAILED
+            assert outbox_rows(fixture) == before
+            assert probe.outbox_states(fixture) == {"PENDING": before}
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_reclaimed_newest_artifact_outranks_the_older_one(tmp_path: Path) -> None:
+    """Fix-surface review F3: never project an older artifact over one waiting for re-execution.
+
+    Two artifacts share one generation. When the *newest* one is the artifact awaiting
+    re-execution, allocating a higher revision for the older one makes the artifact the operator
+    just republished come back superseded: the stale vector stays reachable through search while
+    the outbox, the entry and the audit all read "confirmed".
+    """
+    fixture = build(tmp_path, events=1)
+    try:
+        asset_id = int(fixture.scale) + 1
+        stale_artifact = f"p4-02c-{asset_id}"
+        newest_artifact = f"{stale_artifact}-changed"
+        stale = json.loads(
+            artifact_path(fixture, stale_artifact).read_text(encoding="utf-8")
+        )["vector"]
+        newer = benchmark.synthetic_vectors(1, seed=909, distribution="clustered")[0]
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id=newest_artifact,
+            asset_id=asset_id,
+            vector=newer,
+            now=benchmark.now_ms(),
+            input_revision=hashlib.sha256(b"p4-02c-newest-reclaimed").hexdigest(),
+        )
+        path, replayed, published = corrupt_artifact(fixture, newest_artifact)
+        with pytest.raises(CatalogError) as refused:
+            maintenance.drain_semantic_outbox(fixture.catalog)
+        assert refused.value.code == ARTIFACT_MISSING
+
+        isolation = maintenance.drain_semantic_outbox(fixture.catalog, repair=True)
+        # The audit refuses to schedule an event that would outrank the re-execution target.
+        assert isolation["repair"] == {"scheduled": 0, "requires_reexecution": 1}
+        assert isolation["awaiting_reexecution"]["count"] == 1
+        assert isolation["applied"] == 1  # the older artifact's own outstanding event
+        assert outbox_rows(fixture) == 2
+
+        source = give_the_asset_a_real_source_file(fixture, tmp_path, asset_id)
+        recovery = maintenance.reexecute_reclaimed_artifacts(
+            fixture.catalog, encoder=StubImageEncoder({source.name: replayed})
+        )
+        assert recovery["republished"] == 1
+        final = maintenance.drain_semantic_outbox(fixture.catalog)
+        assert final["applied"] == 1
+        assert final["awaiting_reexecution"]["count"] == 0
+        assert probe.outbox_states(fixture) == {"CONFIRMED": 2}
+        window = probe._entry_revision(fixture, asset_id)
+        row = probe._row_for(fixture, asset_id) or {}
+        assert str(window["state"]) == "CONFIRMED"
+        assert int(window["confirmation_revision"]) == int(row["projection_revision"]) == (
+            probe._max_event_revision(fixture, asset_id)
+        )
+        # The re-executed artifact is the one that survived; the pre-change vector is gone.
+        assert probe._asset_distance(fixture, query=newer, asset_id=asset_id) <= 1e-6
+        assert probe._asset_distance(fixture, query=stale, asset_id=asset_id) > 0.0
+        # The re-executed artifact is byte-identical to what was published before the corruption.
+        assert path.read_bytes() == published
+    finally:
+        fixture.catalog.close()
+
+
+def test_a_same_millisecond_content_change_keeps_the_newest_vector(tmp_path: Path) -> None:
+    """Fix round F4 (Sol focused review): order the triple by authority, not by millisecond.
+
+    ``artifacts.created_at`` has millisecond granularity, so two legitimate content versions
+    published inside one millisecond can put the *older* artifact first by artifact_id. The audit
+    then allocated the higher projection revision for that stale artifact, the drain confirmed it,
+    and search kept returning the pre-change vector while every report read "confirmed".
+    """
+    fixture = build(tmp_path, events=1)
+    try:
+        asset_id = int(fixture.scale) + 1
+        stale_artifact = f"p4-02c-{asset_id}"
+        published_at = int(
+            fixture.catalog.read_one(
+                "SELECT created_at FROM artifacts WHERE artifact_id = ?", (stale_artifact,)
+            )["created_at"]
+        )
+        stale = json.loads(
+            artifact_path(fixture, stale_artifact).read_text(encoding="utf-8")
+        )["vector"]
+        newest = benchmark.synthetic_vectors(1, seed=333, distribution="clustered")[0]
+        benchmark.bump_filter_revision(fixture, cause="CONTENT_CHANGED")
+        benchmark.publish_embedding(
+            fixture,
+            artifact_id="a-new-content",
+            asset_id=asset_id,
+            vector=newest,
+            now=published_at,
+            input_revision=hashlib.sha256(b"p4-02c-same-millisecond").hexdigest(),
+        )
+        # The two versions really share one millisecond, and the stale id sorts higher.
+        assert stale_artifact > "a-new-content"
+        assert {
+            str(row["created_at"])
+            for row in fixture.catalog.read_all(
+                "SELECT created_at FROM artifacts WHERE artifact_id IN (?, ?)",
+                (stale_artifact, "a-new-content"),
+            )
+        } == {str(published_at)}
+
+        audit = IndexCoordinator(fixture.catalog).audit_and_schedule_repairs(now_ms=published_at)
+        assert audit == {"scheduled": [], "requires_reexecution": []}
+        assert outbox_rows(fixture) == 2
+
+        drained = maintenance.drain_semantic_outbox(fixture.catalog)
+        assert drained["applied"] == 2
+        entry = probe._entry_revision(fixture, asset_id)
+        row = probe._row_for(fixture, asset_id) or {}
+        assert str(entry["state"]) == "CONFIRMED"
+        assert int(entry["confirmation_revision"]) == int(row["projection_revision"]) == 1
+        assert probe._asset_distance(fixture, query=newest, asset_id=asset_id) <= 1e-6
+        assert probe._asset_distance(fixture, query=stale, asset_id=asset_id) > 0.0
+    finally:
+        fixture.catalog.close()
+
+
 # ------------------------------------------------------------------------- the operator CLI
 def test_the_reexecute_cli_lists_targets_cheaply_and_refuses_a_missing_model(
     tmp_path: Path, capsys: Any
@@ -377,6 +623,53 @@ def test_the_reexecute_cli_lists_targets_cheaply_and_refuses_a_missing_model(
         # The refusal happened before any catalog work: the target is untouched.
         assert lifecycle(fixture, "p4-02c-42") == "RECLAIMED"
         assert probe.state_digest(fixture)["sha256"] == digest
+    finally:
+        fixture.catalog.close()
+
+
+def test_the_json_entry_point_survives_a_non_ascii_path(tmp_path: Path) -> None:
+    """P4-02C review F2: ``--json`` is a machine-readable contract, not a console artifact.
+
+    A renamed model or data directory is an ordinary Windows fact (the documented default model
+    directory lives under the user profile), and a ``--json`` document carrying one must still be
+    decodable as UTF-8 when its bytes go through a pipe.
+    """
+    fixture = build(tmp_path, events=2)
+    try:
+        root = str(fixture.data_root)
+        non_ascii = tmp_path / "模型 目录"
+        non_ascii.mkdir(parents=True, exist_ok=True)
+        argv = [
+            "reexecute",
+            "--data-root",
+            root,
+            "--model-dir",
+            str(non_ascii),
+            "--manifest",
+            str(non_ascii / "manifest.json"),
+            "--device",
+            "cpu",
+            "--json",
+        ]
+        digest = probe.state_digest(fixture)["sha256"]
+        completed = subprocess.run(
+            [sys.executable, "-m", "photo_search.indexing.cli", *argv],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            timeout=600,
+        )
+        assert completed.returncode == 1
+        assert completed.stdout.isascii()
+        payload = json.loads(completed.stdout.decode("utf-8"))
+        assert payload["status"] == "error"
+        assert payload["error"]["code"] == RUNTIME_CAPABILITY_UNAVAILABLE
+        assert payload["error"]["details"]["model_dir"] == str(non_ascii)
+        # The refusal still happens before any catalog work.
+        assert probe.state_digest(fixture)["sha256"] == digest
+        # The delivered evidence tool reads the very same invocation without raising.
+        helper = probe._run_cli(argv)
+        assert helper["returncode"] == 1
+        assert helper["payload"]["error"]["code"] == RUNTIME_CAPABILITY_UNAVAILABLE
     finally:
         fixture.catalog.close()
 

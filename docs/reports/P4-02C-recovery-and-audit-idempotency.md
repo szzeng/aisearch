@@ -211,3 +211,217 @@ migration `0001`～`0015`、`SUPPORTED_SCHEMA_VERSION`（仍 15）、ADR-0001～
 `_schedule_existing`、`maintenance.py` 的 `reexecute_reclaimed_artifacts` 与
 `awaiting_reexecution_summary`；最小反例与命令见 §5/§7；未验证项见 §9；
 禁止扩大范围见本卡「本卡禁止修改」。
+
+## 11. 修复轮（主审 F1/F2 + 修复面复核 F3，2026-09-24）
+
+**状态：`IMPLEMENTED / VALIDATION COMPLETE（B + D）`，`ENGINEERING REVIEW PASS（修复面）`，
+`SOL FOCUSED REVIEW PENDING` —— 未标 P4-02C PASS、未启动 P4-02B。** 修复依据是主审报告
+[P4-02C-dsh-engineering-review.md](P4-02C-dsh-engineering-review.md) 的 F1/F2，以及同报告
+「修复面复核」R4 发现的 F3，改动全部落在
+本卡允许修改面内：`src/photo_search/indexing/{store,cli}.py`、
+`tools/diagnostics/index_maintenance_probe.py`、本卡测试；**未新增依赖、未改 schema/migration、
+未改检索语义或 status/错误码信封**。
+
+### 11.1 F1：审计决策收敛到「三元组一次」
+
+`IndexCoordinator.audit_and_schedule_repairs` 现在先把「仍需投影」的工件按
+`(space_id, asset_id, generation_id)` 分组，每个三元组只决定**一个**目标：该三元组**最新的工件行**
+（按 `(created_at, artifact_id)` 定序），再把它交给 `_schedule_existing` 的审计路径。
+`_schedule_existing` 的复用判据与 `schedule_projection_refresh` 的显式 revision 语义**未动**；
+不可读工件的 `RECLAIMED`/`requires_reexecution` 分支逐字未动。
+
+为什么这样修：一次投影是**三元组**级的事实，而一个资产在同一 generation 上合法地可以拥有多个
+embedding 工件（P4-01C 内容变更发布第二个、第一个仍是 `PUBLISHED`）。主审实测「逐工件」判断在
+该状态下每次审计各分配 1 条、revision 交替上升。改判后，「三元组的最新工件已有未确认事件」
+与 `_schedule_existing` 的复用条件变成同一句话：重复审计零分配。真实缺失仍然排程——条目确认丢失 /
+Lance 行缺失 / 工件被换时，该三元组的最新工件没有可复用的未确认事件。
+
+修复前后对照（主审自建探针 `tmp/p402c-review/audit_growth_probe.py`，同一夹具同一状态）：
+
+| 探针 | 修复前 | 修复后 |
+|---|---|---|
+| 变体 A：连续 4 次审计（无损坏、无 drain） | `PENDING 5 → 7 → 9 → 11` | **`3 → 3 → 3 → 3`**，`scheduled` 恒为 `[]` |
+| 变体 B：`drain --repair` ×3（最早事件 payload 校验失败，drain 确实卡住） | `5 → 7 → 9` | **`3 → 3 → 3`**，拒绝恒为 `INDEX_SUBMISSION_FAILED` |
+
+证据：`test-results/p4-02c-review-audit-growth-prefix.json`（修复前）与
+`test-results/p4-02c-review-audit-growth.json`（修复后，均在 `tmp/p402c-review/` 的项目内临时夹具上）。
+
+新增回归用例（`tests/integration/test_p4_02c_recovery_and_idempotency.py`）：
+
+1. `test_one_generation_with_two_artifacts_keeps_the_audit_bounded`：内容变更 → 三元组两个
+   `PUBLISHED` 工件、两个事件同 generation；连续三次审计零新增且 `scheduled` 为空；随后 `drain`
+   只落**最新工件**的向量（`confirmation_revision == Lance.projection_revision == 1`、
+   旧向量不可达、旧工件事件按 supersede 空确认）；再删除 `index_entries` 行，同三元组仍被
+   排程一次并收敛（`scheduled == 1`）。
+2. `test_a_stuck_drain_does_not_grow_through_repeated_repairs`：同一三元组 + 最早事件
+   `payload_checksum` 失效（`_validate_event_payload` 的失败关闭守卫，审计不修复它），
+   三次 `drain --repair` 行数不变、状态恒为 `{PENDING: 3}`、拒绝恒为 `INDEX_SUBMISSION_FAILED`。
+
+反向验证（变异）：把审计退回修复前的「逐工件」实现（`tmp/p402c-review/mutation_m4.py`，
+临时 pytest 插件，**不改仓库文件**）→ 上述两条用例**都失败**，其余用例亦按预期失败
+（`test-results/p4-02c-fix-mutation-m4.xml`）。用例确实守住了 F1，而非空转。
+
+### 11.2 F2：`--json` 机器可读契约与非 ASCII 路径
+
+- `indexing/cli.py`：`--json` 输出改为 **ASCII 安全 JSON**（`_emit` / `_emit_error` 的
+  `ensure_ascii=True`），并在模块 docstring 写明「机器可读输出不得依赖控制台代码页」。
+  人类可读（非 `--json`）输出、退出码 0/1/2 语义与错误码**未改**。
+- `tools/diagnostics/index_maintenance_probe.py::_run_cli`：给子进程注入 `PYTHONIOENCODING=utf-8`、
+  以 `errors="replace"` 读取、并对空捕获做保护——不再出现
+  `AttributeError: 'NoneType' object has no attribute 'strip'`。
+
+修复前后对照（同一探针 `tmp/p402c-review/cli_encoding_probe.py`，均为真实 CLI 子进程的原始字节）：
+
+| 输入 | 修复前 stdout 的 UTF-8 解码 | 修复后 |
+|---|---|---|
+| `--model-dir <ASCII>`（模型缺失） | ok（exit 1） | ok（exit 1） |
+| `--model-dir <含中文>`（模型缺失） | `UnicodeDecodeError: 'utf-8' ... byte 0xd0 in position 158` | **ok**（exit 1），stdout 全为 ASCII |
+
+证据：`test-results/p4-02c-review-cli-encoding-prefix.json`（修复前）与
+`test-results/p4-02c-review-cli-encoding.json`（修复后）。
+
+**卡面必测命令现在可按原文执行**：用 `tmp/p402c-review/run_recovery_zh.py`（工作目录名以
+`\uXXXX` 转义构造，避免任何 shell/控制台编码介入）运行
+`--mode recovery --work-dir "<项目内 中文 空格 目录>"` → **exit 0、`recovery.ok = true`、
+10/10 检查为真**（`test-results/p4-02c-fix-recovery-zh.json`），审计行数 3 → 3 → 3。
+
+新增回归用例：`test_the_json_entry_point_survives_a_non_ascii_path`——子进程 `--json` 输出
+`isascii()` 为真、`json.loads(stdout.decode("utf-8"))` 成功、`model_dir` 详情回显中文路径、
+拒绝仍发生在打开目录库之前（派生指纹不变），且工具侧 `_run_cli` 对同一调用不再抛异常。
+
+变异证据：m7（用子进程 `sitecustomize` 把 `json.dumps` 强制回 `ensure_ascii=False`）→
+该用例**失败 1 例**（子进程断言无法被进程内插件触及，故用子进程注入证明判别力）。
+
+### 11.3 F3：等待重执行的最新工件不得被旧工件越权覆盖
+
+修复面复核（主审报告「修复面复核」R4）发现的**新交互缺陷**：内容变更三元组里若「等待重执行」
+的正是**最新工件**，第一版修复仍会把**较旧工件**作为修复目标并给它分配更高的 revision，
+于是操作员刚重发布回来的最新工件反而被 supersede——搜索继续命中**变更前的向量**，
+而 outbox / `index_entries` / `awaiting_reexecution` 与随后的审计全部显示健康（无任何信号）。
+
+修补：审计决策改为以三元组**全部工件**（含刚置 `RECLAIMED` 的）确定「最新工件」，
+只有当这个最新工件本身也在待修复集合里时才排程；否则该三元组只由 `requires_reexecution` 报告，
+修复交给既有恢复入口。新增用例
+`test_a_reclaimed_newest_artifact_outranks_the_older_one`。
+
+修复前后对照（`tmp/p402c-review/f3_probe.py`，2 工件三元组 + 损坏最新工件，逐字节等价重执行）：
+
+| | 第一版修复 | 现修订 |
+|---|---|---|
+| `drain --repair` 审计 | `scheduled = 1` / `requires_reexecution = 1` | **`scheduled = 0`** / `requires_reexecution = 1` |
+| `reexecute` → `drain` 后的 entry | `f3-41`（旧工件）rev 2 | **`f3-41-changed`（最新工件）** rev 1 |
+| 与最新向量 / 变更前向量的距离 | `2.02` / **`0.0`（旧向量仍在服务）** | **`0.0`** / `2.02` |
+
+证据：`test-results/p4-02c-review-f3.json`；变异 m6（去掉该守卫）→ **恰好 1 例失败**，
+即上述新用例（`test-results/p4-02c-fix-mutation_m6.xml`）。
+
+### 11.4 修复轮验收（最终冻结工作树）
+
+| 证据 | 结果 |
+|---|---|
+| focused `test-results/p4-02c-fix-focused.xml` | **11 / 0 / 0 / 0**（14.4 s；7 原有 + 4 条新用例） |
+| 受影响面 `test-results/p4-02c-fix-boundaries.xml` | **36 / 0 / 0 / 0**（23.6 s） |
+| 全量 `test-results/p4-02c-fix-full.xml` | **1670 / 0 / 0 / 48**（225.9 s；基线 1666 + 4 条新用例） |
+| 变异 m1–m7 `test-results/p4-02c-fix-mutation_m*.xml` | 失败 **6 / 5 / 1 / 8 / 3 / 1 / 1** 例；m5（取最旧工件）命中 F1 两例 + F3，m6（去 F3 守卫）恰好命中 F3，m7（子进程 `ensure_ascii=False`）命中 F2 |
+| `--mode all` `test-results/p4-02c-fix-probe-all.json` | 六场景 `ok=true`；entry applied 300 / 第二次 0 / 持锁 p95 124.196 ms / 审计 11.176 ms-per-artifact；busy_timeout 1 次拒绝后 `semantic_ready = 72`；injections 4/4；cli 5/5 |
+| 中文+空格工作目录 `test-results/p4-02c-fix-recovery-zh.json` | 工具 exit 0，`recovery.ok = true`，10/10 检查为真 |
+| 主审探针复跑（`p4-02c-review-isolation.json`、`p4-02c-review-dry-run.json`） | 11 个隔离事件 `count 11 / sample 10 / sample_truncated true`、字段集精确、无路径字段；多目标 `1 republished + 1 ARTIFACT_INVALID` 互不影响；`--dry-run` 快照 `identical=true`、SQLite trace 写语句 `[]` |
+| `ruff check .` / `git diff --check` / `uv lock --check` | 全 exit 0 |
+
+改动面（相对 `665109e`，`git diff --stat`）：`src/photo_search/indexing/store.py`（+60 行）、
+`src/photo_search/indexing/cli.py`（12 行）、`tools/diagnostics/index_maintenance_probe.py`（15 行）、
+本卡测试（+237 行，4 条新用例）。**禁止面仍零改动**：migration `0001`–`0015`、`catalog/schema.py`（`n = 15`）、
+outbox/entry 状态词表、ADR/companion、`taken_time`/`capture_desc`/`SearchFiltersEchoV2`、
+`search_projection` 键集、`search/retrieval.py`、`api/**`、`web/**`、`PhotoSearch.spec`、
+`tools/packaging/**`、`packaged_api_smoke.py`、`pyproject.toml`、`uv.lock`。
+
+### 11.5 仍未验证 / BLOCKED（沿用 §9 口径）
+
+真实中文 CLIP 权重的端到端重执行仍 **BLOCKED**（两处默认模型目录实测不存在），
+`republished` 结论仍是非真实模型的确定性注入证据；30 万档对领取谓词与审计决策成本的影响、
+ANN/§12.3 的 0.95、API P95、GTX 1660、冻结包内该 CLI 入口的可达性均**未验证**。
+本轮未处理主审非阻断观察 O1（结果不含适配器 `resolved_device`）与 O2（`--device-policy` 默认
+`cpu_allowed` 而 `--device` 必填）；人类可读（非 `--json`）输出仍随控制台代码页，属既有行为，
+本轮只收口机器可读契约。
+
+### 11.6 停止点
+
+修复轮的诚实状态是 `IMPLEMENTED / VALIDATION COMPLETE（B + D）` +
+`ENGINEERING REVIEW PASS（修复面）`（见主审报告「修复面复核」R7），
+**仍未标 P4-02C PASS**。按卡面路由，下一步是**新会话**的
+**C2 / GPT-5.6 Sol / high 聚焦终审（必选，不得记 `SOL_NOT_REQUIRED`）**，只审 V3.1 §11 相关
+不变量（领取谓词、revision/幂等键、旧 revision 不回滚、恢复链与失败关闭边界）及其直接回归；
+通过后才标 **P4-02C PASS**，并把 **P4-02B** 的前置状态更新为「A2/A3 已收口」。
+模型切换始终由用户在 Codex 中手动完成。
+
+## 12. F4 修复轮（Sol 聚焦终审，2026-09-24）
+
+**状态：`IMPLEMENTED / VALIDATION COMPLETE（B + D）`，`SOL SHORT RE-REVIEW PENDING`
+—— 未标 P4-02C PASS、未启动 P4-02B。** 依据 [Sol 聚焦终审](P4-02C-sol-focused-review.md)
+的 **F4（阻断）**；改动仍只落在本卡允许修改面内（`store.py` 的审计排序 + 本卡测试），
+未新增依赖、未改 schema/migration、未改状态词表/检索语义/错误码信封。
+
+### 12.1 F4 与最小反例
+
+`audit_and_schedule_repairs` 用 `(artifact.created_at, artifact_id)` 选三元组的「最新工件」。
+但 `artifacts.created_at` 是**毫秒**粒度，`artifact_id` 的字典序与发布顺序无关：同一毫秒内两次
+合法内容发布（内容变更流程）时，审计会把**旧内容**当成当前工件、为它分配更高的
+`projection_revision`，drain 之后 **旧向量成为搜索行**，而 outbox / `index_entries` /
+审计/`awaiting_reexecution` 全部显示健康。
+
+主审用 Sol 自己的探针 `tmp/p402c-sol/tie_probe.py` 独立复现（修复前）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 审计结果 | `scheduled = ['p4-02c-41']`（旧内容） | **`scheduled = []`** |
+| 事件序列（按 revision） | 旧 0 → 新 1 → **旧 2** | 旧 0 → 新 1 |
+| drain 后 Lance `projection_revision` | 2 | **1** |
+| 与旧向量 / 与新向量距离 | **0.0** / 1.8838 | 1.8838 / **0.0** |
+| JUnit | `test-results/p4-02c-f4-repro.xml` **1 / 1** | `test-results/p4-02c-f4-fixed.xml` **1 / 0 / 0 / 0** |
+
+### 12.2 修复
+
+三元组的「当前工件」改为按**权威顺序**判定：每个工件以其**发布 revision**
+（`MIN(projection_revision)`，即发布时盖上的 `catalog_filter_revision`，正是 drain 判定
+「谁的投影获胜」的同一个值）排序；`job_id`、`created_at`、`artifact_id` 只作为
+「该工件的发布事件已不在 outbox」时的确定性兜底。取 `MIN` 而不是 `MAX` 是关键：审计自己分配的
+事件总是高于该三元组既有 revision，用 `MAX` 会让审计事件反过来改变排序。
+
+### 12.3 回归与变异
+
+- 新增用例 `test_a_same_millisecond_content_change_keeps_the_newest_vector`：同一毫秒、
+  反向字典序 artifact_id（`p4-02c-41` vs `a-new-content`）、真实发布路径；断言审计零排程、
+  drain 后 `confirmation_revision == Lance.projection_revision == 1`、新向量命中且旧向量不可达。
+- 变异 m8（把排序改回 `(created_at, artifact_id)`）→ **恰好 1 例失败**，即该用例
+  （`test-results/p4-02c-f4-mutation_m8.xml`：12 / 1 / 0 / 0）。
+- Sol 要求的另两条同步复核（本轮重跑通过）：**F3**（等待重执行的最新工件不被旧工件越权覆盖，
+  `test_a_reclaimed_newest_artifact_outranks_the_older_one`）与**真实缺失仍排程**
+  （`test_repeated_audits_do_not_grow_the_backlog_but_a_real_loss_still_schedules`、
+  `test_one_generation_with_two_artifacts_keeps_the_audit_bounded`）。
+
+### 12.4 验收（最终冻结工作树）
+
+| 证据 | 结果 |
+|---|---|
+| focused `test-results/p4-02c-f4-focused.xml` | **12 / 0 / 0 / 0**（14.9 s；7 原有 + 5 新用例） |
+| 受影响面 `test-results/p4-02c-f4-boundaries.xml` | **36 / 0 / 0 / 0**（23.3 s） |
+| 全量 `test-results/p4-02c-f4-full.xml` | **1671 / 0 / 0 / 48**（215.1 s = 基线 1666 + 5 条新用例） |
+| Sol 反例探针 `p4-02c-f4-{repro,fixed}.xml` | 修复前 1/1 failure → 修复后 **1/0/0/0** |
+| 变异 m8 `p4-02c-f4-mutation_m8.xml` | 12 / **1** / 0 / 0（命中的就是新 F4 用例） |
+| `--mode all` `test-results/p4-02c-f4-probe-all.json` | 六场景 `ok=true`；entry applied 300 / 第二次 0 / 持锁 p95 119.944 ms / 审计 8.044 ms-per-artifact |
+| F1/F3 反例复跑（`p4-02c-review-audit-growth.json`、`p4-02c-review-f3.json`） | 审计行数 A `3→3→3→3`、B `3→3→3`；F3 `scheduled = 0`、`requires_reexecution = 1`、恢复后 entry 为最新工件（新 0.0 / 旧 2.0193） |
+| 隔离/多目标/dry-run/编码/中文工作目录 | 11 个隔离事件样本边界、`1 republished + 1 ARTIFACT_INVALID`、`--dry-run` 零写库、`--json` 两种路径均 UTF-8、`--mode recovery --work-dir "<中文 空格>"` exit 0 且 10/10 |
+| `ruff check .` / `git diff --check` / `uv lock --check` | 全 exit 0 |
+
+### 12.5 未验证 / 边界
+
+若某工件的**发布事件本身被手工删除**（outbox 行被删，非受支持流程），权威顺序只能退化为
+`job_id`/`created_at`/`artifact_id` 兜底；该分支未单独注入，记入未验证项。真实中文 CLIP 权重仍缺失
+（端到端重执行 BLOCKED）、30 万档审计/领取成本、ANN 0.95、API P95、GTX 1660、冻结包内 CLI
+可达性沿用 §11.5。
+
+### 12.6 停止点
+
+按 Sol 报告要求，修复后的 **Sol 短审只覆盖 F4 与上述直接回归**（不重走全量 diff）；
+通过后才标 **P4-02C PASS**，并把 **P4-02B** 的前置更新为「A2/A3 已收口」。
+模型切换始终由用户在 Codex 中手动完成。

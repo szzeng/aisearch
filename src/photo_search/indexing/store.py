@@ -945,13 +945,67 @@ class IndexCoordinator:
         )
 
     def audit_and_schedule_repairs(self, *, now_ms: int) -> dict[str, list[str]]:
-        """Recreate missing confirmations/outbox; report artifacts needing re-execution."""
+        """Recreate missing confirmations/outbox; report artifacts needing re-execution.
+
+        The audit takes **one** decision per ``(space, asset, generation)`` triple, for the
+        triple's newest artifact (ordered by the authority's publish revision - see the ordering
+        comment below). A projection is per triple, and one asset can legitimately own several
+        embedding artifacts for the same generation: a P4-01C content change publishes a second
+        artifact and leaves the first
+        ``PUBLISHED``. Scheduling each of those artifacts separately is what P4-02C's engineering
+        review measured as an unbounded audit - every pass allocated one more event per artifact
+        of the triple, even though the triple's newest unconfirmed event already carried exactly
+        that work. Coming back to :meth:`_schedule_existing` for the newest artifact means the
+        pending event is *reused*, so a repeated audit over an unchanged state allocates nothing
+        while a genuine loss (a deleted confirmation, a missing engine row, a replaced artifact)
+        still schedules its repair.
+
+        The decision also refuses to repair a triple whose newest artifact is the one waiting for
+        re-execution. Projecting an older artifact there would allocate a revision *above* the
+        re-executed one, so the artifact an operator just republished would come back superseded
+        and the stale vector would stay reachable while every report reads "confirmed" (P4-02C
+        fix-surface review F3). Such a triple is reported through ``requires_reexecution``
+        instead, and its repair is the existing recovery entry.
+        """
         scheduled: list[str] = []
         reexecute: list[str] = []
         rows = self.catalog.read_all(
             "SELECT a.*, j.subject_type, j.subject_id FROM artifacts a "
             "JOIN jobs j ON j.job_id = a.job_id WHERE a.artifact_type = 'embedding'"
         )
+        # Which artifact of a triple is the *current* one is an authority question, not a
+        # timestamp one. Every publish stamps its outbox event with the authority's
+        # ``catalog_filter_revision`` (the event's ``projection_revision``), and that is exactly
+        # the value the drain compares when it decides which projection wins. ``created_at`` has
+        # millisecond granularity, so two content versions published inside one millisecond can
+        # order the older artifact first by ``artifact_id`` - P4-02C's Sol focused review (F4)
+        # measured the audit then allocating the higher revision for the *stale* content, which
+        # became the live search row. The lowest revision an artifact owns is its publish
+        # revision (a repair event is always allocated above every revision of the triple), so
+        # ``MIN`` is the authority order; the remaining keys only break a tie for an artifact
+        # whose publish event is no longer in the outbox.
+        publish_revision = {
+            str(row["artifact_id"]): int(row["revision"])
+            for row in self.catalog.read_all(
+                "SELECT artifact_id, MIN(projection_revision) AS revision FROM index_outbox "
+                "WHERE event_type = 'UPSERT_VECTOR' GROUP BY artifact_id"
+            )
+        }
+
+        def authority_order(item: dict[str, Any]) -> tuple[int, int, int, str]:
+            artifact = item["artifact"]
+            artifact_id = str(artifact["artifact_id"])
+            return (
+                publish_revision.get(artifact_id, -1),
+                int(artifact["job_id"]),
+                int(artifact["created_at"]),
+                artifact_id,
+            )
+
+        # Every (space, asset, generation) that still needs its projection, with the artifacts
+        # that map onto it. The decision below consumes one entry per triple, never one per row.
+        triples: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
+        repairable: dict[tuple[str, int, str], list[dict[str, Any]]] = {}
         for artifact in rows:
             generation = self.catalog.read_one(
                 "SELECT * FROM index_generations WHERE space_id = ? AND processor_id = ? "
@@ -960,6 +1014,10 @@ class IndexCoordinator:
             )
             if generation is None or str(artifact["subject_type"]) != "asset":
                 continue
+            asset_id = int(artifact["subject_id"])
+            key = (str(artifact["space_id"]), asset_id, str(generation["generation_id"]))
+            item = {"artifact": artifact, "generation": generation, "asset_id": asset_id}
+            triples.setdefault(key, []).append(item)
             try:
                 self.artifacts.read(artifact)
             except CatalogError:
@@ -982,7 +1040,6 @@ class IndexCoordinator:
                 except OSError:
                     pass
                 continue
-            asset_id = int(artifact["subject_id"])
             confirmed = self.index.has(
                 generation_id=str(generation["generation_id"]),
                 dimension=int(generation["dimension"]),
@@ -994,12 +1051,26 @@ class IndexCoordinator:
             )
             if entry is not None and str(entry["state"]) == "CONFIRMED" and confirmed:
                 continue
+            repairable.setdefault(key, []).append(item)
+        for key in sorted(repairable):
+            newest = max(triples[key], key=authority_order)
+            if str(newest["artifact"]["artifact_id"]) not in {
+                str(item["artifact"]["artifact_id"]) for item in repairable[key]
+            }:
+                # The newest artifact of this triple is unreadable or already waiting for
+                # re-execution, so the honest repair is the recovery entry, not a projection of
+                # an older artifact that would outrank it for ever.
+                continue
             with self.catalog.write() as connection:
                 created = self._schedule_existing(
-                    connection, artifact=artifact, generation=generation, asset_id=asset_id, now_ms=now_ms
+                    connection,
+                    artifact=newest["artifact"],
+                    generation=newest["generation"],
+                    asset_id=newest["asset_id"],
+                    now_ms=now_ms,
                 )
             if created:
-                scheduled.append(str(artifact["artifact_id"]))
+                scheduled.append(str(newest["artifact"]["artifact_id"]))
         return {"scheduled": scheduled, "requires_reexecution": reexecute}
 
     def schedule_projection_refresh(
@@ -1074,7 +1145,10 @@ class IndexCoordinator:
           one unconfirmed event per artifact per audit run, while the drain kept failing on the
           oldest event. The audit therefore *reuses* the unconfirmed event that already carries
           exactly this work whenever that event is the newest one for the triple, and only
-          allocates a new revision when it is not.
+          allocates a new revision when it is not. It calls this method once per triple, for the
+          triple's newest artifact (see :meth:`audit_and_schedule_repairs`), so "the newest
+          unconfirmed event is this artifact's own" is the same statement as "this triple's
+          projection work is already queued".
 
         A genuine repair still schedules: a deleted confirmation, a missing engine row or a
         replaced artifact leaves either no unconfirmed event or a newer one, so the audit

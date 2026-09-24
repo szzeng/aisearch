@@ -23,6 +23,12 @@ Commands
 ``drain`` is safe to run twice, and safe to run while another maintainer or a foreground
 writer is active: nothing here takes an exclusive lock, so an event another maintainer
 already confirmed is skipped instead of being written twice.
+
+``--json`` output is ASCII-safe JSON: non-ASCII facts (an operator's own model or data path, for
+instance) are emitted as ``\\uXXXX`` escapes, so the bytes stay a valid JSON document whatever
+the console code page is. Windows pipes default to the ANSI code page, so a
+``ensure_ascii=False`` document carrying a Chinese path was not decodable as UTF-8 (P4-02C
+review F2).
 """
 
 from __future__ import annotations
@@ -187,7 +193,9 @@ def _image_encoder(
 
 def _emit(args: argparse.Namespace, payload: dict[str, Any]) -> None:
     if getattr(args, "json", False):
-        print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+        # ASCII-safe on purpose: ``--json`` is the machine-readable contract, and its bytes must
+        # not depend on the console code page a pipe happens to use (P4-02C review F2).
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
         return
     for key, value in payload.items():
         rendered = (
@@ -202,7 +210,7 @@ def _emit_error(args: argparse.Namespace, error: CatalogError) -> None:
     if getattr(args, "json", False):
         print(
             json.dumps(
-                {"status": "error", "error": error.as_dict()}, ensure_ascii=False, sort_keys=True
+                {"status": "error", "error": error.as_dict()}, ensure_ascii=True, sort_keys=True
             )
         )
         return

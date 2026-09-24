@@ -1221,17 +1221,26 @@ def _outbox_rows(fixture: Any) -> int:
 
 
 def _run_cli(argv: Sequence[str]) -> dict[str, Any]:
+    # A UTF-8 child stdio plus a replacement-decoding read: the CLI's ``--json`` output is
+    # ASCII-safe, but a redirected stream must never turn a non-ASCII path into a crash here.
+    # (P4-02C review F2: with a Chinese work directory this used to raise
+    # ``AttributeError: 'NoneType' object has no attribute 'strip'`` after the decode failed.)
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = "utf-8"
     completed = subprocess.run(
         [sys.executable, "-m", "photo_search.indexing.cli", *argv],
         cwd=str(PROJECT_ROOT),
-        env=os.environ.copy(),
+        env=environment,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         timeout=1800,
     )
+    stdout = completed.stdout or ""
+    stderr = completed.stderr or ""
     payload: dict[str, Any] | None = None
-    for line in reversed(completed.stdout.strip().splitlines()):
+    for line in reversed(stdout.strip().splitlines()):
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
@@ -1241,7 +1250,7 @@ def _run_cli(argv: Sequence[str]) -> dict[str, Any]:
         "argv": ["photo_search.indexing.cli", *argv],
         "returncode": int(completed.returncode),
         "payload": payload,
-        "stderr_tail": completed.stderr.strip().splitlines()[-5:],
+        "stderr_tail": stderr.strip().splitlines()[-5:],
     }
 
 
