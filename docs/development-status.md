@@ -3115,3 +3115,52 @@ C 级冻结包仍未验证。** 见 [主审报告](reports/P4-02E-dsh-engineerin
   `src/**` 与 `0016` 的 SHA-256 与主审开审快照**逐字相同**（本轮只改测试与文档，产品代码零改动）。
 - 仍未验证：真实模型吞吐/显存、含真实文本塔的 API P95、GTX 1660、ANN Recall 0.95、30 万档 HTTP/
   冷 OS 缓存/长时 soak、C 级冻结包。
+
+## Latest measurement closure — P4-02F 阶段 0（2026-09-25）
+
+**P4-02F：`STAGE 0 COMPLETE（纯测量；六项归因事实已交付）`/ `STAGE 1 GATE A·B DECISION PENDING`。
+本卡不改产品代码，不授予 §12.2 达标，也不授权 A3 ⇒ 不标 PASS。** 详见
+[P4-02F 阶段 0 报告](reports/P4-02F-retrieval-latency.md)。
+
+- 执行：会话内自跑（用户手动指定继续）；基线 `efeecf3`（P4-02E 已提交、`SUPPORTED_SCHEMA_VERSION=16`），
+  开工时 `git status --short` 仅本卡新工具未跟踪。上一轮因并发 P4-02E 会话中途改动 `schema.py` 造成
+  建库 `SCHEMA_INCONSISTENT` 的环境阻塞已消除。
+- 变更面：新增 `tools/diagnostics/p4_02f_stage0.py`、本报告、状态条目与 `test-results/p4-02f-*.json`；
+  `src/**`、`0001`～`0016`、`SUPPORTED_SCHEMA_VERSION`、ADR/companion、信封/错误码/检索语义、
+  `search_projection`、打包面、`pyproject.toml`、`uv.lock` **零 diff**。唯一状态变化是 `tmp/` 可丢弃 root 上
+  的诊断索引 `replace`（`--rebuild` 显式打开）。
+- **事实①分阶段计时**（同一夹具/查询/`top_k=20`；10 万 A/B/B/A × 20 样本；30 万 5 样本）：
+  10 万 `service` 中位 **2 973.6 ms（突发·全覆盖）/ 8 572.6 ms（波次·5%）**，差异 **99.66% 在 Lance 引擎**、
+  其中 **95.4% 是引擎 pass**（`to_arrow`）；30 万 as-built 中位 **165 448.3 ms**、P95 **201 346.8 ms**，
+  **99.33% 在引擎、93.23% 是引擎 pass**。SQLite 候选 walk 只占 0.53%（30 万，880 ms）、
+  产品级 `pending_projection_page` 464 ms。
+- **事实②块大小矩阵**：10 万两档的 {250, 1 000, 5 000, 20 000} 全部 `truncated=false` 且返回**逐项相同**页；
+  30 万覆盖修复后 1 000/5 000/20 000 三档返回同一页（`4eece2f113d3…`、扫满 300 000），
+  **250 档需要 1 200 块 > `MAX_VECTOR_BLOCKS=1000` 而被安全阀截断**（`truncated=true`、只扫 250 000）。
+  ⇒ 块约束确为访问路径参数；但**任何把块调小的修法必须同步抬高块数上界**，否则静默丢候选。
+- **事实③F4 覆盖率（单变量）**：同一张表 `replace` 重建索引 —— 10 万 `5000/95000 → 100000/0`：
+  **10 077.4 → 1 686.1 ms（5.98×）**；30 万 `5000/295000 → 300000/0`：
+  **209 442.5 → 8 804.6 ms（23.8×）**；两次返回页都逐项相同，30 万重建本体仅 212.9 ms。
+- **事实④每调用固定开销**：`_table()`（`connect`+`open_table`+schema 检查）= **3.2–3.5 ms/次（10 万）**、
+  **9.13 ms/次（30 万）**；折合 64–69 ms/查询（20 块）与 548 ms/查询（60 块）。
+  P4-02B DS-H §4.5 由线性拟合得到的「≈130 ms 固定开销」不是句柄成本，本次直接测量把它定到 3–9 ms。
+- **事实⑤单次无约束 pass（诊断下界，不是 A3 授权）**：10 万 **56.8–59.2 ms**、30 万 **346.96 ms**
+  （与 P4-01B 的 ≈0.374 s 一致），返回页与候选块路径相同。
+- **事实⑥突发 vs 波次**：受控对 B−A 的 +5.599 s 中 SQLite +12.5 ms、表句柄 +3.2 ms、
+  **引擎 pass +5 341.2 ms（95.4%）**、行物化 +241.6 ms；本轮比值为 **2.88×（P50）/3.02×（P95）**。
+- **对阶段 1 的硬输入**：把覆盖补满后，10 万档最好仍 **1.42–1.69 s**（块 5 000/20 000），
+  30 万档最好仍 **约 6.4–6.5 s**（块 20 000/15 次）；表句柄复用只能再省 ~70 ms / ~0.55 s。
+  ⇒ **闸门 A（无契约变更）在两档都不可达 ≤1 s**；闸门 B（A3）也必须重测非引擎段
+  （30 万档候选 walk 本身 0.88 s，A3 形状不需要枚举整代候选）。
+- 验收（B 级不回归）：`tests/unit + tests/integration` = **1698 / 0 / 0 / 48**（48 为环境跳过）、
+  `ruff check .`、`git diff --check`、`uv lock --check` 全 exit 0；JUnit `test-results/p4-02f-full.xml`。
+  受限令牌下首次 `--basetemp` 触发已知 `WinError 5`，按正常 Windows 权限路由换新 basetemp 重跑，**未改 ACL**。
+- BLOCKED/未验证：真实中文 CLIP 权重与真实文本塔延迟、GTX 1660 最低配置、ANN Recall 0.95、
+  冷 OS 缓存与长时 soak、HTTP 层对照、30 万档「维护同时前台」（P4-02E 记录 34 945.94 ms，目标 ≤1.5 s）；
+  等价性/反例注入（未确认 A、`PENDING_REPAIR`、旧 revision、离线/隐藏、并发发布窗口）属阶段 1，本卡未做。
+- 停止点：本卡**未标 PASS**，也未做任何闸门裁决。下一步为 **P4-02F 阶段 1**：
+  先按卡面完成闸门 A 的实测（完整覆盖 + 表句柄复用 + 块数上界）与闸门 B 的 ADR/companion 与
+  Sol §4 反例逐条关闭，再决定实现路径。审查路由：**DS-H 完整受影响面工程主审** +
+  （本卡涉及 A3/§12.2 承诺与结果完整性裁决）**Sol high 聚焦终审必选**；终审前状态停在
+  `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`。推荐模型 **DS-H / DeepSeek V4.1 Flash / 高推理**，
+  模型切换始终由用户在 Codex 中手动完成。
