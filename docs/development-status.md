@@ -2839,3 +2839,39 @@ JUnit `test-results/p4-02c-sol-rereview-f4.xml` **1 / 0 / 0 / 0**。F4、F3、�
 DS-H 容量证据专项审查，改动产品代码或触发卡面条件即扩大为完整主审。P4-06 只读展示、P4-07
 纯打包/环境适配也各有有界专项审查与扩大条件。审查范围调整不降低卡面 B/D/C 必测项，
 不改变 P4-02C PASS、P4-02B 尚未启动或真实模型/最低配置的未验证状态。
+
+## Latest task — P4-02B（2026-09-24）
+
+**P4-02B：`IMPLEMENTED / VALIDATION COMPLETE（B + D）`；三档真实跑完，但发现两条必须记录的能力事实
+（F1 语义发布一次性突发 O(n²)、F2 查询 P95 未达标），因此**未标 P4-02B PASS**，独立
+DS-H 容量证据专项审查 PENDING。** 详见 [P4-02B 报告](reports/P4-02B-capacity-validation.md)。
+
+- 执行：DS-L / DeepSeek V4.1 Flash / 低推理（用户手动选择）；只新增测量工具/夹具/测试/报告，
+  `src/**`、schema、检索语义、错误码信封零改动，`schema_version` 仍 15。
+- 三档（合成夹具、中文+空格工作目录、真实产品入口）10 000 / 100 000 / 300 000 全部真实完成：
+  30 万档 `artifacts=PUBLISHED 300 000`、`outbox=CONFIRMED 300 000`、`entries=CONFIRMED 300 000`、
+  `semantic_ready=300 000`、generation `READY`（active）、`pending=0`、`pending_repair=0`。
+- 阶段吞吐：scan 349 / 348 / 343 件/秒；投影 14.9k–17.9k 文档/秒；缩略图 222 / 239 / 218 件/秒；
+  语义（有界波次）97 / 92 / ≈79 件/秒；drain 864 / 744 事件/秒（1.158 / 1.344 ms/事件）。
+- **F2 未达标（不自动放宽）**：暖机文字搜索 P95 = 200 ms（1 万）→ 8 318 ms（10 万）→
+  125 175 ms（30 万，3 样本），§12.2 目标 ≤ 1 s；后台维护同时前台 10 万档实测 12.6 s。根因是
+  `search/retrieval.py::vector_channel` 的候选块路径（5 000 候选/块，30 万约 60 块，查询工作集
+  峰值 2.1 GB）；P4-01 的 A3（无过滤一次全局查询 ≈0.37 s@30 万）仍未授权，建议另开卡。
+- **F1 发现（需另开卡）**：一次性投递整个积压时 `jobs.claimable_candidates` 每次物化并排序整个
+  可运行积压 ⇒ 1 万 96.2 件/秒 → 10 万 47.3 件/秒 → 30 万 11.3 件/秒（截断样本）；改有界波次后
+  10 万 92.3、30 万 ≈79 件/秒。最小反例与修法方向见报告 §9 F1。
+- D 级注入五项全通过（中断恢复无重复/无丢行、`after_lance` 幂等重放、内容变更旧向量被取代、
+  离线无幽灵命中、确认后立即可检索）；B 级全量 **1682 / 0 / 0 / 48**、本卡新增 **11 / 0 / 0 / 0**，
+  Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
+- BLOCKED：真实模型吞吐/显存、完整 API P95（含真实文本塔）、GTX 1660 最低配置、人脸/OCR 阶段时间。
+
+**停止点**：本卡按规定未标 PASS。请在新会话用 **DS-H / DeepSeek V4.1 Flash / 高推理**做容量证据
+专项审查并写 `docs/reports/P4-02B-dsh-engineering-review.md`（核对三档是否真实走产品入口、夹具
+可复现性、测量口径与 §12.1/§12.2/§12.3 一致性、D 级注入真实性、F1/F2/F3 的停止项判定；若改
+`src/` 或测量绕开产品入口即扩大为完整受影响面主审）。若主审把 F2/F4 升级为协议或 ADR 裁决
+（ANN 承诺、A3、§12.2 查询口径），必须改记 `ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PENDING`
+并交 **C2 / GPT-5.6 Sol / high** 聚焦终审。模型切换始终由用户在 Codex 中手动完成。
+
+**下一任务**：[P4-03](tasks/P4-03.md)（UpgradeRun/targets、预算、暂停恢复、profile 原子激活）。
+推荐 **DS-H / DeepSeek V4.1 Flash / 高推理**，且 **Sol 必选**（命中 V3.1 §11 高风险清单）。
+若先处理 F1/F2，建议另开「语义发布积压领取」与「检索延迟（候选块/A3）」两张卡，不占用 P4-03 范围。
