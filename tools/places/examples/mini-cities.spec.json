@@ -30,7 +30,7 @@
     "alias_languages": ["en"],
     "record_count": 3
   },
-  "compatible_catalog_schema": { "minimum": 5, "maximum": 15 },
+  "compatible_catalog_schema": { "minimum": 5, "maximum": 16 },
   "state": "STAGED",
   "previous_dataset_id": null,
   "places": [

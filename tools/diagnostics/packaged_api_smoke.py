@@ -1179,6 +1179,17 @@ def run_smoke(
     return report
 
 
+def supported_schema_version() -> int:
+    """The tip of the migration chain of *this* source build.
+
+    The frozen bundle must carry the same tip, so the check is pinned to the source of truth
+    instead of a literal that every additive migration would have to remember to bump.
+    """
+    from photo_search.catalog import schema
+
+    return int(schema.SUPPORTED_SCHEMA_VERSION)
+
+
 def summarize(report: dict[str, Any]) -> list[str]:
     checks = report["checks"]
     heif_degraded = checks.get("heif_degraded_mode")
@@ -1423,7 +1434,7 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("packaged person-operation schema")
     taken_time_schema = checks.get("packaged_taken_time_schema") or {}
     if (
-        taken_time_schema.get("schema_version") != 15
+        taken_time_schema.get("schema_version") != supported_schema_version()
         or not taken_time_schema.get("has_asset_metadata")
         or not taken_time_schema.get("has_closed_sources")
         or not taken_time_schema.get("has_capture_index")

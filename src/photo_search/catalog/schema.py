@@ -55,7 +55,13 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: library-level ``taken_time_rules_version`` key. It is additive only - no fact table, no
 #: search document, no queue cause and no vector namespace changes - and it backfills
 #: nothing, because the extraction is its own idempotent, resumable task.
-SUPPORTED_SCHEMA_VERSION = 15
+#: ``0016`` adds the P4-02E index-only additive of the bounded semantic-backlog claim:
+#: ``idx_jobs_claim_order`` (the ``(side, priority)`` class seek of
+#: ``jobs.claimable_candidates``) plus the two *partial* indexes
+#: ``idx_jobs_retry_due``/``idx_jobs_expired_lease`` that let the claim's own prefilter
+#: statements (``requeue_due_retries``/``fail_exhausted_leases``) stop scanning the whole
+#: backlog. No table, column, row, CHECK or state vocabulary changes.
+SUPPORTED_SCHEMA_VERSION = 16
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

@@ -645,11 +645,12 @@ def semantic_stage(
 
     The work is released in **bounded waves** (``--publish-wave``), and every wave is drained
     by the production entry before the next one is published: that is the steady-state shape
-    of the AI worker (continuous publication) plus the maintenance entry, and it is the only
-    shape in which the claim query stays cheap - ``jobs.claimable_candidates`` materialises
-    and sorts the *whole* runnable backlog per claim, so one 300 000-event burst turns the
-    stage quadratic. ``--burst-sample`` keeps one deliberately unbounded burst at the front of
-    the run so that cost stays measured instead of assumed.
+    of the AI worker (continuous publication) plus the maintenance entry. Before P4-02E it was
+    also the only shape in which the claim stayed cheap, because ``jobs.claimable_candidates``
+    materialised and sorted the *whole* runnable backlog per claim (P4-02B section 9, finding
+    F1): one 300 000-event burst turned the stage quadratic. P4-02E bounded that access path,
+    so ``--burst-sample`` can now cover the whole backlog at once and its throughput is
+    expected to match the wave shape.
     """
     report: dict[str, Any] = {"encoder": "deterministic-stand-in (no pinned model weights)"}
     ordered = [int(value) for value in asset_ids]

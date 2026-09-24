@@ -70,7 +70,9 @@ def test_the_migration_chain_is_continuous_and_0015_is_the_time_layer() -> None:
     versions = [number for number, _ in schema.migration_files()]
     assert versions == list(range(1, SUPPORTED + 1))
     assert versions[14] == 15
-    assert SUPPORTED == V15
+    # P4-02E raised the moving tip with an index-only additive (0016). This probe is about the
+    # 0015 step itself, so it only requires that the chain reaches 0015 and continues from it.
+    assert SUPPORTED >= V15
     names = sorted(
         path.name for path in REAL_MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")
     )
@@ -159,7 +161,11 @@ def test_v14_to_v15_is_continuous_backed_up_and_lossless(
     assert snapshot(path) == before
     # The chain continues from 15 to whatever this build supports, then settles.
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.previous_version == SUPPORTED
+    assert again.previous_version == V15
+    assert again.schema_version == SUPPORTED
+    assert again.applied == tuple(range(V15 + 1, SUPPORTED + 1))
+    settled = migrate_database(path, data_root=data_root(tmp_path))
+    assert settled.applied == () and settled.previous_version == SUPPORTED
 
 
 def test_the_table_enforces_the_frozen_closed_sets(
@@ -296,7 +302,13 @@ def test_an_older_build_refuses_the_newer_catalog_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = build_v14(tmp_path, monkeypatch)
+    # Pin the 0015 step: this probe is about a v15 catalog, and P4-02E raised the moving tip
+    # to 16 with an index-only additive migration.
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V15))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V15)
     migrate_database(path, data_root=data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
     assert inspect_database(path) == V15
     before_bytes = path.read_bytes()
     before = snapshot(path)

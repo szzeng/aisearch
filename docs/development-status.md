@@ -3030,3 +3030,88 @@ round 3 `729.1` vs `727.4`，结论相同）；§6「84 次查询 + 2 次暖机�
 
 **下一步**：按 **P4-02E（F1 语义积压领取有界化）** 与 **P4-02F（F2 检索延迟）** 独立推进，
 模型切换由用户在 Codex 中手动完成。
+
+## Latest task — P4-02E（2026-09-24）
+
+**P4-02E：`IMPLEMENTED / VALIDATION COMPLETE（B + D + 迁移）`；独立 DS-H 完整受影响面主审 PENDING，
+`SOL_NOT_REQUIRED`（未改公平/aging/领取窗口/饥饿上界）。** 详见
+[P4-02E 报告](reports/P4-02E-backlog-claim.md)。
+
+- 执行：DS-H / DeepSeek V4.1 Flash / 高推理（用户手动选择）；基线 `a0a55c0`，开工时工作树干净。
+- 变更面：`jobs/queue.py::claimable_candidates` 改为「有界候选 + 精确裁决」（签名、返回列与语义不变）、
+  新增 `catalog/migrations/0016_jobs_claim_order.sql`（只新增 3 个索引，其中 2 个部分索引）、
+  `SUPPORTED_SCHEMA_VERSION 15 → 16`、本卡测试/工具/报告/状态，以及 5 处机械版本钉扎（见报告 §3.3）；
+  禁止面（ADR-0001～0011 与 companion、公平公式与三个排序键、`MAX_CANDIDATES_PER_CLAIM`、aging 默认值、
+  `0001`～`0015`、状态词表、检索语义/错误码/`search_projection`、`api/**`、`web/**`、`PhotoSearch.spec`、
+  `tools/packaging/**`、`pyproject.toml`、`uv.lock`）**零 diff**。
+- 等价性：**240 状态 × 6 `limit` × 3 aging 窗口 = 4 320 次页面比较逐项相同**（`job_id` 顺序与
+  `effective_priority` 值都相同）；`processor_ids` 为 `None`/空集/多值/不存在、重启后同序列、
+  资格阻断（候选页内 256 条全 `BLOCKED` 且不消耗 `attempts`）、过期租约 takeover 计一次失败、
+  暂停态 `SCHEDULER_PAUSED` 均保持。
+- 成本：30 万积压领取 107.22 / 113.74 ms（中位/P95）→ **1.48 / 1.62 ms**；`Scheduler.claim_next`
+  写事务 181.88 ms → **2.61 ms**（空写事务 0.006 ms）。两侧计划都不再出现
+  `USE TEMP B-TREE FOR ORDER BY`；领取预筛选两句从 35.1 + 38.4 ms 降到 0.024 + 0.016 ms。
+- **30 万一次性突发回归**：execute **98.3 件/秒**（3 050 960.5 ms / 300 000 件，单波全量、
+  `waves=1`），与稳态波次同量级（≈79 件/秒），远超改前截断样本 11.3 件/秒与卡面 ≥70 门槛；
+  drain 412.8 事件/秒（300 000 事件）；`semantic_ready=300000`、`pending=0`、`pending_repair=0`、
+  `schema_version=16`。10 000 档前后对照 96.2 → 106.3 件/秒。
+- 本卡新发现并收口（属卡面要求 4「不得把成本转移到别的阶段」）：同一领取写事务里的
+  `requeue_due_retries` 在 30 万积压下是整索引扫描（35.1 ms，强制 seek 0.020 ms 的最小反例），
+  `fail_exhausted_leases` 是整表 `SCAN jobs`（38.4 ms）；以及主审参考实现的 `SELECT DISTINCT priority`
+  依赖 `ANALYZE` 统计，产品无统计时 57.9 ms → 0.004 ms。三者分别由两个部分索引与「显式递增 seek
+  枚举类」修掉，均为加性、未改语义。
+- 验收（主审放行条件落实后）：聚焦 `10 / 0 / 0 / 0`、`0016` 迁移 `6 / 0 / 0 / 0`、
+  版本耦合 `88 / 0 / 0 / 0`、全量 **`1698 / 0 / 0 / 48`**（48 为环境跳过；本卡净增 16 例）、
+  Ruff / `git diff --check` / `uv lock --check` 全 exit 0。
+- BLOCKED/未验证：真实模型吞吐与显存、含真实文本塔的 API P95、GTX 1660、ANN Recall 0.95；
+  **冻结包（C 级）本卡未重建**（`dist/PhotoSearch` 仍是 schema 15 的旧包，`0016` 会由
+  `collect_data_files('photo_search')` 自动收集但未做真实打包 smoke）；
+  30 万档 HTTP、冷 OS 缓存与长时 soak 未测。
+- 停止点：本卡**未标 PASS**。请在新会话用**另一位 DS-H / 高推理**做**完整受影响面工程主审**
+  （领取谓词与逐项等价性、revision/幂等键、租约与资格门、`0016` 迁移、计划与变异证据、
+  以及上面两条新发现是否被正确收口），主审不得只核 diff。未命中 V3.1 §2.2，不升 DS-MAX。
+- 下一步：**P4-02F（F2 检索延迟）** 的前置结论已更新——本卡只关闭 F1，不改变 F2/F3 的归因与闸门
+  （30 万档「维护期间前台检索」P95 仍 34.9 s）。**P4-03 的迁移编号已从 `0016` 改为 `0017`**
+  （`0016` 被本卡占用）。模型切换仍由用户在 Codex 中手动完成。
+
+## Latest independent review — P4-02E DS-H 完整受影响面工程主审（2026-09-25）
+
+**P4-02E：`ENGINEERING REVIEW PASS`（含 1 条提交前应修、2 条记录性发现）；`SOL_NOT_REQUIRED` 维持；
+C 级冻结包仍未验证。** 见 [主审报告](reports/P4-02E-dsh-engineering-review.md)（基线 `a0a55c0`，
+被审状态为实现者的未提交工作树，被审文件 SHA-256 前 16 位已记录）。
+
+- **独立性限制**：本次主审与实现同一会话（用户指派继续做审查）。独立性体现在主审自跑测试与探针、
+  自写冻结查询对照、并找到实现者未发现的问题；但这**不是** V3.1 §2.4 期望的“另一位 DS-H 会话/模型”。
+  如需严格独立，建议另开会话用另一模型复跑主审 §2/§9 的常设探针（约 25 分钟）。
+- 变更面：11 改 5 新；禁止面（ADR/伙伴、`scheduler/search/api/web`、`0001`～`0015`、`PhotoSearch.spec`、
+  `tools/packaging/**`、`pyproject.toml`、`uv.lock`）零 diff；预筛选与租约函数的 SQL 文本逐字未改，
+  `0016` 确为纯新增索引（三条 `CREATE INDEX`）。
+- 主审独立复现：聚焦 **66 / 0 / 0 / 0**、全量 **1697 / 0 / 0 / 48**；成本探针 4 档中位
+  0.952 / 0.898 / 0.927 / **1.654** ms（`claim_next` 1.7–3.0 ms）；10 000 档真实产品入口突发
+  **99.6 件/秒**（实现者 106.3，同量级）。30 万档突发**未重跑**（约 1.5 h），改为核读 + 内部自洽校验：
+  `steps=wave_assets=300000`、`waves=1`、`applied=300000`、`returncode=0`、98.3 件/秒按 ms 反算一致、
+  412.8 事件/秒、`schema_version=16`、`semantic_ready=300000`、`pending=0`、五个 D 级注入全 ok。
+- **主审新增等价性证据**：2 513 次真实领取序列逐项相同（两个同夹具库各走一次真实领取路径，结束时
+  `state`/`attempts` 快照也相同）；30 万行 × 5 个类 × 3 个 aging 窗口页面相同；
+  部分索引在「有索引 / 无索引 / 无索引且无统计 / 再加回索引」四种配置下返回行集合完全一致（含
+  `attempts`/`max_attempts` 边界与 `(0,3)`、`(2,3)`、`(3,3)`）。另：其它 `jobs` 语句计划无回归，
+  仅 `fail_exhausted_leases` 改走新部分索引。
+- **主审新发现**：**N1**（提交前应修）两处「预筛选不得扫描」守卫在自身 5 000 行夹具下**空转** ——
+  删掉两个部分索引后计划仍非 `SCAN jobs`（5 万行 + `ANALYZE` 才出现可判定差异），需把守卫移到
+  ≥50 000 行并断言计划**点名** `idx_jobs_retry_due` / `idx_jobs_expired_lease`（可加 DROP 对照）。
+  **N2** K（优先级类数）交叉点已量化：K=1 0.86 ms、K=10 9.4 ms、K=50 固定 K 下 37.7→51.1 ms（平坦）、
+  K=100 113 ms、K=1000 467 ms（对照冻结查询 24–27 ms）；生产 `enqueue` 均用默认优先级 0（API 只读），
+  故非阻断，但「引入非零优先级必须先做按类游标的堆式多路归并/给出 K 有界规则」应成为后续卡面前置条件。
+  **N3** `collect_data_files('photo_search')` 已含 `0016`（28 资源 / 16 迁移），但 `dist/PhotoSearch`
+  仍是 schema 15 旧包 ⇒ C 级保持未验证。
+- 放行条件（非阻断本结论）**已全部落实并由主审复验**：N1 → 守卫改为
+  `test_the_prefilters_of_the_claim_use_their_partial_indexes`（50 000 行单一状态 + `ANALYZE`，断言点名
+  `idx_jobs_retry_due`/`idx_jobs_expired_lease`，并用 DROP 对照证明夹具可判定；迁移用例里同源空转断言已删）；
+  N2 → K 交叉点量化表（K=1 0.86 / 10 9.4 / 50 37.7–51.1 / 100 113.1 / 1000 466.7 ms，对照冻结
+  4.0–73.0 ms）已写入实现报告 §9 并附触发条件；§2.2 耗时已改为区间（26–35 / 28–38 ms，注明主审复现
+  26.4/27.9）；N3 C 级冻结包**维持未验证**。另：主审探针的「领取序列逐项相同」已提升为正式用例
+  `test_the_claimed_sequence_is_identical_to_the_frozen_sequence`。
+- 落实后复跑：聚焦 **10 / 0 / 0 / 0**、迁移 **6 / 0 / 0 / 0**、全量 **1698 / 0 / 0 / 48**；
+  `src/**` 与 `0016` 的 SHA-256 与主审开审快照**逐字相同**（本轮只改测试与文档，产品代码零改动）。
+- 仍未验证：真实模型吞吐/显存、含真实文本塔的 API P95、GTX 1660、ANN Recall 0.95、30 万档 HTTP/
+  冷 OS 缓存/长时 soak、C 级冻结包。

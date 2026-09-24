@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 from httpx import AsyncClient
 from p4_time_fixtures import (
+    REAL_MIGRATIONS_DIR,
+    SUPPORTED_SCHEMA_VERSION,
     assets_by_basename,
     build_v14_catalog,
     enqueue_all,
@@ -54,7 +56,14 @@ def test_d1_a_populated_v14_catalog_upgrades_to_v15_without_touching_any_old_row
     assert inspect_database(path) == 14
     revision_before = before["catalog_filter_revision"][0][1]
 
+    # This probe is about the ``0015`` step itself, so it pins the target version the same way
+    # ``test_p4_taken_time_migration.py`` does instead of following the moving tip (P4-02E
+    # raised it to 16 with an index-only additive migration).
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 15))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 15)
     result = migrate_database(path, data_root=v14_data_root(tmp_path))
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED_SCHEMA_VERSION)
 
     assert (result.previous_version, result.schema_version, result.applied) == (14, 15, (15,))
     assert inspect_database(path) == 15

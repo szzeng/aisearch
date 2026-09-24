@@ -274,6 +274,58 @@ def requeue_due_retries(
     return int(cursor.rowcount or 0)
 
 
+#: The two runnable sides of a claim: ``(state, its runnable condition)``. The condition is
+#: bound with ``now_ms`` and the processor filter is appended verbatim by the caller.
+_CLAIM_SIDES: tuple[tuple[str, str], ...] = (
+    (STATE_QUEUED, "run_after <= ?"),
+    (STATE_RUNNING, "lease_expires_at <= ?"),
+)
+
+#: P4-02E: the covering index of migration ``0016``. The claim statements name it explicitly
+#: (``INDEXED BY``) because the scheduler must not depend on planner statistics: this product
+#: never runs ``ANALYZE``, and without ``sqlite_stat1`` the planner prefers
+#: ``idx_jobs_processor_state`` (which looks more constrained) and falls back to
+#: ``USE TEMP B-TREE FOR ORDER BY``, i.e. to the quadratic F1 shape. Naming the index makes the
+#: access path part of the frozen contract; a build without it fails loudly instead of
+#: silently degrading.
+_CLAIM_INDEX = "idx_jobs_claim_order"
+
+
+def _claim_priority_sql(condition_sql: str, filter_sql: str, *, after_cursor: bool) -> str:
+    """The next stored priority that really has a runnable row on one side (P4-02E).
+
+    ``after_cursor`` continues the walk strictly above the previous priority. Walking the
+    classes this way costs one index seek per class; a ``SELECT DISTINCT priority`` would look
+    equivalent but is *not* bounded without statistics: SQLite only turns it into a seek-per-
+    distinct-value loop when ``sqlite_stat1`` exists (measured 58 ms vs 0.004 ms at a 300 000
+    row backlog, see docs/reports/P4-02E-backlog-claim.md).
+    """
+    cursor_sql = " AND priority > ?" if after_cursor else ""
+    return (
+        f"SELECT priority FROM jobs INDEXED BY {_CLAIM_INDEX} "
+        f"WHERE state = ?{cursor_sql} AND {condition_sql}{filter_sql} "
+        "ORDER BY priority ASC LIMIT 1"
+    )
+
+
+def _claim_class_sql(condition_sql: str, filter_sql: str) -> str:
+    """The oldest ``limit`` rows of one ``(side, priority)`` class, in global order.
+
+    The global order is ``effective_priority DESC, created_at ASC, job_id ASC`` and
+    ``effective_priority = priority + ((now - created_at) / window)`` is non-increasing in
+    ``created_at`` *inside* one class (integer division, truncating toward zero, is monotone).
+    The class-internal order is therefore exactly ``created_at ASC, job_id ASC``, which is what
+    ``idx_jobs_claim_order(state, priority, created_at, job_id)`` supplies without a sort.
+    """
+    return (
+        f"SELECT {JOB_COLUMNS}, "
+        "(priority + ((? - created_at) / ?)) AS effective_priority "
+        f"FROM jobs INDEXED BY {_CLAIM_INDEX} "
+        f"WHERE state = ? AND priority = ? AND {condition_sql}{filter_sql} "
+        "ORDER BY created_at ASC, job_id ASC LIMIT ?"
+    )
+
+
 def claimable_candidates(
     connection: sqlite3.Connection,
     *,
@@ -290,33 +342,59 @@ def claimable_candidates(
     fresh high-priority jobs therefore cannot starve an old backlog forever, because the
     backlog's effective priority keeps rising. Ties are broken by ``created_at`` then
     ``job_id``, so the same state always produces the same choice after a restart.
+
+    P4-02E: the page is built as *bounded candidates + exact adjudication* instead of
+    materialising the whole runnable backlog. Because ``effective_priority`` is non-increasing
+    in ``created_at`` inside one ``(side, priority)`` class, a page of ``limit`` rows can never
+    contain more than ``limit`` rows of any single class, and those rows must be that class's
+    oldest ones. Taking the oldest ``limit`` rows per class and adjudicating that union with
+    the frozen formula and the three frozen sort keys is therefore *identical* - item by item,
+    including the ``effective_priority`` values - to the previous whole-backlog query, while
+    its cost no longer grows with the backlog (``idx_jobs_claim_order`` serves the class seek).
+
+    Cost model: one index seek per ``(side, priority)`` class plus at most ``limit`` rows per
+    class, i.e. ``O(K)`` seeks and ``O(K * limit)`` rows for ``K`` distinct runnable
+    priorities - never ``O(backlog)``. Every production ``enqueue`` call site uses the default
+    priority today (``K = 1``); a future workload with a large ``K`` would want a heap merge
+    over per-class cursors, which is a deliberate follow-on decision rather than a hidden one.
     """
     window = max(int(aging_window_ms), 1)
+    bound = max(int(limit), 1)
     filter_sql, parameters = _processor_filter(processor_ids)
-    sql = (
-        f"SELECT {JOB_COLUMNS}, "
-        "(priority + ((? - created_at) / ?)) AS effective_priority "
-        "FROM jobs WHERE state = 'QUEUED' AND run_after <= ?"
-        f"{filter_sql} "
-        "UNION ALL "
-        f"SELECT {JOB_COLUMNS}, "
-        "(priority + ((? - created_at) / ?)) AS effective_priority "
-        "FROM jobs WHERE state = 'RUNNING' AND lease_expires_at <= ?"
-        f"{filter_sql} "
-        "ORDER BY effective_priority DESC, created_at ASC, job_id ASC LIMIT ?"
+    candidates: list[sqlite3.Row] = []
+    for state, condition_sql in _CLAIM_SIDES:
+        next_priority = connection.execute(
+            _claim_priority_sql(condition_sql, filter_sql, after_cursor=False),
+            (state, int(now_ms), *parameters),
+        ).fetchone()
+        while next_priority is not None:
+            priority = int(next_priority["priority"])
+            candidates.extend(
+                connection.execute(
+                    _claim_class_sql(condition_sql, filter_sql),
+                    (
+                        int(now_ms),
+                        window,
+                        state,
+                        priority,
+                        int(now_ms),
+                        *parameters,
+                        bound,
+                    ),
+                ).fetchall()
+            )
+            next_priority = connection.execute(
+                _claim_priority_sql(condition_sql, filter_sql, after_cursor=True),
+                (state, priority, int(now_ms), *parameters),
+            ).fetchone()
+    candidates.sort(
+        key=lambda row: (
+            -int(row["effective_priority"]),
+            int(row["created_at"]),
+            int(row["job_id"]),
+        )
     )
-    bound = [
-        int(now_ms),
-        window,
-        int(now_ms),
-        *parameters,
-        int(now_ms),
-        window,
-        int(now_ms),
-        *parameters,
-        max(int(limit), 1),
-    ]
-    return list(connection.execute(sql, tuple(bound)).fetchall())
+    return candidates[:bound]
 
 
 def _start_running(
