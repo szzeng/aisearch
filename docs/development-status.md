@@ -3479,3 +3479,38 @@ focused/full JUnit）。最小反例：`C_sql=C_strict={B}`，Lance 还有更近
 §6 第 1 行的 M2 判定与新增测试，并补可核对 `6cd526e` 的独立主审记录及压缩交接包。
 已核对既有契约 JUnit 12 / 0 / 0 / 0、全量 1710 / 0 / 0 / 48，本轮未重跑。
 **A3 未实现/未启用，§12.2 未改，P4-02F 非性能 PASS。**
+
+## Latest revision-surface review — P4-02H 按机制门禁修订面（r5，2026-09-25）
+
+**修订面主审（点名 `6cd526e` + `9f5f14d`）不予 PASS：1 处判据级冲突需裁决、2 处面级陈述需修正、
+1 处点名断言缺口、4 条非阻断观察。** 见 [修订面主审报告](reports/P4-02H-a3-contract-review-r5.md)。
+本轮只读：`src/**`、ADR 判据、companion 与契约用例**零改动**；维持 `A3 未实现/未启用`、`§12.2 未改`、
+`P4-02F 非 PASS`。
+
+- **F-A（判据级，停止交裁决）**：§6 第 1 行（自称真实 `after_lance` 窗口，状态含 `PENDING_REPAIR`）
+  与第 11 行允许「M3 + 停止证书」，第 2 行（`index_entries = PENDING_REPAIR`，引擎可能仍留旧行）却是
+  **无条件回退** ⇒ 同一物理状态被两行相反裁决。可执行证据：同一有效 M3 证书下
+  `decide("pending_repair")=FALLBACK` 而 `decide("extra_engine_row_with_m3_certificate")=A3_WITH_CERTIFICATE`
+  （真实窗口的 `PENDING_REPAIR` 由 `tests/integration/test_p2_search_topup.py:75/:119` 证实；契约用例
+  矩阵 `:40-45` 的 `unconfirmed_row` 权威状态本身就写着「left it PENDING_REPAIR」，与 `:46-51` 的
+  `pending_repair` 同一状态）。两个闭合
+  方向（放宽第 2 行 / 收紧第 1、11 行）都属判据级语义变化，须用户或 ADR 级裁决。
+- **F-B（面级）**：参考模型 `decide` 只做名称级配对、不读机制 ⇒ 第 11 行状态下 **M1** 证书被接受
+  （§3.3 禁止），第 1 行状态下 **M3** 证书被判回退（第 1 行允许）；r4 又删去第 11 行原有
+  「M1/M2 在该状态必须回退」一句。
+- **F-C（面级）**：`tests/unit/test_p4_02g_a3_contracts.py:512` 注释与
+  `docs/reports/P4-02H-fix-and-handoff.md:106` 仍写「多余引擎行使证书失败」，与 §3.3/第 11 行
+  「M3 不要求行集相等」相反，需加按机制限定语（历史状态节同族表述同理）。
+- **F-D（断言缺口）**：第 11 行负分支「A 的失格判据不可证/发布前失效 ⇒ 继续扩大或回退」在
+  `gate_holds` 中未建模（只建模了未检查行距离下界）。
+- **非阻断观察**：`evidence` 非必填（r4 写入断言）；`A3Request.required` 不含 `certificate` ⇒
+  `{decision: A3_WITH_CERTIFICATE, certificate: null}` 零错误通过；`CertificateMechanism`/`EngineSideGate`
+  在 r4 后成为无 `$ref` 的孤儿定义；用例 M2 分支把公共门禁当引擎侧门禁；第 11 行与矩阵的用词不一致。
+- **正面证据（本轮独立复核）**：3 组正配全被接受、6 组交叉全被 schema 拒绝；§3.3 表/§4 表/第 1 行
+  的分机制判据一致；§6 恰 11 行且编号连续；companion `case` 枚举 == 契约用例矩阵键集；
+  停止证书的距离下界严格 `>`（下界相等必须继续扩大）。
+- **验收（本会话自跑）**：契约用例 **13 / 0 / 0 / 0**（`test-results/p4-02h-review-r5-contracts.xml`）；
+  独立探针 `test-results/p4-02h-review-r5-probes.json`；`ruff check .`、`git diff --check`、
+  `uv lock --check` 全 exit 0。**未重跑 B 级全量**（本轮零产品/契约改动）。
+- **下一步**：F-A 裁决 + F-B/F-C/F-D 最小闭合（闭合后只短审修订面）→ **Sol high 聚焦终审**；
+  冻结通过前不生成隔离实验卡、不立 A3 实现卡。模型切换由用户在 Codex 中手动完成。
