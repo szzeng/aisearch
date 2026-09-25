@@ -3192,3 +3192,41 @@ C 级冻结包仍未验证。** 见 [主审报告](reports/P4-02E-dsh-engineerin
 - 验收：本轮只新增测量工具改动与报告/状态；`ruff check .`、`git diff --check`、`uv lock --check` exit 0，
   产品代码、migration、schema、ADR/companion、信封/错误码零 diff（全量 B 级回归仍以阶段 0 的
   `test-results/p4-02f-full.xml` = **1698 / 0 / 0 / 48** 为准，本轮未再改产品代码故未重跑）。
+
+## Latest contract freeze — P4-02G A3 契约冻结（2026-09-25）
+
+**P4-02G：`ADR-0012 冻结（Accepted）` + companion 冻结 + 五个点名反例全部落在回退侧；
+`A3 未实现、未启用`；`§12.2 未修改`；`P4-02F 不标性能 PASS`。** 详见
+[契约冻结报告](reports/P4-02G-a3-contract-freeze.md)（决策输入 [P4-02G 闸门评估](reports/P4-02G-a3-gate-review.md)，
+基线 `f083023`，用后工作树干净）。
+
+- **裁决链**：P4-02F 阶段 0/1 实测（闸门 A 未达标、闸门 B 未证等价）→ P4-02G 架构裁决（用户决定进入
+  A3 契约与隔离实验）→ 本卡冻结 ADR-0012 + companion。**实现授权仍为空**。
+- **冻结内容**：①资格谓词 `A3_ELIGIBLE`（完整向量绑定 + 语义查询 + 无额外权威筛选 + 绑定代
+  `READY` 且 space/维度匹配）；②`C` 的精确定义（SQLite 权威视图下 `CONFIRMED`、当前有效投影
+  revision、与可见性权威事实相符；Lance 派生列/计数/索引存在性都不是凭证）；③证书三选一
+  （M1 等价快照 / M2 下推等价 / M3 带停止证书的迭代扩大，且发布前仍成立）；
+  ④全局 `(distance, asset_id)` 全序、截断不得先于全序、`top_k=1..1000`；
+  ⑤**回退义务**：证明不了完整 Top-K 必须回退，不发布缺项页、不改信封、不新增错误码。
+- **五个点名反例的冻结决策**：未确认行 → 回退；`PENDING_REPAIR` → 回退；旧/重复 `projection_revision`
+  → 回退；并列距离 → 回退（全序由 `(distance, asset_id)` 决定，禁止引擎内截断）；
+  并发发布窗 → 回退/重搜。连同矩阵其余 4 行共 9 行，**8 行回退 + 1 行正对照**，每行都要求
+  发布页与完整路径逐项相同。
+- **交付物**：`docs/decisions/ADR-0012-a3-global-candidate-contract.md`、
+  `docs/decisions/contracts/p4-a3-contracts.v1.json`、
+  `tests/unit/test_p4_02g_a3_contracts.py`（**9 / 0 / 0 / 0**，JUnit `test-results/p4-02g-contracts.xml`）、
+  冻结报告、本状态条目与下一张卡 `docs/tasks/P4-02H.md`。
+- **验收**：B 级全量 **1707 / 0 / 0 / 48**（含本卡 9 例，JUnit `test-results/p4-02g-full.xml`）、
+  `ruff check .`、`git diff --check`、`uv lock --check` 全 exit 0。受限令牌下 `--basetemp` 先触发
+  `WinError 5`、后触发 `WinError 3`（父目录未建成，848 例假错误），按正常 Windows 权限路由
+  **先建父目录再重跑**得到上面的真结果，**未改 ACL**。
+- **零产品改动**：`src/**`、`0001`～`0016`、`SUPPORTED_SCHEMA_VERSION`、既有 ADR/companion、
+  信封/错误码/`query_hash`/游标、RRF/BM25/距离、打包面、`pyproject.toml`、`uv.lock` 零 diff。
+- **仍未验证**：A3 与完整路径的等价性（oracle 对照 `Recall@K=1.000`）、五类注入的真实前后计数与
+  最小复现、A3 端到端 P50/P95（含真实文本编码、HTTP、回退率与回退时延）、真实中文 CLIP 权重、
+  GTX 1660、冷 OS 缓存与长时 soak —— 均留给隔离实验卡与后续实现卡。
+- **停止点与下一步**：本卡是 A 级契约冻结，不标实现/性能 PASS。下一步执行
+  [P4-02H](tasks/P4-02H.md)：**独立 DS-H 完整受影响面工程审查**（ADR-0012/companion/契约用例与
+  P4-02G §5.1/§5.3 一致性、五个反例决策与回退义务）→ 然后 **Sol high 聚焦终审**冻结协议与最小反例；
+  终审通过前不得立 A3 实现卡，`src/**` 保持零改动。推荐模型 **DS-H / DeepSeek V4.1 Flash / 高推理**，
+  模型切换仍由用户在 Codex 中手动完成。

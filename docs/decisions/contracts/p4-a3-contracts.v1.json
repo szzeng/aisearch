@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p4-a3-contracts.v1.json",
+  "title": "Photo Search P4-02G / ADR-0012 A3 eligibility, certificate and fallback contract",
+  "description": "Derived from ADR-0012-a3-global-candidate-contract.md. Contract only: A3 is NOT implemented and NOT enabled. Any A3 publication requires one of the certificate mechanisms, and every other state must fall back to the complete authoritative candidate-block path.",
+  "oneOf": [
+    { "$ref": "#/$defs/A3Request" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p4-a3-contracts.v1" },
+    "RulesVersion": { "const": 1 },
+    "SearchContractVersion": { "const": "p2-contracts.v1" },
+    "MaxTopK": { "const": 1000 },
+    "MinTopK": { "const": 1 },
+    "OrderKey": {
+      "description": "The published total order. Truncation may only happen after this order is applied.",
+      "const": ["distance", "asset_id"]
+    },
+    "CertificateMechanism": {
+      "enum": ["M1_EQUIVALENT_SNAPSHOT", "M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"]
+    },
+    "ForbiddenMechanism": {
+      "enum": [
+        "FIXED_OVERFETCH_MULTIPLIER",
+        "FIXED_RETRY_COUNT",
+        "GLOBAL_TOP_K_THEN_FILTER",
+        "COUNT_ONLY_EQUALITY",
+        "SAMPLING_ONLY_EQUALITY",
+        "INDEX_EXISTENCE_AS_QUALIFICATION",
+        "ENGINE_TRUNCATION_BEFORE_TOTAL_ORDER"
+      ]
+    },
+    "Decision": {
+      "enum": ["A3_WITH_CERTIFICATE", "FALLBACK_COMPLETE_PATH"]
+    },
+    "FallbackReason": {
+      "enum": [
+        "NOT_ELIGIBLE_EXTRA_SCOPE",
+        "NOT_ELIGIBLE_FILTER_ONLY",
+        "NOT_ELIGIBLE_INCOMPLETE_BINDING",
+        "BINDING_NOT_READY",
+        "UNCONFIRMED_ROW_IN_ENGINE",
+        "PENDING_REPAIR_ENTRY",
+        "STALE_OR_DUPLICATE_REVISION",
+        "MISSING_ENGINE_ROW",
+        "REVISION_OR_VISIBILITY_CHANGED_BEFORE_PUBLICATION",
+        "NO_CERTIFICATE_PROVABLE"
+      ]
+    },
+    "EligibilityRule": {
+      "type": "object",
+      "description": "ADR-0012 section 2: every field must hold for A3 to be even considered.",
+      "required": [
+        "full_vector_binding",
+        "semantic_query",
+        "source_id_is_null",
+        "availability_is_any",
+        "place_ids_is_empty",
+        "person_ids_is_empty",
+        "capture_is_null",
+        "generation_state_ready",
+        "space_and_dimension_match"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "full_vector_binding": { "const": true },
+        "semantic_query": { "const": true },
+        "source_id_is_null": { "const": true },
+        "availability_is_any": { "const": true },
+        "place_ids_is_empty": { "const": true },
+        "person_ids_is_empty": { "const": true },
+        "capture_is_null": { "const": true },
+        "generation_state_ready": { "const": true },
+        "space_and_dimension_match": { "const": true }
+      }
+    },
+    "AuthoritySetRule": {
+      "type": "object",
+      "description": "ADR-0012 section 3: the exact definition of C, the SQLite authoritative qualification set.",
+      "required": [
+        "entry_state_confirmed",
+        "current_projection_revision",
+        "asset_visibility_from_sqlite_authority",
+        "lance_visible_column_is_not_a_credential"
+      ],
+      "properties": {
+        "entry_state_confirmed": { "const": true },
+        "current_projection_revision": { "const": true },
+        "asset_visibility_from_sqlite_authority": { "const": true },
+        "lance_visible_column_is_not_a_credential": { "const": true }
+      }
+    },
+    "CertificateRule": {
+      "type": "object",
+      "description": "ADR-0012 section 4. Exactly one mechanism must be evidenced, and it must still hold at publication time.",
+      "required": ["mechanism", "holds_at_publication"],
+      "properties": {
+        "mechanism": { "$ref": "#/$defs/CertificateMechanism" },
+        "holds_at_publication": { "const": true },
+        "evidence": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "StateMatrixRow": {
+      "type": "object",
+      "description": "ADR-0012 section 6: one frozen counterexample class and its decided outcome.",
+      "required": ["case", "engine_state", "authority_state", "decision", "fallback_reason"],
+      "additionalProperties": false,
+      "properties": {
+        "case": {
+          "enum": [
+            "unconfirmed_row",
+            "pending_repair",
+            "stale_or_duplicate_revision",
+            "missing_engine_row",
+            "tied_distance",
+            "hidden_offline_or_source_change",
+            "generation_or_space_switch",
+            "concurrent_publication",
+            "positive_control_certificate"
+          ]
+        },
+        "engine_state": { "type": "string", "minLength": 1 },
+        "authority_state": { "type": "string", "minLength": 1 },
+        "decision": { "$ref": "#/$defs/Decision" },
+        "fallback_reason": {
+          "oneOf": [
+            { "$ref": "#/$defs/FallbackReason" },
+            { "type": "null" }
+          ]
+        },
+        "published_page_equals_complete_path": { "const": true }
+      }
+    },
+    "A3Request": {
+      "type": "object",
+      "description": "One A3 decision record: eligibility, certificate, decision and the counterexample it belongs to.",
+      "required": ["contract_version", "rules_version", "eligibility", "authority_set", "top_k", "order_key", "decision"],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "rules_version": { "$ref": "#/$defs/RulesVersion" },
+        "eligibility": { "$ref": "#/$defs/EligibilityRule" },
+        "authority_set": { "$ref": "#/$defs/AuthoritySetRule" },
+        "certificate": {
+          "oneOf": [
+            { "$ref": "#/$defs/CertificateRule" },
+            { "type": "null" }
+          ]
+        },
+        "top_k": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "order_key": { "$ref": "#/$defs/OrderKey" },
+        "decision": { "$ref": "#/$defs/Decision" },
+        "fallback_reason": {
+          "oneOf": [
+            { "$ref": "#/$defs/FallbackReason" },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}
