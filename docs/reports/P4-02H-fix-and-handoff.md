@@ -34,7 +34,8 @@
   ＋**真实 `scope_condition`**＋内存权威表＋替身索引，**显式计算 `C_sql`/`C_strict`** 两种窗口形状：
   ①防御性形状（`CONFIRMED` 条目的引擎行 revision 不一致）⇒ `C_sql={1,2}`、`C_strict={2}` ⇒ 回退；
   ②**真实 `after_lance` 形状**（条目已降为 `PENDING_REPAIR`、引擎已写新行）⇒ `C_sql == C_strict == {1,2}`
-  且多余引擎行 `{3}` 使证书失败 ⇒ 同样回退。oracle 仍返回 `hits=[A(revision=2)]`，证明其 revision-blind。
+  且多余引擎行 `{3}` 使 **M1** 的行集相等失败（**M2** 需已证下推、**M3** 须以停止证书覆盖该行）⇒ 最终回退。
+  oracle 仍返回 `hits=[A(revision=2)]`，证明其 revision-blind。
 
 ### 2.1 短审修正（Sol 聚焦短审 F2：归因错误，已改）
 
@@ -63,9 +64,10 @@ Sol r3 指出上面那句统一门禁与 M3 冲突：M3 正是要在「引擎有
 | M3 停止证书 | **不要求行集相等**：允许多余行，但必须在**引擎行流**上给出可判定的停止证书（已取得 K 个合格行 + 未检查行的距离下界劣于第 K 行），并在**发布前复核第 K 行合格性** |
 
 三机制**共同**的门禁只剩：公共门禁 `C_strict == C_sql` + 发布前窗口复核。
-ADR §4 的机制表新增「引擎侧门禁」列，§6 第 1 行改为「M1/M2 不可用、**M3 可用**（有证书时）」，
+ADR §4 的机制表新增「引擎侧门禁」列，§6 第 1 行改为「**M1 不可用；M2 只在证明排序前下推等价时可用；
+M3 只在停止证书成立时可用**」，
 并新增第 11 行 `extra_engine_row_with_m3_certificate`（A 更近但未确认、B 已确认、`top_k=1`
-⇒ 允许 M3，页 = `{B}` = oracle；同状态下 M1/M2 必须回退）。companion 新增
+⇒ 允许 M3，页 = `{B}` = oracle；同状态下 **M1 必须回退、M2 只在已证下推时可用**）。companion 新增
 `EngineSideGate` 枚举并把 `engine_side_gate` 列为 `CertificateRule` 必填；
 契约用例新增 `test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state`
 （含「未检查行下界更近 ⇒ 证书不成立、必须继续扩大或回退」的负例）。
@@ -124,6 +126,19 @@ r5 独立主审（`docs/reports/P4-02H-a3-contract-review-r5.md`，被审 `9f5f1
    O-2 `A3Request` 改为 `oneOf{A3PublishDecision, A3FallbackDecision}`——**A3 决定必须带非空、机制绑定的
    证书**，回退记录必须写 `fallback_reason`（两个反向负例已断言）；O-3 `gate_holds` 的 M2 分支改为比较
    **过滤后行集 == `C_strict` == `C_sql`**。O-4（第 11 行状态用词）随 F-A 文本修正一并纳入。
+
+### 2.6 Sol 聚焦短审（`P4-02H-focused-review-r6.md`）：第 11 行末句按路径拆分 + O-3 负例
+
+该轮（被审 `ead26d5`）判定方向甲、F-D、O-1/O-2/O-4 均通过，另列两处直接回归缺口，均已修：
+
+1. **第 11 行末句自相矛盾**：末句原写「或 M2 谓词未证明，则必须继续扩大或回退」，会把该行自身的
+   M3 正例也否定。现在矩阵表下新增**按路径判定的注**（选 M3 看停止证书三条件；选 M2 看谓词是否已证明；
+   M1 在本例不可用），并更正 §12 第 1 点的旧记录为「本例 M2 因缺证明回退；同状态若证明成立则可用」。
+2. **F-C 逐句清理**：真实窗口用例 docstring、本节 §2/§2.2 三处旧句改为分机制条件表述
+   （`rg` 已确认无「使证书失败」「M1/M2 不可用」类残留）。
+3. **O-3 补负例**：`gate_holds` 的过滤后行集改为**参数**（`filtered="correct"|"wrong"`），并断言
+   `pushdown_proven=True` 但过滤结果为 `{A}` 时 **M2 门禁失败** —— 旧表达式
+   `pushdown_proven and c_strict == c_sql` 在同一夹具也会通过，这条负例确保不会退回旧逻辑。
 
 ## 3. 验收
 

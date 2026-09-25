@@ -465,7 +465,8 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
     revision) is *not* what ``after_lance`` produces -- the publish path leaves the entry
     ``PENDING_REPAIR``, so that asset is in neither set and ``C_sql == C_strict``;
     (2) the real window is therefore "engine has a row the oracle does not", where the
-    certificate fails on the extra row even though the two sets are equal.
+    the *M1* gate fails on the extra row (row-set equality), while M2 would need a proven
+    pushdown predicate and M3 would need a stop certificate - even though the two sets are equal.
     In both shapes the *final* decision is a fallback, but for per-mechanism reasons: M1 fails
     on the row-set equality, M2 would need a proven pushdown predicate, and M3 would need a
     stop certificate; the real ``vector_channel`` proves the oracle is revision-blind.
@@ -582,7 +583,9 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
     c_strict = {"B"}
 
     physical = {"A", "B"}  # the whole engine row set of this generation/space
-    filtered_row_set = {"B"}  # what an (independent) proven pushdown predicate would return
+    # What an (independent) proven pushdown predicate would return. r7/O-3: this is a parameter,
+    # so a wrong filter result must fail the M2 gate instead of passing on the fixture alone.
+    filtered_row_sets = {"correct": {"B"}, "wrong": {"A"}}
 
     inspected = [("A", 0.10, False), ("B", 0.20, True)]  # (asset, distance, qualified)
 
@@ -593,6 +596,7 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         certificate: bool,
         uninspected_distance_lower_bound: float = 0.5,
         disqualification_provable: bool = True,
+        filtered: str = "correct",
     ) -> bool:
         """Reference model of §3.3: one gate per mechanism, nothing global beyond §7."""
         if not certificate:
@@ -600,8 +604,8 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         if mechanism == "M1_EQUIVALENT_SNAPSHOT":
             return physical == c_strict  # no extra row allowed
         if mechanism == "M2_PUSHDOWN_EQUIVALENCE":
-            # r6/O-3: M2 must compare the *filtered* row set with C_strict, not just claim a proof.
-            return pushdown_proven and filtered_row_set == c_strict == c_sql
+            # r6/r7 O-3: M2 must compare the *filtered* row set with C_strict, not just claim a proof.
+            return pushdown_proven and filtered_row_sets[filtered] == c_strict == c_sql
         qualified = sorted([row for row in inspected if row[2]], key=lambda row: (row[1], row[0]))
         kth = qualified[:1]
         if not kth:
@@ -621,6 +625,15 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
     assert gate_holds("M1_EQUIVALENT_SNAPSHOT", pushdown_proven=False, certificate=True) is False
     assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=False, certificate=True) is False
     assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=True, certificate=True) is True
+    assert (
+        gate_holds(
+            "M2_PUSHDOWN_EQUIVALENCE",
+            pushdown_proven=True,
+            certificate=True,
+            filtered="wrong",
+        )
+        is False
+    )
     assert gate_holds("M3_STOP_CERTIFICATE", pushdown_proven=False, certificate=True) is True
     assert (
         gate_holds(
