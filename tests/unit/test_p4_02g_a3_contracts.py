@@ -428,6 +428,11 @@ def test_adr_records_the_rounds_boundaries() -> None:
     for mechanism in FORBIDDEN_MECHANISMS:
         assert mechanism not in text  # the enum lives in the companion, not duplicated in the ADR
     assert "固定倍数 overfetch" in text and "全局 Top-K 后过滤" in text
+    # r7: the frozen row 11 must state its failure branches *per chosen path*; the old
+    # "or the M2 predicate is unproven -> fall back" clause negated its own M3 positive case.
+    row_11 = next(line for line in text.splitlines() if line.startswith("| 11 |"))
+    assert "选择 M3 时" in row_11 and "选择 M2 时" in row_11
+    assert "或 M2 谓词未证明" not in row_11
 
 
 # --------------------------------------------------- real-code counterexamples (Sol F1 / F2)
