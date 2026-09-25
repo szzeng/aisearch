@@ -106,6 +106,25 @@ r5 独立主审（`docs/reports/P4-02H-a3-contract-review-r5.md`，被审 `9f5f1
 4. **F-D（断言缺口，已修）**：`gate_holds` 新增 `disqualification_provable` 入参，并断言
    「失格判据不可证/发布前失效 ⇒ 证书不成立、必须继续扩大或回退」，与 §6 第 11 行末句一致。
 
+### 2.5 Sol 聚焦短审（`P4-02H-focused-review-r5.md`）：F-A 残余 + F-C 残余 + F-D 连通 + O-1～O-3
+
+该轮聚焦短审（被审 `73b7232`）判定方向甲的第 1/2 行已对齐，另列 4 项必须闭合，均已修：
+
+1. **F-A 残余**：第 11 行原写「M1 与 M2 在该状态必须回退」，却未限定「本例没有已证明的 M2 下推谓词」。
+   现第 11 行状态列加入该限定，决策列改为「M1 不可用；**M2 只在本例有已证明的排序前下推等价时可用**
+   （本例无此证明故回退）；M3 可用（停止证书）」。参考模型把 M2 的可用性交给**证据**：
+   `MECHANISM_AVAILABILITY[第 11 行] = {M2, M3}`，`decide` 对 M2 额外要求 `pushdown_proven`；新增断言要求
+   **同一 M2 证据在 `unconfirmed_row`、`pending_repair` 与第 11 行三处都得到 `A3_WITH_CERTIFICATE`**
+   （该轮的最小反例），无该证明时三处都回退。
+2. **F-C 残余**：ADR §3.3 的真实 `after_lance` 说明改为「**M1 失败**；M2 只在已证排序前下推时可用；
+   M3 只在停止证书成立时可用，都不成立才回退」；用例 docstring 与本节 §1/§2 的同族旧话同步改为分机制说法。
+3. **F-D 连通**：`decide` 现在也接收 `disqualification_provable`，「失格判据不可证」会传到**最终回退决定**
+   （不再只停留在 `gate_holds`）；「发布前失效」由既有 `holds_at_publication` 分支覆盖，两条入口各有断言。
+4. **O-1～O-3 纳入本次冻结**：O-1 三个证书变体的 `evidence` 改为 **required**（含缺失负例）；
+   O-2 `A3Request` 改为 `oneOf{A3PublishDecision, A3FallbackDecision}`——**A3 决定必须带非空、机制绑定的
+   证书**，回退记录必须写 `fallback_reason`（两个反向负例已断言）；O-3 `gate_holds` 的 M2 分支改为比较
+   **过滤后行集 == `C_strict` == `C_sql`**。O-4（第 11 行状态用词）随 F-A 文本修正一并纳入。
+
 ## 3. 验收
 
 契约用例 **12 / 0 / 0 / 0**（JUnit `test-results/p4-02h-r3-contracts.xml`；

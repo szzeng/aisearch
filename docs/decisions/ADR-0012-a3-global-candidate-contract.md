@@ -81,7 +81,8 @@ Lance 侧的 `visible`、行数、计数或索引存在性**都不是**资格凭
 - **真实的 `after_lance` 崩溃窗口不是 `C_strict ≠ C_sql`**：任何为同一 `(space, asset, generation)`
   发布新产物的路径都会**先把条目降为 `PENDING_REPAIR`**，`process_next(failpoint="after_lance")`
   在引擎写后、确认前抛出时条目仍是 `PENDING_REPAIR` ⇒ 该资产**既不在 `C_sql` 也不在 `C_strict`**，
-  两集**相等**；回退由「**引擎有行、oracle 没有**」（证书的额外行失败）触发。
+  两集**相等**；此时 **M1 失败**（全物理行集 ≠ `C_strict`），**M2 只有在本例已证明排序前下推等价时可用**，
+  **M3 只有停止证书成立时可用**，都不成立才回退（Sol r6 修正：不是「证书一律因多余行失败」）。
   该状态由仓库自身用例与独立复跑的真实 Lance/调度器交织共同证实
   （`tests/integration/test_p2_search_topup.py` 的崩溃窗口断言 `entry_state == "PENDING_REPAIR"`；
   [独立复跑](P4-02H-independent-recheck.md) §3 的 5 步交织每步 `C_sql == C_strict`）。
@@ -129,7 +130,7 @@ M3 最坏情况下退化为完整候选扫描 —— 因此 A3 的收益**不是
 | 8 | 并发发布窗 | 查询与发布之间发生确认/修复/撤销/revision 变化 | 发布前按现行 revision/资格门禁复核；不能重建完整结果则 **回退/重搜** |
 | 9 | 正对照（证书成立） | `C_strict == C_sql` 且**该机制的引擎侧门禁**（§3.3 表）成立，且在窗口内稳定 | 允许 A3；页必须与完整路径（oracle，`C_sql` 上）逐项相同 |
 | 10 | 空 `place_ids` 但 `place_state != any`（Sol F1） | 无地点 ID 条件，`place_state ∈ {assigned, unassigned, manual_unassigned, suggested}` | **不资格**（`NOT_ELIGIBLE_EXTRA_SCOPE`）；`scope_condition` 非恒真 ⇒ 走完整路径 |
-| 11 | 多余引擎行 + M3 停止证书（Sol r3/r4） | 同代同 space：SQLite 仅 B `CONFIRMED`（`C_sql = C_strict = {B}`）；引擎有**已检查且判为不合格**的 A(0.10 更近) 与 B(0.20)，`top_k=1`，且未检查行的距离下界劣于 0.20 | **M3 可用**：近的 A 属于「已检查、经同一权威视图判不合格」（判据：不在 `C_sql`），不阻断证书；停止证书只需覆盖**未检查的潜在合格行** ⇒ 允许 A3，页 = `{B}` = oracle。**M1 与 M2 在该状态必须回退**（M1：全物理集 `{A,B}` ≠ `C_strict`；M2：无已证明的排序前下推谓词）。若未检查行下界更近，或 A 的失格判据不可证/发布前失效，则必须继续扩大或回退 |
+| 11 | 多余引擎行 + M3 停止证书（Sol r3/r4/r6） | 同代同 space：SQLite 仅 B `CONFIRMED`（`C_sql = C_strict = {B}`）；引擎有**已检查且经同一权威视图判为不合格**的 A(0.10 更近) 与 B(0.20)，`top_k=1`；未检查行的距离下界劣于 0.20；**本例没有已证明的排序前下推谓词** | **M3 可用**（近的 A 已检查且失格判据可证、不阻断证书；停止证书只覆盖未检查的潜在合格行）⇒ 允许 A3，页 = `{B}` = oracle。**M1 不可用**（全物理集 `{A,B}` ≠ `C_strict`）；**M2 只在本例有已证明的排序前下推等价时可用**，本例无此证明故回退。若未检查行下界更近、A 的失格判据不可证或发布前失效，或 M2 谓词未证明，则必须继续扩大或回退 |
 
 ## 12. 决策记录：F-A（`PENDING_REPAIR` 多余行的机制可用性）
 

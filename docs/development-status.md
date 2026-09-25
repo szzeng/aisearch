@@ -3410,6 +3410,32 @@ A3 未实现/未启用；§12.2 不变。** 修正后只短审受影响边界；
 - **下一步**：Sol high 聚焦短审（只审 F-A 的方向甲与 F-B/F-C/F-D 修订面 + r7 未决 O-1～O-4 是否纳入冻结）；
   冻结通过前不立隔离实验卡、不立 A3 实现卡。模型切换由用户手动完成。
 
+## Latest r6 fix — P4-02H F-A 残余 + O-1～O-3 纳入冻结（2026-09-25）
+
+**Sol 聚焦短审（`reports/P4-02H-focused-review-r5.md`，被审 `73b7232`）的 4 项已闭合：
+F-A 残余（第 11 行 M2 限定）、F-C 残余旧陈述、
+F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
+[Sol 聚焦短审](reports/P4-02H-focused-review-r5.md)。维持 `A3 未实现/未启用`、`§12.2 未改`、
+`P4-02F 非 PASS`、`src/**` 零改动。
+
+- **F-A 残余**：第 11 行增列限定「**本例没有已证明的排序前下推谓词**」，决策改为「M1 不可用；
+  **M2 只在本例有已证明的排序前下推等价时可用**；M3 可用（停止证书）」。参考模型把 M2 可用性交给
+  **证据**（`MECHANISM_AVAILABILITY` 含 M2 + `decide` 要求 `pushdown_proven`），并断言**同一 M2 证据在
+  `unconfirmed_row`/`pending_repair`/第 11 行三处都得到 `A3_WITH_CERTIFICATE`**（Sol 聚焦短审的最小反例）。
+- **F-C 残余**：ADR §3.3 的真实 `after_lance` 说明与用例 docstring、交接包同族旧话全部改为
+  「M1 失败；M2 只在已证下推时可用；M3 只在停止证书成立时可用；都不成立才回退」。
+- **F-D 连通**：`decide` 接收 `disqualification_provable`，「失格判据不可证」现在会传到**最终回退决定**；
+  「发布前失效」由 `holds_at_publication` 分支覆盖，两条入口各有断言。
+- **O-1～O-3 纳入冻结**：O-1 三个证书变体的 `evidence` 改为 required（含缺失负例）；
+  O-2 `A3Request` 改为 `oneOf{A3PublishDecision, A3FallbackDecision}`——A3 决定必须带非空、机制绑定的
+  证书，回退记录必须写 `fallback_reason`；O-3 `gate_holds` 的 M2 分支改为比较**过滤后行集 ==
+  `C_strict` == `C_sql`**。O-4 随 F-A 文本修正纳入。
+- **验收**：契约用例 **15 / 0 / 0 / 0**（`test-results/p4-02h-r6-contracts.xml`）；
+  B 级全量 **1713 / 0 / 0 / 48**（`test-results/p4-02h-r6-full.xml`）；`ruff check .`、
+  `git diff --check` exit 0。
+- **下一步**：Sol high 再聚焦短审（只审本轮 4 项闭合面）；通过后才冻结 ADR-0012、才生成隔离实验卡；
+  在此之前不实现、不启用 A3，不立实现卡。
+
 ## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
 
 **另开会话的只读复跑：F1 命题成立且边界完备；F2 的判据方向正确，但 ADR §3.3 的举例与 §6 第 11 行的
@@ -3544,3 +3570,13 @@ focused/full JUnit）。最小反例：`C_sql=C_strict={B}`，Lance 还有更近
   `uv lock --check` 全 exit 0。**未重跑 B 级全量**（本轮零产品/契约改动）。
 - **下一步**：F-A 裁决 + F-B/F-C/F-D 最小闭合（闭合后只短审修订面）→ **Sol high 聚焦终审**；
   冻结通过前不生成隔离实验卡、不立 A3 实现卡。模型切换由用户在 Codex 中手动完成。
+
+## Latest focused short review — P4-02H r5 修订面（2026-09-25）
+
+**最终冻结暂缓。** 见 [F-A 方向甲与 F-B/F-C/F-D 聚焦短审](reports/P4-02H-focused-review-r5.md)
+（被审提交 `73b7232`）。方向甲的第 1/2 行已对齐，但第 11 行在未限定「无 M2 下推证明」的同一
+物理状态下仍令 M2 必回退；参考模型同一 M2 证书在第 1 行 A3、第 11 行回退。F-C 的 ADR §3.3 与
+真实反例 docstring 尚留「多余行使证书失败 ⇒ 回退」旧陈述；F-D 只有局部门禁负断言，尚未断言
+最终决定回退。r5 观察 O-1/O-2/O-3 应纳入冻结闭合，O-4 随 F-A 文本对齐、不单列阻断。
+已核对既有契约 JUnit 14 / 0 / 0 / 0、全量 1712 / 0 / 0 / 48；本轮未重跑，另用只读探针复现
+M2 状态差异与无证据/无证书记录被 companion 接受。**A3 未实现/未启用，§12.2 未改，P4-02F 非性能 PASS。**

@@ -116,7 +116,7 @@
     },
     "M1Certificate": {
       "type": "object",
-      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication", "evidence"],
       "additionalProperties": false,
       "properties": {
         "mechanism": { "const": "M1_EQUIVALENT_SNAPSHOT" },
@@ -127,7 +127,7 @@
     },
     "M2Certificate": {
       "type": "object",
-      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication", "evidence"],
       "additionalProperties": false,
       "properties": {
         "mechanism": { "const": "M2_PUSHDOWN_EQUIVALENCE" },
@@ -139,7 +139,7 @@
     "M3Certificate": {
       "type": "object",
       "description": "M3 needs no row-set equality, but it does need a decidable stop certificate over the engine row stream; rows it inspected and judged unqualified by the same authoritative view may be nearer.",
-      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication", "evidence"],
       "additionalProperties": false,
       "properties": {
         "mechanism": { "const": "M3_STOP_CERTIFICATE" },
@@ -182,29 +182,67 @@
       }
     },
     "A3Request": {
+      "description": "One A3 decision record. O-2: the decision is bound to its certificate here, so 'publish with A3' without a non-null mechanism-bound certificate is rejected by the machine contract, not only by prose.",
+      "oneOf": [
+        { "$ref": "#/$defs/A3PublishDecision" },
+        { "$ref": "#/$defs/A3FallbackDecision" }
+      ]
+    },
+    "A3PublishDecision": {
       "type": "object",
-      "description": "One A3 decision record: eligibility, certificate, decision and the counterexample it belongs to.",
-      "required": ["contract_version", "rules_version", "eligibility", "authority_set", "top_k", "order_key", "decision"],
+      "required": [
+        "contract_version",
+        "rules_version",
+        "eligibility",
+        "authority_set",
+        "top_k",
+        "order_key",
+        "decision",
+        "certificate",
+        "fallback_reason"
+      ],
+      "additionalProperties": false,
       "properties": {
         "contract_version": { "$ref": "#/$defs/ContractVersion" },
         "rules_version": { "$ref": "#/$defs/RulesVersion" },
         "eligibility": { "$ref": "#/$defs/EligibilityRule" },
         "authority_set": { "$ref": "#/$defs/AuthoritySetRule" },
+        "top_k": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "order_key": { "$ref": "#/$defs/OrderKey" },
+        "decision": { "const": "A3_WITH_CERTIFICATE" },
+        "certificate": { "$ref": "#/$defs/CertificateRule" },
+        "fallback_reason": { "const": null }
+      }
+    },
+    "A3FallbackDecision": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "rules_version",
+        "eligibility",
+        "authority_set",
+        "top_k",
+        "order_key",
+        "decision",
+        "certificate",
+        "fallback_reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "rules_version": { "$ref": "#/$defs/RulesVersion" },
+        "eligibility": { "$ref": "#/$defs/EligibilityRule" },
+        "authority_set": { "$ref": "#/$defs/AuthoritySetRule" },
+        "top_k": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "order_key": { "$ref": "#/$defs/OrderKey" },
+        "decision": { "const": "FALLBACK_COMPLETE_PATH" },
         "certificate": {
           "oneOf": [
             { "$ref": "#/$defs/CertificateRule" },
             { "type": "null" }
           ]
         },
-        "top_k": { "type": "integer", "minimum": 1, "maximum": 1000 },
-        "order_key": { "$ref": "#/$defs/OrderKey" },
-        "decision": { "$ref": "#/$defs/Decision" },
-        "fallback_reason": {
-          "oneOf": [
-            { "$ref": "#/$defs/FallbackReason" },
-            { "type": "null" }
-          ]
-        }
+        "fallback_reason": { "$ref": "#/$defs/FallbackReason" }
       }
     }
   }

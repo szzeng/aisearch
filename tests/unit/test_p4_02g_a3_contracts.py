@@ -227,6 +227,8 @@ def decide(
     eligible: dict[str, Any],
     certificate: dict[str, Any] | None,
     case: str,
+    pushdown_proven: bool = False,
+    disqualification_provable: bool = True,
 ) -> tuple[str, str | None]:
     """ADR-0012 §2/§4/§6: the only way to publish with A3 is an evidenced, still-valid certificate."""
     if not all(eligible.values()):
@@ -238,7 +240,15 @@ def decide(
         return FALLBACK, "NO_CERTIFICATE_PROVABLE"
     # r5 F-B: the state decides which mechanisms are admissible at all; a mechanism the row
     # does not admit (M1 on an extra-row state, anything on a defensive state) falls back.
-    if str(certificate.get("mechanism")) not in MECHANISM_AVAILABILITY[case]:
+    mechanism = str(certificate.get("mechanism"))
+    if mechanism not in MECHANISM_AVAILABILITY[case]:
+        return FALLBACK, "NO_CERTIFICATE_PROVABLE"
+    # r6/O-3 + F-D: the mechanism's own evidence must actually be proven *and* still hold, so a
+    # candidate M2 without a proven pushdown predicate (or M3 without a provable
+    # disqualification) reaches the final fallback decision, not just the local gate check.
+    if mechanism == "M2_PUSHDOWN_EQUIVALENCE" and not pushdown_proven:
+        return FALLBACK, "NO_CERTIFICATE_PROVABLE"
+    if mechanism == "M3_STOP_CERTIFICATE" and not disqualification_provable:
         return FALLBACK, "NO_CERTIFICATE_PROVABLE"
     # The row admits this mechanism *and* every invariant holds, so A3 may publish; the page
     # obligation (equal to the oracle) is asserted by matrix_row()/the publication tests.
@@ -310,7 +320,12 @@ MECHANISM_AVAILABILITY: dict[str, frozenset[str]] = {
     "generation_or_space_switch": frozenset(),
     "concurrent_publication": frozenset(),
     "place_state_filter": frozenset(),
-    "extra_engine_row_with_m3_certificate": frozenset({"M3_STOP_CERTIFICATE"}),
+    # Sol r6: M2 is admissible on extra-row states too, but only with a *proven* pushdown
+    # predicate -- which this row's example explicitly does not have (evidence, not the row,
+    # decides), so the decision table below still marks its M2 branch as fallback.
+    "extra_engine_row_with_m3_certificate": frozenset(
+        {"M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"}
+    ),
     "positive_control_certificate": frozenset(
         {"M1_EQUIVALENT_SNAPSHOT", "M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"}
     ),
@@ -451,7 +466,9 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
     ``PENDING_REPAIR``, so that asset is in neither set and ``C_sql == C_strict``;
     (2) the real window is therefore "engine has a row the oracle does not", where the
     certificate fails on the extra row even though the two sets are equal.
-    Both shapes fall back; the real ``vector_channel`` proves the oracle is revision-blind.
+    In both shapes the *final* decision is a fallback, but for per-mechanism reasons: M1 fails
+    on the row-set equality, M2 would need a proven pushdown predicate, and M3 would need a
+    stop certificate; the real ``vector_channel`` proves the oracle is revision-blind.
     """
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
@@ -558,12 +575,14 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
             "mechanism",
             "engine_side_gate",
             "holds_at_publication",
+            "evidence",
         ]
 
     c_sql = {"B"}
     c_strict = {"B"}
 
     physical = {"A", "B"}  # the whole engine row set of this generation/space
+    filtered_row_set = {"B"}  # what an (independent) proven pushdown predicate would return
 
     inspected = [("A", 0.10, False), ("B", 0.20, True)]  # (asset, distance, qualified)
 
@@ -581,7 +600,8 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         if mechanism == "M1_EQUIVALENT_SNAPSHOT":
             return physical == c_strict  # no extra row allowed
         if mechanism == "M2_PUSHDOWN_EQUIVALENCE":
-            return pushdown_proven and c_strict == c_sql
+            # r6/O-3: M2 must compare the *filtered* row set with C_strict, not just claim a proof.
+            return pushdown_proven and filtered_row_set == c_strict == c_sql
         qualified = sorted([row for row in inspected if row[2]], key=lambda row: (row[1], row[0]))
         kth = qualified[:1]
         if not kth:
@@ -710,3 +730,58 @@ def test_mechanism_availability_comes_from_the_state_not_a_baked_decision() -> N
             FALLBACK,
             "NO_CERTIFICATE_PROVABLE",
         )
+
+
+def test_evidence_binding_and_decision_certificate_binding(companion: dict[str, Any]) -> None:
+    """r6 O-1/O-2 + F-D: every certificate carries evidence, and A3 needs a real certificate."""
+    # O-1: evidence is required on all three mechanism variants.
+    for mechanism, gate in GATE_BY_MECHANISM.items():
+        without_evidence = request(
+            case="positive_control_certificate",
+            certificate={
+                "mechanism": mechanism,
+                "engine_side_gate": gate,
+                "holds_at_publication": True,
+            },
+        )
+        assert contract_errors(without_evidence, "A3Request", companion), mechanism
+    # O-2: an A3 decision without a non-null certificate is rejected by the machine contract.
+    publish_without_certificate = {
+        **request(case="positive_control_certificate", certificate=CERTIFICATE),
+        "certificate": None,
+    }
+    assert contract_errors(publish_without_certificate, "A3Request", companion)
+    # ... and a fallback record must name its reason (no silent fallback).
+    silent_fallback = {
+        **request(case="positive_control_certificate", certificate=None),
+        "fallback_reason": None,
+    }
+    assert contract_errors(silent_fallback, "A3Request", companion)
+    # F-D: an unprovable disqualification reaches the *decision*, not only the local gate.
+    m3 = {
+        "mechanism": "M3_STOP_CERTIFICATE",
+        "engine_side_gate": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
+        "holds_at_publication": True,
+        "evidence": "stop certificate over the engine row stream",
+    }
+    assert decide(
+        eligible=eligibility(),
+        certificate=m3,
+        case="extra_engine_row_with_m3_certificate",
+        disqualification_provable=False,
+    ) == (FALLBACK, "NO_CERTIFICATE_PROVABLE")
+    # r6 F-A residual: the same M2 evidence must be admissible on every extra-row row.
+    m2 = {
+        "mechanism": "M2_PUSHDOWN_EQUIVALENCE",
+        "engine_side_gate": "M2_PUSHDOWN_RESTRICTED_SET_EQUALS_C_STRICT",
+        "holds_at_publication": True,
+        "evidence": "proven pushdown predicate restricted to C_strict",
+    }
+    for case in ("unconfirmed_row", "pending_repair", "extra_engine_row_with_m3_certificate"):
+        assert decide(
+            eligible=eligibility(), certificate=m2, case=case, pushdown_proven=True
+        ) == (A3_WITH_CERTIFICATE, None), case
+        assert decide(eligible=eligibility(), certificate=m2, case=case) == (
+            FALLBACK,
+            "NO_CERTIFICATE_PROVABLE",
+        ), case
