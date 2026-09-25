@@ -217,12 +217,20 @@ class LanceVectorIndex:
 
         Every state below is a *reported* outcome and no caller may turn it into a failure:
         a generation without the index still answers correctly, just slower.
-        ``present``/``created`` both mean the index is usable; ``unavailable`` means the
+        ``present``/``created``/``refreshed`` all mean the index is usable; ``unavailable`` means the
         engine refused it - or refused to even list its index catalogue - and the
         candidate-ID path stays in its scan mode. The catalogue read is inside the same
         guard on purpose: a maintenance step may never abort the outbox drain because index
         metadata is unreadable (P4-01C review B2). ``_table`` stays outside, so a missing or
         dimension-mismatched table is still a structured catalog failure.
+
+        P4-02D finding F4 / P4-02J: ``create_index`` only covers the rows that exist at that
+        moment, and this generation is written in many small batches, so an index built on the
+        first batch leaves every later row unindexed and the candidate-block query degrades
+        into a whole-generation scan (10x-24x slower on the measured roots). An index that the
+        engine reports as incomplete (``num_unindexed_rows > 0``) is therefore rebuilt in
+        place; the outcome is reported as ``refreshed`` with the row count it had to cover.
+        Rows are never dropped and the answer is unchanged - only the access path changes.
         """
         table = self._table(
             generation_id=str(generation_id), dimension=int(dimension), create=False
@@ -232,9 +240,23 @@ class LanceVectorIndex:
         try:
             import lancedb.index as lance_index
 
-            names = {str(getattr(item, "name", item)) for item in table.list_indices()}
+            catalogue = list(table.list_indices())
+            names = {str(getattr(item, "name", item)) for item in catalogue}
             if ASSET_SCALAR_INDEX in names:
-                return {"state": "present", "index": ASSET_SCALAR_INDEX}
+                unindexed = 0
+                for item in catalogue:
+                    if str(getattr(item, "name", item)) == ASSET_SCALAR_INDEX:
+                        unindexed = int(getattr(item, "num_unindexed_rows", 0) or 0)
+                if unindexed == 0:
+                    return {"state": "present", "index": ASSET_SCALAR_INDEX}
+                table.create_index(
+                    ASSET_SCALAR_COLUMN, config=lance_index.BTree(), replace=True
+                )
+                return {
+                    "state": "refreshed",
+                    "index": ASSET_SCALAR_INDEX,
+                    "unindexed_rows_before": unindexed,
+                }
             table.create_index(ASSET_SCALAR_COLUMN, config=lance_index.BTree())
         except Exception as error:  # noqa: BLE001 - a refused index must not fail a write
             return {
