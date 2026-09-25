@@ -62,9 +62,18 @@ Lance 侧的 `visible`、行数、计数或索引存在性**都不是**资格凭
 ### 3.3 两条集合的关系（F2 的裁决）
 
 - A3 的**发布义务**是「与 oracle（`C_sql` 上的完整路径）逐项相同」；
-- A3 的**证书义务**是在 `C_strict` 上可证；
-- 因此 `C_strict ≠ C_sql`（例如 `after_lance` 崩溃窗口：Lance 已写未确认的更新行）时
-  **强制回退**（§7），回退发布的正是 oracle 页，两者一致、不矛盾。
+- A3 的**证书义务**是在 `C_strict` 上可证，且**发布前必须通过门禁 `C_strict == C_sql`**
+  且「引擎对该代/空间的可查询行集 == `C_strict`」（没有多余行）；
+- **真实的 `after_lance` 崩溃窗口不是 `C_strict ≠ C_sql`**：任何为同一 `(space, asset, generation)`
+  发布新产物的路径都会**先把条目降为 `PENDING_REPAIR`**，`process_next(failpoint="after_lance")`
+  在引擎写后、确认前抛出时条目仍是 `PENDING_REPAIR` ⇒ 该资产**既不在 `C_sql` 也不在 `C_strict`**，
+  两集**相等**；回退由「**引擎有行、oracle 没有**」（证书的额外行失败）触发。
+  该状态由仓库自身用例与独立复跑的真实 Lance/调度器交织共同证实
+  （`tests/integration/test_p2_search_topup.py` 的崩溃窗口断言 `entry_state == "PENDING_REPAIR"`；
+  [独立复跑](P4-02H-independent-recheck.md) §3 的 5 步交织每步 `C_sql == C_strict`）。
+- `C_sql ≠ C_strict`（**同一 `CONFIRMED` 条目的引擎行 revision 不一致**）只保留为**防御性**状态
+  （越序写入、损坏或外部替换引擎文件）：现行 `IndexCoordinator` 路径不产生它，但证书不得依赖
+  「它不可能发生」这一假设。该状态 ⇒ **强制回退**（§7），回退发布的正是 oracle 页。
 - **本 ADR 不修改**现行完整路径的 revision-blind 行为；若要收紧它，属完整路径自身的另行裁决与立卡。
 
 ## 4. 证书：允许 A3 的三条互斥机制
@@ -72,8 +81,8 @@ Lance 侧的 `visible`、行数、计数或索引存在性**都不是**资格凭
 | 机制 | 内容 | 必须的证据 |
 |---|---|---|
 | **M1 等价快照** | 查询前存在可验证的写者栅栏/版本对，使「Lance 可查询行集及 revision」在**整个查询—发布窗口**内等于 `C_strict`（因而其 ID 投影等于 `C_sql`） | 栅栏标识 + 同一窗口内的 ID/revision 集合相等证明（计数与采样不构成证明） |
-| **M2 下推等价** | 把 C 的资格约束**推入排序之前**（引擎过滤/成员快照），并证明该谓词与 C 逐项等价 | 谓词等价证明 + 反驳用例（不允许「引擎过滤后 SQLite 再删」两阶段替代） |
-| **M3 带停止证书的迭代扩大** | 逐步扩大检索范围，直到已取得 K 个合格行，且**所有未检查行在 `(distance, asset_id)` 全序上都不可能排在第 K 行之前** | 停止证书（上界/下界对）+ 无证书即回退 |
+| **M2 下推等价** | 把资格约束**推入排序之前**（引擎过滤/成员快照），并证明该谓词与 **`C_strict`** 逐项等价（其 ID 投影因而等于 `C_sql`） | 谓词等价证明 + 反驳用例（不允许「引擎过滤后 SQLite 再删」两阶段替代） |
+| **M3 带停止证书的迭代扩大** | 逐步扩大检索范围，直到已取得 K 个合格行，且**所有未检查行在 `(distance, asset_id)` 全序上都不可能排在第 K 行之前**；合格性按 **`C_strict`** 判定 | 停止证书（上界/下界对）+ 无证书即回退 |
 
 固定倍数 overfetch、固定重试次数、全局 Top-K 后过滤、仅凭计数/采样/索引存在性**都不构成证书**。
 M3 最坏情况下退化为完整候选扫描 —— 因此 A3 的收益**不是**必然保证。
@@ -96,17 +105,16 @@ M3 最坏情况下退化为完整候选扫描 —— 因此 A3 的收益**不是
 
 | # | 反例类别 | 状态 | 决策 |
 |---:|---|---|---|
-| 1 | 未确认行 | Lance 有行、SQLite 未确认（outbox 未 `CONFIRMED`） | 无 M1/M2/M3 ⇒ **回退**（不得发布缺项页） |
-| 2 | 修复中 | `index_entries = PENDING_REPAIR` | ⇒ **回退** |
-| 3 | revision 不一致 | Lance 行 `projection_revision` 不是当前有效版本（**含 Lance 已写未确认的崩溃窗口**；`record_id = generation:asset` 保证每代每资产只有一行，不存在重复行） | ⇒ **回退** |
+| 1 | 未确认行（**含真实 `after_lance` 窗口**） | 引擎有行、oracle 无该条目：条目未 `CONFIRMED` 或已降为 `PENDING_REPAIR`（`process_next(failpoint="after_lance")` 的实际状态），此时 `C_sql == C_strict`，失败来自「引擎有多余行」 | 无 M1/M2/M3 ⇒ **回退**（不得发布缺项页） |
+| 2 | 修复中 | `index_entries = PENDING_REPAIR`（引擎可能仍留旧行） | ⇒ **回退** |
+| 3 | revision 不一致（**防御性**） | 同一 `CONFIRMED` 条目的引擎行 `projection_revision` 不一致：越序写入、损坏或外部替换引擎文件。现行 `IndexCoordinator` 路径**不产生**该状态（独立复跑 5 步交织 `C_sql == C_strict` 每步成立），仅作为证书不得依赖的假设保留 | ⇒ **回退** |
 | 4 | Lance 缺行 | SQLite `CONFIRMED` 但 Lance 无对应行/旧行 | ⇒ **回退**（事后核验补不回缺失项） |
 | 5 | 并列距离 | 第 K 与第 K+1 距离相同 | 全序 `(distance, asset_id)` 决定；引擎内截断一律禁止 |
 | 6 | 隐藏/离线/来源变化 | 权威可见性或来源在查询窗口内变化 | 以 SQLite 权威为准 ⇒ 变化即 **回退/重搜** |
 | 7 | 代/space 切换 | 绑定 generation/space 变化或不再 `READY` | ⇒ **回退** |
 | 8 | 并发发布窗 | 查询与发布之间发生确认/修复/撤销/revision 变化 | 发布前按现行 revision/资格门禁复核；不能重建完整结果则 **回退/重搜** |
-| 9 | 正对照（证书成立） | 全部可能行与 C 逐项一致且窗口内稳定 | 允许 A3；页必须与完整路径逐项相同 |
+| 9 | 正对照（证书成立） | `C_strict == C_sql` **且**引擎可查询行集 == `C_strict`，且在窗口内稳定 | 允许 A3；页必须与完整路径（oracle，`C_sql` 上）逐项相同 |
 | 10 | 空 `place_ids` 但 `place_state != any`（Sol F1） | 无地点 ID 条件，`place_state ∈ {assigned, unassigned, manual_unassigned, suggested}` | **不资格**（`NOT_ELIGIBLE_EXTRA_SCOPE`）；`scope_condition` 非恒真 ⇒ 走完整路径 |
-| 11 | 行 revision 与确认不一致（Sol F2） | Lance 行 `projection_revision=2`、条目 `confirmation_revision=1`（`after_lance` 窗口） | `C_strict ≠ C_sql` ⇒ **回退**；oracle 页照现行行为发布 |
 
 ## 7. 回退义务
 

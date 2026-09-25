@@ -40,8 +40,8 @@ STATE_MATRIX: dict[str, tuple[str, str | None, str, str]] = {
     "unconfirmed_row": (
         FALLBACK,
         "UNCONFIRMED_ROW_IN_ENGINE",
-        "row written, outbox not confirmed",
-        "asset absent from C",
+        "engine row present after failpoint=after_lance",
+        "entry not CONFIRMED (the publish path left it PENDING_REPAIR)",
     ),
     "pending_repair": (
         FALLBACK,
@@ -52,8 +52,8 @@ STATE_MATRIX: dict[str, tuple[str, str | None, str, str]] = {
     "stale_or_duplicate_revision": (
         FALLBACK,
         "STALE_OR_DUPLICATE_REVISION",
-        "row carries an older projection_revision",
-        "current revision differs",
+        "defensive: engine row revision differs from the confirmation revision",
+        "same asset stays CONFIRMED (out-of-order write / corruption / external replace)",
     ),
     "missing_engine_row": (
         FALLBACK,
@@ -90,12 +90,6 @@ STATE_MATRIX: dict[str, tuple[str, str | None, str, str]] = {
         "NOT_ELIGIBLE_EXTRA_SCOPE",
         "no place-id condition at all",
         "place_state is assigned/unassigned/manual_unassigned/suggested",
-    ),
-    "row_revision_mismatch": (
-        FALLBACK,
-        "STALE_OR_DUPLICATE_REVISION",
-        "Lance row projection_revision=2 (written, not confirmed)",
-        "index_entries confirmation_revision=1",
     ),
     "positive_control_certificate": (
         A3_WITH_CERTIFICATE,
@@ -407,12 +401,15 @@ def test_real_place_state_makes_the_scope_predicate_non_tautological() -> None:
     ) == (FALLBACK, "NOT_ELIGIBLE_EXTRA_SCOPE")
 
 
-def test_real_oracle_is_revision_blind_in_the_after_lance_window() -> None:
-    """Sol F2: the complete path ranks a newer-but-unconfirmed Lance row.
+def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> None:
+    """Sol short re-review F2: compute ``C_sql``/``C_strict`` for both window shapes.
 
-    Reproduces the reviewer's minimal counterexample with the **real** ``vector_channel`` and
-    the **real** ``scope_condition`` over an in-memory authority, and pins the contract's
-    answer: ``C_strict != C_sql`` in this window, so A3 must fall back to the oracle page.
+    (1) the **defensive** shape (a ``CONFIRMED`` entry whose engine row carries another
+    revision) is *not* what ``after_lance`` produces -- the publish path leaves the entry
+    ``PENDING_REPAIR``, so that asset is in neither set and ``C_sql == C_strict``;
+    (2) the real window is therefore "engine has a row the oracle does not", where the
+    certificate fails on the extra row even though the two sets are equal.
+    Both shapes fall back; the real ``vector_channel`` proves the oracle is revision-blind.
     """
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
@@ -447,6 +444,9 @@ def test_real_oracle_is_revision_blind_in_the_after_lance_window() -> None:
                 {"asset_id": 2, "distance": 0.2, "projection_revision": 1, "space_id": "space"},
             ]
         )
+        engine_rows = {1: 2, 2: 1}
+        entry_state = {1: "CONFIRMED", 2: "CONFIRMED"}
+        confirmed_revision = {1: 1, 2: 1}
         binding = VectorBinding(
             generation_id="gen",
             space_id="space",
@@ -467,7 +467,30 @@ def test_real_oracle_is_revision_blind_in_the_after_lance_window() -> None:
         connection.close()
     assert [int(row["asset_id"]) for row in block["hits"]] == [1]
     assert int(block["hits"][0]["projection_revision"]) == 2
-    # The frozen answer for this window: certificate fails on C_strict, so A3 falls back and
-    # the fallback page is exactly this oracle page.
-    assert STATE_MATRIX["row_revision_mismatch"][0] == FALLBACK
-    assert matrix_row("row_revision_mismatch")["published_page_equals_complete_path"] is True
+
+    def sets(*, engine: dict[int, int], states: dict[int, str], revisions: dict[int, int]) -> tuple[set[int], set[int]]:
+        c_sql = {asset for asset, state in states.items() if state == "CONFIRMED"}
+        c_strict = {
+            asset
+            for asset in c_sql
+            if engine.get(asset) is not None and engine[asset] == revisions[asset]
+        }
+        return c_sql, c_strict
+
+    # (1) defensive shape: the confirmed entry's engine row carries a different revision.
+    c_sql, c_strict = sets(engine=engine_rows, states=entry_state, revisions=confirmed_revision)
+    assert (c_sql, c_strict) == ({1, 2}, {2})
+    assert STATE_MATRIX["stale_or_duplicate_revision"][0] == FALLBACK
+
+    # (2) the real after_lance shape: the entry is PENDING_REPAIR while the engine already
+    # holds a row, so the asset is in neither set and the two sets are EQUAL.
+    real_engine = {1: 1, 2: 1, 3: 1}  # asset 3's new row is already written
+    c_sql, c_strict = sets(
+        engine=real_engine,
+        states={**entry_state, 3: "PENDING_REPAIR"},
+        revisions={**confirmed_revision, 3: 1},
+    )
+    assert c_sql == c_strict == {1, 2}
+    assert set(real_engine) - c_strict == {3}  # the extra engine row fails M1/M2/M3
+    assert STATE_MATRIX["unconfirmed_row"][0] == FALLBACK
+    assert matrix_row("unconfirmed_row")["published_page_equals_complete_path"] is True

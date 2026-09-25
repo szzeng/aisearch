@@ -30,9 +30,24 @@
   companion 的 `AuthoritySetRule` 相应改为 7 个冻结布尔（含 `mismatch_forces_fallback`），
   矩阵新增第 11 行 `row_revision_mismatch`。
 - **直接反例（真实代码，可执行）**：
-  `test_real_oracle_is_revision_blind_in_the_after_lance_window` 用**真实 `vector_channel`**
-  ＋**真实 `scope_condition`**＋内存权威表＋替身索引，复现 A(rev2, 0.1)/B(rev1, 0.2)、`top_k=1`
-  得 `hits=[A(revision=2)]`，并断言该窗口的冻结决策是回退且回退页等于该 oracle 页。
+  `test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes` 用**真实 `vector_channel`**
+  ＋**真实 `scope_condition`**＋内存权威表＋替身索引，**显式计算 `C_sql`/`C_strict`** 两种窗口形状：
+  ①防御性形状（`CONFIRMED` 条目的引擎行 revision 不一致）⇒ `C_sql={1,2}`、`C_strict={2}` ⇒ 回退；
+  ②**真实 `after_lance` 形状**（条目已降为 `PENDING_REPAIR`、引擎已写新行）⇒ `C_sql == C_strict == {1,2}`
+  且多余引擎行 `{3}` 使证书失败 ⇒ 同样回退。oracle 仍返回 `hits=[A(revision=2)]`，证明其 revision-blind。
+
+### 2.1 短审修正（Sol 聚焦短审 F2：归因错误，已改）
+
+原 §1/§2 把「`CONFIRMED` 条目 × 更新的引擎行」标为 `after_lance` 崩溃窗口，**与真实状态机不符**：
+发布/重排程路径**先**把条目降为 `PENDING_REPAIR`，`process_next(failpoint="after_lance")` 抛出时条目
+仍是 `PENDING_REPAIR`，该资产**既不在 `C_sql` 也不在 `C_strict`**（两集相等），回退由「引擎有行、
+oracle 没有」触发。该结论由 [独立复跑](P4-02H-independent-recheck.md) §3 的 5 步真实交织
+（每步 `C_sql == C_strict`）与仓库既有用例
+`tests/integration/test_p2_search_topup.py`（断言 `entry_state == "PENDING_REPAIR"`）共同证实。
+现 ADR §3.3/§6 已按此改写：第 1 行承载真实窗口，第 3 行降级为**防御性**状态
+（越序写入/损坏/外部替换；现行 `IndexCoordinator` 不产生），并明确 `C_strict` 的逐行 revision 比较
+在现行状态机下是**空转**、只作证书不许依赖的假设保留；§4 的 M2/M3 与 §6 第 9 行已把裸 `C`
+改为 `C_strict`/`C_sql`，并加入发布前门禁 `C_strict == C_sql` 且「引擎可查询行集 == `C_strict`」。
 
 ## 3. 验收
 
@@ -50,7 +65,7 @@ B 级全量见 `test-results/p4-02h-fix-full.xml`。`src/**`、migration、schem
 | 待裁决高风险问题 | ①`C_strict` 的「行 revision = 确认 revision」需要一次**跨库同窗口证明**（M1 栅栏）才可用；M2/M3 的等价性尚未有构造成本评估。②回退率未知：ADR 的强制回退可能吃掉全部收益，必须由隔离实验按真实混合负载报 P95。③`place_state` 之外是否还有同类「列表为空但谓词非恒真」的字段（本卡已逐字段核对，建议独立复跑） |
 | ADR 预期/实际差异 | 预期「无额外筛选 = 所有列表为空」；实际「谓词是否恒真」才是判据（F1）。预期「C = 权威资格集」；实际现行路径只按 ID 入口（F2）。两处差异已写入 ADR §2.2/§3 |
 | 符号级定位 | `src/photo_search/places/filter.py::place_condition`（`state` 分支）、`src/photo_search/search/retrieval.py::scope_condition`（谓词 `"1"` 短路）、`_CONFIRMED_BLOCK_SQL`、`src/photo_search/indexing/store.py::_record`（`record_id = generation:asset`）与 `IndexCoordinator` 的 `after_lance` 故障点 |
-| 最小反例 | F1：无任何列表条件 + `place_state=assigned` + 距离逆序（B=0.1 无地点、A=0.2 有 `MANUAL_ASSIGNED`），`top_k=1` ⇒ 全代 Top-1 漏 A。F2：A 行 rev2（未确认）0.1、B rev1 0.2，`top_k=1` ⇒ 真实 `vector_channel` 返回 A(rev2)。两者都在 `test_p4_02g_a3_contracts.py` 内可执行 |
+| 最小反例 | F1：无任何列表条件 + `place_state=assigned` + 距离逆序（B=0.1 无地点、A=0.2 有 `MANUAL_ASSIGNED`），`top_k=1` ⇒ 全代 Top-1 漏 A。F2（已按短审修正）：**真实窗口** = 条目 `PENDING_REPAIR` + 引擎已写新行 ⇒ `C_sql == C_strict`，证书因多余引擎行失败 ⇒ 回退；**防御性窗口** = 同一 `CONFIRMED` 条目的引擎行 revision 不一致 ⇒ `C_strict ≠ C_sql` ⇒ 回退，oracle 在该形状下仍返回 A(rev2)。两者都在 `test_p4_02g_a3_contracts.py` 内可执行（含显式 `C_sql`/`C_strict` 计算） |
 | 未验证项 | A3 与 oracle 的 `Recall@K=1.000` 等价性、五类注入的真实前后计数、A3 端到端 P50/P95（含真实文本编码/HTTP/回退率与回退时延）、真实中文 CLIP 权重、GTX 1660、冷缓存与长时 soak |
 | 禁止扩大范围 | 不得实现/启用 A3、不得改 §12.2、不得改 `src/**`、信封/错误码/`query_hash`/游标、RRF/BM25/距离、既有 ADR 条款；不得以固定 overfetch/后过滤/计数或采样/索引存在性充当证书；不得接真实照片库 |
 

@@ -126,7 +126,6 @@
             "generation_or_space_switch",
             "concurrent_publication",
             "place_state_filter",
-            "row_revision_mismatch",
             "positive_control_certificate"
           ]
         },

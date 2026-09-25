@@ -3295,3 +3295,75 @@ A3 未实现/未启用；§12.2 不变。** 修正后只短审受影响边界；
   真实 `scope_condition` 全字段恒真性、`vector_channel` revision 窗口与交接包 §4 的三项高风险问题。
 - **下一步**：Sol high 聚焦短审（只审 F1/F2 修复边界 + 两条真实反例 + 交接包）；冻结通过前
   **不立隔离实验卡与 A3 实现卡**。模型切换由用户在 Codex 中手动完成。
+
+## Latest short re-review fix — P4-02H F2 归因修正（2026-09-25）
+
+**独立复跑 + Sol 聚焦短审：F1 通过；F2 的判据方向正确但窗口归因错误，已修正。** 见
+[独立复跑](reports/P4-02H-independent-recheck.md)（另一会话，5 步真实 Lance/调度器交织）与
+[聚焦短审](reports/P4-02H-focused-rereview.md)（基线 `7ecd363`）。状态仍停在
+`ENGINEERING REVIEW PASS (revised) / SOL FOCUSED REVIEW PENDING`；维持 `A3 未实现/未启用`、
+`§12.2 未改`、`P4-02F 非 PASS`、`src/**` 零改动。
+
+- **F1 通过**：独立复跑用真实迁移库 + 真实 `scope_condition` 检查 240 组（168 组可评估），
+  仅全中性一组返回恒真 `"1"`，与冻结谓词零反例。
+- **F2 修正内容**：真实 `after_lance` 窗口**不是** `C_strict ≠ C_sql` —— 发布/重排程路径**先**把条目
+  降为 `PENDING_REPAIR`，`process_next(failpoint="after_lance")` 抛出时条目仍为 `PENDING_REPAIR`，
+  该资产**既不在 `C_sql` 也不在 `C_strict`（两集相等）**，回退由「引擎有行、oracle 没有」触发
+  （仓库既有用例 `tests/integration/test_p2_search_topup.py` 断言 `entry_state == "PENDING_REPAIR"`；
+  独立复跑 5 步交织 `C_sql == C_strict` 每步成立）。ADR §3.3/§6 已据此改写：第 1 行承载真实窗口；
+  `CONFIRMED × 引擎行 revision 不一致` 降级为**防御性**状态（越序写入/损坏/外部替换，现行
+  `IndexCoordinator` 不产生，`C_strict` 的逐行比较在现行状态机下**空转**但保留为证书不许依赖的假设）；
+  §4 的 M2/M3 与 §6 第 9 行把裸 `C` 明确为 `C_strict`/`C_sql`，并加入发布前门禁
+  `C_strict == C_sql` 且「引擎可查询行集 == `C_strict`」。
+- **用例与交接包同步**：`test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes`
+  显式计算两种窗口的 `C_sql`/`C_strict`（防御性形状 `{1,2}` vs `{2}`；真实形状 `{1,2}` vs `{1,2}`
+  且多余引擎行 `{3}` 使证书失败），保留「真实 `vector_channel` revision-blind」的证据；
+  [修复与交接报告](reports/P4-02H-fix-and-handoff.md) §2.1 与 §4 的窗口说明同步更正。
+- **验收**：契约用例 **11 / 0 / 0 / 0**（`test-results/p4-02h-fix2-contracts.xml`）；
+  B 级全量 **1709 / 0 / 0 / 48**（`test-results/p4-02h-fix2-full.xml`）；`ruff check .`、
+  `git diff --check` exit 0；`src/**` 与既有冻结面零 diff。
+- **仍未完成的终审前置**：独立 DS-H **完整受影响面**主审（独立复跑报告自述只复跑了三个点名边界，
+  不替代该前置）⇒ 下一步仍需由另一会话按 P4-02H 卡面完成完整受影响面主审，再做 Sol high 聚焦终审；
+  通过前**不立隔离实验卡与 A3 实现卡**。
+
+## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
+
+**另开会话的只读复跑：F1 命题成立且边界完备；F2 的判据方向正确，但 ADR §3.3 的举例与 §6 第 11 行的
+状态描述与现行状态机不符（需 Sol/DS-H 裁决）；状态仍停在 `ENGINEERING REVIEW PASS (revised) /
+SOL FOCUSED REVIEW PENDING`。** 见 [独立复跑报告](reports/P4-02H-independent-recheck.md)
+（基线 `7ecd363`；只新增 `tmp/p402h-recheck/**` 探针与 `test-results/p4-02h-recheck*.json`）。
+维持 `A3 未实现/未启用`、`§12.2 未改`、`P4-02F 非性能 PASS`、`src/**` 零 diff。
+
+- **A 全字段恒真性**：8 个 `SearchScope` 字段 × 真实迁移库 × 真实 `scope_condition` 共 240 组
+  （72 组结构化拒绝、168 组可评估）⇒ **只有全中性一处恒真，与 ADR §2.2 零反例**；
+  `place_state` 确实是唯一「空列表但谓词非恒真」的字段（交接包 §4 ③ 已答，无同类字段）。
+- **B revision 窗口**：真实 Lance + 真实调度器 + 文档化 `failpoint="after_lance"` ⇒ 崩溃窗口里条目
+  **已是 `PENDING_REPAIR`**、真实形状是「引擎有行、oracle 没有」（§6 第 1/2 行），
+  5 步可达交织每步 `C_sql == C_strict`；ADR §6 第 11 行「CONFIRMED 条目 × 更新引擎行」需**越序引擎
+  写入**（手工构造后真实 `vector_channel` 仍返回 rev2 的更近行，起草方最小反例在该状态下可复现）。
+  写入次序证据：新产物发布与 `_schedule_existing` 两条分支都先降级为 `PENDING_REPAIR`，
+  引擎写入只在 `IndexCoordinator` 且与确认同事务。⇒ `C_strict` 的逐行比较在现行状态机下无可命中对象。
+- **C §4 三项**：①产品无跨库栅栏/版本对（`_table` 取最新表，无 version pin），M1 需新机制；实测
+  「读全代每行 revision」20 000 行 36.4–37.6 ms ≈ 一次整代 pass（候选块路径的 1/6.5），但与 A3 的
+  ≈0.37 s 叠加后对 §12.2 偏紧 ⇒ 更可行的是代级栅栏 + 写入次序不变式；M2/M3 构造成本**未评估**。
+  ②回退率**实现前不可测**（可测的静态资格面：168 组里 1 组合格）。③见 A。
+- **验收**：契约用例 **11 / 0 / 0 / 0**（`test-results/p4-02h-recheck-contracts.xml`）；仓库自身两条
+  窗口用例 **2 / 2 PASSED**（`test-results/p4-02h-recheck-window-tests.json`）；`ruff check .`、
+  `git diff --check`、`uv lock --check` 全 exit 0；`git status --short` 空。
+  **未重跑 B 级全量**（无产品代码改动；最近一次为 P4-02H 的 1709 / 0 / 0 / 48，本轮未复核）。
+- **环境限制（如实记录）**：本沙箱内 `mkdir(mode=0o700)` 的目录无法枚举（`WinError 5`），
+  而 pytest 的 `tmp_path`/`--basetemp` 正是这样建根 ⇒ 用 `tmp_path` 的用例在本沙箱内 setup 报错；
+  本轮未改 ACL，改用同一函数体/同一断言的直接调用复跑。
+- **下一步**：Sol high 聚焦终审（新增输入：§3.4 的表述修正与 `C_strict` 去留、§4.1 的 M1 形态）；
+  任何冻结面修改走 ADR §11 变更控制；冻结通过前不立隔离实验卡与 A3 实现卡。
+
+## Latest focused rereview — P4-02H F1/F2（2026-09-25）
+
+**F1 通过，F2 暂不通过；最终冻结继续待审。** 见 [聚焦短审报告](reports/P4-02H-focused-rereview.md)
+（被审提交 `7ecd363`；保留已有未提交独立复跑报告/状态）。F1 的 `place_state=any` 已进入 ADR、companion
+和契约用例，独立真实谓词交叉 240 组零反例。F2 的 `C_sql`/`C_strict` 区分方向正确，但 ADR §3.3/§6
+第 11 行和新增用例把需越序构造的 `CONFIRMED × 新 Lance revision` 状态误称为 `after_lance` 崩溃窗口；
+真实产品在该窗口的条目已是 `PENDING_REPAIR`，由未确认行的回退义务覆盖。修复交接包已补，须同步改正窗口
+说明；独立复跑仅覆盖点名边界，未替代任务卡要求的独立 DS-H 完整受影响面主审。既有契约 JUnit
+11 / 0 / 0 / 0、B 级全量 1709 / 0 / 0 / 48；本轮未重跑。**P4-02F 非性能 PASS、A3 未实现/未启用、
+§12.2 未改。**
