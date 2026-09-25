@@ -233,6 +233,9 @@ def decide(
         return FALLBACK, "NOT_ELIGIBLE_EXTRA_SCOPE"
     if certificate is None or certificate.get("holds_at_publication") is not True:
         return FALLBACK, "NO_CERTIFICATE_PROVABLE"
+    paired = GATE_BY_MECHANISM.get(str(certificate.get("mechanism")))
+    if paired != certificate.get("engine_side_gate"):
+        return FALLBACK, "NO_CERTIFICATE_PROVABLE"
     decision, _, _, _ = STATE_MATRIX[case]
     return decision, None
 
@@ -523,11 +526,13 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
     """
     enum_gates = set(companion["$defs"]["EngineSideGate"]["enum"])
     assert enum_gates == set(GATE_BY_MECHANISM.values())
-    assert companion["$defs"]["CertificateRule"]["required"] == [
-        "mechanism",
-        "engine_side_gate",
-        "holds_at_publication",
-    ]
+    assert len(companion["$defs"]["CertificateRule"]["oneOf"]) == 3
+    for variant in ("M1Certificate", "M2Certificate", "M3Certificate"):
+        assert companion["$defs"][variant]["required"] == [
+            "mechanism",
+            "engine_side_gate",
+            "holds_at_publication",
+        ]
 
     c_sql = {"B"}
     c_strict = {"B"}
@@ -576,6 +581,61 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         is False
     )
     assert gate_holds("M3_STOP_CERTIFICATE", pushdown_proven=False, certificate=False) is False
+    # The nearer A does not block because it was *inspected* and disqualified by the same
+    # authoritative view: its disqualification basis (A is not in C_sql) is provable.
+    assert "A" not in c_sql and "A" not in c_strict
     assert STATE_MATRIX["extra_engine_row_with_m3_certificate"][0] == A3_WITH_CERTIFICATE
     assert matrix_row("extra_engine_row_with_m3_certificate")["published_page_equals_complete_path"]
     assert [row[0] for row in sorted(inspected, key=lambda r: (r[1], r[0])) if row[2]] == ["B"]
+
+
+def test_companion_binds_each_mechanism_to_exactly_one_engine_side_gate(
+    companion: dict[str, Any],
+) -> None:
+    """Sol r4 blocker 2: a certificate must not be able to pair M1 with M3's gate."""
+    gates = list(GATE_BY_MECHANISM.values())
+    for mechanism, gate in GATE_BY_MECHANISM.items():
+        record = request(
+            case="positive_control_certificate",
+            certificate={
+                "mechanism": mechanism,
+                "engine_side_gate": gate,
+                "holds_at_publication": True,
+                "evidence": "matched pairing",
+            },
+        )
+        assert contract_errors(record, "A3Request", companion) == [], mechanism
+    bad = request(
+        case="positive_control_certificate",
+        certificate={
+            "mechanism": "M1_EQUIVALENT_SNAPSHOT",
+            "engine_side_gate": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
+            "holds_at_publication": True,
+            "evidence": "cross pairing",
+        },
+    )
+    assert contract_errors(bad, "A3Request", companion)
+    assert decide(
+        eligible=eligibility(),
+        certificate={
+            "mechanism": "M1_EQUIVALENT_SNAPSHOT",
+            "engine_side_gate": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
+            "holds_at_publication": True,
+        },
+        case="positive_control_certificate",
+    ) == (FALLBACK, "NO_CERTIFICATE_PROVABLE")
+    # every cross pairing must be rejected by the schema, not only by the reference model
+    for mechanism, gate in GATE_BY_MECHANISM.items():
+        for other_gate in gates:
+            if other_gate == gate:
+                continue
+            crossed = request(
+                case="positive_control_certificate",
+                certificate={
+                    "mechanism": mechanism,
+                    "engine_side_gate": other_gate,
+                    "holds_at_publication": True,
+                    "evidence": "cross pairing",
+                },
+            )
+            assert contract_errors(crossed, "A3Request", companion), (mechanism, other_gate)

@@ -70,6 +70,22 @@ ADR §4 的机制表新增「引擎侧门禁」列，§6 第 1 行改为「M1/M2
 契约用例新增 `test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state`
 （含「未检查行下界更近 ⇒ 证书不成立、必须继续扩大或回退」的负例）。
 
+### 2.3 第四轮聚焦审核（Sol r4）：M3 停止规则措辞与机器契约配对
+
+1. **M3 停止规则自相矛盾（已修）**：§3.3/§4 原文要求「所有未检查**或已被排除**的行都不可能排在第 K 行
+   之前」，而 §6 第 11 行的正例恰恰存在**更近但已排除**的 A(0.10) ⇒ 按原文该证书必然失败。
+   现改为：停止证书只需覆盖**未检查的潜在合格行**；**已检查并经同一权威视图判为不合格的行可以更近**，
+   但其**失格判据与发布前有效性必须可证**（本例 A 的判据 = 不在 `C_sql`）。§6 第 11 行同步写明
+   「未检查行下界更近，或 A 的失格判据不可证/发布前失效 ⇒ 继续扩大或回退」。
+2. **机制×门禁错配（已修）**：companion 原先把 `mechanism`/`engine_side_gate` 作为两个独立枚举，
+   `{mechanism: M1, engine_side_gate: M3 的门禁}` 会被零错误接受。现改为
+   `CertificateRule = oneOf {M1Certificate, M2Certificate, M3Certificate}`，每个变体用 `const`
+   把机制与门禁**一对一绑定**，交叉组合一律拒绝；参考模型 `decide` 同样校验配对，错配即回退。
+3. 另按 r4 把 §6 第 1 行措辞改为「**M1 不可用；M2 只在证明排序前下推等价时可用；M3 只在停止证书
+   成立时可用**」，与机制表一致。新增
+   `test_companion_binds_each_mechanism_to_exactly_one_engine_side_gate`（3 组正配 + 全部交叉错配），
+   并把 M3 用例改为显式写明「更近的 A 是已检查、判据可证的失格行」。
+
 ## 3. 验收
 
 契约用例 **12 / 0 / 0 / 0**（JUnit `test-results/p4-02h-r3-contracts.xml`；
@@ -82,8 +98,8 @@ B 级全量 **1710 / 0 / 0 / 48**（`test-results/p4-02h-r3-full.xml`）。
 
 | 项 | 内容 |
 |---|---|
-| 审查基线 | `77557db`（本次修复后为本次提交；`src/**` 全程零改动） |
-| 改动文件与结论 | ADR-0012（§1/§2/§3/§4/§5/§6）、`p4-a3-contracts.v1.json`（`EligibilityRule`/`AuthoritySetRule`/`StateMatrixRow.case`）、`tests/unit/test_p4_02g_a3_contracts.py`（+2 真实代码反例）、本报告、状态条目。结论：F1/F2 均已按「收紧判据、不改基线语义」修复 |
+| 审查基线 | `6cd526e`（本轮 r4 修正后为本次提交；`src/**` 全程零改动）。**r2 的整体主审被审基线是 `2900a0a`；`6cd526e` 的按机制门禁 diff 尚无点名该提交的独立主审报告 ⇒ 需补一份，可只覆盖 r3/r4 修订面** |
+| 改动文件与结论 | ADR-0012（§1/§2/§3/§4/§5/§6，含 r3 按机制门禁表与 r4 的 M3 措辞）、`p4-a3-contracts.v1.json`（`EligibilityRule`/`AuthoritySetRule`/`StateMatrixRow.case`/`EngineSideGate`/`CertificateRule` 三变体一对一绑定）、`tests/unit/test_p4_02g_a3_contracts.py`（+2 真实代码反例 + 按机制门禁 + 配对用例）、本报告、状态条目。结论：F1/F2 与 r3/r4 阻断均已按「收紧判据、不改基线语义」修复 |
 | 待裁决高风险问题 | ①`C_strict` 的「行 revision = 确认 revision」需要一次**跨库同窗口证明**（M1 栅栏）才可用；M2/M3 的等价性尚未有构造成本评估。②回退率未知：ADR 的强制回退可能吃掉全部收益，必须由隔离实验按真实混合负载报 P95。③`place_state` 之外是否还有同类「列表为空但谓词非恒真」的字段（本卡已逐字段核对，建议独立复跑） |
 | ADR 预期/实际差异 | 预期「无额外筛选 = 所有列表为空」；实际「谓词是否恒真」才是判据（F1）。预期「C = 权威资格集」；实际现行路径只按 ID 入口（F2）。两处差异已写入 ADR §2.2/§3 |
 | 符号级定位 | `src/photo_search/places/filter.py::place_condition`（`state` 分支）、`src/photo_search/search/retrieval.py::scope_condition`（谓词 `"1"` 短路）、`_CONFIRMED_BLOCK_SQL`、`src/photo_search/indexing/store.py::_record`（`record_id = generation:asset`）与 `IndexCoordinator` 的 `after_lance` 故障点 |

@@ -107,16 +107,46 @@
       }
     },
     "CertificateRule": {
+      "description": "ADR-0012 section 3.3/4: each mechanism is bound to exactly one engine-side gate, and the certificate must still hold at publication time. Cross pairings are rejected here, not only in prose.",
+      "oneOf": [
+        { "$ref": "#/$defs/M1Certificate" },
+        { "$ref": "#/$defs/M2Certificate" },
+        { "$ref": "#/$defs/M3Certificate" }
+      ]
+    },
+    "M1Certificate": {
       "type": "object",
-      "description": "ADR-0012 section 4. Exactly one mechanism must be evidenced, and it must still hold at publication time.",
       "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "additionalProperties": false,
       "properties": {
-        "mechanism": { "$ref": "#/$defs/CertificateMechanism" },
-        "engine_side_gate": { "$ref": "#/$defs/EngineSideGate" },
+        "mechanism": { "const": "M1_EQUIVALENT_SNAPSHOT" },
+        "engine_side_gate": { "const": "M1_PHYSICAL_SET_EQUALS_C_STRICT" },
         "holds_at_publication": { "const": true },
         "evidence": { "type": "string", "minLength": 1 }
-      },
-      "additionalProperties": false
+      }
+    },
+    "M2Certificate": {
+      "type": "object",
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "additionalProperties": false,
+      "properties": {
+        "mechanism": { "const": "M2_PUSHDOWN_EQUIVALENCE" },
+        "engine_side_gate": { "const": "M2_PUSHDOWN_RESTRICTED_SET_EQUALS_C_STRICT" },
+        "holds_at_publication": { "const": true },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "M3Certificate": {
+      "type": "object",
+      "description": "M3 needs no row-set equality, but it does need a decidable stop certificate over the engine row stream; rows it inspected and judged unqualified by the same authoritative view may be nearer.",
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
+      "additionalProperties": false,
+      "properties": {
+        "mechanism": { "const": "M3_STOP_CERTIFICATE" },
+        "engine_side_gate": { "const": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM" },
+        "holds_at_publication": { "const": true },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
     },
     "StateMatrixRow": {
       "type": "object",
