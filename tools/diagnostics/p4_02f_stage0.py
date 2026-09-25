@@ -109,6 +109,8 @@ class Stats:
         self.sqlite_calls = 0
         self.candidate_walk_ms = 0.0
         self.candidate_walk_calls = 0
+        self.pending_topup_ms = 0.0
+        self.pending_topup_calls = 0
         self.stage_ms: dict[str, float] = {}
         self.stage_calls: dict[str, int] = {}
         self.blocks: list[dict[str, Any]] = []
@@ -137,9 +139,17 @@ def instrument_catalog(catalog: Catalog, stats: Stats) -> None:
         elapsed = (time.perf_counter() - started) * 1000
         stats.sqlite_ms += elapsed
         stats.sqlite_calls += 1
-        if "FROM index_entries" in str(sql) and "CONFIRMED" in str(sql):
+        text = str(sql)
+        # The candidate keyset walk and the pending-projection top-up both mention
+        # ``index_entries`` and ``CONFIRMED``; only the exact block-query signature may be
+        # counted as the walk, or the top-up (which is the more expensive of the two at
+        # 300 000 assets) would be mislabelled as candidate fetching.
+        if "FROM index_entries AS e JOIN assets AS a" in text and "e.state = 'CONFIRMED'" in text:
             stats.candidate_walk_ms += elapsed
             stats.candidate_walk_calls += 1
+        elif "NOT EXISTS (SELECT 1 FROM index_entries" in text:
+            stats.pending_topup_ms += elapsed
+            stats.pending_topup_calls += 1
         return rows
 
     catalog.read_all = timed_read_all  # type: ignore[method-assign]
@@ -441,6 +451,8 @@ class Generation:
             "sqlite_calls": self.stats.sqlite_calls,
             "sqlite_candidate_walk_ms": round(self.stats.candidate_walk_ms, 3),
             "sqlite_candidate_walk_calls": self.stats.candidate_walk_calls,
+            "sqlite_pending_topup_ms": round(self.stats.pending_topup_ms, 3),
+            "sqlite_pending_topup_calls": self.stats.pending_topup_calls,
             "engine_ms": round(engine_ms, 3),
             "engine_calls": len(blocks),
             "engine_table_ms": round(sum(r["table_ms"] for r in blocks), 3),
@@ -678,6 +690,13 @@ def round_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     stages = {
         "sqlite_read_all": statistics.median(column("sqlite_ms")),
         "sqlite_candidate_walk": statistics.median(column("sqlite_candidate_walk_ms")),
+        "sqlite_pending_topup": statistics.median(column("sqlite_pending_topup_ms")),
+        "sqlite_other_reads": round(
+            statistics.median(column("sqlite_ms"))
+            - statistics.median(column("sqlite_candidate_walk_ms"))
+            - statistics.median(column("sqlite_pending_topup_ms")),
+            3,
+        ),
         "engine_total": engine,
         "engine_table_handle": statistics.median(column("engine_table_ms")),
         "engine_plan": statistics.median(column("engine_plan_ms")),
