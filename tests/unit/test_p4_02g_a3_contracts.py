@@ -15,10 +15,18 @@ A3 implementation and asserts nothing about production behaviour that does not e
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from photo_search.search.retrieval import (
+    SearchScope,
+    VectorBinding,
+    scope_condition,
+    vector_channel,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPANION = ROOT / "docs" / "decisions" / "contracts" / "p4-a3-contracts.v1.json"
@@ -76,6 +84,18 @@ STATE_MATRIX: dict[str, tuple[str, str | None, str, str]] = {
         "REVISION_OR_VISIBILITY_CHANGED_BEFORE_PUBLICATION",
         "row set changed by a concurrent confirmation",
         "confirmation/revision moved before publication",
+    ),
+    "place_state_filter": (
+        FALLBACK,
+        "NOT_ELIGIBLE_EXTRA_SCOPE",
+        "no place-id condition at all",
+        "place_state is assigned/unassigned/manual_unassigned/suggested",
+    ),
+    "row_revision_mismatch": (
+        FALLBACK,
+        "STALE_OR_DUPLICATE_REVISION",
+        "Lance row projection_revision=2 (written, not confirmed)",
+        "index_entries confirmation_revision=1",
     ),
     "positive_control_certificate": (
         A3_WITH_CERTIFICATE,
@@ -180,6 +200,7 @@ def eligibility(**overrides: Any) -> dict[str, Any]:
         "source_id_is_null": True,
         "availability_is_any": True,
         "place_ids_is_empty": True,
+        "place_state_is_any": True,
         "person_ids_is_empty": True,
         "capture_is_null": True,
         "generation_state_ready": True,
@@ -191,9 +212,12 @@ def eligibility(**overrides: Any) -> dict[str, Any]:
 
 def authority_set() -> dict[str, bool]:
     return {
+        "oracle_membership_matches_confirmed_block_sql": True,
         "entry_state_confirmed": True,
-        "current_projection_revision": True,
-        "asset_visibility_from_sqlite_authority": True,
+        "strict_requires_one_row_per_generation_asset": True,
+        "strict_requires_row_revision_equals_confirmation_revision": True,
+        "strict_is_a_subset_of_oracle_membership": True,
+        "mismatch_forces_fallback": True,
         "lance_visible_column_is_not_a_credential": True,
     }
 
@@ -353,3 +377,97 @@ def test_adr_records_the_rounds_boundaries() -> None:
     for mechanism in FORBIDDEN_MECHANISMS:
         assert mechanism not in text  # the enum lives in the companion, not duplicated in the ADR
     assert "固定倍数 overfetch" in text and "全局 Top-K 后过滤" in text
+
+
+# --------------------------------------------------- real-code counterexamples (Sol F1 / F2)
+def test_real_place_state_makes_the_scope_predicate_non_tautological() -> None:
+    """Sol F1: ``place_state`` is independent of ``place_ids``.
+
+    The eligibility predicate may only treat an empty ``place_ids`` as "no extra filter" when
+    the *real* predicate is tautological, so this calls the product's own ``scope_condition``
+    instead of trusting the contract's own reference model.
+    """
+    connection = sqlite3.connect(":memory:")
+    try:
+        tautological = [
+            state
+            for state in ("any", "assigned", "unassigned", "manual_unassigned", "suggested")
+            if scope_condition(connection, SearchScope.build(place_state=state))[0] == "1"
+        ]
+    finally:
+        connection.close()
+    assert tautological == ["any"]
+    # ... and the frozen matrix therefore refuses A3 for every non-"any" place_state.
+    assert STATE_MATRIX["place_state_filter"][0] == FALLBACK
+    assert eligibility(place_state_is_any=False)["place_state_is_any"] is False
+    assert decide(
+        eligible=eligibility(place_state_is_any=False),
+        certificate=CERTIFICATE,
+        case="positive_control_certificate",
+    ) == (FALLBACK, "NOT_ELIGIBLE_EXTRA_SCOPE")
+
+
+def test_real_oracle_is_revision_blind_in_the_after_lance_window() -> None:
+    """Sol F2: the complete path ranks a newer-but-unconfirmed Lance row.
+
+    Reproduces the reviewer's minimal counterexample with the **real** ``vector_channel`` and
+    the **real** ``scope_condition`` over an in-memory authority, and pins the contract's
+    answer: ``C_strict != C_sql`` in this window, so A3 must fall back to the oracle page.
+    """
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.executescript(
+            "CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, state TEXT);"
+            "CREATE TABLE index_entries(asset_id INTEGER, generation_id TEXT, space_id TEXT, "
+            "state TEXT);"
+            "INSERT INTO assets(asset_id, state) VALUES (1, 'ACTIVE'), (2, 'ACTIVE');"
+            "INSERT INTO index_entries VALUES "
+            "(1, 'gen', 'space', 'CONFIRMED'), (2, 'gen', 'space', 'CONFIRMED');"
+        )
+
+        class _MemoryCatalog:
+            def __init__(self, connection: sqlite3.Connection) -> None:
+                self.connection = connection
+
+            def read_all(self, sql: str, parameters: tuple = ()) -> list[Any]:
+                return self.connection.execute(sql, tuple(parameters)).fetchall()
+
+        class _StubIndex:
+            def __init__(self, rows: list[dict[str, Any]]) -> None:
+                self.rows = rows
+
+            def search_candidates(self, **kwargs: Any) -> list[dict[str, Any]]:
+                ids = {int(value) for value in kwargs["asset_ids"]}
+                return [dict(row) for row in self.rows if int(row["asset_id"]) in ids]
+
+        index = _StubIndex(
+            [
+                {"asset_id": 1, "distance": 0.1, "projection_revision": 2, "space_id": "space"},
+                {"asset_id": 2, "distance": 0.2, "projection_revision": 1, "space_id": "space"},
+            ]
+        )
+        binding = VectorBinding(
+            generation_id="gen",
+            space_id="space",
+            dimension=8,
+            processor_id="stand-in",
+            state="READY",
+            is_active=True,
+        )
+        block = vector_channel(
+            _MemoryCatalog(connection),
+            index=index,  # type: ignore[arg-type]
+            binding=binding,
+            query_vector=[0.0] * 8,
+            scope=SearchScope.build(),
+            top_k=1,
+        )
+    finally:
+        connection.close()
+    assert [int(row["asset_id"]) for row in block["hits"]] == [1]
+    assert int(block["hits"][0]["projection_revision"]) == 2
+    # The frozen answer for this window: certificate fails on C_strict, so A3 falls back and
+    # the fallback page is exactly this oracle page.
+    assert STATE_MATRIX["row_revision_mismatch"][0] == FALLBACK
+    assert matrix_row("row_revision_mismatch")["published_page_equals_complete_path"] is True

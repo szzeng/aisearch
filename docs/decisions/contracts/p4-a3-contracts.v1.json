@@ -56,6 +56,7 @@
         "source_id_is_null",
         "availability_is_any",
         "place_ids_is_empty",
+        "place_state_is_any",
         "person_ids_is_empty",
         "capture_is_null",
         "generation_state_ready",
@@ -68,6 +69,7 @@
         "source_id_is_null": { "const": true },
         "availability_is_any": { "const": true },
         "place_ids_is_empty": { "const": true },
+        "place_state_is_any": { "const": true },
         "person_ids_is_empty": { "const": true },
         "capture_is_null": { "const": true },
         "generation_state_ready": { "const": true },
@@ -76,17 +78,23 @@
     },
     "AuthoritySetRule": {
       "type": "object",
-      "description": "ADR-0012 section 3: the exact definition of C, the SQLite authoritative qualification set.",
+      "description": "ADR-0012 section 3: the oracle membership set C_sql (exactly what _CONFIRMED_BLOCK_SQL selects) and the stronger certificate set C_strict (row-level consistent).",
       "required": [
+        "oracle_membership_matches_confirmed_block_sql",
         "entry_state_confirmed",
-        "current_projection_revision",
-        "asset_visibility_from_sqlite_authority",
+        "strict_requires_one_row_per_generation_asset",
+        "strict_requires_row_revision_equals_confirmation_revision",
+        "strict_is_a_subset_of_oracle_membership",
+        "mismatch_forces_fallback",
         "lance_visible_column_is_not_a_credential"
       ],
       "properties": {
+        "oracle_membership_matches_confirmed_block_sql": { "const": true },
         "entry_state_confirmed": { "const": true },
-        "current_projection_revision": { "const": true },
-        "asset_visibility_from_sqlite_authority": { "const": true },
+        "strict_requires_one_row_per_generation_asset": { "const": true },
+        "strict_requires_row_revision_equals_confirmation_revision": { "const": true },
+        "strict_is_a_subset_of_oracle_membership": { "const": true },
+        "mismatch_forces_fallback": { "const": true },
         "lance_visible_column_is_not_a_credential": { "const": true }
       }
     },
@@ -117,6 +125,8 @@
             "hidden_offline_or_source_change",
             "generation_or_space_switch",
             "concurrent_publication",
+            "place_state_filter",
+            "row_revision_mismatch",
             "positive_control_certificate"
           ]
         },

@@ -3256,3 +3256,42 @@ C 级冻结包仍未验证。** 见 [主审报告](reports/P4-02E-dsh-engineerin
 - **停止点与下一步**：交 **Sol high 聚焦终审**（同一契约 + 最小反例 + 独立性限制）。Sol 冻结通过后
   才生成隔离实验卡（合成夹具、oracle 对照、五类注入、回退率/时延），实验卡与实现卡都不得改 `src/**`；
   在此之前不立 A3 实现卡。模型切换由用户在 Codex 中手动完成。
+
+## Latest focused contract review — P4-02H（2026-09-25）
+
+**P4-02H 契约聚焦审核暂不通过最终冻结；退回 DS-H 修正两项判据并补齐终审输入。** 见
+[聚焦审核报告](reports/P4-02H-focused-contract-review.md)（基线 `77557db`，只读核对、内存谓词探针与 revision 合成反例）。
+F1：`place_ids=()` 不代表无地点筛选，`place_state=assigned/unassigned/manual_unassigned/suggested`
+仍改变 `scope_condition`，ADR-0012 §2 与 companion 的 A3 资格遗漏该条件。F2：ADR §3/§4 的当前
+revision/可见性 C 与 §5 指定的现行 revision-blind 完整路径 oracle 在 Lance 已写未确认窗口不一致，
+须明确 C、强制回退及回退页的关系。既有契约 JUnit `p4-02h-contracts.xml` 的 9 例通过，但未覆盖
+这两条真实调用链反例。P4-02H 主审报告自述与起草同会话，尚非独立 DS-H 主审；任务卡要求的
+压缩交接包也未完整交付。本轮聚焦审核不冒称卡面指定的 Sol high 终审。**P4-02F 仍非性能 PASS；
+A3 未实现/未启用；§12.2 不变。** 修正后只短审受影响边界；在此之前不立隔离实验或 A3 实现卡。
+
+## Latest fix round — P4-02H F1/F2 修复与压缩交接包（2026-09-25）
+
+**Sol 阻断项 F1/F2 已修（只收紧判据、不改基线语义），卡面第 4 项的压缩交接包已补齐；
+状态停在 `ENGINEERING REVIEW PASS (revised) / SOL FOCUSED REVIEW PENDING`。** 见
+[修复与交接报告](reports/P4-02H-fix-and-handoff.md)。维持 `A3 未实现/未启用`、`§12.2 未改`、
+`P4-02F 非 PASS`、`src/**` 零改动。
+
+- **F1（`place_state`）**：确认 `places/filter.py::place_condition` 在 `place_ids=()` 时对
+  `assigned`/`unassigned`/`manual_unassigned`/`suggested` 仍返回非恒真谓词（只有 `any` 返回 `"1"`）。
+  契约改为**由真实谓词是否恒真决定资格**；ADR §2.2 与 companion 加入必填 `place_state_is_any`，
+  矩阵新增 `place_state_filter` 行（不资格 ⇒ 回退）。
+- **F2（revision/可见性）**：`_CONFIRMED_BLOCK_SQL` 只按 ID 入口，不比较行 `projection_revision`
+  与 `confirmation_revision`。契约拆成 **`C_sql`（oracle 成员集）** 与 **`C_strict`（证书资格集：
+  每代每资产一行 + space 匹配 + 行 revision = 当前确认 revision）**；M1/M2/M3 只在 `C_strict` 上评估，
+  `C_strict ≠ C_sql`（含 `after_lance` 窗口）⇒ 强制回退且回退页即 oracle 页；并写明本 ADR **不修改**
+  完整路径的 revision-blind 行为，收紧它须另行裁决立卡。
+- **两条真实代码反例（可执行）**：①真实 `scope_condition` 断言只有 `place_state="any"` 恒真；
+  ②真实 `vector_channel` + 内存权威 + 替身索引复现 A(rev2,0.1)/B(rev1,0.2)、`top_k=1` ⇒
+  `hits=[A(revision=2)]`，并断言该窗口回退且回退页等于 oracle 页。
+- **验收**：契约用例 **11 / 0 / 0 / 0**（`test-results/p4-02h-fix-contracts.xml`）；
+  B 级全量 **1709 / 0 / 0 / 48**（`test-results/p4-02h-fix-full.xml`）；`ruff check .`、
+  `git diff --check` exit 0；`src/**` 与既有冻结面零 diff。
+- **仍缺的终审前置**：独立性未满足（起草/主审/修复同一会话）⇒ 短审建议另开会话、另一模型复跑
+  真实 `scope_condition` 全字段恒真性、`vector_channel` revision 窗口与交接包 §4 的三项高风险问题。
+- **下一步**：Sol high 聚焦短审（只审 F1/F2 修复边界 + 两条真实反例 + 交接包）；冻结通过前
+  **不立隔离实验卡与 A3 实现卡**。模型切换由用户在 Codex 中手动完成。
