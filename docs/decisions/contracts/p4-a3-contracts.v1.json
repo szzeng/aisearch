@@ -19,6 +19,14 @@
     "CertificateMechanism": {
       "enum": ["M1_EQUIVALENT_SNAPSHOT", "M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"]
     },
+    "EngineSideGate": {
+      "description": "ADR-0012 section 3.3: the engine-side gate is per mechanism; equality of the whole physical row set is M1's requirement only.",
+      "enum": [
+        "M1_PHYSICAL_SET_EQUALS_C_STRICT",
+        "M2_PUSHDOWN_RESTRICTED_SET_EQUALS_C_STRICT",
+        "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM"
+      ]
+    },
     "ForbiddenMechanism": {
       "enum": [
         "FIXED_OVERFETCH_MULTIPLIER",
@@ -101,9 +109,10 @@
     "CertificateRule": {
       "type": "object",
       "description": "ADR-0012 section 4. Exactly one mechanism must be evidenced, and it must still hold at publication time.",
-      "required": ["mechanism", "holds_at_publication"],
+      "required": ["mechanism", "engine_side_gate", "holds_at_publication"],
       "properties": {
         "mechanism": { "$ref": "#/$defs/CertificateMechanism" },
+        "engine_side_gate": { "$ref": "#/$defs/EngineSideGate" },
         "holds_at_publication": { "const": true },
         "evidence": { "type": "string", "minLength": 1 }
       },
@@ -126,6 +135,7 @@
             "generation_or_space_switch",
             "concurrent_publication",
             "place_state_filter",
+            "extra_engine_row_with_m3_certificate",
             "positive_control_certificate"
           ]
         },

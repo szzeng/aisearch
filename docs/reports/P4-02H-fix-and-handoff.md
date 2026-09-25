@@ -49,11 +49,33 @@ oracle 没有」触发。该结论由 [独立复跑](P4-02H-independent-recheck.
 在现行状态机下是**空转**、只作证书不许依赖的假设保留；§4 的 M2/M3 与 §6 第 9 行已把裸 `C`
 改为 `C_strict`/`C_sql`，并加入发布前门禁 `C_strict == C_sql` 且「引擎可查询行集 == `C_strict`」。
 
+### 2.2 第三轮聚焦审核（Sol r3）：门禁改为**按机制**
+
+Sol r3 指出上面那句统一门禁与 M3 冲突：M3 正是要在「引擎有多余（未确认）行」时用停止证书工作，
+而「全物理行集 == `C_strict`」一旦写成**所有机制**的公共门禁，M3 在其目标场景里必然失败。
+最小反例（Sol 原文）：同代同 space、SQLite 仅 B `CONFIRMED`、引擎另有更近的未确认 A、`top_k=1`
+—— M3 依停止证书可发布 B（与 oracle 逐项相同），统一门禁却会强制回退。已改：
+
+| 机制 | 引擎侧门禁（ADR §3.3 新表） |
+|---|---|
+| M1 等价快照 | **全物理行集 == `C_strict`**（不允许多余行） |
+| M2 下推等价 | **已证明等价的谓词过滤后行集 == `C_strict`**（全物理集可有多余行） |
+| M3 停止证书 | **不要求行集相等**：允许多余行，但必须在**引擎行流**上给出可判定的停止证书（已取得 K 个合格行 + 未检查行的距离下界劣于第 K 行），并在**发布前复核第 K 行合格性** |
+
+三机制**共同**的门禁只剩：公共门禁 `C_strict == C_sql` + 发布前窗口复核。
+ADR §4 的机制表新增「引擎侧门禁」列，§6 第 1 行改为「M1/M2 不可用、**M3 可用**（有证书时）」，
+并新增第 11 行 `extra_engine_row_with_m3_certificate`（A 更近但未确认、B 已确认、`top_k=1`
+⇒ 允许 M3，页 = `{B}` = oracle；同状态下 M1/M2 必须回退）。companion 新增
+`EngineSideGate` 枚举并把 `engine_side_gate` 列为 `CertificateRule` 必填；
+契约用例新增 `test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state`
+（含「未检查行下界更近 ⇒ 证书不成立、必须继续扩大或回退」的负例）。
+
 ## 3. 验收
 
-契约用例 **11 / 0 / 0 / 0**（JUnit `test-results/p4-02h-fix-contracts.xml`；
-原 9 例 + F1/F2 两条真实代码反例）；`ruff check .`、`git diff --check` exit 0；
-B 级全量见 `test-results/p4-02h-fix-full.xml`。`src/**`、migration、schema、既有 ADR/companion、
+契约用例 **12 / 0 / 0 / 0**（JUnit `test-results/p4-02h-r3-contracts.xml`；
+原 9 例 + F1/F2 两条真实代码反例 + Sol r3 的按机制门禁用例）；`ruff check .`、`git diff --check` exit 0；
+B 级全量 **1710 / 0 / 0 / 48**（`test-results/p4-02h-r3-full.xml`）。
+`src/**`、migration、schema、既有 ADR/companion、
 信封/错误码、`pyproject.toml`、`uv.lock` 零 diff。
 
 ## 4. 压缩交接包（Sol 终审输入，按 P4-02H 必须交付第 4 项）

@@ -91,6 +91,12 @@ STATE_MATRIX: dict[str, tuple[str, str | None, str, str]] = {
         "no place-id condition at all",
         "place_state is assigned/unassigned/manual_unassigned/suggested",
     ),
+    "extra_engine_row_with_m3_certificate": (
+        A3_WITH_CERTIFICATE,
+        None,
+        "engine also holds an unconfirmed row A (nearer) beside the confirmed row B",
+        "C_sql = C_strict = {B}",
+    ),
     "positive_control_certificate": (
         A3_WITH_CERTIFICATE,
         None,
@@ -270,8 +276,17 @@ def request(
 
 CERTIFICATE = {
     "mechanism": "M1_EQUIVALENT_SNAPSHOT",
+    "engine_side_gate": "M1_PHYSICAL_SET_EQUALS_C_STRICT",
     "holds_at_publication": True,
     "evidence": "writer fence id + id/revision set equality inside the publication window",
+}
+
+#: ADR-0012 §3.3: the engine-side gate is per mechanism (Sol r3). Equality of the whole
+#: physical row set is M1's requirement only; M3 deliberately allows extra engine rows.
+GATE_BY_MECHANISM = {
+    "M1_EQUIVALENT_SNAPSHOT": "M1_PHYSICAL_SET_EQUALS_C_STRICT",
+    "M2_PUSHDOWN_EQUIVALENCE": "M2_PUSHDOWN_RESTRICTED_SET_EQUALS_C_STRICT",
+    "M3_STOP_CERTIFICATE": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
 }
 
 
@@ -494,3 +509,73 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
     assert set(real_engine) - c_strict == {3}  # the extra engine row fails M1/M2/M3
     assert STATE_MATRIX["unconfirmed_row"][0] == FALLBACK
     assert matrix_row("unconfirmed_row")["published_page_equals_complete_path"] is True
+
+
+def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
+    companion: dict[str, Any],
+) -> None:
+    """Sol r3: the engine-side gate must be per mechanism, not one global row-set equality.
+
+    Minimal counterexample: one generation/space, SQLite confirms only B, the engine also
+    holds an unconfirmed and *nearer* A, ``top_k=1``. M3 may publish B with a stop
+    certificate over the engine row stream; M1 cannot (extra row) and M2 needs a proven
+    pushdown predicate. The published page must equal the oracle page ``{B}``.
+    """
+    enum_gates = set(companion["$defs"]["EngineSideGate"]["enum"])
+    assert enum_gates == set(GATE_BY_MECHANISM.values())
+    assert companion["$defs"]["CertificateRule"]["required"] == [
+        "mechanism",
+        "engine_side_gate",
+        "holds_at_publication",
+    ]
+
+    c_sql = {"B"}
+    c_strict = {"B"}
+
+    physical = {"A", "B"}  # the whole engine row set of this generation/space
+
+    inspected = [("A", 0.10, False), ("B", 0.20, True)]  # (asset, distance, qualified)
+
+    def gate_holds(
+        mechanism: str,
+        *,
+        pushdown_proven: bool,
+        certificate: bool,
+        uninspected_distance_lower_bound: float = 0.5,
+    ) -> bool:
+        """Reference model of §3.3: one gate per mechanism, nothing global beyond §7."""
+        if not certificate:
+            return False
+        if mechanism == "M1_EQUIVALENT_SNAPSHOT":
+            return physical == c_strict  # no extra row allowed
+        if mechanism == "M2_PUSHDOWN_EQUIVALENCE":
+            return pushdown_proven and c_strict == c_sql
+        qualified = sorted([row for row in inspected if row[2]], key=lambda row: (row[1], row[0]))
+        kth = qualified[:1]
+        if not kth:
+            return False
+        # Rejected-but-inspected rows never block (the oracle excludes them too). The
+        # certificate is about the rows M3 has *not* read: their documented distance lower
+        # bound must be worse than the K-th qualified row, or M3 must keep expanding.
+        return uninspected_distance_lower_bound > kth[0][1]
+
+    # M1 fails (physical {A, B} != C_strict {B}); M2 has no proven pushdown predicate for
+    # this shape; M3 holds and publishes exactly the oracle page {B}. Without a certificate
+    # every mechanism falls back.
+    assert gate_holds("M1_EQUIVALENT_SNAPSHOT", pushdown_proven=False, certificate=True) is False
+    assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=False, certificate=True) is False
+    assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=True, certificate=True) is True
+    assert gate_holds("M3_STOP_CERTIFICATE", pushdown_proven=False, certificate=True) is True
+    assert (
+        gate_holds(
+            "M3_STOP_CERTIFICATE",
+            pushdown_proven=False,
+            certificate=True,
+            uninspected_distance_lower_bound=0.05,
+        )
+        is False
+    )
+    assert gate_holds("M3_STOP_CERTIFICATE", pushdown_proven=False, certificate=False) is False
+    assert STATE_MATRIX["extra_engine_row_with_m3_certificate"][0] == A3_WITH_CERTIFICATE
+    assert matrix_row("extra_engine_row_with_m3_certificate")["published_page_equals_complete_path"]
+    assert [row[0] for row in sorted(inspected, key=lambda r: (r[1], r[0])) if row[2]] == ["B"]

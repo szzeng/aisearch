@@ -3326,6 +3326,32 @@ A3 未实现/未启用；§12.2 不变。** 修正后只短审受影响边界；
   不替代该前置）⇒ 下一步仍需由另一会话按 P4-02H 卡面完成完整受影响面主审，再做 Sol high 聚焦终审；
   通过前**不立隔离实验卡与 A3 实现卡**。
 
+## Latest gate fix — P4-02H 按机制门禁（Sol r3，2026-09-25）
+
+**第二轮独立主审与 Sol r3 聚焦审核：上一轮 F1/F2 阻断已关闭、独立性缺口已由另一会话的完整主审补齐；
+新阻断「统一行集门禁 vs M3」已按机制修正。** 见
+[第二轮整体主审](reports/P4-02H-a3-contract-review-r2.md)、
+[Sol r3 聚焦审核](reports/P4-02H-focused-review-r3.md)。状态仍停在
+`ENGINEERING REVIEW PASS (revised) / SOL FOCUSED REVIEW PENDING`；维持 `A3 未实现/未启用`、
+`§12.2 未改`、`P4-02F 非 PASS`、`src/**` 零改动。
+
+- **Sol r3 阻断**：ADR §3.3 曾把「引擎可查询行集 == `C_strict`」写成**所有机制**的发布前门禁，
+  而 M3（带停止证书的迭代扩大）正是要在「引擎有多余未确认行」时工作 ⇒ 该门禁会让 M3 在其目标场景
+  必然失败。最小反例：SQLite 仅 B `CONFIRMED`、引擎另有更近的未确认 A、`top_k=1`。
+- **修正**：门禁改为**按机制**——M1 要求全物理行集 == `C_strict`；M2 要求「已证明等价的谓词过滤后行集
+  == `C_strict`」（全物理集可有多余行）；M3 **不要求行集相等**，但必须给出**可判定的停止证书**
+  （K 个合格行 + 未检查行的距离下界劣于第 K 行）并在发布前复核第 K 行合格性。三机制共同门禁只剩
+  公共门禁 `C_strict == C_sql` + 发布前窗口复核。ADR §3.3/§4/§6 已改，§6 第 1 行改为「M1/M2 不可用、
+  M3 可用（有证书时）」并新增第 11 行 `extra_engine_row_with_m3_certificate`；
+  companion 新增 `EngineSideGate` 枚举与必填 `engine_side_gate`。
+- **用例**：新增 `test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state`
+  （同状态下 M1/M2 回退、M3 出 `{B}` = oracle；未检查行下界更近 ⇒ 证书不成立必须扩大或回退）。
+- **验收**：契约用例 **12 / 0 / 0 / 0**（`test-results/p4-02h-r3-contracts.xml`）；
+  B 级全量 **1710 / 0 / 0 / 48**（`test-results/p4-02h-r3-full.xml`）；`ruff check .`、
+  `git diff --check` exit 0；`src/**` 与既有冻结面零 diff。
+- **下一步**：Sol high 聚焦短审（只审本次按机制门禁与第 11 行）；通过后才冻结 ADR-0012，
+  之后才生成隔离实验卡；在此之前不实现、不启用 A3，不立实现卡。模型切换由用户手动完成。
+
 ## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
 
 **另开会话的只读复跑：F1 命题成立且边界完备；F2 的判据方向正确，但 ADR §3.3 的举例与 §6 第 11 行的
@@ -3367,3 +3393,51 @@ SOL FOCUSED REVIEW PENDING`。** 见 [独立复跑报告](reports/P4-02H-indepen
 说明；独立复跑仅覆盖点名边界，未替代任务卡要求的独立 DS-H 完整受影响面主审。既有契约 JUnit
 11 / 0 / 0 / 0、B 级全量 1709 / 0 / 0 / 48；本轮未重跑。**P4-02F 非性能 PASS、A3 未实现/未启用、
 §12.2 未改。**
+
+## Latest engineering review — P4-02H 整体主审（第二轮，含窗口归因更正，2026-09-25）
+
+**`ENGINEERING REVIEW PASS`：7 项边界全部通过、本轮 0 处必须修正（2 处非阻断表述建议 + 1 处变更控制
+提醒留 Sol 裁决）；状态停在 `ENGINEERING REVIEW PASS (revised) / SOL FOCUSED REVIEW PENDING`。**
+见 [整体主审报告](reports/P4-02H-a3-contract-review-r2.md)（被审基线 `2900a0a`；本轮只读，未改任何
+冻结面）。维持 `A3 未实现/未启用`、`§12.2 未改`、`P4-02F 非性能 PASS`、`src/**` 零 diff。
+
+- **窗口归因更正复核通过**：写入次序（产物发布 `artifacts/store.py:378` 与
+  `_schedule_existing` 的 `_mark_entry_pending_repair` 先降级并提交；引擎写入只在
+  `IndexCoordinator` `:596/:775` 且与 `:606/:803` 的确认同事务）⇒ 真实 `after_lance` 是
+  「引擎有行、oracle 没有」；本轮真实引擎探针复现：引擎行 {4,5,6}、6 最近（0.05）但条目
+  `PENDING_REPAIR` ⇒ `C_sql={4,5}`、真实 `vector_channel` 返回 `[4,5]`。防御性形态
+  （`C_sql={1,2}` / `C_strict={2}`）保留在契约用例并仍跑真实 `vector_channel`。
+- **三方一致性**：ADR §6 恰 10 行且行号连续，companion `StateMatrixRow.case` 枚举与契约用例
+  `STATE_MATRIX` 键集完全相等，`row_revision_mismatch` 三方均已不存在，第 3 行仍标「防御性」，
+  7 类禁止机制枚举完整。
+- **全序/并列**：20 行全并列时 `top_k=1` 在 `block_size∈{5000,1}`（1 块 vs 20 块）返回同一最小
+  `asset_id`；`top_k=1000` 返回 20 行严格升序、`truncated=false`。
+- **§4 三项**：①产品无跨库栅栏/版本（`store.py:134` 无 version pin），M1 需新机制；证书核对
+  20 000 行 36.4–37.6 ms ≈ 一次整代 pass（候选块路径 226.9–253.9 ms，约 6.5×），叠 A3 约 0.37 s
+  后对 §12.2 偏紧 ⇒ 应把 §3.3 门禁由 M1 栅栏结构性满足；M2/M3 构造成本未评估。②回退率实现前
+  不可测（静态资格面 168 组里 1 组），真实触发源是「引擎多余未确认行」的并发密度。③仅
+  `place_state` 一类，另记 `CaptureRange()` 与规则版本不匹配两处保守方向观察。
+- **重要口径（供 Sol）**：A3 资格请求下 `scope_condition` 恒真 ⇒ 现行 `_verified_ids` 权威复读
+  **空转**，A3 正确性完全落在证书与发布前门禁上；§3.3 的「引擎可查询行集」需定义成
+  「本次查询可返回的行集」（M1 物理表 / M2 下推后集合），且门禁是 §4 M1 窗口证据的可执行形式，
+  不是单点抽查。
+- **DS-MAX 判定**：V3.1 §2.2 六条逐条核对后**不升**（#3 接近但能判断且已更正；#4/#5/#6 未命中），
+  若 Sol 要求大范围反查则按 #6 升级。
+- **验收（本会话自跑，基线 `2900a0a`）**：契约 **11 / 0 / 0 / 0**（`test-results/p4-02h-r2-contracts.xml`）；
+  B 级全量 **1709 / 0 / 0 / 48**（`test-results/p4-02h-r2-full.xml`，229.1 s）；
+  探针 `test-results/p4-02h-r2-review-probes.json`；`ruff check .`、`git diff --check`、
+  `uv lock --check` 全 exit 0；`git status --short` 空。
+- **环境事实**：沙箱内 `mkdir(mode=0o700)` 目录无法枚举（`WinError 5`），pytest 的
+  `tmp_path`/`--basetemp` 正是这样建根 ⇒ B 级全量按沙箱外正常权限路由执行一次（未改 ACL）。
+- **下一步**：**Sol high 聚焦终审必选**（模型切换由用户在 Codex 中手动完成）；冻结通过前不生成
+  隔离实验卡、不立 A3 实现卡。
+
+## Latest focused review — P4-02H 第二轮主审后（2026-09-25）
+
+**F1/F2 已关闭；ADR §3.3 的统一行集门禁与 §4 M3 停止证书的关系待裁决，最终冻结暂缓。**
+见 [聚焦审核报告](reports/P4-02H-focused-review-r3.md)（被审提交 `2900a0a`，已核对第二轮主审及
+focused/full JUnit）。最小反例：`C_sql=C_strict={B}`，Lance 还有更近但未确认的 A；M3 可迭代排除 A、
+取得 B 并给出停止证书，但 §3.3 若要求引擎物理可查询行集等于 `{B}` 则禁止发布。需冻结“可查询
+行集”在 M1/M2/M3 下的准确含义和各自发布证据，或明示 M3 在此状态不可用。上一轮窗口归因与
+`place_state` 修复均通过；第二轮独立主审的受影响面已覆盖。既有契约 JUnit 11 / 0 / 0 / 0、
+全量 1709 / 0 / 0 / 48，本轮未重跑。**A3 未实现/未启用，§12.2 未改，P4-02F 非性能 PASS。**
