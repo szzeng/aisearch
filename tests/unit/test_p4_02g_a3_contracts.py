@@ -236,8 +236,13 @@ def decide(
     paired = GATE_BY_MECHANISM.get(str(certificate.get("mechanism")))
     if paired != certificate.get("engine_side_gate"):
         return FALLBACK, "NO_CERTIFICATE_PROVABLE"
-    decision, _, _, _ = STATE_MATRIX[case]
-    return decision, None
+    # r5 F-B: the state decides which mechanisms are admissible at all; a mechanism the row
+    # does not admit (M1 on an extra-row state, anything on a defensive state) falls back.
+    if str(certificate.get("mechanism")) not in MECHANISM_AVAILABILITY[case]:
+        return FALLBACK, "NO_CERTIFICATE_PROVABLE"
+    # The row admits this mechanism *and* every invariant holds, so A3 may publish; the page
+    # obligation (equal to the oracle) is asserted by matrix_row()/the publication tests.
+    return A3_WITH_CERTIFICATE, None
 
 
 def matrix_row(case: str) -> dict[str, Any]:
@@ -290,6 +295,25 @@ GATE_BY_MECHANISM = {
     "M1_EQUIVALENT_SNAPSHOT": "M1_PHYSICAL_SET_EQUALS_C_STRICT",
     "M2_PUSHDOWN_EQUIVALENCE": "M2_PUSHDOWN_RESTRICTED_SET_EQUALS_C_STRICT",
     "M3_STOP_CERTIFICATE": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
+}
+
+#: ADR-0012 §3.3/§4/§6 as executable availability: which mechanisms the *state* admits at all
+#: (r5 F-B: the availability is a property of the row, not of a baked decision). Rows that admit
+#: no mechanism must fall back unconditionally.
+MECHANISM_AVAILABILITY: dict[str, frozenset[str]] = {
+    "unconfirmed_row": frozenset({"M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"}),
+    "pending_repair": frozenset({"M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"}),
+    "stale_or_duplicate_revision": frozenset(),
+    "missing_engine_row": frozenset(),
+    "tied_distance": frozenset(),
+    "hidden_offline_or_source_change": frozenset(),
+    "generation_or_space_switch": frozenset(),
+    "concurrent_publication": frozenset(),
+    "place_state_filter": frozenset(),
+    "extra_engine_row_with_m3_certificate": frozenset({"M3_STOP_CERTIFICATE"}),
+    "positive_control_certificate": frozenset(
+        {"M1_EQUIVALENT_SNAPSHOT", "M2_PUSHDOWN_EQUIVALENCE", "M3_STOP_CERTIFICATE"}
+    ),
 }
 
 
@@ -509,7 +533,9 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
         revisions={**confirmed_revision, 3: 1},
     )
     assert c_sql == c_strict == {1, 2}
-    assert set(real_engine) - c_strict == {3}  # the extra engine row fails M1/M2/M3
+    # The extra engine row fails M1's row-set equality; M2 needs a proven pushdown predicate,
+    # and M3 must cover that row with a stop certificate (ADR-0012 §3.3) - not one shared gate.
+    assert set(real_engine) - c_strict == {3}
     assert STATE_MATRIX["unconfirmed_row"][0] == FALLBACK
     assert matrix_row("unconfirmed_row")["published_page_equals_complete_path"] is True
 
@@ -547,6 +573,7 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         pushdown_proven: bool,
         certificate: bool,
         uninspected_distance_lower_bound: float = 0.5,
+        disqualification_provable: bool = True,
     ) -> bool:
         """Reference model of §3.3: one gate per mechanism, nothing global beyond §7."""
         if not certificate:
@@ -562,6 +589,10 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
         # Rejected-but-inspected rows never block (the oracle excludes them too). The
         # certificate is about the rows M3 has *not* read: their documented distance lower
         # bound must be worse than the K-th qualified row, or M3 must keep expanding.
+        # r5 F-D: the K-th qualified row may only stand if the *inspected and rejected* rows
+        # around it are disqualified provably (and stay so at publication).
+        if not disqualification_provable:
+            return False
         return uninspected_distance_lower_bound > kth[0][1]
 
     # M1 fails (physical {A, B} != C_strict {B}); M2 has no proven pushdown predicate for
@@ -571,6 +602,15 @@ def test_gate_is_per_mechanism_and_m3_covers_the_extra_engine_row_state(
     assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=False, certificate=True) is False
     assert gate_holds("M2_PUSHDOWN_EQUIVALENCE", pushdown_proven=True, certificate=True) is True
     assert gate_holds("M3_STOP_CERTIFICATE", pushdown_proven=False, certificate=True) is True
+    assert (
+        gate_holds(
+            "M3_STOP_CERTIFICATE",
+            pushdown_proven=False,
+            certificate=True,
+            disqualification_provable=False,
+        )
+        is False
+    )
     assert (
         gate_holds(
             "M3_STOP_CERTIFICATE",
@@ -639,3 +679,34 @@ def test_companion_binds_each_mechanism_to_exactly_one_engine_side_gate(
                 },
             )
             assert contract_errors(crossed, "A3Request", companion), (mechanism, other_gate)
+
+
+def test_mechanism_availability_comes_from_the_state_not_a_baked_decision() -> None:
+    """r5 F-B: the row's state (not a pre-baked decision) decides which mechanisms apply."""
+    assert set(MECHANISM_AVAILABILITY) == set(STATE_MATRIX)
+    m3 = {
+        "mechanism": "M3_STOP_CERTIFICATE",
+        "engine_side_gate": "M3_STOP_CERTIFICATE_OVER_ENGINE_STREAM",
+        "holds_at_publication": True,
+        "evidence": "stop certificate over the engine row stream",
+    }
+    # M1 is NOT admitted on the extra-row state, even with a well-formed M1 certificate.
+    assert decide(
+        eligible=eligibility(), certificate=dict(CERTIFICATE), case="extra_engine_row_with_m3_certificate"
+    ) == (FALLBACK, "NO_CERTIFICATE_PROVABLE")
+    # M3 IS admitted there, and on the real window rows (1/2), with its own certificate.
+    for case in ("extra_engine_row_with_m3_certificate", "unconfirmed_row", "pending_repair"):
+        assert decide(eligible=eligibility(), certificate=m3, case=case) == (A3_WITH_CERTIFICATE, None)
+    # ... while the defensive/other rows admit nothing, even with a well-formed M3 certificate.
+    for case in (
+        "stale_or_duplicate_revision",
+        "missing_engine_row",
+        "tied_distance",
+        "hidden_offline_or_source_change",
+        "generation_or_space_switch",
+        "concurrent_publication",
+    ):
+        assert decide(eligible=eligibility(), certificate=m3, case=case) == (
+            FALLBACK,
+            "NO_CERTIFICATE_PROVABLE",
+        )

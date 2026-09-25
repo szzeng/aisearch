@@ -86,6 +86,26 @@ ADR §4 的机制表新增「引擎侧门禁」列，§6 第 1 行改为「M1/M2
    `test_companion_binds_each_mechanism_to_exactly_one_engine_side_gate`（3 组正配 + 全部交叉错配），
    并把 M3 用例改为显式写明「更近的 A 是已检查、判据可证的失格行」。
 
+### 2.4 第五轮独立主审（r5）：F-A 裁决 + F-B/F-C/F-D 面级修正
+
+r5 独立主审（`docs/reports/P4-02H-a3-contract-review-r5.md`，被审 `9f5f14d`）结论：点名边界 1（按机制门禁表）
+**通过**；1 处判据级冲突交裁决、2 处面级陈述与 1 处断言缺口需修。本轮处理：
+
+1. **F-A（判据级，采纳方向甲）**：第 1/11 行（允许 M3 + 停止证书）与第 2 行（无条件回退）指向**同一物理
+   状态**却相反。ADR 新增 §12 决策记录：第 2 行改为**按机制的条件回退**、第 11 行恢复「M1/M2 必须回退」
+   的显式条款；理由是方向乙会把真实 `after_lance` 窗口变成只能回退、把已冻结的三机制退化为两机制
+   （§3.3 自己标注为需另裁的语义变化）。方向甲**不放宽任何不变量**（`C_strict == C_sql`、全序、
+   发布前复核、无证书即回退均保留），且已在 §12 明确**仍需用户在最终冻结时确认或改判方向乙**。
+2. **F-B（面级，已修）**：可执行参考模型原先只做「名字级」配对，状态级可用性靠按行烘焙的决策。
+   现在新增 `MECHANISM_AVAILABILITY`（每行允许哪些机制）并让 `decide` **先按机制求值**：
+   `M1 × 多余行 ⇒ 回退`、`M3 × 真实窗口行 ⇒ 允许`、防御性行**任何机制都不允许**（即使证书形式合规）。
+   新增 `test_mechanism_availability_comes_from_the_state_not_a_baked_decision` 覆盖这三类分支。
+3. **F-C（面级，已修）**：清掉「多余引擎行使证书失败」这类把三机制写成同一门禁的旧陈述——
+   用例注释改为「多余行使 **M1** 的行集相等失败；**M2** 需已证明下推；**M3** 须以停止证书覆盖该行」，
+   本节 §4「最小反例」行同步加按机制限定语。历史状态条目里的同族表述已在最新状态条目中点名更正。
+4. **F-D（断言缺口，已修）**：`gate_holds` 新增 `disqualification_provable` 入参，并断言
+   「失格判据不可证/发布前失效 ⇒ 证书不成立、必须继续扩大或回退」，与 §6 第 11 行末句一致。
+
 ## 3. 验收
 
 契约用例 **12 / 0 / 0 / 0**（JUnit `test-results/p4-02h-r3-contracts.xml`；
@@ -103,7 +123,7 @@ B 级全量 **1710 / 0 / 0 / 48**（`test-results/p4-02h-r3-full.xml`）。
 | 待裁决高风险问题 | ①`C_strict` 的「行 revision = 确认 revision」需要一次**跨库同窗口证明**（M1 栅栏）才可用；M2/M3 的等价性尚未有构造成本评估。②回退率未知：ADR 的强制回退可能吃掉全部收益，必须由隔离实验按真实混合负载报 P95。③`place_state` 之外是否还有同类「列表为空但谓词非恒真」的字段（本卡已逐字段核对，建议独立复跑） |
 | ADR 预期/实际差异 | 预期「无额外筛选 = 所有列表为空」；实际「谓词是否恒真」才是判据（F1）。预期「C = 权威资格集」；实际现行路径只按 ID 入口（F2）。两处差异已写入 ADR §2.2/§3 |
 | 符号级定位 | `src/photo_search/places/filter.py::place_condition`（`state` 分支）、`src/photo_search/search/retrieval.py::scope_condition`（谓词 `"1"` 短路）、`_CONFIRMED_BLOCK_SQL`、`src/photo_search/indexing/store.py::_record`（`record_id = generation:asset`）与 `IndexCoordinator` 的 `after_lance` 故障点 |
-| 最小反例 | F1：无任何列表条件 + `place_state=assigned` + 距离逆序（B=0.1 无地点、A=0.2 有 `MANUAL_ASSIGNED`），`top_k=1` ⇒ 全代 Top-1 漏 A。F2（已按短审修正）：**真实窗口** = 条目 `PENDING_REPAIR` + 引擎已写新行 ⇒ `C_sql == C_strict`，证书因多余引擎行失败 ⇒ 回退；**防御性窗口** = 同一 `CONFIRMED` 条目的引擎行 revision 不一致 ⇒ `C_strict ≠ C_sql` ⇒ 回退，oracle 在该形状下仍返回 A(rev2)。两者都在 `test_p4_02g_a3_contracts.py` 内可执行（含显式 `C_sql`/`C_strict` 计算） |
+| 最小反例 | F1：无任何列表条件 + `place_state=assigned` + 距离逆序（B=0.1 无地点、A=0.2 有 `MANUAL_ASSIGNED`），`top_k=1` ⇒ 全代 Top-1 漏 A。F2（按 r4/r5 修正）：**真实窗口** = 条目 `PENDING_REPAIR` + 引擎仍留该资产的行 ⇒ `C_sql == C_strict`，其中 **M1 因行集不等失败、M2 需已证排序前下推、M3 须以停止证书覆盖该多余行**，都不成立才回退；**防御性窗口** = 同一 `CONFIRMED` 条目的引擎行 revision 不一致 ⇒ `C_strict ≠ C_sql` ⇒ 任何机制都回退，oracle 在该形状下仍返回 A(rev2)。两者都在 `test_p4_02g_a3_contracts.py` 内可执行（含显式 `C_sql`/`C_strict` 计算） |
 | 未验证项 | A3 与 oracle 的 `Recall@K=1.000` 等价性、五类注入的真实前后计数、A3 端到端 P50/P95（含真实文本编码/HTTP/回退率与回退时延）、真实中文 CLIP 权重、GTX 1660、冷缓存与长时 soak |
 | 禁止扩大范围 | 不得实现/启用 A3、不得改 §12.2、不得改 `src/**`、信封/错误码/`query_hash`/游标、RRF/BM25/距离、既有 ADR 条款；不得以固定 overfetch/后过滤/计数或采样/索引存在性充当证书；不得接真实照片库 |
 
