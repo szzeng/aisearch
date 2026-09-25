@@ -60,6 +60,10 @@ M3 最坏情况下退化为完整候选扫描 —— 因此 A3 的收益**不是
 2. **截断必须发生在全序之后**：不得让引擎先只返回 K 行再在 Python 排序（P4-01C 审查 B1）。
 3. `top_k ∈ [1, 1000]`；契约要求对**每个** `top_k` 成立，不能只验证 `top_k=20`。
 4. 融合、`pending_projection`、权威复读、会话/游标与错误语义保持原状。
+5. **等价性 oracle 就是现行完整候选块路径的实现**（P4-02H 主审 F2）：包含它当前的
+   revision-blind 窗口。任何**加强** revision 校验（例如要求引擎行的 `projection_revision`
+   等于当前确认 revision）都是完整路径自身的后续工作，**不得**以 A3 为名改变基线语义；
+   A3 只能被要求「不比完整路径更差」。
 
 ## 6. 状态矩阵（反例目录，冻结）
 
@@ -70,7 +74,7 @@ M3 最坏情况下退化为完整候选扫描 —— 因此 A3 的收益**不是
 |---:|---|---|---|
 | 1 | 未确认行 | Lance 有行、SQLite 未确认（outbox 未 `CONFIRMED`） | 无 M1/M2/M3 ⇒ **回退**（不得发布缺项页） |
 | 2 | 修复中 | `index_entries = PENDING_REPAIR` | ⇒ **回退** |
-| 3 | 旧/重复 revision | Lance 行 `projection_revision` 不是当前有效版本 | ⇒ **回退** |
+| 3 | revision 不一致 | Lance 行 `projection_revision` 不是当前有效版本（**含 Lance 已写未确认的崩溃窗口**；`record_id = generation:asset` 保证每代每资产只有一行，不存在重复行） | ⇒ **回退** |
 | 4 | Lance 缺行 | SQLite `CONFIRMED` 但 Lance 无对应行/旧行 | ⇒ **回退**（事后核验补不回缺失项） |
 | 5 | 并列距离 | 第 K 与第 K+1 距离相同 | 全序 `(distance, asset_id)` 决定；引擎内截断一律禁止 |
 | 6 | 隐藏/离线/来源变化 | 权威可见性或来源在查询窗口内变化 | 以 SQLite 权威为准 ⇒ 变化即 **回退/重搜** |

@@ -3230,3 +3230,29 @@ C 级冻结包仍未验证。** 见 [主审报告](reports/P4-02E-dsh-engineerin
   P4-02G §5.1/§5.3 一致性、五个反例决策与回退义务）→ 然后 **Sol high 聚焦终审**冻结协议与最小反例；
   终审通过前不得立 A3 实现卡，`src/**` 保持零改动。推荐模型 **DS-H / DeepSeek V4.1 Flash / 高推理**，
   模型切换仍由用户在 Codex 中手动完成。
+
+## Latest engineering review — P4-02H ADR-0012 契约主审（2026-09-25）
+
+**P4-02H：`ENGINEERING REVIEW PASS`（7 项边界全部通过；2 条表述缺陷已修；1 条独立性限制已披露），
+状态停在 `SOL FOCUSED REVIEW PENDING`。** 见 [主审报告](reports/P4-02H-a3-contract-review.md)
+（被审基线 `40f2bd4`）。维持 `A3 未实现/未启用`、`§12.2 未改`、`P4-02F 非 PASS`。
+
+- **独立性限制（必须披露）**：本次主审与 ADR/companion 起草**同一会话**，不是 V3.1 §2.3 期望的
+  「另一位 DS-H 会话」；建议在 Sol 聚焦终审前另开会话（另一模型/档位）复跑本报告 §2 的核对项。
+- **逐项判定**：①资格谓词与 `SearchScope`/`scope_condition` 一一对应，未漏权威条件；②`C` 与
+  `_CONFIRMED_BLOCK_SQL`/`_record` 的写入语义一致，Lance `visible` 确实不参与资格；③证书三机制与
+  P4-02G §3.2 一致、7 类禁止机制被 schema 拒绝、M3 最坏退化已明确为可接受回退；④全序与
+  `vector_channel` 的 `sorted(key=(distance, asset_id))` 一致、`top_k` 上界与 `MAX_TOP_K` 一致；
+  ⑤五个点名反例的决策可测；⑥回退义务与「不改信封」明确；⑦边界记录如实。
+- **F1（已修）**：`record_id = "{generation_id}:{asset_id}"` + `merge_insert` ⇒ **每代每资产只有一行**，
+  「重复行」不是结构状态；ADR §6 第 3 行改为「revision 不一致（含 Lance 已写未确认的崩溃窗口）」。
+- **F2（已修）**：五类可达性核对后，在 ADR §5 明确**等价性 oracle 就是现行完整路径的实现**（含其
+  revision-blind 窗口）；加强 revision 校验属完整路径自身后续工作，不得以 A3 之名改变基线语义。
+- **复跑**：契约用例 **9 / 0 / 0 / 0**（JUnit `test-results/p4-02h-contracts.xml`，修正后重跑）；
+  B 级全量沿用冻结轮 `test-results/p4-02g-full.xml` = **1707 / 0 / 0 / 48**（本轮只改文档措辞与
+  ADR 判据表述）。`ruff check .`、`git diff --check` 全 exit 0；`src/**` 零改动。
+- **仍未验证**：等价性（oracle 对照 `Recall@K=1.000`）、五类注入的真实前后计数、A3 端到端 P50/P95
+  （含真实文本编码、HTTP、回退率与回退时延）、真实中文 CLIP 权重、GTX 1660、冷缓存/soak。
+- **停止点与下一步**：交 **Sol high 聚焦终审**（同一契约 + 最小反例 + 独立性限制）。Sol 冻结通过后
+  才生成隔离实验卡（合成夹具、oracle 对照、五类注入、回退率/时延），实验卡与实现卡都不得改 `src/**`；
+  在此之前不立 A3 实现卡。模型切换由用户在 Codex 中手动完成。
