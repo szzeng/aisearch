@@ -3502,6 +3502,31 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
   按用户"暂时不做 P4-02I"的裁决，本卡**不修改、不提交、不删除**它们；若后续恢复 P4-02I，
   应先核对这些文件的归属与状态再决定去留。
 
+## Latest preparation — P4-03 开工前核对与契约裁决（2026-09-26）
+
+**P4-03 准备完成：卡面要求的"执行前必须实测确认"全部核对通过；五条契约裁决已定，
+其中"到预算走 PAUSED"由用户 2026-09-26 明确确认。** 见
+[P4-03 准备包](reports/P4-03-preparation.md)。本轮只读核对 + 文档，**未改产品代码、未新增迁移**。
+
+- **核对结果**：`SUPPORTED_SCHEMA_VERSION = 16` 且 migrations 最大 `0016` ⇒ **`0017` 空闲**；
+  `src` 内**没有**任何 UpgradeRun/升级表或模块（全部要新建）；`search_profiles.image_generation_id`
+  已是 `ON DELETE RESTRICT`（引用保护一半）；`index_generations` 已保证"每 space 至多一个 active"
+  且 `is_active=1 ⇒ state='READY'`；`activate_profile` 已是单事务搬移（激活地基到位，只需补"引用完整"门禁）；
+  既有错误码闭集足以覆盖五类失败 ⇒ **零新增错误码**。
+- **五条裁决**：①目标集 = 差值集显式落库（`(run_id, asset_id, input_revision)`，plan 时快照）；
+  ②预算为上限、任一先到即软停，时间预算为墙钟且 **PAUSED 期间冻结**，到限转 **`PAUSED(reason=BUDGET)`**
+  （用户已确认）；③暂停=软停（批次提交后生效、在途可重放、恢复幂等）、取消=终态且不可 resume；
+  ④激活前"引用完整"六条门禁（READY / run SUCCEEDED / 权威覆盖完整 / artifact 可读 / 引用保护 /
+  失败不写任何行且不改信封）；⑤失败分类复用既有错误码 + 冻结 `reason` 枚举。
+- **待 P4-03A 冻结的枚举**：run 状态 `PLANNED/RUNNING/PAUSED/CANCELLED/FAILED/SUCCEEDED`；
+  `PAUSE_REASON ∈ {USER, BUDGET, ENVIRONMENT}`；目标行 `PLANNED/IN_FLIGHT/SUCCEEDED/FAILED/CANCELLED`；
+  失败 `reason` 闭集（`MODEL_WEIGHTS_MISSING`/`VRAM_INSUFFICIENT`/`SOURCE_OFFLINE`/`ARTIFACT_MISSING`/
+  `LEASE_EXPIRED`/`DISK_SPACE_INSUFFICIENT`/`RUNTIME_UNHEALTHY`）。
+- **顺序**：P4-02J 先收口（30 万档复测进行中；它不加迁移）→ **P4-03A 契约冻结**（DS-H 起草 →
+  Sol high 必选冻结）→ P4-03B 实现（`0017` + `src/photo_search/upgrade/**` + API/UI + 六项 D 级注入）
+  → DS-H 完整受影响面主审 + Sol 终审。
+- **BLOCKED（开工即记）**：真实模型权重、真实升级吞吐/显存、GTX 1660 最低配置。
+
 ## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
 
 **另开会话的只读复跑：F1 命题成立且边界完备；F2 的判据方向正确，但 ADR §3.3 的举例与 §6 第 11 行的
