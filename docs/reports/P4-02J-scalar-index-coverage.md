@@ -65,8 +65,13 @@ P4-02F 仍非性能 PASS；独立 **DS-H 完整受影响面主审 PENDING**。
 
 ## 6. 独立争用复测与下一步
 
-- 独立仪器复测：`tools/diagnostics/ann_scale_benchmark.py --mode concurrency --concurrency-scale 300000`
-  （自带合成夹具 + 后台 drain + 前台采样），结果待补。
+- **独立仪器复测（已完成）**：`ann_scale_benchmark.py --mode concurrency --concurrency-scale 300000`
+  （自带合成夹具 = 全长覆盖索引 + 200 事件后台 drain + 8 次前台采样）：
+  **前台 P50 4 849.8 / P95 4 908.0 ms**（min 4 720.0 / max 4 911.4，`meets_target=false`，
+  进程峰值内存 1 892 MB），证据 `test-results/p4-02j-concurrency-300k.json`。
+  ⇒ 与同一档**空闲**时的 P95 4 787.2 ms 几乎相同：**覆盖完整时，后台维护对前台的影响几乎消失**，
+  前台成本由查询路径本身主导（这也解释了本卡 §4 里容量工具口径 7.72 s 与本节 4.91 s 的差异——
+  夹具与后台负载不同，两个仪器都远低于修复前的 129.7 s / 34.9 s）。
 - 下一步：**独立 DS-H 完整受影响面主审**（改动落在产品维护/索引生命周期），审：覆盖自愈语义与
   P4-01C 状态兼容、页不变证据、维护预算、P4-01 caveat 的反证是否成立、争用口径；通过后按用户
   路线进入「后台争用复测收口」与 P4-03A 契约阶段。
