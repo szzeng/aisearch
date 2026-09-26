@@ -3527,6 +3527,43 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
   → DS-H 完整受影响面主审 + Sol 终审。
 - **BLOCKED（开工即记）**：真实模型权重、真实升级吞吐/显存、GTX 1660 最低配置。
 
+## Latest independent engineering review — P4-02J 完整受影响面主审（2026-09-26）
+
+**主审结论：产品代码 `REVIEW PASS`（0 处必须修正）；本卡整体 `不予 PASS` —— 报告面 3 处必须闭合，
+均只需改文档。** 见 [P4-02J 独立 DS-H 主审报告](reports/P4-02J-dsh-engineering-review.md)
+（被审 `aa33f65`/`757fb46`/`3a3e542`，基线 `ad37a26`；主审 `src/**` 零改动、工作树空）。
+**F2 未关闭；A3 未实现未启用；§12.2 未改；P4-02F 仍非性能 PASS。**
+
+- **必须闭合（文档面，勿改产品代码）**：
+  - **F-A**：报告 §1 与提交 `757fb46` 把「中位比」写成「**P95 改善** 5.9×/36×」（本文件的 P4-02J 小节
+    只列原始 P95 数值、无比值）。P95 比应为 **6.30×（9 197.1/1 459.24）与 42.06×（201 346.8/4 787.24）**；
+    或把 5.9×/36× 改称「中位」。
+  - **F-B**：§6 把独立仪器的前台 4.91 s 当作「争用复测」结论。带时间戳复跑证明该仪器 8 个被测样本
+    **零重叠**后台 drain（worker `elapsed_ms=1 469.9` 在 `warm_seconds=2.0` + 预热搜索内结束；
+    `samples_started_before_worker_exit = 0`）⇒ 4.91 s 是**空闲**前台。真正的争用证据在 §4：
+    30 万 `7 721.2 ms`（2 样本）vs 同 root 空闲 `4 787.2 ms` ⇒ **残余争用 ≈1.61×**（10 万 ≈1.69×）；
+    同口径争用前台 129 705.6 → 7 721.2 ms（16.8×）。§6 结论句与本文件末尾「影响几乎消失」须按此改写。
+  - **F-C**：必须交付 3 的**索引字节 / 表 version 变化**未进 §3 表（as-built `33 513 B` / version `1 525`
+    → 修复后 `2 226 551 B` / version `1 561`）。
+- **独立复核通过（本会话自跑）**：聚焦 **11 / 0 / 0 / 0**（`p4-02j-review-focused2.xml`）；
+  B 级全量 **1715 / 0 / 0 / 48**（`p4-02j-review-full2.xml`，295.7 s）；
+  `ruff check .` / `git diff --check` / `uv lock --check` 全 exit 0；证据 `p4-02j-review-probes.json`。
+  **14 例用例差已定位**：被审 1729 中的 14 例全部来自**未跟踪**的 P4-02I 原型
+  `tests/integration/test_p4_02i_a3_isolation.py`，该文件（与 `tools/diagnostics/p4_02i_a3_isolation.py`）
+  现已不在工作树（只剩被忽略的 `__pycache__/*.pyc`）；主审侧「多出集合」= 0，两侧被跟踪用例集合相同。
+- **产品面核对**：`refreshed` 语义、幂等（完整即 `present`）、`no_table`/`created`/`present`/`unavailable`
+  与 P4-01C B2（目录不可读不得拖垮 drain）全部保留；独立探针确认引擎目录项的
+  `num_indexed_rows`/`num_unindexed_rows` 随追加与重建变化（400→800→1 200→1 600 行、未索引恒回到 0），
+  且重建前后 `search_candidates` 页逐项相同；跨运行同夹具页 sha 复算与 P4-02F as-built 完全一致
+  （10 万 `25ac38b4aecc`、30 万 `4eece2f113d3`）。P4-01 的「第三次 `replace=True` 卡住」反证成立
+  （该现象在 P4-01 自身记录中属 ANN 变体回路）；`drop_index + create_index` 仍作备选记录、本卡不启用。
+  **Sol 判定 `SOL_NOT_REQUIRED`**（只改访问路径、页逐项不变、无信封/迁移/revision/人工状态面）。
+- **须补写的一句（惰性）**：自愈发生在**下一次维护调用开头**，所以建库末态的 100% 由
+  `capacity_validation.py:746` 的 `drain --limit 0` 那一趟补跑覆盖（`refreshed` /
+  `unindexed_rows_before=5000`）；每波状态为 `no_table`×1 / `created`×1 / `refreshed`×18（10 万）、×58（30 万）。
+- **下一步**：DS-H 只改文档面三处 → 一次只审修订面的短审（含本文件与 §3 两行表格）；通过后才收口
+  P4-02J，再按用户路线进入「后台争用复测收口」与 **P4-03A 契约阶段**。
+
 ## Latest implementation — P4-02J 覆盖自愈复测完成（2026-09-26）
 
 **P4-02J：`IMPLEMENTED / VALIDATION COMPLETE（B + 真实 10 万/30 万复测）；独立 DS-H 完整受影响面主审 PENDING`。**
@@ -3551,11 +3588,12 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
 - **下一步**：独立 **DS-H 完整受影响面主审**（含 §3 的 P4-01 caveat 反证与 §4 争用口径）；
   之后按用户路线收口"后台争用"并开 **P4-03A 契约阶段**（准备包见 [P4-03-preparation.md](reports/P4-03-preparation.md)）。
 
-**独立仪器争用复测（已完成，补充）**：`ann_scale_benchmark --mode concurrency --concurrency-scale 300000`
-（自带全长覆盖夹具 + 200 事件后台 drain + 8 次前台采样）前台 **P50 4 849.8 / P95 4 908.0 ms**，
-与同档空闲 P95 4 787.2 ms 几乎相同 ⇒ **覆盖完整时后台维护对前台的影响几乎消失**，前台成本由查询路径
-本身主导；证据 `test-results/p4-02j-concurrency-300k.json`。两仪器（容量工具 7.72 s / 本仪器 4.91 s）
-都远低于修复前的 129.7 s / 34.9 s；目标 ≤1.5 s 仍未达标。
+**独立仪器复测（更正：这是"空闲"口径，不是争用测量）**：主审 F-B 指出 `ann_scale_benchmark
+--mode concurrency --concurrency-scale 300000` 那次的 8 个前台样本与 200 事件后台 drain **零重叠**，
+因此只能证明**空闲**前台成本：**P50 4 849.8 / P95 4 908.0 ms**（与容量夹具空闲 P95 4 787.2 ms 一致）；
+证据 `test-results/p4-02j-concurrency-300k.json`。**真正的争用结论仍取自 §4 建库期采样**
+（10 万 2 468.9 ms/5 样本、30 万 7 721.2 ms/**仅 2 样本**）⇒ 30 万争用 P95 属**未完成项**，
+需要一次与后台 drain **有重叠、≥5 样本**的采样（记录重叠窗口与后台进度）才能定论；目标 ≤1.5 s 仍未达标。
 
 ## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
 
