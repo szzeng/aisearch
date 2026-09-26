@@ -3527,6 +3527,38 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
   → DS-H 完整受影响面主审 + Sol 终审。
 - **BLOCKED（开工即记）**：真实模型权重、真实升级吞吐/显存、GTX 1660 最低配置。
 
+## Latest contention closure — P4-02J 后台争用复测收口（2026-09-26）
+
+**P4-02J 收口为 `PASS`（`SOL_NOT_REQUIRED`）：主审 `REVIEW PASS` + F-A/F-B/F-C 文档修正 + 修订面短审 PASS；
+短审点名的「30 万档重叠、≥5 样本、记录重叠窗口与后台进度」采样完成（7 样本，真重叠 112 930.7 ms）；
+§12.2 目标 ≤1.5 s 仍未达标 ⇒ **F2 不关闭**。** 见
+[后台争用复测收口](reports/P4-02J-contention-closure.md)（**纯测量**：`src/**`、`tools/**`、`tests/**` 零改动；
+夹具为 P4-02J 源 root 的一次性副本，源 root 与既有证据未改）。
+**A3 未实现未启用；§12.2 未改；P4-02F 仍非性能 PASS。**
+
+- **主测量（30 万档，同 root 同会话）**：空闲前台中位 **7 731.8 / P95 7 772.6 ms**；后台 drain 运行中
+  **7 样本**、中位 **15 534.3 / P95 20 469.5 ms**（11 377 → 20 908 ms 单调上升）；
+  drain `applied=30 000 / batches=150 / returncode=0`，`sampling_stopped_while_drain_running=false`，
+  逐样本后台进度 302 200 → 330 000（`test-results/p4-02j-contention-close.json`）。
+  ⇒ 维护额外开销 **≈2.0×（中位）/2.4×（P95）**，前台成本主要由查询路径本身决定（空闲已 7.7 s）。
+- **机制记录**：drain 写入的 30 000 行在维护结束时仍未索引（`300 000 / 30 000`），由收口那次
+  `drain --limit 0` 的 `refreshed`（`unindexed_rows_before=30 000` → `330 000 / 0`，2 226 551 → 2 465 847 B）
+  补齐 ⇒ P4-02J 的惰性自愈被真实触发。drain 自身 `write_hold_ms` max 2 964.7 ms、`lock_wait_ms` max
+  0.072 ms、`write_rejections` 0 ⇒ 维护侧没有被前台饿死。
+- **会话口径（重要）**：只读复测的源 root（300 000）中位 7 609.8 ms 与副本同量级，
+  比 P4-02J §2 的暖机会话（4 577.1 / 4 787.2 ms）慢 1.6–1.7 倍 ⇒ **只能同会话比比值**；
+  不要拿本次 20.5 s 与 §4 的 7.72 s 相减/相除以推断回退。
+- **新发现（归因未定，未改产品代码）**：投影队列非空（一次 3 万新资产突发）时，前台搜索与 drain 并发
+  **4/9 次被拒** —— `CatalogError: CATALOG_UNREADABLE: cannot start a catalog write transaction:
+  database is locked`（各等满 5 s busy timeout）；同一队列深度下**无 drain 对照 0/12 次被拒**、
+  每次约 40 ms（`test-results/p4-02j-contention-unwarmed.json`、`…-catchup-control.json`）。
+  drain 自身计时写事务在该次只有 max 0.657 s / p95 0.558 s ⇒「drain 长事务占满锁」**不能解释**，
+  剩余候选是 WAL checkpoint 或未计时的写路径（**本会话证据不足以区分，不写成结论、不写成缺陷**）。
+- **未验证/BLOCKED**：真实权重与文本塔、HTTP 层、GTX 1660、冷 OS 缓存与 soak、40 万扩容；
+  以及上一条的 checkpoint/第三方写锁探针归因。
+- **下一步**：为「投影未追赶 + 后台 drain ⇒ 前台搜索被拒」立独立最小反例与归因卡（归因清楚前不动产品代码）；
+  之后按用户路线进入 **P4-03A 契约阶段**（准备包见 [P4-03-preparation.md](reports/P4-03-preparation.md)）。
+
 ## Latest short review — P4-02J 修订面（2026-09-26）
 
 **修订面 `PASS`：主审 F-A/F-B/F-C 三处全部闭合，产品面零改动、未引入新的事实性错误；P4-02J 据此可
@@ -3593,7 +3625,8 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
 
 ## Latest implementation — P4-02J 覆盖自愈复测完成（2026-09-26）
 
-**P4-02J：`IMPLEMENTED / VALIDATION COMPLETE（B + 真实 10 万/30 万复测）；独立 DS-H 完整受影响面主审 PENDING`。**
+**P4-02J：`PASS`（B + 真实 10 万/30 万复测；独立 DS-H 完整受影响面主审 PASS + F-A/F-B/F-C 文档修正 +
+修订面短审 PASS，`SOL_NOT_REQUIRED`）。**
 见 [P4-02J 报告](reports/P4-02J-scalar-index-coverage.md)。**F2 未关闭；A3 未实现未启用；§12.2 未改。**
 
 - **改动**：`store.py::ensure_scalar_index` 在 `num_unindexed_rows > 0` 时就地 `replace=True` 重建并报
