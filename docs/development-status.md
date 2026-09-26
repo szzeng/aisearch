@@ -3527,6 +3527,30 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
   → DS-H 完整受影响面主审 + Sol 终审。
 - **BLOCKED（开工即记）**：真实模型权重、真实升级吞吐/显存、GTX 1660 最低配置。
 
+## Latest implementation — P4-02J 覆盖自愈复测完成（2026-09-26）
+
+**P4-02J：`IMPLEMENTED / VALIDATION COMPLETE（B + 真实 10 万/30 万复测）；独立 DS-H 完整受影响面主审 PENDING`。**
+见 [P4-02J 报告](reports/P4-02J-scalar-index-coverage.md)。**F2 未关闭；A3 未实现未启用；§12.2 未改。**
+
+- **改动**：`store.py::ensure_scalar_index` 在 `num_unindexed_rows > 0` 时就地 `replace=True` 重建并报
+  `refreshed`；完整时仍 `present`；其余状态语义不变。测试 `test_p4_02j_scalar_index_coverage.py`。
+- **真实建库复测（同一夹具/查询/波次形状）**：10 万覆盖率 **5000/95000 → 100000/0**、
+  service P95 **9 197.1 → 1 459.2 ms**；30 万覆盖率 **5000/295000 → 300000/0**、
+  P95 **201 346.8 → 4 787.2 ms**；两档返回页与 as-built **逐项相同**。
+- **争用（后台维护同时前台）**：10 万 12 622.7 ms（1 样本）→ **2 468.9 ms（5 样本）**；
+  30 万 129 705.6 ms（1 样本，同形状）/34 945.9 ms（5 样本，突发档）→ **7 721.2 ms（2 样本）**；
+  目标 ≤1.5 s **仍未达标**。
+- **维护预算**：重建次数 = 波数（20 / 60）；单次上限 51 ms / 213 ms ⇒ 累计 ≤1 s / ≤13 s；
+  实测 drain 11.06 s / 15.06 s。**P4-01 记录的"连续第三次 `replace=True` 卡住"未复现**
+  （30 万档 60 次重建全部完成）⇒ 该 caveat 至少不适用于 BTree 标量索引；备选实现为
+  `drop_index + create_index`，交主审判定是否更保守。
+- **验收**：聚焦 11/0/0/0（`p4-02j-focused.xml`）、B 级全量 1729/0/0/48（`p4-02j-full.xml`）、
+  ruff / `git diff --check` / `uv lock --check` 全 exit 0；未改检索语义/信封/错误码/ADR/§12.2/迁移。
+- **BLOCKED/未验证**：真实权重与真实文本塔、HTTP 层、GTX 1660、冷缓存与 soak、40 万扩容、
+  并发写入与重建交互、崩溃窗口内重建幂等。**F2 未关闭**（30 万仍 4.58 s）。
+- **下一步**：独立 **DS-H 完整受影响面主审**（含 §3 的 P4-01 caveat 反证与 §4 争用口径）；
+  之后按用户路线收口"后台争用"并开 **P4-03A 契约阶段**（准备包见 [P4-03-preparation.md](reports/P4-03-preparation.md)）。
+
 ## Latest independent re-check — P4-02H §5 三项复跑（2026-09-25）
 
 **另开会话的只读复跑：F1 命题成立且边界完备；F2 的判据方向正确，但 ADR §3.3 的举例与 §6 第 11 行的
