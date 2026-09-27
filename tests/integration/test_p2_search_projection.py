@@ -310,6 +310,8 @@ def test_an_interrupted_batch_rolls_back_and_the_rerun_has_no_duplicates(
         "remaining": 0,
         "batches": 0,
         "state": "SYNCED",
+        # P4-02V: how many batches stopped on the background drain's write lock.
+        "deferred_batches": 0,
     }
 
 

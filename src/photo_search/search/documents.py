@@ -24,6 +24,13 @@ P3-01 fills:
 
 ``user_text``/``caption_text``/``tag_text`` stay empty strings (P2-05 and later own them);
 no content is ever fabricated for them.
+
+P4-02V adds the contention rule of a *read* path: an interactive catch-up must never let the
+background drain's write lock turn a legal search into an error. It waits a bounded
+``CATCH_UP_BUSY_BUDGET_MS`` for the writer lock and, while the lock is still held, returns the
+lag it leaves (``state = LAGGING``, unchanged ``queued_assets``) instead of raising
+``CATALOG_UNREADABLE``. Nothing is dropped: the affected set is durable, so the next catch-up
+- or the same search once the drain stops - re-derives it.
 """
 
 from __future__ import annotations
@@ -31,9 +38,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from photo_search.catalog.db import Catalog
+from photo_search.catalog.errors import CatalogError
+from photo_search.indexing.maintenance import is_busy_rejection
 from photo_search.places.directory import active_alias_rows, ancestor_rows, get_place_row
 from photo_search.search.tokens import FTS_GENERATION_ID, TOKENIZER_VERSION, index_text
 
@@ -51,6 +62,15 @@ TEXT_COLUMNS = (
 #: catch-up performs before it reports the remaining lag instead of holding a long write.
 DRAIN_BATCH_SIZE = 200
 CATCH_UP_BATCHES = 4
+
+#: How long one interactive catch-up waits for the single-writer lock before it gives up and
+#: reports the lag it leaves (P4-02V). ``Catalog``'s own 5 s budget is the *maintenance*
+#: budget: P4-02U measured the background drain holding the write lock for ~99% of a 57.6 s
+#: build, with continuous unavailability up to 32 449.4 ms while every single transaction
+#: stayed below 0.7 s. Inside such a window a longer wait cannot succeed - it only makes the
+#: reader wait five seconds and then refuse the whole search. Skipping is lossless: queued
+#: assets stay in ``search_projection_queue``, so the next catch-up re-derives them.
+CATCH_UP_BUSY_BUDGET_MS = 100
 
 _PRESENT_LOCATIONS_SQL = (
     "SELECT relative_path FROM file_locations WHERE asset_id = ? AND availability = 'PRESENT' "
@@ -234,22 +254,64 @@ def drain_queue(
     return {"processed": len(rows), "written": written, "remaining": queue_depth(connection)}
 
 
+@contextmanager
+def _bounded_catch_up_write(catalog: Catalog) -> Iterator[sqlite3.Connection]:
+    """One catch-up write whose wait for the writer lock is bounded (P4-02V).
+
+    The bound is a *connection* setting, so it is restored in ``finally``: the maintenance
+    drain of the same catalog keeps the 5 s budget its own retry policy is built on, and a
+    reader that later needs the lock for something else is not silently made impatient.
+    """
+    connection = catalog.connection
+    previous = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
+    narrowed = previous > int(CATCH_UP_BUSY_BUDGET_MS)
+    if narrowed:
+        connection.execute(f"PRAGMA busy_timeout = {int(CATCH_UP_BUSY_BUDGET_MS)}")
+    try:
+        with catalog.write() as writer:
+            yield writer
+    finally:
+        if narrowed:
+            connection.execute(f"PRAGMA busy_timeout = {int(previous)}")
+
+
 def catch_up(
     catalog: Catalog, *, batches: int = CATCH_UP_BATCHES, batch_size: int = DRAIN_BATCH_SIZE
 ) -> dict[str, int | str]:
     """Catch the projection up in bounded batches and report the lag that is left.
 
     Nothing is written when the queue is already empty, so a plain read stays a read.
+
+    A batch that cannot get the single-writer lock inside ``CATCH_UP_BUSY_BUDGET_MS`` ends the
+    catch-up instead of failing it (P4-02V): the refused transaction wrote nothing, the
+    affected set stays durable and the caller is told the projection is ``LAGGING``.
     """
-    if queue_depth(catalog.connection) == 0:
-        return {"processed": 0, "written": 0, "remaining": 0, "batches": 0, "state": "SYNCED"}
-    processed = written = used = 0
-    remaining = 0
+    queued = queue_depth(catalog.connection)
+    if queued == 0:
+        return {
+            "processed": 0,
+            "written": 0,
+            "remaining": 0,
+            "batches": 0,
+            "state": "SYNCED",
+            "deferred_batches": 0,
+        }
+    processed = written = used = deferred = 0
+    remaining = queued
     for _ in range(max(1, int(batches))):
-        with catalog.write() as connection:
-            result = drain_queue(
-                connection, now_ms=catalog.now_ms(), limit=int(batch_size)
-            )
+        try:
+            with _bounded_catch_up_write(catalog) as connection:
+                result = drain_queue(
+                    connection, now_ms=catalog.now_ms(), limit=int(batch_size)
+                )
+        except CatalogError as error:
+            if not is_busy_rejection(error):
+                raise
+            # The background drain owns the write lock for the whole build (P4-02U):
+            # waiting cannot win inside that window, so stop here and report the lag.
+            deferred += 1
+            remaining = queue_depth(catalog.connection)
+            break
         processed += int(result["processed"])
         written += int(result["written"])
         remaining = int(result["remaining"])
@@ -262,6 +324,7 @@ def catch_up(
         "remaining": remaining,
         "batches": used,
         "state": "SYNCED" if remaining == 0 else "LAGGING",
+        "deferred_batches": deferred,
     }
 
 
