@@ -56,6 +56,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ann_scale_benchmark as bench  # noqa: E402
+import numpy as np  # noqa: E402
 import p4_02d_attribution as prior  # noqa: E402
 
 from photo_search.catalog.db import Catalog  # noqa: E402
@@ -629,7 +630,86 @@ class Generation:
             "full_rows": len(full),
         }
 
-    # --------------------------------------------------------------- single pass
+    # ------------------------------------------------- numpy flat-exact reference
+    def numpy_flat_exact(self, *, samples: int) -> dict[str, Any]:
+        """Pure NumPy reference: read the frozen generation, then ``matrix @ q`` + Top-K.
+
+        Read-only and deliberately outside the product: it reuses the very fixture the other
+        modes measure, takes only the product's Top-K with ``argpartition`` (never a full
+        sort) and reports the matrix read and the pure query separately. It is a bottleneck
+        yardstick only - it authorises no A3/ANN work and adds no product index.
+        """
+        import pyarrow as pa  # the heavy engine import stays inside this diagnostic
+
+        top_k = int(self.top_k)
+        if top_k < 1:
+            raise SystemExit("--top-k must be at least 1")
+        accessor = getattr(self.timed_index, "original_table", None) or self.index._table
+        ready = time.perf_counter()
+        table = accessor(generation_id=bench.GENERATION_ID, dimension=bench.DIM, create=False)
+        if table is None:
+            raise SystemExit("the root has no vector table for the frozen generation")
+        arrow = table.to_arrow()
+        asset_ids = arrow["asset_id"].to_numpy(zero_copy_only=False)
+        flat = pa.compute.list_flatten(arrow["vector"].combine_chunks())
+        matrix = np.ascontiguousarray(
+            flat.to_numpy(zero_copy_only=False).reshape(len(asset_ids), bench.DIM),
+            dtype=np.float32,
+        )
+        read_ms = (time.perf_counter() - ready) * 1000
+        del arrow, flat
+        stride = max(1, len(asset_ids) // 1000)
+        sampled = np.linalg.norm(matrix[::stride], axis=1)
+        query = np.asarray(self.query_vector, dtype=np.float32)
+        times: list[float] = []
+        order: list[int] = []
+        for _ in range(max(1, int(samples))):
+            started = time.perf_counter()
+            scores = matrix @ query
+            candidates = np.argpartition(-scores, top_k - 1)[:top_k]
+            order = [int(value) for value in candidates[np.argsort(-scores[candidates])]]
+            times.append((time.perf_counter() - started) * 1000)
+        numpy_page = [
+            [int(asset_ids[row]), round(float(matrix[row] @ query), 9)] for row in order
+        ]
+        engine_page = self.index.search(
+            generation_id=bench.GENERATION_ID,
+            dimension=bench.DIM,
+            query_vector=self.query_vector,
+            limit=top_k,
+        )
+        numpy_ids = [int(asset_ids[row]) for row in order]
+        engine_ids = [int(row["asset_id"]) for row in engine_page]
+        return {
+            "note": (
+                "bottleneck yardstick only: a contiguous NumPy matrix is NOT a product index "
+                "and this mode authorises no A3/ANN work"
+            ),
+            "rows": int(len(asset_ids)),
+            "dimension": int(bench.DIM),
+            "dtype": "float32",
+            "matrix_mib": round(matrix.nbytes / 1048576, 2),
+            "read_ms": round(read_ms, 3),
+            "samples": int(samples),
+            "top_k": top_k,
+            "query_ms_median": round(statistics.median(times), 3),
+            "query_ms_min": round(min(times), 3),
+            "query_ms_all": [round(value, 3) for value in times],
+            "vector_norm_sample": {
+                "rows": int(len(sampled)),
+                "min": round(float(sampled.min()), 6),
+                "max": round(float(sampled.max()), 6),
+            },
+            "query_norm": round(float(np.linalg.norm(query)), 6),
+            "identical_order_to_engine": numpy_ids == engine_ids,
+            "overlap_ids": len(set(numpy_ids) & set(engine_ids)),
+            "numpy_page": numpy_page,
+            "engine_page": [
+                [int(row["asset_id"]), round(float(row["distance"]), 9)] for row in engine_page
+            ],
+        }
+
+
     def single_pass(self, *, samples: int) -> dict[str, Any]:
         times: list[float] = []
         page: list[list[Any]] = []
@@ -776,14 +856,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--root", action="append", required=True, help="LABEL=PATH data root")
     parser.add_argument(
         "--modes",
-        default="identity,stages,blocks,overhead,single-pass",
-        help="comma list of identity,stages,blocks,overhead,single-pass",
+        default="identity,stages,blocks,overhead,single-pass,numpy-flat-exact",
+        help="comma list of identity,stages,blocks,overhead,single-pass,numpy-flat-exact",
     )
     parser.add_argument("--order", default=None, help="sampling order over the labels, e.g. A,B,B,A")
     parser.add_argument("--samples", type=int, default=20, help="service samples per round")
     parser.add_argument("--block-sizes", default=",".join(str(v) for v in DEFAULT_BLOCK_SIZES))
     parser.add_argument("--block-samples", type=int, default=3)
     parser.add_argument("--single-pass-samples", type=int, default=5)
+    parser.add_argument("--flat-exact-samples", type=int, default=3)
     parser.add_argument("--overhead-reps", type=int, default=30)
     parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument(
@@ -806,7 +887,14 @@ def write_output(path: Path | None, payload: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     modes = [part.strip() for part in str(args.modes).split(",") if part.strip()]
-    unknown = set(modes) - {"identity", "stages", "blocks", "overhead", "single-pass"}
+    unknown = set(modes) - {
+        "identity",
+        "stages",
+        "blocks",
+        "overhead",
+        "single-pass",
+        "numpy-flat-exact",
+    }
     if unknown:
         raise SystemExit(f"unknown modes: {sorted(unknown)}")
     roots = parse_roots(args.root)
@@ -990,6 +1078,14 @@ def main(argv: list[str] | None = None) -> int:
         if "single-pass" in modes:
             report["single_pass"] = {
                 label: generations[label].single_pass(samples=int(args.single_pass_samples))
+                for label in order
+            }
+
+        if "numpy-flat-exact" in modes:
+            report["numpy_flat_exact"] = {
+                label: generations[label].numpy_flat_exact(
+                    samples=int(args.flat_exact_samples)
+                )
                 for label in order
             }
 

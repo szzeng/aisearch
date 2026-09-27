@@ -140,3 +140,23 @@ SQL 执行计划）仍有空间，但它们只有在**真实入口可用**后才
 `docs/tasks/P4-02N.md`、`docs/tasks/P4-02M.md` 的状态行、`docs/development-status.md` 的更新。
 `src/**`、`tests/**`、迁移、`pyproject.toml`/`uv.lock`、`PhotoSearch.spec`、`tools/**`、`docs/decisions/**`、
 既有报告**零 diff**。
+
+## 7. 30 万 Flat-Exact 参考基线（2026-09-27 只读补充）
+
+口径：复用既有 30 万夹具 `tmp/p402f-阶段0/scale-300000-wave/data`（300 000 assets / 300 000 CONFIRMED /
+512 维 / 单位向量，Lance 表版本 1526 前后不变），同一查询向量、`top_k=20`，只用 `argpartition` 取 Top-K
+（不全量排序），不建库、不跑模型、不扫真实图库；Lance 与产品行复用既有证据，不重复测。
+
+| 路径 | 30 万延迟 | 说明 |
+|---|---|---|
+| NumPy flat-exact | **10.9 ms**（3 次中位；min 10.877 / max 11.778；另计读矩阵 **589.2 ms** / 586 MiB） | 纯连续矩阵参考 |
+| Lance single-pass | **346.961 ms**（5 样本中位，P4-02F 既有证据） | 单次引擎参考 |
+| Production exact | **≈4.85 s**（P4-02J 覆盖完整 P50 4 849.8 / P95 4 908.0 ms；P4-02K 合成口径中位 5 353.26 ms 同量级） | 产品完整精确路径 |
+
+读数：纯距离计算比产品完整路径小约 3 个数量级 ⇒ 30 万档瓶颈**不在** flat-exact 距离计算，而在引擎往返与
+整行物化 + SQLite/融合链路。旁证：NumPy Top-20 与引擎单次 Top-20 **顺序完全一致（20/20）**，且 `2 - 2·dot`
+与引擎 L2² 距离逐个吻合（如 1.629789 vs 0.185106）⇒ 两条路径的空间与度量口径一致，可直接比较。
+
+产物：`test-results/p4-02f-flat-exact-300k.json`；工具：`tools/diagnostics/p4_02f_stage0.py`
+新增 `numpy-flat-exact` 模式（`--modes identity,numpy-flat-exact`，100 行增量，`src/**` 零改动）。
+本基线只用于定位瓶颈：**不引入 NumPy 产品索引、FAISS、ANN、第二后端或 A3**。
