@@ -1,0 +1,848 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://photo-search.local/contracts/p4-upgrade-contracts.v1.json",
+  "title": "Photo Search P4-03A UpgradeRun / target-set / budget / pause-resume / profile-activation companion",
+  "description": "Derived from ADR-0013-upgrade-run-and-profile-activation-contract.md; ADR-0013 is authoritative on any conflict. This companion is a CONTRACT ONLY: P4-03A implements no upgrade behaviour, adds no migration and changes no schema_version. It freezes (a) the upgrade_runs / upgrade_targets row shapes with their closed CHECK vocabularies, (b) the run and target-row finite state machines with their rejected transitions, (c) the plan-time difference-set predicate for upgrade_targets built on the EXISTING index_entries / index_outbox authority columns, (d) the target/seconds/concurrency budget semantics with the batch-boundary soft stop, (e) the six activation gates with their existing error codes and the zero-write obligation, (f) the reference-protection boundary, (g) the failure-classification map onto EXISTING error codes plus a frozen reason vocabulary, (h) the minimal read-only status and control API/UI field set, and (i) the 0017 migration / 16 -> 17 implementability contract. It introduces no new error code and no new top-level error-envelope field, and it declares no supersession of any existing companion.",
+  "oneOf": [
+    { "$ref": "#/$defs/ContractIdentity" },
+    { "$ref": "#/$defs/UpgradeRunRow" },
+    { "$ref": "#/$defs/UpgradeTargetRow" },
+    { "$ref": "#/$defs/RunTransitionMatrix" },
+    { "$ref": "#/$defs/TargetTransitionMatrix" },
+    { "$ref": "#/$defs/PauseDetailRule" },
+    { "$ref": "#/$defs/BudgetRule" },
+    { "$ref": "#/$defs/TargetSetRule" },
+    { "$ref": "#/$defs/ActivationGateMatrix" },
+    { "$ref": "#/$defs/FailureMapping" },
+    { "$ref": "#/$defs/ReferenceProtection" },
+    { "$ref": "#/$defs/UpgradeRunPage" },
+    { "$ref": "#/$defs/UpgradeRunDetail" },
+    { "$ref": "#/$defs/UpgradeControlResponse" },
+    { "$ref": "#/$defs/UpgradeApiError" },
+    { "$ref": "#/$defs/MigrationContract" }
+  ],
+  "$defs": {
+    "ContractVersion": { "const": "p4-upgrade-contracts.v1" },
+    "SearchContractVersion": { "const": "p2-contracts.v1" },
+    "RulesVersion": { "const": 1 },
+    "SchemaVersionBefore": { "const": 16 },
+    "SchemaVersionAfter": { "const": 17 },
+    "MigrationFile": { "const": "0017_upgrade_runs.sql" },
+    "MaxPauseDetailChars": { "const": 200 },
+    "ContractIdentity": {
+      "type": "object",
+      "description": "ADR-0013 sections 1 and 11: the frozen identity of this contract and of the migration P4-03B must add.",
+      "required": [
+        "contract_version",
+        "search_contract_version",
+        "rules_version",
+        "schema_version_before",
+        "schema_version_after",
+        "migration_file"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "search_contract_version": { "$ref": "#/$defs/SearchContractVersion" },
+        "rules_version": { "$ref": "#/$defs/RulesVersion" },
+        "schema_version_before": { "$ref": "#/$defs/SchemaVersionBefore" },
+        "schema_version_after": { "$ref": "#/$defs/SchemaVersionAfter" },
+        "migration_file": { "$ref": "#/$defs/MigrationFile" }
+      }
+    },
+    "RunState": {
+      "enum": ["PLANNED", "RUNNING", "PAUSED", "CANCELLED", "FAILED", "SUCCEEDED"]
+    },
+    "PauseReason": { "enum": ["USER", "BUDGET", "ENVIRONMENT"] },
+    "TargetState": {
+      "enum": ["PLANNED", "IN_FLIGHT", "SUCCEEDED", "FAILED", "CANCELLED"]
+    },
+    "FailureReason": {
+      "enum": [
+        "MODEL_WEIGHTS_MISSING",
+        "VRAM_INSUFFICIENT",
+        "RUNTIME_UNHEALTHY",
+        "SOURCE_OFFLINE",
+        "ARTIFACT_MISSING",
+        "LEASE_EXPIRED",
+        "DISK_SPACE_INSUFFICIENT"
+      ]
+    },
+    "ReferenceKind": {
+      "enum": [
+        "ACTIVE_PROFILE",
+        "LIVE_SEARCH_SESSION",
+        "UPGRADE_RUN_TARGET",
+        "ROLLBACK_TASK",
+        "BACKUP_MANIFEST"
+      ]
+    },
+    "ErrorCode": {
+      "description": "The frozen code set this contract may use. Every one of these already exists in this build's structured error vocabulary (photo_search/catalog/errors.py, or the API-layer codes in photo_search/api/errors.py); ADR-0013 adds none.",
+      "enum": [
+        "RUNTIME_CAPABILITY_UNAVAILABLE",
+        "SOURCE_OFFLINE",
+        "LEASE_EXPIRED",
+        "STALE_LEASE",
+        "ARTIFACT_MISSING",
+        "DISK_SPACE_INSUFFICIENT",
+        "SCHEDULER_PAUSED",
+        "INVALID_STATE_TRANSITION",
+        "PROFILE_GENERATION_MISMATCH",
+        "SCHEMA_TOO_NEW",
+        "SCHEMA_INCONSISTENT",
+        "MIGRATION_FAILED",
+        "VALIDATION_ERROR",
+        "CATALOG_UNREADABLE",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "RunTransitionMatrix": {
+      "type": "object",
+      "description": "ADR-0013 section 3.1. allowed is exactly the accepted set; every pair of RunState values not listed here is refused with INVALID_STATE_TRANSITION and zero writes. rejected lists the named counterexample classes the ADR fixes.",
+      "required": ["allowed", "rejected", "terminal_states", "idempotent_actions"],
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "const": [
+            "PLANNED->RUNNING",
+            "PLANNED->PAUSED",
+            "PLANNED->CANCELLED",
+            "RUNNING->PAUSED",
+            "RUNNING->SUCCEEDED",
+            "RUNNING->FAILED",
+            "RUNNING->CANCELLED",
+            "PAUSED->RUNNING",
+            "PAUSED->CANCELLED",
+            "PAUSED->FAILED"
+          ]
+        },
+        "rejected": {
+          "const": [
+            "CANCELLED->RUNNING",
+            "CANCELLED->PAUSED",
+            "SUCCEEDED->RUNNING",
+            "SUCCEEDED->PAUSED",
+            "SUCCEEDED->CANCELLED",
+            "FAILED->RUNNING",
+            "FAILED->PAUSED",
+            "PAUSED->SUCCEEDED",
+            "PLANNED->SUCCEEDED",
+            "RUNNING->PLANNED"
+          ]
+        },
+        "terminal_states": { "const": ["CANCELLED", "FAILED", "SUCCEEDED"] },
+        "idempotent_actions": {
+          "const": [
+            { "state": "PAUSED", "action": "pause" },
+            { "state": "RUNNING", "action": "resume" },
+            { "state": "CANCELLED", "action": "cancel" }
+          ]
+        }
+      }
+    },
+    "TargetTransitionMatrix": {
+      "type": "object",
+      "description": "ADR-0013 section 4.4. A target row that was IN_FLIGHT when the process died returns to PLANNED by replay (the in-flight batch stays replayable); a FAILED row may be retried. SUCCEEDED and CANCELLED never reopen.",
+      "required": ["allowed", "rejected", "terminal_states"],
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "const": [
+            "PLANNED->IN_FLIGHT",
+            "PLANNED->CANCELLED",
+            "IN_FLIGHT->SUCCEEDED",
+            "IN_FLIGHT->FAILED",
+            "IN_FLIGHT->PLANNED",
+            "FAILED->PLANNED",
+            "FAILED->CANCELLED"
+          ]
+        },
+        "rejected": {
+          "const": [
+            "SUCCEEDED->PLANNED",
+            "SUCCEEDED->FAILED",
+            "CANCELLED->PLANNED",
+            "CANCELLED->IN_FLIGHT",
+            "IN_FLIGHT->CANCELLED"
+          ]
+        },
+        "terminal_states": { "const": ["SUCCEEDED", "CANCELLED"] }
+      }
+    },
+    "PauseDetailRule": {
+      "type": "object",
+      "description": "ADR-0013 section 3.3. detail is optional free text that must never carry a local path, a control character or a separator: it is a bounded identifier-like note.",
+      "required": ["max_chars", "pattern", "required_when", "forbidden_characters"],
+      "additionalProperties": false,
+      "properties": {
+        "max_chars": { "$ref": "#/$defs/MaxPauseDetailChars" },
+        "pattern": { "const": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$" },
+        "required_when": { "const": ["ENVIRONMENT"] },
+        "forbidden_characters": {
+          "const": ["NUL", "CONTROL", "FORWARD_SLASH", "BACKSLASH", "COLON"]
+        }
+      }
+    },
+    "BudgetRule": {
+      "type": "object",
+      "description": "ADR-0013 section 5. Any budget reaching its cap is a soft stop at a batch boundary; the concurrency budget only bounds one claim.",
+      "required": [
+        "budget_targets",
+        "budget_seconds",
+        "budget_concurrency",
+        "elapsed_ms",
+        "claim_bound",
+        "stop_predicate",
+        "soft_stop_state",
+        "concurrency_is_not_a_stop",
+        "wall_clock_freezes_while_paused"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "budget_targets": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 100000000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_seconds": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 86400000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "claim_bound": { "const": "min(budget_concurrency, remaining_targets)" },
+        "stop_predicate": { "const": "targets_or_seconds" },
+        "soft_stop_state": { "const": "PAUSED" },
+        "concurrency_is_not_a_stop": { "const": true },
+        "wall_clock_freezes_while_paused": { "const": true }
+      }
+    },
+    "TargetSetPredicate": {
+      "type": "object",
+      "description": "ADR-0013 section 4.1. The one authoritative predicate for 'this asset still needs this profile's (space_id, processor_id, dimension) projection'. It reads the EXISTING index_entries / index_outbox columns; it never invents a second revision space.",
+      "required": [
+        "requires_asset_available",
+        "requires_missing_or_stale_confirmed_entry",
+        "current_revision_is_triple_authority_revision",
+        "unsettled_by_unconfirmed_outbox_row",
+        "uses_existing_revision_columns_only",
+        "no_second_revision_space"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "requires_asset_available": { "const": true },
+        "requires_missing_or_stale_confirmed_entry": { "const": true },
+        "current_revision_is_triple_authority_revision": { "const": true },
+        "unsettled_by_unconfirmed_outbox_row": { "const": true },
+        "uses_existing_revision_columns_only": { "const": true },
+        "no_second_revision_space": { "const": true }
+      }
+    },
+    "TargetSetRule": {
+      "type": "object",
+      "required": [
+        "predicate",
+        "unique_key",
+        "snapshot",
+        "idempotent_replay",
+        "superseded_interface",
+        "retry_rule",
+        "empty_set_is_legal"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "predicate": { "$ref": "#/$defs/TargetSetPredicate" },
+        "unique_key": { "const": ["run_id", "asset_id"] },
+        "snapshot": { "const": "once_at_plan" },
+        "idempotent_replay": { "const": "same_plan_yields_no_second_row" },
+        "superseded_interface": { "const": "input_revision_compare_only" },
+        "retry_rule": { "const": "FAILED_to_PLANNED_bumps_attempts" },
+        "empty_set_is_legal": { "const": true }
+      }
+    },
+    "GateId": {
+      "enum": [
+        "GENERATION_READY",
+        "RUN_SUCCEEDED",
+        "AUTHORITATIVE_COVERAGE_COMPLETE",
+        "ARTIFACT_READABLE",
+        "REFERENCES_PROTECTED"
+      ]
+    },
+    "ActivationGateRow": {
+      "type": "object",
+      "required": ["gate", "refusal_code", "details_reason", "zero_writes_on_refusal"],
+      "additionalProperties": false,
+      "properties": {
+        "gate": { "$ref": "#/$defs/GateId" },
+        "refusal_code": { "$ref": "#/$defs/ErrorCode" },
+        "details_reason": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 64 },
+            { "type": "null" }
+          ]
+        },
+        "zero_writes_on_refusal": { "const": true }
+      }
+    },
+    "ActivationGateMatrix": {
+      "type": "object",
+      "description": "ADR-0013 section 7. Five evaluable gates plus one atomicity obligation; the sixth item of the card is failure_atomicity, not a predicate.",
+      "required": [
+        "gates",
+        "gates_total",
+        "failure_atomicity",
+        "atomic_pointer_move",
+        "envelope_unchanged"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "gates": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "$ref": "#/$defs/ActivationGateRow" }
+        },
+        "gates_total": { "const": 6 },
+        "failure_atomicity": { "const": "any_failure_is_zero_write" },
+        "atomic_pointer_move": {
+          "const": "active_search_profile_and_index_generations_is_active_in_one_transaction"
+        },
+        "envelope_unchanged": { "const": true }
+      }
+    },
+    "FailureRow": {
+      "type": "object",
+      "required": [
+        "reason",
+        "error_code",
+        "error_details_reason",
+        "location",
+        "retryable",
+        "counts_toward_attempts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "$ref": "#/$defs/FailureReason" },
+        "error_code": { "$ref": "#/$defs/ErrorCode" },
+        "error_details_reason": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 64 },
+            { "type": "null" }
+          ]
+        },
+        "location": { "enum": ["TARGET", "RUN"] },
+        "retryable": { "type": "boolean" },
+        "counts_toward_attempts": { "type": "boolean" }
+      }
+    },
+    "ControlPlaneRefusal": {
+      "type": "object",
+      "required": ["code", "when"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "when": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "FailureMapping": {
+      "type": "object",
+      "description": "ADR-0013 section 9. Zero new error codes; a secret/CPU downgrade or a silent profile switch is forbidden.",
+      "required": [
+        "rows",
+        "control_plane_refusals",
+        "no_new_error_codes",
+        "forbidden_behaviours"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "rows": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": { "$ref": "#/$defs/FailureRow" }
+        },
+        "control_plane_refusals": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/ControlPlaneRefusal" }
+        },
+        "no_new_error_codes": { "const": true },
+        "forbidden_behaviours": {
+          "const": ["IMPLICIT_CPU_FALLBACK", "SILENT_PROFILE_SWITCH"]
+        }
+      }
+    },
+    "ReferenceProtection": {
+      "type": "object",
+      "description": "ADR-0013 section 8. A generation referenced by any of these kinds may not be RETIRED or cleaned; the refusal reuses INVALID_STATE_TRANSITION with a frozen details.reason.",
+      "required": [
+        "blocking_references",
+        "refusal_code",
+        "refusal_details_reason",
+        "retain_previous_versions_default",
+        "retain_switch_is_configurable",
+        "never_deletes_human_knowledge_or_originals"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "blocking_references": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ReferenceKind" }
+        },
+        "refusal_code": { "const": "INVALID_STATE_TRANSITION" },
+        "refusal_details_reason": { "const": "GENERATION_REFERENCED" },
+        "retain_previous_versions_default": { "const": 1 },
+        "retain_switch_is_configurable": { "const": true },
+        "never_deletes_human_knowledge_or_originals": { "const": true }
+      }
+    },
+    "TargetCounts": {
+      "type": "object",
+      "required": [
+        "targets_total",
+        "targets_planned",
+        "targets_in_flight",
+        "targets_succeeded",
+        "targets_failed",
+        "targets_cancelled"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "targets_total": { "type": "integer", "minimum": 0 },
+        "targets_planned": { "type": "integer", "minimum": 0 },
+        "targets_in_flight": { "type": "integer", "minimum": 0 },
+        "targets_succeeded": { "type": "integer", "minimum": 0 },
+        "targets_failed": { "type": "integer", "minimum": 0 },
+        "targets_cancelled": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "UpgradeRunProjection": {
+      "type": "object",
+      "description": "ADR-0013 section 10.1: the read-only status projection. Counts and closed state words only; no path, no coordinate, no text.",
+      "required": [
+        "contract_version",
+        "run_id",
+        "profile_id",
+        "space_id",
+        "image_generation_id",
+        "state",
+        "pause_reason",
+        "pause_detail",
+        "control_revision",
+        "elapsed_ms",
+        "budget_targets",
+        "budget_seconds",
+        "budget_concurrency",
+        "counts",
+        "resumable",
+        "target_set_digest",
+        "planned_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "image_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/RunState" },
+        "pause_reason": {
+          "oneOf": [{ "$ref": "#/$defs/PauseReason" }, { "type": "null" }]
+        },
+        "pause_detail": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "control_revision": { "type": "integer", "minimum": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "budget_targets": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 100000000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_seconds": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 86400000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_concurrency": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "counts": { "$ref": "#/$defs/TargetCounts" },
+        "resumable": { "type": "boolean" },
+        "target_set_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "planned_at": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "PAUSED" } }, "required": ["state"] },
+          "then": { "properties": { "pause_reason": { "$ref": "#/$defs/PauseReason" } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "RUNNING", "CANCELLED", "FAILED", "SUCCEEDED"] } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": { "pause_reason": { "const": null }, "pause_detail": { "const": null } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "pause_reason": { "const": "ENVIRONMENT" } },
+            "required": ["pause_reason"]
+          },
+          "then": { "properties": { "pause_detail": { "type": "string", "minLength": 1 } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["CANCELLED", "SUCCEEDED"] } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "resumable": { "const": false } } }
+        }
+      ]
+    },
+    "UpgradeTargetProjection": {
+      "type": "object",
+      "required": ["asset_id", "input_revision", "state", "reason", "attempts", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": { "type": "integer", "minimum": 1 },
+        "input_revision": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/TargetState" },
+        "reason": {
+          "oneOf": [{ "$ref": "#/$defs/FailureReason" }, { "type": "null" }]
+        },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "FAILED" } }, "required": ["state"] },
+          "then": { "properties": { "reason": { "$ref": "#/$defs/FailureReason" } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "IN_FLIGHT", "SUCCEEDED", "CANCELLED"] } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "reason": { "const": null } } }
+        }
+      ]
+    },
+    "UpgradeRunPage": {
+      "type": "object",
+      "required": ["contract_version", "runs", "limit", "next_cursor", "has_more"],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "runs": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "$ref": "#/$defs/UpgradeRunProjection" }
+        },
+        "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "next_cursor": {
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 256 }, { "type": "null" }]
+        },
+        "has_more": { "type": "boolean" }
+      }
+    },
+    "UpgradeRunDetail": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "run",
+        "targets",
+        "targets_limit",
+        "targets_next_cursor",
+        "targets_has_more"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "run": { "$ref": "#/$defs/UpgradeRunProjection" },
+        "targets": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/UpgradeTargetProjection" }
+        },
+        "targets_limit": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "targets_next_cursor": {
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 256 }, { "type": "null" }]
+        },
+        "targets_has_more": { "type": "boolean" }
+      }
+    },
+    "UpgradeControlResponse": {
+      "type": "object",
+      "description": "ADR-0013 section 10.2. changed is false and control_revision is unchanged when the same control request is replayed on an already-satisfied state.",
+      "required": [
+        "contract_version",
+        "request_id",
+        "run_id",
+        "state",
+        "pause_reason",
+        "pause_detail",
+        "control_revision",
+        "changed",
+        "replayed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/RunState" },
+        "pause_reason": {
+          "oneOf": [{ "$ref": "#/$defs/PauseReason" }, { "type": "null" }]
+        },
+        "pause_detail": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "control_revision": { "type": "integer", "minimum": 1 },
+        "changed": { "type": "boolean" },
+        "replayed": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "changed": { "const": true } }, "required": ["changed"] },
+          "then": { "properties": { "replayed": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "replayed": { "const": true } }, "required": ["replayed"] },
+          "then": { "properties": { "changed": { "const": false } } }
+        }
+      ]
+    },
+    "UpgradeApiErrorDetails": {
+      "type": "object",
+      "properties": {
+        "reason": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "field": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/RunState" },
+        "reason_current": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "requested": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "expected_control_revision": { "type": "integer", "minimum": 1 },
+        "control_revision": { "type": "integer", "minimum": 1 },
+        "blocking_references": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/ReferenceKind" }
+        },
+        "missing_objects": { "type": "array", "maxItems": 32, "items": { "type": "string" } },
+        "unsupported_schema_version": { "type": "integer", "minimum": 0 },
+        "supported_schema_version": { "type": "integer", "minimum": 0 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 }
+      },
+      "additionalProperties": false
+    },
+    "UpgradeApiError": {
+      "type": "object",
+      "description": "The frozen envelope of every failing endpoint (architecture 10.2). Exactly the three existing top-level keys plus the optional details object: this contract adds no top-level field.",
+      "required": ["code", "message", "request_id"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "details": { "$ref": "#/$defs/UpgradeApiErrorDetails" }
+      }
+    },
+    "MigrationContract": {
+      "type": "object",
+      "description": "ADR-0013 section 11. P4-03A adds no migration file: it only freezes the implementability contract P4-03B must satisfy.",
+      "required": [
+        "migration_file",
+        "from_version",
+        "to_version",
+        "additive_only",
+        "earlier_migrations_byte_identical",
+        "transactional_and_idempotent",
+        "no_down_migration",
+        "too_new_behaviour",
+        "unused_upgrade_behaviour_unchanged"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "migration_file": { "$ref": "#/$defs/MigrationFile" },
+        "from_version": { "$ref": "#/$defs/SchemaVersionBefore" },
+        "to_version": { "$ref": "#/$defs/SchemaVersionAfter" },
+        "additive_only": { "const": true },
+        "earlier_migrations_byte_identical": { "const": true },
+        "transactional_and_idempotent": { "const": true },
+        "no_down_migration": { "const": true },
+        "too_new_behaviour": { "const": "SCHEMA_TOO_NEW" },
+        "unused_upgrade_behaviour_unchanged": { "const": true }
+      }
+    },
+    "UpgradeRunRow": {
+      "type": "object",
+      "description": "ADR-0013 section 2.1 as an executable row shape: the closed CHECK vocabularies of upgrade_runs, minus the columns whose rule the JSON cannot express (they are pinned by the contract test against the ADR).",
+      "required": [
+        "run_id",
+        "profile_id",
+        "space_id",
+        "image_generation_id",
+        "target_set_digest",
+        "state",
+        "pause_reason",
+        "pause_detail",
+        "budget_targets",
+        "budget_seconds",
+        "budget_concurrency",
+        "elapsed_ms",
+        "resumed_at",
+        "control_revision",
+        "last_error_code",
+        "planned_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "image_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "target_set_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "state": { "$ref": "#/$defs/RunState" },
+        "pause_reason": {
+          "oneOf": [{ "$ref": "#/$defs/PauseReason" }, { "type": "null" }]
+        },
+        "pause_detail": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "budget_targets": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 100000000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_seconds": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 86400000 },
+            { "type": "null" }
+          ]
+        },
+        "budget_concurrency": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "resumed_at": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "control_revision": { "type": "integer", "minimum": 1 },
+        "last_error_code": {
+          "oneOf": [{ "$ref": "#/$defs/ErrorCode" }, { "type": "null" }]
+        },
+        "planned_at": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "PAUSED" } }, "required": ["state"] },
+          "then": { "properties": { "pause_reason": { "$ref": "#/$defs/PauseReason" } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "RUNNING", "CANCELLED", "FAILED", "SUCCEEDED"] } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": { "pause_reason": { "const": null }, "pause_detail": { "const": null } }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "const": "RUNNING" } }, "required": ["state"] },
+          "then": { "properties": { "resumed_at": { "type": "integer", "minimum": 0 } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "PAUSED", "CANCELLED", "FAILED", "SUCCEEDED"] } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "resumed_at": { "const": null } } }
+        },
+        {
+          "if": {
+            "properties": { "pause_reason": { "const": "ENVIRONMENT" } },
+            "required": ["pause_reason"]
+          },
+          "then": { "properties": { "pause_detail": { "type": "string", "minLength": 1 } } }
+        }
+      ]
+    },
+    "UpgradeTargetRow": {
+      "type": "object",
+      "description": "ADR-0013 section 2.2 as an executable row shape: the closed CHECK vocabularies of upgrade_targets.",
+      "required": ["run_id", "asset_id", "input_revision", "state", "reason", "attempts", "updated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "asset_id": { "type": "integer", "minimum": 1 },
+        "input_revision": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "state": { "$ref": "#/$defs/TargetState" },
+        "reason": {
+          "oneOf": [{ "$ref": "#/$defs/FailureReason" }, { "type": "null" }]
+        },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "updated_at": { "type": "integer", "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "FAILED" } }, "required": ["state"] },
+          "then": { "properties": { "reason": { "$ref": "#/$defs/FailureReason" } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "IN_FLIGHT", "SUCCEEDED", "CANCELLED"] } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "reason": { "const": null } } }
+        }
+      ]
+    }
+  }
+}
