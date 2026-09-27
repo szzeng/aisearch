@@ -57,6 +57,20 @@
 
 - If permission changes are required, explicitly request confirmation before applying changes.
 
+### Codex Tool and Sandbox Facts
+
+- The `apply_patch` tool can hang in some sessions regardless of the patch content.
+  After two consecutive no-result calls, stop retrying: use an equivalent explicit
+  write (`Set-Content` / `Add-Content`), then read the file back or compile it to
+  verify what actually landed.
+
+- Sandboxed sessions can deny pytest's temporary directories (`WinError 5` on
+  `listdir` / `rmtree`), reproduced for `.pytest-tmp` and for `--basetemp` under
+  both `tmp/` and `%TEMP%`, at temp-dir creation and at session-finish cleanup.
+  This is an environment failure, not a product or test failure: record it as
+  such and re-run the required suite through the normal permission route.
+  Never change ACLs to work around it.
+
 ### AI Model and Data Rules
 
 - Do not store AI models inside source code directories.
