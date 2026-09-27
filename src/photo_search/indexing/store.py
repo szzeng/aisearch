@@ -398,6 +398,51 @@ class LanceVectorIndex:
         )
         return rows[: int(limit)]
 
+    def search_candidates_bounded(
+        self,
+        *,
+        generation_id: str,
+        dimension: int,
+        query_vector: Sequence[float],
+        asset_ids: Sequence[int],
+        top_k: int,
+        space_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Rank inside the candidate ids asking the engine for ``top_k + 1`` rows only.
+
+        Returns ``(rows, resolved)``. ``resolved`` is True exactly when ``rows`` already hold
+        every row of this candidate set that the caller's ``(distance, asset_id)`` Top-K
+        decision can need: the set holds at most ``top_k`` rows at or below its ``top_k``-th
+        distance. The engine returns its ``top_k + 1`` *nearest* rows, so a strictly larger
+        ``(top_k+1)``-th distance proves that no tie group was cut at the boundary - and with
+        a cut tie group the engine's arbitrary intra-tie order cannot rebuild the product's
+        ``(distance, asset_id)`` order, which is why the caller then falls back to the
+        exhaustive :meth:`search_candidates` for that block (P4-01C review B1).
+
+        The engine is still only asked to rank *inside* the authoritative candidate ids, and
+        the fallback is the previous access path unchanged, so a block that needs it produces
+        exactly the rows the exhaustive call produces. What changes is the volume: a resolved
+        block transfers ``top_k + 1`` rows instead of one row per candidate id.
+        """
+        ids = sorted({int(value) for value in asset_ids})
+        if not ids:
+            return [], True
+        conditions = ["asset_id IN (" + ", ".join(str(value) for value in ids) + ")"]
+        if space_id is not None:
+            conditions.append(f"space_id = {_lance_literal(str(space_id))}")
+        wanted = int(top_k)
+        rows = self.search(
+            generation_id=str(generation_id),
+            dimension=int(dimension),
+            query_vector=query_vector,
+            limit=wanted + 1,
+            where=" AND ".join(conditions),
+            space_id=space_id,
+            columns=CANDIDATE_ROW_COLUMNS,
+        )
+        if len(rows) <= wanted:
+            return rows, True
+        return rows, bool(float(rows[wanted]["distance"]) > float(rows[wanted - 1]["distance"]))
     @staticmethod
     def _query_vector(*, dimension: int, query_vector: Sequence[float]) -> list[float]:
         values: list[float] = []

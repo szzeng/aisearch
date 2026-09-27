@@ -162,3 +162,90 @@ SQL 执行计划）仍有空间，但它们只有在**真实入口可用**后才
 产物：`test-results/p4-02f-flat-exact-300k.json`；工具：`tools/diagnostics/p4_02f_stage0.py`
 新增 `numpy-flat-exact` 模式（`--modes identity,numpy-flat-exact`，100 行增量，`src/**` 零改动）。
 本基线只用于定位瓶颈：**不引入 NumPy 产品索引、FAISS、ANN、第二后端或 A3**。
+
+## 8. 单点优化实现与前后对照（2026-09-27）
+
+### 8.1 选点与「减少 60 次查询」的阻塞判定（同会话基线）
+
+命令（同一 30 万夹具、同一查询、top_k=200、4 样本）：
+
+```powershell
+uv run --no-sync python tools/diagnostics/p4_02f_stage0.py `
+  --root "W=tmp/p402f-阶段0/scale-300000-wave/data" --order W `
+  --modes identity,stages,overhead --samples 4 --top-k 200 --output test-results/p4-02m-before.json
+```
+
+| 口径 | 中位（ms） |
+|---|---|
+| service | **5008.73**（p95 5189.56，样本 4753.24–5198.99） |
+| engine 合计（60 次调用） | **4345.58** |
+| ├ 表句柄 `_table()` | 356.64（每块约 5.9） |
+| ├ plan | 18.35 |
+| ├ **Arrow pass（扫描+过滤+距离）** | **3505.94（80.7%）** |
+| ├ 行转换 | 136.30 |
+| └ 物化 | 327.97 |
+| sqlite 读合计 | 591.33（候选 walk 326.80 + 待补页 259.18 + 其�余 5.35） |
+| 其他（融合/权威/残差） | 75.94 |
+| blocks / scanned / truncated | 60 / 300000 / false |
+
+**判定：在当前冻结契约下，把 60 次调用合并成更少次调用无法安全实现。**
+
+1. 加大块长会让每次调用的 `asset_id IN (...)` 过滤更贵：P4-02F §13 的同族实测是块 50 000（6 次调用）
+   engine 6976.0 ms、整代一次调用 10 430.5 ms，都劣于 60 次的 4345.6 ms。
+2. 单次无约束 pass（346.96 ms）本质是「全库 Top-K 后再过滤」，被主架构 §9.3 第 4 条与卡面同时禁止。
+3. ANN / HNSW / FAISS / A3 / 第二后端 / NumPy 持久索引都超出本卡范围。
+
+**最小机制与预期收益（记录，不在本卡实施）**：需要一种「引擎可低成本判定的候选集成员资格」——
+例如代级 bitmap/块描述符随世代物化，或 ADR-0012 的 A3 证书——把 60 次过滤 pass 压向单次 pass 量级。
+按 e56c906 基线（纯距离计算 10.9 ms、单次 pass 346.96 ms）外推，service 有望从 5.0 s 量级降到约
+0.8–1.0 s（含 SQLite 候选 walk、待补页与融合）。这是**机制/契约决策**，须另立卡。
+
+### 8.2 本卡实现的唯一优化：边界并列探测 + 最少返回行
+
+同一热点内可安全收的那一半是「limit=len(ids) 的全行物化」：
+
+- `indexing/store.py::search_candidates_bounded`：每块只向引擎要 `top_k + 1` 行，并返回
+  `resolved = len(rows) <= top_k or rows[top_k].distance > rows[top_k-1].distance`。
+  证明：若第 `k+1` 近的距离严格大于第 `k` 近，则引擎给出的 `k+1` 行已覆盖该块**所有**距离 ≤ `d_k` 的行，
+  该块参与全局 `(distance, asset_id)` Top-K 所需的信息完整。
+- 只有边界并列组被截断（`resolved=False`）时，`search/retrieval.py::vector_channel` 才对该块回退到原
+  `search_candidates`（一行/候选、按 `(distance, asset_id)` 排序后取前 k），因此合并结果与旧路径**逐项相同**。
+- 引擎仍然只在权威候选集**内部**排名；没有全局 Top-K 后过滤，没有改块大小、通道上限或被截断语义。
+
+### 8.3 前后对照与完整结果等价（同夹具、同查询、同会话）
+
+| 观测 | 优化前 | 优化后 |
+|---|---|---|
+| `page`（200 行 id+距离） | — | **逐字节相同**（`page` 与 `vector_probe_identical=true`） |
+| blocks / scanned / truncated | 60 / 300000 / false | 60 / 300000 / false |
+| service 中位 | **5008.73 ms** | **4211.61 ms（−797.1 ms，−15.9%）** |
+| service 样本区间 | 4753.24–5198.99 | 4005.03–4545.82 |
+| engine 合计 | 4345.58 ms | 约 **3530 ms**（见下注） |
+
+注：本卡**没有**改诊断工具。工具当前的阶段埋点只挂在 `LanceVectorIndex.search_candidates` 上，
+新路径的引擎时间因此落入残差桶（`other_fusion_and_authority` 3606.7 ms，其中约 3530 ms 是未计时的引擎
+工作量），与「行转换 136.30 + 物化 327.97 = 464.3 ms 被消除、每块返回 201 行而非 5000 行」的量级一致。
+补齐工具埋点属于下一轮（会扩大审查面），本卡如实标注。
+
+**残余（量化，未做）**：每块 `_table()` 句柄仍需 356.64 ms（约占 7%）；与 8.1 的机制卡一起处理更合适。
+
+### 8.4 本轮验证状态
+
+- 聚焦回归（含 A3 契约）：`test_p4_02g_a3_contracts.py` + `test_p4_01c_retrieval_blocks.py` +
+  `test_p2_search_authority/topup/channels/image` → **49 passed / 0 failed**（`test-results/p4-02m-focused.xml`）。
+- **B 级全量**：`pytest -q tests/unit tests/integration` → **1783 tests / 0 failed / 0 errors / 48 skipped（271.0 s）**
+  （`test-results/p4-02m-full.xml`）。
+- B 级抓到的第一处回归（也是本卡唯一的接口耦合）：`test_p4_02g_a3_contracts.py` 的 `_StubIndex` 只实现
+  `search_candidates`。处置：**不改冻结的 A3 契约测试**，改为产品侧鸭子类型容错——`vector_channel` 只在
+  替身**提供** `search_candidates_bounded` 时才走新路径，否则退回原全量调用（等价路径），因此所有既有替身
+  仍产出逐字节相同的结果。49/0 与 1783/0 均在该修正后取得。
+- **仍未收口**：独立 **DS-H 完整受影响面主审**（状态 = IMPLEMENTED / INDEPENDENT REVIEW PENDING，不是 PASS）；
+  诊断工具补挂 `search_candidates_bounded` 埋点（本轮刻意不改工具，避免扩大审查面）。
+
+## 9. 聚焦终审收口（2026-09-27）
+
+[独立 DS-H 主审](P4-02M-dsh-affected-surface-review.md)产品面已通过；[聚焦终审](P4-02M-sol-focused-review.md)裁决 F1 闭合，任务 **PASS（仅本卡单点优化）**。§8.4 的待主审状态为当时记录，现由这两份审查报告更新。
+
+F1 解释：K+1 是块内边界探测，严格间隔证完整前 K，并列回退旧穷举；最终全序截断、oracle 的资格/revision-blind/发布语义保留。ADR-0012 §8 禁止修改 oracle 来掩盖缺项，不禁止有完整等价证明的访问优化；不改 ADR/companion，不授权 A3。
+
+§8.3 的前后中位收益仅为每臂 **4 样本观察**，不称 ≥30 样本 P95 或 §12.2 达标；新方法尚未挂阶段计时，engine 反推值仍是估算。真实模型/API/质量集、后台争用、GTX1660、打包与备份恢复没有因本卡通过而获得验收。

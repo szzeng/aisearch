@@ -487,14 +487,46 @@ def vector_channel(
             break
         blocks += 1
         scanned += len(ids)
-        for row in index.search_candidates(
-            generation_id=binding.generation_id,
-            dimension=binding.dimension,
-            query_vector=query_vector,
-            asset_ids=ids,
-            limit=int(top_k),
-            space_id=binding.space_id,
-        ):
+        # P4-02M: one bounded call per block - the engine returns its ``top_k + 1`` nearest
+        # candidates and reports whether that answer is already complete for the caller's
+        # ``(distance, asset_id)`` order. Only a block whose boundary tie group was cut falls
+        # back to the exhaustive one-row-per-candidate call, so the merged result is exactly
+        # the exhaustive path's while a resolved block transfers ``top_k + 1`` rows instead of
+        # one row per candidate id.
+        # The bounded access path is an *optimization*, not a new contract: a substitute index
+        # that offers only the exhaustive ``search_candidates`` (the A3 contract test's stub,
+        # diagnostics) keeps working and produces byte-identical rows, because the exhaustive
+        # call *is* the documented behaviour. Only a resolved bounded answer is trusted.
+        bounded = getattr(index, "search_candidates_bounded", None)
+        hits: list[dict[str, Any]]
+        if bounded is None:
+            hits = index.search_candidates(
+                generation_id=binding.generation_id,
+                dimension=binding.dimension,
+                query_vector=query_vector,
+                asset_ids=ids,
+                limit=int(top_k),
+                space_id=binding.space_id,
+            )
+        else:
+            hits, resolved = bounded(
+                generation_id=binding.generation_id,
+                dimension=binding.dimension,
+                query_vector=query_vector,
+                asset_ids=ids,
+                top_k=int(top_k),
+                space_id=binding.space_id,
+            )
+            if not resolved:
+                hits = index.search_candidates(
+                    generation_id=binding.generation_id,
+                    dimension=binding.dimension,
+                    query_vector=query_vector,
+                    asset_ids=ids,
+                    limit=int(top_k),
+                    space_id=binding.space_id,
+                )
+        for row in hits:
             merged[int(row["asset_id"])] = row
         if len(ids) < int(block_size):
             break
