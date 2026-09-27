@@ -3527,6 +3527,80 @@ F-D 连通到最终决定、O-1～O-3 纳入本次冻结。** 见
   → DS-H 完整受影响面主审 + Sol 终审。
 - **BLOCKED（开工即记）**：真实模型权重、真实升级吞吐/显存、GTX 1660 最低配置。
 
+## Latest next-task card — P4-03A 契约冻结已立卡（2026-09-27）
+
+**下一张任务卡已生成：[docs/tasks/P4-03A.md](tasks/P4-03A.md)。** 它是 P4-03 拆出的**阶段 A**：把
+`upgrade_runs`/`upgrade_targets` 的表形态与闭集、目标集（差值集）判定、预算与暂停/恢复/取消状态机、
+六条激活门禁、引用保护边界、失败分类到**既有**错误码的映射，以及 `0017` 迁移的实现性证明冻结成
+ADR-0013 + companion + 契约测试——**只写契约，不动任何产品代码、不加迁移**。
+
+- **路由**：阶段 A = **DS-H / DeepSeek V4.1 Flash / 高推理**（草拟 ADR-0013、
+  `docs/decisions/contracts/p4-upgrade-contracts.v1.json`、`tests/unit/test_p4_upgrade_contracts.py`）；
+  阶段 B = **C2 / GPT-5.6 Sol / high 聚焦终审并冻结（必选）**——P4-03 命中 V3.1 §11 高风险清单
+  （profile 原子激活/升级/回退/引用保护），**不得记 `SOL_NOT_REQUIRED`**；两阶段必须分别在两个新会话，
+  模型由用户在 Codex 中手动切换。
+- **输入已冻结**：2026-09-26 的五条裁决（差值集落库 / 预算到限走 `PAUSED(BUDGET)` 且墙钟在 PAUSED 冻结 /
+  暂停软停·取消终态不可 resume / 激活前六条门禁且失败零写入·不新增信封 / 零新增错误码 + reason 闭集）
+  + 准备包实测（`SUPPORTED_SCHEMA_VERSION = 16`、migrations 最大 `0016` ⇒ **`0017` 空闲**、
+  `src` 内无升级表、既有错误码够用、真实权重与 GTX 1660 BLOCKED）。
+- **边界**：不含 §12.2 前台性能目标；不含 P4-02J 收口新发现的「投影未追赶 + 后台 drain ⇒ 前台搜索
+  `CATALOG_UNREADABLE`」归因（该归因卡**暂未立**，需用户裁决是否插队）；不含 P4-04/05/07 的工作。
+- **当前状态**：P4-02J `PASS`（`SOL_NOT_REQUIRED`）；**F2 未关闭**；**A3 未实现未启用**；**§12.2 未改**；
+  **P4-02F 仍非性能 PASS**。下一步：用户手动切到 **DS-H / DeepSeek V4.1 Flash / 高推理** 新会话执行
+  P4-03A 阶段 A。
+
+## Latest contract stage A — P4-03A 阶段 A 契约草拟与工程预审完成（2026-09-27）
+
+**P4-03A 阶段 A `ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING`（`SOL` 必选，未冻结）。**
+见 [P4-03A 阶段 A 报告](reports/P4-03A-dsh-contract-draft.md)。基线 `d6b6666`（工作树里用户放入的
+`docs/tasks/P4-03A.md` 与本文件上一节原样保留）。
+
+- **产出**：`docs/decisions/ADR-0013-upgrade-run-and-profile-activation-contract.md`（**Proposed**，
+  18 节）、`docs/decisions/contracts/p4-upgrade-contracts.v1.json`（38 `$defs` / 16 公共 object，
+  全 `additionalProperties: false`；SHA-256 `ebf4553b26b458edcee4b668b9958d7478fa937695fab7f9a8ec7df04ac2f6ea`）、
+  `tests/unit/test_p4_upgrade_contracts.py`（23 用例）。
+- **冻结内容**：`upgrade_runs`/`upgrade_targets` 列/闭集 CHECK/键与索引、`control_revision` 语义与
+  权威边界（不得双权威）、run 状态机 10 条允许转换 + 10 条点名拒绝、`PAUSE_REASON` 与
+  `pause_detail` 的 `^[^\u0000-\u001F\u007F/\\:]{1,200}$` 规则、
+  目标集差值谓词（`settled = 有当前 CONFIRMED ∧ 无未确认 outbox`，只读既有
+  `index_entries.confirmation_revision`/`index_outbox.projection_revision`；`input_revision = assets.sha256`）、
+  预算三字段（NULL=不限，`2026-09-26` 裁决的「任一先到即 `PAUSED(BUDGET)`」、墙钟仅 RUNNING 累加、
+  `budget_concurrency` 只界领取）、暂停/恢复/取消的单事务与取消不可 resume、
+  六条激活门禁（①～⑤ 可评估 + ⑥ 零写入原子性）、引用保护五类引用（`GENERATION_REFERENCED`）、
+  7 条 `reason` → **5 个既有错误码**的映射（零新增码）、只读/控制 API 字段闭集与信封不变、
+  `0017` / `16 → 17` 迁移契约与 `0001`～`0016` 逐字节不变。
+- **验收**：契约 **23 / 0 / 0 / 0**（`test-results/p4-03a-contracts.xml`）；`ruff check .`、
+  `git diff --check`、`uv lock --check` 全 exit 0；`src/**`、migration、`pyproject.toml`/`uv.lock`、
+  打包面**零 diff**；`SUPPORTED_SCHEMA_VERSION` 仍为 16，`0017` **必须仍空缺**。
+- **未验证 / BLOCKED**：真实模型权重与真实升级吞吐/显存、GTX 1660 最低配置（本机 RTX 4060，不得替代）、
+  `0017` 在真实 30 万库上的迁移耗时、plan 目标集耗时长尾、切换窗口内的前台争用、40 万扩容、
+  崩溃窗口重建幂等、P4-04 旧版追赶与回退演练。**F2 未关闭；A3 未实现未启用；§12.2 未改；
+  P4-02F 非性能 PASS。**
+- **下一步**：**阶段 B = C2 / GPT-5.6 Sol / high 新会话聚焦终审并冻结（必选，不得
+  `SOL_NOT_REQUIRED`）**；通过后才转 Accepted、标 P4-03A PASS 并生成 `docs/tasks/P4-03B.md`。
+  模型切换由用户在 Codex 中手动完成。
+
+## Latest planning card — P4-02K 只读预算拆解卡已立卡（2026-09-27）
+
+**新任务卡：[docs/tasks/P4-02K.md](tasks/P4-02K.md)**（在 P4-03A 阶段 A 会话中按用户要求生成）。
+它只做「§12.2 的 1 s 目标拆解 + A3 决策分析」：**只读**、不实现/启用 A3、不改 `src/**`/迁移/§12.2/
+任何 ADR 或既有报告，交付 `docs/reports/P4-02K-budget-and-a3-decision.md`。
+
+- **立卡原因**：F2 未关闭，A3 的「值不值得」与「§12.2 要不要改」需要一份可直接裁决的预算证据；
+  该卡不含任何 PASS 语义，结论只能是「余量窄 / 需先解决某项 / 与 1 s 互斥」三选一。
+- **卡内已冻结的开工事实（执行时须逐字段复算）**：
+  ① 互斥装配应为引擎 pass 346.96 + pending 补页 359.012 + 残差 77.348 = **783.32 ms**
+  （P4-02F §14 的 813.46 把 `authoritative_page` 28.717 与 fts/RRF ≈1.0 加在互斥残差之外，
+  重复计入 ≈30.1 ms；恒等式 `589.34 + 4 686.572 + 77.348 = service 中位 5 353.26` 可复核）；
+  ② 证书成本必须分**两分支**：行级 M1（唯一实测是 2 万行探针 36.4–37.6 ms，报告给 30 万量级判断
+  ≈0.35 s，且该探针为 dim=2 合成向量、声明不得外推）与代级栅栏（无实现、成本未评估）；
+  ③ 回退硬门槛 `P(回退 ∪ A3>1 s) ≤ 5%`，回退一次 ≈4.8–7.8 s（空闲）/ 20.5 s（后台重叠）。
+- **路由**：执行 **DS-H**；独立审查为**独立 DS-H 容量证据专项审查**（V3.1 §2.4）；
+  Sol 是否必选**随结论落点**——只记录现状可记 `SOL_NOT_REQUIRED`，若要支撑「授权 A3」或「改 §12.2」
+  则 **C2 / GPT-5.6 Sol / high 聚焦终审必选**。
+- **与主线关系**：P4-02K 与 P4-03A/03B **互不阻塞**。当前主线仍是 **P4-03A 阶段 B（Sol 冻结，必选）**。
+- **状态不变**：**F2 未关闭；§12.2 未改；A3 未实现未启用；P4-02F 非性能 PASS。**
+
 ## Latest contention closure — P4-02J 后台争用复测收口（2026-09-26）
 
 **P4-02J 收口为 `PASS`（`SOL_NOT_REQUIRED`）：主审 `REVIEW PASS` + F-A/F-B/F-C 文档修正 + 修订面短审 PASS；
