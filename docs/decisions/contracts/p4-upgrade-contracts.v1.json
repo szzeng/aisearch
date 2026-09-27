@@ -18,6 +18,13 @@
     { "$ref": "#/$defs/UpgradeRunPage" },
     { "$ref": "#/$defs/UpgradeRunDetail" },
     { "$ref": "#/$defs/UpgradeControlResponse" },
+    { "$ref": "#/$defs/UpgradeControlRequest" },
+    { "$ref": "#/$defs/UpgradeControlRequestRow" },
+    { "$ref": "#/$defs/ControlIdempotencyRule" },
+    { "$ref": "#/$defs/ClockRule" },
+    { "$ref": "#/$defs/LeaseRule" },
+    { "$ref": "#/$defs/AttemptsRule" },
+    { "$ref": "#/$defs/BudgetGrantRule" },
     { "$ref": "#/$defs/UpgradeApiError" },
     { "$ref": "#/$defs/MigrationContract" }
   ],
@@ -177,10 +184,10 @@
       "additionalProperties": false,
       "properties": {
         "max_chars": { "$ref": "#/$defs/MaxPauseDetailChars" },
-        "pattern": { "const": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$" },
+        "pattern": { "const": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$" },
         "required_when": { "const": ["ENVIRONMENT"] },
         "forbidden_characters": {
-          "const": ["NUL", "CONTROL", "FORWARD_SLASH", "BACKSLASH", "COLON"]
+          "const": ["NUL", "C0", "C1", "FORWARD_SLASH", "BACKSLASH", "COLON"]
         }
       }
     },
@@ -196,7 +203,8 @@
         "stop_predicate",
         "soft_stop_state",
         "concurrency_is_not_a_stop",
-        "wall_clock_freezes_while_paused"
+        "wall_clock_freezes_while_paused",
+        "completion_precedes_budget_pause"
       ],
       "additionalProperties": false,
       "properties": {
@@ -222,7 +230,8 @@
         "stop_predicate": { "const": "targets_or_seconds" },
         "soft_stop_state": { "const": "PAUSED" },
         "concurrency_is_not_a_stop": { "const": true },
-        "wall_clock_freezes_while_paused": { "const": true }
+        "wall_clock_freezes_while_paused": { "const": true },
+        "completion_precedes_budget_pause": { "const": true }
       }
     },
     "TargetSetPredicate": {
@@ -255,7 +264,8 @@
         "idempotent_replay",
         "superseded_interface",
         "retry_rule",
-        "empty_set_is_legal"
+        "empty_set_is_legal",
+        "activation_reevaluates_current_difference_set"
       ],
       "additionalProperties": false,
       "properties": {
@@ -265,7 +275,8 @@
         "idempotent_replay": { "const": "same_plan_yields_no_second_row" },
         "superseded_interface": { "const": "input_revision_compare_only" },
         "retry_rule": { "const": "FAILED_to_PLANNED_bumps_attempts" },
-        "empty_set_is_legal": { "const": true }
+        "empty_set_is_legal": { "const": true },
+        "activation_reevaluates_current_difference_set": { "const": true }
       }
     },
     "GateId": {
@@ -278,20 +289,86 @@
       ]
     },
     "ActivationGateRow": {
-      "type": "object",
-      "required": ["gate", "refusal_code", "details_reason", "zero_writes_on_refusal"],
-      "additionalProperties": false,
-      "properties": {
-        "gate": { "$ref": "#/$defs/GateId" },
-        "refusal_code": { "$ref": "#/$defs/ErrorCode" },
-        "details_reason": {
-          "oneOf": [
-            { "type": "string", "minLength": 1, "maxLength": 64 },
-            { "type": "null" }
-          ]
+      "$comment": "ADR-0013 section 7 (Sol F-D): one gate row is a const, so a legal gate with a legal-but-wrong refusal code or details reason is rejected by the machine contract.",
+      "oneOf": [
+        {
+          "const": {
+            "gate": "GENERATION_READY",
+            "refusals": [
+              {
+                "code": "INVALID_STATE_TRANSITION",
+                "details_reasons": [
+                  "GENERATION_NOT_READY"
+                ]
+              }
+            ],
+            "zero_writes_on_refusal": true
+          }
         },
-        "zero_writes_on_refusal": { "const": true }
-      }
+        {
+          "const": {
+            "gate": "RUN_SUCCEEDED",
+            "refusals": [
+              {
+                "code": "INVALID_STATE_TRANSITION",
+                "details_reasons": [
+                  "RUN_NOT_SUCCEEDED"
+                ]
+              }
+            ],
+            "zero_writes_on_refusal": true
+          }
+        },
+        {
+          "const": {
+            "gate": "AUTHORITATIVE_COVERAGE_COMPLETE",
+            "refusals": [
+              {
+                "code": "INVALID_STATE_TRANSITION",
+                "details_reasons": [
+                  "COVERAGE_INCOMPLETE"
+                ]
+              }
+            ],
+            "zero_writes_on_refusal": true
+          }
+        },
+        {
+          "const": {
+            "gate": "ARTIFACT_READABLE",
+            "refusals": [
+              {
+                "code": "ARTIFACT_MISSING",
+                "details_reasons": []
+              }
+            ],
+            "zero_writes_on_refusal": true
+          }
+        },
+        {
+          "const": {
+            "gate": "REFERENCES_PROTECTED",
+            "refusals": [
+              {
+                "code": "PROFILE_GENERATION_MISMATCH",
+                "details_reasons": [
+                  "PROFILE_REFERENCE_CHANGED"
+                ]
+              },
+              {
+                "code": "RUNTIME_CAPABILITY_UNAVAILABLE",
+                "details_reasons": [
+                  "CAPABILITY_MISSING",
+                  "RUNTIME_UNHEALTHY",
+                  "QUALIFICATION_MISSING",
+                  "RERANKER_QUALIFICATION_MISSING"
+                ]
+              }
+            ],
+            "zero_writes_on_refusal": true
+          }
+        }
+      ]
     },
     "ActivationGateMatrix": {
       "type": "object",
@@ -299,9 +376,13 @@
       "required": [
         "gates",
         "gates_total",
+        "gate_vocabulary",
         "failure_atomicity",
         "atomic_pointer_move",
-        "envelope_unchanged"
+        "envelope_unchanged",
+        "gate_and_pointer_in_one_transaction",
+        "artifact_readability_is_a_real_read",
+        "activation_reevaluates_difference_set"
       ],
       "additionalProperties": false,
       "properties": {
@@ -309,41 +390,102 @@
           "type": "array",
           "minItems": 5,
           "maxItems": 5,
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/ActivationGateRow" }
         },
         "gates_total": { "const": 6 },
+        "gate_vocabulary": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/GateId" }
+        },
         "failure_atomicity": { "const": "any_failure_is_zero_write" },
         "atomic_pointer_move": {
           "const": "active_search_profile_and_index_generations_is_active_in_one_transaction"
         },
-        "envelope_unchanged": { "const": true }
+        "envelope_unchanged": { "const": true },
+        "gate_and_pointer_in_one_transaction": { "const": true },
+        "artifact_readability_is_a_real_read": { "const": true },
+        "activation_reevaluates_difference_set": { "const": true }
       }
     },
     "FailureRow": {
-      "type": "object",
-      "required": [
-        "reason",
-        "error_code",
-        "error_details_reason",
-        "location",
-        "retryable",
-        "counts_toward_attempts"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "reason": { "$ref": "#/$defs/FailureReason" },
-        "error_code": { "$ref": "#/$defs/ErrorCode" },
-        "error_details_reason": {
-          "oneOf": [
-            { "type": "string", "minLength": 1, "maxLength": 64 },
-            { "type": "null" }
-          ]
-        },
-        "location": { "enum": ["TARGET", "RUN"] },
-        "retryable": { "type": "boolean" },
-        "counts_toward_attempts": { "type": "boolean" }
+  "$comment": "ADR-0013 section 9 (Sol F-D): each reason is bound to exactly one frozen row, so a legal reason with a legal-but-wrong code, location, retryable or attempts flag is rejected.",
+  "oneOf": [
+    {
+      "const": {
+        "reason": "MODEL_WEIGHTS_MISSING",
+        "error_code": "RUNTIME_CAPABILITY_UNAVAILABLE",
+        "error_details_reason": "MODEL_WEIGHTS_MISSING",
+        "location": "TARGET",
+        "retryable": false,
+        "counts_toward_attempts": false
       }
     },
+    {
+      "const": {
+        "reason": "VRAM_INSUFFICIENT",
+        "error_code": "RUNTIME_CAPABILITY_UNAVAILABLE",
+        "error_details_reason": "VRAM_INSUFFICIENT",
+        "location": "TARGET",
+        "retryable": false,
+        "counts_toward_attempts": false
+      }
+    },
+    {
+      "const": {
+        "reason": "RUNTIME_UNHEALTHY",
+        "error_code": "RUNTIME_CAPABILITY_UNAVAILABLE",
+        "error_details_reason": "RUNTIME_UNHEALTHY",
+        "location": "TARGET",
+        "retryable": false,
+        "counts_toward_attempts": false
+      }
+    },
+    {
+      "const": {
+        "reason": "SOURCE_OFFLINE",
+        "error_code": "SOURCE_OFFLINE",
+        "error_details_reason": null,
+        "location": "TARGET",
+        "retryable": true,
+        "counts_toward_attempts": true
+      }
+    },
+    {
+      "const": {
+        "reason": "ARTIFACT_MISSING",
+        "error_code": "ARTIFACT_MISSING",
+        "error_details_reason": null,
+        "location": "TARGET",
+        "retryable": true,
+        "counts_toward_attempts": true
+      }
+    },
+    {
+      "const": {
+        "reason": "LEASE_EXPIRED",
+        "error_code": "LEASE_EXPIRED",
+        "error_details_reason": null,
+        "location": "TARGET",
+        "retryable": true,
+        "counts_toward_attempts": true
+      }
+    },
+    {
+      "const": {
+        "reason": "DISK_SPACE_INSUFFICIENT",
+        "error_code": "DISK_SPACE_INSUFFICIENT",
+        "error_details_reason": null,
+        "location": "RUN",
+        "retryable": true,
+        "counts_toward_attempts": false
+      }
+    }
+  ]
+},
     "ControlPlaneRefusal": {
       "type": "object",
       "required": ["code", "when"],
@@ -368,12 +510,14 @@
           "type": "array",
           "minItems": 7,
           "maxItems": 7,
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/FailureRow" }
         },
         "control_plane_refusals": {
           "type": "array",
           "minItems": 2,
           "maxItems": 2,
+          "uniqueItems": true,
           "items": { "$ref": "#/$defs/ControlPlaneRefusal" }
         },
         "no_new_error_codes": { "const": true },
@@ -382,6 +526,520 @@
         }
       }
     },
+    "ClockRule": {
+  "$comment": "ADR-0013 section 5.2 (Sol F-C): the only accounting rule, which uniquely fixes pause, resume and restart.",
+  "const": {
+    "persisted_total_ms_field": "elapsed_ms",
+    "anchor_field": "resumed_at",
+    "owner_field": "clock_owner",
+    "effective_elapsed_ms": "elapsed_ms + (now - resumed_at if state == RUNNING and clock_owner == this_session else 0)",
+    "leave_running_charges_only_for_owner": true,
+    "restart_reanchors_before_any_claim": true,
+    "downtime_is_never_charged": true,
+    "no_double_count": true
+  }
+},
+    "LeaseRule": {
+  "$comment": "ADR-0013 sections 4.4/4.5 (Sol F-E): one takeover path, one counting point.",
+  "const": {
+    "in_flight_requires": [
+      "lease_token",
+      "lease_expires_at"
+    ],
+    "non_in_flight_requires_null": [
+      "lease_token",
+      "lease_expires_at"
+    ],
+    "valid_lease_process_replay": "IN_FLIGHT->PLANNED with attempts unchanged",
+    "expired_lease_takeover": "IN_FLIGHT->FAILED(reason=LEASE_EXPIRED) once per expired lease_token",
+    "takeover_replay_counts_zero": true,
+    "late_result_refused_by": [
+      "lease_token",
+      "input_revision",
+      "processor_id"
+    ]
+  }
+},
+    "AttemptsRule": {
+  "$comment": "ADR-0013 section 4.5 (Sol F-E): attempts counts failures, never replays or retries.",
+  "const": {
+    "increments_exactly_on": "the transition into FAILED whose reason counts_toward_attempts is true",
+    "never_increments_on": [
+      "IN_FLIGHT->PLANNED",
+      "FAILED->PLANNED"
+    ],
+    "takeover_increment_is_the_same_failure": true,
+    "explicit_retry_is_a_separate_transition": true
+  }
+},
+    "ControlIdempotencyRule": {
+  "$comment": "ADR-0013 section 3.2 (Sol F-B): replay is decided before any revision check.",
+  "const": {
+    "table": "upgrade_control_requests",
+    "key": [
+      "run_id",
+      "request_id"
+    ],
+    "digest_fields": [
+      "action",
+      "pause_reason",
+      "pause_detail",
+      "grant_targets",
+      "grant_seconds"
+    ],
+    "digest_excludes": [
+      "expected_control_revision"
+    ],
+    "order": [
+      "replay_lookup",
+      "state_predicate",
+      "expected_revision_predicate",
+      "apply_and_record"
+    ],
+    "replay_precedes_revision_check": true,
+    "same_transaction": true,
+    "response_changed_means": "this_call_wrote_the_run",
+    "log_changed_means": "the_original_request_changed_the_run",
+    "replay_response": {
+      "changed": false,
+      "replayed": true
+    },
+    "noop_rule": {
+      "definition": "target state already holds AND the request parameters match the state that already holds",
+      "pause_matches": [
+        "pause_reason",
+        "pause_detail"
+      ],
+      "resume_matches": [
+        "no_grant"
+      ],
+      "cancel_matches": [],
+      "writes": "the_log_row_only",
+      "must_not_update_the_run": true
+    },
+    "noop_parameter_mismatch": {
+      "code": "INVALID_STATE_TRANSITION",
+      "details_reason": "CONTROL_NOOP_ARGUMENT_MISMATCH",
+      "zero_writes": true
+    },
+    "same_key_different_digest": "VALIDATION_ERROR",
+    "expected_revision_mismatch": "INVALID_STATE_TRANSITION"
+  }
+},
+    "BudgetGrantRule": {
+  "$comment": "ADR-0013 sections 5.4/6 (Sol F-C): how a budget-limited run legally continues.",
+  "const": {
+    "applies_to_action": "RESUME",
+    "allowed_source_state": "PAUSED",
+    "fields": [
+      "grant_targets",
+      "grant_seconds"
+    ],
+    "requires_cap_non_null": true,
+    "arithmetic": "cap_new = cap_old + grant",
+    "exceeding_max_refuses": true,
+    "same_transaction_as_resume": true,
+    "recorded_in": "upgrade_control_requests",
+    "digest_includes_grants": true,
+    "does_not_reset_completed_or_elapsed": true,
+    "source_state_mismatch": {
+      "code": "INVALID_STATE_TRANSITION",
+      "details_reason": "GRANT_SOURCE_STATE_NOT_PAUSED",
+      "zero_writes": true
+    }
+  }
+},
+    "UpgradeControlRequest": {
+  "type": "object",
+  "description": "ADR-0013 section 10.2 (Sol F-B). The closed control-request schema; the HTTP path suffix is the lowercase action.",
+  "required": [
+    "contract_version",
+    "request_id",
+    "action"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "contract_version": {
+      "$ref": "#/$defs/ContractVersion"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "action": {
+      "enum": [
+        "PAUSE",
+        "RESUME",
+        "CANCEL"
+      ]
+    },
+    "expected_control_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pause_reason": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PauseReason"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pause_detail": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "grant_targets": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "grant_seconds": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "RESUME",
+              "CANCEL"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "pause_reason": {
+            "const": null
+          },
+          "pause_detail": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "PAUSE"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "required": [
+          "pause_reason"
+        ],
+        "properties": {
+          "pause_reason": {
+            "$ref": "#/$defs/PauseReason"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "pause_reason": {
+            "const": "ENVIRONMENT"
+          }
+        },
+        "required": [
+          "pause_reason"
+        ]
+      },
+      "then": {
+        "required": [
+          "pause_detail"
+        ],
+        "properties": {
+          "pause_detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "PAUSE",
+              "CANCEL"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "properties": {
+          "grant_targets": {
+            "const": null
+          },
+          "grant_seconds": {
+            "const": null
+          }
+        }
+      }
+    }
+  ]
+},
+    "UpgradeControlRequestRow": {
+  "type": "object",
+  "description": "ADR-0013 section 2.3 (Sol F-B): the durable control-request log that carries request_id idempotency across restarts.",
+  "required": [
+    "run_id",
+    "request_id",
+    "action",
+    "request_digest",
+    "grant_targets",
+    "grant_seconds",
+    "outcome_state",
+    "outcome_pause_reason",
+    "outcome_pause_detail",
+    "outcome_control_revision",
+    "changed",
+    "created_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "action": {
+      "enum": [
+        "PAUSE",
+        "RESUME",
+        "CANCEL"
+      ]
+    },
+    "request_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "grant_targets": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "grant_seconds": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome_state": {
+      "$ref": "#/$defs/RunState"
+    },
+    "outcome_pause_reason": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PauseReason"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome_pause_detail": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "outcome_control_revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome_state": {
+            "const": "PAUSED"
+          }
+        },
+        "required": [
+          "outcome_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome_pause_reason": {
+            "$ref": "#/$defs/PauseReason"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome_state": {
+            "enum": [
+              "PLANNED",
+              "RUNNING",
+              "CANCELLED",
+              "FAILED",
+              "SUCCEEDED"
+            ]
+          }
+        },
+        "required": [
+          "outcome_state"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome_pause_reason": {
+            "const": null
+          },
+          "outcome_pause_detail": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome_pause_reason": {
+            "const": "ENVIRONMENT"
+          }
+        },
+        "required": [
+          "outcome_pause_reason"
+        ]
+      },
+      "then": {
+        "properties": {
+          "outcome_pause_detail": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "RESUME"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "else": {
+        "properties": {
+          "grant_targets": {
+            "const": null
+          },
+          "grant_seconds": {
+            "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "changed": {
+            "const": false
+          }
+        },
+        "required": [
+          "changed"
+        ]
+      },
+      "then": {
+        "properties": {
+          "grant_targets": {
+            "const": null
+          },
+          "grant_seconds": {
+            "const": null
+          }
+        }
+      }
+    }
+  ]
+},
     "ReferenceProtection": {
       "type": "object",
       "description": "ADR-0013 section 8. A generation referenced by any of these kinds may not be RETIRED or cleaned; the refusal reuses INVALID_STATE_TRANSITION with a frozen details.reason.",
@@ -469,7 +1127,7 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+              "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
             },
             { "type": "null" }
           ]
@@ -629,7 +1287,7 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+              "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
             },
             { "type": "null" }
           ]
@@ -669,6 +1327,23 @@
         "missing_objects": { "type": "array", "maxItems": 32, "items": { "type": "string" } },
         "unsupported_schema_version": { "type": "integer", "minimum": 0 },
         "supported_schema_version": { "type": "integer", "minimum": 0 },
+        "runtime_package_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "processor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "capability_revision": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "health_status": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "role": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_state": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "image_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile_space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_space_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profile_processor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generation_processor_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "declared_method": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "declared_tokenizer_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "supported_tokenizer_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "declared_fts_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "supported_fts_generation_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "message": { "type": "string", "minLength": 1, "maxLength": 512 }
       },
       "additionalProperties": false
@@ -697,7 +1372,8 @@
         "transactional_and_idempotent",
         "no_down_migration",
         "too_new_behaviour",
-        "unused_upgrade_behaviour_unchanged"
+        "unused_upgrade_behaviour_unchanged",
+        "table_names"
       ],
       "additionalProperties": false,
       "properties": {
@@ -709,7 +1385,8 @@
         "transactional_and_idempotent": { "const": true },
         "no_down_migration": { "const": true },
         "too_new_behaviour": { "const": "SCHEMA_TOO_NEW" },
-        "unused_upgrade_behaviour_unchanged": { "const": true }
+        "unused_upgrade_behaviour_unchanged": { "const": true },
+        "table_names": { "const": ["upgrade_runs", "upgrade_targets", "upgrade_control_requests"] }
       }
     },
     "UpgradeRunRow": {
@@ -729,6 +1406,7 @@
         "budget_concurrency",
         "elapsed_ms",
         "resumed_at",
+        "clock_owner",
         "control_revision",
         "last_error_code",
         "planned_at",
@@ -751,7 +1429,7 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 200,
-              "pattern": "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+              "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
             },
             { "type": "null" }
           ]
@@ -772,6 +1450,9 @@
         "elapsed_ms": { "type": "integer", "minimum": 0 },
         "resumed_at": {
           "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
+        "clock_owner": {
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }]
         },
         "control_revision": { "type": "integer", "minimum": 1 },
         "last_error_code": {
@@ -806,6 +1487,17 @@
           "then": { "properties": { "resumed_at": { "const": null } } }
         },
         {
+          "if": { "properties": { "state": { "const": "RUNNING" } }, "required": ["state"] },
+          "then": { "properties": { "clock_owner": { "type": "string", "minLength": 1, "maxLength": 128 } } }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "PAUSED", "CANCELLED", "FAILED", "SUCCEEDED"] } },
+            "required": ["state"]
+          },
+          "then": { "properties": { "clock_owner": { "const": null } } }
+        },
+        {
           "if": {
             "properties": { "pause_reason": { "const": "ENVIRONMENT" } },
             "required": ["pause_reason"]
@@ -817,7 +1509,7 @@
     "UpgradeTargetRow": {
       "type": "object",
       "description": "ADR-0013 section 2.2 as an executable row shape: the closed CHECK vocabularies of upgrade_targets.",
-      "required": ["run_id", "asset_id", "input_revision", "state", "reason", "attempts", "updated_at"],
+      "required": ["run_id", "asset_id", "input_revision", "state", "reason", "attempts", "lease_token", "lease_expires_at", "updated_at"],
       "additionalProperties": false,
       "properties": {
         "run_id": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -828,6 +1520,12 @@
           "oneOf": [{ "$ref": "#/$defs/FailureReason" }, { "type": "null" }]
         },
         "attempts": { "type": "integer", "minimum": 0 },
+        "lease_token": {
+          "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 128 }, { "type": "null" }]
+        },
+        "lease_expires_at": {
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
+        },
         "updated_at": { "type": "integer", "minimum": 0 }
       },
       "allOf": [
@@ -841,6 +1539,24 @@
             "required": ["state"]
           },
           "then": { "properties": { "reason": { "const": null } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "IN_FLIGHT" } }, "required": ["state"] },
+          "then": {
+            "properties": {
+              "lease_token": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "lease_expires_at": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "state": { "enum": ["PLANNED", "SUCCEEDED", "FAILED", "CANCELLED"] } },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": { "lease_token": { "const": null }, "lease_expires_at": { "const": null } }
+          }
         }
       ]
     }

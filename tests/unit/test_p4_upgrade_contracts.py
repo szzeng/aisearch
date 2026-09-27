@@ -37,6 +37,7 @@ from photo_search.api import errors as api_errors
 from photo_search.api.errors import error_payload, status_for_code
 from photo_search.catalog import errors as error_codes
 from photo_search.catalog.schema import SUPPORTED_SCHEMA_VERSION, migration_files
+from photo_search.search import profile as search_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = ROOT / "docs" / "decisions" / "contracts"
@@ -75,7 +76,7 @@ MAX_PAUSE_DETAIL_CHARS = 200
 MAX_BUDGET_TARGETS = 100_000_000
 MAX_BUDGET_SECONDS = 86_400_000
 MAX_BUDGET_CONCURRENCY = 64
-PAUSE_DETAIL_PATTERN = "^[^\\u0000-\\u001F\\u007F/\\\\:]{1,200}$"
+PAUSE_DETAIL_PATTERN = "^[^\\u0000-\\u001F\\u007F-\\u009F/\\\\:]{1,200}$"
 
 #: ADR-0013 section 3.1, exactly as the companion freezes it.
 ALLOWED_RUN_TRANSITIONS = (
@@ -150,15 +151,32 @@ EXPECTED_FAILURE_MAPPING: dict[str, tuple[str, str | None, str, bool, bool]] = {
     "DISK_SPACE_INSUFFICIENT": ("DISK_SPACE_INSUFFICIENT", None, "RUN", True, False),
 }
 
-#: ADR-0013 section 7: gate -> (refusal code, details.reason). The sixth item of the card is
-#: the atomicity obligation, not a predicate.
-EXPECTED_GATES: dict[str, tuple[str, str | None]] = {
-    "GENERATION_READY": ("INVALID_STATE_TRANSITION", "GENERATION_NOT_READY"),
-    "RUN_SUCCEEDED": ("INVALID_STATE_TRANSITION", "RUN_NOT_SUCCEEDED"),
-    "AUTHORITATIVE_COVERAGE_COMPLETE": ("INVALID_STATE_TRANSITION", "COVERAGE_INCOMPLETE"),
-    "ARTIFACT_READABLE": ("ARTIFACT_MISSING", None),
-    "REFERENCES_PROTECTED": ("PROFILE_GENERATION_MISMATCH", "PROFILE_REFERENCE_CHANGED"),
+#: ADR-0013 section 7 (Sol F-D): gate -> the frozen refusals of that gate only. The sixth
+#: item of the card is the atomicity obligation, not a predicate.
+EXPECTED_GATES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "GENERATION_READY": (("INVALID_STATE_TRANSITION", ("GENERATION_NOT_READY",)),),
+    "RUN_SUCCEEDED": (("INVALID_STATE_TRANSITION", ("RUN_NOT_SUCCEEDED",)),),
+    "AUTHORITATIVE_COVERAGE_COMPLETE": (("INVALID_STATE_TRANSITION", ("COVERAGE_INCOMPLETE",)),),
+    "ARTIFACT_READABLE": (("ARTIFACT_MISSING", ()),),
+    "REFERENCES_PROTECTED": (
+        ("PROFILE_GENERATION_MISMATCH", ("PROFILE_REFERENCE_CHANGED",)),
+        (
+            "RUNTIME_CAPABILITY_UNAVAILABLE",
+            ("CAPABILITY_MISSING", "RUNTIME_UNHEALTHY", "QUALIFICATION_MISSING",
+             "RERANKER_QUALIFICATION_MISSING"),
+        ),
+    ),
 }
+
+#: ADR-0013 section 7: the closed gate vocabulary, in the frozen order.
+EXPECTED_GATE_VOCABULARY = tuple(EXPECTED_GATES)
+
+#: ADR-0013 section 10.2 (Sol F-B): the closed control-request vocabulary.
+CONTROL_ACTIONS = ("PAUSE", "RESUME", "CANCEL")
+DIGEST_FIELDS = ("action", "pause_reason", "pause_detail", "grant_targets", "grant_seconds")
+#: Sol F-B: the precondition is deliberately outside the digest, so an idempotent replay that
+#: carries an older expected_control_revision is still a replay.
+DIGEST_EXCLUDES = ("expected_control_revision",)
 
 #: Every companion that already existed when ADR-0013 was written. ADR-0013 declares no
 #: supersession, so all nine keep their bytes.
@@ -250,14 +268,15 @@ CREATE TABLE upgrade_runs (
         CHECK(budget_concurrency BETWEEN 1 AND 64),
     elapsed_ms          INTEGER NOT NULL DEFAULT 0 CHECK(elapsed_ms >= 0),
     resumed_at          INTEGER CHECK(resumed_at IS NULL OR resumed_at >= 0),
+    clock_owner         TEXT CHECK(clock_owner IS NULL OR clock_owner <> ''),
     control_revision    INTEGER NOT NULL CHECK(control_revision >= 1),
     last_error_code     TEXT,
     planned_at          INTEGER NOT NULL CHECK(planned_at >= 0),
     updated_at          INTEGER NOT NULL CHECK(updated_at >= 0),
     CHECK((state = 'PAUSED' AND pause_reason IS NOT NULL)
           OR (state <> 'PAUSED' AND pause_reason IS NULL AND pause_detail IS NULL)),
-    CHECK((state = 'RUNNING' AND resumed_at IS NOT NULL)
-          OR (state <> 'RUNNING' AND resumed_at IS NULL)),
+    CHECK((state = 'RUNNING' AND resumed_at IS NOT NULL AND clock_owner IS NOT NULL)
+          OR (state <> 'RUNNING' AND resumed_at IS NULL AND clock_owner IS NULL)),
     CHECK(pause_reason <> 'ENVIRONMENT'
           OR (pause_detail IS NOT NULL AND pause_detail <> ''))
 );
@@ -274,13 +293,45 @@ CREATE TABLE upgrade_targets (
         'MODEL_WEIGHTS_MISSING','VRAM_INSUFFICIENT','RUNTIME_UNHEALTHY','SOURCE_OFFLINE',
         'ARTIFACT_MISSING','LEASE_EXPIRED','DISK_SPACE_INSUFFICIENT')),
     attempts       INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+    lease_token    TEXT CHECK(lease_token IS NULL OR lease_token <> ''),
+    lease_expires_at INTEGER CHECK(lease_expires_at IS NULL OR lease_expires_at >= 0),
     updated_at     INTEGER NOT NULL CHECK(updated_at >= 0),
     PRIMARY KEY(run_id, asset_id),
     CHECK((state = 'FAILED' AND reason IS NOT NULL)
-          OR (state <> 'FAILED' AND reason IS NULL))
+          OR (state <> 'FAILED' AND reason IS NULL)),
+    CHECK((state = 'IN_FLIGHT' AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+          OR (state <> 'IN_FLIGHT' AND lease_token IS NULL AND lease_expires_at IS NULL))
 );
 
 CREATE INDEX idx_upgrade_targets_state ON upgrade_targets(run_id, state, asset_id);
+
+-- ADR-0013 section 2.3 (Sol F-B): the durable control-request log that carries request_id
+-- idempotency across restarts.
+CREATE TABLE upgrade_control_requests (
+    run_id             TEXT NOT NULL REFERENCES upgrade_runs(run_id) ON DELETE CASCADE,
+    request_id         TEXT NOT NULL CHECK(request_id <> '' AND length(request_id) <= 64),
+    action             TEXT NOT NULL CHECK(action IN ('PAUSE','RESUME','CANCEL')),
+    request_digest     TEXT NOT NULL
+        CHECK(length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+    grant_targets      INTEGER CHECK(grant_targets IS NULL OR (grant_targets BETWEEN 1 AND 100000000)),
+    grant_seconds      INTEGER CHECK(grant_seconds IS NULL OR (grant_seconds BETWEEN 1 AND 86400000)),
+    outcome_state      TEXT NOT NULL
+        CHECK(outcome_state IN ('PLANNED','RUNNING','PAUSED','CANCELLED','FAILED','SUCCEEDED')),
+    outcome_pause_reason TEXT
+        CHECK(outcome_pause_reason IS NULL OR outcome_pause_reason IN ('USER','BUDGET','ENVIRONMENT')),
+    outcome_pause_detail TEXT,
+    outcome_control_revision INTEGER NOT NULL CHECK(outcome_control_revision >= 1),
+    changed            INTEGER NOT NULL CHECK(changed IN (0,1)),
+    created_at         INTEGER NOT NULL CHECK(created_at >= 0),
+    PRIMARY KEY(run_id, request_id),
+    CHECK(grant_targets IS NULL OR (action = 'RESUME' AND changed = 1)),
+    CHECK(grant_seconds IS NULL OR (action = 'RESUME' AND changed = 1)),
+    CHECK((outcome_state = 'PAUSED' AND outcome_pause_reason IS NOT NULL)
+          OR (outcome_state <> 'PAUSED' AND outcome_pause_reason IS NULL
+              AND outcome_pause_detail IS NULL))
+);
+
+CREATE INDEX idx_upgrade_control_requests_run ON upgrade_control_requests(run_id, created_at);
 """
 
 #: One existing, readable file relative to the repo root, used as an artifact ``storage_uri``.
@@ -345,8 +396,11 @@ def _errors(instance: Any, raw_schema: dict[str, Any], path: str = "$") -> list[
             errors.append(f"{path}: oneOf matched {matches}")
     for branch in schema.get("allOf", []):
         errors.extend(_errors(instance, branch, path))
-    if "if" in schema and not _errors(instance, schema["if"], path):
-        errors.extend(_errors(instance, schema.get("then", {}), path))
+    if "if" in schema:
+        if not _errors(instance, schema["if"], path):
+            errors.extend(_errors(instance, schema.get("then", {}), path))
+        elif "else" in schema:
+            errors.extend(_errors(instance, schema["else"], path))
     expected_type = schema.get("type")
     if expected_type is not None:
         choices = [expected_type] if isinstance(expected_type, str) else expected_type
@@ -506,6 +560,9 @@ def new_catalog() -> sqlite3.Connection:
         connection.executescript(path.read_text(encoding="utf-8"))
     connection.executescript(REFERENCE_UPGRADE_DDL)
     connection.execute("INSERT INTO metadata(key, value) VALUES ('schema_version', '16')")
+    # Autocommit: the reference transactions below issue their own explicit BEGIN IMMEDIATE,
+    # exactly like catalog/db.py::Catalog.write() does for the real writer.
+    connection.isolation_level = None
     return connection
 
 
@@ -672,12 +729,16 @@ def add_run(
     budget_seconds: int | None = None,
     budget_concurrency: int = 1,
     control_revision: int = 1,
+    clock_owner: str | None = None,
+    elapsed_ms: int = 0,
 ) -> None:
+    owner = clock_owner if clock_owner is not None else ("session-1" if state == "RUNNING" else None)
     connection.execute(
         "INSERT INTO upgrade_runs(run_id, profile_id, space_id, image_generation_id, "
         "target_set_digest, state, pause_reason, pause_detail, budget_targets, budget_seconds, "
-        "budget_concurrency, elapsed_ms, resumed_at, control_revision, last_error_code, "
-        "planned_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, 0, 0)",
+        "budget_concurrency, elapsed_ms, resumed_at, clock_owner, control_revision, "
+        "last_error_code, planned_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0)",
         (
             run_id,
             profile_id,
@@ -690,7 +751,9 @@ def add_run(
             budget_targets,
             budget_seconds,
             budget_concurrency,
-            1 if state == "RUNNING" else None,
+            elapsed_ms,
+            0 if state == "RUNNING" else None,
+            owner,
             control_revision,
         ),
     )
@@ -705,10 +768,15 @@ def add_target(
     reason: str | None = None,
     attempts: int = 0,
     input_revision: str | None = None,
+    lease_token: str | None = None,
+    lease_expires_at: int | None = None,
 ) -> None:
+    if state == "IN_FLIGHT":
+        lease_token = lease_token or f"lease-{asset_id}"
+        lease_expires_at = 1000 if lease_expires_at is None else lease_expires_at
     connection.execute(
         "INSERT INTO upgrade_targets(run_id, asset_id, input_revision, state, reason, "
-        "attempts, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        "attempts, lease_token, lease_expires_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
         (
             run_id,
             asset_id,
@@ -716,6 +784,8 @@ def add_target(
             state,
             reason,
             attempts,
+            lease_token,
+            lease_expires_at,
         ),
     )
 
@@ -757,17 +827,15 @@ def needs_projection(
 
 
 def coverage_complete(
-    connection: sqlite3.Connection, *, run_id: str, space_id: str, generation_id: str
+    connection: sqlite3.Connection, *, space_id: str, generation_id: str
 ) -> bool:
-    """Gate 3: every target row is covered and the generation carries no unsettled work."""
-    targets = {
-        int(row["asset_id"])
-        for row in connection.execute(
-            "SELECT asset_id FROM upgrade_targets WHERE run_id = ?", (run_id,)
-        )
-    }
-    unsettled = set(needs_projection(connection, space_id=space_id, generation_id=generation_id))
-    if targets & unsettled:
+    """Gate 3 (Sol F-A): re-evaluate the CURRENT difference set over every ACTIVE asset.
+
+    The plan target set is a snapshot. A newly added ACTIVE asset has no entry and no outbox
+    row, so "no pending rows" cannot prove that no uncovered asset exists; the bound of the
+    check is the current difference set, not the plan.
+    """
+    if needs_projection(connection, space_id=space_id, generation_id=generation_id):
         return False
     pending_repair = connection.execute(
         "SELECT COUNT(*) FROM index_entries WHERE generation_id = ? AND state = 'PENDING_REPAIR'",
@@ -804,7 +872,6 @@ def activation_refusal(
         return ("INVALID_STATE_TRANSITION", "RUN_NOT_SUCCEEDED")
     if not coverage_complete(
         connection,
-        run_id=run_id,
         space_id=str(run["space_id"]),
         generation_id=str(run["image_generation_id"]),
     ):
@@ -816,8 +883,11 @@ def activation_refusal(
     ).fetchall()
     for row in uris:
         path = data_root / str(row["uri"])
+        # Sol O-2: readability is a *real* read, not an existence probe.
         try:
-            readable = path.is_file()
+            with path.open("rb") as handle:
+                handle.read(1)
+            readable = True
         except OSError:  # pragma: no cover - an unreadable path is a platform fact
             readable = False
         if not readable:
@@ -839,14 +909,26 @@ def activation_refusal(
 
 
 def reference_activate(
-    connection: sqlite3.Connection, *, run_id: str, now_ms: int = 1000, **kwargs: Any
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    now_ms: int = 1000,
+    activation_hook: Any = None,
+    **kwargs: Any,
 ) -> None:
-    """Gate check plus the atomic pointer move; a refusal writes nothing at all."""
-    refusal = activation_refusal(connection, run_id=run_id, **kwargs)
-    if refusal is not None:
-        raise Refused(*refusal)
-    run = connection.execute("SELECT * FROM upgrade_runs WHERE run_id = ?", (run_id,)).fetchone()
-    with connection:
+    """Gates 1..5 and the pointer move inside ONE ``BEGIN IMMEDIATE`` transaction (Sol O-2).
+
+    A refusal or any fault before COMMIT rolls the whole transaction back, so the pointer,
+    ``index_generations.is_active`` and the run all stay exactly as they were.
+    """
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        refusal = activation_refusal(connection, run_id=run_id, **kwargs)
+        if refusal is not None:
+            raise Refused(*refusal)
+        run = connection.execute(
+            "SELECT * FROM upgrade_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
         connection.execute(
             "UPDATE index_generations SET is_active = 0, updated_at = ? "
             "WHERE space_id = ? AND is_active = 1",
@@ -860,6 +942,12 @@ def reference_activate(
             "UPDATE active_search_profile SET profile_id = ?, updated_at = ? WHERE state_id = 1",
             (str(run["profile_id"]), now_ms),
         )
+        if activation_hook is not None:
+            activation_hook(connection)
+        connection.execute("COMMIT")
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
 
 
 def catalog_snapshot(connection: sqlite3.Connection) -> tuple[Any, ...]:
@@ -877,14 +965,18 @@ def catalog_snapshot(connection: sqlite3.Connection) -> tuple[Any, ...]:
             "ORDER BY generation_id"
         )
     )
+    # Every column of every run row: a no-op must leave the whole row untouched (Sol F-B2).
     runs = tuple(
         tuple(row)
-        for row in connection.execute(
-            "SELECT run_id, state, pause_reason, control_revision FROM upgrade_runs "
-            "ORDER BY run_id"
-        )
+        for row in connection.execute("SELECT * FROM upgrade_runs ORDER BY run_id")
     )
     return (pointer, generations, runs)
+
+
+def control_log_rows(connection: sqlite3.Connection) -> int:
+    return int(
+        connection.execute("SELECT COUNT(*) FROM upgrade_control_requests").fetchone()[0]
+    )
 
 
 def retire_blockers(
@@ -991,6 +1083,11 @@ def test_companion_identity_and_closed_public_objects() -> None:
     assert len(public) == len(set(public))
     for name in public:
         definition = DEFS[name]
+        if "oneOf" in definition or "const" in definition:
+            # A frozen rule or row set (Sol F-D): every branch is itself closed.
+            for branch in definition.get("oneOf", [definition]):
+                assert "const" in branch or branch.get("additionalProperties") is False, name
+            continue
         assert definition.get("type") == "object", name
         assert definition.get("additionalProperties") is False, name
         assert definition.get("required"), name
@@ -1109,9 +1206,12 @@ def test_pause_detail_rule_is_frozen_by_the_companion() -> None:
         "a\rb",
         "a\tb",
         "a\x00b",
+        "a\x85b",
+        "a\x9fb",
+        "\x7f",
         "",
     ):
-        assert pattern.fullmatch(bad) is None, bad
+        assert pattern.fullmatch(bad) is None, bad  # Sol O-3: DEL and C1 are refused too
 
 
 def test_run_row_contract_pins_pause_and_wall_clock_rules() -> None:
@@ -1129,6 +1229,7 @@ def test_run_row_contract_pins_pause_and_wall_clock_rules() -> None:
         "budget_concurrency": 1,
         "elapsed_ms": 0,
         "resumed_at": None,
+        "clock_owner": None,
         "control_revision": 1,
         "last_error_code": None,
         "planned_at": 0,
@@ -1143,12 +1244,20 @@ def test_run_row_contract_pins_pause_and_wall_clock_rules() -> None:
     for bad_detail in ("C:\\photos", "a/b", "a\nb", "x" * 201):
         assert contract_errors(dict(row, pause_detail=bad_detail), "UpgradeRunRow"), bad_detail
     # pause_reason/pause_detail are NULL outside PAUSED; resumed_at is set exactly on RUNNING.
+    # Sol F-C: resumed_at and clock_owner are born and die together with RUNNING.
     assert contract_errors(dict(row, state="RUNNING", resumed_at=5), "UpgradeRunRow")
     assert contract_errors(dict(row, state="RUNNING", resumed_at=None), "UpgradeRunRow")
     assert contract_errors(
-        dict(row, state="RUNNING", pause_reason=None, pause_detail=None, resumed_at=5),
+        dict(row, state="RUNNING", resumed_at=5, clock_owner="session-1"), "UpgradeRunRow"
+    )
+    assert contract_errors(
+        dict(row, state="RUNNING", pause_reason=None, pause_detail=None, resumed_at=5,
+             clock_owner="session-1"),
         "UpgradeRunRow",
     ) == []
+    assert contract_errors(
+        dict(row, state="PAUSED", pause_reason="USER", clock_owner="session-1"), "UpgradeRunRow"
+    )
     assert contract_errors(
         dict(row, state="CANCELLED", pause_reason=None, pause_detail=None), "UpgradeRunRow"
     ) == []
@@ -1163,6 +1272,8 @@ def test_target_rows_require_a_reason_exactly_when_failed() -> None:
         "state": "FAILED",
         "reason": None,
         "attempts": 1,
+        "lease_token": None,
+        "lease_expires_at": None,
         "updated_at": 0,
     }
     assert any("reason" in error for error in contract_errors(row, "UpgradeTargetRow"))
@@ -1181,6 +1292,17 @@ def test_target_rows_require_a_reason_exactly_when_failed() -> None:
         "enum" in error
         for error in contract_errors(dict(row, state="NOT_A_STATE"), "UpgradeTargetRow")
     )
+    # Sol F-E: only IN_FLIGHT carries a lease, and it must carry both columns.
+    leased = dict(row, state="PLANNED", reason=None, lease_token="lease-1", lease_expires_at=10)
+    assert contract_errors(leased, "UpgradeTargetRow")
+    assert contract_errors(
+        dict(row, state="IN_FLIGHT", reason=None, lease_token=None, lease_expires_at=None),
+        "UpgradeTargetRow",
+    )
+    assert contract_errors(
+        dict(row, state="IN_FLIGHT", reason=None, lease_token="lease-1", lease_expires_at=10),
+        "UpgradeTargetRow",
+    ) == []
 
 
 def test_failure_mapping_uses_only_existing_error_codes() -> None:
@@ -1274,6 +1396,35 @@ def test_failure_mapping_uses_only_existing_error_codes() -> None:
     )
 
 
+def _expected_gate_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "gate": gate,
+            "refusals": [
+                {"code": code, "details_reasons": list(reasons)} for code, reasons in refusals
+            ],
+            "zero_writes_on_refusal": True,
+        }
+        for gate, refusals in EXPECTED_GATES.items()
+    ]
+
+
+def _expected_matrix() -> dict[str, Any]:
+    return {
+        "gates": _expected_gate_rows(),
+        "gates_total": 6,
+        "gate_vocabulary": list(EXPECTED_GATE_VOCABULARY),
+        "failure_atomicity": "any_failure_is_zero_write",
+        "atomic_pointer_move": (
+            "active_search_profile_and_index_generations_is_active_in_one_transaction"
+        ),
+        "envelope_unchanged": True,
+        "gate_and_pointer_in_one_transaction": True,
+        "artifact_readability_is_a_real_read": True,
+        "activation_reevaluates_difference_set": True,
+    }
+
+
 def test_activation_gate_matrix_pins_five_gates_plus_atomicity() -> None:
     matrix = DEFS["ActivationGateMatrix"]["properties"]
     assert matrix["gates_total"]["const"] == 6
@@ -1282,49 +1433,57 @@ def test_activation_gate_matrix_pins_five_gates_plus_atomicity() -> None:
         "active_search_profile_and_index_generations_is_active_in_one_transaction"
     )
     assert matrix["envelope_unchanged"]["const"] is True
+    assert matrix["gate_and_pointer_in_one_transaction"]["const"] is True
+    assert matrix["artifact_readability_is_a_real_read"]["const"] is True
+    assert matrix["activation_reevaluates_difference_set"]["const"] is True
     assert matrix["gates"]["minItems"] == matrix["gates"]["maxItems"] == 5
-    for code, _reason in EXPECTED_GATES.values():
-        assert code in tuple(DEFS["ErrorCode"]["enum"])
-    assert contract_errors(
-        {
-            "gates": [
-                {
-                    "gate": gate,
-                    "refusal_code": code,
-                    "details_reason": reason,
-                    "zero_writes_on_refusal": True,
-                }
-                for gate, (code, reason) in EXPECTED_GATES.items()
-            ],
-            "gates_total": 6,
-            "failure_atomicity": "any_failure_is_zero_write",
-            "atomic_pointer_move": (
-                "active_search_profile_and_index_generations_is_active_in_one_transaction"
-            ),
-            "envelope_unchanged": True,
+    assert matrix["gates"]["uniqueItems"] is True
+    assert tuple(EXPECTED_GATE_VOCABULARY) == tuple(DEFS["GateId"]["enum"])
+    for refusals in EXPECTED_GATES.values():
+        for code, _reasons in refusals:
+            assert code in tuple(DEFS["ErrorCode"]["enum"])
+    # Sol F-D: the exact matrix is accepted, and every mutation of it is rejected.
+    assert contract_errors(_expected_matrix(), "ActivationGateMatrix") == []
+    mutations = {
+        "wrong refusal code": {
+            "gate": "GENERATION_READY",
+            "refusals": [{"code": "ARTIFACT_MISSING", "details_reasons": ["GENERATION_NOT_READY"]}],
+            "zero_writes_on_refusal": True,
         },
-        "ActivationGateMatrix",
-    ) == []
-    # A gate row without the zero-write promise, or outside the closed gate vocabulary, fails.
-    assert contract_errors(
-        {
-            "gates": [
-                {
-                    "gate": "MADE_UP_GATE",
-                    "refusal_code": "ARTIFACT_MISSING",
-                    "details_reason": None,
-                    "zero_writes_on_refusal": False,
-                }
-            ],
-            "gates_total": 6,
-            "failure_atomicity": "any_failure_is_zero_write",
-            "atomic_pointer_move": (
-                "active_search_profile_and_index_generations_is_active_in_one_transaction"
-            ),
-            "envelope_unchanged": True,
+        "wrong details reason": {
+            "gate": "GENERATION_READY",
+            "refusals": [{"code": "INVALID_STATE_TRANSITION", "details_reasons": ["RUN_NOT_SUCCEEDED"]}],
+            "zero_writes_on_refusal": True,
         },
-        "ActivationGateMatrix",
-    )
+        "legal-but-wrong gate": {
+            "gate": "MADE_UP_GATE",
+            "refusals": [{"code": "INVALID_STATE_TRANSITION", "details_reasons": ["GENERATION_NOT_READY"]}],
+            "zero_writes_on_refusal": True,
+        },
+        "no zero-write promise": {
+            "gate": "ARTIFACT_READABLE",
+            "refusals": [{"code": "ARTIFACT_MISSING", "details_reasons": []}],
+            "zero_writes_on_refusal": False,
+        },
+    }
+    for label, row in mutations.items():
+        broken = _expected_matrix()
+        broken["gates"] = [
+            row if candidate["gate"] == row["gate"] else candidate for candidate in broken["gates"]
+        ]
+        if row["gate"] not in EXPECTED_GATES:
+            broken["gates"][0] = row
+        assert contract_errors(broken, "ActivationGateMatrix"), label
+    # Membership completeness: a duplicated row or a missing row is refused too.
+    duplicated = _expected_matrix()
+    duplicated["gates"] = [duplicated["gates"][0]] * 5
+    assert contract_errors(duplicated, "ActivationGateMatrix")
+    shortened = _expected_matrix()
+    shortened["gates"] = shortened["gates"][:4]
+    assert contract_errors(shortened, "ActivationGateMatrix")
+    wrong_vocabulary = _expected_matrix()
+    wrong_vocabulary["gate_vocabulary"] = list(EXPECTED_GATE_VOCABULARY[:-1])
+    assert contract_errors(wrong_vocabulary, "ActivationGateMatrix")
 
 
 def test_budget_rule_boundaries_and_any_first_wins() -> None:
@@ -1334,6 +1493,7 @@ def test_budget_rule_boundaries_and_any_first_wins() -> None:
     assert rule["soft_stop_state"]["const"] == "PAUSED"
     assert rule["concurrency_is_not_a_stop"]["const"] is True
     assert rule["wall_clock_freezes_while_paused"]["const"] is True
+    assert rule["completion_precedes_budget_pause"]["const"] is True
     assert rule["budget_targets"]["oneOf"][0]["maximum"] == MAX_BUDGET_TARGETS
     assert rule["budget_seconds"]["oneOf"][0]["maximum"] == MAX_BUDGET_SECONDS
     assert rule["budget_concurrency"]["maximum"] == MAX_BUDGET_CONCURRENCY
@@ -1349,6 +1509,7 @@ def test_budget_rule_boundaries_and_any_first_wins() -> None:
             "soft_stop_state": "PAUSED",
             "concurrency_is_not_a_stop": True,
             "wall_clock_freezes_while_paused": True,
+            "completion_precedes_budget_pause": True,
         }
         base.update(overrides)
         return base
@@ -1557,8 +1718,8 @@ def _gate_mutation_scripts() -> list[tuple[str, dict[str, Any]]]:
         (
             "RUN_SUCCEEDED",
             {
-                "sql": "UPDATE upgrade_runs SET state = 'RUNNING', resumed_at = 5 "
-                "WHERE run_id = 'run-1'"
+                "sql": "UPDATE upgrade_runs SET state = 'RUNNING', resumed_at = 5, "
+                "clock_owner = 'session-1' WHERE run_id = 'run-1'"
             },
         ),
         (
@@ -1672,7 +1833,8 @@ def test_reference_protection_blocks_retire_and_cleanup() -> None:
     assert "UPGRADE_RUN_TARGET" in retire_blockers(connection, "gen-new")
     # A finished run no longer holds the generation.
     connection.execute(
-        "UPDATE upgrade_runs SET state = 'SUCCEEDED', resumed_at = NULL WHERE run_id = 'run-live'"
+        "UPDATE upgrade_runs SET state = 'SUCCEEDED', resumed_at = NULL, clock_owner = NULL "
+        "WHERE run_id = 'run-live'"
     )
     assert "UPGRADE_RUN_TARGET" not in retire_blockers(connection, "gen-new")
     # Only after every reference is gone may the generation be retired.
@@ -1828,6 +1990,11 @@ def test_migration_contract_and_byte_identity() -> None:
     assert contract["no_down_migration"]["const"] is True
     assert contract["too_new_behaviour"]["const"] == "SCHEMA_TOO_NEW"
     assert contract["unused_upgrade_behaviour_unchanged"]["const"] is True
+    assert tuple(contract["table_names"]["const"]) == (
+        "upgrade_runs",
+        "upgrade_targets",
+        "upgrade_control_requests",
+    )
     assert contract_errors(
         {
             "migration_file": "0017_upgrade_runs.sql",
@@ -1839,6 +2006,7 @@ def test_migration_contract_and_byte_identity() -> None:
             "no_down_migration": True,
             "too_new_behaviour": "SCHEMA_TOO_NEW",
             "unused_upgrade_behaviour_unchanged": True,
+            "table_names": ["upgrade_runs", "upgrade_targets", "upgrade_control_requests"],
         },
         "MigrationContract",
     ) == []
@@ -1875,3 +2043,894 @@ def test_the_companion_declares_no_supersession_and_no_private_property() -> Non
     text = COMPANION_PATH.read_text(encoding="utf-8")
     for forbidden in ("storage_uri", "source_root", "relative_path", "taken_at_raw", "root_path"):
         assert forbidden not in text, forbidden
+
+
+# ------------------------------------------------------- revised-surface reference models
+def control_digest(
+    *,
+    action: str,
+    pause_reason: str | None = None,
+    pause_detail: str | None = None,
+    grant_targets: int | None = None,
+    grant_seconds: int | None = None,
+) -> str:
+    """ADR-0013 section 3.2 (Sol F-B): the digest excludes ``expected_control_revision``."""
+    payload = {
+        "action": action,
+        "pause_reason": pause_reason,
+        "pause_detail": pause_detail,
+        "grant_targets": grant_targets,
+        "grant_seconds": grant_seconds,
+    }
+    assert set(payload) == set(DIGEST_FIELDS)
+    return digest_of(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+
+
+def apply_grant(*, cap: int | None, grant: int, maximum: int) -> int:
+    """ADR-0013 section 5.4 (Sol F-C): an additive budget grant, never a silent reset."""
+    if cap is None:
+        raise Refused("VALIDATION_ERROR", "GRANT_WITHOUT_CAP")
+    if isinstance(grant, bool) or not isinstance(grant, int) or grant < 1:
+        raise Refused("VALIDATION_ERROR", "GRANT_NOT_POSITIVE")
+    if cap + grant > maximum:
+        raise Refused("VALIDATION_ERROR", "GRANT_EXCEEDS_CEILING")
+    return cap + grant
+
+
+def effective_elapsed_ms(
+    *,
+    state: str,
+    elapsed_ms: int,
+    resumed_at: int | None,
+    clock_owner: str | None,
+    session: str,
+    now_ms: int,
+) -> int:
+    """ADR-0013 section 5.2 (Sol F-C): settled segment + the live, owned segment only."""
+    if state == "RUNNING" and clock_owner == session and resumed_at is not None:
+        return elapsed_ms + (now_ms - resumed_at)
+    return elapsed_ms
+
+
+def reanchor(*, clock_owner: str | None, session: str, now_ms: int) -> tuple[int, str]:
+    """Recovery re-anchors unconditionally: the downtime interval is never charged."""
+    assert clock_owner != session or clock_owner is None
+    return now_ms, session
+
+
+def settle_on_leave(*, elapsed_ms: int, resumed_at: int | None, clock_owner: str | None,
+                    session: str, now_ms: int) -> int:
+    if clock_owner != session:
+        raise Refused("INVALID_STATE_TRANSITION", "CLOCK_NOT_OWNED")
+    assert resumed_at is not None
+    return elapsed_ms + (now_ms - resumed_at)
+
+
+def batch_boundary_decision(*, target_states: tuple[str, ...], budget_reached: bool) -> str:
+    """ADR-0013 section 5.3 (Sol F-C): completion precedes the budget soft stop."""
+    if not any(state in ("PLANNED", "IN_FLIGHT") for state in target_states) and (
+        "FAILED" not in target_states
+    ):
+        return "SUCCEEDED"
+    return "PAUSED" if budget_reached else "RUNNING"
+
+
+def takeover_expired_lease(
+    connection: sqlite3.Connection, *, run_id: str, asset_id: int, now_ms: int
+) -> str:
+    """Sol F-E: the one expired-lease takeover path, executable, counted exactly once."""
+    row = connection.execute(
+        "SELECT * FROM upgrade_targets WHERE run_id = ? AND asset_id = ?", (run_id, asset_id)
+    ).fetchone()
+    if row is None or str(row["state"]) != "IN_FLIGHT":
+        raise Refused("INVALID_STATE_TRANSITION", "TAKEOVER_NOT_ELIGIBLE")
+    if int(row["lease_expires_at"]) > int(now_ms):
+        # A still-valid lease is the zero-count process replay, not a takeover.
+        raise Refused("INVALID_STATE_TRANSITION", "LEASE_STILL_VALID")
+    delta = attempt_delta(transition="IN_FLIGHT->FAILED", reason="LEASE_EXPIRED")
+    connection.execute(
+        "UPDATE upgrade_targets SET state = 'FAILED', reason = 'LEASE_EXPIRED', "
+        "attempts = attempts + ?, lease_token = NULL, lease_expires_at = NULL, updated_at = ? "
+        "WHERE run_id = ? AND asset_id = ? AND state = 'IN_FLIGHT'",
+        (delta, now_ms, run_id, asset_id),
+    )
+    return "FAILED"
+
+
+def attempt_delta(*, transition: str, reason: str | None) -> int:
+    """ADR-0013 section 4.5 (Sol F-E): attempts increments only when entering FAILED."""
+    if transition != "IN_FLIGHT->FAILED":
+        return 0
+    assert reason is not None
+    return 1 if EXPECTED_FAILURE_MAPPING[reason][4] else 0
+
+
+def noop_matches(
+    *,
+    state: str,
+    pause_reason: str | None,
+    pause_detail: str | None,
+    grant_targets: int | None,
+    grant_seconds: int | None,
+    run: Any,
+) -> bool:
+    """Sol F-B2: what "the parameters match the state that already holds" means."""
+    if state == "PAUSED":
+        return pause_reason == run["pause_reason"] and pause_detail == run["pause_detail"]
+    if state == "RUNNING":
+        return grant_targets is None and grant_seconds is None
+    if state == "CANCELLED":
+        return True
+    return False
+
+
+def apply_control_request(
+    connection: sqlite3.Connection,
+    *,
+    run_id: str,
+    request_id: str,
+    action: str,
+    pause_reason: str | None = None,
+    pause_detail: str | None = None,
+    grant_targets: int | None = None,
+    grant_seconds: int | None = None,
+    expected_control_revision: int | None = None,
+    session: str = "session-1",
+    now_ms: int = 2000,
+) -> dict[str, Any]:
+    """ADR-0013 section 3.2 (Sol F-B) as one ``BEGIN IMMEDIATE`` transaction.
+
+    Replay lookup comes first: a replayed request is answered from the recorded row and is
+    never re-judged by the state predicate or by ``expected_control_revision``.
+    """
+    digest = control_digest(
+        action=action,
+        pause_reason=pause_reason,
+        pause_detail=pause_detail,
+        grant_targets=grant_targets,
+        grant_seconds=grant_seconds,
+    )
+    target = {"PAUSE": "PAUSED", "RESUME": "RUNNING", "CANCEL": "CANCELLED"}.get(action)
+    if target is None:
+        raise Refused("VALIDATION_ERROR", "UNKNOWN_CONTROL_ACTION")
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        existing = connection.execute(
+            "SELECT * FROM upgrade_control_requests WHERE run_id = ? AND request_id = ?",
+            (run_id, request_id),
+        ).fetchone()
+        if existing is not None:
+            if str(existing["request_digest"]) != digest:
+                raise Refused("VALIDATION_ERROR", "IDEMPOTENCY_CONFLICT")
+            connection.execute("COMMIT")
+            # Sol F-B1: the response describes *this call*, which wrote nothing.
+            return {
+                "contract_version": CONTRACT_VERSION,
+                "request_id": request_id,
+                "run_id": run_id,
+                "state": str(existing["outcome_state"]),
+                "pause_reason": existing["outcome_pause_reason"],
+                "pause_detail": existing["outcome_pause_detail"],
+                "control_revision": int(existing["outcome_control_revision"]),
+                "changed": False,
+                "replayed": True,
+            }
+        run = connection.execute(
+            "SELECT * FROM upgrade_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if run is None:
+            raise Refused("INVALID_STATE_TRANSITION", "RUN_NOT_FOUND")
+        state = str(run["state"])
+        changed = state != target
+        if changed and not run_transition_allowed(state, target):
+            raise Refused("INVALID_STATE_TRANSITION", f"{state}->{target}")
+        if not changed and not noop_matches(
+            state=state,
+            pause_reason=pause_reason,
+            pause_detail=pause_detail,
+            grant_targets=grant_targets,
+            grant_seconds=grant_seconds,
+            run=run,
+        ):
+            # Sol F-B2: the state already holds but the parameters disagree.
+            raise Refused("INVALID_STATE_TRANSITION", "CONTROL_NOOP_ARGUMENT_MISMATCH")
+        if expected_control_revision is not None and int(expected_control_revision) != int(
+            run["control_revision"]
+        ):
+            raise Refused("INVALID_STATE_TRANSITION", "CONTROL_REVISION_STALE")
+        new_state = target if changed else state
+        new_pause_reason = pause_reason if new_state == "PAUSED" else None
+        new_pause_detail = pause_detail if new_state == "PAUSED" else None
+        new_revision = int(run["control_revision"]) + (1 if changed else 0)
+        elapsed = int(run["elapsed_ms"])
+        resumed_at = run["resumed_at"]
+        owner = run["clock_owner"]
+        budget_targets = run["budget_targets"]
+        budget_seconds = run["budget_seconds"]
+        if changed and state == "RUNNING":
+            elapsed = settle_on_leave(
+                elapsed_ms=elapsed,
+                resumed_at=int(resumed_at),
+                clock_owner=None if owner is None else str(owner),
+                session=session,
+                now_ms=now_ms,
+            )
+            resumed_at = None
+            owner = None
+        if changed and new_state == "RUNNING":
+            # Sol F-B2-G: a budget grant is only legal on PAUSED -> RUNNING. The check runs
+            # before any run/log write, and a replay has already returned above.
+            if (grant_targets is not None or grant_seconds is not None) and state != "PAUSED":
+                raise Refused("INVALID_STATE_TRANSITION", "GRANT_SOURCE_STATE_NOT_PAUSED")
+            if owner is not None and str(owner) != session:
+                raise Refused("INVALID_STATE_TRANSITION", "CLOCK_NOT_OWNED")
+            resumed_at = now_ms
+            owner = session
+            if grant_targets is not None:
+                budget_targets = apply_grant(
+                    cap=None if budget_targets is None else int(budget_targets),
+                    grant=grant_targets,
+                    maximum=MAX_BUDGET_TARGETS,
+                )
+            if grant_seconds is not None:
+                budget_seconds = apply_grant(
+                    cap=None if budget_seconds is None else int(budget_seconds),
+                    grant=grant_seconds,
+                    maximum=MAX_BUDGET_SECONDS,
+                )
+        if changed:
+            # Sol F-B2: a *first* no-op inserts the log row only; it must not touch any column.
+            connection.execute(
+                "UPDATE upgrade_runs SET state = ?, pause_reason = ?, pause_detail = ?, "
+                "budget_targets = ?, budget_seconds = ?, elapsed_ms = ?, resumed_at = ?, "
+                "clock_owner = ?, control_revision = ?, updated_at = ? WHERE run_id = ?",
+                (
+                    new_state,
+                    new_pause_reason,
+                    new_pause_detail,
+                    budget_targets,
+                    budget_seconds,
+                    elapsed,
+                    resumed_at,
+                    owner,
+                    new_revision,
+                    now_ms,
+                    run_id,
+                ),
+            )
+        connection.execute(
+            "INSERT INTO upgrade_control_requests(run_id, request_id, action, request_digest, "
+            "grant_targets, grant_seconds, outcome_state, outcome_pause_reason, "
+            "outcome_pause_detail, outcome_control_revision, changed, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                run_id,
+                request_id,
+                action,
+                digest,
+                grant_targets if changed else None,
+                grant_seconds if changed else None,
+                new_state,
+                new_pause_reason,
+                new_pause_detail,
+                new_revision,
+                1 if changed else 0,
+                now_ms,
+            ),
+        )
+        connection.execute("COMMIT")
+        return {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": request_id,
+            "run_id": run_id,
+            "state": new_state,
+            "pause_reason": new_pause_reason,
+            "pause_detail": new_pause_detail,
+            "control_revision": new_revision,
+            "changed": changed,
+            "replayed": False,
+        }
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+
+
+def _profile(**overrides: Any) -> Any:
+    base: dict[str, Any] = {
+        "profile_id": "prof-x",
+        "embedding_processor_id": "emb-v1",
+        "space_id": "space-a",
+        "image_generation_id": "gen-new",
+        "query_preprocess_version": "1",
+        "query_parser_version": "1",
+        "fts_tokenizer_version": search_profile.SUPPORTED_FTS_TOKENIZER_VERSION,
+        "fts_generation_id": search_profile.SUPPORTED_FTS_GENERATION_ID,
+        "reranker_processor_id": None,
+        "fusion_config": dict(search_profile.DEFAULT_FUSION_CONFIG),
+        "runtime_package_id": "pkg-v1",
+        "created_at": 0,
+    }
+    base.update(overrides)
+    return search_profile.SearchProfile(**base)
+
+
+def _catalog_shim(connection: sqlite3.Connection) -> Any:
+    from types import SimpleNamespace
+
+    return SimpleNamespace(connection=connection, read_one=None, read_all=None, now_ms=lambda: 0)
+
+
+def reused_refusal_details_keys() -> set[str]:
+    """Sol O-1: every ``details`` key the reused readiness/binding refusals really carry."""
+    keys: set[str] = set()
+
+    def capture(call: Any) -> None:
+        try:
+            call()
+        except error_codes.CatalogError as error:  # type: ignore[attr-defined]
+            keys.update(str(name) for name in error.details)
+        else:  # pragma: no cover - each probe must refuse
+            raise AssertionError("the probe was expected to refuse")
+
+    connection = new_catalog()
+    add_job(connection)
+    add_asset(connection, 1)
+    add_generation(connection, "gen-new")
+    add_generation(connection, "gen-b", space_id="space-b", processor_id="emb-other")
+    catalog = _catalog_shim(connection)
+
+    capture(lambda: search_profile.resolve_profile_binding(
+        catalog, _profile(image_generation_id="gen-missing"), connection=connection))
+    capture(lambda: search_profile.resolve_profile_binding(
+        catalog, _profile(space_id="space-b"), connection=connection))
+    capture(lambda: search_profile.resolve_profile_binding(
+        catalog, _profile(embedding_processor_id="emb-other"), connection=connection))
+    add_generation(connection, "gen-pending", state="PENDING")
+    capture(lambda: search_profile.resolve_profile_binding(
+        catalog, _profile(image_generation_id="gen-pending"), connection=connection))
+    capture(lambda: search_profile.validate_profile_readiness(
+        connection, _profile(), now_ms=0))
+    capture(lambda: search_profile.reranker_readiness(
+        connection, _profile(reranker_processor_id="rerank-v1")))
+    capture(lambda: search_profile.check_profile_servable(
+        catalog, _profile(fts_generation_id="fts-other"), connection=connection))
+    capture(lambda: search_profile.check_profile_servable(
+        catalog, _profile(fusion_config={"revision": "x", "method": "MEAN",
+                                         "parameters": {"k": 1, "weights": {}}}),
+        connection=connection))
+    return keys
+
+
+def _running_fixture(**run_kwargs: Any) -> sqlite3.Connection:
+    connection = new_catalog()
+    add_job(connection)
+    add_asset(connection, 1)
+    add_generation(connection, "gen-new")
+    add_profile(connection, "prof-new", generation_id="gen-new")
+    add_run(
+        connection,
+        "run-1",
+        profile_id="prof-new",
+        generation_id="gen-new",
+        state="RUNNING",
+        **run_kwargs,
+    )
+    return connection
+
+
+def _planned_fixture(**run_kwargs: Any) -> sqlite3.Connection:
+    """A legal PLANNED run (no clock anchor), used for the F-B2-G source-state probe."""
+    connection = _running_fixture(**run_kwargs)
+    connection.execute(
+        "UPDATE upgrade_runs SET state = 'PLANNED', resumed_at = NULL, clock_owner = NULL "
+        "WHERE run_id = 'run-1'"
+    )
+    return connection
+
+
+# ------------------------------------------------------------------- Sol F-A / O-2 cases
+def test_activation_reevaluates_the_current_difference_set() -> None:
+    """Sol F-A: the plan snapshot is not the bound of the coverage gate."""
+    # (a) an ACTIVE asset added after plan: no target row, no entry, no outbox row.
+    connection = _activation_fixture()
+    add_asset(connection, 2)
+    assert needs_projection(connection, space_id="space-a", generation_id="gen-new") == [2]
+    before = catalog_snapshot(connection)
+    with pytest.raises(Refused) as refused:
+        reference_activate(connection, run_id="run-1")
+    assert (refused.value.code, refused.value.reason) == (
+        "INVALID_STATE_TRANSITION",
+        "COVERAGE_INCOMPLETE",
+    )
+    assert catalog_snapshot(connection) == before
+    # Positive control: once the new asset is covered, the same run activates.
+    add_artifact(connection, "art-2")
+    add_outbox(
+        connection, "ev2", artifact_id="art-2", asset_id=2, generation_id="gen-new",
+        projection_revision=7,
+    )
+    add_entry(
+        connection, asset_id=2, generation_id="gen-new", artifact_id="art-2",
+        confirmation_revision=7,
+    )
+    reference_activate(connection, run_id="run-1")
+    assert connection.execute(
+        "SELECT profile_id FROM active_search_profile WHERE state_id = 1"
+    ).fetchone()[0] == "prof-new"
+
+    # (b) an empty plan (no target rows at all) then a new ACTIVE asset.
+    connection = _activation_fixture()
+    connection.execute("DELETE FROM upgrade_targets WHERE run_id = 'run-1'")
+    add_asset(connection, 2)
+    before = catalog_snapshot(connection)
+    with pytest.raises(Refused) as refused:
+        reference_activate(connection, run_id="run-1")
+    assert refused.value.reason == "COVERAGE_INCOMPLETE"
+    assert catalog_snapshot(connection) == before
+
+    # (c) an already covered asset that was never in the plan loses its coverage.
+    connection = _activation_fixture()
+    connection.execute("DELETE FROM index_entries WHERE asset_id = 1")
+    before = catalog_snapshot(connection)
+    with pytest.raises(Refused) as refused:
+        reference_activate(connection, run_id="run-1")
+    assert refused.value.reason == "COVERAGE_INCOMPLETE"
+    assert catalog_snapshot(connection) == before
+
+
+def test_activation_is_one_transaction_and_rolls_back_on_fault() -> None:
+    """Sol O-2: gates and the pointer move share one transaction, so a mid-way fault rolls back."""
+    connection = _activation_fixture()
+    before = catalog_snapshot(connection)
+
+    def explode(_connection: sqlite3.Connection) -> None:
+        raise RuntimeError("mid-transaction fault")
+
+    with pytest.raises(RuntimeError):
+        reference_activate(connection, run_id="run-1", activation_hook=explode)
+    assert catalog_snapshot(connection) == before
+
+
+def test_artifact_readability_is_a_real_read() -> None:
+    """Sol O-2: the gate opens the artifact instead of probing for a path."""
+    connection = _activation_fixture()
+    # A directory exists on disk but cannot be read as a file.
+    connection.execute(
+        "UPDATE artifacts SET storage_uri = ? WHERE artifact_id = 'art-1'",
+        ("docs/decisions/contracts",),
+    )
+    before = catalog_snapshot(connection)
+    with pytest.raises(Refused) as refused:
+        reference_activate(connection, run_id="run-1")
+    assert (refused.value.code, refused.value.reason) == ("ARTIFACT_MISSING", None)
+    assert catalog_snapshot(connection) == before
+
+
+# ------------------------------------------------------------------- Sol F-B cases
+def test_control_request_schema_is_closed() -> None:
+    request = {
+        "contract_version": CONTRACT_VERSION,
+        "request_id": "R1",
+        "action": "PAUSE",
+        "pause_reason": "USER",
+    }
+    assert contract_errors(request, "UpgradeControlRequest") == []
+    assert contract_errors(dict(request, unknown_field=1), "UpgradeControlRequest")
+    assert contract_errors(
+        {"contract_version": CONTRACT_VERSION, "request_id": "R1"}, "UpgradeControlRequest"
+    )
+    assert contract_errors(
+        {"contract_version": CONTRACT_VERSION, "request_id": "R1", "action": "MADE_UP"},
+        "UpgradeControlRequest",
+    )
+    # pause needs a reason; ENVIRONMENT needs a detail; grants belong to resume only.
+    assert contract_errors(
+        {"contract_version": CONTRACT_VERSION, "request_id": "R1", "action": "PAUSE"},
+        "UpgradeControlRequest",
+    )
+    assert contract_errors(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": "R1",
+            "action": "PAUSE",
+            "pause_reason": "ENVIRONMENT",
+        },
+        "UpgradeControlRequest",
+    )
+    assert contract_errors(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": "R1",
+            "action": "CANCEL",
+            "grant_targets": 5,
+        },
+        "UpgradeControlRequest",
+    )
+    assert contract_errors(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": "R1",
+            "action": "RESUME",
+            "grant_targets": 5,
+            "grant_seconds": 60,
+            "expected_control_revision": 3,
+        },
+        "UpgradeControlRequest",
+    ) == []
+    assert contract_errors(
+        {
+            "contract_version": CONTRACT_VERSION,
+            "request_id": "R1",
+            "action": "RESUME",
+            "grant_targets": 5,
+            "grant_seconds": 60,
+            "expected_control_revision": 3,
+        },
+        "UpgradeControlRequestRow",
+    )
+    row = {
+        "run_id": "run-1",
+        "request_id": "R1",
+        "action": "RESUME",
+        "request_digest": "a" * 64,
+        "grant_targets": 5,
+        "grant_seconds": None,
+        "outcome_state": "RUNNING",
+        "outcome_pause_reason": None,
+        "outcome_pause_detail": None,
+        "outcome_control_revision": 4,
+        "changed": True,
+        "created_at": 10,
+    }
+    assert contract_errors(row, "UpgradeControlRequestRow") == []
+    assert contract_errors(dict(row, extra=1), "UpgradeControlRequestRow")
+    assert contract_errors(dict(row, outcome_state="PAUSED"), "UpgradeControlRequestRow")
+    assert contract_errors(dict(row, unknown_field=1), "UpgradeControlRequestRow")
+    assert contract_errors(
+        dict(row, action="PAUSE", grant_targets=None), "UpgradeControlRequestRow"
+    ) == []
+    # A grant on a row whose run was not changed is refused by the contract and by the DDL.
+    assert contract_errors(dict(row, changed=False), "UpgradeControlRequestRow")
+    connection = _running_fixture()
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO upgrade_control_requests(run_id, request_id, action, request_digest, "
+            "grant_targets, grant_seconds, outcome_state, outcome_pause_reason, "
+            "outcome_pause_detail, outcome_control_revision, changed, created_at) "
+            "VALUES ('run-1', 'RX', 'PAUSE', ?, 5, NULL, 'PAUSED', 'USER', NULL, 2, 1, 10)",
+            ("b" * 64,),
+        )
+
+
+def test_control_request_idempotency_is_durable_and_replay_first() -> None:
+    """Sol F-B1/F-B2: pause(R1) → resume(R2) → replay R1 must not pause the run again."""
+    connection = _running_fixture()
+    first = apply_control_request(
+        connection, run_id="run-1", request_id="R1", action="PAUSE", pause_reason="USER"
+    )
+    assert first["changed"] is True and first["replayed"] is False
+    assert first["state"] == "PAUSED" and first["control_revision"] == 2
+    second = apply_control_request(connection, run_id="run-1", request_id="R2", action="RESUME")
+    assert second["state"] == "RUNNING" and second["control_revision"] == 3
+    # The restart replays R1 with an older expected revision: replay wins over the revision check.
+    before = catalog_snapshot(connection)
+    log_before = control_log_rows(connection)
+    replay = apply_control_request(
+        connection,
+        run_id="run-1",
+        request_id="R1",
+        action="PAUSE",
+        pause_reason="USER",
+        expected_control_revision=2,
+    )
+    # Sol F-B1: the response describes *this* call, so a replay is changed=false.
+    assert replay["changed"] is False and replay["replayed"] is True
+    assert replay["state"] == "PAUSED" and replay["control_revision"] == 2
+    assert catalog_snapshot(connection) == before
+    assert control_log_rows(connection) == log_before
+    pointer = connection.execute("SELECT state FROM upgrade_runs WHERE run_id = 'run-1'").fetchone()[0]
+    assert pointer == "RUNNING"  # the replayed request did not touch the run
+    # The same key with a different intent is a structured conflict.
+    for kwargs in ({"action": "RESUME"}, {"action": "PAUSE", "pause_reason": "BUDGET"}):
+        with pytest.raises(Refused) as conflicted:
+            apply_control_request(
+                connection, run_id="run-1", request_id="R1", **kwargs  # type: ignore[arg-type]
+            )
+        assert conflicted.value.code == "VALIDATION_ERROR"
+    # A first no-op (pause on an already paused run) is recorded too, with changed = 0 --
+    # and it must leave the whole run row untouched (Sol F-B2).
+    apply_control_request(
+        connection, run_id="run-1", request_id="R3", action="PAUSE", pause_reason="USER"
+    )
+    run_before_noop = catalog_snapshot(connection)
+    log_before_noop = control_log_rows(connection)
+    noop = apply_control_request(
+        connection, run_id="run-1", request_id="R4", action="PAUSE", pause_reason="USER"
+    )
+    assert noop["changed"] is False and noop["replayed"] is False
+    assert noop["state"] == "PAUSED" and noop["control_revision"] == 4
+    assert catalog_snapshot(connection) == run_before_noop
+    assert control_log_rows(connection) == log_before_noop + 1
+    rows = [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT request_id, changed, outcome_state FROM upgrade_control_requests "
+            "WHERE run_id = 'run-1' ORDER BY request_id"
+        )
+    ]
+    assert rows == [
+        ("R1", 1, "PAUSED"),
+        ("R2", 1, "RUNNING"),
+        ("R3", 1, "PAUSED"),
+        ("R4", 0, "PAUSED"),
+    ]
+    # expected_control_revision is a precondition only for a *fresh* request.
+    before_stale = catalog_snapshot(connection)
+    with pytest.raises(Refused) as stale:
+        apply_control_request(
+            connection, run_id="run-1", request_id="R5", action="CANCEL",
+            expected_control_revision=99,
+        )
+    assert stale.value.reason == "CONTROL_REVISION_STALE"
+    assert catalog_snapshot(connection) == before_stale
+
+    # Sol F-B2: the state already holds but the parameters disagree -> refuse with zero writes,
+    # including no log row (a different reason on an already paused run, and a grant on a run
+    # that is already RUNNING).
+    connection2 = _running_fixture()
+    apply_control_request(
+        connection2, run_id="run-1", request_id="P1", action="PAUSE", pause_reason="BUDGET"
+    )
+    before_mismatch = catalog_snapshot(connection2)
+    log_before_mismatch = control_log_rows(connection2)
+    with pytest.raises(Refused) as mismatch:
+        apply_control_request(
+            connection2, run_id="run-1", request_id="P2", action="PAUSE", pause_reason="USER"
+        )
+    assert mismatch.value.code == "INVALID_STATE_TRANSITION"
+    assert mismatch.value.reason == "CONTROL_NOOP_ARGUMENT_MISMATCH"
+    assert catalog_snapshot(connection2) == before_mismatch
+    assert control_log_rows(connection2) == log_before_mismatch
+    connection3 = _running_fixture(budget_targets=1)
+    before_grant = catalog_snapshot(connection3)
+    log_before_grant = control_log_rows(connection3)
+    with pytest.raises(Refused) as granted_run:
+        apply_control_request(
+            connection3, run_id="run-1", request_id="G1", action="RESUME", grant_targets=2
+        )
+    assert granted_run.value.reason == "CONTROL_NOOP_ARGUMENT_MISMATCH"
+    assert catalog_snapshot(connection3) == before_grant
+    assert control_log_rows(connection3) == log_before_grant
+
+
+# ------------------------------------------------------------------- Sol F-C cases
+def test_budget_grant_and_wall_clock_ledger() -> None:
+    assert apply_grant(cap=1, grant=2, maximum=MAX_BUDGET_TARGETS) == 3
+    for kwargs in (
+        {"cap": None, "grant": 1, "maximum": MAX_BUDGET_TARGETS},
+        {"cap": MAX_BUDGET_TARGETS, "grant": 1, "maximum": MAX_BUDGET_TARGETS},
+        {"cap": 5, "grant": 0, "maximum": MAX_BUDGET_TARGETS},
+    ):
+        with pytest.raises(Refused) as refused:
+            apply_grant(**kwargs)  # type: ignore[arg-type]
+        assert refused.value.code == "VALIDATION_ERROR"
+
+    # An exhausted budget claims nothing on a bare resume; a grant lets the same run continue.
+    connection = _running_fixture(budget_targets=1)
+    add_target(connection, "run-1", 1, state="SUCCEEDED")
+    assert claim_batch_size(budget_concurrency=4, budget_targets=1, completed_targets=1) == 0
+    apply_control_request(
+        connection, run_id="run-1", request_id="A1", action="PAUSE", pause_reason="BUDGET"
+    )
+    bare = apply_control_request(connection, run_id="run-1", request_id="A2", action="RESUME")
+    assert bare["state"] == "RUNNING"
+    assert claim_batch_size(budget_concurrency=4, budget_targets=1, completed_targets=1) == 0
+    apply_control_request(
+        connection, run_id="run-1", request_id="A3", action="PAUSE", pause_reason="BUDGET"
+    )
+    granted = apply_control_request(
+        connection, run_id="run-1", request_id="A4", action="RESUME", grant_targets=3
+    )
+    assert granted["state"] == "RUNNING"
+    caps = connection.execute(
+        "SELECT budget_targets, budget_seconds FROM upgrade_runs WHERE run_id = 'run-1'"
+    ).fetchone()
+    assert int(caps["budget_targets"]) == 4
+    assert claim_batch_size(budget_concurrency=4, budget_targets=4, completed_targets=1) == 3
+    # A grant on an unlimited cap is refused, and it never resets what is already recorded.
+    with pytest.raises(Refused) as no_cap:
+        apply_grant(cap=None, grant=1, maximum=MAX_BUDGET_TARGETS)
+    assert no_cap.value.reason == "GRANT_WITHOUT_CAP"
+
+    # The wall-clock ledger: settled segment + live segment, re-anchored on recovery.
+    assert effective_elapsed_ms(
+        state="PAUSED", elapsed_ms=5000, resumed_at=None, clock_owner=None, session="s", now_ms=99999
+    ) == 5000
+    assert effective_elapsed_ms(
+        state="RUNNING", elapsed_ms=5000, resumed_at=0, clock_owner="s", session="s", now_ms=1500
+    ) == 6500
+    assert effective_elapsed_ms(
+        state="RUNNING", elapsed_ms=5000, resumed_at=0, clock_owner="other", session="s", now_ms=1500
+    ) == 5000
+    # Sol F-C's trap: reading only the settled value never reaches a seconds cap.
+    assert not budget_stop(budget_targets=None, budget_seconds=1, completed_targets=0, elapsed_ms=0)
+    assert budget_stop(budget_targets=None, budget_seconds=1, completed_targets=0, elapsed_ms=1000)
+    assert reanchor(clock_owner="previous-session", session="s", now_ms=9999) == (9999, "s")
+    assert settle_on_leave(
+        elapsed_ms=100, resumed_at=1000, clock_owner="s", session="s", now_ms=1050
+    ) == 150
+    with pytest.raises(Refused) as not_owner:
+        settle_on_leave(elapsed_ms=100, resumed_at=1000, clock_owner="other", session="s", now_ms=1050)
+    assert not_owner.value.reason == "CLOCK_NOT_OWNED"
+
+    # Boundary order: completion precedes the budget soft stop.
+    assert batch_boundary_decision(target_states=("SUCCEEDED",), budget_reached=True) == "SUCCEEDED"
+    assert batch_boundary_decision(
+        target_states=("SUCCEEDED", "PLANNED"), budget_reached=True
+    ) == "PAUSED"
+    assert batch_boundary_decision(
+        target_states=("SUCCEEDED", "FAILED"), budget_reached=True
+    ) == "PAUSED"
+    assert batch_boundary_decision(
+        target_states=("SUCCEEDED",), budget_reached=False
+    ) == "SUCCEEDED"
+
+
+# ------------------------------------------------------------------- Sol F-E cases
+def test_expired_lease_takeover_counts_exactly_once() -> None:
+    assert attempt_delta(transition="IN_FLIGHT->FAILED", reason="LEASE_EXPIRED") == 1
+    assert attempt_delta(transition="IN_FLIGHT->FAILED", reason="SOURCE_OFFLINE") == 1
+    assert attempt_delta(transition="IN_FLIGHT->FAILED", reason="MODEL_WEIGHTS_MISSING") == 0
+    assert attempt_delta(transition="IN_FLIGHT->FAILED", reason="VRAM_INSUFFICIENT") == 0
+    assert attempt_delta(transition="IN_FLIGHT->PLANNED", reason=None) == 0
+    assert attempt_delta(transition="FAILED->PLANNED", reason=None) == 0
+
+    connection = _running_fixture()
+    add_target(connection, "run-1", 1, state="IN_FLIGHT")
+    # Leaving IN_FLIGHT without clearing the lease is refused by the DDL.
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute("UPDATE upgrade_targets SET state = 'SUCCEEDED' WHERE asset_id = 1")
+    # The one takeover path, with exactly one increment.
+    connection.execute(
+        "UPDATE upgrade_targets SET state = 'FAILED', reason = 'LEASE_EXPIRED', attempts = attempts + 1, "
+        "lease_token = NULL, lease_expires_at = NULL WHERE asset_id = 1"
+    )
+    row = connection.execute(
+        "SELECT state, reason, attempts FROM upgrade_targets WHERE asset_id = 1"
+    ).fetchone()
+    assert tuple(row) == ("FAILED", "LEASE_EXPIRED", 1)
+    # The second takeover call is executed for real: the row is no longer eligible, so it
+    # cannot count a second time (Sol F-E).
+    connection.execute(
+        "UPDATE upgrade_targets SET state = 'IN_FLIGHT', reason = NULL, "
+        "lease_token = 'lease-2', lease_expires_at = 500, attempts = 0 WHERE asset_id = 1"
+    )
+    with pytest.raises(Refused) as still_valid:
+        takeover_expired_lease(connection, run_id="run-1", asset_id=1, now_ms=100)
+    assert still_valid.value.reason == "LEASE_STILL_VALID"
+    assert takeover_expired_lease(
+        connection, run_id="run-1", asset_id=1, now_ms=600
+    ) == "FAILED"
+    assert int(
+        connection.execute(
+            "SELECT attempts FROM upgrade_targets WHERE asset_id = 1"
+        ).fetchone()[0]
+    ) == 1
+    with pytest.raises(Refused) as ineligible:
+        takeover_expired_lease(connection, run_id="run-1", asset_id=1, now_ms=700)
+    assert ineligible.value.reason == "TAKEOVER_NOT_ELIGIBLE"
+    assert int(
+        connection.execute(
+            "SELECT attempts FROM upgrade_targets WHERE asset_id = 1"
+        ).fetchone()[0]
+    ) == 1
+    connection.execute(
+        "UPDATE upgrade_targets SET state = 'FAILED', reason = 'LEASE_EXPIRED', "
+        "lease_token = NULL, lease_expires_at = NULL WHERE asset_id = 1"
+    )
+    # The explicit retry afterwards does not count again.
+    connection.execute(
+        "UPDATE upgrade_targets SET state = 'PLANNED', reason = NULL WHERE asset_id = 1"
+    )
+    assert int(
+        connection.execute(
+            "SELECT attempts FROM upgrade_targets WHERE asset_id = 1"
+        ).fetchone()[0]
+    ) == 1
+
+
+# ------------------------------------------------------------------- Sol O-1 case
+def test_reused_refusal_details_keys_are_inside_the_frozen_error_details() -> None:
+    frozen = set(DEFS["UpgradeApiErrorDetails"]["properties"])
+    keys = reused_refusal_details_keys()
+    assert keys, "the probes must exercise the real readiness/binding refusals"
+    assert keys <= frozen, sorted(keys - frozen)
+    assert {"reason", "runtime_package_id", "profile_id", "generation_state"} <= keys
+
+
+def test_control_response_changed_semantics() -> None:
+    """Sol F-B1: first / no-op / replay must each produce one valid, distinct envelope."""
+    connection = _running_fixture()
+    first = apply_control_request(
+        connection, run_id="run-1", request_id="C1", action="PAUSE", pause_reason="USER"
+    )
+    assert contract_errors(first, "UpgradeControlResponse") == []
+    assert (first["changed"], first["replayed"]) == (True, False)
+
+    noop = apply_control_request(
+        connection, run_id="run-1", request_id="C2", action="PAUSE", pause_reason="USER"
+    )
+    assert contract_errors(noop, "UpgradeControlResponse") == []
+    assert (noop["changed"], noop["replayed"]) == (False, False)
+
+    replay = apply_control_request(
+        connection, run_id="run-1", request_id="C1", action="PAUSE", pause_reason="USER"
+    )
+    assert contract_errors(replay, "UpgradeControlResponse") == []
+    assert (replay["changed"], replay["replayed"]) == (False, True)
+    assert replay["control_revision"] == first["control_revision"]
+
+    # The pairing the companion forbids: a call cannot both have written the run and be a replay.
+    assert contract_errors(dict(replay, changed=True), "UpgradeControlResponse")
+    assert contract_errors(dict(first, replayed=True), "UpgradeControlResponse")
+    # The durable log keeps the *original* outcome, which is a different fact from the response.
+    recorded = connection.execute(
+        "SELECT changed, outcome_state, outcome_control_revision FROM upgrade_control_requests "
+        "WHERE request_id = 'C1'"
+    ).fetchone()
+    assert tuple(recorded) == (1, "PAUSED", 2)
+
+
+def test_budget_grant_requires_a_paused_source_state() -> None:
+    """Sol F-B2-G: grant_* is only legal on PAUSED -> RUNNING, never on PLANNED -> RUNNING."""
+    for cap_field, grant_field in (("budget_targets", "grant_targets"), ("budget_seconds", "grant_seconds")):
+        connection = _planned_fixture(**{cap_field: 1})
+        before = catalog_snapshot(connection)
+        log_before = control_log_rows(connection)
+        with pytest.raises(Refused) as refused:
+            apply_control_request(
+                connection,
+                run_id="run-1",
+                request_id="PLAN_GRANT",
+                action="RESUME",
+                **{grant_field: 2},  # type: ignore[arg-type]
+            )
+        assert refused.value.code == "INVALID_STATE_TRANSITION"
+        assert refused.value.reason == "GRANT_SOURCE_STATE_NOT_PAUSED"
+        assert catalog_snapshot(connection) == before
+        assert control_log_rows(connection) == log_before
+        # The plain start transition is untouched by this rule (no grant, no refusal).
+        started = apply_control_request(
+            connection, run_id="run-1", request_id="PLAN_START", action="RESUME"
+        )
+        assert started["changed"] is True and started["state"] == "RUNNING"
+
+    # A successful PAUSED + grant may still be replayed by its own key once the run is RUNNING.
+    connection = _running_fixture(budget_targets=1)
+    add_target(connection, "run-1", 1, state="SUCCEEDED")
+    apply_control_request(
+        connection, run_id="run-1", request_id="G1", action="PAUSE", pause_reason="BUDGET"
+    )
+    granted = apply_control_request(
+        connection, run_id="run-1", request_id="G2", action="RESUME", grant_targets=2
+    )
+    assert granted["changed"] is True and granted["state"] == "RUNNING"
+    cap = int(
+        connection.execute(
+            "SELECT budget_targets FROM upgrade_runs WHERE run_id = 'run-1'"
+        ).fetchone()[0]
+    )
+    assert cap == 3
+    before_replay = catalog_snapshot(connection)
+    log_before_replay = control_log_rows(connection)
+    replay = apply_control_request(
+        connection, run_id="run-1", request_id="G2", action="RESUME", grant_targets=2
+    )
+    assert replay["changed"] is False and replay["replayed"] is True
+    assert catalog_snapshot(connection) == before_replay
+    assert control_log_rows(connection) == log_before_replay
+    assert int(
+        connection.execute(
+            "SELECT budget_targets FROM upgrade_runs WHERE run_id = 'run-1'"
+        ).fetchone()[0]
+    ) == 3  # the replay does not grant a second time
