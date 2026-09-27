@@ -133,7 +133,7 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
                 source.draft(source.mode, (long_edge, long_edge))
             # Restore the orientation pillow-heif cleared so HEIC is normalised by exactly
             # the same ``exif_transpose`` call as every other format.
-            orientation = _restore_recorded_orientation(source)
+            orientation = restore_recorded_orientation(source)
             if orientation is None:
                 orientation = _read_orientation(source)
             upright = ImageOps.exif_transpose(source)
@@ -267,7 +267,7 @@ def _read_orientation(source: Image.Image) -> int:
     return read_orientation(source)
 
 
-def _restore_recorded_orientation(source: Image.Image) -> int | None:
+def restore_recorded_orientation(source: Image.Image) -> int | None:
     """Put back the orientation pillow-heif removed, so one path normalises every format.
 
     Returns the effective orientation when the tag was restored, and ``None`` when this

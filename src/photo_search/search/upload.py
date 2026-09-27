@@ -16,10 +16,10 @@ Three facts shape the implementation:
    directory, validated there, and that directory is removed again on *both* the success and
    the failure path (:func:`stage_upload`).
 3. **The image tower stays behind the ADR-0003 §7 adapter.** Encoding is done by the
-   deployment-supplied adapter (``encode_images``). This build ships no encoder at all, and
-   the endpoint then answers a structured
+   deployment-supplied adapter (``encode_images``). A process without one - the default
+   packaging, or a machine with no registered pinned model - answers a structured
    ``RUNTIME_CAPABILITY_UNAVAILABLE``/``IMAGE_ENCODER_UNAVAILABLE`` instead of pretending
-   the text channel found something.
+   the text channel found something (P4-02N wires the real adapter when the model exists).
 
 The limits themselves are data (:class:`UploadLimits`) so a test can drive every branch
 without generating a 16 MiB photo, and so the served page can state the exact numbers the
@@ -52,7 +52,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.media import heif
 from photo_search.media.contract import refused_input_formats
-from photo_search.media.decode import HEADER_BYTES, sniff_format
+from photo_search.media.decode import HEADER_BYTES, restore_recorded_orientation, sniff_format
 from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.search.embedding import check_encoder_binding
 from photo_search.search.tokens import VALIDATION_ERROR
@@ -75,11 +75,13 @@ UPLOAD_DECODE_LONG_EDGE = 1600
 #: The private staging directory prefix; every one of them is removed before the response
 #: is sent, so a leftover directory is a defect a test can see.
 TEMP_DIRECTORY_PREFIX = "photo-search-upload-"
-#: The frozen P2-07 whitelist of this *query* input. It is deliberately its own list and
-#: not the library's decode capability: an upload is never catalogued, and widening this
-#: boundary is an additive protocol change that P2-07's static and integration assertions
-#: have to state explicitly (P4-00C-A report §5 keeps it unchanged).
-UPLOAD_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
+#: The whitelist of this *query* input, amended by P4-02T. It is still a deliberate, literal
+#: list and not a follow of the library's decode capability - an upload is never catalogued,
+#: so accepting one more family stays an explicit protocol change P2-07's assertions state.
+#: What changed is the *set*: the library already indexes and displays ``MPO`` (first frame,
+#: P4-02S) and the HEIF family (P4-00C-A), so refusing a phone's own portrait/burst photo
+#: here made "upload search" unusable on the very files the grid shows.
+UPLOAD_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF", "MPO", "HEIC", "HEIF"})
 #: A multipart body may carry at most this many parts (one image plus the declared fields).
 MULTIPART_MAX_PARTS = 32
 #: The body ceiling includes the multipart framing, so it is the image ceiling plus room
@@ -327,6 +329,9 @@ def _decode_upload(
     """Decode and measure one staged upload, or refuse it with a stable code."""
     started = time.monotonic()
     try:
+        # The single registration point: without it a HEIC upload would decode only when some
+        # earlier request happened to register the plugin in this process (P4-02T).
+        heif.ensure_heif_support()
         with Image.open(path) as source:
             label = str(source.format or "").upper()
             if label not in UPLOAD_INPUT_FORMATS:
@@ -348,6 +353,11 @@ def _decode_upload(
                 # Bound peak memory exactly like the P1-03 media path does. Must happen
                 # before ``exif_transpose`` loads the pixels; ``size`` is already captured.
                 source.draft(source.mode, (int(limits.decode_long_edge),) * 2)
+            # P4-02T: pillow-heif clears the orientation tag when it opens a HEIF container,
+            # so the upload path restores it exactly like ``media.decode.load_normalized``
+            # before the single ``exif_transpose`` below - a rotated phone photo would
+            # otherwise be encoded from the wrong orientation without any error at all.
+            restore_recorded_orientation(source)
             upright = ImageOps.exif_transpose(source)
             upright.load()
             decoded_width, decoded_height = int(upright.size[0]), int(upright.size[1])
@@ -410,11 +420,13 @@ def _sniff(path: Path) -> str | None:
 def upload_refused_families() -> frozenset[str]:
     """Families this boundary recognises and refuses with ``FORMAT_UNSUPPORTED``.
 
-    Everything the library refuses, plus the HEIF family: HEIC/HEIF are decodable by the
-    library (P4-00C-A) but are still outside this endpoint's frozen whitelist, so a HEIC
-    upload gets the same structured refusal instead of drifting into ``DECODE_FAILED``.
+    P4-02T: this is exactly the media contract's refused set. The HEIF family used to be
+    added here because it was decodable by the library yet outside this endpoint's
+    whitelist; now that the whitelist covers it, a *broken* HEIC upload is honestly a
+    ``DECODE_FAILED`` (the rule the media path documents) instead of a bogus "this build
+    does not support HEIC".
     """
-    return refused_input_formats() | heif.HEIF_INPUT_FORMATS
+    return refused_input_formats()
 
 
 # ------------------------------------------------------------------- image query vector

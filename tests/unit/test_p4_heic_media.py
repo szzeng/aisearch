@@ -66,7 +66,9 @@ def test_heic_joins_the_supported_set_and_the_capability_report() -> None:
     assert probe["heif_support"]["available"] is True
     assert probe["heif_support"]["formats"] == ["HEIC", "HEIF"]
     # The formats this build still refuses did not move.
-    for refused in ("AVIF", "TIFF", "JXL", "RAW", "MPO", "PSD"):
+    #: P4-02S moved ``MPO`` out of this list (first-frame semantics verified); every other
+    #: recognised-but-unverified family stays refused.
+    for refused in ("AVIF", "TIFF", "JXL", "RAW", "PSD"):
         assert refused in probe["refused_input_formats"]
 
 
@@ -344,18 +346,23 @@ def test_a_registration_that_fails_after_installing_the_opener_is_rolled_back(
     assert "HEIC" not in error.value.details["supported_formats"]
 
 
-def test_the_upload_boundary_keeps_its_own_frozen_whitelist(tmp_path: Path) -> None:
-    """P4-00C-A ruling: the search-query upload whitelist does not follow the library."""
-    heic_bytes = write_plain_heic(tmp_path / "photo.heic", size=(64, 48)).read_bytes()
-    assert upload.UPLOAD_INPUT_FORMATS == frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
-    assert "HEIF" in upload.upload_refused_families()
+def test_the_upload_boundary_now_accepts_the_heif_family(tmp_path: Path) -> None:
+    """P4-00C-A kept this list its own; P4-02T amended the *set* it holds.
 
-    with pytest.raises(CatalogError) as error:
-        with upload.stage_upload(heic_bytes):
-            pass  # pragma: no cover - refused during validation
-    assert error.value.code == FORMAT_UNSUPPORTED
-    assert error.value.details["format"] == "HEIF"
-    assert error.value.details["supported_formats"] == sorted(upload.UPLOAD_INPUT_FORMATS)
+    It is still a literal list (a new family is still an explicit protocol change), but it
+    now covers every family the library already indexes and displays, so a phone's own HEIC
+    is a query instead of a structured refusal.
+    """
+    heic_bytes = write_plain_heic(tmp_path / "photo.heic", size=(64, 48)).read_bytes()
+    assert upload.UPLOAD_INPUT_FORMATS == frozenset(
+        {"JPEG", "PNG", "WEBP", "BMP", "GIF", "MPO", "HEIC", "HEIF"}
+    )
+    assert "HEIF" not in upload.upload_refused_families()
+
+    with upload.stage_upload(heic_bytes) as staged:
+        assert staged.facts.format == "HEIF"
+        assert staged.facts.byte_size == len(heic_bytes)
+        assert (staged.facts.width, staged.facts.height) == (64, 48)
 
 
 def test_gps_and_time_tags_are_visible_on_a_heic(tmp_path: Path) -> None:

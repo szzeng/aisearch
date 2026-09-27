@@ -87,11 +87,13 @@ class ApiContext:
     def query_encoder(self) -> QueryEncoder | None:
         """The query half of the embedding adapter, or ``None`` when none is wired.
 
-        ADR-0003 §7 keeps the heavy frameworks out of the service layer, so this build has
-        no built-in encoder: a deployment (or a test) supplies one through
-        ``encoder_factory``. ``None`` is reported honestly by ``GET /capabilities`` and
-        turns a request that needs the semantic channel into a structured refusal instead
-        of a silently text-only page.
+        ADR-0003 §7 keeps the heavy frameworks out of the service layer, so the encoder is
+        always a *supplied* adapter: the real startup entry (``photo_search.__main__``)
+        supplies the managed-AI-worker adapter of ``photo_search.workers.query_encoder``
+        when this machine has the pinned model, while a test or a deployment supplies its
+        own through ``encoder_factory``. ``None`` - and equally a factory that raises - is
+        reported honestly by ``GET /capabilities`` and turns a request that needs the
+        semantic channel into a structured refusal instead of a silently text-only page.
         """
         if self._encoder_resolved:
             return self._encoder
@@ -125,7 +127,7 @@ class ApiContext:
         return self._reranker
 
     def close(self) -> None:
-        """Stop the worker and release both connections; safe to call twice."""
+        """Stop the worker, the query encoder and both connections; safe to call twice."""
         runner = self._runner
         self._runner = None
         if runner is not None:
@@ -140,4 +142,15 @@ class ApiContext:
                 service.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("closing the catalog service failed", exc_info=True)
+        # P4-02N: an adapter that owns a worker process is stopped here as well. The seam is
+        # duck-typed on purpose - the documented ADR-0003 adapter has ``close()`` and a test
+        # stand-in may not, which must never turn a shutdown into a failure.
+        encoder = self._encoder
+        self._encoder = None
+        stop = getattr(encoder, "close", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the query encoder failed", exc_info=True)
         self.search_sessions.clear()

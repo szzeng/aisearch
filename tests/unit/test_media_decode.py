@@ -263,7 +263,10 @@ def test_plugin_format_policy_never_guesses_from_the_extension() -> None:
     assert decode.plugin_format_decision("JPEG") == ("JPEG", True)
     assert decode.plugin_format_decision("png") == ("PNG", True)
     assert decode.plugin_format_decision("HEIF") == ("HEIF", True)
-    for refused in ("TIFF", "MPO", "AVIF", "PSD"):
+    #: ``MPO`` is supported since P4-02S (first-frame semantics, verified); the families below
+    #: are still recognised and deliberately refused.
+    assert decode.plugin_format_decision("MPO") == ("MPO", True)
+    for refused in ("TIFF", "AVIF", "PSD"):
         label, decodable = decode.plugin_format_decision(refused)
         assert (label, decodable) == (refused, False)
     assert decode.plugin_format_decision(None) == ("UNKNOWN", False)

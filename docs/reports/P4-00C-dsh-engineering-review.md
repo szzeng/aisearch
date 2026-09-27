@@ -63,7 +63,7 @@ basetemp 的父目录需先存在（本机 pytest 对显式 `--basetemp` 不做 
    `read_orientation()` 用同一判别器，因此 `probe_original_frame()` 与解码帧一致。四个组合
    （两种形态 × 方向 6/8）都用四象限颜色对照独立期望图，能同时抓漏旋转、反向旋转和双重旋转；
    非 HEIF 图像的行为与基线逐字相同（`exif` 为空或越界仍返回 1）。
-6. **上传面裁定**：`UPLOAD_INPUT_FORMATS = {JPEG,PNG,WEBP,BMP,GIF}` 成为该端点**自有**的冻结白名单，
+6. **上传面裁定**：`UPLOAD_INPUT_FORMATS = {JPEG,PNG,WEBP,BMP,GIF}` 成为该端点**自有**的冻结白名单（**已被 [P4-02T](P4-02T-upload-format-policy.md) 修订，见该报告 §2/§6**），
    `_decode_upload` 不再借用库内能力；`P2-07` 的既有测试文件未被修改却仍然全绿，说明该端点的既有断言
    未被削弱。真实 HTTP 样本得到 `409 FORMAT_UNSUPPORTED`、`details.format="HEIF"`、
    `details.supported_formats` 为上传白名单，与报告 §5 一致。

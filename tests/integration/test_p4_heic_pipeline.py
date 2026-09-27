@@ -428,24 +428,31 @@ def image_env(tmp_path: Path):
         env.library.close()
 
 
-def test_the_upload_endpoint_refuses_a_heic_with_a_structured_409(
+def test_the_upload_endpoint_now_accepts_a_heic(
     image_env: SearchEnv, tmp_path: Path
 ) -> None:
-    """The recorded real-HTTP sample of the P4-00C-A upload ruling."""
+    """P4-00C-A recorded the real-HTTP 409 here; P4-02T amends that ruling.
+
+    The whitelist now holds the families the library already indexes, so the same real
+    request is a query instead of a refusal. The structured-refusal shape itself is still
+    covered - for a family that *is* refused - in
+    ``tests/unit/test_p4_02t_upload_formats.py``.
+    """
     heic_bytes = write_exif_heic(tmp_path / "上传 原图.heic", orientation=6).read_bytes()
 
     async def scenario(client: AsyncClient):
         csrf = await image_env.authenticate(client)
         return await client.post(
             "/api/v1/search/image",
-            data={**image_env.explicit_binding(), "request_id": "p4-00c-a-upload"},
+            data={**image_env.explicit_binding(), "request_id": "p4-02t-upload"},
             files={"image": ("上传 原图.heic", heic_bytes, "image/heic")},
             headers=SearchEnv.post_headers(csrf),
         )
 
     response = image_env.scenario(scenario)
-    assert response.status_code == 409, response.text
+    assert response.status_code == 200, response.text
     body = response.json()
-    assert body["code"] == FORMAT_UNSUPPORTED
-    assert body["details"]["format"] == "HEIF"
-    assert "HEIC" not in body["details"]["supported_formats"]
+    assert body["image_query"]["format"] == "HEIF"
+    # Container ``irot`` already uprights the frame, so this is the decoded query size.
+    assert (body["image_query"]["width"], body["image_query"]["height"]) == (200, 320)
+    assert body["channels"]["vector"]["engaged"] is True

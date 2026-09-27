@@ -14,6 +14,12 @@ Commands
             the events this call confirmed (including the batches that landed before a bounded
             retry), write transactions, lock-wait and hold-time distributions, and any
             structured ``busy_timeout`` refusal with its retry outcome.
+``build``    the production build entry (P4-02O): select the assets that still need an
+            embedding for the pinned model, enqueue one idempotent job per asset, run them
+            through the scheduler with the pinned Chinese-CLIP adapter, drain the outbox and -
+            unless ``--skip-profile`` is given - publish and activate the search profile of the
+            built generation so the library is immediately searchable. ``--dry-run`` lists the
+            targets without loading a model.
 ``reexecute`` the production recovery entry (P4-02C): re-run the pinned embedding model on the
             assets behind artifacts that are awaiting re-execution and republish those artifacts
             through ``ArtifactStore.republish_reclaimed``. The model is never chosen silently:
@@ -53,7 +59,7 @@ from photo_search.indexing.maintenance import (
 )
 from photo_search.runtime.device import DevicePolicy
 
-COMMANDS = ("status", "drain", "reexecute")
+COMMANDS = ("status", "drain", "reexecute", "build")
 
 
 def _common_options() -> argparse.ArgumentParser:
@@ -148,6 +154,75 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[policy.value for policy in DevicePolicy],
         default=DevicePolicy.CPU_ALLOWED.value,
         help="how the adapter resolves that request (default: cpu_allowed)",
+    )
+    build = commands.add_parser(
+        "build",
+        parents=[common],
+        help="build (or extend) the semantic index with the pinned model (P4-02O)",
+    )
+    build.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="enqueue at most this many assets (default 5000)",
+    )
+    build.add_argument(
+        "--source-id",
+        type=int,
+        default=None,
+        help="restrict the build to one registered source root",
+    )
+    build.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="outbox events per engine write during the confirmation step",
+    )
+    build.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the targets only: no model is loaded, nothing is encoded or written",
+    )
+    build.add_argument(
+        "--model-dir",
+        type=Path,
+        default=None,
+        help="directory of the pinned ONNX model (required unless --dry-run)",
+    )
+    build.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="the pinned model manifest (required unless --dry-run)",
+    )
+    build.add_argument(
+        "--device",
+        default=None,
+        help="explicit device request; there is no silent default (required unless --dry-run)",
+    )
+    build.add_argument(
+        "--device-policy",
+        choices=[policy.value for policy in DevicePolicy],
+        default=DevicePolicy.CPU_ALLOWED.value,
+        help="how the adapter resolves that request (default: cpu_allowed)",
+    )
+    build.add_argument(
+        "--profile-id",
+        default=None,
+        help="search profile id to publish (default: semantic-<generation id>)",
+    )
+    build.add_argument(
+        "--skip-profile",
+        action="store_true",
+        help="build the index only; do not create/activate the search profile",
+    )
+    build.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help=(
+            "rewind the finished jobs of the selected targets (FAILED, CANCELLED, BLOCKED, "
+            "RETRY_WAIT or SUCCEEDED) back to QUEUED instead of leaving them behind"
+        ),
     )
     return parser
 
@@ -246,7 +321,7 @@ def run_command(args: argparse.Namespace) -> int:
     if batch_size is not None and int(batch_size) < 1:
         _emit_error(args, CatalogError("USAGE", "--batch-size must be a positive number"))
         return 2
-    if command == "reexecute" and not bool(getattr(args, "dry_run", False)):
+    if command in ("reexecute", "build") and not bool(getattr(args, "dry_run", False)):
         for option in ("model_dir", "manifest", "device"):
             if getattr(args, option, None) is None:
                 _emit_error(
@@ -263,6 +338,73 @@ def run_command(args: argparse.Namespace) -> int:
         if command == "status":
             # Read-only: the status answer must not create or migrate a database.
             _emit(args, semantic_index_status(catalog_db_path(data_root)))
+            return 0
+        if command == "build":
+            from photo_search.indexing import semantic
+
+            dry_run = bool(getattr(args, "dry_run", False))
+            limit = (
+                int(args.limit) if getattr(args, "limit", None) is not None
+                else semantic.DEFAULT_BUILD_LIMIT
+            )
+            with Catalog.open(data_root=data_root) as catalog:
+                if dry_run:
+                    spec = semantic.semantic_spec(args.manifest, {}, device_policy=args.device_policy)
+                    selection = semantic.semantic_selection(
+                        catalog,
+                        space_id=str(spec.envelope["space_id"]),
+                        processor_id=str(spec.processor_id),
+                        source_id=getattr(args, "source_id", None),
+                        limit=limit,
+                    )
+                    targets = selection["targets"]
+                    _emit(
+                        args,
+                        {
+                            "status": "ok",
+                            "dry_run": True,
+                            "model": {
+                                "processor_id": str(spec.processor_id),
+                                "space_id": str(spec.envelope["space_id"]),
+                                "dimension": int(spec.envelope["dimension"]),
+                            },
+                            "targets": len(targets),
+                            "out_of_scope": dict(selection["out_of_scope"]),
+                            "sample": [int(item["asset_id"]) for item in targets[:20]],
+                        },
+                    )
+                    return 0
+                encoder = _image_encoder(
+                    model_dir=args.model_dir,
+                    manifest=args.manifest,
+                    device=args.device,
+                    device_policy=args.device_policy,
+                )
+                payload = semantic.build_index(
+                    catalog,
+                    encoder=encoder,
+                    manifest_path=args.manifest,
+                    limit=limit,
+                    source_id=getattr(args, "source_id", None),
+                    batch_size=batch_size,
+                    device=args.device,
+                    device_policy=args.device_policy,
+                    retry_failed=bool(getattr(args, "retry_failed", False)),
+                )
+                if not bool(getattr(args, "skip_profile", False)):
+                    spec = semantic.semantic_spec(
+                        args.manifest,
+                        semantic.adapter_runtime_facts(encoder),
+                        device_policy=args.device_policy,
+                    )
+                    payload["profile"] = semantic.ensure_search_profile(
+                        catalog,
+                        spec,
+                        space_id=str(payload["model"]["space_id"]),
+                        generation_id=str(payload["generation"]["generation_id"]),
+                        profile_id=getattr(args, "profile_id", None),
+                    )
+            _emit(args, payload)
             return 0
         if command == "reexecute":
             dry_run = bool(getattr(args, "dry_run", False))

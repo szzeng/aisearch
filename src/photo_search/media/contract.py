@@ -43,8 +43,11 @@ FAILURE_SUFFIX = ".json"
 TEMP_SUFFIX = ".tmp"
 
 #: Input formats this build decodes with Pillow alone, all measured on this machine
-#: (P1-03 report §4).
-BASE_SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
+#: (P1-03 report §4). P4-02S adds ``MPO`` - the multi-picture JPEG many phones write for
+#: portrait/burst shots. What is shown and embedded is the container's **first frame**; P4-02S
+#: verified that first frame against opening the same bytes as JPEG (size, mode and pixel
+#: bytes) before the format moved out of the refused list.
+BASE_SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF", "MPO"})
 
 #: Formats that are recognised and deliberately refused until their handling is verified.
 #: The contract forbids reporting them as a finished thumbnail (architecture §5.4), even
@@ -54,7 +57,6 @@ BASE_SUPPORTED_INPUT_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP", "GIF"})
 REFUSED_INPUT_FORMATS = frozenset(
     {
         "TIFF",
-        "MPO",
         "AVIF",
         "JXL",
         "ICO",

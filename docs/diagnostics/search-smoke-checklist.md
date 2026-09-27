@@ -18,7 +18,7 @@ uv run --no-sync python tools/diagnostics/search_smoke_fixture.py --photos 6 --r
 - 一个 `READY` 图像世代，其中 **2** 个资产有 `CONFIRMED` 向量条目，其余 4 个没有
   （用于观察“语义索引仍在追赶”）；
 - 一个人工归属的地点（`杭州西湖` → 其中一张照片），因此“已归类”筛选只返回 1 行；
-- 一个已激活的 `SearchProfile`，指向该世代；本进程**没有**查询编码器（与打包应用一致）。
+- 一个已激活的 `SearchProfile`，指向该世代；该夹具的数据目录在 `%TEMP%` 下且**没有**登记权重（模型默认位置 `<数据根>/models/chinese_clip/vit-b-16`），所以启动时 `query_encoder_available=false`。P4-02N 之后，同一构建只要把权重放进数据根（或传 `--model-dir`）就会接线真实编码器，下面的“无编码器”预期随之改变。
 
 ## 2. 启动真实端口的本地服务
 
@@ -34,12 +34,12 @@ uv run --no-sync python -m photo_search --port <free-port> --data-root "<夹具�
 |---|---|---|
 | 1 | 打开启动器链接，再点导航「搜索图片」 | 303 落到 `/`；`/search` 标题「搜索图片」；导航含「返回「本机图片搜索」」「地点整理」「上传搜图」「分项覆盖率」 |
 | 2 | 看 `/search` 顶部提示 | 显示当前 `profile_id` 与图像世代，并说明 `query_encoder_available=false` 时文本查询会被服务端明确拒绝 |
-| 3 | 输入中文查询文本并点「搜索」 | 结构化 `409 RUNTIME_CAPABILITY_UNAVAILABLE`（`QUERY_ENCODER_UNAVAILABLE`）提示，文案说明「语义通道未运行」，查询文本保留，出现「按当前条件重搜」 |
+| 3 | 输入中文查询文本并点「搜索」 | 无权重夹具下是结构化 `409 RUNTIME_CAPABILITY_UNAVAILABLE`（`QUERY_ENCODER_UNAVAILABLE`）提示，文案说明「语义通道未运行」，查询文本保留，出现「按当前条件重搜」 |
 | 4 | 清空查询文本后再点「搜索」 | 出网格：每行有缩略图、名次、资产编号、命中原因「仅筛选…」、「语义就绪：否」、通道名次与「查看详情」链接；状态行给出「已显示 N 行 · 候选共 M 个 · 还有下一页/已到末尾」 |
 | 5 | 看结果区提示 | 出现「文本投影仍在追赶：还有 N 个资产…」；若本次通道能绑定世代，还会出现「语义索引仍在追赶…」与待确认向量条目计数 |
 | 6 | 把「每页数量」改成 2 后搜索，再点「加载下一页」 | 第二页追加新行，无重复；状态行「已显示 4 行 · 候选共 6 个」 |
 | 7 | 「地点状态」选「已归类」后搜索 | 结果收窄到被人工归属的那 1 个资产（夹具输出里有它的 `asset_id`） |
-| 8 | 选一张本地图片，点「用这张图搜索」 | 本构建没有图像编码器 → 结构化 `409 RUNTIME_CAPABILITY_UNAVAILABLE`（`IMAGE_ENCODER_UNAVAILABLE`），提示明确说明没有用文本通道或「零命中」冒充结果；服务端不新增资产 |
+| 8 | 选一张本地图片，点「用这张图搜索」 | 本夹具无权重 ⇒ `query_encoder_available=false` → 结构化 `409 RUNTIME_CAPABILITY_UNAVAILABLE`（`IMAGE_ENCODER_UNAVAILABLE`），提示明确说明没有用文本通道或「零命中」冒充结果；服务端不新增资产 |
 | 9 | 看「分项覆盖率（分类别，不合成一个准确率）」 | 文本投影覆盖 / 语义索引覆盖 / 地点覆盖 / 来源可用性四项各自列出，各有「口径」说明，最后一句声明不合成「整体 AI 准确率」 |
 | 10 | 窄视口约 640px + Tab | 无横向滚动（网格折列）；Tab 依次经过导航链接 → 查询文本 → 来源等控件，焦点可见 |
 
@@ -57,9 +57,9 @@ uv run --no-sync python -m photo_search --port <free-port> --data-root "<夹具�
 
 ## 5. 已知边界
 
-- 本构建的 API 进程没有查询/图像编码器，因此**在浏览器里**无法看到语义通道命中的行
+- **数据根没有登记权重时**（本夹具即如此）API 进程没有查询/图像编码器，因此**在浏览器里**无法看到语义通道命中的行
   （`hit_reason=SEMANTIC`/`TEXT+SEMANTIC`）或「语义索引仍在追赶」提示。该提示的数据路径由
   `tests/integration/test_p2_search_image.py::test_a_lagging_semantic_entry_is_named_instead_of_hidden`
-  覆盖；等真实 adapter 接入后再补充真实浏览器的语义观察。
+  覆盖；**P4-02N 之后真实 adapter 已接入真实启动**：把权重放进数据根（或传 `--model-dir`）就应在浏览器看到语义命中行，这项真实浏览器观察仍待补做。
 - 内置浏览器的文件选择器在自动化里偶发超时，重试后可用；上传端点的结构性证据以 C 级
   `packaged_api_smoke.py`（真实 multipart 请求）为准。

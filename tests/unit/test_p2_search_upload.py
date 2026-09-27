@@ -267,14 +267,15 @@ def test_an_unreadable_payload_is_a_decode_failure_without_any_path() -> None:
 
 
 def test_a_recognised_but_unsupported_family_is_not_reported_as_a_decode_failure() -> None:
-    # A HEIF header: Pillow cannot identify it, and the P1-03 policy refuses the family
-    # explicitly instead of calling it corrupt.
-    payload = b"\x00\x00\x00\x18ftypheic" + b"\x00" * 32
+    # An AVIF box: Pillow cannot identify it, and the P1-03 policy refuses the family
+    # explicitly instead of calling it corrupt. P4-02T moved the HEIF family into the
+    # whitelist, so this test states the invariant for a family that is still refused.
+    payload = b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00avifmif1" + b"\x00" * 32
     with pytest.raises(CatalogError) as failure:
         with stage_upload(payload):
             pass  # pragma: no cover - refused during validation
     assert failure.value.code == "FORMAT_UNSUPPORTED"
-    assert failure.value.details["format"] == "HEIF"
+    assert failure.value.details["format"] == "AVIF"
 
 
 # ------------------------------------------------------------------- image encoding
