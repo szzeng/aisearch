@@ -26,6 +26,19 @@ gate; this tool delivers the six facts and nothing else:
                      equivalence with the authoritative candidate set);
 6. the burst and the wave root side by side in ``stages``, so the P4-02B
                      3 484.4 ms / 8 317.8 ms pair can be attributed to the stage it lands in.
+7. ``bounded-blocks`` - the **P4-02M bounded** block-size matrix. P4-02M made
+                     ``vector_channel`` ask the engine for ``top_k + 1`` rows per block
+                     (``LanceVectorIndex.search_candidates_bounded``, product code) and fall
+                     back to the exhaustive ``search_candidates`` call only when a block's
+                     boundary tie group was cut, so fact 2's block-size conclusion - measured
+                     on the ``limit = len(ids)`` exhaustive path - cannot be reused here.
+                     This mode alternates the product's own 5 000-row block with every
+                     candidate size and records, per sample, the ``vector_channel`` time, the
+                     full ``search_assets`` service time, ``engine_blocks``, the bounded and
+                     fallback call counts, the rows every block actually returned and the
+                     ``(asset_id, distance)`` page. The service's own ``vector_channel`` is
+                     reached through a per-process wrapper that injects the block size; no
+                     product file changes and no other mode changes behaviour.
 
 The tool never changes product behaviour: it imports the product's own retrieval entry points
 (``search_assets`` / ``vector_channel`` / ``LanceVectorIndex``) and only observes them. The
@@ -40,6 +53,12 @@ Usage::
         --root "B=tmp/p402f-阶段0/scale-100000-wave/data" \
         --order A,B,B,A --samples 20 \
         --output test-results/p4-02f-stage0-100k.json
+
+    uv run --no-sync python tools/diagnostics/p4_02f_stage0.py \
+        --root "W=tmp/p402f-阶段0/scale-300000-wave/data" \
+        --modes identity,bounded-blocks --order W --top-k 20 \
+        --bounded-candidates 10000,15000,20000,30000,50000 --bounded-rounds 2 \
+        --output test-results/p4-02m-bounded-blocks-300k.json
 """
 
 from __future__ import annotations
@@ -118,6 +137,18 @@ class Stats:
         self.block: dict[str, float] | None = None
         self.table_ms = 0.0
         self.table_calls = 0
+        # P4-02M bounded access path. ``bounded_blocks`` holds one record per
+        # ``LanceVectorIndex.search_candidates_bounded`` call, so the bounded path's own
+        # table/plan/arrow/convert split is measured here instead of being inferred from the
+        # residual bucket (that was F2 of the P4-02M review). After P4-02M every record in
+        # ``blocks`` is a fallback call, and ``fallback_*`` counts those explicitly.
+        self.bounded_calls = 0
+        self.bounded_blocks: list[dict[str, Any]] = []
+        self.bounded_rows: list[int] = []
+        self.bounded_limits: list[int] = []
+        self.fallback_calls = 0
+        self.fallback_rows: list[int] = []
+        self.pending_fallback = False
 
     def add_stage(self, name: str, milliseconds: float) -> None:
         _add(self.stage_ms, name, milliseconds)
@@ -325,12 +356,98 @@ class TimedIndex:
         record["candidates"] = len(kwargs.get("asset_ids") or ())
         record["limit"] = int(kwargs.get("limit") or 0)
         record["rows"] = len(rows)
+        # P4-02M: after a bounded call reported ``resolved=False``, the next
+        # ``search_candidates`` call the product makes is its own fallback for that block, so
+        # it is counted as a fallback here and nowhere else.
+        if self._stats.pending_fallback:
+            self._stats.fallback_calls += 1
+            self._stats.fallback_rows.append(len(rows))
+            self._stats.pending_fallback = False
         self._stats.blocks.append(record)
         self._stats.block = None
         return rows
 
+    def search_candidates_bounded(self, **kwargs: Any) -> tuple[list[dict[str, Any]], bool]:
+        """Time the P4-02M bounded product call and count the caller's fallbacks.
+
+        The product method is **not** re-implemented: this only observes
+        ``LanceVectorIndex.search_candidates_bounded`` - the same ``top_k + 1`` request the
+        product's ``vector_channel`` makes - and records the rows it actually returned and
+        whether it reported ``resolved``. That is what turns "the new access path is in use"
+        from an assumption into a measured fact, and it also gives the bounded path its own
+        table/plan/arrow/convert split (P4-02M review F2).
+        """
+        self._stats.block = {}
+        started = time.perf_counter()
+        try:
+            rows, resolved = self._index.search_candidates_bounded(**kwargs)
+        finally:
+            total = (time.perf_counter() - started) * 1000
+        bucket = self._stats.block or {}
+        record: dict[str, Any] = {
+            key: round(float(value), 3) for key, value in bucket.items()
+        }
+        for key in ("table_ms", "plan_ms", "arrow_ms", "convert_ms"):
+            record.setdefault(key, 0.0)
+        record["total_ms"] = round(total, 3)
+        record["materialize_ms"] = round(
+            max(
+                total
+                - record["table_ms"]
+                - record["plan_ms"]
+                - record["arrow_ms"]
+                - record["convert_ms"],
+                0.0,
+            ),
+            3,
+        )
+        record["candidates"] = len(kwargs.get("asset_ids") or ())
+        record["requested_limit"] = int(kwargs.get("top_k") or 0) + 1
+        record["rows"] = len(rows)
+        record["resolved"] = bool(resolved)
+        self._stats.bounded_blocks.append(record)
+        self._stats.bounded_calls += 1
+        self._stats.bounded_rows.append(len(rows))
+        self._stats.bounded_limits.append(int(record["requested_limit"]))
+        self._stats.pending_fallback = not bool(resolved)
+        self._stats.block = None
+        return rows, bool(resolved)
+
     def __getattr__(self, name: str) -> Any:
         return getattr(self._index, name)
+
+
+class _BlockSizeOverride:
+    """Inject ``block_size`` into the product service's own ``vector_channel`` call.
+
+    ``search/service.py`` calls ``vector_channel`` without a block size, so the product
+    always uses ``retrieval.SCOPE_BLOCK_SIZE``; its default argument is bound at definition
+    time, which is why the constant itself cannot be patched. This wrapper replaces *this
+    process's* reference to the imported function for the duration of one measurement and
+    restores it afterwards, so only the block size differs from the product call - that is
+    the single parameter under study.
+    """
+
+    def __init__(self, block_size: int) -> None:
+        self.block_size = int(block_size)
+        self.original: Any = None
+        self.last_block: dict[str, Any] | None = None
+
+    def __enter__(self) -> _BlockSizeOverride:
+        self.original = search_service.vector_channel
+
+        def patched(catalog: Any, **kwargs: Any) -> Any:
+            kwargs["block_size"] = self.block_size
+            block = self.original(catalog, **kwargs)
+            self.last_block = block
+            return block
+
+        search_service.vector_channel = patched
+        return self
+
+    def __exit__(self, *exc: Any) -> bool:
+        search_service.vector_channel = self.original
+        return False
 
 
 # --------------------------------------------------------------------------- one root
@@ -757,6 +874,214 @@ class Generation:
             "only_in_unconstrained": sorted(unconstrained_ids - constrained_ids)[:20],
         }
 
+    # ------------------------------------------- P4-02M bounded block-size matrix
+    def bounded_vector_once(self, *, block_size: int) -> dict[str, Any]:
+        """One ``vector_channel`` sample on the P4-02M bounded access path."""
+        self.stats.reset()
+        started = time.perf_counter()
+        block = vector_channel(
+            self.catalog,
+            index=self.timed_index,  # type: ignore[arg-type]
+            binding=self.binding,
+            query_vector=self.query_vector,
+            scope=SearchScope.build(),
+            top_k=self.top_k,
+            block_size=int(block_size),
+        )
+        total_ms = (time.perf_counter() - started) * 1000
+        return {
+            "ms": round(total_ms, 3),
+            "engine_ms": round(sum(record["total_ms"] for record in self.stats.blocks), 3),
+            "bounded_engine_ms": round(
+                sum(record["total_ms"] for record in self.stats.bounded_blocks), 3
+            ),
+            "walk_ms": round(self.stats.candidate_walk_ms, 3),
+            "blocks": int(block["blocks"]),
+            "scanned_assets": int(block["scanned_assets"]),
+            "truncated": bool(block["truncated"]),
+            "bounded_calls": int(self.stats.bounded_calls),
+            "fallback_calls": int(self.stats.fallback_calls),
+            "bounded_rows": [int(value) for value in self.stats.bounded_rows],
+            "bounded_limits": [int(value) for value in self.stats.bounded_limits],
+            "fallback_rows": [int(value) for value in self.stats.fallback_rows],
+            "page": [
+                [int(row["asset_id"]), round(float(row["distance"]), 9)]
+                for row in block["hits"]
+            ],
+        }
+
+    def bounded_service_once(self, *, block_size: int) -> dict[str, Any]:
+        """One full ``search_assets`` sample whose vector channel carries ``block_size``."""
+        self.stats.reset()
+        with _BlockSizeOverride(block_size) as override:
+            started = time.perf_counter()
+            payload = search_assets(
+                self.catalog,
+                text=DEFAULT_QUERY_TEXT,
+                top_k=self.top_k,
+                vector_index=self.timed_index,  # type: ignore[arg-type]
+                encoder=self.encoder,
+                space_id=bench.SPACE_ID,
+                generation_id=bench.GENERATION_ID,
+                dimension=bench.DIM,
+            )
+            total_ms = (time.perf_counter() - started) * 1000
+            block = override.last_block
+        scan = payload.get("vector_scan") or {}
+        hits = [] if block is None else list(block["hits"])
+        return {
+            "ms": round(total_ms, 3),
+            "blocks": int(scan.get("blocks", 0)),
+            "scanned_assets": int(scan.get("scanned_assets", 0)),
+            "truncated": bool(scan.get("truncated", False)),
+            "bounded_calls": int(self.stats.bounded_calls),
+            "fallback_calls": int(self.stats.fallback_calls),
+            "bounded_rows": [int(value) for value in self.stats.bounded_rows],
+            "page": [
+                [int(row["asset_id"]), round(float(row["distance"]), 9)] for row in hits
+            ],
+            "ranked_hits": [int(row["asset_id"]) for row in payload["hits"]],
+        }
+
+    def bounded_matrix(
+        self, *, candidates: list[int], baseline: int, rounds: int
+    ) -> dict[str, Any]:
+        """Alternate the product block size with each candidate size, on the bounded path.
+
+        The product's own 5 000-row block is measured *between* every pair of candidate
+        measurements, so a monotone drift (cache, thermal) moves the control as well and
+        cannot masquerade as a size effect. ``vector`` and full-service samples are taken
+        back to back for the same size, and both pages are compared against the 5 000-row
+        baseline item by item.
+        """
+        baseline = int(baseline)
+        candidates = [int(value) for value in candidates if int(value) != baseline]
+        sequence: list[int] = []
+        for _ in range(max(1, int(rounds))):
+            sequence.append(baseline)
+            for size in candidates:
+                sequence.append(size)
+                sequence.append(baseline)
+        warmup_vector = self.bounded_vector_once(block_size=baseline)
+        warmup_service = self.bounded_service_once(block_size=baseline)
+        collected: dict[int, dict[str, list[dict[str, Any]]]] = {}
+        timeline: list[dict[str, Any]] = []
+        for size in sequence:
+            vector = self.bounded_vector_once(block_size=size)
+            service = self.bounded_service_once(block_size=size)
+            bucket = collected.setdefault(size, {"vector": [], "service": []})
+            bucket["vector"].append(vector)
+            bucket["service"].append(service)
+            timeline.append(
+                {
+                    "block_size": size,
+                    "vector_ms": vector["ms"],
+                    "service_ms": service["ms"],
+                    "engine_blocks": vector["blocks"],
+                    "bounded_calls": vector["bounded_calls"],
+                    "fallback_calls": vector["fallback_calls"],
+                }
+            )
+            print(
+                f"bounded {size}: vector {vector['ms']} ms / service {service['ms']} ms / "
+                f"blocks {vector['blocks']} / bounded {vector['bounded_calls']} / "
+                f"fallback {vector['fallback_calls']} / rows {vector['bounded_rows'][:3]}",
+                file=sys.stderr,
+                flush=True,
+            )
+        baseline_page = json.dumps(
+            collected[baseline]["vector"][0]["page"], ensure_ascii=True
+        )
+        baseline_service_page = json.dumps(
+            collected[baseline]["service"][0]["page"], ensure_ascii=True
+        )
+        results: list[dict[str, Any]] = []
+        for size in [baseline, *candidates]:
+            vector_runs = collected[size]["vector"]
+            service_runs = collected[size]["service"]
+            vector_ms = [run["ms"] for run in vector_runs]
+            service_ms = [run["ms"] for run in service_runs]
+            bounded_rows = [value for run in vector_runs for value in run["bounded_rows"]]
+            fallback_rows = [value for run in vector_runs for value in run["fallback_rows"]]
+            results.append(
+                {
+                    "block_size": size,
+                    "blocks": int(vector_runs[0]["blocks"]),
+                    "engine_blocks": int(vector_runs[0]["blocks"]),
+                    "scanned_assets": int(vector_runs[0]["scanned_assets"]),
+                    "truncated": bool(vector_runs[0]["truncated"]),
+                    "service_blocks": int(service_runs[0]["blocks"]),
+                    "service_truncated": bool(service_runs[0]["truncated"]),
+                    "samples": len(vector_runs),
+                    "top_k": int(self.top_k),
+                    "vector_ms_median": round(statistics.median(vector_ms), 3),
+                    "vector_ms_all": vector_ms,
+                    "service_ms_median": round(statistics.median(service_ms), 3),
+                    "service_ms_all": service_ms,
+                    "engine_ms_median": round(
+                        statistics.median([run["engine_ms"] for run in vector_runs]), 3
+                    ),
+                    "bounded_engine_ms_median": round(
+                        statistics.median([run["bounded_engine_ms"] for run in vector_runs]), 3
+                    ),
+                    "walk_ms_median": round(
+                        statistics.median([run["walk_ms"] for run in vector_runs]), 3
+                    ),
+                    "bounded_calls_all": [run["bounded_calls"] for run in vector_runs],
+                    "fallback_calls_all": [run["fallback_calls"] for run in vector_runs],
+                    "bounded_requested_limit": sorted(
+                        {value for run in vector_runs for value in run["bounded_limits"]}
+                    ),
+                    "block_rows_first_sample": vector_runs[0]["bounded_rows"],
+                    "block_rows_distinct": sorted(set(bounded_rows)),
+                    "block_rows_median": round(statistics.median(bounded_rows), 3)
+                    if bounded_rows
+                    else None,
+                    "fallback_rows_distinct": sorted(set(fallback_rows)),
+                    "vector_page": vector_runs[0]["page"],
+                    "vector_pages_stable_within_size": len(
+                        {json.dumps(run["page"], ensure_ascii=True) for run in vector_runs}
+                    )
+                    == 1,
+                    "vector_page_matches_baseline": json.dumps(
+                        vector_runs[0]["page"], ensure_ascii=True
+                    )
+                    == baseline_page,
+                    "service_page_matches_baseline": json.dumps(
+                        service_runs[0]["page"], ensure_ascii=True
+                    )
+                    == baseline_service_page,
+                    "service_pages_stable_within_size": len(
+                        {json.dumps(run["page"], ensure_ascii=True) for run in service_runs}
+                    )
+                    == 1,
+                    "ranked_hits": service_runs[0]["ranked_hits"],
+                }
+            )
+        return {
+            "baseline_block_size": baseline,
+            "candidate_block_sizes": candidates,
+            "rounds": max(1, int(rounds)),
+            "interleaved_order": sequence,
+            "top_k": int(self.top_k),
+            "warmup": {"vector_ms": warmup_vector["ms"], "service_ms": warmup_service["ms"]},
+            "timeline": timeline,
+            "results": results,
+            "baseline_page": collected[baseline]["vector"][0]["page"],
+            "all_pages_match_baseline": all(
+                record["vector_page_matches_baseline"]
+                and record["service_page_matches_baseline"]
+                for record in results
+            ),
+            "all_truncated_false": all(
+                not record["truncated"] and not record["service_truncated"]
+                for record in results
+            ),
+            "bounded_calls_positive_everywhere": all(
+                min(record["bounded_calls_all"]) > 0 for record in results
+            ),
+        }
+
 
 def round_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
     """The honest shape of one round: distribution of every stage, plus its share."""
@@ -857,12 +1182,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--modes",
         default="identity,stages,blocks,overhead,single-pass,numpy-flat-exact",
-        help="comma list of identity,stages,blocks,overhead,single-pass,numpy-flat-exact",
+        help=(
+            "comma list of identity,stages,blocks,overhead,single-pass,numpy-flat-exact,"
+            "bounded-blocks"
+        ),
     )
     parser.add_argument("--order", default=None, help="sampling order over the labels, e.g. A,B,B,A")
     parser.add_argument("--samples", type=int, default=20, help="service samples per round")
     parser.add_argument("--block-sizes", default=",".join(str(v) for v in DEFAULT_BLOCK_SIZES))
     parser.add_argument("--block-samples", type=int, default=3)
+    parser.add_argument(
+        "--bounded-candidates",
+        default="10000,15000,20000,30000,50000",
+        help="candidate block sizes of the bounded-blocks mode (P4-02M path)",
+    )
+    parser.add_argument(
+        "--bounded-baseline",
+        type=int,
+        default=PRODUCT_BLOCK_SIZE,
+        help="the product block size every candidate of bounded-blocks is compared against",
+    )
+    parser.add_argument("--bounded-rounds", type=int, default=2)
     parser.add_argument("--single-pass-samples", type=int, default=5)
     parser.add_argument("--flat-exact-samples", type=int, default=3)
     parser.add_argument("--overhead-reps", type=int, default=30)
@@ -894,6 +1234,7 @@ def main(argv: list[str] | None = None) -> int:
         "overhead",
         "single-pass",
         "numpy-flat-exact",
+        "bounded-blocks",
     }
     if unknown:
         raise SystemExit(f"unknown modes: {sorted(unknown)}")
@@ -1080,6 +1421,31 @@ def main(argv: list[str] | None = None) -> int:
                 label: generations[label].single_pass(samples=int(args.single_pass_samples))
                 for label in order
             }
+
+        if "bounded-blocks" in modes:
+            report["bounded_blocks"] = {
+                label: generations[label].bounded_matrix(
+                    candidates=[
+                        int(part)
+                        for part in str(args.bounded_candidates).split(",")
+                        if part.strip()
+                    ],
+                    baseline=int(args.bounded_baseline),
+                    rounds=int(args.bounded_rounds),
+                )
+                for label in order
+            }
+            for label, matrix in report["bounded_blocks"].items():
+                print(
+                    f"bounded-blocks {label}: "
+                    + ", ".join(
+                        f"{record['block_size']}->{record['vector_ms_median']} ms vector / "
+                        f"{record['service_ms_median']} ms service"
+                        for record in matrix["results"]
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
 
         if "numpy-flat-exact" in modes:
             report["numpy_flat_exact"] = {
