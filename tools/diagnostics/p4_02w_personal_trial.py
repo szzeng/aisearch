@@ -918,6 +918,43 @@ def scenario_stats(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
 
 # --------------------------------------------------------------------------- attribution
+class _BoundedCallLedger:
+    """Count the product's two candidate entries without changing either of them.
+
+    ``vector_channel`` asks for ``search_candidates_bounded`` when the index offers it and
+    falls back to the exhaustive ``search_candidates`` only for a block whose boundary tie
+    group was cut (P4-02M). The HTTP entry cannot see either call, so the in-process
+    attribution round - which runs the *real* model against the same fixture and query -
+    observes them here. This is an observation shim: both methods are the product's own.
+    """
+
+    def __init__(self, index: Any) -> None:
+        self._index = index
+        self.bounded_calls = 0
+        self.fallback_calls = 0
+        self._pending_fallback = False
+
+    def reset(self) -> None:
+        self.bounded_calls = 0
+        self.fallback_calls = 0
+        self._pending_fallback = False
+
+    def search_candidates_bounded(self, **kwargs: Any) -> Any:
+        rows, resolved = self._index.search_candidates_bounded(**kwargs)
+        self.bounded_calls += 1
+        self._pending_fallback = not bool(resolved)
+        return rows, resolved
+
+    def search_candidates(self, **kwargs: Any) -> Any:
+        if self._pending_fallback:
+            self.fallback_calls += 1
+            self._pending_fallback = False
+        return self._index.search_candidates(**kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._index, name)
+
+
 def scenario_attribution(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     """Component split of the current 300k text path (diagnostic, not end-to-end PASS).
 
@@ -977,7 +1014,7 @@ def scenario_attribution(args: argparse.Namespace) -> tuple[dict[str, Any], int]
             dimension=int(binding["dimension"]),
         )
         match = build_match(QUERY_TEXT)
-        index = default_vector_index(catalog)
+        index = _BoundedCallLedger(default_vector_index(catalog))
 
         def once() -> dict[str, Any]:
             record: dict[str, Any] = {}
@@ -993,6 +1030,7 @@ def scenario_attribution(args: argparse.Namespace) -> tuple[dict[str, Any], int]
             text_hits = fts_channel(catalog, match, scope, top_k=int(args.top_k))
             record["fts_ms"] = round((time.perf_counter() - started) * 1000, 1)
             record["fts_hits"] = len(text_hits)
+            index.reset()
             started = time.perf_counter()
             block = vector_channel(
                 catalog, index=index, binding=vb, query_vector=vector, scope=scope,
@@ -1000,6 +1038,11 @@ def scenario_attribution(args: argparse.Namespace) -> tuple[dict[str, Any], int]
             )
             record["vector_ms"] = round((time.perf_counter() - started) * 1000, 1)
             record["engine_blocks"] = int(block["blocks"])
+            # P4-02X: the HTTP envelope only carries ``engine_blocks``, so the two call
+            # counts of the access path are recorded from this in-process round (real model,
+            # same fixture, same query and same ``top_k`` as the HTTP samples).
+            record["bounded_calls"] = int(index.bounded_calls)
+            record["fallback_calls"] = int(index.fallback_calls)
             record["scanned_assets"] = int(block["scanned_assets"])
             record["vector_truncated"] = bool(block["truncated"])
             record["vector_hits"] = len(block["hits"])

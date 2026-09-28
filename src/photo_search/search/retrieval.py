@@ -53,7 +53,16 @@ MAX_TOP_K = 1000
 #: either way - :func:`vector_channel` merges the per-block top-k exactly, so every global
 #: top-k member is found in its own block's top-k - which is why this bound is an
 #: access-path parameter and never a recall parameter.
-SCOPE_BLOCK_SIZE = 5000
+#: P4-02M then cut each block's *transfer* to ``top_k + 1`` rows (the engine reports
+#: ``resolved=False`` when a block's boundary tie group was cut, and exactly that block
+#: falls back to the exhaustive one-row-per-candidate call), and P4-02X raised this bound
+#: from 5 000 to 15 000: on the frozen 300 000-row fixture the vector channel goes from
+#: ~60 to ~20 engine calls while every final ``(asset_id, distance)`` row stays identical
+#: (paired service ratio ~0.86 - see docs/reports/P4-02M-bounded-block-size-retest.md).
+#: The one cost that grows with this bound is a fallback block, which then materialises
+#: that whole block; 15 000 was chosen over the marginally faster 30 000 for exactly that
+#: reason (a tie-heavy corpus can only ever hit the fallback path).
+SCOPE_BLOCK_SIZE = 15000
 #: Safety valve for a runaway scan; an incomplete scan is reported, never hidden.
 MAX_VECTOR_BLOCKS = 1000
 #: How many ids the authoritative page publishes (architecture §9.5: at most 1000

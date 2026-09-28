@@ -84,6 +84,7 @@ from photo_search.indexing import maintenance  # noqa: E402
 from photo_search.indexing.store import LanceVectorIndex  # noqa: E402
 from photo_search.search import service as search_service  # noqa: E402
 from photo_search.search.retrieval import (  # noqa: E402
+    SCOPE_BLOCK_SIZE,
     SearchScope,
     resolve_binding,
     vector_channel,
@@ -93,8 +94,9 @@ from photo_search.search.service import search_assets  # noqa: E402
 DEFAULT_QUERY_TEXT = "西湖 sunset 全家福"
 DEFAULT_TOP_K = 20
 DEFAULT_BLOCK_SIZES = (250, 1000, 5000, 20000)
-#: The product's own block bound (``retrieval.SCOPE_BLOCK_SIZE``), used for the ``stages`` mode.
-PRODUCT_BLOCK_SIZE = 5000
+#: The product's own block bound (``retrieval.SCOPE_BLOCK_SIZE``), *imported* so this tool can
+#: never drift from the constant it claims to measure (P4-02X raised it 5 000 -> 15 000).
+PRODUCT_BLOCK_SIZE = int(SCOPE_BLOCK_SIZE)
 #: How many spread-out assets get a direct vector comparison across roots.
 PROBE_IDS = 64
 #: The product stages this tool times around the two channels. They are patched on the
@@ -556,6 +558,8 @@ class Generation:
         cpu_after = time.process_time()
         blocks = self.stats.blocks
         engine_ms = sum(record["total_ms"] for record in blocks)
+        bounded_blocks = self.stats.bounded_blocks
+        bounded_engine_ms = sum(record["total_ms"] for record in bounded_blocks)
         vector_hits = payload["channels"]["vector"]
         return {
             "service_ms": round(total_ms, 3),
@@ -573,6 +577,17 @@ class Generation:
             "sqlite_pending_topup_calls": self.stats.pending_topup_calls,
             "engine_ms": round(engine_ms, 3),
             "engine_calls": len(blocks),
+            # P4-02M/P4-02X: the product's bounded call has its own bucket, so after that
+            # change every record in ``blocks`` is a *fallback* call. These keys keep the
+            # split explicit instead of letting the bounded engine time disappear into
+            # ``other_ms`` (the gap the P4-02M review recorded as F2).
+            "engine_bounded_ms": round(bounded_engine_ms, 3),
+            "engine_bounded_calls": len(bounded_blocks),
+            "bounded_calls": int(self.stats.bounded_calls),
+            "fallback_calls": int(self.stats.fallback_calls),
+            "other_ms_without_bounded_engine_ms": round(
+                total_ms - self.stats.sqlite_ms - engine_ms - bounded_engine_ms, 3
+            ),
             "engine_table_ms": round(sum(r["table_ms"] for r in blocks), 3),
             "engine_plan_ms": round(sum(r["plan_ms"] for r in blocks), 3),
             "engine_arrow_ms": round(sum(r["arrow_ms"] for r in blocks), 3),
@@ -1103,6 +1118,10 @@ def round_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
             3,
         ),
         "engine_total": engine,
+        "engine_bounded_total": statistics.median(column("engine_bounded_ms")),
+        "engine_grand_total": statistics.median(
+            [float(sample["engine_ms"]) + float(sample["engine_bounded_ms"]) for sample in samples]
+        ),
         "engine_table_handle": statistics.median(column("engine_table_ms")),
         "engine_plan": statistics.median(column("engine_plan_ms")),
         "engine_arrow_pass": statistics.median(column("engine_arrow_ms")),
@@ -1134,6 +1153,8 @@ def round_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "stage_calls": stage_calls,
         "blocks_per_sample": sorted({int(sample["blocks"]) for sample in samples}),
         "engine_calls_per_sample": sorted({int(sample["engine_calls"]) for sample in samples}),
+        "bounded_calls_per_sample": sorted({int(sample["bounded_calls"]) for sample in samples}),
+        "fallback_calls_per_sample": sorted({int(sample["fallback_calls"]) for sample in samples}),
         "block_ms_median": round(statistics.median(block_ms), 3) if block_ms else None,
         "block_ms_p95": round(
             float(sorted(block_ms)[max(0, int(0.95 * len(block_ms)) - 1)]), 3
