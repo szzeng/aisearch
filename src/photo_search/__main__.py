@@ -21,6 +21,8 @@ from photo_search.api.context import ApiContext
 from photo_search.api.session import bootstrap_session_credential
 from photo_search.api.settings import ApiSettings, BindNotAllowed
 from photo_search.app import create_app
+from photo_search.backup import create_backup, restore_backup
+from photo_search.catalog.errors import CatalogError
 from photo_search.config import resolve_data_root
 from photo_search.ingestion.cli import add_catalog_parser, run_catalog_command
 from photo_search.runtime.device import DevicePolicy
@@ -208,6 +210,22 @@ def main() -> None:
         help="write the JSON report to this path as UTF-8 (console output still prints)",
     )
     add_catalog_parser(subparsers)
+    backup = subparsers.add_parser("backup", help="stopped-service backup and restore")
+    backup_commands = backup.add_subparsers(dest="backup_command")
+    for name, help_text in (
+        ("create", "create a consistent stopped-service backup"),
+        ("restore", "restore a backup into an empty data root"),
+    ):
+        command = backup_commands.add_parser(name, help=help_text)
+        command.add_argument("--json", action="store_true", help="emit one JSON document")
+        command.add_argument("--data-root", type=Path, required=True)
+        command.add_argument("--bundle", type=Path, required=True)
+        if name == "create":
+            command.add_argument(
+                "--stopped",
+                action="store_true",
+                help="confirm all writers and catalog/Lance handles are stopped",
+            )
     parser.add_argument(
         "--host",
         default=None,
@@ -258,6 +276,22 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "catalog":
         raise SystemExit(run_catalog_command(args))
+    if args.command == "backup":
+        try:
+            if args.backup_command == "create":
+                payload = create_backup(
+                    data_root=args.data_root, destination=args.bundle, stopped=args.stopped
+                )
+            elif args.backup_command == "restore":
+                payload = restore_backup(bundle=args.bundle, data_root=args.data_root)
+            else:
+                raise CatalogError("USAGE", "choose one of ['create', 'restore']")
+        except CatalogError as error:
+            payload, code = {"status": "error", "error": error.as_dict()}, 1
+        else:
+            code = 0
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True) if args.json else payload)
+        raise SystemExit(code)
     if args.command == "demo-search":
         raise SystemExit(
             _demo_search(

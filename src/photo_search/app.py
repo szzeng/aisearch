@@ -22,6 +22,7 @@ from photo_search.api.routes import APP_VERSION, router
 from photo_search.api.security import SecurityMiddleware
 from photo_search.api.settings import ApiSettings
 from photo_search.api.web import router as web_router
+from photo_search.runtime.data_root_lease import acquire_data_root_lease
 
 __all__ = ["APP_VERSION", "app", "create_app"]
 
@@ -47,10 +48,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # The same OS lease is acquired by backup only after this service has stopped.
+        lease = acquire_data_root_lease(api.settings.data_root)
         try:
             yield
         finally:
             api.close()
+            lease.close()
 
     application = FastAPI(
         title="Photo Search",
