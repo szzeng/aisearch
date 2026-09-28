@@ -1,6 +1,6 @@
 # P4-02X — bounded block-size 最小产品收敛（`SCOPE_BLOCK_SIZE` 5000 → 15000）
 
-**状态：IMPLEMENTED / INDEPENDENT REVIEW PENDING（正确性与性能验收均已达标，待独立 DS-H 窄受影响面主审）。**
+**状态：PASS（2026-09-28，独立 DS-H 窄受影响面工程主审 = `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`，见 §9）。**
 性能结论：30 万档真实中文 CLIP + CUDA + 真实 HTTP 暖机文字 **n=30 P95 = 3760.2 ms ≤ 5000 ms ⇒ PASS，保留 15000**。
 
 - 基线：`b42c341`（`master`，开工工作树干净；卡见 [P4-02X](../tasks/P4-02X.md)）。Python 3.12.10 / `.venv`，schema 16。
@@ -44,8 +44,7 @@ schema/迁移、scheduler/busy timeout、A3/ANN/第二后端/模型。
 | 夹具 | 300000 CONFIRMED，Lance `version` 1526 → 1526（只读） |
 
 交错 A/B（同夹具、同会话，`15000 → 5000 → 15000 → 15000 → 5000 → 15000`）：
-`vector_channel` 中位 15000 = 2929.9 ms、5000 = 3473.9 ms；service 中位 15000 = 3226.0、5000 = 3705.7；
-5000 相对 15000 的配对比值 = **1.1504 / 1.1503** ⇒ 本会话新常数快约 **15%**，与 P4-02M 轮的 −13.6%（service 配对）同向。
+**（DS-H 主审 F1 修正）**本轮离线 A/B **不可比、不作结论**：所引 `p4-02x-offline-equivalence.json` 的分桶中位是 vector 15000 = 4961.995 / 5000 = 4708.245（n=4 vs n=2）、service 15000 = 5476.689 / 5000 = 5133.319，且该 run 的两个「15000 夹心」对照互相矛盾（0.876 与 1.187）。受控差值以**同会话真实 HTTP 对照**为准（15000 相对 5000：P50 −11.1% / P95 −7.3%），离线配对 −13.6%（service）/ −14.1%（vector）取自 P4-02M 复测 `08e012c`。
 
 ## 4. 验证 B：边界并列 / `resolved=False` → exhaustive fallback
 
@@ -117,7 +116,7 @@ schema/迁移、scheduler/busy timeout、A3/ANN/第二后端/模型。
 2. 性能：P95 = 3760.2 ms ≤ 5000 ms ⇒ **PASS，保留 15000**；
 3. 本卡**不**继续改 20000/30000，**不**启动 A3/ANN/第二后端；后台 D、浏览器首屏、上传、40 万、GTX 1660、
    冷缓存、真实图库与 soak **未测**（P4-02W 的 D FAIL / B BLOCKED 结论不被本卡改变）；
-4. 状态 = **IMPLEMENTED / INDEPENDENT REVIEW PENDING**：实现自检不是独立审查，本卡尚缺 §7 要求的
+4. 状态 = **PASS**：独立 DS-H 窄受影响面工程主审已完成（§9）＝ `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`；本卡已满足 §7 要求的
    独立 DS-H **窄受影响面工程主审**（`SCOPE_BLOCK_SIZE → vector_channel → search_candidates_bounded →
    resolved=False → exhaustive fallback → tied-distance/全序/truncated → 受影响测试 → 30 万真实性能证据`）；
    无 ADR/schema/API/数据安全语义变化 ⇒ 预计 `SOL_NOT_REQUIRED`。
@@ -147,3 +146,19 @@ uv run --no-sync pytest -q tests/unit tests/integration --junitxml=test-results/
 `test-results/p4-02x-warm-text.json`、`test-results/p4-02x-warm-text-control-5000.json`、
 `test-results/p4-02x-attribution.json`、`test-results/p4-02x-focused.xml`、`test-results/p4-02x-full.xml`、
 `tmp/p4-02x-*.log`、`tmp/p4-02x-fallback-probe.py`。
+---
+
+## 9. 独立主审（2026-09-28，DS-H 窄受影响面）
+
+**结论：`ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`；本卡收口 PASS。** 只读复核，未重跑性能测试；详见
+[P4-02X 窄受影响面工程主审](P4-02X-dsh-narrow-affected-surface-review.md)。
+
+1. 产品改动仅 `src/photo_search/search/retrieval.py` 的 `SCOPE_BLOCK_SIZE 5000 → 15000`（+注释），SHA256 `23749299…b9426` 实测一致；检索语义、SQL 绑定、全序、RRF/BM25、信封/错误码未动。
+2. `vector_channel → search_candidates_bounded → resolved=False → 穷举回退` 调用链逐行核对未变（当前源码 509–546 行）。
+3. 并列夹具 `fallback_calls == blocks`（5/8/15000 → 6/4/1），页面等于穷举参考、`truncated=false`、候选 30/30；定点点名含该并列/全序用例。
+4. 30 万正常路径 `engine_blocks=20`、`bounded_calls=20`、`fallback_calls=0`、每块 21 行、`scanned=300000`、通道级 `truncated=false`，且 `all_pages_match_baseline=true`（与 5000 参数逐项相同）。
+5. 定点 38/0/0/0 与 B 级 1806/0/0/48 实读；本轮独立复跑 `ruff`/`uv lock --check`/`git diff --check` 全绿。
+6. 真实 HTTP n=30：P50 3473.7 / P95 3760.2 / max 3770.8、失败 0、每样本 `engine_blocks=20`，统计独立复算逐字一致。
+7. 无 ADR/schema/API/数据安全语义变化 ⇒ `SOL_NOT_REQUIRED`。
+
+**主审 F1（已按本条修正本文 §3）**：原文「本会话交错 A/B：vector 中位 15000 = 2929.9 / 5000 = 3473.9，service 3226.0 / 3705.7，配对比值 1.1504/1.1503 ⇒ 快约 15%」的这 6 个数字在**任何保留证据中都不存在**；`p4-02x-offline-equivalence.json` 自身分桶中位为 vector 4961.995 / 4708.245、service 5476.689 / 5133.319，且该 run 的两个夹心对照互相矛盾（0.876 与 1.187）⇒ 本轮离线 A/B 不作结论。受控差值改用同会话真实 HTTP 对照（P50 −11.1% / P95 −7.3%）与 P4-02M 复测 `08e012c`（−13.6% / −14.1%）。**该修正不影响本卡 PASS**：卡面门槛只看真实 HTTP 30 样本 P95。
