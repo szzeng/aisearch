@@ -535,6 +535,8 @@
     ["ocr", "文字识别"],
   ];
   var STAGE_STATE_TEXT = {
+    NOT_STARTED: "未开始",
+    PENDING: "待处理",
     IN_PROGRESS: "处理中",
     COMPLETE: "完成",
     UNAVAILABLE: "不可用",
@@ -664,6 +666,22 @@
     build: "开始建库",
     refresh: "刷新图库",
   };
+  //: Why a refresh could not call itself search ready (``search_ready_basis``). A terminal
+  //: "刷新失败" without a reason is exactly the kind of state the source card was fixed to
+  //: avoid, so the run line names the gate it stopped at (review F3 of the P4-02Y-I
+  //: re-review).
+  var SEARCH_GATE_TEXT = {
+    "semantic-backlog": "还有语义索引项待处理",
+    "semantic-confirmed-nothing": "没有图片能建立语义索引",
+    "semantic-nothing-to-index": "无需建立语义索引（没有可索引图片）",
+    "semantic-pending": "语义索引尚未确认完成",
+    GENERATION_NOT_PUBLISHED: "该向量空间还没有任何已发布的图像索引",
+    MANIFEST_UNCONFIGURED: "未配置语义模型",
+    MODEL_UNAVAILABLE: "无法加载图像编码器",
+    MODEL_LOAD_FAILED: "图像编码器加载失败",
+    ACTIVE_PROFILE_SPACE_MISMATCH: "活动搜索档案与本模型的向量空间不一致",
+    "projection-lagging": "搜索投影尚未追赶完成",
+  };
 
   function refreshLibrary(sourceIds, mode) {
     var timer = state.refreshTimer;
@@ -743,6 +761,10 @@
     }
     if (counters.content_delta_count !== undefined) {
       parts.push("新增/变化内容 " + String(counters.content_delta_count) + " 项");
+    }
+    if (!status.search_ready && status.search_ready_basis) {
+      var gate = String(status.search_ready_basis);
+      parts.push("原因：" + (SEARCH_GATE_TEXT[gate] || gate));
     }
     var kind = status.state === "FAILED"
       ? "error"

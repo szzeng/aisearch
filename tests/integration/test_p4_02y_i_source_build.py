@@ -213,6 +213,61 @@ def test_the_progress_of_an_unavailable_processor_is_reported_not_guessed(tmp_pa
         env.close()
 
 
+def test_a_new_source_never_reports_a_finished_analysis_stage(tmp_path: Path) -> None:
+    """§3: a source that has run no build task must show 未开始 - never 完成.
+
+    A freshly registered source has nothing in scope, and "0 of 0 assets handled" used to be
+    rendered as ``COMPLETE``; a source that had only been scanned showed ``IN_PROGRESS`` even
+    though no analysis task existed. Both are now derived from the durable evidence of what
+    really ran: never started / waiting / running / finished / unavailable.
+    """
+    (tmp_path / "library").mkdir(parents=True, exist_ok=True)
+    env = RefreshEnv.build(tmp_path, photos=0, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        fresh = tmp_path / "fresh"
+        write_jpeg(fresh / "fresh-0.jpg", noise=810)
+        source_id = register_source(env, "fresh", fresh)
+
+        # 1. registered only: nothing was ever scanned, and no stage has any recorded work.
+        stages = source_payload(env, source_id)["progress"]["stages"]
+        assert stages["semantic"]["state"] == "UNBUILT"
+        for name in ("taken_time", "gps"):
+            assert stages[name]["state"] == "NOT_STARTED", (name, stages[name])
+            assert stages[name]["handled"] == 0
+            assert stages[name]["attempted"] == 0
+        for name in ("place", "face", "ocr"):
+            assert stages[name]["state"] == "UNAVAILABLE"
+        assert "COMPLETE" not in {stage["state"] for stage in stages.values()}
+
+        # 2. a complete-verification scan alone is still not analysis work.
+        env.service().run_scan(source_id)
+        scanned = source_payload(env, source_id)["progress"]
+        assert scanned["scan"]["files"] == 1
+        assert scanned["built"] is False
+        assert scanned["stages"]["taken_time"]["state"] == "NOT_STARTED"
+        assert scanned["stages"]["gps"]["state"] == "NOT_STARTED"
+        assert scanned["stages"]["taken_time"]["total"] == 1
+
+        # 3. one "开始建库" runs every available stage over the scope: now they may finish.
+        assert run(env, mode="build", source_ids=[source_id])["search_ready"] is True
+        built = source_payload(env, source_id)["progress"]["stages"]
+        assert built["taken_time"]["state"] == "COMPLETE"
+        assert built["gps"]["state"] == "COMPLETE"
+        assert built["taken_time"]["handled"] == 1
+
+        # 4. content added afterwards is real outstanding work: neither "处理中" (nothing is
+        #    queued) nor "完成" (it has not run for this revision).
+        write_jpeg(fresh / "later.jpg", noise=811)
+        env.service().run_scan(source_id)
+        later = source_payload(env, source_id)["progress"]["stages"]
+        assert later["taken_time"]["total"] == 2
+        assert later["taken_time"]["handled"] == 1
+        assert later["taken_time"]["state"] == "PENDING"
+        assert later["gps"]["state"] == "PENDING"
+    finally:
+        env.close()
+
+
 # ------------------------------------------------------------- §2 bounded build / backlog
 def test_a_build_drains_the_backlog_beyond_the_batch_and_delta_ceilings(
     tmp_path: Path, monkeypatch: Any
@@ -784,6 +839,13 @@ def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path
         assert "已扫描，无可索引图片" in served["script"]
         assert "无法建立语义索引" in served["script"]
         assert "张无法编码" in served["script"]
+        # A stage that has run no task is rendered 未开始, and outstanding-but-idle work is
+        # 待处理 - the two words the review follow-up asked for.
+        assert "NOT_STARTED: \"未开始\"" in served["script"]
+        assert "PENDING: \"待处理\"" in served["script"]
+        # A run that is not search ready names the gate it stopped at (re-review F3).
+        assert "SEARCH_GATE_TEXT" in served["script"]
+        assert "GENERATION_NOT_PUBLISHED: \"该向量空间还没有任何已发布的图像索引\"" in served["script"]
         assert 'method: "DELETE"' in served["script"]
     finally:
         env.close()

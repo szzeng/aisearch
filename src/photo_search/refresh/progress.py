@@ -64,8 +64,21 @@ SEMANTIC_UNINDEXABLE = "UNINDEXABLE"
 #: zero confirmed entries.
 BUILT_MARKER_PREFIX = "source_build:"
 
-#: Enrichment states of one source (P4-02Y-I §3: "处理中 / 完成 / 不可用").
+#: Enrichment states of one source. The card must never call a stage "完成" that has not run:
+#:
+#: * ``NOT_STARTED`` - no task of this stage has ever been recorded for the source's current
+#:   content. This is the honest answer for a freshly registered (or only scanned) source, and
+#:   the reason it exists as its own state: with nothing in scope, "0 of 0 handled" used to be
+#:   reported as ``COMPLETE``;
+#: * ``PENDING`` - some of the source's content has been handled before, but part of it has no
+#:   terminal result and nothing is queued right now (a new photo between two refreshes);
+#: * ``IN_PROGRESS`` - work of this stage is queued or running right now;
+#: * ``COMPLETE`` - every currently readable asset has a terminal result for its current
+#:   revision;
+#: * ``UNAVAILABLE`` - this machine has no weights/dataset for the stage.
 STAGE_UNAVAILABLE = "UNAVAILABLE"
+STAGE_NOT_STARTED = "NOT_STARTED"
+STAGE_PENDING = "PENDING"
 STAGE_IN_PROGRESS = "IN_PROGRESS"
 STAGE_COMPLETE = "COMPLETE"
 
@@ -297,13 +310,16 @@ def enrichment_counts(
     source_id: int | None = None,
     fact_table: str | None = None,
 ) -> dict[str, int]:
-    """``handled``/``pending`` of one enrichment processor for one scope.
+    """``handled``/``pending``/``attempted`` of one enrichment processor for one scope.
 
     ``handled`` counts the assets whose **current** content revision has a job that reached a
     terminal state - a finished job of an older revision is history and must not make a
     changed photo look processed. The taken-time extractor is the one exception: its job
     revision digests the recorded positions as well (ADR-0011 §2), so its durable "this asset
-    was processed" evidence is the row of its own fact table instead.
+    was processed" evidence is the row of its own fact table instead. ``attempted`` counts the
+    in-scope assets that have *any* job row for this processor, whatever its revision: it is
+    what tells "this stage never ran for this source" (``NOT_STARTED``) apart from "part of the
+    content is not processed yet" (``PENDING``).
     """
     clause, parameters = _scope_clause(source_id)
     if fact_table is None:
@@ -337,7 +353,16 @@ def enrichment_counts(
             (str(task_type), str(processor_id), *_LIVE_JOB_STATES, *parameters),
         )["n"]
     )
-    return {"handled": handled, "pending": pending}
+    attempted = int(
+        catalog.read_one(
+            "SELECT COUNT(*) AS n FROM jobs AS j "
+            "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+            "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
+            f"AND a.asset_id IN ({clause})",
+            (str(task_type), str(processor_id), *parameters),
+        )["n"]
+    )
+    return {"handled": handled, "pending": pending, "attempted": attempted}
 
 
 def served_binding(
@@ -454,6 +479,7 @@ def source_progress(
                 "state": STAGE_UNAVAILABLE,
                 "handled": 0,
                 "pending": 0,
+                "attempted": 0,
                 "total": total_assets,
             }
             continue
@@ -484,11 +510,22 @@ def source_progress(
 
 
 def _enrichment_state(counts: Mapping[str, int], total_assets: int) -> str:
+    """One honest word for a stage, from durable counts only.
+
+    The order matters: ``pending`` first (something is really running), then "nothing readable
+    to analyse" (the case that used to be mislabelled ``COMPLETE`` for a brand-new source),
+    then "everything handled", and only then the two "nothing happened yet" answers.
+    """
+    total = int(total_assets)
     if int(counts["pending"]) > 0:
         return STAGE_IN_PROGRESS
-    if total_assets <= 0 or int(counts["handled"]) >= int(total_assets):
+    if total <= 0:
+        return STAGE_NOT_STARTED
+    if int(counts["handled"]) >= total:
         return STAGE_COMPLETE
-    return STAGE_IN_PROGRESS
+    if int(counts["attempted"]) == 0:
+        return STAGE_NOT_STARTED
+    return STAGE_PENDING
 
 
 __all__ = [
@@ -503,6 +540,8 @@ __all__ = [
     "SEMANTIC_UNAVAILABLE",
     "STAGE_COMPLETE",
     "STAGE_IN_PROGRESS",
+    "STAGE_NOT_STARTED",
+    "STAGE_PENDING",
     "STAGE_UNAVAILABLE",
     "built_marker_key",
     "enrichment_availability",
