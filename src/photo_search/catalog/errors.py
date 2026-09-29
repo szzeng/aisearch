@@ -237,6 +237,10 @@ FACE_MAPPING_OPERATION_NOT_UNDOABLE = "FACE_MAPPING_OPERATION_NOT_UNDOABLE"
 MAX_MAPPING_DECISIONS = 200
 MAX_MAPPING_TARGETS = 16
 
+#: P4-02Y §3: the two shipped scan modes are ``full`` and ``fast``. Anything else is a
+#: caller error, not a silently different scan.
+INVALID_SCAN_MODE = "INVALID_SCAN_MODE"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

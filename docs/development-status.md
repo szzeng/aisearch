@@ -2,6 +2,48 @@
 
 更新：2026-09-28。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## 当前任务 P4-02Y — 一键快速刷新图库（增量扫描 → 增量派生 → 可搜索）
+
+**PASS（2026-09-29；独立 DS-H 窄受影响面工程主审 = `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`，
+[主审报告](reports/P4-02Y-dsh-narrow-affected-surface-review.md)）。** 基线 `bc84fd3` + P4-02Y 的产品/测试
+diff（仍未提交；`d59bcd0`/`277b1d3`/`4f6e737` 只改任务卡，`3b70df6`/`bc84fd3` 是 P4-02Y-T 立卡），
+schema 仍 16，`0017` 未实施。
+[任务卡](tasks/P4-02Y.md)、[实现报告](reports/P4-02Y-library-refresh.md)。产品改动：`ingestion/scanner.py` 新增
+`execute_scan(mode="full"|"fast")`（fast 只 hash 无法复用既有完整绑定位置 + 本轮 `MISSING→PRESENT` 恢复 +
+有界 `content_delta`/`location_delta`；`full` 逐位置全量 SHA-256 语义不变）、`catalog/store.py`（`renamed`/
+`restored`/`asset_id` 加性字段、`iter_unbound_seen_locations`、`reconcile_missing_detail`）、新增
+`refresh/{pipeline,state}.py`、新增 `api/refresher.py` 与 `POST/GET /api/v1/library/refresh`（加性，202 + 只读状态，
+单进程一个 active refresh）、`web` 入口（刷新图库 / 快速刷新此来源 / 阶段文案）、
+`workers/query_encoder.py` 补 `health()`+`encode_image(path)`（缺则刷新永远补不了嵌入，属本轮发现的真实缺陷）。
+§10 批量 observation：默认 **128**（128/256 在 30 万 no-op 上差异在噪声内 ⇒ 取单事务更短的 128，停止扫参）。
+验证：定点 **40/0/0/0**、B 级 **1846/0/0/48**（262.823 s，JUnit 实读）、`ruff`/`uv lock --check`/`git diff --check` 全绿。
+§11-A（30 万 no-op，真实产品 HTTP 入口）：`hash_targets=0`、`hash_bytes=0`、**0 张原图被打开做 hash / 0 张解码**、
+各增强阶段 0 新工作、catalog 逐行摘要前后相同、并发合法搜索 0 拒绝、refresh wall 30.2–31.0 s（体验目标 1–3 分钟）。
+§11-B（30 万 + 300 新 + 10 副本 + rename10 + delete10，真实 pinned Chinese-CLIP/CUDA）：只 hash **310** 个位置、
+`new_assets=300`、`rebound_assets=10`、semantic 300/300/310/310/0、thumbnail 生成 300 复用 10、taken-time 320、
+GPS 310、face/OCR/place-resolver `SKIPPED_UNAVAILABLE` 不阻塞、**start→SEARCH_READY 50 195 ms**、
+`COMPLETE`+`search_ready=true`、9 次并发合法搜索 0 拒绝、SEARCH_READY 时真实 HTTP 搜索命中新增资产第 1 位。
+证据：`test-results/p4-02y-{focused,full}.xml`、`test-results/p4-02y-noop-{128,128b,256,256b}.json`、
+`test-results/p4-02y-delta.json`；工具 `tools/diagnostics/p4_02y_refresh_scale.py`（夹具只读，工作副本内做一次
+`artifacts.input_revision` 合成修正使 selector 自洽：300000→0，夹具本身零改动）。
+**独立 DS-H 窄受影响面工程主审已完成（2026-09-29）= `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`**（[主审报告](reports/P4-02Y-dsh-narrow-affected-surface-review.md)：
+①fast 只复用「已完整 SHA-256 确认 + asset_id 非空 + size/mtime 未变」的绑定，changed 在同一事务清空
+`asset_id`，绑定入口仍只接受完整 hash ⇒ size/mtime 未成为内容身份；②`full` 仍是默认模式、逐位置全量
+hash、`count_unbound==0` 与「仅完整成功后 reconcile MISSING」未动；③delta 有界（50 000）+ 溢出回退 +
+不进公开信封，下游 thumbnail/taken-time/GPS/place/face/OCR 全只吃 delta，30 万档只 hash 310 / 只派生
+300；④批量 observation 的 PATH_KEY_COLLISION、changed 清空、MISSING 原子对账、lease（每批一次
+qualification）、中断续跑语义逐一保持；⑤SEARCH_READY 由「projection SYNCED + delta 在当前 generation
+CONFIRMED」决定、在增强阶段之前宣告，face/OCR/GPS 非硬前置；⑥no-op 四份 JSON 0 hash / 0 AI / catalog
+逐行相同；⑦无 ADR/schema/既有 API 契约变化）。主审**未重跑** 30 万性能测试与 B 级回归（B 级 JUnit 的
+1806 个既有用例对应现状 `src/**`，两个新集成文件由主审在当前工作树独立复跑 **40/0/0/0**，
+`test-results/p4-02y-review-focused.xml`），并重跑 `ruff`/`uv lock --check`/`git diff --check` 全绿。
+非阻断 F1–F3：①报告中「start→SEARCH_READY 50 195 ms」是工具观测上界（流水线自记 39 538 ms，两者都达标）；
+②30 万档「可搜索」探针在终止态之后执行，半途取证由门禁顺序 + 定点测试支撑；③单轮变化 >50 000 时该轮
+D..G 增强被跳过且后续 refresh 不再捡起（catalog/投影/语义/可搜索性不受影响，缩略图有按需入口）。
+**未验证 / 不授予 PASS**：浏览器计时（`BROWSER_TIMING BLOCKED`）、face/OCR 真实权重、place resolver 数据集、
+GTX 1660、冷缓存、40 万、soak、打包产物内刷新、真实个人图库；30 万历史向量为容量工具合成向量，故其
+相关性/质量不在本卡结论内。**下一动作 = P4-02Y-T（已立卡；本轮按用户指令不启动）。**
+
 ## 当前任务 P4-02X — bounded block-size 最小产品收敛
 
 **PASS（2026-09-28；独立 DS-H 窄受影响面工程主审 = `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`，[主审报告](reports/P4-02X-dsh-narrow-affected-surface-review.md)）。** [P4-02X](tasks/P4-02X.md)：固定采用 `SCOPE_BLOCK_SIZE=15000`，不再扫参；依据最新 [P4-02M bounded block-size 复测](reports/P4-02M-bounded-block-size-retest.md)，15000/20 blocks 已取得约 −13.6% service 配对收益，而 30000/10 仅再多约 1–2 个百分点但单块 fallback 规模翻倍。执行策略：只改一个产品常数 → 最小正常 bounded 等价验证 → 至少一次 `resolved=False` tied-distance/exhaustive fallback → 必要受影响回归 → 复用 P4-02W 场景 A 做真实中文 CLIP + CUDA + HTTP 的 30 样本暖机文字验收。历史基线 P95=5076.4 ms，门槛 ≤5000 ms。若仍 >5 s，记 `IMPLEMENTED / PERFORMANCE STILL FAIL` 并停止，不在本卡改 20000/30000，不启动 A3/ANN；后台 D 留到后续整体性能验收。**结果（基线 `b42c341` + 未提交 diff）：产品改动仅 `src/photo_search/search/retrieval.py` 的 `SCOPE_BLOCK_SIZE` 5000 → 15000（+11/−1；schema/迁移、依赖、`uv.lock`、ADR/companion、信封/错误码/游标、`search_candidates_bounded`/`resolved`/fallback 逻辑、全序、RRF/BM25、scheduler 零改动；文件 SHA256 `23749299…b9426`）。** ①正常 bounded（30 万夹具、`top_k=20`）：`engine_blocks=20`、`bounded_calls=20`、`fallback_calls=0`、每块 21 = `top_k+1` 行、`scanned=300000`、`truncated=false`、最终 `(asset_id, distance)` 与改动前 5000 基线**逐项相同**；（DS-H 主审 F1 修正）离线 A/B 本轮不可比、不作结论（15000 n=4 vs 5000 n=2，两个夹心对照互相矛盾）；受控差值取同会话真实 HTTP 对照：15000 相对 5000 P50 −11.1% / P95 −7.3%，离线配对 −13.6% 取自 P4-02M 复测 `08e012c`。②边界并列：30 行全等距夹具下 block 5/8/15000 的 `fallback_calls` = **6/4/1 == blocks**（确实触发 `resolved=False → exhaustive fallback`），三档页面均等于穷举参考、`truncated=false`、候选 30/30 未丢；回退单块实测 5000 → 69.6 / 15000 → 183.9 / 30000 → 630.2 ms ⇒ 全量回退最坏外推 4.18 / **3.68** / 6.30 s（15000 即便退化也不慢于 5000，30000 会明显变慢 ⇒ 选 15000 的量化依据）。③定点 **38 / 0 / 0 / 0**、B 级 **1806 / 0 / 0 / 48**（257.2 s，均 JUnit 实读）、`ruff`/`uv lock --check`/`git diff --check` 全绿（沙箱内 pytest basetemp `WinError 5` 为既有环境限制，按正常权限路由重跑，未改 ACL）。④**真实中文 CLIP `vit-b-16` + RTX 4060 Laptop/CUDA + 真实 HTTP + 暖机 n=30：P50 3473.7 / P95 3760.2 / max 3770.8 / 失败 0 / 每样本 `engine_blocks=20` ⇒ P95 ≤ 5000 达标，保留 15000**（冷启动单列 6161.6 ms；前后夹具一致）；**同会话把常数临时改回 5000 的对照 P95 = 4058.4 ms 也达标** ⇒ 与 P4-02W 历史 5076.4 之差**不能全部归因本改动**（机器/缓存/会话状态差异为主），本改动受控效果 = 本会话 **−11.1% P50 / −7.3% P95** + 离线交错配对 **−13.6% service**；真实模型 in-process 归因 `vector_ms` p50 3163.7（P4-02W 同口径 4598.8）、`bounded_calls=20`、`fallback_calls=0`。诊断侧最小调整：`p4_02f_stage0.py`（`PRODUCT_BLOCK_SIZE` 改为导入产品常数防漂移 + `stages` 补 bounded 引擎桶）、`p4_02w_personal_trial.py`（`attribution` 新增只观测的 `_BoundedCallLedger`，因为 HTTP 信封不含 `fallback_calls`）。报告 [P4-02X](reports/P4-02X-block-size-15000.md)，证据 `test-results/p4-02x-{offline-equivalence,fallback-probe,warm-text,warm-text-control-5000,attribution}.json` 与 `test-results/p4-02x-{focused,full}.xml`。**未验证**：后台 D、浏览器首屏、上传搜图、40 万、GTX 1660、冷缓存、真实图库、soak；不改 20000/30000、不启动 A3/ANN/第二后端。**独立 DS-H 窄受影响面工程主审已完成（2026-09-28）= `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`**（[主审报告](reports/P4-02X-dsh-narrow-affected-surface-review.md)：改动仅 `SCOPE_BLOCK_SIZE`；`vector_channel → search_candidates_bounded → resolved=False → 穷举回退` 逐行未变；并列夹具 `fallback_calls == blocks`（6/4/1）且页面等于穷举参考；30 万正常路径 `engine_blocks=20`、通道级 `truncated=false`、页面与 5000 参数逐项相同；定点 38/0/0/0 + B 级 1806/0/0/48（JUnit 实读）；真实 HTTP n=30 P95=3760.2 可复算；无 ADR/schema/API/数据安全变化）。本卡已收口 **PASS**（仅本卡常数收敛这一条）；报告 §3 离线 A/B 数字已按主审 F1 修正。执行：DS-H / DeepSeek V4.1 Flash / 高推理（模型切换由用户在 Codex 中手动完成）。**已由 `295f7ad`（[P4-02X 收口]）本地提交**（`src/photo_search/search/retrieval.py`、`tools/diagnostics/p4_02f_stage0.py`、`tools/diagnostics/p4_02w_personal_trial.py`、`docs/reports/P4-02X-block-size-15000.md`、`docs/tasks/P4-02X.md`、`docs/development-status.md`）；本轮主审与 F1 数字修正为未提交 diff。

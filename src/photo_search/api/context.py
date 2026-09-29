@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from photo_search.api.errors import Redactor
+from photo_search.api.refresher import LibraryRefresher
 from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
 from photo_search.api.settings import ApiSettings, generate_session_token
@@ -34,6 +35,12 @@ class ApiContext:
         worker_id: str | None = None,
         encoder_factory: Callable[[], QueryEncoder] | None = None,
         reranker_factory: Callable[[], Any] | None = None,
+        refresher_executor: Callable[[Any, Any, Any], Any] | None = None,
+        refresh_manifest_path: str | None = None,
+        refresh_device: str | None = None,
+        refresh_device_policy: str = "cpu_allowed",
+        refresh_batch_size: int | None = None,
+        refresh_enrich: bool = True,
     ) -> None:
         self.settings = settings
         token = settings.session_token or generate_session_token()
@@ -57,6 +64,16 @@ class ApiContext:
         self._reranker_resolved = False
         self._service: CatalogService | None = None
         self._runner: ScanRunner | None = None
+        #: P4-02Y: the single background library refresh. It reuses the *same* ADR-0003 §7
+        #: adapter as the query path (never a second model instance), resolves its own
+        #: connection inside its worker thread, and reports through ``photo_search.refresh``.
+        self._refresher_executor = refresher_executor
+        self._refresh_manifest_path = refresh_manifest_path
+        self._refresh_device = refresh_device
+        self._refresh_device_policy = str(refresh_device_policy)
+        self._refresh_batch_size = refresh_batch_size
+        self._refresh_enrich = bool(refresh_enrich)
+        self._refresher: LibraryRefresher | None = None
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -75,6 +92,27 @@ class ApiContext:
                 self._service_factory, executor=self._runner_executor, worker_id=self._worker_id
             )
         return self._runner
+
+    def refresher(self) -> LibraryRefresher:
+        """The single background library refresh; one active refresh per process."""
+        if self._refresher is None:
+            from photo_search.ingestion.scanner import DEFAULT_OBSERVATION_BATCH
+
+            self._refresher = LibraryRefresher(
+                self._service_factory,
+                encoder_provider=self.query_encoder,
+                manifest_path=self._refresh_manifest_path,
+                device=self._refresh_device,
+                device_policy=self._refresh_device_policy,
+                batch_size=(
+                    DEFAULT_OBSERVATION_BATCH
+                    if self._refresh_batch_size is None
+                    else int(self._refresh_batch_size)
+                ),
+                enrich=self._refresh_enrich,
+                executor=self._refresher_executor,
+            )
+        return self._refresher
 
     def redactor(self) -> Redactor:
         """Build the path redactor from whatever catalog state is currently readable."""
@@ -128,6 +166,13 @@ class ApiContext:
 
     def close(self) -> None:
         """Stop the worker, the query encoder and both connections; safe to call twice."""
+        refresher = self._refresher
+        self._refresher = None
+        if refresher is not None:
+            try:
+                refresher.close()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the library refresher failed", exc_info=True)
         runner = self._runner
         self._runner = None
         if runner is not None:

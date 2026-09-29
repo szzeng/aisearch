@@ -53,6 +53,8 @@ from photo_search.api.models import (
     ImageSearchResultModel,
     JobListResponse,
     JobRecord,
+    LibraryRefreshRequest,
+    LibraryRefreshStatus,
     MappingGroup,
     MappingListResponse,
     MappingOperationResponse,
@@ -466,6 +468,37 @@ async def request_scan(request: Request, source_id: int) -> dict[str, Any]:
         "state": str(requested["state"]),
         "reused": bool(requested["reused"]),
     }
+
+
+# ------------------------------------------------------------------------------ refresh
+@router.post(
+    "/library/refresh",
+    response_model=LibraryRefreshStatus,
+    status_code=202,
+    summary="Refresh the library: fast scan, incremental derivation, searchable first",
+)
+async def request_library_refresh(
+    request: Request, payload: LibraryRefreshRequest | None = Body(default=None)
+) -> dict[str, Any]:
+    """Start the one-click refresh and answer ``202`` with the current status.
+
+    The request never waits for the scan, the embeddings or the enrichment stages: the
+    refresh runs on its own worker thread and reports through
+    ``GET /api/v1/library/refresh``. A second request while one is active is *not* queued -
+    it answers with the running refresh and ``accepted = false`` (P4-02Y §5).
+    """
+    source_ids = None if payload is None else payload.source_ids
+    return context_of(request).refresher().start(source_ids)
+
+
+@router.get(
+    "/library/refresh",
+    response_model=LibraryRefreshStatus,
+    summary="The status of this process's library refresh",
+)
+async def library_refresh_status(request: Request) -> dict[str, Any]:
+    """Read-only status: stage, search readiness and per-source counters (no asset ids)."""
+    return context_of(request).refresher().status()
 
 
 # -------------------------------------------------------------------------------- jobs

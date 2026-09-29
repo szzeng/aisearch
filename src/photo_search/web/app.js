@@ -78,6 +78,8 @@
       timeCache: {},
     },
     pollTimer: null,
+    //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
+    refreshTimer: null,
     objectUrls: [],
     observer: null,
   };
@@ -450,6 +452,15 @@
       });
       actions.appendChild(scan);
       card.appendChild(actions);
+      var quick = element("p");
+      var refreshOne = element("button", null, "快速刷新此来源");
+      refreshOne.type = "button";
+      refreshOne.setAttribute("data-refresh", String(source.source_id));
+      refreshOne.addEventListener("click", function () {
+        refreshLibrary([Number(source.source_id)]);
+      });
+      quick.appendChild(refreshOne);
+      card.appendChild(quick);
       var progress = element("p", "hint", "");
       progress.setAttribute("data-progress", String(source.source_id));
       progress.setAttribute("role", "status");
@@ -480,13 +491,90 @@
         var body = result.body || {};
         setStatus(
           els.sourcesStatus,
-          "扫描已排队（scan #" + body.scan_id + "，job #" + body.job_id + "）"
+          "完整校验扫描已排队（scan #" + body.scan_id + "，job #" + body.job_id + "）"
         );
         pollJob(sourceId, body.job_id);
       })
       .catch(function (failure) {
         setStatus(els.sourcesStatus, "扫描请求失败：" + describe(failure), "error");
       });
+  }
+
+  // -------------------------------------------------------------------- refresh
+  // P4-02Y: the one-click fast refresh of the whole library (or of the named sources).
+  // It is an additive entry next to "扫描": the status text distinguishes the stage the
+  // server reports, so "可搜索" is shown as soon as the new content is really searchable.
+  var REFRESH_STATE_TEXT = {
+    IDLE: "尚未刷新",
+    SCANNING: "正在快速扫描来源",
+    INDEXING: "正在更新搜索索引",
+    SEARCH_READY: "可搜索：新增内容已进入搜索",
+    ENRICHING: "可搜索；正在生成缩略图与增强信息",
+    COMPLETE: "刷新完成",
+    PARTIAL_FAILED: "刷新部分完成（部分增强未完成）",
+    FAILED: "刷新失败",
+  };
+
+  function refreshLibrary(sourceIds) {
+    var timer = state.refreshTimer;
+    if (timer !== null) {
+      clearTimeout(timer);
+      state.refreshTimer = null;
+    }
+    setStatus(els.refreshStatus, "正在请求刷新图库…");
+    var body = sourceIds ? { source_ids: sourceIds } : {};
+    request("/library/refresh", { method: "POST", body: body })
+      .then(function (result) {
+        renderRefresh(result.body || {});
+        pollRefresh();
+      })
+      .catch(function (failure) {
+        setStatus(els.refreshStatus, "刷新请求失败：" + describe(failure), "error");
+      });
+  }
+
+  function pollRefresh() {
+    request("/library/refresh")
+      .then(function (result) {
+        var body = result.body || {};
+        renderRefresh(body);
+        var finished = body.state === "COMPLETE" ||
+          body.state === "PARTIAL_FAILED" ||
+          body.state === "FAILED";
+        if (!finished) {
+          state.refreshTimer = setTimeout(pollRefresh, POLL_INTERVAL_MS);
+          return;
+        }
+        state.refreshTimer = null;
+        state.browse.loaded = false;
+        loadSources();
+      })
+      .catch(function (failure) {
+        state.refreshTimer = null;
+        setStatus(els.refreshStatus, "读取刷新进度失败：" + describe(failure), "error");
+      });
+  }
+
+  function renderRefresh(status) {
+    var counters = status.counters || {};
+    var stateText = REFRESH_STATE_TEXT[status.state] || String(status.state || "");
+    var parts = [stateText];
+    if (status.running && status.accepted === false && status.refresh_id) {
+      parts.push("（已有一个刷新在进行，本次未重复启动）");
+    }
+    if (counters.hash_targets !== undefined) {
+      parts.push(
+        "已重新校验 " + String(counters.hash_targets) + " 个位置" +
+        "（复用 " + String(counters.unchanged_reused || 0) + " 个未变位置）"
+      );
+    }
+    if (counters.content_delta_count !== undefined) {
+      parts.push("新增/变化内容 " + String(counters.content_delta_count) + " 项");
+    }
+    var kind = status.state === "FAILED"
+      ? "error"
+      : (status.state === "PARTIAL_FAILED" ? "error" : "");
+    setStatus(els.refreshStatus, parts.join("；"), kind);
   }
 
   function progressNode(sourceId) {
@@ -1236,6 +1324,8 @@
       main: document.getElementById("main"),
       sourcesList: document.getElementById("sources-list"),
       sourcesStatus: document.getElementById("sources-status"),
+      refreshLibrary: document.getElementById("refresh-library"),
+      refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
       sourceFormError: document.getElementById("source-form-error"),
       sourceName: document.getElementById("source-name"),
@@ -1291,6 +1381,9 @@
       loadBrowse(false);
     });
     els.sourceForm.addEventListener("submit", submitSource);
+    els.refreshLibrary.addEventListener("click", function () {
+      refreshLibrary(null);
+    });
     window.addEventListener("hashchange", handleHash);
 
     state.observer = buildObserver();

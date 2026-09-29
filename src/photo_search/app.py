@@ -35,6 +35,12 @@ def create_app(
     runner_executor: Callable[[Any, int], Any] | None = None,
     encoder_factory: Callable[[], Any] | None = None,
     reranker_factory: Callable[[], Any] | None = None,
+    refresher_executor: Callable[[Any, Any, Any], Any] | None = None,
+    refresh_manifest_path: str | None = None,
+    refresh_device: str | None = None,
+    refresh_device_policy: str = "cpu_allowed",
+    refresh_batch_size: int | None = None,
+    refresh_enrich: bool = True,
 ) -> FastAPI:
     """Build one application instance over the given local settings."""
     resolved = settings or ApiSettings.create()
@@ -44,6 +50,12 @@ def create_app(
         runner_executor=runner_executor,
         encoder_factory=encoder_factory,
         reranker_factory=reranker_factory,
+        refresher_executor=refresher_executor,
+        refresh_manifest_path=refresh_manifest_path,
+        refresh_device=refresh_device,
+        refresh_device_policy=refresh_device_policy,
+        refresh_batch_size=refresh_batch_size,
+        refresh_enrich=refresh_enrich,
     )
 
     @asynccontextmanager

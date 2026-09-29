@@ -342,6 +342,45 @@ class ScanRequestResponse(BaseModel):
     reused: bool
 
 
+class LibraryRefreshRequest(BaseModel):
+    """``POST /api/v1/library/refresh``: refresh every source, or only the named ones.
+
+    An omitted/empty body means "every registered source" - the one-click case. The list is
+    only useful for a user who knows which directory changed (P4-02Y §5).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_ids: list[int] | None = Field(default=None, max_length=64)
+
+
+class LibraryRefreshStatus(BaseModel):
+    """The refresh status; counts and stage names only, never an asset-id list (P4-02Y §4).
+
+    ``SEARCH_READY`` and ``COMPLETE`` are distinct on purpose: the first means this round's
+    new content is already reachable through the current search path, the second that the
+    available enrichment stages also finished. ``search_ready_basis`` names the evidence the
+    first one rests on.
+    """
+
+    refresh_id: str | None = None
+    state: str
+    accepted: bool = False
+    running: bool = False
+    search_ready: bool = False
+    search_ready_basis: str | None = None
+    source_ids: list[int] | None = None
+    batch_size: int
+    started_at_ms: int | None = None
+    updated_at_ms: int | None = None
+    finished_at_ms: int | None = None
+    stages: dict[str, Any] = Field(default_factory=dict)
+    failed_stages: list[str] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    counters: dict[str, Any] = Field(default_factory=dict)
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class JobRecord(BaseModel):
     """A ``jobs`` row without the lease token, the worker id or any absolute path."""
 

@@ -24,7 +24,7 @@ import hashlib
 import os
 import stat
 import time
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,7 @@ from photo_search.catalog.errors import (
     DISK_SPACE_INSUFFICIENT,
     FILE_READ_ERROR,
     INPUT_UNSTABLE,
+    INVALID_SCAN_MODE,
     JOB_NOT_FOUND,
     LEASE_CONFLICT,
     PATH_KEY_COLLISION,
@@ -62,6 +63,24 @@ DEFAULT_STABILITY_WINDOW_MS = 1_500
 DEFAULT_STABILITY_WAIT_LIMIT_MS = 30_000
 #: Positions are read back for content confirmation in bounded chunks, not as one list.
 LOCATION_CHUNK_SIZE = 256
+
+#: P4-02Y §3: the scan modes. ``full`` is the frozen complete-verification scan (every seen
+#: position is hashed again); ``fast`` is the daily refresh: it re-enumerates every position
+#: but only re-hashes the ones whose previously *confirmed* binding cannot be reused.
+SCAN_MODE_FULL = "full"
+SCAN_MODE_FAST = "fast"
+SCAN_MODES = (SCAN_MODE_FULL, SCAN_MODE_FAST)
+
+#: P4-02Y §10: how many observations one enumeration write transaction commits. Only these
+#: two values were measured; 128 is the shipped default because its single write transaction
+#: is shorter (the write lock is what a concurrent reader contends with).
+OBSERVATION_BATCH_CHOICES = (128, 256)
+DEFAULT_OBSERVATION_BATCH = 128
+
+#: Upper bound of one refresh's in-memory delta sets. A library-scale change set is allowed
+#: to overflow: the count stays exact, the affected ids fall back to the existing full
+#: selectors, and correctness never depends on the set fitting in memory (P4-02Y §4).
+DELTA_LIMIT = 50_000
 #: Progress split of the two passes; the values only have to be monotone and bounded.
 ENUMERATION_PROGRESS_CEILING = 0.45
 ENUMERATION_PROGRESS_SCALE_FILES = 2_000
@@ -153,6 +172,31 @@ class FileObservation:
 
 
 @dataclass(frozen=True)
+class _ContentBinding:
+    """One confirmed content binding, as the fast refresh has to report it."""
+
+    asset_id: int | None
+    #: ``True`` when this hash created a new asset row (the content is new to the library).
+    created: bool
+    byte_size: int
+
+
+def _batched(
+    iterator: Iterator[FileObservation], size: int
+) -> Iterator[list[FileObservation]]:
+    """Group a stream into bounded batches without materialising the whole listing."""
+    batch_size = max(int(size), 1)
+    batch: list[FileObservation] = []
+    for item in iterator:
+        batch.append(item)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+@dataclass(frozen=True)
 class ScanOutcome:
     scan_id: int
     source_id: int
@@ -170,6 +214,22 @@ class ScanOutcome:
     prepare_ms: int
     enumeration_ms: int
     processing_ms: int
+    #: P4-02Y: the mode this execution ran in and the fast-refresh accounting. A ``full``
+    #: scan reports the same keys with ``unchanged_reused = 0`` so one consumer can read
+    #: either mode without a second shape.
+    mode: str = SCAN_MODE_FULL
+    unchanged_reused: int = 0
+    hash_targets: int = 0
+    hash_bytes: int = 0
+    content_confirmed: int = 0
+    new_assets: int = 0
+    rebound_assets: int = 0
+    locations_added: int = 0
+    content_delta_count: int = 0
+    location_delta_count: int = 0
+    delta_overflow: bool = False
+    content_delta: tuple[int, ...] = ()
+    location_delta: tuple[int, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -189,7 +249,26 @@ class ScanOutcome:
             "prepare_ms": self.prepare_ms,
             "enumeration_ms": self.enumeration_ms,
             "processing_ms": self.processing_ms,
+            "mode": self.mode,
+            "unchanged_reused": self.unchanged_reused,
+            "hash_targets": self.hash_targets,
+            "hash_bytes": self.hash_bytes,
+            "content_confirmed": self.content_confirmed,
+            "new_assets": self.new_assets,
+            "rebound_assets": self.rebound_assets,
+            "locations_added": self.locations_added,
+            "content_delta_count": self.content_delta_count,
+            "location_delta_count": self.location_delta_count,
+            "delta_overflow": self.delta_overflow,
         }
+
+    def deltas(self) -> tuple[tuple[int, ...], tuple[int, ...]]:
+        """The affected-asset routing sets, for the refresh orchestrator only (P4-02Y §4).
+
+        Deliberately *not* part of :meth:`as_dict`: the CLI and the HTTP layer report counts
+        and states, never an asset-id list of the user's library.
+        """
+        return (tuple(self.content_delta), tuple(self.location_delta))
 
 
 def _is_reparse_point(entry: os.DirEntry[str]) -> bool:
@@ -330,8 +409,22 @@ def execute_scan(
     observations: Sequence[FileObservation] | None = None,
     stability: StabilityPolicy | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    mode: str = SCAN_MODE_FULL,
+    observation_batch: int = DEFAULT_OBSERVATION_BATCH,
 ) -> ScanOutcome:
-    """Run one logical scan request to a terminal state, or raise with it persisted."""
+    """Run one logical scan request to a terminal state, or raise with it persisted.
+
+    ``mode`` selects the frozen complete-verification scan (``full``, the default and the
+    behaviour every existing entry keeps) or the P4-02Y fast refresh (``fast``): the same
+    enumeration, the same stability guards and the same success/reconcile contract, but the
+    content pass only visits the positions whose confirmed binding cannot be reused.
+    """
+    if mode not in SCAN_MODES:
+        raise CatalogError(
+            INVALID_SCAN_MODE,
+            "unknown scan mode",
+            details={"mode": mode, "supported": list(SCAN_MODES)},
+        )
     catalog = service.catalog
     requested = service.start_scan(source_id)
     scan_id = int(requested["scan_id"])
@@ -392,6 +485,8 @@ def execute_scan(
         policy=policy,
         interrupt_after=interrupt_after,
         cancel_check=cancel_check,
+        mode=mode,
+        observation_batch=max(int(observation_batch), 1),
     )
     run.prepare_ms = _elapsed_ms(prepare_started)
 
@@ -427,9 +522,7 @@ def execute_scan(
         processing_started = time.perf_counter()
         run.process(
             root=root,
-            total=store.count_seen_locations(
-                catalog.connection, source_id=source_id, scan_id=scan_id
-            ),
+            total=run.content_targets(),
         )
         run.processing_ms = _elapsed_ms(processing_started)
         require_free_space(service.disk_usage, service.data_root)
@@ -453,7 +546,11 @@ def execute_scan(
                 "scan cannot succeed while a seen position still needs content confirmation",
                 details={"source_id": source_id, "scan_id": scan_id, "pending_content": pending},
             )
-        missing = store.reconcile_missing(connection, source_id=source_id, scan_id=scan_id)
+        reconciled = store.reconcile_missing_detail(
+            connection, source_id=source_id, scan_id=scan_id, sample_limit=DELTA_LIMIT
+        )
+        missing = int(reconciled["count"])
+        run.note_missing(reconciled["asset_ids"], truncated=bool(reconciled["truncated"]))
         store.set_scan_state(connection, scan_id=scan_id, state="SUCCEEDED", now_ms=now_ms)
         store.set_last_successful_scan(
             connection, source_id=source_id, scan_id=scan_id, status="ONLINE"
@@ -473,7 +570,10 @@ def execute_scan(
         source_id=source_id,
         job_id=job_id,
         state="SUCCEEDED",
-        files_seen=run.processed,
+        # ``files_seen`` stays "how many positions this execution saw": in a fast refresh the
+        # content pass only visits the hash targets, so ``content_confirmed`` carries the
+        # number of positions that really were hashed again.
+        files_seen=run.enumerated,
         locations_missing=missing,
         locations_pending_content=0,
         unstable_retries=run.unstable_retries,
@@ -485,6 +585,19 @@ def execute_scan(
         prepare_ms=run.prepare_ms,
         enumeration_ms=run.enumeration_ms,
         processing_ms=run.processing_ms,
+        mode=run.mode,
+        unchanged_reused=run.unchanged_reused,
+        hash_targets=run.hash_targets,
+        hash_bytes=run.hash_bytes,
+        content_confirmed=run.processed,
+        new_assets=run.new_assets,
+        rebound_assets=run.rebound_assets,
+        locations_added=run.locations_added,
+        content_delta_count=run.content_count,
+        location_delta_count=run.location_count,
+        delta_overflow=run.delta_overflow,
+        content_delta=tuple(sorted(run.content_delta)),
+        location_delta=tuple(sorted(run.location_delta)),
     )
 
 
@@ -503,6 +616,8 @@ class _ScanRun:
         policy: StabilityPolicy,
         interrupt_after: int | None,
         cancel_check: Callable[[], bool] | None,
+        mode: str = SCAN_MODE_FULL,
+        observation_batch: int = DEFAULT_OBSERVATION_BATCH,
     ) -> None:
         self.service = service
         self.catalog = service.catalog
@@ -514,8 +629,28 @@ class _ScanRun:
         self.policy = policy
         self.interrupt_after = interrupt_after
         self.cancel_check = cancel_check
+        self.mode = str(mode)
+        self.fast = self.mode == SCAN_MODE_FAST
+        self.observation_batch = max(int(observation_batch), 1)
         self.enumerated = 0
         self.processed = 0
+        self.unchanged_reused = 0
+        self.hash_targets = 0
+        self.hash_bytes = 0
+        self.new_assets = 0
+        self.rebound_assets = 0
+        self.locations_added = 0
+        #: P4-02Y §4: the routing deltas. The counts stay exact; the sets are bounded and an
+        #: overflow is reported so the consumers fall back to their full selectors.
+        self.content_delta: set[int] = set()
+        self.location_delta: set[int] = set()
+        self.content_count = 0
+        self.location_count = 0
+        self.delta_overflow = False
+        #: ``MISSING`` -> ``PRESENT`` recoveries the enumeration saw; they must be re-hashed
+        #: even though their previous binding survived (P4-02Y §2).
+        self.restored_location_ids: set[int] = set()
+        self.restored_overflow = False
         self.unstable_retries = 0
         self.stability_waits = 0
         self.stability_wait_ms = 0
@@ -577,7 +712,12 @@ class _ScanRun:
             iterator: Iterator[FileObservation] = iter(listing)
         else:
             iterator = iter_observations(root)
-        for observation in iterator:
+        # A fast refresh commits its "nothing changed" observations in bounded batches
+        # (P4-02Y §10) - the per-file write transaction is the dominant fixed cost once the
+        # full SHA-256 pass is skipped. The complete-verification scan keeps the frozen
+        # one-observation-per-transaction shape.
+        batch_size = self.observation_batch if self.fast else 1
+        for batch in _batched(iterator, batch_size):
             self._check_cancel()
             now_ms = self.catalog.now_ms()
             with self.catalog.write() as connection:
@@ -585,24 +725,115 @@ class _ScanRun:
                     connection, worker=self.worker, lease_seconds=self.lease, now_ms=now_ms
                 )
                 self.execution.require(connection, now_ms=now_ms)
-                store.observe_location_detailed(
-                    connection,
-                    source_id=self.source_id,
-                    scan_id=self.scan_id,
-                    relative_path=observation.relative_path,
-                    path_key=observation.path_key,
-                    size=observation.size,
-                    mtime_ns=observation.mtime_ns,
-                )
+                for observation in batch:
+                    observed = store.observe_location_detailed(
+                        connection,
+                        source_id=self.source_id,
+                        scan_id=self.scan_id,
+                        relative_path=observation.relative_path,
+                        path_key=observation.path_key,
+                        size=observation.size,
+                        mtime_ns=observation.mtime_ns,
+                    )
+                    self._note_observation(observed)
                 self._write_progress(
-                    connection, _enumeration_progress(self.enumerated + 1), now_ms
+                    connection,
+                    _enumeration_progress(self.enumerated + len(batch)),
+                    now_ms,
                 )
-            self.enumerated += 1
-            recent = _recent_mtime_ms(
-                observation.mtime_ns, self.wall_now_ms(), self.policy.window_ms
+            self.enumerated += len(batch)
+            for observation in batch:
+                recent = _recent_mtime_ms(
+                    observation.mtime_ns, self.wall_now_ms(), self.policy.window_ms
+                )
+                if recent is not None:
+                    self.newest_recent_mtime_ms = max(
+                        self.newest_recent_mtime_ms or recent, recent
+                    )
+
+    def _note_observation(self, observed: store.LocationObservation) -> None:
+        """Turn one enumeration result into the fast refresh's counters and deltas.
+
+        Everything here is derived from the frozen observation semantics: a position whose
+        stored ``size``/``mtime_ns`` still match a *confirmed* binding is reusable, one whose
+        observation cleared the binding is not, and ``MISSING`` -> ``PRESENT`` is a
+        recovery that has to be re-confirmed even when the old binding survived.
+        """
+        if observed.created:
+            self.locations_added += 1
+        if observed.restored and observed.location_id is not None:
+            if len(self.restored_location_ids) >= DELTA_LIMIT:
+                self.restored_overflow = True
+            else:
+                self.restored_location_ids.add(int(observed.location_id))
+        if (
+            observed.created
+            or observed.changed
+            or observed.renamed
+            or observed.restored
+        ):
+            if observed.created:
+                # A brand-new position has no asset yet: it reaches the location delta
+                # through the content pass once its hash resolves the content identity.
+                pass
+            else:
+                self._note_location(observed.asset_id)
+        if (
+            self.fast
+            and not observed.created
+            and not observed.changed
+            and not observed.restored
+            and observed.asset_id is not None
+        ):
+            # The reusable case: the stored ``size``/``mtime_ns`` still match a binding a
+            # previous *complete* scan confirmed, so no hash happens for this position.
+            self.unchanged_reused += 1
+
+    def _note_location(self, asset_id: int | None) -> None:
+        """Record one changed location fact for the location-delta consumers."""
+        if asset_id is None:
+            return
+        self.location_count += 1
+        if len(self.location_delta) >= DELTA_LIMIT:
+            self.delta_overflow = True
+            return
+        self.location_delta.add(int(asset_id))
+
+    def _note_content(self, asset_id: int | None) -> None:
+        """Record one position whose content identity this execution confirmed."""
+        if asset_id is None:
+            return
+        self.content_count += 1
+        self._note_location(asset_id)
+        if len(self.content_delta) >= DELTA_LIMIT:
+            self.delta_overflow = True
+            return
+        self.content_delta.add(int(asset_id))
+
+    def note_missing(self, asset_ids: Iterable[int], *, truncated: bool) -> None:
+        """Record the assets the final reconciliation just marked ``MISSING``."""
+        if truncated:
+            self.delta_overflow = True
+        for asset_id in asset_ids:
+            self._note_location(int(asset_id))
+
+    def content_targets(self) -> int:
+        """How many positions this execution still intends to confirm content for."""
+        if not self.fast:
+            return store.count_seen_locations(
+                self.catalog.connection, source_id=self.source_id, scan_id=self.scan_id
             )
-            if recent is not None:
-                self.newest_recent_mtime_ms = max(self.newest_recent_mtime_ms or recent, recent)
+        if self.restored_overflow:
+            # Too many recoveries to route individually: fall back to the frozen complete
+            # content pass rather than hashing an incomplete set (correctness first).
+            self.unchanged_reused = 0
+            return store.count_seen_locations(
+                self.catalog.connection, source_id=self.source_id, scan_id=self.scan_id
+            )
+        unbound = store.count_unbound_locations(
+            self.catalog.connection, source_id=self.source_id, scan_id=self.scan_id
+        )
+        return unbound + len(self.restored_location_ids)
 
     def soak(self) -> None:
         """Wait once for the newest still-fresh file instead of once per file.
@@ -627,25 +858,53 @@ class _ScanRun:
 
     # ------------------------------------------------------------------- processing
     def process(self, *, root: Path, total: int) -> None:
-        """Confirm content for every position this execution saw, in bounded chunks."""
-        for row in store.iter_seen_locations(
-            self.catalog.connection,
-            source_id=self.source_id,
-            scan_id=self.scan_id,
-            chunk_size=LOCATION_CHUNK_SIZE,
-        ):
+        """Confirm content for every position of this execution that still needs a hash.
+
+        A complete-verification scan visits every position it saw; a fast refresh visits the
+        ones whose confirmed binding cannot be reused, which is what keeps its cost
+        proportional to the change set rather than to the library (P4-02Y §3).
+        """
+        if self.fast and not self.restored_overflow:
+            iterator = store.iter_unbound_seen_locations(
+                self.catalog.connection,
+                source_id=self.source_id,
+                scan_id=self.scan_id,
+                also_location_ids=self.restored_location_ids,
+                chunk_size=LOCATION_CHUNK_SIZE,
+            )
+        else:
+            iterator = store.iter_seen_locations(
+                self.catalog.connection,
+                source_id=self.source_id,
+                scan_id=self.scan_id,
+                chunk_size=LOCATION_CHUNK_SIZE,
+            )
+        for row in iterator:
             self._check_cancel()
             if self.interrupt_after is not None and self.processed >= self.interrupt_after:
                 raise ScanInterrupted(
                     f"scan {self.scan_id} interrupted after {self.processed} of {total} files"
                 )
             relative = str(row["relative_path"])
-            self._process_file(
+            bound = self._process_file(
                 row=row, relative=relative, absolute=Path(root, relative), total=total
             )
+            if bound is not None:
+                self.hash_targets += 1
+                self.hash_bytes += int(bound.byte_size)
+                if bound.asset_id is None:
+                    pass
+                elif bound.created:
+                    self.new_assets += 1
+                else:
+                    self.rebound_assets += 1
+                if self.fast:
+                    self._note_content(bound.asset_id)
             self.processed += 1
 
-    def _process_file(self, *, row: Any, relative: str, absolute: Path, total: int) -> None:
+    def _process_file(
+        self, *, row: Any, relative: str, absolute: Path, total: int
+    ) -> _ContentBinding | None:
         """Commit one file's positive facts, or re-queue the scan when it stays unstable."""
         current = FileObservation(
             relative_path=relative,
@@ -697,6 +956,9 @@ class _ScanRun:
                     connection, worker=self.worker, lease_seconds=self.lease, now_ms=now_ms
                 )
                 self.execution.require(connection, now_ms=now_ms)
+                existing = connection.execute(
+                    "SELECT asset_id FROM assets WHERE sha256 = ?", (digest,)
+                ).fetchone()
                 bound = store.bind_location_content(
                     connection,
                     location_id=location_id,
@@ -706,8 +968,15 @@ class _ScanRun:
                     byte_size=current.size,
                     now_ms=now_ms,
                 )
-            if bound:
-                return
+                if bound:
+                    asset_row = connection.execute(
+                        "SELECT asset_id FROM assets WHERE sha256 = ?", (digest,)
+                    ).fetchone()
+                    return _ContentBinding(
+                        asset_id=None if asset_row is None else int(asset_row["asset_id"]),
+                        created=existing is None,
+                        byte_size=int(current.size),
+                    )
             attempts += 1
             if attempts >= UNSTABLE_FILE_ATTEMPTS:
                 raise _requeue(

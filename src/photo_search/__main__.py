@@ -94,6 +94,10 @@ def _serve(args: argparse.Namespace) -> int:
     api = ApiContext(
         dataclasses.replace(settings, session_token=bootstrap.token),
         encoder_factory=wiring.factory,
+        # P4-02Y: the one-click refresh embeds new content in the *same* pinned space the
+        # query path already serves, so the manifest the encoder was resolved from is the
+        # manifest the refresh must use.
+        refresh_manifest_path=str(wiring.manifest) if wiring.available else None,
     )
     application = create_app(settings=api.settings, context=api)
     # The credential is printed to the console on purpose: it is the only bootstrap channel

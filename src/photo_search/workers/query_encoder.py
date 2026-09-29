@@ -184,6 +184,19 @@ class WorkerQueryEncoder:
     def spec(self) -> ProcessorSpec:
         return self._spec
 
+    def health(self) -> dict[str, Any]:
+        """The worker's own health document, in the shape the ADR-0003 adapter defines.
+
+        The indexing side reads a loaded adapter's live facts (device, provider, runtime
+        package) to record the capability snapshot and the qualification evidence of the
+        generation it builds (P4-02O). The API adapter owns a worker *process* instead of the
+        sessions, so it answers with the worker's health reply - the same keys, one hop away -
+        which is what lets the refresh embed new content in exactly the space the query path
+        already serves (P4-02Y §6C).
+        """
+        reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
+        return reply if isinstance(reply, dict) else {}
+
     def encode_queries(
         self, texts: Sequence[str], cancellation: Any = None
     ) -> list[list[float]]:
@@ -200,6 +213,16 @@ class WorkerQueryEncoder:
             self._vector(self._worker_image(item), dimension, "query image")
             for item in asset_inputs
         ]
+
+    def encode_image(self, image: Any) -> list[float]:
+        """One vector for one image *path*, the spelling the indexing side calls.
+
+        ``photo_search.indexing.semantic`` hands the image tower a path of a catalogued
+        original; the upload/search half of this adapter hands it a decoded image. Both are
+        the same worker call, so the API process can embed the delta of a refresh without a
+        second model instance (P4-02Y §6C).
+        """
+        return self._vector(self._worker_image(image), self._dimension(), "image")
 
     def close(self) -> None:
         """Stop the worker process. Shutdown is idempotent and never raises."""

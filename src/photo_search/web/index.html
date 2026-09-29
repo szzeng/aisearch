@@ -31,6 +31,16 @@
       <section id="view-sources" class="view" hidden aria-labelledby="view-sources-title">
         <h2 id="view-sources-title">来源与扫描</h2>
         <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
+        <p>
+          <button type="button" id="refresh-library">刷新图库</button>
+          <span id="refresh-status" class="hint" role="status" aria-live="polite"></span>
+        </p>
+        <p class="hint">
+          「刷新图库」会重新枚举全部已登记来源，但只对新增、变化或需要恢复的位置重新校验内容，
+          并只处理这些变化；新增照片一旦可以搜索到就会出现“可搜索”状态，缩略图、拍摄时间、
+          地点与人脸/文字识别等增强可以在之后继续。
+          「扫描」仍会完整校验每个位置的内容（完整校验扫描）。
+        </p>
         <ul id="sources-list" class="sources"></ul>
         <form id="source-form" class="card" novalidate>
           <h3>新增来源</h3>

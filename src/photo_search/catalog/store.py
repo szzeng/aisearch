@@ -10,7 +10,7 @@ single-writer transaction.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -248,11 +248,30 @@ def observe_location(
 
 @dataclass(frozen=True)
 class LocationObservation:
-    """Result of one positive position observation (P1-02 streaming scans)."""
+    """Result of one positive position observation (P1-02 streaming scans).
+
+    ``created``/``changed`` keep the frozen P1-02 meaning: *this* observation either created
+    the location or saw a different ``size``/``mtime_ns`` than the stored one. P4-02Y adds
+    two purely additive facts about the same observation so a fast refresh can tell a
+    rename and a ``MISSING`` -> ``PRESENT`` recovery from an ordinary re-observation:
+
+    * ``renamed`` - the stored ``relative_path`` of this ``path_key`` changed to a new
+      spelling while the stored content binding was kept;
+    * ``restored`` - the location was ``MISSING`` before this observation.
+
+    Neither flag is a content identity: they only decide whether the fast scan has to
+    re-confirm the position's full SHA-256 (ADR-0002 §5.1/§5.2, P4-02Y §2).
+    """
 
     location_id: int
     created: bool
     changed: bool
+    renamed: bool = False
+    restored: bool = False
+    #: The content binding stored on the location *after* this observation: ``None`` for a
+    #: created position and for one whose changed stat cleared the binding. Purely additive -
+    #: the frozen P1-02 contract only reads ``location_id``/``created``/``changed``.
+    asset_id: int | None = None
 
 
 def observe_location_detailed(
@@ -282,7 +301,8 @@ def observe_location_detailed(
             details={"source_id": source_id, "scan_id": scan_id},
         )
     row = connection.execute(
-        "SELECT location_id, relative_path, size, mtime_ns, asset_id, last_seen_scan_id "
+        "SELECT location_id, relative_path, size, mtime_ns, asset_id, last_seen_scan_id, "
+        "availability "
         "FROM file_locations "
         "WHERE source_id = ? AND path_key = ?",
         (source_id, path_key),
@@ -312,6 +332,9 @@ def observe_location_detailed(
             },
         )
     location_id = int(row["location_id"])
+    renamed = str(row["relative_path"]) != relative_path
+    restored = str(row["availability"]) == "MISSING"
+    kept_asset_id = None if row["asset_id"] is None else int(row["asset_id"])
     changed = int(row["size"]) != int(size) or int(row["mtime_ns"]) != int(mtime_ns)
     if changed:
         connection.execute(
@@ -319,13 +342,27 @@ def observe_location_detailed(
             "last_seen_scan_id = ?, availability = 'PRESENT' WHERE location_id = ?",
             (relative_path, size, mtime_ns, scan_id, location_id),
         )
-        return LocationObservation(location_id=location_id, created=False, changed=True)
+        return LocationObservation(
+            location_id=location_id,
+            created=False,
+            changed=True,
+            renamed=renamed,
+            restored=restored,
+            asset_id=None,
+        )
     connection.execute(
         "UPDATE file_locations SET relative_path = ?, last_seen_scan_id = ?, availability = 'PRESENT' "
         "WHERE location_id = ?",
         (relative_path, scan_id, location_id),
     )
-    return LocationObservation(location_id=location_id, created=False, changed=False)
+    return LocationObservation(
+        location_id=location_id,
+        created=False,
+        changed=False,
+        renamed=renamed,
+        restored=restored,
+        asset_id=kept_asset_id,
+    )
 
 
 SEEN_LOCATION_FIELDS = ("location_id", "relative_path", "path_key", "size", "mtime_ns")
@@ -371,6 +408,55 @@ def iter_seen_locations(
         last_id = int(rows[-1]["location_id"])
 
 
+def iter_unbound_seen_locations(
+    connection: sqlite3.Connection,
+    *,
+    source_id: int,
+    scan_id: int,
+    also_location_ids: Iterable[int] = (),
+    chunk_size: int = 256,
+) -> Iterator[sqlite3.Row]:
+    """Stream only the positions this execution still has to confirm content for (P4-02Y §3).
+
+    A fast refresh may reuse a content binding that a previous *complete* scan has already
+    confirmed with a full SHA-256, so the content pass must not walk every position it saw
+    again. Two kinds of position still need the hash pass:
+
+    * a seen position with ``asset_id IS NULL`` - a new one, or one whose observation
+      cleared its binding;
+    * the positions the enumeration explicitly reported as ``MISSING`` -> ``PRESENT``
+      recoveries (``also_location_ids``), whose binding must be re-confirmed even though it
+      still points at a previously hashed asset.
+
+    The stream stays bounded exactly like :func:`iter_seen_locations`: keyset pagination on
+    ``location_id``, never a materialised list of the library.
+    """
+    extra = sorted({int(value) for value in also_location_ids})
+    size = max(int(chunk_size), 1)
+    for start in range(0, len(extra), size):
+        batch = extra[start : start + size]
+        placeholders = ", ".join("?" for _ in batch)
+        rows = connection.execute(
+            f"SELECT {', '.join(SEEN_LOCATION_FIELDS)} FROM file_locations "
+            f"WHERE source_id = ? AND last_seen_scan_id = ? AND location_id IN ({placeholders}) "
+            "ORDER BY location_id",
+            (source_id, scan_id, *batch),
+        ).fetchall()
+        yield from rows
+    last_id = 0
+    while True:
+        rows = connection.execute(
+            f"SELECT {', '.join(SEEN_LOCATION_FIELDS)} FROM file_locations "
+            "WHERE source_id = ? AND last_seen_scan_id = ? AND asset_id IS NULL AND location_id > ? "
+            "ORDER BY location_id LIMIT ?",
+            (source_id, scan_id, last_id, size),
+        ).fetchall()
+        if not rows:
+            return
+        yield from rows
+        last_id = int(rows[-1]["location_id"])
+
+
 def bind_location_content(
     connection: sqlite3.Connection,
     *,
@@ -402,6 +488,26 @@ def bind_location_content(
 
 def reconcile_missing(connection: sqlite3.Connection, *, source_id: int, scan_id: int) -> int:
     """Mark locations this complete scan did not see; only the final commit calls this."""
+    return int(
+        reconcile_missing_detail(connection, source_id=source_id, scan_id=scan_id)["count"]
+    )
+
+
+def reconcile_missing_detail(
+    connection: sqlite3.Connection,
+    *,
+    source_id: int,
+    scan_id: int,
+    sample_limit: int = 4096,
+) -> dict[str, Any]:
+    """The same single atomic reconciliation, plus the assets it just marked missing.
+
+    The ``UPDATE`` predicate is byte-for-byte the frozen one; P4-02Y only adds
+    ``RETURNING`` so the refresh can hand the newly unavailable assets to its
+    location-delta consumers (taken-time revision, search projection). The returned
+    ``asset_ids`` are a bounded sample - the count is always complete, the sample is only
+    a routing hint and a larger overflow simply falls back to the full selector.
+    """
     scan = connection.execute(
         "SELECT source_id FROM scan_runs WHERE scan_id = ?", (scan_id,)
     ).fetchone()
@@ -411,13 +517,24 @@ def reconcile_missing(connection: sqlite3.Connection, *, source_id: int, scan_id
             "missing reconciliation must use a scan of the same source",
             details={"source_id": source_id, "scan_id": scan_id},
         )
-    cursor = connection.execute(
+    rows = connection.execute(
         "UPDATE file_locations SET availability = 'MISSING' "
         "WHERE source_id = ? AND availability <> 'MISSING' "
-        "AND (last_seen_scan_id IS NULL OR last_seen_scan_id <> ?)",
+        "AND (last_seen_scan_id IS NULL OR last_seen_scan_id <> ?) "
+        "RETURNING asset_id",
         (source_id, scan_id),
-    )
-    return int(cursor.rowcount or 0)
+    ).fetchall()
+    limit = max(int(sample_limit), 0)
+    asset_ids: list[int] = []
+    truncated = False
+    for row in rows:
+        if row["asset_id"] is None:
+            continue
+        if len(asset_ids) >= limit:
+            truncated = True
+            break
+        asset_ids.append(int(row["asset_id"]))
+    return {"count": len(rows), "asset_ids": asset_ids, "truncated": truncated}
 
 
 def count_unbound_locations(
