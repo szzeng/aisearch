@@ -652,6 +652,44 @@ def run_smoke(
                 )
             asset_id = assets["assets"][0]["asset_id"]
             checks["availability"] = assets["assets"][0]["availability"]
+
+            # P4-02Y: the frozen build has to carry the one-click "刷新图库" entry and answer
+            # it with the documented shape: ``202`` without waiting, a process-local status
+            # that keeps the same refresh id, and a terminal state inside the frozen
+            # vocabulary. Nothing in the fixture changed since the full scan above, so the
+            # fast scan is a no-op; what this check proves is the *entry point*, not a second
+            # library pass. This data root deliberately has no pinned model, so the run must
+            # *not* claim SEARCH_READY - it has to report the missing semantic channel
+            # instead. The real SEARCH_READY path is exercised by the P4-02Y-T trial card
+            # against the real data root, not here.
+            refresh = client.post("/api/v1/library/refresh", json={}, headers=headers)
+            checks["refresh_request_status"] = refresh.status_code
+            requested = refresh.json() if refresh.status_code == 202 else {}
+            checks["refresh_accepted"] = requested.get("accepted")
+            checks["refresh_request_state"] = requested.get("state")
+            refresh_id = requested.get("refresh_id")
+            checks["refresh_id_present"] = bool(refresh_id)
+            refresh_status: dict[str, Any] = {}
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                refresh_status = client.get("/api/v1/library/refresh").json()
+                if refresh_status.get("refresh_id") == refresh_id and not refresh_status.get(
+                    "running"
+                ):
+                    break
+                time.sleep(0.3)
+            checks["refresh_final_state"] = refresh_status.get("state")
+            checks["refresh_search_ready"] = refresh_status.get("search_ready")
+            checks["refresh_search_ready_basis"] = refresh_status.get("search_ready_basis")
+            checks["refresh_status_shape_ok"] = (
+                refresh_status.get("refresh_id") == refresh_id
+                and isinstance(refresh_status.get("stages"), dict)
+                and isinstance(refresh_status.get("counters"), dict)
+            )
+            checks["refresh_failed_stages"] = refresh_status.get("failed_stages")
+            checks["refresh_counters"] = refresh_status.get("counters")
+            checks["refresh_semantic"] = (refresh_status.get("stages") or {}).get("semantic")
+
             # The offline subject is picked by its *relative path*, never by row order: the
             # listing is ordered by ``asset_id`` and a second fixture photo must not be
             # mistaken for the file this check deletes.
@@ -1304,6 +1342,33 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("scan")
     if checks.get("asset_count") != 5:
         problems.append("asset listing")
+    from photo_search.refresh.state import REFRESH_STATES
+
+    terminal_refresh_states = set(REFRESH_STATES) - {"IDLE", "SCANNING", "INDEXING", "ENRICHING"}
+    if (
+        checks.get("refresh_request_status") != 202
+        or checks.get("refresh_accepted") is not True
+        or not checks.get("refresh_id_present")
+        or checks.get("refresh_request_state") not in REFRESH_STATES
+        or checks.get("refresh_final_state") not in terminal_refresh_states
+        or not checks.get("refresh_status_shape_ok")
+    ):
+        problems.append("packaged library refresh entry")
+    refresh_semantic = checks.get("refresh_semantic") or {}
+    if checks.get("refresh_search_ready") is not False:
+        # A fixture data root with no pinned model cannot serve the semantic channel, so a
+        # frozen build that still claimed SEARCH_READY here would promise search it has not
+        # got (P4-02Y §6).
+        problems.append("packaged library refresh claimed search readiness")
+    if (
+        refresh_semantic.get("state") != "SKIPPED_UNAVAILABLE"
+        or refresh_semantic.get("reason") != "MANIFEST_UNCONFIGURED"
+        or checks.get("refresh_final_state") != "FAILED"
+    ):
+        # The run cannot bring the library up to date without the model, so it has to name
+        # the missing semantic channel *and* end in the state that says so instead of a
+        # COMPLETE that would hide the gap.
+        problems.append("packaged library refresh semantic stage")
     text_summary = checks.get("text_search_summary") or {}
     if (
         checks.get("text_search_status") != 200

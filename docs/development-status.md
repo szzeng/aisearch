@@ -1,8 +1,76 @@
 # Development status
 
-更新：2026-09-28。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-09-29。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-02Y — 一键快速刷新图库（增量扫描 → 增量派生 → 可搜索）
+## 当前任务 P4-02Y-I — 来源建库与管理闭环（实现完成，待独立复核）
+
+**IMPLEMENTED / 待独立 DS-H 窄受影响面复核（2026-09-29；[实现报告](reports/P4-02Y-I-source-build-and-delete.md)、
+[任务卡](tasks/P4-02Y-I.md)）。** 基线 `master @ 714d4ea`（卡面基线 `b17ded6`），schema 仍 **16**、`0017` 未实施、
+ADR/依赖/`uv.lock` 零改动；daily `refresh` 档终态判定与 P4-02Y 逐行一致（唯一加性差异：未就绪时
+`search_ready_basis` 由 `null` 变为原因字符串）。产品改动：`refresh/pipeline.py`（`mode="build"`：先分类后编码、
+`BUILD_PAGE_SIZE=5000`/`BUILD_ROUND_CAP=10000` 有界循环、`_scoped_asset_page`/`_drain_scope` 按持久 scope 分页跑六个
+既有增强阶段、`SEARCH_READY` 由持久 backlog 判定 `semantic-backlog-empty`、`note_search_gate`）、
+新增 `refresh/progress.py`（纯 SQL 的来源级进度：扫描计数 + 语义 `total/confirmed/pending/failed/queued` +
+五个增强 stage 的 `handled/pending` + `served_binding`/`enrichment_availability`）、`catalog/store.py`
+（`delete_source`：先清 `asset_geo_facts`/`asset_ocr_text`/`faces` 的 `location_id` 引用，再同事务删 location→scan job→
+`scan_runs`→`source_roots`；`QUEUED/RUNNING` scan 与活动 refresh 均结构化 409）、`ingestion/service.py`、
+`indexing/semantic.py`（加性 `after_asset_id` keyset 分页）、`api/routes.py`（`POST /library/refresh` 加 `mode`、
+`GET /sources*` 加 `progress`、新增 `DELETE /api/v1/sources/{id}`）、`api/models.py`、`api/refresher.py`、
+`api/context.py`、`refresh/state.py`、`web/{app.js,index.html,styles.css}`。语义分母口径 = 该来源**被语义层分类为
+图片的资产集**（有 `image_embedding` job 行 ∪ 当前 generation CONFIRMED），文档/视频不进分母；「✓ 可以语义搜索」
+仅当 `pending == 0 且 confirmed > 0`。验证：新定点 14 例（`test-results/p4-02y-i-focused.xml`，一图一验收全覆盖）、
+P4-02Y 两文件 + `test_api_sources_assets.py` + `test_api_frontend.py` 全绿、B 级全量（见报告 §6/§8）、
+`ruff`/`uv lock --check`/`git diff --check` 全绿（沙箱 pytest basetemp `WinError 5` 按既有环境限制改走正常权限路由）。
+**未验证 / 不授予 PASS**：独立 DS-H 复核未进行（卡面要求另开会话）、20-30 万真实建库墙钟与分页成本、
+face/OCR 真实权重与 place resolver 数据集、浏览器计时（`BROWSER_TIMING BLOCKED`）、孤儿 asset/artifact/vector
+物理 GC（卡面排除）、跨进程并发写者。**下一步 = 独立 DS-H 窄受影响面复核；不自动启动 P4-02Z。**
+
+**独立 DS-H 窄受影响面复核 = `REVIEW FAIL`（1 阻断 B1 + 2 非阻断 F1/F2，`SOL_NOT_REQUIRED`；
+[复核报告](reports/P4-02Y-I-dsh-narrow-affected-surface-review.md)）**：B1 = scope 内没有可确认内容时
+`ensure_search_profile` 向 `search_profiles.image_generation_id` 写入一个从未发布的 generation ⇒ 外键失败，
+抛出的 `sqlite3.IntegrityError` 不是 `CatalogError` ⇒ 无理由 FAILED + 「继续建库」永久重复失败（daily 档同洞，
+归因既有洞，被本卡第一次放到主入口上）；F1 = 被拒内容不进 pending、卡片只显示 `confirmed/total` ⇒ 可谎称「可搜索」；
+F2 = 「已扫描但无可索引图片」与「未建库」在持久状态里不可区分。
+**[B1 修复轮](reports/P4-02Y-I-b1-fix-round.md) 已完成**：`indexing/semantic.py` 新增 `generation_published()` 守卫、
+`ensure_search_profile()` 返回结构化拒绝（不抛异常、不写行）；build 档新增 `semantic-nothing-to-index` /
+`semantic-confirmed-nothing` 终态并把未就绪原因写入 `failed_stages`；daily 档不再谎报 `semantic-confirmed`
+（改 `GENERATION_NOT_PUBLISHED`）；卡片新增 `NO_IMAGES`/`UNINDEXABLE` 状态 + `failed/queued` 计数 + 状态词
+「✓ 可以搜索，N 张无法编码」；持久标记 `metadata['source_build:<id>']`（复用既有 kv 表，无新 schema）区分未建库与
+无可索引图片；多来源 backlog 改为 union（共享 asset 不再计两次）。修复后：本卡定点 18 例、5 文件 159/0/0/0
+（35.314 s）、B 级 **1864/0/0/48**（310.355 s）、复核探针复跑无异常（无未捕获异常、终态均带 basis/原因；
+删除边界的手检已固化为常驻用例）。
+**下一步 = 修复后的独立窄复核（另开会话）；不自动启动 P4-02Z。**
+
+## 上一任务（P4-02Y-T，已完成，保留记录）— 当前 HEAD 打包 + 最小 smoke + 开始个人试用
+
+**PASS / PERSONAL TRIAL STARTED（2026-09-29，HEAD `b17ded6`；[报告](reports/P4-02Y-T-personal-trial-start.md)、
+[任务卡](tasks/P4-02Y-T.md)）。** 从当前 HEAD 重新构建 onedir：`uv run --no-sync python
+tools/packaging/build_onedir.py` exit 0，`dist/PhotoSearch/PhotoSearch.exe` 36 308 235 B / sha256 `2da907e2…012d5`，
+包内 21 个 NVIDIA DLL、16 个迁移、`web/` 资源齐全。最小 packaged smoke（复用
+`tools/diagnostics/packaged_api_smoke.py`，另补**刷新入口最小检查**）`status=ok / problems=[]`：启动 1.2 s、
+schema 16、迁移/`photo_search` 数据资源/HEIF 组件与源码逐字节一致、无权重分支 409 诚实拒绝、
+`POST/GET /api/v1/library/refresh` 202+同 id 终态且无模型时 `search_ready=false`（`MANIFEST_UNCONFIGURED`，不谎报）。
+**真实个人试用 smoke（冻结 exe + 真实数据根 `D:\SZ\project\PhotoSearchData` + 真实中文 CLIP/CUDA）五步全 PASS**：
+A 启动 1515 ms、`/` 与 `/web/app.js` 200、4 来源 ONLINE、包内 stdout `semantic channel READY` + `query_encoder_available=true`
+（首次 capabilities 冷启动 2096.8 ms）；B「刷新图库」202 → `SEARCH_READY` 825 ms / `COMPLETE` 831 ms，`enumerated=3682`、
+`unchanged_reused=3682`、**`hash_targets=0`/`hash_bytes=0`**、semantic `SKIPPED_NO_TARGETS`；C 8 条真实中文查询
+**8/8 200** 各 20 命中、`vector engaged`、top1 缩略图 200（暖机 59–111 ms）；D 在 `D:\SZ\pic\P4-02Y-T 试用新增\`
+新增 8 张重编码图片 → `hash_targets=8`/`new_assets=8`/semantic 8/8/projection 8 → `SEARCH_READY` 2615 ms，
+`试用新增` 查询 top1–2 即新资产（id 3659–3666）；E `Ctrl+Break` 退出（lifespan shutdown 正常）→ 重启 1016 ms 后
+generation/profile 不变、`/library/refresh` 回 `IDLE`、3 条查询 3/3 有结果、新资产仍可检索；原图安全：4 来源 3682 文件
+`path|size|mtime_ns` 摘要前后逐字节相同。非阻断 F1–F4（沙箱 `%TEMP%` 限制冻结进程写上传临时文件、Ctrl+Break 退出码 3、
+无权重夹具刷新终态只会显示「刷新失败」、未覆盖面/OCR 权重与 >50 000 delta）。**未做/未验证**：RC1 正式验收、浏览器渲染与首屏计时、
+P4-02W A/B/C/D 重测、30 万/40 万、GTX 1660、ANN/A3、installer/MSI、打包产物内 face/OCR。**停止点：不启动 P4-02Z。**
+
+**提交前 Git 核对**：本卡的打包/试用/证据对应 `b17ded6`；提交时 HEAD 已被**并行会话**推进到 `2235ab3`
+（`[P4-02Y-I 主审复审]`，含 `7387915` 来源建库 build 档 / 持久来源进度 / 删除来源、`73c5f37` B1 修复，
+报告见 `reports/P4-02Y-I-*.md`、卡 `tasks/P4-02Y-I.md`；本文件不重复其结论）。P4-02Y-I 改了
+`refresh/{pipeline,progress,state}.py` 等，故 `dist/PhotoSearch` 与本次 packaged smoke / 试用证据**早于当前 HEAD
+一步**；已在报告 §9 记录，并确认本卡给 `packaged_api_smoke.py` 补的刷新入口检查在 `2235ab3` 的每日档语义下
+仍然成立（无模型 ⇒ `MANIFEST_UNCONFIGURED` + `search_ready=false` + 终态 `FAILED`）。**未做**：在 `2235ab3` 上
+重新 build/smoke/真实试用（若要打包与试用证据对齐当前 HEAD，需重跑 P4-02Y-T §2–§4）。
+
+## 上一任务（P4-02Y，已完成，保留记录）— 一键快速刷新图库（增量扫描 → 增量派生 → 可搜索）
 
 **PASS（2026-09-29；独立 DS-H 窄受影响面工程主审 = `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`，
 [主审报告](reports/P4-02Y-dsh-narrow-affected-surface-review.md)）。** 基线 `bc84fd3` + P4-02Y 的产品/测试
@@ -41,8 +109,9 @@ CONFIRMED」决定、在增强阶段之前宣告，face/OCR/GPS 非硬前置；�
 ②30 万档「可搜索」探针在终止态之后执行，半途取证由门禁顺序 + 定点测试支撑；③单轮变化 >50 000 时该轮
 D..G 增强被跳过且后续 refresh 不再捡起（catalog/投影/语义/可搜索性不受影响，缩略图有按需入口）。
 **未验证 / 不授予 PASS**：浏览器计时（`BROWSER_TIMING BLOCKED`）、face/OCR 真实权重、place resolver 数据集、
-GTX 1660、冷缓存、40 万、soak、打包产物内刷新、真实个人图库；30 万历史向量为容量工具合成向量，故其
-相关性/质量不在本卡结论内。**下一动作 = P4-02Y-T（已立卡；本轮按用户指令不启动）。**
+GTX 1660、冷缓存、40 万、soak、真实个人图库；30 万历史向量为容量工具合成向量，故其相关性/质量不在本卡结论内。
+（其中「打包产物内刷新」与「真实个人图库」已由上面的 P4-02Y-T 覆盖。）**P4-02Y-T 已于 2026-09-29 完成 →
+PERSONAL TRIAL STARTED；P4-02Z 保持 DEFERRED，等真实使用后确需正式命名 RC1 再执行。**
 
 ## 当前任务 P4-02X — bounded block-size 最小产品收敛
 
@@ -99,5 +168,24 @@ GTX 1660、冷缓存、40 万、soak、打包产物内刷新、真实个人图�
 P4-02T（[主审](reports/P4-02T-dsh-affected-surface-review.md)、[报告](reports/P4-02T-upload-format-policy.md)）：主审独立复核上传 vs 库内解码 8 例逐像素一致（含两帧 HEIC 对抗例）、复跑四文件 86/0、B 级 1783/0/0/48（237.1 s）、真实驱动 9/9；两处文档问题（`upload.py` docstring、P4-00C 旧裁定未标修订）已在审查轮修正。白名单 8 项、上传解码先注册 pillow-heif 并把媒体侧 `restore_recorded_orientation` 提升为公开函数复用；变异对照证明去掉归一会让 `[False-6]/[False-8]` 两例失败；新单测 9/0、点名四文件 86/0、B 级 **1783/0/0/48**（238.8 s）、真实模型诊断 9/9；两处 P2-07 旧断言（HEIC 上传必须 409）随卡改为新口径。修复轮（P4-02O/Q，[报告](reports/P4-02O-Q-dsh-fix-round.md)）：F1 来源谓词合成修复 + 新增来源过滤单测（点名单测 9/0）+ `cli.py` 文案 + F4/F5/F7/F9 文档；真实库 `build --dry-run` 三 case（无过滤 479 / `--source-id 3` 91 / 不存在 0）落 `test-results/p402-fix-o-dry-run.json`；B 级 **1774/0/0/48**（236.5 s）、ruff/lock/diff-check 全绿；F2/F3 待裁决。DS-H 完整受影响面主审（2026-09-27，[报告](reports/P4-02N-O-Q-S-dsh-affected-surface-review.md)）：独立复跑单测 66/0、B 级 1773/0/0/48、ruff/lock/diff-check 全绿、P4-02N 两分支 7/7、P4-02O 驱动 13/13、4 帧 MPO 探针与只读库核对一致；结论 REVIEW FAIL（F1 阻塞，F2/F3 需裁决，F4/F5 文档/证据项）。P4-02S：单测 24/0（MPO+HEIC 契约）、真实库缩略图 +343、自检索 26/26、12 条查询 P50 87.5/P95 95.1 ms（32 样本）、B 级全量 1773/0/0/48（301.8 s）。P4-02R：只读诊断 13/379 抽样，链路判定矩阵见报告。P4-02P/Q：真实图库 3658 资产 → 3179 图片 CONFIRMED（479 非图片 out_of_scope）、缩略图 2800、暖机文字查询 P95 88.8 ms（32 样本）。P4-02O：单测 5/0、点名集成 59/0、真实建库驱动 13/13、B 级 1766/0/0/48。P4-02N：单测 13/0、点名集成 17/0、B 级 1761/0/0/48、两个诊断工具各 7/7。此前的 P4-02M 只读核对：：入口运行时核对 `uv run --no-sync python -c '…'` exit 0（模块级app/无参`create_app()`/默认`ApiContext` 的 `query_encoder()` 全为 `None`）、编码器实现面扫描无 `QueryEncoder` 实现类、登记模型目录缺失；`ruff check .`/`uv lock --check`/`git diff --check` 见[报告§5](reports/P4-02M-exact-search-optimization.md)。另有**用户授权的资源步骤**（2026-09-27）：真实中文 CLIP 权重已准备到 `D:\SZ\project\PhotoSearchData\models\chinese_clip\vit-b-16`，与仓库 manifest 逐字节一致、数值等价校验与真实 worker `demo-search --device cuda` 均通过，见[权重准备报告](reports/2026-09-27-chinese-clip-weights-preparation.md)；该步骤不改代码/依赖/schema，也未写入 C 盘数据根。本轮没有运行产品测试、容量或打包，不授予任何性能或实现 PASS。
 
 ## 工作树交接
+
+**最新一轮（2026-09-29，P4-02Y-I 来源建库与管理闭环）**：基线 `714d4ea`（`[P4-02Y-I 立卡]`，master）。
+产品/测试/报告已按卡面本地提交 = **`7387915`**（16 个文件） + 复核修复轮 **`73c5f37`**（9 个文件，含复核报告与
+B1 修复轮报告；`src/photo_search/{refresh/pipeline.py,refresh/progress.py,refresh/state.py,catalog/store.py,
+ingestion/service.py,indexing/semantic.py,api/{routes.py,models.py,refresher.py,context.py},web/{app.js,index.html,styles.css}}`、
+`tests/integration/test_p4_02y_i_source_build.py`、`docs/reports/P4-02Y-I-source-build-and-delete.md`、`docs/tasks/P4-02Y-I.md`）。
+**本文件未提交**：它同时带着上一卡 P4-02Y-T 的未提交交接文字与旁证报告（`docs/reports/P4-02Y-T-personal-trial-start.md`
+仍未入库、`docs/tasks/P4-02Y-T.md` 与 `tools/diagnostics/packaged_api_smoke.py` 仍未提交），按「不得代为提交」的交接约定
+留待用户决定；提交本文件前请先决定 P4-02Y-T 那三项如何处理，否则 HEAD 的链接会悬空。未 push。
+下一动作 = P4-02Y-I 的独立 DS-H 窄受影响面复核（另开会话），不是自动开工；P4-02Z 保持 DEFERRED。
+
+**最新一轮（2026-09-29，P4-02Y-T 打包与个人试用启动）**：基线 `b17ded6`（`[P4-02Y 收口]`，master）。本轮
+**未提交**改动只有三项：`tools/diagnostics/packaged_api_smoke.py`（新增「刷新图库」入口最小检查：202 +
+同 `refresh_id` 走到终态 + 无模型时 `search_ready=false`/`MANIFEST_UNCONFIGURED`）、新增
+`docs/reports/P4-02Y-T-personal-trial-start.md`、`docs/tasks/P4-02Y-T.md` 状态行与本文件。`src/**`、`tests/**`、
+依赖/`uv.lock`、schema（仍 16）、ADR 零改动；`dist/`、`test-results/`、`tmp/`（含一次性试用驱动
+`tmp/p4-02y-t/{trial,probe,shutdown_probe}.py`）按 `.gitignore` 不入库。真实试用刻意保留的产物：
+`D:\SZ\pic\P4-02Y-T 试用新增\`（8 张重编码图片；删除后再点「刷新图库」只会把它们标记为 `missing`）。
+未 push；下一动作不是自动开工，而是进入真实日常试用（一事一卡），P4-02Z 保持 DEFERRED。
 
 本轮基线 `549075f`（master，工作树干净），schema 仍 16，0017 未实施。ADR-0013/companion/契约测试、P4-03A 报告与卡、全项目评估/个人试用评估均已随 `549075f` 入库，历史状态归档保留。本轮只新增/修改：`docs/reports/P4-02M-exact-search-optimization.md`、`docs/reports/2026-09-27-chinese-clip-weights-preparation.md`、`docs/reports/P4-02N-real-query-encoder-wiring.md`、`docs/tasks/P4-02N.md`（+状态行）、`docs/tasks/P4-02M.md` 状态行、`docs/tasks/P4-02O.md`、`docs/reports/P4-02O-semantic-index-build.md`、`docs/development-status.md`、`src/photo_search/workers/query_encoder.py`、`src/photo_search/indexing/semantic.py`、`src/photo_search/indexing/cli.py`、`src/photo_search/__main__.py`、`src/photo_search/api/context.py`、`tests/unit/test_p4_02n_query_encoder_wiring.py`、`tests/unit/test_p4_02o_semantic_build.py`、`tools/diagnostics/p4_02n_*.py`、`tools/diagnostics/p4_02o_semantic_build.py`、`docs/reports/P4-02N-O-Q-S-dsh-affected-surface-review.md`（DS-H 审查报告）、`docs/reports/P4-02O-Q-dsh-fix-round.md`（修复轮报告）、`docs/diagnostics/search-smoke-checklist.md`（F4 口径）、`src/photo_search/search/upload.py`、`src/photo_search/media/decode.py`、`tests/unit/test_p4_02t_upload_formats.py`、`tools/diagnostics/p4_02t_upload_formats.py`、`docs/tasks/P4-02T.md`、`docs/reports/P4-02T-upload-format-policy.md`、`docs/reports/P4-02T-dsh-affected-surface-review.md`（主审）、`docs/reports/P4-00C-A-heic-business-implementation.md` 与 `docs/reports/P4-00C-dsh-engineering-review.md`（旧白名单裁定加修订指针）、`tests/unit/test_p2_search_upload.py` 与 `tests/integration/test_p4_heic_pipeline.py`（P2-07 断言修订）、任务卡 P4-02N/O/Q/S/T 的状态行；`docs/development-status.md` 追加审查+修复结论行（D 盘权重与 `test-results/`、`tmp/` 产物在仓库外/被忽略，不入库）。**2026-09-27 后续**：`334af99`（P4-02N/O/Q/S/T 收口）与 `e56c906`（30 万 Flat-Exact 基线）已本地提交；其后本轮对 P4-02M 历史残留的修正（本文件、`docs/tasks/P4-02M.md` 状态行与门禁、`docs/reports/P4-02M-exact-search-optimization.md` §4 溯源）**未提交**；另有 P4-02U 测量卡与专项审查产物未提交：`docs/tasks/P4-02U.md`、`docs/tasks/P4-02V.md`、`docs/reports/P4-02U-lock-attribution.md`、`docs/reports/P4-02U-dsh-capacity-evidence-review.md`、`tools/diagnostics/p4_02u_lock_attribution.py`；未 push，不得批量覆盖或代为提交。
