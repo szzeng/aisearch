@@ -2,7 +2,33 @@
 
 更新：2026-09-29。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-02Y-I — 来源建库与管理闭环（实现完成，待独立复核）
+## 当前任务 P4-02Y-J — 个人试用 AI 资源就绪（PASS）
+
+**PASS / READY（2026-09-29，HEAD `d7224b6`；[报告](reports/P4-02Y-J-personal-ai-resources.md)、
+[任务卡](tasks/P4-02Y-J.md)）。** 个人试用数据根 `D:\SZ\project\PhotoSearchData` 的
+**`Chinese-CLIP READY（已有）+ OCR READY + Face READY`**：OCR 4 文件从项目固定 wheel
+（`rapidocr-onnxruntime 1.4.4`，无下载）复制到 `models\ocr\ppocr-v4-mobile`，Face 因本机无既有副本改用现有
+准备工具取官方 model-zoo `buffalo_l.zip`（288 621 354 B / `80ffe37d…`，与 P0-04 `pack_release` 一致）解出
+`models\face\buffalo_l\{det_10g,w600k_r50}.onnx`；6 个文件同时等于 P0-04 manifest 与产品 `ocr/face.contract`
+表（size+SHA-256），指纹/`config_hash`/`space_id(4c06341c33c2)`/`dimension 512` 均未变。产品入口
+`ocr/face cli weights|status --data-root D:\…\PhotoSearchData` 全 `status=ok`、`weights_present=true`；
+OCR smoke（`PHOTO_SEARCH_DATA_ROOT` 指向 D 盘数据根，先校验再复制）`status=ok`：3/3 CONFIRMED、`SYNCED`、
+发票图 5 区域含 `发票金额1280元`/`编号20260914`、高密度页 2 切片、空白页 0、`发票`/`1280`/`20260914` 命中；
+Face smoke `--device cpu` `status=ok`/`problems=[]`：12 张脸、独立索引 `READY`/`dimension=512`、
+复合图 1 CONFIRMED + 1 `SAME_IMAGE_CONFLICT`、重算分布与冻结 `CALIBRATION` 一致、二次运行 12/8 不变。
+非阻断：本机 GPU 不能承载固定 SCRFD 图（`probe` = cpu 可用 / gpu `FACE_DEVICE_UNAVAILABLE`，与 P0-06
+`det_10g` 12 个 CPU-only 节点记录一致，产品按契约 CPU 降级且不阻塞刷新）、准备工具 manifest 步骤在本机
+缺 `onnxruntime` dist 元数据（资源已就位，校验由独立只读脚本完成）、`face_smoke_fixture.py --device auto`
+绕过设备探测会在 calibration 阶段失败（`--device cpu` 全绿）。**产品代码 0 修改**，schema 仍 16、
+deps/`uv.lock`/ADR 零改动，原图零改动；未做全图库 OCR/Face 建库、未复测 CLIP。
+**下一步 = 继续真实日常试用（一事一卡），或按 READY 的 [P4-02Y-P](tasks/P4-02Y-P.md)（亚洲 GeoNames，DS-L 低推理）
+补齐地点包；不启动 P4-02Z。**
+
+## 上一任务（P4-02Y-I，已完成，保留记录）— 来源建库与管理闭环
+
+**最终状态：PASS（2026-09-29，修复后的独立 DS-H 窄受影响面复核复审 = `ENGINEERING REVIEW PASS /
+SOL_NOT_REQUIRED`，见本段末与 [任务卡](tasks/P4-02Y-I.md)）。** 以下首段保留「实现完成 / 首轮复核 FAIL」当时的
+原样记录，不代表当前状态。
 
 **IMPLEMENTED / 待独立 DS-H 窄受影响面复核（2026-09-29；[实现报告](reports/P4-02Y-I-source-build-and-delete.md)、
 [任务卡](tasks/P4-02Y-I.md)）。** 基线 `master @ 714d4ea`（卡面基线 `b17ded6`），schema 仍 **16**、`0017` 未实施、
