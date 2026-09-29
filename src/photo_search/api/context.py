@@ -114,6 +114,14 @@ class ApiContext:
             )
         return self._refresher
 
+    def refresh_manifest_path(self) -> str | None:
+        """The pinned manifest the refresh (and the source card's progress) is bound to."""
+        return self._refresh_manifest_path
+
+    def refresh_device_policy(self) -> str:
+        """The device policy of the refresh; the source card renders the same binding."""
+        return self._refresh_device_policy
+
     def redactor(self) -> Redactor:
         """Build the path redactor from whatever catalog state is currently readable."""
         try:

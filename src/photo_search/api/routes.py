@@ -88,6 +88,7 @@ from photo_search.api.models import (
     SearchResultModel,
     SessionResponse,
     SourceCreateRequest,
+    SourceDeleteResponse,
     SourceDetail,
     SourceListResponse,
     StatsResponse,
@@ -109,6 +110,7 @@ from photo_search.api.session import (
 )
 from photo_search.catalog.errors import (
     FACE_NOT_FOUND,
+    INVALID_STATE_TRANSITION,
     RUNTIME_CAPABILITY_UNAVAILABLE,
     UPLOAD_TOO_LARGE,
     CatalogError,
@@ -150,6 +152,7 @@ from photo_search.persons.read import (
 from photo_search.persons.service import PersonService
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
+from photo_search.refresh import progress as refresh_progress
 from photo_search.scheduler import state as scheduler_state
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.scheduler.projection import (
@@ -420,12 +423,56 @@ async def stats(request: Request) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------- sources
+def _source_progress_context(context: ApiContext, service: CatalogService) -> tuple[Any, dict[str, bool]]:
+    """The served semantic binding and the enrichment availability of this machine.
+
+    Resolved once per request: the manifest is read once and the weight/dataset probes are
+    done once, however many sources the answer carries. Both are *reported*: a build without
+    a pinned model or without face weights shows ``UNAVAILABLE`` instead of a progress bar
+    that could never move.
+    """
+    binding = refresh_progress.served_binding(
+        service.catalog,
+        manifest_path=context.refresh_manifest_path(),
+        device_policy=context.refresh_device_policy(),
+    )
+    available = refresh_progress.enrichment_availability(
+        service.catalog, data_root=context.settings.data_root
+    )
+    return binding, available
+
+
+def _with_progress(
+    service: CatalogService,
+    payload: dict[str, Any],
+    *,
+    binding: Any,
+    available: dict[str, bool],
+) -> dict[str, Any]:
+    """Attach the durable P4-02Y-I build progress to one source payload (additive)."""
+    payload["progress"] = refresh_progress.source_progress(
+        service.catalog,
+        source_id=int(payload["source_id"]),
+        binding=binding,
+        available=available,
+    )
+    return payload
+
+
 @router.get("/sources", response_model=SourceListResponse, summary="Registered sources")
 async def list_sources(request: Request) -> dict[str, Any]:
-    service = service_of(request)
+    context = context_of(request)
+    service = context.service()
+    binding, available = _source_progress_context(context, service)
     return {
         "sources": [
-            service.get_source(int(row["source_id"])) for row in service.list_sources()
+            _with_progress(
+                service,
+                service.get_source(int(row["source_id"])),
+                binding=binding,
+                available=available,
+            )
+            for row in service.list_sources()
         ]
     }
 
@@ -447,7 +494,42 @@ async def create_source(request: Request, payload: SourceCreateRequest) -> dict[
 
 @router.get("/sources/{source_id}", response_model=SourceDetail, summary="One source")
 async def get_source(request: Request, source_id: int) -> dict[str, Any]:
-    return service_of(request).get_source(int(source_id))
+    context = context_of(request)
+    service = context.service()
+    binding, available = _source_progress_context(context, service)
+    return _with_progress(
+        service,
+        service.get_source(int(source_id)),
+        binding=binding,
+        available=available,
+    )
+
+
+@router.delete(
+    "/sources/{source_id}",
+    response_model=SourceDeleteResponse,
+    summary="Stop managing a source root (records only; never a photo)",
+)
+async def delete_source(request: Request, source_id: int) -> dict[str, Any]:
+    """Remove the registration, its locations and its scan state - and nothing else.
+
+    The card's promise is "删除来源只会移除 PhotoSearch 中的记录，不会删除文件夹中的照片"
+    (P4-02Y-I §5). This endpoint therefore never touches a file: it drops the source's
+    ``file_locations``/``scan_runs``/``source_roots`` rows in one transaction and reports
+    ``originals_touched = 0``. An asset that also lives in another source keeps everything;
+    the library refresh (``P4-02Y-I`` §2) may be running as a second writer, so a removal is
+    refused with a structured state conflict while one is active - exactly like a scan in
+    flight, which the store refuses on its own.
+    """
+    context = context_of(request)
+    refresher = context.refresher()
+    if refresher.is_running():
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            "a library refresh is running; delete the source after it finishes",
+            details={"source_id": int(source_id), "reason": "REFRESH_IN_PROGRESS"},
+        )
+    return context.service().delete_source(int(source_id))
 
 
 @router.post(
@@ -486,9 +568,15 @@ async def request_library_refresh(
     refresh runs on its own worker thread and reports through
     ``GET /api/v1/library/refresh``. A second request while one is active is *not* queued -
     it answers with the running refresh and ``accepted = false`` (P4-02Y §5).
+
+    ``mode = "build"`` is the P4-02Y-I first build ("开始建库"): the same additive entry, but
+    it drains the durable backlog of the named sources in bounded batches instead of stopping
+    at one bounded delta. The requested mode is echoed in the status so the caller sees which
+    pass it is watching.
     """
     source_ids = None if payload is None else payload.source_ids
-    return context_of(request).refresher().start(source_ids)
+    mode = "refresh" if payload is None else str(payload.mode)
+    return context_of(request).refresher().start(source_ids, mode=mode)
 
 
 @router.get(

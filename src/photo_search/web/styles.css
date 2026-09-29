@@ -130,6 +130,14 @@ button[disabled] {
   color: var(--fg-muted);
 }
 
+/* P4-02Y-I: the one destructive action of the sources page ("删除来源"). It removes
+   PhotoSearch records only - the confirmation text says so - and the colour is the only
+   hint the page gives that it is not an ordinary maintenance button. */
+button.danger {
+  border-color: var(--danger, #b3261e);
+  color: var(--danger, #b3261e);
+}
+
 input,
 select {
   font: inherit;

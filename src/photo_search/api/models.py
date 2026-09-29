@@ -132,6 +132,11 @@ class SourceRecord(BaseModel):
 
 class SourceDetail(SourceRecord):
     counts: dict[str, Any] | None = None
+    #: P4-02Y-I §3: the durable build progress of this source (scan denominator, semantic
+    #: backlog, coarse enrichment states). Additive: an older client simply ignores it, and
+    #: a caller that cannot resolve the semantic channel sees the stages reported as
+    #: ``UNAVAILABLE`` instead of a guess.
+    progress: dict[str, Any] | None = None
 
 
 class SourceListResponse(BaseModel):
@@ -146,6 +151,25 @@ class SourceCreateRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
     root_path: str = Field(min_length=1, max_length=4096)
     volume_hint: str | None = Field(default=None, max_length=64)
+
+
+class SourceDeleteResponse(BaseModel):
+    """``DELETE /api/v1/sources/{id}``: what leaving the managed set removed (P4-02Y-I §5).
+
+    Counts only, and ``originals_touched`` is always zero: the answer must make the "this
+    removes records, never photos" promise inspectable instead of merely asserted.
+    """
+
+    source_id: int
+    display_name: str
+    deleted: bool = True
+    locations_removed: int
+    scans_removed: int
+    scan_jobs_removed: int
+    #: Assets that had *only* this source: they keep their identity, embeddings and manual
+    #: facts (no orphan GC in this card) but no longer have a readable position.
+    assets_orphaned: int
+    originals_touched: int = 0
 
 
 class MediaKindSummary(BaseModel):
@@ -347,11 +371,17 @@ class LibraryRefreshRequest(BaseModel):
 
     An omitted/empty body means "every registered source" - the one-click case. The list is
     only useful for a user who knows which directory changed (P4-02Y §5).
+
+    ``mode`` is ``refresh`` (the daily incremental pass of P4-02Y) or ``build`` (P4-02Y-I
+    §1/§2): the first source build, which keeps draining the *durable* backlog of the named
+    sources in bounded batches until their semantic index is complete instead of stopping at
+    one bounded delta.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     source_ids: list[int] | None = Field(default=None, max_length=64)
+    mode: Literal["refresh", "build"] = "refresh"
 
 
 class LibraryRefreshStatus(BaseModel):
@@ -367,6 +397,9 @@ class LibraryRefreshStatus(BaseModel):
     state: str
     accepted: bool = False
     running: bool = False
+    #: ``refresh`` (daily incremental) or ``build`` (P4-02Y-I first build); ``null`` while the
+    #: process has not started any refresh yet.
+    mode: str | None = None
     search_ready: bool = False
     search_ready_basis: str | None = None
     source_ids: list[int] | None = None

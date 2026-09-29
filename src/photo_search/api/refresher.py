@@ -23,13 +23,25 @@ from typing import Any
 
 from photo_search.catalog.errors import CatalogError
 from photo_search.ingestion.scanner import DEFAULT_OBSERVATION_BATCH
-from photo_search.refresh.pipeline import refresh_library
+from photo_search.refresh.pipeline import (
+    REFRESH_MODE_DAILY,
+    REFRESH_MODES,
+    refresh_library,
+)
 from photo_search.refresh.state import RefreshStatus, idle_status
 
 logger = logging.getLogger("photo_search.api.refresher")
 
 #: Default time ``close`` waits for the worker to notice the stop flag.
 CLOSE_TIMEOUT_SECONDS = 5.0
+
+
+def _normalize_mode(mode: str) -> str:
+    """Validate the run mode; the HTTP layer already refuses an unknown spelling."""
+    value = str(mode or REFRESH_MODE_DAILY)
+    if value not in REFRESH_MODES:
+        raise ValueError(f"unknown refresh mode {mode!r}")
+    return value
 
 
 class LibraryRefresher:
@@ -68,12 +80,19 @@ class LibraryRefresher:
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ public API
-    def start(self, source_ids: Sequence[int] | None = None) -> dict[str, Any]:
+    def start(
+        self, source_ids: Sequence[int] | None = None, *, mode: str = REFRESH_MODE_DAILY
+    ) -> dict[str, Any]:
         """Start a refresh, or report the one that is already running.
 
         A second request during an active refresh is *not* queued: it answers with the
         current status and ``accepted = false``, so a double click can never start a second
         concurrent pass (P4-02Y §5).
+
+        ``mode`` is ``refresh`` (the daily incremental pass) or ``build`` (P4-02Y-I: the first
+        build of one source, which drains the durable backlog in bounded batches). A second
+        request while one run is active is never queued in either mode, so a build and a quick
+        refresh cannot interleave on the same catalog.
         """
         with self._lock:
             if self._closed:
@@ -81,17 +100,22 @@ class LibraryRefresher:
             if self._running:
                 return self._snapshot_locked(accepted=False)
             requested = None if not source_ids else [int(value) for value in source_ids]
+            requested_mode = _normalize_mode(mode)
             status = RefreshStatus(
                 refresh_id=uuid.uuid4().hex,
                 source_ids=requested,
                 batch_size=self._batch_size,
                 started_at_ms=int(self._now_ms()),
+                mode=requested_mode,
                 now_ms=self._now_ms,
             )
             self._status = status
             self._running = True
             self._thread = threading.Thread(
-                target=self._loop, args=(status, requested), name=self._name, daemon=True
+                target=self._loop,
+                args=(status, requested, requested_mode),
+                name=self._name,
+                daemon=True,
             )
             self._thread.start()
             return self._snapshot_locked(accepted=True)
@@ -141,7 +165,9 @@ class LibraryRefresher:
                 )
 
     # ---------------------------------------------------------------------- worker
-    def _loop(self, status: RefreshStatus, source_ids: Sequence[int] | None) -> None:
+    def _loop(
+        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str
+    ) -> None:
         service: Any | None = None
         try:
             service = self._service_factory()
@@ -158,6 +184,7 @@ class LibraryRefresher:
                     device=self._device or "auto",
                     device_policy=self._device_policy,
                     enrich=self._enrich,
+                    mode=mode,
                 )
         except CatalogError as error:
             logger.info("library refresh failed: %s", error.code)

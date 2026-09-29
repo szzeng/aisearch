@@ -69,6 +69,7 @@ class RefreshStatus:
         source_ids: Sequence[int] | None,
         batch_size: int,
         started_at_ms: int,
+        mode: str = "refresh",
         now_ms: int | None = None,
     ) -> None:
         self._lock = threading.Lock()
@@ -76,6 +77,7 @@ class RefreshStatus:
         self._data: dict[str, Any] = {
             "refresh_id": str(refresh_id),
             "state": "SCANNING",
+            "mode": str(mode),
             "search_ready": False,
             "search_ready_basis": None,
             "source_ids": None if source_ids is None else [int(v) for v in source_ids],
@@ -151,6 +153,18 @@ class RefreshStatus:
             self._data["state"] = "SEARCH_READY"
             self._touch(self._data)
 
+    def note_search_gate(self, *, basis: str) -> None:
+        """Record *why* the run is not search ready, without claiming readiness (P4-02Y-I).
+
+        ``search_ready_basis`` is the honest half of the two-part answer: a build that stopped
+        with a durable backlog left reports ``semantic-backlog`` here and keeps
+        ``search_ready = false``, so the caller can word it as "not finished yet" instead of
+        mistaking it for the same thing as a broken scan.
+        """
+        with self._lock:
+            self._data["search_ready_basis"] = str(basis)
+            self._touch(self._data)
+
     def finish(self, *, state: str, elapsed_ms: int) -> None:
         if state not in ("COMPLETE", "PARTIAL_FAILED", "FAILED"):
             raise ValueError(f"a refresh may only finish as COMPLETE/PARTIAL_FAILED/FAILED, not {state!r}")
@@ -167,6 +181,7 @@ def idle_status(*, batch_size: int) -> dict[str, Any]:
     return {
         "refresh_id": None,
         "state": "IDLE",
+        "mode": None,
         "search_ready": False,
         "search_ready_basis": None,
         "source_ids": None,

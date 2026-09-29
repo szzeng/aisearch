@@ -80,6 +80,9 @@
     pollTimer: null,
     //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
     refreshTimer: null,
+    //: P4-02Y-I: whether a refresh/build is in flight, so the source cards can disable the
+    //: actions that would only be refused by the single-active-refresh rule.
+    refreshRunning: false,
     objectUrls: [],
     observer: null,
   };
@@ -417,12 +420,18 @@
     }
     state.sources.forEach(function (source) {
       var counts = source.counts || {};
+      var progress = source.progress || null;
       var card = element("li", "source-card");
       card.appendChild(element("h3", null, source.display_name));
       var list = element("dl");
-      [
+      var rows = [
         ["来源编号", "#" + source.source_id],
         ["状态", SOURCE_STATUS_TEXT[source.status] || source.status],
+      ];
+      if (progress && progress.scan) {
+        rows.push(["扫描", String(progress.scan.files) + " 个文件（可显示 " + String(progress.scan.present) + "）"]);
+      }
+      rows.push(
         ["资产", String(counts.assets === undefined ? "未知" : counts.assets)],
         [
           "在库位置",
@@ -432,42 +441,156 @@
           "缺失位置",
           String(counts.locations_missing === undefined ? "未知" : counts.locations_missing),
         ],
+        ["语义索引", semanticProgressText(progress)],
+        ["语义状态", semanticStateText(progress)],
+      );
+      ENRICHMENT_LABELS.forEach(function (pair) {
+        var stage = progress && progress.stages ? progress.stages[pair[0]] : null;
+        if (stage) {
+          rows.push([pair[1], STAGE_STATE_TEXT[stage.state] || String(stage.state)]);
+        }
+      });
+      rows.push(
         [
           "最近成功扫描",
           source.last_successful_scan === null || source.last_successful_scan === undefined
             ? "尚无成功扫描"
             : "扫描 #" + source.last_successful_scan,
         ],
-      ].forEach(function (pair) {
+      );
+      rows.forEach(function (pair) {
         list.appendChild(element("dt", null, pair[0]));
         list.appendChild(element("dd", null, pair[1]));
       });
       card.appendChild(list);
+      var mode = sourceActionMode(progress);
       var actions = element("p");
-      var scan = element("button", null, "扫描");
-      scan.type = "button";
-      scan.setAttribute("data-scan", String(source.source_id));
-      scan.addEventListener("click", function () {
-        startScan(source.source_id);
+      if (mode === "build" || mode === "continue") {
+        // §1/§2: a source that was never built, or one whose durable backlog still holds work
+        // (semantic index incomplete, or an enrichment stage with unfinished jobs), gets the
+        // one entry that keeps building it.
+        var build = element("button", null, mode === "continue" ? "继续建库" : "开始建库");
+        build.type = "button";
+        build.setAttribute("data-build", String(source.source_id));
+        build.addEventListener("click", function () {
+          refreshLibrary([Number(source.source_id)], "build");
+        });
+        actions.appendChild(build);
+        var buildScan = element("button", null, "完整校验扫描");
+        buildScan.type = "button";
+        buildScan.setAttribute("data-scan", String(source.source_id));
+        buildScan.addEventListener("click", function () {
+          startScan(source.source_id);
+        });
+        actions.appendChild(buildScan);
+      } else {
+        // §4: once a source is built the daily action is a fast source-scoped refresh; the
+        // complete-verification scan stays as the secondary maintenance entry.
+        var refreshOne = element("button", null, "快速刷新此来源");
+        refreshOne.type = "button";
+        refreshOne.setAttribute("data-refresh", String(source.source_id));
+        refreshOne.addEventListener("click", function () {
+          refreshLibrary([Number(source.source_id)], "refresh");
+        });
+        actions.appendChild(refreshOne);
+        var scan = element("button", null, "完整校验扫描");
+        scan.type = "button";
+        scan.setAttribute("data-scan", String(source.source_id));
+        scan.addEventListener("click", function () {
+          startScan(source.source_id);
+        });
+        actions.appendChild(scan);
+      }
+      var remove = element("button", "danger", "删除来源");
+      remove.type = "button";
+      remove.setAttribute("data-delete", String(source.source_id));
+      remove.addEventListener("click", function () {
+        deleteSource(source);
       });
-      actions.appendChild(scan);
+      actions.appendChild(remove);
+      if (state.refreshRunning) {
+        Array.prototype.forEach.call(actions.querySelectorAll("button"), function (button) {
+          button.disabled = true;
+        });
+        actions.appendChild(
+          element("span", "hint", "刷新正在进行，完成后再操作来源。")
+        );
+      }
       card.appendChild(actions);
-      var quick = element("p");
-      var refreshOne = element("button", null, "快速刷新此来源");
-      refreshOne.type = "button";
-      refreshOne.setAttribute("data-refresh", String(source.source_id));
-      refreshOne.addEventListener("click", function () {
-        refreshLibrary([Number(source.source_id)]);
-      });
-      quick.appendChild(refreshOne);
-      card.appendChild(quick);
-      var progress = element("p", "hint", "");
-      progress.setAttribute("data-progress", String(source.source_id));
-      progress.setAttribute("role", "status");
-      progress.setAttribute("aria-live", "polite");
-      card.appendChild(progress);
+      var progressLine = element("p", "hint", "");
+      progressLine.setAttribute("data-progress", String(source.source_id));
+      progressLine.setAttribute("role", "status");
+      progressLine.setAttribute("aria-live", "polite");
+      card.appendChild(progressLine);
       els.sourcesList.appendChild(card);
     });
+  }
+
+  //: P4-02Y-I §3: the enrichment rows of a source card and their three honest words.
+  var ENRICHMENT_LABELS = [
+    ["taken_time", "拍摄时间"],
+    ["gps", "定位信息"],
+    ["place", "地点"],
+    ["face", "人物"],
+    ["ocr", "文字识别"],
+  ];
+  var STAGE_STATE_TEXT = {
+    IN_PROGRESS: "处理中",
+    COMPLETE: "完成",
+    UNAVAILABLE: "不可用",
+  };
+  var SEMANTIC_STATE_TEXT = {
+    UNBUILT: "未建库",
+    BUILDING: "正在建立语义索引",
+    SEARCHABLE: "✓ 可以语义搜索",
+    UNAVAILABLE: "语义通道不可用",
+  };
+
+  function semanticProgressText(progress) {
+    var semantic = progress && progress.stages ? progress.stages.semantic : null;
+    if (!semantic) {
+      return "未知";
+    }
+    if (semantic.total === 0 && semantic.confirmed === 0) {
+      return "尚未开始";
+    }
+    return String(semantic.confirmed) + " / " + String(semantic.total);
+  }
+
+  function semanticStateText(progress) {
+    var semantic = progress && progress.stages ? progress.stages.semantic : null;
+    if (!semantic) {
+      return "未知";
+    }
+    if (semantic.reason) {
+      return (SEMANTIC_STATE_TEXT[semantic.state] || String(semantic.state)) +
+        "（" + String(semantic.reason) + "）";
+    }
+    return SEMANTIC_STATE_TEXT[semantic.state] || String(semantic.state);
+  }
+
+  //: Which action a source card offers. ``build`` never-built, ``continue`` durable backlog
+  //: left (semantic incomplete or an enrichment stage with unfinished jobs), ``refresh`` the
+  //: daily incremental pass of an already built source.
+  function sourceActionMode(progress) {
+    if (!progress || !progress.stages) {
+      return "build";
+    }
+    var semantic = progress.stages.semantic || {};
+    if (!progress.built || semantic.state === "UNBUILT") {
+      return "build";
+    }
+    if (semantic.state === "BUILDING") {
+      return "continue";
+    }
+    var names = Object.keys(progress.stages);
+    for (var index = 0; index < names.length; index += 1) {
+      var stage = progress.stages[names[index]];
+      if (stage && stage.state === "IN_PROGRESS") {
+        return "continue";
+      }
+    }
+    return "refresh";
   }
 
   function renderSourceOptions() {
@@ -514,22 +637,32 @@
     PARTIAL_FAILED: "刷新部分完成（部分增强未完成）",
     FAILED: "刷新失败",
   };
+  //: P4-02Y-I §1/§2: the first build of one source. The card calls it "开始建库"; the server
+  //: runs the same additive refresh entry in its ``build`` mode.
+  var REFRESH_MODE_TEXT = {
+    build: "开始建库",
+    refresh: "刷新图库",
+  };
 
-  function refreshLibrary(sourceIds) {
+  function refreshLibrary(sourceIds, mode) {
     var timer = state.refreshTimer;
     if (timer !== null) {
       clearTimeout(timer);
       state.refreshTimer = null;
     }
-    setStatus(els.refreshStatus, "正在请求刷新图库…");
-    var body = sourceIds ? { source_ids: sourceIds } : {};
+    var requested = mode === "build" ? "build" : "refresh";
+    setStatus(els.refreshStatus, "正在请求" + REFRESH_MODE_TEXT[requested] + "…");
+    var body = { mode: requested };
+    if (sourceIds) {
+      body.source_ids = sourceIds;
+    }
     request("/library/refresh", { method: "POST", body: body })
       .then(function (result) {
         renderRefresh(result.body || {});
         pollRefresh();
       })
       .catch(function (failure) {
-        setStatus(els.refreshStatus, "刷新请求失败：" + describe(failure), "error");
+        setStatus(els.refreshStatus, "请求失败：" + describe(failure), "error");
       });
   }
 
@@ -557,10 +690,26 @@
 
   function renderRefresh(status) {
     var counters = status.counters || {};
-    var stateText = REFRESH_STATE_TEXT[status.state] || String(status.state || "");
-    var parts = [stateText];
+    var failedStages = status.failed_stages || [];
+    var unfinished = failedStages.indexOf("semantic-backlog") >= 0;
+    var stateText = unfinished
+      ? "尚未完成建立语义索引（可再次点击继续）"
+      : (REFRESH_STATE_TEXT[status.state] || String(status.state || ""));
+    var parts = [];
+    if (status.mode === "build") {
+      parts.push("开始建库");
+    }
+    parts.push(stateText);
+    state.refreshRunning = Boolean(status.running);
     if (status.running && status.accepted === false && status.refresh_id) {
       parts.push("（已有一个刷新在进行，本次未重复启动）");
+    }
+    var semantic = status.stages && status.stages.semantic ? status.stages.semantic : null;
+    if (semantic && semantic.backlog_total !== undefined) {
+      parts.push(
+        "语义索引 " + String(semantic.backlog_confirmed) + " / " + String(semantic.backlog_total) +
+        "（待处理 " + String(semantic.backlog_pending) + "）"
+      );
     }
     if (counters.hash_targets !== undefined) {
       parts.push(
@@ -575,6 +724,37 @@
       ? "error"
       : (status.state === "PARTIAL_FAILED" ? "error" : "");
     setStatus(els.refreshStatus, parts.join("；"), kind);
+  }
+
+  function deleteSource(source) {
+    // P1-05 keeps every absolute local path out of the page: the confirmation names the
+    // display name only, exactly like the source list does. The registered root stays in the
+    // catalog (and in the input box the user typed it into) and is never read back here.
+    var message =
+      "删除来源只会移除 PhotoSearch 中的记录，不会删除文件夹中的照片。\n\n" +
+      "来源：" + String(source.display_name) + "\n" +
+      "确认删除这个来源吗？";
+    if (typeof window.confirm !== "function" || !window.confirm(message)) {
+      return;
+    }
+    setStatus(els.sourcesStatus, "正在删除来源…");
+    request("/sources/" + encodeURIComponent(source.source_id), { method: "DELETE" })
+      .then(function (result) {
+        var body = result.body || {};
+        state.browse.loaded = false;
+        setStatus(
+          els.sourcesStatus,
+          "已删除来源「" + String(body.display_name || source.display_name) + "」：移除 " +
+            String(body.locations_removed === undefined ? 0 : body.locations_removed) +
+            " 个位置记录、共享之外 " +
+            String(body.assets_orphaned === undefined ? 0 : body.assets_orphaned) +
+            " 个仅存于该来源的资产；原始照片 0 修改 / 0 删除。"
+        );
+        return loadSources();
+      })
+      .catch(function (failure) {
+        setStatus(els.sourcesStatus, "删除来源失败：" + describe(failure), "error");
+      });
   }
 
   function progressNode(sourceId) {
@@ -668,7 +848,10 @@
     })
       .then(function () {
         els.sourceForm.reset();
-        setStatus(els.sourcesStatus, "来源已注册。可以点“扫描”开始入库。");
+        setStatus(
+          els.sourcesStatus,
+          "来源已注册。点「开始建库」即可扫描、建立语义索引并进入可搜索状态。"
+        );
         return loadSources();
       })
       .catch(function (failure) {

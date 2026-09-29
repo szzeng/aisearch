@@ -233,6 +233,18 @@ class CatalogService:
             "reused": False,
         }
 
+    def delete_source(self, source_id: int) -> dict[str, Any]:
+        """Stop managing a source root; never touches a file (P4-02Y-I §5).
+
+        The whole removal happens in one transaction, so a reader either still sees the
+        registered source with all of its locations or sees it completely gone - never a
+        half-deleted root. A scan in flight is refused by :func:`catalog.store.delete_source`
+        with a structured state conflict; the API layer additionally refuses a removal while
+        a library refresh (a second writer over the same catalog) is running.
+        """
+        with self.catalog.write() as connection:
+            return store.delete_source(connection, source_id=int(source_id))
+
     def run_scan(self, source_id: int, **options: Any) -> dict[str, Any]:
         from photo_search.ingestion.scanner import execute_scan
 

@@ -550,6 +550,102 @@ def count_unbound_locations(
     )
 
 
+def delete_source(connection: sqlite3.Connection, *, source_id: int) -> dict[str, Any]:
+    """Cancel the management of one source root inside the caller's transaction.
+
+    This is *registration* deletion, never file deletion (P4-02Y-I §5): the registered root,
+    its locations and its scan history go away, while ``assets``, artifacts, vectors, manual
+    knowledge and - above everything else - the user's original photos are untouched. An
+    asset that also has a location in another source keeps every fact it has; an asset that
+    only lived here becomes an orphan (no location at all), which this card deliberately does
+    not garbage-collect (``orphan asset/artifact/vector GC`` is explicitly out of scope).
+
+    A source with a scan in flight (``QUEUED``/``RUNNING``) is refused: the scan worker would
+    otherwise keep writing locations for a source that no longer exists. A ``BLOCKED`` scan
+    (an offline root) is not a live execution, so it is simply removed together with the
+    rest of the source's scan state.
+    """
+    source_id = int(source_id)
+    row = get_source_row(connection, source_id)
+    live = connection.execute(
+        "SELECT scan_id, state FROM scan_runs WHERE source_id = ? "
+        "AND state IN ('QUEUED', 'RUNNING') ORDER BY scan_id LIMIT 1",
+        (source_id,),
+    ).fetchone()
+    if live is not None:
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            f"source {source_id} has a scan in flight",
+            details={
+                "source_id": source_id,
+                "scan_id": int(live["scan_id"]),
+                "state": str(live["state"]),
+                "reason": "SCAN_IN_PROGRESS",
+            },
+        )
+    scan_ids = [
+        int(item["scan_id"])
+        for item in connection.execute(
+            "SELECT scan_id FROM scan_runs WHERE source_id = ? ORDER BY scan_id", (source_id,)
+        ).fetchall()
+    ]
+    orphaned = int(
+        connection.execute(
+            "SELECT COUNT(DISTINCT l.asset_id) FROM file_locations AS l "
+            "WHERE l.source_id = ? AND l.asset_id IS NOT NULL AND NOT EXISTS ("
+            "SELECT 1 FROM file_locations AS other "
+            "WHERE other.asset_id = l.asset_id AND other.source_id <> ?)",
+            (source_id, source_id),
+        ).fetchone()[0]
+    )
+    locations = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM file_locations WHERE source_id = ?", (source_id,)
+        ).fetchone()[0]
+    )
+    # Three derived fact tables point at the *observation* they were produced from with
+    # ``ON DELETE RESTRICT`` (ADR-0005/ADR-0009/ADR-0010): the GPS fact of an asset, its OCR
+    # document and its faces. Losing the position must not destroy a fact that may belong to
+    # an asset still reachable through another source, so the reference is cleared instead of
+    # the row: the fact keeps its asset identity (and any manual knowledge bound to it) and
+    # only loses the position it was originally read from, which no longer exists.
+    for table in ("asset_geo_facts", "asset_ocr_text", "faces"):
+        connection.execute(
+            f"UPDATE {table} SET location_id = NULL WHERE location_id IN ("
+            "SELECT location_id FROM file_locations WHERE source_id = ?)",
+            (source_id,),
+        )
+    # The locations go first: their ``AFTER DELETE`` trigger re-queues the filename
+    # projection of every asset that was bound here, which is what makes a removed source's
+    # filenames stop being searchable (P4-02Y-I §5).
+    connection.execute("DELETE FROM file_locations WHERE source_id = ?", (source_id,))
+    jobs_removed = 0
+    if scan_ids:
+        placeholders = ", ".join("?" for _ in scan_ids)
+        cursor = connection.execute(
+            f"DELETE FROM jobs WHERE subject_type = ? AND subject_id IN ({placeholders})",
+            (SCAN_SUBJECT_TYPE, *(str(value) for value in scan_ids)),
+        )
+        jobs_removed = int(cursor.rowcount or 0)
+    # ``source_roots.last_successful_scan`` points at a ``scan_runs`` row, so the pointer has
+    # to be cleared before the history can be deleted (both are ``ON DELETE RESTRICT``).
+    connection.execute(
+        "UPDATE source_roots SET last_successful_scan = NULL WHERE source_id = ?", (source_id,)
+    )
+    connection.execute("DELETE FROM scan_runs WHERE source_id = ?", (source_id,))
+    connection.execute("DELETE FROM source_roots WHERE source_id = ?", (source_id,))
+    return {
+        "source_id": source_id,
+        "display_name": str(row["display_name"]),
+        "root_path": str(row["root_path"]),
+        "locations_removed": locations,
+        "scans_removed": len(scan_ids),
+        "scan_jobs_removed": jobs_removed,
+        "assets_orphaned": orphaned,
+        "originals_touched": 0,
+    }
+
+
 def reset_execution_coverage(
     connection: sqlite3.Connection, *, source_id: int, scan_id: int
 ) -> int:

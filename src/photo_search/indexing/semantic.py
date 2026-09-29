@@ -74,6 +74,10 @@ _PRESENT_SOURCE_SQL = (
 #: ``source_predicate`` is either empty or ``f.source_id = ? AND``. It must compose with the
 #: ``NOT EXISTS`` clause - adding a second ``WHERE`` for the source filter made every
 #: ``build --source-id`` call a SQL syntax error (DS-H review F1).
+#: ``cursor_predicate`` is either empty or ``a.asset_id > ? AND``; it is what lets the
+#: P4-02Y-I build walk a whole source in bounded pages instead of materialising the pending
+#: set at once. Both predicates come *before* the ``NOT EXISTS`` so their parameters stay in
+#: the same order as the placeholders.
 #: Assets that have a readable original and no confirmed embedding for their *current*
 #: content revision. A confirmed entry whose artifact came from a different revision (the file
 #: changed) is deliberately not a hit: that asset needs a new job.
@@ -85,7 +89,7 @@ _TARGET_SQL = (
     "SELECT l.location_id FROM file_locations AS l WHERE l.asset_id = a.asset_id "
     "AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1) "
     "JOIN source_roots AS r ON r.source_id = f.source_id "
-    "WHERE {source_predicate}NOT EXISTS ("
+    "WHERE {source_predicate}{cursor_predicate}NOT EXISTS ("
     "SELECT 1 FROM index_entries AS e JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
     "WHERE e.asset_id = a.asset_id AND e.space_id = ? AND e.generation_id = ? "
     "AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256) "
@@ -152,22 +156,31 @@ def semantic_selection(
     space_id: str,
     processor_id: str,
     source_id: int | None = None,
+    after_asset_id: int | None = None,
     limit: int | None = None,
 ) -> dict[str, Any]:
     """Split the pending assets into embeddable targets and out-of-scope files.
 
     ``limit`` bounds how many *targets* are selected; the out-of-scope histogram is complete
     only when the whole pending set was examined, which the returned ``coverage_complete``
-    says explicitly.
+    says explicitly. ``after_asset_id`` starts the walk after one already-processed asset, so
+    a caller that has to cover a 20-30 万 first build can page through the whole scope with
+    bounded memory instead of asking for every pending row at once (P4-02Y-I §2).
     """
     source_predicate = ""
     parameters: tuple[Any, ...] = ()
     if source_id is not None:
         source_predicate = "f.source_id = ? AND "
         parameters = (int(source_id),)
+    cursor_predicate = ""
+    if after_asset_id is not None:
+        cursor_predicate = "a.asset_id > ? AND "
+        parameters = (*parameters, int(after_asset_id))
     generation_id = generation_id_for(str(space_id), str(processor_id))
     rows = catalog.read_all(
-        _TARGET_SQL.format(source_predicate=source_predicate),
+        _TARGET_SQL.format(
+            source_predicate=source_predicate, cursor_predicate=cursor_predicate
+        ),
         (*parameters, str(space_id), generation_id),
     )
     wanted = None if limit is None else max(0, int(limit))
@@ -210,6 +223,7 @@ def semantic_targets(
     space_id: str,
     processor_id: str,
     source_id: int | None = None,
+    after_asset_id: int | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """The embeddable assets that still need an embedding for this generation."""
@@ -218,6 +232,7 @@ def semantic_targets(
         space_id=str(space_id),
         processor_id=str(processor_id),
         source_id=source_id,
+        after_asset_id=after_asset_id,
         limit=limit,
     )["targets"]
 
