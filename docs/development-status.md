@@ -119,7 +119,16 @@ F2 = 「已扫描但无可索引图片」与「未建库」在持久状态里不
 无可索引图片；多来源 backlog 改为 union（共享 asset 不再计两次）。修复后：本卡定点 18 例、5 文件 159/0/0/0
 （35.314 s）、B 级 **1864/0/0/48**（310.355 s）、复核探针复跑无异常（无未捕获异常、终态均带 basis/原因；
 删除边界的手检已固化为常驻用例）。
-**下一步 = 修复后的独立窄复核（另开会话）；不自动启动 P4-02Z。**
+**2026-09-30 来源卡阶段状态修复（PASS 之后的新变更）已独立窄复核 = `ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED`**
+（提交 `6879a96`，[复核报告](reports/P4-02Y-I-stage-state-fix-review.md)、[修复报告](reports/P4-02Y-I-stage-state-fix.md)）：
+`_enrichment_state` 不再只看 `handled/total`，新增 `NOT_STARTED`/`PENDING` 并按真实任务证据（加性字段
+`attempted`）推导，顺带关闭复审 F3（刷新状态行渲染 `search_ready_basis` 原因）。用户点名的 5 点全部独立复现
+通过（五态无互相冒充、三面口径自洽、加性面无信封/schema/迁移变化、F3 已修）；独立复跑 5 文件
+**160/0/0/0**、`ruff`/`lock`/`diff-check`/`node` 全绿。剩 4 条非阻断：`attempted` 实为「任意 revision 的
+job 行数」而非「资产数」（仅 `==0` 用于判定）、修复报告 §6 的全离线边界句与实测不符（实测语义行
+`NO_IMAGES` + `search_ready=true`）、taken-time `COMPLETE` 可比当前 revision 早一轮（既有口径）、
+`SEARCH_GATE_TEXT` 未收录 `semantic-unavailable`（回退原文）。F1/F2 仍为已知边界。
+**下一步 = 无（本卡与 2026-09-30 追加修复均已收口；仍不自动启动 P4-02Z）。**
 
 ## 上一任务（P4-02Y-T，已完成，保留记录）— 当前 HEAD 打包 + 最小 smoke + 开始个人试用
 
