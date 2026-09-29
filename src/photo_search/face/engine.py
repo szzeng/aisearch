@@ -9,10 +9,12 @@ the first - never a second set of them.
 
 Two boundaries are enforced here rather than documented:
 
-* **The device is resolved, not discovered.** A CUDA session is created with the CPU
-  execution-provider fallback disabled and its provider list is checked afterwards; a CUDA
-  request that cannot open CUDA is a structured ``FACE_DEVICE_UNAVAILABLE`` failure, never
-  a quieter CPU run.
+* **The device is resolved, not discovered.** Recognition runs on a strict CUDA session with
+  CPU execution-provider fallback disabled.  The pinned SCRFD detector is the deliberate
+  exception: its unsupported CUDA nodes run through an explicitly configured CPU EP while
+  the session still starts on CUDA.  That mixed state is recorded by the probe; a CUDA request
+  that cannot open either required session is a structured ``FACE_DEVICE_UNAVAILABLE``
+  failure, never a quieter all-CPU run.
 * **The input is bounded.** The working raster is capped by ``WORKING_LONG_EDGE``, an image
   whose *declared* pixels exceed ``MAX_DECODE_PIXELS`` is refused before decoding, and a
   picture with more faces than ``MAX_FACES`` is a bounded-output refusal rather than a
@@ -495,25 +497,44 @@ class FaceEngine:
         self.dll_report: dict[str, Any] | None = None
         if resolution.device == "cuda":
             self.dll_report = preload_runtime_dlls()
-        options = build_session_options(resolution)
-        provider_list = session_providers(resolution)
+        strict_options = build_session_options(resolution)
+        strict_providers = session_providers(resolution)
         factory = session_factory or _onnx_session
+        detector_options = strict_options
+        detector_providers = strict_providers
+        detector_requires_cpu_provider = False
+        if resolution.device == "cuda":
+            # ``det_10g`` has a small set of nodes that the pinned CUDA EP cannot execute on
+            # this supported runtime.  Keep CUDA first, but permit those nodes to run on the
+            # CPU EP.  Recognition remains the strict-CUDA path below.
+            detector_options = build_session_options(resolution, disable_cpu_fallback=False)
+            detector_providers = [*strict_providers, CPU_PROVIDER]
+            detector_requires_cpu_provider = True
         self.detector = self._open(
             factory,
             path=weights.detection_path,
-            providers=provider_list,
-            options=options,
+            providers=detector_providers,
+            options=detector_options,
             expected=resolution.provider,
             role="detection",
+            require_cpu_provider=detector_requires_cpu_provider,
         )
         self.recognizer = self._open(
             factory,
             path=weights.recognition_path,
-            providers=provider_list,
-            options=options,
+            providers=strict_providers,
+            options=strict_options,
             expected=resolution.provider,
             role="recognition",
         )
+        self.detector_providers = tuple(self.detector.get_providers())
+        self.recognizer_providers = tuple(self.recognizer.get_providers())
+        self.mixed_cuda_detection = bool(
+            resolution.device == "cuda" and CPU_PROVIDER in self.detector_providers
+        )
+        # ONNX Runtime may still list CPU in ``get_providers()`` for a strict CUDA session.
+        # The configured fallback gate, not that inventory, is the authority for ArcFace.
+        self.recognition_cpu_fallback_disabled = bool(resolution.cpu_fallback_disabled)
 
     @staticmethod
     def _open(
@@ -524,6 +545,7 @@ class FaceEngine:
         options: Any,
         expected: str,
         role: str,
+        require_cpu_provider: bool = False,
     ) -> Any:
         try:
             session = factory(str(path), sess_options=options, providers=list(providers))
@@ -543,6 +565,12 @@ class FaceEngine:
                 FACE_DEVICE_UNAVAILABLE,
                 "the face session did not land on the resolved execution provider",
                 details={"role": str(role), "expected": str(expected), "actual": list(actual)},
+            )
+        if require_cpu_provider and CPU_PROVIDER not in actual:
+            raise CatalogError(
+                FACE_DEVICE_UNAVAILABLE,
+                "the face detection session did not retain its required CPU execution provider",
+                details={"role": str(role), "expected": [str(expected), CPU_PROVIDER], "actual": list(actual)},
             )
         return session
 
@@ -660,6 +688,14 @@ class FaceEngineCache:
                 "provider": str(engine.provider),
                 "degradation": bool(engine.is_degradation),
                 "reason": str(engine.reason),
+                "execution": {
+                    "detection_providers": list(engine.detector_providers),
+                    "recognition_providers": list(engine.recognizer_providers),
+                    "mixed_cuda_detection": bool(engine.mixed_cuda_detection),
+                    "recognition_cpu_fallback_disabled": bool(
+                        engine.recognition_cpu_fallback_disabled
+                    ),
+                },
                 "error": None,
             }
         except CatalogError as error:
@@ -669,6 +705,7 @@ class FaceEngineCache:
                 "provider": None,
                 "degradation": False,
                 "reason": None,
+                "execution": None,
                 "error": {"code": str(error.code), **error.details},
             }
         with self._lock:
@@ -691,6 +728,7 @@ class FaceEngineCache:
             "provider": None,
             "degradation": False,
             "reason": "not probed",
+            "execution": None,
             "error": None,
             "checked": False,
         }

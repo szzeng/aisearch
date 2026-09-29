@@ -2,7 +2,33 @@
 
 更新：2026-09-29。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-02Y-P — 亚洲 GeoNames 真实地名包（PASS）
+## 当前任务 P4-02Y-K — Face 检测 CUDA/CPU 混合执行（PASS / DS-H 窄受影响面复核 = PASS，F1 已关闭）
+
+`det_10g` 的 CUDA session 改为显式 `CUDAExecutionProvider + CPUExecutionProvider` 混合 stack，
+`w600k_r50` 仍 strict CUDA（`session.disable_cpu_ep_fallback=1`）；probe 公开 detector/recognition
+providers、`mixed_cuda_detection` 与 recognition strict gate，故不伪装成纯 CUDA。真实固定权重 + 公共
+Face fixture：CPU 与 mixed GPU smoke 均 `status=ok`、12 张脸/8 组/1 same-image conflict，耗时分别
+33 295 / 9 683 ms，mixed `qualified_devices=[cpu,gpu]`；定点 JUnit **18/0/0/0**、ruff/lock/diff-check
+全绿。只改 Face engine 与单测，未读改真实图库；[报告](reports/P4-02Y-K-face-mixed-cuda-cpu.md)、
+[任务卡](tasks/P4-02Y-K.md)。
+
+**独立 DS-H 窄受影响面复核（[复核报告](reports/P4-02Y-K-review-dsh.md)）：初轮 NEED FIX。** 任务卡 6 条边界与
+3 条通过条件已全部独立复现通过（Chinese-CLIP/OCR/全局 device policy/ADR 零改动；两次真实 Face smoke 与
+实现者 artifact 的 12 脸/8 组/1 冲突、逐脸质量、人物成员完全一致；注入 CUDA EP 注册失败仍得
+`FACE_DEVICE_UNAVAILABLE`，无新增全局 fallback），但**同一受影响面内
+`tests/integration/test_p3_face_lifecycle.py::test_an_explicit_gpu_request_never_falls_back_to_cpu`
+现在稳定失败（15/16）**：其未过滤的 `SELECT resolved_device FROM jobs` 把 `catalog_scan` 作业的
+`resolved_device=NULL` 计入，而该分支在改动前因 `det_10g` strict CUDA 打不开而不可达，本卡让 GPU Face
+首次可用才暴露（产品行为正确，属既有测试缺陷）。**F1 已修复**：断言现只查询 Face task type，完整
+Face lifecycle 复跑 **16/0/0/0**（JUnit `test-results/p4-02y-k-face-lifecycle-fix.xml`），ruff/lock/diff-check
+全绿；产品语义/契约/ADR 未变。**复审（DS-H 只复审 F1）：PASS。** 修复 diff 与复核建议一致（按
+`contract.FACE_TASK_TYPE = "image_face"` 过滤），`src/**` 相对初轮复核逐字未变，故初轮产品侧证据仍有效；
+本复核独立复跑定点单测 + Face lifecycle = **34/0/0/0**（JUnit `test-results/p4-02y-k-review-rerun.xml`），
+F1 不再复现。复核用 JUnit 与文件范围符合任务卡；未触发 DS-H 全受影响面复审或 C2/Sol 升级。本卡可收口；
+未验证项仍为打包产物内 mixed detector、逐节点 provider 归因、全量套件。非阻断小瑕疵：任务卡把过滤值写作
+`face_detection`，实际为 `image_face`（建议顺手改）。
+
+## 上一任务 P4-02Y-P — 亚洲 GeoNames 真实地名包（PASS）
 
 **PASS（2026-09-29，HEAD `eb0e5be`；[报告](reports/P4-02Y-P-asia-geonames.md)、[任务卡](tasks/P4-02Y-P.md)）。**
 新增 `tools/places/prepare_geonames.py`（只读 dump、不联网、不碰照片/catalog），把 GeoNames dump

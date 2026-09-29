@@ -20,6 +20,7 @@ from photo_search.catalog.errors import (
 from photo_search.face import contract, weights
 from photo_search.face.engine import (
     FaceCancelled,
+    FaceEngine,
     FaceEngineCache,
     analyze_image,
     anchor_centers,
@@ -312,3 +313,45 @@ def test_the_engine_cache_refuses_a_broken_weight_set(tmp_path: Path) -> None:
     with pytest.raises(CatalogError) as error:
         cache.verified_weights(tmp_path)
     assert error.value.code == FACE_WEIGHTS_MISSING
+
+
+def test_cuda_detector_explicitly_uses_mixed_providers_while_recognition_stays_strict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCRFD may use CPU nodes, but the ArcFace graph must retain strict CUDA semantics."""
+    from photo_search.runtime.device import CPU_PROVIDER, CUDA_PROVIDER, DISABLE_CPU_FALLBACK_KEY
+
+    fake_pinned(tmp_path, monkeypatch)
+    resolved = weights.verify(weights.resolve(tmp_path))
+    calls: list[dict[str, Any]] = []
+
+    class Session:
+        def __init__(self, providers: list[Any]) -> None:
+            self._providers = tuple(
+                item[0] if isinstance(item, tuple) else item for item in providers
+            )
+
+        def get_providers(self) -> tuple[str, ...]:
+            return self._providers
+
+    def factory(path: str, *, sess_options: Any, providers: list[Any]) -> Session:
+        calls.append({"path": path, "options": sess_options, "providers": providers})
+        return Session(providers)
+
+    engine = FaceEngine(
+        resolved,
+        device="gpu",
+        providers=(CUDA_PROVIDER, CPU_PROVIDER),
+        session_factory=factory,
+    )
+
+    detector, recognizer = calls
+    assert detector["providers"] == [(CUDA_PROVIDER, {"use_tf32": "0"}), CPU_PROVIDER]
+    with pytest.raises(RuntimeError):
+        detector["options"].get_session_config_entry(DISABLE_CPU_FALLBACK_KEY)
+    assert recognizer["providers"] == [(CUDA_PROVIDER, {"use_tf32": "0"})]
+    assert recognizer["options"].get_session_config_entry(DISABLE_CPU_FALLBACK_KEY) == "1"
+    assert engine.detector_providers == (CUDA_PROVIDER, CPU_PROVIDER)
+    assert engine.recognizer_providers == (CUDA_PROVIDER,)
+    assert engine.mixed_cuda_detection is True
+    assert engine.recognition_cpu_fallback_disabled is True

@@ -419,7 +419,11 @@ def test_an_explicit_gpu_request_never_falls_back_to_cpu(harness: Harness) -> No
     result = harness.run_faces(device="gpu")
     if "CUDAExecutionProvider" in available_providers() and result["gpu"]["usable"]:
         # A machine whose CUDA really works: the job runs on the GPU and says so.
-        assert {str(row["resolved_device"]) for row in harness.catalog.read_all("SELECT resolved_device FROM jobs")} == {"gpu"}
+        jobs = harness.catalog.read_all(
+            "SELECT resolved_device FROM jobs WHERE task_type = ?",
+            (contract.FACE_TASK_TYPE,),
+        )
+        assert {str(row["resolved_device"]) for row in jobs} == {"gpu"}
         return
     # Otherwise the GPU is a *recorded* capability fact and the job blocks: never a CPU run.
     assert harness.faces() == []
