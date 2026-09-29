@@ -2,7 +2,27 @@
 
 更新：2026-09-29。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-02Y-J — 个人试用 AI 资源就绪（PASS）
+## 当前任务 P4-02Y-P — 亚洲 GeoNames 真实地名包（PASS）
+
+**PASS（2026-09-29，HEAD `eb0e5be`；[报告](reports/P4-02Y-P-asia-geonames.md)、[任务卡](tasks/P4-02Y-P.md)）。**
+新增 `tools/places/prepare_geonames.py`（只读 dump、不联网、不碰照片/catalog），把 GeoNames dump
+（快照 **2026-09-15**：`cities500` + `alternateNamesV2` + `countryInfo`，24 个亚洲国家/地区）转成既有包格式：
+**45 217 记录**（45 193 城市 + 24 国家）、26 521 别名、包 12.2 MB，`build`/`import`/`validate`/`activate`
+全 `status: ok`，落位 `D:\SZ\project\PhotoSearchData\places\datasets\geonames-asia-cities500-v1`、
+`state=ACTIVE`、`resolver_available=true`。命名口径=简体中文→其他中文→主名称→英文；真实数据中修掉四个坑并各
+留回归用例（同文本不同标签只留最好标签、历史地名降权、挂 `zh` 的繁体写法降权、同脚本内优先短式/基础式）。
+验收：杭州/上海/东京/新加坡坐标各返回正确附近城市（单次 22–30 ms，`nearby_cities` 直调）；真实包在临时数据根
+跑通产品 GPS→resolver 闭环（4/4 `CANDIDATES`，top1 黄浦/Eifuku/Hillcrest Park/杭州）；真实库 87 个 GPS fact
+**只读**核对（36.19169 N/117.12494 E → 泰安市 0.84 km）。定点+地点模块回归 **64/0/0/0**、`ruff check .` 与
+`git diff --check` exit 0；`src/**`、schema/迁移、依赖、`uv.lock`、ADR 零改动，原图零改动。
+**非阻断**：官方 `download.geonames.org` 到本机仅 20–43 KB/s（195 MB 的 `alternateNamesV2` 40 分钟只到 100 MB），
+改用同快照的官方 dump HF 镜像 `DataDock/geonames`（8.7 MB/s，29 秒下完；抽样字段与官方一致 + zip CRC + 既有
+`load_content` 校验）；源数据对 Hanoi/Kathmandu/Colombo/Vientiane 只有繁体名、Osaka 只有 `大阪市`；
+45 193 城市中 27.4% 有中文名；解析为线性扫描（30 万全量外推约 2 h → 需要时另立性能卡，本卡按 §4 不做索引）。
+**下一步 = 继续日常试用**：激活后日常刷新会自动给增量的 GPS 照片产出附近城市建议；`tmp/p4-02y-p/`（约 1.1 GB
+原始 dump 与 spec，不入库）可删。不启动 P4-02Z。
+
+## 上一任务（P4-02Y-J，已完成，保留记录）— 个人试用 AI 资源就绪
 
 **PASS / READY（2026-09-29，HEAD `d7224b6`；[报告](reports/P4-02Y-J-personal-ai-resources.md)、
 [任务卡](tasks/P4-02Y-J.md)）。** 个人试用数据根 `D:\SZ\project\PhotoSearchData` 的
