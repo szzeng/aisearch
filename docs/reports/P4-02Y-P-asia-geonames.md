@@ -145,3 +145,52 @@ EXIF GPS 的合成照片（就在上述 4 个坐标），走产品 GPS + resolve
 * 一次性核对脚本（`tmp/`，不入库）：`verify_asia_package.py`、`inspect_spec.py`。
 * 产品代码 0 修改：本卡只新增 `tools/places/prepare_geonames.py` 与一个单测文件，外加本报告与状态行；
   `src/**`、`docs/decisions/**`、schema/迁移、依赖、`uv.lock` 均零改动（`ruff check .` 与 `git diff --check` exit 0）。
+
+## 9. 运维记录：2026-09-30 重装
+
+**现象**：重新打开数据根时发现安装目录里 `manifest.json` 为 **0 字节**，其余 4 个内容文件与构建产物逐字节相同；
+catalog 中该数据集的注册行退回 **`STAGED`**（`validated_at`/`activated_at` 均为 `null`）、
+`active_geo_dataset.dataset_id = null`（`revision = 0`）、`places`/`place_aliases` 为空、`place_resolutions` 为空；
+而 `asset_geo_facts` 的 87 条真实 GPS 坐标仍在。包目录与 `catalog.db` 的 mtime 同为 **2026/9/29 23:58:33**。
+
+**判断（含事后时间线核对）**：两件事各有各的原因，不要混为一谈。
+
+1. **注册丢失 = catalog 被整体替换**。只读核对当前库自身的记账时间可知：库里的
+   `assets`/`scan_runs`/`jobs`/`artifacts` 全部创建于 **2026-09-29 23:18:35–23:24:43**，语义 generation 也建于
+   23:18:39，而 `source_roots` 只有 1 个来源 `E:\BaiduNetdiskDownload\zsz`（91 资产 / 91 位置 / 87 条语义与
+   OCR / 0 人脸）。也就是说：当晚 23:18 前后 `catalog.db` 被换成了一份**新建的空库**并从零重建，`
+   P4-02Y-P` 激活时写下的 `geo_datasets` 行、`active_geo_dataset` 指针、`places` 映射随之消失
+   （地点包文件仍在磁盘上，catalog 只记录它的路径与 hash）。
+2. **0 字节 manifest = 一次包写入被中断**。只有两条代码路径会写包目录：`manage_dataset.py build --out <dir>`
+   与 `stage_package` 的复制；两者都「先写 4 个内容文件、**最后**写 manifest」，因此被中断时恰好留下“4 个文件
+   新 mtime、内容与构建产物逐字节一致 + manifest 0 字节”。包目录与 `catalog.db` 的 mtime 同为 23:58:33，
+   说明 23:58:33 那次“重新建包/导入”只走到一半（还没 activate）就被打断；`runtime\session.json` 23:51:07 的
+   更新说明当时应用刚被启动过（该数据根没有 `backups\` 目录，未启用备份）。
+
+**结论**：删除/替换 `catalog.db` 不会、也不可能把 `manifest.json` 写成 0 字节；它造成的是“地点包注册丢失”。
+**建议：换库/重装/回滚/导入这类操作请在应用关闭时执行**，以免写一半被中断；重置地点包请用
+`manage_dataset.py cleanup` / `rollback`，不要删库（删库会连同来源、资产、缩略图、OCR、人脸、投影与语义索引
+登记一起丢掉）。
+
+**处置**（全部走产品自带工具，无手改 DB）：
+
+```
+uv run --no-sync python tools/places/manage_dataset.py --data-root D:\SZ\project\PhotoSearchData \
+    cleanup --dataset-id geonames-asia-cities500-v1        # 半导入行 + 残缺目录，允许因为不是 ACTIVE 且无引用
+uv run --no-sync python tools/places/manage_dataset.py --data-root D:\SZ\project\PhotoSearchData \
+    import --source tmp/p4-02y-p/asia-package --activate   # 重新 stage → validate → activate
+```
+
+**重装后核对**（证据 `test-results/p4-02y-p-reinstall-{cleanup,import,status,probe}.json`）：
+
+| 项 | 值 |
+|---|---|
+| 安装目录 5 文件 | manifest.json 3300 B（sha256 `dff5767d…`，与构建产物一致）、places.jsonl `cb0920d2…`（与注册表记录一致） |
+| 注册状态 | `dataset_id=geonames-asia-cities500-v1`、`state=ACTIVE`、`record_count=45217`、`places_mapped=45217`、`resolver_available=true` |
+| 产品自身加载 | `resolver.load_active_content(data_root)` 成功：45 217 places / 17 057 aliases |
+| 真实 GPS 复核 | asset 1/2（36.19169 N / 117.12494 E）→ 泰安市 0.84 km、Feicheng 32.8 km、莱芜市 47.7 km |
+
+**提示**：以后只要 catalog 被替换/回滚/重建（例如删库重来），地点注册表就一起回退，地点包需要按上面的
+`import --activate`（或直接 `activate`，如果注册行还在）重新登记一次；包文件本身一直在
+`D:\SZ\project\PhotoSearchData\places\datasets\geonames-asia-cities500-v1`，构建产物副本仍在
+`tmp\p4-02y-p\asia-package\`。

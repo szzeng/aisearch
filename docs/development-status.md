@@ -48,6 +48,14 @@ F1 不再复现。复核用 JUnit 与文件范围符合任务卡；未触发 DS-
 **下一步 = 继续日常试用**：激活后日常刷新会自动给增量的 GPS 照片产出附近城市建议；`tmp/p4-02y-p/`（约 1.1 GB
 原始 dump 与 spec，不入库）可删。不启动 P4-02Z。
 
+**2026-09-30 重装（运维记录）**：数据根里的地名包被发现处于半导入状态（`manifest.json` 0 字节、注册表
+`STAGED`、`active_geo_dataset=null`、包目录与 `catalog.db` 同秒被改），按报告 §9 用产品工具
+`cleanup` + `import --activate` 重装：`state=ACTIVE`、`places_mapped=45217`、`resolver_available=true`，
+产品 `load_active_content` 与真实 GPS 复核（→ 泰安市 0.84 km）通过。事后核对：该数据根的 `catalog.db` 在
+2026-09-29 23:18 被换成了新建库（只剩 1 个来源 `E:\BaiduNetdiskDownload\zsz`、91 资产）并从零重建，
+**删库丢掉的是地点包的“注册”**；而 `manifest.json` 为 0 字节是 23:58:33 一次建包/导入只走到一半被打断的指纹
+（包文件本身一直是好的）。以后 catalog 被替换/回滚/重建后，都需要重新 `import --activate` 一次。
+
 ## 上一任务（P4-02Y-J，已完成，保留记录）— 个人试用 AI 资源就绪
 
 **PASS / READY（2026-09-29，HEAD `d7224b6`；[报告](reports/P4-02Y-J-personal-ai-resources.md)、
