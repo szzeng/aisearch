@@ -393,7 +393,12 @@ def test_deleting_a_source_keeps_the_asset_shared_with_another_source(tmp_path: 
         for name in ("copy-a.jpg", "copy-b.jpg"):
             os.utime(second / name, ns=((1_700_000_000_000 - 3_600_000) * 1_000_000,) * 2)
         second_id = register_source(env, "second", second)
-        assert run(env, mode="build", source_ids=[1, second_id])["search_ready"] is True
+        built = run(env, mode="build", source_ids=[1, second_id])
+        assert built["search_ready"] is True
+        # Both sources share the same two contents: the run's backlog counts the *union*, so
+        # the shared assets are not counted twice (review observation on `_backlog_report`).
+        assert built["stages"]["semantic"]["backlog_total"] == 2
+        assert built["stages"]["semantic"]["backlog_confirmed"] == 2
         shared_asset = asset_of(env, "photo-000.jpg")
 
         status, body = delete_source(env, 1)
@@ -445,6 +450,43 @@ def test_deleting_a_source_never_touches_a_single_original_photo(tmp_path: Path)
         assert body["originals_touched"] == 0
         assert directory_summary(env.library) == before
         assert len(list(env.library.iterdir())) == 4
+    finally:
+        env.close()
+
+
+def test_deleting_a_source_keeps_the_derived_facts_of_its_assets(tmp_path: Path) -> None:
+    """§5: the GPS/OCR/face rows keep their identity; only their provenance is cleared.
+
+    ``file_locations`` may not simply be deleted while such a row points at one of its
+    positions (``ON DELETE RESTRICT``), so the removal clears the reference instead - and this
+    is the assertion that the *fact* really survives it (the review's independent probe made
+    the same check by hand).
+    """
+    env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        assert run(env, mode="build", source_ids=[1])["search_ready"] is True
+        catalog = env.service().catalog
+        before = [
+            dict(row)
+            for row in catalog.read_all(
+                "SELECT asset_id, status, location_id FROM asset_geo_facts ORDER BY asset_id"
+            )
+        ]
+        assert before and all(row["location_id"] is not None for row in before)
+
+        status, body = delete_source(env, 1)
+
+        after = [
+            dict(row)
+            for row in catalog.read_all(
+                "SELECT asset_id, status, location_id FROM asset_geo_facts ORDER BY asset_id"
+            )
+        ]
+        assert status == 200
+        assert body["originals_touched"] == 0
+        assert [row["asset_id"] for row in after] == [row["asset_id"] for row in before]
+        assert [row["status"] for row in after] == [row["status"] for row in before]
+        assert all(row["location_id"] is None for row in after)
     finally:
         env.close()
 
@@ -559,6 +601,165 @@ def test_a_source_that_became_offline_can_still_be_deleted(tmp_path: Path) -> No
         env.close()
 
 
+# ----------------------------------- B1/F2: nothing confirmable must be reported, never crash
+def test_a_documents_only_source_builds_once_and_says_what_it_saw(tmp_path: Path) -> None:
+    """B1 case A / F2: a source without a single indexable image is explained, not crashed.
+
+    The build classifies the scope, finds nothing the image-text index is about, and therefore
+    has no generation row for a search profile to point at. That used to raise an uncaught
+    ``sqlite3.IntegrityError`` (the ``search_profiles.image_generation_id`` foreign key), which
+    the run reported as a bare ``FAILED`` with no reason and no way forward.
+    """
+    # ``RefreshEnv.build(photos=0)`` needs the (empty) library root to exist already.
+    (tmp_path / "library").mkdir(parents=True, exist_ok=True)
+    env = RefreshEnv.build(tmp_path, photos=0, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        documents = tmp_path / "documents"
+        documents.mkdir()
+        (documents / "notes.txt").write_text("not a photo", encoding="utf-8")
+        os.utime(documents / "notes.txt", ns=((1_700_000_000_000 - 3_600_000) * 1_000_000,) * 2)
+        source_id = register_source(env, "documents", documents)
+
+        status = run(env, mode="build", source_ids=[source_id])
+
+        assert status["state"] == "COMPLETE"
+        assert status["search_ready"] is True
+        assert status["search_ready_basis"] == "semantic-nothing-to-index"
+        assert status["failed_stages"] == []
+        assert status["errors"] == []
+        assert status["stages"]["semantic"]["state"] == "SKIPPED_NO_TARGETS"
+        assert status["stages"]["semantic"]["reason"] == "NO_INDEXABLE_CONTENT"
+        assert status["stages"]["semantic"]["classified"] == 0
+        assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {"UNIDENTIFIED": 1}
+        # Nothing was ever published into this space, so there is no generation and no profile.
+        assert env.service().catalog.read_all("SELECT generation_id FROM index_generations") == []
+        assert env.service().catalog.read_all("SELECT profile_id FROM search_profiles") == []
+
+        card = source_payload(env, source_id)["progress"]
+        assert card["stages"]["semantic"]["state"] == "NO_IMAGES"
+        assert card["stages"]["semantic"]["total"] == 0
+        assert card["built"] is True
+        assert card["search_ready"] is True
+        assert card["scan"] == {"files": 1, "present": 1, "missing": 0}
+        # Durable, not process-local: the marker is what tells "never looked at" from "looked
+        # at, nothing to index" after a restart.
+        marker = env.service().catalog.read_one(
+            "SELECT value FROM metadata WHERE key = ?", (f"source_build:{source_id}",)
+        )
+        assert marker is not None
+
+        # Pressing the button again is a no-op, not a second empty sweep with a new failure.
+        again = run(env, mode="build", source_ids=[source_id])
+        assert again["state"] == "COMPLETE"
+        assert again["errors"] == []
+        assert source_payload(env, source_id)["progress"]["stages"]["semantic"]["state"] == (
+            "NO_IMAGES"
+        )
+    finally:
+        env.close()
+
+
+def test_a_source_whose_images_are_all_refused_is_reported_and_not_a_loop(
+    tmp_path: Path,
+) -> None:
+    """B1 case B/D/C: refused content must not crash, must be named, and must not re-encode."""
+    (tmp_path / "library").mkdir(parents=True, exist_ok=True)
+    env = RefreshEnv.build(tmp_path, photos=0, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        broken = tmp_path / "broken"
+        for index in range(2):
+            write_jpeg(broken / f"broken-{index}.jpg", noise=500 + index)
+        source_id = register_source(env, "broken", broken)
+
+        first = run(env, mode="build", source_ids=[source_id])
+
+        assert first["state"] == "FAILED"
+        assert first["search_ready"] is False
+        assert first["search_ready_basis"] == "semantic-confirmed-nothing"
+        assert "semantic-confirmed-nothing" in first["failed_stages"]
+        assert first["errors"] == []
+        assert len(env.adapter.image_calls) == 2
+
+        card = source_payload(env, source_id)["progress"]
+        assert card["built"] is True
+        assert card["search_ready"] is False
+        assert card["stages"]["semantic"]["state"] == "UNINDEXABLE"
+        assert card["stages"]["semantic"]["total"] == 2
+        assert card["stages"]["semantic"]["confirmed"] == 0
+        assert card["stages"]["semantic"]["failed"] == 2
+        assert card["stages"]["semantic"]["pending"] == 0
+
+        # "继续建库" again: same honest answer, and it does not hand anything to the encoder a
+        # second time (the refused jobs are terminal; there is no confirmed content to repeat).
+        second = run(env, mode="build", source_ids=[source_id])
+        assert second["state"] == "FAILED"
+        assert second["search_ready_basis"] == "semantic-confirmed-nothing"
+        assert second["errors"] == []
+        assert len(env.adapter.image_calls) == 2
+        assert source_payload(env, source_id)["progress"]["stages"]["semantic"]["state"] == (
+            "UNINDEXABLE"
+        )
+
+        # The P4-02Y daily entry on the same catalog is honest about having no index at all
+        # instead of claiming "semantic-confirmed" for a library with no generation row.
+        daily = run(env, mode="refresh", source_ids=[source_id])
+        assert daily["errors"] == []
+        assert daily["search_ready"] is False
+        assert daily["search_ready_basis"] == "GENERATION_NOT_PUBLISHED"
+        assert env.service().catalog.read_all("SELECT generation_id FROM index_generations") == []
+    finally:
+        env.close()
+
+
+def test_a_refused_image_is_counted_on_the_card_without_hiding_the_rest(tmp_path: Path) -> None:
+    """F1: "可以搜索" must carry the number of images it could not index.
+
+    The run itself ends ``PARTIAL_FAILED`` with ``semantic-content`` (P4-02Y's frozen rule for
+    content the encoder refused while the rest stays searchable); what F1 added is that the
+    *card* now reports the refused count instead of a bare "✓ 可以语义搜索".
+    """
+    (tmp_path / "library").mkdir(parents=True, exist_ok=True)
+    env = RefreshEnv.build(tmp_path, photos=0, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        mixed = tmp_path / "mixed"
+        write_jpeg(mixed / "good.jpg", noise=97)
+        write_jpeg(mixed / "broken.jpg", noise=98)
+        source_id = register_source(env, "mixed", mixed)
+
+        status = run(env, mode="build", source_ids=[source_id])
+
+        assert status["state"] == "PARTIAL_FAILED"
+        assert status["search_ready"] is True
+        assert status["search_ready_basis"] == "semantic-backlog-empty"
+        assert status["errors"] == []
+        assert "semantic-content" in status["failed_stages"]
+        semantic = source_payload(env, source_id)["progress"]["stages"]["semantic"]
+        assert semantic["state"] == "SEARCHABLE"
+        assert semantic["total"] == 2
+        assert semantic["confirmed"] == 1
+        assert semantic["failed"] == 1
+        assert semantic["pending"] == 0
+
+        # The one image that could be encoded is searchable; the refused one did not hide it.
+        env.adapter.vectors["good"] = query_vector_for(mixed / "good.jpg")
+        found = env.search_payload(
+            {"request_id": "p4-02y-i-refused", "text": "good", "page_size": 5}
+        )
+        assert [int(item["asset_id"]) for item in found["hits"]][:1] == [
+            asset_of(env, "good.jpg")
+        ]
+
+        # A second build re-encodes nothing that is already confirmed.
+        again = run(env, mode="build", source_ids=[source_id])
+        assert again["errors"] == []
+        good_calls = [
+            str(path) for path in env.adapter.image_calls if Path(path).name == "good.jpg"
+        ]
+        assert good_calls == [str(mixed / "good.jpg")]
+    finally:
+        env.close()
+
+
 # --------------------------------------------------------------------------- Web wiring
 def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path: Path) -> None:
     """§1/§3/§5 at asset level: the served shell and script really carry the new entries."""
@@ -579,6 +780,10 @@ def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path
         assert '"build"' in served["script"]
         assert "继续建库" in served["script"]
         assert "semantic-backlog" in served["script"]
+        assert "semantic-confirmed-nothing" in served["script"]
+        assert "已扫描，无可索引图片" in served["script"]
+        assert "无法建立语义索引" in served["script"]
+        assert "张无法编码" in served["script"]
         assert 'method: "DELETE"' in served["script"]
     finally:
         env.close()

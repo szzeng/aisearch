@@ -541,6 +541,8 @@
   };
   var SEMANTIC_STATE_TEXT = {
     UNBUILT: "未建库",
+    NO_IMAGES: "已扫描，无可索引图片",
+    UNINDEXABLE: "无法建立语义索引",
     BUILDING: "正在建立语义索引",
     SEARCHABLE: "✓ 可以语义搜索",
     UNAVAILABLE: "语义通道不可用",
@@ -552,9 +554,17 @@
       return "未知";
     }
     if (semantic.total === 0 && semantic.confirmed === 0) {
-      return "尚未开始";
+      return semantic.state === "NO_IMAGES" ? "0 / 0（无可索引图片）" : "尚未开始";
     }
-    return String(semantic.confirmed) + " / " + String(semantic.total);
+    var text = String(semantic.confirmed) + " / " + String(semantic.total);
+    var notes = [];
+    if (Number(semantic.failed) > 0) {
+      notes.push(String(semantic.failed) + " 张无法编码");
+    }
+    if (Number(semantic.queued) > 0) {
+      notes.push(String(semantic.queued) + " 项排队中");
+    }
+    return notes.length ? text + "（" + notes.join("，") + "）" : text;
   }
 
   function semanticStateText(progress) {
@@ -565,6 +575,17 @@
     if (semantic.reason) {
       return (SEMANTIC_STATE_TEXT[semantic.state] || String(semantic.state)) +
         "（" + String(semantic.reason) + "）";
+    }
+    // A refused image never becomes searchable and never blocks the rest (P4-02Y's own rule),
+    // but the card must not promise a bare "可以搜索" while hiding it (review F1).
+    if (semantic.state === "SEARCHABLE" && Number(semantic.failed) > 0) {
+      return "✓ 可以搜索，" + String(semantic.failed) + " 张无法编码（其余不受影响）";
+    }
+    if (semantic.state === "UNINDEXABLE") {
+      return (
+        "无法建立语义索引：" + String(semantic.total) +
+        " 张图片均无法编码（修好文件后再刷新）"
+      );
     }
     return SEMANTIC_STATE_TEXT[semantic.state] || String(semantic.state);
   }
@@ -577,7 +598,7 @@
       return "build";
     }
     var semantic = progress.stages.semantic || {};
-    if (!progress.built || semantic.state === "UNBUILT") {
+    if (!progress.built || semantic.state === "UNBUILT" || semantic.state === "UNAVAILABLE") {
       return "build";
     }
     if (semantic.state === "BUILDING") {
@@ -692,9 +713,12 @@
     var counters = status.counters || {};
     var failedStages = status.failed_stages || [];
     var unfinished = failedStages.indexOf("semantic-backlog") >= 0;
+    var refusedAll = failedStages.indexOf("semantic-confirmed-nothing") >= 0;
     var stateText = unfinished
       ? "尚未完成建立语义索引（可再次点击继续）"
-      : (REFRESH_STATE_TEXT[status.state] || String(status.state || ""));
+      : (refusedAll
+        ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
+        : (REFRESH_STATE_TEXT[status.state] || String(status.state || "")));
     var parts = [];
     if (status.mode === "build") {
       parts.push("开始建库");

@@ -664,6 +664,24 @@ def build_index(
     }
 
 
+def generation_published(catalog: Catalog, *, space_id: str, processor_id: str) -> bool:
+    """Whether this space/processor pair has ever had an embedding published.
+
+    The ``index_generations`` row is written when the *first* embedding artifact of the space
+    is published (:meth:`photo_search.artifacts.store.ArtifactStore.publish`), so "no row"
+    means "nothing has ever been confirmed into this space". Both the search-profile
+    publication below and the refresh pipeline need that fact: a build that confirmed nothing
+    has no index to serve yet - a reportable outcome, not a failure (P4-02Y-I review B1).
+    """
+    generation_id = generation_id_for(str(space_id), str(processor_id))
+    return (
+        catalog.read_one(
+            "SELECT 1 FROM index_generations WHERE generation_id = ?", (generation_id,)
+        )
+        is not None
+    )
+
+
 def ensure_search_profile(
     catalog: Catalog,
     spec: Any,
@@ -680,6 +698,13 @@ def ensure_search_profile(
     activation gate (capability snapshot + qualification evidence + generation state), which
     is the check a servable profile must pass. Search profiles are immutable: a rebuild
     publishes a new ``profile_id`` instead of editing the old row.
+
+    A profile may only name a generation that *exists*: ``search_profiles.image_generation_id``
+    is a foreign key into ``index_generations``. A run that confirmed no image at all - a scope
+    with no indexable file, or one whose images the encoder refused - therefore has nothing to
+    publish; that is returned as ``profile_id = None`` + ``reason`` instead of letting the
+    foreign key fail, and the caller decides what the run's terminal state is (P4-02Y-I
+    review B1).
     """
     from photo_search.search.profile import (
         DEFAULT_FUSION_CONFIG,
@@ -691,6 +716,17 @@ def ensure_search_profile(
     )
 
     moment = int(catalog.now_ms() if now_ms is None else now_ms)
+    if not generation_published(
+        catalog, space_id=str(space_id), processor_id=str(spec.processor_id)
+    ):
+        return {
+            "profile_id": None,
+            "created": False,
+            "activated": False,
+            "readiness": None,
+            "reason": "GENERATION_NOT_PUBLISHED",
+            "active_profile_id": active_profile_id(catalog.connection),
+        }
     identifier = str(profile_id or f"{PROFILE_ID_PREFIX}{generation_id}")
     created = False
     if load_profile(catalog, identifier) is None:
@@ -770,6 +806,7 @@ __all__ = [
     "embedding_artifact",
     "enqueue_targets",
     "ensure_search_profile",
+    "generation_published",
     "generation_summary",
     "image_eligibility",
     "job_counts",

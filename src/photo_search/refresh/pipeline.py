@@ -224,13 +224,17 @@ def refresh_library(
         # Content the encoder was handed and refused is reported as a partial failure: the
         # rest of the library is searchable, and the next refresh retries that content.
         failures.append("semantic-content")
-    if mode == REFRESH_MODE_BUILD and not search_ready and basis == "semantic-backlog":
-        # A build that ran out of its bounded rounds is *not* a failure of the library, and it
-        # is not a partial success either: the core search path is simply not up to date yet.
-        # The run ends as FAILED (there is no "incomplete" state in the frozen vocabulary) but
-        # names the reason, so the card can say "还有 N 项语义索引待处理，可再次点击继续"
-        # instead of showing the same word as a broken scan.
-        failures.append("semantic-backlog")
+    if mode == REFRESH_MODE_BUILD and not search_ready and str(basis) in (
+        "semantic-backlog",
+        "semantic-confirmed-nothing",
+    ):
+        # A build that ran out of its bounded rounds, or one whose images could not be
+        # encoded at all, is *not* a failure of the library and not a partial success either:
+        # the core search path is simply not up to date yet. The run ends as FAILED (there is
+        # no "incomplete" state in the frozen vocabulary) but names the reason, so the card can
+        # say "还有 N 项语义索引待处理，可再次点击继续" or "N 张图片无法编码" instead of the
+        # same word as a broken scan (P4-02Y-I review B1/F1).
+        failures.append(str(basis))
     if mode == REFRESH_MODE_BUILD and not search_ready:
         # A build has one job: bring the named sources up to a searchable state. A run that did
         # not get there is FAILED, and ``failed_stages`` names why - "semantic-backlog" for a
@@ -491,15 +495,33 @@ def _semantic_stage(
                 break
             if cancel_check is not None and cancel_check():
                 break
-        live_spec = semantic.semantic_spec(
-            manifest_path, semantic.adapter_runtime_facts(encoder), device_policy=device_policy
+        # A run that confirmed nothing into a space which has never been published leaves no
+        # generation row for a profile to point at. That is not "up to date": this build has
+        # no image index to serve at all, so the stage reports it instead of letting the
+        # activation foreign key fail or claiming a searchable library (P4-02Y-I review B1).
+        published = semantic.generation_published(
+            catalog, space_id=space_id, processor_id=str(spec.processor_id)
         )
-        profile = semantic.ensure_search_profile(
-            catalog,
-            live_spec,
-            space_id=space_id,
-            generation_id=str(last["generation"]["generation_id"]) if last else generation_id,
-        )
+        if published:
+            live_spec = semantic.semantic_spec(
+                manifest_path,
+                semantic.adapter_runtime_facts(encoder),
+                device_policy=device_policy,
+            )
+            profile = semantic.ensure_search_profile(
+                catalog,
+                live_spec,
+                space_id=space_id,
+                generation_id=(
+                    str(last["generation"]["generation_id"]) if last else generation_id
+                ),
+            )
+        else:
+            profile = {
+                "profile_id": None,
+                "activated": False,
+                "reason": "GENERATION_NOT_PUBLISHED",
+            }
     except CatalogError as error:
         status.note_error(
             stage="semantic", code=str(error.code), message=str(error.message)[:200]
@@ -514,6 +536,20 @@ def _semantic_stage(
             "batches": batches,
             **_content_report(catalog, space_id, content_delta, spec),
         }
+    if not published:
+        return {
+            "state": STAGE_SKIPPED,
+            "reason": "GENERATION_NOT_PUBLISHED",
+            "space_id": space_id,
+            "generation_id": generation_id,
+            "targets": targets,
+            "encoded": encoded,
+            "batches": batches,
+            "profile": None,
+            "profile_activated": False,
+            **_content_report(catalog, space_id, content_delta, spec),
+            "delta_overflow": bool(delta_overflow),
+        }
     return {
         "state": STAGE_OK,
         "space_id": space_id,
@@ -524,6 +560,7 @@ def _semantic_stage(
         "coverage_complete": bool(last["coverage_complete"]) if last else False,
         "profile": profile["profile_id"],
         "profile_activated": bool(profile["activated"]),
+        "profile_reason": profile.get("reason"),
         **_content_report(catalog, space_id, content_delta, spec),
         "delta_overflow": bool(delta_overflow),
     }
@@ -603,6 +640,7 @@ def _semantic_build_stage(
     space_id, generation_id = served
     classified = 0
     pages = 0
+    cancelled = False
     for scope in scopes:
         cursor = 0
         while pages < BUILD_ROUND_CAP:
@@ -633,7 +671,12 @@ def _semantic_build_stage(
             if cancel_check is not None and cancel_check():
                 break
         if cancel_check is not None and cancel_check():
+            cancelled = True
             break
+    if not cancelled:
+        # The whole classification sweep finished: from now on "this scope has been looked at"
+        # is a durable fact, which is what lets the card tell 未建库 from 已扫描但无可索引图片.
+        _mark_scopes_built(catalog, scopes=scopes)
     report = {
         "mode": REFRESH_MODE_BUILD,
         "scopes": [None if scope is None else int(scope) for scope in scopes],
@@ -700,15 +743,34 @@ def _semantic_build_stage(
                     break
                 if cancel_check is not None and cancel_check():
                     break
-        live_spec = semantic.semantic_spec(
-            manifest_path, semantic.adapter_runtime_facts(encoder), device_policy=device_policy
-        )
-        profile = semantic.ensure_search_profile(
-            catalog,
-            live_spec,
-            space_id=space_id,
-            generation_id=str(last["generation"]["generation_id"]) if last else generation_id,
-        )
+        if semantic.generation_published(
+            catalog, space_id=space_id, processor_id=processor_id
+        ):
+            live_spec = semantic.semantic_spec(
+                manifest_path,
+                semantic.adapter_runtime_facts(encoder),
+                device_policy=device_policy,
+            )
+            profile = semantic.ensure_search_profile(
+                catalog,
+                live_spec,
+                space_id=space_id,
+                generation_id=(
+                    str(last["generation"]["generation_id"]) if last else generation_id
+                ),
+            )
+        else:
+            # Nothing of this scope entered the served generation (a scope without any
+            # indexable image, or one whose images the encoder refused), so there is no
+            # generation row for a profile to point at. That is a *reported* outcome: the
+            # backlog below decides whether the scope has nothing to index or nothing that
+            # could be encoded (P4-02Y-I review B1/F2).
+            profile = {
+                "profile_id": None,
+                "created": False,
+                "activated": False,
+                "reason": "GENERATION_NOT_PUBLISHED",
+            }
     except CatalogError as error:
         status.note_error(
             stage="semantic", code=str(error.code), message=str(error.message)[:200]
@@ -724,10 +786,16 @@ def _semantic_build_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     backlog = _backlog_report(catalog, space_id, processor_id, scopes)
+    nothing_to_index = int(backlog["backlog_total"]) == 0
     return {
-        "state": STAGE_OK,
+        # "There is no image this index is about" is a terminal, honest answer - not a failure
+        # and not an "up to date" index either. It stays distinguishable from a normal OK run
+        # so the card can say 已扫描、无可索引图片 instead of an empty progress bar.
+        "state": STAGE_SKIPPED_NO_TARGETS if nothing_to_index else STAGE_OK,
+        "reason": "NO_INDEXABLE_CONTENT" if nothing_to_index else None,
         "profile": profile["profile_id"],
         "profile_activated": bool(profile["activated"]),
+        "profile_reason": profile.get("reason"),
         "targets": 0,
         "encoded": encoded,
         "batches": batches,
@@ -739,13 +807,40 @@ def _semantic_build_stage(
     }
 
 
+def _mark_scopes_built(catalog: Any, *, scopes: Sequence[int | None]) -> None:
+    """Record durably that a build has classified these scopes (P4-02Y-I review F2).
+
+    One additive ``metadata`` key per source (``source_build:<id>``), written only after the
+    classification sweep really finished for that scope. A whole-library scope
+    (``scopes == [None]``) covers every registered source, because its sweep classified all of
+    them. No table, column or migration is added; ``metadata`` is this catalog's existing
+    key/value store.
+    """
+    from photo_search.refresh import progress as progress_module
+
+    if scopes == [None] or None in scopes:
+        identifiers = [
+            int(row["source_id"])
+            for row in catalog.read_all("SELECT source_id FROM source_roots ORDER BY source_id")
+        ]
+    else:
+        identifiers = [int(scope) for scope in scopes if scope is not None]
+    for source_id in identifiers:
+        progress_module.mark_source_built(
+            catalog, source_id=int(source_id), value=str(catalog.now_ms())
+        )
+
+
 def _backlog_report(
     catalog: Any, space_id: str | None, processor_id: str | None, scopes: Sequence[int | None]
 ) -> dict[str, int]:
-    """The durable semantic backlog of the requested scopes, summed over them."""
+    """The durable semantic backlog of the requested scopes, as one *union*.
+
+    An asset that two of the named sources share is counted once: the number describes the
+    content this build is about, not the sum of the per-source cards.
+    """
     from photo_search.refresh import progress as progress_module
 
-    totals = {"total": 0, "confirmed": 0, "pending": 0, "failed": 0, "queued": 0}
     if space_id is None or processor_id is None:
         return {
             "backlog_total": 0,
@@ -754,21 +849,31 @@ def _backlog_report(
             "backlog_failed": 0,
             "backlog_queued": 0,
         }
-    for scope in scopes:
+    concrete = [int(scope) for scope in scopes if scope is not None]
+    if None in scopes:
+        part = progress_module.semantic_breakdown(
+            catalog, space_id=str(space_id), processor_id=str(processor_id)
+        )
+    elif len(concrete) == 1:
         part = progress_module.semantic_breakdown(
             catalog,
             space_id=str(space_id),
             processor_id=str(processor_id),
-            source_id=None if scope is None else int(scope),
+            source_id=concrete[0],
         )
-        for key in totals:
-            totals[key] += int(part[key])
+    else:
+        part = progress_module.semantic_breakdown(
+            catalog,
+            space_id=str(space_id),
+            processor_id=str(processor_id),
+            source_ids=concrete,
+        )
     return {
-        "backlog_total": totals["total"],
-        "backlog_confirmed": totals["confirmed"],
-        "backlog_pending": totals["pending"],
-        "backlog_failed": totals["failed"],
-        "backlog_queued": totals["queued"],
+        "backlog_total": int(part["total"]),
+        "backlog_confirmed": int(part["confirmed"]),
+        "backlog_pending": int(part["pending"]),
+        "backlog_failed": int(part["failed"]),
+        "backlog_queued": int(part["queued"]),
     }
 
 
@@ -920,6 +1025,11 @@ def _search_ready(
     if mode == REFRESH_MODE_BUILD:
         if int(semantic.get("backlog_pending", 0)) > 0:
             return (False, "semantic-backlog")
+        if int(semantic.get("backlog_total", 0)) == 0:
+            # No image of this scope is (or ever was) part of the image-text index, so its
+            # backlog is empty by construction and this round's new content is reachable by
+            # definition. The card words it as 已扫描、无可索引图片 rather than "可搜索".
+            return (True, "semantic-nothing-to-index")
         if int(semantic.get("backlog_confirmed", 0)) == 0:
             # Nothing of this scope is in the served generation (no image at all, or every
             # image was refused), so this run must not promise a searchable library.

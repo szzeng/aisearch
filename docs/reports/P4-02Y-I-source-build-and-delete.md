@@ -45,8 +45,11 @@ ADR 未改动；模型/推理切换由用户在 Codex 中手动完成。本报�
      对可索引图片调用既有 `enqueue_targets` 落**持久 job**。分类结束即得到稳定、精确的分母；
    - 编码：循环调用既有 `semantic.build_index(limit=5000, source_id=scope)`，直到本轮选不到目标，
      或一整批 `confirmed_delta == 0`（剩余内容已被编码器终态拒绝）才停止——**不会只做第一批**；
-   - `SEARCH_READY` 由持久 backlog 判定（`semantic-backlog-empty`）：`backlog_pending == 0` 且
-     `backlog_confirmed > 0`。delta 超过 `DELTA_LIMIT` 被清空时结论**不变**（P4-02Y F3 在 build 档闭合）。
+   - `SEARCH_READY` 由持久 backlog 判定：`backlog_pending == 0` 且（`backlog_confirmed > 0` →
+     `semantic-backlog-empty`；`backlog_total == 0` → `semantic-nothing-to-index`；两者都不满足 →
+     `semantic-confirmed-nothing`）。delta 超过 `DELTA_LIMIT` 被清空时结论**不变**（P4-02Y F3 在 build 档闭合）。
+     （本段为 [B1 修复轮](P4-02Y-I-b1-fix-round.md) 之后的最终口径：修复前 build 档在 `backlog_total == 0` 时
+     会落进无理由 FAILED，见该报告 §2。）
 4. **D..G 增强**：build 档不再吃内存 delta，而是按 `asset_id` keyset 分页遍历 scope，把每页交给**同一**既有阶段函数
    （thumbnail / taken-time / GPS / place resolver / face / OCR）。已完成的工作是幂等空转（已发布 artifact 复用、
    job 五元逻辑键去重），因此既补历史 backlog 又不重复处理。
@@ -77,8 +80,11 @@ built / search_ready
   taken-time 例外——它的 job revision 还摘要了位置观测（ADR-0011 §2），因此用 `asset_metadata` 行作为
   「已处理」证据（已在 `progress.py` 注释与 §7 记录此口径差异）。
 
-状态词：`UNBUILT`（未建库，无任何已分类图片）/ `BUILDING`（正在建立语义索引）/ `SEARCHABLE`
-（**✓ 可以语义搜索**，仅当 `pending == 0` 且 `confirmed > 0`）/ `UNAVAILABLE`（本机无可用语义通道）；
+状态词（B1 修复轮后的最终口径）：`UNBUILT`（未建库，从未分类过且无 build 标记）/ `NO_IMAGES`
+（已扫描、无可索引图片；由 `metadata['source_build:<id>']` 标记区分）/ `BUILDING`（`pending > 0`）/
+`SEARCHABLE`（**✓ 可以语义搜索**，`pending == 0` 且 `confirmed > 0`；`failed > 0` 时卡片改称
+「✓ 可以搜索，N 张无法编码（其余不受影响）」）/ `UNINDEXABLE`（`pending == 0`、`confirmed == 0`、
+`total > 0`：图片都存在但全部无法编码）/ `UNAVAILABLE`（本机无可用语义通道）。
 增强 stage 为 `IN_PROGRESS` / `COMPLETE` / `UNAVAILABLE`（无权重或无 place 数据集时**不谎报处理中**）。
 全部查询是 SQL（走 `file_locations(source_id)`、`idx_file_locations_asset`、`index_entries` 主键、
 `idx_jobs_subject`），**不打开任何原图、不加载任何模型**；重启后同样数字。
@@ -186,3 +192,16 @@ git diff --check
 ⇒ 若复核确认无冻结契约变化，判定目标为 **`SOL_NOT_REQUIRED`**；若复核认为「删除来源对
 `asset_geo_facts`/`asset_ocr_text`/`faces` 的 `location_id` 置 NULL」或 build 档 `SEARCH_READY` 口径需要契约层裁定，
 则停止扩实现并单独请求 Sol 聚焦终审。
+
+## 10. 修复轮（复核结论之后）
+
+独立 DS-H 窄受影响面复核（[报告](P4-02Y-I-dsh-narrow-affected-surface-review.md)）给出 `REVIEW FAIL`：
+**B1（阻断）**——scope 内没有可确认内容时，语义阶段无条件发布搜索 profile，而该 space 从未发布过 embedding
+时 `search_profiles.image_generation_id` 外键失败，抛出的 `sqlite3.IntegrityError` 不是 `CatalogError`，
+最终变成无理由 `FAILED` 且「继续建库」永久重复失败；另有 F1（拒绝内容被卡片隐藏）与 F2（「没有可索引图片」
+没有诚实状态）。三项与复核 §3 末尾的「多来源 backlog 求和」观察已在
+[B1 修复轮报告](P4-02Y-I-b1-fix-round.md) 中修复：`ensure_search_profile` 增加 `generation_published` 守卫并
+返回结构化结果、build 档补 `semantic-nothing-to-index` / `semantic-confirmed-nothing` 终态与
+`NO_IMAGES` / `UNINDEXABLE` 卡片状态、卡片显示 `failed/queued`、多来源 backlog 改为 union。
+修复后定点 18 例、5 文件 159 例、B 级 1864/0/0/48（310.355 s）全绿，四份复核探针复跑无异常。**本报告 §1–§9 描述的是
+修复前提交 `7387915` 的实现（保留原文以留痕），最终口径以修复轮报告为准；修复后仍需一次独立窄复核。**

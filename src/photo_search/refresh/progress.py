@@ -27,20 +27,42 @@ Two deliberate definitions, because they are what makes the numbers exact *and* 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 #: The frozen semantic task type (P2/P4 spelling), the same constant
 #: :mod:`photo_search.refresh.pipeline` routes on.
 SEMANTIC_TASK_TYPE = "image_embedding"
 
-#: Semantic states of one source. ``UNBUILT`` means the durable evidence says no image of
-#: this scope has ever been classified - the card then offers "开始建库" instead of a
-#: progress bar, and it never claims the source is searchable.
+#: Semantic states of one source.
+#:
+#: * ``UNBUILT`` - no image of this scope has ever been classified *and* no build has run
+#:   over it: the card offers "开始建库" instead of a progress bar;
+#: * ``NO_IMAGES`` - a build ran and found nothing the image-text index is about (documents,
+#:   videos, ...). Honest and terminal: there is nothing to index, and pressing "开始建库"
+#:   again would only repeat the same empty sweep;
+#: * ``BUILDING`` - images are classified and some of them are still pending;
+#: * ``SEARCHABLE`` - every classified image of the scope is confirmed in the served
+#:   generation (``failed`` may still be > 0: a refused image does not block the rest, and the
+#:   card shows that count);
+#: * ``UNINDEXABLE`` - images exist but none of them could be confirmed (the encoder refused
+#:   every one of them), so this scope has nothing searchable;
+#: * ``UNAVAILABLE`` - this process has no usable semantic channel at all.
 SEMANTIC_UNAVAILABLE = "UNAVAILABLE"
 SEMANTIC_UNBUILT = "UNBUILT"
+SEMANTIC_NO_IMAGES = "NO_IMAGES"
 SEMANTIC_BUILDING = "BUILDING"
 SEMANTIC_SEARCHABLE = "SEARCHABLE"
+SEMANTIC_UNINDEXABLE = "UNINDEXABLE"
+
+#: ``metadata`` key prefix of the durable "a build has classified this source" marker. The
+#: ``metadata`` table is this catalog's existing key/value store (``schema_version`` and
+#: ``taken_time_rules_version`` already live there), so this adds no table, column or
+#: migration - it only records the *fact* that one full build classified the scope, which is
+#: what tells ``UNBUILT`` ("never looked at") apart from ``NO_IMAGES`` ("looked at, nothing to
+#: index"). The two are otherwise indistinguishable in durable state: both have zero jobs and
+#: zero confirmed entries.
+BUILT_MARKER_PREFIX = "source_build:"
 
 #: Enrichment states of one source (P4-02Y-I §3: "处理中 / 完成 / 不可用").
 STAGE_UNAVAILABLE = "UNAVAILABLE"
@@ -82,12 +104,27 @@ def _placeholders(values: tuple[str, ...]) -> str:
     return ", ".join("?" for _ in values)
 
 
-def _scope_clause(source_id: int | None) -> tuple[str, tuple[Any, ...]]:
+def _scope_clause(
+    source_id: int | None = None, *, source_ids: Sequence[int] | None = None
+) -> tuple[str, tuple[Any, ...]]:
     """The asset set one progress query is expressed against, plus its bound parameters.
 
     ``source_id=None`` means the whole library; otherwise the assets that still have a
-    ``PRESENT``, content-bound position in that source.
+    ``PRESENT``, content-bound position in that source. ``source_ids`` is the same set for a
+    *union* of named sources, which is how several scopes are reported without counting an
+    asset shared by two of them twice.
     """
+    if source_ids is not None:
+        identifiers = sorted({int(value) for value in source_ids})
+        if not identifiers:
+            return ("SELECT DISTINCT l.asset_id AS asset_id FROM file_locations AS l WHERE 0", ())
+        placeholders = ", ".join("?" for _ in identifiers)
+        return (
+            "SELECT DISTINCT l.asset_id AS asset_id FROM file_locations AS l "
+            f"WHERE l.source_id IN ({placeholders}) "
+            "AND l.availability = 'PRESENT' AND l.asset_id IS NOT NULL",
+            tuple(identifiers),
+        )
     if source_id is None:
         return (
             "SELECT DISTINCT l.asset_id AS asset_id FROM file_locations AS l "
@@ -129,6 +166,7 @@ def semantic_breakdown(
     space_id: str,
     processor_id: str,
     source_id: int | None = None,
+    source_ids: Sequence[int] | None = None,
 ) -> dict[str, int]:
     """``total``/``confirmed``/``pending``/``failed``/``queued`` of one scope's images.
 
@@ -138,7 +176,7 @@ def semantic_breakdown(
     "pending" any more); ``pending`` is the honest remainder; ``queued`` is how much of the
     work is sitting in the durable queue right now.
     """
-    clause, parameters = _scope_clause(source_id)
+    clause, parameters = _scope_clause(source_id, source_ids=source_ids)
     total = int(
         catalog.read_one(
             "SELECT COUNT(*) AS n FROM ("
@@ -200,16 +238,55 @@ def semantic_breakdown(
     }
 
 
-def semantic_state(breakdown: Mapping[str, int]) -> str:
-    """The card's semantic state word for one durable breakdown."""
+def built_marker_key(source_id: int) -> str:
+    """The ``metadata`` key that records "a build has classified this source"."""
+    return f"{BUILT_MARKER_PREFIX}{int(source_id)}"
+
+
+def mark_source_built(catalog: Any, *, source_id: int, value: str) -> None:
+    """Record durably that one build has classified this source's scope.
+
+    Written by the build's classification sweep, in its own short transaction. It is not a
+    progress cache (every number stays derived from ``jobs``/``index_entries``); it only
+    answers "was this scope ever looked at?", which is what distinguishes ``UNBUILT`` from
+    ``NO_IMAGES`` (P4-02Y-I review F2).
+    """
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO metadata(key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (built_marker_key(source_id), str(value)),
+        )
+
+
+def source_built(catalog: Any, *, source_id: int) -> bool:
+    """Whether a build has ever classified this source (durable marker lookup)."""
+    try:
+        row = catalog.read_one(
+            "SELECT 1 FROM metadata WHERE key = ?", (built_marker_key(source_id),)
+        )
+    except Exception:  # noqa: BLE001 - a catalog without the metadata table is "unbuilt"
+        return False
+    return row is not None
+
+
+def semantic_state(breakdown: Mapping[str, int], *, built: bool) -> str:
+    """The card's semantic state word for one durable breakdown.
+
+    ``failed`` is *deliberately* not part of the "is it searchable" decision: a refused image
+    never becomes searchable and never blocks the rest (P4-02Y's own rule). It is reported so
+    the card can say how many images are missing and why, instead of a bare "可搜索".
+    """
     total = int(breakdown["total"])
     confirmed = int(breakdown["confirmed"])
     pending = int(breakdown["pending"])
     if total == 0 and confirmed == 0:
-        return SEMANTIC_UNBUILT
-    if pending == 0 and confirmed > 0:
+        return SEMANTIC_NO_IMAGES if built else SEMANTIC_UNBUILT
+    if pending > 0:
+        return SEMANTIC_BUILDING
+    if confirmed > 0:
         return SEMANTIC_SEARCHABLE
-    return SEMANTIC_BUILDING
+    return SEMANTIC_UNINDEXABLE
 
 
 def enrichment_counts(
@@ -338,6 +415,10 @@ def source_progress(
     """The whole durable card of one source: scan counts, semantic backlog, enrichments."""
     available = dict(available or {})
     scan = scan_progress(catalog, source_id=source_id)
+    # "Has a build classified this scope?" is durable and separate from the semantic counts:
+    # a scope whose files are all documents has zero of both, and only this marker tells the
+    # card that the sweep really happened (P4-02Y-I review F2).
+    classified_once = source_built(catalog, source_id=int(source_id))
     stages: dict[str, Any] = {}
     if binding is None:
         semantic: dict[str, Any] = {
@@ -359,7 +440,7 @@ def source_progress(
             processor_id=str(binding["processor_id"]),
         )
         semantic = {
-            "state": semantic_state(breakdown),
+            "state": semantic_state(breakdown, built=classified_once),
             "reason": None,
             **breakdown,
             "space_id": str(binding["space_id"]),
@@ -391,10 +472,13 @@ def source_progress(
     return {
         "source_id": int(source_id),
         "scan": scan,
-        # ``built`` is exactly "some image of this source has been classified by the semantic
-        # layer", a durable fact rather than a process-local one.
-        "built": int(semantic["total"]) > 0,
-        "search_ready": str(semantic["state"]) == SEMANTIC_SEARCHABLE,
+        # ``built`` is exactly "a build has classified this source" (or at least one image of
+        # it is classified, for a library built before this marker existed) - a durable fact
+        # rather than a process-local one.
+        "built": bool(classified_once or int(semantic["total"]) > 0),
+        # ``NO_IMAGES`` counts as ready on purpose: the scope's backlog is empty because the
+        # index is not about any of its files, which the state word says explicitly.
+        "search_ready": str(semantic["state"]) in (SEMANTIC_SEARCHABLE, SEMANTIC_NO_IMAGES),
         "stages": stages,
     }
 
@@ -408,21 +492,27 @@ def _enrichment_state(counts: Mapping[str, int], total_assets: int) -> str:
 
 
 __all__ = [
+    "BUILT_MARKER_PREFIX",
     "ENRICHMENT_STAGES",
     "SEMANTIC_BUILDING",
+    "SEMANTIC_NO_IMAGES",
     "SEMANTIC_SEARCHABLE",
     "SEMANTIC_TASK_TYPE",
+    "SEMANTIC_UNINDEXABLE",
     "SEMANTIC_UNBUILT",
     "SEMANTIC_UNAVAILABLE",
     "STAGE_COMPLETE",
     "STAGE_IN_PROGRESS",
     "STAGE_UNAVAILABLE",
+    "built_marker_key",
     "enrichment_availability",
     "enrichment_counts",
+    "mark_source_built",
     "scan_progress",
     "scoped_asset_count",
     "semantic_breakdown",
     "semantic_state",
     "served_binding",
+    "source_built",
     "source_progress",
 ]
