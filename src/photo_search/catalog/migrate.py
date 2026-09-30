@@ -159,10 +159,14 @@ def _apply_migration(connection: sqlite3.Connection, version: int, path: Path) -
         "INSERT INTO metadata(key, value) VALUES('{key}', '{version}') "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value;"
     ).format(key=schema.SCHEMA_VERSION_KEY, version=version)
+    rebuild = version == 17
+    if rebuild:
+        connection.execute("PRAGMA foreign_keys = OFF")
     try:
-        connection.executescript(
-            f"BEGIN IMMEDIATE;\n{script}\n{bump}\nCOMMIT;\n"
-        )
+        connection.executescript(f"BEGIN IMMEDIATE;\n{script}\n{bump}\n")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise sqlite3.IntegrityError("migration would leave an invalid foreign key")
+        connection.execute("COMMIT")
     except sqlite3.Error as error:
         try:
             connection.execute("ROLLBACK")
@@ -173,6 +177,10 @@ def _apply_migration(connection: sqlite3.Connection, version: int, path: Path) -
             f"migration {path.name} failed and was rolled back: {error}",
             details={"migration": path.name, "schema_version": version},
         ) from error
+    finally:
+        if rebuild:
+            connection.execute("PRAGMA legacy_alter_table = OFF")
+            connection.execute("PRAGMA foreign_keys = ON")
 
 
 def migrate_database(

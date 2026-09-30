@@ -199,7 +199,7 @@ def test_a_replaced_original_never_inherits_the_previous_recognition(harness: Ha
     harness.recognize()
     catch_up_projection(harness.catalog)
     # Neither the old digits nor the old artifact can be reached through the new asset.
-    assert harness.text_hits('"222999"*') == [second_asset]
+    assert harness.text_hits('"222"* AND "999"*') == [second_asset]
     assert harness.text_hits('"111"*') != [second_asset]
     text_row = harness.ocr_document(second_asset)
     assert str(text_row["input_revision"]) == second_revision

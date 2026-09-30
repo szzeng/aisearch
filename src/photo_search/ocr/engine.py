@@ -1,4 +1,4 @@
-"""The pinned PP-OCRv4 pipeline: bounded high-resolution input, slicing and geometry.
+"""The pinned PP-OCRv6 small pipeline: bounded high-resolution input, slicing and geometry.
 
 Three decisions live here, and each of them is deliberate:
 
@@ -345,18 +345,16 @@ class PinnedOcrEngine:
         self.resolved_device = "gpu" if resolution.device == "cuda" else "cpu"
         self.runtime_provider = str(runtime_provider or resolution.provider)
         self.precision = str(precision)
-        self._engine = factory(
-            config_path=str(weights.config_path),
-            det_model_path=str(weights.detection_path),
-            cls_model_path=str(weights.classification_path),
-            rec_model_path=str(weights.recognition_path),
-            text_score=float(contract.MIN_TEXT_SCORE),
-            print_verbose=False,
-            max_side_len=int(contract.MAX_LONG_EDGE),
-            det_use_cuda=self.resolved_device == "gpu",
-            cls_use_cuda=self.resolved_device == "gpu",
-            rec_use_cuda=self.resolved_device == "gpu",
-        )
+        self._engine = factory(config_path=str(weights.config_path), params={
+            "Global.model_root_dir": str(weights.root),
+            "Global.text_score": float(contract.MIN_TEXT_SCORE),
+            "Global.max_side_len": int(contract.MAX_LONG_EDGE),
+            "Global.log_level": "error",
+            "Det.model_path": str(weights.detection_path),
+            "Cls.model_path": str(weights.classification_path),
+            "Rec.model_path": str(weights.recognition_path),
+            "EngineConfig.onnxruntime.use_cuda": self.resolved_device == "gpu",
+        })
         self.session_providers = self._read_session_providers(self._engine)
         expected_provider = (
             runtime_device.CUDA_PROVIDER
@@ -384,8 +382,8 @@ class PinnedOcrEngine:
     @staticmethod
     def _read_session_providers(engine: Any) -> dict[str, tuple[str, ...]]:
         paths = {
-            "det": ("text_det", "infer", "session"),
-            "cls": ("text_cls", "infer", "session"),
+            "det": ("text_det", "session", "session"),
+            "cls": ("text_cls", "session", "session"),
             "rec": ("text_rec", "session", "session"),
         }
         observed: dict[str, tuple[str, ...]] = {}
@@ -405,17 +403,20 @@ class PinnedOcrEngine:
 
     def read(self, bgr: Any) -> Any:
         """Run detection + direction classification + recognition on one BGR array."""
-        raw, _elapsed = self._engine(bgr)
-        return raw
+        output = self._engine(bgr)
+        if output.boxes is None:
+            return []
+        return [[box.tolist(), text, float(score)]
+                for box, text, score in zip(output.boxes, output.txts, output.scores, strict=True)]
 
 
 def _rapidocr_factory() -> Callable[..., Any]:
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        from rapidocr import RapidOCR
     except Exception as error:  # pragma: no cover - a broken install
         raise CatalogError(
             RUNTIME_CAPABILITY_UNAVAILABLE,
-            "this process has no rapidocr-onnxruntime runtime",
+            "this process has no RapidOCR runtime",
             details={"reason": type(error).__name__},
         ) from error
     return RapidOCR

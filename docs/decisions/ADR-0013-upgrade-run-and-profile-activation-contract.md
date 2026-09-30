@@ -1,5 +1,7 @@
 # ADR-0013 — UpgradeRun、目标集、预算、暂停恢复与 profile 原子激活契约
 
+> 2026-10-01 编号修订：当前 schema 18 的 0017/0018 已由 [ADR-0014](ADR-0014-offline-place-boundaries.md) 用于地点边界及投影修复。本 ADR 的 0017 预留失效；正文及冻结 JSON 是 schema 16 上的历史设计/参考 DDL，UpgradeRun 尚未实现。后续任务须从当前 schema 分配新迁移号，复核新地点语义与升级目标集后再验收，不能照搬旧编号。
+
 - 状态：**Accepted**（2026-09-27，P4-03A 阶段 B 第四轮聚焦短审通过；第一轮及修订历史见 §15，最终证据见阶段 B 报告 §8）
 - 日期：2026-09-27
 - 适用实现：**P4-03B**（`0017` 迁移 + `src/photo_search/upgrade/**` + API/UI + 六项 D 级注入）

@@ -284,6 +284,10 @@ async def exchange_session(
 )
 async def capabilities(request: Request) -> dict[str, Any]:
     """Read-only build facts. Opens the catalog read-only, so it never writes anything."""
+    return await context_of(request).run_search(lambda: _capabilities(request))
+
+
+def _capabilities(request: Request) -> dict[str, Any]:
     settings = context_of(request).settings
     info = catalog_info(None, data_root=settings.data_root)
     error = info.get("error")
@@ -890,6 +894,42 @@ async def create_place(request: Request, payload: PlaceCreateRequest) -> dict[st
     )
 
 
+@router.get("/places/browse", summary="Browse photo collections by geographic hierarchy")
+async def browse_places(request: Request, parent: int | None = None, name: str = "",
+                        show_empty: bool = False, scenic: bool = False, limit: int = 48,
+                        cursor: str | None = None) -> dict[str, Any]:
+    from photo_search.places.browse import browse
+    context = context_of(request)
+    # Initialise the request service (and its GPS worker) before offloading the read.
+    context.service()
+    def read():
+        catalog = context.service().catalog
+        with catalog.read_snapshot() as connection:
+            return browse(connection, parent=parent, name=name, show_empty=show_empty,
+                          scenic=scenic, limit=clamp_place_limit(limit), cursor=cursor)
+    return await context.run_search(read)
+
+
+@router.get("/places/boundaries", summary="Installed offline boundary coverage")
+async def boundary_status(request: Request) -> dict[str, Any]:
+    from photo_search.geo.boundaries import status
+    return status(service_of(request).catalog.connection)
+
+
+@router.post("/places/boundaries", summary="Install and activate an offline boundary package")
+async def install_boundaries(request: Request) -> dict[str, Any]:
+    from photo_search.geo.boundaries import MAX_PACKAGE_BYTES, install
+    raw = await _read_bounded_body(request, limit=MAX_PACKAGE_BYTES)
+    context = context_of(request)
+    context.service()
+    return await context.run_search(lambda: install(context.service().catalog, raw))
+
+
+@router.get("/places/{place_id}", response_model=PlaceRecord, summary="One place for name and ancestry display")
+async def get_place(request: Request, place_id: int) -> dict[str, Any]:
+    return places_of(request).get_place(int(place_id))
+
+
 @router.patch(
     "/places/{place_id}",
     response_model=PlaceRecord,
@@ -1423,12 +1463,14 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
     """
     context = context_of(request)
     envelope = SearchRequest.from_envelope(payload.model_dump())
-    return search_request(
-        context.service().catalog,
-        envelope,
-        sessions=context.search_sessions,
-        encoder=context.query_encoder(),
-        reranker=context.reranker(),
+    return await context.run_search(
+        lambda: search_request(
+            context.service().catalog,
+            envelope,
+            sessions=context.search_sessions,
+            encoder=context.query_encoder(),
+            reranker=context.reranker(),
+        )
     )
 
 
@@ -1485,8 +1527,13 @@ async def post_search_image(request: Request) -> dict[str, Any]:
     """
     context = context_of(request)
     body = await _read_bounded_body(request, limit=DEFAULT_LIMITS.max_body_bytes)
+    content_type = request.headers.get("content-type")
+    return await context.run_search(lambda: _search_image(context, content_type, body))
+
+
+def _search_image(context: ApiContext, content_type: str | None, body: bytes) -> dict[str, Any]:
     form = parse_multipart_form(
-        request.headers.get("content-type"),
+        content_type,
         body,
         max_body_bytes=DEFAULT_LIMITS.max_body_bytes,
     )
@@ -1505,11 +1552,7 @@ async def post_search_image(request: Request) -> dict[str, Any]:
             field="profile_id",
         )
     encoder = image_encoder_of(context.query_encoder())
-    # Decoding and encoding are the only heavy steps here, so they run in a worker thread:
-    # the catalog connection stays on the request thread (as in the media endpoints) and the
-    # event loop is never blocked by a large photo.
-    facts, vector = await asyncio.to_thread(
-        _prepare_upload,
+    facts, vector = _prepare_upload(
         upload.payload,
         encoder,
         str(binding.space_id),

@@ -7,8 +7,11 @@ or unreadable has to be re-checked on the next request instead of poisoning the 
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from photo_search.api.errors import Redactor
@@ -16,6 +19,7 @@ from photo_search.api.refresher import LibraryRefresher
 from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
 from photo_search.api.settings import ApiSettings, generate_session_token
+from photo_search.catalog.errors import CatalogError
 from photo_search.ingestion.service import CatalogService
 from photo_search.search.embedding import QueryEncoder
 from photo_search.search.sessions import SearchSessionStore
@@ -42,6 +46,11 @@ class ApiContext:
         refresh_batch_size: int | None = None,
         refresh_enrich: bool = True,
     ) -> None:
+        self._adapter_lock = threading.RLock()
+        self._search_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="photo-search")
+        self._search_slots = threading.BoundedSemaphore(4)
+        self._search_state = threading.local()
+        self._closed = False
         self.settings = settings
         token = settings.session_token or generate_session_token()
         self.sessions = SessionManager(
@@ -62,6 +71,7 @@ class ApiContext:
         self._reranker_factory = reranker_factory
         self._reranker: Any = None
         self._reranker_resolved = False
+        self._boundary_worker = None
         self._service: CatalogService | None = None
         self._runner: ScanRunner | None = None
         #: P4-02Y: the single background library refresh. It reuses the *same* ADR-0003 §7
@@ -81,8 +91,16 @@ class ApiContext:
     # ------------------------------------------------------------------ resources
     def service(self) -> CatalogService:
         """The catalog service of the request-handling thread (opened once)."""
+        if getattr(self._search_state, "active", False):
+            if not hasattr(self._search_state, "service"):
+                self._search_state.service = self._service_factory()
+            return self._search_state.service
         if self._service is None:
             self._service = self._service_factory()
+            catalog = getattr(self._service, "catalog", None)
+            if catalog is not None and hasattr(catalog, "db_path"):
+                from photo_search.geo.worker import BoundaryWorker
+                self._boundary_worker = BoundaryWorker(data_root=catalog.data_root, db_path=catalog.db_path)
         return self._service
 
     def runner(self) -> ScanRunner:
@@ -130,50 +148,63 @@ class ApiContext:
             return Redactor(data_root=self.settings.data_root)
         return Redactor.for_catalog(service.catalog, data_root=self.settings.data_root)
 
-    def query_encoder(self) -> QueryEncoder | None:
-        """The query half of the embedding adapter, or ``None`` when none is wired.
-
-        ADR-0003 §7 keeps the heavy frameworks out of the service layer, so the encoder is
-        always a *supplied* adapter: the real startup entry (``photo_search.__main__``)
-        supplies the managed-AI-worker adapter of ``photo_search.workers.query_encoder``
-        when this machine has the pinned model, while a test or a deployment supplies its
-        own through ``encoder_factory``. ``None`` - and equally a factory that raises - is
-        reported honestly by ``GET /capabilities`` and turns a request that needs the
-        semantic channel into a structured refusal instead of a silently text-only page.
-        """
-        if self._encoder_resolved:
-            return self._encoder
-        self._encoder_resolved = True
-        if self._encoder_factory is None:
-            return None
+    async def run_search(self, operation: Callable[[], Any]) -> Any:
+        """Bound queued work and keep model/SQLite waits off the event loop."""
+        if self._closed or not self._search_slots.acquire(blocking=False):
+            raise CatalogError("SEARCH_BUSY", "搜索正在处理，请稍后重试")
         try:
-            self._encoder = self._encoder_factory()
-        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
-            logger.debug("building the query encoder failed", exc_info=True)
-            self._encoder = None
-        return self._encoder
+            future = self._search_executor.submit(self._execute_search, operation)
+        except BaseException:
+            self._search_slots.release()
+            raise
+        # Releasing on actual completion also covers a disconnected/cancelled HTTP caller.
+        future.add_done_callback(lambda _: self._search_slots.release())
+        return await asyncio.wrap_future(future)
+
+    def _execute_search(self, operation: Callable[[], Any]) -> Any:
+        self._search_state.active = True
+        try:
+            return operation()
+        finally:
+            service = getattr(self._search_state, "service", None)
+            if service is not None:
+                service.close()
+                del self._search_state.service
+            self._search_state.active = False
+
+    def query_encoder(self) -> QueryEncoder | None:
+        """Cache a successful initialization; temporary failures can be retried."""
+        with self._adapter_lock:
+            if self._closed:
+                return None
+            if not self._encoder_resolved and self._encoder_factory is not None:
+                try:
+                    self._encoder = self._encoder_factory()
+                    self._encoder_resolved = self._encoder is not None
+                except Exception:
+                    logger.warning("building the query encoder failed", exc_info=True)
+            return self._encoder
 
     def reranker(self) -> Any:
-        """The reranker half of the ADR-0003 §7 boundary, or ``None`` when none is wired.
-
-        Same rule as :meth:`query_encoder`: the service layer never imports a heavy
-        framework, a deployment supplies the adapter, and an absent or broken adapter is
-        reported honestly (``rerank_state=UNAVAILABLE``) rather than faked.
-        """
-        if self._reranker_resolved:
+        with self._adapter_lock:
+            if self._closed:
+                return None
+            if not self._reranker_resolved and self._reranker_factory is not None:
+                try:
+                    self._reranker = self._reranker_factory()
+                    self._reranker_resolved = self._reranker is not None
+                except Exception:
+                    logger.warning("building the reranker failed", exc_info=True)
             return self._reranker
-        self._reranker_resolved = True
-        if self._reranker_factory is None:
-            return None
-        try:
-            self._reranker = self._reranker_factory()
-        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
-            logger.debug("building the reranker adapter failed", exc_info=True)
-            self._reranker = None
-        return self._reranker
 
     def close(self) -> None:
         """Stop the worker, the query encoder and both connections; safe to call twice."""
+        if self._closed:
+            return
+        self._closed = True
+        if self._boundary_worker is not None:
+            self._boundary_worker.close()
+        self._search_executor.shutdown(wait=True, cancel_futures=True)
         refresher = self._refresher
         self._refresher = None
         if refresher is not None:

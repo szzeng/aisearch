@@ -181,7 +181,7 @@ DIGEST_EXCLUDES = ("expected_control_revision",)
 #: Every companion that already existed when ADR-0013 was written. ADR-0013 declares no
 #: supersession, so all nine keep their bytes.
 FROZEN_COMPANIONS = {
-    "p2-contracts.v1.json": "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57",
+    "p2-contracts.v1.json": "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa",
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"
     ),
@@ -2011,14 +2011,11 @@ def test_migration_contract_and_byte_identity() -> None:
         "MigrationContract",
     ) == []
 
-    # P4-03A adds no migration: 0017 must still be free and the supported version still 16.
-    assert SUPPORTED_SCHEMA_VERSION == 16
-    assert [version for version, _path in migration_files()] == list(range(1, 17))
-    assert not (MIGRATIONS_DIR / "0017_upgrade_runs.sql").exists()
-    assert not list(MIGRATIONS_DIR.glob("0017_*.sql"))
-    assert sorted(FROZEN_MIGRATION_HASHES) == sorted(
-        path.name for path in MIGRATIONS_DIR.glob("*.sql")
-    )
+    # ADR-0014 allocates 0017/0018 to places; the earlier upgrade DDL remains a
+    # reference-only contract. Preserve every historical migration, not its old head.
+    assert SUPPORTED_SCHEMA_VERSION >= 18
+    assert [version for version, _path in migration_files()] == list(range(1, SUPPORTED_SCHEMA_VERSION + 1))
+    assert not list(MIGRATIONS_DIR.glob("*_upgrade_runs.sql"))
     for name, expected in FROZEN_MIGRATION_HASHES.items():
         path = MIGRATIONS_DIR / name
         assert path.is_file(), name

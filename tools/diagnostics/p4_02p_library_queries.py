@@ -160,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json",
+        default=REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--queries", default=",".join(DEFAULT_QUERIES))

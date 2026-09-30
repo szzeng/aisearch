@@ -27,8 +27,8 @@ job_result_state: SUCCEEDED | RETRY_WAIT | BLOCKED | FAILED | CANCELLED
 ```
 
 上述大写 device policy 是稳定外部协议值；现有 runtime/device.py 的小写 Python Enum 仅作一对一内部
-映射。稳定协议的 resolved_device=gpu 对应现有运行时代码的 device=cuda，并必须同时记录实际
-CUDAExecutionProvider；实现不得把两个拼写当成两个逻辑设备或两个 space。CPU_ALLOWED 在派发前按
+映射。稳定协议的 resolved_device=gpu 可对应 CUDA 或 Apple MPS，实际 runtime_provider 分别记录
+CUDAExecutionProvider、torch-cuda 或 torch-mps；实现不得把后端名称当成两个逻辑设备或两个 space。CPU_ALLOWED 在派发前按
 健康能力快照选 CPU 属于明确的 auto 解析，不是执行失败后的隐式 fallback。
 
 所有跨进程对象都携带 `contract_version = "p2-contracts.v1"`，拒绝未知字段。时间为 UTC epoch
@@ -155,7 +155,7 @@ normalization = L2
 该 provider 最近 health check 为 healthy、且存在对应 processor/device/precision 的专项验收 evidence。
 列出 provider 但未健康检查、只有别的 processor 的验证、或只有估算资源都不合格。
 
-`GPU_REQUIRED` 因 CUDA 不可用/不健康进入 `BLOCKED`，不消耗普通错误重试次数。GPU 恢复、health
+`GPU_REQUIRED` 因选定 GPU 后端不可用/不健康进入 `BLOCKED`，不消耗普通错误重试次数。GPU 恢复、health
 check 通过且专项 evidence 仍适用于当前 revision 后，scheduler 可把该阻塞任务重新置为可调度状态；
 恢复动作不得绕过 ADR-0002 的合法状态迁移。OOM 处理只能尝试 spec 已声明并验证的更小 batch、卸载
 闲置模型和有限重试；仍失败则 `BLOCKED`。

@@ -28,9 +28,7 @@ JOB_RESULT_STATES = ("SUCCEEDED", "RETRY_WAIT", "BLOCKED", "FAILED", "CANCELLED"
 HEALTH_STATUSES = ("healthy", "degraded", "unhealthy", "unknown")
 ARTIFACT_TYPES = ("embedding", "structured", "binary")
 
-#: ADR-0003 §1: the stable ``gpu`` spelling is a one-to-one mapping of the runtime's
-#: ``cuda`` device. They are the same logical device, never two spaces.
-RUNTIME_DEVICE_BY_RESOLVED = {"cpu": "cpu", "gpu": "cuda"}
+#: Logical ``gpu`` covers CUDA and Apple MPS; runtime_provider records which is used.
 
 #: Upper bound for one result envelope. A worker that returns a larger payload is refused
 #: before anything is committed, so a runaway payload can never become a catalog write.

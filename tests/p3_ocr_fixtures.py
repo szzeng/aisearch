@@ -40,12 +40,14 @@ PINNED_MODEL_ROOT = weights.model_root()
 OCR_WEIGHTS_AVAILABLE = weights.weights_present()
 SKIP_WITHOUT_WEIGHTS = pytest.mark.skipif(
     not OCR_WEIGHTS_AVAILABLE,
-    reason="the pinned PP-OCRv4 weights are not installed under the P0-04 model root",
+    reason="the pinned PP-OCRv6 weights are not installed under the P0-04 model root",
 )
 
 #: The system font P0-04 used for its OCR fixtures. CJK rendering needs a font with CJK
 #: coverage, so a machine without it skips instead of asserting on empty pixels.
 FONT_PATH = Path(r"C:\Windows\Fonts\msyh.ttc")
+if not FONT_PATH.is_file():
+    FONT_PATH = Path("/System/Library/Fonts/STHeiti Medium.ttc")
 FONT_AVAILABLE = FONT_PATH.is_file()
 SKIP_WITHOUT_FONT = pytest.mark.skipif(
     not FONT_AVAILABLE, reason=f"{FONT_PATH} is not installed on this machine"
@@ -122,7 +124,7 @@ def install_weights(
 ) -> Path:
     """Copy the pinned files into ``<data_root>/models`` (optionally faulted)."""
     if not OCR_WEIGHTS_AVAILABLE:
-        raise RuntimeError("the pinned PP-OCRv4 weights are not installed on this machine")
+        raise RuntimeError("the pinned PP-OCRv6 weights are not installed on this machine")
     resolved = weights.resolve()
     target = weights.model_root(data_root)
     for entry in resolved.files:

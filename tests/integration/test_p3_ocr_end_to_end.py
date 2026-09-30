@@ -2,7 +2,7 @@
 
 The fixtures are rendered from a real system font, so these assertions are about genuine
 recognition (Chinese text and digits), genuine region geometry and a genuine FTS hit. The
-only thing simulated is nothing: the pinned PP-OCRv4 files are copied into the test data
+only thing simulated is nothing: the pinned PP-OCRv6 files are copied into the test data
 root and the product's own scheduler, artifact store, migration and projection do the work.
 """
 
@@ -289,8 +289,8 @@ def test_a_high_density_page_is_sliced_and_a_blank_page_stays_empty(harness: Har
     assert summary["state"] == "SYNCED"
 
 
-def test_the_ocr_job_runs_on_cpu_even_though_the_gpu_package_is_present(harness: Harness) -> None:
-    """The OCR processor is CPU_PREFERRED: a healthy GPU is never silently used."""
+def test_the_ocr_job_uses_the_qualified_provider_and_precision(harness: Harness) -> None:
+    """CPU_ALLOWED selects a qualified GPU when present, otherwise the qualified CPU."""
     harness.install_weights()
     write_text_image(harness.library / "one.jpg", ["编号 20260914"], size=(900, 400), font_size=44)
     harness.scan()
@@ -298,13 +298,14 @@ def test_the_ocr_job_runs_on_cpu_even_though_the_gpu_package_is_present(harness:
 
     summary = harness.recognize()
     run = summary["run"]
-    assert run["precision"] == contract.OCR_SUPPORTED_PRECISIONS[0]
-    assert run["provider"] == "CPUExecutionProvider"
     job = harness.catalog.read_one(
         "SELECT * FROM jobs WHERE task_type = 'image_ocr' AND subject_id = ?", (str(asset_id),)
     )
+    assert job["precision"] == contract.OCR_SUPPORTED_PRECISIONS[0]
+    expected_device = "gpu" if "gpu" in run["qualified_devices"] else "cpu"
+    assert job["runtime_provider"] == run[f"{expected_device}_provider"]
     assert str(job["requested_device"]) == "auto"
-    assert str(job["resolved_device"]) == "cpu"
+    assert str(job["resolved_device"]) == expected_device
     assert str(job["runtime_capability_revision"]) == str(run["capability_revision"])
 
 

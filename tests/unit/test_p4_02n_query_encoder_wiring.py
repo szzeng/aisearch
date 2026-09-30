@@ -36,8 +36,8 @@ from photo_search.workers.query_encoder import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-VECTOR = [0.01] * 512
+MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
+VECTOR = [0.01] * 768
 
 
 def pinned() -> ProcessorSpec:
@@ -139,21 +139,16 @@ class StubAdapterWithoutClose:
 def test_the_pinned_spec_is_the_space_the_indexing_side_publishes() -> None:
     spec = pinned()
     assert spec.processor_kind == "embedding_model"
-    assert spec.processor_id == "chinese-clip-vit-b-16@36e679e65c2a"
-    assert spec.envelope["space_id"] == "chinese-clip-vit-b-16:c8ac42d3907c57b0"
-    assert spec.envelope["dimension"] == 512
-    assert spec.envelope["metric"] == "cosine"
-    assert spec.envelope["normalization_version"] == "L2-v1"
-    assert spec.envelope["max_tokens"] == 52
-    assert spec.envelope["max_pixels"] == 224 * 224
-    assert [item["name"] for item in spec.envelope["weights"]] == [
-        "image_tower.fp32.onnx",
-        "text_tower.fp32.onnx",
-    ]
+    assert spec.processor_id.startswith("fg-clip2-base@")
+    assert spec.envelope["space_id"].startswith("fg-clip2-base:")
+    assert spec.envelope["dimension"] == 768
+    assert spec.envelope["max_tokens"] == 196
+    assert spec.envelope["max_pixels"] == 576 * 16 * 16
+    assert "model.safetensors" in {item["name"] for item in spec.envelope["weights"]}
     assert ProcessorSpec.from_envelope(spec.to_envelope()) == spec
-    check_encoder_binding(spec, space_id=spec.envelope["space_id"], dimension=512)
+    check_encoder_binding(spec, space_id=spec.envelope["space_id"], dimension=768)
     with pytest.raises(CatalogError) as refused:
-        check_encoder_binding(spec, space_id="another-space:1", dimension=512)
+        check_encoder_binding(spec, space_id="another-space:1", dimension=768)
     assert refused.value.code == SPACE_MISMATCH
 
 
@@ -167,7 +162,7 @@ def test_the_adapter_answers_the_query_seam_with_the_worker_vector() -> None:
     assert worker.texts == ["西湖 sunset"]
     # The search seam checks the encoder binding and the vector before it ranks anything.
     assert encode_query(
-        adapter, "西湖 sunset", space_id=str(spec.envelope["space_id"]), dimension=512
+        adapter, "西湖 sunset", space_id=str(spec.envelope["space_id"]), dimension=768
     ) == VECTOR
 
 
@@ -176,7 +171,7 @@ def test_the_adapter_answers_the_query_seam_with_the_worker_vector() -> None:
     [
         ({"vector": [1.0, 2.0]}, "dimension"),
         ({}, "returned no"),
-        ({"vector": ["1.0"] * 512}, "value"),
+        ({"vector": ["1.0"] * 768}, "value"),
     ],
 )
 def test_the_adapter_refuses_a_malformed_worker_vector(reply: Any, expected: str) -> None:

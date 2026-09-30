@@ -18,8 +18,9 @@ from typing import Any
 from photo_search.catalog.errors import INVALID_PLACE_FILTER, CatalogError
 
 CONTRACT_VERSION = "p2-place-contracts.v1"
+DIRECTORY_CONTRACT_VERSION = "place-geography.v2"
 
-PLACE_KINDS = ("country", "city", "attraction", "custom")
+PLACE_KINDS = ("country", "province", "city", "district", "attraction", "custom")
 PLACE_LIFECYCLE = ("ACTIVE", "RETIRED")
 PLACE_ORIGINS = ("USER", "DATASET")
 ALIAS_SOURCES = ("USER", "DATASET")
@@ -173,7 +174,7 @@ def place_view(
 ) -> dict[str, Any]:
     """The frozen ``Place`` projection of one ``places`` row."""
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": DIRECTORY_CONTRACT_VERSION,
         "place_id": int(row["place_id"]),
         "kind": str(row["kind"]),
         "canonical_name": str(row["canonical_name"]),

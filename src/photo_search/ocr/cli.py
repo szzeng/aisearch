@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="photo-search-ocr", description=__doc__)
     commands = parser.add_subparsers(dest="command")
     common = _common_options()
-    commands.add_parser("weights", parents=[common], help="verify the pinned PP-OCRv4 files")
+    commands.add_parser("weights", parents=[common], help="verify the pinned PP-OCRv6 small files")
     commands.add_parser("status", parents=[common], help="read-only OCR readiness summary")
     for name, help_text in (
         ("enqueue", "queue OCR jobs for the selected assets"),

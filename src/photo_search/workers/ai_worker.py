@@ -1,6 +1,6 @@
-"""Spawned AI worker process for manifest-driven Chinese-CLIP inference.
+"""Spawned AI worker process for manifest-driven FG-CLIP 2 inference.
 
-The worker owns the device decision: it defaults to CUDA, accepts an explicit CPU
+The worker owns the device decision: it selects CUDA or Apple MPS, accepts an explicit CPU
 request, reports the device/provider it actually resolved, and turns an unavailable GPU
 into a structured failure instead of a silent whole-model CPU run.
 """
@@ -16,8 +16,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from photo_search.models.embedding.chinese_clip_onnx import (
-    ChineseClipOnnxAdapter,
+from photo_search.models.embedding.fgclip2 import (
+    FGClip2Adapter,
     RuntimeConfig,
 )
 from photo_search.runtime.device import DevicePolicy, DeviceUnavailableError
@@ -45,13 +45,12 @@ def run_worker(
     }
     with Path(stderr_path).open("a", encoding="utf-8", buffering=1) as stderr, contextlib.redirect_stderr(stderr):
         try:
-            adapter = ChineseClipOnnxAdapter(
+            adapter = FGClip2Adapter(
                 Path(model_dir),
                 Path(manifest_path),
                 RuntimeConfig(
                     requested_device=device,
                     device_policy=DevicePolicy(device_policy),
-                    enable_profiling=True,
                 ),
             )
             adapter.load()
@@ -93,7 +92,7 @@ def run_worker(
                 pass
 
 
-def _error_details(error: BaseException, adapter: ChineseClipOnnxAdapter | None) -> dict[str, Any]:
+def _error_details(error: BaseException, adapter: FGClip2Adapter | None) -> dict[str, Any]:
     """Device facts that let a caller pause the right AI task without parsing text."""
     details: dict[str, Any] = {"cpu_fallback": "disabled"}
     if isinstance(error, DeviceUnavailableError):
@@ -107,7 +106,7 @@ def _error_details(error: BaseException, adapter: ChineseClipOnnxAdapter | None)
 
 
 def _handle(
-    adapter: ChineseClipOnnxAdapter,
+    adapter: FGClip2Adapter,
     request: dict[str, Any],
     completed_steps: list[str],
 ) -> dict[str, Any]:
@@ -117,14 +116,14 @@ def _handle(
     elif action == "encode_text":
         result = {
             "vector": adapter.encode_text(request.get("text")),
-            "spec": adapter.spec().as_dict(),
+            "spec": adapter.spec().to_envelope(),
             "device": adapter.resolution.as_dict(),
         }
     elif action == "encode_image":
         image_path = Path(request.get("image_path", ""))
         result = {
             "vector": adapter.encode_image(image_path),
-            "spec": adapter.spec().as_dict(),
+            "spec": adapter.spec().to_envelope(),
             "device": adapter.resolution.as_dict(),
         }
     elif action == "demo_search":
@@ -139,7 +138,7 @@ def _handle(
     return {"status": "ok", "stage": str(action), "completed_steps": completed, "result": result}
 
 
-def _demo_search(adapter: ChineseClipOnnxAdapter) -> dict[str, Any]:
+def _demo_search(adapter: FGClip2Adapter) -> dict[str, Any]:
     """Run the offline fixture search inside the worker on the resolved device."""
     with tempfile.TemporaryDirectory(prefix="photo-search-demo-") as raw_directory:
         directory = Path(raw_directory)
@@ -164,6 +163,6 @@ def _demo_search(adapter: ChineseClipOnnxAdapter) -> dict[str, Any]:
             for name, vector in image_results
         ],
         "top_k": scores,
-        "spec": adapter.spec().as_dict(),
+        "spec": adapter.spec().to_envelope(),
         "device": adapter.resolution.as_dict(),
     }

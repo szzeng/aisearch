@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from photo_search.catalog.db import Catalog
+from photo_search.catalog.selection import available_assets
 from photo_search.jobs import queue as jobs
 from photo_search.ocr import contract
 from photo_search.ocr.engine import OcrEngineCache
@@ -29,43 +30,7 @@ from photo_search.search import documents as search_documents
 #: States a forced re-recognition may rewind: everything except a live execution.
 REWINDABLE_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "RETRY_WAIT")
 
-_TARGET_SQL = (
-    "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256 "
-    "FROM assets AS a "
-    "JOIN file_locations AS f ON f.asset_id = a.asset_id AND f.availability = 'PRESENT' "
-    "{source_filter}"
-    "ORDER BY a.asset_id"
-)
-
-
-def ocr_targets(
-    catalog: Catalog,
-    *,
-    asset_ids: Sequence[int] | None = None,
-    source_id: int | None = None,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """Every asset that currently has a readable original - the OCR work set.
-
-    An asset whose only positions are ``MISSING``/``SOURCE_OFFLINE`` is deliberately not a
-    target: it cannot be recognised today, and queuing it would only add a blocked job.
-    """
-    wanted = None if asset_ids is None else {int(value) for value in asset_ids}
-    source_filter = ""
-    parameters: tuple[Any, ...] = ()
-    if source_id is not None:
-        source_filter = "WHERE f.source_id = ? "
-        parameters = (int(source_id),)
-    rows = catalog.read_all(_TARGET_SQL.format(source_filter=source_filter), parameters)
-    targets = [
-        {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
-        for row in rows
-        if wanted is None or int(row["asset_id"]) in wanted
-    ]
-    if limit is not None:
-        targets = targets[: max(0, int(limit))]
-    return targets
-
+ocr_targets = available_assets
 
 def enqueue_targets(
     catalog: Catalog,
@@ -266,7 +231,7 @@ def run_queue(
         cache,
         data_root=resolved_data_root,
         now_ms=catalog.now_ms(),
-        note="pinned PP-OCRv4 ONNX sessions created and their actual providers inspected",
+        note="pinned PP-OCRv6 ONNX sessions created and their actual providers inspected",
     )
     executor = ocr_executor(
         catalog,
@@ -278,6 +243,8 @@ def run_queue(
     )
     steps = 0
     while limit is None or steps < max(0, int(limit)):
+        if cancel is not None and cancel():
+            break
         if not scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             break
         steps += 1

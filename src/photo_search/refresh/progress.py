@@ -96,7 +96,7 @@ ENRICHMENT_STAGES: tuple[tuple[str, str, str, str | None], ...] = (
     ("gps", "geo_extract", "geo-exif-gps@1", None),
     ("place", "place_resolve", "geo-nearby-city@1", None),
     ("face", "image_face", "face-model@1", None),
-    ("ocr", "image_ocr", "ocr-text@1", None),
+    ("ocr", "image_ocr", "ocr-text@2", None),
 )
 
 #: The stages whose availability depends on installed weights (the place stage depends on a
@@ -322,6 +322,16 @@ def enrichment_counts(
     content is not processed yet" (``PENDING``).
     """
     clause, parameters = _scope_clause(source_id)
+    if task_type == "place_resolve" and catalog.read_one("SELECT 1 FROM boundary_packages WHERE active=1"):
+        row = catalog.read_one(
+            "SELECT COUNT(*) AS total, SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM boundary_packages b "
+            "WHERE b.active=1 AND NOT EXISTS (SELECT 1 FROM boundary_results r WHERE r.package_id=b.package_id "
+            "AND r.asset_id=g.asset_id AND r.geo_fact_id=g.geo_fact_id AND r.input_revision=a.sha256)) "
+            "THEN 1 ELSE 0 END) AS handled FROM asset_geo_facts g JOIN assets a USING(asset_id) "
+            f"WHERE g.asset_id IN ({clause})", parameters)
+        handled = int(row["handled"] or 0)
+        total = int(row["total"])
+        return {"handled": handled, "pending": total-handled, "attempted": total}
     if fact_table is None:
         handled = int(
             catalog.read_one(
@@ -420,7 +430,9 @@ def enrichment_availability(catalog: Any, *, data_root: Any) -> dict[str, bool]:
 
     try:
         row = catalog.read_one("SELECT dataset_id FROM active_geo_dataset WHERE singleton = 1")
-        place = row is not None and row["dataset_id"] is not None
+        place = (row is not None and row["dataset_id"] is not None) or bool(
+            catalog.read_one("SELECT 1 FROM boundary_packages WHERE active=1")
+        )
     except Exception:  # noqa: BLE001 - a catalog without the place layer reports "unavailable"
         place = False
     return {

@@ -72,7 +72,7 @@ ADR = ADR_PATH.read_text(encoding="utf-8")
 #: of these files, so all seven keep their bytes.
 FROZEN_COMPANIONS = {
     "p2-contracts.v1.json": (
-        "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57"
+        "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
     ),
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"

@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
-from photo_search.models.embedding.chinese_clip_onnx import _summarise_profile
 from photo_search.runtime.device import (
     CPU_PROVIDER,
     CUDA_PROVIDER,
@@ -115,28 +111,3 @@ def test_runtime_capabilities_reports_the_packaged_runtime(monkeypatch: pytest.M
     assert capabilities.cuda_available is False
     assert capabilities.providers == (CPU_PROVIDER,)
     assert capabilities.as_dict()["providers"] == [CPU_PROVIDER]
-
-
-def test_profile_summary_counts_the_provider_of_every_node(tmp_path: Path) -> None:
-    profile = tmp_path / "profile.json"
-    profile.write_text(
-        json.dumps(
-            [
-                {"cat": "Node", "args": {"provider": CUDA_PROVIDER, "op_name": "MatMul"}},
-                {"cat": "Node", "args": {"provider": CUDA_PROVIDER, "op_name": "Add"}},
-                {"cat": "Node", "args": {"provider": CPU_PROVIDER, "op_name": "Shape"}},
-                {"cat": "Session", "args": {"provider": CUDA_PROVIDER}},
-                {"cat": "Node", "args": {}},
-            ]
-        ),
-        encoding="utf-8",
-    )
-    summary = _summarise_profile(str(profile))
-    assert summary["node_events"] == 3
-    assert summary["node_providers"] == {CUDA_PROVIDER: 2, CPU_PROVIDER: 1}
-    assert not profile.exists()
-
-
-def test_profile_summary_handles_a_missing_profile() -> None:
-    assert _summarise_profile(None) == {"available": False}
-    assert _summarise_profile("Z:/definitely/missing.json")["available"] is False

@@ -256,7 +256,7 @@ def snapshot_from_runtime(
     providers: list[dict[str, Any]] = []
     for name in tuple(getattr(runtime, "providers", ()) or ()):
         provider = str(name)
-        if provider == CUDA_PROVIDER_NAME:
+        if provider in (CUDA_PROVIDER_NAME, "torch-cuda", "torch-mps"):
             device = "gpu"
         elif provider == CPU_PROVIDER_NAME:
             device = "cpu"

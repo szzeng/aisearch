@@ -1,15 +1,4 @@
-"""Resolution and verification of the pinned PP-OCRv4 files (P0-04 manifest).
-
-The OCR processor may only ever open the four files recorded in
-:mod:`photo_search.ocr.contract`. Each of them is checked for size and SHA-256 before any
-ONNX session is created, and a missing or different file is a structured
-``OCR_WEIGHTS_MISSING`` / ``OCR_WEIGHTS_HASH_MISMATCH`` failure - the wheel that ships its
-own copy of the same three graphs is never used as a fallback, because a build that claims
-"PP-OCRv4 mobile, config ``bf94a1da``" must be able to prove it.
-
-Nothing here imports Pillow, numpy or ONNX Runtime, so a diagnostics or API process can ask
-"are the pinned files present?" without paying for a runtime.
-"""
+"""Resolve and hash-check the installed PP-OCRv6 small model files."""
 
 from __future__ import annotations
 
@@ -172,7 +161,7 @@ def verify(weights: OcrWeights) -> OcrWeights:
         if int(info.st_size) != entry.expected_bytes:
             raise CatalogError(
                 OCR_WEIGHTS_HASH_MISMATCH,
-                "a pinned OCR file has a different byte size than the P0-04 manifest",
+                "a pinned OCR file has a different byte size than the pinned manifest",
                 details={
                     "role": entry.role,
                     "relative_path": entry.relative_path,
@@ -184,7 +173,7 @@ def verify(weights: OcrWeights) -> OcrWeights:
         if digest != entry.expected_sha256:
             raise CatalogError(
                 OCR_WEIGHTS_HASH_MISMATCH,
-                "a pinned OCR file does not match the P0-04 sha256",
+                "a pinned OCR file does not match the pinned sha256",
                 details={
                     "role": entry.role,
                     "relative_path": entry.relative_path,

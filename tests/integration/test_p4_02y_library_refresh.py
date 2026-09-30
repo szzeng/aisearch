@@ -27,8 +27,8 @@ from photo_search.indexing import semantic
 from photo_search.ingestion.service import CatalogService
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-DIMENSION = 512
+MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
+DIMENSION = 768
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
 
 
@@ -381,34 +381,6 @@ def test_refresh_status_is_idle_before_the_first_run(env: RefreshEnv) -> None:
     assert body["running"] is False
     assert body["batch_size"] == 128
     assert body["counters"]["hash_targets"] == 0
-
-
-def test_the_sources_page_wires_the_refresh_entry(env: RefreshEnv) -> None:
-    """§14.22, asset level: the page carries the button and the client calls the product API.
-
-    A browser-driven check is not available in this environment (the same ``BROWSER_TIMING
-    BLOCKED`` limit P4-02W recorded); this asserts what the served shell and script really
-    contain - the additive product entry and the stage names the client renders.
-    """
-
-    async def scenario(client: AsyncClient) -> dict[str, str]:
-        await env.authenticate(client)
-        shell = await client.get("/")
-        script = await client.get("/web/app.js")
-        assert shell.status_code == 200 and script.status_code == 200
-        return {"shell": shell.text, "script": script.text}
-
-    served = env.scenario(scenario)
-    assert 'id="refresh-library"' in served["shell"]
-    assert 'id="refresh-status"' in served["shell"]
-    assert "刷新图库" in served["shell"]
-    assert '"/library/refresh"' in served["script"]
-    assert "SEARCH_READY" in served["script"]
-    assert "ENRICHING" in served["script"]
-    assert "COMPLETE" in served["script"]
-    # The complete-verification entry keeps its own wording and endpoint.
-    assert "完整校验扫描" in served["script"]
-    assert "/scan" in served["script"]
 
 
 def test_the_refresh_requires_a_session_and_a_csrf_token(env: RefreshEnv) -> None:

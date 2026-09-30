@@ -43,7 +43,7 @@ from photo_search.workers.query_encoder import resolve_query_encoder  # noqa: E4
 SESSION_TOKEN = "p4-02t-session-token"
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
 ORIGIN = "http://127.0.0.1"
-MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
 FIRST_FRAME = (220, 30, 30)
 SECOND_FRAME = (30, 30, 220)
 #: The three upload probes: file name -> expected outcome.

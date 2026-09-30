@@ -169,7 +169,7 @@ def build_v15_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_the_migration_chain_is_continuous_and_0016_is_the_claim_index_step() -> None:
     files = schema.migration_files()
     assert [number for number, _ in files] == list(range(1, SUPPORTED + 1))
-    assert SUPPORTED == V16
+    assert SUPPORTED >= V16
     names = [path.name for _, path in files]
     assert names[:15] == [
         "0001_initial.sql",
@@ -221,6 +221,8 @@ def test_v15_to_v16_is_continuous_backed_up_and_lossless(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = build_v15_catalog(tmp_path, monkeypatch)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V16))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V16)
     assert inspect_database(path) == V15
     before = snapshot(path, PRESERVED_TABLES)
     metadata_before = metadata_without_version(path)
@@ -252,7 +254,7 @@ def test_v15_to_v16_is_continuous_backed_up_and_lossless(
     assert metadata_without_version(path) == metadata_before
     # The chain continues to whatever this build supports, then settles.
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.previous_version == SUPPORTED
+    assert again.applied == () and again.previous_version == V16
 
 
 def test_the_new_indexes_are_the_ones_the_claim_uses(
@@ -322,6 +324,8 @@ def test_an_older_build_refuses_the_newer_catalog_and_writes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = build_v15_catalog(tmp_path, monkeypatch)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V16))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V16)
     migrate_database(path, data_root=data_root(tmp_path))
     assert inspect_database(path) == V16
     before_bytes = path.read_bytes()

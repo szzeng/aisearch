@@ -16,7 +16,7 @@ Commands
             structured ``busy_timeout`` refusal with its retry outcome.
 ``build``    the production build entry (P4-02O): select the assets that still need an
             embedding for the pinned model, enqueue one idempotent job per asset, run them
-            through the scheduler with the pinned Chinese-CLIP adapter, drain the outbox and -
+            through the scheduler with the pinned FG-CLIP 2 adapter, drain the outbox and -
             unless ``--skip-profile`` is given - publish and activate the search profile of the
             built generation so the library is immediately searchable. ``--dry-run`` lists the
             targets without loading a model.
@@ -230,19 +230,19 @@ def build_parser() -> argparse.ArgumentParser:
 def _image_encoder(
     *, model_dir: Path, manifest: Path, device: str, device_policy: str
 ) -> Any:
-    """Build the pinned Chinese-CLIP adapter behind the ADR-0003 image-encoder boundary.
+    """Build the pinned FG-CLIP 2 adapter behind the ADR-0003 image-encoder boundary.
 
     The heavy runtime stays behind this function: the module itself imports no ONNX, and a
     model that cannot be loaded is a structured refusal (with the operator's own paths and the
     failure class) rather than a traceback or a silent CPU run.
     """
     try:
-        from photo_search.models.embedding.chinese_clip_onnx import (
-            ChineseClipOnnxAdapter,
+        from photo_search.models.embedding.fgclip2 import (
+            FGClip2Adapter,
             RuntimeConfig,
         )
 
-        adapter = ChineseClipOnnxAdapter(
+        adapter = FGClip2Adapter(
             Path(model_dir),
             Path(manifest),
             RuntimeConfig(

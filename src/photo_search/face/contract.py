@@ -15,7 +15,7 @@ the runtime really offered - an unusable CUDA provider is a recorded capability 
 a silent downgrade.
 
 **The vectors live in their own space.** ``FACE_SPACE_ID`` is derived from the pinned
-recognition graph and can never equal the image/text space of Chinese-CLIP, so a face
+recognition graph and can never equal the image/text space of the image encoder, so a face
 vector cannot be compared with - or accidentally written into - the photo index.
 
 **The thresholds are calibrated, not conventional.** ``MERGE_THRESHOLD`` and

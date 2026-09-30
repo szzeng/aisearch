@@ -89,7 +89,10 @@ def _inject_location(
 
 
 def _make_junction(link: Path, target: Path) -> bool:
-    """Create a directory junction if this machine allows it."""
+    """Create a Windows junction or a POSIX directory symlink for traversal checks."""
+    if os.name != "nt":
+        link.symlink_to(target, target_is_directory=True)
+        return link.is_dir()
     try:
         completed = subprocess.run(
             ["cmd", "/c", "mklink", "/J", str(link), str(target)],
@@ -364,7 +367,7 @@ def test_traversal_rows_and_reparse_points_are_refused(api_env) -> None:
         assert str(outside) not in thumbnail.text
     assert result["junction"][0].json()["code"] == "ACCESS_DENIED"
     # The valid asset of the same source keeps working.
-    ok_asset = _asset_ids_by_name(api_env)["photos\\ok.jpg"]
+    ok_asset = _asset_ids_by_name(api_env)[str(Path("photos") / "ok.jpg")]
 
     async def check_ok(client: AsyncClient) -> dict:
         await api_env.authenticate(client)

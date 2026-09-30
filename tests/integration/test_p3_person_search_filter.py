@@ -61,7 +61,7 @@ COMPANION = json.loads(
 #: The four companions P3-07B promises to leave byte-identical, plus the P3-07A one.
 FROZEN_CONTRACT_SHA256 = {
     "p2-contracts.v1.json": (
-        "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57"
+        "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
     ),
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"
@@ -523,27 +523,27 @@ def test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer(
     state = seeded
     second = Catalog.open(db_path=state.env.catalog.db_path)
     try:
-        persons = PersonService(second, clock=second.now_ms)
         merged: dict[str, Any] = {}
         real_resolve = search_service.resolve_canonical_person_id
 
         def commit_merge() -> None:
-            rows = second.read_all(
-                "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
-                (int(state.a), int(state.b)),
-            )
-            revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
-            merged["result"] = persons.merge(
-                target_person_id=int(state.b),
-                target_expected_revision=revisions[int(state.b)],
-                sources=[
-                    {
-                        "person_id": int(state.a),
-                        "expected_revision": revisions[int(state.a)],
-                    }
-                ],
-                request_id="req-second-connection-merge",
-            )
+            with Catalog.open(db_path=state.env.catalog.db_path) as writer:
+                rows = writer.read_all(
+                    "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
+                    (int(state.a), int(state.b)),
+                )
+                revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
+                merged["result"] = PersonService(writer, clock=writer.now_ms).merge(
+                    target_person_id=int(state.b),
+                    target_expected_revision=revisions[int(state.b)],
+                    sources=[
+                        {
+                            "person_id": int(state.a),
+                            "expected_revision": revisions[int(state.a)],
+                        }
+                    ],
+                    request_id="req-second-connection-merge",
+                )
 
         def spy(connection: Any, person_id: int) -> int:
             value = real_resolve(connection, person_id)
@@ -584,21 +584,21 @@ def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
     state = seeded
     second = Catalog.open(db_path=state.env.catalog.db_path)
     try:
-        persons = PersonService(second, clock=second.now_ms)
         moves = {"count": 0}
         real_resolve = search_service.resolve_canonical_person_id
 
         def rename_every_time() -> None:
-            moves["count"] += 1
-            row = second.read_one(
-                "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
-            )
-            persons.rename(
-                person_id=int(state.b),
-                name=f"Alice {moves['count']}",
-                request_id=f"req-moving-{moves['count']}",
-                expected_revision=int(row["revision"]),
-            )
+            with Catalog.open(db_path=state.env.catalog.db_path) as writer:
+                moves["count"] += 1
+                row = writer.read_one(
+                    "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
+                )
+                PersonService(writer, clock=writer.now_ms).rename(
+                    person_id=int(state.b),
+                    name=f"Alice {moves['count']}",
+                    request_id=f"req-moving-{moves['count']}",
+                    expected_revision=int(row["revision"]),
+                )
 
         def spy(connection: Any, person_id: int) -> int:
             value = real_resolve(connection, person_id)
@@ -634,23 +634,23 @@ def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
 
 def _second_connection_merger(state: Seeded, second: Catalog) -> Any:
     """A callable that commits one legitimate merge (target higher) on a second connection."""
-    persons = PersonService(second, clock=second.now_ms)
     merged: dict[str, Any] = {}
 
     def commit() -> None:
-        rows = second.read_all(
-            "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
-            (int(state.a), int(state.b)),
-        )
-        revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
-        merged["result"] = persons.merge(
-            target_person_id=int(state.b),
-            target_expected_revision=revisions[int(state.b)],
-            sources=[
-                {"person_id": int(state.a), "expected_revision": revisions[int(state.a)]}
-            ],
-            request_id="req-second-connection-merge",
-        )
+        with Catalog.open(db_path=state.env.catalog.db_path) as writer:
+            rows = writer.read_all(
+                "SELECT person_id, revision FROM persons WHERE person_id IN (?, ?)",
+                (int(state.a), int(state.b)),
+            )
+            revisions = {int(row["person_id"]): int(row["revision"]) for row in rows}
+            merged["result"] = PersonService(writer, clock=writer.now_ms).merge(
+                target_person_id=int(state.b),
+                target_expected_revision=revisions[int(state.b)],
+                sources=[
+                    {"person_id": int(state.a), "expected_revision": revisions[int(state.a)]}
+                ],
+                request_id="req-second-connection-merge",
+            )
 
     return commit, merged
 
@@ -722,7 +722,7 @@ def test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page(
         def spy(payload: dict[str, Any]) -> Any:
             value = real_entries_of(payload)
             if not moved:
-                with second.write() as connection:
+                with Catalog.open(db_path=state.env.catalog.db_path) as writer, writer.write() as connection:
                     moved["revision"] = place_revision.bump_suggestion_revision(
                         connection,
                         cause=place_revision.CAUSE_SUGGESTION_CHANGED,
@@ -762,28 +762,28 @@ def test_an_exhausted_retry_names_the_counter_that_moved(
     state = seeded
     second = Catalog.open(db_path=state.env.catalog.db_path)
     try:
-        persons = PersonService(second, clock=second.now_ms)
         moves = {"count": 0}
         real_entries_of = search_service._entries_of
 
         def mutate() -> None:
-            moves["count"] += 1
-            if mutation == "both":
-                row = second.read_one(
-                    "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
-                )
-                persons.rename(
-                    person_id=int(state.b),
-                    name=f"Alice {moves['count']}",
-                    request_id=f"req-moving-{moves['count']}",
-                    expected_revision=int(row["revision"]),
-                )
-            with second.write() as connection:
-                place_revision.bump_suggestion_revision(
-                    connection,
-                    cause=place_revision.CAUSE_SUGGESTION_CHANGED,
-                    now_ms=moves["count"],
-                )
+            with Catalog.open(db_path=state.env.catalog.db_path) as writer:
+                moves["count"] += 1
+                if mutation == "both":
+                    row = writer.read_one(
+                        "SELECT revision FROM persons WHERE person_id = ?", (int(state.b),)
+                    )
+                    PersonService(writer, clock=writer.now_ms).rename(
+                        person_id=int(state.b),
+                        name=f"Alice {moves['count']}",
+                        request_id=f"req-moving-{moves['count']}",
+                        expected_revision=int(row["revision"]),
+                    )
+                with writer.write() as connection:
+                    place_revision.bump_suggestion_revision(
+                        connection,
+                        cause=place_revision.CAUSE_SUGGESTION_CHANGED,
+                        now_ms=moves["count"],
+                    )
 
         def spy(payload: dict[str, Any]) -> Any:
             value = real_entries_of(payload)

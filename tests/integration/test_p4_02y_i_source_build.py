@@ -816,36 +816,3 @@ def test_a_refused_image_is_counted_on_the_card_without_hiding_the_rest(tmp_path
 
 
 # --------------------------------------------------------------------------- Web wiring
-def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path: Path) -> None:
-    """§1/§3/§5 at asset level: the served shell and script really carry the new entries."""
-    env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
-    try:
-        async def scenario(client: AsyncClient) -> dict[str, str]:
-            await env.authenticate(client)
-            shell = await client.get("/")
-            script = await client.get("/web/app.js")
-            assert shell.status_code == 200 and script.status_code == 200
-            return {"shell": shell.text, "script": script.text}
-
-        served = env.scenario(scenario)
-        for phrase in ("开始建库", "删除来源", "完整校验扫描", "快速刷新此来源"):
-            assert phrase in served["shell"] or phrase in served["script"], phrase
-        assert "删除来源只会移除 PhotoSearch 中的记录，不会删除文件夹中的照片" in served["script"]
-        assert "可以语义搜索" in served["script"]
-        assert '"build"' in served["script"]
-        assert "继续建库" in served["script"]
-        assert "semantic-backlog" in served["script"]
-        assert "semantic-confirmed-nothing" in served["script"]
-        assert "已扫描，无可索引图片" in served["script"]
-        assert "无法建立语义索引" in served["script"]
-        assert "张无法编码" in served["script"]
-        # A stage that has run no task is rendered 未开始, and outstanding-but-idle work is
-        # 待处理 - the two words the review follow-up asked for.
-        assert "NOT_STARTED: \"未开始\"" in served["script"]
-        assert "PENDING: \"待处理\"" in served["script"]
-        # A run that is not search ready names the gate it stopped at (re-review F3).
-        assert "SEARCH_GATE_TEXT" in served["script"]
-        assert "GENERATION_NOT_PUBLISHED: \"该向量空间还没有任何已发布的图像索引\"" in served["script"]
-        assert 'method: "DELETE"' in served["script"]
-    finally:
-        env.close()

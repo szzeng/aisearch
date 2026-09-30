@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
 from photo_search.catalog.errors import INVALID_PATH, CatalogError
@@ -52,6 +55,7 @@ def test_path_key_rejects_paths_outside_the_source_root(value: str) -> None:
     assert error.value.code == INVALID_PATH
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows drive path spelling")
 def test_root_key_is_absolute_case_insensitive_and_trailing_separator_free() -> None:
     assert root_key("C:/Temp/Photos/") == root_key("c:\\temp\\photos")
     assert normalize_root("C:/Temp/Photos/") == "C:\\Temp\\Photos"
@@ -73,3 +77,7 @@ def test_empty_source_root_is_rejected() -> None:
     with pytest.raises(CatalogError) as error:
         normalize_root("   ")
     assert error.value.code == INVALID_PATH
+
+
+def test_native_root_keeps_display_path(tmp_path):
+    assert normalize_root(tmp_path / "photos") == str(Path(tmp_path / "photos").resolve())

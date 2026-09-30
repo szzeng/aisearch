@@ -1,4 +1,4 @@
-"""P4-02N closure: the pinned Chinese-CLIP model, a real index and a real HTTP text search.
+"""P4-02N closure: the pinned FG-CLIP 2 model, a real index and a real HTTP text search.
 
 What this driver proves, in **one process** and with the real weights:
 
@@ -55,7 +55,7 @@ QUERY_TEXT = "红色的图片"
 EXPECTED_TOP = "red.png"
 SESSION_TOKEN = "p4-02n-session-token"
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
-PROVIDER_BY_DEVICE = {"gpu": "CUDAExecutionProvider", "cpu": "CPUExecutionProvider"}
+PROVIDER_BY_DEVICE = {"gpu": "torch-cuda", "cpu": "torch-cpu"}
 ORIGIN = "http://127.0.0.1"
 
 
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--manifest",
         type=Path,
-        default=REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json",
+        default=REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json",
     )
     parser.add_argument(
         "--device", default="cuda", help="cuda (default), cpu, or auto for the ADR-0001 policy"

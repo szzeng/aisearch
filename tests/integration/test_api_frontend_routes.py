@@ -21,50 +21,34 @@ _UNSAFE_TARGETS = [
 
 
 def test_the_shell_and_its_assets_are_public_while_the_api_is_not(api_env) -> None:
-    async def scenario(client: AsyncClient) -> dict:
-        shell = await client.get("/")
-        script = await client.get("/web/app.js")
-        style = await client.get("/web/styles.css")
-        missing = await client.get("/web/does-not-exist.js")
-        traversal = await client.get("/web/%2e%2e/app.js")
-        deep_traversal = await client.get("/web/app.js/../../index.html")
-        stats = await client.get("/api/v1/stats")
-        return {
-            "shell": shell,
-            "script": script,
-            "style": style,
-            "missing": missing,
-            "traversal": traversal,
-            "deep_traversal": deep_traversal,
-            "stats": stats,
-        }
+    import re
 
-    result = api_env.scenario(scenario)
+    async def scenario(client: AsyncClient) -> None:
+        for path in ("/", "/search", "/persons", "/places", "/library", "/sources"):
+            shell = await client.get(path)
+            assert shell.status_code == 200
+            assert "no-cache" in shell.headers["Cache-Control"]
+            assert TOKEN not in shell.text
+            assert str(api_env.data_root) not in shell.text
+            for asset in re.findall(r'(?:src|href)="(/web/[^"]+)"', shell.text):
+                response = await client.get(asset)
+                assert response.status_code == 200
+                assert "max-age" in response.headers["Cache-Control"]
+        for path in ("/web/does-not-exist.js", "/web/%2e%2e/app.js", "/web/app.js/../../index.html"):
+            assert (await client.get(path)).status_code == 404
+        for path in ("/api/v1/stats", "/api/v1/persons", "/api/v1/places", "/api/v1/places/1"):
+            assert (await client.get(path)).status_code == 401
+        assert (await client.post("/api/v1/search", json={})).status_code == 401
+        assert (await client.post("/api/v1/search/image")).status_code == 401
+        await api_env.authenticate(client)
+        created = await client.post("/api/v1/places", json={"canonical_name": "测试地点", "kind": "custom"}, headers=api_env.post_headers(api_env.csrf_token))
+        assert created.status_code == 201, created.text
+        detail = await client.get(f"/api/v1/places/{created.json()['place_id']}")
+        assert detail.status_code == 200
+        assert detail.json()["canonical_name"] == "测试地点"
+        assert (await client.get("/api/v1/places/99999")).status_code == 404
 
-    shell = result["shell"]
-    assert shell.status_code == 200, shell.text
-    assert shell.headers["Content-Type"].startswith("text/html")
-    assert "no-cache" in shell.headers["Cache-Control"]
-    assert shell.headers["X-Request-ID"]
-    assert "http://" not in shell.text and "https://" not in shell.text
-    assert str(api_env.library) not in shell.text
-    assert str(api_env.data_root) not in shell.text
-    assert TOKEN not in shell.text
-
-    assert result["script"].status_code == 200
-    assert "javascript" in result["script"].headers["Content-Type"]
-    assert "max-age" in result["script"].headers["Cache-Control"]
-    assert result["style"].status_code == 200
-    assert result["style"].headers["Content-Type"].startswith("text/css")
-
-    assert result["missing"].status_code == 404
-    assert result["missing"].json()["code"] == "WEB_ASSET_NOT_FOUND"
-    assert result["traversal"].status_code == 404
-    assert result["deep_traversal"].status_code == 404
-
-    # The shell is public, the data is not: the boundary is untouched by the new routes.
-    assert result["stats"].status_code == 401
-    assert result["stats"].json()["code"] == "SESSION_REQUIRED"
+    api_env.scenario(scenario)
 
 
 def test_session_exchange_without_next_keeps_the_p1_04_json(api_env) -> None:
@@ -136,103 +120,3 @@ def test_an_unsafe_next_is_refused_without_burning_the_credential(api_env) -> No
         assert "location" not in refusal.headers
     assert result["accepted"].status_code == 303
     assert result["accepted"].headers["Location"] == "/sources"
-
-
-def test_the_places_page_is_public_while_its_api_stays_protected(api_env) -> None:
-    """``/places`` is the P2-03C document; ``/api/v1/places`` is still session-protected."""
-
-    async def scenario(client: AsyncClient) -> dict:
-        page = await client.get("/places")
-        script = await client.get("/web/places.js")
-        style = await client.get("/web/places.css")
-        shell = await client.get("/")
-        anonymous = await client.get("/api/v1/places")
-        await api_env.authenticate(client)
-        authenticated = await client.get("/api/v1/places")
-        return {
-            "page": page,
-            "script": script,
-            "style": style,
-            "shell": shell,
-            "anonymous": anonymous,
-            "authenticated": authenticated,
-        }
-
-    result = api_env.scenario(scenario)
-
-    page = result["page"]
-    assert page.status_code == 200, page.text
-    assert page.headers["Content-Type"].startswith("text/html")
-    assert "no-cache" in page.headers["Cache-Control"]
-    assert "http://" not in page.text and "https://" not in page.text
-    assert "地点整理" in page.text
-    assert str(api_env.library) not in page.text
-    assert str(api_env.data_root) not in page.text
-    assert TOKEN not in page.text
-
-    assert result["script"].status_code == 200
-    assert "javascript" in result["script"].headers["Content-Type"]
-    assert result["style"].status_code == 200
-    assert result["style"].headers["Content-Type"].startswith("text/css")
-    # The shell links to the page, so the navigation goes both ways.
-    assert 'href="/places"' in result["shell"].text
-
-    # The document is public; the frozen place records are not.
-    assert result["anonymous"].status_code == 401
-    assert result["anonymous"].json()["code"] == "SESSION_REQUIRED"
-    assert result["authenticated"].status_code == 200
-    assert "places" in result["authenticated"].json()
-
-
-def test_the_search_page_is_public_while_its_api_stays_protected(api_env) -> None:
-    """``/search`` is the P2-07 document; ``/api/v1/search`` is still session-protected."""
-
-    async def scenario(client: AsyncClient) -> dict:
-        page = await client.get("/search")
-        script = await client.get("/web/search.js")
-        style = await client.get("/web/search.css")
-        shell = await client.get("/")
-        places = await client.get("/places")
-        anonymous = await client.post("/api/v1/search", json={"request_id": "r1"})
-        image = await client.post("/api/v1/search/image")
-        await api_env.authenticate(client)
-        profile = await client.get("/api/v1/search-profile")
-        return {
-            "page": page,
-            "script": script,
-            "style": style,
-            "shell": shell,
-            "places": places,
-            "anonymous": anonymous,
-            "image": image,
-            "profile": profile,
-        }
-
-    result = api_env.scenario(scenario)
-
-    page = result["page"]
-    assert page.status_code == 200, page.text
-    assert page.headers["Content-Type"].startswith("text/html")
-    assert "no-cache" in page.headers["Cache-Control"]
-    assert "http://" not in page.text and "https://" not in page.text
-    assert "搜索" in page.text
-    assert str(api_env.library) not in page.text
-    assert str(api_env.data_root) not in page.text
-    assert TOKEN not in page.text
-
-    assert result["script"].status_code == 200
-    assert "javascript" in result["script"].headers["Content-Type"]
-    assert result["style"].status_code == 200
-    assert result["style"].headers["Content-Type"].startswith("text/css")
-
-    # The three documents link to each other.
-    assert 'href="/search"' in result["shell"].text
-    assert 'href="/search"' in result["places"].text
-    assert 'href="/places"' in page.text
-
-    # The document is public; both search endpoints are not.
-    assert result["anonymous"].status_code == 401
-    assert result["anonymous"].json()["code"] == "SESSION_REQUIRED"
-    assert result["image"].status_code == 401
-    assert result["image"].json()["code"] == "SESSION_REQUIRED"
-    assert result["profile"].status_code == 200

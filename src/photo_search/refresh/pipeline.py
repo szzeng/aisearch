@@ -487,6 +487,7 @@ def _semantic_stage(
                 device=device,
                 device_policy=device_policy,
                 worker_id="library-refresh",
+                cancel_check=cancel_check,
             )
             batches += 1
             encoded += int(payload["targets"])
@@ -730,6 +731,7 @@ def _semantic_build_stage(
                     device=device,
                     device_policy=device_policy,
                     worker_id="library-refresh",
+                cancel_check=cancel_check,
                 )
                 batches += 1
                 encoded += int(payload["targets"])
@@ -1080,8 +1082,8 @@ def _enrichment_stages(
         "taken_time": lambda: _taken_time_stage(catalog, content | location),
         "gps": lambda: _gps_stage(catalog, content),
         "place_resolver": lambda: _resolver_stage(catalog, service.data_root, content),
-        "face": lambda: _face_stage(catalog, service.data_root, content),
-        "ocr": lambda: _ocr_stage(catalog, service.data_root, content),
+        "face": lambda: _face_stage(catalog, service.data_root, content, cancel_check),
+        "ocr": lambda: _ocr_stage(catalog, service.data_root, content, cancel_check),
     }
     if mode == REFRESH_MODE_BUILD:
         scoped: dict[str, Callable[[], dict[str, Any]]] = {
@@ -1112,13 +1114,13 @@ def _enrichment_stages(
             "face": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
-                runner=lambda page: _face_stage(catalog, service.data_root, page),
+                runner=lambda page: _face_stage(catalog, service.data_root, page, cancel_check),
                 cancel_check=cancel_check,
             ),
             "ocr": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
-                runner=lambda page: _ocr_stage(catalog, service.data_root, page),
+                runner=lambda page: _ocr_stage(catalog, service.data_root, page, cancel_check),
                 cancel_check=cancel_check,
             ),
         }
@@ -1318,6 +1320,11 @@ def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str,
 
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "targets": 0, "new_jobs": 0, "steps": 0}
+    if catalog.read_one("SELECT 1 FROM boundary_packages WHERE active=1"):
+        from photo_search.geo.boundaries import resolve_batch
+        handled = resolve_batch(catalog, limit=ENRICH_LIMIT)
+        return {"state": STAGE_OK, "targets": len(assets), "steps": handled,
+                "new_jobs": 0, "basis": "GPS_BOUNDARY"}
     try:
         resolver_module.load_active_content(catalog.connection, data_root=data_root)
     except CatalogError as error:
@@ -1343,7 +1350,10 @@ def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str,
     return {"state": STAGE_OK, "targets": len(targets), "new_jobs": created, "steps": steps}
 
 
-def _face_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]:
+def _face_stage(
+    catalog: Any, data_root: Any, assets: set[int],
+    cancel_check: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
     from photo_search.face import service as face_service
     from photo_search.face import weights as face_weights
 
@@ -1359,7 +1369,7 @@ def _face_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any
             "steps": 0,
         }
     result = face_service.detect(
-        catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT]
+        catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT], cancel=cancel_check
     )
     return {
         "state": STAGE_OK,
@@ -1372,7 +1382,10 @@ def _face_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any
     }
 
 
-def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]:
+def _ocr_stage(
+    catalog: Any, data_root: Any, assets: set[int],
+    cancel_check: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
     from photo_search.ocr import service as ocr_service
     from photo_search.ocr import weights as ocr_weights
 
@@ -1389,7 +1402,9 @@ def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]
         }
     targets = ocr_service.ocr_targets(catalog, asset_ids=sorted(assets)[:ENRICH_LIMIT])
     enqueued = ocr_service.enqueue_targets(catalog, targets, now_ms=catalog.now_ms())
-    run = ocr_service.run_queue(catalog, data_root=data_root, worker_id="library-refresh")
+    run = ocr_service.run_queue(
+        catalog, data_root=data_root, worker_id="library-refresh", cancel=cancel_check
+    )
     return {
         "state": STAGE_OK,
         "targets": len(targets),

@@ -26,11 +26,6 @@ from photo_search.ocr.processor import (
 from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.search.tokens import TOKENIZER_VERSION, index_text
 
-MANIFEST = json.loads(
-    (
-        Path(__file__).resolve().parents[2] / "tools/prepare_models/manifests/face-ocr.json"
-    ).read_text(encoding="utf-8")
-)
 SHA = "c" * 64
 
 
@@ -77,32 +72,15 @@ def payload(**overrides: object) -> dict:
 
 
 # ------------------------------------------------------------------------- pinned facts
-def test_the_pinned_table_mirrors_the_p0_04_manifest_exactly() -> None:
-    manifest = MANIFEST["ocr"]
-    expected = {
-        role: (str(entry["path"]), int(entry["bytes"]), str(entry["sha256"]))
-        for role, entry in manifest["artifacts"].items()
+def test_ocr_config_is_pinned_to_the_shipped_file() -> None:
+    from photo_search.ocr.weights import sha256_file
+    path = Path(contract.__file__).with_name("rapidocr.yaml")
+    assert sha256_file(path) == contract.CONFIG_HASH
+    assert contract.ENGINE_VERSION == "3.9.2"
+    assert contract.OCR_SOURCE == "RAPIDOCR_PPOCRV6_SMALL"
+    assert {entry["role"] for entry in contract.PINNED_WEIGHTS} == {
+        "detection", "recognition", "classification", "config"
     }
-    mirrors = {
-        str(entry["role"]): (str(entry["path"]), int(entry["bytes"]), str(entry["sha256"]))
-        for entry in contract.PINNED_WEIGHTS
-    }
-    assert mirrors == expected
-    assert contract.CONFIG_HASH == manifest["artifacts"]["config"]["sha256"]
-    assert contract.ENGINE_VERSION == manifest["package_version"]
-    assert contract.OCR_ENGINE == manifest["engine"]
-    # The recorded preprocessing is the frozen engine configuration this build claims.
-    assert contract.ENGINE_CONFIG["det_limit_side_len"] == manifest["preprocessing"]["detection"][
-        "limit_side_len"
-    ]
-    assert contract.ENGINE_CONFIG["det_box_thresh"] == manifest["preprocessing"]["detection"][
-        "box_thresh"
-    ]
-    assert contract.ENGINE_CONFIG["rec_image_shape"] == manifest["preprocessing"]["recognition"][
-        "image_shape"
-    ]
-    assert contract.MODEL_FINGERPRINT == contract.MODEL_FINGERPRINT.lower()
-    assert len(contract.MODEL_FINGERPRINT) == 64
 
 
 def test_the_fingerprint_is_derived_from_the_pinned_triples() -> None:
@@ -187,7 +165,7 @@ def test_low_confidence_regions_are_kept_and_counted() -> None:
 @pytest.mark.parametrize(
     ("overrides", "code"),
     [
-        ({"processor_id": "ocr-text@2"}, ARTIFACT_INVALID),
+        ({"processor_id": "ocr-text@obsolete"}, ARTIFACT_INVALID),
         ({"source": "OTHER"}, ARTIFACT_INVALID),
         ({"model_fingerprint": "d" * 64}, ARTIFACT_INVALID),
         ({"config_hash": "d" * 64}, ARTIFACT_INVALID),

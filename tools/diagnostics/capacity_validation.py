@@ -23,7 +23,7 @@ The stages are driven through the product's own code, never through a copy of it
 
 Honest limitations, recorded in the report instead of being hidden:
 
-1. No pinned Chinese-CLIP (and no face/OCR) weights are installed on this machine, so an
+1. No pinned FG-CLIP 2 (and no face/OCR) weights are installed on this machine, so an
    embedding is produced by a deterministic stand-in executor: same protocol, same files,
    same outbox, no model. Real-model throughput, VRAM peaks, the GTX 1660 minimum
    configuration and the face/OCR stage times are therefore reported ``BLOCKED``.
@@ -84,7 +84,7 @@ from photo_search.search import documents as search_documents  # noqa: E402
 from photo_search.search.service import search_assets  # noqa: E402
 
 #: The pinned processor identity of ``ann_scale_benchmark`` (real space/dimension of the
-#: Chinese-CLIP ViT-B/16 export); only the encoder behind it is a stand-in.
+#: FG-CLIP 2 Base manifest); only the encoder behind it is a stand-in.
 SPACE_ID = bench.SPACE_ID
 PROCESSOR_ID = bench.PROCESSOR_ID
 GENERATION_ID = bench.GENERATION_ID
@@ -139,38 +139,10 @@ def directory_bytes(path: Path) -> int:
 
 
 def current_working_set_bytes() -> int:
-    """Working set of this process right now (Windows) or current RSS elsewhere."""
-    if sys.platform == "win32":
-        import ctypes
-        import ctypes.wintypes as wintypes
+    """Current resident bytes on Windows, macOS and Linux (never peak RSS)."""
+    import psutil
 
-        class ProcessMemoryCounters(ctypes.Structure):
-            _fields_ = [
-                ("cb", wintypes.DWORD),
-                ("PageFaultCount", wintypes.DWORD),
-                ("PeakWorkingSetSize", ctypes.c_size_t),
-                ("WorkingSetSize", ctypes.c_size_t),
-                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                ("PagefileUsage", ctypes.c_size_t),
-                ("PeakPagefileUsage", ctypes.c_size_t),
-            ]
-
-        counters = ProcessMemoryCounters()
-        counters.cb = ctypes.sizeof(ProcessMemoryCounters)
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        query = kernel32.K32GetProcessMemoryInfo
-        query.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessMemoryCounters), wintypes.DWORD]
-        query.restype = wintypes.BOOL
-        handle = wintypes.HANDLE(kernel32.GetCurrentProcess())
-        if not query(handle, ctypes.byref(counters), counters.cb):
-            raise OSError(f"GetProcessMemoryInfo failed: {ctypes.get_last_error()}")
-        return int(counters.WorkingSetSize)
-    with open("/proc/self/statm", encoding="ascii") as stream:  # pragma: no cover - POSIX
-        pages = int(stream.read().split()[1])
-    return pages * os.sysconf("SC_PAGE_SIZE")
+    return int(psutil.Process().memory_info().rss)
 
 
 class MemorySampler:
@@ -1002,7 +974,7 @@ def injection_fixture(work: Path, args: argparse.Namespace) -> tuple[Path, list[
 def injection_interrupted_drain(
     data_root: Path, assets: Sequence[int], *, args: argparse.Namespace
 ) -> dict[str, Any]:
-    """A drain killed mid-flight resumes into exactly one row per asset (P2-03 §7.2)."""
+    """Interrupt at a confirmed batch boundary, then resume without lost/duplicate rows."""
     catalog = Catalog.open(data_root=data_root)
     try:
         fixture = Fixture(catalog, data_root)
@@ -1023,35 +995,54 @@ def injection_interrupted_drain(
         pending_before = outbox_pending(catalog)
         environment = dict(os.environ)
         environment["PYTHONIOENCODING"] = "utf-8"
+        ready = data_root / "interrupt-ready"
+        ready.unlink(missing_ok=True)
+        # A timed kill can miss the entire drain on a fast host. The child applies one
+        # real batch and signals readiness before waiting for termination. The separate
+        # after_lance injection covers interruption inside the engine/SQLite window.
+        child = """
+import sys
+import threading
+from pathlib import Path
+from photo_search.catalog.db import Catalog
+from photo_search.indexing.maintenance import drain_semantic_outbox
+with Catalog.open(data_root=Path(sys.argv[1])) as catalog:
+    drain_semantic_outbox(catalog, limit=10, batch_size=10)
+    Path(sys.argv[2]).touch()
+    threading.Event().wait()
+"""
         process = subprocess.Popen(
             [
                 sys.executable,
-                "-m",
-                "photo_search.indexing.cli",
-                "drain",
-                "--data-root",
+                "-c",
+                child,
                 str(data_root),
-                "--json",
-                "--limit",
-                str(len(subset)),
-                "--batch-size",
-                "10",
+                str(ready),
             ],
             cwd=str(REPO_ROOT),
             env=environment,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        deadline = time.perf_counter() + 120
-        while time.perf_counter() < deadline and outbox_confirmed(catalog) == 0:
-            time.sleep(0.05)
-        time.sleep(0.2)
-        interrupted = process.poll() is None
-        process.terminate()
         try:
-            process.wait(timeout=60)
-        except subprocess.TimeoutExpired:  # pragma: no cover - a stuck child is reported
-            process.kill()
+            deadline = time.perf_counter() + 120
+            while not ready.exists() and process.poll() is None:
+                if time.perf_counter() >= deadline:
+                    raise RuntimeError("drain child did not confirm its first batch")
+                time.sleep(0.05)
+            if not ready.exists():
+                _, stderr = process.communicate()
+                raise RuntimeError(f"drain child failed: {stderr.decode(errors='replace')}")
+            interrupted = process.poll() is None
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:  # pragma: no cover - a stuck child is reported
+                process.kill()
+                process.communicate()
+            ready.unlink(missing_ok=True)
         mid_confirmed = outbox_confirmed(catalog)
         mid = outbox_counts(catalog)
         resumed = maintenance.drain_semantic_outbox(catalog, limit=len(subset) + 16)

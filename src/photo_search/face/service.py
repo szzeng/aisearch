@@ -29,6 +29,7 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CatalogError
+from photo_search.catalog.selection import available_assets as face_targets
 from photo_search.face import contract, weights
 from photo_search.face.engine import FaceEngineCache
 from photo_search.face.index import FaceIndexCoordinator, reconcile
@@ -40,40 +41,6 @@ from photo_search.scheduler.contracts import RuntimeCapabilities
 
 #: States a forced re-detection may rewind: everything except a live execution.
 REWINDABLE_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "RETRY_WAIT")
-
-_TARGET_SQL = (
-    "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256 "
-    "FROM assets AS a "
-    "JOIN file_locations AS f ON f.asset_id = a.asset_id AND f.availability = 'PRESENT' "
-    "{source_filter}"
-    "ORDER BY a.asset_id"
-)
-
-
-def face_targets(
-    catalog: Catalog,
-    *,
-    asset_ids: Sequence[int] | None = None,
-    source_id: int | None = None,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """Every asset that currently has a readable original - the face work set."""
-    wanted = None if asset_ids is None else {int(value) for value in asset_ids}
-    source_filter = ""
-    parameters: tuple[Any, ...] = ()
-    if source_id is not None:
-        source_filter = "WHERE f.source_id = ? "
-        parameters = (int(source_id),)
-    rows = catalog.read_all(_TARGET_SQL.format(source_filter=source_filter), parameters)
-    targets = [
-        {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
-        for row in rows
-        if wanted is None or int(row["asset_id"]) in wanted
-    ]
-    if limit is not None:
-        targets = targets[: max(0, int(limit))]
-    return targets
-
 
 def enqueue_targets(
     catalog: Catalog,
@@ -319,6 +286,8 @@ def run_queue(
     )
     steps = 0
     while limit is None or steps < max(0, int(limit)):
+        if cancel is not None and cancel():
+            break
         if not scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             break
         steps += 1
@@ -355,6 +324,7 @@ def detect(
     limit: int | None = None,
     asset_ids: Sequence[int] | None = None,
     engine_cache: FaceEngineCache | None = None,
+    cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """The whole closed loop: queue, detect, publish candidates, group conservatively."""
     targets = face_targets(catalog, asset_ids=asset_ids, limit=limit)
@@ -367,6 +337,7 @@ def detect(
         device=str(device),
         limit=limit,
         engine_cache=engine_cache,
+        cancel=cancel,
     )
     index = FaceIndexCoordinator(catalog)
     published = catch_up_index(catalog, coordinator=index)

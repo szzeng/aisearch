@@ -296,7 +296,7 @@ def test_duplicate_content_shares_one_asset_and_one_artifact(
         assert harness.service.run_scan(source_a)["state"] == "SUCCEEDED"
         after_delete = _locations(harness, source_a)
         assert after_delete["top.jpg"]["availability"] == "MISSING"
-        assert after_delete["子 目 录\\副 本 一.jpg"]["availability"] == "PRESENT"
+        assert after_delete[str(Path("子 目 录") / "副 本 一.jpg")]["availability"] == "PRESENT"
         counts_a = harness.service.counts(source_id=source_a)
         assert counts_a["locations"] == 3
         assert counts_a["locations_present"] == 2
@@ -360,8 +360,8 @@ def test_move_keeps_identity_and_reuses_the_same_artifact(
     assert outcome["locations_missing"] == 1
     final = _locations(harness, source_id)
     assert len(final) == 3
-    assert final["2024 年\\照 片 一.jpg"]["availability"] == "PRESENT"
-    assert final["2024 年\\照 片 一.jpg"]["asset_id"] == asset_id
+    assert final[str(Path("2024 年") / "照 片 一.jpg")]["availability"] == "PRESENT"
+    assert final[str(Path("2024 年") / "照 片 一.jpg")]["asset_id"] == asset_id
     assert final["a.jpg"]["availability"] == "MISSING"
     # The old position keeps its last known content binding (ADR-0002 §3.4).
     assert final["a.jpg"]["asset_id"] == asset_id

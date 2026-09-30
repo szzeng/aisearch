@@ -1,4 +1,4 @@
-"""Build the onedir executable with the CUDA runtime and without user model weights.
+"""Build the Windows onedir executable with the CUDA runtime and without user model weights.
 
 The product ships one ONNX Runtime distribution (``onnxruntime-gpu``). Its CUDA execution
 provider needs the matching CUDA/cuDNN DLLs, which the ``nvidia-*`` wheels install outside
@@ -41,7 +41,8 @@ def nvidia_runtime_dlls(site_packages: Path) -> list[Path]:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[2]
-    manifest = root / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+    if not (root / "src/photo_search/web/dist/index.html").is_file():
+        raise SystemExit("UI build missing; run `npm --prefix frontend ci` and `npm --prefix frontend run build` first")
     dlls = nvidia_runtime_dlls(site_packages_directory())
     if not dlls:
         raise SystemExit(
@@ -50,14 +51,15 @@ def main() -> int:
         )
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "PhotoSearch",
-        "--paths", str(root / "src"), "--add-data", f"{manifest};tools/prepare_models/manifests",
+        "--paths", str(root / "src"),
         "--collect-binaries", "onnxruntime", "--collect-data", "tokenizers",
         # ``pillow_heif`` is imported only after the media capability probe.  PyInstaller
         # cannot see that dynamic import, and the wheel has both a top-level extension and
         # a sibling libheif DLL.  Collecting the package as a unit keeps the frozen build
         # capability-identical to the locked development environment (P4-00C-B).
         "--collect-all", "pillow_heif",
-        "--exclude-module", "torch", "--exclude-module", "torchvision",
+        "--collect-all", "torch", "--collect-all", "torchvision",
+        "--collect-all", "transformers", "--collect-all", "rapidocr",
         # The catalog migrations are ``.sql`` data files inside the package: without them a
         # frozen build would start with no schema at all (P1-04 report §6.1).
         "--collect-data", "photo_search",

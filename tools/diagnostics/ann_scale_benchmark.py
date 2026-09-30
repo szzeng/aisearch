@@ -68,6 +68,9 @@ from photo_search.artifacts.store import ArtifactStore, generation_id_for
 from photo_search.catalog.db import Catalog
 from photo_search.indexing.store import IndexCoordinator, LanceVectorIndex
 from photo_search.jobs import queue as job_queue
+
+# The synthetic probe follows the installed model's dimension and identity.
+from photo_search.models.embedding.manifest import DEFAULT_MANIFEST, pinned_embedding_spec
 from photo_search.scheduler.contracts import (
     CONTRACT_VERSION,
     ArtifactRef,
@@ -85,11 +88,10 @@ from photo_search.search.tokens import (
 )
 from photo_search.taken_time import contract as time_contract
 
-#: The production embedding identity of the pinned Chinese-CLIP ViT-B/16 export
-#: (``tools/prepare_models/manifests/chinese-clip-vit-b-16.json``): 512-D, cosine, L2.
-SPACE_ID = "chinese-clip-vit-b-16:c8ac42d3907c57b0"
-PROCESSOR_ID = "chinese-clip-vit-b-16@36e679e65c2a"
-DIM = 512
+_MODEL_SPEC = pinned_embedding_spec(DEFAULT_MANIFEST)
+SPACE_ID = str(_MODEL_SPEC.envelope["space_id"])
+PROCESSOR_ID = str(_MODEL_SPEC.processor_id)
+DIM = int(_MODEL_SPEC.envelope["dimension"])
 GENERATION_ID = generation_id_for(SPACE_ID, PROCESSOR_ID)
 #: LanceDB refuses to train PQ with fewer rows than this.
 MIN_ANN_ROWS = 256
