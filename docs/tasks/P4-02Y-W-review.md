@@ -29,11 +29,12 @@
 ## 必审不变量
 
 - `DEFAULT_TOP_K = MAX_TOP_K = MAX_SESSION_IDS = 5000`；产品默认固定 5000，UI 不暴露 top_k 设置。
-- 强匹配唯一门限常量为 `STRONG_MATCH_MAX_DISTANCE = 1.5`；只使用 Vector Top5000 的 `distance` 统计。验证 1.49 / 1.5 / 1.500001 边界及第 5000 条决定的 `strong_match_more_possible`。
+- 强匹配唯一门限常量为 `STRONG_MATCH_MAX_DISTANCE = 1.3`（≈ cosine ≥ 0.35）；只使用 Vector Top5000 的 `distance` 统计。核对边界测试 1.29 / 1.30 / 1.300001 及第 5000 条决定的 `strong_match_more_possible`。
 - 强匹配仅添加计数，不过滤、隐藏、重排或减少候选；SearchResult 顶层字段不变，API 不暴露阈值或百分比。
 - vector `scan_truncated` 必须直接映射 `vector_scan.truncated`；不得再以 vector 候选数量/top_k 推断扫描不完整。真正扫描截断显示卡面指定警告；正常 5000 容量、5000 strong、或 RRF 结果超过 Session 容量均不弹异常警告。
 - `len(entries) <= 5000` 不截断；`>5000` 保存前 5000 并标记截断；分页可达第 5000 个 ID。
 - 性能证据实际使用 P4-02Y-V 的 30 万固定夹具，top_k=5000、20 blocks、300000 scanned、fallback=0、scan_truncated=false。
+- 用户于 2026-09-30 指定更新强匹配门限与阈值边界测试/文档，并明确要求本修正不运行测试；既有 JUnit/Smoke 证据早于该门限修正，不得当作新门限已验证。核对当前 diff 和更新后的测试断言即可。
 
 ## 审查输出
 

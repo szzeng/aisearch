@@ -23,9 +23,9 @@ def test_search_and_session_capacity_are_5000_and_request_default_is_fixed() -> 
 
 def test_strong_match_distance_boundary_only_adds_vector_counts() -> None:
     rows = [
-        {"asset_id": 1, "distance": 1.49},
-        {"asset_id": 2, "distance": 1.5},
-        {"asset_id": 3, "distance": 1.500001},
+        {"asset_id": 1, "distance": 1.29},
+        {"asset_id": 2, "distance": 1.30},
+        {"asset_id": 3, "distance": 1.300001},
     ]
     original_order = [row["asset_id"] for row in rows]
     summary = channel_summary(rows, top_k=5000)
@@ -37,14 +37,14 @@ def test_strong_match_distance_boundary_only_adds_vector_counts() -> None:
 
 
 def test_full_top_k_strong_boundary_and_real_scan_truncation_are_distinct() -> None:
-    rows = [{"asset_id": i, "distance": 1.5} for i in range(5000)]
+    rows = [{"asset_id": i, "distance": 1.30} for i in range(5000)]
     strong = channel_summary(rows, top_k=5000)
     assert strong["strong_match_count"] == 5000
     assert strong["strong_match_more_possible"] is True
     assert strong["truncated"] is False
     assert strong["scan_truncated"] is False
 
-    rows[-1] = {"asset_id": 4999, "distance": 1.500001}
+    rows[-1] = {"asset_id": 4999, "distance": 1.300001}
     weak_boundary = channel_summary(rows, top_k=5000)
     assert weak_boundary["strong_match_more_possible"] is False
     assert weak_boundary["truncated"] is False

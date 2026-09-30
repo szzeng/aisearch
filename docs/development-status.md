@@ -8,7 +8,7 @@
 
 ## 当前任务 P4-02Y-W — 5000 搜索结果 + 高度匹配（实现与验收完成，独立审查待做）
 
-实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。B 级 JUnit **1878/0/0/48**；30 万 smoke `top_k=5000`：20 blocks、300000 scanned、fallback=0、truncated=false；ruff、Node syntax、diff-check 通过。按 V3.1 §2.4，仍需新会话 DS-H 完整受影响面工程主审，故总任务尚未 PASS。下一步只做该独立审查，不扩展搜索算法优化。
+实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。当前暂定阈值 `distance <= 1.3`（约 `cosine >= 0.35`）；边界测试/文档已同步。此前 B 级 JUnit **1878/0/0/48**、30 万 smoke 及静态检查早于此门限修正，按用户要求未重跑测试，故新门限未验证；总任务仍待独立 DS-H 复核。
 
 ## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
 

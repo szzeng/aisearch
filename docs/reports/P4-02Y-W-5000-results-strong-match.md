@@ -6,7 +6,7 @@
 ## 结果
 
 - `DEFAULT_TOP_K`、`MAX_TOP_K`、`MAX_SESSION_IDS` 统一为 5000；SearchSessionStore 的现有 `len(entries) <= max_ids` 语义得到遵守，调用方也只在 `len(entries) > 5000` 时传入候选截断状态。
-- `channels.vector` 加入 `strong_match_count`、`strong_match_more_possible`、`scan_truncated`。强匹配唯一内部阈值为 `STRONG_MATCH_MAX_DISTANCE = 1.5`，只计算 Vector Top-K 的 squared-L2 distance；RRF 输入和融合结果不受计数影响。SearchResult 顶层结构未变，也不向 API 暴露阈值或百分比。
+- `channels.vector` 加入 `strong_match_count`、`strong_match_more_possible`、`scan_truncated`。强匹配暂定内部阈值为 `STRONG_MATCH_MAX_DISTANCE = 1.3`（约等于 cosine ≥ 0.35），只计算 Vector Top-K 的 squared-L2 distance；RRF 输入和融合结果不受计数影响。SearchResult 顶层结构未变，也不向 API 暴露阈值或百分比。
 - vector `truncated` 只随 `vector_scan.truncated`；前端只有 `scan_truncated=true` 才提示“向量扫描未完整完成，本次结果可能不完整。”正常 Session 容量不显示异常警告。语义搜索状态栏显示“约 N 张高度匹配”或“5000+ 张高度匹配”。
 - 架构 §9.2、§9.5 同步为固定 5000 语义 Top-K/Session 上限，并说明纯筛选权威候选页仍是独立上限。
 - `docs/development-status.md` 压缩至 11 行，只保留 W/V 最新交接；此前的历史交接原样转存到现有状态归档文件。
@@ -22,5 +22,6 @@
 ## 未决与范围
 
 - 实现者未自审。依 V3.1 §2.4，本跨检索/API/Session 变更需另开会话做独立 DS-H 完整受影响面工程主审；当前不得标总任务 PASS。
+- 门限后来按用户指示更新；边界测试与相关任务/复核文档已同步修改。按用户要求没有重新运行测试；前述 B 级与 30 万 smoke 证据早于此次单阈值修正，当前阈值修正尚未验证。
 - 不涉及 schema、migration、依赖、`uv.lock`、ANN/检索路径或真实照片库。未启动其他搜索算法优化。
 - 下一步：`docs/tasks/P4-02Y-W-review.md`，建议 DS-H / DeepSeek V4.1 Flash / 高推理；模型由用户手动切换。
