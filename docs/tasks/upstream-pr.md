@@ -6,7 +6,7 @@
 
 阅读：主架构 §3～11、§15；策略 §2.4、§3、§5；ADR-0001/0003/0014；search-repair、macos-benchmark、frontend-modernization、place-filtering、place-geography 任务记录及直接受影响实现/测试。
 
-检查重点：模型文件/空间身份与设备资格、worker 并发和恢复、SQLite 权威过滤与迁移、人工地点锁与撤销、API 会话/CSRF/路径安全、前端写操作及异步状态、构建资源、安装/升级文档、提交中无模型/图库/凭据/本机产物。结果见下；PR 链接在提交后记录。
+检查重点：模型文件/空间身份与设备资格、worker 并发和恢复、SQLite 权威过滤与迁移、人工地点锁与撤销、API 会话/CSRF/路径安全、前端写操作及异步状态、构建资源、安装/升级文档、提交中无模型/图库/凭据/本机产物。结果见下；已提交 [上游 PR #1](https://github.com/szzeng/aisearch/pull/1)（Draft），分支 `codex/macos-search-place-modernization`，实现提交 `44ce3de`。
 
 
 ## 改动和原因
@@ -50,3 +50,5 @@ UV_CACHE_DIR=.uv-cache UV_PYTHON_INSTALL_DIR=.python uv build --wheel --offline 
 正常入口重启后，原公开 2,000 图目录经自动备份升级至 schema 18，外键检查无错误；浏览器地点页、离线包来源/年份提示正常。此前真实搜索、以图搜图、人物命名/撤销、地点归类/撤销和合成 GPS 层级浏览证据见相关任务记录，本轮未重复模型 benchmark。
 
 未验：Windows NVIDIA/GTX 1660 实机与冻结包（含 GEOS/CUDA 依赖）、macOS 安装包、十万/三十万真实图库、所有人物复杂操作的浏览器路径、独立 DS-H 工程审查及 Sol 高风险聚焦终审。旧容量报告不能代表当前模型和地理版本；历史中国边界和一个西湖景区包不代表最新全国数据。以上均在 PR 中披露，提交为草稿供上游审阅，不标正式 PASS。
+
+提交状态：已向原作者仓库 `szzeng/aisearch:master` 提交草稿 PR，未合并。工作区仅提交源代码、锁文件、测试和必要文档；没有模型/图库/凭据产物。后续独立审查入口为 [整批变更审查卡](frontend-review.md)，由用户手动切换 DS-H 后开展。
