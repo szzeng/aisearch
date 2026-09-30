@@ -1,8 +1,12 @@
 # Development status
 
-更新：2026-09-29。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-09-30。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-02Y-K — Face 检测 CUDA/CPU 混合执行（PASS / DS-H 窄受影响面复核 = PASS，F1 已关闭）
+## 当前任务 P4-02Y-V — `top_k` 性能测试（DONE）
+
+纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。`MAX_TOP_K=1000` 在纯性能角度仅有温和保守性；不据此调整参数。产品代码零改动，ruff、脚本 help、diff-check 通过；未跑 pytest（卡片不要求）。任务卡要求测完即停止，本轮不自动建立下一张卡。
+
+## 上一任务 P4-02Y-K — Face 检测 CUDA/CPU 混合执行（PASS / DS-H 窄受影响面复核 = PASS，F1 已关闭）
 
 `det_10g` 的 CUDA session 改为显式 `CUDAExecutionProvider + CPUExecutionProvider` 混合 stack，
 `w600k_r50` 仍 strict CUDA（`session.disable_cpu_ep_fallback=1`）；probe 公开 detector/recognition
