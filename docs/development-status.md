@@ -10,6 +10,10 @@
 
 实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。当前暂定阈值 `distance <= 1.3`（约 `cosine >= 0.35`）；边界测试/文档已同步。此前 B 级 JUnit **1878/0/0/48**、30 万 smoke 及静态检查早于此门限修正，按用户要求未重跑测试，故新门限未验证；总任务仍待独立 DS-H 复核。
 
+## 旁路纯测量 P4-QWEN-SPEED — 完成
+
+报告：[P4-QWEN-SPEED](reports/P4-QWEN-SPEED.md)；原始样本：`test-results/p4-qwen-speed.json`。Qwen query P50 **72.86 ms**；2048D 30 万向量 P50 **23957.95 ms**，20 blocks / 300000 scanned / fallback 0 / truncated false。8 GB RTX 4060 Laptop FP16 CUDA 路径成功；估算搜索时间：512D **3.81 s**、2048D **24.34 s**（均非 HTTP 端到端实测）。
+
 ## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
 
 纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。纯性能数据不单独决定产品上限。
