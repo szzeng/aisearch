@@ -269,28 +269,28 @@ def test_the_engine_is_built_only_from_the_pinned_paths(tmp_path: Path, monkeypa
             self.options = options
             provider = (
                 runtime_device.CUDA_PROVIDER
-                if options.get("det_use_cuda")
+                if options.get("params", {}).get("EngineConfig.onnxruntime.use_cuda")
                 else runtime_device.CPU_PROVIDER
             )
             def session() -> Any:
                 return SimpleNamespace(get_providers=lambda: [provider])
-            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session()))
-            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session()))
+            self.text_det = SimpleNamespace(session=SimpleNamespace(session=session()))
+            self.text_cls = SimpleNamespace(session=SimpleNamespace(session=session()))
             self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session()))
 
         def __call__(self, image: Any) -> Any:  # pragma: no cover - no inference here
-            return None, None
+            return SimpleNamespace(boxes=None)
 
     engine = PinnedOcrEngine(resolved, engine_factory=Recorder)
     assert captured["config_path"] == str(resolved.config_path)
-    assert captured["det_model_path"] == str(resolved.detection_path)
-    assert captured["cls_model_path"] == str(resolved.classification_path)
-    assert captured["rec_model_path"] == str(resolved.recognition_path)
+    assert captured["params"]["Det.model_path"] == str(resolved.detection_path)
+    assert captured["params"]["Cls.model_path"] == str(resolved.classification_path)
+    assert captured["params"]["Rec.model_path"] == str(resolved.recognition_path)
     # The low-confidence override travels into the engine, and the wheel's own copies are
     # never referenced by any option.
-    assert captured["text_score"] == contract.MIN_TEXT_SCORE
+    assert captured["params"]["Global.text_score"] == contract.MIN_TEXT_SCORE
     assert "site-packages" not in json_dump(captured)
-    assert engine.read(None) is None
+    assert engine.read(None) == []
 
 
 def json_dump(payload: Any) -> str:
@@ -310,12 +310,12 @@ def test_the_engine_cache_reuses_a_verified_engine_until_the_files_change(
             builds["count"] += 1
             self.options = options
             session = SimpleNamespace(get_providers=lambda: [runtime_device.CPU_PROVIDER])
-            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
-            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_det = SimpleNamespace(session=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(session=SimpleNamespace(session=session))
             self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
 
         def __call__(self, image: Any) -> Any:  # pragma: no cover
-            return None, None
+            return SimpleNamespace(boxes=None)
 
     cache = OcrEngineCache(engine_factory=Recorder)
     first = cache.engine(tmp_path)
@@ -344,12 +344,12 @@ def test_the_engine_cache_separates_cpu_and_cuda_sessions(
         def __init__(self, **options: Any) -> None:
             provider = (
                 runtime_device.CUDA_PROVIDER
-                if options.get("det_use_cuda")
+                if options.get("params", {}).get("EngineConfig.onnxruntime.use_cuda")
                 else runtime_device.CPU_PROVIDER
             )
             session = SimpleNamespace(get_providers=lambda: [provider])
-            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
-            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_det = SimpleNamespace(session=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(session=SimpleNamespace(session=session))
             self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
 
     cache = OcrEngineCache(engine_factory=Recorder)
@@ -380,8 +380,8 @@ def test_a_gpu_request_refuses_a_cpu_only_rapidocr_session(
             session = SimpleNamespace(
                 get_providers=lambda: [runtime_device.CPU_PROVIDER]
             )
-            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
-            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_det = SimpleNamespace(session=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(session=SimpleNamespace(session=session))
             self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
 
     cache = OcrEngineCache(engine_factory=CpuOnlyRecorder)

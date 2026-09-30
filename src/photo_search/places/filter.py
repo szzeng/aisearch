@@ -18,16 +18,26 @@ from photo_search.places import assignments as assignment_module
 from photo_search.places import datasets as dataset_module
 from photo_search.places import revision as revision_module
 from photo_search.places import suggestions as suggestion_module
-from photo_search.places.contracts import CONTRACT_VERSION, PLACE_STATES, fail, privacy_flags
-from photo_search.places.directory import ancestor_views, descendant_ids, get_place_row
+from photo_search.places.contracts import (
+    CONTRACT_VERSION,
+    DIRECTORY_CONTRACT_VERSION,
+    PLACE_STATES,
+    fail,
+    privacy_flags,
+)
+from photo_search.places.directory import (
+    ancestor_views,
+    descendant_ids,
+    descendant_query,
+    get_place_row,
+)
 
 ASSIGNED_EXISTS = (
-    "EXISTS (SELECT 1 FROM asset_place_assignments AS ap WHERE ap.asset_id = {alias}.asset_id "
-    "AND ap.mode = 'MANUAL_ASSIGNED'{place_clause})"
+    "EXISTS (SELECT 1 FROM effective_asset_places AS ap WHERE ap.asset_id = {alias}.asset_id "
+    "{place_clause})"
 )
 UNASSIGNED_NOT_EXISTS = (
-    "NOT EXISTS (SELECT 1 FROM asset_place_assignments AS ap WHERE ap.asset_id = {alias}.asset_id "
-    "AND ap.mode = 'MANUAL_ASSIGNED')"
+    "NOT EXISTS (SELECT 1 FROM effective_asset_places AS ap WHERE ap.asset_id = {alias}.asset_id)"
 )
 MANUAL_UNASSIGNED_EXISTS = (
     "EXISTS (SELECT 1 FROM asset_place_assignments AS ap WHERE ap.asset_id = {alias}.asset_id "
@@ -64,15 +74,16 @@ def place_condition(
         # "any" and "assigned" are the same predicate here: a place only ever reaches an
         # asset through its one effective control row, so an unassigned asset cannot match
         # a place id at all.
-        scope = descendant_ids(connection, ids) if include_descendants else ids
-        if not scope:
-            return "0", []
-        placeholders = ", ".join("?" for _ in scope)
+        if include_descendants:
+            scope_sql, parameters = descendant_query(ids)
+        else:
+            parameters = sorted(set(ids))
+            scope_sql = ", ".join("?" for _ in parameters)
         return (
             ASSIGNED_EXISTS.format(
-                alias=alias, place_clause=f" AND ap.place_id IN ({placeholders})"
+                alias=alias, place_clause=f" AND ap.place_id IN ({scope_sql})"
             ),
-            list(scope),
+            parameters,
         )
     if state == "assigned":
         return ASSIGNED_EXISTS.format(alias=alias, place_clause=""), []
@@ -158,21 +169,29 @@ def asset_place_view(
 ) -> dict[str, Any]:
     """``GET /assets/{id}/place``: control, lock, exclusions, suggestion state, revisions."""
     assignment = assignment_module.read_current_view(connection, int(asset_id))
-    place = None
-    if assignment is not None and assignment["place_id"] is not None:
-        row = get_place_row(connection, int(assignment["place_id"]))
-        place = {
-            "place_id": int(row["place_id"]),
-            "kind": str(row["kind"]),
-            "canonical_name": str(row["canonical_name"]),
-            "lifecycle": str(row["lifecycle"]),
+    effective = connection.execute(
+        "SELECT e.*,p.kind FROM effective_asset_places e JOIN places p USING(place_id) "
+        "WHERE e.asset_id=? ORDER BY CASE WHEN p.kind IN ('attraction','custom') THEN 1 ELSE 0 END, e.place_id",
+        (int(asset_id),),
+    ).fetchall()
+    places = []
+    for entry in effective:
+        row = get_place_row(connection, int(entry["place_id"]))
+        places.append({
+            "place_id": int(row["place_id"]), "kind": str(row["kind"]),
+            "canonical_name": str(row["canonical_name"]), "lifecycle": str(row["lifecycle"]),
             "ancestors": ancestor_views(connection, int(row["place_id"])),
-        }
+        })
+    place = places[0] if places else None
+    from photo_search.geo.boundaries import automatic_view
     payload: dict[str, Any] = {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": DIRECTORY_CONTRACT_VERSION,
         "asset_id": int(asset_id),
         "assignment": assignment,
         "place": place,
+        "areas": places[1:],
+        "effective_origin": effective[0]["origin"] if effective else None,
+        "automatic": automatic_view(connection, int(asset_id)),
         "exclusions": assignment_module.exclusion_summary(connection, int(asset_id)),
         "suggested": suggestion_module.suggestion_view(connection, int(asset_id)),
         "catalog_filter_revision": revision_module.read_filter_revision(connection),
@@ -192,15 +211,17 @@ def coverage(connection: sqlite3.Connection) -> dict[str, Any]:
 
     assets_total = scalar("SELECT COUNT(*) FROM assets")
     assigned = scalar(
-        "SELECT COUNT(*) FROM asset_place_assignments WHERE mode = 'MANUAL_ASSIGNED'"
+        "SELECT COUNT(DISTINCT asset_id) FROM effective_asset_places"
     )
     manual_unassigned = scalar(
         "SELECT COUNT(*) FROM asset_place_assignments WHERE mode = 'MANUAL_UNASSIGNED'"
     )
     suggestion_counts = suggestion_module.suggestion_counts(connection)
     resolver_ready = dataset_module.resolver_available(connection)
+    boundary_ready = bool(connection.execute("SELECT 1 FROM boundary_packages WHERE active=1").fetchone())
+    boundary_done = scalar("SELECT COUNT(DISTINCT r.asset_id) FROM boundary_results r JOIN boundary_packages b USING(package_id) JOIN asset_geo_facts g ON g.asset_id=r.asset_id AND g.geo_fact_id=r.geo_fact_id WHERE b.active=1")
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": DIRECTORY_CONTRACT_VERSION,
         "assets_total": assets_total,
         "gps_extracted": scalar("SELECT COUNT(*) FROM asset_geo_facts"),
         "gps_valid": scalar("SELECT COUNT(*) FROM asset_geo_facts WHERE status = 'VALID'"),
@@ -210,8 +231,8 @@ def coverage(connection: sqlite3.Connection) -> dict[str, Any]:
         ),
         # A resolver exists in this build; it is only *available* when a validated package is
         # the active one, and that is exactly what these counters report.
-        "resolver_available": bool(resolver_ready),
-        "place_resolved": int(suggestion_counts["place_resolved"]),
+        "resolver_available": bool(resolver_ready or boundary_ready),
+        "place_resolved": boundary_done if boundary_ready else int(suggestion_counts["place_resolved"]),
         "places_assigned": assigned,
         "places_manual_unassigned": manual_unassigned,
         "places_suggested": int(suggestion_counts["places_suggested"]),

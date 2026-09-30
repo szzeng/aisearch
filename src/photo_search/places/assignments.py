@@ -1,8 +1,8 @@
 """Manual place control: one current row per asset, a lock, exclusions and compensations.
 
 ADR-0005 §5/§6 in one place: ``AUTO_ALLOWED`` / ``MANUAL_ASSIGNED`` / ``MANUAL_UNASSIGNED``
-are the only modes, only an ACTIVE ``MANUAL_ASSIGNED`` row is an effective place, and an
-automatic result can never reach this table. Every write is one operation with a
+are the only modes. Automatic boundary results live separately (ADR-0014); manual
+control and exclusions govern the effective-place view. Every write is one operation with a
 ``request_id``, a canonical payload hash and expected revisions, so a replay is provably
 the same request and a batch is all-or-nothing inside one short transaction.
 """
@@ -23,6 +23,7 @@ from photo_search.catalog.errors import (
     PLACE_OPERATION_NOT_UNDOABLE,
     PLACE_REFERENCED,
 )
+from photo_search.places import directory
 from photo_search.places import revision as revision_module
 from photo_search.places import suggestions as suggestion_module
 from photo_search.places.contracts import (
@@ -512,6 +513,9 @@ def apply_request(
             _require_active_place(connection, int(target))
         before = assignment_view(row)
         previous_place = None if before is None or before["place_id"] is None else int(before["place_id"])
+        effective_before = [int(r[0]) for r in connection.execute(
+            "SELECT DISTINCT place_id FROM effective_asset_places WHERE asset_id=?", (asset_id,)
+        )]
         # ADR-0005 §5: assign A->B excludes A, and an explicit assign of B also clears B's
         # own exclusion. Both may happen in one item, so the item carries a bounded list.
         wanted_exclusions: dict[int, bool] = {}
@@ -523,6 +527,16 @@ def apply_request(
                 wanted_exclusions[int(target)] = False
         elif action == "UNASSIGN" and previous_place is not None:
             wanted_exclusions[previous_place] = True
+        if action in ("ASSIGN", "UNASSIGN"):
+            for previous in effective_before:
+                if action == "UNASSIGN" or previous != int(target):
+                    wanted_exclusions[previous] = True
+        if action == "ASSIGN":
+            # An explicit correction may clear an ancestor exclusion blocking this target.
+            for ancestor in directory.ancestor_rows(connection, int(target)):
+                exclusion = _exclusion_row(connection, asset_id=asset_id, place_id=int(ancestor["place_id"]))
+                if exclusion is not None and exclusion["active"]:
+                    wanted_exclusions[int(ancestor["place_id"])] = False
         deltas: list[dict[str, int]] = []
         for place_id, wanted in sorted(wanted_exclusions.items()):
             row_exclusion = _exclusion_row(connection, asset_id=asset_id, place_id=place_id)

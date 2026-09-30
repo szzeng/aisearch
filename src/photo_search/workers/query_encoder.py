@@ -19,15 +19,12 @@ Three rules decide what is written here:
   behaviour (``query_encoder_available=false`` plus the structured 409) instead of starting
   a worker that cannot load anything.
 * **One request at a time.** The worker client speaks a single request/reply channel, so
-  the adapter serialises its own calls: two concurrent searches can never swap replies.
+  the client serialises all calls: two concurrent searches can never swap replies.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 import tempfile
-import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,136 +36,21 @@ from photo_search.catalog.errors import (
     SPACE_MISMATCH,
     CatalogError,
 )
+from photo_search.models.embedding.manifest import (
+    MODEL_SUBDIR,
+    SPEC_REVISION,
+    pinned_embedding_spec,
+)
 from photo_search.runtime.device import DevicePolicy
-from photo_search.scheduler.contracts import CONTRACT_VERSION, ProcessorSpec, canonical_json
+from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.workers.client import AiWorkerClient
 
-#: The query-side spec revision: "what this adapter is" (the indexing side names its own).
-SPEC_REVISION = "chinese-clip-vit-b-16-query-v1"
-#: The frozen job-protocol spellings this processor shares with the indexing side.
-TASK_TYPE = "image_embedding"
-INPUT_TYPE = "asset"
-OUTPUT_TYPE = "embedding"
-#: Version labels of the query pipeline, named so a reader can check them against the
-#: manifest: its preprocessing (shortest edge 224, 224 center crop, bicubic, RGB, float32),
-#: its ``BertTokenizerFast`` (max_length 52, right truncation, max-length padding), no
-#: instruction template, and L2 normalisation before the vector leaves the adapter.
-IMAGE_PREPROCESS_VERSION = "clip-224-shortest-bicubic-rgb-v1"
-QUERY_PREPROCESS_VERSION = "bert-maxlen52-truncate-right-v1"
-INSTRUCTION_TEMPLATE_VERSION = "none-v1"
-NORMALIZATION_VERSION = "L2-v1"
-#: The P0-04 model layout, kept *relative to the data root*: no absolute user path is ever
-#: compiled into the source, and moving the data root moves the model with it.
-MODEL_SUBDIR = ("models", "chinese_clip", "vit-b-16")
-#: A cold CUDA start on a power-gated laptop GPU can take minutes; a slow start must never
-#: be mistaken for a hung worker.
 COLD_START_TIMEOUT_SECONDS = 900.0
-#: ``DevicePolicy`` spellings as the frozen ``ProcessorSpec`` records them.
-_DEVICE_POLICY_SPELLING = {
-    DevicePolicy.GPU_REQUIRED: "GPU_REQUIRED",
-    DevicePolicy.CPU_ALLOWED: "CPU_ALLOWED",
-    DevicePolicy.CPU_PREFERRED: "CPU_PREFERRED",
-}
-#: ONNX Runtime provider names that back the frozen ``cpu``/``gpu`` device spellings.
-_PROVIDER_DEVICES = {
-    "CPUExecutionProvider": "cpu",
-    "CUDAExecutionProvider": "gpu",
-    "TensorrtExecutionProvider": "gpu",
-}
+_PROVIDER_DEVICES = {"torch-cuda": "gpu", "torch-mps": "gpu", "torch-cpu": "cpu"}
 
 
 def default_model_dir(data_root: str | Path) -> Path:
-    """The pinned model directory under one application data root (P0-04 layout)."""
     return Path(data_root).joinpath(*MODEL_SUBDIR)
-
-
-def _config_hash(manifest: Mapping[str, Any]) -> str:
-    """Digest of the manifest facts that define this embedding configuration."""
-    identity = {
-        "model": manifest["model"],
-        "embedding": manifest["embedding"],
-        "preprocessing": manifest["preprocessing"],
-        "tokenizer": manifest["tokenizer"],
-        "onnx": manifest["onnx"],
-    }
-    return hashlib.sha256(canonical_json(identity).encode("utf-8")).hexdigest()
-
-
-def pinned_embedding_spec(
-    manifest_path: str | Path,
-    *,
-    device_policy: str | DevicePolicy = DevicePolicy.CPU_ALLOWED,
-    runtime_package_id: str | None = None,
-    runtime_backend: str | None = None,
-    supported_devices: Sequence[str] | None = None,
-    supported_precisions: Sequence[str] | None = None,
-) -> ProcessorSpec:
-    """The embedding ``ProcessorSpec`` of the pinned model, read from its manifest.
-
-    ``space_id`` is ``chinese-clip-vit-b-16:<image-tower sha256[:16]>`` and ``processor_id``
-    is ``chinese-clip-vit-b-16@<revision[:12]>`` - the *same* derivation the indexing
-    adapter uses, so a query can never be encoded into a space the published vectors do not
-    live in. The runtime facts (package, backend, devices, precisions) are passed in from
-    the live worker when they are known and otherwise fall back to the manifest's record.
-    """
-    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    onnx = manifest["artifacts"]["onnx"]
-    model = manifest["model"]
-    embedding = manifest["embedding"]
-    tokenizer = manifest["tokenizer"]
-    preprocessing = manifest["preprocessing"]
-    runtime = manifest["runtime"]
-    revision = str(model["resolved_revision"])
-    image_digest = str(onnx["image"]["sha256"])
-    devices = tuple(
-        dict.fromkeys(str(item) for item in (supported_devices or ("gpu", "cpu")))
-    )
-    precisions = tuple(
-        dict.fromkeys(str(item) for item in (supported_precisions or ("FP32",)))
-    )
-    return ProcessorSpec.from_envelope(
-        {
-            "contract_version": CONTRACT_VERSION,
-            "spec_revision": SPEC_REVISION,
-            "processor_id": f"chinese-clip-vit-b-16@{revision[:12]}",
-            "processor_kind": "embedding_model",
-            "task_type": TASK_TYPE,
-            "config_hash": _config_hash(manifest),
-            "input_type": INPUT_TYPE,
-            "output_type": OUTPUT_TYPE,
-            "device_policy": _DEVICE_POLICY_SPELLING[DevicePolicy(device_policy)],
-            "runtime_backend": str(runtime_backend or runtime["backend"]),
-            "runtime_package_id": str(
-                runtime_package_id
-                or f"onnxruntime@{runtime['versions']['onnxruntime']}"
-            ),
-            "supported_devices": list(devices),
-            "supported_precisions": list(precisions),
-            "max_batch_size": int(manifest["onnx"]["batch"]),
-            "cancellation_supported": False,
-            "resource_measurements": [],
-            "model_id": str(model["id"]),
-            "model_revision": revision,
-            "weights": [
-                {
-                    "name": Path(str(onnx[role]["path"])).name,
-                    "revision": f"{revision}#{str(onnx[role]['sha256'])[:12]}",
-                    "sha256": str(onnx[role]["sha256"]),
-                }
-                for role in ("image", "text")
-            ],
-            "image_preprocess_version": IMAGE_PREPROCESS_VERSION,
-            "query_preprocess_version": QUERY_PREPROCESS_VERSION,
-            "tokenizer_version": f"bert-vocab-{str(tokenizer['vocab_sha256'])[:12]}",
-            "instruction_template_version": INSTRUCTION_TEMPLATE_VERSION,
-            "normalization_version": NORMALIZATION_VERSION,
-            "dimension": int(embedding["dimension"]),
-            "metric": str(embedding["metric"]),
-            "space_id": f"chinese-clip-vit-b-16:{image_digest[:16]}",
-            "max_pixels": int(preprocessing["image_size"]) ** 2,
-            "max_tokens": int(tokenizer["max_length"]),
-        }
-    )
 
 
 class WorkerQueryEncoder:
@@ -177,9 +59,6 @@ class WorkerQueryEncoder:
     def __init__(self, client: Any, spec: ProcessorSpec) -> None:
         self._client = client
         self._spec = spec
-        #: The worker client is a single request/reply channel; this lock is what keeps two
-        #: concurrent searches from reading each other's reply.
-        self._lock = threading.Lock()
 
     def spec(self) -> ProcessorSpec:
         return self._spec
@@ -195,6 +74,8 @@ class WorkerQueryEncoder:
         already serves (P4-02Y §6C).
         """
         reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
+        if isinstance(reply, Mapping) and "spec" in reply:
+            _check_worker_space(reply["spec"], self._spec)
         return reply if isinstance(reply, dict) else {}
 
     def encode_queries(
@@ -233,23 +114,22 @@ class WorkerQueryEncoder:
         return int(self._spec.envelope["dimension"])
 
     def _worker_text(self, text: str) -> Any:
-        with self._lock:
-            return self._client.encode_text(text)
+        return self._client.encode_text(text)
 
     def _worker_image(self, image: Any) -> Any:
         # The worker protocol carries a *path*: a decoded upload is written to a private
         # temporary PNG of this process and removed before the vector is returned.
         save = getattr(image, "save", None)
         if not callable(save):
-            with self._lock:
-                return self._client.encode_image(Path(image))
+            return self._client.encode_image(Path(image))
         with tempfile.TemporaryDirectory(prefix="photo-search-query-") as raw:
             path = Path(raw) / "query.png"
             save(str(path), "PNG")
-            with self._lock:
-                return self._client.encode_image(path)
+            return self._client.encode_image(path)
 
     def _vector(self, reply: Any, dimension: int, what: str) -> list[float]:
+        if isinstance(reply, Mapping) and "spec" in reply:
+            _check_worker_space(reply["spec"], self._spec)
         raw = reply.get("vector") if isinstance(reply, Mapping) else None
         if not isinstance(raw, (list, tuple)):
             raise CatalogError(

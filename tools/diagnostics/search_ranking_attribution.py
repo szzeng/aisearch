@@ -37,7 +37,7 @@ from photo_search.search.tokens import build_match
 from photo_search.workers.query_encoder import build_worker_query_encoder, default_model_dir
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / "tools/prepare_models/manifests/chinese-clip-vit-b-16.json"
+MANIFEST = REPO_ROOT / "src/photo_search/models/embedding/fg-clip2-base.json"
 OUT_JSON = REPO_ROOT / "test-results/search-ranking-attribution.json"
 OUT_CSV = REPO_ROOT / "test-results/search-ranking-attribution.csv"
 CHUNK = 800

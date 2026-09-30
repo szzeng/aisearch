@@ -686,7 +686,7 @@ def build_report(repo_root: Path) -> dict[str, Any]:
             "note": "P4-02F §15 records 1686.1 -> 2445.0 ms (100k) and 8804.6 -> 5353.3 ms (300k) on the same roots",
         },
         "unverified": [
-            "real Chinese-CLIP weights and the real text tower latency (BLOCKED)",
+            "real FG-CLIP 2 weights and the real text tower latency (BLOCKED)",
             "GTX 1660 6 GB minimum configuration (BLOCKED)",
             "an end-to-end API p95 under the real mixed load (the only legitimate acceptance)",
             "the A3 certificate cost on any branch (no implementation, no benchmark)",

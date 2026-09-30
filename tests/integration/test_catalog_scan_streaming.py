@@ -356,7 +356,7 @@ def test_enumeration_permission_failure_blocks_without_missing_or_success(
     assert resumed["locations_missing"] == 1
     final = _locations(harness)
     assert final["a.jpg"]["availability"] == "MISSING"
-    assert final["locked\\hidden.jpg"]["availability"] == "PRESENT"
+    assert final[str(Path("locked") / "hidden.jpg")]["availability"] == "PRESENT"
     assert harness.service.get_source(source_id)["last_successful_scan"] == 2
 
 
@@ -414,8 +414,8 @@ def test_a_move_into_a_subdirectory_keeps_the_asset_and_reports_both_truths(
     assert outcome["state"] == "SUCCEEDED"
     assert outcome["locations_missing"] == 1
     final = _locations(harness)
-    assert final["2024\\a.jpg"]["availability"] == "PRESENT"
-    assert final["2024\\a.jpg"]["asset_id"] == asset
+    assert final[str(Path("2024") / "a.jpg")]["availability"] == "PRESENT"
+    assert final[str(Path("2024") / "a.jpg")]["asset_id"] == asset
     assert final["a.jpg"]["availability"] == "MISSING"
     assert final["a.jpg"]["asset_id"] == asset
     counts = harness.service.counts(source_id=source_id)

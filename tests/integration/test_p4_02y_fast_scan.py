@@ -298,7 +298,7 @@ def test_fast_refresh_moves_a_file_into_a_new_directory_without_new_content(libr
     outcome = scan(library)
 
     assert outcome["new_assets"] == 0
-    assert int(location_of(library, "trip\\IMG_0001.JPG")["asset_id"]) == moved_asset
+    assert int(location_of(library, str(Path("trip") / "IMG_0001.JPG"))["asset_id"]) == moved_asset
     assert outcome["locations_missing"] == 1
 
 

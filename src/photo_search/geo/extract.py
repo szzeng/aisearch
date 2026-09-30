@@ -500,4 +500,13 @@ def persist_geo_fact(
             int(now_ms),
         ),
     )
+    if connection.execute("SELECT 1 FROM boundary_results WHERE asset_id=?", (asset_id,)).fetchone():
+        from photo_search.places import revision as place_revision
+        connection.execute(
+            "INSERT INTO search_projection_queue VALUES (?,'PLACE_ASSIGNMENT_CHANGED',?) "
+            "ON CONFLICT(asset_id) DO UPDATE SET cause=excluded.cause,queued_at=excluded.queued_at",
+            (asset_id, int(now_ms)),
+        )
+        place_revision.bump_filter_revision(connection, cause="PLACE_GPS_CHANGED",
+                                            now_ms=int(now_ms), asset_ids=[asset_id])
     return True

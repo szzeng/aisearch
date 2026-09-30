@@ -1,15 +1,14 @@
 """Application data root, catalog and backup path resolution.
 
-The data root semantics follow the P0-04 verified behaviour: application data lives
-outside the install directory, normally under ``%LOCALAPPDATA%\\PhotoSearchData``, and
-under the packaged desktop app's LocalCache view when the app redirects
-``LOCALAPPDATA``. ``PHOTO_SEARCH_DATA_ROOT`` is a test/diagnostic override only; it
-never changes where a normal run keeps its data.
+Application data lives outside the install directory: LocalAppData on Windows and
+Library/Application Support on macOS. PHOTO_SEARCH_DATA_ROOT and an explicit CLI
+path override the platform default.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 DATA_ROOT_ENV = "PHOTO_SEARCH_DATA_ROOT"
@@ -41,6 +40,8 @@ def default_data_root() -> Path:
     override = os.environ.get(DATA_ROOT_ENV)
     if override:
         return Path(os.path.abspath(override))
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / DATA_ROOT_DIRNAME
     profile = os.environ.get("USERPROFILE")
     candidate = Path(profile) / "AppData" / "Local" if profile else None
     if candidate is None or not candidate.is_dir():

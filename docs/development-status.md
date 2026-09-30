@@ -1,19 +1,11 @@
 # Development status
 
-更新：2026-09-30。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-10-01。
 
-## P4-02Y-L — OCR CUDA 设备契约（**实现验收通过；独立 DS-H 审查待做**）
+当前任务：[整批改动检查与上游 PR](tasks/upstream-pr.md)，实现者整合检查完成，准备提交草稿。范围：FG-CLIP 2 / OCR 和搜索可靠性、Apple Silicon macOS、Vue 界面、离线行政层级与跨区景区。数据库 schema 18；地点语义和迁移 0017/0018 见 [ADR-0014](decisions/ADR-0014-offline-place-boundaries.md)。已安装公开中国 2,901 个历史区县边界和西湖景区包，不宣称最新全国覆盖。
 
-实现报告：[P4-02Y-L OCR CUDA](reports/P4-02Y-L-ocr-cuda.md)；审查卡：[P4-02Y-L-review](tasks/P4-02Y-L-review.md)。Sol 冻结通过；RTX 4060 Laptop 实测 auto 3/3 job 走 CUDA，显式 CPU 3/3 成功；CPU/GPU 输出等价，round-total 中位数 5227.72/843.33 ms（6.199×），synthetic refresh/build 3/3 CUDA。P2/OCR JUnit **119 passed / 0 failed / 0 errors / 19 skipped**；Ruff、lock、diff-check 通过。P4-02Y-L 总任务仍**待独立 DS-H 全受影响面审查**，未标 PASS。
+最新验证：整体后端 1,857 项中 1,850 通过、6 项环境跳过；1 项旧 OCR 断言修正后相关 13 项复测全部通过，无未解决自检失败。前端 15 项、类型检查、生产构建、Ruff、差异检查、依赖锁及 wheel 资源一致性通过。公开 2,000 图目录已备份升级至 schema 18，地点页正常。准确命令、JUnit、修复和验证边界见[整合记录](tasks/upstream-pr.md)。
 
-## 当前任务 P4-02Y-W — 5000 搜索结果 + 高度匹配（实现与验收完成，独立审查待做）
+下一任务：[整批变更独立工程审查](tasks/frontend-review.md)，建议用户手动切换 DS-H 完整检查受影响面，再由 Sol high 聚焦高风险不变量；未执行，不标正式 PASS。本轮不自动切换模型。
 
-实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。当前暂定阈值 `distance <= 1.3`（约 `cosine >= 0.35`）；边界测试/文档已同步。此前 B 级 JUnit **1878/0/0/48**、30 万 smoke 及静态检查早于此门限修正，按用户要求未重跑测试，故新门限未验证；总任务仍待独立 DS-H 复核。
-
-## 旁路纯测量 P4-QWEN-SPEED — 完成
-
-报告：[P4-QWEN-SPEED](reports/P4-QWEN-SPEED.md)；原始样本：`test-results/p4-qwen-speed.json`。Qwen query P50 **72.86 ms**；2048D 30 万向量 P50 **23957.95 ms**，20 blocks / 300000 scanned / fallback 0 / truncated false。8 GB RTX 4060 Laptop FP16 CUDA 路径成功；估算搜索时间：512D **3.81 s**、2048D **24.34 s**（均非 HTTP 端到端实测）。
-
-## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
-
-纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。纯性能数据不单独决定产品上限。
+此前 [macOS 实测](tasks/macos-benchmark.md)完成 Apple M4 / 16GB 的 MPS 图文、CPU OCR/人脸及 2,000 张公开图片测试；数据和模型在独立应用数据目录。十万/三十万真实图库、Windows/GTX 1660、冻结安装包和独立工程验收仍待完成。未扫描私人图库。

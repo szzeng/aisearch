@@ -1,4 +1,7 @@
 .venv/
+.python/
+node_modules/
+.npm-cache/
 __pycache__/
 *.py[cod]
 
@@ -30,7 +33,7 @@ tmp/
 temp/
 
 # AI models and generated assets
-models/
+/models/
 embeddings/
 indexes/
 *.bin

@@ -1,4 +1,4 @@
-"""P3-01 OCR processor: pinned PP-OCRv4 weights, bounded slicing, and the OCR document.
+"""P3-01 OCR processor: pinned PP-OCRv6 small weights, bounded slicing, and the OCR document.
 
 Importing this package is cheap on purpose (see :mod:`photo_search.ocr.contract`). The
 runtime pieces live in :mod:`photo_search.ocr.weights`, :mod:`photo_search.ocr.engine`,

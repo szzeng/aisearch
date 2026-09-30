@@ -14,11 +14,13 @@ from photo_search.catalog.errors import INVALID_PATH, CatalogError
 
 
 def normalize_root(path: str | Path) -> str:
-    """Return a display-preserving absolute Windows path without a trailing separator."""
+    """Return an absolute path using the host filesystem separators."""
     text = str(path)
     if not text.strip():
         raise CatalogError(INVALID_PATH, "source root path must not be empty")
     absolute = os.path.abspath(text)
+    if os.name != "nt":
+        return os.path.normpath(absolute)
     normalized = ntpath.normpath(absolute)
     drive, tail = ntpath.splitdrive(normalized)
     if tail in ("\\", "/") and drive:

@@ -6,6 +6,8 @@ import multiprocessing
 import os
 import queue
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -55,29 +57,36 @@ class AiWorkerClient:
         stderr_fd, stderr_path = tempfile.mkstemp(prefix="photo-search-ai-", suffix=".stderr")
         os.close(stderr_fd)
         self._stderr_file = Path(stderr_path)
-        self._process = self._ctx.Process(
-            target=run_worker,
-            args=(
-                self._requests,
-                self._responses,
-                str(model_dir),
-                str(manifest_path),
-                str(self._stderr_file),
-                device,
-                self.device_policy.value,
-            ),
-            name="photo-search-ai",
-        )
+        self._queue_size = queue_size
+        self._worker_args = (str(model_dir), str(manifest_path), str(self._stderr_file),
+                             device, self.device_policy.value)
+        self._process = self._new_process()
         self._started = False
+        self._closed = False
+        self._lock = threading.RLock()
+
+    def _new_process(self):
+        return self._ctx.Process(target=run_worker,
+                                 args=(self._requests, self._responses, *self._worker_args),
+                                 name="photo-search-ai")
 
     @property
     def pid(self) -> int | None:
         return self._process.pid
 
     def start(self) -> None:
-        if not self._started:
-            self._process.start()
-            self._started = True
+        with self._lock:
+            if self._closed:
+                raise WorkerError({"message": "AI worker is closed"}, self.stderr_tail())
+            if self._started and not self._process.is_alive():
+                self._close_queues()
+                self._requests = self._ctx.Queue(maxsize=self._queue_size)
+                self._responses = self._ctx.Queue(maxsize=self._queue_size)
+                self._process = self._new_process()
+                self._started = False
+            if not self._started:
+                self._process.start()
+                self._started = True
 
     def health(self, timeout: float = 60.0) -> dict[str, Any]:
         return self._call({"action": "health"}, timeout)
@@ -96,6 +105,15 @@ class AiWorkerClient:
         return self._call({"action": "provider_usage"}, timeout)
 
     def shutdown(self, timeout: float = 10.0) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            try:
+                self._shutdown(timeout)
+            finally:
+                self._closed = True
+
+    def _shutdown(self, timeout: float) -> None:
         if self._started and self._process.is_alive():
             try:
                 self._call({"action": "shutdown"}, timeout)
@@ -108,6 +126,12 @@ class AiWorkerClient:
         self._cleanup_stderr_file()
 
     def _call(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
+        # The lock covers the complete exchange, including health and shutdown. Locking
+        # only encode calls allows one caller to consume another caller's response.
+        with self._lock:
+            return self._exchange(request, timeout)
+
+    def _exchange(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
         self.start()
         checked = checked_message(request)
         try:
@@ -117,11 +141,20 @@ class AiWorkerClient:
                 {"exception_type": "QueueFull", "message": "worker request queue is full"},
                 self.stderr_tail(),
             ) from error
-        try:
-            response = self._responses.get(timeout=timeout)
-        except queue.Empty as error:
-            self._stop()
-            raise WorkerTimeoutError(f"worker timed out after {timeout} seconds") from error
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._stop()
+                raise WorkerTimeoutError(f"worker timed out after {timeout} seconds")
+            try:
+                response = self._responses.get(timeout=min(remaining, 0.1))
+                break
+            except queue.Empty:
+                if not self._process.is_alive():
+                    raise WorkerError(
+                        {"message": "AI worker exited before replying"}, self.stderr_tail()
+                    ) from None
         if response.get("status") != "ok":
             raise WorkerError(response, self.stderr_tail())
         return dict(response["result"])
@@ -142,8 +175,8 @@ class AiWorkerClient:
 
     def _close_queues(self) -> None:
         for channel in (self._requests, self._responses):
+            channel.cancel_join_thread()
             channel.close()
-            channel.join_thread()
 
     def _cleanup_stderr_file(self) -> None:
         try:

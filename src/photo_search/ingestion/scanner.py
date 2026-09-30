@@ -335,7 +335,7 @@ def iter_observations(root: Path) -> Iterator[FileObservation]:
             try:
                 if _is_reparse_point(entry):
                     continue
-                relative = f"{relative_dir}\\{entry.name}" if relative_dir else entry.name
+                relative = os.path.join(relative_dir, entry.name)
                 if entry.is_dir(follow_symlinks=False):
                     subdirectories.append((relative, Path(entry.path)))
                     continue

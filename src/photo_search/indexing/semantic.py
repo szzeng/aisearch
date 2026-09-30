@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -71,29 +72,19 @@ _PRESENT_SOURCE_SQL = (
     "WHERE l.asset_id = ? AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1"
 )
 
-#: ``source_predicate`` is either empty or ``f.source_id = ? AND``. It must compose with the
-#: ``NOT EXISTS`` clause - adding a second ``WHERE`` for the source filter made every
-#: ``build --source-id`` call a SQL syntax error (DS-H review F1).
-#: ``cursor_predicate`` is either empty or ``a.asset_id > ? AND``; it is what lets the
-#: P4-02Y-I build walk a whole source in bounded pages instead of materialising the pending
-#: set at once. Both predicates come *before* the ``NOT EXISTS`` so their parameters stay in
-#: the same order as the placeholders.
-#: Assets that have a readable original and no confirmed embedding for their *current*
-#: content revision. A confirmed entry whose artifact came from a different revision (the file
-#: changed) is deliberately not a hit: that asset needs a new job.
 _TARGET_SQL = (
     "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256, "
     "f.relative_path AS relative_path, r.root_path AS root_path "
     "FROM assets AS a "
     "JOIN file_locations AS f ON f.location_id = ("
     "SELECT l.location_id FROM file_locations AS l WHERE l.asset_id = a.asset_id "
-    "AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1) "
+    "AND l.availability = 'PRESENT' {source_predicate}ORDER BY l.location_id LIMIT 1) "
     "JOIN source_roots AS r ON r.source_id = f.source_id "
-    "WHERE {source_predicate}{cursor_predicate}NOT EXISTS ("
+    "WHERE {cursor_predicate}NOT EXISTS ("
     "SELECT 1 FROM index_entries AS e JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
     "WHERE e.asset_id = a.asset_id AND e.space_id = ? AND e.generation_id = ? "
     "AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256) "
-    "ORDER BY a.asset_id"
+    "ORDER BY a.asset_id LIMIT ?"
 )
 
 
@@ -158,6 +149,7 @@ def semantic_selection(
     source_id: int | None = None,
     after_asset_id: int | None = None,
     limit: int | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Split the pending assets into embeddable targets and out-of-scope files.
 
@@ -167,53 +159,54 @@ def semantic_selection(
     a caller that has to cover a 20-30 万 first build can page through the whole scope with
     bounded memory instead of asking for every pending row at once (P4-02Y-I §2).
     """
-    source_predicate = ""
-    parameters: tuple[Any, ...] = ()
-    if source_id is not None:
-        source_predicate = "f.source_id = ? AND "
-        parameters = (int(source_id),)
-    cursor_predicate = ""
-    if after_asset_id is not None:
-        cursor_predicate = "a.asset_id > ? AND "
-        parameters = (*parameters, int(after_asset_id))
+    source_predicate = "AND l.source_id = ? " if source_id is not None else ""
+    source_parameters = () if source_id is None else (int(source_id),)
     generation_id = generation_id_for(str(space_id), str(processor_id))
-    rows = catalog.read_all(
-        _TARGET_SQL.format(
-            source_predicate=source_predicate, cursor_predicate=cursor_predicate
-        ),
-        (*parameters, str(space_id), generation_id),
-    )
     wanted = None if limit is None else max(0, int(limit))
     targets: list[dict[str, Any]] = []
     labels: dict[str, int] = {}
     sample: list[dict[str, Any]] = []
-    out_of_scope = 0
-    checked = 0
-    for row in rows:
-        checked += 1
-        path = Path(str(row["root_path"])) / str(row["relative_path"])
-        eligible, label = image_eligibility(path)
-        if eligible:
-            if wanted is None or len(targets) < wanted:
-                targets.append(
-                    {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
-                )
+    checked = out_of_scope = 0
+    after = int(after_asset_id or 0)
+    complete = False
+    while not (cancel_check is not None and cancel_check()):
+        # One extra row distinguishes a complete result from an early target limit.
+        page_size = 512 if wanted is None else min(512, max(1, wanted - len(targets) + 1))
+        rows = catalog.read_all(
+            _TARGET_SQL.format(source_predicate=source_predicate,
+                               cursor_predicate="a.asset_id > ? AND "),
+            (*source_parameters, after, str(space_id), generation_id, page_size),
+        )
+        if not rows:
+            complete = True
+            break
+        for row in rows:
+            if cancel_check is not None and cancel_check():
+                break
             if wanted is not None and len(targets) >= wanted:
                 break
-            continue
-        out_of_scope += 1
-        labels[label] = labels.get(label, 0) + 1
-        if len(sample) < 20:
-            sample.append({"asset_id": int(row["asset_id"]), "label": label})
+            after = int(row["asset_id"])
+            checked += 1
+            path = Path(str(row["root_path"])) / str(row["relative_path"])
+            eligible, label = image_eligibility(path)
+            if eligible:
+                targets.append({"asset_id": after, "input_revision": str(row["sha256"])})
+            else:
+                out_of_scope += 1
+                labels[label] = labels.get(label, 0) + 1
+                if len(sample) < 20:
+                    sample.append({"asset_id": after, "label": label})
+        if after != int(rows[-1]["asset_id"]):
+            break
+        if len(rows) < page_size:
+            complete = True
+            break
     return {
         "checked": checked,
-        "coverage_complete": checked == len(rows),
+        "coverage_complete": complete,
         "targets": targets,
-        "out_of_scope": {
-            "count": out_of_scope,
-            "labels": dict(sorted(labels.items())),
-            "sample": sample,
-        },
+        "out_of_scope": {"count": out_of_scope, "labels": dict(sorted(labels.items())),
+                         "sample": sample},
     }
 
 
@@ -240,7 +233,7 @@ def semantic_targets(
 def job_device(requested: str) -> str:
     """The *job-protocol* spelling (``auto``/``cpu``/``gpu``) of one device request.
 
-    The CLI and the adapter speak ``cuda``/``cpu``/``auto`` (ADR-0001) while a job row and the
+    The CLI and adapter speak ``cuda``/``mps``/``cpu``/``auto`` while a job row and the
     scheduler speak ``auto``/``cpu``/``gpu`` (p2-contracts.v1). Translating in one place keeps
     the two vocabularies from leaking into each other.
     """
@@ -249,11 +242,11 @@ def job_device(requested: str) -> str:
         return "auto"
     if value in ("cpu", "host"):
         return "cpu"
-    if value in ("cuda", "gpu"):
+    if value in ("cuda", "mps", "gpu"):
         return "gpu"
     raise CatalogError(
         "USAGE",
-        "the requested device must be auto, cpu, cuda or gpu",
+        "the requested device must be auto, cpu, cuda, mps or gpu",
         details={"requested_device": str(requested)},
     )
 
@@ -368,18 +361,21 @@ def adapter_runtime_facts(adapter: Any) -> dict[str, Any]:
     version = str(runtime.get("runtime_version") or "")
     precision = str(device.get("precision") or "FP32")
     devices = ["cpu"]
-    if bool(runtime.get("cuda_available")):
+    gpu_available = bool(runtime.get("cuda_available") or runtime.get("mps_available"))
+    if gpu_available:
         devices.insert(0, "gpu")
     return {
         "runtime_package_id": f"{package}@{version}" if version else package,
         "runtime_backend": str(runtime.get("runtime_backend") or "onnxruntime"),
         "supported_devices": tuple(devices),
         "supported_precisions": (precision,),
-        "resolved_device": "gpu" if resolved == "cuda" else resolved,
+        "resolved_device": "gpu" if resolved in ("cuda", "mps") else resolved,
         "resolved_provider": str(device.get("provider") or ""),
         "resolved_precision": precision,
         "providers": [str(name) for name in (runtime.get("providers") or ())],
         "cuda_available": bool(runtime.get("cuda_available")),
+        "gpu_available": gpu_available,
+        "mps_available": bool(runtime.get("mps_available")),
     }
 
 
@@ -395,10 +391,12 @@ def record_runtime_evidence(
     provider = str(facts["resolved_provider"])
     precision = str(facts["resolved_precision"])
     entries: list[dict[str, Any]] = []
-    if bool(facts["cuda_available"]):
+    if bool(facts.get("gpu_available", facts.get("cuda_available"))):
         entries.append(
             {
-                "name": CUDA_PROVIDER,
+                "name": provider if resolved == "gpu" else (
+                    "torch-mps" if facts.get("mps_available") else CUDA_PROVIDER
+                ),
                 "device": "gpu",
                 "precisions": [precision],
                 "available": resolved == "gpu",
@@ -409,7 +407,7 @@ def record_runtime_evidence(
         )
     entries.append(
         {
-            "name": CPU_PROVIDER,
+            "name": provider if resolved == "cpu" else CPU_PROVIDER,
             "device": "cpu",
             "precisions": [precision],
             "available": resolved == "cpu",
@@ -427,7 +425,7 @@ def record_runtime_evidence(
             "runtime_package_name": package_name,
             "runtime_package_version": version,
             "python_version": "3.12.10",
-            "platform": "windows-x86_64",
+            "platform": f"{platform.system().lower()}-{platform.machine().lower()}",
             "driver_version": None,
             "providers": entries,
             "health_status": "healthy" if resolved in ("cpu", "gpu") else "unhealthy",
@@ -446,7 +444,7 @@ def record_runtime_evidence(
         provider_name=provider,
         runtime_package_id=package,
         now_ms=int(now_ms),
-        note="pinned Chinese-CLIP ONNX sessions created for this device",
+        note="pinned embedding model loaded on this device",
     )
     return {
         "capability_revision": str(snapshot.capability_revision),
@@ -588,6 +586,7 @@ def build_index(
     device_policy: str = "cpu_allowed",
     worker_id: str = "semantic-build",
     retry_failed: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Build (or extend) the semantic index of one catalog with the pinned model.
 
@@ -607,6 +606,7 @@ def build_index(
         processor_id=str(spec.processor_id),
         source_id=source_id,
         limit=limit,
+        cancel_check=cancel_check,
     )
     targets = list(selection["targets"])
     enqueued = enqueue_targets(
@@ -625,7 +625,9 @@ def build_index(
         processor_id=str(spec.processor_id),
     )
     steps = 0
-    while scheduler.run_once(executor, worker_id=str(worker_id), now_ms=catalog.now_ms()):
+    while not (cancel_check is not None and cancel_check()):
+        if not scheduler.run_once(executor, worker_id=str(worker_id), now_ms=catalog.now_ms()):
+            break
         steps += 1
         if len(targets) and steps >= len(targets):
             break

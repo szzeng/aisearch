@@ -24,7 +24,7 @@ AssetOrder = Literal["asset_id", "time_desc", "capture_desc"]
 PlaceStateFilter = Literal["any", "assigned", "unassigned", "manual_unassigned", "suggested"]
 PersonMatchFilter = Literal["all", "any"]
 PlaceAssignmentAction = Literal["assign", "unassign", "restore_auto"]
-PlaceKind = Literal["country", "city", "attraction", "custom"]
+PlaceKind = Literal["country", "province", "city", "district", "attraction", "custom"]
 
 
 class ErrorResponse(BaseModel):
@@ -570,6 +570,9 @@ class AssetPlaceResponse(BaseModel):
     catalog_filter_revision: int
     suggestion_revision: int
     gps_state: str
+    effective_origin: str | None = None
+    areas: list[PlaceSummary] = Field(default_factory=list)
+    automatic: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class PlaceAssignmentRequest(BaseModel):

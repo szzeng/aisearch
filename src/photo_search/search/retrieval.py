@@ -21,6 +21,7 @@ Nothing here writes: no query moves ``created_at``, re-encodes an image or chang
 
 from __future__ import annotations
 
+import heapq
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -435,7 +436,7 @@ def fts_channel(
 def text_column_matches(
     catalog: Any, match: MatchQuery, asset_ids: Sequence[int]
 ) -> dict[int, list[str]]:
-    """Which derived column produced each text hit (``filename_text``/``place_text``).
+    """Which derived column produced each text hit (filename, place or OCR text).
 
     P2-04 stores file names and the *effective* place in separate columns, so a column
     scoped MATCH answers "the file name says so" versus "the effective place says so"
@@ -446,7 +447,7 @@ def text_column_matches(
         return {}
     placeholders = ", ".join("?" for _ in ids)
     hits: dict[int, list[str]] = {}
-    for column in ("filename_text", "place_text"):
+    for column in ("filename_text", "place_text", "ocr_text"):
         expression = f"{{{column}}} : ({match.expression})"
         rows = catalog.read_all(
             "SELECT rowid AS asset_id FROM search_documents_fts "
@@ -537,6 +538,10 @@ def vector_channel(
                 )
         for row in hits:
             merged[int(row["asset_id"])] = row
+        if len(merged) > int(top_k):
+            merged = {int(row["asset_id"]): row for row in heapq.nsmallest(
+                int(top_k), merged.values(), key=lambda row: (row["distance"], row["asset_id"])
+            )}
         if len(ids) < int(block_size):
             break
         after = ids[-1]

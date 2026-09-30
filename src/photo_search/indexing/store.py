@@ -71,7 +71,7 @@ ASSET_SCALAR_COLUMN = "asset_id"
 
 #: The columns one candidate-block query reads. The vector column is deliberately excluded:
 #: a block may return up to one row per authoritative candidate id (see
-#: :meth:`LanceVectorIndex.search_candidates`), and carrying 512 floats per row for rows the
+#: :meth:`LanceVectorIndex.search_candidates`), and carrying full vectors per row for rows the
 #: caller only ranks by their distance is pure transfer cost. ``_distance`` must be listed -
 #: the engine warns (and will stop auto-projecting it) when a projection omits it.
 CANDIDATE_ROW_COLUMNS = (
@@ -133,19 +133,26 @@ class LanceVectorIndex:
 
     def _table(self, *, generation_id: str, dimension: int, create: bool) -> Any | None:
         lancedb, pa = self._dependencies()
-        self.root.mkdir(parents=True, exist_ok=True)
-        database = lancedb.connect(str(self.root))
+        if not hasattr(self, "_database"):
+            self.root.mkdir(parents=True, exist_ok=True)
+            self._database = lancedb.connect(str(self.root))
+            self._tables: dict[str, Any] = {}
         name = _table_name(generation_id)
-        names = set(database.list_tables().tables)
-        if name in names:
-            table = database.open_table(name)
-            vector_type = table.schema.field("vector").type
-            if int(vector_type.list_size) != int(dimension):
-                raise CatalogError(SPACE_MISMATCH, "generation dimension differs from its Lance table")
-            return table
-        if not create:
-            return None
-        return database.create_table(name, schema=self._schema(pa, int(dimension)))
+        table = self._tables.get(name)
+        if table is None:
+            if name in set(self._database.list_tables().tables):
+                table = self._database.open_table(name)
+            elif create:
+                table = self._database.create_table(name, schema=self._schema(pa, int(dimension)))
+            else:
+                return None
+            self._tables[name] = table
+        else:
+            # Background indexing can commit between requests; never pin a stale handle.
+            table.checkout_latest()
+        if int(table.schema.field("vector").type.list_size) != int(dimension):
+            raise CatalogError(SPACE_MISMATCH, "generation dimension differs from its Lance table")
+        return table
 
     def upsert(self, *, generation: Any, record: dict[str, Any]) -> None:
         self.upsert_batch(generation=generation, records=[record])

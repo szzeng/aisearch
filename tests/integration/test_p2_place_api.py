@@ -15,7 +15,7 @@ from typing import Any
 from httpx import AsyncClient
 
 from photo_search.geo.extract import GPS_PROCESSOR_ID
-from photo_search.places.contracts import CONTRACT_VERSION
+from photo_search.places.contracts import DIRECTORY_CONTRACT_VERSION
 
 SAFE_DETAIL_KEYS = {
     "asset_ids",
@@ -205,7 +205,7 @@ def test_place_directory_endpoints(api_env) -> None:
 
     result = api_env.scenario(scenario)
     assert result["city"]["status"] == 201
-    assert result["city"]["body"]["contract_version"] == CONTRACT_VERSION
+    assert result["city"]["body"]["contract_version"] == DIRECTORY_CONTRACT_VERSION
     assert result["city"]["body"]["kind"] == "city"
     assert result["city"]["body"]["aliases"][0]["normalized"] == "hangzhou"
     assert set(result["city"]["body"]) == {

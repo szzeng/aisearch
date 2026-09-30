@@ -77,8 +77,7 @@ _PRESENT_LOCATIONS_SQL = (
     "ORDER BY location_id"
 )
 _EFFECTIVE_PLACE_SQL = (
-    "SELECT place_id FROM asset_place_assignments WHERE asset_id = ? "
-    "AND mode = 'MANUAL_ASSIGNED'"
+    "SELECT DISTINCT place_id FROM effective_asset_places WHERE asset_id = ? ORDER BY place_id"
 )
 _ASSET_EXISTS_SQL = "SELECT 1 FROM assets WHERE asset_id = ?"
 #: The current OCR search copy of one asset: only a document recognised for exactly the
@@ -110,11 +109,11 @@ def filename_values(connection: sqlite3.Connection, asset_id: int) -> list[str]:
 
 def place_values(connection: sqlite3.Connection, asset_id: int) -> list[str]:
     """Canonical names and ACTIVE aliases of the effective place chain, root first."""
-    row = connection.execute(_EFFECTIVE_PLACE_SQL, (int(asset_id),)).fetchone()
-    if row is None or row["place_id"] is None:
-        return []
-    place_id = int(row["place_id"])
-    chain = [*reversed(ancestor_rows(connection, place_id)), get_place_row(connection, place_id)]
+    rows = connection.execute(_EFFECTIVE_PLACE_SQL, (int(asset_id),)).fetchall()
+    chain = []
+    for row in rows:
+        place_id = int(row["place_id"])
+        chain.extend([*reversed(ancestor_rows(connection, place_id)), get_place_row(connection, place_id)])
     seen: set[str] = set()
     values: list[str] = []
     for place in chain:

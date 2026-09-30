@@ -25,7 +25,8 @@ MANUAL_LOCK_SQL = (
 #: the active dataset, and at least one candidate that is not excluded for this asset.
 SUGGESTED_PREDICATE = (
     "NOT EXISTS (SELECT 1 FROM asset_place_assignments AS ap WHERE ap.asset_id = {alias}.asset_id "
-    "AND ap.mode = 'MANUAL_ASSIGNED') AND EXISTS (SELECT 1 FROM place_resolutions AS pr "
+    "AND ap.mode = 'MANUAL_ASSIGNED') AND NOT EXISTS (SELECT 1 FROM effective_asset_places ep "
+    "WHERE ep.asset_id={alias}.asset_id) AND EXISTS (SELECT 1 FROM place_resolutions AS pr "
     "WHERE pr.asset_id = {alias}.asset_id AND pr.status = 'CANDIDATES' "
     "AND pr.dataset_id = (SELECT dataset_id FROM active_geo_dataset WHERE singleton = 1) "
     "AND pr.resolution_id = (SELECT pr2.resolution_id FROM place_resolutions AS pr2 "
@@ -94,7 +95,9 @@ def visible_candidates(
     if resolution is None:
         return None, [], 0
     rows = _candidate_rows(connection, str(resolution["resolution_id"]))
-    if has_manual_assignment(connection, int(asset_id)):
+    if has_manual_assignment(connection, int(asset_id)) or connection.execute(
+        "SELECT 1 FROM effective_asset_places WHERE asset_id=?", (int(asset_id),)
+    ).fetchone():
         return resolution, [], len(rows)
     excluded = excluded_place_ids(connection, int(asset_id))
     visible = [

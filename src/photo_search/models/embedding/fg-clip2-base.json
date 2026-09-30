@@ -1,0 +1,72 @@
+{
+  "model": {
+    "id": "qihoo360/fg-clip2-base",
+    "resolved_revision": "430fbc8a912c86fd4de601381b6245a0edab22f0"
+  },
+  "embedding": {
+    "dimension": 768,
+    "metric": "cosine",
+    "normalization": "L2"
+  },
+  "preprocessing": {
+    "max_num_patches": 576,
+    "decode_long_edge": 1600,
+    "orientation": "exif-heif-v1"
+  },
+  "tokenizer": {
+    "max_length": 196,
+    "walk_type": "auto-short-long",
+    "short_max_length": 64
+  },
+  "files": [
+    {
+      "path": "config.json",
+      "sha256": "030a2f607e2090c2bd580be40361f228e7849381f025e5e2dc8955c84d53fb8f",
+      "bytes": 1107
+    },
+    {
+      "path": "configuration_fgclip2.py",
+      "sha256": "a554895ce535aacb123cbca527376b8bf97186201f80130d4925b44895674187",
+      "bytes": 13267
+    },
+    {
+      "path": "model.safetensors",
+      "sha256": "5328bf1538afb4b7f4aa844f749655285d0d79490f31a25aeefc5603d9b173fe",
+      "bytes": 1535264416
+    },
+    {
+      "path": "modeling_fgclip2.py",
+      "sha256": "190fd0710336a885b74a1a2b3a7054824cd095d28348833ff45f5c0a3458c2d1",
+      "bytes": 60139
+    },
+    {
+      "path": "preprocessor_config.json",
+      "sha256": "1125703e5446d5b6ff4d5893a33bac128cdd21dc12e3dad2469a648fb0ae3bf7",
+      "bytes": 393
+    },
+    {
+      "path": "special_tokens_map.json",
+      "sha256": "baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351",
+      "bytes": 636
+    },
+    {
+      "path": "tokenizer.json",
+      "sha256": "58a1696e79c9d97937389ed116f552a15c84811d7b8023918b86f4bc5775b1b0",
+      "bytes": 34356304
+    },
+    {
+      "path": "tokenizer.model",
+      "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2",
+      "bytes": 4241003
+    },
+    {
+      "path": "tokenizer_config.json",
+      "sha256": "607049b4766b302a66e31906a6b4729e01f623597c82262fb52e552f0d4f7fb4",
+      "bytes": 40160
+    }
+  ],
+  "runtime": {
+    "backend": "pytorch",
+    "package": "torch"
+  }
+}

@@ -34,8 +34,8 @@ from typing import Any
 import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MODEL_DIR = Path(r"D:\SZ\project\PhotoSearchData\models\chinese_clip\vit-b-16")
-DEFAULT_MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+DEFAULT_MODEL_DIR = Path(r"D:\SZ\project\PhotoSearchData\models\fg-clip2-base")
+DEFAULT_MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
 VENV_PYTHON = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 
 #: The fixture's own canonical Chinese query (capacity_validation.DEFAULT_QUERY_TEXT).

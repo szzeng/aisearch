@@ -1,8 +1,4 @@
-"""Shared helpers for the P0-06 GPU/runtime probes.
-
-The probes intentionally reuse the P0-03/P0-04 preparation helpers so the frozen model
-directories, manifests and hashing rules stay in one place.
-"""
+"""Shared path, serialization and device inspection helpers."""
 
 from __future__ import annotations
 
@@ -12,33 +8,55 @@ import os
 import re
 import statistics
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
-PREPARE_MODELS_DIR = Path(__file__).resolve().parents[1] / "prepare_models"
-if str(PREPARE_MODELS_DIR) not in sys.path:
-    sys.path.insert(0, str(PREPARE_MODELS_DIR))
+from photo_search.config import resolve_data_root
+from photo_search.face import contract as face_contract
+from photo_search.face.weights import sha256_file
+from photo_search.ocr import contract as ocr_contract
+from photo_search.workers.query_encoder import default_model_dir as embedding_directory
 
-# The probes import the frozen-artifact helpers through this module, and this module owns
-# the single ``sys.path`` bootstrap, so the probe scripts never import the preparation
-# modules directly (that would depend on a fragile import order).
-from chinese_clip_common import (  # noqa: E402
-    default_model_dir,
-    l2_normalize,
-    load_json,
-    write_json,
-)
-from face_ocr_common import (  # noqa: E402
-    FACE_MODEL_FILES,
-    RAPIDOCR_MODEL_FILES,
-    default_model_root,
-    download_cache_dir,
-    face_model_dir,
-    ocr_model_dir,
-    sha256_file,
-)
+FACE_MODEL_FILES = {e["role"]: Path(e["path"]).name for e in face_contract.PINNED_WEIGHTS}
+RAPIDOCR_MODEL_FILES = tuple(Path(e["path"]).name for e in ocr_contract.PINNED_WEIGHTS
+                           if e["role"] != "config")
+
+
+def default_model_dir() -> Path:
+    return embedding_directory(resolve_data_root())
+
+
+def default_model_root() -> Path:
+    return resolve_data_root() / "models"
+
+
+def face_model_dir(root: Path) -> Path:
+    return root / "face" / "buffalo_l"
+
+
+def ocr_model_dir(root: Path) -> Path:
+    return root / "ocr" / "ppocr-v6-small"
+
+
+def download_cache_dir(root: Path) -> Path:
+    return root / "downloads"
+
+
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def l2_normalize(values: Any) -> Any:
+    import numpy as np
+    values = np.asarray(values, dtype=np.float32)
+    return values / np.linalg.norm(values, axis=-1, keepdims=True)
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 

@@ -1,0 +1,28 @@
+{
+  "name": "photo-search-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "typecheck": "vue-tsc --noEmit",
+    "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run --reporter=default --reporter=junit --outputFile=../test-results/frontend.xml"
+  },
+  "dependencies": {
+    "@lucide/vue": "1.49.0",
+    "naive-ui": "2.45.3",
+    "vue": "3.5.43",
+    "vue-router": "5.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "6.0.9",
+    "@vue/test-utils": "2.4.6",
+    "jsdom": "26.1.0",
+    "prettier": "3.9.9",
+    "typescript": "5.9.3",
+    "vite": "8.3.1",
+    "vitest": "5.0.3",
+    "vue-tsc": "3.3.11"
+  }
+}

@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -127,9 +128,21 @@ class DatasetContent:
     places: Mapping[str, DatasetPlace]
     aliases: Mapping[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
 
-    @property
+    @cached_property
     def city_places(self) -> tuple[DatasetPlace, ...]:
         return tuple(place for place in self.places.values() if place.kind == "city")
+
+    @cached_property
+    def city_index(self) -> Any:
+        """Rebuildable per-package index; importing a catalog never imports SciPy."""
+        if not self.city_places:
+            return None
+        from scipy.spatial import KDTree
+
+        return KDTree(
+            [_unit_sphere(place.latitude, place.longitude) for place in self.city_places],
+            copy_data=True,
+        )
 
     def ancestors(self, dataset_place_id: str) -> list[str]:
         """The display names of a place's ancestors, nearest parent first."""
@@ -678,6 +691,12 @@ def haversine_m(latitude_a: float, longitude_a: float, latitude_b: float, longit
     return 2.0 * EARTH_RADIUS_M * math.asin(min(1.0, math.sqrt(term)))
 
 
+def _unit_sphere(latitude: float, longitude: float) -> tuple[float, float, float]:
+    """3D unit coordinates keep the date line and poles continuous for a Euclidean tree."""
+    phi, lam = math.radians(latitude), math.radians(longitude)
+    return math.cos(phi) * math.cos(lam), math.cos(phi) * math.sin(lam), math.sin(phi)
+
+
 def nearby_cities(
     content: DatasetContent,
     latitude: float,
@@ -692,8 +711,18 @@ def nearby_cities(
     same ranking. A point with no city inside ``max_distance_m`` (a sea position, say)
     returns an empty list, and that is a successful empty result, not an error.
     """
+    if max_candidates <= 0 or max_distance_m < 0 or content.city_index is None:
+        return []
+    # Chord length is monotonic in great-circle distance through pi radians. Expand by a
+    # tiny floating-point margin to include boundary points; exact distances below decide
+    # membership, ordering and ties. Never index raw lat/lon as a flat Euclidean plane.
+    radius = 2.0 * math.sin(min(math.pi, max_distance_m / EARTH_RADIUS_M) / 2.0)
+    indices = content.city_index.query_ball_point(
+        _unit_sphere(latitude, longitude), radius + 1e-12, eps=0.0,
+    )
     ranked: list[tuple[float, DatasetPlace]] = []
-    for place in content.city_places:
+    for index in indices:
+        place = content.city_places[index]
         distance = haversine_m(latitude, longitude, place.latitude, place.longitude)
         if distance <= float(max_distance_m):
             ranked.append((distance, place))

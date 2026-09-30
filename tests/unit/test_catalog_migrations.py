@@ -23,6 +23,10 @@ from photo_search.catalog.sqlite_io import connect_rw, open_readonly
 from photo_search.ingestion.service import CatalogService
 
 CORE_TABLES = {
+    "boundary_packages",
+    "boundary_features",
+    "boundary_results",
+    "boundary_memberships",
     "active_geo_dataset",
     "active_search_profile",
     "assets",

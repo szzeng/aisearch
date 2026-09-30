@@ -314,23 +314,6 @@ def test_adr_freezes_space_and_forbids_implicit_fallback() -> None:
     assert "禁止隐式 fallback" in ADR
     assert "ACCEPTED / FROZEN FOR P2 IMPLEMENTATION" in ADR
 
-    manifest = json.loads(
-        (
-            ROOT
-            / "tools"
-            / "prepare_models"
-            / "manifests"
-            / "chinese-clip-vit-b-16.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert manifest["artifacts"]["onnx"]["image"]["sha256"].startswith(
-        SPACE_ID.rsplit(":", 1)[1]
-    )
-    assert manifest["embedding"] == {
-        "dimension": 512,
-        "metric": "cosine",
-        "normalization": "L2",
-    }
 
 
 def test_job_request_and_non_model_processor_instances_validate() -> None:

@@ -60,7 +60,7 @@ V4_TABLES = (
 
 V5_TABLES = (
     *V4_TABLES,
-    "active_geo_dataset",
+    "active_geo_dataset", "boundary_packages", "boundary_features", "boundary_results", "boundary_memberships",
     "geo_dataset_files",
     "geo_datasets",
     "place_resolution_candidates",

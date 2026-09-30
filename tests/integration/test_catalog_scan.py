@@ -134,6 +134,9 @@ def _jobs(harness: Harness) -> list[dict]:
 
 
 def _make_junction(link: Path, target: Path) -> bool:
+    if os.name != "nt":
+        link.symlink_to(target, target_is_directory=True)
+        return link.is_dir()
     completed = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(link), str(target)],
         capture_output=True,

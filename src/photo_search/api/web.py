@@ -1,15 +1,4 @@
-"""The packaged front-end shell and its static assets (architecture §10.1, §10.3).
-
-The page is served straight out of package data (``photo_search/web/``), so the frozen
-onedir bundle ships it unchanged. Neither the shell nor its assets need a session: they
-contain no user data and no absolute local path. Every piece of personal data still comes
-from the session-protected, read-only ``/api/v1`` endpoints, so this module cannot become
-a second way into the library.
-
-A request can only ever name a file *inside* the web package: the path is split on ``/``,
-each segment has to match a strict allow-list, and the traversal is resolved through
-``importlib.resources`` rather than through the filesystem.
-"""
+"""Serve the compiled Vue application and local assets behind the existing API boundary."""
 
 from __future__ import annotations
 
@@ -24,17 +13,7 @@ from fastapi import APIRouter, Response
 from photo_search.api.errors import WEB_ASSET_NOT_FOUND, ApiError
 
 WEB_PACKAGE = "photo_search.web"
-INDEX_NAME = "index.html"
-#: The place-curation page (P2-03C). It lives beside the shell, is served from the same
-#: package data and carries no user data of its own.
-PLACES_NAME = "places.html"
-#: The search page (P2-07). Same rule as the place page: a public document whose every piece
-#: of data still comes from the session-protected ``/api/v1`` endpoints.
-SEARCH_NAME = "search.html"
-#: The person-curation page (P3-06). It never shadows ``/api/v1/persons`` or
-#: ``/api/v1/person-operations``: this route only answers the bare ``/persons`` document.
-PERSONS_NAME = "persons.html"
-
+INDEX_NAME = "dist/index.html"
 #: The shell must always be revalidated: it names the assets of this exact build.
 SHELL_CACHE_CONTROL = "no-cache"
 #: Scripts and styles change only with a build, so a short cache is enough.
@@ -120,52 +99,24 @@ def _serve(relative: str, *, cache_control: str) -> Response:
 
 
 @router.get("/")
-async def index() -> Response:
-    """The application shell. No session, no user data, no local path."""
-    return _serve(INDEX_NAME, cache_control=SHELL_CACHE_CONTROL)
-
-
-@router.get("/places")
-async def places_page() -> Response:
-    """The place-curation page. It never shadows ``/api/v1/places``.
-
-    The business API keeps its own prefix, so the two paths can coexist: this route only
-    answers the bare ``/places`` document, and every piece of place data still comes from
-    the session-protected ``/api/v1`` endpoints.
-    """
-    return _serve(PLACES_NAME, cache_control=SHELL_CACHE_CONTROL)
-
-
 @router.get("/search")
-async def search_page() -> Response:
-    """The search page. It never shadows ``POST /api/v1/search``.
-
-    The business API keeps its own prefix, so the document and the endpoint coexist: this
-    route only answers the bare ``/search`` document, and every result, coverage number and
-    thumbnail still comes from the session-protected ``/api/v1`` endpoints.
-    """
-    return _serve(SEARCH_NAME, cache_control=SHELL_CACHE_CONTROL)
-
-
+@router.get("/places")
 @router.get("/persons")
-async def persons_page() -> Response:
-    """The person-curation page.
-
-    The business API keeps its own prefix, so ``/persons`` and ``/api/v1/persons`` coexist:
-    this route only answers the document, and every person, face, count and operation still
-    comes from the session-protected ``/api/v1`` endpoints.
-    """
-    return _serve(PERSONS_NAME, cache_control=SHELL_CACHE_CONTROL)
+@router.get("/library")
+@router.get("/sources")
+async def index() -> Response:
+    """History-mode routes share a public shell; every data API still needs a session."""
+    return _serve(INDEX_NAME, cache_control=SHELL_CACHE_CONTROL)
 
 
 @router.get("/web/{path:path}")
 async def static_asset(path: str) -> Response:
     """One packaged script, style or image below ``/web/``."""
-    # Both pages name assets of this exact build, so they are always revalidated; a
+    # The shell names assets of this exact build and must be revalidated; a
     # script or stylesheet only changes with a build.
     cache_control = (
         SHELL_CACHE_CONTROL
-        if path in (INDEX_NAME, PLACES_NAME, SEARCH_NAME, PERSONS_NAME)
+        if path == INDEX_NAME
         else ASSET_CACHE_CONTROL
     )
     return _serve(path, cache_control=cache_control)
@@ -174,9 +125,6 @@ async def static_asset(path: str) -> Response:
 __all__ = [
     "ASSET_CACHE_CONTROL",
     "INDEX_NAME",
-    "PERSONS_NAME",
-    "PLACES_NAME",
-    "SEARCH_NAME",
     "SHELL_CACHE_CONTROL",
     "media_type_for_name",
     "read_static",

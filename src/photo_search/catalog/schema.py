@@ -61,7 +61,9 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: ``idx_jobs_retry_due``/``idx_jobs_expired_lease`` that let the claim's own prefilter
 #: statements (``requeue_due_retries``/``fail_exhausted_leases``) stop scanning the whole
 #: backlog. No table, column, row, CHECK or state vocabulary changes.
-SUPPORTED_SCHEMA_VERSION = 16
+#: ``0017`` adds administrative levels, offline boundary packages and effective place
+#: membership; ``0018`` repairs retirement/reactivation projection queueing and stale rows.
+SUPPORTED_SCHEMA_VERSION = 18
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

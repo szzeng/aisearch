@@ -1,4 +1,4 @@
-"""Local development entry point and the offline Chinese-CLIP demo."""
+"""Local development entry point and the offline FG-CLIP 2 demo."""
 
 from __future__ import annotations
 
@@ -155,9 +155,8 @@ def _default_model_dir(data_root: Path | None = None) -> Path:
 
 
 def _default_manifest() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-    return Path.cwd() / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+    from photo_search.models.embedding.manifest import DEFAULT_MANIFEST
+    return DEFAULT_MANIFEST
 
 
 def _demo_search(
@@ -198,13 +197,13 @@ def _demo_search(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Personal local photo search")
     subparsers = parser.add_subparsers(dest="command")
-    demo = subparsers.add_parser("demo-search", help="run the offline Chinese-CLIP fixture search")
+    demo = subparsers.add_parser("demo-search", help="run the offline FG-CLIP 2 fixture search")
     demo.add_argument("--model-dir", type=Path, default=_default_model_dir())
     demo.add_argument("--manifest", type=Path, default=_default_manifest())
     demo.add_argument(
         "--device",
-        default="cuda",
-        help="cuda (default, GPU required) or cpu (explicit reported degradation)",
+        default="auto",
+        help="auto (CUDA or Apple MPS), cuda, mps, or cpu (explicit degradation)",
     )
     demo.add_argument("--device-policy", default=DevicePolicy.CPU_ALLOWED.value)
     demo.add_argument(
@@ -255,7 +254,7 @@ def main() -> None:
         default=None,
         help=(
             "pinned embedding model directory to serve text/image search from "
-            "(default: <data root>/models/chinese_clip/vit-b-16; "
+            "(default: <data root>/models/fg-clip2-base; "
             f"env {MODEL_DIR_ENV})"
         ),
     )
@@ -264,17 +263,17 @@ def main() -> None:
         type=Path,
         default=None,
         help=(
-            "pinned model manifest (default: the shipped Chinese-CLIP manifest; "
+            "pinned model manifest (default: the shipped FG-CLIP 2 manifest; "
             f"env {MODEL_MANIFEST_ENV})"
         ),
     )
     parser.add_argument(
         "--model-device",
-        choices=("auto", "cuda", "cpu"),
+        choices=("auto", "cuda", "mps", "cpu"),
         default=None,
         help=(
-            "device for the query encoder: auto follows the ADR-0001 policy (default CUDA, "
-            f"an explicit cpu request is a reported degradation); env {MODEL_DEVICE_ENV}"
+            "device for the query encoder: auto selects CUDA or Apple MPS; "
+            f"an explicit cpu request is a reported degradation; env {MODEL_DEVICE_ENV}"
         ),
     )
     args = parser.parse_args()

@@ -114,7 +114,19 @@ def plugin_format_decision(pil_format: str | None) -> tuple[str, bool]:
     return (label or "UNKNOWN"), False
 
 
-def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
+def upright_image(source: Image.Image, *, long_edge: int) -> Image.Image:
+    """The same bounded JPEG decode and orientation handling for library and upload."""
+    if source.format == "JPEG":
+        source.draft(source.mode, (long_edge, long_edge))
+    restore_recorded_orientation(source)
+    image = ImageOps.exif_transpose(source)
+    image.load()
+    return image
+
+
+def load_normalized(
+    path: Path, *, long_edge: int, max_pixels: int | None = None
+) -> DecodedImage:
     """Decode ``path``, apply its EXIF orientation and return the upright image.
 
     The returned image is fully loaded and owned by the caller, so the source file can be
@@ -126,18 +138,14 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
     try:
         with Image.open(path) as source:
             label, decodable = plugin_format_decision(source.format)
+            if max_pixels is not None and source.width * source.height > max_pixels:
+                raise _decode_failed(path, "image exceeds the pixel safety limit")
             if not decodable:
                 raise _unsupported(label)
-            if label == "JPEG":
-                # Must happen before ``exif_transpose`` loads the pixels.
-                source.draft(source.mode, (long_edge, long_edge))
-            # Restore the orientation pillow-heif cleared so HEIC is normalised by exactly
-            # the same ``exif_transpose`` call as every other format.
             orientation = restore_recorded_orientation(source)
             if orientation is None:
                 orientation = _read_orientation(source)
-            upright = ImageOps.exif_transpose(source)
-            upright.load()
+            upright = upright_image(source, long_edge=long_edge)
             width, height = upright.size
             mode = source.mode
     except CatalogError:

@@ -109,7 +109,7 @@ from photo_search.search.upload import checked_query_vector
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
 
-#: Chinese-CLIP squared-L2 threshold; equivalent to cosine similarity >= 0.35.
+#: Normalised-vector squared-L2 threshold; equivalent to cosine similarity >= 0.35.
 STRONG_MATCH_MAX_DISTANCE = 1.3
 
 _HIT_REASON_BY_CHANNELS = {

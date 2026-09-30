@@ -77,7 +77,7 @@ def process_memory_bytes() -> int:
         return int(counters.PeakWorkingSetSize)
     import resource
 
-    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * 1024
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) * (1 if sys.platform == "darwin" else 1024)
 
 
 def build_fixture(root: Path, *, files: int, file_bytes: int, directories: int) -> int:

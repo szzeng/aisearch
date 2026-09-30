@@ -19,13 +19,20 @@ import time
 from pathlib import Path
 from typing import Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "runtime"))
+from photo_search.config import resolve_data_root
+from photo_search.workers.query_encoder import default_model_dir as model_directory
 
-from runtime_common import (  # noqa: E402
-    REPOSITORY_ROOT,
-    default_model_dir,
-    write_json,
-)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_model_dir() -> Path:
+    return model_directory(resolve_data_root())
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+
 
 DEFAULT_PACKAGE = REPOSITORY_ROOT / "dist" / "PhotoSearch"
 DEFAULT_RESULT = REPOSITORY_ROOT / "docs/reports/P0-06-packaged-gpu-smoke.json"
@@ -98,17 +105,13 @@ def check_run(run: dict[str, Any], device: str, label: str) -> list[str]:
     if report["device"]["device"] != device:
         failures.append(f"{label}: resolved device {report['device']['device']} != {device}")
     if device == "cuda":
-        if report["device"]["provider"] != "CUDAExecutionProvider":
+        if report["device"]["provider"] != "torch-cuda":
             failures.append(f"{label}: provider {report['device']['provider']}")
         if report["device"]["cpu_fallback_disabled"] is not True:
             failures.append(f"{label}: CPU fallback was not disabled")
-        providers = {
-            provider
-            for entry in report["provider_usage"].values()
-            for provider in (entry.get("node_providers") or {})
-        }
-        if providers != {"CUDAExecutionProvider"}:
-            failures.append(f"{label}: node providers {sorted(providers)}")
+        usage = report.get("provider_usage", {})
+        if usage.get("backend") != "pytorch" or usage.get("device") != "cuda":
+            failures.append(f"{label}: unexpected inference runtime {usage}")
     else:
         if report["device"].get("is_degradation") is not True:
             failures.append(f"{label}: CPU run was not reported as a degradation")
@@ -132,14 +135,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", type=Path, default=DEFAULT_PACKAGE)
     parser.add_argument("--model-dir", type=Path, default=default_model_dir())
-    parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--result", type=Path, default=DEFAULT_RESULT)
     parser.add_argument("--keep-copy", action="store_true")
     args = parser.parse_args()
 
     package = args.package.resolve()
     executable = package / "PhotoSearch.exe"
-    relative_manifest = Path("_internal/tools/prepare_models/manifests/chinese-clip-vit-b-16.json")
+    relative_manifest = Path("_internal/photo_search/models/embedding/fg-clip2-base.json")
     result: dict[str, Any] = {
         "status": "running",
         "task": "P0-06",
@@ -154,7 +156,9 @@ def main() -> int:
         write_json(args.result.resolve(), result)
         print(result, file=sys.stderr)
         return 1
-    temporary_root = Path(tempfile.mkdtemp(prefix="P0-06 "))
+    temporary_parent = REPOSITORY_ROOT / ".pytest-tmp" / "packaging"
+    temporary_parent.mkdir(parents=True, exist_ok=True)
+    temporary_root = Path(tempfile.mkdtemp(prefix="P0-06 ", dir=temporary_parent))
     accept_dir = temporary_root / "P0-06 中文 空格 验收"
     accept_dir.mkdir(parents=True, exist_ok=True)
     copied = accept_dir / "PhotoSearch"
@@ -176,7 +180,8 @@ def main() -> int:
             write_json(args.result.resolve(), result)
             print(result, file=sys.stderr)
             return 1
-        output_directory = Path(tempfile.mkdtemp(prefix="P0-06-smoke-"))
+        output_directory = temporary_root / "output"
+        output_directory.mkdir()
         runs = []
         for device in ("cuda", "cpu"):
             output_path = output_directory / f"demo-{device}.json"

@@ -265,7 +265,7 @@ _PRESENT_SOURCE_SQL = (
 class ImageEncoder(Protocol):
     """The image half of the ADR-0003 §7 embedding adapter boundary.
 
-    Production supplies the pinned Chinese-CLIP adapter the AI worker already drives - the
+    Production supplies the pinned FG-CLIP 2 adapter the AI worker already drives - the
     worker's request surface is exactly ``adapter.encode_image(path)`` on the asset's current
     file, and a re-execution is the same call on the same input revision. Diagnostics and tests
     supply a deterministic stand-in through this protocol; nothing here loads a model, chooses a

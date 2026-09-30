@@ -41,8 +41,8 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FIXTURE = REPO_ROOT / "tmp" / "p402f-阶段0" / "scale-300000-wave"
-MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-DEFAULT_MODEL_DIR = Path("D:/SZ/project/PhotoSearchData/models/chinese_clip/vit-b-16")
+MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
+DEFAULT_MODEL_DIR = Path("D:/SZ/project/PhotoSearchData/models/fg-clip2-base")
 SESSION_TOKEN = "p4-02y-scale-token"
 HOST = "127.0.0.1"
 PORT = {"value": 8377}

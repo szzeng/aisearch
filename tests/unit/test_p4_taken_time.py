@@ -415,7 +415,7 @@ def test_the_capture_condition_joins_the_same_and_set_as_every_other_condition()
         assert "l.source_id = ?" in sql
         assert "l.availability = 'PRESENT'" in sql
         assert "EXISTS (SELECT 1 FROM asset_metadata AS m" in sql
-        assert "ap.mode = 'MANUAL_ASSIGNED'" in sql
+        assert "effective_asset_places" in sql
         assert MEMBER_PREDICATE in sql
         # The parameter order follows the SQL text: source, person, capture, place.
         assert parameters == [4, 7, *contract.CAPTURE_SOURCES,

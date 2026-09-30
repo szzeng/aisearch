@@ -62,9 +62,11 @@ ALIAS_FIELDS = (
 #: a parent; a ``custom`` place may hang under any active kind.
 PARENT_KINDS: dict[str, tuple[str, ...]] = {
     "country": (),
-    "city": ("country",),
-    "attraction": ("country", "city"),
-    "custom": ("country", "city", "attraction", "custom"),
+    "province": ("country",),
+    "city": ("country", "province"),
+    "district": ("country", "province", "city"),
+    "attraction": ("country", "province", "city", "district"),
+    "custom": ("country", "province", "city", "district", "attraction", "custom"),
 }
 
 #: Hard bound on one ancestor walk, so a corrupted hierarchy cannot loop forever.
@@ -157,19 +159,25 @@ def ancestor_views(connection: sqlite3.Connection, place_id: int) -> list[dict[s
 
 def descendant_ids(connection: sqlite3.Connection, place_ids: Iterable[int]) -> list[int]:
     """Every descendant (inclusive) of the given places, using one recursive CTE."""
+    sql, roots = descendant_query(place_ids)
+    rows = connection.execute(sql, roots).fetchall()
+    return [int(row[0]) for row in rows]
+
+
+def descendant_query(place_ids: Iterable[int]) -> tuple[str, list[int]]:
+    """A set-valued subtree query: bind only selected roots, never every descendant."""
     roots = sorted({int(value) for value in place_ids})
     if not roots:
-        return []
+        return "SELECT place_id FROM places WHERE 0", []
     placeholders = ", ".join("?" for _ in roots)
-    rows = connection.execute(
+    return (
         "WITH RECURSIVE tree(place_id) AS ("
         f" SELECT place_id FROM places WHERE place_id IN ({placeholders})"
         " UNION"
         " SELECT p.place_id FROM places p JOIN tree t ON p.parent_place_id = t.place_id"
         ") SELECT place_id FROM tree ORDER BY place_id",
-        tuple(roots),
-    ).fetchall()
-    return [int(row[0]) for row in rows]
+        roots,
+    )
 
 
 def check_parent(
@@ -201,6 +209,12 @@ def check_parent(
         raise fail(
             PLACE_PARENT_CYCLE,
             f"a {kind} place cannot hang under a {parent['kind']} place",
+            place_id=int(parent_place_id),
+        )
+    if len(ancestor_rows(connection, int(parent_place_id))) >= MAX_HIERARCHY_DEPTH:
+        raise fail(
+            PLACE_PARENT_CYCLE,
+            "the requested parent exceeds the supported hierarchy depth",
             place_id=int(parent_place_id),
         )
     return parent
@@ -485,8 +499,7 @@ def retire_place(
     )
     assigned = int(
         connection.execute(
-            "SELECT COUNT(*) FROM asset_place_assignments WHERE place_id = ? "
-            "AND mode = 'MANUAL_ASSIGNED'",
+            "SELECT COUNT(*) FROM effective_asset_places WHERE place_id = ?",
             (int(place_id),),
         ).fetchone()[0]
     )
@@ -496,7 +509,8 @@ def retire_place(
             (int(place_id),),
         ).fetchone()[0]
     )
-    if children or assigned or excluded:
+    bounded = connection.execute("SELECT 1 FROM boundary_features WHERE place_id=?", (int(place_id),)).fetchone()
+    if children or assigned or excluded or bounded:
         raise fail(
             PLACE_REFERENCED,
             "this place is still referenced and cannot be retired",
@@ -529,8 +543,8 @@ def assets_effectively_assigned_to(
     return [
         int(row[0])
         for row in connection.execute(
-            "SELECT asset_id FROM asset_place_assignments "
-            f"WHERE mode = 'MANUAL_ASSIGNED' AND place_id IN ({placeholders}) ORDER BY asset_id",
+            "SELECT DISTINCT asset_id FROM effective_asset_places "
+            f"WHERE place_id IN ({placeholders}) ORDER BY asset_id",
             tuple(ids),
         ).fetchall()
     ]

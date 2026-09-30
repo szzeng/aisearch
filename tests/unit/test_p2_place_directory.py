@@ -777,6 +777,50 @@ def test_place_filters_are_authoritative_and_deduplicated(catalog: Catalog) -> N
     assert unknown.value.code == PLACE_NOT_FOUND
 
 
+def test_subtree_filter_does_not_bind_every_child(catalog: Catalog) -> None:
+    assets = seed_assets(catalog, 2)
+    with catalog.write() as connection:
+        root = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+        children = [
+            directory.create_place(
+                connection, kind="custom", canonical_name=f"地点 {i}",
+                parent_place_id=root, now_ms=2,
+            )
+            for i in range(80)
+        ]
+    PlaceService(catalog).write_assignment(
+        asset_id=assets[0], action="ASSIGN", target_place_id=children[-1],
+        request_id="subtree", expected_revision=0,
+    )
+    previous_limit = catalog.connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 32)
+    try:
+        # Overlapping roots still return each photo once; unrelated/unassigned photos stay out.
+        sql, params = filter_module.place_condition(
+            catalog.connection, place_ids=[root, children[-1]], include_descendants=True,
+        )
+        rows = catalog.read_all(f"SELECT asset_id FROM assets AS a WHERE {sql}", tuple(params))
+        assert [row[0] for row in rows] == [assets[0]]
+    finally:
+        catalog.connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
+
+
+def test_overdeep_hierarchy_is_rejected_before_it_can_break_reads(catalog: Catalog) -> None:
+    with catalog.write() as connection:
+        parent = directory.create_place(connection, kind="custom", canonical_name="根", now_ms=1)
+        for depth in range(directory.MAX_HIERARCHY_DEPTH):
+            parent = directory.create_place(
+                connection, kind="custom", canonical_name=f"层级 {depth}",
+                parent_place_id=parent, now_ms=2,
+            )
+        assert len(directory.ancestor_rows(connection, parent)) == directory.MAX_HIERARCHY_DEPTH
+        with pytest.raises(CatalogError) as error:
+            directory.create_place(
+                connection, kind="custom", canonical_name="过深", parent_place_id=parent, now_ms=3,
+            )
+        assert error.value.code == PLACE_PARENT_CYCLE
+        assert connection.execute("SELECT COUNT(*) FROM places").fetchone()[0] == 65
+
+
 def test_coverage_and_cursor_binding(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 3)
     with catalog.write() as connection:

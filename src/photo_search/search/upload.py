@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from photo_search.catalog.errors import (
     DECODE_FAILED,
@@ -52,7 +52,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.media import heif
 from photo_search.media.contract import refused_input_formats
-from photo_search.media.decode import HEADER_BYTES, restore_recorded_orientation, sniff_format
+from photo_search.media.decode import HEADER_BYTES, sniff_format, upright_image
 from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.search.embedding import check_encoder_binding
 from photo_search.search.tokens import VALIDATION_ERROR
@@ -349,17 +349,7 @@ def _decode_upload(
                         "max_pixels": int(limits.max_pixels),
                     },
                 )
-            if label == "JPEG":
-                # Bound peak memory exactly like the P1-03 media path does. Must happen
-                # before ``exif_transpose`` loads the pixels; ``size`` is already captured.
-                source.draft(source.mode, (int(limits.decode_long_edge),) * 2)
-            # P4-02T: pillow-heif clears the orientation tag when it opens a HEIF container,
-            # so the upload path restores it exactly like ``media.decode.load_normalized``
-            # before the single ``exif_transpose`` below - a rotated phone photo would
-            # otherwise be encoded from the wrong orientation without any error at all.
-            restore_recorded_orientation(source)
-            upright = ImageOps.exif_transpose(source)
-            upright.load()
+            upright = upright_image(source, long_edge=int(limits.decode_long_edge))
             decoded_width, decoded_height = int(upright.size[0]), int(upright.size[1])
     except CatalogError:
         raise

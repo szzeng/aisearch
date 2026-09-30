@@ -129,6 +129,7 @@ MAX_REQUEST_ID_CHARS = 64
 MAX_ERROR_DETAILS_CHARS = 2_000
 
 _STATUS_BY_CODE: dict[str, int] = {
+    "SEARCH_BUSY": 503,
     # Not found: the caller named something that does not exist.
     ASSET_NOT_FOUND: 404,
     SOURCE_NOT_FOUND: 404,

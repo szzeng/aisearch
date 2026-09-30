@@ -20,8 +20,8 @@ from photo_search.indexing import semantic
 from photo_search.scheduler.contracts import canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
-DIMENSION = 512
+MANIFEST = REPO_ROOT / "src" / "photo_search" / "models" / "embedding" / "fg-clip2-base.json"
+DIMENSION = 768
 PHOTOS = ("red.jpg", "green.jpg", "blue.jpg")
 
 
@@ -40,16 +40,16 @@ class StubPinnedAdapter:
             "device": {
                 "device": self.device,
                 "provider": (
-                    "CUDAExecutionProvider" if self.device == "cuda" else "CPUExecutionProvider"
+                    "torch-cuda" if self.device == "cuda" else "torch-cpu"
                 ),
                 "precision": "FP32",
                 "cpu_fallback_disabled": True,
             },
             "runtime": {
-                "runtime_backend": "onnxruntime",
-                "runtime_package": "onnxruntime-gpu",
+                "runtime_backend": "pytorch",
+                "runtime_package": "torch",
                 "runtime_version": "1.30.0",
-                "providers": ["CUDAExecutionProvider", "CPUExecutionProvider"],
+                "providers": ["torch-cuda", "torch-cpu"],
                 "cuda_available": True,
             },
         }

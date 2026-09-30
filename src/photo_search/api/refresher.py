@@ -77,6 +77,7 @@ class LibraryRefresher:
         self._status: RefreshStatus | None = None
         self._running = False
         self._closed = False
+        self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ public API
@@ -146,14 +147,10 @@ class LibraryRefresher:
                 time.sleep(0.01)
 
     def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
-        """Join the worker if it is idle; a refresh in flight keeps its own connection.
-
-        One refresh run opens its service *inside its own thread* and closes it there again,
-        so a later run can never reuse a connection another thread created (SQLite's own
-        thread affinity). ``close`` therefore only waits for the worker to finish.
-        """
+        """Stop claiming work and wait for the current operation to finish."""
         with self._lock:
             self._closed = True
+            self._stop.set()
             thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=float(timeout))
@@ -185,6 +182,7 @@ class LibraryRefresher:
                     device_policy=self._device_policy,
                     enrich=self._enrich,
                     mode=mode,
+                    cancel_check=self._stop.is_set,
                 )
         except CatalogError as error:
             logger.info("library refresh failed: %s", error.code)

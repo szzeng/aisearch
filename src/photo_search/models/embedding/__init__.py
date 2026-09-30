@@ -1,1 +1,1 @@
-"""Chinese-CLIP embedding adapter implementation."""
+"""FG-CLIP 2 embedding adapter implementation."""
