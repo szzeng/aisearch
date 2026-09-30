@@ -4,60 +4,66 @@
 
 只回答：
 
-> Qwen3-VL-Embedding-2B 用于当前 30 万图库时，搜索会比 Chinese-CLIP 慢多少？
+> Qwen3-VL-Embedding-2B 用于当前 30 万图库时，搜索速度大约会变成多少？
 
 纯测速，不改生产功能。
 
 执行建议：**GPT-6 Luna / medium**。若 2048D generation 无法正确复用既有 30 万 fixture，或 Qwen CUDA 独立环境出现需要跨模块定位的依赖/显存问题，再升 **Luna / high**；本卡不需要 Sol / DS-H 独立审核。
 
-## A. 30万向量检索
+## 已有基线：直接引用，不复测
 
-复用现有：
+Chinese-CLIP 与 512D 的 30 万检索已有正式数据，本卡不得重复测量。
+
+P4-02Y-V：
+
+```text
+300000 vectors
+512D
+top_k=5000
+block=15000
+20 blocks
+300000 scanned
+fallback=0
+truncated=false
+
+Vector P50  = 3420.894 ms
+Service P50 = 3733.173 ms
+```
+
+Qwen 若输出 512D，对 LanceDB 仍是 30 万条 512D float32 向量，因此 **Qwen 512D 的向量检索成本直接采用该 512D 基线**。
+
+不重建 512D fixture，不复测 Chinese-CLIP。
+
+## A. 唯一新增的30万向量测试：2048D
+
+复用既有 30 万 fixture 的临时副本：
 
 ```text
 tmp/p402f-阶段0/scale-300000-wave/data
 ```
 
-固定：
-
-```text
-300000 vectors
-top_k=5000
-block=15000
-exact search
-```
-
-### 512D
-
-直接使用现有 fixture，不重建。
-
-```text
-warmup 1
-正式 5 次
-```
-
-作为本轮基线。
-
-### 2048D
-
-复制现有 30 万 fixture 到临时目录，仅新增：
+只新增：
 
 ```text
 2048D generation
 300000 confirmed index entries
 2048D Lance vector table
+top_k=5000
+block=15000
+exact search
 ```
 
-synthetic L2-normalized float32 vectors 即可。
+使用 synthetic L2-normalized float32 vectors。
 
 必须：
 
 - 分块生成；
 - 分块写 Lance；
 - 不在内存保存完整 `300000 × 2048` 矩阵；
-- 不修改原历史 fixture。
+- 不修改原历史 fixture；
+- 走当前生产 `LanceVectorIndex / vector_channel` 路径。
 
-同样：
+测速：
 
 ```text
 warmup 1
@@ -83,7 +89,7 @@ fallback=0
 truncated=false
 ```
 
-需要时新增独立脚本：
+需要时新增：
 
 ```text
 tools/diagnostics/qwen_speed_probe.py
@@ -91,14 +97,38 @@ tools/diagnostics/qwen_speed_probe.py
 
 不要修改历史 `p4_02f_stage0.py`。
 
-## B. Query 编码速度
+## B. 建立一次性 Qwen 测速环境
 
-真实测：
+当前项目没有 Qwen3-VL-Embedding-2B 的运行依赖和模型权重。
+
+本卡负责在 `tmp/` 下建立**独立、可删除的临时环境**，按 Qwen 官方要求安装测试所需依赖并下载：
 
 ```text
-Chinese-CLIP
-Qwen3-VL-Embedding-2B
+Qwen/Qwen3-VL-Embedding-2B
 ```
+
+例如：
+
+```text
+tmp/qwen-speed-env/
+tmp/qwen-speed-model/
+```
+
+具体目录可由执行者按官方工具实际布局决定。
+
+禁止修改：
+
+```text
+pyproject.toml
+uv.lock
+当前 PhotoSearch .venv
+```
+
+禁止把模型权重、临时环境或缓存提交 Git。
+
+## C. 只测 Qwen Query 编码
+
+不再测试 Chinese-CLIP。
 
 固定查询：
 
@@ -108,7 +138,7 @@ Qwen3-VL-Embedding-2B
 两个人一起吃饭
 ```
 
-每模型：
+Qwen：
 
 ```text
 warmup 3
@@ -118,51 +148,42 @@ warmup 3
 记录：
 
 - Query encode P50
-- 模型加载时间
+- 模型加载时间（单独记录，不算正常查询）
 - GPU 峰值显存
+- 实际 CUDA/device/dtype
+- 输出维度
 
-Qwen 输出只比较：
+只比较：
 
 ```text
 512D
 2048D
 ```
 
-若 512D 只是同一次 forward 后的 MRL 截断，不重复推理。
+若 512D 只是同一次 forward 后的 MRL 截断，不重复执行模型推理。
 
-### Qwen 环境
+### GPU 规则
 
-使用 `tmp/` 下独立临时 Python 环境。
-
-禁止修改：
-
-```text
-pyproject.toml
-uv.lock
-当前 .venv
-```
-
-Qwen 使用真实 CUDA 正常精度路径。
+使用当前 RTX 4060 Laptop 的真实 CUDA 正常运行路径。
 
 若发生：
 
 ```text
 CUDA OOM
-模型无法在当前 RTX 4060 Laptop 8GB 正常加载
+模型无法正常加载
+依赖无法建立
 ```
 
-直接记录结果。
+直接记录真实结果并停止对应测试。
 
-本卡不改成：
+本卡禁止为了跑通改成：
 
 - CPU
 - CPU offload
 - 量化
 - 其它模型
 
-来绕过。
-
-## C. 输出
+## D. 输出
 
 ```text
 docs/reports/P4-QWEN-SPEED.md
@@ -171,25 +192,33 @@ test-results/p4-qwen-speed.json
 
 最终只需要：
 
-| 模型 | 维度 | Query P50 | 30万 Vector P50 | 相对当前 |
-|---|---:|---:|---:|---:|
-| Chinese-CLIP | 512 | 实测 | 本轮实测 | 1.00× |
-| Qwen | 512 | 实测 | 同512D基线 | X× |
-| Qwen | 2048 | 实测 | 实测 | X× |
+| 模型/方案 | Query | 30万 Vector | 说明 |
+|---|---:|---:|---|
+| 当前 Chinese-CLIP 512D | 引用已有证据 | 3420.894 ms | 当前基线 |
+| Qwen 512D | 新实测 | 3420.894 ms | 直接复用512D检索基线 |
+| Qwen 2048D | 新实测 | 新实测 | 完整维度 |
 
-并回答：
+同时引用当前已有：
 
 ```text
-Qwen 512D 相对当前约慢多少
-Qwen 2048D 相对当前约慢多少
+30万 Service P50 = 3733.173 ms
+```
 
-主要额外耗时来自：
-Query encoding / vector dimension / 两者
+基于“已有基线 + Qwen Query 实测 + 2048D Vector 实测”给出简洁估算，并明确标记为 **estimated，不是真实生产 HTTP 端到端实测**。
+
+最终回答：
+
+```text
+Qwen 512D：预计搜索速度约为多少，主要新增耗时是什么
+Qwen 2048D：预计搜索速度约为多少，主要新增耗时是什么
+当前 8GB GPU 是否能正常运行 Qwen3-VL-Embedding-2B
 ```
 
 ## 不做
 
 - 不测准确率
+- 不复测 Chinese-CLIP
+- 不复测 512D 30 万检索
 - 不编码真实 30 万照片
 - 不正式接入 Qwen
 - 不改生产 `src/**`
@@ -202,9 +231,11 @@ Query encoding / vector dimension / 两者
 
 ## 最小检查
 
+若新增诊断脚本：
+
 ```text
 ruff check tools/diagnostics/qwen_speed_probe.py
 git diff --check
 ```
 
-只提交测速工具和报告。
+只提交测速工具和报告；`tmp/` 环境、模型、缓存及大体积测试数据不提交。
