@@ -34,13 +34,13 @@ OCR_SOURCE = "RAPIDOCR_PPOCRV4_MOBILE"
 OCR_ENGINE = "rapidocr-onnxruntime"
 OCR_RUNTIME_BACKEND = "onnxruntime"
 
-#: ADR-0003 §2: OCR is not an embedding and not a reranker, so the only honest
-#: ``processor_kind`` is ``non_model`` - which the frozen contract already pins to
-#: ``CPU_PREFERRED`` on ``cpu`` only, exactly the device policy P3-01 requires.
-OCR_PROCESSOR_KIND = "non_model"
-OCR_DEVICE_POLICY = "CPU_PREFERRED"
-OCR_SUPPORTED_DEVICES = ("cpu",)
+#: OCR executes pinned model weights but publishes a structured document, not a vector.
+OCR_PROCESSOR_KIND = "structured_model"
+OCR_DEVICE_POLICY = "CPU_ALLOWED"
+OCR_SUPPORTED_DEVICES = ("gpu", "cpu")
 OCR_SUPPORTED_PRECISIONS = ("FP32",)
+OCR_MODEL_ID = "rapidocr-ppocrv4-mobile"
+OCR_MODEL_REVISION = "rapidocr-onnxruntime@1.4.4"
 
 #: ``<data_root>/models`` is the P0-04 model root; every pinned path is relative to it.
 MODELS_DIRNAME = "models"

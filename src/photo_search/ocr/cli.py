@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
             _selection_options(subparser)
         if name in ("enqueue", "recognize"):
             subparser.add_argument(
+                "--device",
+                choices=("auto", "cpu", "gpu"),
+                default="auto",
+                help="requested OCR device; auto prefers a qualified GPU",
+            )
+            subparser.add_argument(
                 "--force",
                 action="store_true",
                 help="rewind an already finished job instead of only creating a missing one",
@@ -208,6 +214,7 @@ def run_command(args: argparse.Namespace) -> int:
                     targets,
                     now_ms=service.catalog.now_ms(),
                     force=bool(getattr(args, "force", False)),
+                    requested_device=str(getattr(args, "device", "auto")),
                 )
             if command in ("run", "recognize"):
                 payload["run"] = run_queue(

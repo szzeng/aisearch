@@ -122,15 +122,20 @@ def test_the_fingerprint_is_derived_from_the_pinned_triples() -> None:
 
 
 # ------------------------------------------------------------------------------- spec
-def test_the_processor_spec_is_the_frozen_non_model_cpu_shell() -> None:
+def test_the_processor_spec_is_the_frozen_structured_model_shell() -> None:
     spec = ocr_processor_spec()
     assert isinstance(spec, ProcessorSpec)
     envelope = spec.to_envelope()
     # Round-tripping proves the envelope is a legal processor contract, not a lookalike.
     assert ProcessorSpec.from_envelope(envelope).processor_id == contract.OCR_PROCESSOR_ID
-    assert envelope["processor_kind"] == "non_model"
-    assert envelope["device_policy"] == "CPU_PREFERRED"
-    assert envelope["supported_devices"] == ["cpu"]
+    assert envelope["processor_kind"] == "structured_model"
+    assert envelope["device_policy"] == "CPU_ALLOWED"
+    assert envelope["supported_devices"] == ["gpu", "cpu"]
+    assert envelope["model_id"] == contract.OCR_MODEL_ID
+    assert envelope["model_revision"] == contract.OCR_MODEL_REVISION
+    assert {item["name"] for item in envelope["weights"]} == {
+        "detection", "classification", "recognition"
+    }
     assert envelope["runtime_backend"] == "onnxruntime"
     assert envelope["cancellation_supported"] is True
     assert envelope["max_batch_size"] == 1
@@ -138,16 +143,18 @@ def test_the_processor_spec_is_the_frozen_non_model_cpu_shell() -> None:
     assert envelope["task_type"] == contract.OCR_TASK_TYPE
     assert set(envelope) == set(ProcessorSpec.from_envelope(envelope).to_envelope())
     # No vector-shaped field ever appears on an OCR processor.
-    for key in ("space_id", "dimension", "model_id", "weights", "normalizer"):
+    for key in ("space_id", "dimension", "metric", "normalizer"):
         assert key not in envelope
 
 
-def test_the_processor_never_claims_a_device_other_than_cpu() -> None:
+def test_the_processor_declares_gpu_and_cpu_without_vector_identity() -> None:
     spec = ocr_processor_spec()
-    assert spec.supported_devices == ("cpu",)
+    assert spec.supported_devices == ("gpu", "cpu")
     assert spec.envelope["device_policy"] == contract.OCR_DEVICE_POLICY
-    with pytest.raises(CatalogError):
-        ProcessorSpec.from_envelope({**spec.envelope, "device_policy": "GPU_REQUIRED"})
+    assert ProcessorSpec.from_envelope(spec.envelope).processor_kind == "structured_model"
+    for field in ("space_id", "dimension", "metric"):
+        with pytest.raises(CatalogError):
+            ProcessorSpec.from_envelope({**spec.envelope, field: "invalid"})
 
 
 # ---------------------------------------------------------------------------- payload

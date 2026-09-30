@@ -2,6 +2,10 @@
 
 更新：2026-09-30。当前规则：主架构**需求修订 6**、执行策略**修订 8**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## P4-02Y-L — OCR CUDA 设备契约（**实现验收通过；独立 DS-H 审查待做**）
+
+实现报告：[P4-02Y-L OCR CUDA](reports/P4-02Y-L-ocr-cuda.md)；审查卡：[P4-02Y-L-review](tasks/P4-02Y-L-review.md)。Sol 冻结通过；RTX 4060 Laptop 实测 auto 3/3 job 走 CUDA，显式 CPU 3/3 成功；CPU/GPU 输出等价，round-total 中位数 5227.72/843.33 ms（6.199×），synthetic refresh/build 3/3 CUDA。P2/OCR JUnit **119 passed / 0 failed / 0 errors / 19 skipped**；Ruff、lock、diff-check 通过。P4-02Y-L 总任务仍**待独立 DS-H 全受影响面审查**，未标 PASS。
+
 ## 当前任务 P4-02Y-W — 5000 搜索结果 + 高度匹配（实现与验收完成，独立审查待做）
 
 实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。B 级 JUnit **1878/0/0/48**；30 万 smoke `top_k=5000`：20 blocks、300000 scanned、fallback=0、truncated=false；ruff、Node syntax、diff-check 通过。按 V3.1 §2.4，仍需新会话 DS-H 完整受影响面工程主审，故总任务尚未 PASS。下一步只做该独立审查，不扩展搜索算法优化。

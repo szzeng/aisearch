@@ -23,7 +23,7 @@ CONTRACT_VERSION = "p2-contracts.v1"
 DEVICE_POLICIES = ("GPU_REQUIRED", "CPU_ALLOWED", "CPU_PREFERRED")
 REQUESTED_DEVICES = ("auto", "cpu", "gpu")
 RESOLVED_DEVICES = ("cpu", "gpu")
-PROCESSOR_KINDS = ("embedding_model", "reranker_model", "non_model")
+PROCESSOR_KINDS = ("embedding_model", "reranker_model", "non_model", "structured_model")
 JOB_RESULT_STATES = ("SUCCEEDED", "RETRY_WAIT", "BLOCKED", "FAILED", "CANCELLED")
 HEALTH_STATUSES = ("healthy", "degraded", "unhealthy", "unknown")
 ARTIFACT_TYPES = ("embedding", "structured", "binary")
@@ -553,6 +553,8 @@ class ProcessorSpec:
             extra = _EMBEDDING_EXTRA
         elif kind == "reranker_model":
             extra = _RERANKER_EXTRA
+        elif kind == "structured_model":
+            extra = ("model_id", "model_revision", "weights")
         else:
             extra = ()
         _closed(data, where=where, required=(*_SPEC_COMMON_REQUIRED, *extra))
@@ -569,6 +571,20 @@ class ProcessorSpec:
                     device_policy=policy,
                     supported_devices=list(devices),
                 )
+        if kind == "structured_model":
+            if _text(data["output_type"], where="output_type") == "embedding":
+                raise _fail("a structured_model cannot declare embedding output", where=where)
+            _text(data["model_id"], where="model_id")
+            _text(data["model_revision"], where="model_revision")
+            weights = data["weights"]
+            if not isinstance(weights, Sequence) or isinstance(weights, (str, bytes)) or not weights:
+                raise _fail("structured_model.weights must be a non-empty array", where=where)
+            for index, weight in enumerate(weights):
+                item = _object(weight, where=f"weights[{index}]")
+                _closed(item, where=f"weights[{index}]", required=("name", "revision", "sha256"))
+                _text(item["name"], where=f"weights[{index}].name")
+                _text(item["revision"], where=f"weights[{index}].revision")
+                _sha256(item["sha256"], where=f"weights[{index}].sha256")
         _sha256(data["config_hash"], where="config_hash")
         measurements = data["resource_measurements"]
         if not isinstance(measurements, Sequence) or isinstance(measurements, (str, bytes)):

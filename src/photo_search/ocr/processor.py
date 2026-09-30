@@ -1,9 +1,8 @@
 """The OCR ``ProcessorSpec``, its structured artifact and its persistence hook.
 
-The processor is the frozen ADR-0003 shell with the P3-01 facts filled in: ``non_model``
-(which the contract already pins to ``CPU_PREFERRED`` on ``cpu`` only), the pinned
-``config_hash``, and no vector of any kind - ``embedding``, ``space_id`` and ``dimension``
-never appear in an OCR result.
+The processor uses the additive ``structured_model`` branch: pinned model weights with a
+structured document result and no vector of any kind - ``embedding``, ``space_id`` and
+``dimension`` never appear in an OCR result.
 
 The split between the two durable stores follows the P3-01 invariants exactly:
 
@@ -38,6 +37,7 @@ from photo_search.catalog.errors import (
     OCR_RESULT_TOO_LARGE,
     OCR_WEIGHTS_HASH_MISMATCH,
     OCR_WEIGHTS_MISSING,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     SOURCE_FILE_MISSING,
     SOURCE_OFFLINE,
     STALE_INPUT_REVISION,
@@ -108,7 +108,16 @@ def onnx_runtime_package_id() -> str:
 
 
 def ocr_processor_spec() -> ProcessorSpec:
-    """The frozen ``ProcessorSpec`` of the OCR processor: CPU only, no vector."""
+    """The frozen ``ProcessorSpec`` of the OCR structured model: CUDA/CPU, no vector."""
+    weights = [
+        {
+            "name": str(entry["role"]),
+            "revision": contract.OCR_MODEL_REVISION,
+            "sha256": str(entry["sha256"]),
+        }
+        for entry in contract.PINNED_WEIGHTS
+        if str(entry["role"]) != "config"
+    ]
     return ProcessorSpec.from_envelope(
         {
             "contract_version": contract.CONTRACT_VERSION,
@@ -127,6 +136,9 @@ def ocr_processor_spec() -> ProcessorSpec:
             "max_batch_size": 1,
             "cancellation_supported": True,
             "resource_measurements": [],
+            "model_id": contract.OCR_MODEL_ID,
+            "model_revision": contract.OCR_MODEL_REVISION,
+            "weights": weights,
         }
     )
 
@@ -202,6 +214,9 @@ def extract_for_asset(
     input_revision: str,
     data_root: str | Path | None = None,
     engine_cache: OcrEngineCache | None = None,
+    resolved_device: str = "cpu",
+    runtime_provider: str | None = None,
+    precision: str = "FP32",
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
@@ -230,7 +245,12 @@ def extract_for_asset(
     decoded = _decode(location["absolute_path"])
     _verify_unchanged(location, observed)
     cache = engine_cache or OcrEngineCache()
-    engine = cache.engine(data_root if data_root is not None else catalog.data_root)
+    engine = cache.engine(
+        data_root if data_root is not None else catalog.data_root,
+        resolved_device=resolved_device,
+        runtime_provider=runtime_provider,
+        precision=precision,
+    )
     document = recognize_image(
         engine,
         decoded.image,
@@ -378,6 +398,9 @@ def ocr_executor(
                 input_revision=str(request["input_revision"]),
                 data_root=data_root,
                 engine_cache=cache,
+                resolved_device=str(request["resolved_device"]),
+                runtime_provider=str(request["runtime_provider"]),
+                precision=str(request["precision"]),
                 cancel=cancel,
                 deadline_ms=deadline_ms,
                 clock=clock,
@@ -401,7 +424,7 @@ def ocr_executor(
                 # A bounded CPU budget that ran out is a transient condition: the job may
                 # be retried (and consumes one attempt), it is never a silent success.
                 state, retryable, blocking = "RETRY_WAIT", True, None
-            elif code in _BLOCKING_CODES:
+            elif code in _BLOCKING_CODES or code == RUNTIME_CAPABILITY_UNAVAILABLE:
                 state, retryable, blocking = "BLOCKED", False, "SOURCE_UNAVAILABLE"
             else:
                 state, retryable, blocking = "FAILED", False, None

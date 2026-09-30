@@ -175,6 +175,29 @@ NON_MODEL_SPEC = {
     "resource_measurements": [],
 }
 
+STRUCTURED_MODEL_SPEC = {
+    **{key: value for key, value in NON_MODEL_SPEC.items() if key != "processor_kind"},
+    "spec_revision": "rapidocr-ppocrv4-mobile-v1",
+    "processor_id": "ocr-text@1",
+    "processor_kind": "structured_model",
+    "task_type": "image_ocr",
+    "input_type": "asset_original",
+    "output_type": "ocr_document.v1",
+    "device_policy": "CPU_ALLOWED",
+    "runtime_backend": "onnxruntime",
+    "runtime_package_id": "onnxruntime-gpu@1.30.0",
+    "supported_devices": ["gpu", "cpu"],
+    "supported_precisions": ["FP32"],
+    "max_batch_size": 1,
+    "model_id": "rapidocr-ppocrv4-mobile",
+    "model_revision": "rapidocr-onnxruntime@1.4.4",
+    "weights": [
+        {"name": "detection", "revision": "rapidocr-onnxruntime@1.4.4", "sha256": SHA},
+        {"name": "classification", "revision": "rapidocr-onnxruntime@1.4.4", "sha256": SHA},
+        {"name": "recognition", "revision": "rapidocr-onnxruntime@1.4.4", "sha256": SHA},
+    ],
+}
+
 EMBEDDING_SPEC = {
     **{key: value for key, value in NON_MODEL_SPEC.items() if key != "processor_kind"},
     "spec_revision": "chinese-clip-vit-b-16-fp32-v1",
@@ -335,6 +358,41 @@ def test_job_request_and_non_model_processor_instances_validate() -> None:
     }
     assert_valid(request, "JobRequest")
     assert_valid(NON_MODEL_SPEC, "ProcessorSpec")
+    assert_valid(STRUCTURED_MODEL_SPEC, "ProcessorSpec")
+
+
+def test_structured_model_requires_model_identity_and_rejects_vector_fields() -> None:
+    assert_valid(STRUCTURED_MODEL_SPEC, "ProcessorSpec")
+    for field in ("model_id", "model_revision", "weights"):
+        invalid = dict(STRUCTURED_MODEL_SPEC)
+        invalid.pop(field)
+        assert_invalid(invalid, "ProcessorSpec")
+    for field, value in (("space_id", SPACE_ID), ("dimension", 512), ("metric", "cosine")):
+        invalid = {**STRUCTURED_MODEL_SPEC, field: value}
+        assert_invalid(invalid, "ProcessorSpec")
+    assert_invalid({**STRUCTURED_MODEL_SPEC, "output_type": "embedding"}, "ProcessorSpec")
+    assert_invalid({**STRUCTURED_MODEL_SPEC, "weights": []}, "ProcessorSpec")
+    # The additive branch must leave the frozen no-model CPU contract untouched.
+    assert_valid(NON_MODEL_SPEC, "ProcessorSpec")
+    assert_invalid(
+        {**NON_MODEL_SPEC, "device_policy": "CPU_ALLOWED", "supported_devices": ["gpu", "cpu"]},
+        "ProcessorSpec",
+    )
+
+
+def test_runtime_parser_rejects_invalid_structured_model_identity() -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.scheduler.contracts import ProcessorSpec
+
+    assert ProcessorSpec.from_envelope(STRUCTURED_MODEL_SPEC).processor_kind == "structured_model"
+    for invalid in (
+        {**STRUCTURED_MODEL_SPEC, "output_type": "embedding"},
+        {**STRUCTURED_MODEL_SPEC, "model_id": ""},
+        {**STRUCTURED_MODEL_SPEC, "weights": []},
+        {**STRUCTURED_MODEL_SPEC, "weights": [{"name": "det", "revision": "v1", "sha256": "bad"}]},
+    ):
+        with pytest.raises(CatalogError):
+            ProcessorSpec.from_envelope(invalid)
 
 
 def test_embedding_processor_and_non_vector_results_validate() -> None:

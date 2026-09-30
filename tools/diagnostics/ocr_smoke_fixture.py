@@ -108,7 +108,7 @@ def install_pinned_weights(data_root: Path) -> Path:
     return verify(target).root
 
 
-def run(work_dir: Path) -> dict[str, Any]:
+def run(work_dir: Path, *, requested_device: str = "auto") -> dict[str, Any]:
     data_root = work_dir / "PhotoSearchData"
     library = work_dir / "照片库 中文 空格"
     if work_dir.exists():
@@ -121,7 +121,12 @@ def run(work_dir: Path) -> dict[str, Any]:
         source = service.register_source(display_name="ocr-smoke", root_path=library)
         scan = service.run_scan(int(source["source_id"]))
         targets = ocr_targets(service.catalog)
-        enqueue = enqueue_targets(service.catalog, targets, now_ms=service.catalog.now_ms())
+        enqueue = enqueue_targets(
+            service.catalog,
+            targets,
+            now_ms=service.catalog.now_ms(),
+            requested_device=requested_device,
+        )
         run_report = run_queue(service.catalog, data_root=data_root)
         projection = catch_up_projection(service.catalog)
         summary = ocr_summary(service.catalog.db_path, weights_present=True)
@@ -193,6 +198,15 @@ def run(work_dir: Path) -> dict[str, Any]:
             "seconds": round(time.monotonic() - started, 2),
             "enqueue": enqueue,
             "run": run_report,
+            "requested_device": requested_device,
+            "ocr_jobs": [
+                dict(row)
+                for row in service.catalog.read_all(
+                    "SELECT state, requested_device, resolved_device, runtime_provider, precision "
+                    "FROM jobs WHERE task_type = ? ORDER BY job_id",
+                    (contract.OCR_TASK_TYPE,),
+                )
+            ],
             "projection": projection,
             "images": images,
             "fts_hits": {query: sorted(hits[query]) for query in QUERIES},
@@ -209,10 +223,12 @@ def main(argv: list[str] | None = None) -> int:
         help="the (recreated) work directory; never a real photo library",
     )
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto")
+    parser.add_argument("--output", type=Path, default=None, help="also write the UTF-8 JSON report here")
     parser.add_argument("--keep", action="store_true", help="keep the work directory on failure")
     args = parser.parse_args(argv)
     try:
-        report = run(args.work_dir.resolve())
+        report = run(args.work_dir.resolve(), requested_device=args.device)
     except (CatalogError, AssertionError, FileNotFoundError) as error:
         detail = error.as_dict() if isinstance(error, CatalogError) else str(error)
         print(
@@ -227,7 +243,11 @@ def main(argv: list[str] | None = None) -> int:
             shutil.rmtree(args.work_dir.resolve(), ignore_errors=True)
         return 1
     if args.json:
-        print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+        rendered = json.dumps(report, ensure_ascii=False, sort_keys=True)
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        print(rendered)
     else:
         print(json.dumps(
             {

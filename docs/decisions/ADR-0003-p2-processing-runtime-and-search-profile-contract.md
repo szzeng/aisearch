@@ -119,6 +119,12 @@ precision、batch 或 CPU 隐式降级继续。
   输出是候选分数，不伪造 embedding dimension/metric/space。
 - `non_model` 只有公共字段。GPS 提取、地名解析等使用版本化 processor ID/task type/config hash，
   但禁止为它们伪造 model、weights、dimension、metric 或 `space_id`。
+- `structured_model` 表示运行模型并发布版本化 structured JSON artifact、但不产出向量的处理器；除公共字段外，
+  必须声明 `model_id`、`model_revision` 和非空 `weights`。它不得声明 embedding 专属字段，也不得产生
+  `embedding` artifact，`output_type` 也不得为 `embedding`。其设备策略和支持设备由 processor 自身声明，
+  并仍完整遵循 §5 的资格矩阵与专项 evidence。
+  该分支为 `p2-contracts.v1` 的加性扩展；既有三种 kind、尤其 `non_model` 的 CPU 限制不变。
+  旧版解析器会拒绝新 kind；发布时写入者和读取者须一同升级，不得让旧版读取者处理新 spec。
 
 已冻结基础 embedding processor 使用：
 

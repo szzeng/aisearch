@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -29,6 +30,7 @@ from photo_search.ocr.engine import (
     reading_order,
     recognize_image,
 )
+from photo_search.runtime import device as runtime_device
 
 SHA = "e" * 64
 
@@ -265,6 +267,16 @@ def test_the_engine_is_built_only_from_the_pinned_paths(tmp_path: Path, monkeypa
         def __init__(self, **options: Any) -> None:
             captured.update(options)
             self.options = options
+            provider = (
+                runtime_device.CUDA_PROVIDER
+                if options.get("det_use_cuda")
+                else runtime_device.CPU_PROVIDER
+            )
+            def session() -> Any:
+                return SimpleNamespace(get_providers=lambda: [provider])
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session()))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session()))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session()))
 
         def __call__(self, image: Any) -> Any:  # pragma: no cover - no inference here
             return None, None
@@ -297,6 +309,10 @@ def test_the_engine_cache_reuses_a_verified_engine_until_the_files_change(
         def __init__(self, **options: Any) -> None:
             builds["count"] += 1
             self.options = options
+            session = SimpleNamespace(get_providers=lambda: [runtime_device.CPU_PROVIDER])
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
 
         def __call__(self, image: Any) -> Any:  # pragma: no cover
             return None, None
@@ -311,6 +327,90 @@ def test_the_engine_cache_reuses_a_verified_engine_until_the_files_change(
     target.write_bytes(target.read_bytes() + b"x")
     with pytest.raises(CatalogError):
         cache.engine(tmp_path)
+
+
+def test_the_engine_cache_separates_cpu_and_cuda_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_pinned(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        runtime_device,
+        "available_providers",
+        lambda: (runtime_device.CUDA_PROVIDER, runtime_device.CPU_PROVIDER),
+    )
+    monkeypatch.setattr(runtime_device, "preload_runtime_dlls", lambda: {"loaded": True})
+
+    class Recorder:
+        def __init__(self, **options: Any) -> None:
+            provider = (
+                runtime_device.CUDA_PROVIDER
+                if options.get("det_use_cuda")
+                else runtime_device.CPU_PROVIDER
+            )
+            session = SimpleNamespace(get_providers=lambda: [provider])
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
+
+    cache = OcrEngineCache(engine_factory=Recorder)
+    cpu = cache.engine(tmp_path, resolved_device="cpu")
+    gpu = cache.engine(tmp_path, resolved_device="gpu")
+    assert cpu is not gpu
+    assert cpu.runtime_provider == runtime_device.CPU_PROVIDER
+    assert gpu.runtime_provider == runtime_device.CUDA_PROVIDER
+    assert all(
+        providers[0] == runtime_device.CUDA_PROVIDER
+        for providers in gpu.session_providers.values()
+    )
+
+
+def test_a_gpu_request_refuses_a_cpu_only_rapidocr_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_pinned(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        runtime_device,
+        "available_providers",
+        lambda: (runtime_device.CUDA_PROVIDER, runtime_device.CPU_PROVIDER),
+    )
+    monkeypatch.setattr(runtime_device, "preload_runtime_dlls", lambda: {"loaded": True})
+
+    class CpuOnlyRecorder:
+        def __init__(self, **options: Any) -> None:
+            session = SimpleNamespace(
+                get_providers=lambda: [runtime_device.CPU_PROVIDER]
+            )
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session))
+
+    cache = OcrEngineCache(engine_factory=CpuOnlyRecorder)
+    with pytest.raises(CatalogError) as error:
+        cache.engine(tmp_path, resolved_device="gpu")
+    assert error.value.code == "RUNTIME_RESOLUTION_MISMATCH"
+    assert error.value.details["mismatched_roles"] == ["cls", "det", "rec"]
+
+
+def test_a_gpu_request_is_blocked_when_cuda_provider_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_pinned(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        runtime_device,
+        "available_providers",
+        lambda: (runtime_device.CPU_PROVIDER,),
+    )
+    builds = {"count": 0}
+
+    def factory(**options: Any) -> Any:
+        builds["count"] += 1
+        raise AssertionError("the engine must not be constructed without CUDA")
+
+    cache = OcrEngineCache(engine_factory=factory)
+    with pytest.raises(CatalogError) as error:
+        cache.engine(tmp_path, resolved_device="gpu")
+    assert error.value.code == "RUNTIME_CAPABILITY_UNAVAILABLE"
+    assert builds["count"] == 0
 
 
 def test_the_engine_cache_never_serves_a_missing_weight_set(tmp_path: Path) -> None:

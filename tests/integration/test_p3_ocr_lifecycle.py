@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from photo_search.catalog.errors import (
     OCR_DEADLINE_EXCEEDED,
     OCR_WEIGHTS_HASH_MISMATCH,
     OCR_WEIGHTS_MISSING,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     STALE_LEASE,
     CatalogError,
 )
@@ -51,10 +53,24 @@ def harness(tmp_path: Path) -> Harness:
 
 
 def qualified_scheduler(harness: Harness) -> Any:
-    """A scheduler whose CPU capability is recorded without loading the real weights."""
+    """A scheduler with stub CPU qualification and no GPU qualification."""
     spec = ocr_processor_spec()
     scheduler = build_scheduler(harness.catalog, spec)
-    record_runtime_evidence(scheduler, spec, now_ms=1_000, note="P3-01 lifecycle fixture")
+
+    class StubCache:
+        def engine(self, _data_root: Path, *, resolved_device: str) -> Any:
+            if resolved_device == "gpu":
+                raise CatalogError(RUNTIME_CAPABILITY_UNAVAILABLE, "GPU is not qualified")
+            return SimpleNamespace(runtime_provider="CPUExecutionProvider")
+
+    record_runtime_evidence(
+        scheduler,
+        spec,
+        StubCache(),
+        data_root=harness.data_root,
+        now_ms=1_000,
+        note="P3-01 lifecycle fixture",
+    )
     return scheduler
 
 

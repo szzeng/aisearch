@@ -32,10 +32,12 @@ from photo_search.catalog.errors import (
     OCR_INPUT_TOO_LARGE,
     OCR_RESULT_TOO_LARGE,
     RUNTIME_CAPABILITY_UNAVAILABLE,
+    RUNTIME_RESOLUTION_MISMATCH,
     CatalogError,
 )
 from photo_search.ocr import contract
 from photo_search.ocr.weights import OcrWeights, verify
+from photo_search.runtime import device as runtime_device
 
 Point = tuple[float, float]
 Box = tuple[float, float, float, float]
@@ -313,11 +315,36 @@ def recognize_image(
 
 # ----------------------------------------------------------------------------- engine
 class PinnedOcrEngine:
-    """The three pinned graphs, opened once per process from verified files."""
+    """The three pinned graphs, opened on one explicitly resolved device."""
 
-    def __init__(self, weights: OcrWeights, *, engine_factory: Callable[..., Any] | None = None) -> None:
+    def __init__(
+        self,
+        weights: OcrWeights,
+        *,
+        resolved_device: str = "cpu",
+        runtime_provider: str | None = None,
+        precision: str = "FP32",
+        engine_factory: Callable[..., Any] | None = None,
+    ) -> None:
         factory = engine_factory or _rapidocr_factory()
         self.weights = weights
+        try:
+            resolution = runtime_device.resolve_device(
+                requested_device=str(resolved_device),
+                policy=runtime_device.DevicePolicy.CPU_ALLOWED,
+                precision=str(precision),
+            )
+        except runtime_device.DeviceUnavailableError as error:
+            raise CatalogError(
+                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "the requested OCR provider is unavailable",
+                details={"resolved_device": str(resolved_device), "reason": error.reason},
+            ) from error
+        if resolution.device == "cuda":
+            runtime_device.preload_runtime_dlls()
+        self.resolved_device = "gpu" if resolution.device == "cuda" else "cpu"
+        self.runtime_provider = str(runtime_provider or resolution.provider)
+        self.precision = str(precision)
         self._engine = factory(
             config_path=str(weights.config_path),
             det_model_path=str(weights.detection_path),
@@ -326,7 +353,55 @@ class PinnedOcrEngine:
             text_score=float(contract.MIN_TEXT_SCORE),
             print_verbose=False,
             max_side_len=int(contract.MAX_LONG_EDGE),
+            det_use_cuda=self.resolved_device == "gpu",
+            cls_use_cuda=self.resolved_device == "gpu",
+            rec_use_cuda=self.resolved_device == "gpu",
         )
+        self.session_providers = self._read_session_providers(self._engine)
+        expected_provider = (
+            runtime_device.CUDA_PROVIDER
+            if self.resolved_device == "gpu"
+            else runtime_device.CPU_PROVIDER
+        )
+        mismatches = {
+            role: providers
+            for role, providers in self.session_providers.items()
+            if not providers or providers[0] != expected_provider
+        }
+        if mismatches or self.runtime_provider != expected_provider:
+            raise CatalogError(
+                RUNTIME_RESOLUTION_MISMATCH,
+                "RapidOCR did not create all sessions on the dispatched provider",
+                details={
+                    "resolved_device": self.resolved_device,
+                    "expected_provider": expected_provider,
+                    "reported_provider": self.runtime_provider,
+                    "session_providers": self.session_providers,
+                    "mismatched_roles": sorted(mismatches),
+                },
+            )
+
+    @staticmethod
+    def _read_session_providers(engine: Any) -> dict[str, tuple[str, ...]]:
+        paths = {
+            "det": ("text_det", "infer", "session"),
+            "cls": ("text_cls", "infer", "session"),
+            "rec": ("text_rec", "session", "session"),
+        }
+        observed: dict[str, tuple[str, ...]] = {}
+        try:
+            for role, path in paths.items():
+                target = engine
+                for attribute in path:
+                    target = getattr(target, attribute)
+                observed[role] = tuple(str(item) for item in target.get_providers())
+        except Exception as error:
+            raise CatalogError(
+                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "RapidOCR session providers could not be verified",
+                details={"reason": type(error).__name__},
+            ) from error
+        return observed
 
     def read(self, bgr: Any) -> Any:
         """Run detection + direction classification + recognition on one BGR array."""
@@ -387,14 +462,27 @@ class OcrEngineCache:
             self._weights[key] = verified
         return verified
 
-    def engine(self, data_root: str | Path | None = None) -> PinnedOcrEngine:
+    def engine(
+        self,
+        data_root: str | Path | None = None,
+        *,
+        resolved_device: str = "cpu",
+        runtime_provider: str | None = None,
+        precision: str = "FP32",
+    ) -> PinnedOcrEngine:
         verified = self.verified_weights(data_root)
-        key = self._signature(verified)
+        key = (*self._signature(verified), str(resolved_device), runtime_provider, str(precision))
         with self._lock:
             cached = self._engines.get(key)
             if cached is not None:
                 return cached
-        engine = PinnedOcrEngine(verified, engine_factory=self._factory)
+        engine = PinnedOcrEngine(
+            verified,
+            resolved_device=resolved_device,
+            runtime_provider=runtime_provider,
+            precision=precision,
+            engine_factory=self._factory,
+        )
         with self._lock:
             self._engines[key] = engine
         return engine

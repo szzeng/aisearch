@@ -47,7 +47,7 @@
       "enum": ["SUCCEEDED", "RETRY_WAIT", "BLOCKED", "FAILED", "CANCELLED"]
     },
     "ProcessorKind": {
-      "enum": ["embedding_model", "reranker_model", "non_model"]
+      "enum": ["embedding_model", "reranker_model", "non_model", "structured_model"]
     },
     "InputSnapshot": {
       "type": "object",
@@ -534,11 +534,80 @@
       },
       "additionalProperties": false
     },
+    "StructuredModelProcessorSpec": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "spec_revision",
+        "processor_id",
+        "processor_kind",
+        "task_type",
+        "config_hash",
+        "input_type",
+        "output_type",
+        "device_policy",
+        "runtime_backend",
+        "runtime_package_id",
+        "supported_devices",
+        "supported_precisions",
+        "max_batch_size",
+        "cancellation_supported",
+        "resource_measurements",
+        "model_id",
+        "model_revision",
+        "weights"
+      ],
+      "properties": {
+        "contract_version": { "$ref": "#/$defs/ContractVersion" },
+        "spec_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_id": { "$ref": "#/$defs/NonEmptyString" },
+        "processor_kind": { "const": "structured_model" },
+        "task_type": { "$ref": "#/$defs/NonEmptyString" },
+        "config_hash": { "$ref": "#/$defs/Sha256" },
+        "input_type": { "$ref": "#/$defs/NonEmptyString" },
+        "output_type": {
+          "allOf": [
+            { "$ref": "#/$defs/NonEmptyString" },
+            { "not": { "const": "embedding" } }
+          ]
+        },
+        "device_policy": { "$ref": "#/$defs/DevicePolicy" },
+        "runtime_backend": { "$ref": "#/$defs/NonEmptyString" },
+        "runtime_package_id": { "$ref": "#/$defs/NonEmptyString" },
+        "supported_devices": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResolvedDevice" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "supported_precisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "max_batch_size": { "type": "integer", "minimum": 1 },
+        "cancellation_supported": { "type": "boolean" },
+        "resource_measurements": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ResourceMeasurement" }
+        },
+        "model_id": { "$ref": "#/$defs/NonEmptyString" },
+        "model_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "weights": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/WeightArtifact" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "ProcessorSpec": {
       "oneOf": [
         { "$ref": "#/$defs/EmbeddingProcessorSpec" },
         { "$ref": "#/$defs/RerankerProcessorSpec" },
-        { "$ref": "#/$defs/NonModelProcessorSpec" }
+        { "$ref": "#/$defs/NonModelProcessorSpec" },
+        { "$ref": "#/$defs/StructuredModelProcessorSpec" }
       ]
     },
     "RuntimeProvider": {

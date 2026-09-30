@@ -73,6 +73,7 @@ def enqueue_targets(
     *,
     now_ms: int,
     force: bool = False,
+    requested_device: str = "auto",
 ) -> dict[str, int]:
     """Queue (or force-requeue) one OCR job per target, idempotently."""
     queued = rewound = live = 0
@@ -80,7 +81,13 @@ def enqueue_targets(
         for target in targets:
             asset_id = int(target["asset_id"])
             revision = str(target["input_revision"])
-            if force and _rewind(connection, asset_id=asset_id, revision=revision, now_ms=now_ms):
+            if force and _rewind(
+                connection,
+                asset_id=asset_id,
+                revision=revision,
+                now_ms=now_ms,
+                requested_device=requested_device,
+            ):
                 rewound += 1
                 continue
             if force and _is_live(connection, asset_id=asset_id, revision=revision):
@@ -94,6 +101,7 @@ def enqueue_targets(
                 task_type=contract.OCR_TASK_TYPE,
                 processor_id=contract.OCR_PROCESSOR_ID,
                 now_ms=int(now_ms),
+                requested_device=str(requested_device),
             )
             queued += 1
     return {"targets": len(targets), "queued": queued, "rewound": rewound, "live": live}
@@ -110,7 +118,12 @@ def _is_live(connection: sqlite3.Connection, *, asset_id: int, revision: str) ->
 
 
 def _rewind(
-    connection: sqlite3.Connection, *, asset_id: int, revision: str, now_ms: int
+    connection: sqlite3.Connection,
+    *,
+    asset_id: int,
+    revision: str,
+    now_ms: int,
+    requested_device: str,
 ) -> bool:
     """Reuse the same logical job for a forced re-recognition (never a second row)."""
     placeholders = ", ".join("?" for _ in REWINDABLE_STATES)
@@ -119,13 +132,14 @@ def _rewind(
         "lease_expires_at = NULL, worker_id = NULL, run_after = ?, last_error_code = NULL, "
         "last_error_message = NULL, blocking_reason = NULL, resolved_device = NULL, "
         "runtime_provider = NULL, precision = NULL, runtime_capability_revision = NULL, "
-        "dispatch_spec_revision = NULL, updated_at = ? "
+        "dispatch_spec_revision = NULL, requested_device = ?, updated_at = ? "
         "WHERE subject_type = 'asset' AND subject_id = ? AND input_revision = ? "
         "AND task_type = ? AND processor_id = ? "
         f"AND state IN ({placeholders})",
         (
             jobs.STATE_QUEUED,
             int(now_ms),
+            str(requested_device),
             int(now_ms),
             str(int(asset_id)),
             str(revision),
@@ -158,7 +172,9 @@ def pending_job_count(catalog: Catalog) -> int:
 def record_runtime_evidence(
     scheduler: scheduler_engine.Scheduler,
     spec: Any,
+    cache: OcrEngineCache,
     *,
+    data_root: str | Path,
     now_ms: int,
     note: str,
 ) -> dict[str, Any]:
@@ -168,32 +184,58 @@ def record_runtime_evidence(
     ``note`` is the record of that evidence, and a provider is only reported healthy once
     those sessions really exist.
     """
-    from photo_search.runtime.device import CPU_PROVIDER, runtime_capabilities
+    from photo_search.runtime.device import (
+        CPU_PROVIDER,
+        CUDA_PROVIDER,
+        runtime_capabilities,
+    )
 
+    cpu_engine = cache.engine(data_root, resolved_device="cpu")
+    gpu_engine: Any | None = None
+    gpu_error: Exception | None = None
+    try:
+        gpu_engine = cache.engine(data_root, resolved_device="gpu")
+    except Exception as error:  # a failed qualification is evidence, not an OCR job fallback
+        gpu_error = error
     runtime = runtime_capabilities()
+    provider_health = {CPU_PROVIDER: "healthy"}
+    provider_precisions = {CPU_PROVIDER: list(spec.supported_precisions)}
+    if CUDA_PROVIDER in runtime.providers:
+        provider_health[CUDA_PROVIDER] = "healthy" if gpu_engine is not None else "unhealthy"
+        provider_precisions[CUDA_PROVIDER] = list(spec.supported_precisions)
     snapshot = snapshot_from_runtime(
         runtime,
         now_ms=int(now_ms),
-        health="healthy",
-        provider_health={CPU_PROVIDER: "healthy"},
-        provider_precisions={CPU_PROVIDER: list(spec.supported_precisions)},
+        health="healthy" if gpu_engine is not None else "degraded",
+        provider_health=provider_health,
+        provider_precisions=provider_precisions,
     )
     scheduler.record_capability(snapshot, now_ms=int(now_ms))
-    scheduler.record_qualification(
-        processor_id=str(spec.processor_id),
-        spec_revision=str(spec.spec_revision),
-        device="cpu",
-        precision=str(spec.supported_precisions[0]),
-        provider_name=CPU_PROVIDER,
-        runtime_package_id=str(spec.runtime_package_id),
-        now_ms=int(now_ms),
-        note=str(note),
-    )
+    engines = [("cpu", cpu_engine, CPU_PROVIDER)]
+    if gpu_engine is not None:
+        engines.append(("gpu", gpu_engine, CUDA_PROVIDER))
+    for device_name, engine, expected_provider in engines:
+        if engine.runtime_provider != expected_provider:
+            continue
+        scheduler.record_qualification(
+            processor_id=str(spec.processor_id),
+            spec_revision=str(spec.spec_revision),
+            device=device_name,
+            precision=str(spec.supported_precisions[0]),
+            provider_name=expected_provider,
+            runtime_package_id=str(spec.runtime_package_id),
+            now_ms=int(now_ms),
+            note=str(note),
+        )
     return {
         "capability_revision": str(snapshot.capability_revision),
         "runtime_package_id": str(snapshot.runtime_package_id),
-        "provider": CPU_PROVIDER,
-        "precision": str(spec.supported_precisions[0]),
+        "qualified_devices": [name for name, _, _ in engines],
+        "cpu_provider": cpu_engine.runtime_provider,
+        "gpu_provider": None if gpu_engine is None else gpu_engine.runtime_provider,
+        "gpu_probe_error": None
+        if gpu_error is None
+        else {"type": type(gpu_error).__name__, "code": getattr(gpu_error, "code", None)},
     }
 
 
@@ -217,12 +259,14 @@ def run_queue(
     scheduler = build_scheduler(catalog, spec)
     cache = engine_cache or OcrEngineCache()
     # Creating the pinned sessions is the evidence for the "healthy" capability record.
-    cache.engine(data_root if data_root is not None else catalog.data_root)
+    resolved_data_root = data_root if data_root is not None else catalog.data_root
     evidence = record_runtime_evidence(
         scheduler,
         spec,
+        cache,
+        data_root=resolved_data_root,
         now_ms=catalog.now_ms(),
-        note="pinned PP-OCRv4 ONNX sessions created on CPUExecutionProvider",
+        note="pinned PP-OCRv4 ONNX sessions created and their actual providers inspected",
     )
     executor = ocr_executor(
         catalog,
