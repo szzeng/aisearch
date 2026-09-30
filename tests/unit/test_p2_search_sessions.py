@@ -145,7 +145,36 @@ def test_the_cached_candidate_list_is_bounded_and_the_token_stops_at_the_end() -
     assert store.cursor_for_offset(session, 0) is not None
     assert store.cursor_for_offset(session, 3) is not None
     assert store.cursor_for_offset(session, 4) is None
-    assert MAX_SESSION_IDS == 1000
+    assert MAX_SESSION_IDS == 5000
+
+
+def test_exact_session_capacity_is_complete_but_one_extra_entry_is_truncated() -> None:
+    store = SearchSessionStore(max_ids=MAX_SESSION_IDS)
+    exact = make_session(store, ids=tuple(range(MAX_SESSION_IDS)))
+    assert len(exact.entries) == MAX_SESSION_IDS
+    assert exact.candidates_truncated is False
+    assert store.cursor_for_offset(exact, MAX_SESSION_IDS - 1) is not None
+    assert store.cursor_for_offset(exact, MAX_SESSION_IDS) is None
+
+    over = store.build_session(
+        query_hash="over-capacity",
+        entries=[entry(value) for value in range(MAX_SESSION_IDS + 1)],
+        profile_id=None,
+        image_generation_id="image-gen-x",
+        space_id="test-space:a1",
+        dimension=3,
+        catalog_filter_revision=4,
+        suggestion_revision=0,
+        fusion_config={"method": "RRF"},
+        query={"text": "sunset"},
+        filters={"availability": "any"},
+        channels={},
+        pending_semantic=None,
+        search_projection={"state": "SYNCED"},
+        state="OK",
+    )
+    assert len(over.entries) == MAX_SESSION_IDS
+    assert over.candidates_truncated is True
 
 
 def test_concurrent_use_stays_consistent() -> None:

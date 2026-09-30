@@ -501,8 +501,11 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "pending_semantic" in script
     assert "search_projection" in script
     assert "文本投影仍在追赶" in script
-    assert "candidates_truncated" in script
+    assert "candidates_truncated" not in script
     assert "truncated" in script
+    assert "向量扫描未完整完成，本次结果可能不完整。" in script
+    assert "高度匹配" in script
+    assert "5000+ 张高度匹配" in script
 
 
 def test_the_search_page_keeps_the_p2_03_place_filter_semantics() -> None:

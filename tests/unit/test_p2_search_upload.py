@@ -383,7 +383,7 @@ def test_a_text_field_is_not_part_of_the_image_endpoint() -> None:
         {"request_id": ""},
         {"request_id": "r", "page_size": "0"},
         {"request_id": "r", "page_size": "101"},
-        {"request_id": "r", "top_k": "1001"},
+        {"request_id": "r", "top_k": "5001"},
         {"request_id": "r", "dimension": "0"},
         {"request_id": "r", "dimension": "three"},
         {"request_id": "r", "place_ids": "3,x"},

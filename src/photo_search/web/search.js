@@ -8,7 +8,7 @@
  *    vector; server-supplied text is scrubbed before it is shown;
  *  - a non-success state is stated explicitly instead of being downgraded into "no result":
  *    a missing query/image encoder, an expired session or cursor, a lagging semantic index
- *    and a truncated candidate list each get their own sentence;
+ *    and an incomplete vector scan gets an explicit warning;
  *  - hit reasons and coverage numbers stay separate facts: no distance, BM25 score or
  *    reranker score is ever turned into an "accuracy" or a percentage here;
  *  - nothing is loaded from the network except this same origin.
@@ -305,14 +305,6 @@
     });
   }
 
-  function truncationLine(label) {
-    return (
-      label +
-      "的候选达到了本次上界并被截断（truncated=true）：这条通道的结果可能不完整，" +
-      "调大 top_k 或在更窄的筛选下重搜会更完整。"
-    );
-  }
-
   function successNotices(body) {
     var lines = [];
     var projection = body.search_projection || {};
@@ -348,20 +340,10 @@
           "。这些照片可能相关但语义通道现在还看不到。",
       });
     }
-    if (body.candidates_truncated) {
-      lines.push({
-        kind: "",
-        text: "候选列表达到了服务端上界（1000）并被截断：结果可能不完整。",
-      });
-    }
     var channels = body.channels || {};
-    var fts = channels.fts || {};
     var vector = channels.vector || {};
-    if (fts.truncated) {
-      lines.push({ kind: "", text: truncationLine("文本通道") });
-    }
-    if (vector.truncated) {
-      lines.push({ kind: "", text: truncationLine("向量通道") });
+    if (vector.scan_truncated) {
+      lines.push({ kind: "", text: "向量扫描未完整完成，本次结果可能不完整。" });
     }
     if (body.state === "FILTER_REVISION_CHANGED") {
       lines.push({
@@ -1070,6 +1052,14 @@
       "候选共 " + number(body.total_candidates) + " 个",
       body.has_more ? "还有下一页" : "已到末尾",
     ];
+    var vector = (body.channels || {}).vector || {};
+    if (vector.engaged) {
+      parts.unshift(
+        vector.strong_match_more_possible
+          ? "5000+ 张高度匹配"
+          : "约 " + number(vector.strong_match_count) + " 张高度匹配"
+      );
+    }
     if (!hits.length) {
       var capture = captureCondition(body);
       if (capture.present && capture.block && capture.block.state !== "READY") {

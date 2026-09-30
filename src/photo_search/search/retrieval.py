@@ -40,11 +40,11 @@ from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
 
-#: Per-channel initial candidate bound (architecture §9.2: "初始 Top 200").
-DEFAULT_TOP_K = 200
+#: Fixed per-channel candidate bound for the personal-trial product (architecture §9.2).
+DEFAULT_TOP_K = 5000
 #: Hard ceiling of one request's candidate list, shared by the service and the protocol
 #: envelope so the two can never disagree about what "too large" means.
-MAX_TOP_K = 1000
+MAX_TOP_K = 5000
 #: How many authoritative candidates one vector block covers. Every block costs one engine
 #: query and each of those scans the generation, so the vector channel costs
 #: ``ceil(candidates / block)`` whole-generation scans. P4-01 measured a 300 000-row

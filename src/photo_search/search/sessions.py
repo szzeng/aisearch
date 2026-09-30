@@ -27,8 +27,8 @@ from typing import Any
 
 from photo_search.catalog.errors import INVALID_CURSOR, SEARCH_SESSION_EXPIRED, CatalogError
 
-#: Architecture §9.5: one session caches at most 1000 ordered candidate ids.
-MAX_SESSION_IDS = 1000
+#: Architecture §9.5: one semantic-search session caches at most 5000 ordered candidate ids.
+MAX_SESSION_IDS = 5000
 #: Architecture §9.5: the default lifetime of one search session.
 SESSION_TTL_MS = 600_000
 #: How many live sessions one process keeps before the least recently used one is dropped.

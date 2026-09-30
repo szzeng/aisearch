@@ -34,6 +34,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.scheduler.capability import record_capability
 from photo_search.scheduler.contracts import RuntimeCapabilities
+from photo_search.search import service as search_service
 from photo_search.search.profile import DEFAULT_FUSION_CONFIG, activate_profile
 from photo_search.search.sessions import SESSION_TTL_MS
 
@@ -145,13 +146,38 @@ def test_an_explicitly_bound_text_search_answers_one_reproducible_page(
     assert SESSION_TOKEN not in rendered
 
 
+def test_strong_match_annotation_does_not_change_search_order_or_candidate_count(
+    search_env: SearchEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario(client: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        csrf = await search_env.authenticate(client)
+        monkeypatch.setattr(search_service, "STRONG_MATCH_MAX_DISTANCE", -1.0)
+        below = await post_search(client, search_body(search_env), csrf)
+        assert below.status_code == 200, below.text
+        monkeypatch.setattr(search_service, "STRONG_MATCH_MAX_DISTANCE", 1_000_000.0)
+        above = await post_search(client, search_body(search_env), csrf)
+        assert above.status_code == 200, above.text
+        return below.json(), above.json()
+
+    below, above = search_env.scenario(scenario)
+    assert [hit["asset_id"] for hit in below["hits"]] == [
+        hit["asset_id"] for hit in above["hits"]
+    ]
+    assert below["total_candidates"] == above["total_candidates"]
+    below_vector = below["channels"]["vector"]
+    above_vector = above["channels"]["vector"]
+    assert below_vector["candidates"] == above_vector["candidates"]
+    assert below_vector["strong_match_count"] == 0
+    assert above_vector["strong_match_count"] == above_vector["candidates"]
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
         {"page_size": 0},
         {"page_size": 101},
         {"top_k": 0},
-        {"top_k": 1001},
+        {"top_k": 5001},
         {"surprise": True},
         {"contract_version": "p2-contracts.v2"},
         {"request_id": ""},

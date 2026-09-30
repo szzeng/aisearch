@@ -109,6 +109,9 @@ from photo_search.search.upload import checked_query_vector
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
 
+#: Chinese-CLIP squared-L2 threshold; equivalent to cosine similarity >= 0.25.
+STRONG_MATCH_MAX_DISTANCE = 1.5
+
 _HIT_REASON_BY_CHANNELS = {
     (FTS_CHANNEL,): "TEXT",
     (VECTOR_CHANNEL,): "SEMANTIC",
@@ -504,8 +507,18 @@ def _channel_summary(
     """
     text_count = len(payload["channels"][FTS_CHANNEL])
     vector_count = len(payload["channels"][VECTOR_CHANNEL])
+    vector_rows = payload["channels"][VECTOR_CHANNEL]
     scan = payload["vector_scan"] or {}
     engaged = binding is not None and (match is not None or bool(image_query))
+    scan_truncated = bool(scan.get("truncated"))
+    strong_match_count = sum(
+        float(row["distance"]) <= STRONG_MATCH_MAX_DISTANCE for row in vector_rows
+    )
+    strong_match_more_possible = bool(
+        vector_count == MAX_TOP_K
+        and vector_rows
+        and float(vector_rows[-1]["distance"]) <= STRONG_MATCH_MAX_DISTANCE
+    )
     return {
         FTS_CHANNEL: {
             "engaged": match is not None,
@@ -515,8 +528,10 @@ def _channel_summary(
         VECTOR_CHANNEL: {
             "engaged": engaged,
             "candidates": vector_count,
-            "truncated": engaged
-            and (bool(scan.get("truncated")) or vector_count >= int(top_k)),
+            "truncated": engaged and scan_truncated,
+            "strong_match_count": strong_match_count,
+            "strong_match_more_possible": strong_match_more_possible,
+            "scan_truncated": scan_truncated,
             "engine_blocks": int(scan.get("blocks", 0)),
             "reason": None if engaged else "NO_QUERY_TEXT",
         },
@@ -1103,7 +1118,7 @@ def search_request(
                 None if str(outcome.state) == RERANK_STATE_NOT_REQUESTED else outcome.to_envelope()
             ),
             state=str(candidate["state"]),
-            candidates_truncated=len(entries) >= MAX_SESSION_IDS,
+            candidates_truncated=len(entries) > MAX_SESSION_IDS,
         )
         hits, next_offset, has_more, token = _render_page(
             catalog,
