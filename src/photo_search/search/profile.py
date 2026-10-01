@@ -421,12 +421,20 @@ def activate_profile(
     profile_id: str,
     now_ms: int | None = None,
     activation_hook: Callable[[sqlite3.Connection], None] | None = None,
+    precondition: Callable[[sqlite3.Connection], None] | None = None,
 ) -> tuple[SearchProfile, bool, dict[str, Any]]:
     """Publish one profile as the served one, atomically and idempotently.
 
     ``activation_hook`` is the documented fault-injection point: it runs after the readiness
     checks and the two pointer updates but before ``COMMIT``, so a test can prove that an
     interruption leaves neither the active pointer nor ``is_active`` half-moved.
+
+    ``precondition`` is the P4-Embedding-Arch extension for the *controlled* selection: it runs
+    inside the very same ``BEGIN IMMEDIATE`` transaction, after the profile/bundle/readiness
+    checks and **before** any pointer moves. It is the place where the authoritative coverage,
+    outbox and artifact-record facts are re-read, so a check can never be performed outside the
+    transaction that publishes the pointer (ADR-0003 §8). It must not perform model inference or
+    any other long-running work: only the corresponding rows are re-verified here.
     """
     profile = load_profile(catalog, profile_id)
     if profile is None:
@@ -441,6 +449,8 @@ def activate_profile(
         _require_supported_fts(profile)
         _require_supported_fusion(profile)
         readiness = validate_profile_readiness(connection, profile, now_ms=moment)
+        if precondition is not None:
+            precondition(connection)
         previous = active_profile_id(connection)
         row = connection.execute(
             "SELECT is_active FROM index_generations WHERE generation_id = ?",

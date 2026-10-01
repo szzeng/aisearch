@@ -24,8 +24,6 @@ Three rules decide what is written here:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -39,11 +37,20 @@ from photo_search.catalog.errors import (
     SPACE_MISMATCH,
     CatalogError,
 )
+from photo_search.models.embedding.base import (
+    analyze_manifest,
+    build_processor_spec,
+    effective_device_policy,
+    provider_block,
+    read_manifest,
+)
 from photo_search.runtime.device import DevicePolicy
-from photo_search.scheduler.contracts import CONTRACT_VERSION, ProcessorSpec, canonical_json
+from photo_search.scheduler.contracts import ProcessorSpec
 from photo_search.workers.client import AiWorkerClient
 
-#: The query-side spec revision: "what this adapter is" (the indexing side names its own).
+#: The query-side spec revision of the historical Chinese-CLIP adapter. The value now lives in
+#: :data:`photo_search.models.embedding.base.SPEC_REVISIONS`; this alias keeps the imports of the
+#: P4-02N wiring stable.
 SPEC_REVISION = "chinese-clip-vit-b-16-query-v1"
 #: The frozen job-protocol spellings this processor shares with the indexing side.
 TASK_TYPE = "image_embedding"
@@ -74,6 +81,10 @@ _PROVIDER_DEVICES = {
     "CPUExecutionProvider": "cpu",
     "CUDAExecutionProvider": "gpu",
     "TensorrtExecutionProvider": "gpu",
+    # P4-Embedding-Arch: the PyTorch CUDA path is a *different* execution fact from an ONNX
+    # execution provider, and it is reported under its own honest name.
+    "PyTorchCUDA": "gpu",
+    "PyTorchCPU": "cpu",
 }
 
 
@@ -84,14 +95,8 @@ def default_model_dir(data_root: str | Path) -> Path:
 
 def _config_hash(manifest: Mapping[str, Any]) -> str:
     """Digest of the manifest facts that define this embedding configuration."""
-    identity = {
-        "model": manifest["model"],
-        "embedding": manifest["embedding"],
-        "preprocessing": manifest["preprocessing"],
-        "tokenizer": manifest["tokenizer"],
-        "onnx": manifest["onnx"],
-    }
-    return hashlib.sha256(canonical_json(identity).encode("utf-8")).hexdigest()
+    _, identity = analyze_manifest(manifest)
+    return identity.config_hash
 
 
 def pinned_embedding_spec(
@@ -105,69 +110,25 @@ def pinned_embedding_spec(
 ) -> ProcessorSpec:
     """The embedding ``ProcessorSpec`` of the pinned model, read from its manifest.
 
-    ``space_id`` is ``chinese-clip-vit-b-16:<image-tower sha256[:16]>`` and ``processor_id``
-    is ``chinese-clip-vit-b-16@<revision[:12]>`` - the *same* derivation the indexing
-    adapter uses, so a query can never be encoded into a space the published vectors do not
-    live in. The runtime facts (package, backend, devices, precisions) are passed in from
-    the live worker when they are known and otherwise fall back to the manifest's record.
+    The derivation lives in :mod:`photo_search.models.embedding.base` and is shared with the
+    indexing side and with every other provider, so a query can never be encoded into a space the
+    published vectors do not live in. For the historical Chinese-CLIP manifest this produces
+    exactly the pre-P4 document. The runtime facts (package, backend, devices, precisions) are
+    passed in from the live worker when they are known and otherwise fall back to the manifest.
     """
-    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-    onnx = manifest["artifacts"]["onnx"]
-    model = manifest["model"]
-    embedding = manifest["embedding"]
-    tokenizer = manifest["tokenizer"]
-    preprocessing = manifest["preprocessing"]
-    runtime = manifest["runtime"]
-    revision = str(model["resolved_revision"])
-    image_digest = str(onnx["image"]["sha256"])
-    devices = tuple(
-        dict.fromkeys(str(item) for item in (supported_devices or ("gpu", "cpu")))
-    )
-    precisions = tuple(
-        dict.fromkeys(str(item) for item in (supported_precisions or ("FP32",)))
-    )
-    return ProcessorSpec.from_envelope(
-        {
-            "contract_version": CONTRACT_VERSION,
-            "spec_revision": SPEC_REVISION,
-            "processor_id": f"chinese-clip-vit-b-16@{revision[:12]}",
-            "processor_kind": "embedding_model",
-            "task_type": TASK_TYPE,
-            "config_hash": _config_hash(manifest),
-            "input_type": INPUT_TYPE,
-            "output_type": OUTPUT_TYPE,
-            "device_policy": _DEVICE_POLICY_SPELLING[DevicePolicy(device_policy)],
-            "runtime_backend": str(runtime_backend or runtime["backend"]),
-            "runtime_package_id": str(
-                runtime_package_id
-                or f"onnxruntime@{runtime['versions']['onnxruntime']}"
-            ),
-            "supported_devices": list(devices),
-            "supported_precisions": list(precisions),
-            "max_batch_size": int(manifest["onnx"]["batch"]),
-            "cancellation_supported": False,
-            "resource_measurements": [],
-            "model_id": str(model["id"]),
-            "model_revision": revision,
-            "weights": [
-                {
-                    "name": Path(str(onnx[role]["path"])).name,
-                    "revision": f"{revision}#{str(onnx[role]['sha256'])[:12]}",
-                    "sha256": str(onnx[role]["sha256"]),
-                }
-                for role in ("image", "text")
-            ],
-            "image_preprocess_version": IMAGE_PREPROCESS_VERSION,
-            "query_preprocess_version": QUERY_PREPROCESS_VERSION,
-            "tokenizer_version": f"bert-vocab-{str(tokenizer['vocab_sha256'])[:12]}",
-            "instruction_template_version": INSTRUCTION_TEMPLATE_VERSION,
-            "normalization_version": NORMALIZATION_VERSION,
-            "dimension": int(embedding["dimension"]),
-            "metric": str(embedding["metric"]),
-            "space_id": f"chinese-clip-vit-b-16:{image_digest[:16]}",
-            "max_pixels": int(preprocessing["image_size"]) ** 2,
-            "max_tokens": int(tokenizer["max_length"]),
-        }
+    manifest = read_manifest(manifest_path)
+    _, identity = analyze_manifest(manifest)
+    facts: dict[str, Any] = {}
+    if runtime_package_id is not None:
+        facts["runtime_package_id"] = str(runtime_package_id)
+    if runtime_backend is not None:
+        facts["runtime_backend"] = str(runtime_backend)
+    if supported_devices is not None:
+        facts["supported_devices"] = tuple(str(item) for item in supported_devices)
+    if supported_precisions is not None:
+        facts["supported_precisions"] = tuple(str(item) for item in supported_precisions)
+    return build_processor_spec(
+        manifest, identity, facts=facts, device_policy=device_policy
     )
 
 
@@ -292,6 +253,11 @@ def _runtime_facts(health: Mapping[str, Any]) -> dict[str, Any]:
         for name in (runtime.get("providers") or ())
         if str(name) in _PROVIDER_DEVICES
     ]
+    resolved = str(device.get("device") or "")
+    if resolved:
+        # The device the adapter *really* resolved is authoritative; the provider list only says
+        # what the runtime offers.
+        devices.append("gpu" if resolved == "cuda" else resolved)
     if devices:
         facts["supported_devices"] = tuple(dict.fromkeys(devices))
     if device.get("precision"):
@@ -315,8 +281,13 @@ def build_worker_query_encoder(
     the manifest-derived one; a worker that disagrees is refused, because ranking a query in
     another space would silently return the wrong photos.
     """
+    manifest = read_manifest(manifest_path)
+    provider = provider_block(manifest)
+    # The manifest's own policy is combined with the caller's: a model that is only correct on a
+    # strict CUDA path can never be softened into a CPU run by a caller's default.
+    effective_policy = effective_device_policy(provider["device_policy"], device_policy)
     client = client_factory(
-        Path(model_dir), Path(manifest_path), device=device, device_policy=device_policy
+        Path(model_dir), Path(manifest_path), device=device, device_policy=effective_policy
     )
     try:
         health = client.health(timeout=COLD_START_TIMEOUT_SECONDS)
@@ -327,7 +298,7 @@ def build_worker_query_encoder(
                 details={"reason": "MODEL_NOT_LOADED"},
             )
         spec = pinned_embedding_spec(
-            Path(manifest_path), device_policy=device_policy, **_runtime_facts(health)
+            Path(manifest_path), device_policy=effective_policy, **_runtime_facts(health)
         )
         _check_worker_space(health.get("spec"), spec)
     except Exception:
@@ -367,11 +338,13 @@ def _check_worker_space(worker_spec: Any, expected: ProcessorSpec) -> None:
 class EncoderWiring:
     """Whether this process can serve the semantic channel, and why."""
 
-    #: ``READY`` / ``MODEL_DIR_MISSING`` / ``MANIFEST_MISSING``.
+    #: ``READY`` / ``MODEL_DIR_MISSING`` / ``MANIFEST_MISSING`` / ``PROVIDER_UNKNOWN``.
     reason: str
     model_dir: str
     manifest: str
     factory: Callable[[], WorkerQueryEncoder] | None
+    #: The provider this wiring resolves to (empty when nothing could be resolved).
+    provider_id: str = ""
 
     @property
     def available(self) -> bool:
@@ -381,6 +354,7 @@ class EncoderWiring:
         return {
             "available": bool(self.available),
             "reason": str(self.reason),
+            "provider_id": str(self.provider_id),
             "model_dir": str(self.model_dir),
             "manifest": str(self.manifest),
         }
@@ -417,7 +391,76 @@ def resolve_query_encoder(
             client_factory=client_factory,
         )
 
-    return EncoderWiring("READY", str(directory), str(manifest), factory)
+    return EncoderWiring(
+        "READY",
+        str(directory),
+        str(manifest),
+        factory,
+        provider_id=str(provider_block(read_manifest(manifest))["provider_id"]),
+    )
+
+
+def active_provider_id(catalog: Any) -> str | None:
+    """The provider the *active* search profile binds, or ``None`` when none is activated.
+
+    ADR-0003 §8: the served profile binds the encoder, the space and the generation, so the
+    process that serves requests must load exactly the provider its ``embedding_processor_id``
+    names. This reads one row, loads nothing and decides nothing else.
+    """
+    from photo_search.models.embedding.base import provider_id_of_processor
+    from photo_search.search import profile as profile_module
+
+    try:
+        identifier = profile_module.active_profile_id(catalog.connection)
+    except Exception:  # noqa: BLE001 - an unreadable catalog is "no profile", not a crash
+        return None
+    if identifier is None:
+        return None
+    profile = profile_module.load_profile(catalog, str(identifier))
+    if profile is None:
+        return None
+    return provider_id_of_processor(str(profile.embedding_processor_id))
+
+
+def resolve_provider_encoder(
+    *,
+    provider: Any,
+    device: str | None = None,
+    device_policy: str | DevicePolicy | None = None,
+    client_factory: Callable[..., Any] = AiWorkerClient,
+) -> EncoderWiring:
+    """The encoder factory for one registry provider, or an honest "not installed".
+
+    This is the production path: the provider comes from the registry (and, when a catalog has an
+    activated profile, from that profile's ``processor_id``), so the query path can only ever load
+    the model the served generation was built with.
+    """
+    directory = Path(str(provider.model_dir))
+    manifest = Path(str(provider.manifest_path))
+    policy = effective_device_policy(
+        getattr(provider, "device_policy", None), device_policy
+    )
+    if not manifest.is_file():
+        return EncoderWiring(
+            "MANIFEST_MISSING", str(directory), str(manifest), None, str(provider.provider_id)
+        )
+    if not directory.is_dir() or getattr(provider, "missing_files", ()):
+        return EncoderWiring(
+            "MODEL_DIR_MISSING", str(directory), str(manifest), None, str(provider.provider_id)
+        )
+
+    def factory() -> WorkerQueryEncoder:
+        return build_worker_query_encoder(
+            model_dir=directory,
+            manifest_path=manifest,
+            device=device,
+            device_policy=policy,
+            client_factory=client_factory,
+        )
+
+    return EncoderWiring(
+        "READY", str(directory), str(manifest), factory, str(provider.provider_id)
+    )
 
 
 __all__ = [

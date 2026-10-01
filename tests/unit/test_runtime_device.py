@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from photo_search.models.embedding.chinese_clip_onnx import _summarise_profile
+from photo_search.runtime import device as runtime_device
 from photo_search.runtime.device import (
     CPU_PROVIDER,
     CUDA_PROVIDER,
+    NVIDIA_SITE_PACKAGES_ONLY,
     PROVIDER_OVERRIDE_ENV,
     DevicePolicy,
     DeviceUnavailableError,
     available_providers,
     build_session_options,
     normalize_device,
+    preload_runtime_dlls,
     resolve_device,
     runtime_capabilities,
     session_providers,
@@ -22,6 +27,20 @@ from photo_search.runtime.device import (
 
 CUDA_PROVIDERS = (CUDA_PROVIDER, CPU_PROVIDER)
 CPU_ONLY_PROVIDERS = (CPU_PROVIDER,)
+CLIP_MANIFEST = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "prepare_models"
+    / "manifests"
+    / "chinese-clip-vit-b-16.json"
+)
+QWEN_MANIFEST = (
+    Path(__file__).resolve().parents[2]
+    / "tools"
+    / "prepare_models"
+    / "manifests"
+    / "qwen3-vl-embedding-2b.json"
+)
 
 
 def test_normalize_device_accepts_user_and_provider_spellings() -> None:
@@ -140,3 +159,125 @@ def test_profile_summary_counts_the_provider_of_every_node(tmp_path: Path) -> No
 def test_profile_summary_handles_a_missing_profile() -> None:
     assert _summarise_profile(None) == {"available": False}
     assert _summarise_profile("Z:/definitely/missing.json")["available"] is False
+
+
+def test_the_ort_preload_never_probes_pytorch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P4-Embedding-Arch: two CUDA stacks in one environment must not share a search path.
+
+    ``onnxruntime-gpu`` is the CUDA 13 build while PyTorch is the measured cu128 build. ONNX
+    Runtime's default probe prefers "the lib directory of a compatible PyTorch", which warns
+    about the version mismatch and puts ``torch\\lib`` first - where the cuDNN 9 files have the
+    same names as ONNX Runtime's but are linked against CUDA 12. The product therefore selects
+    ONNX Runtime's documented "nvidia site packages only" mode (an empty string) instead.
+    """
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        runtime_device.onnxruntime, "preload_dlls", lambda **kwargs: calls.append(kwargs)
+    )
+    report = preload_runtime_dlls()
+    assert calls == [{"directory": NVIDIA_SITE_PACKAGES_ONLY}]
+    assert NVIDIA_SITE_PACKAGES_ONLY == ""
+    assert report["mode"] == "nvidia-site-packages"
+    assert report["loaded"] is True
+    assert report["directory"] is None  # nothing was added to the search path by hand
+    assert report["search_path_added"] is False
+    assert report["error"] is None
+
+
+def test_a_packaged_build_still_preloads_its_own_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The frozen-build path is unchanged: an explicit flat directory plus a search path entry."""
+    calls: list[Any] = []
+    monkeypatch.setattr(runtime_device, "bundled_dll_directory", lambda: tmp_path)
+    monkeypatch.setattr(
+        runtime_device.onnxruntime, "preload_dlls", lambda **kwargs: calls.append(kwargs)
+    )
+    report = preload_runtime_dlls()
+    assert calls == [{"directory": str(tmp_path)}]
+    assert report["mode"] == "packaged"
+    assert report["loaded"] is True
+    assert report["directory"] == str(tmp_path)
+    if os.name == "nt":
+        assert report["search_path_added"] is True
+
+
+def test_an_explicit_directory_argument_is_honoured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        runtime_device.onnxruntime, "preload_dlls", lambda **kwargs: calls.append(kwargs)
+    )
+    report = preload_runtime_dlls(tmp_path)
+    assert calls == [{"directory": str(tmp_path)}]
+    assert report["mode"] == "explicit"
+    assert report["directory"] == str(tmp_path)
+
+
+def test_a_preload_failure_is_reported_and_never_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(**_: Any) -> None:
+        raise OSError("dll not found")
+
+    monkeypatch.setattr(runtime_device.onnxruntime, "preload_dlls", explode)
+    report = preload_runtime_dlls()
+    assert report["loaded"] is False
+    assert report["error"] == "OSError: dll not found"
+
+
+def test_the_onnx_worker_disables_torch_but_the_qwen_worker_keeps_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One CUDA stack per ONNX worker; PyTorch stays available where it is needed.
+
+    ONNX Runtime prints its CUDA-major mismatch notice whenever ``torch`` is in ``sys.modules``
+    (``onnxruntime/__init__.py``), and the cuDNN 9 files share names across the two stacks. An
+    ONNX-serving worker therefore turns transformers' PyTorch support off; a ``qwen3_vl`` worker
+    must not, and an operator-provided ``USE_TORCH`` is respected.
+
+    The decision has to be observed in a **fresh interpreter** - in this test process torch is
+    already imported by the other cases in this file, which is exactly the situation the product
+    avoids by calling this before the adapter (and therefore transformers) is imported.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    code = (
+        "import json, os, sys;"
+        "from photo_search.workers.ai_worker import prepare_framework_stack as p;"
+        "os.environ.pop('USE_TORCH', None);"
+        "clip = p(sys.argv[1]);"
+        "os.environ.pop('USE_TORCH', None);"
+        "qwen = p(sys.argv[2]);"
+        "os.environ['USE_TORCH'] = '1';"
+        "respected = p(sys.argv[1]);"
+        "print(json.dumps([clip, qwen, respected]))"
+    )
+    environment = {key: value for key, value in os.environ.items() if key != "USE_TORCH"}
+    completed = subprocess.run(
+        [sys.executable, "-c", code, str(CLIP_MANIFEST), str(QWEN_MANIFEST)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=300,
+    )
+    assert completed.returncode == 0, completed.stderr[-500:]
+    clip, qwen, respected = json.loads(completed.stdout.strip().splitlines()[-1])
+    assert clip == {
+        "adapter": "chinese_clip_onnx",
+        "use_torch": "0",
+        "applied": True,
+        "torch_imported": False,
+    }
+    assert qwen["adapter"] == "qwen3_vl" and qwen["applied"] is False
+    assert qwen["use_torch"] == "unset" and qwen["torch_imported"] is False
+    assert respected == {
+        "adapter": "chinese_clip_onnx",
+        "use_torch": "1",
+        "applied": False,
+        "torch_imported": False,
+    }

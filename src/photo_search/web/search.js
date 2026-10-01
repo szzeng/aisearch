@@ -1053,7 +1053,10 @@
       body.has_more ? "还有下一页" : "已到末尾",
     ];
     var vector = (body.channels || {}).vector || {};
-    if (vector.engaged) {
+    // The 1.3 threshold is a property of the calibrated Chinese-CLIP space. Another active
+    // model reports the statistic as unavailable, and the sentence is hidden instead of
+    // rendering its distribution as "0 张高度匹配" (P4-Embedding-Arch §E).
+    if (vector.engaged && vector.strong_match_available !== false) {
       parts.unshift(
         vector.strong_match_more_possible
           ? "5000+ 张高度匹配"
@@ -1355,12 +1358,31 @@
           "（需要激活的 profile 或显式绑定），纯筛选查询不受影响。"
       );
     } else {
+      var model = search.active_embedding_model;
       lines.push(
         "当前搜索配置 " +
           safeText(search.active_profile_id) +
           " · 图像世代 " +
           safeText(search.active_image_generation_id || "未激活")
       );
+      if (model) {
+        lines.push(
+          "活动语义模型 " +
+            safeText(model.display_name || model.provider_id || "未知") +
+            "（adapter=" +
+            safeText(model.adapter || "未知") +
+            " · " +
+            safeText(model.dimension === null || model.dimension === undefined
+              ? "维度未知"
+              : model.dimension + "D") +
+            " · 本机" +
+            (model.installed ? "已安装" : "未安装：" + safeText(model.reason || "UNKNOWN")) +
+            "）"
+        );
+        if (model.strong_match_available === false) {
+          lines.push("该空间没有标定高度匹配统计，本页不显示“高度匹配”句。");
+        }
+      }
     }
     if (!search || search.query_encoder_available !== true) {
       lines.push(

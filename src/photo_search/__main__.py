@@ -10,6 +10,7 @@ import logging
 import multiprocessing
 import os
 import re
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,16 @@ from photo_search.backup import create_backup, restore_backup
 from photo_search.catalog.errors import CatalogError
 from photo_search.config import resolve_data_root
 from photo_search.ingestion.cli import add_catalog_parser, run_catalog_command
+from photo_search.models.embedding.cli import add_embedding_parser, run_embedding_command
+from photo_search.models.embedding.registry import registry_for
 from photo_search.runtime.device import DevicePolicy
 from photo_search.workers.client import AiWorkerClient
-from photo_search.workers.query_encoder import default_model_dir, resolve_query_encoder
+from photo_search.workers.query_encoder import (
+    EncoderWiring,
+    default_model_dir,
+    resolve_provider_encoder,
+    resolve_query_encoder,
+)
 
 #: A cold CUDA start on a power-gated laptop GPU can take minutes; validation runs use
 #: generous deadlines so a slow start is never mistaken for a hung worker.
@@ -131,22 +139,64 @@ def _serve(args: argparse.Namespace) -> int:
 def _encoder_wiring(args: argparse.Namespace, data_root: Path) -> Any:
     """Where this process looks for the pinned model, and whether it found it.
 
-    Defaults are relative to the resolved data root (P0-04 layout) plus the shipped
-    manifest; ``--model-dir``/``--model-manifest`` and their environment overrides replace
-    them without changing any other resolution rule.
+    P4-Embedding-Arch: the *active search profile* names the provider this process must serve,
+    so the provider is resolved from that profile and from the registry of installed models
+    rather than from a compiled-in model name. ``--model-dir``/``--model-manifest`` stay as an
+    explicit single-provider override for diagnostics and tests, and both paths keep P4-02N's
+    honest ``MODEL_DIR_MISSING``/``MANIFEST_MISSING`` answers.
     """
-    model_dir = args.model_dir or os.environ.get(MODEL_DIR_ENV) or _default_model_dir(data_root)
-    manifest = (
-        args.model_manifest
-        or os.environ.get(MODEL_MANIFEST_ENV)
-        or _default_manifest()
-    )
     device = args.model_device or os.environ.get(MODEL_DEVICE_ENV) or None
-    return resolve_query_encoder(
-        model_dir=Path(model_dir),
-        manifest_path=Path(manifest),
-        device=None if device in (None, "auto") else str(device),
-    )
+    requested = None if device in (None, "auto") else str(device)
+    explicit_dir = args.model_dir or os.environ.get(MODEL_DIR_ENV)
+    explicit_manifest = args.model_manifest or os.environ.get(MODEL_MANIFEST_ENV)
+    if explicit_dir or explicit_manifest:
+        return resolve_query_encoder(
+            model_dir=Path(explicit_dir or _default_model_dir(data_root)),
+            manifest_path=Path(explicit_manifest or _default_manifest()),
+            device=requested,
+        )
+    registry = registry_for(data_root)
+    activated = active_provider_id(data_root)
+    provider = registry.find(activated) if activated is not None else registry.default()
+    if provider is None:
+        return EncoderWiring("PROVIDER_UNKNOWN", "", "", None, activated or "")
+    return resolve_provider_encoder(provider=provider, device=requested)
+
+
+def active_provider_id(data_root: Path) -> str | None:
+    """The provider of this catalog's activated search profile, read without writing.
+
+    The startup entry must not migrate or create a catalog just to look at one pointer, so this
+    is a plain read-only query against the documented ``0007`` tables; anything unreadable means
+    "no activated profile", which falls back to the historical default provider.
+    """
+    from photo_search.config import catalog_db_path
+    from photo_search.models.embedding.base import provider_id_of_processor
+
+    path = Path(catalog_db_path(data_root))
+    if not path.is_file():
+        return None
+    try:
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        row = connection.execute(
+            "SELECT profile_id FROM active_search_profile WHERE state_id = 1"
+        ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        profile = connection.execute(
+            "SELECT embedding_processor_id FROM search_profiles WHERE profile_id = ?",
+            (str(row[0]),),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        connection.close()
+    if profile is None or profile[0] is None:
+        return None
+    return provider_id_of_processor(str(profile[0]))
 
 
 def _default_model_dir(data_root: Path | None = None) -> Path:
@@ -214,6 +264,7 @@ def main() -> None:
         help="write the JSON report to this path as UTF-8 (console output still prints)",
     )
     add_catalog_parser(subparsers)
+    add_embedding_parser(subparsers)
     backup = subparsers.add_parser("backup", help="stopped-service backup and restore")
     backup_commands = backup.add_subparsers(dest="backup_command")
     for name, help_text in (
@@ -280,6 +331,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "catalog":
         raise SystemExit(run_catalog_command(args))
+    if args.command == "embedding":
+        raise SystemExit(run_embedding_command(args))
     if args.command == "backup":
         try:
             if args.backup_command == "create":

@@ -241,6 +241,27 @@ MAX_MAPPING_TARGETS = 16
 #: caller error, not a silently different scan.
 INVALID_SCAN_MODE = "INVALID_SCAN_MODE"
 
+#: P4-Embedding-Arch: the pluggable semantic-provider family. A manifest that cannot describe
+#: its own provider, a provider this build has no adapter for, a weight file that is missing or
+#: has different bytes, and a model whose runtime/precision is not installed are all
+#: *configuration* facts with no honest equivalent in the frozen set - and none of them may
+#: degrade into "load some other model" or "run on another device". The controlled
+#: stopped-service profile selection adds its own codes for the two facts ADR-0003 §8 makes
+#: mandatory: a writer that is still active, and an index that does not cover the current
+#: library (or is not readable).
+EMBEDDING_MANIFEST_INVALID = "EMBEDDING_MANIFEST_INVALID"
+EMBEDDING_PROVIDER_UNKNOWN = "EMBEDDING_PROVIDER_UNKNOWN"
+EMBEDDING_WEIGHTS_MISSING = "EMBEDDING_WEIGHTS_MISSING"
+EMBEDDING_WEIGHTS_HASH_MISMATCH = "EMBEDDING_WEIGHTS_HASH_MISMATCH"
+EMBEDDING_RUNTIME_MISSING = "EMBEDDING_RUNTIME_MISSING"
+EMBEDDING_DEVICE_UNAVAILABLE = "EMBEDDING_DEVICE_UNAVAILABLE"
+SELECTION_WRITER_ACTIVE = "SELECTION_WRITER_ACTIVE"
+SELECTION_EMPTY_GENERATION = "SELECTION_EMPTY_GENERATION"
+SELECTION_COVERAGE_INCOMPLETE = "SELECTION_COVERAGE_INCOMPLETE"
+SELECTION_OUTBOX_PENDING = "SELECTION_OUTBOX_PENDING"
+SELECTION_ARTIFACT_UNREADABLE = "SELECTION_ARTIFACT_UNREADABLE"
+SELECTION_INDEX_UNHEALTHY = "SELECTION_INDEX_UNHEALTHY"
+
 
 class CatalogError(Exception):
     """A structured, JSON-serialisable failure of the catalog or ingestion layer."""

@@ -38,7 +38,12 @@ from PIL import Image
 
 from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.db import Catalog
-from photo_search.catalog.errors import RUNTIME_RESOLUTION_MISMATCH, CatalogError
+from photo_search.catalog.errors import (
+    PROCESSOR_MISMATCH,
+    RUNTIME_RESOLUTION_MISMATCH,
+    SPACE_MISMATCH,
+    CatalogError,
+)
 from photo_search.indexing.maintenance import drain_semantic_outbox
 from photo_search.jobs import queue as jobs
 from photo_search.media import decode as media_decode
@@ -364,6 +369,7 @@ def adapter_runtime_facts(adapter: Any) -> dict[str, Any]:
     runtime = health.get("runtime") or {}
     device = health.get("device") or {}
     resolved = str(device.get("device") or "cpu")
+    resolved_provider = str(device.get("provider") or "")
     package = str(runtime.get("runtime_package") or "onnxruntime-gpu")
     version = str(runtime.get("runtime_version") or "")
     precision = str(device.get("precision") or "FP32")
@@ -376,7 +382,17 @@ def adapter_runtime_facts(adapter: Any) -> dict[str, Any]:
         "supported_devices": tuple(devices),
         "supported_precisions": (precision,),
         "resolved_device": "gpu" if resolved == "cuda" else resolved,
-        "resolved_provider": str(device.get("provider") or ""),
+        "resolved_provider": resolved_provider,
+        # The provider *names* of the two device entries of the capability snapshot. An ONNX
+        # build reports its execution providers; the PyTorch provider reports its own honest
+        # backend name, so the P2-02 qualification gate compares like with like and a PyTorch
+        # CUDA run is never recorded as if it were an ONNX CUDA session.
+        "gpu_provider_name": (
+            resolved_provider if resolved == "cuda" and resolved_provider else CUDA_PROVIDER
+        ),
+        "cpu_provider_name": (
+            resolved_provider if resolved == "cpu" and resolved_provider else CPU_PROVIDER
+        ),
         "resolved_precision": precision,
         "providers": [str(name) for name in (runtime.get("providers") or ())],
         "cuda_available": bool(runtime.get("cuda_available")),
@@ -398,7 +414,7 @@ def record_runtime_evidence(
     if bool(facts["cuda_available"]):
         entries.append(
             {
-                "name": CUDA_PROVIDER,
+                "name": str(facts.get("gpu_provider_name") or CUDA_PROVIDER),
                 "device": "gpu",
                 "precisions": [precision],
                 "available": resolved == "gpu",
@@ -409,7 +425,7 @@ def record_runtime_evidence(
         )
     entries.append(
         {
-            "name": CPU_PROVIDER,
+            "name": str(facts.get("cpu_provider_name") or CPU_PROVIDER),
             "device": "cpu",
             "precisions": [precision],
             "available": resolved == "cpu",
@@ -581,6 +597,8 @@ def build_index(
     *,
     encoder: Any,
     manifest_path: str | Path,
+    expected_space_id: str | None = None,
+    expected_processor_id: str | None = None,
     limit: int | None = DEFAULT_BUILD_LIMIT,
     source_id: int | None = None,
     batch_size: int | None = None,
@@ -599,6 +617,28 @@ def build_index(
     spec = semantic_spec(manifest_path, facts, device_policy=device_policy)
     space_id = str(spec.envelope["space_id"])
     dimension = int(spec.envelope["dimension"])
+    # P4-Embedding-Arch: the caller that follows an active profile names the space it intends to
+    # extend. A worker that loaded a different (even same-dimensional) model is refused here, so a
+    # build can never write vectors into a space nobody serves.
+    if expected_space_id is not None and str(expected_space_id) != space_id:
+        raise CatalogError(
+            SPACE_MISMATCH,
+            "the loaded encoder produces a different space than the one being built",
+            details={
+                "expected_space_id": str(expected_space_id),
+                "derived_space_id": space_id,
+                "processor_id": str(spec.processor_id),
+            },
+        )
+    if expected_processor_id is not None and str(expected_processor_id) != str(spec.processor_id):
+        raise CatalogError(
+            PROCESSOR_MISMATCH,
+            "the loaded encoder is a different processor than the one being built",
+            details={
+                "expected_processor_id": str(expected_processor_id),
+                "derived_processor_id": str(spec.processor_id),
+            },
+        )
     scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
     evidence = record_runtime_evidence(scheduler, spec, facts, now_ms=catalog.now_ms())
     selection = semantic_selection(
@@ -705,6 +745,12 @@ def ensure_search_profile(
     publish; that is returned as ``profile_id = None`` + ``reason`` instead of letting the
     foreign key fail, and the caller decides what the run's terminal state is (P4-02Y-I
     review B1).
+
+    P4-Embedding-Arch changes exactly one thing: **a build for another space never moves the
+    pointer**. The daily build of a new library (no active profile) and every incremental build
+    of the space that is already served keep activating, which is the pre-existing behaviour;
+    a *candidate* - a different provider or a different revision of one - only publishes its
+    immutable profile row and waits for the controlled stopped-service selection.
     """
     from photo_search.search.profile import (
         DEFAULT_FUSION_CONFIG,
@@ -753,6 +799,24 @@ def ensure_search_profile(
                 ),
             )
         created = True
+    activated_id = active_profile_id(catalog.connection)
+    if activated_id is not None:
+        activated_profile = load_profile(catalog, activated_id)
+        served_space = None if activated_profile is None else str(activated_profile.space_id)
+        if served_space != str(space_id):
+            # A different space is being built. Its profile exists as an immutable candidate and
+            # nothing else changes: the served model keeps serving until the operator selects the
+            # candidate through the controlled stopped-service entry.
+            return {
+                "profile_id": identifier,
+                "created": created,
+                "activated": False,
+                "readiness": None,
+                "reason": "CANDIDATE_NOT_ACTIVATED",
+                "active_profile_id": activated_id,
+                "active_space_id": served_space,
+                "candidate_space_id": str(space_id),
+            }
     profile, changed, readiness = activate_profile(catalog, profile_id=identifier, now_ms=moment)
     return {
         "profile_id": str(profile.profile_id),

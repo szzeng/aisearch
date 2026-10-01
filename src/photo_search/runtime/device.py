@@ -300,31 +300,62 @@ def build_session_options(
     return options
 
 
-def preload_runtime_dlls(directory: str | Path | None = None) -> dict[str, Any]:
-    """Load the CUDA/cuDNN DLLs before CUDA initialises.
+#: ONNX Runtime's documented "nvidia site packages only" selector. ``preload_dlls`` reads an
+#: empty *string* as "search the ``nvidia-*`` site packages and the default DLL paths", i.e. it
+#: skips the "compatible PyTorch lib directory" step entirely.
+NVIDIA_SITE_PACKAGES_ONLY = ""
 
-    ``directory=None`` uses ONNX Runtime's own search (compatible PyTorch ``lib``
-    directory, then the ``nvidia`` site packages). A packaged build passes the flat
-    directory it ships, which is also added to the DLL search path so the provider DLL
-    can resolve its dependencies by name.
+
+def preload_runtime_dlls(directory: str | Path | None = None) -> dict[str, Any]:
+    """Load ONNX Runtime's own CUDA/cuDNN DLLs before CUDA initialises.
+
+    ``onnxruntime-gpu`` is built against CUDA 13 and ships its runtime as the ``nvidia-*``
+    wheels, while the Qwen provider needs the measured PyTorch cu128 build - so this one
+    environment deliberately carries two CUDA stacks. ONNX Runtime's *default* probe prefers
+    "the lib directory of a compatible PyTorch": with matching CUDA majors it would put
+    ``torch\\lib`` first on the DLL search path, where the cuDNN 9 files carry the *same names*
+    as ONNX Runtime's cuDNN 9 but are linked against CUDA 12. That cross-major mix is not a
+    supported configuration, so the DLL source is pinned here explicitly instead of being
+    decided by whatever PyTorch happens to be installed.
+
+    ``directory=""`` is ONNX Runtime's own documented selector for "``nvidia`` site packages,
+    then the default DLL paths". Note what this does *not* do: ONNX Runtime prints its
+    "installed PyTorch uses CUDA 12.x / this build uses CUDA 13.x" line whenever ``torch`` is in
+    ``sys.modules`` of the same process (``onnxruntime/__init__.py``), independent of this
+    argument. That message is silenced by not importing torch in an ONNX-serving process at all
+    (see the ONNX adapter's lazy tokenizer import), not by this function.
+
+    A PyInstaller build still passes the flat directory it ships, and that path keeps its
+    previous behaviour (explicit ``directory`` plus ``add_dll_directory``); an explicit
+    ``directory`` argument from a caller is honoured unchanged.
     """
+    mode = "nvidia-site-packages"
     if directory is None:
-        directory = bundled_dll_directory()
+        bundled = bundled_dll_directory()
+        if bundled is not None:
+            directory = bundled
+            mode = "packaged"
+        else:
+            directory = NVIDIA_SITE_PACKAGES_ONLY
+    else:
+        mode = "explicit"
     report: dict[str, Any] = {
-        "directory": str(directory) if directory is not None else None,
+        "mode": mode,
+        "directory": str(directory) if str(directory) else None,
+        "ort_directory_argument": str(directory),
         "search_path_added": False,
         "loaded": False,
         "error": None,
     }
     try:
-        if directory is not None:
+        if str(directory):
             path = Path(directory)
             if os.name == "nt" and hasattr(os, "add_dll_directory"):
                 os.add_dll_directory(str(path))
                 report["search_path_added"] = True
             onnxruntime.preload_dlls(directory=str(path))
         else:
-            onnxruntime.preload_dlls()
+            onnxruntime.preload_dlls(directory=NVIDIA_SITE_PACKAGES_ONLY)
         report["loaded"] = True
     except Exception as error:  # DLL preloading must never mask the real provider error
         report["error"] = f"{type(error).__name__}: {error}"

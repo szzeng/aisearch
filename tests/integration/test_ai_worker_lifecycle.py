@@ -72,13 +72,24 @@ def test_timeout_terminates_spawned_worker(model_dir: Path, manifest: Path) -> N
 
 
 def test_startup_error_contains_stderr_tail(model_dir: Path, tmp_path: Path) -> None:
+    """A startup failure is reported both as a structured payload and in the worker's stderr.
+
+    P4-Embedding-Arch: the worker now resolves its adapter from the *manifest*, so a missing
+    manifest is refused by the manifest reader as ``CatalogError(EMBEDDING_MANIFEST_INVALID)``
+    instead of surfacing the raw ``FileNotFoundError`` of ``json.loads``. The payload therefore
+    carries the stable code (not just a text tail), which is what the parent process reports.
+    """
     bad_manifest = tmp_path / "missing-manifest.json"
     worker = AiWorkerClient(model_dir, bad_manifest, device="cpu")
     stderr_path = worker._stderr_file
     with pytest.raises(WorkerError) as captured:
         worker.health(timeout=CPU_WORKER_TIMEOUT_SECONDS)
     assert captured.value.payload["stage"] == "startup"
-    assert "FileNotFoundError" in captured.value.stderr_tail
+    assert captured.value.payload["exception_type"] == "CatalogError"
+    code = captured.value.details.get("code")
+    assert code == "EMBEDDING_MANIFEST_INVALID"
+    assert code in captured.value.stderr_tail
+    assert str(bad_manifest) in captured.value.details.get("manifest", "")
     worker.shutdown()
     assert not stderr_path.exists()
 

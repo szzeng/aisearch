@@ -13,10 +13,11 @@ dependencies = [
     "pillow>=10,<12",
     "pillow-heif==1.8.0",
     "pydantic>=2.9,<3",
+    "qwen-vl-utils==0.0.14",
     "rapidocr-onnxruntime>=1.4.4,<1.5",
-    "torch>=2.5,<3",
-    "torchvision>=0.20,<1",
-    "transformers>=4.46,<4.47",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
+    "transformers==4.57.0",
     "uvicorn>=0.30,<1",
 ]
 
@@ -44,6 +45,20 @@ packages = ["src/photo_search"]
 # that CPU-only distribution so no second copy of the same module can overwrite it.
 [tool.uv]
 override-dependencies = ["onnxruntime; sys_platform == 'never'"]
+
+# P4-Embedding-Arch: the single environment carries both semantic providers, and the PyTorch
+# half is the CUDA 12.8 build the Qwen3-VL-Embedding-2B measurements were taken with. The
+# indicator is explicit so a CPU-only `torch` wheel can never be resolved by accident: the
+# Qwen adapter reports ``EMBEDDING_DEVICE_UNAVAILABLE`` instead of silently running on a host
+# device it was not qualified on.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

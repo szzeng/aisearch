@@ -352,6 +352,50 @@ def _search_capabilities(request: Request) -> dict[str, Any] | None:
         **(projection or {}),
         **(profile or {}),
         "query_encoder_available": context.query_encoder() is not None,
+        "active_embedding_model": active_embedding_model(context, profile),
+    }
+
+
+def active_embedding_model(context: Any, profile: Any) -> dict[str, Any] | None:
+    """The *served* semantic model of this catalog, named without loading it (P4-Embedding-Arch).
+
+    The served space comes from the active generation, so the page can say which model is
+    answering and whether the P4-02Y-W strong-match statistic belongs to it - without starting a
+    worker, opening a model directory or leaking a path.
+    """
+    from photo_search.models.embedding.registry import registry_for
+    from photo_search.search.service import strong_match_policy
+
+    # The *served* generation is the one the active profile names. ``active_generations`` lists
+    # every generation whose own space is marked active (ADR-0003 §8 keeps one per space), so
+    # picking the first one would name another space's model as soon as two providers are
+    # installed - the profile's own ``image_generation_id`` is what decides.
+    generations = (profile or {}).get("active_generations") or []
+    active_generation_id = str((profile or {}).get("active_image_generation_id") or "")
+    served = next(
+        (
+            item
+            for item in generations
+            if str(item.get("generation_id") or "") == active_generation_id
+        ),
+        None,
+    )
+    if served is None:
+        return None
+    space_id = str(served.get("space_id") or "")
+    if not space_id:
+        return None
+    provider_id = space_id.split(":", 1)[0]
+    entry = registry_for(context.settings.data_root).find(provider_id)
+    return {
+        "provider_id": provider_id,
+        "space_id": space_id,
+        "display_name": None if entry is None else str(entry.display_name),
+        "adapter": None if entry is None else str(entry.adapter),
+        "dimension": None if entry is None else int(entry.identity.dimension),
+        "installed": bool(entry is not None and entry.installed),
+        "reason": "PROVIDER_UNKNOWN" if entry is None else str(entry.reason),
+        "strong_match_available": bool(strong_match_policy(space_id)),
     }
 
 

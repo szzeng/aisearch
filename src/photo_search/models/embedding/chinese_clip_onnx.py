@@ -7,6 +7,11 @@ The adapter never guesses a device.  It resolves the requested device against th
 runtime's providers (default CUDA under ADR-0001), creates the ONNX session with the CPU
 execution-provider fallback disabled so a CUDA fault cannot turn into a silent whole-model
 CPU run, and reports the resolved device/provider plus any degradation reason.
+
+This adapter only needs ``transformers`` for its tokenizer, and that import pulls PyTorch in. The
+AI worker therefore runs an ONNX-serving process with ``USE_TORCH=0`` (see
+:func:`photo_search.workers.ai_worker.prepare_framework_stack`), so such a process carries exactly
+one CUDA stack - ONNX Runtime's own - and never trips ONNX Runtime's PyTorch-mismatch notice.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import onnxruntime
 from PIL import Image
 from transformers import BertTokenizerFast
 
+from photo_search.models.embedding.base import analyze_manifest
 from photo_search.runtime.device import (
     DevicePolicy,
     DeviceResolution,
@@ -49,6 +55,8 @@ class ProcessorSpec:
     device: str
     image_size: int
     token_limit: int
+    provider_id: str = "chinese-clip-vit-b-16"
+    adapter: str = "chinese_clip_onnx"
     device_policy: str = DevicePolicy.CPU_ALLOWED.value
     runtime_provider: str = "unresolved"
     runtime_version: str = ""
@@ -87,6 +95,7 @@ class ChineseClipOnnxAdapter:
         self.model_dir = model_dir
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self._config = runtime_config or RuntimeConfig()
+        self._provider, self._identity = analyze_manifest(self.manifest)
         embedding = self.manifest["embedding"]
         model = self.manifest["model"]
         runtime = self.manifest["runtime"]
@@ -94,8 +103,8 @@ class ChineseClipOnnxAdapter:
         tokenizer = self.manifest["tokenizer"]
         digest = self.manifest["artifacts"]["onnx"]["image"]["sha256"][:16]
         self._spec = ProcessorSpec(
-            processor_id=f"chinese-clip-vit-b-16@{model['resolved_revision'][:12]}",
-            space_id=f"chinese-clip-vit-b-16:{digest}",
+            processor_id=f"{self._identity.provider_id}@{model['resolved_revision'][:12]}",
+            space_id=f"{self._identity.provider_id}:{digest}",
             dimension=int(embedding["dimension"]),
             metric=str(embedding["metric"]),
             normalization=str(embedding["normalization"]),
@@ -104,6 +113,8 @@ class ChineseClipOnnxAdapter:
             device="unresolved",
             image_size=int(preprocessing["image_size"]),
             token_limit=int(tokenizer["max_length"]),
+            provider_id=str(self._provider["provider_id"]),
+            adapter=str(self._provider["adapter"]),
             device_policy=DevicePolicy(self._config.device_policy).value,
             runtime_version=onnxruntime.__version__,
             precision=self._config.precision,
@@ -116,7 +127,7 @@ class ChineseClipOnnxAdapter:
         self._tokenizer_path = model_dir / self.manifest["tokenizer"]["vocab_file"]
         self._image_session: onnxruntime.InferenceSession | None = None
         self._text_session: onnxruntime.InferenceSession | None = None
-        self._tokenizer: BertTokenizerFast | None = None
+        self._tokenizer: Any | None = None
         self._resolution: DeviceResolution | None = None
         self._capabilities: RuntimeCapabilities | None = None
         self._dll_report: dict[str, Any] | None = None

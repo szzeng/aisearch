@@ -112,6 +112,18 @@ from photo_search.taken_time import read as time_read
 #: Chinese-CLIP squared-L2 threshold; equivalent to cosine similarity >= 0.35.
 STRONG_MATCH_MAX_DISTANCE = 1.3
 
+#: The one representation space that threshold was calibrated on (P4-02Y-W). The statistic is a
+#: property of *that* model's distance distribution, so another space - Qwen3-VL-Embedding-2B, or
+#: a future re-quantised Chinese-CLIP - reports it as unavailable and the page hides the sentence
+#: instead of rendering another model's distribution as "0 张高度匹配".
+STRONG_MATCH_SPACE_PREFIX = "chinese-clip-vit-b-16:"
+
+
+def strong_match_policy(space_id: str | None) -> bool:
+    """Whether ``distance <= 1.3`` means anything in this space (P4-02Y-W §7)."""
+    text = str(space_id or "")
+    return bool(text) and text.startswith(STRONG_MATCH_SPACE_PREFIX)
+
 _HIT_REASON_BY_CHANNELS = {
     (FTS_CHANNEL,): "TEXT",
     (VECTOR_CHANNEL,): "SEMANTIC",
@@ -519,6 +531,7 @@ def _channel_summary(
         and vector_rows
         and float(vector_rows[-1]["distance"]) <= STRONG_MATCH_MAX_DISTANCE
     )
+    strong_match_available = strong_match_policy(getattr(binding, "space_id", None))
     return {
         FTS_CHANNEL: {
             "engaged": match is not None,
@@ -531,6 +544,9 @@ def _channel_summary(
             "truncated": engaged and scan_truncated,
             "strong_match_count": strong_match_count,
             "strong_match_more_possible": strong_match_more_possible,
+            # Additive and read-only: the numbers above keep their meaning for the calibrated
+            # space, and this flag says whether they may be rendered at all.
+            "strong_match_available": bool(strong_match_available),
             "scan_truncated": scan_truncated,
             "engine_blocks": int(scan.get("blocks", 0)),
             "reason": None if engaged else "NO_QUERY_TEXT",
