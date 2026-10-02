@@ -121,6 +121,23 @@ class CapabilitiesResponse(BaseModel):
     faces: dict[str, Any] | None = None
 
 
+class SourceSummary(BaseModel):
+    """Fast, rootless source identity for the home screen.
+
+    This is only catalog metadata; ``status`` is not a live filesystem check.
+    """
+
+    source_id: int
+    display_name: str
+    volume_hint: str | None = None
+    status: str
+    last_successful_scan: int | None = None
+
+
+class SourceSummaryResponse(BaseModel):
+    sources: list[SourceSummary]
+
+
 class SourceRecord(BaseModel):
     source_id: int
     display_name: str

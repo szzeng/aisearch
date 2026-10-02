@@ -55,6 +55,10 @@
   var state = {
     sessionMissing: false,
     sources: [],
+    sourceDetails: {},
+    sourceDetailOpen: {},
+    sourcesRequestVersion: 0,
+    detailPreviewFit: null,
     browse: {
       sourceId: "",
       order: "time_desc",
@@ -76,6 +80,10 @@
       captureState: null,
       //: Per-asset taken-time projections, fetched lazily for the visible tiles.
       timeCache: {},
+      requestVersion: 0,
+      returnScrollY: 0,
+      returnAssetId: "",
+      returnAssetTop: null,
     },
     pollTimer: null,
     //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
@@ -397,15 +405,36 @@
 
   // -------------------------------------------------------------------- sources
   function loadSources() {
-    setStatus(els.sourcesStatus, "正在读取来源…");
-    return request("/sources")
+    state.sourcesRequestVersion += 1;
+    var requestVersion = state.sourcesRequestVersion;
+    setStatus(els.sourcesStatus, "正在读取图库入口…");
+    state.sourceDetails = {};
+    return request("/sources/summary")
       .then(function (result) {
+        if (requestVersion !== state.sourcesRequestVersion) {
+          return;
+        }
         state.sources = (result.body && result.body.sources) || [];
+        if (
+          state.browse.sourceId &&
+          !state.sources.some(function (source) {
+            return String(source.source_id) === String(state.browse.sourceId);
+          })
+        ) {
+          state.browse.sourceId = "";
+          state.browse.loaded = false;
+          if (!els.views.browse.hidden) {
+            loadBrowse(true);
+          }
+        }
         renderSources();
         renderSourceOptions();
         setStatus(els.sourcesStatus, "");
       })
       .catch(function (failure) {
+        if (requestVersion !== state.sourcesRequestVersion) {
+          return;
+        }
         setStatus(els.sourcesStatus, "读取来源失败：" + describe(failure), "error");
       });
   }
@@ -414,20 +443,93 @@
     els.sourcesList.textContent = "";
     if (!state.sources.length) {
       els.sourcesList.appendChild(
-        element("li", "hint", "还没有登记来源。请在下面填写照片目录的路径并注册。")
+        element("li", "hint", "还没有登记图库。展开“图库管理与分析明细”添加一个图库。")
       );
       return;
     }
     state.sources.forEach(function (source) {
-      var counts = source.counts || {};
-      var progress = source.progress || null;
       var card = element("li", "source-card");
       card.appendChild(element("h3", null, source.display_name));
+      var identity = "图库 #" + source.source_id;
+      if (source.volume_hint) {
+        identity += " · " + safeText(source.volume_hint);
+      }
+      card.appendChild(element("p", "hint", identity));
+      card.appendChild(
+        element(
+          "p",
+          "hint",
+          "记录状态 " + (SOURCE_STATUS_TEXT[source.status] || source.status || "已登记") +
+            " · 未实时检查磁盘"
+        )
+      );
+      var open = element("button", "view-source", "查看此图库照片");
+      open.type = "button";
+      open.addEventListener("click", function () {
+        state.browse.sourceId = String(source.source_id);
+        els.browseSource.value = state.browse.sourceId;
+        state.browse.loaded = false;
+        showView("browse");
+      });
+      card.appendChild(open);
+
+      var detail = element("details", "source-detail");
+      detail.open = Boolean(state.sourceDetailOpen[source.source_id]);
+      var summary = element("summary", null, "完整路径、状态与管理明细（按需读取）");
+      detail.appendChild(summary);
+      var detailContent = element("div", "source-detail-content", "展开后读取统计与任务状态。");
+      detail.appendChild(detailContent);
+      detail.addEventListener("toggle", function () {
+        state.sourceDetailOpen[source.source_id] = detail.open;
+        if (detail.open) {
+          loadSourceDetail(source, detailContent);
+        }
+      });
+      card.appendChild(detail);
+      els.sourcesList.appendChild(card);
+      if (detail.open) {
+        loadSourceDetail(source, detailContent);
+      }
+    });
+  }
+
+  function loadSourceDetail(source, container) {
+    var cached = state.sourceDetails[String(source.source_id)];
+    if (cached) {
+      renderSourceDetail(source, cached, container);
+      return;
+    }
+    container.textContent = "正在读取这个图库的统计与任务状态…";
+    request("/sources/" + encodeURIComponent(source.source_id))
+      .then(function (result) {
+        var full = result.body || {};
+        state.sourceDetails[String(source.source_id)] = full;
+        renderSourceDetail(source, full, container);
+      })
+      .catch(function (failure) {
+        container.textContent = "明细读取失败：" + describe(failure) + " ";
+        var retry = element("button", null, "重试读取明细");
+        retry.type = "button";
+        retry.addEventListener("click", function () {
+          loadSourceDetail(source, container);
+        });
+        container.appendChild(retry);
+      });
+  }
+
+  function renderSourceDetail(source, detail, container) {
+    var counts = detail.counts || {};
+    var progress = detail.progress || null;
+    source = Object.assign({}, source, detail);
+    container.textContent = "";
       var list = element("dl");
       var rows = [
         ["来源编号", "#" + source.source_id],
-        ["状态", SOURCE_STATUS_TEXT[source.status] || source.status],
+        ["图库记录状态", SOURCE_STATUS_TEXT[source.status] || source.status],
       ];
+      if (detail.root_path) {
+        rows.push(["完整根路径", detail.root_path]);
+      }
       if (progress && progress.scan) {
         rows.push(["扫描", String(progress.scan.files) + " 个文件（可显示 " + String(progress.scan.present) + "）"]);
       }
@@ -453,16 +555,16 @@
       rows.push(
         [
           "最近成功扫描",
-          source.last_successful_scan === null || source.last_successful_scan === undefined
+          detail.last_successful_scan === null || detail.last_successful_scan === undefined
             ? "尚无成功扫描"
-            : "扫描 #" + source.last_successful_scan,
+            : "扫描 #" + detail.last_successful_scan,
         ],
       );
       rows.forEach(function (pair) {
         list.appendChild(element("dt", null, pair[0]));
         list.appendChild(element("dd", null, pair[1]));
       });
-      card.appendChild(list);
+      container.appendChild(list);
       var mode = sourceActionMode(progress);
       var actions = element("p");
       if (mode === "build" || mode === "continue") {
@@ -516,14 +618,12 @@
           element("span", "hint", "刷新正在进行，完成后再操作来源。")
         );
       }
-      card.appendChild(actions);
+      container.appendChild(actions);
       var progressLine = element("p", "hint", "");
       progressLine.setAttribute("data-progress", String(source.source_id));
       progressLine.setAttribute("role", "status");
       progressLine.setAttribute("aria-live", "polite");
-      card.appendChild(progressLine);
-      els.sourcesList.appendChild(card);
-    });
+      container.appendChild(progressLine);
   }
 
   //: P4-02Y-I §3: the enrichment rows of a source card and their three honest words.
@@ -619,15 +719,34 @@
   function renderSourceOptions() {
     var current = els.browseSource.value;
     els.browseSource.textContent = "";
-    var all = element("option", null, "全部来源");
+    var all = element("option", null, "全部图库");
     all.value = "";
     els.browseSource.appendChild(all);
     state.sources.forEach(function (source) {
-      var option = element("option", null, source.display_name);
+      var label = source.display_name + " · #" + source.source_id;
+      if (source.volume_hint) {
+        label += " · " + safeText(source.volume_hint);
+      }
+      var option = element("option", null, label);
       option.value = String(source.source_id);
       els.browseSource.appendChild(option);
     });
     els.browseSource.value = current;
+    updateBrowseScope();
+  }
+
+  function updateBrowseScope() {
+    if (!els.browseScope) {
+      return;
+    }
+    var selected = state.sources.find(function (source) {
+      return String(source.source_id) === String(state.browse.sourceId);
+    });
+    els.browseScope.hidden = !selected;
+    text(
+      els.browseScopeName,
+      selected ? "当前仅查看「" + selected.display_name + " · #" + selected.source_id + "」" : ""
+    );
   }
 
   function startScan(sourceId) {
@@ -932,15 +1051,8 @@
   }
 
   function loadBrowse(reset) {
-    if (state.browse.loading) {
-      state.browse.owed = true;
-      return;
-    }
-    if (continuationRefused(reset)) {
-      return;
-    }
-    state.browse.loading = true;
     if (reset) {
+      state.browse.requestVersion += 1;
       releaseObjectUrls();
       state.browse.cursor = null;
       state.browse.hasMore = false;
@@ -948,7 +1060,19 @@
       state.browse.timeCache = {};
       setStatus(els.browseCaptureState, "");
       els.assetGrid.textContent = "";
+      els.loadMore.hidden = true;
+      els.gridSentinel.hidden = true;
     }
+    if (state.browse.loading) {
+      state.browse.owed = true;
+      return;
+    }
+    if (continuationRefused(reset)) {
+      return;
+    }
+    updateBrowseScope();
+    state.browse.loading = true;
+    var requestVersion = state.browse.requestVersion;
     setStatus(els.browseStatus, reset ? "正在加载图片…" : "正在加载下一页…");
     var params = new URLSearchParams();
     params.set("order", state.browse.order);
@@ -967,6 +1091,14 @@
     }
     request("/assets?" + params.toString())
       .then(function (result) {
+        if (requestVersion !== state.browse.requestVersion) {
+          state.browse.loading = false;
+          if (state.browse.owed) {
+            state.browse.owed = false;
+            loadBrowse(true);
+          }
+          return;
+        }
         var body = result.body || {};
         var assets = body.assets || [];
         assets.forEach(function (asset) {
@@ -988,6 +1120,13 @@
       })
       .catch(function (failure) {
         state.browse.loading = false;
+        if (requestVersion !== state.browse.requestVersion) {
+          if (state.browse.owed) {
+            state.browse.owed = false;
+            loadBrowse(true);
+          }
+          return;
+        }
         els.loadMore.hidden = true;
         els.gridSentinel.hidden = true;
         var hint = "";
@@ -1175,7 +1314,18 @@
     tile.appendChild(frame);
 
     var caption = element("div", "tile-caption");
-    caption.appendChild(element("span", null, relativeLabel(asset)));
+    var currentSource = asset.current_location
+      ? state.sources.find(function (source) {
+          return String(source.source_id) === String(asset.current_location.source_id);
+        })
+      : null;
+    var locationLine = currentSource
+      ? currentSource.display_name + " · " + relativeLabel(asset)
+      : relativeLabel(asset);
+    if (asset.current_location && Number(asset.location_count) > 1) {
+      locationLine += " · 另有 " + String(Number(asset.location_count) - 1) + " 个位置";
+    }
+    caption.appendChild(element("span", null, locationLine));
     var meta = element(
       "span",
       "meta",
@@ -1209,6 +1359,10 @@
 
   // --------------------------------------------------------------------- detail
   function showDetail(assetId) {
+    state.browse.returnScrollY = window.scrollY || window.pageYOffset || 0;
+    var returnTile = els.assetGrid.querySelector('[data-asset-id="' + String(assetId) + '"]');
+    state.browse.returnAssetId = String(assetId);
+    state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
     var target = "#/asset/" + assetId;
     if (location.hash === target) {
       renderDetail(assetId);
@@ -1220,6 +1374,8 @@
 
   function renderDetail(assetId) {
     showView("detail");
+    window.scrollTo(0, 0);
+    state.detailPreviewFit = null;
     els.detailBody.textContent = "";
     els.detailBody.appendChild(element("p", "state-block", "正在读取图片详情…"));
     request("/assets/" + encodeURIComponent(assetId))
@@ -1238,15 +1394,90 @@
     els.detailBody.textContent = "";
     var label = detailLabel(body, assetId);
     var figure = element("figure", "detail-figure");
-    var holder = element("div", "thumb-frame");
+    var controls = element("div", "detail-preview-controls");
+    var zoomOut = element("button", null, "−");
+    zoomOut.type = "button";
+    zoomOut.disabled = true;
+    zoomOut.setAttribute("aria-label", "缩小预览");
+    var fit = element("button", null, "适合窗口");
+    fit.type = "button";
+    fit.disabled = true;
+    var actual = element("button", null, "实际大小");
+    actual.type = "button";
+    actual.disabled = true;
+    var zoomIn = element("button", null, "+");
+    zoomIn.type = "button";
+    zoomIn.disabled = true;
+    zoomIn.setAttribute("aria-label", "放大预览");
+    var zoomLabel = element("span", "hint", "读取尺寸中…");
+    [zoomOut, fit, actual, zoomIn, zoomLabel].forEach(function (control) {
+      controls.appendChild(control);
+    });
+    figure.appendChild(controls);
+    var holder = element("div", "thumb-frame detail-preview-frame");
     figure.appendChild(holder);
     var caption = element("figcaption", "hint", "正在加载预览…");
     figure.appendChild(caption);
     els.detailBody.appendChild(figure);
 
+    var preview = { image: null, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit" };
+    function applyScale(scale) {
+      if (!preview.image || !preview.naturalWidth || !preview.naturalHeight) {
+        return;
+      }
+      preview.scale = Math.max(0.1, Math.min(8, scale));
+      preview.image.style.width = Math.round(preview.naturalWidth * preview.scale) + "px";
+      preview.image.style.height = Math.round(preview.naturalHeight * preview.scale) + "px";
+      zoomLabel.textContent = Math.round(preview.scale * 100) + "%";
+      zoomOut.disabled = preview.scale <= 0.1;
+      zoomIn.disabled = preview.scale >= 8;
+    }
+    function fitPreview() {
+      if (!preview.image || !preview.naturalWidth || !preview.naturalHeight) {
+        return;
+      }
+      preview.mode = "fit";
+      var availableWidth = Math.max(1, holder.clientWidth - 16);
+      var availableHeight = Math.max(1, holder.clientHeight - 16);
+      applyScale(Math.min(availableWidth / preview.naturalWidth, availableHeight / preview.naturalHeight));
+    }
+    zoomOut.addEventListener("click", function () {
+      preview.mode = "zoom";
+      applyScale(preview.scale / 1.25);
+    });
+    zoomIn.addEventListener("click", function () {
+      preview.mode = "zoom";
+      applyScale(preview.scale * 1.25);
+    });
+    fit.addEventListener("click", fitPreview);
+    actual.addEventListener("click", function () {
+      preview.mode = "actual";
+      applyScale(1);
+    });
+    state.detailPreviewFit = function () {
+      if (preview.mode === "fit") {
+        fitPreview();
+      }
+    };
+    [zoomOut, fit, actual, zoomIn].forEach(function (control) {
+      control.disabled = true;
+    });
+    function showPreviewArtifact(artifact, description) {
+      var image = placeImage(holder, artifact.url, description, function (loaded) {
+        preview.image = loaded;
+        preview.naturalWidth = loaded.naturalWidth;
+        preview.naturalHeight = loaded.naturalHeight;
+        [zoomOut, fit, actual, zoomIn].forEach(function (control) {
+          control.disabled = false;
+        });
+        fitPreview();
+      });
+      image.className = "detail-preview-image";
+    }
+
     fetchArtifact("/assets/" + assetId + "/preview").then(function (preview) {
       if (preview.ok) {
-        placeImage(holder, preview.url, "预览：" + label);
+        showPreviewArtifact(preview, "预览：" + label);
         text(caption, preview.originalAvailable === "false" ? "预览可用；原文件当前不可用。" : "预览");
         if (preview.originalAvailable === "false") {
           addBadge(holder, "badge badge-original-missing", "原文件不可用");
@@ -1256,7 +1487,7 @@
       caption.textContent = "预览不可用（" + preview.code + "），正在回退缩略图…";
       return fetchArtifact("/assets/" + assetId + "/thumbnail").then(function (thumb) {
         if (thumb.ok) {
-          placeImage(holder, thumb.url, "缩略图：" + label);
+          showPreviewArtifact(thumb, "缩略图：" + label);
           text(
             caption,
             "预览不可用（" + preview.code + "），已回退显示缩略图" +
@@ -1268,6 +1499,7 @@
           return;
         }
         clearFrame(holder);
+        zoomLabel.textContent = "预览不可用";
         noteInFrame(holder, "error", "没有任何可用产物：" + thumb.code);
         text(
           caption,
@@ -1389,7 +1621,7 @@
     els.detailBody.appendChild(media);
   }
 
-  function placeImage(holder, url, altText) {
+  function placeImage(holder, url, altText, onLoaded) {
     clearFrame(holder);
     var image = document.createElement("img");
     image.alt = altText;
@@ -1397,8 +1629,14 @@
       clearFrame(holder);
       noteInFrame(holder, "error", "图片无法显示（IMAGE_UNREADABLE）");
     });
+    if (typeof onLoaded === "function") {
+      image.addEventListener("load", function () {
+        onLoaded(image);
+      });
+    }
     image.src = url;
     holder.appendChild(image);
+    return image;
   }
 
   //: The detail payload carries ``locations`` (not ``current_location``), so the first
@@ -1560,6 +1798,8 @@
       sourceName: document.getElementById("source-name"),
       sourceRoot: document.getElementById("source-root"),
       browseStatus: document.getElementById("browse-status"),
+      browseScope: document.getElementById("browse-scope"),
+      browseScopeName: document.getElementById("browse-scope-name"),
       browseSource: document.getElementById("browse-source"),
       browseOrder: document.getElementById("browse-order"),
       browseCaptureFrom: document.getElementById("browse-capture-from"),
@@ -1586,12 +1826,33 @@
     document.getElementById("detail-back").addEventListener("click", function () {
       clearHash();
       showView("browse");
+      window.requestAnimationFrame(function () {
+        var scrollY = state.browse.returnScrollY;
+        var returnTile = els.assetGrid.querySelector(
+          '[data-asset-id="' + state.browse.returnAssetId + '"]'
+        );
+        if (returnTile && state.browse.returnAssetTop !== null) {
+          scrollY += returnTile.getBoundingClientRect().top - state.browse.returnAssetTop;
+        }
+        window.scrollTo(0, Math.max(0, scrollY));
+      });
+    });
+    document.getElementById("view-all-galleries").addEventListener("click", function () {
+      state.browse.sourceId = "";
+      els.browseSource.value = "";
+      state.browse.loaded = false;
+      showView("browse");
     });
     document.getElementById("browse-reload").addEventListener("click", function () {
       loadBrowse(true);
     });
     els.browseSource.addEventListener("change", function () {
       state.browse.sourceId = els.browseSource.value;
+      loadBrowse(true);
+    });
+    document.getElementById("clear-browse-source").addEventListener("click", function () {
+      state.browse.sourceId = "";
+      els.browseSource.value = "";
       loadBrowse(true);
     });
     els.browseOrder.addEventListener("change", function () {
@@ -1617,8 +1878,12 @@
 
     state.observer = buildObserver();
     handleHash();
-    probeCapabilities();
-    loadSources();
+    loadSources().then(probeCapabilities);
+    window.addEventListener("resize", function () {
+      if (state.detailPreviewFit) {
+        state.detailPreviewFit();
+      }
+    });
   }
 
   if (document.readyState === "loading") {

@@ -209,14 +209,17 @@ def test_frontend_never_puts_a_credential_in_a_url_or_in_storage() -> None:
     assert "console." not in script
 
 
-def test_frontend_never_renders_an_absolute_local_path() -> None:
-    """Only display names and source-relative paths are rendered; root_path stays in the form."""
+def test_frontend_only_renders_a_root_path_after_source_detail_is_expanded() -> None:
+    """The home summary stays rootless; a deliberate source-detail expansion shows its root."""
     _, script, _ = _web_documents()
 
-    # The user's typed root path is sent to the API as a request field, but the list and the
-    # detail renderer never read it back into the DOM.
+    # The user's typed root path is sent to the API as a request field. The lightweight source
+    # list stays rootless; only the separately loaded, explicitly expanded source detail may
+    # display the already-authenticated SourceDetail.root_path.
     assert "root_path: root" in script
     assert "source.root_path" not in script
+    assert 'detail.root_path' in script
+    assert "完整根路径" in script
     # Server-supplied text is scrubbed before it is shown (P1-05 report §8.1).
     assert "PATH_LIKE" in script
     assert "错误详情包含本机路径" in script
@@ -233,6 +236,27 @@ def test_frontend_copy_stays_honest_about_time_and_offline_media() -> None:
     # A refused artifact shows the server-supplied code as visible text, never a broken image.
     assert "badge-code" in script
     assert "result.code" in script
+
+
+def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
+    shell, script, style = _web_documents()
+
+    assert 'request("/sources/summary")' in script
+    assert 'request("/sources/" + encodeURIComponent(source.source_id))' in script
+    assert "source.root_path" not in script
+    assert 'loadSources().then(probeCapabilities)' in script
+    assert "全部图库" in shell + script
+    assert "查看此图库照片" in script
+    assert "current_location.source_id" in script
+    assert "图库管理与分析明细" in shell
+    assert "requestVersion !== state.browse.requestVersion" in script
+    assert ".detail-preview-frame img" in style
+    assert "适合窗口" in script
+    assert "实际大小" in script
+    assert "缩小预览" in script
+    assert "放大预览" in script
+    assert "height: max(12rem, calc(100svh - 15rem))" in style
+    assert "max-width: min(100%, 48rem)" not in style
 
 
 # ---------------------------------------------------------------------------------------

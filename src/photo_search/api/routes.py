@@ -93,6 +93,7 @@ from photo_search.api.models import (
     SourceDeleteResponse,
     SourceDetail,
     SourceListResponse,
+    SourceSummaryResponse,
     StatsResponse,
 )
 from photo_search.api.queries import (
@@ -477,6 +478,24 @@ async def stats(request: Request) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------- sources
+@router.get(
+    "/sources/summary",
+    response_model=SourceSummaryResponse,
+    summary="Lightweight registered source identities",
+)
+async def list_source_summaries(request: Request) -> dict[str, Any]:
+    """Return only catalog identity fields; do not count assets or probe source roots."""
+    return {
+        "sources": [
+            {
+                key: row[key]
+                for key in ("source_id", "display_name", "volume_hint", "status", "last_successful_scan")
+            }
+            for row in service_of(request).list_sources()
+        ]
+    }
+
+
 def _source_progress_context(context: ApiContext, service: CatalogService) -> tuple[Any, dict[str, bool]]:
     """The served semantic binding and the enrichment availability of this machine.
 
@@ -1583,7 +1602,9 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
             kind, key, content = chosen["kind"], chosen["key"], parsed_content
             query_text = content or None
         else:
-            query_text = original
+            # SearchRequest treats an empty text field as invalid; a blank query is the
+            # documented pure-filter search, so normalize it to None at this boundary.
+            query_text = original or None
     else:
         state = "selected"
         query_text = (content if content is not None else original).strip() or None

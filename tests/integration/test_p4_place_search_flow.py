@@ -96,7 +96,7 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
     )
     assert [int(hit["asset_id"]) for hit in scoped_text_hits] == [assets[0]]
 
-    async def scenario(client: AsyncClient) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def scenario(client: AsyncClient) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
         csrf = await api_env.authenticate(client)
         created = await client.post(
             "/api/v1/places",
@@ -144,9 +144,15 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
             headers=api_env.post_headers(csrf),
         )
         assert cancelled.status_code == 200, cancelled.text
-        return selected.json(), next_page.json(), cancelled.json()
+        pure_filter = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "place-aware-pure-filter", "original_query": ""},
+            headers=api_env.post_headers(csrf),
+        )
+        assert pure_filter.status_code == 200, pure_filter.text
+        return selected.json(), next_page.json(), cancelled.json(), pure_filter.json()
 
-    selected, next_page, cancelled = api_env.scenario(scenario)
+    selected, next_page, cancelled, pure_filter = api_env.scenario(scenario)
     assert selected["place_scope"]["name"] == "济南"
     assert [hit["asset_id"] for hit in selected["hits"]] == [assets[0]]
     assert selected["has_more"] is True
@@ -154,3 +160,5 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
     assert next_page["page_offset"] == 1
     assert cancelled["place_scope"] is None
     assert {hit["asset_id"] for hit in cancelled["hits"]} == set(assets)
+    assert pure_filter["query"] is None
+    assert {hit["asset_id"] for hit in pure_filter["hits"]} == set(assets)

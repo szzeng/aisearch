@@ -10,6 +10,7 @@ from pathlib import Path
 from httpx import AsyncClient
 
 from photo_search.catalog import schema
+from photo_search.refresh import progress as refresh_progress
 
 
 def _seed_library(api_env, count: int) -> list[Path]:
@@ -33,6 +34,42 @@ async def _register(client: AsyncClient, api_env, csrf: str, name: str = "librar
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_source_summary_is_rootless_lightweight_and_session_protected(api_env, monkeypatch) -> None:
+    api_env.service.register_source(
+        display_name="中文图库",
+        root_path=api_env.library,
+        volume_hint="外接盘 A",
+    )
+
+    def fail_if_full_progress_is_requested(*args, **kwargs):
+        raise AssertionError("lightweight source summary requested full progress")
+
+    monkeypatch.setattr(refresh_progress, "source_progress", fail_if_full_progress_is_requested)
+
+    async def scenario(client: AsyncClient) -> tuple[int, dict]:
+        unauthenticated = await client.get("/api/v1/sources/summary")
+        await api_env.authenticate(client)
+        response = await client.get("/api/v1/sources/summary")
+        return unauthenticated.status_code, response.json()
+
+    unauthenticated_status, body = api_env.scenario(scenario)
+    assert unauthenticated_status == 401
+    assert body == {
+        "sources": [
+            {
+                "source_id": 1,
+                "display_name": "中文图库",
+                "volume_hint": "外接盘 A",
+                "status": "ONLINE",
+                "last_successful_scan": None,
+            }
+        ]
+    }
+    assert "root_path" not in str(body)
+    assert "counts" not in str(body)
+    assert "progress" not in str(body)
 
 
 def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:

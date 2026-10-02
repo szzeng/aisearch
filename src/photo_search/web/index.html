@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css" />
-    <script src="/web/app.js" defer></script>
+    <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
+    <script src="/web/app.js?v=p4-home-ux-a-3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -29,22 +29,28 @@
 
     <main id="main" tabindex="-1">
       <section id="view-sources" class="view" hidden aria-labelledby="view-sources-title">
-        <h2 id="view-sources-title">来源与扫描</h2>
+        <h2 id="view-sources-title">我的图库</h2>
         <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
-        <p>
+        <p class="home-actions">
+          <button type="button" id="view-all-galleries">查看全部图库照片</button>
+          <a class="nav-link" href="/search">搜索图片</a>
+        </p>
+        <ul id="sources-list" class="sources"></ul>
+        <details class="management-panel">
+          <summary>图库管理与分析明细</summary>
+          <p>
           <button type="button" id="refresh-library">刷新图库</button>
           <span id="refresh-status" class="hint" role="status" aria-live="polite"></span>
-        </p>
-        <p class="hint">
+          </p>
+          <p class="hint">
           新登记的来源显示「未建库」，点「开始建库」会一次完成扫描、搜索投影与语义索引，
           再在后台继续缩略图、拍摄时间、地点与人脸/文字识别；语义索引进度由图库记录推导，
           完整覆盖后才会显示「✓ 可以语义搜索」。建库完成后日常点「快速刷新此来源」即可，
           它只处理变化。「刷新图库」对全部来源做同样的增量刷新；「完整校验扫描」仍会完整
           校验每个位置的内容（次要维护入口）。「删除来源」只移除 PhotoSearch 中的记录，
           不会删除、移动或修改文件夹中的照片。
-        </p>
-        <ul id="sources-list" class="sources"></ul>
-        <form id="source-form" class="card" novalidate>
+          </p>
+          <form id="source-form" class="card" novalidate>
           <h3>新增来源</h3>
           <p class="hint">
             把照片目录的完整路径粘贴到下面的输入框。本页面不会枚举本机文件系统，
@@ -77,7 +83,8 @@
             <button type="submit">注册来源</button>
           </p>
           <p class="error" id="source-form-error" role="alert" hidden></p>
-        </form>
+          </form>
+        </details>
       </section>
 
       <section id="view-browse" class="view" hidden aria-labelledby="view-browse-title">
@@ -88,9 +95,9 @@
           与 EXIF 根时间一律显示为「文件时间」，不参与拍摄时间范围筛选，也绝不被伪装成拍摄时间。
         </p>
         <div class="browse-controls">
-          <label for="browse-source">来源筛选</label>
+          <label for="browse-source">图库筛选</label>
           <select id="browse-source">
-            <option value="">全部来源</option>
+            <option value="">全部图库</option>
           </select>
           <label for="browse-order">排序</label>
           <select id="browse-order">
@@ -120,6 +127,10 @@
           />
           <button type="button" id="browse-reload">刷新</button>
         </div>
+        <p id="browse-scope" class="state-block browse-scope" role="status" aria-live="polite" hidden>
+          <span id="browse-scope-name"></span>
+          <button type="button" id="clear-browse-source">查看全部图库</button>
+        </p>
         <p class="hint">
           拍摄时间范围是左闭右开：包含起始时刻，不包含结束时刻。留空表示该端不限。
           只写日期时按当天 00:00:00.000 处理；带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）

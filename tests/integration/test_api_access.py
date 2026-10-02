@@ -34,6 +34,7 @@ def test_business_endpoints_require_a_session(api_env) -> None:
             "/api/v1/capabilities",
             "/api/v1/stats",
             "/api/v1/sources",
+            "/api/v1/sources/summary",
             "/api/v1/assets",
             "/api/v1/jobs",
             "/api/v1/assets/1",
