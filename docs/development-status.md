@@ -1,8 +1,12 @@
 # Development status
 
-更新：2026-10-02。当前规则：主架构**需求修订 8**、执行策略**修订 10**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-10-02。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务 P4-EMBEDDING-ARCH — 可插拔语义 provider + Qwen3-VL 512D（**实现完成；独立审查待做**）
+## 当前任务 P4-PLACE-SEARCH-A — 普通搜索支持地点＋内容（**PASS — 本机个人地点＋内容搜索与小样本验证**）
+
+用户新增补充：[执行卡](tasks/P4-PLACE-SEARCH-A.md)。基线`f3b04af`。报告：[实现记录](reports/P4-PLACE-SEARCH-A-implementation.md)。新增地点感知搜索入口、共用权威地点成员scope、无语义Top-K限制的纯地点分页、可取消条件chip；active省份INDEX即使无照片也可识别，同名选项附上级地名。定向JUnit 28/0/0/0（含共同向量block路径）、Ruff与diff-check通过。合成浏览器完成`济南的日落`→普通照片结果/预览→取消后保留日落查询并全范围搜索；将样片人工改至上海后重载并重新搜索，济南范围0张。仅合成资产；不代表真实模型准确率或真实图库效果。未访问真实库，不建B/C卡、不跑全量或性能测试；本轮未提交。
+
+## 待审任务 P4-EMBEDDING-ARCH — 可插拔语义 provider + Qwen3-VL 512D（**实现完成；独立审查待做**）
 
 实现报告：[P4-EMBEDDING-ARCH 实现](reports/P4-EMBEDDING-ARCH-implementation.md)；独立审查卡：[P4-EMBEDDING-ARCH-review](tasks/P4-EMBEDDING-ARCH-review.md)；[执行卡](tasks/P4-EMBEDDING-ARCH.md)、[接入策略](plans/P4-EMBEDDING-ARCH.md)、[设计核对](reports/P4-EMBEDDING-ARCH-design.md)。状态 **IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**；下一步 **DS-H 全受影响面工程审查 → Sol high 聚焦终审**，模型由用户手动选择。本轮完成 registry/factory/Qwen adapter、`embedding list|prepare-local|build-candidate|select-profile`、候选不激活、受控停机选择的事务内覆盖/outbox/artifact/Lance/资格门禁、页面 `strong_match_available`，并把主环境锁定到 torch `2.8.0+cu128`/torchvision `0.23.0+cu128`/transformers `4.57.0`/qwen-vl-utils `0.0.14`。已按用户要求把 Qwen 装入真实数据根 `D:\SZ\project\PhotoSearchData` 并完成全库切换（3182 张图像、候选建库 17.4 分钟、受控选择覆盖 3182/3182、真实 HTTP 三查询 200）。证据：定向 JUnit **203 tests / 0 failed / 0 errors / 6 skipped**、真实双 provider CUDA smoke **24/24**（`test-results/p4-embedding-arch-smoke.json`，12 合成图、8 中文 query、2 上传自查询、Qwen 峰值显存 4.29 GB）、现有页面文字+上传各一次真实浏览器确认；Ruff/`uv lock --check`/`git diff --check` 通过。未验证项见报告 §5（OOM/GTX 1660 未注入、Lance 行数核对 ≤2 万行、CLIP 侧未做候选选择演练、未打包、未跑性能专项）。onnxruntime 的 PyTorch CUDA 主版本提示已消除：ONNX worker 进程改为 `USE_TORCH=0`（torch 不再进入该进程），见报告 §5.6。真实数据根的日常增量/切回只做机制验证；切回 CLIP 需先补建那张 HEIC。额外全量套件发现 4 个**既有**失败（`p2-contracts.v1.json` 冻结哈希与 `c1d0a34` 不一致，非本卡改动），建议路由 P4-02Y-L 审查，见实现报告 §7。
 

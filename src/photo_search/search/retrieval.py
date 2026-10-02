@@ -109,6 +109,9 @@ class SearchScope:
     #: of the same AND set, applied by every channel, the authoritative page and the pre-page
     #: re-check - and it may only ever match a ``label = capture`` row.
     capture: time_contract.CaptureRange | None = None
+    #: P4-PLACE-SEARCH-A: effective personal album membership, resolved from the shared
+    #: album reader before retrieval. None means unrestricted; an empty tuple means empty.
+    album_asset_ids: tuple[int, ...] | None = None
 
     @classmethod
     def build(
@@ -122,6 +125,7 @@ class SearchScope:
         person_ids: Sequence[int] | None = None,
         person_match: str = "any",
         capture: time_contract.CaptureRange | None = None,
+        album_asset_ids: Sequence[int] | None = None,
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -164,6 +168,9 @@ class SearchScope:
             person_ids=people,
             person_match=mode,
             capture=capture,
+            album_asset_ids=(
+                None if album_asset_ids is None else tuple(sorted({int(v) for v in album_asset_ids}))
+            ),
         )
 
 
@@ -259,6 +266,13 @@ def scope_condition(
     """One SQL predicate over ``<alias>.asset_id`` plus its bound parameters."""
     conditions: list[str] = []
     parameters: list[Any] = []
+    if scope.album_asset_ids is not None:
+        if not scope.album_asset_ids:
+            conditions.append("0")
+        else:
+            placeholders = ", ".join("?" for _ in scope.album_asset_ids)
+            conditions.append(f"{alias}.asset_id IN ({placeholders})")
+            parameters.extend(scope.album_asset_ids)
     if scope.source_id is not None:
         # Set membership instead of a correlated ``EXISTS``: P4-01B measured the correlated
         # form at 19.4 s for ONE block of a 20 000-row generation (and >60 s at 300 000),

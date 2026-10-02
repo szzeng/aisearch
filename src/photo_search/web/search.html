@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1">
       <p class="hint">
-        本页只把查询文本原样交给后端（不做自然语言条件解析），并且只展示后端给回的字段：
+        本页识别有限的本地地点＋内容表达式，其余查询仍按原样搜索；并且只展示后端给回的字段：
         命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成
         “准确率”或百分比。
       </p>
@@ -50,6 +50,7 @@
             />
           </p>
           <div id="place-entry" class="place-entry wide" hidden aria-live="polite"></div>
+        <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <p>
             <label for="query-source">来源</label>
             <select id="query-source">

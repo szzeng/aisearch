@@ -58,6 +58,8 @@ def query_hash(
     person_match: str = "any",
     capture_from: str | None = None,
     capture_to_exclusive: str | None = None,
+    album_asset_ids: Sequence[int] | None = None,
+    album_scope_revision: Sequence[Any] | None = None,
 ) -> str:
     """A stable digest of the conditions that must stay identical across the pages.
 
@@ -91,6 +93,10 @@ def query_hash(
         if capture_to_exclusive is None
         else str(capture_to_exclusive),
     }
+    if album_asset_ids is not None:
+        payload["album_asset_ids"] = [int(value) for value in album_asset_ids]
+    if album_scope_revision is not None:
+        payload["album_scope_revision"] = list(album_scope_revision)
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 

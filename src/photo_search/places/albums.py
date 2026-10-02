@@ -204,3 +204,14 @@ def album_assets(catalog: Any, data_root: Any, *, kind: str, key: str, limit: in
     page = ids[start : start + max(1, min(int(limit), 100))]
     next_cursor = _token(start + len(page), revisions) if start + len(page) < len(ids) else None
     return {"assets": [{"asset_id": value, "thumbnail_url": f"/api/v1/assets/{value}/thumbnail", "detail_url": f"/api/v1/assets/{value}"} for value in page], "total": len(ids), "next_cursor": next_cursor, "catalog_filter_revision": revisions[0], "suggestion_revision": revisions[1], "package_revision": revisions[2]}
+
+
+def album_member_ids(catalog: Any, data_root: Any, *, kind: str, key: str) -> tuple[list[int], dict[str, Any]]:
+    """Resolve one selected album through the exact membership reader used by browsing."""
+    collection = albums(catalog, data_root, kind=kind)
+    selected = next((item for item in collection["albums"] if item["key"] == str(key)), None)
+    if selected is None:
+        return [], collection
+    rows, _ = _album_rows(catalog, data_root)
+    ids = [int(row["asset_id"]) for row in rows if _key(kind, row) == (kind, str(key))]
+    return ids, collection

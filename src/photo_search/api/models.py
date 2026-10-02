@@ -1199,6 +1199,16 @@ class SearchRequestModel(BaseModel):
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
 
+class PlaceAwareSearchRequestModel(SearchRequestModel):
+    """Additive personal-search envelope; the frozen ``/search`` body stays unchanged."""
+
+    original_query: str = Field(max_length=256)
+    content_query: str | None = Field(default=None, max_length=256)
+    place_kind: Literal["city", "province", "country"] | None = None
+    place_key: str | None = Field(default=None, max_length=128)
+    place_cancelled: bool = False
+
+
 class SearchHitModel(BaseModel):
     """One row of one page: identity, rank provenance and why it matched."""
 

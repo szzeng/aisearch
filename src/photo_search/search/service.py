@@ -222,6 +222,7 @@ def search_assets(
     capture: time_contract.CaptureRange | None = None,
     vector_index: LanceVectorIndex | None = None,
     query_vector: Sequence[float] | None = None,
+    album_asset_ids: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -255,6 +256,7 @@ def search_assets(
         # ADR-0011 §6.5: the capture range joins the very same AND set, and only
         # ``label = capture`` rows may satisfy it.
         capture=capture,
+        album_asset_ids=album_asset_ids,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -805,6 +807,7 @@ def _continue_session(
     profile: SearchProfile | None,
     binding: VectorBinding | None,
     digest: str,
+    album_scope_revision: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """Serve the next page of one live session, or the identifiable expiry/staleness code."""
     session_id, offset = sessions.decode_cursor(request.cursor)
@@ -815,6 +818,15 @@ def _continue_session(
             field="cursor",
         )
     session = sessions.require(session_id)
+    if "album_scope_revision" in session.extra and list(session.extra["album_scope_revision"]) != (
+        None if album_scope_revision is None else list(album_scope_revision)
+    ):
+        raise _refuse(
+            CATALOG_FILTER_REVISION_STALE,
+            "the selected place album changed after this search started",
+            reason="PLACE_ALBUM_REVISION_CHANGED",
+            search_session_id=session.session_id,
+        )
     if offset < 0 or offset >= len(session.entries):
         raise _refuse(
             INVALID_CURSOR,
@@ -949,6 +961,8 @@ def search_request(
     rerank_timeout_ms: int = DEFAULT_RERANK_TIMEOUT_MS,
     query_vector: Sequence[float] | None = None,
     query_identity: str | None = None,
+    album_asset_ids: Sequence[int] | None = None,
+    album_scope_revision: Sequence[Any] | None = None,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -981,6 +995,7 @@ def search_request(
             person_ids=people,
             person_match=request.person_match,
             capture=capture,
+            album_asset_ids=album_asset_ids,
         )
 
     scope = build_scope(base.canonical_person_ids)
@@ -1013,6 +1028,10 @@ def search_request(
             capture_to_exclusive=request.capture_to_exclusive,
             top_k=int(request.top_k),
             page_size=int(request.page_size),
+            # Kept outside the frozen P2 request envelope; binds the additive personal
+            # place-aware entry to its resolved album membership.
+            album_asset_ids=current.album_asset_ids,
+            album_scope_revision=album_scope_revision,
         )
 
     digest = digest_of(scope)
@@ -1025,6 +1044,7 @@ def search_request(
             profile=profile,
             binding=binding,
             digest=digest,
+            album_scope_revision=album_scope_revision,
         )
     if request.search_session_id is not None:
         raise _refuse(
@@ -1078,6 +1098,7 @@ def search_request(
             query_vector=(
                 list(query_vector) if query_vector is not None and uses_vector_channel else None
             ),
+            album_asset_ids=scope.album_asset_ids,
         )
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a
@@ -1135,6 +1156,10 @@ def search_request(
             ),
             state=str(candidate["state"]),
             candidates_truncated=len(entries) > MAX_SESSION_IDS,
+            extra=(
+                {} if album_scope_revision is None
+                else {"album_scope_revision": list(album_scope_revision)}
+            ),
         )
         hits, next_offset, has_more, token = _render_page(
             catalog,

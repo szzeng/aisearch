@@ -10,6 +10,7 @@ connection is never touched from a second thread.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Mapping
 from email.utils import formatdate
 from pathlib import Path
@@ -68,6 +69,7 @@ from photo_search.api.models import (
     PersonSplitRequest,
     PersonUndoRequest,
     PlaceAssignmentRequest,
+    PlaceAwareSearchRequestModel,
     PlaceBatchRequest,
     PlaceCoverageResponse,
     PlaceCreateRequest,
@@ -109,7 +111,9 @@ from photo_search.api.session import (
     safe_redirect_target,
 )
 from photo_search.catalog.errors import (
+    CATALOG_FILTER_REVISION_STALE,
     FACE_NOT_FOUND,
+    INVALID_CURSOR,
     INVALID_STATE_TRANSITION,
     RUNTIME_CAPABILITY_UNAVAILABLE,
     UPLOAD_TOO_LARGE,
@@ -152,6 +156,7 @@ from photo_search.persons.read import (
 from photo_search.persons.service import PersonService
 from photo_search.places import albums as place_albums
 from photo_search.places import backfill as place_backfill
+from photo_search.places import revision as place_revision
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.refresh import progress as refresh_progress
@@ -168,7 +173,10 @@ from photo_search.scheduler.projection import (
 from photo_search.search.contracts import FeedbackRequest, SearchRequest
 from photo_search.search.contracts import fail as search_fail
 from photo_search.search.profile import activate_profile, profile_projection
+from photo_search.search.retrieval import SearchScope, scope_condition
 from photo_search.search.service import (
+    _person_authority_base,
+    _projection_block,
     feedback_limit,
     list_feedback,
     resolve_request_binding,
@@ -1506,6 +1514,180 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
         encoder=context.query_encoder(),
         reranker=context.reranker(),
     )
+
+
+def _place_aware_parse(service: Any, text: str) -> tuple[str | None, list[dict[str, Any]], str | None]:
+    """Recognize only the bounded place-first Chinese forms supported by P4-PLACE-SEARCH-A."""
+    normalized = "".join(str(text).split()).casefold()
+    rows = service.catalog.read_all(
+        "SELECT place_id, kind, canonical_name, parent_place_id FROM places WHERE lifecycle='ACTIVE' ORDER BY length(canonical_name) DESC"
+    )
+    candidates: list[dict[str, Any]] = []
+    place_names = {int(row["place_id"]): str(row["canonical_name"]) for row in rows}
+    for row in rows:
+        if str(row["kind"]) not in ("city", "country"):
+            continue
+        aliases = service.catalog.read_all(
+            "SELECT text FROM place_aliases WHERE place_id=? AND lifecycle='ACTIVE'", (int(row["place_id"]),)
+        )
+        parent_id = row["parent_place_id"]
+        candidates.append({"kind": str(row["kind"]), "key": str(row["place_id"]), "name": str(row["canonical_name"]), "parent": place_names.get(int(parent_id), "") if parent_id else "", "aliases": [str(value["text"]) for value in aliases]})
+    # Province names come from the installed INDEX, including known provinces that
+    # currently have no album members.
+    province_index, _, _, province_index_available = place_albums._index(service.catalog, service.data_root)
+    if province_index_available:
+        provinces: dict[str, dict[str, Any]] = {}
+        for region in province_index.get("city_to_admin1", {}).values():
+            provinces.setdefault(str(region["id"]), {"kind": "province", "key": str(region["id"]), "name": str(region["name"]), "parent": "", "aliases": []})
+            entry = provinces[str(region["id"])]
+            entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *region.get("aliases", [])]))
+        candidates.extend(provinces.values())
+    matches: list[tuple[int, dict[str, Any], str | None]] = []
+    for item in candidates:
+        for spelling in [item["name"], *item["aliases"]]:
+            name = "".join(str(spelling).split()).casefold()
+            if not name:
+                continue
+            if normalized == name:
+                matches.append((len(name), item, None))
+            elif normalized.startswith("在" + name + "拍的"):
+                matches.append((len(name), item, str(text).strip()[len("在" + str(spelling) + "拍的"):].strip()))
+            elif normalized.startswith(name + "的"):
+                matches.append((len(name), item, str(text).strip()[len(str(spelling) + "的"):].strip()))
+    if not matches:
+        return None, [], None
+    longest = max(value[0] for value in matches)
+    selected = {(value[1]["kind"], value[1]["key"]): value for value in matches if value[0] == longest}
+    options = [value[1] for value in selected.values()]
+    content = next(iter(selected.values()))[2] if len(selected) == 1 else None
+    return ("ambiguous" if len(options) > 1 else "recognized"), options, content
+
+
+@router.post("/search/place-aware", summary="Personal local place plus content search")
+async def post_place_aware_search(request: Request, payload: PlaceAwareSearchRequestModel) -> dict[str, Any]:
+    """Additive entry that resolves place intent before reusing the existing search/session service."""
+    context = context_of(request)
+    service = context.service()
+    original = payload.original_query.strip()
+    kind, key, content = payload.place_kind, payload.place_key, payload.content_query
+    if payload.place_cancelled:
+        kind = key = None
+        query_text = (content if content is not None else original).strip() or None
+        state = None
+    elif kind is None and key is None:
+        state, options, parsed_content = _place_aware_parse(service, original)
+        if state == "ambiguous":
+            return {"needs_place_choice": True, "original_query": original, "content_query": parsed_content, "place_choices": options}
+        if state == "recognized":
+            chosen = options[0]
+            kind, key, content = chosen["kind"], chosen["key"], parsed_content
+            query_text = content or None
+        else:
+            query_text = original
+    else:
+        state = "selected"
+        query_text = (content if content is not None else original).strip() or None
+    album_ids = None
+    revision = None
+    place_block = None
+    if kind is not None and key is not None:
+        album_ids, collection = place_albums.album_member_ids(service.catalog, service.data_root, kind=kind, key=key)
+        album = next((item for item in collection["albums"] if item["key"] == str(key)), None)
+        revision = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, str(key))
+        if album is None and kind in ("city", "country"):
+            known = service.catalog.read_one("SELECT canonical_name, parent_place_id FROM places WHERE place_id=? AND kind=? AND lifecycle='ACTIVE'", (int(key), kind))
+            if known is None:
+                raise ApiError("PLACE_NOT_FOUND", "the selected place is no longer available", status=409)
+            parent_row = service.catalog.read_one("SELECT canonical_name FROM places WHERE place_id=?", (int(known["parent_place_id"]),)) if known["parent_place_id"] else None
+            album = {"name": str(known["canonical_name"]), "parent": "" if parent_row is None else str(parent_row["canonical_name"]), "origin": None}
+        if album is None and kind == "province":
+            province_index, _, _, available = place_albums._index(service.catalog, service.data_root)
+            region = next((value for value in province_index.get("city_to_admin1", {}).values() if available and str(value["id"]) == str(key)), None)
+            if region is not None:
+                album = {"name": str(region["name"]), "parent": "", "origin": None}
+        if album is None:
+            raise ApiError("PLACE_NOT_FOUND", "the selected place is no longer available", status=409)
+        place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
+    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled"})
+    values["text"] = query_text
+    envelope = SearchRequest.from_envelope(values)
+    if kind is not None and key is not None and query_text is None:
+        return _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block)
+    result = search_request(service.catalog, envelope, sessions=context.search_sessions, encoder=context.query_encoder(), reranker=context.reranker(), album_asset_ids=album_ids, album_scope_revision=revision)
+    result["place_scope"] = place_block
+    result["original_query"] = original
+    result["content_query"] = query_text
+    return result
+
+
+def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any]) -> dict[str, Any]:
+    """Uncapped SQLite pages for a pure selected place; keeps album membership authoritative."""
+    catalog = service.catalog
+    base = _person_authority_base(catalog, request)
+    scope = SearchScope.build(
+        source_id=request.source_id,
+        availability=request.availability,
+        place_ids=request.place_ids,
+        include_descendants=request.include_descendants,
+        place_state=request.place_state,
+        person_ids=base.canonical_person_ids,
+        person_match=request.person_match,
+        capture=request.capture_range,
+        album_asset_ids=album_ids,
+    )
+    filter_fingerprint = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": scope.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size}, sort_keys=True, separators=(",", ":"))
+    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint)
+    session_id = f"place-album:{kind}:{key}"
+    if request.cursor is not None:
+        if request.search_session_id != session_id:
+            raise ApiError(INVALID_CURSOR, "the place album cursor does not match this search")
+        start = place_albums._decode(request.cursor, revisions)
+    else:
+        start = 0
+    where, params = scope_condition(catalog.connection, scope)
+    total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+    rows = catalog.read_all(f"SELECT a.asset_id FROM assets AS a WHERE {where} ORDER BY a.asset_id LIMIT ? OFFSET ?", (*params, int(request.page_size) + 1, start))
+    if (
+        place_revision.read_filter_revision(catalog.connection),
+        place_revision.read_suggestion_revision(catalog.connection),
+        place_albums._index(catalog, service.data_root)[1],
+    ) != (
+        collection["catalog_filter_revision"],
+        collection["suggestion_revision"],
+        collection["package_revision"],
+    ):
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place album changed; reload the search", status=409)
+    page = rows[: int(request.page_size)]
+    next_offset = start + len(page)
+    has_more = next_offset < total
+    token = place_albums._token(next_offset, revisions) if has_more else None
+    ids = [int(row["asset_id"]) for row in page]
+    hits = [{"asset_id": asset_id, "rank": start + index + 1, "score": None, "matched_by": {"filter": start + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
+    return {
+        "contract_version": "p2-contracts.v1", "request_id": request.request_id,
+        "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
+        "space_id": None, "dimension": None,
+        "catalog_filter_revision": int(collection["catalog_filter_revision"]),
+        "suggestion_revision": int(collection["suggestion_revision"]), "fusion_config": {},
+        "query": None,
+        "filters": {"source_id": request.source_id, "availability": request.availability,
+                    "place_ids": [int(value) for value in request.place_ids],
+                    "include_descendants": request.include_descendants, "place_state": request.place_state,
+                    "person_ids": list(scope.person_ids), "person_match": scope.person_match,
+                    "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive,
+                    "catalog_filter_revision": int(collection["catalog_filter_revision"]),
+                    "suggestion_revision": int(collection["suggestion_revision"])},
+        "hits": hits, "page_size": int(request.page_size), "page_offset": start,
+        "next_cursor": token, "has_more": has_more, "total_candidates": total,
+        "candidates_truncated": False,
+        "channels": {"fts": {"engaged": False, "candidates": 0, "truncated": False},
+                     "vector": {"engaged": False, "candidates": 0, "scan_truncated": False},
+                     "authoritative": {"total": total, "listed": len(ids), "truncated": False, "order": "asset_id"}},
+        "pending_semantic": None,
+        "search_projection": _projection_block(catalog, match=None, catch_up=None),
+        "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
+        "place_scope": place_block, "original_query": request.text, "content_query": None,
+    }
 
 
 #: The multipart fields ``POST /search/image`` defines. ``text`` is deliberately absent: an

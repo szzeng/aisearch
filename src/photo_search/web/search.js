@@ -91,6 +91,7 @@
       mode: "text",
       //: The condition digest this session is bound to (null while no session is open).
       binding: null,
+      placeAware: null,
     },
     requestCounter: 0,
     objectUrls: [],
@@ -871,6 +872,7 @@
   }
 
   function submitSearch() {
+    state.search.placeAware = null;
     state.search.mode = "text";
     state.search.sessionId = null;
     state.search.cursor = null;
@@ -928,6 +930,18 @@
     return promise.then(
       function (body) {
         state.search.loading = false;
+        if (body && body.needs_place_choice) {
+          showPlaceChoices(body);
+          return true;
+        }
+        if (body && body.place_scope) {
+          state.search.placeAware = {
+            original_query: body.original_query || els.queryText.value.trim(),
+            content_query: body.content_query || "",
+            place_kind: body.place_scope.kind,
+            place_key: body.place_scope.key,
+          };
+        }
         renderPage(body, continuation);
         return true;
       },
@@ -943,6 +957,7 @@
 
   function sendTextSearch(continuation, filters) {
     var queryText = els.queryText.value.trim();
+    var placeAware = state.search.placeAware;
     var body = {
       contract_version: CONTRACT_VERSION,
       request_id: newRequestId("text"),
@@ -950,7 +965,17 @@
       place_state: filters.placeState,
       include_descendants: filters.includeDescendants,
       page_size: filters.pageSize,
+      original_query: placeAware ? placeAware.original_query : queryText,
     };
+    if (placeAware) {
+      body.content_query = placeAware.content_query;
+      if (placeAware.place_cancelled) {
+        body.place_cancelled = true;
+      } else if (placeAware.place_kind && placeAware.place_key) {
+        body.place_kind = placeAware.place_kind;
+        body.place_key = placeAware.place_key;
+      }
+    }
     if (queryText) {
       body.text = queryText;
     }
@@ -976,9 +1001,33 @@
       body.search_session_id = state.search.sessionId;
       body.cursor = state.search.cursor;
     }
-    return request("/search", { method: "POST", body: body }).then(function (result) {
+    return request("/search/place-aware", { method: "POST", body: body }).then(function (result) {
       return result.body || {};
     });
+  }
+
+  function showPlaceChoices(body) {
+    clear(els.resultPlaceScope);
+    els.resultPlaceScope.hidden = false;
+    var label = element("span", "", "检测到同名地点，请选择：");
+    els.resultPlaceScope.appendChild(label);
+    (body.place_choices || []).forEach(function (place) {
+      var button = element("button", "", place.name + (place.parent ? " · " + place.parent : "") + "（" + place.kind + "）");
+      button.type = "button";
+      button.addEventListener("click", function () {
+        state.search.placeAware = {
+          original_query: body.original_query,
+          content_query: body.content_query || "",
+          place_kind: place.kind,
+          place_key: place.key,
+        };
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        sendSearch(false);
+      });
+      els.resultPlaceScope.appendChild(button);
+    });
+    setStatus(els.queryStatus, "地点范围尚未确定，请选择后再搜索。", "error");
   }
 
   function sendImageSearch(continuation, filters) {
@@ -1029,6 +1078,29 @@
   }
 
   function renderPage(body, continuation) {
+    clear(els.resultPlaceScope);
+    if (body.place_scope) {
+      var chip = element("span", "", "地点：" + body.place_scope.name + (body.place_scope.origin === "GPS_NEARBY_CITY" ? "（附近城市）" : ""));
+      var cancel = element("button", "", "取消地点条件");
+      cancel.type = "button";
+      cancel.addEventListener("click", function () {
+        state.search.placeAware = {
+          original_query: body.original_query || els.queryText.value.trim(),
+          content_query: body.content_query || "",
+          place_cancelled: true,
+        };
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        state.search.binding = null;
+        clear(els.resultGrid);
+        sendSearch(false);
+      });
+      els.resultPlaceScope.appendChild(chip);
+      els.resultPlaceScope.appendChild(cancel);
+      els.resultPlaceScope.hidden = false;
+    } else {
+      els.resultPlaceScope.hidden = true;
+    }
     var hits = body.hits || [];
     if (!continuation) {
       releaseObjectUrls();
@@ -1570,6 +1642,7 @@
       queryActions: document.getElementById("query-actions"),
       searchForm: document.getElementById("search-form"),
       queryText: document.getElementById("query-text"),
+      resultPlaceScope: document.getElementById("result-place-scope"),
       querySource: document.getElementById("query-source"),
       queryAvailability: document.getElementById("query-availability"),
       queryPlaceState: document.getElementById("query-place-state"),
