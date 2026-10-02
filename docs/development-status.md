@@ -1,10 +1,14 @@
 # Development status
 
-更新：2026-09-30。当前规则：主架构**需求修订 7**、执行策略**修订 9**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-10-02。当前规则：主架构**需求修订 8**、执行策略**修订 10**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
 ## 当前任务 P4-EMBEDDING-ARCH — 可插拔语义 provider + Qwen3-VL 512D（**实现完成；独立审查待做**）
 
 实现报告：[P4-EMBEDDING-ARCH 实现](reports/P4-EMBEDDING-ARCH-implementation.md)；独立审查卡：[P4-EMBEDDING-ARCH-review](tasks/P4-EMBEDDING-ARCH-review.md)；[执行卡](tasks/P4-EMBEDDING-ARCH.md)、[接入策略](plans/P4-EMBEDDING-ARCH.md)、[设计核对](reports/P4-EMBEDDING-ARCH-design.md)。状态 **IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**；下一步 **DS-H 全受影响面工程审查 → Sol high 聚焦终审**，模型由用户手动选择。本轮完成 registry/factory/Qwen adapter、`embedding list|prepare-local|build-candidate|select-profile`、候选不激活、受控停机选择的事务内覆盖/outbox/artifact/Lance/资格门禁、页面 `strong_match_available`，并把主环境锁定到 torch `2.8.0+cu128`/torchvision `0.23.0+cu128`/transformers `4.57.0`/qwen-vl-utils `0.0.14`。已按用户要求把 Qwen 装入真实数据根 `D:\SZ\project\PhotoSearchData` 并完成全库切换（3182 张图像、候选建库 17.4 分钟、受控选择覆盖 3182/3182、真实 HTTP 三查询 200）。证据：定向 JUnit **203 tests / 0 failed / 0 errors / 6 skipped**、真实双 provider CUDA smoke **24/24**（`test-results/p4-embedding-arch-smoke.json`，12 合成图、8 中文 query、2 上传自查询、Qwen 峰值显存 4.29 GB）、现有页面文字+上传各一次真实浏览器确认；Ruff/`uv lock --check`/`git diff --check` 通过。未验证项见报告 §5（OOM/GTX 1660 未注入、Lance 行数核对 ≤2 万行、CLIP 侧未做候选选择演练、未打包、未跑性能专项）。onnxruntime 的 PyTorch CUDA 主版本提示已消除：ONNX worker 进程改为 `USE_TORCH=0`（torch 不再进入该进程），见报告 §5.6。真实数据根的日常增量/切回只做机制验证；切回 CLIP 需先补建那张 HEIC。额外全量套件发现 4 个**既有**失败（`p2-contracts.v1.json` 冻结哈希与 `c1d0a34` 不一致，非本卡改动），建议路由 P4-02Y-L 审查，见实现报告 §7。
+
+## 用户新增需求 P4-PLACE-AUTO — 个人GPS地点相册（**简化方案完成；未实现**）
+
+用户要求个人使用、简单功能与测试即可，保留“城市＋国家/省份”，改为[唯一功能卡 P4-PLACE-AUTO-A](tasks/P4-PLACE-AUTO-A.md)，[简化方案](plans/P4-PLACE-AUTO.md)、[核对记录](reports/P4-PLACE-AUTO-design.md)。同一卡做短设计→GPS附近城市/省份只读附加资料→地点封面/去重总数/照片分页→地名入口→缺项补齐→定向pytest/JUnit＋20～30合成资产＋一次真实浏览器。推荐DS-H/高推理，用户手动选择；按V3.1 §9.3不另拆契约冻结、多轮审查、B/C、30万测量或exe。本卡保留原图/人工控制/旧筛选与FTS语义，数量/列表一致；50km为附近城市个人整理初值，非行政准确率保证。本轮仅方案修订与文档检查，未实现/访问真实图库；原P2-04A草稿保留，embedding等既有待审状态不变。
 
 ## P4-02Y-L — OCR CUDA 设备契约（**实现验收通过；独立 DS-H 审查待做**）
 
