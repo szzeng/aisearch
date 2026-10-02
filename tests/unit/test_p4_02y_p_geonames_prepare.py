@@ -184,6 +184,11 @@ def raw_dir(tmp_path: Path) -> Path:
         encoding="utf-8",
         newline="\n",
     )
+    (directory / "admin1CodesASCII.txt").write_text(
+        "CN.01\tZhejiang\tZhejiang\t123456\n",
+        encoding="utf-8",
+        newline="\n",
+    )
     (directory / "alternateNamesV2.txt").write_text(
         "\n".join(
             [
@@ -242,6 +247,8 @@ def test_country_filter_and_place_ids(tool_module: Any, raw_dir: Path) -> None:
     places = _places(spec)
     assert spec["coverage"]["country_codes"] == ["BT", "CN", "JP", "MV", "SG"]
     assert spec["dataset_id"] == "geonames-asia-cities500-v1"
+    assert spec["index"]["schema_version"] == 1
+    assert spec["index"]["city_to_admin1"]["geonames-city-1808926"]["id"] == "CN.01"
     assert {
         "geonames-country-cn",
         "geonames-country-jp",

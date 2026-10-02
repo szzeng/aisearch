@@ -1,6 +1,6 @@
 # P4-PLACE-AUTO-A — 一张卡完成个人GPS地点相册与地名查找
 
-日期：2026-10-02，个人使用简化版。状态：**READY FOR PERSONAL IMPLEMENTATION / NOT STARTED**。
+日期：2026-10-02，个人使用简化版。状态：**PASS — 本机个人地点相册与小样本验证**。
 推荐：**DS-H / DeepSeek V4.1 Flash / 高推理**，用户手动选择；实现/修复/测试尽量同一会话。
 本卡取代此前同ID的独立契约冻结卡，不再生成B/C或默认独立审查卡。
 上层：[简化方案](../plans/P4-PLACE-AUTO.md)；依据：[核对记录](../reports/P4-PLACE-AUTO-design.md)。
@@ -9,10 +9,10 @@
 
 完成一个本机可日常使用的闭环：**GPS自动按附近城市整理→地点封面/数量→照片网格→地名查找→人工纠错**。
 保留城市＋国家/省份。用户已要求个人相册、简单功能与测试即可，按V3.1 §9.3限定例外执行。
-本轮立卡不是代码已实现；用户要求执行本卡后再实现。真实个人库读取/补齐须另有明确范围授权。
+实现报告：[P4-PLACE-AUTO-A implementation](../reports/P4-PLACE-AUTO-A-implementation.md)。本轮未读取真实个人库；真实库补齐仍须另有明确范围授权。
 
 开工按AGENTS.md→development-status→本卡→方案/报告读取，记录实际HEAD/已有编辑。
-立卡HEAD=9ebcbef；原有未提交docs/tasks/P2-04A.md保留，不沿用它返回P2-05的旧路由。
+立卡HEAD=9ebcbef；本轮实际基线HEAD=696a06e。docs/tasks/P2-04A.md已由用户删除，本轮保持删除，不恢复，也不沿用它返回P2-05的旧路由。
 embedding等待审事项不纳入此任务或追认PASS。执行本卡时明确更新状态入口。
 
 ## 2. 读取与允许修改范围

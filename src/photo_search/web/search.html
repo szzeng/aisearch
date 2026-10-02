@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/web/styles.css" />
     <link rel="stylesheet" href="/web/search.css" />
     <script src="/web/search.js" defer></script>
+    <script src="/web/search-place-entry.js" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -48,6 +49,7 @@
               placeholder="留空 = 纯筛选查询（不生成任何查询向量）"
             />
           </p>
+          <div id="place-entry" class="place-entry wide" hidden aria-live="polite"></div>
           <p>
             <label for="query-source">来源</label>
             <select id="query-source">

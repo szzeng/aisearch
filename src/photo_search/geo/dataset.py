@@ -126,6 +126,7 @@ class DatasetContent:
     files: tuple[DatasetFile, ...]
     places: Mapping[str, DatasetPlace]
     aliases: Mapping[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
+    province_index: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def city_places(self) -> tuple[DatasetPlace, ...]:
@@ -597,6 +598,32 @@ def _parse_aliases(
     return {key: tuple(value) for key, value in collected.items()}
 
 
+def _parse_province_index(directory: Path, relative_path: str) -> dict[str, Any]:
+    try:
+        payload = json.loads((directory / relative_path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise _invalid("the INDEX file is not valid UTF-8 JSON", relative_path=relative_path) from error
+    if not isinstance(payload, Mapping) or set(payload) != {"schema_version", "provider", "source_snapshot", "city_to_admin1"}:
+        raise _invalid("the INDEX file has an unsupported shape", relative_path=relative_path)
+    if payload["schema_version"] != 1:
+        raise _invalid("the INDEX schema_version must be 1", relative_path=relative_path)
+    provider = _text(payload["provider"], where="INDEX.provider")
+    snapshot = _text(payload["source_snapshot"], where="INDEX.source_snapshot")
+    mapping = payload["city_to_admin1"]
+    if not isinstance(mapping, Mapping):
+        raise _invalid("INDEX.city_to_admin1 must be an object")
+    result: dict[str, Any] = {}
+    for city_id, region in mapping.items():
+        city_key = _text(city_id, where="INDEX city id")
+        if not isinstance(region, Mapping) or set(region) != {"id", "name", "aliases"}:
+            raise _invalid("an INDEX admin1 row has an unsupported shape", city_id=city_key)
+        aliases = region["aliases"]
+        if not isinstance(aliases, list) or any(not isinstance(value, str) or not value.strip() for value in aliases):
+            raise _invalid("INDEX aliases must be a list of non-empty strings", city_id=city_key)
+        result[city_key] = {"id": _text(region["id"], where="INDEX admin1 id"), "name": _text(region["name"], where="INDEX admin1 name"), "aliases": list(dict.fromkeys(aliases))}
+    return {"provider": provider, "source_snapshot": snapshot, "city_to_admin1": result}
+
+
 def load_content(
     package_dir: str | Path,
     *,
@@ -645,6 +672,20 @@ def load_content(
         if ROLE_ALIASES in by_role
         else {}
     )
+    province_index = (
+        _parse_province_index(directory, by_role[ROLE_INDEX].relative_path)
+        if ROLE_INDEX in by_role
+        else {}
+    )
+    if province_index and (
+        province_index["provider"] != validated["source"]["provider"]
+        or province_index["source_snapshot"] != validated["source"]["snapshot"]
+    ):
+        raise _invalid("the INDEX does not match the dataset source snapshot")
+    if province_index:
+        unknown_cities = sorted(set(province_index["city_to_admin1"]) - set(places))
+        if unknown_cities:
+            raise _invalid("the INDEX references an unknown city", dataset_place_id=unknown_cities[0])
     declared_records = int(validated["coverage"]["record_count"])
     if declared_records != len(places):
         raise _invalid(
@@ -662,6 +703,7 @@ def load_content(
         files=files,
         places=places,
         aliases=aliases,
+        province_index=province_index,
     )
 
 

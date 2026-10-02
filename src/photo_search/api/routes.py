@@ -150,6 +150,8 @@ from photo_search.persons.read import (
     person_page,
 )
 from photo_search.persons.service import PersonService
+from photo_search.places import albums as place_albums
+from photo_search.places import backfill as place_backfill
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
 from photo_search.refresh import progress as refresh_progress
@@ -891,6 +893,36 @@ async def list_places(
         parent_place_id=None if parent is None else int(parent),
         ancestor_place_id=None if ancestor is None else int(ancestor),
         lifecycle=lifecycle,
+    )
+
+
+@router.get("/places/albums", summary="Photo albums grouped by current GPS or manual place")
+async def list_place_albums(
+    request: Request,
+    kind: Literal["city", "province", "country"] = "city",
+    name: str | None = Query(default=None, max_length=200),
+) -> dict[str, Any]:
+    service = service_of(request)
+    return place_albums.albums(service.catalog, service.data_root, kind=kind, name=name)
+
+
+@router.post("/places/albums/backfill", summary="Fill missing GPS and nearby-place results in one bounded batch")
+async def backfill_place_albums(request: Request) -> dict[str, Any]:
+    service = service_of(request)
+    return place_backfill.run(service.catalog, service.data_root)
+
+
+@router.get("/places/albums/{kind}/{key}/assets", summary="Paged photos in one place album")
+async def list_place_album_assets(
+    request: Request,
+    kind: Literal["city", "province", "country"],
+    key: str,
+    limit: int = 48,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    service = service_of(request)
+    return place_albums.album_assets(
+        service.catalog, service.data_root, kind=kind, key=key, limit=limit, cursor=cursor
     )
 
 

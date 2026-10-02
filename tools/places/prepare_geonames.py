@@ -249,10 +249,23 @@ def read_cities(path: Path, countries: Sequence[str]) -> list[dict[str, Any]]:
                     "longitude": float(longitude),
                     "country_code": code,
                     "population": int(population) if population.isdigit() else 0,
+                    "admin1_code": fields[10].strip(),
                     "feature_code": fields[7].strip(),
                 }
             )
     return cities
+
+
+def read_admin1(path: Path, codes: Iterable[str]) -> dict[str, dict[str, Any]]:
+    wanted = set(codes)
+    found: dict[str, dict[str, Any]] = {}
+    with _open_text(path) as stream:
+        for line in stream:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 4 or fields[0] not in wanted:
+                continue
+            found[fields[0]] = {"id": fields[0], "name": fields[1].strip(), "geonameid": int(fields[3]) if fields[3].isdigit() else None}
+    return found
 
 
 def collect_alternate_names(
@@ -373,6 +386,9 @@ def build_spec(
         raise ValueError("cities500.txt produced no city inside the requested countries")
 
     wanted_ids = {int(row["geonameid"]) for row in cities}
+    admin_path = raw_dir / "admin1CodesASCII.txt"
+    admin_rows = read_admin1(admin_path, {f"{row['country_code']}.{row['admin1_code']}" for row in cities if row["admin1_code"]}) if admin_path.is_file() else {}
+    wanted_ids.update(int(row["geonameid"]) for row in admin_rows.values() if row["geonameid"] is not None)
     wanted_ids.update(
         int(row["geonameid"]) for row in country_rows.values() if row["geonameid"] is not None
     )
@@ -436,9 +452,12 @@ def build_spec(
 
     latitudes = [float(row["latitude"]) for row in cities]
     longitudes = [float(row["longitude"]) for row in cities]
+    source_names = ["cities500.txt", "alternateNamesV2.txt", "countryInfo.txt"]
+    if admin_path.is_file():
+        source_names.append("admin1CodesASCII.txt")
     source_files = [
         f"{name} sha256={_sha256_file(raw_dir / name)} bytes={(raw_dir / name).stat().st_size}"
-        for name in ("cities500.txt", "alternateNamesV2.txt", "countryInfo.txt")
+        for name in source_names
     ]
     # The dump's own *date* is what identifies the snapshot; a mirror (or a later unzip)
     # leaves today's mtime on the files, so the caller may name the snapshot it knows.
@@ -449,8 +468,25 @@ def build_spec(
             _snapshot_stamp(cities_path),
             _snapshot_stamp(alternate_path),
             _snapshot_stamp(country_path),
+            *([_snapshot_stamp(admin_path)] if admin_path.is_file() else []),
         )
     )
+    province_index = None
+    if admin_rows:
+        province_index = {
+            "schema_version": 1,
+            "provider": "GeoNames",
+            "source_snapshot": resolved_snapshot,
+            "city_to_admin1": {
+                f"geonames-city-{row['geonameid']}": {
+                    "id": admin_rows[f"{row['country_code']}.{row['admin1_code']}"]["id"],
+                    "name": admin_rows[f"{row['country_code']}.{row['admin1_code']}"]["name"],
+                    "aliases": [item[6] for item in names.ranked(int(admin_rows[f"{row['country_code']}.{row['admin1_code']}"]["geonameid"])) if item[0] < 2][:10],
+                }
+                for row in cities
+                if row["admin1_code"] and f"{row['country_code']}.{row['admin1_code']}" in admin_rows
+            },
+        }
     return {
         "package_id": package_id,
         "package_version": "1",
@@ -499,7 +535,7 @@ def build_spec(
         "places": places,
         "aliases": aliases,
         "license_text": LICENSE_TEXT,
-        "index": None,
+        "index": province_index,
     }
 
 
