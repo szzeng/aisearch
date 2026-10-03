@@ -54,7 +54,7 @@ from photo_search.ingestion.service import CatalogService
 WALL_BASE_MS = time.time_ns() // 1_000_000
 QUIET_AGE_MS = 3_600_000
 
-THUMBNAIL_PROCESSOR_ID = "catalog-thumbnail@1"
+THUMBNAIL_PROCESSOR_ID = "catalog-thumbnail@2"
 PREVIEW_PROCESSOR_ID = "catalog-preview@1"
 
 

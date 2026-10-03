@@ -92,3 +92,11 @@ JUnit `test-results/p4-person-feedback.xml`：**15/0/0/0**。第一次沙箱启�
 ## 2026-10-03 INTERNAL_ERROR 后续修正：兼容生产人脸框格式
 
 用户反馈人物相册出现“这次操作没有完成，请重试。（INTERNAL_ERROR）”。定位为上一轮预览框改动的回归：真实人脸处理器将 `bbox_json` 写为 `{"bbox":[x1,y1,x2,y2]}`，而`_face_view()`误把其当作裸数组遍历，`/faces/inbox` 因将键名`bbox`转成浮点数而返回500。现通过既有 `parse_bbox()` 同时读取两种格式；坏几何仅不画框，人脸仍可选择，头像裁剪端点维持原有结构化错误。新增生产格式合成回归。定向JUnit `test-results/p4-person-feedback-bbox.xml` **15/0/0/0**；Ruff/Node/diff-check通过。重启源码服务并用新会话链接后生效。
+
+## 2026-10-03照片方形缩略图仍错配：旧媒体产物失效
+
+用户提供的服务日志对`/api/v1/assets/15/thumbnail`显示`304 Not Modified`。前次只改为ETag重新验证仍无法修复错误的已发布缩略图：HTTP ETag只绑定原图SHA与旧处理器版本，而媒体缓存把任意非空文件视作有效，不能证明旧文件的像素内容正确。人脸小圆图与点开大图正确、唯独方形格图错误，符合旧thumbnail产物被错误复用的表现；本轮未读取用户真实资产15或PhotoSearchData。
+
+将`catalog-thumbnail@1`升为`catalog-thumbnail@2`，使旧HTTP ETag和旧磁盘产物都不再被当前端点采用。新缩略图按需从登记原图生成并缓存到v2目录；旧v1派生产物保留，不改动原图或照片索引。方形缩略图输出尺寸/编码算法未变。
+
+新增API反例：在合成asset的v1路径预置非空错误bytes，GET thumbnail取得正确320x240 JPEG，ETag为`catalog-thumbnail@2:<sha>`，且v1内容原样保留。定向JUnit：媒体/API/cache/人物相册 **45/0/0/0**；内容生命周期与升级恢复 **21/0/0/0**；Ruff、Node语法、diff-check通过。用户源码服务需重启；打开相册时缩略图会按需重建，之后重新进入或刷新人物列表即可。不运行全库扫描/重建。

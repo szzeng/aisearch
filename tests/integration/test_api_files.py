@@ -19,7 +19,7 @@ from PIL import Image
 from photo_search.ingestion.service import CatalogService
 
 OLD_MTIME_NS = (1_700_000_000_000 - 3_600_000) * 1_000_000
-ARTIFACT_CACHE = "private, max-age=31536000, immutable"
+ARTIFACT_CACHE = "private, no-cache, must-revalidate"
 
 
 def _stamp_old(path: Path, now_ms: int | None = None) -> Path:
@@ -127,6 +127,10 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     api_env.scan(api_env.register_source()["source_id"])
     asset_id = api_env.first_asset_id()
     sha256 = _asset_sha(api_env, asset_id)
+    # A non-empty but incorrect prior-version cache entry must never be reused.
+    stale = api_env.data_root / "thumbnails" / "catalog-thumbnail@1" / sha256[:2] / sha256[2:4] / f"{sha256}.jpg"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(b"wrong cached thumbnail")
 
     async def scenario(client: AsyncClient) -> dict:
         await api_env.authenticate(client)
@@ -154,8 +158,9 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     assert first.headers["Content-Type"] == "image/jpeg"
     assert first.headers["Cache-Control"] == ARTIFACT_CACHE
     assert first.headers["X-Original-Available"] == "true"
-    assert first.headers["ETag"] == f'"catalog-thumbnail@1:{sha256}"'
+    assert first.headers["ETag"] == f'"catalog-thumbnail@2:{sha256}"'
     assert _image_size(first.content) == (320, 240)
+    assert stale.read_bytes() == b"wrong cached thumbnail"
 
     second = result["second"]
     assert second.status_code == 200
@@ -177,9 +182,12 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     assert media["thumbnail"]["long_edge"] == 320
     assert media["preview"]["long_edge"] == 1600
 
-    # Exactly one thumbnail artifact exists: a repeated request never recomputes.
-    published = sorted(path.name for path in (api_env.data_root / "thumbnails").rglob("*.jpg"))
-    assert published == [f"{sha256}.jpg"]
+    # The stale v1 artifact remains untouched; only the current version serves requests.
+    published = sorted(
+        path.relative_to(api_env.data_root / "thumbnails").parts[0]
+        for path in (api_env.data_root / "thumbnails").rglob("*.jpg")
+    )
+    assert published == ["catalog-thumbnail@1", "catalog-thumbnail@2"]
 
 
 def test_original_bytes_ranges_and_headers(api_env) -> None:

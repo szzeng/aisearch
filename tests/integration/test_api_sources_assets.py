@@ -86,7 +86,7 @@ def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:
     assert body["controlled_reads"] is True
     assert body["session_required"] is True
     assert body["loopback_only"] is True
-    assert body["media"]["thumbnail"]["processor_id"] == "catalog-thumbnail@1"
+    assert body["media"]["thumbnail"]["processor_id"] == "catalog-thumbnail@2"
     assert body["media"]["thumbnail"]["long_edge"] == 320
     assert body["media"]["preview"]["processor_id"] == "catalog-preview@1"
     assert body["media"]["preview"]["long_edge"] == 1600

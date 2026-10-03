@@ -33,7 +33,7 @@ def test_paths_are_two_level_sharded_versioned_and_under_the_data_root(tmp_path:
         tmp_path
         / "data"
         / "thumbnails"
-        / "catalog-thumbnail@1"
+        / "catalog-thumbnail@2"
         / SHA[:2]
         / SHA[2:4]
         / f"{SHA}.jpg"
@@ -170,7 +170,7 @@ def test_versions_and_inventory_keep_an_older_processing_version_visible(
     leftover = current.parent / f"{SHA}.123-abc.tmp"
     leftover.write_bytes(b"partial")
 
-    assert cache.version_dirs(kind="thumbnail") == ["catalog-thumbnail@0", "catalog-thumbnail@1"]
+    assert cache.version_dirs(kind="thumbnail") == ["catalog-thumbnail@0", "catalog-thumbnail@2"]
     assert older.read_bytes() == b"old-version-bytes"
     inventory = cache.cache_inventory(spec=THUMBNAIL_SPEC)
     assert inventory == {
