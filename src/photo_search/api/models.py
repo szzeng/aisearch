@@ -84,6 +84,18 @@ class SchedulerStateResponse(BaseModel):
     reason: str | None = None
 
 
+class PageCapabilitiesResponse(BaseModel):
+    """Schema and build facts for page startup, without model or coverage probes."""
+
+    app_version: str
+    api_version: Literal["v1"] = "v1"
+    schema_version: int | None
+    supported_schema_version: int
+    schema_status: str
+    controlled_reads: bool = True
+    session_required: bool = True
+
+
 class CapabilitiesResponse(BaseModel):
     """Build and contract facts. Contains no data-directory path and no user data."""
 

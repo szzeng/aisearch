@@ -259,6 +259,19 @@ def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
     assert "max-width: min(100%, 48rem)" not in style
 
 
+def test_page_startup_avoids_model_probes_and_automatic_coverage() -> None:
+    _, home_script, _ = _web_documents()
+    search_shell, search_script, _ = _search_documents()
+    assert 'request("/capabilities/page")' in home_script
+    assert 'request("/capabilities")' not in home_script
+    sources_loader = search_script.split("function loadSources()", 1)[1].split("function renderSourceOptions", 1)[0]
+    assert 'request("/sources/summary")' in sources_loader
+    assert 'request("/capabilities/page")' in search_script
+    assert "capabilitiesPromise.then(loadCoverage)" not in search_script
+    assert 'addEventListener("click", loadCoverage)' in search_script
+    assert "进入搜索页无需等待统计" in search_shell
+
+
 # ---------------------------------------------------------------------------------------
 # P2-03C: the place-curation page. It is a separate document in the same package-data
 # directory, so it keeps the P1-05 rules and adds the frozen ADR-0005 vocabulary verbatim.

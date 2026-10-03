@@ -1746,7 +1746,7 @@
   function probeCapabilities() {
     // Hidden-by-default navigation entry: it is revealed only when this catalog really
     // carries the person read layer (see revealPersonsNav).
-    request("/capabilities")
+    request("/capabilities/page")
       .then(function (result) {
         var body = result.body || {};
         clearNotice();

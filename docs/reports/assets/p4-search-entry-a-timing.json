@@ -1,0 +1,23 @@
+{
+  "fixture": "3 empty synthetic galleries",
+  "simulated_encoder_start_ms": 1000,
+  "samples": [
+    {
+      "sample": 1,
+      "page_ms": 17.18,
+      "full_ms": 1031.15
+    },
+    {
+      "sample": 2,
+      "page_ms": 14.52,
+      "full_ms": 1028.66
+    },
+    {
+      "sample": 3,
+      "page_ms": 22.44,
+      "full_ms": 1037.57
+    }
+  ],
+  "page_encoder_calls": 0,
+  "full_encoder_calls": 3
+}

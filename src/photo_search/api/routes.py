@@ -59,6 +59,7 @@ from photo_search.api.models import (
     MappingGroup,
     MappingListResponse,
     MappingOperationResponse,
+    PageCapabilitiesResponse,
     PersonListResponse,
     PersonMergeRequest,
     PersonNameRequest,
@@ -288,6 +289,33 @@ async def exchange_session(
 
 
 # ------------------------------------------------------------------------ capabilities
+@router.get(
+    "/capabilities/page",
+    response_model=PageCapabilitiesResponse,
+    summary="Lightweight page startup facts without model initialization",
+)
+def page_capabilities(request: Request) -> dict[str, Any]:
+    """Validate schema using a local read-only connection, without resolving the encoder.
+
+    This sync route runs outside the event loop. It never uses the request-thread catalog
+    service: catalog_info opens and closes its own read-only connection in this thread.
+    """
+    info = catalog_info(None, data_root=context_of(request).settings.data_root)
+    error = info.get("error")
+    if isinstance(error, dict) and error.get("code"):
+        raise CatalogError(
+            str(error["code"]),
+            str(error.get("message") or "the catalog is not usable"),
+            details=error.get("details") or None,
+        )
+    return {
+        "app_version": APP_VERSION,
+        "schema_version": info.get("schema_version"),
+        "supported_schema_version": info.get("supported_schema_version"),
+        "schema_status": str(info.get("status") or "unknown"),
+    }
+
+
 @router.get(
     "/capabilities",
     response_model=CapabilitiesResponse,

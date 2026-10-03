@@ -32,6 +32,7 @@ def test_business_endpoints_require_a_session(api_env) -> None:
     async def scenario(client: AsyncClient) -> None:
         for path in (
             "/api/v1/capabilities",
+            "/api/v1/capabilities/page",
             "/api/v1/stats",
             "/api/v1/sources",
             "/api/v1/sources/summary",

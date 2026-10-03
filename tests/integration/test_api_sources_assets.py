@@ -98,6 +98,39 @@ def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:
     assert "db_path" not in body
 
 
+def test_page_capabilities_does_not_initialize_encoder_or_read_coverage(api_env, monkeypatch) -> None:
+    from photo_search.api import routes
+
+    def unexpected_work(*args, **kwargs):
+        raise AssertionError("page startup performed model or coverage work")
+
+    monkeypatch.setattr(api_env.context, "query_encoder", unexpected_work)
+    for name in (
+        "scheduler_summary", "index_summary", "search_projection_summary", "search_profile_summary",
+        "ocr_summary", "face_summary", "ocr_weights_present", "face_weights_present",
+    ):
+        monkeypatch.setattr(routes, name, unexpected_work)
+
+    async def scenario(client: AsyncClient) -> dict:
+        unauthenticated = await client.get("/api/v1/capabilities/page")
+        assert unauthenticated.status_code == 401
+        await api_env.authenticate(client)
+        response = await client.get("/api/v1/capabilities/page")
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    body = api_env.scenario(scenario)
+    assert body == {
+        "app_version": routes.APP_VERSION,
+        "api_version": "v1",
+        "schema_version": schema.SUPPORTED_SCHEMA_VERSION,
+        "supported_schema_version": schema.SUPPORTED_SCHEMA_VERSION,
+        "schema_status": "ok",
+        "controlled_reads": True,
+        "session_required": True,
+    }
+
+
 def test_sources_create_list_and_structured_rejections(api_env) -> None:
     _seed_library(api_env, 3)
 

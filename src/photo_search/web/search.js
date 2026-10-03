@@ -1292,7 +1292,7 @@
       request("/capabilities"),
       request("/places/coverage"),
       request("/stats"),
-      request("/sources"),
+      request("/sources/summary"),
     ])
       .then(function (results) {
         var capabilities = results[0].body || {};
@@ -1493,7 +1493,7 @@
   function loadCapabilities() {
     // The person navigation entry reads the same capabilities document; it stays hidden
     // until the catalog really carries the person read layer.
-    return request("/capabilities").then(
+    return request("/capabilities/page").then(
       function (result) {
         var body = result.body || {};
         state.capabilities = body;
@@ -1529,7 +1529,7 @@
             body.schema_status +
             "） · 只读受控访问"
         );
-        renderBindingHint(body);
+        text(els.bindingHint, "搜索配置将在搜索时确认；分项覆盖率可按需查看。");
       },
       function (failure) {
         disablePersonFilter(
@@ -1556,7 +1556,7 @@
   }
 
   function loadSources() {
-    return request("/sources").then(
+    return request("/sources/summary").then(
       function (result) {
         state.sources = (result.body && result.body.sources) || [];
         renderSourceOptions();
@@ -1697,7 +1697,7 @@
     state.observer = buildObserver();
     updatePersonSelection();
     syncPersonControls();
-    loadCapabilities().then(loadCoverage);
+    loadCapabilities();
     loadSources();
   }
 
