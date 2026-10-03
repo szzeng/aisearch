@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from conftest import ApiEnv
 from p3_persons_page_fixtures import add_link, add_person, seed_library, set_control, set_exclusion
 
@@ -278,16 +276,6 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
     empty = add_person(catalog, avatar_face_id=data["left"])
     add_link(catalog, data["left"], left_person)
     add_link(catalog, data["right"], right_person)
-    # The real face processor persists the box in an object wrapper.
-    with catalog.write() as connection:
-        for face_id in (data["left"], data["right"]):
-            raw = connection.execute(
-                "SELECT bbox_json FROM faces WHERE face_id = ?", (face_id,)
-            ).fetchone()["bbox_json"]
-            connection.execute(
-                "UPDATE faces SET bbox_json = ? WHERE face_id = ?",
-                (json.dumps({"bbox": json.loads(raw)}), face_id),
-            )
 
     async def scenario(client):
         await api_env.authenticate(client)
@@ -308,10 +296,6 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
         assert not left_page["assets"][0]["person_faces_has_more"]
         assert tuple(catalog.connection.iterdump()) == before
         assert "bbox" not in repr(left_page) and "vector" not in repr(left_page)
-        face_page = (await client.get(f"/api/v1/assets/{data['asset_id']}/faces")).json()
-        boxes = {face["face_id"]: face["box"] for face in face_page["faces"]}
-        assert boxes[data["left"]][0] < boxes[data["left"]][2]
-        assert boxes[data["left"]][2] < boxes[data["right"]][0]
         first = await client.get(cards[left_person]["thumbnail_url"])
         second = await client.get(cards[right_person]["thumbnail_url"])
         assert first.status_code == second.status_code == 200

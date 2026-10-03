@@ -20,9 +20,7 @@ KINDS = (THUMBNAIL, PREVIEW)
 #: Versioned processor identities. ``@1`` freezes: long edge, JPEG output, quality,
 #: LANCZOS resample, EXIF-orientation normalisation, JPEG DCT-scaled decode when the
 #: source is larger than the target (never an upscale).
-# @2 also invalidates non-empty @1 entries which cannot be proven correct: the old
-# cache considered any published bytes valid and keyed HTTP validators only by source SHA.
-THUMBNAIL_PROCESSOR_ID = "catalog-thumbnail@2"
+THUMBNAIL_PROCESSOR_ID = "catalog-thumbnail@1"
 PREVIEW_PROCESSOR_ID = "catalog-preview@1"
 #: P3-06 face avatars. The crop is rendered from the published preview, so its own identity
 #: covers the geometry and the source content: a re-detection that moves a face box produces

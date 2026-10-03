@@ -484,7 +484,7 @@ def test_replaced_content_never_inherits_the_old_results(tmp_path: Path) -> None
         thumbnail_path = (
             env.data_root
             / "thumbnails"
-            / "catalog-thumbnail@2"
+            / "catalog-thumbnail@1"
             / digest[:2]
             / digest[2:4]
             / f"{digest}.jpg"

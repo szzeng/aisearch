@@ -7,9 +7,9 @@
     <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-person-ux-a-feedback1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-ux-a-avatar2" />
     <script src="/web/persons.js" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-ux-a-feedback1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-ux-a-undo3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -45,7 +45,7 @@
       </section>
       <p id="pa-status" class="notice" role="status" aria-live="polite"></p>
       <div id="pa-undo-bar" class="pa-undo" hidden><span id="pa-undo-text"></span><button id="pa-undo" type="button">撤销</button><button id="pa-undo-dismiss" type="button" aria-label="收起撤销提示">收起</button></div>
-      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><div id="pa-preview-frame" class="pa-preview-frame"><img id="pa-preview-image" alt="整张照片" /></div><p id="pa-preview-note" class="hint" role="status"></p><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
+      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><p id="pa-preview-note" class="hint" role="status"></p><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
       <dialog id="pa-edit" class="pa-dialog"><h2 id="pa-edit-title"></h2><p id="pa-edit-note" class="hint"></p>
         <form id="pa-edit-form"><label for="pa-edit-query" id="pa-edit-label">名字</label><input id="pa-edit-query" maxlength="200" autocomplete="off" /><button id="pa-edit-find" type="button" hidden>查找人物</button><div id="pa-choices" class="pa-choices"></div><button id="pa-choice-more" type="button" hidden>更多人物</button><p id="pa-edit-error" class="error" role="alert"></p><div class="row-actions"><button id="pa-edit-submit">保存</button><button id="pa-edit-cancel" type="button">取消</button></div></form>
       </dialog>

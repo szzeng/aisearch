@@ -260,7 +260,7 @@ def test_thumbnail_batch_publishes_orientation_correct_jpegs(harness: Harness) -
 
     summary = harness.service.generate_thumbnail()
 
-    assert summary["processor_id"] == "catalog-thumbnail@2"
+    assert summary["processor_id"] == "catalog-thumbnail@1"
     assert summary["long_edge"] == 320
     assert summary["assets_considered"] == 9
     assert summary["generated"] == 9
@@ -786,7 +786,7 @@ def test_cli_generates_media_and_reports_structured_errors(tmp_path: Path) -> No
     media = json.loads(thumbnails.stdout)["media"]
     assert media["generated"] == 2
     assert media["unsupported"] == 1
-    assert media["processor_id"] == "catalog-thumbnail@2"
+    assert media["processor_id"] == "catalog-thumbnail@1"
 
     status = _run_cli(data_root, "media-status", "--failures", "--json")
     assert status.returncode == 0, status.stderr

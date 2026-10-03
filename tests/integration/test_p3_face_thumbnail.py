@@ -100,8 +100,7 @@ def test_the_crop_comes_from_that_faces_own_box(api_env) -> None:
     assert left.status_code == 200, left.text
     assert left.headers["Content-Type"] == "image/jpeg"
     assert left.content.startswith(JPEG_MAGIC)
-    assert "no-cache" in left.headers["Cache-Control"]
-    assert "must-revalidate" in left.headers["Cache-Control"]
+    assert "immutable" in left.headers["Cache-Control"]
     assert left.headers["ETag"].startswith('"face-crop@1:')
     assert int(left.headers["Content-Length"]) == len(left.content)
 
