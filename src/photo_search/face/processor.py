@@ -191,8 +191,14 @@ def face_processor_spec() -> ProcessorSpec:
     )
 
 
-def artifact_id_for(input_revision: str) -> str:
-    return f"{ARTIFACT_ID_PREFIX}{contract.FACE_PROCESSOR_ID}:{str(input_revision)}"
+def artifact_id_for(input_revision: str, *, spec_revision: str | None = None) -> str:
+    revision = contract.FACE_SPEC_REVISION if spec_revision is None else str(spec_revision)
+    legacy = f"{ARTIFACT_ID_PREFIX}{contract.FACE_PROCESSOR_ID}:{str(input_revision)}"
+    if revision == "face-buffalo-l-scrfd-arcface-v1":
+        return legacy
+    # ArtifactStore keys both the id and the logical artifact revision immutably.
+    # Keep v1 bytes available to human anchors when the same asset is reprocessed.
+    return f"{legacy}:{revision}"
 
 
 def face_id_for(*, input_revision: str, ordinal: int, bbox: Sequence[float]) -> str:
@@ -212,9 +218,15 @@ def face_id_for(*, input_revision: str, ordinal: int, bbox: Sequence[float]) -> 
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
-def generation_id_for(space_id: str, processor_id: str) -> str:
+def generation_id_for(space_id: str, processor_id: str, *, spec_revision: str | None = None) -> str:
     """The independent face-index generation: face-keyed, never the image generation."""
-    suffix = hashlib.sha256(f"{space_id}\0{processor_id}".encode()).hexdigest()[:24]
+    revision = contract.FACE_SPEC_REVISION if spec_revision is None else str(spec_revision)
+    # Preserve the historical v1 identity; a preprocessing change creates a separate
+    # candidate generation even when the recognition weights/space are unchanged.
+    identity = f"{space_id}\0{processor_id}"
+    if revision != "face-buffalo-l-scrfd-arcface-v1":
+        identity += f"\0{revision}"
+    suffix = hashlib.sha256(identity.encode()).hexdigest()[:24]
     return f"{contract.FACE_GENERATION_PREFIX}{suffix}"
 
 

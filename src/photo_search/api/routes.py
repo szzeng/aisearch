@@ -147,6 +147,7 @@ from photo_search.media.status import (
     MEDIA_STATE_UNSUPPORTED,
 )
 from photo_search.ocr.weights import weights_present as ocr_weights_present
+from photo_search.persons import albums as person_albums
 from photo_search.persons.read import (
     clamp_page_limit as clamp_person_limit,
 )
@@ -1266,6 +1267,67 @@ async def post_face_mapping_decisions(
         request_id=body.get("request_id"),
         asset_id=body.get("asset_id"),
         decisions=body.get("decisions"),
+    )
+
+
+@router.get("/persons/browse", summary="Find people by name for personal browsing")
+async def browse_persons(
+    request: Request,
+    kind: str = "all",
+    q: str = "",
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    return person_albums.people_page(
+        service_of(request).catalog, kind=kind, q=q, limit=clamp_person_limit(limit), cursor=cursor
+    )
+
+
+@router.get(
+    "/persons/{person_id}/photos",
+    summary="All effective photos of one person, without a semantic model",
+)
+async def person_photos(
+    request: Request, person_id: int, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    service = service_of(request)
+    return person_albums.photo_page(
+        service.catalog,
+        service.media_cache(),
+        person_id=person_id,
+        limit=clamp_person_limit(limit),
+        cursor=cursor,
+    )
+
+
+@router.get("/faces/inbox", summary="Detected faces still needing personal organization")
+async def face_inbox(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_albums.inbox_page(
+        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor
+    )
+
+
+@router.get("/assets/{asset_id}/faces", summary="Safe cropped faces of one photo")
+async def photo_faces(request: Request, asset_id: int) -> dict[str, Any]:
+    return person_albums.asset_faces(service_of(request).catalog, asset_id)
+
+
+@router.put(
+    "/persons/{person_id}/label",
+    response_model=PersonOperationResponse,
+    summary="Rename without implicitly merging another person",
+)
+async def put_person_label(
+    request: Request, person_id: int, payload: PersonNameRequest
+) -> dict[str, Any]:
+    return persons_of(request).rename(
+        person_id=person_id,
+        name=payload.name,
+        request_id=payload.request_id,
+        expected_revision=int(payload.expected_revision),
+        merge_by_name=False,
     )
 
 

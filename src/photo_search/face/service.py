@@ -126,9 +126,7 @@ def _is_live(connection: sqlite3.Connection, *, asset_id: int, revision: str) ->
     return row is not None
 
 
-def _rewind(
-    connection: sqlite3.Connection, *, asset_id: int, revision: str, now_ms: int
-) -> bool:
+def _rewind(connection: sqlite3.Connection, *, asset_id: int, revision: str, now_ms: int) -> bool:
     """Reuse the same logical job for a forced re-detection (never a second row)."""
     placeholders = ", ".join("?" for _ in REWINDABLE_STATES)
     cursor = connection.execute(
@@ -168,9 +166,7 @@ def job_counts(catalog: Catalog, *, task_type: str = contract.FACE_TASK_TYPE) ->
 def pending_job_count(catalog: Catalog) -> int:
     counts = job_counts(catalog)
     return sum(
-        count
-        for state, count in counts.items()
-        if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
+        count for state, count in counts.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
     )
 
 
@@ -199,9 +195,7 @@ def seal_snapshot(
                 "device": "gpu",
                 "precisions": ["FP32"],
                 "available": True if not checked else bool(gpu["usable"]),
-                "health": (
-                    "healthy" if gpu["usable"] else ("unhealthy" if checked else "unknown")
-                ),
+                "health": ("healthy" if gpu["usable"] else ("unhealthy" if checked else "unknown")),
                 "health_checked_at": int(now_ms),
                 "evidence_id": None,
             }
@@ -217,9 +211,7 @@ def seal_snapshot(
             "evidence_id": None,
         }
     )
-    if probe["cpu"]["usable"] and (
-        probe["gpu"]["usable"] or not bool(probe["cuda_listed"])
-    ):
+    if probe["cpu"]["usable"] and (probe["gpu"]["usable"] or not bool(probe["cuda_listed"])):
         health = "healthy"
     elif probe["cpu"]["usable"]:
         health = "degraded"
@@ -256,7 +248,9 @@ def record_runtime_evidence(
 ) -> dict[str, Any]:
     """Probe the devices, record the capability snapshot and the real qualifications."""
     probe = cache.probe(data_root, include_gpu=str(device) != "cpu")
-    snapshot = seal_snapshot(probe, runtime_package_id=str(spec.runtime_package_id), now_ms=int(now_ms))
+    snapshot = seal_snapshot(
+        probe, runtime_package_id=str(spec.runtime_package_id), now_ms=int(now_ms)
+    )
     scheduler.record_capability(snapshot, now_ms=int(now_ms))
     qualified: list[str] = []
     for name, entry in (("cpu", probe["cpu"]), ("gpu", probe["gpu"])):
@@ -270,9 +264,7 @@ def record_runtime_evidence(
             provider_name=str(entry["provider"]),
             runtime_package_id=str(spec.runtime_package_id),
             now_ms=int(now_ms),
-            note=(
-                "pinned buffalo_l detection+recognition sessions created for this device"
-            ),
+            note=("pinned buffalo_l detection+recognition sessions created for this device"),
         )
         qualified.append(str(name))
     return {
@@ -344,6 +336,91 @@ def catch_up_association(
 ) -> dict[str, Any]:
     """Group the faces whose facts are already published and confirmed."""
     return reconcile(catalog, coordinator=coordinator, limit=int(limit))
+
+
+def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, Any]:
+    """Reconsider stored, unassigned faces without detection or resetting human knowledge.
+
+    Only the explicitly compatible buffalo_l v1/v2 generations are eligible. Old faces
+    superseded by a v2 publication (including a zero-face result) are not resurrected.
+    The existing durable queue/index/control gates still own publication and assignment.
+    """
+    legacy = "face-buffalo-l-scrfd-arcface-v1"
+    current = contract.FACE_SPEC_REVISION
+    limit = max(0, int(limit))
+    with catalog.write() as connection:
+        targets = connection.execute(
+            "SELECT f.asset_id, f.spec_revision, MAX(f.face_revision) AS face_revision "
+            "FROM faces AS f JOIN assets AS a ON a.asset_id = f.asset_id "
+            "JOIN face_embeddings AS e ON e.face_id = f.face_id "
+            "WHERE a.state = 'ACTIVE' AND f.input_revision = a.sha256 "
+            "AND f.spec_revision IN (?, ?) AND e.processor_id = ? AND e.space_id = ? "
+            "AND e.dimension = ? AND e.metric = 'cosine' AND e.normalization = 'L2' "
+            "AND NOT EXISTS (SELECT 1 FROM face_person_links AS l "
+            " WHERE l.face_id = f.face_id AND l.decision = 'CONFIRMED') "
+            "AND NOT EXISTS (SELECT 1 FROM face_assignment_controls AS c "
+            " WHERE c.face_id = f.face_id AND c.mode IN ('MANUAL_ASSIGNED', 'MANUAL_UNASSIGNED')) "
+            "AND (f.spec_revision = ? OR ("
+            " NOT EXISTS (SELECT 1 FROM faces AS n WHERE n.asset_id = f.asset_id "
+            "  AND n.spec_revision = ?) AND NOT EXISTS (SELECT 1 FROM artifacts AS ar "
+            "  WHERE ar.processor_id = ? AND ar.input_revision = f.input_revision "
+            "  AND ar.artifact_revision = ? AND ar.lifecycle_state = 'PUBLISHED'))) "
+            "GROUP BY f.asset_id, f.spec_revision ORDER BY f.asset_id LIMIT ?",
+            (
+                legacy,
+                current,
+                contract.FACE_PROCESSOR_ID,
+                contract.FACE_SPACE_ID,
+                contract.FACE_DIMENSION,
+                current,
+                current,
+                contract.FACE_PROCESSOR_ID,
+                contract.FACE_ARTIFACT_REVISION,
+                limit,
+            ),
+        ).fetchall()
+        for row in targets:
+            connection.execute(
+                "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, "
+                "queued_at) VALUES (?, ?, ?, ?) ON CONFLICT(asset_id) DO NOTHING",
+                (
+                    int(row["asset_id"]),
+                    str(row["spec_revision"]),
+                    int(row["face_revision"]),
+                    catalog.now_ms(),
+                ),
+            )
+    # Candidate publication needs no model files or ONNX session. It also resumes a
+    # previous interrupted rematch before computing any new assignments.
+    index = FaceIndexCoordinator(catalog)
+    published = catch_up_index(catalog, coordinator=index) if limit else None
+    results: dict[str, Any] = {}
+    remaining = limit
+    for revision in (legacy, current):
+        if remaining <= 0:
+            break
+        result = reconcile(
+            catalog,
+            coordinator=FaceIndexCoordinator(catalog, spec_revision=revision),
+            spec_revision=revision,
+            limit=remaining,
+            asset_ids=[
+                int(row["asset_id"]) for row in targets if str(row["spec_revision"]) == revision
+            ],
+        )
+        results[revision] = result
+        remaining -= int(result["processed"])
+    return {
+        "policy_revision": contract.ASSOCIATION_POLICY_REVISION,
+        "merge_threshold": contract.MERGE_THRESHOLD,
+        "selected_assets": len(targets),
+        "index": published,
+        "association": results,
+        "processed": sum(int(r["processed"]) for r in results.values()),
+        "merged": sum(int(r["merged"]) for r in results.values()),
+        "suggested": sum(int(r["suggested"]) for r in results.values()),
+        "deferred": sum(int(r["deferred"]) for r in results.values()),
+    }
 
 
 def detect(

@@ -1,0 +1,114 @@
+<style>
+#people-demo { --p-bg:light-dark(#f7f7f9,#16161a);--p-panel:light-dark(#fff,#202027);--p-fg:light-dark(#1c1c1e,#ececf1);--p-sub:light-dark(#5b5b60,#b3b3bd);--p-line:light-dark(#d6d6dc,#3a3a44);--p-accent:light-dark(#1b5fb4,#7fb3ff);font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif;background:var(--p-bg);color:var(--p-fg);padding:24px;border-radius:12px;line-height:1.6; }
+#people-demo * {box-sizing:border-box;}
+#people-demo [hidden] {display:none!important;}
+#people-demo .pd-head {display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-right:80px;}
+#people-demo h2 {font-size:22px;font-weight:500;margin:0;}
+#people-demo h3 {font-size:17px;font-weight:500;margin:16px 0 8px;}
+#people-demo p {margin:8px 0;}
+#people-demo .pd-sub {color:var(--p-sub);font-size:13px;}
+#people-demo button,#people-demo input,#people-demo select {font:inherit;color:var(--p-fg);background:var(--p-panel);border:1px solid var(--p-line);border-radius:8px;padding:8px 12px;min-height:42px;}
+#people-demo button.pd-main {background:var(--p-accent);color:light-dark(#fff,#16161a);border-color:var(--p-accent);}
+#people-demo button[aria-pressed=true] {border-color:var(--p-accent);box-shadow:0 0 0 1px var(--p-accent);}
+#people-demo .pd-actions {display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0;}
+#people-demo input {width:min(100%,300px);min-width:0;}
+#people-demo .pd-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:16px;margin:18px 0;}
+#people-demo .pd-person {display:flex;flex-direction:column;align-items:center;padding:18px 8px;gap:8px;}
+#people-demo .pd-avatar {display:grid;place-items:center;width:72px;height:72px;border-radius:50%;font-size:29px;background:light-dark(#e2eaf4,#2b3b50);color:var(--p-fg);}
+#people-demo .pd-count {font-size:13px;color:var(--p-sub);}
+#people-demo .pd-photo {margin:0;background:var(--p-panel);border:1px solid var(--p-line);border-radius:10px;overflow:hidden;}
+#people-demo .pd-scene {aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;gap:4px;background:linear-gradient(155deg,light-dark(#dce8ed,#2c414b) 55%,light-dark(#dce3d9,#384033) 55%);font-size:26px;}
+#people-demo figcaption {padding:8px 12px;font-size:13px;}
+#people-demo .pd-dialog {background:var(--p-panel);border:1px solid var(--p-line);border-radius:10px;padding:18px;margin:16px 0;}
+#people-demo .pd-dialog label {display:block;margin:8px 0;}
+#people-demo .pd-note {padding-top:10px;border-top:1px solid var(--p-line);font-size:13px;}
+@media(max-width:450px){#people-demo{padding:16px;}#people-demo .pd-head{padding-right:0;}#people-demo .pd-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}#people-demo button{max-width:100%;}#people-demo .pd-scene{font-size:21px;}}
+</style>
+<div id="people-demo" lang="zh-CN">
+  <div class="pd-head"><h2>人物</h2><span class="pd-sub">交互示意 · 示例人物与照片</span></div>
+  <div class="pd-actions" aria-label="人物入口">
+    <button type="button" class="cursor-interaction" data-nav="people" aria-pressed="true">人物</button>
+    <button type="button" class="cursor-interaction" data-nav="organize" aria-pressed="false">整理人物</button>
+  </div>
+  <section id="pd-people" aria-label="人物列表">
+    <label for="pd-search" class="pd-sub">搜索名字</label><br><input id="pd-search" placeholder="输入名字" autocomplete="off">
+    <div id="pd-person-list" class="pd-grid"></div>
+  </section>
+  <section id="pd-organize" hidden aria-label="整理人物">
+    <h3>取个名字</h3><div class="pd-actions"><span class="pd-avatar" aria-hidden="true">人</span><span>未命名分组 · 3 张示例照片</span><button type="button" id="pd-name" class="cursor-interaction pd-main">取个名字 / 并入已有的人</button></div>
+    <h3>确认一下</h3><div class="pd-actions"><span class="pd-avatar" aria-hidden="true">爸</span><span id="pd-suggestion">这张照片里的是爸爸吗？</span><button type="button" id="pd-yes" class="cursor-interaction">是，加入爸爸</button><button type="button" id="pd-skip" class="cursor-interaction">先跳过</button></div>
+    <h3>还没归类</h3><p class="pd-sub">脸较小、系统不确定的人也会出现在这里；人工移除的脸会单独标记。</p>
+  </section>
+  <section id="pd-album" hidden aria-label="人物照片">
+    <div class="pd-actions"><button type="button" id="pd-back" class="cursor-interaction">← 人物</button><h3 id="pd-album-name"></h3></div>
+    <p class="pd-sub">点示例照片，可更正其中的人物</p><div id="pd-photos" class="pd-grid"></div>
+  </section>
+  <section id="pd-edit" class="pd-dialog" hidden aria-label="命名或合并">
+    <h3>这个人叫什么？</h3><label for="pd-name-value">名字，也可以选择已有的人</label><input id="pd-name-value" placeholder="输入名字" autocomplete="off">
+    <p id="pd-name-hint" class="pd-sub"></p><div class="pd-actions"><button type="button" id="pd-save" class="cursor-interaction pd-main">保存</button><button type="button" id="pd-cancel" class="cursor-interaction">取消</button></div>
+  </section>
+  <section id="pd-correct" class="pd-dialog" hidden aria-label="更正人物">
+    <h3>更正这张照片中的人</h3><p id="pd-correction-text"></p><label for="pd-correction-target">修改对象</label><select id="pd-correction-target"></select>
+    <div class="pd-actions"><button type="button" id="pd-remove" class="cursor-interaction">不是这个人</button><button type="button" id="pd-change" class="cursor-interaction pd-main">改为所选人物</button><button type="button" id="pd-close" class="cursor-interaction">取消</button></div>
+    <p class="pd-sub">只更正选中的脸；合照中的其他人保留。</p>
+  </section>
+  <div class="pd-actions"><span id="pd-status" role="status" aria-live="polite"></span><button type="button" id="pd-undo" class="cursor-interaction" hidden>撤销</button></div>
+  <p class="pd-note">示意中的保存、合并和撤销仅改变演示数据。</p>
+</div>
+<script>
+(() => {
+  const root = document.getElementById('people-demo');
+  const el = id => root.querySelector('#' + id);
+  let state = {people:[{name:'爸爸',mark:'爸',count:12},{name:'妈妈',mark:'妈',count:8},{name:'小林',mark:'林',count:5}],view:'people',person:'爸爸',suggestion:false};
+  const saved = window.openai?.widgetState?.privateContent;
+  if (saved?.people?.length && ['people','organize','album'].includes(saved.view)) state = saved;
+  let undo = null;
+  let mergeConfirmed = false;
+  const persist = () => {
+    if (window.openai?.setWidgetState) window.openai.setWidgetState({modelContent:{view:state.view,person:state.person},privateContent:state}).catch(() => {});
+  };
+  function snapshot(){undo = JSON.parse(JSON.stringify(state));el('pd-undo').hidden=false;}
+  function notify(value){el('pd-status').textContent=value;}
+  function show(view){state.view=view;el('pd-people').hidden=view!=='people';el('pd-organize').hidden=view!=='organize';el('pd-album').hidden=view!=='album';el('pd-edit').hidden=true;el('pd-correct').hidden=true;root.querySelectorAll('[data-nav]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.nav===view)));render();}
+  function render(){
+    const query=el('pd-search').value.trim();
+    el('pd-person-list').replaceChildren();
+    state.people.filter(p=>p.name.includes(query)).forEach(p=>{
+      const b=document.createElement('button');b.type='button';b.className='pd-person cursor-interaction';
+      const a=document.createElement('span');a.className='pd-avatar';a.textContent=p.mark;
+      const n=document.createElement('span');n.textContent=p.name;
+      const c=document.createElement('span');c.className='pd-count';c.textContent=p.count+' 张示例照片';
+      b.append(a,n,c);b.addEventListener('click',()=>{state.person=p.name;show('album');persist();});el('pd-person-list').append(b);
+    });
+    const person=state.people.find(p=>p.name===state.person)||state.people[0];state.person=person.name;
+    el('pd-album-name').textContent=person.name+' · '+person.count+' 张示例照片';
+    el('pd-photos').replaceChildren();
+    for(let i=0;i<3;i++){
+      const b=document.createElement('button');b.type='button';b.className='pd-photo cursor-interaction';
+      const scene=document.createElement('div');scene.className='pd-scene';scene.textContent=i===1?person.mark+' ＋ 友':person.mark;
+      const label=document.createElement('div');label.textContent=i===1?'示例合照':'示例照片 '+(i+1);label.style.padding='8px';
+      b.append(scene,label);b.addEventListener('click',()=>{el('pd-correct').hidden=false;el('pd-correction-text').textContent='当前选中：'+person.name+'的这张脸'+(i===1?'（另一位朋友保留）':'');el('pd-correction-target').replaceChildren();state.people.filter(p=>p.name!==person.name).forEach(p=>{const o=document.createElement('option');o.value=p.name;o.textContent=p.name;el('pd-correction-target').append(o);});});el('pd-photos').append(b);
+    }
+    el('pd-suggestion').textContent=state.suggestion?'已经确认，已加入爸爸相册':'这张照片里的是爸爸吗？';el('pd-yes').disabled=state.suggestion;
+  }
+  root.querySelectorAll('[data-nav]').forEach(b=>b.addEventListener('click',()=>{show(b.dataset.nav);persist();}));
+  el('pd-search').addEventListener('input',render);
+  el('pd-back').addEventListener('click',()=>{show('people');persist();});
+  el('pd-name').addEventListener('click',()=>{mergeConfirmed=false;el('pd-edit').hidden=false;el('pd-name-value').value='';el('pd-name-hint').textContent='输入已有名字时，会先确认合并。';el('pd-save').textContent='保存';el('pd-name-value').focus();});
+  el('pd-name-value').addEventListener('input',()=>{mergeConfirmed=false;el('pd-save').textContent='保存';});
+  el('pd-save').addEventListener('click',()=>{
+    const name=el('pd-name-value').value.trim();if(!name){el('pd-name-hint').textContent='请先输入名字';return;}
+    const existing=state.people.find(p=>p.name===name);
+    if(existing&&!mergeConfirmed){mergeConfirmed=true;el('pd-name-hint').textContent='并到“'+name+'”的 '+existing.count+' 张照片中？';el('pd-save').textContent='确认合并';return;}
+    snapshot();if(existing){existing.count+=3;notify('已并入'+name);}else{state.people.push({name,mark:name.slice(0,1),count:3});notify('已保存名字：'+name);}el('pd-edit').hidden=true;render();persist();
+  });
+  el('pd-cancel').addEventListener('click',()=>{el('pd-edit').hidden=true;});
+  el('pd-yes').addEventListener('click',()=>{snapshot();state.suggestion=true;state.people.find(p=>p.name==='爸爸').count++;notify('已确认，加入爸爸相册');render();persist();});
+  el('pd-skip').addEventListener('click',()=>notify('本次先跳过，没有更改归属'));
+  function correct(change){snapshot();const p=state.people.find(p=>p.name===state.person);p.count=Math.max(0,p.count-1);if(change){state.people.find(p=>p.name===el('pd-correction-target').value).count++;}el('pd-correct').hidden=true;notify(change?'已更正选中的脸，其他人保留':'已移除选中的脸，其他人保留');render();persist();}
+  el('pd-remove').addEventListener('click',()=>correct(false));el('pd-change').addEventListener('click',()=>correct(true));el('pd-close').addEventListener('click',()=>{el('pd-correct').hidden=true;});
+  el('pd-undo').addEventListener('click',()=>{if(undo){state=undo;undo=null;el('pd-undo').hidden=true;show(state.view);notify('已撤销上一次操作');persist();}});
+  window.addEventListener('openai:set_globals',event=>{const incoming=event.detail?.globals?.widgetState?.privateContent;if(incoming?.people?.length&&['people','organize','album'].includes(incoming.view)){state=incoming;show(state.view);}});
+  show(state.view);
+})();
+</script>

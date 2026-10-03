@@ -65,9 +65,7 @@ class PersonService:
             (canonical,),
         ).fetchall()
         faces = int(
-            connection.execute(
-                _MEMBER_SQL.format(aggregate="*"), (canonical,)
-            ).fetchone()["total"]
+            connection.execute(_MEMBER_SQL.format(aggregate="*"), (canonical,)).fetchone()["total"]
         )
         assets = int(
             connection.execute(
@@ -94,6 +92,7 @@ class PersonService:
         name: Any,
         request_id: str,
         expected_revision: int,
+        merge_by_name: bool = True,
     ) -> dict[str, Any]:
         now_ms = int(self.clock())
         with self.catalog.write() as connection:
@@ -105,6 +104,7 @@ class PersonService:
                 expected_revision=expected_revision,
                 now_ms=now_ms,
                 refresh=self.refresh,
+                merge_by_name=merge_by_name,
             )
 
     def merge(

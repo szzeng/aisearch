@@ -1,6 +1,47 @@
 /* Person-curation page styles. Offline-only: system fonts, relative units, no external
  * reference. Single-column friendly, so a 640px viewport never scrolls sideways. */
 
+/* The everyday album comes first; maintenance tools open only when requested. */
+.pa-shell { padding: clamp(1rem, 3vw, 2rem); }
+.pa-shell[hidden], .pa-shell [hidden], .pa-dialog [hidden], .pa-undo[hidden] { display: none; }
+.pa-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.pa-heading h2 { margin: 0.5rem 0; font-size: 1.45rem; }
+.pa-heading .hint { margin: 0.2rem 0 1rem; }
+.pa-search { display: flex; gap: 0.6rem; flex-wrap: wrap; margin: 1.1rem 0; }
+.pa-search input { min-width: 0; width: auto; flex: 1 1 15rem; padding: 0.7rem 1rem; border-radius: 999px; }
+.pa-search button, .pa-heading button { border-radius: 999px; }
+.pa-heading button[aria-pressed="true"], .pa-choice[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--bg); outline: 2px solid var(--accent); }
+.pa-people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr)); gap: 1rem; margin: 1.4rem 0; }
+.pa-person-card { min-width: 0; display: flex; align-items: center; flex-direction: column; gap: 0.4rem; border: 0; border-radius: 1rem; background: transparent; padding: 0.6rem; text-align: center; overflow-wrap: anywhere; }
+button.pa-person-card:hover { background: var(--bg); }
+.pa-picture { display: grid; overflow: hidden; position: relative; background: var(--bg); color: var(--fg-muted); border: 1px solid var(--line); }
+.pa-picture img, .pa-image-fallback { grid-area: 1 / 1; width: 100%; height: 100%; min-height: 0; min-width: 0; }
+.pa-picture img { object-fit: cover; z-index: 1; }
+.pa-image-fallback { display: grid; place-items: center; padding: 0.4rem; font-size: 0.75rem; }
+.pa-image-ready .pa-image-fallback { visibility: hidden; }
+.pa-avatar { width: 6.5rem; height: 6.5rem; border-radius: 50%; }
+.pa-face-button { border: none; background: transparent; padding: 0; border-radius: 50%; }
+.pa-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 0.6rem; margin: 1rem 0; }
+.pa-photo-card { min-width: 0; padding: 0; border: none; border-radius: 0.7rem; overflow: hidden; }
+.pa-photo { width: 100%; aspect-ratio: 4 / 3; border: none; }
+.pa-photo-date { display: block; padding: 0.3rem 0.5rem; font-size: 0.75rem; color: var(--fg-muted); text-align: left; }
+.pa-dialog { background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 1rem; width: min(35rem, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); padding: 1.5rem; overflow: auto; }
+.pa-dialog::backdrop { background: rgb(0 0 0 / 60%); }
+.pa-dialog form { display: grid; gap: 0.75rem; }
+.pa-dialog form > input { min-width: 0; width: 100%; }
+.pa-dialog .error:empty, #pa-status:empty { display: none; }
+.pa-choices { display: grid; gap: 0.6rem; }
+.pa-choice { display: flex; gap: 0.8rem; align-items: center; text-align: left; overflow-wrap: anywhere; }
+.pa-choice-avatar { width: 3rem; height: 3rem; border-radius: 50%; flex: 0 0 3rem; }
+.pa-preview { width: min(70rem, calc(100% - 2rem)); }
+.pa-preview > img { display: block; max-width: 100%; width: auto; max-height: 60dvh; margin: 0 auto; object-fit: contain; }
+.pa-face-row { display: flex; gap: 0.8rem; flex-wrap: wrap; }
+.pa-undo { position: sticky; bottom: 1rem; display: flex; justify-content: space-between; gap: 1rem; align-items: center; width: fit-content; max-width: 100%; margin: 1rem auto; padding: 0.8rem 1.2rem; border: 1px solid var(--line); background: var(--panel); border-radius: 1rem; box-shadow: 0 0.4rem 1.5rem rgb(0 0 0 / 15%); z-index: 2; }
+#advanced-tools { margin-top: 2rem; }
+#advanced-tools > summary { padding: 1rem; cursor: pointer; color: var(--fg-muted); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (max-width: 480px) { .pa-people-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pa-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pa-dialog { padding: 1rem; } }
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -230,3 +271,8 @@
     grid-template-columns: 1fr;
   }
 }
+
+.pa-album-identity { display: flex; gap: 1rem; align-items: center; }
+.pa-photo-person { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; padding: .5rem; font-size: .8rem; }
+.pa-photo-person .pa-choice-avatar { width: 3rem; height: 3rem; }
+.pa-selected-person { outline: 2px solid #4268c9; background: #edf2ff; }

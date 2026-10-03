@@ -34,6 +34,20 @@ def candidate(person_id: int, vec: tuple[float, ...], *, face_id: str = "f") -> 
     return Candidate(face_id=face_id, person_id=int(person_id), asset_id=1, vector=vec)
 
 
+@pytest.mark.parametrize(
+    ("similarity", "action"), [(0.4999, "SUGGESTED"), (0.50, "MERGE"), (0.53, "MERGE")]
+)
+def test_personal_merge_threshold_boundary(similarity: float, action: str) -> None:
+    probe = vector(similarity, (1 - similarity * similarity) ** 0.5)
+    decision = decide_for_face(
+        quality_state="OK",
+        vector=probe,
+        candidates=[candidate(7, vector(1))],
+        person_in_asset=set(),
+    )
+    assert decision.action == action
+
+
 def test_blob_round_trip_keeps_the_dimension_contract() -> None:
     vec = vector(3.0, 4.0)
     restored = blob_to_vector(embedding_blob(vec), dimension=contract.FACE_DIMENSION)

@@ -12,6 +12,14 @@
 
 2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。
 
+## 当前人物任务 P4-PERSON-UX-A — 个人相册与简单整理（**IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**）
+
+[实现报告](reports/P4-PERSON-UX-A-implementation.md)、[功能卡](tasks/P4-PERSON-UX-A.md)、[最小决策ADR-0014](decisions/ADR-0014-person-album-geometry-repair.md)。人物默认点头像看完整照片、按名字选人、取名/明确并入、合照选单脸更正及撤销；未命名与机器/人工待归类集中到“整理一下”，高级流程折叠保留。修复长边>1280的scale及原图坐标错误；新旧产物分版本，保留人工映射hold，明确同空间v1/v2代表兼容且不激活部分新索引。按用户“个人项目，完成后简单测试”收尾：定向JUnit **219/0/0/0**，升级边界补充子集 **3/0/0/0**、Ruff/Node/diff-check通过；合成浏览器完成命名/冲突并入/单脸更正/撤销。未访问真实库/PhotoSearchData或大夹具、未加载模型/调整阈值/自动重检，不声明真实识别率或正式PASS。唯一下一人物阶段：[独立受影响面审查](tasks/P4-PERSON-UX-A-review.md)，建议DS-H→Sol high聚焦身份/人工知识及兼容决策；由用户手动切换，不自动继续Agent或全量测试。首页/搜索/Qwen并行任务原状态保留。
+
+2026-10-03个人反馈修复：自动未命名人物NULL头像现在从自己的有效人脸只读补选；每张相册照片显示对应人物裁剪、预览标出本相册人脸。定向JUnit **20/0/0/0**、Ruff/Node/diff-check与合成浏览器通过，两个人物可对应同一合照但展示不同人脸，见报告末节。未改识别阈值/自动合并/真实数据；真实错分仍未验证，源码需重启应用刷新生效。
+
+2026-10-03当前人物授权补充[P4-PERSON-MATCH-A](tasks/P4-PERSON-MATCH-A.md)：自动归人相似度0.56→0.50，检测0.50/建议0.29及质量/冲突/人工保护不变；历史校准独立保留。新增`face.cli rematch`复用已存同空间v1/v2特征重匹配未归人的脸，保持已有归属，不需要图文重建；错误目录不建空库，新零脸产物不复活旧机器脸。定向JUnit **79/0/0/0**、Ruff/CLI帮助/diff-check通过，见[报告与操作命令](reports/P4-PERSON-MATCH-A-implementation.md)。未对真实库执行/加载模型，不声称真实识别率；独立审查加审本补充面，状态仍PENDING。
+
 ## 上一任务 P4-PLACE-SEARCH-A — 普通搜索支持地点＋内容（**PASS — 本机个人地点＋内容搜索与小样本验证**）
 
 用户新增补充：[执行卡](tasks/P4-PLACE-SEARCH-A.md)。基线`f3b04af`。报告：[实现记录](reports/P4-PLACE-SEARCH-A-implementation.md)。新增地点感知搜索入口、共用权威地点成员scope、无语义Top-K限制的纯地点分页、可取消条件chip；active省份INDEX即使无照片也可识别，同名选项附上级地名。定向JUnit 28/0/0/0（含共同向量block路径）、Ruff与diff-check通过。合成浏览器完成`济南的日落`→普通照片结果/预览→取消后保留日落查询并全范围搜索；将样片人工改至上海后重载并重新搜索，济南范围0张。仅合成资产；不代表真实模型准确率或真实图库效果。未访问真实库，不建B/C卡、不跑全量或性能测试；实现已提交c812d10；本次补交方案与交接文档，未重复运行测试，未覆盖项见实现报告。

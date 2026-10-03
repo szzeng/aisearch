@@ -4,25 +4,22 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>人物整理</title>
+    <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css" />
-    <link rel="stylesheet" href="/web/persons.css" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-ux-a-avatar2" />
     <script src="/web/persons.js" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-ux-a-avatar2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
 
     <header class="app-header">
-      <h1>人物整理</h1>
+      <h1>人物相册</h1>
       <nav class="app-nav" aria-label="页面导航">
         <a class="nav-link" href="/">返回「本机图片搜索」</a>
         <a class="nav-link" href="/search">搜索图片</a>
         <a class="nav-link" href="/places">地点整理</a>
-        <a class="nav-link" href="#panel-persons">人物列表</a>
-        <a class="nav-link" href="#panel-mappings">重检测待确认</a>
-        <a class="nav-link" href="#panel-faces">脸与拆分</a>
-        <a class="nav-link" href="#panel-operations">最近操作与撤销</a>
       </nav>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
@@ -30,6 +27,30 @@
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
+      <section id="pa-library" class="panel pa-shell" aria-label="我的人物">
+        <div class="pa-heading"><div><h2>熟悉的人，都在这里</h2><p class="hint">点头像看照片；取个名字，下次直接搜。</p></div>
+          <div class="row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
+        </div>
+        <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
+        <p id="pa-list-note" class="hint"></p>
+        <div id="pa-cards" class="pa-people-grid"></div>
+        <button type="button" id="pa-more" hidden>再看一些人物</button>
+        <section id="pa-inbox" hidden><h3>还没认出是谁</h3><p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。模糊、小脸和人工移出的脸也会显示在这里。</p><div id="pa-inbox-cards" class="pa-people-grid"></div><button id="pa-inbox-more" type="button" hidden>再整理一些</button></section>
+      </section>
+      <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>
+        <button id="pa-back" type="button">← 所有人物</button>
+        <div class="pa-heading"><div class="pa-album-identity"><span id="pa-album-avatar"></span><div><h2 id="pa-title"></h2><p class="hint" id="pa-album-note"></p></div></div><div class="row-actions"><button id="pa-name" type="button">取名字</button><button id="pa-merge" type="button">这是同一个人</button></div></div>
+        <form id="pa-search-photos" class="pa-search"><label class="sr-only" for="pa-photo-query">在这个人的照片中搜索</label><input id="pa-photo-query" type="search" maxlength="256" placeholder="在这个人的照片里找：海边、生日……" /><button>搜索照片</button><button id="pa-all-photos" type="button">全部照片</button></form>
+        <p id="pa-photo-note" class="hint" role="status"></p><div id="pa-photos" class="pa-photo-grid"></div><button id="pa-photos-more" type="button" hidden>再看一些照片</button>
+      </section>
+      <p id="pa-status" class="notice" role="status" aria-live="polite"></p>
+      <div id="pa-undo-bar" class="pa-undo" hidden><span id="pa-undo-text"></span><button id="pa-undo" type="button">撤销</button></div>
+      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><p id="pa-preview-note" class="hint" role="status"></p><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
+      <dialog id="pa-edit" class="pa-dialog"><h2 id="pa-edit-title"></h2><p id="pa-edit-note" class="hint"></p>
+        <form id="pa-edit-form"><label for="pa-edit-query" id="pa-edit-label">名字</label><input id="pa-edit-query" maxlength="200" autocomplete="off" /><button id="pa-edit-find" type="button" hidden>查找人物</button><div id="pa-choices" class="pa-choices"></div><button id="pa-choice-more" type="button" hidden>更多人物</button><p id="pa-edit-error" class="error" role="alert"></p><div class="row-actions"><button id="pa-edit-submit">保存</button><button id="pa-edit-cancel" type="button">取消</button></div></form>
+      </dialog>
+      <details id="advanced-tools"><summary>更多整理（拆分、识别更新、历史操作）</summary>
+      <nav class="app-nav" aria-label="更多整理导航"><a href="#panel-persons">人物列表</a><a href="#panel-mappings">重检测待确认</a><a href="#panel-faces">脸与拆分</a><a href="#panel-operations">最近操作与撤销</a></nav>
       <p class="hint">
         本页只做人工整理：人物、人工锁、排除与操作日志的权威都在本机 SQLite 里，页面读到的每个字段
         都来自会话保护的 <code>/api/v1</code>。页面不显示任何人脸坐标、向量、相似度或本机绝对路径；
@@ -250,11 +271,12 @@
       <section id="panel-limits" class="panel" aria-labelledby="limits-title">
         <h2 id="limits-title">本页不提供的动作</h2>
         <p class="hint">
-          本页不提供人物或脸的物理删除、不提供人脸框坐标编辑、不触发任何模型推理（人脸检测/识别、
+          下方整理工具不提供人物或脸的物理删除、不提供人脸框坐标编辑、不触发任何模型推理（人脸检测/识别、
           OCR、地点解析都不从这里启动），也不写出任何图片向量。缺少模型权重时，已有人物数据照常
           浏览与整理。
         </p>
       </section>
+      </details>
     </main>
 
     <noscript>

@@ -23,7 +23,8 @@ calibrated thresholds of :mod:`photo_search.face.contract`. It is additive and c
 * it never creates, changes or deletes anything about a face under human control, and it only
   ever writes ``assignment_kind = 'AUTO'`` rows.
 
-Candidate matching scans the representatives of the active generation (at most
+Candidate matching scans the active representatives plus the explicitly compatible v2
+geometry repair generation when v1 remains active (at most
 ``MAX_REPRESENTATIVES_PER_PERSON`` per person), never every face against every other face.
 """
 
@@ -48,6 +49,11 @@ from photo_search.face.processor import generation_id_for, queue_candidate
 
 #: Implementation bound for one ``IN (...)`` lookup (mirrors the person/place modules).
 _IN_CHUNK = 400
+
+# Geometry-only repair: recognition pixels, weights, normalization and space are unchanged.
+# This is an explicit v1/v2 bridge, never a compatibility guess for future revisions.
+_GEOMETRY_V1 = "face-buffalo-l-scrfd-arcface-v1"
+_GEOMETRY_V2 = "face-buffalo-l-scrfd-arcface-v2"
 
 
 @dataclass(frozen=True)
@@ -89,7 +95,8 @@ def cosine(first: Sequence[float], second: Sequence[float]) -> float:
     total = 0.0
     for left, right in zip(first, second, strict=True):
         total += float(left) * float(right)
-    return total
+    # Float32 storage roundoff can put an identical unit vector just above 1.
+    return max(-1.0, min(1.0, total))
 
 
 class FaceIndexCoordinator:
@@ -101,7 +108,7 @@ class FaceIndexCoordinator:
         self.catalog = catalog
         self.spec_revision = str(spec_revision)
         self.generation_id = generation_id_for(
-            contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID
+            contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID, spec_revision=self.spec_revision
         )
 
     # ------------------------------------------------------------------ generation
@@ -140,7 +147,25 @@ class FaceIndexCoordinator:
             if event is None:
                 raise CatalogError(INDEX_SUBMISSION_FAILED, "the face outbox event disappeared")
             self._validate_event(event)
-            face = self._publish(event, now_ms=int(now_ms))
+            publisher = self
+            event_generation = self.catalog.read_one(
+                "SELECT spec_revision FROM face_index_generations WHERE generation_id = ?",
+                (str(event["generation_id"]),),
+            )
+            if (
+                self.spec_revision == _GEOMETRY_V2
+                and event_generation is not None
+                and str(event_generation["spec_revision"]) == _GEOMETRY_V1
+                and str(event["generation_id"]) == generation_id_for(
+                    contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID,
+                    spec_revision=_GEOMETRY_V1,
+                )
+            ):
+                # Replay retained v1 repairs with their own revision and generation.
+                publisher = FaceIndexCoordinator(self.catalog, spec_revision=_GEOMETRY_V1)
+            if str(event["generation_id"]) != publisher.generation_id:
+                raise CatalogError(INDEX_SUBMISSION_FAILED, "face event generation is incompatible")
+            face = publisher._publish(event, now_ms=int(now_ms))
             if failpoint == "after_publish":
                 raise _InjectedCrash("after_publish")
             with self.catalog.write() as connection:
@@ -174,7 +199,7 @@ class FaceIndexCoordinator:
                     "WHERE event_id = ?",
                     (int(now_ms), event_id),
                 )
-                self._make_generation_ready(connection, now_ms=int(now_ms))
+                publisher._make_generation_ready(connection, now_ms=int(now_ms))
             return True
         except _InjectedCrash:
             raise
@@ -339,34 +364,61 @@ class FaceIndexCoordinator:
 
     # ------------------------------------------------------------------ candidates
     def candidates(self) -> list[Candidate]:
-        """Every representative of the active generation, with its effective person."""
+        """Confirmed representatives, with the bounded v1/v2 geometry compatibility bridge."""
         generation = self.active_generation()
         if generation is None:
             return []
+        generation_ids = [str(generation["generation_id"])]
+        current = self.generation()
+        if (
+            self.spec_revision == _GEOMETRY_V2
+            and str(generation["spec_revision"]) == _GEOMETRY_V1
+            and str(generation["generation_id"]) == generation_id_for(
+                contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID,
+                spec_revision=_GEOMETRY_V1,
+            )
+            and str(generation["state"]) == "READY"
+            and current is not None
+            and str(current["spec_revision"]) == _GEOMETRY_V2
+            and str(current["state"]) == "READY"
+            and str(current["space_id"]) == str(generation["space_id"]) == contract.FACE_SPACE_ID
+            and str(current["processor_id"]) == str(generation["processor_id"]) == contract.FACE_PROCESSOR_ID
+            and int(current["dimension"]) == int(generation["dimension"]) == contract.FACE_DIMENSION
+            and str(current["metric"]) == str(generation["metric"]) == "cosine"
+            and str(current["normalization"]) == str(generation["normalization"]) == "L2"
+        ):
+            generation_ids.append(self.generation_id)
+        marks = ",".join("?" for _ in generation_ids)
         rows = self.catalog.read_all(
             "SELECT c.face_id AS face_id, l.person_id AS person_id, f.asset_id AS asset_id, "
             "c.vector_blob AS vector_blob FROM face_candidates AS c "
             "JOIN face_person_links AS l ON l.face_id = c.face_id AND l.decision = 'CONFIRMED' "
             "JOIN faces AS f ON f.face_id = c.face_id "
-            "WHERE c.generation_id = ? AND c.is_representative = 1 ORDER BY c.face_id",
-            (str(generation["generation_id"]),),
+            "JOIN face_index_entries AS e ON e.face_id = c.face_id "
+            "AND e.generation_id = c.generation_id AND e.state = 'CONFIRMED' "
+            "AND e.artifact_id = f.artifact_id "
+            f"WHERE c.generation_id IN ({marks}) AND c.is_representative = 1 "
+            "ORDER BY f.face_pixels DESC, c.face_id",
+            tuple(generation_ids),
         )
-        # A human lock or an active human denial is read here too, so a candidate scan can
-        # never offer a face the automatic path is forbidden to touch (ADR-0006 §6).
         locked, excluded = blocked_face_links(self.catalog.connection)
-        return [
-            Candidate(
-                face_id=str(row["face_id"]),
-                person_id=int(row["person_id"]),
-                asset_id=int(row["asset_id"]),
-                vector=blob_to_vector(
-                    bytes(row["vector_blob"]), dimension=contract.FACE_DIMENSION
-                ),
-            )
-            for row in rows
-            if str(row["face_id"]) not in locked
-            and (str(row["face_id"]), int(row["person_id"])) not in excluded
-        ]
+        from photo_search.persons.identity import resolve_canonical_person_id
+
+        selected: list[Candidate] = []
+        counts: dict[int, int] = {}
+        for row in rows:
+            face_id = str(row["face_id"])
+            person_id = resolve_canonical_person_id(self.catalog.connection, int(row["person_id"]))
+            if face_id in locked or (face_id, person_id) in excluded:
+                continue
+            if counts.get(person_id, 0) >= contract.MAX_REPRESENTATIVES_PER_PERSON:
+                continue
+            counts[person_id] = counts.get(person_id, 0) + 1
+            selected.append(Candidate(
+                face_id=face_id, person_id=person_id, asset_id=int(row["asset_id"]),
+                vector=blob_to_vector(bytes(row["vector_blob"]), dimension=contract.FACE_DIMENSION),
+            ))
+        return sorted(selected, key=lambda candidate: candidate.face_id)
 
     def index_state(self) -> dict[str, Any]:
         """Read-only counts of the face index (no vector, no coordinate, no path)."""
@@ -587,6 +639,7 @@ def reconcile(
     coordinator: FaceIndexCoordinator | None = None,
     limit: int = 100_000,
     spec_revision: str = contract.FACE_SPEC_REVISION,
+    asset_ids: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Group every queued asset's faces conservatively, republishing as it goes.
 
@@ -596,6 +649,7 @@ def reconcile(
     must not produce.
     """
     index = coordinator or FaceIndexCoordinator(catalog, spec_revision=str(spec_revision))
+    selected = None if asset_ids is None else {int(asset) for asset in asset_ids}
     decisions: list[dict[str, Any]] = []
     processed = 0
     deferred = 0
@@ -603,6 +657,8 @@ def reconcile(
         if processed >= int(limit):
             break
         asset_id = int(row["asset_id"])
+        if selected is not None and asset_id not in selected:
+            continue
         if index.active_generation() is None or not _index_complete(
             catalog, index, asset_id=asset_id
         ):

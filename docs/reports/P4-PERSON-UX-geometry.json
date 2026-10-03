@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-03",
+  "head": "fe46753",
+  "scope": "synthetic geometry and payload validation; no model or real photos",
+  "junit": {
+    "tests": 3,
+    "passed": 1,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "samples": [
+    {
+      "input_size": [
+        1280,
+        800
+      ],
+      "working_size": [
+        1280,
+        800
+      ],
+      "actual_bbox": [
+        200.0,
+        200.0,
+        300.0,
+        300.0
+      ],
+      "expected_source_bbox": [
+        200.0,
+        200.0,
+        300.0,
+        300.0
+      ],
+      "actual_scale": 1.0,
+      "expected_forward_scale": 1.0,
+      "validation_error": null,
+      "synthetic_detector": true,
+      "model_loaded": false
+    },
+    {
+      "input_size": [
+        2560,
+        1600
+      ],
+      "working_size": [
+        1280,
+        800
+      ],
+      "actual_bbox": [
+        100.0,
+        100.0,
+        150.0,
+        150.0
+      ],
+      "expected_source_bbox": [
+        400.0,
+        400.0,
+        600.0,
+        600.0
+      ],
+      "actual_scale": 2.0,
+      "expected_forward_scale": 0.5,
+      "validation_error": {
+        "code": "ARTIFACT_INVALID",
+        "message": "ARTIFACT_INVALID: scale is outside [0.0, 1.0]"
+      },
+      "synthetic_detector": true,
+      "model_loaded": false
+    },
+    {
+      "input_size": [
+        4000,
+        2500
+      ],
+      "working_size": [
+        1280,
+        800
+      ],
+      "actual_bbox": [
+        64.0,
+        64.0,
+        96.0,
+        96.0
+      ],
+      "expected_source_bbox": [
+        625.0,
+        625.0,
+        937.5,
+        937.5
+      ],
+      "actual_scale": 3.125,
+      "expected_forward_scale": 0.32,
+      "validation_error": {
+        "code": "ARTIFACT_INVALID",
+        "message": "ARTIFACT_INVALID: scale is outside [0.0, 1.0]"
+      },
+      "synthetic_detector": true,
+      "model_loaded": false
+    }
+  ]
+}

@@ -228,6 +228,7 @@ def asset_page(
     text: str | None = None,
     capture_from: str | None = None,
     capture_to_exclusive: str | None = None,
+    person_ids: tuple[int, ...] = (),
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -289,6 +290,12 @@ def asset_page(
         include_descendants=include_descendants,
         place_state=place_state,
     )
+    if person_ids:
+        from photo_search.search.retrieval import SearchScope, person_condition
+
+        person_sql, person_parameters = person_condition(SearchScope.build(person_ids=person_ids))
+        place_sql = f"({place_sql}) AND ({person_sql})"
+        place_parameters = [*place_parameters, *person_parameters]
     # ADR-0005 §10: the ``suggested`` state has its own revision. A continuation (or a page)
     # that was computed under a different visible candidate set must be re-queried instead of
     # silently mixing two versions of the answer.

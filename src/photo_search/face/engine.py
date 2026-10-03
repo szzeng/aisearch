@@ -411,7 +411,10 @@ def analyze_image(
             )
 
     working, inverse_scale = working_image(image)
-    working_scale = 1.0 / float(inverse_scale)
+    # Resize rounds each dimension separately. Map geometry with the actual x/y
+    # ratios, while the document scale remains the forward long-edge ratio.
+    source_scale_x = original_size[0] / float(working.size[0])
+    source_scale_y = original_size[1] / float(working.size[1])
     blob, detect_scale, detect_offset = build_canvas(working)
     check()
     outputs = engine.detect(blob)
@@ -437,9 +440,12 @@ def analyze_image(
             face.bbox[2] - face.bbox[0],
             face.bbox[3] - face.bbox[1],
         )
-        source_box = tuple(_round(value * working_scale) for value in face.bbox)
+        source_box = tuple(
+            _round(value * (source_scale_x if index % 2 == 0 else source_scale_y))
+            for index, value in enumerate(face.bbox)
+        )
         source_landmarks = tuple(
-            (_round(x * working_scale), _round(y * working_scale)) for x, y in face.landmarks
+            (_round(x * source_scale_x), _round(y * source_scale_y)) for x, y in face.landmarks
         )
         state, reason = quality_for(
             det_score=face.det_score, face_pixels=pixels, blur_variance=blur
@@ -463,7 +469,7 @@ def analyze_image(
     return FaceDocument(
         original_size=original_size,
         working_size=(int(raster.size[0]), int(raster.size[1])),
-        scale=float(inverse_scale),
+        scale=1.0 / float(inverse_scale),
         faces=tuple(records),
         elapsed_ms=int(round((now() - started) * 1000.0)),
     )

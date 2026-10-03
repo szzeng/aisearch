@@ -13,6 +13,7 @@ Commands
 ``run``        drain the runnable face jobs through the P2-02 scheduler.
 ``index``      publish and confirm the independent candidate index.
 ``group``      run the conservative association pass.
+``rematch``    reconsider unassigned stored faces; no model inference or library scan.
 ``detect``     ``enqueue`` + ``run`` + ``index`` + ``group`` + ``index`` in one call.
 
 ``--device`` is the ADR-0003 requested device. ``auto`` (the default) resolves to GPU when
@@ -29,8 +30,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from photo_search.catalog.errors import CatalogError
-from photo_search.config import resolve_data_root
+from photo_search.catalog.errors import CATALOG_UNREADABLE, CatalogError
+from photo_search.config import catalog_db_path, resolve_data_root
 from photo_search.face import weights
 from photo_search.face.service import (
     catch_up_association,
@@ -38,13 +39,14 @@ from photo_search.face.service import (
     enqueue_targets,
     face_targets,
     job_counts,
+    rematch_unassigned,
     run_queue,
     weights_report,
 )
 from photo_search.ingestion.service import CatalogService
 from photo_search.scheduler.projection import face_summary
 
-COMMANDS = ("weights", "status", "enqueue", "run", "index", "group", "detect")
+COMMANDS = ("weights", "status", "enqueue", "run", "index", "group", "rematch", "detect")
 DEVICES = ("auto", "cpu", "gpu")
 
 
@@ -108,9 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
             default=None,
             help="wall-clock budget of one image (default: the frozen limit)",
         )
-    run_parser = commands.add_parser(
-        "run", parents=[common], help="drain the runnable face jobs"
-    )
+    run_parser = commands.add_parser("run", parents=[common], help="drain the runnable face jobs")
     _device_options(run_parser)
     run_parser.add_argument("--worker-id", default="face-cli")
     run_parser.add_argument("--max-jobs", type=int, default=None)
@@ -122,6 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
         "group", parents=[common], help="run the conservative association pass"
     )
     group_parser.add_argument("--limit", type=int, default=None)
+    rematch_parser = commands.add_parser(
+        "rematch", parents=[common], help="match unassigned stored faces without detection"
+    )
+    rematch_parser.add_argument("--limit", type=int, default=None, help="maximum assets per pass")
     return parser
 
 
@@ -180,9 +184,9 @@ def _select(service: CatalogService, args: argparse.Namespace) -> list[dict[str,
         limit=args.limit,
     )
     if args.asset_id:
-        missing = {
-            int(value) for value in args.asset_id
-        } - {int(item["asset_id"]) for item in targets}
+        missing = {int(value) for value in args.asset_id} - {
+            int(item["asset_id"]) for item in targets
+        }
         if missing:
             raise CatalogError(
                 "ASSET_NOT_FOUND",
@@ -217,6 +221,19 @@ def run_command(args: argparse.Namespace) -> int:
             return 0
         if command == "status":
             _emit(args, _status_payload(data_root))
+            return 0
+        if command == "rematch":
+            if not catalog_db_path(data_root).is_file():
+                raise CatalogError(
+                    CATALOG_UNREADABLE,
+                    "rematch requires an existing catalog; check --data-root",
+                )
+            with CatalogService.open(data_root=data_root) as service:
+                limit = args.limit if args.limit is not None else 100_000
+                _emit(
+                    args,
+                    {"status": "ok", "rematch": rematch_unassigned(service.catalog, limit=limit)},
+                )
             return 0
         # Every work command proves the pinned weights before anything is queued, so a broken
         # model root is one structured failure instead of a queue full of blocked jobs.

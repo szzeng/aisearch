@@ -1727,9 +1727,16 @@
     loadOperations(true);
   }
 
+  function bootWhenOpened() {
+    var advanced = document.getElementById("advanced-tools");
+    if (!advanced || advanced.open) { boot(); return; }
+    advanced.addEventListener("toggle", function firstOpen() {
+      if (advanced.open) { advanced.removeEventListener("toggle", firstOpen); boot(); }
+    });
+  }
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
+    document.addEventListener("DOMContentLoaded", bootWhenOpened);
   } else {
-    boot();
+    bootWhenOpened();
   }
 })();

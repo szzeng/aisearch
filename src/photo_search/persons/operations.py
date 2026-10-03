@@ -537,25 +537,20 @@ def _repair_candidates(
     connection: sqlite3.Connection, face_ids: Sequence[str], *, now_ms: int
 ) -> None:
     """Degrade the affected faces to ``PENDING_REPAIR`` and republish in the background."""
-    generation_id = generation_id_for(str(FACE_SPACE_ID), str(FACE_PROCESSOR_ID))
-    generation = connection.execute(
-        "SELECT generation_id FROM face_index_generations WHERE generation_id = ?",
-        (str(generation_id),),
-    ).fetchone()
-    if generation is None:
-        # No face candidate index has ever been created for this catalog: nothing to repair.
-        return
     for face_id in sorted({str(value) for value in face_ids}):
+        face = connection.execute(
+            "SELECT artifact_id, spec_revision FROM faces WHERE face_id = ?", (str(face_id),)
+        ).fetchone()
+        if face is None:
+            continue
+        generation_id = generation_id_for(
+            str(FACE_SPACE_ID), str(FACE_PROCESSOR_ID), spec_revision=str(face["spec_revision"])
+        )
         entry = connection.execute(
             "SELECT 1 FROM face_index_entries WHERE generation_id = ? AND face_id = ?",
             (str(generation_id), str(face_id)),
         ).fetchone()
         if entry is None:
-            continue
-        face = connection.execute(
-            "SELECT artifact_id FROM faces WHERE face_id = ?", (str(face_id),)
-        ).fetchone()
-        if face is None:
             continue
         queue_candidate(
             connection,
@@ -719,20 +714,22 @@ def rename_person(
     expected_revision: int,
     now_ms: int,
     refresh: revision_module.ProjectionRefresh | None = None,
+    merge_by_name: bool = True,
 ) -> dict[str, Any]:
     """Save one display name; a same-name save merges through the same use case."""
     request_id = check_request_id(request_id)
     requested = check_person_id(person_id)
     expected = check_expected_revision(expected_revision)
     display_name, name_key = normalize_person_name(name)
-    digest = payload_sha256(
-        {
-            "type": "RENAME",
-            "person_id": int(requested),
-            "name": display_name,
-            "expected_revision": int(expected),
-        }
-    )
+    intent = {
+        "type": "RENAME",
+        "person_id": int(requested),
+        "name": display_name,
+        "expected_revision": int(expected),
+    }
+    if not merge_by_name:
+        intent["merge_by_name"] = False
+    digest = payload_sha256(intent)
     replay = _replay(connection, request_id=request_id, digest=digest)
     if replay is not None:
         return replay
@@ -743,6 +740,12 @@ def rename_person(
     operation_id = operation_id_for(request_id)
     target = active_person_id_for_name_key(connection, name_key)
     merging = target is not None and int(target) != int(canonical)
+    if merging and not merge_by_name:
+        raise CatalogError(
+            PERSON_REVISION_CONFLICT,
+            "this name belongs to another person; choose an explicit merge",
+            details={"reason": "NAME_IN_USE", "target_person_id": int(target)},
+        )
     operation_type = "MERGE_BY_NAME" if merging else "RENAME"
     target_person_id = int(target) if merging else int(canonical)
     operation_revision = _open_operation(

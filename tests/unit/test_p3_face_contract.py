@@ -127,20 +127,26 @@ def test_the_processor_spec_is_a_valid_frozen_embedding_spec() -> None:
     assert ProcessorSpec.from_envelope(envelope).to_envelope() == envelope
 
 
-def test_the_thresholds_are_derived_from_the_recorded_calibration() -> None:
+def test_historical_calibration_is_preserved_and_personal_policy_is_explicit() -> None:
     measured = contract.CALIBRATION
     gap = float(measured["min_genuine"]) - float(measured["max_impostor"])
     assert gap == pytest.approx(float(measured["gap"]), abs=1e-4)
     # The derivation is part of the contract: 0.8 * gap for merging, 0.2 * gap for suggesting.
-    assert contract.MERGE_THRESHOLD == pytest.approx(
+    assert measured["merge_threshold"] == pytest.approx(
         round(float(measured["max_impostor"]) + 0.8 * gap, 2), abs=0.005
     )
-    assert contract.SUGGEST_THRESHOLD == pytest.approx(
+    assert measured["suggest_threshold"] == pytest.approx(
         round(float(measured["max_impostor"]) + 0.2 * gap, 2), abs=0.005
     )
-    # The architecture forbids a generic constant: the merge threshold is not 0.45, it is far
-    # above the highest measured impostor similarity and below the weakest genuine pair.
-    assert contract.MERGE_THRESHOLD != 0.45
+    # Public defaults informed this user-authorized trial; they are not fabricated
+    # measurements of the user's library or a rewriting of the original calibration.
+    assert measured["merge_threshold"] == 0.56
+    assert contract.MERGE_THRESHOLD == 0.50
+    assert contract.SUGGEST_THRESHOLD == measured["suggest_threshold"] == 0.29
+    assert contract.DETECT_SCORE_THRESHOLD == 0.50
+    assert contract.ASSOCIATION_POLICY["merge_threshold"] == contract.MERGE_THRESHOLD
+    assert contract.ASSOCIATION_POLICY["reference_model"] == "buffalo_l"
+    assert contract.MERGE_THRESHOLD == 1 - contract.ASSOCIATION_POLICY["reference_cosine_distance"]
     assert float(measured["max_impostor"]) < contract.SUGGEST_THRESHOLD < contract.MERGE_THRESHOLD
     assert contract.MERGE_THRESHOLD <= float(measured["min_genuine"])
 

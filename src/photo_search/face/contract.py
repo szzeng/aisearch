@@ -1,4 +1,4 @@
-"""Frozen P3-02 face identity, pinned weights and the *calibrated* grouping thresholds.
+"""Pinned face identity, weights, calibration evidence and current grouping policy.
 
 This module holds strings and numbers only. It is imported by the read-only API
 projection, so nothing here may pull ONNX Runtime, numpy or Pillow into a process that
@@ -18,20 +18,17 @@ a silent downgrade.
 recognition graph and can never equal the image/text space of Chinese-CLIP, so a face
 vector cannot be compared with - or accidentally written into - the photo index.
 
-**The thresholds are calibrated, not conventional.** ``MERGE_THRESHOLD`` and
-``SUGGEST_THRESHOLD`` come from ``CALIBRATION`` below: the measured genuine and impostor
-similarity distributions of the pinned pipeline (see the P3-02 report §5 for the fixture
-inventory and the raw numbers). The architecture explicitly forbids reusing a generic
-constant such as 0.45, so the derivation formula is part of the contract:
+**Historical calibration and current policy are separate.** ``CALIBRATION`` preserves
+the P3-02 eight-identity measurement and its original derivation:
 
     gap            = min_genuine - max_impostor
     MERGE          = max_impostor + 0.8 * gap      (0.2061 + 0.8 * 0.4372 = 0.5559 -> 0.56)
     SUGGEST        = max_impostor + 0.2 * gap      (0.2061 + 0.2 * 0.4372 = 0.2936 -> 0.29)
 
-Anything in ``[SUGGEST, MERGE)`` is *not* merged: it becomes a suggestion a human has to
-confirm. That is the architecture §8.3 "宁可漏，不能错" direction, and it is why the merge
-threshold sits far above the highest measured impostor similarity instead of in the middle
-of the gap.
+The user-authorized personal-album policy now uses merge=0.50, referencing Immich's
+buffalo_l default cosine distance=0.50. This is a trial policy, not a new measured
+calibration or an accuracy claim. Suggest=0.29 and all human/quality/conflict guards
+remain unchanged. Association reads stored vectors; detection identity is unchanged.
 """
 
 from __future__ import annotations
@@ -45,9 +42,9 @@ CONTRACT_VERSION = "p2-contracts.v1"
 
 FACE_PROCESSOR_ID = "face-model@1"
 FACE_TASK_TYPE = "image_face"
-FACE_SPEC_REVISION = "face-buffalo-l-scrfd-arcface-v1"
+FACE_SPEC_REVISION = "face-buffalo-l-scrfd-arcface-v2"
 FACE_DETECTOR_ID = "scrfd-det-10g@1"
-FACE_ARTIFACT_REVISION = "face-document.v1"
+FACE_ARTIFACT_REVISION = "face-document.v2"
 #: An embedding-model spec must declare ``output_type = "embedding"`` in the frozen
 #: contract. The *published* artifact is nevertheless structured, and the reason is
 #: recorded in the report §3: an ``embedding`` artifact is asset-keyed and would create an
@@ -96,7 +93,7 @@ WEIGHT_ROLES = tuple(str(entry["role"]) for entry in PINNED_WEIGHTS)
 #: The image-preprocessing generation: bounded source raster, fixed 640x640 detector
 #: canvas, ArcFace 5-point similarity alignment to 112x112, RGB, per-channel
 #: ``(value - mean) * scale``.
-FACE_IMAGE_PREPROCESS_VERSION = "face-scrfd-640-align112-rgb-v1"
+FACE_IMAGE_PREPROCESS_VERSION = "face-scrfd-640-align112-rgb-v2"
 #: This processor has no query side and no tokenizer; the frozen embedding spec still
 #: requires the fields, so they are declared explicitly as "none" rather than left out.
 FACE_QUERY_PREPROCESS_VERSION = "none-v1"
@@ -199,10 +196,10 @@ QUALITY_BLURRY = "BLURRY"
 QUALITY_LOW_SCORE = "LOW_DETECTION_SCORE"
 
 # ------------------------------------------------------------------- association
-#: Highest similarity this build accepts as "a different person" and the lowest it accepts
-#: as "the same person", both derived from ``CALIBRATION`` (see the module docstring).
+#: Current association policy; these scores are similarities, never probabilities.
 SUGGEST_THRESHOLD = 0.29
-MERGE_THRESHOLD = 0.56
+MERGE_THRESHOLD = 0.50
+ASSOCIATION_POLICY_REVISION = "personal-album-cosine-050-v1"
 #: A guard rather than a calibrated value: no fixture produced a near-tie, so this only
 #: decides that an ambiguous best/second-best pair goes to human confirmation.
 NEAR_TIE_MARGIN = 0.08
@@ -225,8 +222,8 @@ ASSIGNMENT_MANUAL = "MANUAL"
 #: never create, change or delete anything about such a face.
 HUMAN_CONTROL_TABLES = ("face_assignment_controls", "face_exclusions")
 
-#: Measured calibration of this pipeline, recorded so the thresholds above are traceable
-#: instead of magic. Fixtures: the 8 real public-domain faces of the P3-02 fixture set
+#: Historical calibration, preserved independently of the current personal trial policy.
+#: Fixtures: the 8 real public-domain faces of the P3-02 fixture set
 #: (astronaut, six faces of the insightface group photo, one portrait) plus synthetic
 #: identity-preserving variants. All numbers are cosine similarity.
 CALIBRATION: dict[str, Any] = {
@@ -253,18 +250,30 @@ CALIBRATION: dict[str, Any] = {
     "min_genuine": 0.6433,
     "max_impostor": 0.2061,
     "gap": 0.4372,
-    "merge_threshold": MERGE_THRESHOLD,
-    "suggest_threshold": SUGGEST_THRESHOLD,
+    "merge_threshold": 0.56,
+    "suggest_threshold": 0.29,
     "derivation": (
         "merge = max_impostor + 0.8 * gap; suggest = max_impostor + 0.2 * gap; "
         "the near-tie margin is a guard, not a measured value"
     ),
 }
 
+ASSOCIATION_POLICY: dict[str, Any] = {
+    "revision": ASSOCIATION_POLICY_REVISION,
+    "selected_at": "2026-10-03",
+    "merge_threshold": MERGE_THRESHOLD,
+    "suggest_threshold": SUGGEST_THRESHOLD,
+    "basis": "user-authorized personal trial; not a new local calibration",
+    "reference": "https://docs.immich.app/install/config-file/",
+    "reference_model": "buffalo_l",
+    "reference_cosine_distance": 0.50,
+}
+
 #: The frozen engine configuration of the artifact payload. ``config_hash`` is the digest of
-#: *this* mapping, so a change in any preprocessing or decision parameter changes the
+#: *this* mapping, so a change in any detection/preprocessing/quality parameter changes the
 #: processor identity instead of silently redefining it.
 ENGINE_CONFIG: dict[str, Any] = {
+    "image_preprocess_version": FACE_IMAGE_PREPROCESS_VERSION,
     "channel_order": "RGB",
     "detect_canvas": DETECT_CANVAS,
     "detect_pad_value": DETECT_PAD_VALUE,
