@@ -38,7 +38,12 @@ from photo_search.models.embedding.qwen3_vl import (
 from photo_search.models.embedding.registry import EmbeddingRegistry, registry_for
 from photo_search.runtime.device import DevicePolicy, DeviceResolution
 from photo_search.scheduler.contracts import canonical_json
-from photo_search.search.service import _channel_summary, strong_match_policy
+from photo_search.search.service import (
+    _channel_summary,
+    _entries_of,
+    strong_match_max_distance,
+    strong_match_policy,
+)
 from photo_search.workers.query_encoder import pinned_embedding_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -535,12 +540,34 @@ def test_a_candidate_of_another_space_never_moves_the_pointer(tmp_path: Path) ->
         library.close()
 
 
-def test_the_strong_match_statistic_is_only_available_for_the_calibrated_space() -> None:
+def test_strong_match_uses_representation_specific_thresholds() -> None:
     assert strong_match_policy(HISTORICAL_SPACE) is True
-    assert strong_match_policy(f"{QWEN_SPACE_PREFIX}abc") is False
+    assert strong_match_max_distance(HISTORICAL_SPACE) == 1.3
+    qwen_space = f"{QWEN_SPACE_PREFIX}abc"
+    assert strong_match_max_distance(qwen_space) == 1.5
+    assert strong_match_policy(qwen_space) is True
+    assert strong_match_max_distance("unknown-space:abc") is None
     assert strong_match_policy(None) is False
     payload = {
-        "channels": {"fts": [], "vector": [{"asset_id": 1, "distance": 1.0}]},
+        "channels": {
+            "fts": [],
+            "vector": [
+                {"asset_id": 1, "distance": 1.49},
+                {"asset_id": 2, "distance": 1.5},
+                {"asset_id": 3, "distance": 1.500001},
+            ],
+        },
+        "hits": [
+            {
+                "asset_id": asset_id,
+                "score": 1.0 / asset_id,
+                "matched_by": {"vector": asset_id},
+                "hit_reason": "SEMANTIC",
+                "matched_text": (),
+                "semantic_ready": True,
+            }
+            for asset_id in (1, 2, 3)
+        ],
         "vector_scan": {"blocks": 1, "scanned_assets": 1, "truncated": False},
         "authoritative": {"total": 1, "count": 1, "truncated": False, "order": "asset_id"},
     }
@@ -548,8 +575,20 @@ def test_the_strong_match_statistic_is_only_available_for_the_calibrated_space()
         payload, match=object(), binding=SimpleNamespace(space_id=HISTORICAL_SPACE), top_k=5000
     )
     qwen_summary = _channel_summary(
-        payload, match=object(), binding=SimpleNamespace(space_id=f"{QWEN_SPACE_PREFIX}abc"), top_k=5000
+        payload, match=object(), binding=SimpleNamespace(space_id=qwen_space), top_k=5000
+    )
+    unknown_summary = _channel_summary(
+        payload, match=object(), binding=SimpleNamespace(space_id="unknown-space:abc"), top_k=5000
     )
     assert clip_summary["vector"]["strong_match_available"] is True
-    assert clip_summary["vector"]["strong_match_count"] == 1
-    assert qwen_summary["vector"]["strong_match_available"] is False
+    assert clip_summary["vector"]["strong_match_count"] == 0
+    assert qwen_summary["vector"]["strong_match_available"] is True
+    assert qwen_summary["vector"]["strong_match_count"] == 2
+    assert unknown_summary["vector"]["strong_match_available"] is False
+    assert unknown_summary["vector"]["strong_match_count"] == 0
+    assert clip_summary["vector"]["candidates"] == qwen_summary["vector"]["candidates"]
+    assert clip_summary["vector"]["truncated"] == qwen_summary["vector"]["truncated"]
+    assert clip_summary["fts"] == qwen_summary["fts"]
+    assert clip_summary["authoritative"] == qwen_summary["authoritative"]
+    assert tuple(entry.asset_id for entry in _entries_of(payload)) == (1, 2, 3)
+    assert [r["asset_id"] for r in payload["channels"]["vector"]] == [1, 2, 3]

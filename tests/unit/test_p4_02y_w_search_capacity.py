@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from photo_search.search.contracts import SearchRequest
 from photo_search.search.retrieval import DEFAULT_TOP_K, MAX_TOP_K
 from photo_search.search.service import _channel_summary
@@ -12,7 +14,8 @@ def channel_summary(rows, *, top_k: int, scan_truncated: bool = False):
         "vector_scan": {"blocks": 20, "scanned_assets": 300_000, "truncated": scan_truncated},
         "authoritative": {"total": 300_000, "count": 300_000, "truncated": False, "order": "asset_id"},
     }
-    return _channel_summary(payload, match=object(), binding=object(), top_k=top_k)["vector"]
+    binding = SimpleNamespace(space_id="chinese-clip-vit-b-16:test")
+    return _channel_summary(payload, match=object(), binding=binding, top_k=top_k)["vector"]
 
 
 def test_search_and_session_capacity_are_5000_and_request_default_is_fixed() -> None:

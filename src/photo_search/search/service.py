@@ -109,20 +109,27 @@ from photo_search.search.upload import checked_query_vector
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
 
-#: Chinese-CLIP squared-L2 threshold; equivalent to cosine similarity >= 0.35.
-STRONG_MATCH_MAX_DISTANCE = 1.3
+# Squared-L2 thresholds are representation-space specific. Qwen currently uses cosine >= 0.25;
+# Chinese-CLIP retains cosine >= 0.35, with separate constants for independent tuning.
+CLIP_STRONG_MATCH_MAX_DISTANCE = 1.3
+QWEN_STRONG_MATCH_MAX_DISTANCE = 1.5
+CLIP_SPACE_PREFIX = "chinese-clip-vit-b-16:"
+QWEN_SPACE_PREFIX = "qwen3-vl-embedding-2b:"
 
-#: The one representation space that threshold was calibrated on (P4-02Y-W). The statistic is a
-#: property of *that* model's distance distribution, so another space - Qwen3-VL-Embedding-2B, or
-#: a future re-quantised Chinese-CLIP - reports it as unavailable and the page hides the sentence
-#: instead of rendering another model's distribution as "0 张高度匹配".
-STRONG_MATCH_SPACE_PREFIX = "chinese-clip-vit-b-16:"
+
+def strong_match_max_distance(space_id: str | None) -> float | None:
+    """Return a display-statistic threshold; retrieval never consumes this value."""
+    text = str(space_id or "")
+    if text.startswith(CLIP_SPACE_PREFIX):
+        return CLIP_STRONG_MATCH_MAX_DISTANCE
+    if text.startswith(QWEN_SPACE_PREFIX):
+        return QWEN_STRONG_MATCH_MAX_DISTANCE
+    return None
 
 
 def strong_match_policy(space_id: str | None) -> bool:
-    """Whether ``distance <= 1.3`` means anything in this space (P4-02Y-W §7)."""
-    text = str(space_id or "")
-    return bool(text) and text.startswith(STRONG_MATCH_SPACE_PREFIX)
+    """Whether a strong-match threshold is defined for this representation space."""
+    return strong_match_max_distance(space_id) is not None
 
 _HIT_REASON_BY_CHANNELS = {
     (FTS_CHANNEL,): "TEXT",
@@ -513,7 +520,10 @@ def _channel_summary(
     top_k: int,
     image_query: bool = False,
 ) -> dict[str, Any]:
-    """Per-channel candidate count and honest truncation, plus the authority bound.
+    """Post-retrieval per-channel metadata and the independent strong-match display count.
+
+    This runs after ``_entries_of`` has frozen the retrieved/ranked candidates. The threshold
+    is only applied to already-retrieved vector distances and cannot filter or reorder entries.
 
     ``image_query`` names the P2-07 case where the vector channel is engaged by an uploaded
     image rather than by a text query: it ran, so it is reported as engaged, but the text
@@ -525,15 +535,19 @@ def _channel_summary(
     scan = payload["vector_scan"] or {}
     engaged = binding is not None and (match is not None or bool(image_query))
     scan_truncated = bool(scan.get("truncated"))
-    strong_match_count = sum(
-        float(row["distance"]) <= STRONG_MATCH_MAX_DISTANCE for row in vector_rows
+    threshold = strong_match_max_distance(getattr(binding, "space_id", None))
+    strong_match_count = (
+        sum(float(row["distance"]) <= threshold for row in vector_rows)
+        if threshold is not None
+        else 0
     )
     strong_match_more_possible = bool(
-        vector_count == MAX_TOP_K
+        threshold is not None
+        and vector_count == MAX_TOP_K
         and vector_rows
-        and float(vector_rows[-1]["distance"]) <= STRONG_MATCH_MAX_DISTANCE
+        and float(vector_rows[-1]["distance"]) <= threshold
     )
-    strong_match_available = strong_match_policy(getattr(binding, "space_id", None))
+    strong_match_available = threshold is not None
     return {
         FTS_CHANNEL: {
             "engaged": match is not None,
