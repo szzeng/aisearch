@@ -7,6 +7,7 @@ on-disk files and the materialised local place directory (ADR-0005 §2/§8).
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -104,6 +105,33 @@ def test_an_imported_package_is_only_usable_after_validation_and_activation(
     assert harness.catalog.read_one(
         "SELECT revision FROM catalog_filter_revision"
     )["revision"] == 0
+
+
+def test_surviving_read_only_package_can_be_registered_after_catalog_recreation(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = harness.source_package("mini-1")
+    expected = package_dir(harness, "geo-mini-cn-1")
+    shutil.copytree(source, expected)
+    original_files = {
+        path.name: path.read_bytes() for path in expected.iterdir() if path.is_file()
+    }
+
+    def fail_if_copied(*args, **kwargs) -> None:
+        pytest.fail("recovery must not rewrite the surviving package")
+
+    monkeypatch.setattr(datasets_module, "_copy_package_files", fail_if_copied)
+    staged = datasets_module.stage_package(harness.catalog, expected)
+    datasets_module.validate_dataset(harness.catalog, staged["dataset_id"])
+    activated = datasets_module.activate_dataset(harness.catalog, staged["dataset_id"])
+
+    assert activated["state"] == "ACTIVE"
+    assert datasets_module.dataset_status(
+        harness.catalog.connection, data_root=harness.data_root
+    )["state"] == "active"
+    assert {path.name: path.read_bytes() for path in expected.iterdir() if path.is_file()} == (
+        original_files
+    )
 
 
 def test_importing_the_same_dataset_twice_is_refused(harness: Harness) -> None:

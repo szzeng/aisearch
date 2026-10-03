@@ -351,7 +351,12 @@ def stage_package(
                 dataset_id=content.dataset_id,
             )
         now = int(catalog.now_ms() if now_ms is None else now_ms)
-        _copy_package_files(source_dir, dataset_dir(root, content.dataset_id), content.files)
+        target_dir = dataset_dir(root, content.dataset_id)
+        # A catalog can be recreated while its immutable package directory survives.
+        # In that recovery path the source is already the final, read-only directory:
+        # validate it above and rebuild catalog rows without rewriting package files.
+        if source_dir.resolve() != target_dir.resolve():
+            _copy_package_files(source_dir, target_dir, content.files)
         _insert_dataset_rows(
             connection,
             content,
