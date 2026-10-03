@@ -13,6 +13,7 @@
   "use strict";
 
   var API = "/api/v1";
+  var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
   var PAGE_SIZE = 50;
   var POLL_INTERVAL_MS = 700;
   var JOB_SCAN_LIMIT = 200;
@@ -1824,6 +1825,19 @@
       });
     });
     document.getElementById("detail-back").addEventListener("click", function () {
+      var fromSearch = false;
+      try {
+        fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search";
+        if (fromSearch) {
+          window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
+        }
+      } catch (_error) {
+        // If storage is blocked, retain the existing in-page return to gallery behavior.
+      }
+      if (fromSearch) {
+        window.location.href = "/search";
+        return;
+      }
       clearHash();
       showView("browse");
       window.requestAnimationFrame(function () {

@@ -21,6 +21,8 @@
   var MIN_PAGE_SIZE = 1;
   var MAX_PAGE_SIZE = 100;
   var DEFAULT_PAGE_SIZE = 20;
+  var SEARCH_SNAPSHOT_KEY = "aisearch.search-return.v1";
+  var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
   //: One page of the person picker. The page never materialises the whole person list: the
   //: server's own keyset cursor drives "加载更多人物", so a large catalog stays a paged read.
   var PERSON_LIMIT = 25;
@@ -92,6 +94,8 @@
       //: The condition digest this session is bound to (null while no session is open).
       binding: null,
       placeAware: null,
+      hits: [],
+      lastBody: null,
     },
     requestCounter: 0,
     objectUrls: [],
@@ -872,6 +876,9 @@
   }
 
   function submitSearch() {
+    clearSearchSnapshot();
+    state.search.hits = [];
+    state.search.lastBody = null;
     state.search.placeAware = null;
     state.search.mode = "text";
     state.search.sessionId = null;
@@ -1065,6 +1072,7 @@
     if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR") {
       state.search.sessionId = null;
       state.search.cursor = null;
+      els.loadMore.hidden = true;
     }
     setStatus(els.queryStatus, "本次查询没有成功：" + describe(failure), "error");
     renderNotices(els.resultNotices, failureLines(failure));
@@ -1075,6 +1083,7 @@
     // The query is preserved and the page offers a re-run, instead of silently showing an
     // empty grid.
     els.queryActions.hidden = false;
+    saveSearchSnapshot();
   }
 
   function renderPage(body, continuation) {
@@ -1111,6 +1120,8 @@
       els.resultGrid.appendChild(buildHit(hit));
     });
     state.search.count += hits.length;
+    state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
+    state.search.lastBody = body;
     state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
     state.search.total = body.total_candidates;
@@ -1146,6 +1157,119 @@
       }
     }
     setStatus(els.queryStatus, parts.join(" · "));
+    saveSearchSnapshot();
+  }
+
+  function clearSearchSnapshot() {
+    try {
+      window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY);
+      window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
+    } catch (_error) {
+      // Storage may be disabled by the browser; the search page remains usable.
+    }
+  }
+
+  function searchFormSnapshot() {
+    return {
+      queryText: els.queryText.value,
+      source: els.querySource.value,
+      availability: els.queryAvailability.value,
+      placeState: els.queryPlaceState.value,
+      placeIds: els.queryPlaceIds.value,
+      descendants: els.queryDescendants.value,
+      captureFrom: els.queryCaptureFrom.value,
+      captureTo: els.queryCaptureTo.value,
+      pageSize: els.queryPageSize.value,
+      personIds: selectedPersonIds(),
+      personMatch: els.queryPersonMatch.value,
+    };
+  }
+
+  function saveSearchSnapshot() {
+    if (!state.search.hits.length || !state.search.lastBody || state.search.mode !== "text") {
+      return;
+    }
+    try {
+      window.sessionStorage.setItem(
+        SEARCH_SNAPSHOT_KEY,
+        JSON.stringify({
+          form: searchFormSnapshot(),
+          hits: state.search.hits,
+          search_session_id: state.search.sessionId,
+          next_cursor: state.search.cursor,
+          count: state.search.count,
+          total_candidates: state.search.total,
+          placeAware: state.search.placeAware,
+          binding: state.search.binding,
+          lastBody: state.search.lastBody,
+          scrollY: window.scrollY || 0,
+        })
+      );
+    } catch (_error) {
+      // Quota or privacy settings can disable storage without affecting current results.
+    }
+  }
+
+  function restoreSearchSnapshot() {
+    var saved;
+    try {
+      saved = JSON.parse(window.sessionStorage.getItem(SEARCH_SNAPSHOT_KEY) || "null");
+      window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
+    } catch (_error) {
+      clearSearchSnapshot();
+      return;
+    }
+    if (!saved || !saved.form || !Array.isArray(saved.hits) || !saved.lastBody) {
+      return;
+    }
+    var form = saved.form;
+    els.queryText.value = form.queryText || "";
+    els.querySource.value = form.source || "";
+    els.queryAvailability.value = form.availability || "any";
+    els.queryPlaceState.value = form.placeState || "any";
+    els.queryPlaceIds.value = form.placeIds || "";
+    els.queryDescendants.value = form.descendants || "true";
+    els.queryCaptureFrom.value = form.captureFrom || "";
+    els.queryCaptureTo.value = form.captureTo || "";
+    els.queryPageSize.value = form.pageSize || String(DEFAULT_PAGE_SIZE);
+    els.queryPersonMatch.value = form.personMatch === "all" ? "all" : "any";
+    state.person.selected = {};
+    (form.personIds || []).forEach(function (personId) {
+      var id = Number(personId);
+      if (isFinite(id) && id > 0 && Math.floor(id) === id) {
+        state.person.selected[personKey(id)] = { person_id: id, name: null };
+      }
+    });
+    updatePersonSelection();
+    state.search.mode = "text";
+    state.search.hits = saved.hits;
+    state.search.sessionId = saved.search_session_id || null;
+    state.search.cursor = saved.next_cursor || null;
+    state.search.count = 0;
+    state.search.total = saved.total_candidates;
+    state.search.placeAware = saved.placeAware || null;
+    state.search.binding = saved.binding || null;
+    state.search.lastBody = saved.lastBody;
+    var body = Object.assign({}, saved.lastBody, {
+      hits: saved.hits,
+      search_session_id: saved.search_session_id,
+      next_cursor: saved.next_cursor,
+      total_candidates: saved.total_candidates,
+      has_more: Boolean(saved.search_session_id && saved.next_cursor),
+    });
+    renderPage(body, false);
+    window.requestAnimationFrame(function () {
+      window.scrollTo(0, Number(saved.scrollY) || 0);
+    });
+  }
+
+  function prepareSearchDetailReturn() {
+    saveSearchSnapshot();
+    try {
+      window.sessionStorage.setItem(SEARCH_RETURN_SOURCE_KEY, "search");
+    } catch (_error) {
+      // The snapshot may still restore on browser back when the browser blocks storage writes.
+    }
   }
 
   // ----------------------------------------------------------------------- tiles
@@ -1187,6 +1311,7 @@
     }
     var open = element("a", "tile-link", "查看详情");
     open.href = "/#/asset/" + encodeURIComponent(hit.asset_id);
+    open.addEventListener("click", prepareSearchDetailReturn);
     caption.appendChild(open);
     tile.appendChild(caption);
     return tile;
@@ -1586,6 +1711,9 @@
       event.preventDefault();
     }
     state.search.mode = "image";
+    clearSearchSnapshot();
+    state.search.hits = [];
+    state.search.lastBody = null;
     state.search.sessionId = null;
     state.search.cursor = null;
     state.search.count = 0;
@@ -1609,6 +1737,22 @@
   }
 
   function resetFilters() {
+    clearSearchSnapshot();
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.count = 0;
+    state.search.total = null;
+    state.search.hits = [];
+    state.search.lastBody = null;
+    state.search.binding = null;
+    state.search.placeAware = null;
+    releaseObjectUrls();
+    clear(els.resultGrid);
+    clear(els.resultPlaceScope);
+    els.resultPlaceScope.hidden = true;
+    renderNotices(els.resultNotices, []);
+    els.loadMore.hidden = true;
+    els.queryActions.hidden = true;
     els.queryText.value = "";
     els.querySource.value = "";
     els.queryAvailability.value = "any";
@@ -1697,8 +1841,9 @@
     state.observer = buildObserver();
     updatePersonSelection();
     syncPersonControls();
-    loadCapabilities();
-    loadSources();
+    var capabilitiesPromise = loadCapabilities();
+    capabilitiesPromise.then(loadCoverage);
+    Promise.all([capabilitiesPromise, loadSources()]).then(restoreSearchSnapshot);
   }
 
   if (document.readyState === "loading") {

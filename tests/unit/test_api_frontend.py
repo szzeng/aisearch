@@ -154,7 +154,10 @@ def test_the_shipped_shell_has_no_external_reference_or_credential() -> None:
     assert "X-CSRF-Token" in script
     assert 'credentials: "same-origin"' in script
     assert "localStorage" not in script
-    assert "sessionStorage" not in script
+    assert "window.sessionStorage" in script
+    assert 'var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";' in script
+    assert 'fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search";' in script
+    assert 'window.location.href = "/search";' in script
     assert "console." not in script
     # A media failure message can carry a repr-escaped absolute path that the server-side
     # redactor does not replace, so the page has to withhold such text itself.
@@ -205,7 +208,7 @@ def test_frontend_never_puts_a_credential_in_a_url_or_in_storage() -> None:
     assert "csrf_token" not in script
     assert "document.cookie =" not in script  # read-only cookie access
     assert "localStorage" not in script
-    assert "sessionStorage" not in script
+    assert "window.sessionStorage" in script
     assert "console." not in script
 
 
@@ -462,13 +465,33 @@ def test_the_search_page_has_no_external_reference_or_credential() -> None:
     assert "X-CSRF-Token" in script
     assert 'credentials: "same-origin"' in script
     assert "localStorage" not in script
-    assert "sessionStorage" not in script
+    assert "window.sessionStorage" in script
     assert "console." not in script
     assert "innerHTML" not in script
     assert "token=" not in script
     assert "csrf_token" not in script
     assert "错误详情包含本机路径" in script
     assert "PATH_LIKE" in script
+
+
+def test_search_page_restores_results_without_searching_again() -> None:
+    _, script, _ = _search_documents()
+
+    assert "window.sessionStorage.setItem" in script
+    assert "window.sessionStorage.getItem" in script
+    restore = script.split("function restoreSearchSnapshot()", 1)[1].split(
+        "// ----------------------------------------------------------------------- tiles", 1
+    )[0]
+    assert "sendSearch(" not in restore
+    assert "renderPage(body, false);" in script
+    assert "window.scrollTo(0, Number(saved.scrollY) || 0);" in script
+    assert "open.addEventListener(\"click\", prepareSearchDetailReturn);" in script
+    assert 'window.sessionStorage.setItem(SEARCH_RETURN_SOURCE_KEY, "search");' in script
+    assert "clearSearchSnapshot();" in script
+    submit = script.split("function submitSearch()", 1)[1].split("function continueSearch()", 1)[0]
+    reset = script.split("function resetFilters()", 1)[1].split("function clearCaptureRange()", 1)[0]
+    assert "clearSearchSnapshot();" in submit
+    assert "clearSearchSnapshot();" in reset
 
 
 def test_the_search_page_reaches_data_only_through_the_protected_api() -> None:

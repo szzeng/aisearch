@@ -2,6 +2,10 @@
 
 更新：2026-10-03。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## P4-SEARCH-RETURN-A — 搜索结果返回恢复（**IMPLEMENTED / 定向验证通过 / 浏览器验收阻塞**）
+
+报告：[实现与验收记录](reports/P4-SEARCH-RETURN-A-implementation.md)。`search.js` 以 `sessionStorage` 保存/恢复筛选、已加载结果、分页 session/cursor、地点状态与离开滚动位置；详情页「返回浏览」会回到搜索页；恢复复用既有渲染且不发起搜索。新搜索/重置清除现场。JUnit **95/0/0/0**、Node 语法与 diff-check 通过。24 张合成夹具已建立于项目 `.tmp`；Windows 回环端口绑定 `WinError 10013`，提权重试仍失败，浏览器往返验收未执行，因此任务尚不能标 PASS。
+
 ## 当前任务 P4-HOME-UX-A — 首页快速可用、图库来源辨识与照片预览适配（**IMPLEMENTED / VALIDATION PENDING**）
 
 执行卡：[P4-HOME-UX-A](tasks/P4-HOME-UX-A.md)；调查：[代码调查](reports/P4-HOME-UX-A-investigation.md)；实现与证据：[实现报告](reports/P4-HOME-UX-A-implementation.md)。后续修正首页请求顺序、显式展开完整来源路径、预览缩放/适合窗口/实际大小；修复空查询纯筛选搜索将空文本传到接口造成的422。116个相关/直接回归测试 **0失败/0错误/0跳过**、Ruff、Node语法、diff-check通过；合成浏览器确认6张纯筛选搜索结果可见。普通文本搜索 API 在确定性合成编码器下返回命中。2026-10-03只读发现本机8000服务健康；新开的未认证页面取来源摘要返回`SESSION_REQUIRED`，未发起搜索，因此真实会话下搜索结果仍待核。用户需在尝试搜索的浏览器打开启动器打印的一次性链接；不得分享链接/令牌。只运行隔离小型合成夹具；**未访问或重建30万夹具**、真实库或PhotoSearchData，未加载模型。其他待审任务不变。
