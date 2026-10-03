@@ -4,7 +4,7 @@
 
 ## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
 
-报告：[恢复与实现](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)。同目录只读包可校验后重建 catalog 登记而不覆盖包文件。PhotoSearchData 的 GeoNames Asia 包已恢复 ACTIVE（45,217 条，resolver 可用）；定向 JUnit **1/0/0/0**、`git diff --check` 通过。catalog 删除会丢 catalog 内地点目录、人工归属与历史解析，包文件保留不代表这些状态可自动复原。需 DS-H 全受影响面独立审查，未标 PASS。
+报告：[恢复与实现（第二轮）](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)；[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。应用打开空地名 registry 时自动校验/激活唯一健康现存包，删除 catalog/vectors 后重启可恢复；保留包字节/mtime、已有选择及多包拒绝边界。PhotoSearchData 已自动恢复 ACTIVE（45,217条）；定向JUnit **29/0/0/0**，最终恢复/并发 **10/0/0/0**，Ruff/diff-check通过。最终全量 **1968/6/0/48**，禁用新增钩子后6项失败仍复现（旧契约哈希/高度匹配测试），详见报告；人工历史不复原，独立DS-H及决策冻结待做，未标PASS。
 
 ## P4-SEARCH-RETURN-A — 搜索结果返回恢复（**IMPLEMENTED / 定向验证通过 / 浏览器验收阻塞**）
 

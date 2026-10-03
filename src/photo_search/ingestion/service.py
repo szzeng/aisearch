@@ -96,6 +96,13 @@ class CatalogService:
             lease_seconds=lease_seconds,
             disk_usage=disk_usage,
         )
+        try:
+            from photo_search.places.datasets import restore_surviving_dataset
+
+            restore_surviving_dataset(catalog)
+        except BaseException:
+            catalog.close()
+            raise
         return cls(
             catalog,
             data_root=root,

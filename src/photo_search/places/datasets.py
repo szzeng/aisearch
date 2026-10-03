@@ -13,6 +13,7 @@ manual assignment, filtering and the operation history keep working.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -47,6 +48,7 @@ from photo_search.places.contracts import (
 )
 
 CAUSE_DATASET_ACTIVATED = "PLACE_DATASET_ACTIVATED"
+logger = logging.getLogger(__name__)
 
 DATASET_ROW_FIELDS = (
     "dataset_id, package_id, package_version, contract_version, manifest_schema, provider, "
@@ -397,6 +399,62 @@ def validate_dataset(
             (now, now, str(dataset_id)),
         )
         return dataset_view(dataset_row(connection, dataset_id) or {}, problems=[])
+
+
+def restore_surviving_dataset(catalog: Catalog) -> dict[str, Any] | None:
+    """Bootstrap an empty registry from its sole intact local package at app startup.
+
+    Existing catalog choices are authoritative, including an intentionally inactive
+    package. Multiple surviving packages require an explicit choice. This reads only
+    the package directory; registration, validation and activation commit together.
+    """
+    if catalog.read_one("SELECT 1 FROM geo_datasets LIMIT 1") is not None:
+        return None
+    root = Path(catalog.data_root)
+    packages = place_datasets_dir(root)
+    try:
+        if not packages.is_dir() or not packages.resolve().is_relative_to(root.resolve()):
+            return None
+        directories = [path for path in packages.iterdir() if path.is_dir()]
+        if len(directories) != 1:
+            return None
+        source = directories[0]
+        if source.is_symlink() or source.is_junction():
+            return None
+        content = dataset_module.load_content(
+            source, supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION)
+        )
+        if source.name != content.dataset_id or source.resolve() != dataset_dir(
+            root, content.dataset_id
+        ):
+            return None
+        if content.manifest["previous_dataset_id"] is not None:
+            # The predecessor is a catalog FK. An empty registry cannot satisfy it;
+            # leave this package for explicit recovery with its retained predecessor.
+            logger.warning("surviving place package needs a predecessor; automatic recovery skipped")
+            return None
+    except (CatalogError, OSError):
+        # A defective optional package must not prevent catalog browsing or manual edits.
+        logger.warning("surviving place package could not be validated; resolver unavailable")
+        return None
+
+    with catalog.write() as connection:
+        # Another application opener may have completed recovery while we verified files.
+        if connection.execute("SELECT 1 FROM geo_datasets LIMIT 1").fetchone() is not None:
+            return None
+        now = catalog.now_ms()
+        _insert_dataset_rows(
+            connection,
+            content,
+            relative_dir=dataset_relative_dir(content.dataset_id),
+            now_ms=now,
+        )
+        connection.execute(
+            "UPDATE geo_datasets SET state = 'VALIDATED', validated_at = ?, updated_at = ? "
+            "WHERE dataset_id = ?",
+            (now, now, content.dataset_id),
+        )
+        return _set_active(connection, content=content, now_ms=now)
 
 
 # ------------------------------------------------------------- activate/rollback/cleanup
