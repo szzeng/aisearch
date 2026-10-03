@@ -1,6 +1,6 @@
 # P4-02Y-W-Q — Qwen 高度匹配恢复
 
-**状态：READY FOR IMPLEMENTATION**
+**状态：IMPLEMENTED / TARGETED VALIDATION COMPLETE / PERSONAL WEB CONFIRMATION PENDING**
 
 性质：个人试用小改。
 
@@ -45,7 +45,7 @@ strong_match_available=false
 本卡直接采用个人使用的通用默认值：
 
 ```text
-Qwen cosine >= 0.50
+Qwen cosine >= 0.25
 ```
 
 当前向量已 L2 normalize，Lance 使用 squared-L2：
@@ -57,13 +57,13 @@ distance = 2 - 2 × cosine
 因此：
 
 ```python
-QWEN_STRONG_MATCH_MAX_DISTANCE = 1.0
+QWEN_STRONG_MATCH_MAX_DISTANCE = 1.5
 ```
 
 即：
 
 ```text
-distance <= 1.0
+distance <= 1.5
 → 高度匹配
 ```
 
@@ -98,7 +98,7 @@ STRONG_MATCH_SPACE_PREFIX = "chinese-clip-vit-b-16:"
 
 ```python
 CLIP_STRONG_MATCH_MAX_DISTANCE = 1.3
-QWEN_STRONG_MATCH_MAX_DISTANCE = 1.0
+QWEN_STRONG_MATCH_MAX_DISTANCE = 1.5
 
 CLIP_SPACE_PREFIX = "chinese-clip-vit-b-16:"
 QWEN_SPACE_PREFIX = "qwen3-vl-embedding-2b:"
@@ -207,8 +207,8 @@ API 顶层结构不变。
 
 ```text
 Qwen distance = 0.99      → strong
-Qwen distance = 1.00      → strong
-Qwen distance = 1.000001  → not strong
+Qwen distance = 1.50      → strong
+Qwen distance = 1.500001  → not strong
 ```
 
 确认：
@@ -330,8 +330,8 @@ docs/development-status.md
 报告保持短小，只记录：
 
 ```text
-threshold = 1.0
-对应 cosine >= 0.50
+threshold = 1.5
+对应 cosine >= 0.25
 修改文件
 定点 pytest 结果
 3 条真实搜索确认结果
@@ -345,7 +345,7 @@ threshold = 1.0
 满足以下条件即停止：
 
 ```text
-Qwen distance <= 1.0
+Qwen distance <= 1.5
 → 被统计为高度匹配
 
 Qwen 搜索页面
@@ -370,7 +370,7 @@ PASS — 本机个人试用 Qwen 高度匹配恢复
 不表示：
 
 ```text
-Qwen 0.50 是经过个人图库严格标定的最佳阈值
+Qwen 0.25 是经过个人图库严格标定的最佳阈值
 正式发行质量验收
 全模型通用阈值
 ```
