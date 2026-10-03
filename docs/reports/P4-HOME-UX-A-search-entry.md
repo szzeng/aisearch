@@ -54,3 +54,23 @@ node --check src/photo_search/web/search.js
 ## 结论与限制
 
 **页面进入链路修复通过定向测试和合成浏览器验证**。本机应用需重启加载新路由，刷新首页/搜索页加载新脚本。若模型尚未准备，首次实际搜索仍会等待模型初始化；此次没有优化模型冷启动，也没有声称搜索推理变快。用户真实会话/真实图库搜索及P4-HOME-UX-A原有未验证项保持待核，不把总任务改成PASS。
+
+## 暂存区整理与遗漏修正（2026-10-03）
+
+整理基线 `cab19db`。暂存区曾删除 `b68165c` 已提交的搜索返回代码及实现报告，工作区已将它们恢复；此次仅取消这些旧暂存，不提交功能回退。`app.js` 和搜索返回实现报告与 HEAD 相同；前端测试唯一差异是函数位置移动，已核对内容完全相同并恢复原位置。
+
+最终代码修正：删除搜索页初始化中的 `capabilitiesPromise.then(loadCoverage)`，让完整覆盖率请求只由显式点击触发，保留轻量能力/来源加载与 `restoreSearchSnapshot`。现有 `test_page_startup_avoids_model_probes_and_automatic_coverage` 已覆盖该约束；搜索返回的保存/恢复契约仍通过。另将高度匹配注释更新为按表征空间决定可用性与阈值，不改变统计、结果或排序。
+
+状态文档保留地名包恢复、Qwen高度匹配及人物反馈的既有交接；修正行尾空白，文本使用 LF。本次不重新验证这些任务，也不更改它们的待审/待验收状态。未跟踪的 `.tmp` 和临时清理审计文件不纳入提交。
+
+本次实际检查（全部退出 0）：
+
+```powershell
+$env:UV_CACHE_DIR = Join-Path $PWD '.uv-cache'
+uv run --no-sync pytest -q tests/unit/test_api_frontend.py --junitxml=test-results/git-reconcile-search-entry-2026-10-03.xml --basetemp=.pytest-tmp/git-reconcile-search-entry-2026-10-03
+uv run --no-sync ruff check tests/unit/test_api_frontend.py
+node --check src/photo_search/web/search.js
+git diff --check
+```
+
+JUnit **95 tests / 0 failures / 0 errors / 0 skipped**。此次只检查前端小修和 Git 整理；未运行浏览器验收、后端/全量测试、模型或真实图库操作。搜索返回浏览器验收与 HOME-UX-A 真实搜索待验证状态保留；本地提交，不 push。

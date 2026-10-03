@@ -1136,9 +1136,8 @@
       body.has_more ? "还有下一页" : "已到末尾",
     ];
     var vector = (body.channels || {}).vector || {};
-    // The 1.3 threshold is a property of the calibrated Chinese-CLIP space. Another active
-    // model reports the statistic as unavailable, and the sentence is hidden instead of
-    // rendering its distribution as "0 张高度匹配" (P4-Embedding-Arch §E).
+    // This is a read-only count computed from retrieved vector distances. Availability and
+    // threshold are representation-space specific; neither changes the returned hits or order.
     if (vector.engaged && vector.strong_match_available !== false) {
       parts.unshift(
         vector.strong_match_more_possible
@@ -1842,7 +1841,6 @@
     updatePersonSelection();
     syncPersonControls();
     var capabilitiesPromise = loadCapabilities();
-    capabilitiesPromise.then(loadCoverage);
     Promise.all([capabilitiesPromise, loadSources()]).then(restoreSearchSnapshot);
   }
 

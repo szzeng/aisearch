@@ -2,15 +2,23 @@
 
 更新：2026-10-03。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
+
+报告：[恢复与实现](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)。同目录只读包可校验后重建 catalog 登记而不覆盖包文件。PhotoSearchData 的 GeoNames Asia 包已恢复 ACTIVE（45,217 条，resolver 可用）；定向 JUnit **1/0/0/0**、`git diff --check` 通过。catalog 删除会丢 catalog 内地点目录、人工归属与历史解析，包文件保留不代表这些状态可自动复原。需 DS-H 全受影响面独立审查，未标 PASS。
+
 ## P4-SEARCH-RETURN-A — 搜索结果返回恢复（**IMPLEMENTED / 定向验证通过 / 浏览器验收阻塞**）
 
 报告：[实现与验收记录](reports/P4-SEARCH-RETURN-A-implementation.md)。`search.js` 以 `sessionStorage` 保存/恢复筛选、已加载结果、分页 session/cursor、地点状态与离开滚动位置；详情页「返回浏览」会回到搜索页；恢复复用既有渲染且不发起搜索。新搜索/重置清除现场。JUnit **95/0/0/0**、Node 语法与 diff-check 通过。24 张合成夹具已建立于项目 `.tmp`；Windows 回环端口绑定 `WinError 10013`，提权重试仍失败，浏览器往返验收未执行，因此任务尚不能标 PASS。
 
-## 当前任务 P4-HOME-UX-A — 首页快速可用、图库来源辨识与照片预览适配（**IMPLEMENTED / VALIDATION PENDING**）
+## P4-02Y-W-Q — Qwen 高度匹配恢复（**IMPLEMENTED / 定向验证通过 / 个人网页确认待完成**）
+
+报告：[P4-02Y-W-Q](reports/P4-02Y-W-Q-qwen-strong-match.md)。Qwen 门限为 cosine ≥0.25（距离 ≤1.5）；CLIP 仍为 1.3，未知空间仍隐藏。核查确认门限只在候选冻结后计算显示统计；新回归断言覆盖候选数/顺序与分页元数据不变。指定 JUnit **27/0/0/0**、Ruff、Node 语法、diff-check 通过。个人网页确认尚未完成：检查时无打开浏览器标签，8000/8001/8080 无监听服务；未启动可能写入 PhotoSearchData 的服务。恢复现有网页后需完成三条只读搜索，故本卡暂不标 PASS。
+
+## 并行待验收 P4-HOME-UX-A — 首页快速可用、图库来源辨识与照片预览适配（**IMPLEMENTED / VALIDATION PENDING**）
 
 执行卡：[P4-HOME-UX-A](tasks/P4-HOME-UX-A.md)；调查：[代码调查](reports/P4-HOME-UX-A-investigation.md)；实现与证据：[实现报告](reports/P4-HOME-UX-A-implementation.md)。后续修正首页请求顺序、显式展开完整来源路径、预览缩放/适合窗口/实际大小；修复空查询纯筛选搜索将空文本传到接口造成的422。116个相关/直接回归测试 **0失败/0错误/0跳过**、Ruff、Node语法、diff-check通过；合成浏览器确认6张纯筛选搜索结果可见。普通文本搜索 API 在确定性合成编码器下返回命中。2026-10-03只读发现本机8000服务健康；新开的未认证页面取来源摘要返回`SESSION_REQUIRED`，未发起搜索，因此真实会话下搜索结果仍待核。用户需在尝试搜索的浏览器打开启动器打印的一次性链接；不得分享链接/令牌。只运行隔离小型合成夹具；**未访问或重建30万夹具**、真实库或PhotoSearchData，未加载模型。其他待审任务不变。
 
-2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。
+2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。 本次暂存整理保留搜索返回功能，补交取消启动时自动读取覆盖率的遗漏修正；前端JUnit **95/0/0/0**、Ruff/Node/diff-check通过，详细范围见同报告“暂存区整理与遗漏修正”。
 
 ## 当前人物任务 P4-PERSON-UX-A — 个人相册与简单整理（**IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**）
 
@@ -47,3 +55,5 @@
 ## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
 
 纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。纯性能数据不单独决定产品上限。
+
+2026-10-03人物相册反馈补修：[实现记录](reports/P4-PERSON-UX-A-implementation.md)。撤销栏10秒自动收起且可手动收起；媒体API改为ETag重新验证，避免catalog复用本地ID后浏览器显示旧缩略图；合照预览为每张检测脸画框并突出当前人物。仅合成三图验证：提示自动消失且人脸框对齐。定向JUnit **15/0/0/0**，Ruff、Node、diff-check通过；未访问真实图库。
