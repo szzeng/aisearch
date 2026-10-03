@@ -6,22 +6,18 @@ Design rules this module keeps:
   ``face_id``; the authoritative box comes from ``faces.bbox_json`` and the pixels come from
   the already published P1-03 preview, which the controlled-file boundary has already
   resolved. Nothing here opens a path a request named.
-* **The frame mapping is one uniform factor.** ``faces.bbox_json`` is stored in the
-  orientation-normalised *original* pixel frame (P3-02 scales the detector box back with
-  ``working_scale``), while the preview is that same frame scaled so its long edge is at most
-  ``PREVIEW_LONG_EDGE``. The preview therefore maps to the original by
-  ``preview_width / original_width``; the original's orientation-normalised size is read
-  from the image header only (no pixel decode of the original, and the EXIF orientations that
-  rotate by 90 degrees swap the two numbers, exactly as ``load_normalized`` does).
+* **The recorded frame is authoritative.** A JPEG draft decode can reduce the raster
+  before face analysis, so a stored box is in the detection document's normalised
+  ``original_size`` frame, which can be smaller than the full photo. Read that frame
+  from the verified immutable document; never infer a scale from the face location.
+  Rows without a detection document use the normalised source header as before.
+  Map each axis separately to account for integer decode/preview rounding.
 * **Bounded work.** The preview is capped at 1600 px on the long edge by its own contract, so
   decoding it is bounded; the output is capped at ``FACE_CROP_LONG_EDGE`` and is never
   enlarged. The published file name is the digest of (processor, face, geometry, content),
   so a re-detection that moves a box cannot reuse the previous pixels.
 
-The residual approximation is recorded instead of hidden: the JPEG preview rounds its
-dimensions to whole pixels, so the mapping can be off by well under one preview pixel. An
-avatar crop does not depend on sub-pixel accuracy, and the authoritative geometry stays in
-``faces`` untouched.
+The authoritative geometry, face IDs, embeddings and manual assignments stay untouched.
 """
 
 from __future__ import annotations
@@ -37,6 +33,7 @@ from typing import Any, Sequence
 
 from PIL import Image, UnidentifiedImageError
 
+from photo_search.artifacts.store import MAX_ARTIFACT_BYTES, ArtifactStore
 from photo_search.catalog.errors import (
     DECODE_FAILED,
     FACE_STATE_CONFLICT,
@@ -145,14 +142,65 @@ def parse_bbox(raw: Any) -> FaceBox:
     return box
 
 
-def normalize_original_size(
-    size: tuple[int, int], orientation: int
-) -> tuple[int, int]:
+def normalize_original_size(size: tuple[int, int], orientation: int) -> tuple[int, int]:
     """The orientation-normalised size of an image with the given EXIF orientation."""
     width, height = int(size[0]), int(size[1])
     if int(orientation) in SWAPPED_ORIENTATIONS:
         return height, width
     return width, height
+
+
+def recorded_face_frame(
+    data_root: Path, face: Any, artifact: Any, *, box: FaceBox, sha256: str
+) -> tuple[int, int] | None:
+    """Recover the existing box's frame without migrating any detection facts.
+
+    Old manually seeded rows have no structured document and keep the header path.
+    A real document must be published, checksum-valid and bound to this exact face
+    and current content; a missing/corrupt document is refused rather than guessed.
+    """
+    from photo_search.face.contract import FACE_PROCESSOR_ID
+
+    if artifact is None and not str(face["artifact_id"]).startswith("face-document:"):
+        return None
+
+    def invalid() -> CatalogError:
+        return CatalogError(
+            FACE_STATE_CONFLICT,
+            "the recorded face coordinate frame cannot be verified",
+            details={"reason": "face_frame_invalid"},
+        )
+
+    if (
+        artifact is None
+        or artifact["lifecycle_state"] != "PUBLISHED"
+        or artifact["artifact_type"] != "structured"
+        or artifact["artifact_revision"] not in {"face-document.v1", "face-document.v2"}
+        or artifact["processor_id"] != FACE_PROCESSOR_ID
+        or str(artifact["input_revision"]) != str(sha256)
+        or str(face["input_revision"]) != str(sha256)
+        or not 0 < int(artifact["byte_size"]) <= MAX_ARTIFACT_BYTES
+    ):
+        raise invalid()
+    try:
+        payload = json.loads(ArtifactStore(data_root).read(artifact))
+        size = payload["original_size"]
+        if (
+            payload["processor_id"] != FACE_PROCESSOR_ID
+            or payload["input_revision"] != sha256
+            or not isinstance(size, list)
+            or len(size) != 2
+            or any(type(value) is not int or value <= 0 for value in size)
+        ):
+            raise invalid()
+        recorded = next(
+            item for item in payload["faces"] if item["face_id"] == str(face["face_id"])
+        )
+        if parse_bbox(recorded["bbox"]) != box:
+            raise invalid()
+    except (KeyError, TypeError, ValueError, StopIteration) as error:
+        raise invalid() from error
+    return int(size[0]), int(size[1])
 
 
 def probe_original_frame(path: str | Path) -> tuple[int, int]:
@@ -212,8 +260,8 @@ def crop_box(
 ) -> tuple[int, int, int, int]:
     """Map one source-frame face box into a clamped, square-ish crop of the target frame.
 
-    ``source_size`` is the orientation-normalised original, ``target_size`` the preview the
-    crop is taken from; both share one aspect ratio, so a single factor maps them.
+    ``source_size`` is the recorded orientation-normalised face frame;
+    ``target_size`` is the preview. Each axis uses its actual integer size.
     """
     source_width = float(source_size[0])
     source_height = float(source_size[1])
@@ -223,10 +271,13 @@ def crop_box(
         raise ValueError("the source frame has no usable size")
     if target_width < 1 or target_height < 1:
         raise ValueError("the target frame has no usable size")
-    factor = float(target_width) / source_width
-    center_x = (float(box.left) + float(box.right)) / 2.0 * factor
-    center_y = (float(box.top) + float(box.bottom)) / 2.0 * factor
-    side = max(float(box.width), float(box.height)) * factor * (1.0 + 2.0 * float(margin))
+    factor_x = float(target_width) / source_width
+    factor_y = float(target_height) / source_height
+    center_x = (float(box.left) + float(box.right)) / 2.0 * factor_x
+    center_y = (float(box.top) + float(box.bottom)) / 2.0 * factor_y
+    side = max(float(box.width) * factor_x, float(box.height) * factor_y) * (
+        1.0 + 2.0 * float(margin)
+    )
     side = max(side, float(MIN_CROP_PIXELS))
     half = side / 2.0
     left, right = _fit(
@@ -285,9 +336,7 @@ def render_crop(
             preview.load()
             image = prepare_output_mode(preview)
             target_size = (int(image.size[0]), int(image.size[1]))
-            rect = crop_box(
-                box, source_size=source_size, target_size=target_size
-            )
+            rect = crop_box(box, source_size=source_size, target_size=target_size)
             cropped = image.crop(rect)
             # The crop must own its pixels before the preview file handle is closed.
             cropped.load()

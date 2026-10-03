@@ -19,7 +19,7 @@ from PIL import Image
 from photo_search.ingestion.service import CatalogService
 
 OLD_MTIME_NS = (1_700_000_000_000 - 3_600_000) * 1_000_000
-ARTIFACT_CACHE = "private, max-age=31536000, immutable"
+ARTIFACT_CACHE = "private, no-cache, must-revalidate"
 
 
 def _stamp_old(path: Path, now_ms: int | None = None) -> Path:

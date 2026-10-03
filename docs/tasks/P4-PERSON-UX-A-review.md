@@ -13,3 +13,5 @@
 补充审查面：报告末节的NULL存储头像→只读有效成员补选、移除/排除后头像失效、同一合照的不同人物person_faces有界投影、页面当前人脸标记。核对新增JUnit20/0/0/0及蓝/绿人物同照片截图，不扩展真实模型/全量测试。
 
 同日用户新增门限授权与重匹配：[P4-PERSON-MATCH-A卡](P4-PERSON-MATCH-A.md)、[实现报告](../reports/P4-PERSON-MATCH-A-implementation.md)，定向JUnit79/0/0/0。加审face contract/service/cli及reconcile可选asset_ids全改动：历史0.56校准不伪改为0.50新测量；归人策略不更改检测/不可变产物身份；已存v1/v2特征重匹配的选择scope、索引确认/排除/人工锁/hold、新零脸发布和旧机器退役、未知空间、错误data-root零建库及limit。既有CONFIRMED关系不拆散，无真实库执行；本轮只有CLI，没有新UI。上述内容属于同一完整受影响面主审，不另开性能或真实数据专项。
+
+本轮图片展示补充：[P4-PERSON-IMAGE-A](P4-PERSON-IMAGE-A.md)、[报告](../reports/P4-PERSON-IMAGE-A-implementation.md)。补审ID URL历史浏览器缓存绕开和ETag重新验证；face-crop@2对校验后已发布v1/v2检测文档original_size帧的只读映射、checksum/输入/face_id/bbox绑定、缺失/损坏拒绝、无文档旧行的原图头路径、SQLite查询与线程池边界。检测spec/face_id/向量/人工归属均不改；29项定向JUnit和合成旧缓存/大JPEG/EXIF6/页面证据通过，真实图库未访问。旧954cf00的图片尝试被3bab1c3撤回，不作为本轮证据或当前实现。

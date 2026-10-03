@@ -25,7 +25,9 @@ PREVIEW_PROCESSOR_ID = "catalog-preview@1"
 #: P3-06 face avatars. The crop is rendered from the published preview, so its own identity
 #: covers the geometry and the source content: a re-detection that moves a face box produces
 #: a different cache entry instead of reusing the old pixels.
-FACE_CROP_PROCESSOR_ID = "face-crop@1"
+# @2 reads the verified detection document's frame, including JPEG draft decode,
+# so old misaligned crops remain recoverable but cannot be served as new results.
+FACE_CROP_PROCESSOR_ID = "face-crop@2"
 
 THUMBNAIL_LONG_EDGE = 320
 PREVIEW_LONG_EDGE = 1600

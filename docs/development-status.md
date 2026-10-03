@@ -20,7 +20,11 @@
 
 2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。 本次暂存整理保留搜索返回功能，补交取消启动时自动读取覆盖率的遗漏修正；前端JUnit **95/0/0/0**、Ruff/Node/diff-check通过，详细范围见同报告“暂存区整理与遗漏修正”。
 
-## 当前人物任务 P4-PERSON-UX-A — 个人相册与简单整理（**IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**）
+## 当前人物任务 P4-PERSON-IMAGE-A — 相册错图与人脸裁剪偏移（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[补充卡](tasks/P4-PERSON-IMAGE-A.md)、[实现与截图](reports/P4-PERSON-IMAGE-A-implementation.md)。ID图片URL重新验证且新版人物JS绕开已有一年旧缓存；裁剪按校验后的检测文档坐标帧处理JPEG draft和旋转，face-crop@2不复用旧错误裁剪；人脸ID/不可变产物/向量/人工归属不变。定向JUnit **29/0/0/0**、Ruff/Node/diff-check与合成旧缓存→相册→预览浏览器验证通过。重启应用并刷新人物页生效，**不用重新识别或建库**。未访问真实库/PhotoSearchData或重启8000，真实照片效果待确认；独立审查加审本面，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)。此前图片补修已由3bab1c3撤回，仅保留撤销提示；以此新证据为准。
+
+## 人物基础待审 P4-PERSON-UX-A — 个人相册与简单整理（**IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**）
 
 [实现报告](reports/P4-PERSON-UX-A-implementation.md)、[功能卡](tasks/P4-PERSON-UX-A.md)、[最小决策ADR-0014](decisions/ADR-0014-person-album-geometry-repair.md)。人物默认点头像看完整照片、按名字选人、取名/明确并入、合照选单脸更正及撤销；未命名与机器/人工待归类集中到“整理一下”，高级流程折叠保留。修复长边>1280的scale及原图坐标错误；新旧产物分版本，保留人工映射hold，明确同空间v1/v2代表兼容且不激活部分新索引。按用户“个人项目，完成后简单测试”收尾：定向JUnit **219/0/0/0**，升级边界补充子集 **3/0/0/0**、Ruff/Node/diff-check通过；合成浏览器完成命名/冲突并入/单脸更正/撤销。未访问真实库/PhotoSearchData或大夹具、未加载模型/调整阈值/自动重检，不声明真实识别率或正式PASS。唯一下一人物阶段：[独立受影响面审查](tasks/P4-PERSON-UX-A-review.md)，建议DS-H→Sol high聚焦身份/人工知识及兼容决策；由用户手动切换，不自动继续Agent或全量测试。首页/搜索/Qwen并行任务原状态保留。
 
@@ -55,5 +59,3 @@
 ## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
 
 纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。纯性能数据不单独决定产品上限。
-
-2026-10-03人物相册反馈补修：[实现记录](reports/P4-PERSON-UX-A-implementation.md)。撤销栏10秒自动收起且可手动收起；媒体API改为ETag重新验证，避免catalog复用本地ID后浏览器显示旧缩略图；合照预览为每张检测脸画框并突出当前人物。仅合成三图验证：提示自动消失且人脸框对齐。定向JUnit **15/0/0/0**，Ruff、Node、diff-check通过；未访问真实图库。

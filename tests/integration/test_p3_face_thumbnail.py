@@ -100,8 +100,8 @@ def test_the_crop_comes_from_that_faces_own_box(api_env) -> None:
     assert left.status_code == 200, left.text
     assert left.headers["Content-Type"] == "image/jpeg"
     assert left.content.startswith(JPEG_MAGIC)
-    assert "immutable" in left.headers["Cache-Control"]
-    assert left.headers["ETag"].startswith('"face-crop@1:')
+    assert left.headers["Cache-Control"] == "private, no-cache, must-revalidate"
+    assert left.headers["ETag"].startswith('"face-crop@2:')
     assert int(left.headers["Content-Length"]) == len(left.content)
 
     # Bounded: at most 256 px on the long edge, and never an upscale of a smaller crop.
@@ -127,7 +127,7 @@ def test_the_crop_comes_from_that_faces_own_box(api_env) -> None:
     assert result["head"].content == b""
 
     # Two faces produced two cached crops inside the rebuildable cache of the data root.
-    crops = sorted((api_env.data_root / "cache" / "face-crops" / "face-crop@1").rglob("*.jpg"))
+    crops = sorted((api_env.data_root / "cache" / "face-crops" / "face-crop@2").rglob("*.jpg"))
     assert len(crops) == 2
     assert any(path.read_bytes() == left.content for path in crops)
     # The frozen preview it was rendered from really exists as well.

@@ -138,6 +138,7 @@ from photo_search.media.face_crop import (
     crop_key,
     parse_bbox,
     probe_original_frame,
+    recorded_face_frame,
     render_crop,
 )
 from photo_search.media.pipeline import MediaInterrupted
@@ -198,7 +199,9 @@ from photo_search.search.upload import (
 
 APP_VERSION = "0.1.0"
 
-ARTIFACT_CACHE_CONTROL = "private, max-age=31536000, immutable"
+# Local catalog ids can be reused after a rebuild. Revalidate the id-based URL;
+# the underlying content-addressed files still need no regeneration.
+ARTIFACT_CACHE_CONTROL = "private, no-cache, must-revalidate"
 ORIGINAL_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
 router = APIRouter(prefix="/api/v1", tags=["photo-search"])
@@ -1514,7 +1517,8 @@ async def _face_crop_response(request: Request, face_id: str) -> Response:
     catalog = service.catalog
     cache = service.media_cache()
     row = catalog.read_one(
-        "SELECT face_id, asset_id, bbox_json FROM faces WHERE face_id = ?", (str(face_id),)
+        "SELECT face_id, asset_id, bbox_json, artifact_id, input_revision FROM faces WHERE face_id = ?",
+        (str(face_id),),
     )
     if row is None:
         raise ApiError(
@@ -1546,7 +1550,22 @@ async def _face_crop_response(request: Request, face_id: str) -> Response:
         # 2. the frozen preview is published first, exactly like ``/assets/{id}/preview``
         preview = _ensure_preview(service, asset_id, sha256)
         # 3. the crop is rendered off the event loop, then published atomically
-        source_size = await asyncio.to_thread(probe_original_frame, location.absolute_path)
+        # JPEG draft decoding can make the recorded face frame smaller than the
+        # original header. The immutable detection document tells us which frame
+        # its box actually uses, without rewriting faces or running recognition.
+        artifact = catalog.read_one(
+            "SELECT * FROM artifacts WHERE artifact_id = ?", (str(row["artifact_id"]),)
+        )
+        source_size = await asyncio.to_thread(
+            recorded_face_frame,
+            catalog.data_root,
+            dict(row),
+            None if artifact is None else dict(artifact),
+            box=box,
+            sha256=sha256,
+        )
+        if source_size is None:
+            source_size = await asyncio.to_thread(probe_original_frame, location.absolute_path)
         payload = await asyncio.to_thread(
             render_crop, preview, box=box, source_size=source_size
         )

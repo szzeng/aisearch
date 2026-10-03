@@ -19,6 +19,9 @@
   function name(person) { return person.name || "未命名的人"; }
   function photoId(item) { return Number(item.asset_id); }
   function photoURL(id, kind) { return "/api/v1/assets/" + id + "/" + kind; }
+  // Old responses declared these reusable id URLs immutable for a year. A new
+  // URL bypasses those already-fresh browser entries; new responses revalidate.
+  function mediaURL(url) { return url + "?v=person-media2"; }
   function picture(url, label, className) {
     const wrap = node("span", undefined, "pa-picture " + (className || ""));
     const fallback = node("span", url ? "正在加载图片…" : "没有可用人脸", "pa-image-fallback");
@@ -26,7 +29,7 @@
     if (url && /^\/api\/v1\/(faces\/[a-f0-9]{64}\/thumbnail|assets\/\d+\/(thumbnail|preview))$/.test(url)) {
       const img = node("img"); img.alt = label; img.loading = "lazy";
       img.addEventListener("load", () => wrap.classList.add("pa-image-ready"));
-      img.addEventListener("error", () => { img.hidden = true; fallback.textContent = className && className.includes("avatar") ? "头像暂时无法加载" : "图片暂时无法加载"; }); img.src = url; wrap.append(img);
+      img.addEventListener("error", () => { img.hidden = true; fallback.textContent = className && className.includes("avatar") ? "头像暂时无法加载" : "图片暂时无法加载"; }); img.src = mediaURL(url); wrap.append(img);
     }
     return wrap;
   }
@@ -160,7 +163,7 @@
     $("preview-note").textContent = "正在读取这张照片的人脸……";
     const image = $("preview-image"); image.hidden = false;
     image.onerror = () => { if (seq === state.previewSeq) { image.hidden = true; $("preview-note").textContent = "大图暂时不可用；照片来源可能已离线。"; } };
-    image.src = photoURL(id, "preview"); $("preview").showModal();
+    image.src = mediaURL(photoURL(id, "preview")); $("preview").showModal();
     try {
       const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
       const selectedId = state.person && state.person.person_id;
