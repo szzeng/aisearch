@@ -296,6 +296,10 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
         assert not left_page["assets"][0]["person_faces_has_more"]
         assert tuple(catalog.connection.iterdump()) == before
         assert "bbox" not in repr(left_page) and "vector" not in repr(left_page)
+        face_page = (await client.get(f"/api/v1/assets/{data['asset_id']}/faces")).json()
+        boxes = {face["face_id"]: face["box"] for face in face_page["faces"]}
+        assert boxes[data["left"]][0] < boxes[data["left"]][2]
+        assert boxes[data["left"]][2] < boxes[data["right"]][0]
         first = await client.get(cards[left_person]["thumbnail_url"])
         second = await client.get(cards[right_person]["thumbnail_url"])
         assert first.status_code == second.status_code == 200

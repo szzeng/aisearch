@@ -182,6 +182,7 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         if assigned_id is None
         else catalog.read_one("SELECT name FROM persons WHERE person_id = ?", (assigned_id,))
     )
+    box = json.loads(str(row["bbox_json"]))
     return {
         "face_id": face_id,
         "asset_id": int(row["asset_id"]),
@@ -190,12 +191,13 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         "assigned_person_id": assigned_id,
         "assigned_person_name": None if assigned is None else assigned["name"],
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
+        "box": [float(value) for value in box],
         "quality_reason": row["quality_reason"],
         "suggestions": suggestions,
     }
 
 
-_SELECT_FACES = "SELECT f.face_id, f.asset_id, f.quality_reason, c.mode, c.revision AS control_revision FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
+_SELECT_FACES = "SELECT f.face_id, f.asset_id, f.bbox_json, f.quality_reason, c.mode, c.revision AS control_revision FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
 _NOT_HELD = "NOT EXISTS (SELECT 1 FROM face_redetection_groups AS g WHERE g.state = 'OPEN' AND (g.old_face_id = f.face_id OR EXISTS (SELECT 1 FROM face_redetection_mappings AS m WHERE m.old_face_id = g.old_face_id AND m.new_face_id = f.face_id AND m.state = 'SUGGESTED')))"
 # An untouched v1 library remains browsable. After a v2 publication (even NO_FACE),
 # obsolete machine faces leave this work queue; human-controlled anchors remain protected.

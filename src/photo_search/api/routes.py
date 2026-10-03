@@ -198,7 +198,9 @@ from photo_search.search.upload import (
 
 APP_VERSION = "0.1.0"
 
-ARTIFACT_CACHE_CONTROL = "private, max-age=31536000, immutable"
+# Asset ids and face ids can be reused when the local catalog is replaced. Keep
+# the content-addressed artifact cache, but require revalidation for id-based URLs.
+ARTIFACT_CACHE_CONTROL = "private, no-cache, must-revalidate"
 ORIGINAL_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
 router = APIRouter(prefix="/api/v1", tags=["photo-search"])

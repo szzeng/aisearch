@@ -5,7 +5,7 @@
   const state = { organize: false, person: null, listCursor: null, inboxCursor: null,
     photoCursor: null, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", edit: null, chosen: null,
-    operation: null, writing: false, searching: false, searchBody: null, busy: new Set() };
+    operation: null, undoTimer: null, writing: false, searching: false, searchBody: null, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -56,6 +56,17 @@
   }
   function message(value) { $("status").textContent = value; }
   function params(values) { return "?" + new URLSearchParams(values); }
+  function layoutFaceBoxes() {
+    const image = $("preview-image");
+    if (!image.naturalWidth || !image.naturalHeight) return;
+    $("preview-frame").querySelectorAll(".pa-face-box").forEach((box) => {
+      const rect = JSON.parse(box.dataset.box);
+      box.style.left = (rect[0] / image.naturalWidth * 100) + "%";
+      box.style.top = (rect[1] / image.naturalHeight * 100) + "%";
+      box.style.width = ((rect[2] - rect[0]) / image.naturalWidth * 100) + "%";
+      box.style.height = ((rect[3] - rect[1]) / image.naturalHeight * 100) + "%";
+    });
+  }
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
@@ -159,6 +170,8 @@
     $("review").hidden = true;
     $("preview-note").textContent = "正在读取这张照片的人脸……";
     const image = $("preview-image"); image.hidden = false;
+    image.onload = layoutFaceBoxes;
+    $("preview-frame").querySelectorAll(".pa-face-box").forEach((box) => box.remove());
     image.onerror = () => { if (seq === state.previewSeq) { image.hidden = true; $("preview-note").textContent = "大图暂时不可用；照片来源可能已离线。"; } };
     image.src = photoURL(id, "preview"); $("preview").showModal();
     try {
@@ -166,12 +179,19 @@
       const selectedId = state.person && state.person.person_id;
       page.faces.sort((a, b) => Number(b.assigned_person_id === selectedId) - Number(a.assigned_person_id === selectedId));
       page.faces.forEach((face) => {
+        if (face.box) {
+          const box = node("span", undefined, "pa-face-box");
+          box.dataset.box = JSON.stringify(face.box);
+          box.title = face.assigned_person_id === selectedId ? "本相册人物" : "检测到的人脸";
+          $("preview-frame").append(box);
+        }
         const card = button("", () => { $("preview").close(); editFace(face); }, "pa-person-card");
         if (face.assigned_person_id === selectedId) {
           card.classList.add("pa-selected-person"); card.append(node("strong", "本相册的人"));
         }
         card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : face.assigned_person_id ? "当前：未命名的人" : "还没确定是谁"), node("span", "更正这张脸")); $("preview-faces").append(card);
       });
+      layoutFaceBoxes();
       $("preview-note").textContent = page.faces.length ? "选中认错的那张脸，再指定是谁或移出人物。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
       $("review").hidden = page.faces.length !== 0;
     } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
@@ -224,6 +244,10 @@
   function rememberOperation(operation, label) {
     state.operation = operation; $("undo-text").textContent = label;
     $("undo-bar").hidden = !operation.changed; $("undo").disabled = false;
+    clearTimeout(state.undoTimer);
+    if (operation.changed) state.undoTimer = setTimeout(() => {
+      state.operation = null; $("undo-bar").hidden = true;
+    }, 10000);
   }
   async function refreshAfterWrite(result, label) {
     rememberOperation(result, label); message(label); $("edit").close(); state.editSeq++; state.choiceSeq++;
@@ -276,7 +300,7 @@
     const operation = state.operation; state.writing = true; $("undo").disabled = true;
     try {
       await api("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", { request_id: requestId(), expected_operation_revision: operation.operation_revision });
-      state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。");
+      clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。");
       loadPeople(false); if (state.organize) loadInbox(false);
       if (state.person) { state.person = await api("/persons/" + state.person.person_id); albumHeading(); state.searching = false; loadPhotos(false); }
     } catch (error) { message("无法撤销：" + errorText(error)); }
@@ -307,6 +331,7 @@
     $("edit").addEventListener("cancel", (event) => { if (state.writing) event.preventDefault(); });
     $("edit").addEventListener("close", () => { state.editSeq++; state.choiceSeq++; });
     $("undo").addEventListener("click", undo); loadPeople(false);
+    $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
