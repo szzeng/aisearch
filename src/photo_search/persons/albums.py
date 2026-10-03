@@ -9,7 +9,9 @@ from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
+from photo_search.catalog.errors import CatalogError
 from photo_search.face.contract import FACE_ARTIFACT_REVISION, FACE_PROCESSOR_ID, FACE_SPEC_REVISION
+from photo_search.media.face_crop import parse_bbox
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.persons.read import person_summary
@@ -182,7 +184,12 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         if assigned_id is None
         else catalog.read_one("SELECT name FROM persons WHERE person_id = ?", (assigned_id,))
     )
-    box = json.loads(str(row["bbox_json"]))
+    try:
+        box = parse_bbox(row["bbox_json"]).as_list()
+    except CatalogError:
+        # Keep the face selectable even when its stored geometry is damaged; the preview
+        # simply omits an overlay, while the crop endpoint reports the geometry conflict.
+        box = None
     return {
         "face_id": face_id,
         "asset_id": int(row["asset_id"]),
@@ -191,7 +198,7 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         "assigned_person_id": assigned_id,
         "assigned_person_name": None if assigned is None else assigned["name"],
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
-        "box": [float(value) for value in box],
+        "box": box,
         "quality_reason": row["quality_reason"],
         "suggestions": suggestions,
     }

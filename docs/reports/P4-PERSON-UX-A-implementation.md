@@ -88,3 +88,7 @@ JUnit **20 tests / 0 failures / 0 errors / 0 skipped**，退出0；Ruff（albums
 逐照片受保护人脸响应新增人脸框原坐标；预览用已显示照片的自然尺寸换算到百分比，为所有脸画框，当前人物框为绿色，其余为黄色。API坐标仍只来自权威faces bbox；若缩略图/元数据照片尺寸为空，前端仍以预览图的自然尺寸正确归一。浏览器合成三脸图中目视确认三个框与三张脸对齐，当前人物为绿色。
 
 JUnit `test-results/p4-person-feedback.xml`：**15/0/0/0**。第一次沙箱启动于临时目录创建时WinError5；正常权限路线重跑后一个新断言发现合成asset没有尺寸元数据，修为使用原始框并按预览naturalWidth/Height渲染，再完整重跑通过。Ruff、Node语法、diff-check均通过。未跑全量；没有重扫真实库或加载模型。
+
+## 2026-10-03 INTERNAL_ERROR 后续修正：兼容生产人脸框格式
+
+用户反馈人物相册出现“这次操作没有完成，请重试。（INTERNAL_ERROR）”。定位为上一轮预览框改动的回归：真实人脸处理器将 `bbox_json` 写为 `{"bbox":[x1,y1,x2,y2]}`，而`_face_view()`误把其当作裸数组遍历，`/faces/inbox` 因将键名`bbox`转成浮点数而返回500。现通过既有 `parse_bbox()` 同时读取两种格式；坏几何仅不画框，人脸仍可选择，头像裁剪端点维持原有结构化错误。新增生产格式合成回归。定向JUnit `test-results/p4-person-feedback-bbox.xml` **15/0/0/0**；Ruff/Node/diff-check通过。重启源码服务并用新会话链接后生效。
