@@ -22,7 +22,8 @@ try {
 
     & $Python -m photo_search `
         --data-root $DataRoot `
-        --model-device cuda
+        --model-device cuda `
+        --open-browser
 
     exit $LASTEXITCODE
 }
