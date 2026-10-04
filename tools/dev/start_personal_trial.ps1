@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$DataRoot = "D:\SZ\project\PhotoSearchData"
+$DataRoot = Join-Path (Split-Path -Parent $RepoRoot) "PhotoSearchData"
 
 if (-not (Test-Path $Python)) {
     throw "Python environment not found: $Python"
