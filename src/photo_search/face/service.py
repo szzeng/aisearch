@@ -323,11 +323,11 @@ def run_queue(
 
 
 def catch_up_index(
-    catalog: Catalog, *, coordinator: FaceIndexCoordinator | None = None
+    catalog: Catalog, *, coordinator: FaceIndexCoordinator | None = None, limit: int = 100_000
 ) -> dict[str, Any]:
     """Publish and confirm every pending face candidate event."""
     index = coordinator or FaceIndexCoordinator(catalog)
-    published = index.process_all(now_ms=catalog.now_ms())
+    published = index.process_all(now_ms=catalog.now_ms(), limit=int(limit))
     return {"published": published, "index": index.index_state()}
 
 
@@ -338,7 +338,13 @@ def catch_up_association(
     return reconcile(catalog, coordinator=coordinator, limit=int(limit))
 
 
-def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, Any]:
+def rematch_unassigned(
+    catalog: Catalog,
+    *,
+    limit: int = 100_000,
+    after_asset_id: int = 0,
+    publication_limit: int = 100_000,
+) -> dict[str, Any]:
     """Reconsider stored, unassigned faces without detection or resetting human knowledge.
 
     Only the explicitly compatible buffalo_l v1/v2 generations are eligible. Old faces
@@ -353,7 +359,7 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
             "SELECT f.asset_id, f.spec_revision, MAX(f.face_revision) AS face_revision "
             "FROM faces AS f JOIN assets AS a ON a.asset_id = f.asset_id "
             "JOIN face_embeddings AS e ON e.face_id = f.face_id "
-            "WHERE a.state = 'ACTIVE' AND f.input_revision = a.sha256 "
+            "WHERE a.state = 'ACTIVE' AND f.input_revision = a.sha256 AND f.asset_id > ? "
             "AND f.spec_revision IN (?, ?) AND e.processor_id = ? AND e.space_id = ? "
             "AND e.dimension = ? AND e.metric = 'cosine' AND e.normalization = 'L2' "
             "AND NOT EXISTS (SELECT 1 FROM face_person_links AS l "
@@ -367,6 +373,7 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
             "  AND ar.artifact_revision = ? AND ar.lifecycle_state = 'PUBLISHED'))) "
             "GROUP BY f.asset_id, f.spec_revision ORDER BY f.asset_id LIMIT ?",
             (
+                max(0, int(after_asset_id)),
                 legacy,
                 current,
                 contract.FACE_PROCESSOR_ID,
@@ -376,9 +383,11 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
                 current,
                 contract.FACE_PROCESSOR_ID,
                 contract.FACE_ARTIFACT_REVISION,
-                limit,
+                limit + 1 if limit else 0,
             ),
         ).fetchall()
+        has_more = len(targets) > limit
+        targets = targets[:limit]
         for row in targets:
             connection.execute(
                 "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, "
@@ -393,7 +402,9 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
     # Candidate publication needs no model files or ONNX session. It also resumes a
     # previous interrupted rematch before computing any new assignments.
     index = FaceIndexCoordinator(catalog)
-    published = catch_up_index(catalog, coordinator=index) if limit else None
+    published = (
+        catch_up_index(catalog, coordinator=index, limit=publication_limit) if limit else None
+    )
     results: dict[str, Any] = {}
     remaining = limit
     for revision in (legacy, current):
@@ -407,6 +418,7 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
             asset_ids=[
                 int(row["asset_id"]) for row in targets if str(row["spec_revision"]) == revision
             ],
+            publication_limit=publication_limit,
         )
         results[revision] = result
         remaining -= int(result["processed"])
@@ -414,10 +426,13 @@ def rematch_unassigned(catalog: Catalog, *, limit: int = 100_000) -> dict[str, A
         "policy_revision": contract.ASSOCIATION_POLICY_REVISION,
         "merge_threshold": contract.MERGE_THRESHOLD,
         "selected_assets": len(targets),
+        "has_more": has_more,
+        "next_after_asset_id": int(targets[-1]["asset_id"]) if has_more and targets else None,
         "index": published,
         "association": results,
         "processed": sum(int(r["processed"]) for r in results.values()),
         "merged": sum(int(r["merged"]) for r in results.values()),
+        "new_groups": sum(int(r["new_groups"]) for r in results.values()),
         "suggested": sum(int(r["suggested"]) for r in results.values()),
         "deferred": sum(int(r["deferred"]) for r in results.values()),
     }

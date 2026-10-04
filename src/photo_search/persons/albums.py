@@ -245,11 +245,39 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         "assigned_person_name": None if assigned is None else assigned["name"],
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
         "quality_reason": row["quality_reason"],
+        "organization_reason": row["organization_reason"],
         "suggestions": suggestions,
     }
 
 
-_SELECT_FACES = "SELECT f.face_id, f.asset_id, f.quality_reason, c.mode, c.revision AS control_revision FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
+# Only a closed set of reason codes leaves this read projection. Scores and vectors
+# remain internal, and the same expression owns list filtering and summary counts.
+_ORGANIZATION_REASON = """
+CASE
+ WHEN c.mode = 'MANUAL_UNASSIGNED' THEN 'MANUAL_UNASSIGNED'
+ WHEN f.quality_reason IN ('SMALL', 'BLURRY', 'LOW_DETECTION_SCORE') THEN f.quality_reason
+ ELSE COALESCE(
+  (SELECT CASE WHEN l.reason IN ('BORDERLINE', 'NEAR_TIE', 'SAME_IMAGE_CONFLICT', 'LOW_QUALITY')
+    THEN l.reason ELSE 'OTHER_SUGGESTION' END
+   FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id
+   WHERE l.face_id = f.face_id AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL
+    AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e
+     WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1)
+   ORDER BY l.confidence DESC, l.person_id LIMIT 1),
+  CASE WHEN EXISTS (SELECT 1 FROM face_index_entries AS i
+    JOIN face_index_generations AS g ON g.generation_id = i.generation_id
+    WHERE i.face_id = f.face_id AND i.artifact_id = f.artifact_id
+     AND i.state = 'CONFIRMED' AND g.state = 'READY' AND g.spec_revision = f.spec_revision)
+   THEN 'NO_MATCH' ELSE 'WAITING_INDEX' END)
+END
+"""
+_FACE_FROM = "FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
+_SELECT_FACES = (
+    "SELECT f.face_id, f.asset_id, f.quality_reason, c.mode, c.revision AS control_revision, "
+    + _ORGANIZATION_REASON
+    + " AS organization_reason "
+    + _FACE_FROM
+)
 _NOT_HELD = "NOT EXISTS (SELECT 1 FROM face_redetection_groups AS g WHERE g.state = 'OPEN' AND (g.old_face_id = f.face_id OR EXISTS (SELECT 1 FROM face_redetection_mappings AS m WHERE m.old_face_id = g.old_face_id AND m.new_face_id = f.face_id AND m.state = 'SUGGESTED')))"
 # An untouched v1 library remains browsable. After a v2 publication (even NO_FACE),
 # obsolete machine faces leave this work queue; human-controlled anchors remain protected.
@@ -260,24 +288,60 @@ _VISIBILITY_PARAMETERS = (
     FACE_PROCESSOR_ID,
     FACE_ARTIFACT_REVISION,
 )
+_NO_MEMBER = (
+    "NOT EXISTS (SELECT 1 FROM face_person_links AS l WHERE l.face_id = f.face_id AND "
+    + MEMBER_PREDICATE
+    + ")"
+)
+_INBOX_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
+_INBOX_KINDS = {
+    "all": "1 = 1",
+    "suggested": "organization_reason IN ('BORDERLINE', 'NEAR_TIE', 'SAME_IMAGE_CONFLICT', 'OTHER_SUGGESTION')",
+    "quality": "organization_reason IN ('SMALL', 'BLURRY', 'LOW_DETECTION_SCORE', 'LOW_QUALITY')",
+    "manual": "organization_reason = 'MANUAL_UNASSIGNED'",
+    "pending": "organization_reason IN ('NO_MATCH', 'WAITING_INDEX')",
+}
 
 
-def inbox_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[str, Any]:
-    binding = ["faceinbox1", read_filter_revision(catalog.connection)]
+def inbox_summary(catalog: Any) -> dict[str, Any]:
+    rows = catalog.read_all(
+        "SELECT organization_reason, COUNT(*) AS total FROM (SELECT CASE WHEN "
+        + _NOT_HELD
+        + " THEN "
+        + _ORGANIZATION_REASON
+        + " ELSE 'REDETECTION_HOLD' END AS organization_reason "
+        + _FACE_FROM
+        + "WHERE "
+        + _VISIBLE
+        + " AND "
+        + _NO_MEMBER
+        + ") GROUP BY organization_reason",
+        _VISIBILITY_PARAMETERS,
+    )
+    counts = {str(row["organization_reason"]): int(row["total"]) for row in rows}
+    held = counts.pop("REDETECTION_HOLD", 0)
+    return {"total": sum(counts.values()), "reasons": counts, "held": held}
+
+
+def inbox_page(
+    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all"
+) -> dict[str, Any]:
+    if kind not in _INBOX_KINDS:
+        raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
+    binding = ["faceinbox2", read_filter_revision(catalog.connection), kind]
     after = _position(cursor, binding, "")
     if not isinstance(after, str) or (
         after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))
     ):
         raise ApiError(INVALID_CURSOR, "invalid face position", status=422)
     rows = catalog.read_all(
-        _SELECT_FACES
+        "SELECT * FROM ("
+        + _SELECT_FACES
         + "WHERE f.face_id > ? AND "
-        + _VISIBLE
-        + " AND NOT EXISTS (SELECT 1 FROM face_person_links AS l WHERE l.face_id = f.face_id AND "
-        + MEMBER_PREDICATE
-        + ") AND "
-        + _NOT_HELD
-        + " ORDER BY f.face_id LIMIT ?",
+        + _INBOX_WHERE
+        + ") WHERE "
+        + _INBOX_KINDS[kind]
+        + " ORDER BY face_id LIMIT ?",
         (after, *_VISIBILITY_PARAMETERS, limit + 1),
     )
     has_more = len(rows) > limit

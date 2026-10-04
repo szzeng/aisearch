@@ -1069,6 +1069,15 @@ class MappingGroupItemResponse(BaseModel):
     candidates: list[MappingOperationCandidate] = Field(default_factory=list)
 
 
+class FaceRematchRequest(BaseModel):
+    """A user-requested batch over stored face vectors, without detection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: StrictInt = Field(default=20, ge=1, le=50)
+    after_asset_id: StrictInt = Field(default=0, ge=0)
+
+
 class FaceCorrectionRequest(BaseModel):
     """``PUT /api/v1/faces/{face_id}/assignment``: one face, one action, one revision."""
 

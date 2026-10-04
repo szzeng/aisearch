@@ -199,7 +199,7 @@ QUALITY_LOW_SCORE = "LOW_DETECTION_SCORE"
 #: Current association policy; these scores are similarities, never probabilities.
 SUGGEST_THRESHOLD = 0.29
 MERGE_THRESHOLD = 0.50
-ASSOCIATION_POLICY_REVISION = "personal-album-cosine-050-v1"
+ASSOCIATION_POLICY_REVISION = "personal-album-candidates-050-v2"
 #: A guard rather than a calibrated value: no fixture produced a near-tie, so this only
 #: decides that an ambiguous best/second-best pair goes to human confirmation.
 NEAR_TIE_MARGIN = 0.08
@@ -207,6 +207,10 @@ NEAR_TIE_MARGIN = 0.08
 #: several representatives, but never unbounded - this is what keeps candidate matching an
 #: incremental scan over representatives instead of an all-pairs comparison.
 MAX_REPRESENTATIVES_PER_PERSON = 8
+#: A bounded quality-ranked pool for selecting diverse confirmed representatives.
+#: These selection guards are not a recognition calibration or engine configuration.
+REPRESENTATIVE_POOL_SIZE = 32
+REPRESENTATIVE_DUPLICATE_SIMILARITY = 0.985
 #: The suggestion reasons a human has to look at.
 REASON_BORDERLINE = "BORDERLINE"
 REASON_LOW_QUALITY = "LOW_QUALITY"
@@ -260,13 +264,16 @@ CALIBRATION: dict[str, Any] = {
 
 ASSOCIATION_POLICY: dict[str, Any] = {
     "revision": ASSOCIATION_POLICY_REVISION,
-    "selected_at": "2026-10-03",
+    "selected_at": "2026-10-04",
     "merge_threshold": MERGE_THRESHOLD,
     "suggest_threshold": SUGGEST_THRESHOLD,
     "basis": "user-authorized personal trial; not a new local calibration",
     "reference": "https://docs.immich.app/install/config-file/",
     "reference_model": "buffalo_l",
     "reference_cosine_distance": 0.50,
+    "representative_pool_size": REPRESENTATIVE_POOL_SIZE,
+    "representative_duplicate_similarity": REPRESENTATIVE_DUPLICATE_SIMILARITY,
+    "candidate_comparison": "best per person before same-image conflict guard",
 }
 
 #: The frozen engine configuration of the artifact payload. ``config_hash`` is the digest of

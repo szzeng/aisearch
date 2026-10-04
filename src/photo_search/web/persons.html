@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/web/styles.css" />
     <link rel="stylesheet" href="/web/persons.css?v=p4-person-preview-a-1" />
     <script src="/web/persons.js" defer></script>
-    <script src="/web/persons-albums.js?v=p4-search-person-link-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-match-b-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -35,7 +35,22 @@
         <p id="pa-list-note" class="hint"></p>
         <div id="pa-cards" class="pa-people-grid"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>
-        <section id="pa-inbox" hidden><h3>还没认出是谁</h3><p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。模糊、小脸和人工移出的脸也会显示在这里。</p><div id="pa-inbox-cards" class="pa-people-grid"></div><button id="pa-inbox-more" type="button" hidden>再整理一些</button></section>
+        <section id="pa-inbox" hidden>
+          <h3>还没认出是谁</h3>
+          <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
+          <div class="row-actions">
+            <label for="pa-inbox-kind">查看</label>
+            <select id="pa-inbox-kind">
+              <option value="all">全部待整理</option><option value="suggested">有相似人物建议</option>
+              <option value="quality">小脸或清晰度不足</option><option value="manual">我移出的人脸</option>
+              <option value="pending">还没有可靠匹配</option>
+            </select>
+            <button id="pa-rematch" type="button">补匹配未归类人脸</button>
+          </div>
+          <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p>
+          <div id="pa-inbox-cards" class="pa-people-grid"></div>
+          <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
+        </section>
       </section>
       <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>
         <button id="pa-back" type="button">← 所有人物</button>

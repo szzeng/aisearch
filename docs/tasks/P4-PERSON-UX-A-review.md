@@ -21,3 +21,7 @@
 2026-10-04封面新增：[P4-PERSON-COVER-A](P4-PERSON-COVER-A.md)、[报告](../reports/P4-PERSON-COVER-A-implementation.md)，JUnit23/0/0/0。补审现有avatar_face_id展示元数据PUT完整model/route/albums/UI调用链：session/CSRF、严格形状、canonical/revision/有效成员事务校验、他人/建议/人工移出/排除拒绝零写入；只更新persons行、不改过滤revision/索引/人工归属，独立PUT不伪写RENAME日志，既有撤销拒绝覆盖后来的封面。UI只可选本人、重复提交/失败/晚到预览结果、相册与卡片同步和失效补选；无schema或旧操作类型变化。仅合成API及实际JS最小DOM，未做真实图库/浏览器验证。
 
 2026-10-04照片导航：[P4-PERSON-PREVIEW-A](P4-PERSON-PREVIEW-A.md)、[报告](../reports/P4-PERSON-PREVIEW-A-implementation.md)，JUnit7/0/0/0。补审实际页面顺序/分页ID去重/首尾禁用、人物搜索相同scope与session/cursor、加载失败重试、重复点击、关闭或新列表时旧续页不切图、旧人脸响应不覆盖新照片；封面保存期间禁用导航与列表外预览隐藏导航。只前端展示/既有有界分页，无API/数据语义改动；最小DOM证据，不冒充真实浏览器验证。
+
+2026-10-04按研究推荐补修：[P4-PERSON-MATCH-B](P4-PERSON-MATCH-B.md)、[实现证据](../reports/P4-PERSON-MATCH-B-implementation.md)，JUnit216/0/0/0。补审face/contract/index/service、persons/albums、API model/routes、persons.html/实际JS及三份新测试完整调用链：同图已归属与代表候选按人物汇总后比较、不能简单剔除占位者强选第二名、人工排除不经同图列表绕回；确认关系/entry/artifact/READY及精确v1/v2例外、live32候选/8多样代表、canonical上限与去重复策略、旧代表标志不重建与index_state口径；.985选代表参数不伪称校准，ENGINE_CONFIG/spec/face_id未改。
+
+加审只读原因汇总与列表可见性/成员/OPEN hold一致、未READY即使entry确认仍等待、质量首因/人工移出优先、过滤游标绑定与API脱敏；补匹配POST的session/CSRF/严格参数、after续批及所选队列范围、启动和逐资产400发布事件上限、持久队列与暂缓/异常重试、已有CONFIRMED关系和人工知识不改；前端仅显式点击、20张一批无自动循环、重复请求/失败保留进度与旧响应保护。API照片级上限不等于全请求400事件或固定响应时间；续批不是静态快照，暂缓项之后可从头处理。仅合成API与Node最小DOM；真实效果/浏览器/容量未验，不重复真实库、模型或性能专项。[原图细节后续卡](P4-PERSON-DETAIL-A.md)尚未实现，不延伸ADR-0014几何兼容例外。

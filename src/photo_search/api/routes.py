@@ -47,6 +47,7 @@ from photo_search.api.models import (
     FaceCorrectionRequest,
     FaceListResponse,
     FaceOperationResponse,
+    FaceRematchRequest,
     FeedbackListResponseModel,
     FeedbackRequestModel,
     FeedbackResponseModel,
@@ -1330,11 +1331,45 @@ async def put_person_cover(
 
 @router.get("/faces/inbox", summary="Detected faces still needing personal organization")
 async def face_inbox(
-    request: Request, limit: int | None = None, cursor: str | None = None
+    request: Request,
+    limit: int | None = None,
+    cursor: str | None = None,
+    kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
 ) -> dict[str, Any]:
     return person_albums.inbox_page(
-        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor
+        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor, kind=kind
     )
+
+
+@router.get("/faces/inbox/summary", summary="Safe counts of face organization reasons")
+async def face_inbox_summary(request: Request) -> dict[str, Any]:
+    return person_albums.inbox_summary(service_of(request).catalog)
+
+
+@router.post("/faces/rematch", summary="Reconsider one batch of unassigned stored faces")
+async def face_rematch(request: Request, payload: FaceRematchRequest) -> dict[str, Any]:
+    from photo_search.face.service import rematch_unassigned
+
+    result = rematch_unassigned(
+        service_of(request).catalog,
+        limit=payload.limit,
+        after_asset_id=payload.after_asset_id,
+        publication_limit=400,
+    )
+    # Internal association decisions contain similarity; only counts cross the API.
+    return {
+        key: result[key]
+        for key in (
+            "selected_assets",
+            "processed",
+            "merged",
+            "new_groups",
+            "suggested",
+            "deferred",
+            "has_more",
+            "next_after_asset_id",
+        )
+    }
 
 
 @router.get("/assets/{asset_id}/faces", summary="Safe cropped faces of one photo")

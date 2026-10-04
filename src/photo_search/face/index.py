@@ -76,6 +76,32 @@ class Decision:
     reason: str | None
 
 
+def diverse_representatives(pool: Sequence[Candidate]) -> list[Candidate]:
+    """Keep the best quality-ranked face, then cover distinct stored appearances.
+
+    The caller supplies only confirmed eligible members in quality order. Work is
+    bounded by the pool and representative caps, never by all face pairs in the library.
+    Near-duplicate faces do not consume the remaining representative slots.
+    """
+    remaining = list(pool[: contract.REPRESENTATIVE_POOL_SIZE])
+    selected: list[Candidate] = []
+    while remaining and len(selected) < contract.MAX_REPRESENTATIVES_PER_PERSON:
+        if not selected:
+            chosen = remaining[0]
+        else:
+            distances = [
+                1.0 - max(cosine(item.vector, other.vector) for other in selected)
+                for item in remaining
+            ]
+            position = max(range(len(remaining)), key=lambda i: distances[i])
+            if distances[position] <= 1.0 - contract.REPRESENTATIVE_DUPLICATE_SIMILARITY:
+                break
+            chosen = remaining[position]
+        selected.append(chosen)
+        remaining.remove(chosen)
+    return selected
+
+
 class _InjectedCrash(RuntimeError):
     pass
 
@@ -303,7 +329,7 @@ class FaceIndexCoordinator:
         return {"artifact_id": str(face["artifact_id"]), "representative": representative}
 
     def _is_representative(self, face: Any) -> bool:
-        """A quality-ok, effectively linked face inside the per-person representative cap."""
+        """Publish-time size hint; candidates() reselects the live diverse representatives."""
         if str(face["quality_state"]) != "OK":
             return False
         link = self.catalog.read_one(
@@ -313,10 +339,14 @@ class FaceIndexCoordinator:
         if link is None:
             return False
         locked, excluded = blocked_face_links(self.catalog.connection)
-        if str(face["face_id"]) in locked or (
-            str(face["face_id"]),
-            int(link["person_id"]),
-        ) in excluded:
+        if (
+            str(face["face_id"]) in locked
+            or (
+                str(face["face_id"]),
+                int(link["person_id"]),
+            )
+            in excluded
+        ):
             # Human knowledge wins over the representative ranking (ADR-0006 §6).
             return False
         ranked = self.catalog.read_all(
@@ -373,8 +403,10 @@ class FaceIndexCoordinator:
         if (
             self.spec_revision == _GEOMETRY_V2
             and str(generation["spec_revision"]) == _GEOMETRY_V1
-            and str(generation["generation_id"]) == generation_id_for(
-                contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID,
+            and str(generation["generation_id"])
+            == generation_id_for(
+                contract.FACE_SPACE_ID,
+                contract.FACE_PROCESSOR_ID,
                 spec_revision=_GEOMETRY_V1,
             )
             and str(generation["state"]) == "READY"
@@ -382,43 +414,81 @@ class FaceIndexCoordinator:
             and str(current["spec_revision"]) == _GEOMETRY_V2
             and str(current["state"]) == "READY"
             and str(current["space_id"]) == str(generation["space_id"]) == contract.FACE_SPACE_ID
-            and str(current["processor_id"]) == str(generation["processor_id"]) == contract.FACE_PROCESSOR_ID
+            and str(current["processor_id"])
+            == str(generation["processor_id"])
+            == contract.FACE_PROCESSOR_ID
             and int(current["dimension"]) == int(generation["dimension"]) == contract.FACE_DIMENSION
             and str(current["metric"]) == str(generation["metric"]) == "cosine"
             and str(current["normalization"]) == str(generation["normalization"]) == "L2"
         ):
             generation_ids.append(self.generation_id)
         marks = ",".join("?" for _ in generation_ids)
+        tables = human_control_tables(self.catalog.connection)
+        eligibility = ""
+        if "face_assignment_controls" in tables:
+            eligibility += (
+                " AND NOT EXISTS (SELECT 1 FROM face_assignment_controls AS ctl "
+                "WHERE ctl.face_id = c.face_id AND ctl.mode = 'MANUAL_UNASSIGNED')"
+            )
+        if "face_exclusions" in tables:
+            eligibility += (
+                " AND NOT EXISTS (SELECT 1 FROM face_exclusions AS x "
+                "WHERE x.face_id = c.face_id AND x.person_id = l.person_id AND x.active = 1)"
+            )
+        # Old publication flags only describe the size-ranked choice at that time.
+        # Read a bounded pool of confirmed members so historical flags need no rebuild
+        # and a smaller, different appearance can replace redundant large portraits.
         rows = self.catalog.read_all(
-            "SELECT c.face_id AS face_id, l.person_id AS person_id, f.asset_id AS asset_id, "
-            "c.vector_blob AS vector_blob FROM face_candidates AS c "
+            "WITH ranked AS (SELECT c.face_id, c.generation_id, l.person_id, "
+            "f.asset_id, f.face_pixels, "
+            "ROW_NUMBER() OVER (PARTITION BY l.person_id "
+            "ORDER BY f.face_pixels DESC, c.face_id) AS pool_rank "
+            "FROM face_candidates AS c "
             "JOIN face_person_links AS l ON l.face_id = c.face_id AND l.decision = 'CONFIRMED' "
             "JOIN faces AS f ON f.face_id = c.face_id "
             "JOIN face_index_entries AS e ON e.face_id = c.face_id "
             "AND e.generation_id = c.generation_id AND e.state = 'CONFIRMED' "
             "AND e.artifact_id = f.artifact_id "
-            f"WHERE c.generation_id IN ({marks}) AND c.is_representative = 1 "
-            "ORDER BY f.face_pixels DESC, c.face_id",
-            tuple(generation_ids),
+            f"WHERE c.generation_id IN ({marks}) AND f.quality_state = 'OK'"
+            + eligibility
+            + ") SELECT r.face_id, r.person_id, r.asset_id, r.face_pixels, c.vector_blob "
+            "FROM ranked AS r JOIN face_candidates AS c "
+            "ON c.face_id = r.face_id AND c.generation_id = r.generation_id "
+            "WHERE r.pool_rank <= ? ORDER BY r.face_pixels DESC, r.face_id",
+            (*generation_ids, contract.REPRESENTATIVE_POOL_SIZE),
         )
         locked, excluded = blocked_face_links(self.catalog.connection)
         from photo_search.persons.identity import resolve_canonical_person_id
 
-        selected: list[Candidate] = []
-        counts: dict[int, int] = {}
+        excluded = {
+            (face_id, resolve_canonical_person_id(self.catalog.connection, person_id))
+            for face_id, person_id in excluded
+        }
+        pools: dict[int, list[Candidate]] = {}
+        seen: set[str] = set()
         for row in rows:
             face_id = str(row["face_id"])
             person_id = resolve_canonical_person_id(self.catalog.connection, int(row["person_id"]))
             if face_id in locked or (face_id, person_id) in excluded:
                 continue
-            if counts.get(person_id, 0) >= contract.MAX_REPRESENTATIVES_PER_PERSON:
+            pool = pools.setdefault(person_id, [])
+            if face_id in seen or len(pool) >= contract.REPRESENTATIVE_POOL_SIZE:
                 continue
-            counts[person_id] = counts.get(person_id, 0) + 1
-            selected.append(Candidate(
-                face_id=face_id, person_id=person_id, asset_id=int(row["asset_id"]),
-                vector=blob_to_vector(bytes(row["vector_blob"]), dimension=contract.FACE_DIMENSION),
-            ))
-        return sorted(selected, key=lambda candidate: candidate.face_id)
+            seen.add(face_id)
+            pool.append(
+                Candidate(
+                    face_id=face_id,
+                    person_id=person_id,
+                    asset_id=int(row["asset_id"]),
+                    vector=blob_to_vector(
+                        bytes(row["vector_blob"]), dimension=contract.FACE_DIMENSION
+                    ),
+                )
+            )
+        return sorted(
+            [item for pool in pools.values() for item in diverse_representatives(pool)],
+            key=lambda candidate: candidate.face_id,
+        )
 
     def index_state(self) -> dict[str, Any]:
         """Read-only counts of the face index (no vector, no coordinate, no path)."""
@@ -443,11 +513,7 @@ class FaceIndexCoordinator:
             "candidates": int(
                 self.catalog.read_one("SELECT COUNT(*) AS total FROM face_candidates")["total"]
             ),
-            "representatives": int(
-                self.catalog.read_one(
-                    "SELECT COUNT(*) AS total FROM face_candidates WHERE is_representative = 1"
-                )["total"]
-            ),
+            "representatives": len(self.candidates()),
         }
 
 
@@ -550,11 +616,23 @@ def _new_person(connection: sqlite3.Connection, *, now_ms: int) -> int:
 
 
 def queued_assets(
-    catalog: Catalog, *, spec_revision: str = contract.FACE_SPEC_REVISION
+    catalog: Catalog, *, spec_revision: str = contract.FACE_SPEC_REVISION,
+    asset_ids: Sequence[int] | None = None,
 ) -> list[Any]:
+    if asset_ids is not None:
+        selected = sorted({int(asset_id) for asset_id in asset_ids})
+        rows: list[Any] = []
+        for offset in range(0, len(selected), 400):
+            batch = selected[offset : offset + 400]
+            marks = ",".join("?" for _ in batch)
+            rows.extend(catalog.read_all(
+                "SELECT * FROM face_association_queue WHERE spec_revision = ? "
+                f"AND asset_id IN ({marks})",
+                (str(spec_revision), *batch),
+            ))
+        return sorted(rows, key=lambda row: (int(row["queued_at"]), int(row["asset_id"])))
     return catalog.read_all(
-        "SELECT * FROM face_association_queue WHERE spec_revision = ? "
-        "ORDER BY queued_at, asset_id",
+        "SELECT * FROM face_association_queue WHERE spec_revision = ? ORDER BY queued_at, asset_id",
         (str(spec_revision),),
     )
 
@@ -594,21 +672,20 @@ def decide_for_face(
     person instead of being silently merged into it. A low-quality face never takes that path
     either - it is only ever suggested, never a confirmed member.
     """
-    if quality_state == "OK":
-        for other_person, other_vector in in_asset:
-            score = cosine(vector, other_vector)
-            if score >= contract.MERGE_THRESHOLD:
-                return Decision(
-                    "SUGGESTED",
-                    int(other_person),
-                    score,
-                    contract.REASON_SAME_IMAGE_CONFLICT,
-                )
     best_by_person: dict[int, float] = {}
     for candidate in candidates:
         score = cosine(vector, candidate.vector)
         if score > best_by_person.get(candidate.person_id, -2.0):
             best_by_person[candidate.person_id] = score
+    occupied = set(person_in_asset)
+    if quality_state == "OK":
+        for other_person, other_vector in in_asset:
+            occupied.add(int(other_person))
+            score = cosine(vector, other_vector)
+            if score >= contract.MERGE_THRESHOLD:
+                best_by_person[int(other_person)] = max(
+                    score, best_by_person.get(int(other_person), -2.0)
+                )
     if not best_by_person:
         if quality_state != "OK":
             return Decision("LOW_QUALITY_UNASSIGNED", None, None, None)
@@ -626,10 +703,8 @@ def decide_for_face(
         return Decision("SUGGESTED", person_id, similarity, contract.REASON_BORDERLINE)
     if runner_up is not None and similarity - runner_up < contract.NEAR_TIE_MARGIN:
         return Decision("SUGGESTED", person_id, similarity, contract.REASON_NEAR_TIE)
-    if person_id in person_in_asset:
-        return Decision(
-            "SUGGESTED", person_id, similarity, contract.REASON_SAME_IMAGE_CONFLICT
-        )
+    if person_id in occupied:
+        return Decision("SUGGESTED", person_id, similarity, contract.REASON_SAME_IMAGE_CONFLICT)
     return Decision("MERGE", person_id, similarity, None)
 
 
@@ -640,6 +715,7 @@ def reconcile(
     limit: int = 100_000,
     spec_revision: str = contract.FACE_SPEC_REVISION,
     asset_ids: Sequence[int] | None = None,
+    publication_limit: int = 100_000,
 ) -> dict[str, Any]:
     """Group every queued asset's faces conservatively, republishing as it goes.
 
@@ -653,7 +729,7 @@ def reconcile(
     decisions: list[dict[str, Any]] = []
     processed = 0
     deferred = 0
-    for row in queued_assets(catalog, spec_revision=str(spec_revision)):
+    for row in queued_assets(catalog, spec_revision=str(spec_revision), asset_ids=asset_ids):
         if processed >= int(limit):
             break
         asset_id = int(row["asset_id"])
@@ -671,7 +747,7 @@ def reconcile(
         processed += 1
         if outcome:
             # Republish now, so the *next* asset already sees these groups as candidates.
-            index.process_all(now_ms=catalog.now_ms())
+            index.process_all(now_ms=catalog.now_ms(), limit=int(publication_limit))
     return {
         "processed": processed,
         "deferred": deferred,
@@ -679,12 +755,8 @@ def reconcile(
         "new_groups": sum(1 for item in decisions if item["action"] == "NEW_GROUP"),
         "merged": sum(1 for item in decisions if item["action"] == "MERGE"),
         "suggested": sum(1 for item in decisions if item["action"] == "SUGGESTED"),
-        "unassigned": sum(
-            1 for item in decisions if item["action"] == "LOW_QUALITY_UNASSIGNED"
-        ),
-        "human_controlled": sum(
-            1 for item in decisions if item["action"] == "HUMAN_CONTROLLED"
-        ),
+        "unassigned": sum(1 for item in decisions if item["action"] == "LOW_QUALITY_UNASSIGNED"),
+        "human_controlled": sum(1 for item in decisions if item["action"] == "HUMAN_CONTROLLED"),
         # ADR-0007 §4: the automatic pass refused these faces because their logical control
         # revision moved after the pass read it. The count is honest about a refusal that
         # wrote nothing, instead of reporting the face as freshly grouped.
@@ -873,11 +945,7 @@ def _reconcile_asset(
         canonical_of_person = _canonical_person_map(
             connection,
             [int(candidate.person_id) for candidate in candidates]
-            + [
-                int(person)
-                for persons in excluded_by_face.values()
-                for person in persons
-            ],
+            + [int(person) for persons in excluded_by_face.values() for person in persons],
         )
         person_in_asset = {
             int(row["person_id"])
@@ -908,7 +976,9 @@ def _reconcile_asset(
                 decisions.append(
                     {
                         "face_id": face_id,
-                        "action": "HUMAN_CONTROLLED" if face_id in protected else "PROVISIONAL_HOLD",
+                        "action": "HUMAN_CONTROLLED"
+                        if face_id in protected
+                        else "PROVISIONAL_HOLD",
                         "person_id": None,
                         "similarity": None,
                         "reason": None,
@@ -939,7 +1009,11 @@ def _reconcile_asset(
                 vector=vector,
                 candidates=usable,
                 person_in_asset=person_in_asset,
-                in_asset=assigned_in_asset,
+                in_asset=[
+                    (person, other_vector)
+                    for person, other_vector in assigned_in_asset
+                    if canonical_of_person.get(person, person) not in denied
+                ],
             )
             now_ms = catalog.now_ms()
             if decision.action == "NEW_GROUP":

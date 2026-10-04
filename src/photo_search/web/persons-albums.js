@@ -5,7 +5,7 @@
   const state = { organize: false, person: null, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
-    choiceSeq: 0, choiceCursor: null, choiceQuery: "", edit: null, chosen: null,
+    choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, edit: null, chosen: null,
     operation: null, undoTimer: null, messageTimer: null, writing: false, coverMode: false, searching: false, searchBody: null, deepLinked: false, linkSeq: 0, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
@@ -124,27 +124,71 @@
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; } }
   }
+  function organizationText(face) {
+    const reason = face.organization_reason || face.quality_reason;
+    if (face.mode === "MANUAL_UNASSIGNED") return "已移出人物，等你指定";
+    const labels = { SMALL: "脸太小，需确认", BLURRY: "脸有些模糊，需确认",
+      LOW_DETECTION_SCORE: "人脸不够明确，需确认", LOW_QUALITY: "清晰度不足，需确认",
+      NEAR_TIE: "像多个人，需确认", SAME_IMAGE_CONFLICT: "合照里的人选有冲突，需确认",
+      WAITING_INDEX: "人脸结果正在整理", NO_MATCH: "还没有可靠的人物匹配" };
+    if (labels[reason]) return labels[reason];
+    if (reason === "BORDERLINE" && face.suggestions && face.suggestions.length) {
+      return "像“" + name(face.suggestions[0]) + "”，需确认";
+    }
+    return "还没确定是谁";
+  }
+  function inboxSummaryText(summary) {
+    const reasons = summary.reasons || {};
+    const pieces = ["待整理 " + summary.total + " 张脸"];
+    const labels = { SMALL: "小脸", BLURRY: "模糊", LOW_DETECTION_SCORE: "人脸不明确",
+      LOW_QUALITY: "清晰度不足", BORDERLINE: "相似待确认", NEAR_TIE: "人选相近",
+      SAME_IMAGE_CONFLICT: "合照冲突", MANUAL_UNASSIGNED: "已移出", WAITING_INDEX: "等待整理",
+      NO_MATCH: "暂无匹配", OTHER_SUGGESTION: "其他建议" };
+    Object.keys(labels).forEach((key) => { if (reasons[key]) pieces.push(labels[key] + " " + reasons[key]); });
+    if (summary.held) pieces.push("另有 " + summary.held + " 张脸等待识别更新确认");
+    return pieces.join(" · ");
+  }
   async function loadInbox(more) {
     if (more && state.busy.has("inbox")) return;
     const seq = ++state.inboxSeq; state.busy.add("inbox"); $("inbox-more").disabled = true;
-    const values = { limit: 30 }; if (more && state.inboxCursor) values.cursor = state.inboxCursor;
-    if (!more) $("inbox-cards").replaceChildren();
+    const values = { limit: 30, kind: $("inbox-kind").value || "all" };
+    if (more && state.inboxCursor) values.cursor = state.inboxCursor;
+    if (!more) { $("inbox-cards").replaceChildren(); state.inboxCursor = null; }
     try {
-      const page = await api("/faces/inbox" + params(values));
+      const [page, summary] = await Promise.all([
+        api("/faces/inbox" + params(values)), more ? Promise.resolve(null) : api("/faces/inbox/summary"),
+      ]);
       if (seq !== state.inboxSeq) return;
+      if (summary) $("inbox-note").textContent = inboxSummaryText(summary);
       const selectedId = state.person && state.person.person_id;
       page.faces.sort((a, b) => Number(b.assigned_person_id === selectedId) - Number(a.assigned_person_id === selectedId));
       page.faces.forEach((face) => {
         const card = node("div", undefined, "pa-person-card");
         const view = button("", () => preview(face.asset_id), "pa-face-button");
         view.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"));
-        card.append(view, node("span", face.mode === "MANUAL_UNASSIGNED" ? "已移出人物" : face.quality_reason ? "小脸或模糊，需确认" : "还没确定是谁", "hint"), button("这是谁？", () => editFace(face)));
+        card.append(view, node("span", organizationText(face), "hint"), button("这是谁？", () => editFace(face)));
         $("inbox-cards").append(card);
       });
       state.inboxCursor = page.next_cursor; $("inbox-more").hidden = !page.has_more;
       if (!$("inbox-cards").children.length) $("inbox-cards").append(node("p", "暂时没有待归组的人脸。", "hint"));
     } catch (error) { if (seq === state.inboxSeq) message(errorText(error)); }
     finally { if (seq === state.inboxSeq) { state.busy.delete("inbox"); $("inbox-more").disabled = false; } }
+  }
+  async function rematchFaces() {
+    if (state.writing || state.busy.has("rematch")) return;
+    state.writing = true; state.busy.add("rematch"); $("rematch").disabled = true;
+    message("正在利用已认出的人补匹配，请稍候……");
+    try {
+      const result = await api("/faces/rematch", { limit: 20, after_asset_id: state.rematchAfter });
+      state.rematchAfter = result.next_after_asset_id || 0;
+      $("rematch").textContent = result.has_more ? "继续补匹配剩余人脸" : "补匹配未归类人脸";
+      await Promise.all([loadPeople(false), loadInbox(false)]);
+      message("这批处理了 " + result.processed + " 张照片，归入已有人物 " + result.merged
+        + " 张脸，新增未命名人物 " + result.new_groups + " 个。"
+        + (result.has_more ? "可继续处理剩余人脸。" : "仍未归类的脸可按原因整理。")
+        + (result.deferred ? "有 " + result.deferred + " 张照片还在等待分析结果。" : ""));
+    } catch (error) { message("补匹配没有完成：" + errorText(error)); }
+    finally { state.writing = false; state.busy.delete("rematch"); $("rematch").disabled = false; }
   }
   function setView(organize) {
     state.organize = organize; $("people").setAttribute("aria-pressed", String(!organize));
@@ -403,6 +447,8 @@
     $("query").addEventListener("search", () => loadPeople(false));
     $("refresh").addEventListener("click", () => { loadPeople(false); if (state.organize) loadInbox(false); });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
+    $("inbox-kind").addEventListener("change", () => loadInbox(false));
+    $("rematch").addEventListener("click", rematchFaces);
     $("back").addEventListener("click", () => {
       state.person = null; state.photoSeq++; state.busy.delete("photos");
       $("library").hidden = false; $("album").hidden = true; $("people").focus();
