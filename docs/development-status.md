@@ -2,6 +2,10 @@
 
 更新：2026-10-04。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## 当前任务：P4-PLACE-MAP-A — 个人地图相册（**简审 5 项修复与桩复验通过 / DS-H 待审**）
+
+[执行卡](tasks/P4-PLACE-MAP-A.md)；[实现报告](reports/P4-PLACE-MAP-A.md)；[简审与反例](reports/P4-PLACE-MAP-A-review.md)。5 项修复在独立短审范围内关闭：资源已解除忽略、同坐标成员入口、版本/分页竞态、缺组件列表回退、详情聚焦早到/晚到。实际 JS 合成桩回归 JUnit **6/0/0/0**，Node 语法与 scoped diff-check 通过；本轮未改功能代码、访问真实图库、重跑 30 万计时或真实浏览器。CN 未实施；独立 DS-H 全受影响面审查仍待做，不标整卡 PASS。
+
 ## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
 
 报告：[恢复与实现（第二轮）](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)；[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。应用打开空地名 registry 时自动校验/激活唯一健康现存包，删除 catalog/vectors 后重启可恢复；保留包字节/mtime、已有选择及多包拒绝边界。PhotoSearchData 已自动恢复 ACTIVE（45,217条）；定向JUnit **29/0/0/0**，最终恢复/并发 **10/0/0/0**，Ruff/diff-check通过。最终全量 **1968/6/0/48**，禁用新增钩子后6项失败仍复现（旧契约哈希/高度匹配测试），详见报告；人工历史不复原，独立DS-H及决策冻结待做，未标PASS。

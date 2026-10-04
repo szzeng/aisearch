@@ -1,437 +1,80 @@
 # P4-PLACE-CN — 中国省 / 市 / 区县地点优化
 
-日期：2026-10-04。状态：**TODO — Phase 0 决策门禁待完成**。立卡基线：`3f1496585ac943a21c81ebf31bbaab85e1ffb695`。  
-定位：个人本地相册；小范围实现、最小测试，不扩成 GIS 系统。
+日期：2026-10-04。状态：**TODO — 最小数据与契约决策待完成**。原立卡基线：`3f1496585ac943a21c81ebf31bbaab85e1ffb695`。
 
-现有地点相册与地点＋内容搜索已完成，复用 `P4-PLACE-AUTO-A` 与 `P4-PLACE-SEARCH-A`。
+定位：个人相册的中文地点补充。**先做 P4-PLACE-MAP-A；本卡不阻塞地图使用。** 复用现有地点相册与 `place-aware search`，完成后地图仅复用更好的地点文字。
 
-## 1. 目标
+2026-10-04 [开工核对](../reports/P4-PLACE-MAP-A-preflight.md)：本卡来源已收敛为 OSM/Geofabrik；[旧阻塞记录](../reports/P4-PLACE-CN-blocker.md)仅保留历史依据，ADR、目标边界核验与大文件下载仍待本卡执行，不能沿用地图底图可达性作为行政区覆盖证据。
 
-解决 GeoNames 在中国地点上的主要体验问题：
+## 1. 最小目标
 
-- 中国照片可能显示英文或附近小地名；
-- 最近城市点不等同于行政归属；
-- 需要按省 / 市 / 区县浏览和搜索照片。
-
-目标结果：
+已有有效 GPS 的中国照片显示合理中文行政区，并可按省 / 市 / 区县浏览、搜索：
 
 ```text
 浙江省 · 杭州市 · 西湖区
 广东省 · 深圳市 · 南山区
-上海市 · 上海市 · 黄浦区
+上海市 · 黄浦区
+
+西湖区 → 对应照片
+西湖区的日落 → 地点成员范围 + 原有日落搜索
 ```
 
-目标搜索：
+中国以外继续 GeoNames；Polygon 结果标为机器派生，不表示人工确认或全国准确率保证。
 
-```text
-杭州
-西湖区
-浙江
-西湖区的日落
-深圳的夜景
-```
+## 2. 开工前的小决策
 
-中国以外继续使用现有 GeoNames。
+先写短 ADR：`docs/decisions/ADR-0016-cn-admin-boundaries.md`（创建前核对编号未被占用）。只解决以下四项，确认后再写功能代码：
 
----
+1. **来源与构建**：首选 OpenStreetMap / Geofabrik China extract，明确快照、许可/署名、WGS84、构建工具及包格式。先核验四个目标地区的边界与中文名称是否可用。
+2. **包共存**：当前仅有一个 active 地名包。优先生成保留现有 GeoNames 内容、附带中国行政区 sidecar 的复合包；中国部分独立记录来源。旧包保留用于回退，不把“旧包仍在磁盘”当作国外解析仍可用。若复合包不可行，先记录原因与最小替代方案。
+3. **派生契约**：冻结行政区稳定 ID/父级、解析结果存储与版本、旧地点 ID 对应及人工排除规则；允许必要的新派生存储，不改历史 migration 或旧人工状态机。
+4. **切换规则**：验证完整包后原子激活；重新解析可中断、继续和回退。已有 GPS 与人工控制保留；新旧版本结果不混用，受影响的相册/搜索分页明确过期。
 
-# Phase 0 — 最小决策门禁
+读文档范围：V3.0 §4.5、§9.3/9.5、§11.3.3；V3.1 §2.4、§3.2、§9.3、§10/11；ADR-0005、ADR-0015，以及直接相关地点实现/测试。不要求读全仓。
 
-负责人：**DS-H，高推理**。  
-只冻结本卡必需决策，不做全仓架构审查，不写功能代码。
+## 3. 数据包与归属
 
-产物：
+新增或等价实现 `tools/places/prepare_china_places.py`：
 
-```text
-docs/decisions/ADR-0015-cn-admin-boundaries.md
-```
+- 行政边界需另备 Geofabrik `china-latest.osm.pbf`（2026-10-04 官网标注约 1.5 GB），现有 GeoNames 城市点包不能替代 Polygon。已有完整且可校验的 PBF 可复用；没有时再经用户确认下载一次，冻结快照/hash。原始 PBF 放项目临时目录，不进入运行数据或安装包，构建后可删除；地图底图不依赖该文件。
+- 提取行政区 relation 及组面所需 way/node；校验成员完整性，输出 Polygon/MultiPolygon、bbox、中文名称/简称、父级、manifest/checksum 与许可文件。普通道路、建筑、POI 不进入输出包。
+- 默认 `admin_level=4/5/6 → province/city/district`；city 包括地级市、自治州、地区、盟。直辖市和省直辖县允许缺 city，保留真实父级，不制造行政实体；港澳等非该层级地区 V1 保留现有路线。
+- district 至少有 `id/name/aliases/parent_province_id/parent_city_id(nullable)/polygon_ref/bbox`；包格式加版本，兼容旧 INDEX。
+- 只使用 `status=VALID`、`datum_status=WGS84/ASSUMED_WGS84`、`input_revision` 匹配当前资产的 GPS。结果绑定 `geo_fact_id/input_revision`、包版本及解析器版本，原始 GPS 不变。
+- 先 bbox 筛候选，再点面判断。区县未命中可独立匹配市/省；边界点、重叠、内洞、无效几何与缺父级返回可靠上级或 unknown。中国覆盖内缺边界不以最近城市冒充行政归属；国外仍走 GeoNames。
 
-ADR 只需明确以下内容。
+数据依据：[OSM 中国层级](https://wiki.openstreetmap.org/wiki/China/Boundaries)、[Geofabrik China](https://download.geofabrik.de/asia/china.html)、[OSM 许可](https://www.openstreetmap.org/copyright)。实际使用快照与覆盖以构建报告为准。
 
-## 0.1 数据源
+## 4. 浏览、搜索与人工优先
 
-正式首选：
+- 省 / 市 / 区县相册、计数、分页和地点搜索共用同一成员解析路径；按 asset_id 去重，同名地点显示上级供选择。
+- `MANUAL_ASSIGNED` 使用人工地点；`MANUAL_UNASSIGNED` 阻止自动分类；`AUTO_ALLOWED` 才可使用未被排除的机器结果。人工指定上海、GPS 在杭州时，不补出杭州的西湖区；无可靠人工区县就留空。
+- 包升级或外部 ID 变化不能使原人工排除失效。无法证明旧地点对应关系时保守不加入有排除争议的机器成员，并记录原因。
+- 区县搜索先约束权威成员范围，再复用内容检索；不把完整地址塞入普通 FTS，不改变旧 manual-only place_text。
+- 提供一个简单受控的“更新中国地点”入口：只对已有有效 GPS 分批解析，不重新读 EXIF、不重建向量/OCR/人脸/缩略图。
 
-```text
-OpenStreetMap
-+
-Geofabrik China extract
-```
+## 5. 小样本验证与验收
 
-允许一次性使用中国 `.osm.pbf` 作为构建输入，但：
+本卡按个人使用收口：定向 pytest（JUnit XML）、Ruff/diff-check、一次地点浏览/搜索闭环及下述 30 万合成数据简单计时；不追加全量套件、全国准确率、大规模压测矩阵或 exe 构建。小样本保留以下必要边界：
 
-- 原始 PBF 不进入 PhotoSearchData；
-- 不进入安装包；
-- 不成为运行时依赖；
-- 生成精简行政区包后可删除。
+- 包 build/validate/activate 成功；损坏包拒绝且旧包继续可用。新包激活后东京仍正常，回退/中断继续可用，旧游标过期。
+- 杭州西湖区、上海黄浦区、深圳南山区、重庆渝中区四个内部坐标；另用小型合成 Polygon 覆盖边界/重叠、内洞/MultiPolygon、缺 city。
+- “西湖区”“西湖区的日落”与浏览成员一致；跨来源副本不重复计数。
+- 人工指定/取消/排除优先；重解析不加回取消照片，不改 GPS，不触发其他建库。
 
-只提取行政区所需对象和字段：
+默认只用合成资产与公开坐标；真实图库抽查须另获用户授权。所列验证完成且审查收口后，只标 **PASS — 本机个人中文地点与小样本验证**。
 
-```text
-boundary=administrative
-admin_level=4 / 5 / 6
-name / name:zh
-ref:admin:CN（如有）
-parent hierarchy
-Polygon / MultiPolygon
-```
+## 6. 30 万照片的基本性能要求
 
-不导入道路、建筑、POI、商家等普通 OSM 数据。
+- 行政区 Polygon 由包版本缓存，后台分批解析并持久保存结果；正常浏览不重新做点面判断。已有同 GPS/包/解析器版本结果直接复用，避免每批重读边界包或从头寻找已完成资产。
+- 相册列表/计数/纯地点分页采用数据库聚合与索引/keyset 查询；不照搬旧 albums 的全量 Python 分组、逐照片查名称/别名或 list 去重。共用成员规则不等于每个接口重复读取全库；地点＋内容搜索继续复用现有权威候选检索路径。
+- 在可复用的 30 万合成资产/归属夹具上，对省/市/区县计数、第一页与下一页做首次及 3 次重复查询，记录耗时/返回量并核对去重计数。另测一个有界 GPS 解析批次的吞吐；全库耗时推算必须标为估算，不当作 30 万真实边界解析实测。
+- 数据准备和重解析均可在后台运行，短事务分批提交，不阻塞地图/照片浏览；不建立 GIS 服务或全国性能评测项目。
 
-## 0.2 项目行政层级
+## 7. 执行与报告
 
-项目内部统一解释为：
+建议 DS-H 做短 ADR 与跨模块实现；独立 DS-H 核对本卡全部改动、直接调用链及上述证据，Sol high 只聚焦层级/人工排除/包切换等高风险契约。不重审全仓，不机械重跑已有成功验证；模型由用户手动切换。
 
-```text
-admin_level=4 → province
-admin_level=5 → city
-admin_level=6 → district
-```
+报告 `docs/reports/P4-PLACE-CN.md` 仅记录 ADR、源快照/许可/CRS、包 ID 与记录数、坐标/搜索/东京结果、验证命令与 JUnit 汇总、30 万简单计时/解析吞吐、审查结论和未覆盖项。
 
-若实际 OSM 个别区域不满足该层级，必须在准备阶段保守处理并记录，不猜测缺失父级。
-
-## 0.3 坐标与事实边界
-
-项目权威 GPS 继续使用：
-
-```text
-asset_geo_facts.latitude
-asset_geo_facts.longitude
-```
-
-只接受当前已有的 WGS84 / ASSUMED_WGS84 有效事实。
-
-省 / 市 / 区县是可重新计算的派生结果，不修改原图 GPS。
-
-## 0.4 自动归属
-
-中国自动归属优先：
-
-```text
-GPS
- ↓
-district Polygon point-in-polygon
- ↓
-city
- ↓
-province
-```
-
-无法可靠命中时允许缺级或 unknown，不退化成错误的“精确行政归属”。
-
-## 0.5 人工优先
-
-必须保持现有语义：
-
-```text
-MANUAL_ASSIGNED   → 人工地点优先
-MANUAL_UNASSIGNED → 阻止自动地点
-AUTO_ALLOWED      → 可使用机器派生地点
-```
-
-机器 Polygon 结果不能伪装为人工确认。
-
-## 0.6 数据包升级
-
-激活新版本中国行政区包后，只允许对已有有效 GPS 重新做地点解析。
-
-禁止因此：
-
-```text
-重新读取原图 EXIF
-重新建向量
-重新 OCR
-重新做人脸
-重新生成缩略图
-```
-
-ADR 完成并通过窄核对后，进入 Phase 1。
-
----
-
-# Phase 1 — 实现
-
-执行：**GPT-6 Luna / Medium**。  
-实现、修复、定向验证尽量同一会话完成。
-
-## 2. 数据包
-
-新增或等价实现：
-
-```text
-tools/places/prepare_china_places.py
-```
-
-输入：
-
-```text
-Geofabrik China OSM PBF
-```
-
-输出独立 dataset，例如：
-
-```text
-asia-cn-admin-v1
-```
-
-准备阶段负责：
-
-- 过滤行政边界；
-- 中文标准名称与常用简称；
-- parent hierarchy；
-- Polygon / MultiPolygon 规范化；
-- CRS 明确为 WGS84；
-- manifest / checksum；
-- PhotoSearch 可读取的行政区 INDEX / sidecar。
-
-保留：
-
-```text
-geonames-asia-cities500-v1
-```
-
-用于非中国地点和 rollback。
-
-## 3. 最小架构改动
-
-当前旧地点模型不直接支持 district。
-
-优先采用**加性行政区 sidecar / INDEX**，例如：
-
-```text
-index
-├─ city_to_admin1
-└─ cn_admin
-   ├─ provinces
-   ├─ cities
-   └─ districts
-```
-
-district 至少包含：
-
-```text
-id
-name
-aliases
-parent_city_id
-polygon_ref
-```
-
-不要为了本卡默认修改：
-
-```text
-places.kind
-历史 migration
-人工 assignment / exclusion / undo
-旧 place_text 语义
-旧搜索核心协议
-```
-
-机器自动行政区也不要简单塞入旧 manual-only `place_text`。
-
-## 4. 中国 GPS 归属
-
-对于中国有效 GPS：
-
-```text
-latitude / longitude
-→ district Polygon
-→ parent city
-→ parent province
-```
-
-中国以外继续现有 GeoNames 最近城市逻辑。
-
-边界点、Polygon 异常、层级缺失时保守返回缺级/unknown。
-
-## 5. 地点浏览
-
-现有地点相册增加：
-
-```text
-province
-city
-district
-```
-
-例如：
-
-```text
-浙江省 · 3200 张
-杭州市 · 1800 张
-西湖区 · 680 张
-```
-
-继续保持人工地点优先和人工取消阻断自动归类。
-
-## 6. 地点搜索
-
-复用现有 `place-aware search`：
-
-```text
-西湖区
-→ 西湖区照片
-
-西湖区的日落
-→ 西湖区成员范围 + 原有“日落”内容搜索
-
-杭州夜景
-→ 杭州成员范围 + 夜景搜索
-```
-
-标准名称和常用简称可参与地点识别。
-
-不要通过“把完整地址塞进普通 FTS”替代结构化地点范围过滤。
-
-## 7. 重新解析
-
-提供一个简单受控入口，使新中国行政区包激活后可以：
-
-```text
-已有有效 GPS
-→ 重新计算省 / 市 / 区县
-```
-
-不重新扫描照片，不触发其他 AI 建库。
-
-## 8. 最小测试
-
-个人项目只做小样本定向测试。
-
-### 数据包
-
-确认：
-
-```text
-build / validate / activate PASS
-```
-
-### 中国坐标
-
-选 3～4 个明显位于行政区内部的位置：
-
-```text
-杭州西湖区
-上海黄浦区
-深圳南山区
-重庆渝中区
-```
-
-检查中文省 / 市 / 区县基本合理。
-
-### 地点搜索
-
-只需重点验证：
-
-```text
-西湖区
-西湖区的日落
-```
-
-### 国外回归
-
-只检查一个：
-
-```text
-东京
-```
-
-确认原 GeoNames 路线正常。
-
-### 真实图库
-
-只有用户明确授权时，随机检查 1～3 张中国 GPS 照片；否则只用合成数据。
-
-不做全国准确率和 30 万性能压测。
-
-## 9. 明确不做
-
-本卡不做：
-
-- 乡镇 / 街道 / 社区；
-- 门牌完整地址；
-- POI / 景点 / 商家；
-- 在线逆地理；
-- 地图 UI；
-- 地图瓦片；
-- 新 GIS 服务；
-- PostGIS / RTree 专项；
-- 全国准确率评测；
-- 全图库重新读 EXIF；
-- 大规模 UI 重构。
-
-## 10. 验收
-
-满足以下即可：
-
-```text
-中国行政区包可生成、验证、激活
-中国有效 GPS 可得到合理中文省 / 市 / 区县
-杭州 / 上海 / 深圳不再优先显示英文小地名
-“西湖区”可找到对应照片
-“西湖区的日落”可做地点范围 + 内容搜索
-东京仍正常
-人工 assignment / unassign 语义不变
-未重建向量 / OCR / 人脸
-```
-
-## 11. 停止条件
-
-如果实现发现必须修改以下核心契约：
-
-```text
-人工 assignment / exclusion 语义
-资产身份
-历史 migration
-旧搜索核心协议
-```
-
-停止扩大任务，记录阻塞。
-
-以下属于本卡正常范围：
-
-```text
-dataset / INDEX 小型加性扩展
-Polygon 读取与 point-in-polygon
-albums 增加 district
-place-aware search 增加 district
-已有 GPS 的重新地点解析
-```
-
----
-
-# Phase 2 — 窄受影响面复核
-
-负责人：**DS-H**。
-
-只检查：
-
-1. 原始 GPS 事实未被改写；
-2. 人工 assignment / unassign / exclusion 仍优先；
-3. 中国 Polygon 结果仅为机器派生；
-4. 数据包切换与重新解析边界清楚；
-5. district scope 未破坏旧地点搜索；
-6. 非中国 GeoNames 回归正常。
-
-不要求全仓工程主审，不默认追加 Sol。
-
-## 12. 报告
-
-输出：
-
-```text
-docs/reports/P4-PLACE-CN.md
-```
-
-只记录：
-
-- ADR 结论；
-- 实际数据源、版本、许可、CRS；
-- dataset_id；
-- 省 / 市 / 区县记录数；
-- 3～4 个中国坐标结果；
-- 两个地点搜索结果；
-- 东京回归；
-- 如获授权，1～3 张真实照片结果；
-- build / validate / activate 状态；
-- 未覆盖项。
+不做乡镇/门牌/POI、在线逆地理、地图 UI、GIS 服务或空间索引专项。若必须改变资产身份、旧人工协议或搜索核心协议，停止扩大实现并记录具体冲突。

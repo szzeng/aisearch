@@ -34,6 +34,7 @@ SEARCH_NAME = "search.html"
 #: The person-curation page (P3-06). It never shadows ``/api/v1/persons`` or
 #: ``/api/v1/person-operations``: this route only answers the bare ``/persons`` document.
 PERSONS_NAME = "persons.html"
+MAP_NAME = "map.html"
 
 #: The shell must always be revalidated: it names the assets of this exact build.
 SHELL_CACHE_CONTROL = "no-cache"
@@ -158,6 +159,12 @@ async def persons_page() -> Response:
     return _serve(PERSONS_NAME, cache_control=SHELL_CACHE_CONTROL)
 
 
+@router.get("/map")
+async def map_page() -> Response:
+    """Personal GPS map page; all photo data remains behind the session API."""
+    return _serve(MAP_NAME, cache_control=SHELL_CACHE_CONTROL)
+
+
 @router.get("/web/{path:path}")
 async def static_asset(path: str) -> Response:
     """One packaged script, style or image below ``/web/``."""
@@ -165,7 +172,18 @@ async def static_asset(path: str) -> Response:
     # script or stylesheet only changes with a build.
     cache_control = (
         SHELL_CACHE_CONTROL
-        if path in (INDEX_NAME, PLACES_NAME, SEARCH_NAME, PERSONS_NAME)
+        if path
+        in (
+            INDEX_NAME,
+            PLACES_NAME,
+            SEARCH_NAME,
+            PERSONS_NAME,
+            MAP_NAME,
+            "map.js",
+            "map-boot.js",
+            "map.css",
+            "map-config.js",
+        )
         else ASSET_CACHE_CONTROL
     )
     return _serve(path, cache_control=cache_control)

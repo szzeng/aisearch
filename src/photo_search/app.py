@@ -18,6 +18,7 @@ from fastapi import FastAPI
 
 from photo_search.api.context import ApiContext
 from photo_search.api.handlers import install_exception_handlers
+from photo_search.api.map_api import router as map_router
 from photo_search.api.routes import APP_VERSION, router
 from photo_search.api.security import SecurityMiddleware
 from photo_search.api.settings import ApiSettings
@@ -77,11 +78,10 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.api = api
-    application.add_middleware(
-        SecurityMiddleware, settings=resolved, sessions=api.sessions
-    )
+    application.add_middleware(SecurityMiddleware, settings=resolved, sessions=api.sessions)
     install_exception_handlers(application)
     application.include_router(router)
+    application.include_router(map_router)
     # The front-end shell and its assets sit outside ``/api/v1``: they carry no user data
     # and need no session, while every data request still goes through the guarded API.
     application.include_router(web_router)

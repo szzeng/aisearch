@@ -1517,6 +1517,13 @@
 
   function drawDetail(body, assetId) {
     els.detailBody.textContent = "";
+    var mapReturn = null;
+    try { mapReturn = JSON.parse(sessionStorage.getItem("aisearch.map-return.v1") || "null"); } catch (_) {}
+    if (mapReturn) {
+      var mapBack = element("a", "nav-link", "返回地图相册");
+      mapBack.href = "/map";
+      els.detailBody.appendChild(mapBack);
+    }
     var label = detailLabel(body, assetId);
     var figure = element("figure", "detail-figure");
     var controls = element("div", "detail-preview-controls");
@@ -1544,6 +1551,9 @@
     var caption = element("figcaption", "hint", "正在加载预览…");
     figure.appendChild(caption);
     els.detailBody.appendChild(figure);
+    var geoHost = element("section", "detail-map-block", "");
+    renderDetailMap(body, assetId, geoHost);
+    els.detailBody.appendChild(geoHost);
 
     var preview = { image: null, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit" };
     function applyScale(scale) {
@@ -1744,6 +1754,45 @@
     });
     media.appendChild(mediaList);
     els.detailBody.appendChild(media);
+  }
+
+  function renderDetailMap(asset, assetId, host) {
+    if (!asset || asset.availability !== "present" || !Array.isArray(asset.locations) ||
+        !asset.locations.some(function (location) { return location.availability === "PRESENT"; })) return;
+    request("/map/assets?asset_id=" + encodeURIComponent(assetId) + "&limit=1")
+      .then(function (membership) {
+        if (!membership.body || membership.body.total !== 1) return;
+        return request("/assets/" + encodeURIComponent(assetId) + "/geo").then(function (result) {
+          var body = result.body || {}, point = body.normalized_wgs84;
+          if (body.status !== "VALID" || body.input_revision !== asset.sha256 ||
+              !["WGS84", "ASSUMED_WGS84"].includes(body.datum_status) || !point) return;
+          var heading = element("h3", null, "拍摄位置");
+          var link = element("a", "nav-link", "在地图相册中查看");
+          link.href = "/map?asset_id=" + encodeURIComponent(assetId);
+          var canvas = element("div", "detail-map-canvas", "");
+          canvas.style.height = "220px";
+          host.appendChild(heading); host.appendChild(link); host.appendChild(canvas);
+          var css = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.css";
+          if (!document.querySelector('link[href="' + css + '"]')) {
+            var stylesheet = document.createElement("link"); stylesheet.rel = "stylesheet"; stylesheet.href = css;
+            document.head.appendChild(stylesheet);
+          }
+          function drawMiniMap(ml) {
+            var detailMap = new ml.Map({container: canvas, center: [point.longitude, point.latitude], zoom: 12,
+              interactive: false, attributionControl: true, style: {version: 8,
+                sources: {osm: {type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+                  tileSize: 256, attribution: "© OpenStreetMap contributors"}},
+                layers: [{id: "osm", type: "raster", source: "osm"}]}});
+            detailMap.on("load", function () {
+              detailMap.addSource("asset-point", {type:"geojson",data:{type:"FeatureCollection",features:[
+                {type:"Feature",geometry:{type:"Point",coordinates:[point.longitude,point.latitude]},properties:{}}]}});
+              detailMap.addLayer({id:"asset-point",type:"circle",source:"asset-point",paint:{"circle-radius":7,"circle-color":"#dc3545","circle-stroke-color":"#fff","circle-stroke-width":2}});
+            });
+          }
+          if (window.maplibregl) drawMiniMap(window.maplibregl);
+          else { var script = document.createElement("script"); script.src = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.js"; script.onload = function () { drawMiniMap(window.maplibregl); }; script.onerror = function () { canvas.textContent = "地图暂不可用"; }; document.head.appendChild(script); }
+        });
+      }).catch(function () {});
   }
 
   function placeImage(holder, url, altText, onLoaded) {

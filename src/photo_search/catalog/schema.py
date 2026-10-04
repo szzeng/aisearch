@@ -61,7 +61,7 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 #: ``idx_jobs_retry_due``/``idx_jobs_expired_lease`` that let the claim's own prefilter
 #: statements (``requeue_due_retries``/``fail_exhausted_leases``) stop scanning the whole
 #: backlog. No table, column, row, CHECK or state vocabulary changes.
-SUPPORTED_SCHEMA_VERSION = 16
+SUPPORTED_SCHEMA_VERSION = 17
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
@@ -125,7 +125,9 @@ def verify_schema(connection: sqlite3.Connection, version: int) -> None:
     missing = sorted(f"{kind}:{name}" for kind, name in set(expected) - set(actual))
     unexpected = sorted(f"{kind}:{name}" for kind, name in set(actual) - set(expected))
     mismatched = sorted(
-        f"{kind}:{name}" for (kind, name) in set(expected) & set(actual) if expected[(kind, name)] != actual[(kind, name)]
+        f"{kind}:{name}"
+        for (kind, name) in set(expected) & set(actual)
+        if expected[(kind, name)] != actual[(kind, name)]
     )
     if missing or unexpected or mismatched:
         raise CatalogError(
@@ -154,7 +156,9 @@ def read_schema_version(connection: sqlite3.Connection) -> int | None:
     tables = set(business_tables(connection))
     if "metadata" not in tables:
         return None
-    row = connection.execute("SELECT value FROM metadata WHERE key = ?", (SCHEMA_VERSION_KEY,)).fetchone()
+    row = connection.execute(
+        "SELECT value FROM metadata WHERE key = ?", (SCHEMA_VERSION_KEY,)
+    ).fetchone()
     if row is None or row[0] is None:
         return None
     try:

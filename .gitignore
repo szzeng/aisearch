@@ -58,3 +58,7 @@ indexes/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# The pinned MapLibre browser bundle is source code, not generated build output.
+!/src/photo_search/web/vendor/maplibre-4.7.1/dist/
+!/src/photo_search/web/vendor/maplibre-4.7.1/dist/*
