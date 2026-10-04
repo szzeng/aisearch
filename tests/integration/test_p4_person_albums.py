@@ -286,7 +286,7 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
         cards = {p["person_id"]: p for p in people}
         assert cards[left_person]["avatar_face_id"] == data["left"]
         assert cards[right_person]["avatar_face_id"] == data["right"]
-        assert cards[empty]["thumbnail_url"] is None
+        assert empty not in cards
         left_page = (await client.get(f"/api/v1/persons/{left_person}/photos")).json()
         right_page = (await client.get(f"/api/v1/persons/{right_person}/photos")).json()
         assert [a["asset_id"] for a in left_page["assets"]] == [data["asset_id"]]

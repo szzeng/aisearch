@@ -3,9 +3,10 @@
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
   const state = { organize: false, person: null, listCursor: null, inboxCursor: null,
-    photoCursor: null, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
+    photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
+    previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", edit: null, chosen: null,
-    operation: null, undoTimer: null, writing: false, searching: false, searchBody: null, busy: new Set() };
+    operation: null, undoTimer: null, messageTimer: null, writing: false, coverMode: false, searching: false, searchBody: null, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -57,7 +58,13 @@
     }
     return result;
   }
-  function message(value) { $("status").textContent = value; }
+  function message(value, transient) {
+    clearTimeout(state.messageTimer); state.messageTimer = null;
+    $("status").textContent = value; $("status").hidden = !value;
+    if (transient) state.messageTimer = setTimeout(() => {
+      state.messageTimer = null; $("status").textContent = ""; $("status").hidden = true;
+    }, 3000);
+  }
   function params(values) { return "?" + new URLSearchParams(values); }
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
@@ -108,16 +115,19 @@
   function albumHeading() {
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
     $("title").textContent = name(state.person); $("name").textContent = state.person.name ? "改名字" : "取名字";
+    $("cover").textContent = state.coverMode ? "取消选择封面" : "更换封面";
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
   function openAlbum(person) {
-    state.person = person; $("library").hidden = true; $("album").hidden = false;
+    state.person = person; state.coverMode = false; $("library").hidden = true; $("album").hidden = false;
     $("photo-query").value = ""; state.searching = false; albumHeading(); loadPhotos(false);
     $("back").focus();
   }
   function renderPhotos(items) {
     items.forEach((item) => {
-      const id = photoId(item); const card = button("", () => preview(id), "pa-photo-card");
+      const id = photoId(item); if (state.photoIds.includes(id)) return;
+      state.photoIds.push(id);
+      const card = button("", () => preview(id), "pa-photo-card");
       card.setAttribute("aria-label", "查看照片 " + id);
       card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo"));
       if (item.person_faces && item.person_faces.length) {
@@ -133,10 +143,13 @@
     });
   }
   async function loadPhotos(more) {
-    if (!state.person || (more && state.busy.has("photos"))) return;
+    if (!state.person || (more && state.busy.has("photos"))) return false;
     const seq = ++state.photoSeq; state.busy.add("photos"); $("photos-more").disabled = true;
     const id = state.person.person_id;
-    if (!more) { $("photos").replaceChildren(); state.photoCursor = null; }
+    if (!more) {
+      $("photos").replaceChildren(); state.photoCursor = null; state.photoIds = []; state.photoListSeq++;
+      updatePreviewNavigation();
+    }
     $("photo-note").textContent = "正在加载照片……";
     try {
       let page;
@@ -148,36 +161,92 @@
         const values = { limit: 60 }; if (more && state.photoCursor) values.cursor = state.photoCursor;
         page = await api("/persons/" + id + "/photos" + params(values));
       }
-      if (seq !== state.photoSeq || !state.person || id !== state.person.person_id) return;
+      if (seq !== state.photoSeq || !state.person || id !== state.person.person_id) return false;
       if (state.searching) state.searchSession = page.search_session_id;
       if (page.person) { state.person = page.person; albumHeading(); }
       renderPhotos(page.assets || page.hits || []); state.photoCursor = page.next_cursor;
       $("photos-more").hidden = !page.has_more && !page.next_cursor;
-      $("photo-note").textContent = $("photos").children.length ? (state.searching ? "搜索结果仅包含这个人的照片。点“全部照片”返回相册。" + (page.candidates_truncated ? " 搜索结果较多，请缩小查询范围。" : "") : "点照片查看大图；认错了可选择对应的人脸更正。") : (state.searching ? "没有找到匹配的照片。" : "这个人物还没有照片。");
-    } catch (error) { if (seq === state.photoSeq) { $("photo-note").textContent = errorText(error); $("photos-more").hidden = true; } }
-    finally { if (seq === state.photoSeq) { state.busy.delete("photos"); $("photos-more").disabled = false; } }
+      $("photo-note").textContent = $("photos").children.length ? (state.coverMode ? "点一张喜欢的照片，再选这个人的脸设为封面。" : state.searching ? "搜索结果仅包含这个人的照片。点“全部照片”返回相册。" + (page.candidates_truncated ? " 搜索结果较多，请缩小查询范围。" : "") : "点照片查看大图；认错了可选择对应的人脸更正。") : (state.searching ? "没有找到匹配的照片。" : "这个人物还没有照片。");
+      return true;
+    } catch (error) { if (seq === state.photoSeq) { $("photo-note").textContent = errorText(error); $("photos-more").hidden = true; } return false; }
+    finally { if (seq === state.photoSeq) { state.busy.delete("photos"); $("photos-more").disabled = false; updatePreviewNavigation(); } }
+  }
+  function previewPosition() {
+    if (!state.person || state.previewListSeq !== state.photoListSeq) return -1;
+    return state.photoIds.indexOf(state.previewAssetId);
+  }
+  function updatePreviewNavigation() {
+    const index = previewPosition(); const enabled = index >= 0 && $("preview").open;
+    $("preview-nav").hidden = !enabled;
+    $("preview-position").textContent = enabled ? "第 " + (index + 1) + " 张" : "";
+    $("preview-prev").disabled = !enabled || index === 0 || state.previewMoving || state.writing;
+    $("preview-next").disabled = !enabled || state.previewMoving || state.writing ||
+      (index === state.photoIds.length - 1 && !state.photoCursor);
+  }
+  async function movePreview(step) {
+    if (state.previewMoving || state.writing || !$("preview").open) return;
+    const index = previewPosition(); if (index < 0 || index + step < 0) return;
+    const listSeq = state.photoListSeq; const previewSeq = state.previewSeq;
+    state.previewMoving = true; updatePreviewNavigation();
+    try {
+      if (index + step >= state.photoIds.length) {
+        if (!state.photoCursor) return;
+        const loaded = await loadPhotos(true);
+        if (previewSeq !== state.previewSeq || listSeq !== state.photoListSeq || !$("preview").open) return;
+        if (!loaded) { $("preview-note").textContent = "下一批照片没有加载成功，请再点“下一张”重试。"; return; }
+      }
+      if (listSeq !== state.photoListSeq || !$("preview").open) return;
+      const next = state.photoIds[index + step];
+      if (next !== undefined) await preview(next);
+    } finally { state.previewMoving = false; updatePreviewNavigation(); }
   }
   async function preview(id) {
     const seq = ++state.previewSeq; $("preview-faces").replaceChildren();
+    state.previewAssetId = id; state.previewListSeq = state.photoListSeq;
     $("review").hidden = true;
     $("preview-note").textContent = "正在读取这张照片的人脸……";
     const image = $("preview-image"); image.hidden = false;
     image.onerror = () => { if (seq === state.previewSeq) { image.hidden = true; $("preview-note").textContent = "大图暂时不可用；照片来源可能已离线。"; } };
-    image.src = mediaURL(photoURL(id, "preview")); $("preview").showModal();
+    image.src = mediaURL(photoURL(id, "preview"));
+    if (!$("preview").open) $("preview").showModal();
+    updatePreviewNavigation();
     try {
       const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
       const selectedId = state.person && state.person.person_id;
       page.faces.sort((a, b) => Number(b.assigned_person_id === selectedId) - Number(a.assigned_person_id === selectedId));
       page.faces.forEach((face) => {
-        const card = button("", () => { $("preview").close(); editFace(face); }, "pa-person-card");
+        if (state.coverMode && face.assigned_person_id !== selectedId) return;
+        const card = node("div", undefined, "pa-person-card");
         if (face.assigned_person_id === selectedId) {
           card.classList.add("pa-selected-person"); card.append(node("strong", "本相册的人"));
         }
-        card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : face.assigned_person_id ? "当前：未命名的人" : "还没确定是谁"), node("span", "更正这张脸")); $("preview-faces").append(card);
+        card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : face.assigned_person_id ? "当前：未命名的人" : "还没确定是谁"));
+        if (state.person && face.assigned_person_id === selectedId) {
+          const cover = button("设为封面", () => saveCover(face.face_id, cover));
+          card.append(cover);
+        }
+        if (!state.coverMode) card.append(button("更正这张脸", () => { $("preview").close(); editFace(face); }));
+        $("preview-faces").append(card);
       });
-      $("preview-note").textContent = page.faces.length ? "选中认错的那张脸，再指定是谁或移出人物。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
+      $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
       $("review").hidden = page.faces.length !== 0;
     } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+  }
+  async function saveCover(faceId, control) {
+    if (!state.person || state.writing) return;
+    const person = state.person; const previewSeq = state.previewSeq;
+    state.writing = true; control.disabled = true; updatePreviewNavigation();
+    try {
+      const result = await api("/persons/" + person.person_id + "/cover",
+        { face_id: faceId, expected_revision: person.revision }, "PUT");
+      loadPeople(false);
+      if (state.person && state.person.person_id === person.person_id) {
+        state.person = result.person; state.coverMode = false; albumHeading(); loadPhotos(false);
+        if (previewSeq === state.previewSeq) $("preview").close();
+        message("已更换人物封面。", true);
+      }
+    } catch (error) { if (previewSeq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+    finally { state.writing = false; control.disabled = false; updatePreviewNavigation(); }
   }
   function editBase(edit, title, note) {
     if (state.writing) return false;
@@ -233,7 +302,7 @@
     }, 10000);
   }
   async function refreshAfterWrite(result, label) {
-    rememberOperation(result, label); message(label); $("edit").close(); state.editSeq++; state.choiceSeq++;
+    rememberOperation(result, label); message(label, true); $("edit").close(); state.editSeq++; state.choiceSeq++;
     loadPeople(false); if (state.organize) loadInbox(false);
     if (state.person) {
       const id = state.person.person_id;
@@ -283,7 +352,7 @@
     const operation = state.operation; state.writing = true; $("undo").disabled = true;
     try {
       await api("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", { request_id: requestId(), expected_operation_revision: operation.operation_revision });
-      clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。");
+      clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。", true);
       loadPeople(false); if (state.organize) loadInbox(false);
       if (state.person) { state.person = await api("/persons/" + state.person.person_id); albumHeading(); state.searching = false; loadPhotos(false); }
     } catch (error) { message("无法撤销：" + errorText(error)); }
@@ -298,6 +367,11 @@
     $("back").addEventListener("click", () => { state.person = null; state.photoSeq++; state.busy.delete("photos"); $("library").hidden = false; $("album").hidden = true; $("people").focus(); });
     $("name").addEventListener("click", () => editBase({ mode: "name", person: { ...state.person } }, "给这个人取名字", "可用家人的称呼或你习惯的名字。"));
     $("merge").addEventListener("click", () => editMerge({ ...state.person }));
+    $("cover").addEventListener("click", () => {
+      if (state.writing || !state.person) return;
+      state.coverMode = !state.coverMode; state.searching = false; $("photo-query").value = "";
+      albumHeading(); loadPhotos(false);
+    });
     $("photos-more").addEventListener("click", () => loadPhotos(true));
     $("search-photos").addEventListener("submit", (event) => {
       event.preventDefault(); const text = $("photo-query").value.trim(); if (!text) { state.searching = false; loadPhotos(false); return; }
@@ -305,8 +379,13 @@
     });
     $("all-photos").addEventListener("click", () => { state.searching = false; $("photo-query").value = ""; loadPhotos(false); });
     $("preview-close").addEventListener("click", () => $("preview").close());
+    $("preview-prev").addEventListener("click", () => movePreview(-1));
+    $("preview-next").addEventListener("click", () => movePreview(1));
     $("review").addEventListener("click", () => { $("preview").close(); const advanced = document.getElementById("advanced-tools"); advanced.open = true; advanced.querySelector("summary").focus(); });
-    $("preview").addEventListener("close", () => { state.previewSeq++; $("preview-image").removeAttribute("src"); });
+    $("preview").addEventListener("close", () => {
+      state.previewSeq++; state.previewAssetId = null; $("preview-image").removeAttribute("src");
+      updatePreviewNavigation();
+    });
     $("edit-form").addEventListener("submit", submitEdit);
     $("edit-find").addEventListener("click", () => loadChoices(false)); $("choice-more").addEventListener("click", () => loadChoices(true));
     $("edit-query").addEventListener("input", () => { if (state.edit && state.edit.mode !== "name") { state.chosen = null; state.choiceSeq++; $("edit-submit").disabled = true; } });

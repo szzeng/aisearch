@@ -60,6 +60,7 @@ from photo_search.api.models import (
     MappingListResponse,
     MappingOperationResponse,
     PageCapabilitiesResponse,
+    PersonCoverRequest,
     PersonListResponse,
     PersonMergeRequest,
     PersonNameRequest,
@@ -1300,6 +1301,18 @@ async def person_photos(
         person_id=person_id,
         limit=clamp_person_limit(limit),
         cursor=cursor,
+    )
+
+
+@router.put("/persons/{person_id}/cover", summary="Choose an effective member face as album cover")
+async def put_person_cover(
+    request: Request, person_id: int, payload: PersonCoverRequest
+) -> dict[str, Any]:
+    return person_albums.set_cover(
+        service_of(request).catalog,
+        person_id=person_id,
+        face_id=payload.face_id,
+        expected_revision=payload.expected_revision,
     )
 
 

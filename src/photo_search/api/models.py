@@ -764,6 +764,13 @@ class PersonNameRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+class PersonCoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    face_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    expected_revision: int = Field(ge=1, strict=True)
+
+
 class PersonMergeSource(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

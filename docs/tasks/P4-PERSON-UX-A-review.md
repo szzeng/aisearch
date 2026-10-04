@@ -15,3 +15,9 @@
 同日用户新增门限授权与重匹配：[P4-PERSON-MATCH-A卡](P4-PERSON-MATCH-A.md)、[实现报告](../reports/P4-PERSON-MATCH-A-implementation.md)，定向JUnit79/0/0/0。加审face contract/service/cli及reconcile可选asset_ids全改动：历史0.56校准不伪改为0.50新测量；归人策略不更改检测/不可变产物身份；已存v1/v2特征重匹配的选择scope、索引确认/排除/人工锁/hold、新零脸发布和旧机器退役、未知空间、错误data-root零建库及limit。既有CONFIRMED关系不拆散，无真实库执行；本轮只有CLI，没有新UI。上述内容属于同一完整受影响面主审，不另开性能或真实数据专项。
 
 本轮图片展示补充：[P4-PERSON-IMAGE-A](P4-PERSON-IMAGE-A.md)、[报告](../reports/P4-PERSON-IMAGE-A-implementation.md)。补审ID URL历史浏览器缓存绕开和ETag重新验证；face-crop@2对校验后已发布v1/v2检测文档original_size帧的只读映射、checksum/输入/face_id/bbox绑定、缺失/损坏拒绝、无文档旧行的原图头路径、SQLite查询与线程池边界。检测spec/face_id/向量/人工归属均不改；29项定向JUnit和合成旧缓存/大JPEG/EXIF6/页面证据通过，真实图库未访问。旧954cf00的图片尝试被3bab1c3撤回，不作为本轮证据或当前实现。
+
+2026-10-04整理补修：[P4-PERSON-CLEANUP-A](P4-PERSON-CLEANUP-A.md)、[报告](../reports/P4-PERSON-CLEANUP-A-implementation.md)，JUnit13/0/0/0。补审未命名有效成员筛选在分页前执行，空身份保留但整理区隐藏，named/all目标选择不变，更正/合并/命名与撤销恢复、共享合照剩余成员不误隐藏；成功状态3秒收起与撤销条10秒独立，连续提示计时重置，旧计时不清除后续错误。仅只读列表与提示展示改变，人工事务/schema不变，无真实库访问。
+
+2026-10-04封面新增：[P4-PERSON-COVER-A](P4-PERSON-COVER-A.md)、[报告](../reports/P4-PERSON-COVER-A-implementation.md)，JUnit23/0/0/0。补审现有avatar_face_id展示元数据PUT完整model/route/albums/UI调用链：session/CSRF、严格形状、canonical/revision/有效成员事务校验、他人/建议/人工移出/排除拒绝零写入；只更新persons行、不改过滤revision/索引/人工归属，独立PUT不伪写RENAME日志，既有撤销拒绝覆盖后来的封面。UI只可选本人、重复提交/失败/晚到预览结果、相册与卡片同步和失效补选；无schema或旧操作类型变化。仅合成API及实际JS最小DOM，未做真实图库/浏览器验证。
+
+2026-10-04照片导航：[P4-PERSON-PREVIEW-A](P4-PERSON-PREVIEW-A.md)、[报告](../reports/P4-PERSON-PREVIEW-A-implementation.md)，JUnit7/0/0/0。补审实际页面顺序/分页ID去重/首尾禁用、人物搜索相同scope与session/cursor、加载失败重试、重复点击、关闭或新列表时旧续页不切图、旧人脸响应不覆盖新照片；封面保存期间禁用导航与列表外预览隐藏导航。只前端展示/既有有界分页，无API/数据语义改动；最小DOM证据，不冒充真实浏览器验证。

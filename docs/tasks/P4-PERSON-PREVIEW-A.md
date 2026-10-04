@@ -1,0 +1,13 @@
+# P4-PERSON-PREVIEW-A — 人物照片连续查看
+
+日期：2026-10-04。状态：IMPLEMENTED / 简单验证完成；独立审查PENDING。用户要求人物相册查看大图时增加“上一张”“下一张”。
+
+入口：AGENTS → development-status → P4-PERSON-COVER-A → 本卡；沿用已读主架构§8.3/10.3及策略§2.4/3.2/3.4，仅相关persons-albums.js/HTML/CSS及小型JS行为测试。
+
+范围：按当前人物相册或当前搜索结果顺序切换大图，同步对应人脸及封面入口；首张禁用上一张、末张禁用下一张；到已加载末尾时复用原分页获取下一批，不预取整库。不属于相册的待整理人脸预览不跨人物导航。防重复加载、旧请求/关闭窗口/切换相册竞态；不改API/索引/人脸归属。
+
+验证：遵循用户个人项目简单测试，只运行实际JS最小DOM/合成HTTP（顺序、首尾、跨页、失败重试、搜索scope、人脸同步、关闭后晚到结果）及封面/成功提示回归，JUnit+Node/Ruff/diff-check。无真实库/服务重启/模型/全量/性能/打包。
+
+收尾：报告/status及人物独立审查卡补充本面，不替代独立审查。
+
+完成：定向JUnit7/0/0/0、Ruff/Node/diff-check通过。见[实现与简单验证](../reports/P4-PERSON-PREVIEW-A-implementation.md)。下一人物阶段仍为P4-PERSON-UX-A-review；未访问真实图库或重启服务。

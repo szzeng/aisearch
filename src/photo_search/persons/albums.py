@@ -10,6 +10,7 @@ from typing import Any
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
 from photo_search.face.contract import FACE_ARTIFACT_REVISION, FACE_PROCESSOR_ID, FACE_SPEC_REVISION
+from photo_search.persons.contracts import PERSON_REVISION_CONFLICT, fail
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.persons.read import person_summary
@@ -56,6 +57,48 @@ def _album_summary(connection: Any, row: Any) -> dict[str, Any]:
     return summary
 
 
+def set_cover(
+    catalog: Any, *, person_id: int, face_id: str, expected_revision: int
+) -> dict[str, Any]:
+    """Replace display metadata, keeping face ownership and all derived indexes intact."""
+    with catalog.write() as connection:
+        canonical = resolve_canonical_person_id(connection, person_id)
+        row = connection.execute(
+            "SELECT * FROM persons WHERE person_id = ?", (canonical,)
+        ).fetchone()
+        if int(row["revision"]) != expected_revision:
+            raise fail(
+                PERSON_REVISION_CONFLICT,
+                "the current person revision is not the expected one",
+                person_id=person_id,
+                canonical_person_id=canonical,
+                expected_revision=expected_revision,
+                current_revision=int(row["revision"]),
+            )
+        member = connection.execute(
+            "SELECT 1 FROM face_person_links AS l JOIN faces AS f ON f.face_id = l.face_id "
+            "JOIN assets AS a ON a.asset_id = f.asset_id "
+            "WHERE l.person_id = ? AND l.face_id = ? AND a.state = 'ACTIVE' AND "
+            + MEMBER_PREDICATE,
+            (canonical, face_id),
+        ).fetchone()
+        if member is None:
+            raise ApiError(
+                VALIDATION_ERROR, "choose a current face of this person as cover", status=422
+            )
+        changed = row["avatar_face_id"] != face_id
+        if changed:
+            connection.execute(
+                "UPDATE persons SET avatar_face_id = ?, revision = revision + 1, updated_at = ? "
+                "WHERE person_id = ?",
+                (face_id, catalog.now_ms(), canonical),
+            )
+            row = connection.execute(
+                "SELECT * FROM persons WHERE person_id = ?", (canonical,)
+            ).fetchone()
+        return {"changed": changed, "person": _album_summary(connection, row)}
+
+
 def _photo_person_faces(connection: Any, *, asset_id: int, person_id: int) -> dict[str, Any]:
     rows = connection.execute(
         "SELECT f.face_id, f.bbox_json FROM faces AS f JOIN face_person_links AS l ON l.face_id = f.face_id "
@@ -92,6 +135,17 @@ def people_page(
         conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":
         conditions.append("p.name IS NULL")
+        # A correction can move the last face away while retaining the identity
+        # for history/undo. Filter empty albums before pagination, without hiding
+        # other unnamed faces in a shared photo or deleting those identities.
+        conditions.append(
+            "EXISTS (SELECT 1 FROM face_person_links AS l "
+            "JOIN faces AS f ON f.face_id = l.face_id "
+            "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
+            "WHERE l.person_id = p.person_id AND member_asset.state = 'ACTIVE' AND "
+            + MEMBER_PREDICATE
+            + ")"
+        )
     if query:
         # instr is literal, so '%'/'_' have no surprising wildcard meaning.
         conditions.append(

@@ -1,6 +1,6 @@
 # Development status
 
-更新：2026-10-03。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-10-04。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
 ## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
 
@@ -20,7 +20,19 @@
 
 2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。 本次暂存整理保留搜索返回功能，补交取消启动时自动读取覆盖率的遗漏修正；前端JUnit **95/0/0/0**、Ruff/Node/diff-check通过，详细范围见同报告“暂存区整理与遗漏修正”。
 
-## 当前人物任务 P4-PERSON-IMAGE-A — 相册错图与人脸裁剪偏移（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+## 当前人物任务 P4-PERSON-PREVIEW-A — 大图上一张/下一张（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-PREVIEW-A.md)、[实现与简单验证](reports/P4-PERSON-PREVIEW-A-implementation.md)。查看照片新增上一张/下一张和当前位置，按当前相册/搜索结果顺序切换；首尾禁用，跨页复用有界分页，失败可重试，图与人脸同步；关闭/新列表后旧响应不切图。定向JUnit **7/0/0/0**、Ruff/Node/diff-check通过，仅实际JS最小DOM合成HTTP验证；刷新人物页生效，无需建库。未访问真实库/重启服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审。
+
+## 人物前一补修 P4-PERSON-COVER-A — 手动选择人物封面（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-COVER-A.md)、[实现与简单验证](reports/P4-PERSON-COVER-A-implementation.md)。人物相册“更换封面”→照片→本人脸“设为封面”，相册/人物卡片同步，复用avatar_face_id持久保存；有效成员/revision/session/CSRF保护，封面失效只读补选。只更新persons显示元数据，不改schema/归属/索引；旧撤销拒绝覆盖新封面。定向JUnit **23/0/0/0**、Ruff/Node/diff-check通过，仅合成API与实际JS最小DOM。重启刷新生效，无需建库；未访问真实库/重启服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审。
+
+## 人物前一补修 P4-PERSON-CLEANUP-A — 更正后空分组与成功提示（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-CLEANUP-A.md)、[实现与简单测试](reports/P4-PERSON-CLEANUP-A-implementation.md)。更正后没有有效人脸的未命名分组在分页前隐藏，保留人物身份与撤销；合照其他未命名人脸仍正常显示。“已归到/已并入/已保存”成功状态3秒消失，撤销条保留10秒，旧计时不清除后续错误。定向JUnit **13/0/0/0**、Ruff/Node/diff-check通过，仅小型合成API与实际JS最小DOM验证。重启刷新生效，无需建库；未访问真实库/重启用户服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审，未标独立PASS。
+
+## 人物前一补修 P4-PERSON-IMAGE-A — 相册错图与人脸裁剪偏移（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
 
 [补充卡](tasks/P4-PERSON-IMAGE-A.md)、[实现与截图](reports/P4-PERSON-IMAGE-A-implementation.md)。ID图片URL重新验证且新版人物JS绕开已有一年旧缓存；裁剪按校验后的检测文档坐标帧处理JPEG draft和旋转，face-crop@2不复用旧错误裁剪；人脸ID/不可变产物/向量/人工归属不变。定向JUnit **29/0/0/0**、Ruff/Node/diff-check与合成旧缓存→相册→预览浏览器验证通过。重启应用并刷新人物页生效，**不用重新识别或建库**。未访问真实库/PhotoSearchData或重启8000，真实照片效果待确认；独立审查加审本面，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)。此前图片补修已由3bab1c3撤回，仅保留撤销提示；以此新证据为准。
 
