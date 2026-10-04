@@ -10,8 +10,12 @@ import logging
 import multiprocessing
 import os
 import re
+import socket
 import sqlite3
 import sys
+import threading
+import time
+import webbrowser
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +85,22 @@ def _log_config() -> dict:
     return config
 
 
+def _open_browser_when_ready(url: str, host: str, port: int) -> None:
+    """Open the one-time session URL once the local HTTP listener is accepting connections."""
+
+    def _worker() -> None:
+        deadline = time.monotonic() + 60.0
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((host, int(port)), timeout=0.25):
+                    webbrowser.open(url, new=2)
+                    return
+            except OSError:
+                time.sleep(0.15)
+
+    threading.Thread(target=_worker, name="photo-search-browser", daemon=True).start()
+
+
 def _serve(args: argparse.Namespace) -> int:
     """Start the local API behind a fresh one-time session credential."""
     settings = ApiSettings.create(
@@ -116,14 +136,16 @@ def _serve(args: argparse.Namespace) -> int:
         "photo-search: semantic channel "
         f"{wiring.reason} (model_dir={wiring.model_dir}, manifest={wiring.manifest})"
     )
-    print(
-        "photo-search: open this single-use session URL to start the local session:\n"
-        f"  http://{settings.browser_host()}:{settings.bind_port}/api/v1/session"
-        # ``next`` comes first and the credential stays last: the exchange then lands the
-        # user on the front end, and the launcher line keeps its documented shape (the
-        # credential is the final query parameter, which the launcher smoke tests read).
+    session_url = (
+        f"http://{settings.browser_host()}:{settings.bind_port}/api/v1/session"
         f"?next=/&token={bootstrap.token}"
     )
+    print(
+        "photo-search: open this single-use session URL to start the local session:\n"
+        f"  {session_url}"
+    )
+    if args.open_browser:
+        _open_browser_when_ready(session_url, settings.browser_host(), settings.bind_port)
     if bootstrap.path is not None:
         print(f"photo-search: credential file {bootstrap.path} ({bootstrap.permission})")
     sys.stdout.flush()
@@ -293,6 +315,11 @@ def main() -> None:
         "--allow-non-loopback",
         action="store_true",
         help="explicitly accept exposing the API beyond this machine (no LAN auth exists)",
+    )
+    parser.add_argument(
+        "--open-browser",
+        action="store_true",
+        help="open the one-time local session URL in the system default browser after startup",
     )
     parser.add_argument(
         "--data-root",
