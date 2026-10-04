@@ -7,8 +7,8 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-preview-a-2" />
-    <script src="/web/search.js?v=p4-search-preview-a-2" defer></script>
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-person-link-a-1" />
+    <script src="/web/search.js?v=p4-search-person-link-a-1" defer></script>
     <script src="/web/search-place-entry.js" defer></script>
   </head>
   <body>
@@ -201,6 +201,11 @@
         <div class="search-preview-heading"><h2 id="search-preview-title">查看照片</h2><button id="search-preview-close" type="button">关闭</button></div>
         <img id="search-preview-image" alt="搜索结果照片大图" />
         <p id="search-preview-info" class="search-preview-info" role="status" aria-live="polite"></p>
+        <section id="search-preview-people" class="search-preview-people" aria-label="照片中的人物" hidden>
+          <h3>照片中的人物</h3>
+          <p id="search-preview-people-note" class="hint" role="status" aria-live="polite"></p>
+          <div id="search-preview-people-list" class="search-preview-people-list"></div>
+        </section>
         <nav id="search-preview-nav" class="search-preview-nav" aria-label="切换搜索结果照片" hidden>
           <button id="search-preview-prev" type="button" disabled>← 上一张</button>
           <span id="search-preview-position" class="hint" role="status" aria-live="polite"></span>

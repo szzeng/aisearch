@@ -168,6 +168,10 @@
 .search-preview[hidden], .search-preview [hidden] { display: none; }
 .search-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .search-preview-heading h2 { margin: 0.3rem 0; }
+.search-preview-people h3 { margin: 0.5rem 0; font-size: 1rem; }
+.search-preview-people-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.search-preview-person { display: flex; align-items: center; gap: 0.45rem; text-align: left; }
+.search-preview-person img { width: 3rem; height: 3rem; border-radius: 50%; object-fit: cover; }
 .search-preview > img { display: block; max-width: 100%; width: auto; max-height: 65dvh; margin: 0 auto; object-fit: contain; }
 .search-preview-info { margin: 0.75rem 0; color: var(--fg-muted); text-align: center; overflow-wrap: anywhere; }
 .search-preview-nav { display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap; margin: 1rem 0; }

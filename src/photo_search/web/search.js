@@ -96,7 +96,7 @@
       placeAware: null,
       hits: [],
       lastBody: null,
-      preview: { assetId: null, listVersion: 0, seq: 0, moving: false },
+      preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false },
     },
     requestCounter: 0,
     objectUrls: [],
@@ -1374,9 +1374,10 @@
       }
     };
     image.src =
-      "/api/v1/assets/" + encodeURIComponent(assetId) + "/preview?v=search-preview-a-2";
+      "/api/v1/assets/" + encodeURIComponent(assetId) + "/preview?v=p4-search-person-link-a-1";
     if (!els.searchPreview.open) els.searchPreview.showModal();
     updateSearchPreviewNavigation();
+    loadPreviewPeople(assetId, seq);
     request("/assets/" + encodeURIComponent(assetId)).then(function (result) {
       if (seq !== preview.seq || !els.searchPreview.open) return;
       text(els.searchPreviewInfo, photoInfoText(hit, result.body || {}, assetId));
@@ -1421,6 +1422,75 @@
       unit += 1;
     }
     return amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2) + " " + units[unit];
+  }
+
+  function loadPreviewPeople(assetId, previewSeq) {
+    var preview = state.search.preview;
+    var peopleSeq = ++preview.peopleSeq;
+    els.searchPreviewPeople.hidden = false;
+    clear(els.searchPreviewPeopleList);
+    text(els.searchPreviewPeopleNote, "正在读取已归属人物…");
+    request("/assets/" + encodeURIComponent(assetId) + "/faces").then(function (result) {
+      if (previewSeq !== preview.seq || peopleSeq !== preview.peopleSeq || !els.searchPreview.open) return null;
+      var faces = (result.body && result.body.faces) || [];
+      var unique = {};
+      faces.forEach(function (face) {
+        if (face.assigned_person_id !== null && face.assigned_person_id !== undefined) {
+          var key = String(face.assigned_person_id);
+          if (!unique[key]) unique[key] = face;
+        }
+      });
+      var entries = Object.keys(unique).map(function (id) {
+        var face = unique[id];
+        return request("/persons/" + encodeURIComponent(id)).then(function (personResult) {
+          return { face: face, person: personResult.body || {} };
+        }).catch(function () { return { face: face, person: null }; });
+      });
+      return Promise.all(entries).then(function (people) {
+        return { people: people, hasMoreFaces: Boolean(result.body && result.body.has_more) };
+      });
+    }).then(function (loaded) {
+      if (!loaded || previewSeq !== preview.seq || peopleSeq !== preview.peopleSeq || !els.searchPreview.open) return;
+      if (!loaded.people.length) {
+        text(els.searchPreviewPeopleNote, "这张照片里还没有已归属的人物。");
+        return;
+      }
+      loaded.people.forEach(function (entry) {
+        var face = entry.face;
+        var person = entry.person || {};
+        var personId = Number(person.person_id || face.assigned_person_id);
+        if (!isFinite(personId) || personId < 1) return;
+        var avatarId = /^[a-f0-9]{64}$/.test(String(person.avatar_face_id || ""))
+          ? person.avatar_face_id
+          : null;
+        var avatarUrl = avatarId
+          ? "/api/v1/faces/" + avatarId + "/thumbnail"
+          : face.thumbnail_url;
+        var card = element("button", "search-preview-person");
+        card.type = "button";
+        card.setAttribute("aria-label", "查看" + (person.name || face.assigned_person_name || "未命名的人") + "的照片");
+        var image = document.createElement("img");
+        image.alt = "";
+        image.loading = "lazy";
+        image.src = avatarUrl ? avatarUrl + "?v=p4-search-person-link-a-1" : "";
+        var label = person.name || face.assigned_person_name || "未命名的人";
+        card.appendChild(image);
+        card.appendChild(element("span", "", avatarId ? label : label + "（暂用这张照片的人脸）"));
+        card.addEventListener("click", function () {
+          els.searchPreview.close();
+          window.location.href = "/persons?person_id=" + encodeURIComponent(personId);
+        });
+        els.searchPreviewPeopleList.appendChild(card);
+      });
+      text(
+        els.searchPreviewPeopleNote,
+        loaded.hasMoreFaces ? "已按人物去重；当前只检查前 200 张人脸。" : "点人物头像查看这个人的照片。"
+      );
+    }).catch(function () {
+      if (previewSeq === preview.seq && peopleSeq === preview.peopleSeq && els.searchPreview.open) {
+        text(els.searchPreviewPeopleNote, "人物信息暂时无法读取。");
+      }
+    });
   }
 
   function moveSearchPreview(step) {
@@ -1950,6 +2020,9 @@
       searchPreviewNext: document.getElementById("search-preview-next"),
       searchPreviewPosition: document.getElementById("search-preview-position"),
       searchPreviewInfo: document.getElementById("search-preview-info"),
+      searchPreviewPeople: document.getElementById("search-preview-people"),
+      searchPreviewPeopleNote: document.getElementById("search-preview-people-note"),
+      searchPreviewPeopleList: document.getElementById("search-preview-people-list"),
       searchPreviewNote: document.getElementById("search-preview-note"),
     };
 

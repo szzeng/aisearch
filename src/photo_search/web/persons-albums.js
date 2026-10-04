@@ -6,7 +6,7 @@
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", edit: null, chosen: null,
-    operation: null, undoTimer: null, messageTimer: null, writing: false, coverMode: false, searching: false, searchBody: null, busy: new Set() };
+    operation: null, undoTimer: null, messageTimer: null, writing: false, coverMode: false, searching: false, searchBody: null, deepLinked: false, linkSeq: 0, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -66,6 +66,45 @@
     }, 3000);
   }
   function params(values) { return "?" + new URLSearchParams(values); }
+  function requestedPersonId() {
+    const search = typeof window !== "undefined" && window.location ? window.location.search : "";
+    const value = new URLSearchParams(search || "").get("person_id");
+    if (!value || !/^[1-9]\d*$/.test(value)) return null;
+    const id = Number(value);
+    return Number.isSafeInteger(id) ? id : null;
+  }
+  async function openPersonById(personId) {
+    const seq = ++state.linkSeq;
+    state.deepLinked = true;
+    $("list-note").textContent = "正在打开这个人的照片……";
+    try {
+      const detail = await api("/persons/" + encodeURIComponent(personId));
+      if (seq !== state.linkSeq) return;
+      const avatar = /^[a-f0-9]{64}$/.test(String(detail.avatar_face_id || ""))
+        ? "/api/v1/faces/" + detail.avatar_face_id + "/thumbnail"
+        : null;
+      openAlbum({
+        person_id: Number(detail.person_id || detail.canonical_person_id),
+        name: detail.name,
+        revision: detail.revision,
+        asset_count: detail.asset_count,
+        face_count: detail.face_count,
+        thumbnail_url: avatar,
+      });
+    } catch (error) {
+      if (seq !== state.linkSeq) return;
+      state.deepLinked = false;
+      $("library").hidden = false;
+      $("album").hidden = true;
+      loadPeople(false);
+      message("无法打开人物照片：" + errorText(error));
+    }
+  }
+  function clearPersonRoute() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("person_id");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
@@ -364,7 +403,11 @@
     $("query").addEventListener("search", () => loadPeople(false));
     $("refresh").addEventListener("click", () => { loadPeople(false); if (state.organize) loadInbox(false); });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
-    $("back").addEventListener("click", () => { state.person = null; state.photoSeq++; state.busy.delete("photos"); $("library").hidden = false; $("album").hidden = true; $("people").focus(); });
+    $("back").addEventListener("click", () => {
+      state.person = null; state.photoSeq++; state.busy.delete("photos");
+      $("library").hidden = false; $("album").hidden = true; $("people").focus();
+      if (state.deepLinked) { state.deepLinked = false; state.linkSeq++; clearPersonRoute(); loadPeople(false); }
+    });
     $("name").addEventListener("click", () => editBase({ mode: "name", person: { ...state.person } }, "给这个人取名字", "可用家人的称呼或你习惯的名字。"));
     $("merge").addEventListener("click", () => editMerge({ ...state.person }));
     $("cover").addEventListener("click", () => {
@@ -394,7 +437,9 @@
     $("edit").addEventListener("close", () => { state.editSeq++; state.choiceSeq++; });
     $("undo").addEventListener("click", undo);
     $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
-    loadPeople(false);
+    const linkedPersonId = requestedPersonId();
+    if (linkedPersonId) openPersonById(linkedPersonId);
+    else loadPeople(false);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();
