@@ -182,6 +182,14 @@ class SourceCreateRequest(BaseModel):
     volume_hint: str | None = Field(default=None, max_length=64)
 
 
+class SourceRenameRequest(BaseModel):
+    """Rename only the source's user-facing label."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=200)
+
+
 class SourceDeleteResponse(BaseModel):
     """``DELETE /api/v1/sources/{id}``: what leaving the managed set removed (P4-02Y-I §5).
 
@@ -426,6 +434,9 @@ class LibraryRefreshStatus(BaseModel):
     state: str
     accepted: bool = False
     running: bool = False
+    #: Scoped builds waiting behind the active run, in FIFO order (process-local).
+    queued: bool = False
+    pending_builds: list[list[int]] = Field(default_factory=list)
     #: ``refresh`` (daily incremental) or ``build`` (P4-02Y-I first build); ``null`` while the
     #: process has not started any refresh yet.
     mode: str | None = None

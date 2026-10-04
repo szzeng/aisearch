@@ -95,6 +95,8 @@ from photo_search.api.models import (
     SourceDeleteResponse,
     SourceDetail,
     SourceListResponse,
+    SourceRenameRequest,
+    SourceSummary,
     SourceSummaryResponse,
     StatsResponse,
 )
@@ -611,6 +613,14 @@ async def get_source(request: Request, source_id: int) -> dict[str, Any]:
     )
 
 
+@router.patch("/sources/{source_id}", response_model=SourceSummary, summary="Rename a photo source")
+async def rename_source(
+    request: Request, source_id: int, payload: SourceRenameRequest
+) -> dict[str, Any]:
+    """Change only display metadata, including while this source is being built."""
+    return service_of(request).rename_source(int(source_id), display_name=payload.display_name)
+
+
 @router.delete(
     "/sources/{source_id}",
     response_model=SourceDeleteResponse,
@@ -672,8 +682,10 @@ async def request_library_refresh(
 
     The request never waits for the scan, the embeddings or the enrichment stages: the
     refresh runs on its own worker thread and reports through
-    ``GET /api/v1/library/refresh``. A second request while one is active is *not* queued -
-    it answers with the running refresh and ``accepted = false`` (P4-02Y §5).
+    ``GET /api/v1/library/refresh``. Daily refresh requests reuse the active run. A distinct
+    scoped build is queued in FIFO order (``accepted = true, queued = true``); duplicate
+    builds are reused. Status fields still describe the active run, with ``pending_builds``
+    listing the waiting source scopes. This process-local queue is lost on shutdown.
 
     ``mode = "build"`` is the P4-02Y-I first build ("开始建库"): the same additive entry, but
     it drains the durable backlog of the named sources in bounded batches instead of stopping

@@ -199,6 +199,15 @@ class CatalogService:
             )
         return self.get_source(source_id)
 
+    def rename_source(self, source_id: int, *, display_name: str) -> dict[str, Any]:
+        """Rename catalog metadata without filesystem checks or starting any work."""
+        name = str(display_name).strip()
+        if not name or len(name) > 200:
+            raise CatalogError(INVALID_PATH, "source display name must contain 1 to 200 characters")
+        with self.catalog.write() as connection:
+            row = store.rename_source(connection, source_id=int(source_id), display_name=name)
+            return store.row_dict(row, store.SOURCE_FIELDS)
+
     def start_scan(self, source_id: int) -> dict[str, Any]:
         """Create or reuse the single non-terminal scan request of one source."""
         source_id = int(source_id)

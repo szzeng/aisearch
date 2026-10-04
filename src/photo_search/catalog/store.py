@@ -108,6 +108,19 @@ def list_source_rows(connection: sqlite3.Connection) -> list[sqlite3.Row]:
     )
 
 
+def rename_source(
+    connection: sqlite3.Connection, *, source_id: int, display_name: str
+) -> sqlite3.Row:
+    """Change the display label only; identity, root and scan state stay intact."""
+    row = get_source_row(connection, source_id)
+    if row["display_name"] != display_name:
+        connection.execute(
+            "UPDATE source_roots SET display_name = ? WHERE source_id = ?",
+            (display_name, source_id),
+        )
+    return get_source_row(connection, source_id)
+
+
 def set_source_status(connection: sqlite3.Connection, *, source_id: int, status: str) -> None:
     connection.execute("UPDATE source_roots SET status = ? WHERE source_id = ?", (status, source_id))
 

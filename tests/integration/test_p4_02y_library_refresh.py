@@ -271,6 +271,69 @@ def env_text_only(tmp_path: Path):
 
 
 # --------------------------------------------------------------------- §14.20/§14.22 API
+def test_source_build_is_queued_while_a_daily_refresh_is_running(tmp_path: Path) -> None:
+    gate = threading.Event()
+    entered = threading.Event()
+    calls = []
+
+    def executor(service: Any, status: Any, source_ids: Any) -> dict:
+        calls.append((source_ids, status.snapshot()["mode"]))
+        if len(calls) == 1:
+            entered.set()
+            assert gate.wait(10)
+        status.finish(state="COMPLETE", elapsed_ms=0)
+        return {}
+
+    env = RefreshEnv.build(tmp_path, refresher_executor=executor)
+    try:
+        # Register a new synthetic library while the existing library's daily run waits.
+        async def scenario(client: AsyncClient) -> None:
+            csrf = await env.authenticate(client)
+            headers = env.post_headers(csrf)
+            first = await client.post("/api/v1/library/refresh", json={}, headers=headers)
+            assert first.status_code == 202
+            assert entered.wait(5)
+            library = tmp_path / "new-library"
+            write_jpeg(library / "new.jpg", noise=42)
+            registered = await client.post(
+                "/api/v1/sources",
+                json={"display_name": "new-library", "root_path": str(library)},
+                headers=headers,
+            )
+            assert registered.status_code == 201, registered.text
+            source_id = registered.json()["source_id"]
+            payload = {"mode": "build", "source_ids": [source_id]}
+            queued = await client.post("/api/v1/library/refresh", json=payload, headers=headers)
+            assert queued.status_code == 202
+            body = queued.json()
+            assert body["accepted"] is True and body["queued"] is True
+            assert body["pending_builds"] == [[source_id]]
+            assert body["refresh_id"] == first.json()["refresh_id"]
+            duplicate = await client.post("/api/v1/library/refresh", json=payload, headers=headers)
+            assert duplicate.json()["accepted"] is False
+            assert duplicate.json()["queued"] is True
+            observed = (await client.get("/api/v1/library/refresh")).json()
+            assert observed["pending_builds"] == [[source_id]]
+            assert observed["running"] is True
+            renamed = await client.patch(
+                f"/api/v1/sources/{source_id}", json={"display_name": "renamed-library"},
+                headers=headers,
+            )
+            assert renamed.status_code == 200
+            assert renamed.json()["display_name"] == "renamed-library"
+            assert env.context.refresher().status()["pending_builds"] == [[source_id]]
+            assert calls == [(None, "refresh")]
+            gate.set()
+
+        env.scenario(scenario)
+        assert env.context.refresher().wait_idle(timeout=10)
+        assert calls == [(None, "refresh"), ([2], "build")]
+        assert env.context.refresher().status()["pending_builds"] == []
+    finally:
+        gate.set()
+        env.close()
+
+
 def test_a_double_click_never_starts_a_second_refresh(tmp_path: Path) -> None:
     gate = threading.Event()
     entered = threading.Event()

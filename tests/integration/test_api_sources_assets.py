@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from httpx import AsyncClient
 
 from photo_search.catalog import schema
+from photo_search.ingestion.service import CatalogService
 from photo_search.refresh import progress as refresh_progress
 
 
@@ -34,6 +36,100 @@ async def _register(client: AsyncClient, api_env, csrf: str, name: str = "librar
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_source_rename_persists_without_changing_identity_or_catalog_work(api_env) -> None:
+    photos = _seed_library(api_env, 2)
+    source = api_env.service.register_source(display_name="旧名字", root_path=api_env.library)
+    api_env.service.run_scan(source["source_id"])
+    catalog = api_env.service.catalog
+    before_source = dict(catalog.read_one("SELECT * FROM source_roots WHERE source_id = 1"))
+    tables = ("assets", "file_locations", "scan_runs", "jobs", "metadata")
+    before = {table: [dict(row) for row in catalog.read_all(f"SELECT * FROM {table}")]
+              for table in tables}
+    photo_bytes = [path.read_bytes() for path in photos]
+    asset_id = catalog.read_one("SELECT asset_id FROM assets ORDER BY asset_id LIMIT 1")[0]
+
+    async def scenario(client: AsyncClient) -> None:
+        csrf = await api_env.authenticate(client)
+        for _ in range(2):
+            changed = await client.patch(
+                "/api/v1/sources/1", json={"display_name": "  家庭照片  "},
+                headers=api_env.post_headers(csrf),
+            )
+            assert changed.status_code == 200, changed.text
+            assert changed.json()["display_name"] == "家庭照片"
+            assert changed.json()["source_id"] == 1
+            assert "root_path" not in changed.json()
+            assert "counts" not in changed.json()
+        summary = await client.get("/api/v1/sources/summary")
+        assert summary.json()["sources"][0]["display_name"] == "家庭照片"
+        detail = await client.get(f"/api/v1/assets/{asset_id}")
+        assert detail.json()["locations"][0]["source_display_name"] == "家庭照片"
+
+    api_env.scenario(scenario)
+    after_source = dict(catalog.read_one("SELECT * FROM source_roots WHERE source_id = 1"))
+    assert after_source == {**before_source, "display_name": "家庭照片"}
+    assert {table: [dict(row) for row in catalog.read_all(f"SELECT * FROM {table}")]
+            for table in tables} == before
+    assert [path.read_bytes() for path in photos] == photo_bytes
+    reopened = CatalogService.open(data_root=api_env.data_root)
+    try:
+        assert reopened.list_sources()[0]["display_name"] == "家庭照片"
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("name", ["", "   ", "a" * 201])
+def test_source_rename_refuses_invalid_names(api_env, name: str) -> None:
+    api_env.service.register_source(display_name="原名字", root_path=api_env.library)
+
+    async def scenario(client: AsyncClient) -> None:
+        csrf = await api_env.authenticate(client)
+        response = await client.patch(
+            "/api/v1/sources/1", json={"display_name": name}, headers=api_env.post_headers(csrf)
+        )
+        assert response.status_code == 422
+
+    api_env.scenario(scenario)
+    assert api_env.service.list_sources()[0]["display_name"] == "原名字"
+
+
+def test_source_rename_access_offline_and_unknown_source(api_env) -> None:
+    api_env.service.register_source(display_name="离线图库", root_path=api_env.tmp_path / "offline")
+
+    async def scenario(client: AsyncClient) -> None:
+        payload = {"display_name": "新名字"}
+        anonymous = await client.patch("/api/v1/sources/1", json=payload)
+        assert anonymous.status_code == 401
+        csrf = await api_env.authenticate(client)
+        no_csrf = await client.patch(
+            "/api/v1/sources/1", json=payload, headers={"Origin": "http://127.0.0.1"}
+        )
+        assert no_csrf.status_code == 403
+        cross_origin = await client.patch(
+            "/api/v1/sources/1", json=payload,
+            headers={"Origin": "http://evil.example", "X-CSRF-Token": csrf},
+        )
+        assert cross_origin.status_code == 403
+        assert api_env.service.list_sources()[0]["display_name"] == "离线图库"
+        wrong_fields = await client.patch(
+            "/api/v1/sources/1", json={**payload, "root_path": "new-root"},
+            headers=api_env.post_headers(csrf),
+        )
+        assert wrong_fields.status_code == 422
+        unknown = await client.patch(
+            "/api/v1/sources/9999", json=payload, headers=api_env.post_headers(csrf)
+        )
+        assert unknown.status_code == 404 and unknown.json()["code"] == "SOURCE_NOT_FOUND"
+        changed = await client.patch(
+            "/api/v1/sources/1", json=payload, headers=api_env.post_headers(csrf)
+        )
+        assert changed.status_code == 200
+        assert changed.json()["status"] == "OFFLINE"
+        assert changed.json()["display_name"] == "新名字"
+
+    api_env.scenario(scenario)
 
 
 def test_source_summary_is_rootless_lightweight_and_session_protected(api_env, monkeypatch) -> None:

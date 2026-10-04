@@ -215,6 +215,15 @@ main {
   gap: 0.5rem;
 }
 
+.source-rename {
+  margin-top: 0.5rem;
+}
+
+.source-rename label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
 .management-panel {
   margin: 1rem 0;
   padding: 0.75rem 1rem;

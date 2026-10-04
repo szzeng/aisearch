@@ -89,9 +89,9 @@
     pollTimer: null,
     //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
     refreshTimer: null,
-    //: P4-02Y-I: whether a refresh/build is in flight, so the source cards can disable the
-    //: actions that would only be refused by the single-active-refresh rule.
+    // One active run; other source builds can wait in its queue.
     refreshRunning: false,
+    refreshStatus: {},
     objectUrls: [],
     observer: null,
   };
@@ -450,7 +450,9 @@
     }
     state.sources.forEach(function (source) {
       var card = element("li", "source-card");
-      card.appendChild(element("h3", null, source.display_name));
+      var title = element("h3", null, source.display_name);
+      title.setAttribute("data-source-title", String(source.source_id));
+      card.appendChild(title);
       var identity = "图库 #" + source.source_id;
       if (source.volume_hint) {
         identity += " · " + safeText(source.volume_hint);
@@ -473,6 +475,7 @@
         showView("browse");
       });
       card.appendChild(open);
+      addSourceRename(card, source, title);
 
       var detail = element("details", "source-detail");
       detail.open = Boolean(state.sourceDetailOpen[source.source_id]);
@@ -492,6 +495,97 @@
         loadSourceDetail(source, detailContent);
       }
     });
+  }
+
+  function addSourceRename(card, source, title) {
+    var edit = element("button", null, "修改名称");
+    edit.type = "button";
+    var form = element("form", "source-rename");
+    form.hidden = true;
+    var label = element("label", null, "图库名称 ");
+    var input = element("input");
+    input.type = "text";
+    input.maxLength = 200;
+    input.required = true;
+    input.value = source.display_name;
+    label.appendChild(input);
+    var save = element("button", null, "保存");
+    save.type = "submit";
+    var cancel = element("button", null, "取消");
+    cancel.type = "button";
+    var feedback = element("p", "hint", "");
+    feedback.setAttribute("role", "status");
+    feedback.setAttribute("aria-live", "polite");
+    form.appendChild(label);
+    form.appendChild(save);
+    form.appendChild(cancel);
+    form.appendChild(feedback);
+    edit.addEventListener("click", function () {
+      input.value = source.display_name;
+      text(feedback, "");
+      edit.hidden = true;
+      form.hidden = false;
+      input.focus();
+      input.select();
+    });
+    cancel.addEventListener("click", function () {
+      form.hidden = true;
+      edit.hidden = false;
+      edit.focus();
+    });
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (save.disabled) {
+        return;
+      }
+      var name = input.value.trim();
+      if (!name || name.length > 200) {
+        text(feedback, "图库名称不能为空，最多200个字。");
+        input.focus();
+        return;
+      }
+      save.disabled = true;
+      cancel.disabled = true;
+      input.disabled = true;
+      text(feedback, "正在保存…");
+      request("/sources/" + encodeURIComponent(source.source_id), {
+        method: "PATCH",
+        body: { display_name: name },
+      })
+        .then(function (result) {
+          source.display_name = result.body.display_name;
+          state.sources.forEach(function (item) {
+            if (String(item.source_id) === String(source.source_id)) {
+              item.display_name = source.display_name;
+            }
+          });
+          var cached = state.sourceDetails[String(source.source_id)];
+          if (cached) {
+            cached.display_name = source.display_name;
+          }
+          text(title, source.display_name);
+          Array.prototype.forEach.call(
+            els.sourcesList.querySelectorAll('[data-source-title="' + source.source_id + '"]'),
+            function (node) { text(node, source.display_name); }
+          );
+          renderSourceOptions();
+          state.browse.loaded = false;
+          form.hidden = true;
+          edit.hidden = false;
+          edit.focus();
+          setStatus(els.sourcesStatus, "图库名称已修改。");
+        })
+        .catch(function (failure) {
+          text(feedback, "保存失败：" + describe(failure));
+        })
+        .finally(function () {
+          save.disabled = false;
+          cancel.disabled = false;
+          input.disabled = false;
+        });
+    });
+    card.appendChild(edit);
+    card.appendChild(form);
   }
 
   function loadSourceDetail(source, container) {
@@ -575,6 +669,7 @@
         var build = element("button", null, mode === "continue" ? "继续建库" : "开始建库");
         build.type = "button";
         build.setAttribute("data-build", String(source.source_id));
+        build.setAttribute("data-build-label", build.textContent);
         build.addEventListener("click", function () {
           refreshLibrary([Number(source.source_id)], "build");
         });
@@ -611,20 +706,35 @@
         deleteSource(source);
       });
       actions.appendChild(remove);
-      if (state.refreshRunning) {
-        Array.prototype.forEach.call(actions.querySelectorAll("button"), function (button) {
-          button.disabled = true;
-        });
-        actions.appendChild(
-          element("span", "hint", "刷新正在进行，完成后再操作来源。")
-        );
-      }
+      updateSourceActions(actions);
       container.appendChild(actions);
       var progressLine = element("p", "hint", "");
       progressLine.setAttribute("data-progress", String(source.source_id));
       progressLine.setAttribute("role", "status");
       progressLine.setAttribute("aria-live", "polite");
       container.appendChild(progressLine);
+  }
+
+  function updateSourceActions(container) {
+    var status = state.refreshStatus;
+    Array.prototype.forEach.call(
+      container.querySelectorAll("[data-build], [data-refresh], [data-scan], [data-delete]"),
+      function (button) {
+        var sourceId = Number(button.getAttribute("data-build"));
+        if (!button.hasAttribute("data-build")) {
+          button.disabled = state.refreshRunning;
+          return;
+        }
+        var queued = (status.pending_builds || []).some(function (ids) {
+          return ids.indexOf(sourceId) >= 0;
+        });
+        var active = state.refreshRunning && status.mode === "build" &&
+          (!status.source_ids || status.source_ids.indexOf(sourceId) >= 0);
+        button.disabled = active || queued;
+        button.textContent = queued ? "已排队" : (active ? "正在建库" :
+          button.getAttribute("data-build-label"));
+      }
+    );
   }
 
   //: P4-02Y-I §3: the enrichment rows of a source card and their three honest words.
@@ -822,6 +932,9 @@
       })
       .catch(function (failure) {
         setStatus(els.refreshStatus, "请求失败：" + describe(failure), "error");
+        if (state.refreshRunning) {
+          state.refreshTimer = setTimeout(pollRefresh, POLL_INTERVAL_MS);
+        }
       });
   }
 
@@ -833,13 +946,18 @@
         var finished = body.state === "COMPLETE" ||
           body.state === "PARTIAL_FAILED" ||
           body.state === "FAILED";
-        if (!finished) {
+        if (body.running) {
+          if (state.refreshTimer !== null) {
+            clearTimeout(state.refreshTimer);
+          }
           state.refreshTimer = setTimeout(pollRefresh, POLL_INTERVAL_MS);
           return;
         }
         state.refreshTimer = null;
-        state.browse.loaded = false;
-        loadSources();
+        if (finished) {
+          state.browse.loaded = false;
+          loadSources();
+        }
       })
       .catch(function (failure) {
         state.refreshTimer = null;
@@ -863,8 +981,14 @@
     }
     parts.push(stateText);
     state.refreshRunning = Boolean(status.running);
-    if (status.running && status.accepted === false && status.refresh_id) {
-      parts.push("（已有一个刷新在进行，本次未重复启动）");
+    state.refreshStatus = status;
+    updateSourceActions(els.sourcesList);
+    els.refreshLibrary.disabled = state.refreshRunning;
+    if (status.queued) {
+      parts.push("已加入建库队列，当前任务结束后自动开始");
+    }
+    if ((status.pending_builds || []).length) {
+      parts.push("等待建库 " + status.pending_builds.length + " 项");
     }
     var semantic = status.stages && status.stages.semantic ? status.stages.semantic : null;
     if (semantic && semantic.backlog_total !== undefined) {
@@ -1893,6 +2017,7 @@
     state.observer = buildObserver();
     handleHash();
     loadSources().then(probeCapabilities);
+    pollRefresh();
     window.addEventListener("resize", function () {
       if (state.detailPreviewFit) {
         state.detailPreviewFit();

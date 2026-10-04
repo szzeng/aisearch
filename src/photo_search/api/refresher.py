@@ -4,10 +4,10 @@
 embeddings or the enrichment stages, and one process must never run two refreshes at once.
 This is the same shape as :class:`photo_search.api.runner.ScanRunner`: one daemon worker
 thread, its own ``CatalogService`` (its own SQLite connection, created *inside* the thread),
-and no state beyond the in-memory status plus whatever the refresh itself commits.
+and no state beyond the in-memory status/build queue plus whatever each run commits.
 
 Nothing here keeps a progress table: a killed process loses the *display* of the refresh,
-while the durable catalog state stays exactly what the completed steps wrote, so pressing
+and waiting requests, while durable catalog state stays exactly what completed steps wrote, so pressing
 the button again safely continues through the underlying idempotency (P4-02Y §5/§12).
 """
 
@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,7 @@ from photo_search.refresh.state import RefreshStatus, idle_status
 
 logger = logging.getLogger("photo_search.api.refresher")
 
-#: Default time ``close`` waits for the worker to notice the stop flag.
+#: Default time ``close`` waits for the active run; waiting builds are discarded.
 CLOSE_TIMEOUT_SECONDS = 5.0
 
 
@@ -78,37 +79,38 @@ class LibraryRefresher:
         self._running = False
         self._closed = False
         self._thread: threading.Thread | None = None
+        self._pending_builds: deque[list[int]] = deque()
 
     # ------------------------------------------------------------------ public API
     def start(
         self, source_ids: Sequence[int] | None = None, *, mode: str = REFRESH_MODE_DAILY
     ) -> dict[str, Any]:
-        """Start a refresh, or report the one that is already running.
+        """Start a run or enqueue a distinct source build behind the active run.
 
-        A second request during an active refresh is *not* queued: it answers with the
-        current status and ``accepted = false``, so a double click can never start a second
-        concurrent pass (P4-02Y §5).
-
-        ``mode`` is ``refresh`` (the daily incremental pass) or ``build`` (P4-02Y-I: the first
-        build of one source, which drains the durable backlog in bounded batches). A second
-        request while one run is active is never queued in either mode, so a build and a quick
-        refresh cannot interleave on the same catalog.
+        Daily refresh clicks retain their existing reuse behavior. Scoped builds wait in a
+        process-local FIFO; duplicates reuse the active or pending build. Only one worker
+        executes, and each run opens/closes its own service on that worker thread.
         """
         with self._lock:
             if self._closed:
                 raise RuntimeError("the library refresher is closed")
-            if self._running:
-                return self._snapshot_locked(accepted=False)
             requested = None if not source_ids else [int(value) for value in source_ids]
             requested_mode = _normalize_mode(mode)
-            status = RefreshStatus(
-                refresh_id=uuid.uuid4().hex,
-                source_ids=requested,
-                batch_size=self._batch_size,
-                started_at_ms=int(self._now_ms()),
-                mode=requested_mode,
-                now_ms=self._now_ms,
-            )
+            if requested_mode == "build" and requested:
+                requested = sorted(set(requested))
+            if self._running:
+                if requested_mode != "build" or not requested:
+                    return self._snapshot_locked(accepted=False)
+                active = self._status.snapshot() if self._status is not None else {}
+                if active.get("mode") == "build" and (
+                    active.get("source_ids") is None or active.get("source_ids") == requested
+                ):
+                    return self._snapshot_locked(accepted=False)
+                if requested in self._pending_builds:
+                    return self._snapshot_locked(accepted=False, queued=True)
+                self._pending_builds.append(requested)
+                return self._snapshot_locked(accepted=True, queued=True)
+            status = self._new_status(requested, requested_mode)
             self._status = status
             self._running = True
             self._thread = threading.Thread(
@@ -146,7 +148,7 @@ class LibraryRefresher:
                 time.sleep(0.01)
 
     def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
-        """Join the worker if it is idle; a refresh in flight keeps its own connection.
+        """Discard waiting builds and wait briefly for the active run to finish.
 
         One refresh run opens its service *inside its own thread* and closes it there again,
         so a later run can never reuse a connection another thread created (SQLite's own
@@ -154,6 +156,7 @@ class LibraryRefresher:
         """
         with self._lock:
             self._closed = True
+            self._pending_builds.clear()
             thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=float(timeout))
@@ -166,6 +169,21 @@ class LibraryRefresher:
 
     # ---------------------------------------------------------------------- worker
     def _loop(
+        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str
+    ) -> None:
+        while True:
+            self._run(status, source_ids, mode)
+            with self._lock:
+                if self._closed or not self._pending_builds:
+                    self._running = False
+                    self._thread = None
+                    return
+                source_ids = self._pending_builds.popleft()
+                mode = "build"
+                status = self._new_status(source_ids, mode)
+                self._status = status
+
+    def _run(
         self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str
     ) -> None:
         service: Any | None = None
@@ -202,16 +220,25 @@ class LibraryRefresher:
                     service.close()
                 except Exception:  # pragma: no cover - shutdown must not raise
                     logger.debug("closing the refresh service failed", exc_info=True)
-            with self._lock:
-                self._running = False
-                self._thread = None
 
     # -------------------------------------------------------------------- internals
-    def _snapshot_locked(self, *, accepted: bool) -> dict[str, Any]:
+    def _new_status(self, source_ids: Sequence[int] | None, mode: str) -> RefreshStatus:
+        return RefreshStatus(
+            refresh_id=uuid.uuid4().hex,
+            source_ids=source_ids,
+            batch_size=self._batch_size,
+            started_at_ms=int(self._now_ms()),
+            mode=mode,
+            now_ms=self._now_ms,
+        )
+
+    def _snapshot_locked(self, *, accepted: bool, queued: bool = False) -> dict[str, Any]:
         status = self._status
         payload = idle_status(batch_size=self._batch_size) if status is None else status.snapshot()
         payload["accepted"] = bool(accepted)
         payload["running"] = bool(self._running)
+        payload["queued"] = bool(queued)
+        payload["pending_builds"] = [list(ids) for ids in self._pending_builds]
         return payload
 
 
