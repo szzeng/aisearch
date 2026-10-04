@@ -6,6 +6,8 @@
 
 [执行卡](tasks/P4-PLACE-MAP-A.md)；[实现报告](reports/P4-PLACE-MAP-A.md)；[简审与反例](reports/P4-PLACE-MAP-A-review.md)。5 项修复在独立短审范围内关闭：资源已解除忽略、同坐标成员入口、版本/分页竞态、缺组件列表回退、详情聚焦早到/晚到。实际 JS 合成桩回归 JUnit **6/0/0/0**，Node 语法与 scoped diff-check 通过；本轮未改功能代码、访问真实图库、重跑 30 万计时或真实浏览器。CN 未实施；独立 DS-H 全受影响面审查仍待做，不标整卡 PASS。
 
+补充：[旧包兼容修复](reports/P4-PLACE-MAP-A-schema-compat.md)已明确允许 schema 17 使用 maximum=16 的有效包，JUnit **64/0/0/0**、Ruff/diff-check 通过；现存 GeoNames 45,217 条只读完整校验通过且包未改，无需重新下载。退出重启应用加载修复；实际重启验收与 DS-H 待做。
+
 ## P4-PERSON-MATCH-B — 合照候选、多样代表与页面补匹配（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
 
 [执行卡](tasks/P4-PERSON-MATCH-B.md)、[实现与验证](reports/P4-PERSON-MATCH-B-implementation.md)、[研究依据](reports/P4-PERSON-RESEARCH-2026-10-04.md)。修复同图A=.53提前挡住B=.90，先完整比较再保留冲突/歧义；每人最多32合格确认候选选8个多样代表，保留旧发布/版本保护；整理页新增原因摘要/筛选及显式20张照片续批补匹配，不加载模型或重建图文。JUnit **216/0/0/0**、Ruff/Node与本卡范围diff-check通过；未访问真实库/个人服务/模型或真实浏览器，不声明真实精度。重启应用刷新人物页生效；人工归属/排除/hold与.50/.29/.08保持。加入[既有人物独立DS-H完整审查](tasks/P4-PERSON-UX-A-review.md)，原图识别/增强检测仍未实现，保存[后续升级范围](tasks/P4-PERSON-DETAIL-A.md)。地图并行状态保持。

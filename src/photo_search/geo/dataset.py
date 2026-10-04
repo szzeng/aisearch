@@ -308,7 +308,13 @@ def validate_manifest(manifest: Any, *, supported_schema_version: int) -> dict[s
     )
     if compatible_min > compatible_max:
         raise _invalid("compatible_catalog_schema has an empty range")
-    if not compatible_min <= int(supported_schema_version) <= compatible_max:
+    # 0017 adds map membership/indexes only; the schema-16 place package contract
+    # is unchanged. Keep this bridge explicit: older maxima and future catalogs
+    # still require their own compatibility decision, and manifests stay immutable.
+    schema16_map_bridge = int(supported_schema_version) == 17 and compatible_max == 16
+    if not (
+        compatible_min <= int(supported_schema_version) <= compatible_max or schema16_map_bridge
+    ):
         raise _invalid(
             "the dataset is not compatible with this catalog schema",
             supported_schema_version=int(supported_schema_version),

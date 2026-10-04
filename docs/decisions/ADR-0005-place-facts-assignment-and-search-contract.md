@@ -205,6 +205,10 @@ manifest/catalog schema、文件相对路径/角色/大小/checksum 和生命周
 地名数据包版本和 suggestion revision 独立于 SearchProfile、embedding space、index generation 与
 CatalogFilterRevision。切包只刷新候选时不重算图文向量，也不使有效地点会话过期。
 
+2026-10-04 兼容补充：迁移 0017 只增加地图成员版本、触发器与索引，地名包契约保持不变。
+catalog schema 17 额外接受声明 maximum=16 的有效地名包；其原始 manifest 不改写，其他
+schema／更早 maximum 仍按声明范围拒绝，格式、层级与 checksum 校验保持。未来迁移不自动继承此例外。
+
 ## 9. `/api/v1` 地点接口与错误语义
 
 所有接口沿用已实现的 loopback Host、内存 session、Origin、double-submit CSRF、统一

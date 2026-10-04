@@ -1,6 +1,6 @@
 # P4-PLACE-MAP-A — 个人照片地图相册
 
-日期：2026-10-04。状态：**READY FOR IMPLEMENTATION — 开工核对完成，功能与性能待验证**。核对：[短报告](../reports/P4-PLACE-MAP-A-preflight.md)。
+日期：2026-10-04。状态：**IMPLEMENTED — 卡内验证与简审修复通过，独立 DS-H 待审**。见[实现报告](../reports/P4-PLACE-MAP-A.md)及[旧包兼容修复](../reports/P4-PLACE-MAP-A-schema-compat.md)；开工核对历史见[短报告](../reports/P4-PLACE-MAP-A-preflight.md)。
 
 定位：个人使用的小型 Google 相册式地图浏览。**本卡先做，直接使用已有 GPS，不依赖 P4-PLACE-CN。** 一张卡完成地图相册与详情小地图。
 
