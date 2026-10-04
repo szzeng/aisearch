@@ -7,8 +7,8 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
-    <link rel="stylesheet" href="/web/search.css" />
-    <script src="/web/search.js?v=p4-search-entry-a-1" defer></script>
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-preview-a-2" />
+    <script src="/web/search.js?v=p4-search-preview-a-2" defer></script>
     <script src="/web/search-place-entry.js" defer></script>
   </head>
   <body>
@@ -196,6 +196,18 @@
           <button type="button" id="load-more" hidden>加载下一页</button>
         </p>
       </section>
+
+      <dialog id="search-preview" class="search-preview" aria-labelledby="search-preview-title">
+        <div class="search-preview-heading"><h2 id="search-preview-title">查看照片</h2><button id="search-preview-close" type="button">关闭</button></div>
+        <img id="search-preview-image" alt="搜索结果照片大图" />
+        <p id="search-preview-info" class="search-preview-info" role="status" aria-live="polite"></p>
+        <nav id="search-preview-nav" class="search-preview-nav" aria-label="切换搜索结果照片" hidden>
+          <button id="search-preview-prev" type="button" disabled>← 上一张</button>
+          <span id="search-preview-position" class="hint" role="status" aria-live="polite"></span>
+          <button id="search-preview-next" type="button" disabled>下一张 →</button>
+        </nav>
+        <p id="search-preview-note" class="hint" role="status" aria-live="polite"></p>
+      </dialog>
 
       <section id="panel-upload" class="panel" aria-labelledby="upload-title">
         <h2 id="upload-title">上传图片找相似</h2>

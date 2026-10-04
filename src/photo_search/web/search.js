@@ -96,6 +96,7 @@
       placeAware: null,
       hits: [],
       lastBody: null,
+      preview: { assetId: null, listVersion: 0, seq: 0, moving: false },
     },
     requestCounter: 0,
     objectUrls: [],
@@ -912,6 +913,9 @@
     if (continuation && (!state.search.sessionId || !state.search.cursor)) {
       return;
     }
+    if (!continuation) {
+      invalidateSearchPreview();
+    }
     if (continuation) {
       if (state.search.binding && conditionFingerprint(filters) !== state.search.binding) {
         setStatus(
@@ -1124,6 +1128,7 @@
     state.search.lastBody = body;
     state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
+    updateSearchPreviewNavigation();
     state.search.total = body.total_candidates;
     els.loadMore.hidden = !body.has_more;
     els.queryActions.hidden = true;
@@ -1274,7 +1279,10 @@
   // ----------------------------------------------------------------------- tiles
   function buildHit(hit) {
     var tile = element("li", "card-tile");
-    var frame = element("div", "thumb-frame");
+    var frame = element("button", "thumb-frame");
+    frame.type = "button";
+    frame.setAttribute("aria-label", "查看照片，搜索结果第 " + number(hit.rank) + " 名");
+    frame.addEventListener("click", function () { openSearchPreview(hit.asset_id); });
     frame.dataset.assetId = String(hit.asset_id);
     observeThumbnail(frame);
     tile.appendChild(frame);
@@ -1314,6 +1322,129 @@
     caption.appendChild(open);
     tile.appendChild(caption);
     return tile;
+  }
+
+  function invalidateSearchPreview() {
+    state.search.preview.seq += 1;
+    state.search.preview.assetId = null;
+    state.search.preview.listVersion += 1;
+    state.search.preview.moving = false;
+    if (els.searchPreview && els.searchPreview.open) els.searchPreview.close();
+    if (els.searchPreviewImage) els.searchPreviewImage.removeAttribute("src");
+    updateSearchPreviewNavigation();
+  }
+
+  function searchPreviewPosition() {
+    if (state.search.preview.listSeq !== state.search.preview.listVersion) return -1;
+    var target = String(state.search.preview.assetId);
+    return state.search.hits.findIndex(function (hit) { return String(hit.asset_id) === target; });
+  }
+
+  function updateSearchPreviewNavigation() {
+    if (!els.searchPreviewNav) return;
+    var index = searchPreviewPosition();
+    var active = index >= 0 && els.searchPreview.open;
+    els.searchPreviewNav.hidden = !active;
+    text(els.searchPreviewPosition, active ? "第 " + (index + 1) + " 张" : "");
+    els.searchPreviewPrev.disabled = !active || index === 0 || state.search.preview.moving;
+    els.searchPreviewNext.disabled = !active || state.search.preview.moving ||
+      (index === state.search.hits.length - 1 && !state.search.cursor);
+  }
+
+  function openSearchPreview(assetId) {
+    var preview = state.search.preview;
+    var seq = ++preview.seq;
+    preview.assetId = assetId;
+    preview.listSeq = preview.listVersion;
+    preview.moving = false;
+    text(els.searchPreviewNote, "");
+    var hit = state.search.hits.find(function (item) { return String(item.asset_id) === String(assetId); });
+    text(
+      els.searchPreviewInfo,
+      hit
+        ? "结果第 " + number(hit.rank) + " 名 · 资产 #" + number(hit.asset_id) + " · 正在读取照片信息…"
+        : "正在读取照片信息…"
+    );
+    var image = els.searchPreviewImage;
+    image.hidden = false;
+    image.onerror = function () {
+      if (seq === preview.seq) {
+        image.hidden = true;
+        text(els.searchPreviewNote, "大图暂时无法显示；照片来源可能已离线。");
+      }
+    };
+    image.src =
+      "/api/v1/assets/" + encodeURIComponent(assetId) + "/preview?v=search-preview-a-2";
+    if (!els.searchPreview.open) els.searchPreview.showModal();
+    updateSearchPreviewNavigation();
+    request("/assets/" + encodeURIComponent(assetId)).then(function (result) {
+      if (seq !== preview.seq || !els.searchPreview.open) return;
+      text(els.searchPreviewInfo, photoInfoText(hit, result.body || {}, assetId));
+    }).catch(function () {
+      if (seq === preview.seq && els.searchPreview.open) {
+        var prefix = hit
+          ? "结果第 " + number(hit.rank) + " 名 · 资产 #" + number(hit.asset_id) + " · "
+          : "";
+        text(els.searchPreviewInfo, prefix + "照片信息暂时无法读取。");
+      }
+    });
+  }
+
+  function photoInfoText(hit, detail, assetId) {
+    var parts = [];
+    if (hit) parts.push("结果第 " + number(hit.rank) + " 名");
+    parts.push("资产 #" + number(detail.asset_id || assetId));
+    if (detail.width && detail.height) parts.push(number(detail.width) + " × " + number(detail.height));
+    if (detail.format) parts.push(String(detail.format).toUpperCase());
+    if (detail.byte_size !== null && detail.byte_size !== undefined) parts.push(formatBytes(detail.byte_size));
+    var taken = detail.taken_time;
+    if (taken && taken.taken_at) {
+      var timeLabel = taken.label === "file_time" ? "文件时间 " : "拍摄时间 ";
+      parts.push(timeLabel + String(taken.taken_at).replace("T", " "));
+      if (taken.camera) parts.push("相机 " + taken.camera);
+    } else {
+      parts.push("未记录拍摄时间");
+    }
+    if (detail.availability === "missing") parts.push("原文件不可用");
+    return parts.join(" · ");
+  }
+
+  function formatBytes(value) {
+    var bytes = Number(value);
+    if (!isFinite(bytes) || bytes < 0) return "";
+    if (bytes < 1024) return bytes + " B";
+    var units = ["KB", "MB", "GB", "TB"];
+    var amount = bytes;
+    var unit = -1;
+    while (amount >= 1024 && unit < units.length - 1) {
+      amount /= 1024;
+      unit += 1;
+    }
+    return amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2) + " " + units[unit];
+  }
+
+  function moveSearchPreview(step) {
+    var preview = state.search.preview;
+    if (preview.moving || !els.searchPreview.open) return;
+    var index = searchPreviewPosition();
+    if (index < 0 || index + step < 0) return;
+    var listVersion = preview.listVersion;
+    var previewSeq = preview.seq;
+    preview.moving = true;
+    updateSearchPreviewNavigation();
+    var load = index + step >= state.search.hits.length ? sendSearch(true) : Promise.resolve(true);
+    Promise.resolve(load).then(function (succeeded) {
+      if (previewSeq !== preview.seq || listVersion !== preview.listVersion || !els.searchPreview.open) return;
+      if (!succeeded) {
+        text(els.searchPreviewNote, "下一页结果没有加载成功，请再点“下一张”重试。");
+        return;
+      }
+      var next = state.search.hits[index + step];
+      if (next) openSearchPreview(next.asset_id);
+    }).finally(function () {
+      preview.moving = false;
+      updateSearchPreviewNavigation();
+    });
   }
 
   function clearFrame(frame) {
@@ -1737,6 +1868,7 @@
 
   function resetFilters() {
     clearSearchSnapshot();
+    invalidateSearchPreview();
     state.search.sessionId = null;
     state.search.cursor = null;
     state.search.count = 0;
@@ -1811,6 +1943,14 @@
       uploadFile: document.getElementById("upload-file"),
       uploadStatus: document.getElementById("upload-status"),
       coverageBody: document.getElementById("coverage-body"),
+      searchPreview: document.getElementById("search-preview"),
+      searchPreviewImage: document.getElementById("search-preview-image"),
+      searchPreviewNav: document.getElementById("search-preview-nav"),
+      searchPreviewPrev: document.getElementById("search-preview-prev"),
+      searchPreviewNext: document.getElementById("search-preview-next"),
+      searchPreviewPosition: document.getElementById("search-preview-position"),
+      searchPreviewInfo: document.getElementById("search-preview-info"),
+      searchPreviewNote: document.getElementById("search-preview-note"),
     };
 
     els.searchForm.addEventListener("submit", function (event) {
@@ -1823,6 +1963,17 @@
       sendSearch(false);
     });
     els.loadMore.addEventListener("click", continueSearch);
+    document.getElementById("search-preview-close").addEventListener("click", function () {
+      els.searchPreview.close();
+    });
+    els.searchPreviewPrev.addEventListener("click", function () { moveSearchPreview(-1); });
+    els.searchPreviewNext.addEventListener("click", function () { moveSearchPreview(1); });
+    els.searchPreview.addEventListener("close", function () {
+      state.search.preview.seq += 1;
+      state.search.preview.assetId = null;
+      els.searchPreviewImage.removeAttribute("src");
+      updateSearchPreviewNavigation();
+    });
     els.personMore.addEventListener("click", function () {
       loadPersons(false);
     });

@@ -10,6 +10,10 @@
 
 报告：[实现与验收记录](reports/P4-SEARCH-RETURN-A-implementation.md)。`search.js` 以 `sessionStorage` 保存/恢复筛选、已加载结果、分页 session/cursor、地点状态与离开滚动位置；详情页「返回浏览」会回到搜索页；恢复复用既有渲染且不发起搜索。新搜索/重置清除现场。JUnit **95/0/0/0**、Node 语法与 diff-check 通过。24 张合成夹具已建立于项目 `.tmp`；Windows 回环端口绑定 `WinError 10013`，提权重试仍失败，浏览器往返验收未执行，因此任务尚不能标 PASS。
 
+## P4-SEARCH-PREVIEW-A — 搜索结果查看、照片信息与前后导航（**IMPLEMENTED / 静态检查通过 / 合成交互待验**）
+
+[执行卡](tasks/P4-SEARCH-PREVIEW-A.md)、[实现记录](reports/P4-SEARCH-PREVIEW-A-implementation.md)。结果缩略图打开大图；按当前已展示顺序前后切换，末尾复用原搜索 session/cursor 加载下一页。另展示资产编号、排名、尺寸、格式、大小、规范化时间和相机信息，字段白名单不含路径/哈希/原始EXIF。首尾禁用；关闭/新搜索使旧导航失效。Node语法和diff-check通过。本轮未运行测试，交互与元数据读取尚未动态验证；未启动服务或访问真实图库。
+
 ## P4-02Y-W-Q — Qwen 高度匹配恢复（**IMPLEMENTED / 定向验证通过 / 个人网页确认待完成**）
 
 报告：[P4-02Y-W-Q](reports/P4-02Y-W-Q-qwen-strong-match.md)。Qwen 门限为 cosine ≥0.25（距离 ≤1.5）；CLIP 仍为 1.3，未知空间仍隐藏。核查确认门限只在候选冻结后计算显示统计；新回归断言覆盖候选数/顺序与分页元数据不变。指定 JUnit **27/0/0/0**、Ruff、Node 语法、diff-check 通过。个人网页确认尚未完成：检查时无打开浏览器标签，8000/8001/8080 无监听服务；未启动可能写入 PhotoSearchData 的服务。恢复现有网页后需完成三条只读搜索，故本卡暂不标 PASS。
