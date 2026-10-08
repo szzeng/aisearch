@@ -58,6 +58,7 @@ DATASET_ROW_FIELDS = (
     "previous_dataset_id, state, record_count, file_count, generated_at, validated_at, "
     "activated_at, retained_at, created_at, updated_at"
 )
+_MANIFEST_PREVIOUS_DATASET = object()
 
 #: The only states a rollback may return to.
 ROLLBACK_STATES = ("VALIDATED", "RETAINED")
@@ -304,8 +305,14 @@ def _insert_dataset_rows(
     *,
     relative_dir: str,
     now_ms: int,
+    previous_dataset_id: str | None | object = _MANIFEST_PREVIOUS_DATASET,
 ) -> None:
     manifest = content.manifest
+    stored_previous_dataset_id = (
+        manifest["previous_dataset_id"]
+        if previous_dataset_id is _MANIFEST_PREVIOUS_DATASET
+        else previous_dataset_id
+    )
     connection.execute(
         "INSERT INTO geo_datasets(dataset_id, package_id, package_version, contract_version, "
         "manifest_schema, provider, source_url, source_snapshot, license_id, license_url, "
@@ -336,7 +343,7 @@ def _insert_dataset_rows(
             int(manifest["compatible_catalog_schema"]["minimum"]),
             int(manifest["compatible_catalog_schema"]["maximum"]),
             relative_dir,
-            manifest["previous_dataset_id"],
+            stored_previous_dataset_id,
             int(manifest["coverage"]["record_count"]),
             len(content.files),
             int(manifest["build"]["generated_at"]),
@@ -492,13 +499,14 @@ def restore_surviving_dataset(catalog: Catalog) -> dict[str, Any] | None:
             root, content.dataset_id
         ):
             return None
-        if content.manifest["previous_dataset_id"] is not None:
-            # The predecessor is a catalog FK. An empty registry cannot satisfy it;
-            # leave this package for explicit recovery with its retained predecessor.
+        missing_predecessor = content.manifest["previous_dataset_id"] is not None
+        if missing_predecessor:
+            # The predecessor is a catalog FK. Preserve the manifest, but omit the
+            # unavailable historical edge from this newly rebuilt registry row.
             logger.warning(
-                "surviving place package needs a predecessor; automatic recovery skipped"
+                "surviving place package has an unavailable historical predecessor; "
+                "ignoring that rollback target during recovery"
             )
-            return None
     except (CatalogError, OSError):
         # A defective optional package must not prevent catalog browsing or manual edits.
         logger.warning("surviving place package could not be validated; resolver unavailable")
@@ -514,6 +522,7 @@ def restore_surviving_dataset(catalog: Catalog) -> dict[str, Any] | None:
             content,
             relative_dir=dataset_relative_dir(content.dataset_id),
             now_ms=now,
+            previous_dataset_id=None if missing_predecessor else _MANIFEST_PREVIOUS_DATASET,
         )
         connection.execute(
             "UPDATE geo_datasets SET state = 'VALIDATED', validated_at = ?, updated_at = ? "

@@ -12,7 +12,8 @@
 - 在应用服务打开 catalog 后、业务读取或后台处理开始前恢复。`create_app` 本身保持无 I/O，GET 地点投影本身保持只读。
 - 当 registry 完全为空、`places/datasets` 中只有一个安全直接子目录时，以现存只读包为输入，完整校验 manifest/文件大小/hash/格式/层级/兼容 schema，以及目录名和 dataset_id 一致性。
 - 校验成功后在同一 catalog 事务插入 STAGED 行、转 VALIDATED、激活并物化地点；失败整体回滚。不复制或重写包文件，不下载，不读取照片，不操作向量目录。
-- 已有任何 registry 行则保持原有活动或未激活选择；并发打开在事务内重新检查。多包无法从文件准确判断用户此前的活动选择，必须显式选择；坏包、缺件、不兼容、错目录和符号链接/目录联接不自动激活，不妨碍浏览 catalog。若 manifest 指向缺失的 previous_dataset_id，空 registry 无法满足原 FK；跳过自动恢复而不删除原回退关系或阻止启动。
+- 已有任何 registry 行则保持原有活动或未激活选择；并发打开在事务内重新检查。多包无法从文件准确判断用户此前的活动选择，必须显式选择；坏包、缺件、不兼容、错目录和符号链接/目录联接不自动激活，不妨碍浏览 catalog。
+- 窄例外（P4-PLACE-RECOVERY-B）：空 registry 且仅有一个通过完整校验的包时，如果其 manifest 指向 catalog 中不存在的 `previous_dataset_id`，恢复仅在新建 catalog 行时将该回退字段置为 NULL，以满足外键。磁盘 manifest 与包字节保持不变；不创建虚构前驱。正常导入仍照 manifest 写入回退关系，其他拒绝边界不变。
 
 ## 边界与证据
 

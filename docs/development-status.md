@@ -2,6 +2,18 @@
 
 更新：2026-10-08。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## 当前实现待验：P4-PLACE-RECOVERY-B — 单复合地名包清库后自动恢复（**IMPLEMENTED / MANUAL TEST PENDING**）
+
+[执行卡](tasks/P4-PLACE-RECOVERY-B.md)、[报告](reports/P4-PLACE-RECOVERY-B.md)、[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。唯一完整复合包的 manifest 前驱在空 registry 中缺失时，新 catalog 行仅将 `previous_dataset_id` 置 NULL；原 manifest/包字节不变，其他唯一包校验与事务边界不变。未运行 pytest（按卡要求）；真实空库恢复与重启由用户在备份后手动验收，未访问 PhotoSearchData，不标 PASS。
+
+## 当前反馈闭环：P4-SEARCH-PLACE-NL-A — 自然语言地点查询（**映射根因已修 / 合成回归通过 / 现场复测待用户完成**）
+
+[执行卡](tasks/P4-SEARCH-PLACE-NL-A.md)、[规划](reports/P4-SEARCH-PLACE-NL-A-planning.md)、[实现与证据](reports/P4-SEARCH-PLACE-NL-A-implementation.md)。2026-10-08截图已证明地点页济南相册是“济南市·山东省·GPS行政区”，30张；搜索原选key根因由合成夹具复现：已验证的旧GeoNames映射key与CN相册key不同，解析选择了空成员旧key。现用当前ACTIVE包`cn_legacy_links`将经证明映射的旧名称/别名路由到同一CN facet，未映射地点仍独立。任务卡定向集合JUnit **58/0/0/0**、Ruff/Node/diff-check通过；未访问真实图库/catalog或重启用户服务，需用户刷新/重启服务后复测“济南的照片”。
+
+## 下一 READY：P4-PHOTO-VIEW-A — 全页面照片查看与信息（**源码核对与立卡完成，未实施**）
+
+[执行卡](tasks/P4-PHOTO-VIEW-A.md)、[规划与现状](reports/P4-PHOTO-VIEW-A-planning.md)。2026-10-08用户要求每页照片缩略图可查看，显示基本信息/完整路径、有GPS的在线地图标记及可点人物头像；个人使用、简单测试。复用现有查看器/受保护资产与来源详情、GPS/人物接口，收敛一张卡：共享信息→所有入口接入→定向JUnit与8～12张合成浏览器。沿用地图在线瓦片授权，无新确认开关；不改身份/归属/坐标/分页协议，不默认全量/性能/打包/模型/真实库。推荐DS-H（DeepSeek V4.1 Flash / 高推理），用户手动选择后实施。本轮仅规划文档，产品未实施/测试；其他待审状态保持。
+
 ## 当前人物交接：P4-PERSON-DETAIL-B — 一键补识别与新图库自动原图裁脸（**IMPLEMENTED / 定向与真实兼容对照通过 / 独立审查待做**）
 
 [执行卡](tasks/P4-PERSON-DETAIL-B.md)、[实现与证据](reports/P4-PERSON-DETAIL-B-implementation.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)、[独立DS-H全受影响面审查卡](tasks/P4-PERSON-DETAIL-B-review.md)。接续Luna部分工作完成：旧库一键按图库补机器待归类/小脸，持久50张分页串行、暂停/继续/失败重试/重启恢复；新建/增量默认原图并保存轻量选择，已发布产物只恢复后续步骤。精确兼容桥接通确认索引及自动归人、消除旧机器占位/重复，保留人工锁/排除/OPEN/撤销与旧身份，schema19→20正常升级。2026-10-08在CN父提交`73bca7e`后复验JUnit **34/0/0/0**、Ruff/Node/scoped diff-check通过；公开样片CPU真实模型9组证据沿用，不代表私人准确率/GPU速度。按用户授权将A+B整理为一笔本地提交，不推送；临时目录/清理记录不纳入。未访问私人照片/真实catalog，真实浏览器/实际升级/长期性能未验。下一步独立DS-H完整审查（含复用A）→Sol high聚焦，用户手动切换。
@@ -24,7 +36,7 @@
 
 此前[P4-PERSON-MATCH-B](tasks/P4-PERSON-MATCH-B.md)定向JUnit **216/0/0/0**，详情升级原规划及SOL关键规则核对见[规划](reports/P4-PERSON-DETAIL-A-planning.md)/[核对](reports/P4-PERSON-DETAIL-A-key-rules-review.md)；其旧“尚未实现”描述由本次实现报告取代。
 
-## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
+## 前置 P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**既有恢复实现；复合包前驱例外见 RECOVERY-B**）
 
 报告：[恢复与实现（第二轮）](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)；[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。应用打开空地名 registry 时自动校验/激活唯一健康现存包，删除 catalog/vectors 后重启可恢复；保留包字节/mtime、已有选择及多包拒绝边界。PhotoSearchData 已自动恢复 ACTIVE（45,217条）；定向JUnit **29/0/0/0**，最终恢复/并发 **10/0/0/0**，Ruff/diff-check通过。最终全量 **1968/6/0/48**，禁用新增钩子后6项失败仍复现（旧契约哈希/高度匹配测试），详见报告；人工历史不复原，独立DS-H及决策冻结待做，未标PASS。
 
