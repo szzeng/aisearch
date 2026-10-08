@@ -10,12 +10,26 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from conftest import stamp
 from httpx import AsyncClient
 from p3_persons_page_fixtures import insert_face, mark_location_missing, seed_library
 from PIL import Image, ImageOps
+
+from photo_search.artifacts.store import ArtifactStore
+from photo_search.face import contract
+from photo_search.face.engine import FaceDocument, FaceRecord
+from photo_search.face.processor import (
+    artifact_ref,
+    build_payload,
+    face_processor_spec,
+    persist_face_document,
+)
+from photo_search.jobs import queue as jobs
+from photo_search.scheduler.contracts import ArtifactRef
 
 JPEG_MAGIC = b"\xff\xd8\xff"
 
@@ -343,3 +357,69 @@ def test_the_crop_endpoint_needs_a_session(api_env) -> None:
     response = api_env.scenario(scenario)
     assert response.status_code == 401
     assert response.json()["code"] == "SESSION_REQUIRED"
+
+
+@pytest.mark.parametrize("source_detail", [False, True])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_published_face_profile_can_render_a_cold_avatar(api_env, source_detail, method) -> None:
+    """Real published documents exercise the route's projection, including source spec."""
+    write_two_tone(api_env.library / "published.jpg")
+    source = api_env.register_source("library")
+    api_env.scan(int(source["source_id"]))
+    catalog = api_env.service.catalog
+    asset = catalog.read_one(
+        "SELECT a.asset_id,a.sha256,l.location_id FROM assets a "
+        "JOIN file_locations l ON l.asset_id=a.asset_id WHERE l.availability='PRESENT'"
+    )
+    task_type = contract.FACE_DETAIL_TASK_TYPE if source_detail else contract.FACE_TASK_TYPE
+    with catalog.write() as connection:
+        job_id = jobs.enqueue(
+            connection, subject_type="asset", subject_id=str(asset["asset_id"]),
+            input_revision=str(asset["sha256"]), task_type=task_type,
+            processor_id=contract.FACE_PROCESSOR_ID, now_ms=catalog.now_ms(),
+        )
+    face = FaceRecord(
+        ordinal=0, bbox=(20.0, 60.0, 100.0, 140.0),
+        landmarks=((35.0, 80.0), (85.0, 80.0), (60.0, 100.0),
+                   (40.0, 120.0), (80.0, 120.0)),
+        det_score=0.95, face_pixels=80.0, blur_variance=120.0,
+        quality_state="OK", quality_reason=None, embedding=(1.0,) + (0.0,) * 511,
+    )
+    payload = build_payload(
+        input_revision=str(asset["sha256"]), location_id=int(asset["location_id"]),
+        document=FaceDocument((320, 240), (320, 240), 1.0, (face,), 1),
+        decode_format="JPEG", source_detail=source_detail,
+    )
+    store = ArtifactStore(catalog.data_root)
+    prepared = [store.prepare(ArtifactRef.from_envelope(artifact_ref(payload)))]
+    job = SimpleNamespace(job_id=job_id, subject_id=str(asset["asset_id"]), task_type=task_type)
+    result = SimpleNamespace(input_revision=str(asset["sha256"]))
+    with catalog.write() as connection:
+        store.persist_result(
+            connection, job=job, result=result,
+            spec=face_processor_spec(source_detail=source_detail), prepared=prepared,
+            now_ms=catalog.now_ms(),
+        )
+        persist_face_document(
+            connection, job=job, result=result, prepared=prepared, now_ms=catalog.now_ms(),
+        )
+    face_id = str(payload["faces"][0]["face_id"])
+    assert not list((api_env.data_root / "cache" / "face-crops").rglob("*.jpg"))
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        url = f"/api/v1/faces/{face_id}/thumbnail?v=person-media2"
+        first = await client.request(method, url)
+        assert first.status_code == 200, first.text
+        loaded = await client.get(url)
+        conditional = await client.get(url, headers={"If-None-Match": first.headers["ETag"]})
+        return first, loaded, conditional
+
+    first, loaded, conditional = api_env.scenario(scenario)
+    assert first.headers["Content-Type"] == "image/jpeg"
+    if method == "HEAD":
+        assert first.content == b""
+    assert loaded.status_code == 200
+    red, blue = mean_channels(loaded.content)
+    assert red > blue
+    assert conditional.status_code == 304

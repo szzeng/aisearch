@@ -6,6 +6,8 @@
 
 2026-10-08提交整理：CN父提交为`73bca7e`，A+B按用户授权合并为本地人脸提交；审查当前人脸提交相对该父提交的完整diff，不再尝试拆出A-only快照。提交前JUnit `test-results/P4-PERSON-DETAIL-commit.xml` **34/0/0/0**，旧final34和公开模型JSON保留作历史证据。
 
+2026-10-09头像补充：[P4-PERSON-AVATAR-FIX-A](P4-PERSON-AVATAR-FIX-A.md)修复路由SELECT漏传实际spec_revision导致原图头像409；29项直接回归通过，现场重启待验。审查加入真实已发布普通／source文档的GET/HEAD冷缓存链，而不能只验证recorded_face_frame完整dict或已有crop缓存；仍保持checksum／bbox／内容／profile拒绝。
+
 按V3.1 §2.4由独立DS-H完整审查全部受影响面，含复用DETAIL-A解码／不可变产物／人工链，不能用展示面简审代替。实现者不是本审查者；模型由用户手动切换，不自动派代理。仅§2.2有实际命名触发条件时升级DeepSeek max；收敛后GPT-5.6 Sol/high只聚焦高风险身份／ADR／人工记录与未决项。
 
 ## 必查表面

@@ -1,6 +1,11 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+
+## 当前头像反馈 P4-PERSON-AVATAR-FIX-A — 原图人物头像409（**IMPLEMENTED / 定向验证通过 / 现场重启待确认**）
+
+[执行卡](tasks/P4-PERSON-AVATAR-FIX-A.md)、[原因与反例](reports/P4-PERSON-AVATAR-FIX-A.md)。头像路由漏查spec_revision，原图文档校验因此返回FACE_STATE_CONFLICT/face_frame_invalid；已补字段，保持原有checksum/内容/脸/profile门禁，不改人脸或归属、不重识别。普通/原图×GET/HEAD冷缓存反例修前原图失败，修后定向JUnit **29/0/0/0**、Ruff/diff-check通过。源码服务重启刷新后现场待确认，未访问私人照片/真实catalog、未推送；补充纳入DETAIL-B既有独立审查。
+
 ## 最近完成 P4-SOURCE-RESUME-A — 来源断点续建入口（**实现与定向自检完成 / 用户图库手测待做**）
 
 [任务卡](tasks/P4-SOURCE-RESUME-A.md)、[实现报告](reports/P4-SOURCE-RESUME-A.md)。来源卡「快速刷新此来源」保留，新增「检查并补齐建库」，用户点击后复用既有 source-scoped `build`；不改模式判定、队列、去重或后端进度协议。定向 Node VM/JUnit **4/0/0/0**、Node syntax、diff-check通过。未重启用户服务、未访问真实图库或 PhotoSearchData；用户手测仍待做，故不标PASS。

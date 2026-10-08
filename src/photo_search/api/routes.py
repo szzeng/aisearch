@@ -1712,7 +1712,8 @@ async def _face_crop_response(request: Request, face_id: str) -> Response:
     catalog = service.catalog
     cache = service.media_cache()
     row = catalog.read_one(
-        "SELECT face_id, asset_id, bbox_json, artifact_id, input_revision FROM faces WHERE face_id = ?",
+        "SELECT face_id, asset_id, bbox_json, artifact_id, input_revision, spec_revision "
+        "FROM faces WHERE face_id = ?",
         (str(face_id),),
     )
     if row is None:
