@@ -75,6 +75,10 @@ MANIFEST_KEYS = frozenset(
     }
 )
 _COMPATIBLE_KEYS = frozenset({"minimum", "maximum"})
+PLACE_LEGACY_MAX_FLOOR = 16
+# Schemas through 21 have been reviewed for package compatibility. 0021 adds only
+# catalog-side source identity references; GeoNames bytes and the CN addon contract stay fixed.
+PLACE_COMPAT_REVIEWED_THROUGH = 21
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8
@@ -225,6 +229,22 @@ def check_relative_path(value: Any, *, where: str = "relative_path") -> str:
     return text
 
 
+def _legacy_place_schema_compatible(
+    *,
+    compatible_minimum: int,
+    compatible_maximum: int,
+    supported_schema_version: int,
+    reviewed_through: int = PLACE_COMPAT_REVIEWED_THROUGH,
+) -> bool:
+    """Return whether an immutable legacy package is covered by the reviewed bridge."""
+    return (
+        int(compatible_minimum) <= int(supported_schema_version)
+        and int(compatible_maximum) >= PLACE_LEGACY_MAX_FLOOR
+        and int(compatible_maximum) < int(supported_schema_version)
+        and int(supported_schema_version) <= int(reviewed_through)
+    )
+
+
 def validate_manifest(manifest: Any, *, supported_schema_version: int) -> dict[str, Any]:
     """Validate a decoded manifest against the frozen shape and the compatibility rules.
 
@@ -310,28 +330,15 @@ def validate_manifest(manifest: Any, *, supported_schema_version: int) -> dict[s
     )
     if compatible_min > compatible_max:
         raise _invalid("compatible_catalog_schema has an empty range")
-    # 0017 adds map membership/indexes only; the schema-16 place package contract
-    # is unchanged. Keep this bridge explicit: older maxima and future catalogs
-    # still require their own compatibility decision, and manifests stay immutable.
-    schema16_map_bridge = (
-        int(supported_schema_version) == 17 and compatible_max == 16
-    ) or (
-        int(supported_schema_version) == 18 and compatible_max in (16, 17)
-    ) or (
-        # Concurrent 0019 adds only face-detail queues/batches; place projections
-        # and the schema-18 CN addon remain unchanged. No future-schema wildcard.
-        int(supported_schema_version) == 19 and compatible_max in (16, 17, 18)
-    ) or (
-        # 0020 adds only face-detail coordinate frames/auto policy and a face-batch
-        # job index. Neither the GeoNames nor CN package projection changes.
-        int(supported_schema_version) == 20 and compatible_max in (16, 17, 18, 19)
-        ) or (
-            # 0021 adds catalog-side source identity references for the existing manual
-            # assignment FK. It does not change GeoNames package bytes or CN addon shape.
-            int(supported_schema_version) == 21 and compatible_max in (16, 17, 18, 19, 20)
+    # A reviewed bridge preserves immutable packages whose declared maximum is
+    # below this catalog schema. Keep its historical floor and review ceiling explicit.
+    legacy_package_bridge = _legacy_place_schema_compatible(
+        compatible_minimum=compatible_min,
+        compatible_maximum=compatible_max,
+        supported_schema_version=int(supported_schema_version),
     )
     if not (
-        compatible_min <= int(supported_schema_version) <= compatible_max or schema16_map_bridge
+        compatible_min <= int(supported_schema_version) <= compatible_max or legacy_package_bridge
     ):
         raise _invalid(
             "the dataset is not compatible with this catalog schema",

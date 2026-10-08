@@ -1,6 +1,10 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+## 最近完成 P4-PLACE-SCHEMA-COMPAT — 地名包旧版本兼容收敛（**IMPLEMENTED / 定向验证通过**）
+
+[执行卡](tasks/P4-PLACE-SCHEMA-COMPAT.md)、[报告](reports/P4-PLACE-SCHEMA-COMPAT.md)。当前 schema21 的 0021 migration 经核对仅增加来源身份映射，不改包契约；GeoNames maximum16 与 CN 复合包 maximum18 由显式 floor16/review ceiling21 统一桥接。定向 JUnit **30/0/0/0**、Ruff、scoped diff-check 通过；合成复合包关闭再打开 CatalogService 后 Tokyo 与济南区县均可加载，包文件字节/mtime 不变。未访问 PhotoSearchData；未跑全量/性能/GPU/浏览器，不代表真实目录验收。后续地点主线仍见下方 P4-PLACE-UNIFIED-A。
+
 ## 当前地点任务 P4-PLACE-UNIFIED-A — OSM优先、GeoNames兜底与真实来源人工指定（**IMPLEMENTED / 定向验证通过 / 本机浏览器验收待做 / DS-H待审**）
 
 [执行卡](tasks/P4-PLACE-UNIFIED-A.md)、[实现报告](reports/P4-PLACE-UNIFIED-A.md)、[DS-H全受影响面审查卡](tasks/P4-PLACE-UNIFIED-A-review.md)。共享来源选择层、活动包来源证明与schema21加性桥、行政区FK承载映射、单张/批量新增人工归属校验、父级共用成员路径与目录代理隐藏已实现；历史Assignment/撤销协议复用。定向JUnit **116/0/0/0**，Ruff、Node、Python compileall、diff-check通过；真实JS页面行为用小型DOM桩验证。Uvicorn为合成浏览器试验绑定127.0.0.1:8765时遭Windows `WinError 10013` 拒绝，故真实浏览器闭环待本机端口可用后补做；无ACL改动、未访问PhotoSearchData。不得标整卡PASS。下一步独立DS-H全受影响面工程审查，推荐DeepSeek V4.1 Flash / 高推理，用户手动切换；DS-MAX仅按V3.1 §2.2命名条件，Sol high条件式聚焦终审。
