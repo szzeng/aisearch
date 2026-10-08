@@ -5,16 +5,23 @@ import hashlib
 import json
 from pathlib import Path
 
-from p2_dataset_fixtures import build_package
+from p2_dataset_fixtures import build_package, mini_spec
 from shapely.geometry import Polygon, box, mapping
 
 from photo_search.places import datasets
 from tools.places.compose_china_places import compose
 
 
-def prepared_fixture(path: Path, *, duplicate: bool = False) -> Path:
+def prepared_fixture(path: Path, *, duplicate: bool = False, jinan: bool = False) -> Path:
     path.mkdir()
-    shapes = [
+    if jinan:
+        shapes = [
+            (1, "province", "山东省", ["山东"], None, None, box(116, 35, 118, 38)),
+            (2, "city", "济南市", ["济南"], 1, None, box(116.5, 36, 117.5, 37)),
+            (3, "district", "历下区", [], 1, 2, box(116.9, 36.5, 117.1, 36.75)),
+        ]
+    else:
+        shapes = [
         (1, "province", "浙江省", ["浙江"], None, None, box(119, 29, 121, 31)),
         (2, "city", "杭州市", ["杭州", "Hangzhou"], 1, None, box(119.5, 29.5, 120.8, 30.8)),
         (
@@ -39,7 +46,7 @@ def prepared_fixture(path: Path, *, duplicate: bool = False) -> Path:
             None,
             box(121.2, 31.1, 121.8, 31.6),
         ),
-    ]
+        ]
     rows = [
         {
             "id": f"relation/{key}",
@@ -81,13 +88,45 @@ def prepared_fixture(path: Path, *, duplicate: bool = False) -> Path:
     return path
 
 
-def install(catalog, root: Path, *, duplicate: bool = False) -> tuple[str, Path]:
+def install(
+    catalog, root: Path, *, duplicate: bool = False, legacy_jinan: bool = False
+) -> tuple[str, Path]:
     base = root / "base-package"
-    build_package(base)
+    if legacy_jinan:
+        build_package(
+            base,
+            spec=mini_spec(
+                dataset_id="geo-mini-jinan-1",
+                places=(
+                    {
+                        "dataset_place_id": "country-cn",
+                        "kind": "country",
+                        "display_name": "中国",
+                        "country_code": "CN",
+                        "latitude": 35.0,
+                        "longitude": 105.0,
+                    },
+                    {
+                        "dataset_place_id": "city-jinan",
+                        "kind": "city",
+                        "display_name": "济南旧称",
+                        "country_code": "CN",
+                        "latitude": 36.65,
+                        "longitude": 117.0,
+                        "parent_dataset_place_id": "country-cn",
+                    },
+                ),
+                aliases=(
+                    {"dataset_place_id": "city-jinan", "text": "济南", "language": "zh"},
+                ),
+            ),
+        )
+    else:
+        build_package(base)
     staged = datasets.stage_package(catalog, base)
     datasets.validate_dataset(catalog, staged["dataset_id"])
     datasets.activate_dataset(catalog, staged["dataset_id"])
-    prepared = prepared_fixture(root / "prepared", duplicate=duplicate)
+    prepared = prepared_fixture(root / "prepared", duplicate=duplicate, jinan=legacy_jinan)
     composite = root / "composite"
     result = compose(base, prepared, composite)
     staged = datasets.stage_package(catalog, composite)

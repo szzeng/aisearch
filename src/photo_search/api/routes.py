@@ -1826,9 +1826,8 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
     )
 
 
-def _place_aware_parse(service: Any, text: str) -> tuple[str | None, list[dict[str, Any]], str | None]:
-    """Recognize only the bounded place-first Chinese forms supported by P4-PLACE-SEARCH-A."""
-    normalized = "".join(str(text).split()).casefold()
+def _place_aware_choices(service: Any) -> list[dict[str, Any]]:
+    """Build parser candidates only from currently active local place sources."""
     rows = service.catalog.read_all(
         "SELECT place_id, kind, canonical_name, parent_place_id FROM places WHERE lifecycle='ACTIVE' ORDER BY length(canonical_name) DESC"
     )
@@ -1841,37 +1840,52 @@ def _place_aware_parse(service: Any, text: str) -> tuple[str | None, list[dict[s
             "SELECT text FROM place_aliases WHERE place_id=? AND lifecycle='ACTIVE'", (int(row["place_id"]),)
         )
         parent_id = row["parent_place_id"]
-        candidates.append({"kind": str(row["kind"]), "key": str(row["place_id"]), "name": str(row["canonical_name"]), "parent": place_names.get(int(parent_id), "") if parent_id else "", "aliases": [str(value["text"]) for value in aliases]})
+        candidates.append({"kind": str(row["kind"]), "key": str(row["place_id"]), "name": str(row["canonical_name"]), "parent": place_names.get(int(parent_id), "") if parent_id else "", "aliases": [str(value["text"]) for value in aliases], "source": "local"})
     # Province names come from the installed INDEX, including known provinces that
     # currently have no album members.
     province_index, _, _, province_index_available = place_albums._index(service.catalog, service.data_root)
     if province_index_available:
         provinces: dict[str, dict[str, Any]] = {}
         for region in province_index.get("city_to_admin1", {}).values():
-            provinces.setdefault(str(region["id"]), {"kind": "province", "key": str(region["id"]), "name": str(region["name"]), "parent": "", "aliases": []})
+            provinces.setdefault(str(region["id"]), {"kind": "province", "key": str(region["id"]), "name": str(region["name"]), "parent": "", "aliases": [], "source": "province_index"})
             entry = provinces[str(region["id"])]
             entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *region.get("aliases", [])]))
         candidates.extend(provinces.values())
-    matches: list[tuple[int, dict[str, Any], str | None]] = []
-    candidates.extend(cn_facets.choices(service.catalog))
-    for item in candidates:
-        for spelling in [item["name"], *item["aliases"]]:
-            name = "".join(str(spelling).split()).casefold()
-            if not name:
-                continue
-            if normalized == name:
-                matches.append((len(name), item, None))
-            elif normalized.startswith("在" + name + "拍的"):
-                matches.append((len(name), item, str(text).strip()[len("在" + str(spelling) + "拍的"):].strip()))
-            elif normalized.startswith(name + "的"):
-                matches.append((len(name), item, str(text).strip()[len(str(spelling) + "的"):].strip()))
-    if not matches:
-        return None, [], None
-    longest = max(value[0] for value in matches)
-    selected = {(value[1]["kind"], value[1]["key"]): value for value in matches if value[0] == longest}
-    options = [value[1] for value in selected.values()]
-    content = next(iter(selected.values()))[2] if len(selected) == 1 else None
-    return ("ambiguous" if len(options) > 1 else "recognized"), options, content
+    cn_candidates = [
+        {**item, "source": "cn_admin"} for item in cn_facets.choices(service.catalog)
+    ]
+    cn_by_key = {str(item["key"]): item for item in cn_candidates}
+    # A package's active cn_legacy_links records a verified equivalence: the old
+    # GeoNames city point lies in the admin geometry and at least one display spelling
+    # matches. Route those spellings to the same CN facet used by the album, rather
+    # than offering an empty legacy key beside the authoritative CN album.
+    linked_rows = service.catalog.read_all(
+        """SELECT l.place_id,l.city_id,l.province_id,p.canonical_name,
+        a.text AS alias,r.kind AS admin_kind
+        FROM cn_legacy_links l
+        JOIN active_geo_dataset active ON active.singleton=1 AND active.dataset_id=l.dataset_id
+        JOIN places p ON p.place_id=l.place_id AND p.lifecycle='ACTIVE'
+        JOIN cn_dataset_regions r ON r.dataset_id=l.dataset_id
+          AND r.admin_id=COALESCE(l.city_id,l.province_id)
+        LEFT JOIN place_aliases a ON a.place_id=l.place_id AND a.lifecycle='ACTIVE'
+        ORDER BY l.place_id,a.text"""
+    )
+    linked_local_ids: set[str] = set()
+    for row in linked_rows:
+        place_id = str(row["place_id"])
+        admin_id = row["city_id"] if row["city_id"] is not None else row["province_id"]
+        target = cn_by_key.get(f"cn:{admin_id}")
+        if target is None or target["kind"] != str(row["admin_kind"]):
+            continue
+        linked_local_ids.add(place_id)
+        spellings = [str(row["canonical_name"])]
+        if row["alias"]:
+            spellings.append(str(row["alias"]))
+        target["aliases"] = list(dict.fromkeys([*target["aliases"], *spellings]))
+
+    candidates = [item for item in candidates if item["key"] not in linked_local_ids]
+    candidates.extend(cn_candidates)
+    return candidates
 
 
 @router.post("/search/place-aware", summary="Personal local place plus content search")
@@ -1879,26 +1893,29 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     """Additive entry that resolves place intent before reusing the existing search/session service."""
     context = context_of(request)
     service = context.service()
-    original = payload.original_query.strip()
+    original = payload.original_query
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
+    parse_notice = None
     if payload.place_cancelled:
         kind = key = None
         query_text = (content if content is not None else original).strip() or None
-        state = None
     elif kind is None and key is None:
-        state, options, parsed_content = _place_aware_parse(service, original)
-        if state == "ambiguous":
-            return {"needs_place_choice": True, "original_query": original, "content_query": parsed_content, "place_choices": options}
-        if state == "recognized":
-            chosen = options[0]
-            kind, key, content = chosen["kind"], chosen["key"], parsed_content
+        from photo_search.places.natural_search import parse_place_query
+
+        plan = parse_place_query(original, _place_aware_choices(service))
+        if plan["state"] == "ambiguous":
+            return {"needs_place_choice": True, "original_query": original,
+                    "content_query": plan["content_query"], "place_choices": plan["choices"]}
+        if plan["state"] == "recognized":
+            chosen = plan["choices"][0]
+            kind, key, content = chosen["kind"], chosen["key"], chosen["content_query"]
             query_text = content or None
         else:
             # SearchRequest treats an empty text field as invalid; a blank query is the
             # documented pure-filter search, so normalize it to None at this boundary.
-            query_text = original or None
+            query_text = original.strip() or None
+        parse_notice = plan["notice"]
     else:
-        state = "selected"
         query_text = (content if content is not None else original).strip() or None
     album_ids = None
     revision = None
@@ -1925,15 +1942,18 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     values["text"] = query_text
     envelope = SearchRequest.from_envelope(values)
     if kind is not None and key is not None and query_text is None:
-        return _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block)
+        result = _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block, original_query=original)
+        result["place_parse_notice"] = parse_notice
+        return result
     result = search_request(service.catalog, envelope, sessions=context.search_sessions, encoder=context.query_encoder(), reranker=context.reranker(), album_asset_ids=album_ids, album_scope_revision=revision)
     result["place_scope"] = place_block
     result["original_query"] = original
     result["content_query"] = query_text
+    result["place_parse_notice"] = parse_notice
     return result
 
 
-def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any]) -> dict[str, Any]:
+def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str) -> dict[str, Any]:
     """Uncapped SQLite pages for a pure selected place; keeps album membership authoritative."""
     catalog = service.catalog
     base = _person_authority_base(catalog, request)
@@ -2010,7 +2030,7 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         "pending_semantic": None,
         "search_projection": _projection_block(catalog, match=None, catch_up=None),
         "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
-        "place_scope": place_block, "original_query": request.text, "content_query": None,
+        "place_scope": place_block, "original_query": original_query, "content_query": None,
     }
 
 

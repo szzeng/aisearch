@@ -217,6 +217,64 @@ def test_cn_api_place_search_matches_browser_and_content(api_env):
     api_env.scenario(scenario)
 
 
+def test_place_aware_search_routes_verified_legacy_alias_to_cn_album(api_env):
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path, legacy_jinan=True)
+    ids = seed(api_env, count=4)
+    legacy_place_id = int(
+        catalog.read_one(
+            "SELECT place_id FROM place_external_refs WHERE external_id='city-jinan'"
+        )["place_id"]
+    )
+    link = catalog.read_one(
+        "SELECT city_id FROM cn_legacy_links WHERE place_id=?", (legacy_place_id,)
+    )
+    assert link is not None and link["city_id"] is not None
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        for asset_id in ids:
+            assigned = await client.put(
+                f"/api/v1/assets/{asset_id}/place-assignment",
+                json={
+                    "action": "assign",
+                    "target_place_id": legacy_place_id,
+                    "expected_revision": 0,
+                    "request_id": f"legacy-jinan-{asset_id}",
+                },
+                headers=headers,
+            )
+            assert assigned.status_code == 200, assigned.text
+        listing = await client.get("/api/v1/places/albums", params={"kind": "city"})
+        assert listing.status_code == 200, listing.text
+        album = next(
+            item
+            for item in listing.json()["albums"]
+            if item["key"] == f"cn:{link['city_id']}"
+        )
+        response = await client.post(
+            "/api/v1/search/place-aware",
+            json={
+                "request_id": "legacy-jinan-search",
+                "original_query": "济南的照片",
+                "page_size": 10,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return album, response.json()
+
+    album, result = api_env.scenario(scenario)
+    assert album["name"] == "济南市"
+    assert album["total"] == len(ids)
+    assert result["place_scope"]["key"] == album["key"]
+    assert result["place_scope"]["name"] == "济南市"
+    assert result["total_candidates"] == album["total"]
+    assert [hit["asset_id"] for hit in result["hits"]] == ids
+    assert result["content_query"] is None
+
+
 def test_cn_content_search_with_bound_synthetic_encoder(tmp_path):
     env = build_search_env(tmp_path)
     try:

@@ -1,0 +1,258 @@
+"""Bounded, local parsing for explicit natural-language place searches.
+
+This module does not look up names or infer geography. Callers supply only the currently
+active place choices; returned keys therefore always refer to existing authoritative data.
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from dataclasses import dataclass
+from typing import Any
+
+_LEADING_REQUESTS = (
+    "请帮我找一下",
+    "请帮我找",
+    "帮我找一下",
+    "帮我找",
+    "帮我查找一下",
+    "帮我查找",
+    "找一下",
+    "查找一下",
+    "搜索一下",
+    "请找",
+    "找",
+    "搜索",
+)
+_PLACE_MARKERS = ("拍摄的", "拍的", "拍摄")
+_PHOTO_TAILS = ("所有照片", "所有图片", "全部照片", "全部图片", "照片", "图片")
+_CONTENT_PROTECTED = ("老照片", "照片里的", "照片中的", "照片中")
+_NEGATIVE = ("不是在", "不在", "没有在", "并非在")
+_JOINERS = ("或者", "以及", "或", "和")
+_PUNCTUATION = "，,。；;、:：.!?！？"
+
+
+@dataclass(frozen=True)
+class _Hit:
+    start: int
+    end: int
+    choice: dict[str, Any]
+
+
+def _normalize_with_map(value: str) -> tuple[str, list[int]]:
+    """Case/compatibility fold text while mapping every output character to its source."""
+    output: list[str] = []
+    offsets: list[int] = []
+    for source_offset, char in enumerate(value):
+        if char.isspace():
+            continue
+        folded = unicodedata.normalize("NFKC", char).casefold()
+        output.extend(folded)
+        offsets.extend([source_offset] * len(folded))
+    return "".join(output), offsets
+
+
+def _norm(value: str) -> str:
+    return _normalize_with_map(value)[0]
+
+
+def _trim_content(value: str) -> str:
+    result = value.strip(" \t\r\n，,。；;、:：")
+    normalized = _norm(result)
+    for request in _LEADING_REQUESTS:
+        folded = _norm(request)
+        if normalized.startswith(folded):
+            result = result[len(request) :].lstrip(" \t\r\n，,。；;、:：")
+            normalized = _norm(result)
+            break
+    normalized = _norm(result)
+    if normalized in {"所有", "全部", "所有照片", "所有图片", "全部照片", "全部图片"}:
+        return ""
+    if not any(normalized.startswith(_norm(prefix)) for prefix in _CONTENT_PROTECTED):
+        for tail in _PHOTO_TAILS:
+            folded = _norm(tail)
+            if normalized.endswith(folded):
+                result = result[: -len(tail)].rstrip(" \t\r\n，,。；;、:：")
+                normalized = _norm(result)
+                break
+    if normalized in {"所有", "全部"}:
+        return ""
+    return result
+
+
+def _strip_request_prefix(value: str) -> str | None:
+    remaining = value
+    for request in _LEADING_REQUESTS:
+        folded = _norm(request)
+        if remaining.startswith(folded):
+            remaining = remaining[len(folded) :]
+            break
+    if remaining.startswith("在"):
+        remaining = remaining[1:]
+    return remaining or None
+
+
+def _spelling_hits(text: str, choices: list[dict[str, Any]]) -> list[_Hit]:
+    normalized, _ = _normalize_with_map(text)
+    hits: list[_Hit] = []
+    seen: set[tuple[int, int, str, str]] = set()
+    for choice in choices:
+        spellings = [str(choice.get("name", "")), *map(str, choice.get("aliases", []))]
+        for spelling in spellings:
+            needle = _norm(spelling)
+            if not needle:
+                continue
+            start = 0
+            while (found := normalized.find(needle, start)) >= 0:
+                end = found + len(needle)
+                identity = (found, end, str(choice.get("kind")), str(choice.get("key")))
+                if identity not in seen:
+                    seen.add(identity)
+                    hits.append(_Hit(found, end, choice))
+                start = found + 1
+    return hits
+
+
+def _parent_chain_prefix(prefix: str, hit: _Hit, hits: list[_Hit]) -> bool:
+    """Allow preceding place names only when the selected choice declares that parent."""
+    if not prefix:
+        return True
+    parent = _norm(str(hit.choice.get("parent", "")).replace("·", " "))
+    preceding = [item for item in hits if item.end <= hit.start and item.end > 0]
+    preceding.sort(key=lambda item: item.end, reverse=True)
+    for item in preceding:
+        name = _norm(str(item.choice.get("name", "")))
+        gap = prefix[item.end : hit.start]
+        if name and name in parent and not gap:
+            before_parent = prefix[: item.start]
+            return _strip_request_prefix(before_parent) is None
+    return False
+
+
+def _original_boundary(offsets: list[int], text: str, normalized_offset: int) -> int:
+    if normalized_offset <= 0:
+        return 0
+    if normalized_offset >= len(offsets):
+        return len(text)
+    return offsets[normalized_offset]
+
+
+def _is_explicit_multi_or_negative(text: str, normalized: str, hits: list[_Hit]) -> bool:
+    for hit in hits:
+        before = normalized[: hit.start]
+        after = normalized[hit.end :]
+        if any(before.endswith(_norm(word)) for word in _NEGATIVE) and any(
+            after.startswith(_norm(marker)) for marker in _PLACE_MARKERS
+        ):
+            return True
+        if any(after.startswith(_norm(word)) for word in _JOINERS):
+            return True
+    for left in hits:
+        for right in hits:
+            if left.end >= right.start or left.start == right.start:
+                continue
+            between = normalized[left.end : right.start]
+            if any(_norm(word) in between for word in _JOINERS):
+                tail = normalized[right.end :]
+                if any(tail.startswith(_norm(marker)) for marker in _PLACE_MARKERS) or tail.startswith("的"):
+                    return True
+    return False
+
+
+def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return a recognized place plan, or preserve the original query without hard filtering."""
+    raw = str(text)
+    normalized, offsets = _normalize_with_map(raw)
+    hits = _spelling_hits(raw, choices)
+    if _is_explicit_multi_or_negative(raw, normalized, hits):
+        return {"state": "unresolved", "choices": [], "content_query": None,
+                "notice": "这句话包含否定或多个地点，尚未形成地点筛选；请改写或使用显式地点条件。"}
+
+    parsed: list[tuple[_Hit, str]] = []
+    for hit in hits:
+        prefix = normalized[: hit.start]
+        suffix = normalized[hit.end :]
+        clean_prefix = _strip_request_prefix(prefix)
+        leading = clean_prefix is None or _parent_chain_prefix(prefix, hit, hits)
+        marker = next((item for item in _PLACE_MARKERS if suffix.startswith(_norm(item))), None)
+        if leading and marker:
+            remainder_start = hit.end + len(_norm(marker))
+            content_start = _original_boundary(offsets, raw, remainder_start)
+            parsed.append((hit, _trim_content(raw[content_start:])))
+            continue
+        if leading and suffix.startswith("的"):
+            content_start = _original_boundary(offsets, raw, hit.end + 1)
+            parsed.append((hit, _trim_content(raw[content_start:])))
+            continue
+        if leading and not suffix.strip(_PUNCTUATION):
+            parsed.append((hit, ""))
+            continue
+        if leading and suffix.startswith(("，", ",")):
+            content_start = _original_boundary(offsets, raw, hit.end + 1)
+            parsed.append((hit, _trim_content(raw[content_start:])))
+            continue
+        if leading and suffix.startswith("照片"):
+            content_start = _original_boundary(offsets, raw, hit.end)
+            parsed.append((hit, _trim_content(raw[content_start:])))
+            continue
+
+        # A place after content is accepted only as an explicit final shooting clause.
+        if marker and suffix.startswith(_norm(marker)):
+            clause_start = _original_boundary(offsets, raw, hit.start)
+            before_raw = raw[:clause_start]
+            trimmed = before_raw.rstrip(" \t\r\n")
+            if trimmed.endswith("在"):
+                trimmed = trimmed[:-1].rstrip(" \t\r\n")
+            if trimmed.endswith(("，", ",", "；", ";")):
+                content = _trim_content(trimmed[:-1])
+                if content:
+                    parsed.append((hit, content))
+
+        # A bare name followed by a whitespace boundary can introduce content, as in
+        # "济南 夜景". Concatenated words such as "济南路上的夜景" never enter here.
+        if leading and suffix and hit.end < len(offsets):
+            end_original = offsets[hit.end - 1] + 1
+            next_original = offsets[hit.end]
+            if next_original > end_original and raw[end_original:next_original].isspace():
+                content_start = offsets[hit.end]
+                parsed.append((hit, _trim_content(raw[content_start:])))
+
+    # A hierarchy written as adjacent known names is resolved only by the selected child's
+    # declared parent. Overlapping same-name sources remain separate choices.
+    if parsed:
+        parsed.sort(key=lambda item: (item[0].end - item[0].start, item[0].start), reverse=True)
+        best_span = parsed[0][0].end - parsed[0][0].start
+        best = [item for item in parsed if item[0].end - item[0].start == best_span]
+        identities = {(str(hit.choice.get("kind")), str(hit.choice.get("key"))) for hit, _ in best}
+        if len(identities) == 1:
+            hit, content = best[0]
+            return {"state": "recognized", "choices": [dict(hit.choice, content_query=content)],
+                    "content_query": content, "notice": None}
+        contents = {content for _, content in best}
+        common = next(iter(contents)) if len(contents) == 1 else None
+        options = [dict(hit.choice, content_query=content) for hit, content in best]
+        return {"state": "ambiguous", "choices": options,
+                "content_query": common, "notice": None}
+
+    # A known child name surrounded by a place phrase is not enough to prove a longer
+    # hierarchy. Keep the text search intact and tell the user why no hard condition formed.
+    if any(
+        any(normalized[hit.end :].startswith(_norm(marker)) for marker in _PLACE_MARKERS)
+        and any(token in normalized[: hit.start] for token in ("省", "市", "区", "县"))
+        for hit in hits
+    ):
+        return {"state": "unresolved", "choices": [], "content_query": None,
+                "notice": "当前地点目录无法确认这段地点层级；仍按原句检索，没有添加地点条件。"}
+
+    if not hits:
+        for marker in _PLACE_MARKERS:
+            marker_at = normalized.find(_norm(marker))
+            if marker_at < 0:
+                continue
+            before_marker = normalized[:marker_at]
+            location_at = before_marker.rfind("在")
+            if location_at >= 0 and marker_at - location_at <= 28:
+                return {"state": "unresolved", "choices": [], "content_query": None,
+                        "notice": "当前地点目录没有可确认的地点；仍按原句检索，没有添加地点条件。"}
+
+    return {"state": None, "choices": [], "content_query": None, "notice": None}

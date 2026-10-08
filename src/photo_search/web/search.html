@@ -7,9 +7,8 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-person-link-a-1" />
-    <script src="/web/search.js?v=p4-search-person-link-a-1" defer></script>
-    <script src="/web/search-place-entry.js" defer></script>
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-place-nl-a-1" />
+    <script src="/web/search.js?v=p4-search-place-nl-a-3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -30,7 +29,7 @@
 
     <main id="main" tabindex="-1">
       <p class="hint">
-        本页识别有限的本地地点＋内容表达式，其余查询仍按原样搜索；并且只展示后端给回的字段：
+        可以直接用日常说法搜索，例如“在济南拍的日落照片”；识别到地点后会显示可取消的范围条件。其余查询仍按原样搜索。页面只展示后端给回的字段：
         命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成
         “准确率”或百分比。
       </p>
@@ -46,11 +45,10 @@
               type="search"
               maxlength="256"
               autocomplete="off"
-              placeholder="留空 = 纯筛选查询（不生成任何查询向量）"
+              placeholder="例如：在济南拍的日落照片"
             />
           </p>
-          <div id="place-entry" class="place-entry wide" hidden aria-live="polite"></div>
-        <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
+          <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <p>
             <label for="query-source">来源</label>
             <select id="query-source">
@@ -65,34 +63,39 @@
               <option value="missing">原文件不可用</option>
             </select>
           </p>
-          <p>
-            <label for="query-place-state">地点状态</label>
-            <select id="query-place-state">
-              <option value="any">不限</option>
-              <option value="assigned">已归类</option>
-              <option value="unassigned">未归类</option>
-              <option value="manual_unassigned">人工未归类</option>
-              <option value="suggested">待确认建议</option>
-            </select>
-          </p>
-          <p>
-            <label for="query-place-ids">地点 place_id</label>
-            <input
-              id="query-place-ids"
-              type="text"
-              inputmode="numeric"
-              maxlength="200"
-              autocomplete="off"
-              placeholder="多个用逗号分隔，例如 3,4"
-            />
-          </p>
-          <p>
-            <label for="query-descendants">包含后代地点</label>
-            <select id="query-descendants">
-              <option value="true">是</option>
-              <option value="false">否</option>
-            </select>
-          </p>
+          <details class="advanced-place-filter wide">
+            <summary>高级地点条件</summary>
+            <div class="filters">
+              <p>
+                <label for="query-place-state">地点状态</label>
+                <select id="query-place-state">
+                  <option value="any">不限</option>
+                  <option value="assigned">已归类</option>
+                  <option value="unassigned">未归类</option>
+                  <option value="manual_unassigned">人工未归类</option>
+                  <option value="suggested">待确认建议</option>
+                </select>
+              </p>
+              <p>
+                <label for="query-place-ids">地点 place_id</label>
+                <input
+                  id="query-place-ids"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="200"
+                  autocomplete="off"
+                  placeholder="多个用逗号分隔，例如 3,4"
+                />
+              </p>
+              <p>
+                <label for="query-descendants">包含后代地点</label>
+                <select id="query-descendants">
+                  <option value="true">是</option>
+                  <option value="false">否</option>
+                </select>
+              </p>
+            </div>
+          </details>
           <fieldset id="capture-filter" class="capture-filter wide">
             <legend>拍摄时间范围（只作用于普通搜索）</legend>
             <p class="hint" id="capture-hint">
@@ -179,7 +182,7 @@
         </form>
         <p class="hint" id="binding-hint"></p>
         <p class="hint">
-          地点筛选按 P2-03A/B 的语义：<code>place_state=suggested</code> 只列出「待确认建议」，
+          高级地点筛选按 P2-03A/B 的语义：<code>place_state=suggested</code> 只列出「待确认建议」，
           机器候选不参与有效地点过滤；要按有效归属筛选请选「已归类」等状态。
         </p>
         <div id="query-status" class="state-block" role="status" aria-live="polite"></div>

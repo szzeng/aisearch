@@ -6,10 +6,11 @@ from typing import Any
 
 from httpx import AsyncClient
 from p2_search_api_fixtures import build_search_env
-from p2_search_fixtures import assign_place, create_place
+from p2_search_fixtures import assign_place, create_place, write_jpeg
 
 from photo_search.places.albums import album_member_ids
 from photo_search.search.documents import catch_up
+from photo_search.search.profile import activate_profile
 from photo_search.search.retrieval import (
     SearchScope,
     fts_channel,
@@ -154,6 +155,8 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
 
     selected, next_page, cancelled, pure_filter = api_env.scenario(scenario)
     assert selected["place_scope"]["name"] == "济南"
+    assert selected["original_query"] == "济南"
+    assert selected["content_query"] is None
     assert [hit["asset_id"] for hit in selected["hits"]] == [assets[0]]
     assert selected["has_more"] is True
     assert [hit["asset_id"] for hit in next_page["hits"]] == [assets[1]]
@@ -162,3 +165,177 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
     assert {hit["asset_id"] for hit in cancelled["hits"]} == set(assets)
     assert pure_filter["query"] is None
     assert {hit["asset_id"] for hit in pure_filter["hits"]} == set(assets)
+
+
+def test_place_aware_api_parses_daily_phrasing_and_keeps_unsafe_queries_unfiltered(tmp_path: Any) -> None:
+    env = build_search_env(tmp_path)
+    asset_id = int(env.assets["杭州西湖 照片.jpg"])
+    city_id = create_place(env.catalog, "济南")
+    assign_place(env.catalog, asset_id=asset_id, place_id=city_id, request_id="phrasing-assign")
+    env.create_profile("place-nl-profile")
+    activate_profile(env.catalog, profile_id="place-nl-profile", now_ms=1_700_000_001_000)
+    env.encoder._vectors["日落"] = [1.0, 0.0, 0.0]
+    env.encoder._vectors["不是在济南拍的照片"] = [1.0, 0.0, 0.0]
+
+    async def scenario(client: AsyncClient) -> list[dict[str, Any]]:
+        csrf = await env.authenticate(client)
+        replies = []
+        for index, query in enumerate(
+            ["在济南拍的照片", "济南的日落", "日落照片，在济南拍的", "在 济南 拍的 日落", "不是在济南拍的照片"]
+        ):
+            response = await client.post(
+                "/api/v1/search/place-aware",
+                json={"request_id": f"phrasing-{index}", "original_query": query, "page_size": 2},
+                headers=env.post_headers(csrf),
+            )
+            assert response.status_code == 200, response.text
+            replies.append(response.json())
+        create_place(env.catalog, "济南")
+        ambiguous = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "phrasing-ambiguous", "original_query": "济南的日落"},
+            headers=env.post_headers(csrf),
+        )
+        assert ambiguous.status_code == 200, ambiguous.text
+        replies.append(ambiguous.json())
+        return replies
+
+    try:
+        pure, prefix, suffix, spaced, negative, ambiguous = env.scenario(scenario)
+        assert pure["original_query"] == "在济南拍的照片"
+        assert pure["content_query"] is None
+        assert pure["place_scope"]["key"] == str(city_id)
+        for body in (prefix, suffix, spaced):
+            assert body["place_scope"]["name"] == "济南"
+            assert body["content_query"] == "日落"
+        assert negative["place_scope"] is None
+        assert negative["place_parse_notice"]
+        assert negative["original_query"] == "不是在济南拍的照片"
+        assert ambiguous["needs_place_choice"] is True
+        assert ambiguous["content_query"] == "日落"
+        assert len(ambiguous["place_choices"]) == 2
+        assert {choice["content_query"] for choice in ambiguous["place_choices"]} == {"日落"}
+    finally:
+        env.context.close()
+        env.library.close()
+
+
+def test_pure_place_query_pages_all_24_synthetic_assets_without_encoding(tmp_path: Any) -> None:
+    env = build_search_env(tmp_path)
+    try:
+        for index in range(21):
+            write_jpeg(env.library.root / f"synthetic-{index:02d}.jpg", index=index + 10)
+        env.library.service.run_scan(env.library.source_id)
+        asset_ids = [
+            int(row["asset_id"])
+            for row in env.catalog.read_all("SELECT asset_id FROM assets ORDER BY asset_id")
+        ]
+        assert len(asset_ids) == 24
+        city_id = create_place(env.catalog, "济南")
+        for index, asset_id in enumerate(asset_ids):
+            assign_place(
+                env.catalog,
+                asset_id=asset_id,
+                place_id=city_id,
+                request_id=f"pure-place-24-{index}",
+            )
+        env.encoder.calls.clear()
+
+        def forbidden_encoder() -> Any:
+            raise AssertionError("pure place paging must not request a text encoder")
+
+        env.context.query_encoder = forbidden_encoder
+
+        async def scenario(client: AsyncClient) -> list[dict[str, Any]]:
+            csrf = await env.authenticate(client)
+            headers = env.post_headers(csrf)
+            pages: list[dict[str, Any]] = []
+            body: dict[str, Any] = {
+                "request_id": "pure-place-page-0",
+                "original_query": "在济南拍的照片",
+                "page_size": 7,
+            }
+            for index in range(4):
+                response = await client.post(
+                    "/api/v1/search/place-aware", json=body, headers=headers
+                )
+                assert response.status_code == 200, response.text
+                page = response.json()
+                pages.append(page)
+                if index < 3:
+                    body = {
+                        "request_id": f"pure-place-page-{index + 1}",
+                        "original_query": "在济南拍的照片",
+                        "content_query": "",
+                        "place_kind": "city",
+                        "place_key": str(city_id),
+                        "page_size": 7,
+                        "search_session_id": page["search_session_id"],
+                        "cursor": page["next_cursor"],
+                    }
+            return pages
+
+        pages = env.scenario(scenario)
+        returned = [int(hit["asset_id"]) for page in pages for hit in page["hits"]]
+        assert returned == asset_ids
+        assert [page["page_offset"] for page in pages] == [0, 7, 14, 21]
+        assert [page["total_candidates"] for page in pages] == [24] * 4
+        assert [page["original_query"] for page in pages] == ["在济南拍的照片"] * 4
+        assert [page["has_more"] for page in pages] == [True, True, True, False]
+        assert env.encoder.calls == []
+
+        empty_city_id = create_place(env.catalog, "无照片地点")
+
+        async def empty_scenario(client: AsyncClient) -> dict[str, Any]:
+            csrf = await env.authenticate(client)
+            response = await client.post(
+                "/api/v1/search/place-aware",
+                json={"request_id": "pure-place-empty", "original_query": "无照片地点"},
+                headers=env.post_headers(csrf),
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        empty = env.scenario(empty_scenario)
+        assert empty["place_scope"]["key"] == str(empty_city_id)
+        assert empty["total_candidates"] == 0
+        assert empty["hits"] == []
+        assert env.encoder.calls == []
+
+        write_jpeg(env.library.root / "late-member.jpg", index=99)
+        env.library.service.run_scan(env.library.source_id)
+        late_asset_id = int(
+            env.catalog.read_one(
+                "SELECT asset_id FROM file_locations WHERE relative_path='late-member.jpg'"
+            )["asset_id"]
+        )
+        assign_place(
+            env.catalog,
+            asset_id=late_asset_id,
+            place_id=city_id,
+            request_id="pure-place-revise-members",
+        )
+
+        async def stale_continuation(client: AsyncClient) -> Any:
+            csrf = await env.authenticate(client)
+            return await client.post(
+                "/api/v1/search/place-aware",
+                json={
+                    "request_id": "pure-place-stale-page",
+                    "original_query": "在济南拍的照片",
+                    "content_query": "",
+                    "place_kind": "city",
+                    "place_key": str(city_id),
+                    "page_size": 7,
+                    "search_session_id": pages[0]["search_session_id"],
+                    "cursor": pages[0]["next_cursor"],
+                },
+                headers=env.post_headers(csrf),
+            )
+
+        stale = env.scenario(stale_continuation)
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "CATALOG_FILTER_REVISION_STALE"
+    finally:
+        env.context.close()
+        env.library.close()

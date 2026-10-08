@@ -143,6 +143,10 @@
   display: none;
 }
 
+.advanced-place-filter { border: 1px solid var(--border, #777); border-radius: .45rem; padding: .65rem .8rem; }
+.advanced-place-filter > summary { cursor: pointer; font-weight: 600; }
+.advanced-place-filter .filters { margin-top: .5rem; }
+
 .thumb-frame {
   border: 0;
   padding: 0;

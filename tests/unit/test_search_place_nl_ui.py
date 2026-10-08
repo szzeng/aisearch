@@ -1,0 +1,151 @@
+"""Bounded natural-place parsing and live search-script state checks."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from photo_search.places.natural_search import parse_place_query
+
+CHOICES = [
+    {"kind": "province", "key": "sd", "name": "山东省", "parent": "", "aliases": ["山东"]},
+    {"kind": "city", "key": "jn", "name": "济南", "parent": "山东省", "aliases": ["济南市", "Jinan"]},
+    {"kind": "province", "key": "zj", "name": "浙江省", "parent": "", "aliases": []},
+    {"kind": "city", "key": "hz", "name": "杭州市", "parent": "浙江省", "aliases": ["杭州"]},
+    {"kind": "district", "key": "cn:west", "name": "西湖区", "parent": "浙江省 · 杭州市", "aliases": []},
+    {"kind": "city", "key": "qd", "name": "青岛", "parent": "山东省", "aliases": ["青岛市"]},
+]
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_place", "expected_content"),
+    [
+        ("济南", "jn", ""),
+        ("济南。", "jn", ""),
+        ("济南，夜景", "jn", "夜景"),
+        ("济南的照片", "jn", ""),
+        ("在济南拍的照片", "jn", ""),
+        ("找一下在济南拍摄的所有照片", "jn", ""),
+        ("济南的日落", "jn", "日落"),
+        ("在济南拍的日落照片", "jn", "日落"),
+        ("帮我找济南拍的夜景", "jn", "夜景"),
+        ("济南 夜景", "jn", "夜景"),
+        ("日落照片，在济南拍的", "jn", "日落"),
+        ("山东省济南市拍的照片", "jn", ""),
+        ("在杭州西湖区拍的日落", "cn:west", "日落"),
+        ("在 济南 拍的 日落", "jn", "日落"),
+        ("Jinan 的 日落", "jn", "日落"),
+    ],
+)
+def test_natural_place_queries_preserve_content_and_map_original_offsets(
+    query: str, expected_place: str, expected_content: str
+) -> None:
+    result = parse_place_query(query, CHOICES)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == expected_place
+    assert result["content_query"] == expected_content
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "老照片",
+        "照片里的文字",
+        "济南路上的夜景",
+        "巴黎风格的房间",
+    ],
+)
+def test_non_location_mentions_are_not_promoted_to_place_filters(query: str) -> None:
+    result = parse_place_query(query, CHOICES)
+    assert result["state"] is None
+    assert result["notice"] is None
+
+
+@pytest.mark.parametrize("query", ["不是在济南拍的照片", "济南或青岛的照片"])
+def test_negative_and_multiple_locations_are_preserved_without_a_hard_filter(query: str) -> None:
+    result = parse_place_query(query, CHOICES)
+    assert result["state"] == "unresolved"
+    assert result["choices"] == []
+    assert result["notice"]
+
+
+def test_real_same_name_choices_keep_their_own_content_and_parent_context() -> None:
+    choices = [
+        {"kind": "city", "key": "local:1", "name": "西湖", "parent": "杭州", "aliases": []},
+        {"kind": "district", "key": "cn:2", "name": "西湖", "parent": "浙江省 · 杭州市", "aliases": []},
+    ]
+    result = parse_place_query("西湖的日落", choices)
+    assert result["state"] == "ambiguous"
+    assert result["content_query"] == "日落"
+    assert {choice["key"]: choice["content_query"] for choice in result["choices"]} == {
+        "local:1": "日落",
+        "cn:2": "日落",
+    }
+
+
+def test_unavailable_parent_data_does_not_invent_a_hierarchy() -> None:
+    result = parse_place_query(
+        "山东省济南市拍的日落",
+        [{"kind": "city", "key": "jn", "name": "济南", "parent": "", "aliases": ["济南市"]}],
+    )
+    assert result["state"] == "unresolved"
+    assert result["choices"] == []
+    assert "无法确认" in result["notice"]
+
+
+def test_missing_place_directory_keeps_an_explicit_place_phrase_as_unresolved() -> None:
+    result = parse_place_query("在未知地点拍的照片", [])
+    assert result["state"] == "unresolved"
+    assert result["choices"] == []
+    assert "没有可确认的地点" in result["notice"]
+
+
+def test_place_cancel_and_ambiguous_choice_use_the_current_content() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the search-page interaction check"
+    script = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+class Element {
+  constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.hidden=false; this.value=""; this.className=""; }
+  set textContent(value) { this.text=String(value); this.children=[]; }
+  get textContent() { return this.text || this.children.map(child=>child.textContent).join(""); }
+  get firstChild() { return this.children[0] || null; }
+  appendChild(child) { this.children.push(child); return child; }
+  removeChild(child) { this.children.splice(this.children.indexOf(child),1); }
+  addEventListener(name, callback) { this.events[name]=callback; }
+  fire(name) { if(this.events[name]) this.events[name]({preventDefault(){}}); }
+}
+const elements=new Map(), get=id=>{ if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+const context={URLSearchParams,encodeURIComponent,isFinite,console,
+  document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
+  window:{location:{href:"/search",search:""}},
+  fetch:async()=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({})})};
+let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
+code=code.replace('  if (document.readyState === "loading")',
+ '  globalThis.ui={state,showPlaceChoices,cancelPlaceScope,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+vm.createContext(context); vm.runInContext(code,context);
+const ui=context.ui, query=get("query-text"), grid=get("grid");
+ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid});
+ui.state.search.loading=true;
+ui.showPlaceChoices({original_query:"西湖的日落",content_query:"日落",place_choices:[
+ {kind:"city",key:"local:1",name:"西湖",parent:"杭州",content_query:"日落"},
+ {kind:"district",key:"cn:2",name:"西湖",parent:"浙江省 · 杭州市",content_query:"日落"}]});
+assert.equal(get("scope").children.length,3);
+get("scope").children[1].fire("click");
+assert.equal(ui.state.search.placeAware.content_query,"日落");
+assert.equal(ui.state.search.placeAware.place_key,"local:1");
+query.value="在济南拍的日落照片";
+ui.state.search.sessionId="old-session"; ui.state.search.cursor="old-cursor"; ui.state.search.binding="old-binding";
+ui.cancelPlaceScope({original_query:"在济南拍的日落照片",content_query:"日落"});
+assert.equal(query.value,"日落");
+assert.equal(ui.state.search.placeAware.place_cancelled,true);
+assert.equal(ui.state.search.sessionId,null); assert.equal(ui.state.search.cursor,null); assert.equal(ui.state.search.binding,null);
+"""
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [node, "-e", script], cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=10
+    )
+    assert result.returncode == 0, result.stderr

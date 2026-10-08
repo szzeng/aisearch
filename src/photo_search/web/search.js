@@ -1020,15 +1020,18 @@
   function showPlaceChoices(body) {
     clear(els.resultPlaceScope);
     els.resultPlaceScope.hidden = false;
-    var label = element("span", "", "检测到同名地点，请选择：");
+    var label = element("span", "", "检测到同名地点，请选择范围（内容词会保留）：");
     els.resultPlaceScope.appendChild(label);
     (body.place_choices || []).forEach(function (place) {
-      var button = element("button", "", place.name + (place.parent ? " · " + place.parent : "") + "（" + place.kind + "）");
+      var kindLabel = { city: "城市", country: "国家/地区", province: "省级地区", district: "区县" }[place.kind] || place.kind;
+      var sourceLabel = { local: "本地地点", province_index: "地名资料", cn_admin: "中国行政区" }[place.source];
+      if (sourceLabel) kindLabel += " · " + sourceLabel;
+      var button = element("button", "", place.name + (place.parent ? " · " + place.parent : "") + "（" + kindLabel + "）");
       button.type = "button";
       button.addEventListener("click", function () {
         state.search.placeAware = {
           original_query: body.original_query,
-          content_query: body.content_query || "",
+          content_query: place.content_query === undefined ? (body.content_query || "") : place.content_query,
           place_kind: place.kind,
           place_key: place.key,
         };
@@ -1090,22 +1093,32 @@
     saveSearchSnapshot();
   }
 
+  function cancelPlaceScope(body) {
+    state.search.placeAware = {
+      original_query: body.original_query || els.queryText.value.trim(),
+      content_query: body.content_query || "",
+      place_cancelled: true,
+    };
+    els.queryText.value = state.search.placeAware.content_query;
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.binding = null;
+    clear(els.resultGrid);
+  }
+
   function renderPage(body, continuation) {
     clear(els.resultPlaceScope);
     if (body.place_scope) {
-      var chip = element("span", "", "地点：" + body.place_scope.name + (body.place_scope.origin === "GPS_NEARBY_CITY" ? "（附近城市）" : ""));
+      var scopeSource = body.place_scope.origin === "GPS_NEARBY_CITY"
+        ? "（GPS附近城市）"
+        : String(body.place_scope.key || "").indexOf("cn:") === 0
+          ? "（中国行政区）"
+          : body.place_scope.kind === "province" ? "（省级地名资料）" : "";
+      var chip = element("span", "", "地点：" + body.place_scope.name + scopeSource);
       var cancel = element("button", "", "取消地点条件");
       cancel.type = "button";
       cancel.addEventListener("click", function () {
-        state.search.placeAware = {
-          original_query: body.original_query || els.queryText.value.trim(),
-          content_query: body.content_query || "",
-          place_cancelled: true,
-        };
-        state.search.sessionId = null;
-        state.search.cursor = null;
-        state.search.binding = null;
-        clear(els.resultGrid);
+        cancelPlaceScope(body);
         sendSearch(false);
       });
       els.resultPlaceScope.appendChild(chip);
@@ -1132,7 +1145,11 @@
     state.search.total = body.total_candidates;
     els.loadMore.hidden = !body.has_more;
     els.queryActions.hidden = true;
-    renderNotices(els.resultNotices, successNotices(body));
+    var notices = successNotices(body);
+    if (body.place_parse_notice) {
+      notices.unshift({ kind: "informational", text: body.place_parse_notice });
+    }
+    renderNotices(els.resultNotices, notices);
     renderPersonEcho(body.filters, state.search.mode);
     renderCaptureEcho(body.filters, state.search.mode);
     var parts = [
@@ -1156,6 +1173,8 @@
         parts.push("这一页没有命中的行（拍摄时间状态见上方说明，不代表没有这些照片）");
       } else if (capture.present) {
         parts.push("这一页没有命中的行（拍摄时间已抽取完成，这个范围内确实没有命中）");
+      } else if (body.place_scope) {
+        parts.push("当前地点范围内没有匹配照片；可取消地点条件或修改查询。没有自动扩大范围。");
       } else {
         parts.push("这一页没有命中的行");
       }

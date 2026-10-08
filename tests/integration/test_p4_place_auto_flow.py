@@ -101,6 +101,19 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
         city = (await client.get("/api/v1/places/albums", params={"kind": "city", "name": "Hangzhou"})).json()
         assert len(city["albums"]) == 1
         assert city["albums"][0]["total"] == 20
+        city_members = (await client.get(f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 100})).json()
+        place_search = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "gps-place-natural-search", "original_query": "在杭州拍的照片", "page_size": 48},
+            headers=api_env.post_headers(csrf),
+        )
+        assert place_search.status_code == 200, place_search.text
+        place_search_body = place_search.json()
+        assert place_search_body["place_scope"]["origin"] == "GPS_NEARBY_CITY"
+        assert place_search_body["total_candidates"] == city["albums"][0]["total"]
+        assert [int(hit["asset_id"]) for hit in place_search_body["hits"]] == [
+            int(item["asset_id"]) for item in city_members["assets"]
+        ]
         first = (await client.get(f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 7})).json()
         second = (await client.get(f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 7, "cursor": first["next_cursor"]})).json()
         third = (await client.get(f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 7, "cursor": second["next_cursor"]})).json()
