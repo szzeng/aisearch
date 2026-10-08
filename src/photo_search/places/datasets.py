@@ -564,6 +564,14 @@ def _set_active(
         (dataset_id, int(now_ms), CAUSE_DATASET_ACTIVATED),
     )
     mapping = materialize_dataset_places(connection, content, now_ms=int(now_ms))
+    connection.executemany(
+        "INSERT OR IGNORE INTO geo_dataset_place_refs"
+        "(dataset_id,provider,external_id,place_id) VALUES (?,?,?,?)",
+        [
+            (content.dataset_id, content.provider, source_id, int(place_id))
+            for source_id, place_id in mapping.items()
+        ],
+    )
     from photo_search.places import cn_facets
 
     cn_facets.materialize(connection, content, mapping)

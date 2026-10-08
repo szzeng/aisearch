@@ -14,6 +14,7 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.places import assignments as assignment_module
+from photo_search.places import choices as choice_module
 from photo_search.places import datasets as dataset_module
 from photo_search.places import directory
 from photo_search.places import filter as filter_module
@@ -242,22 +243,33 @@ class PlaceService:
         asset_id: int,
         action: str,
         target_place_id: int | None,
+        target_place_ref: str | None = None,
         request_id: str,
         expected_revision: int,
         batch: bool = False,
         origin: str | None = None,
     ) -> dict[str, Any]:
         now_ms = int(self.clock())
-        items = [
-            {
-                "asset_id": int(asset_id),
-                "action": str(action),
-                "target_place_id": target_place_id,
-                "expected_revision": expected_revision,
-                "origin": origin,
-            }
-        ]
+        verified_geo_ids = choice_module.verified_geo_source_ids(
+            self.catalog, self.catalog.data_root
+        )
         with self.catalog.write() as connection:
+            if target_place_ref is not None:
+                if target_place_id is not None or action != "ASSIGN":
+                    raise fail("VALIDATION_ERROR", "target_place_ref is only valid for ASSIGN")
+                target_place_id = choice_module.resolve_selection_ref(
+                    connection, target_place_ref, now_ms=now_ms,
+                    verified_geo_ids=verified_geo_ids,
+                )
+            items = [
+                {
+                    "asset_id": int(asset_id),
+                    "action": str(action),
+                    "target_place_id": target_place_id,
+                    "expected_revision": expected_revision,
+                    "origin": origin,
+                }
+            ]
             return assignment_module.apply_request(
                 connection,
                 items=items,
@@ -265,6 +277,7 @@ class PlaceService:
                 now_ms=now_ms,
                 refresh=self.refresh,
                 batch=batch,
+                verified_geo_ids=verified_geo_ids,
             )
 
     def write_batch(
@@ -274,14 +287,30 @@ class PlaceService:
         request_id: str,
     ) -> dict[str, Any]:
         now_ms = int(self.clock())
+        verified_geo_ids = choice_module.verified_geo_source_ids(
+            self.catalog, self.catalog.data_root
+        )
         with self.catalog.write() as connection:
+            resolved_items = []
+            for item in items:
+                normalized = dict(item)
+                source_ref = normalized.pop("target_place_ref", None)
+                if source_ref is not None:
+                    if normalized.get("target_place_id") is not None or normalized.get("action") != "ASSIGN":
+                        raise fail("VALIDATION_ERROR", "target_place_ref is only valid for ASSIGN")
+                    normalized["target_place_id"] = choice_module.resolve_selection_ref(
+                        connection, source_ref, now_ms=now_ms,
+                        verified_geo_ids=verified_geo_ids,
+                    )
+                resolved_items.append(normalized)
             return assignment_module.apply_request(
                 connection,
-                items=items,
+                items=resolved_items,
                 request_id=request_id,
                 now_ms=now_ms,
                 refresh=self.refresh,
                 batch=True,
+                verified_geo_ids=verified_geo_ids,
             )
 
     def undo(

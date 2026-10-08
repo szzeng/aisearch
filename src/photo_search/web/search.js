@@ -1024,7 +1024,7 @@
     els.resultPlaceScope.appendChild(label);
     (body.place_choices || []).forEach(function (place) {
       var kindLabel = { city: "城市", country: "国家/地区", province: "省级地区", district: "区县" }[place.kind] || place.kind;
-      var sourceLabel = { local: "本地地点", province_index: "地名资料", cn_admin: "中国行政区" }[place.source];
+      var sourceLabel = { OSM: "OpenStreetMap", GEONAMES: "GeoNames", local: "本地地点", province_index: "地名资料", cn_admin: "中国行政区" }[place.source];
       if (sourceLabel) kindLabel += " · " + sourceLabel;
       var button = element("button", "", place.name + (place.parent ? " · " + place.parent : "") + "（" + kindLabel + "）");
       button.type = "button";
@@ -1109,7 +1109,9 @@
   function renderPage(body, continuation) {
     clear(els.resultPlaceScope);
     if (body.place_scope) {
-      var scopeSource = body.place_scope.origin === "GPS_NEARBY_CITY"
+      var scopeSource = body.place_scope.source === "OSM" ? "（OpenStreetMap）"
+        : body.place_scope.source === "GEONAMES" ? "（GeoNames）"
+        : body.place_scope.origin === "GPS_NEARBY_CITY"
         ? "（GPS附近城市）"
         : String(body.place_scope.key || "").indexOf("cn:") === 0
           ? "（中国行政区）"

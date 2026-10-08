@@ -127,7 +127,7 @@
         </p>
       </section>
 
-      <section id="panel-create" class="panel" aria-labelledby="create-title">
+      <section id="panel-create" class="panel" aria-labelledby="create-title" hidden>
         <h2 id="create-title">新建地点</h2>
         <p class="hint">
           可以新建城市、景点或自定义地点；国家来自已验证的地名包，这里不提供手工创建。
@@ -168,7 +168,7 @@
         </form>
       </section>
 
-      <section id="panel-edit" class="panel" aria-labelledby="edit-title">
+      <section id="panel-edit" class="panel" aria-labelledby="edit-title" hidden>
         <h2 id="edit-title">重命名 / 编辑别名</h2>
         <p class="hint">
           改名与别名编辑必须携带读到的 revision；冲突时会给出当前 revision，请重新载入后再改。
@@ -235,8 +235,8 @@
         <h3>批量动作</h3>
         <form id="batch-form" class="card" novalidate>
           <p>
-            <label for="target-place-id">目标 place_id（确认归属时必填）</label>
-            <input id="target-place-id" type="text" inputmode="numeric" />
+            <label for="target-place-id">已选目标地点</label>
+            <input id="target-place-id" type="text" readonly aria-readonly="true" placeholder="请按名称搜索并点选真实来源地点" />
           </p>
           <div class="picker">
             <p>

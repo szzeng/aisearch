@@ -39,6 +39,10 @@ CORE_TABLES = {
     "artifacts",
     "catalog_filter_revision",
     "catalog_filter_revision_events",
+    # P4-PLACE-UNIFIED-A (0021): package-proven GeoNames references and the
+    # FK carrier bridge for OSM administrative identities.
+    "cn_admin_place_refs",
+    "geo_dataset_place_refs",
     # P3-02: the face layer. ``faces``/``face_embeddings`` carry the current detection facts
     # and the canonical vectors, ``persons``/``face_person_links`` the unnamed groups with
     # their automatic links and suggestions, and the ``face_index_*``/``face_candidates``
@@ -46,6 +50,12 @@ CORE_TABLES = {
     # asset-keyed image index).
     "face_association_queue",
     "face_candidates",
+    # P4-DETAIL source-coordinate and batch artifacts (0019/0020).
+    "face_detail_association_queue",
+    "face_detail_auto_assets",
+    "face_detail_batch_assets",
+    "face_detail_batches",
+    "face_detail_coordinate_frames",
     "face_embeddings",
     "face_index_entries",
     "face_index_generations",
@@ -58,6 +68,15 @@ CORE_TABLES = {
     "face_redetection_mappings",
     "faces",
     "file_locations",
+    # P4-PLACE-MAP-A materialized membership revision (0017).
+    "map_member_revision",
+    # P4-PLACE-CN validated admin identities, package rows, and source links (0018).
+    "cn_admin_ids",
+    "cn_admin_resolutions",
+    "cn_base_china_places",
+    "cn_dataset_regions",
+    "cn_legacy_links",
+    "cn_update_runs",
     "geo_dataset_files",
     "geo_datasets",
     "jobs",

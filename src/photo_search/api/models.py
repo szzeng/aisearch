@@ -600,6 +600,9 @@ class PlaceSummary(BaseModel):
     canonical_name: str
     lifecycle: str
     ancestors: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+    source_id: str | None = None
+    dataset_id: str | None = None
 
 
 class AssetPlaceResponse(BaseModel):
@@ -621,6 +624,7 @@ class PlaceAssignmentRequest(BaseModel):
 
     action: PlaceAssignmentAction
     target_place_id: int | None = Field(default=None, ge=1)
+    target_place_ref: str | None = Field(default=None, min_length=5, max_length=512)
     request_id: str = Field(min_length=1, max_length=64)
     expected_revision: int = Field(ge=0)
     #: P2-03B: an ASSIGN that confirms a machine suggestion may record that origin.
@@ -673,6 +677,7 @@ class PlaceBatchItem(BaseModel):
     asset_id: int = Field(ge=1)
     action: PlaceAssignmentAction
     target_place_id: int | None = Field(default=None, ge=1)
+    target_place_ref: str | None = Field(default=None, min_length=5, max_length=512)
     expected_revision: int = Field(ge=0)
 
 

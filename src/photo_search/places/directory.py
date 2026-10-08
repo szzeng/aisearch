@@ -374,6 +374,14 @@ def patch_place(
     refresh: revision_module.ProjectionRefresh | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """PATCH v1: rename and edit the ACTIVE alias set. Never re-parents or merges."""
+    if connection.execute(
+        "SELECT 1 FROM cn_admin_place_refs WHERE place_id=?", (int(place_id),)
+    ).fetchone() is not None:
+        raise fail(
+            PLACE_REFERENCED,
+            "a source-backed administrative place cannot be renamed",
+            place_id=int(place_id),
+        )
     row = get_place_row(connection, place_id)
     current_revision = int(row["revision"])
     if int(expected_revision) != current_revision:
@@ -557,7 +565,10 @@ def list_places(
     lifecycle: str | None = None,
 ) -> list[sqlite3.Row]:
     """One bounded keyset page of ``places`` rows, filtered by the frozen predicates."""
-    conditions = ["p.place_id > ?"]
+    conditions = [
+        "p.place_id > ?",
+        "NOT EXISTS (SELECT 1 FROM cn_admin_place_refs m WHERE m.place_id=p.place_id)",
+    ]
     parameters: list[Any] = [int(after_place_id)]
     if name:
         needle = f"%{normalize_name(name, field='name')}%"

@@ -67,9 +67,13 @@ def members_sql(kind: str, *, key: str | None = None) -> tuple[str, tuple[Any, .
         raise ApiError("VALIDATION_ERROR", "unsupported administrative facet kind")
     column = COLS[kind]
     restrict = f" AND r.{column} = ?" if key is not None else f" AND r.{column} IS NOT NULL"
-    manual = f" AND l.{column} = ?" if key is not None else f" AND l.{column} IS NOT NULL"
-    if kind == "district":
-        manual = " AND 0"  # v1 manual cities cannot prove a district
+    if kind == "province":
+        manual_admin = "CASE WHEN r.kind='province' THEN r.admin_id ELSE r.province_id END"
+    elif kind == "city":
+        manual_admin = "CASE WHEN r.kind='city' THEN r.admin_id ELSE r.city_id END"
+    else:
+        manual_admin = "CASE WHEN r.kind='district' THEN r.admin_id END"
+    manual = f" AND ({manual_admin}) = ?" if key is not None else f" AND ({manual_admin}) IS NOT NULL"
     sql = f"""
         SELECT r.asset_id, r.{column} AS admin_id, 'GPS_ADMIN' AS origin
           FROM cn_admin_resolutions r JOIN active_geo_dataset active
@@ -85,14 +89,31 @@ def members_sql(kind: str, *, key: str | None = None) -> tuple[str, tuple[Any, .
            AND NOT EXISTS(SELECT 1 FROM asset_place_exclusions x WHERE x.asset_id=a.asset_id AND x.active=1)
     """
     params: tuple[Any, ...] = () if key is None else (admin_key(key),)
+    sql += f""" UNION ALL
+        SELECT ap.asset_id,({manual_admin}) AS admin_id,'MANUAL' AS origin
+          FROM asset_place_assignments ap JOIN assets a ON a.asset_id=ap.asset_id AND a.state='ACTIVE'
+          JOIN places p ON p.place_id=ap.place_id AND p.lifecycle='ACTIVE'
+          JOIN cn_admin_place_refs m ON m.place_id=ap.place_id
+          JOIN active_geo_dataset active ON active.singleton=1
+          JOIN cn_dataset_regions r ON r.dataset_id=active.dataset_id AND r.admin_id=m.admin_id
+         WHERE ap.record_state='ACTIVE' AND ap.mode='MANUAL_ASSIGNED' {manual}
+           AND EXISTS(SELECT 1 FROM file_locations f WHERE f.asset_id=ap.asset_id AND f.availability='PRESENT')
+    """
+    if key is not None:
+        params += (admin_key(key),)
     if kind != "district":
+        legacy_column = "province_id" if kind == "province" else "city_id"
+        legacy_restrict = (
+            f" AND l.{legacy_column} = ?" if key is not None
+            else f" AND l.{legacy_column} IS NOT NULL"
+        )
         sql += f""" UNION ALL
-            SELECT ap.asset_id,l.{column} AS admin_id,'MANUAL' AS origin
+            SELECT ap.asset_id,l.{legacy_column} AS admin_id,'MANUAL' AS origin
               FROM asset_place_assignments ap JOIN assets a ON a.asset_id=ap.asset_id AND a.state='ACTIVE'
               JOIN places p ON p.place_id=ap.place_id AND p.lifecycle='ACTIVE'
               JOIN cn_legacy_links l ON l.place_id=ap.place_id
               JOIN active_geo_dataset active ON active.singleton=1 AND active.dataset_id=l.dataset_id
-             WHERE ap.record_state='ACTIVE' AND ap.mode='MANUAL_ASSIGNED' {manual}
+             WHERE ap.record_state='ACTIVE' AND ap.mode='MANUAL_ASSIGNED' {legacy_restrict}
                AND EXISTS(SELECT 1 FROM file_locations f WHERE f.asset_id=ap.asset_id AND f.availability='PRESENT')
         """
         if key is not None:

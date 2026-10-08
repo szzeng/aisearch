@@ -325,6 +325,10 @@ def validate_manifest(manifest: Any, *, supported_schema_version: int) -> dict[s
         # 0020 adds only face-detail coordinate frames/auto policy and a face-batch
         # job index. Neither the GeoNames nor CN package projection changes.
         int(supported_schema_version) == 20 and compatible_max in (16, 17, 18, 19)
+        ) or (
+            # 0021 adds catalog-side source identity references for the existing manual
+            # assignment FK. It does not change GeoNames package bytes or CN addon shape.
+            int(supported_schema_version) == 21 and compatible_max in (16, 17, 18, 19, 20)
     )
     if not (
         compatible_min <= int(supported_schema_version) <= compatible_max or schema16_map_bridge

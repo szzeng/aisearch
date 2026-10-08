@@ -67,7 +67,7 @@
         var correction = el("div", "album-correction");
         correction.appendChild(el("label", null, "更正地点"));
         var input = el("input"); input.type = "text"; input.maxLength = 200; input.placeholder = "地点名；留空取消归类；* 恢复自动"; input.setAttribute("aria-label", "更正地点名称"); correction.appendChild(input);
-        var fix = el("button", null, "保存地点更正"); fix.type = "button"; fix.addEventListener("click", function () { correct(asset.asset_id, input.value.trim()); }); correction.appendChild(fix); card.appendChild(correction);
+        var fix = el("button", null, "查找可选地点"); fix.type = "button"; fix.addEventListener("click", function () { correct(asset.asset_id, input.value.trim(), correction); }); correction.appendChild(fix); card.appendChild(correction);
         photos.appendChild(card);
       });
       cursor = body.next_cursor; more.hidden = !cursor;
@@ -92,10 +92,11 @@
       loadAlbums();
     }).catch(function (error) { backfillStatus.textContent = error.message; }).finally(function () { backfill.disabled = false; });
   });
-  function write(assetId, action, place) {
+  function write(assetId, action, placeRef) {
     return get("/assets/" + assetId + "/place").then(function (state) {
       var assignment = state.assignment || {};
-      var payload = { action: action, target_place_id: place || null, expected_revision: Number(assignment.revision || 0), request_id: "album-" + Date.now() + "-" + Math.random().toString(16).slice(2) };
+      var payload = { action: action, expected_revision: Number(assignment.revision || 0), request_id: "album-" + Date.now() + "-" + Math.random().toString(16).slice(2) };
+      if (action === "assign") payload.target_place_ref = placeRef;
       return fetch(api + "/assets/" + assetId + "/place-assignment", { method: "PUT", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() }, body: JSON.stringify(payload) }).then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.message || b.code || "保存失败"); return b; }); });
     });
   }
@@ -107,14 +108,29 @@
       if (updated) openAlbum(updated); else { photos.hidden = true; photos.replaceChildren(); more.hidden = true; }
     }).catch(function () {});
   }
-  function correct(assetId, choice) {
+  function correct(assetId, choice, holder) {
     if (choice.trim() === "*") { write(assetId, "restore_auto", null).then(reloadCurrentAlbum).catch(function (e) { window.alert(e.message); }); return; }
     if (!choice.trim()) { write(assetId, "unassign", null).then(reloadCurrentAlbum).catch(function (e) { window.alert(e.message); }); return; }
-    get("/places?" + new URLSearchParams({ name: choice.trim(), lifecycle: "ACTIVE", limit: "20" }).toString()).then(function (body) {
-      var exact = (body.places || []).filter(function (place) { return place.canonical_name.toLocaleLowerCase() === choice.trim().toLocaleLowerCase() || (place.aliases || []).some(function (a) { return a.text.toLocaleLowerCase() === choice.trim().toLocaleLowerCase(); }); });
-      if (exact.length !== 1) throw new Error(exact.length ? "同名地点较多，请到地点目录确认后再操作。" : "目录中没有这个地点，请先在目录创建或导入。");
-      return write(assetId, "assign", exact[0].place_id);
-    }).then(reloadCurrentAlbum).catch(function (e) { window.alert(e.message); });
+    get("/places/choices?" + new URLSearchParams({ name: choice.trim() }).toString()).then(function (body) {
+      var exact = (body.choices || []).filter(function (place) {
+        var name = choice.trim().normalize("NFKC").toLocaleLowerCase();
+        return place.name.normalize("NFKC").toLocaleLowerCase() === name || (place.aliases || []).some(function (a) { return a.normalize("NFKC").toLocaleLowerCase() === name; });
+      });
+      holder.querySelectorAll(".place-choice-list").forEach(function (item) { item.remove(); });
+      if (!exact.length) throw new Error("当前有效地点目录中没有这个名称，无法新建或指定任意文本。");
+      var list = el("div", "place-choice-list");
+      list.appendChild(el("small", "hint", "请选择地点范围与来源："));
+      exact.forEach(function (place) {
+        var button = el("button", null, place.name + (place.parent ? " · " + place.parent : "") + "（" + place.kind + " · " + place.source + "）");
+        button.type = "button";
+        button.addEventListener("click", function () {
+          button.disabled = true;
+          write(assetId, "assign", place.selection_ref).then(reloadCurrentAlbum).catch(function (e) { button.disabled = false; window.alert(e.message); });
+        });
+        list.appendChild(button);
+      });
+      holder.appendChild(list);
+    }).catch(function (e) { window.alert(e.message); });
   }
   kind.addEventListener("change", loadAlbums);
   var cnUpdate = document.getElementById("cn-update");

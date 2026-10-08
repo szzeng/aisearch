@@ -22,6 +22,8 @@
   var KIND_TEXT = {
     country: "国家",
     city: "城市",
+    province: "省级地区",
+    district: "区县",
     attraction: "景点",
     custom: "自定义",
   };
@@ -59,6 +61,7 @@
 
   var state = {
     sessionMissing: false,
+    batchTargetRef: null,
     placeIndex: {},
     directory: { limit: DEFAULT_LIMIT, cursor: null, hasMore: false, loading: false, count: 0 },
     edit: { place: null },
@@ -1291,9 +1294,9 @@
     }
     var target = null;
     if (action === "assign") {
-      target = integerOrNull(els.targetPlaceId.value);
+      target = state.batchTargetRef;
       if (target === null) {
-        setError(els.batchError, "批量确认归属必须填写目标 place_id（可先用名称搜索填入）。");
+        setError(els.batchError, "请按地点名称搜索并选择一个真实来源地点。");
         return;
       }
     }
@@ -1330,7 +1333,7 @@
               return {
                 asset_id: item.asset_id,
                 action: action,
-                target_place_id: action === "assign" ? target : null,
+                target_place_ref: action === "assign" ? target : null,
                 expected_revision: item.expected_revision,
               };
             });
@@ -1548,47 +1551,32 @@
   function searchPlacesForPicker() {
     var name = els.pickerName.value.trim();
     clear(els.pickerResults);
-    els.pickerResults.appendChild(element("li", "hint", "正在搜索地点…"));
-    var params = new URLSearchParams();
-    params.set("limit", "20");
-    if (name) {
-      params.set("name", name);
+    if (!name) {
+      els.pickerResults.appendChild(element("li", "hint", "请输入地点名称后搜索。"));
+      return;
     }
-    request("/places?" + params.toString())
+    els.pickerResults.appendChild(element("li", "hint", "正在搜索地点…"));
+    request("/places/choices?" + new URLSearchParams({ name: name }).toString())
       .then(function (result) {
         var body = result.body || {};
-        var places = body.places || [];
+        var places = body.choices || [];
         clear(els.pickerResults);
         if (!places.length) {
           els.pickerResults.appendChild(element("li", "hint", "没有匹配的地点。"));
           return;
         }
         places.forEach(function (place) {
-          state.placeIndex[String(place.place_id)] = place;
           var row = element("li", "card place-row");
-          row.appendChild(
-            element(
-              "p",
-              null,
-              placeKindText(place) + "「" + place.canonical_name + "」#" + place.place_id
-            )
-          );
-          var chain = element("p", "chain", "");
-          paintChain(chain, place);
-          row.appendChild(chain);
-          var use = element("button", null, "选为目标 place_id");
+          row.appendChild(element("p", null, place.name + (place.parent ? " · " + place.parent : "") + "（" + place.kind + " · " + place.source + "）"));
+          row.appendChild(element("p", "chain", place.source_id + " · " + place.dataset_version));
+          var use = element("button", null, "选为批量目标");
           use.type = "button";
           use.addEventListener("click", function () {
-            els.targetPlaceId.value = String(place.place_id);
+            state.batchTargetRef = place.selection_ref;
+            els.targetPlaceId.value = place.name + (place.parent ? " · " + place.parent : "") + "（" + place.source + "）";
             setStatus(
               els.suggestedStatus,
-              "目标地点已设为 " +
-                placeKindText(place) +
-                "「" +
-                place.canonical_name +
-                "」#" +
-                place.place_id +
-                "。"
+              "批量目标已绑定已验证来源：" + place.name + (place.parent ? " · " + place.parent : "") + "（" + place.source + "）。"
             );
           });
           row.appendChild(use);

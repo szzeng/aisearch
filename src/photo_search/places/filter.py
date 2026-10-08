@@ -168,6 +168,38 @@ def asset_place_view(
             "lifecycle": str(row["lifecycle"]),
             "ancestors": ancestor_views(connection, int(row["place_id"])),
         }
+        admin = connection.execute(
+            """SELECT i.external_id,r.admin_id,r.kind,r.name,r.dataset_id,
+                      r.province_id,r.city_id,p.name AS province,c.name AS city
+                 FROM cn_admin_place_refs m JOIN cn_admin_ids i ON i.admin_id=m.admin_id
+                 JOIN active_geo_dataset a ON a.singleton=1
+                 JOIN cn_dataset_regions r ON r.dataset_id=a.dataset_id AND r.admin_id=m.admin_id
+                 LEFT JOIN cn_dataset_regions p ON p.dataset_id=r.dataset_id AND p.admin_id=r.province_id
+                 LEFT JOIN cn_dataset_regions c ON c.dataset_id=r.dataset_id AND c.admin_id=r.city_id
+                WHERE m.place_id=?""",
+            (int(row["place_id"]),),
+        ).fetchone()
+        if admin is not None:
+            ancestors = []
+            for key, name, kind in (
+                ("province_id", "province", "province"),
+                ("city_id", "city", "city"),
+            ):
+                if admin[key] is not None:
+                    ancestors.append({
+                        "admin_id": int(admin[key]),
+                        "kind": kind,
+                        "canonical_name": str(admin[name]),
+                        "source": "OSM",
+                    })
+            place.update({
+                "kind": str(admin["kind"]),
+                "canonical_name": str(admin["name"]),
+                "ancestors": ancestors,
+                "source": "OSM",
+                "source_id": str(admin["external_id"]),
+                "dataset_id": str(admin["dataset_id"]),
+            })
     payload: dict[str, Any] = {
         "contract_version": CONTRACT_VERSION,
         "asset_id": int(asset_id),

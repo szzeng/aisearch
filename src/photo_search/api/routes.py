@@ -166,6 +166,7 @@ from photo_search.persons.read import (
 from photo_search.persons.service import PersonService
 from photo_search.places import albums as place_albums
 from photo_search.places import backfill as place_backfill
+from photo_search.places import choices as place_choices
 from photo_search.places import cn_facets
 from photo_search.places import datasets as place_datasets_module
 from photo_search.places import revision as place_revision
@@ -981,6 +982,16 @@ async def list_places(
     )
 
 
+@router.get("/places/choices", summary="Source-backed choices for manual place selection")
+async def list_place_choices(
+    request: Request, name: str = Query(min_length=1, max_length=200)
+) -> dict[str, Any]:
+    service = service_of(request)
+    values = place_choices.choices(service.catalog, text=name, data_root=service.data_root)
+    return {"choices": values, "catalog_filter_revision": place_revision.read_filter_revision(service.catalog.connection),
+            "package_revision": cn_facets.revisions(service.catalog)[2]}
+
+
 @router.get("/places/albums", summary="Photo albums grouped by current GPS or manual place")
 async def list_place_albums(
     request: Request,
@@ -1018,7 +1029,7 @@ async def cn_admin_capabilities(request: Request) -> dict[str, Any]:
     active = service.catalog.read_one("SELECT dataset_id FROM active_geo_dataset WHERE singleton=1")
     run = service.catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (active["dataset_id"],))
     return {"contract_version": "cn-admin-facets.v1", "available": bool(rows),
-            "kinds": ["province", "city", "district"], "manual_district_assignment": False,
+            "kinds": ["province", "city", "district"], "manual_district_assignment": bool(rows),
             "dataset_id": active["dataset_id"], "update": None if run is None else dict(run),
             "package_revision": cn_facets.revisions(service.catalog)[2],
             "records": len(rows)}
@@ -1143,6 +1154,7 @@ async def put_place_assignment(
         asset_id=int(asset_id),
         action=_ACTION_BY_REQUEST[payload.action],
         target_place_id=payload.target_place_id,
+        target_place_ref=payload.target_place_ref,
         request_id=payload.request_id,
         expected_revision=int(payload.expected_revision),
         origin=payload.origin,
@@ -1160,6 +1172,7 @@ async def post_place_batch(request: Request, payload: PlaceBatchRequest) -> dict
             "asset_id": int(item.asset_id),
             "action": _ACTION_BY_REQUEST[item.action],
             "target_place_id": item.target_place_id,
+            "target_place_ref": item.target_place_ref,
             "expected_revision": int(item.expected_revision),
         }
         for item in payload.items
@@ -1827,65 +1840,8 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
 
 
 def _place_aware_choices(service: Any) -> list[dict[str, Any]]:
-    """Build parser candidates only from currently active local place sources."""
-    rows = service.catalog.read_all(
-        "SELECT place_id, kind, canonical_name, parent_place_id FROM places WHERE lifecycle='ACTIVE' ORDER BY length(canonical_name) DESC"
-    )
-    candidates: list[dict[str, Any]] = []
-    place_names = {int(row["place_id"]): str(row["canonical_name"]) for row in rows}
-    for row in rows:
-        if str(row["kind"]) not in ("city", "country"):
-            continue
-        aliases = service.catalog.read_all(
-            "SELECT text FROM place_aliases WHERE place_id=? AND lifecycle='ACTIVE'", (int(row["place_id"]),)
-        )
-        parent_id = row["parent_place_id"]
-        candidates.append({"kind": str(row["kind"]), "key": str(row["place_id"]), "name": str(row["canonical_name"]), "parent": place_names.get(int(parent_id), "") if parent_id else "", "aliases": [str(value["text"]) for value in aliases], "source": "local"})
-    # Province names come from the installed INDEX, including known provinces that
-    # currently have no album members.
-    province_index, _, _, province_index_available = place_albums._index(service.catalog, service.data_root)
-    if province_index_available:
-        provinces: dict[str, dict[str, Any]] = {}
-        for region in province_index.get("city_to_admin1", {}).values():
-            provinces.setdefault(str(region["id"]), {"kind": "province", "key": str(region["id"]), "name": str(region["name"]), "parent": "", "aliases": [], "source": "province_index"})
-            entry = provinces[str(region["id"])]
-            entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *region.get("aliases", [])]))
-        candidates.extend(provinces.values())
-    cn_candidates = [
-        {**item, "source": "cn_admin"} for item in cn_facets.choices(service.catalog)
-    ]
-    cn_by_key = {str(item["key"]): item for item in cn_candidates}
-    # A package's active cn_legacy_links records a verified equivalence: the old
-    # GeoNames city point lies in the admin geometry and at least one display spelling
-    # matches. Route those spellings to the same CN facet used by the album, rather
-    # than offering an empty legacy key beside the authoritative CN album.
-    linked_rows = service.catalog.read_all(
-        """SELECT l.place_id,l.city_id,l.province_id,p.canonical_name,
-        a.text AS alias,r.kind AS admin_kind
-        FROM cn_legacy_links l
-        JOIN active_geo_dataset active ON active.singleton=1 AND active.dataset_id=l.dataset_id
-        JOIN places p ON p.place_id=l.place_id AND p.lifecycle='ACTIVE'
-        JOIN cn_dataset_regions r ON r.dataset_id=l.dataset_id
-          AND r.admin_id=COALESCE(l.city_id,l.province_id)
-        LEFT JOIN place_aliases a ON a.place_id=l.place_id AND a.lifecycle='ACTIVE'
-        ORDER BY l.place_id,a.text"""
-    )
-    linked_local_ids: set[str] = set()
-    for row in linked_rows:
-        place_id = str(row["place_id"])
-        admin_id = row["city_id"] if row["city_id"] is not None else row["province_id"]
-        target = cn_by_key.get(f"cn:{admin_id}")
-        if target is None or target["kind"] != str(row["admin_kind"]):
-            continue
-        linked_local_ids.add(place_id)
-        spellings = [str(row["canonical_name"])]
-        if row["alias"]:
-            spellings.append(str(row["alias"]))
-        target["aliases"] = list(dict.fromkeys([*target["aliases"], *spellings]))
-
-    candidates = [item for item in candidates if item["key"] not in linked_local_ids]
-    candidates.extend(cn_candidates)
-    return candidates
+    """Use the same source-backed candidate set as manual assignment."""
+    return place_choices.choices(service.catalog, data_root=service.data_root)
 
 
 @router.post("/search/place-aware", summary="Personal local place plus content search")
@@ -1902,7 +1858,10 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     elif kind is None and key is None:
         from photo_search.places.natural_search import parse_place_query
 
-        plan = parse_place_query(original, _place_aware_choices(service))
+        plan = parse_place_query(
+            original,
+            place_choices.choices(service.catalog, text=original, data_root=service.data_root),
+        )
         if plan["state"] == "ambiguous":
             return {"needs_place_choice": True, "original_query": original,
                     "content_query": plan["content_query"], "place_choices": plan["choices"]}
@@ -1937,7 +1896,12 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                 album = {"name": str(region["name"]), "parent": "", "origin": None}
         if album is None:
             raise ApiError("PLACE_NOT_FOUND", "the selected place is no longer available", status=409)
-        place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
+        source_choice = next(
+            (item for item in place_choices.choices(service.catalog, data_root=service.data_root)
+             if item["kind"] == kind and str(item["key"]) == str(key)),
+            None,
+        )
+        place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "source": None if source_choice is None else source_choice["source"], "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
     values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled"})
     values["text"] = query_text
     envelope = SearchRequest.from_envelope(values)

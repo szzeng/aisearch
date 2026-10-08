@@ -25,6 +25,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.places import revision as revision_module
 from photo_search.places import suggestions as suggestion_module
+from photo_search.places.choices import is_source_backed_place
 from photo_search.places.contracts import (
     ASSIGNMENT_ACTIONS,
     OPERATION_BY_ACTION,
@@ -469,6 +470,7 @@ def apply_request(
     now_ms: int,
     refresh: revision_module.ProjectionRefresh | None = None,
     batch: bool = False,
+    verified_geo_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """One ASSIGN/UNASSIGN/RESTORE_AUTO request (single item or one atomic batch)."""
     request_id = check_request_id(request_id)
@@ -510,6 +512,14 @@ def apply_request(
         target = item["target_place_id"]
         if action == "ASSIGN":
             _require_active_place(connection, int(target))
+            if not is_source_backed_place(
+                connection, int(target), verified_geo_ids=verified_geo_ids
+            ):
+                raise fail(
+                    PLACE_NOT_FOUND,
+                    "new manual assignments require a place from the active validated source directory",
+                    place_id=int(target),
+                )
         before = assignment_view(row)
         previous_place = None if before is None or before["place_id"] is None else int(before["place_id"])
         # ADR-0005 §5: assign A->B excludes A, and an explicit assign of B also clears B's

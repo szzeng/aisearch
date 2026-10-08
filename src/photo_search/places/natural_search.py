@@ -255,4 +255,17 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
                 return {"state": "unresolved", "choices": [], "content_query": None,
                         "notice": "当前地点目录没有可确认的地点；仍按原句检索，没有添加地点条件。"}
 
+        # A short leading ``X的照片/夜景/海边`` form is commonly an explicit place
+        # request. With no local directory match, keep the text query intact and say why
+        # no location filter was applied. This is informational only; it never invents a
+        # place or changes the retrieval scope.
+        of = normalized.find("的")
+        if 0 < of <= 12 and normalized[of + 1 :].startswith(
+            ("照片", "图片", "夜景", "海边", "风景", "旅游", "旅行")
+        ):
+            leading = normalized[:of]
+            if leading and not any(leading.startswith(_norm(token)) for token in _CONTENT_PROTECTED):
+                return {"state": "unresolved", "choices": [], "content_query": None,
+                        "notice": "当前地点目录没有可确认的地点；仍按原句检索，没有添加地点条件。"}
+
     return {"state": None, "choices": [], "content_query": None, "notice": None}

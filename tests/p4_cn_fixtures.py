@@ -115,9 +115,27 @@ def install(
                         "longitude": 117.0,
                         "parent_dataset_place_id": "country-cn",
                     },
+                    {
+                        "dataset_place_id": "country-jp",
+                        "kind": "country",
+                        "display_name": "日本",
+                        "country_code": "JP",
+                        "latitude": 36.0,
+                        "longitude": 138.0,
+                    },
+                    {
+                        "dataset_place_id": "city-tokyo",
+                        "kind": "city",
+                        "display_name": "Tokyo",
+                        "country_code": "JP",
+                        "latitude": 35.6762,
+                        "longitude": 139.6503,
+                        "parent_dataset_place_id": "country-jp",
+                    },
                 ),
                 aliases=(
                     {"dataset_place_id": "city-jinan", "text": "济南", "language": "zh"},
+                    {"dataset_place_id": "city-tokyo", "text": "东京", "language": "zh"},
                 ),
             ),
         )
