@@ -169,8 +169,24 @@ def load_active_content(
     active = dataset_registry.active_row(connection)
     if active is None:
         raise CatalogError(
-            PLACE_DATASET_MISSING, "no active name dataset is installed", details={"dataset_id": None}
+            PLACE_DATASET_MISSING,
+            "no active name dataset is installed",
+            details={"dataset_id": None},
         )
+    return load_content_snapshot(dict(active), data_root=data_root, cache=cache)
+
+
+def load_content_snapshot(
+    active: Mapping[str, Any],
+    *,
+    data_root: Any,
+    cache: dict[str, dataset_module.DatasetContent] | None = None,
+) -> dataset_module.DatasetContent:
+    """Load a captured immutable registry record without a SQLite connection.
+
+    The CN update endpoint runs cold verification/geometry loading in a CPU thread,
+    then rechecks the active pointer/current inputs on the API thread at publication.
+    """
     store = _CONTENT_CACHE if cache is None else cache
     key = f"{active['dataset_id']}:{active['content_sha256']}"
     cached = store.get(key)
@@ -182,6 +198,15 @@ def load_active_content(
         dataset_registry.dataset_dir(data_root, str(active["dataset_id"])),
         supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION),
     )
+    if (
+        content.dataset_id != active["dataset_id"]
+        or content.manifest["content_sha256"] != active["content_sha256"]
+    ):
+        raise CatalogError(PLACE_DATASET_INVALID, "the package no longer matches its registry")
+    # At most one large CN polygon parse stays cached; retained packages remain on disk.
+    for previous, value in list(store.items()):
+        if previous != key and value.cn_admin is not None:
+            del store[previous]
     store[key] = content
     return content
 
@@ -210,9 +235,7 @@ def evaluate(
             "the job was created for a different content revision",
             details={"asset_ids": [int(asset_id)]},
         )
-    content = load_active_content(
-        catalog.connection, data_root=data_root, cache=cache
-    )
+    content = load_active_content(catalog.connection, data_root=data_root, cache=cache)
     fact = catalog.read_one("SELECT * FROM asset_geo_facts WHERE asset_id = ?", (int(asset_id),))
     if fact is None:
         raise CatalogError(

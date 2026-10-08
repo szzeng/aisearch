@@ -127,6 +127,8 @@ class DatasetContent:
     places: Mapping[str, DatasetPlace]
     aliases: Mapping[str, tuple[dict[str, Any], ...]] = field(default_factory=dict)
     province_index: Mapping[str, Any] = field(default_factory=dict)
+    cn_admin: Any = None
+    cn_legacy_links: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def city_places(self) -> tuple[DatasetPlace, ...]:
@@ -311,7 +313,19 @@ def validate_manifest(manifest: Any, *, supported_schema_version: int) -> dict[s
     # 0017 adds map membership/indexes only; the schema-16 place package contract
     # is unchanged. Keep this bridge explicit: older maxima and future catalogs
     # still require their own compatibility decision, and manifests stay immutable.
-    schema16_map_bridge = int(supported_schema_version) == 17 and compatible_max == 16
+    schema16_map_bridge = (
+        int(supported_schema_version) == 17 and compatible_max == 16
+    ) or (
+        int(supported_schema_version) == 18 and compatible_max in (16, 17)
+    ) or (
+        # Concurrent 0019 adds only face-detail queues/batches; place projections
+        # and the schema-18 CN addon remain unchanged. No future-schema wildcard.
+        int(supported_schema_version) == 19 and compatible_max in (16, 17, 18)
+    ) or (
+        # 0020 adds only face-detail coordinate frames/auto policy and a face-batch
+        # job index. Neither the GeoNames nor CN package projection changes.
+        int(supported_schema_version) == 20 and compatible_max in (16, 17, 18, 19)
+    )
     if not (
         compatible_min <= int(supported_schema_version) <= compatible_max or schema16_map_bridge
     ):
@@ -651,6 +665,8 @@ def load_content(
         raise _invalid("the dataset content checksum does not match the manifest")
     by_role: dict[str, DatasetFile] = {}
     for item in files:
+        if item.role == ROLE_INDEX and item.relative_path.startswith("cn-admin/"):
+            continue  # versioned addon files never replace GeoNames' original INDEX
         by_role.setdefault(item.role, item)
     places = _parse_places(directory, by_role[ROLE_PLACES].relative_path)
     parents = (
@@ -699,7 +715,12 @@ def load_content(
             declared=declared_records,
             actual=len(places),
         )
-    return DatasetContent(
+    from photo_search.geo import cn_admin
+
+    admin_content = cn_admin.load(directory, files)
+    if admin_content is not None and int(supported_schema_version) < 18:
+        raise _invalid("CN administrative facets require catalog schema 18")
+    content = DatasetContent(
         dataset_id=validated["dataset_id"],
         package_id=validated["package_id"],
         package_version=validated["package_version"],
@@ -710,7 +731,11 @@ def load_content(
         places=places,
         aliases=aliases,
         province_index=province_index,
+        cn_admin=admin_content,
     )
+    from dataclasses import replace
+
+    return replace(content, cn_legacy_links=cn_admin.legacy_links(content))
 
 
 def haversine_m(latitude_a: float, longitude_a: float, latitude_b: float, longitude_b: float) -> float:

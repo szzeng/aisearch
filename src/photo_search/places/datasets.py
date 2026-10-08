@@ -145,10 +145,22 @@ def verify_dataset_on_disk(
 ) -> tuple[list[dict[str, Any]], bool]:
     """Verify one package on disk; returns ``(problems, available)`` and never raises."""
     try:
-        dataset_module.load_content(
-            dataset_dir(data_root, str(row["dataset_id"])),
+        # Registry entries were fully parsed when staged. Recheck their immutable
+        # manifest and all content bytes without reparsing large polygon arrays.
+        directory = dataset_dir(data_root, str(row["dataset_id"]))
+        manifest = dataset_module.validate_manifest(
+            dataset_module.read_manifest(directory),
             supported_schema_version=int(supported_schema_version),
         )
+        fields = ("dataset_id", "package_id", "package_version", "provider", "content_sha256")
+        values = tuple(
+            manifest["source"][key] if key == "provider" else manifest[key] for key in fields
+        )
+        if values != tuple(row[key] for key in fields):
+            raise fail(PLACE_DATASET_INVALID, "the package no longer matches its registry")
+        files = dataset_module.verify_files(directory, manifest["files"])
+        if dataset_module.declared_content_sha256(files) != row["content_sha256"]:
+            raise fail(PLACE_DATASET_INVALID, "the package content checksum changed")
     except CatalogError as error:
         return (
             [
@@ -170,16 +182,42 @@ def dataset_status(
     supported_schema_version: int | None = None,
 ) -> dict[str, Any]:
     """The ``GET /places/datasets`` projection: real state, never a fabricated ACTIVE one."""
+    return render_status_snapshot(
+        status_snapshot(connection),
+        data_root=data_root,
+        supported_schema_version=supported_schema_version,
+    )
+
+
+def status_snapshot(connection: sqlite3.Connection) -> dict[str, Any]:
+    """Capture SQLite authority on its owning thread before disk verification."""
+    return {
+        "rows": [
+            dict(row)
+            for row in _rows(
+                connection,
+                f"SELECT {DATASET_ROW_FIELDS} FROM geo_datasets ORDER BY created_at, dataset_id",
+            )
+        ],
+        "active": dict(row) if (row := active_row(connection)) is not None else None,
+        "suggestion_revision": revision_module.read_suggestion_revision(connection),
+    }
+
+
+def render_status_snapshot(
+    snapshot: dict[str, Any],
+    *,
+    data_root: str | Path | None = None,
+    supported_schema_version: int | None = None,
+) -> dict[str, Any]:
+    """Pure file work; never pass an owned SQLite connection to a worker."""
     supported = (
         int(schema_module.SUPPORTED_SCHEMA_VERSION)
         if supported_schema_version is None
         else int(supported_schema_version)
     )
-    rows = _rows(
-        connection,
-        f"SELECT {DATASET_ROW_FIELDS} FROM geo_datasets ORDER BY created_at, dataset_id",
-    )
-    active = active_row(connection)
+    rows = snapshot["rows"]
+    active = snapshot["active"]
     rendered: list[dict[str, Any]] = []
     active_problems: list[dict[str, Any]] = []
     active_available = False
@@ -206,9 +244,11 @@ def dataset_status(
         "state": state,
         "reason": reason,
         "resolver_available": bool(active_available),
-        "active_dataset": None if active is None else dataset_view(active, problems=active_problems),
+        "active_dataset": None
+        if active is None
+        else dataset_view(active, problems=active_problems),
         "datasets": rendered,
-        "suggestion_revision": revision_module.read_suggestion_revision(connection),
+        "suggestion_revision": snapshot["suggestion_revision"],
     }
 
 
@@ -320,12 +360,31 @@ def _insert_dataset_rows(
         )
 
 
-def _verify_stored(connection: sqlite3.Connection, row: Mapping[str, Any], root: Path) -> DatasetContent:
+def _verify_stored(
+    connection: sqlite3.Connection, row: Mapping[str, Any], root: Path
+) -> DatasetContent:
     """Re-verify a stored package before it is validated, activated or rolled back to."""
-    return dataset_module.load_content(
+    content = dataset_module.load_content(
         dataset_dir(root, str(row["dataset_id"])),
         supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION),
     )
+    if (
+        content.dataset_id,
+        content.package_id,
+        content.package_version,
+        content.provider,
+        content.manifest["content_sha256"],
+    ) != (
+        row["dataset_id"],
+        row["package_id"],
+        row["package_version"],
+        row["provider"],
+        row["content_sha256"],
+    ):
+        raise fail(
+            PLACE_DATASET_INVALID, "the package no longer matches its immutable registry record"
+        )
+    return content
 
 
 def stage_package(
@@ -380,6 +439,10 @@ def validate_dataset(
 ) -> dict[str, Any]:
     """Re-verify a staged package and mark it ``VALIDATED``."""
     root = _root_for(catalog, data_root)
+    initial = dataset_row(catalog.connection, dataset_id)
+    if initial is None:
+        raise fail(PLACE_NOT_FOUND, "unknown dataset", dataset_id=str(dataset_id))
+    content = _verify_stored(catalog.connection, initial, root)
     with catalog.write() as connection:
         row = dataset_row(connection, dataset_id)
         if row is None:
@@ -391,7 +454,8 @@ def validate_dataset(
                 dataset_id=str(dataset_id),
                 state=str(row["state"]),
             )
-        _verify_stored(connection, row, root)
+        if str(row["content_sha256"]) != content.manifest["content_sha256"]:
+            raise fail(PLACE_DATASET_INVALID, "the dataset changed during validation")
         now = int(catalog.now_ms() if now_ms is None else now_ms)
         connection.execute(
             "UPDATE geo_datasets SET state = 'VALIDATED', validated_at = COALESCE(validated_at, ?), "
@@ -431,7 +495,9 @@ def restore_surviving_dataset(catalog: Catalog) -> dict[str, Any] | None:
         if content.manifest["previous_dataset_id"] is not None:
             # The predecessor is a catalog FK. An empty registry cannot satisfy it;
             # leave this package for explicit recovery with its retained predecessor.
-            logger.warning("surviving place package needs a predecessor; automatic recovery skipped")
+            logger.warning(
+                "surviving place package needs a predecessor; automatic recovery skipped"
+            )
             return None
     except (CatalogError, OSError):
         # A defective optional package must not prevent catalog browsing or manual edits.
@@ -460,6 +526,8 @@ def restore_surviving_dataset(catalog: Catalog) -> dict[str, Any] | None:
 # ------------------------------------------------------------- activate/rollback/cleanup
 def _has_resolutions(connection: sqlite3.Connection) -> bool:
     row = connection.execute("SELECT 1 FROM place_resolutions LIMIT 1").fetchone()
+    if row is None and schema_module.SUPPORTED_SCHEMA_VERSION >= 18:
+        row = connection.execute("SELECT 1 FROM cn_admin_resolutions LIMIT 1").fetchone()
     return row is not None
 
 
@@ -487,6 +555,9 @@ def _set_active(
         (dataset_id, int(now_ms), CAUSE_DATASET_ACTIVATED),
     )
     mapping = materialize_dataset_places(connection, content, now_ms=int(now_ms))
+    from photo_search.places import cn_facets
+
+    cn_facets.materialize(connection, content, mapping)
     suggestion_revision = revision_module.read_suggestion_revision(connection)
     if _has_resolutions(connection):
         # Every stored resolution named a dataset; a different active package changes the
@@ -516,6 +587,10 @@ def activate_dataset(
     active pointer keeps working (ADR-0005 §8).
     """
     root = _root_for(catalog, data_root)
+    initial = dataset_row(catalog.connection, dataset_id)
+    if initial is None:
+        raise fail(PLACE_NOT_FOUND, "unknown dataset", dataset_id=str(dataset_id))
+    content = _verify_stored(catalog.connection, initial, root)
     with catalog.write() as connection:
         row = dataset_row(connection, dataset_id)
         if row is None:
@@ -527,7 +602,8 @@ def activate_dataset(
                 dataset_id=str(dataset_id),
                 state=str(row["state"]),
             )
-        content = _verify_stored(connection, row, root)
+        if str(row["content_sha256"]) != content.manifest["content_sha256"]:
+            raise fail(PLACE_DATASET_INVALID, "the dataset changed during validation")
         now = int(catalog.now_ms() if now_ms is None else now_ms)
         return _set_active(connection, content=content, now_ms=now)
 
@@ -544,36 +620,58 @@ def rollback_dataset(
     otherwise the most recently activated retained/validated package.
     """
     root = _root_for(catalog, data_root)
+    connection = catalog.connection
+    active = active_row(connection)
+    if active is None:
+        raise fail(
+            PLACE_DATASET_MISSING, "there is no active dataset to roll back from", dataset_id=None
+        )
+    pointer = tuple(
+        connection.execute(
+            "SELECT dataset_id,revision FROM active_geo_dataset WHERE singleton=1"
+        ).fetchone()
+    )
+    target = None
+    previous_id = active["previous_dataset_id"]
+    if previous_id is not None:
+        candidate = dataset_row(connection, str(previous_id))
+        if candidate is not None and str(candidate["state"]) in ROLLBACK_STATES:
+            target = candidate
+    if target is None:
+        placeholders = ", ".join("?" for _ in ROLLBACK_STATES)
+        target = connection.execute(
+            f"SELECT {DATASET_ROW_FIELDS} FROM geo_datasets "
+            f"WHERE state IN ({placeholders}) AND dataset_id <> ? "
+            "ORDER BY COALESCE(retained_at, activated_at, validated_at, created_at) DESC, "
+            "dataset_id DESC LIMIT 1",
+            (*ROLLBACK_STATES, str(active["dataset_id"])),
+        ).fetchone()
+    if target is None:
+        raise fail(
+            PLACE_DATASET_MISSING,
+            "there is no retained previous dataset to roll back to",
+            dataset_id=str(active["dataset_id"]),
+        )
+    # Large boundary verification must not hold the SQLite writer lock.
+    content = _verify_stored(connection, target, root)
     with catalog.write() as connection:
-        active = active_row(connection)
-        if active is None:
-            raise fail(
-                PLACE_DATASET_MISSING,
-                "there is no active dataset to roll back from",
-                dataset_id=None,
-            )
-        target: sqlite3.Row | None = None
-        previous_id = active["previous_dataset_id"]
-        if previous_id is not None:
-            candidate = dataset_row(connection, str(previous_id))
-            if candidate is not None and str(candidate["state"]) in ROLLBACK_STATES:
-                target = candidate
-        if target is None:
-            placeholders = ", ".join("?" for _ in ROLLBACK_STATES)
-            target = connection.execute(
-                f"SELECT {DATASET_ROW_FIELDS} FROM geo_datasets "
-                f"WHERE state IN ({placeholders}) AND dataset_id <> ? "
-                "ORDER BY COALESCE(retained_at, activated_at, validated_at, created_at) DESC, "
-                "dataset_id DESC LIMIT 1",
-                (*ROLLBACK_STATES, str(active["dataset_id"])),
+        current = tuple(
+            connection.execute(
+                "SELECT dataset_id,revision FROM active_geo_dataset WHERE singleton=1"
             ).fetchone()
-        if target is None:
+        )
+        row = dataset_row(connection, content.dataset_id)
+        if (
+            current != pointer
+            or row is None
+            or str(row["state"]) not in ROLLBACK_STATES
+            or row["content_sha256"] != content.manifest["content_sha256"]
+        ):
             raise fail(
-                PLACE_DATASET_MISSING,
-                "there is no retained previous dataset to roll back to",
-                dataset_id=str(active["dataset_id"]),
+                PLACE_DATASET_INVALID,
+                "the dataset changed during rollback validation",
+                dataset_id=content.dataset_id,
             )
-        content = _verify_stored(connection, target, root)
         now = int(catalog.now_ms() if now_ms is None else now_ms)
         result = _set_active(connection, content=content, now_ms=now)
         result["rolled_back_from"] = str(active["dataset_id"])
@@ -607,23 +705,38 @@ def cleanup_dataset(
                 "the active dataset cannot be cleaned up",
                 dataset_id=str(dataset_id),
             )
-        if connection.execute(
-            "SELECT 1 FROM place_resolutions WHERE dataset_id = ? LIMIT 1", (str(dataset_id),)
-        ).fetchone() is not None:
+        if (
+            connection.execute(
+                "SELECT 1 FROM place_resolutions WHERE dataset_id = ? UNION ALL "
+                "SELECT 1 FROM cn_admin_resolutions WHERE dataset_id = ? LIMIT 1",
+                (str(dataset_id), str(dataset_id)),
+            ).fetchone()
+            is not None
+        ):
             raise fail(
                 PLACE_REFERENCED,
                 "a dataset referenced by a stored resolution cannot be cleaned up",
                 dataset_id=str(dataset_id),
             )
-        if connection.execute(
-            "SELECT 1 FROM geo_datasets WHERE previous_dataset_id = ? LIMIT 1",
-            (str(dataset_id),),
-        ).fetchone() is not None:
+        if (
+            connection.execute(
+                "SELECT 1 FROM geo_datasets WHERE previous_dataset_id = ? LIMIT 1",
+                (str(dataset_id),),
+            ).fetchone()
+            is not None
+        ):
             raise fail(
                 PLACE_REFERENCED,
                 "a dataset still used as a rollback target cannot be cleaned up",
                 dataset_id=str(dataset_id),
             )
+        for table in (
+            "cn_update_runs",
+            "cn_legacy_links",
+            "cn_base_china_places",
+            "cn_dataset_regions",
+        ):
+            connection.execute(f"DELETE FROM {table} WHERE dataset_id=?", (str(dataset_id),))
         connection.execute("DELETE FROM geo_dataset_files WHERE dataset_id = ?", (str(dataset_id),))
         connection.execute("DELETE FROM geo_datasets WHERE dataset_id = ?", (str(dataset_id),))
         target = dataset_dir(root, str(dataset_id))

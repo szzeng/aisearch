@@ -8,7 +8,7 @@
   function search(value) {
     if (value.length < 2) { host.hidden = true; host.replaceChildren(); return; }
     host.hidden = false; host.replaceChildren(element("p", "查找地点入口…"));
-    Promise.all(["city", "province", "country"].map(function (kind) {
+    Promise.all(["city", "province", "district", "country"].map(function (kind) {
       return fetch("/api/v1/places/albums?" + new URLSearchParams({ kind: kind, name: value }), { credentials: "same-origin", headers: { Accept: "application/json" } }).then(function (response) { if (!response.ok) throw new Error("地点查找暂不可用"); return response.json(); });
     })).then(function (responses) {
       host.replaceChildren();

@@ -128,6 +128,7 @@ from photo_search.catalog.errors import (
 from photo_search.catalog.migrate import catalog_info
 from photo_search.config import catalog_db_path
 from photo_search.face.weights import weights_present as face_weights_present
+from photo_search.geo import resolver as geo_resolver
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import (
@@ -164,6 +165,8 @@ from photo_search.persons.read import (
 from photo_search.persons.service import PersonService
 from photo_search.places import albums as place_albums
 from photo_search.places import backfill as place_backfill
+from photo_search.places import cn_facets
+from photo_search.places import datasets as place_datasets_module
 from photo_search.places import revision as place_revision
 from photo_search.places.contracts import fail as place_fail
 from photo_search.places.service import PlaceService, clamp_place_limit
@@ -782,6 +785,11 @@ async def list_assets(
     )
 
 
+@router.get("/assets/{asset_id}/admin-place", summary="Current administrative facets and exclusion reason")
+async def get_asset_admin_place(request: Request, asset_id: int) -> dict[str, Any]:
+    return cn_facets.asset_projection(context_of(request).service().catalog, asset_id)
+
+
 @router.get("/assets/{asset_id}", response_model=AssetDetail, summary="Asset detail")
 async def get_asset(request: Request, asset_id: int) -> dict[str, Any]:
     context = context_of(request)
@@ -972,7 +980,7 @@ async def list_places(
 @router.get("/places/albums", summary="Photo albums grouped by current GPS or manual place")
 async def list_place_albums(
     request: Request,
-    kind: Literal["city", "province", "country"] = "city",
+    kind: Literal["city", "province", "country", "district"] = "city",
     name: str | None = Query(default=None, max_length=200),
 ) -> dict[str, Any]:
     service = service_of(request)
@@ -988,7 +996,7 @@ async def backfill_place_albums(request: Request) -> dict[str, Any]:
 @router.get("/places/albums/{kind}/{key}/assets", summary="Paged photos in one place album")
 async def list_place_album_assets(
     request: Request,
-    kind: Literal["city", "province", "country"],
+    kind: Literal["city", "province", "country", "district"],
     key: str,
     limit: int = 48,
     cursor: str | None = None,
@@ -997,6 +1005,33 @@ async def list_place_album_assets(
     return place_albums.album_assets(
         service.catalog, service.data_root, kind=kind, key=key, limit=limit, cursor=cursor
     )
+
+
+@router.get("/places/admin/capabilities", summary="Versioned Chinese administrative facet capability")
+async def cn_admin_capabilities(request: Request) -> dict[str, Any]:
+    service = service_of(request)
+    rows = cn_facets.choices(service.catalog)
+    active = service.catalog.read_one("SELECT dataset_id FROM active_geo_dataset WHERE singleton=1")
+    run = service.catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (active["dataset_id"],))
+    return {"contract_version": "cn-admin-facets.v1", "available": bool(rows),
+            "kinds": ["province", "city", "district"], "manual_district_assignment": False,
+            "dataset_id": active["dataset_id"], "update": None if run is None else dict(run),
+            "package_revision": cn_facets.revisions(service.catalog)[2],
+            "records": len(rows)}
+
+
+@router.post("/places/admin/update", summary="Resolve one bounded batch of existing GPS, without reading photos")
+async def cn_admin_update(request: Request, restart: bool = False, dataset_id: str | None = None) -> dict[str, Any]:
+    service = service_of(request)
+    active = service.catalog.read_one("SELECT g.* FROM geo_datasets g JOIN active_geo_dataset a ON a.dataset_id=g.dataset_id WHERE a.singleton=1")
+    if active is None:
+        raise ApiError("PLACE_DATASET_MISSING", "no active place package", status=409)
+    content = await asyncio.to_thread(geo_resolver.load_content_snapshot, dict(active), data_root=service.data_root)
+    if dataset_id is not None and dataset_id != content.dataset_id:
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "the Chinese place package changed", status=409)
+    run, rows = cn_facets.inputs(service.catalog, content, restart=restart)
+    results = await asyncio.to_thread(cn_facets.calculate, content, rows)
+    return cn_facets.publish(service.catalog, content, run, rows, results)
 
 
 @router.get("/places/coverage", response_model=PlaceCoverageResponse, summary="Place coverage")
@@ -1015,7 +1050,12 @@ async def place_datasets(request: Request) -> dict[str, Any]:
     With no imported package it stays ``unavailable`` and never invents an ACTIVE one; a
     package that is present but missing/faulty is reported as ``missing``/``invalid``.
     """
-    return places_of(request).datasets()
+    service = service_of(request)
+    snapshot = place_datasets_module.status_snapshot(service.catalog.connection)
+    result = await asyncio.to_thread(place_datasets_module.render_status_snapshot, snapshot, data_root=service.data_root)
+    if place_datasets_module.status_snapshot(service.catalog.connection) != snapshot:
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place package changed; reload", status=409)
+    return result
 
 
 @router.post(
@@ -1731,6 +1771,7 @@ def _place_aware_parse(service: Any, text: str) -> tuple[str | None, list[dict[s
             entry["aliases"] = list(dict.fromkeys([*entry["aliases"], *region.get("aliases", [])]))
         candidates.extend(provinces.values())
     matches: list[tuple[int, dict[str, Any], str | None]] = []
+    candidates.extend(cn_facets.choices(service.catalog))
     for item in candidates:
         for spelling in [item["name"], *item["aliases"]]:
             name = "".join(str(spelling).split()).casefold()
@@ -1781,10 +1822,10 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     revision = None
     place_block = None
     if kind is not None and key is not None:
-        album_ids, collection = place_albums.album_member_ids(service.catalog, service.data_root, kind=kind, key=key)
+        album_ids, collection = place_albums.album_member_ids(service.catalog, service.data_root, kind=kind, key=key, include_ids=query_text is not None or not str(key).startswith("cn:"))
         album = next((item for item in collection["albums"] if item["key"] == str(key)), None)
         revision = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, str(key))
-        if album is None and kind in ("city", "country"):
+        if album is None and kind in ("city", "country") and not str(key).startswith("cn:"):
             known = service.catalog.read_one("SELECT canonical_name, parent_place_id FROM places WHERE place_id=? AND kind=? AND lifecycle='ACTIVE'", (int(key), kind))
             if known is None:
                 raise ApiError("PLACE_NOT_FOUND", "the selected place is no longer available", status=409)
@@ -1823,11 +1864,12 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         person_ids=base.canonical_person_ids,
         person_match=request.person_match,
         capture=request.capture_range,
-        album_asset_ids=album_ids,
+        album_asset_ids=None if str(key).startswith("cn:") else album_ids,
     )
     filter_fingerprint = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": scope.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size}, sort_keys=True, separators=(",", ":"))
     revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint)
     session_id = f"place-album:{kind}:{key}"
+    admin_page = str(key).startswith("cn:")
     if request.cursor is not None:
         if request.search_session_id != session_id:
             raise ApiError(INVALID_CURSOR, "the place album cursor does not match this search")
@@ -1835,8 +1877,18 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
     else:
         start = 0
     where, params = scope_condition(catalog.connection, scope)
-    total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
-    rows = catalog.read_all(f"SELECT a.asset_id FROM assets AS a WHERE {where} ORDER BY a.asset_id LIMIT ? OFFSET ?", (*params, int(request.page_size) + 1, start))
+    if admin_page:
+        # The same source/person/time authority intersects the CN SQL membership.
+        # A pure-place page does not materialize the album's full ID list.
+        member_sql, member_params = cn_facets.members_sql(kind, key=key)
+        where = f"({where}) AND a.asset_id IN (SELECT asset_id FROM ({member_sql}))"
+        params = [*params, *member_params]
+        total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+        rows = catalog.read_all(f"SELECT a.asset_id FROM assets AS a WHERE {where} AND a.asset_id>? ORDER BY a.asset_id LIMIT ?", (*params, start, int(request.page_size) + 1))
+    else:
+        total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+        rows = catalog.read_all(f"SELECT a.asset_id FROM assets AS a WHERE {where} ORDER BY a.asset_id LIMIT ? OFFSET ?", (*params, int(request.page_size) + 1, start))
+    offset = int(catalog.read_one(f"SELECT COUNT(*) AS n FROM assets a WHERE {where} AND a.asset_id<=?", (*params, start))["n"]) if admin_page and start else start
     if (
         place_revision.read_filter_revision(catalog.connection),
         place_revision.read_suggestion_revision(catalog.connection),
@@ -1848,11 +1900,11 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
     ):
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place album changed; reload the search", status=409)
     page = rows[: int(request.page_size)]
-    next_offset = start + len(page)
-    has_more = next_offset < total
+    next_offset = int(page[-1]["asset_id"]) if admin_page and page else start + len(page)
+    has_more = len(rows) > len(page) if admin_page else next_offset < total
     token = place_albums._token(next_offset, revisions) if has_more else None
     ids = [int(row["asset_id"]) for row in page]
-    hits = [{"asset_id": asset_id, "rank": start + index + 1, "score": None, "matched_by": {"filter": start + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
+    hits = [{"asset_id": asset_id, "rank": offset + index + 1, "score": None, "matched_by": {"filter": offset + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
     return {
         "contract_version": "p2-contracts.v1", "request_id": request.request_id,
         "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
@@ -1867,7 +1919,7 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
                     "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive,
                     "catalog_filter_revision": int(collection["catalog_filter_revision"]),
                     "suggestion_revision": int(collection["suggestion_revision"])},
-        "hits": hits, "page_size": int(request.page_size), "page_offset": start,
+        "hits": hits, "page_size": int(request.page_size), "page_offset": offset,
         "next_cursor": token, "has_more": has_more, "total_candidates": total,
         "candidates_truncated": False,
         "channels": {"fts": {"engaged": False, "candidates": 0, "truncated": False},

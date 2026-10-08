@@ -1260,7 +1260,7 @@ class PlaceAwareSearchRequestModel(SearchRequestModel):
 
     original_query: str = Field(max_length=256)
     content_query: str | None = Field(default=None, max_length=256)
-    place_kind: Literal["city", "province", "country"] | None = None
+    place_kind: Literal["city", "province", "country", "district"] | None = None
     place_key: str | None = Field(default=None, max_length=128)
     place_cancelled: bool = False
 

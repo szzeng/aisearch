@@ -746,6 +746,23 @@ wheels = [
 ]
 
 [[package]]
+name = "osmium"
+version = "4.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/2e/b5a4204a8f809205e5b1fe31a409882c6d408ae9babfb7eed72b1f5e7c74/osmium-4.3.1.tar.gz", hash = "sha256:5cc16af5f0f34d5e67c678433f6ddda6e37f086ab3cf4ac3b15725fd878f75a8", size = 539311, upload-time = "2026-04-02T09:17:08.702Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/80/935f450e8e9758bc6a5373a8003fe0121d7ac7cdd81a5bf74d3fc8401de4/osmium-4.3.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:694d87da0710bfc076f578dcf5d49f187b27688f28e2e9f5a1b240d33d7a095d", size = 1313981, upload-time = "2026-04-02T09:15:02.673Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/05/0f395cdf2e577d2850479e79d73ad6f7b15e4102e424281986dd787b89c4/osmium-4.3.1-cp312-cp312-macosx_11_0_x86_64.whl", hash = "sha256:efe98ff177190f3fa3b9d86ab092353a8bc74ea22d30ae563f889c2cc8c15825", size = 1462581, upload-time = "2026-04-02T09:15:05.233Z" },
+    { url = "https://files.pythonhosted.org/packages/88/82/143f2d605fa1e78c22ee292f4a49025b0a815cec5c3e52be5d82accd179d/osmium-4.3.1-cp312-cp312-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:5ef9011f47de7c9085ee74971ffc8eb663bfeabb8b80b4e9fd6e62f0c3d5852f", size = 1692740, upload-time = "2026-04-02T09:15:08.471Z" },
+    { url = "https://files.pythonhosted.org/packages/92/af/8d9bc709de5d76341958631ba001bba7d66b8cee83f39b548a94d10a0996/osmium-4.3.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2ca8d9ab7595b17cc0eba608a5de66ee346ee1eacb32634688aa808f5b3bdbc7", size = 1841277, upload-time = "2026-04-02T09:15:11.781Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/29/cf51cd5bf1995b67b2a9f837c8e8641bb7df7be36f9365e7770c8b6d60d4/osmium-4.3.1-cp312-cp312-win_amd64.whl", hash = "sha256:0604b866d4e875fad268b31ecf330ee8dbcf280aac47330b4576f320cffeacb8", size = 1811488, upload-time = "2026-04-02T09:15:15.148Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/2c/ab7055b321a59602b38fbcaa5fdd40c0d9005aa88d09db75b0ae35cf9076/osmium-4.3.1-cp312-cp312-win_arm64.whl", hash = "sha256:6058af8f2a15efced341bdfcd50fc429a3fdd4c7c82ec5eda70394e550a18252", size = 1894243, upload-time = "2026-04-02T09:15:18.218Z" },
+]
+
+[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -778,6 +795,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "qwen-vl-utils" },
     { name = "rapidocr-onnxruntime" },
+    { name = "shapely" },
     { name = "torch" },
     { name = "torchvision" },
     { name = "transformers" },
@@ -790,6 +808,10 @@ dev = [
     { name = "pyinstaller" },
     { name = "pytest" },
     { name = "ruff" },
+]
+places-build = [
+    { name = "osmium" },
+    { name = "shapely" },
 ]
 
 [package.metadata]
@@ -804,6 +826,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9,<3" },
     { name = "qwen-vl-utils", specifier = "==0.0.14" },
     { name = "rapidocr-onnxruntime", specifier = ">=1.4.4,<1.5" },
+    { name = "shapely", specifier = "==2.1.2" },
     { name = "torch", specifier = "==2.8.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "torchvision", specifier = "==0.23.0", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", specifier = "==4.57.0" },
@@ -816,6 +839,10 @@ dev = [
     { name = "pyinstaller", specifier = ">=6.11,<7" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "ruff", specifier = ">=0.8,<1" },
+]
+places-build = [
+    { name = "osmium", specifier = "==4.3.1" },
+    { name = "shapely", specifier = "==2.1.2" },
 ]
 
 [[package]]

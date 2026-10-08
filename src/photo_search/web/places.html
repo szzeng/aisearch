@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/web/styles.css" />
     <link rel="stylesheet" href="/web/places.css" />
     <script src="/web/places.js" defer></script>
-    <script src="/web/places-albums.js?v=2" defer></script>
+    <script src="/web/places-albums.js?v=4" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -33,21 +33,24 @@
     <main id="main" tabindex="-1">
       <p class="hint">
         本页只做人工整理：机器候选永远是「待确认建议」（SUGGESTION_ONLY），确认后才是有效人工归属。
-        页面不触发任何后台解析，也不显示精确坐标与任何本机绝对路径；坐标只在会话保护的
+        仅在点击更新时处理地点，不显示本机绝对路径；坐标在会话保护的
         <code>/api/v1/assets/{asset_id}/geo</code> 提供。
       </p>
 
       <section id="panel-albums" class="panel" aria-labelledby="albums-title">
         <h2 id="albums-title">地点相册</h2>
-        <p class="hint">自动地点显示为「GPS附近城市」，是个人整理提示，不代表精确行政归属。人工指定优先；人工取消的照片不会自动归组。最多50km，仅使用当前GPS与活动地名包。</p>
+        <p class="hint">中国省、市、区县按已安装的行政边界解析，标为机器地点；缺边界时只显示可靠上级。其他地区保留GPS附近城市提示（最多50km）。人工指定和取消优先。</p>
         <div class="album-controls">
           <label for="album-kind">查看</label>
-          <select id="album-kind"><option value="city">城市</option><option value="province">省份</option><option value="country">国家</option></select>
+          <select id="album-kind"><option value="city">城市</option><option value="province">省份</option><option value="district">区县</option><option value="country">国家</option></select>
           <label for="album-name">搜索地名</label>
           <input id="album-name" type="search" maxlength="200" autocomplete="off" placeholder="城市、省份或国家" />
           <button type="button" id="album-backfill">补齐照片地点</button>
+          <button type="button" id="cn-update" hidden>更新中国地点</button>
+          <button type="button" id="cn-pause" hidden>暂停更新</button>
         </div>
         <p id="album-backfill-status" role="status" aria-live="polite"></p>
+        <p id="cn-update-status" role="status" aria-live="polite"></p>
         <div id="album-cards" class="album-cards" aria-live="polite"></div>
         <div id="album-photos" class="album-photos" hidden></div>
         <p><button type="button" id="album-more" hidden>加载更多照片</button></p>

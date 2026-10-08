@@ -11,30 +11,50 @@ import json
 from typing import Any
 
 from photo_search.api.errors import ApiError
+from photo_search.catalog import schema as schema_module
 from photo_search.catalog.errors import CATALOG_FILTER_REVISION_STALE, INVALID_CURSOR
-from photo_search.geo import resolver as resolver_module
+from photo_search.geo import dataset as dataset_module
+from photo_search.places import cn_facets
 from photo_search.places import datasets as datasets_module
 from photo_search.places import revision as revision_module
 from photo_search.places.contracts import normalize_name
 
 AUTO_MAX_DISTANCE_M = 50_000.0
 PAGE_SIZE = 48
+_INDEX_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 
 
 def _index(catalog: Any, data_root: Any) -> tuple[dict[str, Any], str | None, str | None, bool]:
     active = datasets_module.active_row(catalog.connection)
     if active is None:
         return {}, None, None, False
+    pointer_revision = catalog.read_one("SELECT revision FROM active_geo_dataset WHERE singleton=1")["revision"]
+    gps_revision = catalog.read_one("SELECT revision FROM map_member_revision WHERE singleton=1")["revision"]
+    stamp = f"{active['dataset_id']}:{active['content_sha256']}:{pointer_revision}:{gps_revision}"
     try:
-        content = resolver_module.load_active_content(
-            catalog.connection, data_root=data_root
-        )
+        directory = datasets_module.dataset_dir(data_root, str(active["dataset_id"]))
+        cache_key = (str(directory), str(active["content_sha256"]))
+        cached = _INDEX_CACHE.get(cache_key)
+        if cached is None:
+            # The registry accepted this immutable package with full validation.
+            # Browse verifies bytes and reads only the original GeoNames INDEX;
+            # it never loads administrative geometries or recomputes point membership.
+            manifest = dataset_module.validate_manifest(dataset_module.read_manifest(directory), supported_schema_version=schema_module.SUPPORTED_SCHEMA_VERSION)
+            if manifest["dataset_id"] != active["dataset_id"] or manifest["content_sha256"] != active["content_sha256"]:
+                raise ValueError("package identity changed")
+            files = dataset_module.verify_files(directory, manifest["files"])
+            if dataset_module.declared_content_sha256(files) != active["content_sha256"]:
+                raise ValueError("package content changed")
+            original = next((f for f in files if f.role == "INDEX" and not f.relative_path.startswith("cn-admin/")), None)
+            cached = dataset_module._parse_province_index(directory, original.relative_path) if original else {}
+            _INDEX_CACHE.clear()
+            _INDEX_CACHE[cache_key] = cached
     except Exception:
-        return {}, f"{active['dataset_id']}:{active['content_sha256']}", str(active["provider"]), False
-    return dict(content.province_index), f"{active['dataset_id']}:{active['content_sha256']}", str(active["provider"]), True
+        return {}, stamp, str(active["provider"]), False
+    return dict(cached), stamp, str(active["provider"]), True
 
 
-def _album_rows(catalog: Any, data_root: Any) -> tuple[list[dict[str, Any]], str | None]:
+def _album_rows(catalog: Any, data_root: Any, *, suppress_cn: bool = True) -> tuple[list[dict[str, Any]], str | None]:
     province_index, package_revision, provider, package_available = _index(catalog, data_root)
     city_regions = province_index.get("city_to_admin1", {})
     rows = catalog.read_all(
@@ -77,8 +97,13 @@ def _album_rows(catalog: Any, data_root: Any) -> tuple[list[dict[str, Any]], str
                     AND NOT EXISTS (SELECT 1 FROM asset_place_exclusions x
                                      WHERE x.asset_id = a.asset_id
                                        AND x.place_id = pc.local_place_id AND x.active = 1)))
+              AND (?=0 OR (NOT EXISTS(SELECT 1 FROM cn_legacy_links cl
+                      WHERE cl.dataset_id=active.dataset_id AND cl.place_id=ap.place_id)
+                  AND NOT (COALESCE(ap.mode,'AUTO_ALLOWED')='AUTO_ALLOWED'
+                      AND EXISTS(SELECT 1 FROM cn_base_china_places cp
+                           WHERE cp.dataset_id=active.dataset_id AND cp.place_id=pc.local_place_id))))
             ORDER BY a.asset_id""",
-        (AUTO_MAX_DISTANCE_M, int(package_available)),
+        (AUTO_MAX_DISTANCE_M, int(package_available), int(suppress_cn)),
     )
     result: list[dict[str, Any]] = []
     external_ids: dict[int, str] = {}
@@ -140,11 +165,13 @@ def _key(kind: str, row: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def albums(catalog: Any, data_root: Any, *, kind: str = "city", name: str | None = None) -> dict[str, Any]:
-    if kind not in ("city", "province", "country"):
+    if kind not in ("city", "province", "country", "district"):
         raise ValueError("kind must be city, province or country")
+    if kind == "district":
+        return cn_facets.collection(catalog, kind=kind, name=name)
     before_filter = revision_module.read_filter_revision(catalog.connection)
     before_suggestion = revision_module.read_suggestion_revision(catalog.connection)
-    rows, package_revision = _album_rows(catalog, data_root)
+    rows, package_revision = _album_rows(catalog, data_root, suppress_cn=kind != "country")
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = _key(kind, row)
@@ -186,17 +213,25 @@ def albums(catalog: Any, data_root: Any, *, kind: str = "city", name: str | None
     for item in result:
         origins = item.pop("origins")
         item["origin"] = "MIXED" if len(origins) > 1 else next(iter(origins))
+    if kind in ("city", "province"):
+        chinese = cn_facets.collection(catalog, kind=kind, name=name)
+        if (chinese["catalog_filter_revision"], chinese["suggestion_revision"], chinese["package_revision"]) != (before_filter, before_suggestion, package_revision):
+            raise ApiError(CATALOG_FILTER_REVISION_STALE, "the albums changed; reload", status=409)
+        result.extend(chinese["albums"])
+        result.sort(key=lambda value: (value["name"], value["parent"], value["key"]))
     return {"kind": kind, "catalog_filter_revision": filter_revision, "suggestion_revision": suggestion_revision, "package_revision": package_revision, "albums": result}
 
 
 def album_assets(catalog: Any, data_root: Any, *, kind: str, key: str, limit: int = PAGE_SIZE, cursor: str | None = None) -> dict[str, Any]:
+    if str(key).startswith("cn:") or kind == "district":
+        return cn_facets.page(catalog, kind=kind, key=key, limit=limit, cursor=cursor)
     collection = albums(catalog, data_root, kind=kind)
     revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, str(key))
     start = _decode(cursor, revisions)
     selected = next((item for item in collection["albums"] if item["key"] == str(key)), None)
     if selected is None:
         return {"assets": [], "total": 0, "next_cursor": None, "catalog_filter_revision": revisions[0], "suggestion_revision": revisions[1], "package_revision": revisions[2]}
-    rows, _ = _album_rows(catalog, data_root)
+    rows, _ = _album_rows(catalog, data_root, suppress_cn=kind != "country")
     ids = [row["asset_id"] for row in rows if _key(kind, row) == (kind, str(key))]
     _, current_package_revision, _, _ = _index(catalog, data_root)
     if (revision_module.read_filter_revision(catalog.connection), revision_module.read_suggestion_revision(catalog.connection), current_package_revision) != revisions[:3]:
@@ -206,12 +241,21 @@ def album_assets(catalog: Any, data_root: Any, *, kind: str, key: str, limit: in
     return {"assets": [{"asset_id": value, "thumbnail_url": f"/api/v1/assets/{value}/thumbnail", "detail_url": f"/api/v1/assets/{value}"} for value in page], "total": len(ids), "next_cursor": next_cursor, "catalog_filter_revision": revisions[0], "suggestion_revision": revisions[1], "package_revision": revisions[2]}
 
 
-def album_member_ids(catalog: Any, data_root: Any, *, kind: str, key: str) -> tuple[list[int], dict[str, Any]]:
+def album_member_ids(catalog: Any, data_root: Any, *, kind: str, key: str, include_ids: bool = True) -> tuple[list[int], dict[str, Any]]:
     """Resolve one selected album through the exact membership reader used by browsing."""
+    if str(key).startswith("cn:") or kind == "district":
+        before = cn_facets.revisions(catalog)
+        sql, params = cn_facets.members_sql(kind, key=key)
+        ids = [int(row["asset_id"]) for row in catalog.read_all(f"SELECT asset_id FROM ({sql}) ORDER BY asset_id", params)] if include_ids else []
+        choices = cn_facets.choices(catalog, kind=kind)
+        selected = [dict(item, total=len(ids), origin=None) for item in choices if item["key"] == key]
+        if cn_facets.revisions(catalog) != before:
+            raise ApiError(CATALOG_FILTER_REVISION_STALE, "the administrative album changed", status=409)
+        return ids, {"albums": selected, "catalog_filter_revision": before[0], "suggestion_revision": before[1], "package_revision": before[2]}
     collection = albums(catalog, data_root, kind=kind)
     selected = next((item for item in collection["albums"] if item["key"] == str(key)), None)
     if selected is None:
         return [], collection
-    rows, _ = _album_rows(catalog, data_root)
+    rows, _ = _album_rows(catalog, data_root, suppress_cn=kind != "country")
     ids = [int(row["asset_id"]) for row in rows if _key(kind, row) == (kind, str(key))]
     return ids, collection

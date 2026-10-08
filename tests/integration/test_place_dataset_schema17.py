@@ -47,7 +47,7 @@ def test_schema16_active_package_survives_catalog_upgrade(tmp_path, monkeypatch)
     with CatalogService.open(data_root=root) as service:
         state = datasets.dataset_status(service.catalog.connection, data_root=root)
         assert state["state"] == "active" and state["resolver_available"]
-        assert schema.read_schema_version(service.catalog.connection) == 17
+        assert schema.read_schema_version(service.catalog.connection) == schema.SUPPORTED_SCHEMA_VERSION
         assert (
             service.catalog.read_one("SELECT revision FROM active_geo_dataset")[0]
             == active_revision
@@ -86,7 +86,19 @@ def test_schema16_package_recovers_into_empty_schema17_catalog(tmp_path):
         (5, 16, 16, True),
         (5, 15, 17, False),
         (18, 20, 17, False),
-        (5, 16, 18, False),
+        (5, 16, 18, True),
+        (5, 17, 18, True),
+        (5, 15, 18, False),
+        (5, 17, 19, True),
+        (18, 18, 19, True),
+        (5, 15, 19, False),
+        (5, 16, 20, True),
+        (5, 17, 20, True),
+        (18, 18, 20, True),
+        (5, 19, 20, True),
+        (5, 15, 20, False),
+        (21, 21, 20, False),
+        (5, 20, 21, False),
     ],
 )
 def test_schema_bridge_is_explicit_and_bounded(tmp_path, minimum, maximum, supported, accepted):
@@ -100,12 +112,13 @@ def test_schema_bridge_is_explicit_and_bounded(tmp_path, minimum, maximum, suppo
         assert error.value.code == PLACE_DATASET_INVALID
 
 
-def test_schema_bridge_still_rejects_corrupt_files(tmp_path):
+@pytest.mark.parametrize("supported", [17, 20])
+def test_schema_bridge_still_rejects_corrupt_files(tmp_path, supported):
     package = tmp_path / "package"
     build_package(package, compatible=(5, 16))
     places = package / "places.jsonl"
     places.write_bytes(places.read_bytes() + b"\n")
     with pytest.raises(CatalogError) as error:
-        dataset.load_content(package, supported_schema_version=17)
+        dataset.load_content(package, supported_schema_version=supported)
     assert error.value.code == PLACE_DATASET_INVALID
     assert "schema" not in error.value.message

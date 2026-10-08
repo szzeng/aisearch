@@ -10,6 +10,8 @@
   var backfillStatus = document.getElementById("album-backfill-status");
   var current = null;
   var cursor = null;
+  var albumRequest = 0;
+  var photoVersion = 0;
   function el(tag, cls, value) {
     var node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -22,10 +24,15 @@
     });
   }
   function loadAlbums() {
+    var request = ++albumRequest;
+    if (current && current.kind !== kind.value) {
+      current = null; photoVersion++; photos.hidden = true; photos.replaceChildren(); more.hidden = true;
+    }
     cards.replaceChildren(el("p", "hint", "正在整理地点相册…"));
     var params = new URLSearchParams({ kind: kind.value });
     if (name.value.trim()) params.set("name", name.value.trim());
     get("/places/albums?" + params.toString()).then(function (body) {
+      if (request !== albumRequest) return;
       cards.replaceChildren();
       if (!body.albums.length) { cards.appendChild(el("p", "hint", kind.value === "province" ? "暂无省份索引或暂无照片。旧地名包仍可浏览城市和国家。" : "当前没有可浏览的地点照片。")); return; }
       body.albums.forEach(function (album) {
@@ -34,22 +41,24 @@
         button.appendChild(image);
         var title = el("strong", "album-title", album.name); button.appendChild(title);
         button.appendChild(el("span", "album-parent", album.parent || ""));
-        if (album.origin === "GPS_NEARBY_CITY" || album.origin === "MIXED") button.appendChild(el("span", "album-origin", album.origin === "MIXED" ? "含GPS附近城市与人工归类" : "GPS附近城市"));
+        if (album.origin === "GPS_NEARBY_CITY" || album.origin === "MIXED" || album.origin === "GPS_ADMIN") button.appendChild(el("span", "album-origin", album.origin === "MIXED" ? "含机器地点与人工归类" : album.origin === "GPS_ADMIN" ? "GPS行政区 · 机器解析" : "GPS附近城市"));
         button.appendChild(el("span", "album-total", album.total + " 张照片"));
         button.addEventListener("click", function () { openAlbum(album); }); cards.appendChild(button);
       });
-    }).catch(function (error) { cards.replaceChildren(el("p", "error", error.message)); });
+    }).catch(function (error) { if (request === albumRequest) cards.replaceChildren(el("p", "error", error.message)); });
   }
   function openAlbum(album) {
-    current = album; cursor = null; photos.replaceChildren(); photos.hidden = false; more.hidden = true;
+    photoVersion++; current = album; cursor = null; photos.replaceChildren(); photos.hidden = false; more.hidden = true;
     photos.appendChild(el("h3", null, album.name + " · " + album.total + " 张"));
     loadPhotos();
     photos.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   function loadPhotos() {
     if (!current) return;
+    var version = photoVersion;
     var query = new URLSearchParams({ limit: "48" }); if (cursor) query.set("cursor", cursor);
     get("/places/albums/" + encodeURIComponent(current.kind) + "/" + encodeURIComponent(current.key) + "/assets?" + query.toString()).then(function (body) {
+      if (version !== photoVersion) return;
       body.assets.forEach(function (asset) {
         var card = el("article", "album-photo");
         var image = el("img"); image.loading = "lazy"; image.alt = "照片预览"; image.src = api + "/assets/" + encodeURIComponent(asset.asset_id) + "/thumbnail";
@@ -62,7 +71,7 @@
         photos.appendChild(card);
       });
       cursor = body.next_cursor; more.hidden = !cursor;
-    }).catch(function (error) { photos.appendChild(el("p", "error", error.message)); });
+    }).catch(function (error) { if (version === photoVersion) photos.appendChild(el("p", "error", error.message)); });
   }
   function showPreview(assetId) {
     var dialog = document.createElement("dialog"); dialog.className = "album-preview";
@@ -108,6 +117,37 @@
     }).then(reloadCurrentAlbum).catch(function (e) { window.alert(e.message); });
   }
   kind.addEventListener("change", loadAlbums);
+  var cnUpdate = document.getElementById("cn-update");
+  var cnPause = document.getElementById("cn-pause");
+  var cnStatus = document.getElementById("cn-update-status");
+  var cnCapability = null;
+  var cnStop = false;
+  if (cnUpdate && cnPause && cnStatus) {
+    get("/places/admin/capabilities").then(function (body) {
+      cnCapability = body; cnUpdate.hidden = !body.available;
+      if (body.available && body.update && !body.update.complete) cnStatus.textContent = "中国地点更新尚未完成，点击继续；已完成的结果会复用。";
+    }).catch(function () {});
+    cnPause.addEventListener("click", function () { cnStop = true; cnPause.disabled = true; cnStatus.textContent = "正在完成当前批次，然后暂停…"; });
+    cnUpdate.addEventListener("click", function () {
+      if (!cnCapability || !cnCapability.available || cnUpdate.disabled) return;
+      cnStop = false; cnUpdate.disabled = true; cnPause.hidden = false; cnPause.disabled = false;
+      cnStatus.textContent = "正在更新中国地点，仅使用已有GPS…";
+      var restart = Boolean(cnCapability.update && cnCapability.update.complete);
+      function batch() {
+        var query = new URLSearchParams({ dataset_id: cnCapability.dataset_id, restart: String(restart) }); restart = false;
+        return fetch(api + "/places/admin/update?" + query, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrf(), Accept: "application/json" } }).then(function (r) {
+          return r.json().then(function (b) { if (!r.ok) throw new Error(b.message || b.code || "更新失败"); return b; });
+        }).then(function (body) {
+          cnCapability.update = body;
+          cnStatus.textContent = "已查看 " + body.total_scanned + " 张有效GPS照片，新解析 " + body.total_processed + " 张" + (body.complete ? "；更新完成。" : cnStop ? "；已暂停，可继续。" : "；更新中…");
+          if (!body.complete && !cnStop) return new Promise(function (resolve) { window.setTimeout(resolve, 25); }).then(batch);
+        });
+      }
+      batch().catch(function (error) { cnStatus.textContent = error.message + "；进度已保存，可继续。"; }).finally(function () {
+        cnUpdate.disabled = false; cnPause.hidden = true; loadAlbums();
+      });
+    });
+  }
   var timer = null; name.addEventListener("input", function () { window.clearTimeout(timer); timer = window.setTimeout(loadAlbums, 220); });
   more.addEventListener("click", loadPhotos);
   loadAlbums();

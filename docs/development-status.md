@@ -1,10 +1,14 @@
 # Development status
 
-更新：2026-10-04。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+更新：2026-10-08。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前任务：P4-PLACE-MAP-A — 个人地图相册（**简审 5 项修复与桩复验通过 / DS-H 待审**）
+## 当前地点任务：P4-PLACE-CN — 中国省／市／区县（**IMPLEMENTED / 定向与合成浏览器通过 / 独立审查待做**）
 
-[执行卡](tasks/P4-PLACE-MAP-A.md)；[实现报告](reports/P4-PLACE-MAP-A.md)；[简审与反例](reports/P4-PLACE-MAP-A-review.md)。5 项修复在独立短审范围内关闭：资源已解除忽略、同坐标成员入口、版本/分页竞态、缺组件列表回退、详情聚焦早到/晚到。实际 JS 合成桩回归 JUnit **6/0/0/0**，Node 语法与 scoped diff-check 通过；本轮未改功能代码、访问真实图库、重跑 30 万计时或真实浏览器。CN 未实施；独立 DS-H 全受影响面审查仍待做，不标整卡 PASS。
+[执行卡](tasks/P4-PLACE-CN.md)、[证据](reports/P4-PLACE-CN.md)、[ADR-0016](decisions/ADR-0016-cn-admin-boundaries.md)、[独立DS-H审查卡](tasks/P4-PLACE-CN-review.md)。PBF/MD5匹配，真实四区通过；约76.8MB复合包保留45,217条GeoNames＋3,013行政区。schema18独立facet、SQL成员/keyset、区县搜索、有界GPS更新/暂停继续/竞争拒绝，schema19/20仅兼容并行人物增量。最终JUnit **75/0/0/0**；真实包＋30万 **2/0/0/0**、最终30万复测 **1/0/0/0**，计数0.66–1.54秒/两页0.57–0.74秒，100张实际几何批次0.0252秒（不含冷加载）。107张合成浏览器闭环、Ruff/Node/scoped diff-check通过。未访问真实库/catalog，候选包未安装；不是全国完整覆盖/30万真实解析。最新[兼容修复与个人测试步骤](reports/P4-PLACE-CN-schema20.md)：人物增量0020导致旧桥失效，已明确支持schema20，定向JUnit **51/0/0/0**与两份公开包完整字节校验通过；用户需重启源码服务，新CN候选仍未导入。提交范围快照schema18定向JUnit **82/0/0/0**；人物schema19/20保留工作区。下一步独立DS-H全受影响面→Sol high聚焦，用户手动切换。
+
+## P4-PLACE-MAP-A — 个人地图相册（**简审 5 项修复与桩复验通过 / DS-H 待审**）
+
+[执行卡](tasks/P4-PLACE-MAP-A.md)；[实现报告](reports/P4-PLACE-MAP-A.md)；[简审与反例](reports/P4-PLACE-MAP-A-review.md)。5 项修复在独立短审范围内关闭：资源已解除忽略、同坐标成员入口、版本/分页竞态、缺组件列表回退、详情聚焦早到/晚到。实际 JS 合成桩回归 JUnit **6/0/0/0**，Node 语法与 scoped diff-check 通过；本轮未改功能代码、访问真实图库、重跑 30 万计时或真实浏览器。CN 已实现待审，见上节；独立 DS-H 全受影响面审查仍待做，不标整卡 PASS。
 
 补充：[旧包兼容修复](reports/P4-PLACE-MAP-A-schema-compat.md)已明确允许 schema 17 使用 maximum=16 的有效包，JUnit **64/0/0/0**、Ruff/diff-check 通过；现存 GeoNames 45,217 条只读完整校验通过且包未改，无需重新下载。退出重启应用加载修复；实际重启验收与 DS-H 待做。
 
