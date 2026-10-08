@@ -921,7 +921,10 @@
     }
     var requested = mode === "build" ? "build" : "refresh";
     setStatus(els.refreshStatus, "正在请求" + REFRESH_MODE_TEXT[requested] + "…");
-    var body = { mode: requested };
+    var body = {
+      mode: requested,
+    };
+    if (els.faceProfile && els.faceProfile.value) body.face_profile = els.faceProfile.value;
     if (sourceIds) {
       body.source_ids = sourceIds;
     }
@@ -1966,6 +1969,7 @@
       sourcesList: document.getElementById("sources-list"),
       sourcesStatus: document.getElementById("sources-status"),
       refreshLibrary: document.getElementById("refresh-library"),
+      faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
       sourceFormError: document.getElementById("source-form-error"),

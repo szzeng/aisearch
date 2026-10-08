@@ -229,6 +229,39 @@ def warp_aligned(image: Any, landmarks: Sequence[Sequence[float]]) -> Any:
     return np.asarray(warped, dtype=np.uint8)
 
 
+def warp_aligned_source_crop(
+    image: Any,
+    *,
+    bbox: Sequence[float],
+    landmarks: Sequence[Sequence[float]],
+    context: float = 2.0,
+) -> Any:
+    """Align one face from a local crop of the full, upright source raster.
+
+    Detection geometry is mapped to source coordinates before this call. The crop includes
+    surrounding context so the ArcFace similarity transform can sample the complete face,
+    while only this small RGB region is converted to NumPy for each face.
+    """
+    import numpy as np
+
+    width, height = int(image.size[0]), int(image.size[1])
+    left, top, right, bottom = (float(value) for value in bbox)
+    face_width, face_height = max(1.0, right - left), max(1.0, bottom - top)
+    crop_width = min(float(width), face_width * max(1.0, float(context)))
+    crop_height = min(float(height), face_height * max(1.0, float(context)))
+    center_x, center_y = (left + right) / 2.0, (top + bottom) / 2.0
+    x0 = max(0, min(width - 1, int(np.floor(center_x - crop_width / 2.0))))
+    y0 = max(0, min(height - 1, int(np.floor(center_y - crop_height / 2.0))))
+    x1 = max(x0 + 1, min(width, int(np.ceil(center_x + crop_width / 2.0))))
+    y1 = max(y0 + 1, min(height, int(np.ceil(center_y + crop_height / 2.0))))
+    local = image.crop((x0, y0, x1, y1)).convert("RGB")
+    local_landmarks = tuple((float(x) - x0, float(y) - y0) for x, y in landmarks)
+    try:
+        return warp_aligned(local, local_landmarks)
+    finally:
+        local.close()
+
+
 def laplacian_variance(aligned: Any) -> float:
     """Variance of the Laplacian of the aligned crop - the sharpness measure of one face."""
     import numpy as np
@@ -384,6 +417,7 @@ def analyze_image(
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
+    preserve_source_detail: bool = False,
 ) -> FaceDocument:
     """Detect, align, embed and score every face of one already-decoded image."""
     now = clock or time.monotonic
@@ -425,28 +459,40 @@ def analyze_image(
             "the image contains more faces than one artifact may carry",
             details={"faces": len(detected), "max_faces": contract.MAX_FACES},
         )
-    raster = working
+    raster = image if preserve_source_detail else working
     records: list[FaceRecord] = []
     for face in detected:
         check()
-        aligned = warp_aligned(raster, face.landmarks)
+        if preserve_source_detail:
+            source_box = tuple(
+                _round(value * (source_scale_x if index % 2 == 0 else source_scale_y))
+                for index, value in enumerate(face.bbox)
+            )
+            source_landmarks = tuple(
+                (_round(x * source_scale_x), _round(y * source_scale_y))
+                for x, y in face.landmarks
+            )
+            aligned = warp_aligned_source_crop(
+                raster, bbox=source_box, landmarks=source_landmarks
+            )
+            pixels = min(source_box[2] - source_box[0], source_box[3] - source_box[1])
+        else:
+            aligned = warp_aligned(raster, face.landmarks)
+            pixels = min(face.bbox[2] - face.bbox[0], face.bbox[3] - face.bbox[1])
         vector = engine.recognize(aligned)
         blur = laplacian_variance(aligned)
-        # The geometry is stored in the *source* (orientation-normalised) frame, while the
-        # quality measures describe the pixels the recogniser really saw: the working raster
-        # is bounded by ``WORKING_LONG_EDGE``, so a 6000-pixel photo cannot pretend that a
-        # face was recognised at its original resolution.
-        pixels = min(
-            face.bbox[2] - face.bbox[0],
-            face.bbox[3] - face.bbox[1],
-        )
-        source_box = tuple(
-            _round(value * (source_scale_x if index % 2 == 0 else source_scale_y))
-            for index, value in enumerate(face.bbox)
-        )
-        source_landmarks = tuple(
-            (_round(x * source_scale_x), _round(y * source_scale_y)) for x, y in face.landmarks
-        )
+        # Geometry is stored in the orientation-normalised source frame. The quality size
+        # describes the actual recognition input: source pixels for the opt-in path and
+        # working-raster pixels for the normal path.
+        if not preserve_source_detail:
+            source_box = tuple(
+                _round(value * (source_scale_x if index % 2 == 0 else source_scale_y))
+                for index, value in enumerate(face.bbox)
+            )
+            source_landmarks = tuple(
+                (_round(x * source_scale_x), _round(y * source_scale_y))
+                for x, y in face.landmarks
+            )
         state, reason = quality_for(
             det_score=face.det_score, face_pixels=pixels, blur_variance=blur
         )
@@ -469,7 +515,7 @@ def analyze_image(
     return FaceDocument(
         original_size=original_size,
         working_size=(int(raster.size[0]), int(raster.size[1])),
-        scale=1.0 / float(inverse_scale),
+        scale=1.0 if preserve_source_detail else 1.0 / float(inverse_scale),
         faces=tuple(records),
         elapsed_ms=int(round((now() - started) * 1000.0)),
     )

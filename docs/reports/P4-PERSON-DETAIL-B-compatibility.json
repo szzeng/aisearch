@@ -1,0 +1,205 @@
+{
+  "status": "PASS",
+  "scope": "Two public package fixture identities; resized and brightness variants. No real-library accuracy claim.",
+  "sources": [
+    "scikit-image astronaut",
+    "insightface package t1.jpg"
+  ],
+  "model_fingerprint": "62b5343df26ed097211c936a328de882090d0a1af5dde937c05e2aa3d7b1e74d",
+  "space_id": "insightface-buffalo-l:4c06341c33c2",
+  "old_spec": "face-buffalo-l-scrfd-arcface-v2",
+  "new_spec": "face-buffalo-l-scrfd-arcface-source-crop-v1",
+  "old_config_hash": "955550ce5eaf3bb1d6e6ce1cb212011ee3994f7cbc96553a55191d1b6f29347b",
+  "new_config_hash": "49ac9be9fd62d25b3f6d652edea14a7368bb8ab4eaeb93ee90a308dee648b004",
+  "provider": "CPUExecutionProvider",
+  "device": "cpu",
+  "merge_threshold": 0.5,
+  "suggest_threshold": 0.29,
+  "cases": [
+    {
+      "fixture": "astronaut",
+      "profile": "lightweight",
+      "face_count": 1,
+      "original_size": [
+        2048,
+        2048
+      ],
+      "working_size": [
+        1280,
+        1280
+      ],
+      "dimension": 512,
+      "norm": 1.0000000494596888,
+      "quality": "OK",
+      "scale": 0.625,
+      "elapsed_ms": 502,
+      "analyze_ms": 453,
+      "decode_included": true
+    },
+    {
+      "fixture": "astronaut",
+      "profile": "source_detail",
+      "face_count": 1,
+      "original_size": [
+        4096,
+        4096
+      ],
+      "working_size": [
+        4096,
+        4096
+      ],
+      "dimension": 512,
+      "norm": 1.000000009423525,
+      "quality": "OK",
+      "scale": 1.0,
+      "elapsed_ms": 1454,
+      "analyze_ms": 1203,
+      "decode_included": true
+    },
+    {
+      "fixture": "astronaut-bright",
+      "profile": "lightweight",
+      "face_count": 1,
+      "original_size": [
+        1536,
+        1536
+      ],
+      "working_size": [
+        1280,
+        1280
+      ],
+      "dimension": 512,
+      "norm": 0.9999999865901199,
+      "quality": "OK",
+      "scale": 0.8333333333333334,
+      "elapsed_ms": 1048,
+      "analyze_ms": 953,
+      "decode_included": true
+    },
+    {
+      "fixture": "astronaut-bright",
+      "profile": "source_detail",
+      "face_count": 1,
+      "original_size": [
+        3072,
+        3072
+      ],
+      "working_size": [
+        3072,
+        3072
+      ],
+      "dimension": 512,
+      "norm": 1.0000000363023844,
+      "quality": "OK",
+      "scale": 1.0,
+      "elapsed_ms": 1113,
+      "analyze_ms": 906,
+      "decode_included": true
+    },
+    {
+      "fixture": "group-person",
+      "profile": "lightweight",
+      "face_count": 6,
+      "original_size": [
+        2048,
+        1418
+      ],
+      "working_size": [
+        1280,
+        886
+      ],
+      "dimension": 512,
+      "norm": 0.999999985344215,
+      "quality": "OK",
+      "scale": 0.625,
+      "elapsed_ms": 1832,
+      "analyze_ms": 1796,
+      "decode_included": true
+    },
+    {
+      "fixture": "group-person",
+      "profile": "source_detail",
+      "face_count": 6,
+      "original_size": [
+        2048,
+        1418
+      ],
+      "working_size": [
+        2048,
+        1418
+      ],
+      "dimension": 512,
+      "norm": 0.9999999760073947,
+      "quality": "OK",
+      "scale": 1.0,
+      "elapsed_ms": 1832,
+      "analyze_ms": 1797,
+      "decode_included": true
+    }
+  ],
+  "pairs": [
+    {
+      "old": "astronaut",
+      "new": "astronaut",
+      "same_person": true,
+      "similarity": 0.999458,
+      "passed": true
+    },
+    {
+      "old": "astronaut",
+      "new": "astronaut-bright",
+      "same_person": true,
+      "similarity": 0.995024,
+      "passed": true
+    },
+    {
+      "old": "astronaut",
+      "new": "group-person",
+      "same_person": false,
+      "similarity": 0.01219,
+      "passed": true
+    },
+    {
+      "old": "astronaut-bright",
+      "new": "astronaut",
+      "same_person": true,
+      "similarity": 0.994685,
+      "passed": true
+    },
+    {
+      "old": "astronaut-bright",
+      "new": "astronaut-bright",
+      "same_person": true,
+      "similarity": 0.999414,
+      "passed": true
+    },
+    {
+      "old": "astronaut-bright",
+      "new": "group-person",
+      "same_person": false,
+      "similarity": 0.012083,
+      "passed": true
+    },
+    {
+      "old": "group-person",
+      "new": "astronaut",
+      "same_person": false,
+      "similarity": 0.005534,
+      "passed": true
+    },
+    {
+      "old": "group-person",
+      "new": "astronaut-bright",
+      "same_person": false,
+      "similarity": 0.00992,
+      "passed": true
+    },
+    {
+      "old": "group-person",
+      "new": "group-person",
+      "same_person": true,
+      "similarity": 0.998696,
+      "passed": true
+    }
+  ]
+}

@@ -419,6 +419,7 @@ class LibraryRefreshRequest(BaseModel):
 
     source_ids: list[int] | None = Field(default=None, max_length=64)
     mode: Literal["refresh", "build"] = "refresh"
+    face_profile: Literal["source_detail", "lightweight"] | None = None
 
 
 class LibraryRefreshStatus(BaseModel):
@@ -440,6 +441,7 @@ class LibraryRefreshStatus(BaseModel):
     #: ``refresh`` (daily incremental) or ``build`` (P4-02Y-I first build); ``null`` while the
     #: process has not started any refresh yet.
     mode: str | None = None
+    face_profile: Literal["source_detail", "lightweight"] | None = None
     search_ready: bool = False
     search_ready_basis: str | None = None
     source_ids: list[int] | None = None
@@ -1076,6 +1078,14 @@ class FaceRematchRequest(BaseModel):
 
     limit: StrictInt = Field(default=20, ge=1, le=50)
     after_asset_id: StrictInt = Field(default=0, ge=0)
+
+
+class FaceDetailBatchRequest(BaseModel):
+    """Start or reuse one durable source-detail batch over eligible detected faces."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: StrictInt | None = Field(default=None, ge=1)
 
 
 class FaceCorrectionRequest(BaseModel):

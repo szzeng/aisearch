@@ -6,7 +6,10 @@
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, edit: null, chosen: null,
-    operation: null, undoTimer: null, messageTimer: null, writing: false, coverMode: false, searching: false, searchBody: null, deepLinked: false, linkSeq: 0, busy: new Set() };
+    detailBusyAssets: new Set(),
+    operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
+    detailBatch: null, writing: false, coverMode: false, searching: false, searchBody: null,
+    deepLinked: false, linkSeq: 0, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -190,6 +193,93 @@
     } catch (error) { message("补匹配没有完成：" + errorText(error)); }
     finally { state.writing = false; state.busy.delete("rematch"); $("rematch").disabled = false; }
   }
+  function detailBatchNote(batch) {
+    if (!batch || batch.state === "IDLE") return "一键处理当前全部图库中机器待归类、有人物建议或原图像素更充分的小脸照片；合照按照片去重。没有检测到脸的照片不在此批次内。";
+    const labels = { QUEUED: "排队中", RUNNING: "正在处理", PAUSED: "已暂停", COMPLETE: "已完成", PARTIAL_FAILED: "已完成（有失败可重试）" };
+    return (labels[batch.state] || batch.state) + " · 照片 " + batch.processed + "/" + batch.total
+      + " · 成功 " + batch.succeeded + " · 跳过 " + batch.skipped + " · 失败 " + batch.failed
+      + " · 待确认人脸 " + batch.needs_review;
+  }
+  function updateDetailBatchControls(batch) {
+    const previous = state.detailBatch;
+    state.detailBatch = batch && batch.batch_id ? batch : null;
+    $("detail-batch-note").textContent = detailBatchNote(batch);
+    const stateName = batch && batch.state;
+    const active = stateName === "QUEUED" || stateName === "RUNNING";
+    const paused = stateName === "PAUSED";
+    $("detail-batch").disabled = active || paused;
+    if (previous && ["QUEUED", "RUNNING"].includes(previous.state)
+        && ["COMPLETE", "PARTIAL_FAILED"].includes(stateName)) {
+      loadPeople(false); if (state.organize) loadInbox(false);
+    }
+    $("detail-pause").hidden = !active;
+    $("detail-resume").hidden = stateName !== "PAUSED";
+    $("detail-retry").hidden = !(stateName === "PARTIAL_FAILED" && Number(batch.failed) > 0);
+    if (active) scheduleDetailBatchPoll();
+    else if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
+  }
+  function scheduleDetailBatchPoll() {
+    if (state.detailBatchTimer) return;
+    state.detailBatchTimer = setTimeout(async () => {
+      state.detailBatchTimer = null;
+      const seq = state.detailBatchSeq;
+      try {
+        const result = await api(detailBatchURL());
+        if (seq === state.detailBatchSeq) updateDetailBatchControls(result);
+      } catch (error) {
+        if (seq === state.detailBatchSeq) {
+          $("detail-batch-note").textContent = "队列状态暂时无法读取；任务仍保存在本机，正在重试。";
+          scheduleDetailBatchPoll();
+        }
+      }
+    }, 1800);
+  }
+  async function loadDetailBatch() {
+    const seq = ++state.detailBatchSeq;
+    try {
+      const batch = await api(detailBatchURL());
+      if (seq === state.detailBatchSeq) {
+        updateDetailBatchControls(batch);
+        if (!batch.batch_id || ["COMPLETE", "PARTIAL_FAILED"].includes(batch.state)) {
+          const count = await api("/faces/source-detail-preview" + detailScopeQuery());
+          if (seq === state.detailBatchSeq) $("detail-batch").textContent = "一键原图补识别（" + count.total + " 张）";
+        }
+      }
+    } catch (error) { if (seq === state.detailBatchSeq) $("detail-batch-note").textContent = "队列状态暂时无法读取。"; }
+  }
+  async function startDetailBatch() {
+    const seq = ++state.detailBatchSeq;
+    $("detail-batch").disabled = true;
+    try {
+      const source = $("detail-source").value;
+      const result = await api("/faces/source-detail-batches", {source_id: source ? Number(source) : null});
+      if (seq === state.detailBatchSeq) updateDetailBatchControls(result);
+      if (state.detailBatch) scheduleDetailBatchPoll();
+    } catch (error) { $("detail-batch").disabled = false; message("原图补识别没有启动：" + errorText(error)); }
+  }
+  async function changeDetailBatch(action) {
+    if (!state.detailBatch || !state.detailBatch.batch_id) return;
+    const id = encodeURIComponent(state.detailBatch.batch_id);
+    const seq = ++state.detailBatchSeq;
+    try {
+      const result = await api("/faces/source-detail-batches/" + id + "/" + action, {});
+      if (seq === state.detailBatchSeq) updateDetailBatchControls(result);
+    } catch (error) { message("队列操作没有完成：" + errorText(error)); }
+  }
+  function detailScopeQuery() {
+    const source = $("detail-source").value;
+    return source ? "?source_id=" + encodeURIComponent(source) : "";
+  }
+  function detailBatchURL() { return "/faces/source-detail-batches/active" + detailScopeQuery(); }
+  async function loadDetailSources() {
+    try {
+      const response = await api("/sources");
+      for (const source of response.sources || []) {
+        const option = node("option", source.display_name || "图库 " + source.source_id);
+        option.value = String(source.source_id); $("detail-source").append(option);
+      }
+    } catch (error) { /* The all-library scope remains available. */ }
+  }
   function setView(organize) {
     state.organize = organize; $("people").setAttribute("aria-pressed", String(!organize));
     $("organize").setAttribute("aria-pressed", String(organize)); $("inbox").hidden = !organize;
@@ -304,6 +394,8 @@
           card.classList.add("pa-selected-person"); card.append(node("strong", "本相册的人"));
         }
         card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : face.assigned_person_id ? "当前：未命名的人" : "还没确定是谁"));
+        if (face.source_detail) card.append(node("span", "原图细节结果 · "
+          + (face.assigned_person_id ? "已归入人物" : face.automatic_detail ? "待可靠匹配" : "待人工确认"), "hint"));
         if (state.person && face.assigned_person_id === selectedId) {
           const cover = button("设为封面", () => saveCover(face.face_id, cover));
           card.append(cover);
@@ -311,9 +403,63 @@
         if (!state.coverMode) card.append(button("更正这张脸", () => { $("preview").close(); editFace(face); }));
         $("preview-faces").append(card);
       });
-      $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
+      const hasDetail = page.faces.some((face) => face.source_detail);
+      $("face-detail").hidden = state.coverMode || hasDetail;
+      $("face-detail").disabled = state.detailBusyAssets.has(Number(id));
+      $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
       $("review").hidden = page.faces.length !== 0;
     } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+  }
+  async function sourceDetail() {
+    const assetId = state.previewAssetId;
+    const previewSeq = state.previewSeq;
+    if (!assetId || state.detailBusyAssets.has(Number(assetId)) || !$("preview").open) return;
+    state.detailBusyAssets.add(Number(assetId));
+    const control = $("face-detail"); control.disabled = true;
+    control.textContent = "已排队，等待原图处理……";
+    $("preview-note").textContent = "正在排队处理这张照片。原图细节结果会单独显示，需你手动指定人物。";
+    const stillCurrent = () => previewSeq === state.previewSeq && assetId === state.previewAssetId && $("preview").open;
+    try {
+      const queued = await api("/assets/" + assetId + "/face-detail", {}, "POST");
+      if (queued.already_available) {
+        control.hidden = true;
+        $("preview-note").textContent = "这张照片已有原图细节识别结果；结果仅用于人工检查与指定人物。";
+        if (queued.job_id && stillCurrent()) await preview(assetId);
+        return;
+      }
+      const deadline = Date.now() + 180000;
+      while (stillCurrent() && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!stillCurrent()) return;
+        const job = await api("/jobs/" + encodeURIComponent(queued.job_id));
+        if (job.state === "SUCCEEDED") {
+          control.hidden = true;
+          $("preview-note").textContent = "原图细节识别完成。新结果需你手动指定人物，不会自动归组。";
+          await preview(assetId);
+          return;
+        }
+        if (["FAILED", "BLOCKED", "CANCELLED"].includes(job.state)) {
+          control.disabled = false; control.textContent = "重试原图细节识别";
+          $("preview-note").textContent = "原图细节识别没有完成（" + job.state + "），可重试；已有结果和人物归属未改动。";
+          return;
+        }
+        $("preview-note").textContent = job.state === "RUNNING"
+          ? "正在用原图细节处理这张照片……请稍候。"
+          : "这张照片已排队等待原图细节处理……";
+      }
+      if (stillCurrent()) {
+        control.disabled = false; control.textContent = "查看原图细节任务";
+        $("preview-note").textContent = "任务仍在队列中；关闭照片不会取消它，稍后可重新查看状态。";
+      }
+    } catch (error) {
+      if (stillCurrent()) {
+        control.disabled = false; control.textContent = "重试原图细节识别";
+        $("preview-note").textContent = "原图细节识别没有排入队列：" + errorText(error);
+      }
+    } finally {
+      state.detailBusyAssets.delete(Number(assetId));
+      if (!control.hidden && state.previewAssetId === assetId) control.disabled = false;
+    }
   }
   async function saveCover(faceId, control) {
     if (!state.person || state.writing) return;
@@ -449,6 +595,12 @@
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
     $("inbox-kind").addEventListener("change", () => loadInbox(false));
     $("rematch").addEventListener("click", rematchFaces);
+    $("detail-batch").addEventListener("click", startDetailBatch);
+    $("detail-source").addEventListener("change", loadDetailBatch);
+    loadDetailSources();
+    $("detail-pause").addEventListener("click", () => changeDetailBatch("pause"));
+    $("detail-resume").addEventListener("click", () => changeDetailBatch("resume"));
+    $("detail-retry").addEventListener("click", () => changeDetailBatch("retry"));
     $("back").addEventListener("click", () => {
       state.person = null; state.photoSeq++; state.busy.delete("photos");
       $("library").hidden = false; $("album").hidden = true; $("people").focus();
@@ -468,6 +620,7 @@
     });
     $("all-photos").addEventListener("click", () => { state.searching = false; $("photo-query").value = ""; loadPhotos(false); });
     $("preview-close").addEventListener("click", () => $("preview").close());
+    $("face-detail").addEventListener("click", sourceDetail);
     $("preview-prev").addEventListener("click", () => movePreview(-1));
     $("preview-next").addEventListener("click", () => movePreview(1));
     $("review").addEventListener("click", () => { $("preview").close(); const advanced = document.getElementById("advanced-tools"); advanced.open = true; advanced.querySelector("summary").focus(); });
@@ -486,6 +639,7 @@
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
     else loadPeople(false);
+    loadDetailBatch();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

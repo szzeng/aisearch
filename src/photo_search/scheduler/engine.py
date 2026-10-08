@@ -65,8 +65,10 @@ class Scheduler:
         retry_multiplier: int = state.DEFAULT_RETRY_MULTIPLIER,
         retry_max_ms: int = state.DEFAULT_RETRY_MAX_MS,
         artifact_store: ArtifactStore | None = None,
+        job_ids: Sequence[int] | None = None,
     ) -> None:
         self.catalog = catalog
+        self.job_ids = None if job_ids is None else tuple(int(value) for value in job_ids)
         self._specs: dict[str, ProcessorSpec] = {}
         for spec in specs:
             self._specs[spec.processor_id] = spec
@@ -155,6 +157,8 @@ class Scheduler:
                 processor_ids=processor_ids,
                 aging_window_ms=policy.aging_window_ms,
                 limit=limit,
+                task_types=[spec.task_type for spec in self.specs],
+                job_ids=self.job_ids,
             )
             if not candidates:
                 return None

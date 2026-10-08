@@ -255,6 +255,43 @@ def match_state_for(
     return MATCH_WEAK
 
 
+def _detail_comparison_face(connection: sqlite3.Connection, old: Any, new: Any) -> Any:
+    """Normalize verified historical draft geometry only for a source-detail pair."""
+    from photo_search.face.contract import FACE_DETAIL_SPEC_REVISION
+    if str(new["spec_revision"]) != FACE_DETAIL_SPEC_REVISION:
+        return old
+    frames = [connection.execute(
+        "SELECT width,height FROM face_detail_coordinate_frames WHERE artifact_id=? AND input_revision=?",
+        (face["artifact_id"], face["input_revision"]),
+    ).fetchone() for face in (old, new)]
+    if any(frame is None for frame in frames):
+        return None if str(old["artifact_id"]).startswith("face-document:") else old
+    sx, sy = frames[1][0] / frames[0][0], frames[1][1] / frames[0][1]
+    translated = dict(old)
+    translated["bbox_json"] = json.dumps([value * (sx if i % 2 == 0 else sy)
+                                          for i, value in enumerate(_bbox_of(old))])
+    translated["landmarks_json"] = json.dumps([[x * sx, y * sy] for x, y in _landmarks_of(old)])
+    return translated
+
+
+def unverified_detail_hold_face_ids(connection: sqlite3.Connection, *, asset_id: int) -> set[str]:
+    from photo_search.face.contract import FACE_DETAIL_SPEC_REVISION
+    knowledge = human_knowledge_face_ids(connection, asset_id=asset_id)
+    old_rows = connection.execute(
+        "SELECT * FROM faces WHERE asset_id=? AND spec_revision<>?",
+        (asset_id, FACE_DETAIL_SPEC_REVISION),
+    ).fetchall()
+    if any(str(old["face_id"]) in knowledge and str(old["artifact_id"]).startswith("face-document:")
+           and connection.execute("SELECT 1 FROM face_detail_coordinate_frames WHERE artifact_id=? "
+                                  "AND input_revision=?", (old["artifact_id"], old["input_revision"])).fetchone() is None
+           for old in old_rows):
+        return {str(row[0]) for row in connection.execute(
+            "SELECT face_id FROM faces WHERE asset_id=? AND spec_revision=?",
+            (asset_id, FACE_DETAIL_SPEC_REVISION),
+        )}
+    return set()
+
+
 def candidate_state_for(match_states: Sequence[str]) -> str:
     """The frozen four-state derivation of ADR-0010 §3.3."""
     count = len(match_states)
@@ -380,6 +417,7 @@ def generate_candidates_for_asset(
     asset_id: int,
     new_face_ids: Sequence[str],
     now_ms: int,
+    new_spec_revision: str | None = None,
 ) -> None:
     """Refresh the mapping evidence of one asset inside the face-write transaction.
 
@@ -387,9 +425,19 @@ def generate_candidates_for_asset(
     surviving human-owned old row is a candidate, invalidation is decided before the hold is
     computed elsewhere, and a pair keeps exactly one row.
     """
-    from photo_search.face.contract import FACE_SPEC_REVISION
-
-    spec_revision = str(FACE_SPEC_REVISION)
+    if new_spec_revision is None:
+        ids = sorted({str(value) for value in new_face_ids})
+        if ids:
+            row = connection.execute(
+                "SELECT DISTINCT spec_revision FROM faces WHERE face_id IN ("
+                + ", ".join("?" for _ in ids)
+                + ") LIMIT 1",
+                tuple(ids),
+            ).fetchone()
+            new_spec_revision = None if row is None else str(row[0])
+        if new_spec_revision is None:
+            new_spec_revision = _current_spec_revision()
+    spec_revision = str(new_spec_revision)
     new_ids = sorted({str(value) for value in new_face_ids})
     if new_ids:
         placeholders = ", ".join("?" for _ in new_ids)
@@ -432,7 +480,8 @@ def generate_candidates_for_asset(
             if old_face_id == new_face_id:
                 # ADR-0010 §2.1: a self-mapping is never generated.
                 continue
-            match_state = match_state_for(old_face=old_row, new_face=new_row)
+            comparison = _detail_comparison_face(connection, old_row, new_row)
+            match_state = None if comparison is None else match_state_for(old_face=comparison, new_face=new_row)
             if match_state is None:
                 continue
             qualified[old_face_id].add(new_face_id)
@@ -651,17 +700,23 @@ def _refresh_after_retirement(
         _recompute_group(connection, old_face_id=str(row["old_face_id"]), now_ms=int(now_ms))
 
 
-def hold_face_ids(connection: sqlite3.Connection, *, asset_id: int) -> set[str]:
+def hold_face_ids(
+    connection: sqlite3.Connection, *, asset_id: int, spec_revision: str | None = None
+) -> set[str]:
     """ADR-0010 §3.4: the new faces an ``OPEN`` review forbids the automatic path to write."""
     rows = connection.execute(
         "SELECT m.new_face_id AS new_face_id FROM face_redetection_mappings AS m "
         "JOIN face_redetection_groups AS g ON g.old_face_id = m.old_face_id "
         "JOIN faces AS f ON f.face_id = m.new_face_id "
         "WHERE g.asset_id = ? AND g.state = 'OPEN' AND m.state <> 'STALE' "
-        "AND f.spec_revision = ?",
-        (int(asset_id), str(_current_spec_revision())),
+        "AND (? IS NULL OR f.spec_revision = ?)",
+        (int(asset_id), spec_revision, spec_revision),
     ).fetchall()
-    return {str(row["new_face_id"]) for row in rows}
+    held = {str(row["new_face_id"]) for row in rows}
+    from photo_search.face.contract import FACE_DETAIL_SPEC_REVISION
+    if spec_revision is None or str(spec_revision) == FACE_DETAIL_SPEC_REVISION:
+        held.update(unverified_detail_hold_face_ids(connection, asset_id=asset_id))
+    return held
 
 
 def _current_spec_revision() -> str:
@@ -670,9 +725,62 @@ def _current_spec_revision() -> str:
     return str(FACE_SPEC_REVISION)
 
 
-def requeue_asset(connection: sqlite3.Connection, *, asset_id: int, now_ms: int) -> None:
+def requeue_asset(
+    connection: sqlite3.Connection,
+    *,
+    asset_id: int,
+    now_ms: int,
+    spec_revision: str | None = None,
+) -> None:
     """Put one asset back into the durable association queue (ADR-0010 §3.4/§5.3)."""
-    spec_revision = _current_spec_revision()
+    if spec_revision is None:
+        # A mapping decision can concern several old/new profiles at once. Only the
+        # supported automatic profiles are requeued in their own queues. Manual-only
+        # source-detail facts remain reviewable until explicitly authorized for automation.
+        revisions = {
+            str(row["spec_revision"])
+            for row in connection.execute(
+                "SELECT DISTINCT f.spec_revision FROM face_redetection_groups AS g "
+                "JOIN face_redetection_mappings AS m ON m.old_face_id = g.old_face_id "
+                "JOIN faces AS f ON f.face_id = m.new_face_id "
+                "WHERE g.asset_id = ? AND m.state <> 'STALE'",
+                (int(asset_id),),
+            ).fetchall()
+        }
+        current = _current_spec_revision()
+        if revisions:
+            for revision in sorted(revisions):
+                requeue_asset(connection, asset_id=asset_id, now_ms=now_ms,
+                              spec_revision=revision)
+            return
+        spec_revision = current
+    spec_revision = str(spec_revision)
+    from photo_search.face.contract import FACE_DETAIL_SPEC_REVISION
+
+    if spec_revision == FACE_DETAIL_SPEC_REVISION:
+        # Source-detail uses a separate composite queue, gated by per-asset authorization.
+        # Reconciliation checks the compatibility evidence before any automatic link.
+        if connection.execute(
+            "SELECT 1 FROM face_detail_auto_assets WHERE asset_id=? AND policy_revision=?",
+            (int(asset_id), "source-detail-auto@1"),
+        ).fetchone() is None:
+            return
+        row = connection.execute(
+            "SELECT COALESCE(MAX(face_revision), 1) AS revision FROM faces "
+            "WHERE asset_id = ? AND spec_revision = ?",
+            (int(asset_id), spec_revision),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO face_detail_association_queue(asset_id, spec_revision, face_revision, queued_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(asset_id, spec_revision) DO UPDATE SET "
+            "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
+            (int(asset_id), spec_revision, int(row["revision"]) + 1, int(now_ms)),
+        )
+        return
+    if spec_revision != _current_spec_revision():
+        # Historical source profiles remain review-only unless an explicit supported path
+        # says otherwise; never rewrite the asset-keyed v2 queue with another generation.
+        return
     row = connection.execute(
         "SELECT COALESCE(MAX(face_revision), 1) AS revision FROM faces "
         "WHERE asset_id = ? AND spec_revision = ?",

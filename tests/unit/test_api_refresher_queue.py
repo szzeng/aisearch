@@ -78,7 +78,8 @@ def test_builds_run_in_fifo_order_without_duplicates_or_overlap(fail_first: bool
     def executor(service, status, source_ids):
         # Each predecessor's service must close before the next task starts.
         assert len(closed) == len(calls)
-        calls.append((source_ids, status.snapshot()["mode"], threading.get_ident()))
+        snapshot = status.snapshot()
+        calls.append((source_ids, snapshot["mode"], snapshot["face_profile"], threading.get_ident()))
         if len(calls) == 1:
             entered.set()
             assert gate.wait(5)
@@ -88,8 +89,10 @@ def test_builds_run_in_fifo_order_without_duplicates_or_overlap(fail_first: bool
 
     refresher = LibraryRefresher(Service, executor=executor)
     try:
-        first = refresher.start([1], mode="build")
+        first = refresher.start([1], mode="build", face_profile="lightweight")
         assert entered.wait(5)
+        assert refresher.start([1, 1], mode="build", face_profile="lightweight")["accepted"] is False
+        # Omitting the profile means keep the running selection, rather than queue it twice.
         assert refresher.start([1, 1], mode="build")["accepted"] is False
         second = refresher.start([2], mode="build")
         assert second["accepted"] is True and second["queued"] is True
@@ -103,8 +106,12 @@ def test_builds_run_in_fifo_order_without_duplicates_or_overlap(fail_first: bool
         assert refresher.wait_idle(timeout=0.01) is False
         gate.set()
         assert refresher.wait_idle(timeout=5)
-        assert [call[:2] for call in calls] == [([1], "build"), ([2], "build"), ([3], "build")]
-        assert len({call[2] for call in calls}) == 1
+        assert [call[:3] for call in calls] == [
+            ([1], "build", "lightweight"),
+            ([2], "build", "source_detail"),
+            ([3], "build", "source_detail"),
+        ]
+        assert len({call[3] for call in calls}) == 1
         assert len(closed) == 3
         assert refresher.status()["source_ids"] == [3]
         assert refresher.status()["pending_builds"] == []

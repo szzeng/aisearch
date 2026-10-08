@@ -143,8 +143,35 @@ def onnx_runtime_package_id() -> str:
     return f"onnxruntime-gpu@{onnxruntime.__version__}"
 
 
-def face_processor_spec() -> ProcessorSpec:
+def face_processor_spec(
+    *, source_detail: bool = False, automatic_detail: bool = False
+) -> ProcessorSpec:
     """The frozen ``ProcessorSpec`` of the face processor (ADR-0003 §2/§4)."""
+    if source_detail:
+        config = dict(contract.ENGINE_CONFIG)
+        config["image_preprocess_version"] = contract.FACE_DETAIL_PREPROCESS_VERSION
+        config.update(
+            {
+                "source_frame": "exif-upright-original",
+                "source_decode_max_pixels": contract.MAX_DECODE_PIXELS,
+                "jpeg_draft": False,
+                "recognition_crop": "local-source-landmarks-align112",
+            }
+        )
+        spec_revision = contract.FACE_DETAIL_SPEC_REVISION
+        task_type = (
+            contract.FACE_DETAIL_AUTO_TASK_TYPE
+            if automatic_detail
+            else contract.FACE_DETAIL_TASK_TYPE
+        )
+        config_hash = hashlib.sha256(canonical_json(config).encode("utf-8")).hexdigest()
+        image_preprocess_version = contract.FACE_DETAIL_PREPROCESS_VERSION
+    else:
+        config = dict(contract.ENGINE_CONFIG)
+        spec_revision = contract.FACE_SPEC_REVISION
+        task_type = contract.FACE_TASK_TYPE
+        config_hash = contract.CONFIG_HASH
+        image_preprocess_version = contract.FACE_IMAGE_PREPROCESS_VERSION
     weights = [
         {
             "name": Path(str(entry["path"])).name,
@@ -156,11 +183,11 @@ def face_processor_spec() -> ProcessorSpec:
     return ProcessorSpec.from_envelope(
         {
             "contract_version": contract.CONTRACT_VERSION,
-            "spec_revision": contract.FACE_SPEC_REVISION,
+            "spec_revision": spec_revision,
             "processor_id": contract.FACE_PROCESSOR_ID,
             "processor_kind": contract.FACE_PROCESSOR_KIND,
-            "task_type": contract.FACE_TASK_TYPE,
-            "config_hash": contract.CONFIG_HASH,
+            "task_type": task_type,
+            "config_hash": config_hash,
             "input_type": contract.FACE_INPUT_TYPE,
             "output_type": contract.FACE_OUTPUT_TYPE,
             "device_policy": contract.FACE_DEVICE_POLICY,
@@ -174,7 +201,7 @@ def face_processor_spec() -> ProcessorSpec:
             "model_id": contract.FACE_MODEL_ID,
             "model_revision": contract.FACE_MODEL_REVISION,
             "weights": weights,
-            "image_preprocess_version": contract.FACE_IMAGE_PREPROCESS_VERSION,
+            "image_preprocess_version": image_preprocess_version,
             "query_preprocess_version": contract.FACE_QUERY_PREPROCESS_VERSION,
             "tokenizer_version": contract.FACE_TOKENIZER_VERSION,
             "instruction_template_version": contract.FACE_INSTRUCTION_TEMPLATE_VERSION,
@@ -201,7 +228,13 @@ def artifact_id_for(input_revision: str, *, spec_revision: str | None = None) ->
     return f"{legacy}:{revision}"
 
 
-def face_id_for(*, input_revision: str, ordinal: int, bbox: Sequence[float]) -> str:
+def face_id_for(
+    *,
+    input_revision: str,
+    ordinal: int,
+    bbox: Sequence[float],
+    spec_revision: str | None = None,
+) -> str:
     """The deterministic identity of one face of one content revision and generation.
 
     It depends on the content revision, the detection generation, the ordinal and the
@@ -210,7 +243,7 @@ def face_id_for(*, input_revision: str, ordinal: int, bbox: Sequence[float]) -> 
     a different picture produces different ids (so nothing is silently inherited).
     """
     payload = {
-        "spec_revision": contract.FACE_SPEC_REVISION,
+        "spec_revision": str(spec_revision or contract.FACE_SPEC_REVISION),
         "input_revision": str(input_revision),
         "ordinal": int(ordinal),
         "bbox": [round(float(value), contract.COORDINATE_DECIMALS) for value in bbox],
@@ -241,14 +274,33 @@ def build_payload(
     location_id: int | None,
     document: FaceDocument,
     decode_format: str,
+    source_detail: bool = False,
 ) -> dict[str, Any]:
     """The deterministic face document of one content revision."""
     faces: list[dict[str, Any]] = []
+    spec_revision = (
+        contract.FACE_DETAIL_SPEC_REVISION if source_detail else contract.FACE_SPEC_REVISION
+    )
+    config = dict(contract.ENGINE_CONFIG)
+    if source_detail:
+        config["image_preprocess_version"] = contract.FACE_DETAIL_PREPROCESS_VERSION
+        config.update(
+            {
+                "source_frame": "exif-upright-original",
+                "source_decode_max_pixels": contract.MAX_DECODE_PIXELS,
+                "jpeg_draft": False,
+                "recognition_crop": "local-source-landmarks-align112",
+            }
+        )
+    config_hash = hashlib.sha256(canonical_json(config).encode("utf-8")).hexdigest()
     for face in document.faces:
         faces.append(
             {
                 "face_id": face_id_for(
-                    input_revision=str(input_revision), ordinal=face.ordinal, bbox=face.bbox
+                    input_revision=str(input_revision),
+                    ordinal=face.ordinal,
+                    bbox=face.bbox,
+                    spec_revision=spec_revision,
                 ),
                 "ordinal": int(face.ordinal),
                 "bbox": [float(value) for value in face.bbox],
@@ -261,7 +313,7 @@ def build_payload(
                 "embedding": [float(value) for value in face.embedding],
             }
         )
-    return {
+    payload = {
         "contract_version": contract.CONTRACT_VERSION,
         "processor_id": contract.FACE_PROCESSOR_ID,
         "input_revision": str(input_revision),
@@ -269,8 +321,8 @@ def build_payload(
         "source": contract.FACE_SOURCE,
         "model_id": contract.FACE_MODEL_ID,
         "model_fingerprint": contract.MODEL_FINGERPRINT,
-        "config_hash": contract.CONFIG_HASH,
-        "engine_config": dict(contract.ENGINE_CONFIG),
+        "config_hash": config_hash,
+        "engine_config": config,
         "space_id": contract.FACE_SPACE_ID,
         "dimension": int(contract.FACE_DIMENSION),
         "metric": contract.FACE_METRIC,
@@ -283,15 +335,25 @@ def build_payload(
         "low_quality_faces": int(document.low_quality_count),
         "faces": faces,
     }
+    if source_detail:
+        payload["spec_revision"] = spec_revision
+        payload["artifact_revision"] = contract.FACE_DETAIL_ARTIFACT_REVISION
+    return payload
 
 
 def artifact_ref(payload: Mapping[str, Any]) -> dict[str, Any]:
     """The ``ArtifactRef`` of one face document; the executor never picks a storage path."""
     data = canonical_json(dict(payload)).encode("utf-8")
+    spec_revision = str(payload.get("spec_revision", contract.FACE_SPEC_REVISION))
+    artifact_revision = str(
+        payload.get("artifact_revision", contract.FACE_ARTIFACT_REVISION)
+    )
     return {
-        "artifact_id": artifact_id_for(str(payload["input_revision"])),
+        "artifact_id": artifact_id_for(
+            str(payload["input_revision"]), spec_revision=spec_revision
+        ),
         "artifact_type": "structured",
-        "artifact_revision": contract.FACE_ARTIFACT_REVISION,
+        "artifact_revision": artifact_revision,
         "media_type": contract.FACE_MEDIA_TYPE,
         "checksum_sha256": hashlib.sha256(data).hexdigest(),
         "byte_size": len(data),
@@ -321,8 +383,24 @@ def extract_for_asset(
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
+    preserve_source_detail: bool = False,
 ) -> dict[str, Any]:
     """Read the registered original, find its faces and return the document payload."""
+    now = clock or time.monotonic
+    started = now()
+    budget_ms = contract.DEFAULT_DEADLINE_MS if deadline_ms is None else int(deadline_ms)
+
+    def check_task() -> None:
+        if cancel is not None and cancel():
+            raise FaceCancelled("the execution was cancelled before it finished")
+        if (now() - started) * 1000.0 > budget_ms:
+            raise CatalogError(
+                FACE_DEADLINE_EXCEEDED,
+                "the face task budget was exhausted",
+                details={"deadline_ms": budget_ms},
+            )
+
+    check_task()
     row = catalog.read_one("SELECT sha256 FROM assets WHERE asset_id = ?", (int(asset_id),))
     if row is None:
         raise CatalogError(
@@ -335,6 +413,9 @@ def extract_for_asset(
             STALE_INPUT_REVISION,
             "the job was created for a different content revision",
         )
+    if preserve_source_detail:
+        from photo_search.face.detail_policy import prepare_coordinate_frames
+        prepare_coordinate_frames(catalog, asset_id=asset_id)
     location = _resolve_location(catalog, int(asset_id))
     observed = _stat_pair(location)
     digest = _hash_file(location["absolute_path"])
@@ -343,22 +424,26 @@ def extract_for_asset(
             INPUT_UNSTABLE,
             "the file bytes no longer match the catalogued content",
         )
-    decoded = _decode(location["absolute_path"])
+    decoded = _decode(location["absolute_path"], preserve_source_detail=preserve_source_detail)
     _verify_unchanged(location, observed)
+    check_task()
     cache = engine_cache or FaceEngineCache()
     engine = cache.engine(data_root if data_root is not None else catalog.data_root, device=str(device))
+    remaining_ms = max(1, budget_ms - int((now() - started) * 1000.0))
     document = analyze_image(
         engine,
         decoded.image,
         cancel=cancel,
-        deadline_ms=deadline_ms,
+        deadline_ms=remaining_ms,
         clock=clock,
+        preserve_source_detail=preserve_source_detail,
     )
     payload = build_payload(
         input_revision=str(input_revision),
         location_id=int(location["location_id"]),
         document=document,
         decode_format=str(decoded.source_format),
+        source_detail=preserve_source_detail,
     )
     validate_payload(payload)
     return payload
@@ -441,11 +526,16 @@ def _hash_file(path: Path, *, chunk_bytes: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def _decode(path: Path) -> Any:
+def _decode(path: Path, *, preserve_source_detail: bool = False) -> Any:
     """The accepted P1-03 decode boundary: format gate, EXIF orientation, JPEG draft."""
     from photo_search.media.decode import load_normalized
 
-    return load_normalized(path, long_edge=contract.WORKING_LONG_EDGE)
+    return load_normalized(
+        path,
+        long_edge=contract.WORKING_LONG_EDGE,
+        jpeg_draft=not preserve_source_detail,
+        max_pixels=contract.MAX_DECODE_PIXELS if preserve_source_detail else None,
+    )
 
 
 def _safe_message(error: CatalogError) -> str:
@@ -465,6 +555,7 @@ def face_executor(
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
     wall_clock: Callable[[], int] | None = None,
+    preserve_source_detail: bool = False,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build the scheduler executor for ``image_face`` jobs over one catalog.
 
@@ -492,17 +583,29 @@ def face_executor(
             "completed_at": int(now()),
         }
         try:
-            payload = extract_for_asset(
-                catalog,
-                asset_id=int(request["subject_id"]),
-                input_revision=str(request["input_revision"]),
-                device=str(request["resolved_device"]),
-                data_root=data_root,
-                engine_cache=cache,
-                cancel=cancel,
-                deadline_ms=deadline_ms,
-                clock=clock,
+            payload = (
+                _published_source_detail_payload(
+                    catalog,
+                    asset_id=int(request["subject_id"]),
+                    input_revision=str(request["input_revision"]),
+                    data_root=data_root,
+                )
+                if preserve_source_detail
+                else None
             )
+            if payload is None:
+                payload = extract_for_asset(
+                    catalog,
+                    asset_id=int(request["subject_id"]),
+                    input_revision=str(request["input_revision"]),
+                    device=str(request["resolved_device"]),
+                    data_root=data_root,
+                    engine_cache=cache,
+                    cancel=cancel,
+                    deadline_ms=deadline_ms,
+                    clock=clock,
+                    preserve_source_detail=preserve_source_detail,
+                )
         except FaceCancelled:
             result.update(
                 state="CANCELLED",
@@ -546,6 +649,49 @@ def face_executor(
     return run
 
 
+def _published_source_detail_payload(
+    catalog: Any, *, asset_id: int, input_revision: str, data_root: str | Path | None
+) -> dict[str, Any] | None:
+    """Reuse a verified immutable detail artifact when its catalogued location still matches."""
+    current = catalog.read_one(
+        "SELECT location_id FROM file_locations WHERE asset_id=? AND availability='PRESENT' "
+        "ORDER BY location_id LIMIT 1",
+        (int(asset_id),),
+    )
+    if current is None:
+        return None
+    artifact_id = artifact_id_for(
+        str(input_revision), spec_revision=contract.FACE_DETAIL_SPEC_REVISION
+    )
+    row = catalog.read_one(
+        "SELECT * FROM artifacts WHERE artifact_id=? AND processor_id=? AND input_revision=? "
+        "AND artifact_revision=? AND lifecycle_state='PUBLISHED' LIMIT 1",
+        (
+            artifact_id,
+            contract.FACE_PROCESSOR_ID,
+            str(input_revision),
+            contract.FACE_DETAIL_ARTIFACT_REVISION,
+        ),
+    )
+    if row is None:
+        return None
+    from photo_search.artifacts.store import ArtifactStore
+
+    store = ArtifactStore.open(data_root if data_root is not None else catalog.data_root)
+    try:
+        payload = json.loads(store.read(row).decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CatalogError(ARTIFACT_INVALID, "the published source-detail artifact is invalid") from error
+    validate_payload(payload)
+    if (
+        str(payload.get("input_revision")) != str(input_revision)
+        or str(payload.get("spec_revision")) != contract.FACE_DETAIL_SPEC_REVISION
+        or int(payload.get("location_id") or 0) != int(current["location_id"])
+    ):
+        return None
+    return payload
+
+
 # --------------------------------------------------------------------- payload checks
 def _number(value: Any, *, where: str, low: float, high: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -566,7 +712,10 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
     """Enforce the frozen face-document shape before anything reaches the catalog."""
     import math
 
-    if not isinstance(payload, Mapping) or frozenset(payload) != PAYLOAD_KEYS:
+    if not isinstance(payload, Mapping) or frozenset(payload) not in (
+        PAYLOAD_KEYS,
+        PAYLOAD_KEYS | {"spec_revision", "artifact_revision"},
+    ):
         raise CatalogError(
             ARTIFACT_INVALID,
             "the face document does not match the frozen shape",
@@ -598,10 +747,38 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
             raise CatalogError(ARTIFACT_INVALID, f"{key} is not a sha256")
     if str(payload["model_fingerprint"]) != contract.MODEL_FINGERPRINT:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by other weights")
-    if str(payload["config_hash"]) != contract.CONFIG_HASH:
+    source_detail = "spec_revision" in payload
+    expected_spec = (
+        contract.FACE_DETAIL_SPEC_REVISION if source_detail else contract.FACE_SPEC_REVISION
+    )
+    expected_artifact = (
+        contract.FACE_DETAIL_ARTIFACT_REVISION
+        if source_detail
+        else contract.FACE_ARTIFACT_REVISION
+    )
+    if source_detail and (
+        str(payload["spec_revision"]) != expected_spec
+        or str(payload["artifact_revision"]) != expected_artifact
+    ):
+        raise CatalogError(ARTIFACT_INVALID, "the document carries an unknown face profile")
+    expected_config = dict(contract.ENGINE_CONFIG)
+    if source_detail:
+        expected_config["image_preprocess_version"] = contract.FACE_DETAIL_PREPROCESS_VERSION
+        expected_config.update(
+            {
+                "source_frame": "exif-upright-original",
+                "source_decode_max_pixels": contract.MAX_DECODE_PIXELS,
+                "jpeg_draft": False,
+                "recognition_crop": "local-source-landmarks-align112",
+            }
+        )
+    expected_config_hash = hashlib.sha256(canonical_json(expected_config).encode("utf-8")).hexdigest()
+    if str(payload["config_hash"]) != expected_config_hash:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by another config")
     if not isinstance(payload["engine_config"], Mapping):
         raise CatalogError(ARTIFACT_INVALID, "engine_config must be an object")
+    if dict(payload["engine_config"]) != expected_config:
+        raise CatalogError(ARTIFACT_INVALID, "the document engine_config does not match its profile")
     if str(payload["decode_format"]) != str(payload["decode_format"]).upper():
         raise CatalogError(ARTIFACT_INVALID, "the decode format label must be upper case")
     for key in ("original_size", "working_size"):
@@ -676,7 +853,10 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
         if not math.isfinite(norm) or abs(math.sqrt(norm) - 1.0) > 1e-3:
             raise CatalogError(ARTIFACT_INVALID, "a face embedding is not L2-normalised")
         expected_id = face_id_for(
-            input_revision=revision, ordinal=expected_ordinal, bbox=bbox
+            input_revision=revision,
+            ordinal=expected_ordinal,
+            bbox=bbox,
+            spec_revision=expected_spec,
         )
         if str(face["face_id"]) != expected_id:
             raise CatalogError(
@@ -727,8 +907,12 @@ def human_controlled_face_ids(connection: sqlite3.Connection, *, asset_id: int) 
     return controlled
 
 
-def _ensure_generation(connection: sqlite3.Connection, *, now_ms: int) -> str:
-    generation_id = generation_id_for(contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID)
+def _ensure_generation(
+    connection: sqlite3.Connection, *, now_ms: int, spec_revision: str
+) -> str:
+    generation_id = generation_id_for(
+        contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID, spec_revision=spec_revision
+    )
     connection.execute(
         "INSERT OR IGNORE INTO face_index_generations(generation_id, space_id, processor_id, "
         "spec_revision, dimension, metric, normalization, state, is_active, created_at, "
@@ -737,7 +921,7 @@ def _ensure_generation(connection: sqlite3.Connection, *, now_ms: int) -> str:
             generation_id,
             contract.FACE_SPACE_ID,
             contract.FACE_PROCESSOR_ID,
-            contract.FACE_SPEC_REVISION,
+            str(spec_revision),
             contract.FACE_DIMENSION,
             contract.FACE_METRIC,
             contract.FACE_NORMALIZATION,
@@ -755,7 +939,7 @@ def _ensure_generation(connection: sqlite3.Connection, *, now_ms: int) -> str:
             ARTIFACT_INVALID,
             "the face candidate generation does not belong to this processor's face space",
         )
-    if str(row["spec_revision"]) != contract.FACE_SPEC_REVISION:
+    if str(row["spec_revision"]) != str(spec_revision):
         raise CatalogError(
             ARTIFACT_INVALID,
             "the face candidate generation was created by another detection revision",
@@ -785,6 +969,11 @@ def persist_face_document(
         payload = json.loads(item.payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise CatalogError(ARTIFACT_INVALID, "the face document payload is not valid JSON") from error
+    spec_revision = str(payload.get("spec_revision", contract.FACE_SPEC_REVISION))
+    source_detail = spec_revision == contract.FACE_DETAIL_SPEC_REVISION
+    automatic_detail = source_detail and str(
+        getattr(job, "task_type", "")
+    ) == contract.FACE_DETAIL_AUTO_TASK_TYPE
     validate_payload(payload)
     asset_id = int(job.subject_id)
     row = connection.execute(
@@ -801,11 +990,18 @@ def persist_face_document(
     revision_row = connection.execute(
         "SELECT COALESCE(MAX(face_revision), 0) AS revision FROM faces "
         "WHERE asset_id = ? AND spec_revision = ?",
-        (asset_id, contract.FACE_SPEC_REVISION),
+        (asset_id, spec_revision),
     ).fetchone()
     face_revision = int(revision_row["revision"]) + 1
-    generation_id = _ensure_generation(connection, now_ms=int(now_ms))
+    generation_id = _ensure_generation(
+        connection, now_ms=int(now_ms), spec_revision=spec_revision
+    )
     faces = list(payload["faces"])
+    connection.execute(
+        "INSERT OR IGNORE INTO face_detail_coordinate_frames(artifact_id,input_revision,width,height) "
+        "VALUES(?,?,?,?)",
+        (str(item.ref.artifact_id), str(result.input_revision), *payload["original_size"]),
+    )
     new_ids = {str(face["face_id"]) for face in faces}
     protected = human_controlled_face_ids(connection, asset_id=asset_id)
     _retire_stale_faces(
@@ -814,11 +1010,14 @@ def persist_face_document(
         keep=new_ids,
         protected=protected,
         generation_id=generation_id,
+        spec_revision=spec_revision,
         now_ms=int(now_ms),
     )
-    _park_rewritten_ordinals(connection, asset_id=asset_id, keep=new_ids, now_ms=int(now_ms))
+    _park_rewritten_ordinals(
+        connection, asset_id=asset_id, keep=new_ids, spec_revision=spec_revision, now_ms=int(now_ms)
+    )
     ordinals = _free_ordinals(
-        connection, asset_id=asset_id, keep=new_ids, wanted=len(faces)
+        connection, asset_id=asset_id, keep=new_ids, wanted=len(faces), spec_revision=spec_revision
     )
     for face, ordinal in zip(faces, ordinals, strict=True):
         _upsert_face(
@@ -831,6 +1030,8 @@ def persist_face_document(
             artifact_id=str(item.ref.artifact_id),
             face_revision=face_revision,
             generation_id=generation_id,
+            spec_revision=spec_revision,
+            queue_for_index=(not source_detail) or automatic_detail,
             now_ms=int(now_ms),
         )
     # ADR-0010 §3.1/§3.4: the reviewable old/new mapping of this asset is refreshed in the
@@ -844,14 +1045,27 @@ def persist_face_document(
         asset_id=asset_id,
         new_face_ids=sorted(new_ids),
         now_ms=int(now_ms),
+        new_spec_revision=spec_revision,
     )
-    connection.execute(
-        "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, queued_at) "
-        "VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(asset_id) DO UPDATE SET spec_revision = excluded.spec_revision, "
-        "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
-        (asset_id, contract.FACE_SPEC_REVISION, int(face_revision), int(now_ms)),
-    )
+    if not source_detail:
+        connection.execute(
+            "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, queued_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(asset_id) DO UPDATE SET spec_revision = excluded.spec_revision, "
+            "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
+            (asset_id, spec_revision, int(face_revision), int(now_ms)),
+        )
+    elif automatic_detail:
+        from photo_search.face.detail_policy import authorize
+
+        authorize(connection, asset_id=asset_id, input_revision=str(result.input_revision),
+                  artifact_id=str(item.ref.artifact_id), now_ms=int(now_ms))
+        connection.execute(
+            "INSERT INTO face_detail_association_queue(asset_id, spec_revision, face_revision, queued_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(asset_id, spec_revision) DO UPDATE SET "
+            "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
+            (asset_id, spec_revision, int(face_revision), int(now_ms)),
+        )
     return True
 
 
@@ -862,12 +1076,13 @@ def _retire_stale_faces(
     keep: set[str],
     protected: set[str],
     generation_id: str,
+    spec_revision: str,
     now_ms: int,
 ) -> None:
     """Drop this asset's rows a new detection no longer contains, never a human-owned one."""
     rows = connection.execute(
         "SELECT face_id FROM faces WHERE asset_id = ? AND spec_revision = ?",
-        (int(asset_id), contract.FACE_SPEC_REVISION),
+        (int(asset_id), str(spec_revision)),
     ).fetchall()
     stale = [
         str(row["face_id"])
@@ -892,7 +1107,12 @@ def _retire_stale_faces(
 
 
 def _park_rewritten_ordinals(
-    connection: sqlite3.Connection, *, asset_id: int, keep: set[str], now_ms: int
+    connection: sqlite3.Connection,
+    *,
+    asset_id: int,
+    keep: set[str],
+    spec_revision: str,
+    now_ms: int,
 ) -> None:
     """Move the rows this commit is about to rewrite out of the ordinal space.
 
@@ -912,7 +1132,7 @@ def _park_rewritten_ordinals(
             _ORDINAL_PARK_OFFSET,
             int(now_ms),
             int(asset_id),
-            contract.FACE_SPEC_REVISION,
+            str(spec_revision),
             _ORDINAL_PARK_OFFSET,
             *ordered,
         ),
@@ -920,14 +1140,19 @@ def _park_rewritten_ordinals(
 
 
 def _free_ordinals(
-    connection: sqlite3.Connection, *, asset_id: int, keep: set[str], wanted: int
+    connection: sqlite3.Connection,
+    *,
+    asset_id: int,
+    keep: set[str],
+    wanted: int,
+    spec_revision: str,
 ) -> list[int]:
     """The ordinals the new detection may take, avoiding every surviving other face."""
     used = {
         int(row["ordinal"])
         for row in connection.execute(
             "SELECT ordinal, face_id FROM faces WHERE asset_id = ? AND spec_revision = ?",
-            (int(asset_id), contract.FACE_SPEC_REVISION),
+            (int(asset_id), str(spec_revision)),
         ).fetchall()
         if str(row["face_id"]) not in keep
     }
@@ -951,6 +1176,8 @@ def _upsert_face(
     artifact_id: str,
     face_revision: int,
     generation_id: str,
+    spec_revision: str,
+    queue_for_index: bool,
     now_ms: int,
 ) -> None:
     face_id = str(face["face_id"])
@@ -971,7 +1198,7 @@ def _upsert_face(
         (
             face_id,
             int(asset_id),
-            contract.FACE_SPEC_REVISION,
+            str(spec_revision),
             contract.FACE_DETECTOR_ID,
             int(ordinal),
             str(input_revision),
@@ -1012,13 +1239,14 @@ def _upsert_face(
             int(now_ms),
         ),
     )
-    queue_candidate(
-        connection,
-        face_id=face_id,
-        generation_id=generation_id,
-        artifact_id=str(artifact_id),
-        now_ms=int(now_ms),
-    )
+    if queue_for_index:
+        queue_candidate(
+            connection,
+            face_id=face_id,
+            generation_id=generation_id,
+            artifact_id=str(artifact_id),
+            now_ms=int(now_ms),
+        )
 
 
 def queue_candidate(

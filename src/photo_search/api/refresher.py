@@ -79,11 +79,12 @@ class LibraryRefresher:
         self._running = False
         self._closed = False
         self._thread: threading.Thread | None = None
-        self._pending_builds: deque[list[int]] = deque()
+        self._pending_builds: deque[tuple[list[int], str | None]] = deque()
 
     # ------------------------------------------------------------------ public API
     def start(
-        self, source_ids: Sequence[int] | None = None, *, mode: str = REFRESH_MODE_DAILY
+        self, source_ids: Sequence[int] | None = None, *, mode: str = REFRESH_MODE_DAILY,
+        face_profile: str | None = None,
     ) -> dict[str, Any]:
         """Start a run or enqueue a distinct source build behind the active run.
 
@@ -96,6 +97,9 @@ class LibraryRefresher:
                 raise RuntimeError("the library refresher is closed")
             requested = None if not source_ids else [int(value) for value in source_ids]
             requested_mode = _normalize_mode(mode)
+            requested_profile = None if face_profile is None else str(face_profile)
+            if requested_profile not in (None, "source_detail", "lightweight"):
+                raise ValueError("unknown face profile")
             if requested_mode == "build" and requested:
                 requested = sorted(set(requested))
             if self._running:
@@ -104,18 +108,21 @@ class LibraryRefresher:
                 active = self._status.snapshot() if self._status is not None else {}
                 if active.get("mode") == "build" and (
                     active.get("source_ids") is None or active.get("source_ids") == requested
+                ) and (
+                    requested_profile is None or active.get("face_profile") == requested_profile
                 ):
                     return self._snapshot_locked(accepted=False)
-                if requested in self._pending_builds:
+                pending_item = (requested or [], requested_profile)
+                if pending_item in self._pending_builds:
                     return self._snapshot_locked(accepted=False, queued=True)
-                self._pending_builds.append(requested)
+                self._pending_builds.append(pending_item)
                 return self._snapshot_locked(accepted=True, queued=True)
-            status = self._new_status(requested, requested_mode)
+            status = self._new_status(requested, requested_mode, requested_profile)
             self._status = status
             self._running = True
             self._thread = threading.Thread(
                 target=self._loop,
-                args=(status, requested, requested_mode),
+                args=(status, requested, requested_mode, requested_profile),
                 name=self._name,
                 daemon=True,
             )
@@ -169,22 +176,24 @@ class LibraryRefresher:
 
     # ---------------------------------------------------------------------- worker
     def _loop(
-        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str
+        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str,
+        face_profile: str | None,
     ) -> None:
         while True:
-            self._run(status, source_ids, mode)
+            self._run(status, source_ids, mode, face_profile)
             with self._lock:
                 if self._closed or not self._pending_builds:
                     self._running = False
                     self._thread = None
                     return
-                source_ids = self._pending_builds.popleft()
+                source_ids, face_profile = self._pending_builds.popleft()
                 mode = "build"
-                status = self._new_status(source_ids, mode)
+                status = self._new_status(source_ids, mode, face_profile)
                 self._status = status
 
     def _run(
-        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str
+        self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str,
+        face_profile: str | None,
     ) -> None:
         service: Any | None = None
         try:
@@ -192,18 +201,10 @@ class LibraryRefresher:
             if self._executor is not None:
                 self._executor(service, status, source_ids)
             else:
-                refresh_library(
-                    service,
-                    status,
-                    source_ids=source_ids,
-                    batch_size=self._batch_size,
-                    encoder_factory=self._encoder_provider,
-                    manifest_path=self._manifest_path,
-                    device=self._device or "auto",
-                    device_policy=self._device_policy,
-                    enrich=self._enrich,
-                    mode=mode,
-                )
+                from photo_search.face.service import BACKGROUND_MODEL_SLOT
+
+                with BACKGROUND_MODEL_SLOT:
+                    self._refresh(service, status, source_ids, mode, face_profile)
         except CatalogError as error:
             logger.info("library refresh failed: %s", error.code)
             status.note_error(stage="refresh", code=str(error.code), message=str(error.message)[:200])
@@ -221,14 +222,35 @@ class LibraryRefresher:
                 except Exception:  # pragma: no cover - shutdown must not raise
                     logger.debug("closing the refresh service failed", exc_info=True)
 
+    def _refresh(
+        self, service: Any, status: RefreshStatus, source_ids: Sequence[int] | None,
+        mode: str, face_profile: str | None,
+    ) -> None:
+        refresh_library(
+            service,
+            status,
+            source_ids=source_ids,
+            batch_size=self._batch_size,
+            encoder_factory=self._encoder_provider,
+            manifest_path=self._manifest_path,
+            device=self._device or "auto",
+            device_policy=self._device_policy,
+            enrich=self._enrich,
+            mode=mode,
+            face_profile=face_profile,
+        )
+
     # -------------------------------------------------------------------- internals
-    def _new_status(self, source_ids: Sequence[int] | None, mode: str) -> RefreshStatus:
+    def _new_status(
+        self, source_ids: Sequence[int] | None, mode: str, face_profile: str | None = None
+    ) -> RefreshStatus:
         return RefreshStatus(
             refresh_id=uuid.uuid4().hex,
             source_ids=source_ids,
             batch_size=self._batch_size,
             started_at_ms=int(self._now_ms()),
             mode=mode,
+            face_profile=face_profile or "source_detail",
             now_ms=self._now_ms,
         )
 
@@ -238,7 +260,7 @@ class LibraryRefresher:
         payload["accepted"] = bool(accepted)
         payload["running"] = bool(self._running)
         payload["queued"] = bool(queued)
-        payload["pending_builds"] = [list(ids) for ids in self._pending_builds]
+        payload["pending_builds"] = [list(ids) for ids, _profile in self._pending_builds]
         return payload
 
 

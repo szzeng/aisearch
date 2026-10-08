@@ -114,7 +114,9 @@ def plugin_format_decision(pil_format: str | None) -> tuple[str, bool]:
     return (label or "UNKNOWN"), False
 
 
-def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
+def load_normalized(
+    path: Path, *, long_edge: int, jpeg_draft: bool = True, max_pixels: int | None = None
+) -> DecodedImage:
     """Decode ``path``, apply its EXIF orientation and return the upright image.
 
     The returned image is fully loaded and owned by the caller, so the source file can be
@@ -128,7 +130,15 @@ def load_normalized(path: Path, *, long_edge: int) -> DecodedImage:
             label, decodable = plugin_format_decision(source.format)
             if not decodable:
                 raise _unsupported(label)
-            if label == "JPEG":
+            if max_pixels is not None:
+                declared_pixels = int(source.size[0]) * int(source.size[1])
+                if declared_pixels > int(max_pixels):
+                    raise CatalogError(
+                        "FACE_INPUT_TOO_LARGE",
+                        "the image declares more pixels than this bounded face path accepts",
+                        details={"pixels": declared_pixels, "max_pixels": int(max_pixels)},
+                    )
+            if label == "JPEG" and jpeg_draft:
                 # Must happen before ``exif_transpose`` loads the pixels.
                 source.draft(source.mode, (long_edge, long_edge))
             # Restore the orientation pillow-heif cleared so HEIC is normalised by exactly

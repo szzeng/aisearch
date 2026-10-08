@@ -70,6 +70,7 @@ class RefreshStatus:
         batch_size: int,
         started_at_ms: int,
         mode: str = "refresh",
+        face_profile: str = "source_detail",
         now_ms: int | None = None,
     ) -> None:
         self._lock = threading.Lock()
@@ -78,6 +79,7 @@ class RefreshStatus:
             "refresh_id": str(refresh_id),
             "state": "SCANNING",
             "mode": str(mode),
+            "face_profile": str(face_profile),
             "search_ready": False,
             "search_ready_basis": None,
             "source_ids": None if source_ids is None else [int(v) for v in source_ids],
@@ -100,6 +102,11 @@ class RefreshStatus:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return copy.deepcopy(self._data)
+
+    def set_face_profile(self, profile: str) -> None:
+        with self._lock:
+            self._data["face_profile"] = str(profile)
+            self._touch(self._data)
 
     def set_state(self, state: str, **fields: Any) -> None:
         if state not in REFRESH_STATES:

@@ -46,7 +46,14 @@
               <option value="pending">还没有可靠匹配</option>
             </select>
             <button id="pa-rematch" type="button">补匹配未归类人脸</button>
+            <label for="pa-detail-source">补识别范围</label>
+            <select id="pa-detail-source"><option value="">全部图库</option></select>
+            <button id="pa-detail-batch" type="button">一键原图补识别</button>
+            <button id="pa-detail-pause" type="button" hidden>暂停补识别</button>
+            <button id="pa-detail-resume" type="button" hidden>继续补识别</button>
+            <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
           </div>
+          <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
           <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p>
           <div id="pa-inbox-cards" class="pa-people-grid"></div>
           <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
@@ -60,7 +67,7 @@
       </section>
       <p id="pa-status" class="notice" role="status" aria-live="polite" hidden></p>
       <div id="pa-undo-bar" class="pa-undo" hidden><span id="pa-undo-text"></span><button id="pa-undo" type="button">撤销</button><button id="pa-undo-dismiss" type="button" aria-label="收起撤销提示">收起</button></div>
-      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><nav id="pa-preview-nav" class="pa-preview-nav" aria-label="切换人物照片" hidden><button id="pa-preview-prev" type="button" disabled>← 上一张</button><span id="pa-preview-position" class="hint" role="status" aria-live="polite"></span><button id="pa-preview-next" type="button" disabled>下一张 →</button></nav><p id="pa-preview-note" class="hint" role="status"></p><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
+      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><nav id="pa-preview-nav" class="pa-preview-nav" aria-label="切换人物照片" hidden><button id="pa-preview-prev" type="button" disabled>← 上一张</button><span id="pa-preview-position" class="hint" role="status" aria-live="polite"></span><button id="pa-preview-next" type="button" disabled>下一张 →</button></nav><p id="pa-preview-note" class="hint" role="status"></p><button id="pa-face-detail" type="button" hidden>尝试原图细节识别</button><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
       <dialog id="pa-edit" class="pa-dialog"><h2 id="pa-edit-title"></h2><p id="pa-edit-note" class="hint"></p>
         <form id="pa-edit-form"><label for="pa-edit-query" id="pa-edit-label">名字</label><input id="pa-edit-query" maxlength="200" autocomplete="off" /><button id="pa-edit-find" type="button" hidden>查找人物</button><div id="pa-choices" class="pa-choices"></div><button id="pa-choice-more" type="button" hidden>更多人物</button><p id="pa-edit-error" class="error" role="alert"></p><div class="row-actions"><button id="pa-edit-submit">保存</button><button id="pa-edit-cancel" type="button">取消</button></div></form>
       </dialog>

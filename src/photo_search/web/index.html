@@ -7,7 +7,7 @@
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-source-rename-a-1" />
-    <script src="/web/app.js?v=p4-source-rename-a-1" defer></script>
+    <script src="/web/app.js?v=p4-person-detail-b-1" defer></script>
     <script src="/web/map-config.js" defer></script>
   </head>
   <body>
@@ -44,6 +44,15 @@
           <button type="button" id="refresh-library">刷新图库</button>
           <span id="refresh-status" class="hint" role="status" aria-live="polite"></span>
           </p>
+          <p>
+            <label for="face-profile">人脸处理</label>
+            <select id="face-profile">
+              <option value="" selected>沿用已选模式（新图库默认原图裁脸）</option>
+              <option value="source_detail">原图裁脸</option>
+              <option value="lightweight">轻量模式</option>
+            </select>
+          </p>
+          <p class="hint">该选项只影响之后发起的建库或刷新；不会自动重跑旧图库。原图裁脸提高已检测人脸的识别细节，不会补出检测器完全漏掉的人脸。</p>
           <p class="hint">
           新登记的来源显示「未建库」，点「开始建库」会一次完成扫描、搜索投影与语义索引，
           再在后台继续缩略图、拍摄时间、地点与人脸/文字识别；语义索引进度由图库记录推导，

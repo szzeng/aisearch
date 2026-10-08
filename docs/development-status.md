@@ -2,7 +2,15 @@
 
 更新：2026-10-08。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
-## 当前地点任务：P4-PLACE-CN — 中国省／市／区县（**IMPLEMENTED / 定向与合成浏览器通过 / 独立审查待做**）
+## 当前人物交接：P4-PERSON-DETAIL-B — 一键补识别与新图库自动原图裁脸（**IMPLEMENTED / 定向与真实兼容对照通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-DETAIL-B.md)、[实现与证据](reports/P4-PERSON-DETAIL-B-implementation.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)、[独立DS-H全受影响面审查卡](tasks/P4-PERSON-DETAIL-B-review.md)。接续Luna部分工作完成：旧库一键按图库补机器待归类/小脸，持久50张分页串行、暂停/继续/失败重试/重启恢复；新建/增量默认原图并保存轻量选择，已发布产物只恢复后续步骤。精确兼容桥接通确认索引及自动归人、消除旧机器占位/重复，保留人工锁/排除/OPEN/撤销与旧身份，schema19→20正常升级。2026-10-08在CN父提交`73bca7e`后复验JUnit **34/0/0/0**、Ruff/Node/scoped diff-check通过；公开样片CPU真实模型9组证据沿用，不代表私人准确率/GPU速度。按用户授权将A+B整理为一笔本地提交，不推送；临时目录/清理记录不纳入。未访问私人照片/真实catalog，真实浏览器/实际升级/长期性能未验。下一步独立DS-H完整审查（含复用A）→Sol high聚焦，用户手动切换。
+
+## 前置 P4-PERSON-DETAIL-A — 按需原图裁脸（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-DETAIL-A.md)、[实现与JUnit证据](reports/P4-PERSON-DETAIL-A-implementation.md)、[独立DS-H完整审查卡](tasks/P4-PERSON-DETAIL-A-review.md)。独立详情profile复用buffalo_l、640检测和112对齐；原图完整解码一次、局部裁剪，session/CSRF保护的照片按钮入持久队列并串行执行。A阶段结果仅供人工确认；上节B已增加显式授权的自动链。A阶段定向JUnit **24/0/0/0**、Ruff/Node/scoped diff-check通过；当时未访问真实照片/模型/浏览器。复用A的独立工程审查纳入B，Sol high聚焦核对仍待做。
+
+## 并行未结任务：P4-PLACE-CN — 中国省／市／区县（**IMPLEMENTED / 定向与合成浏览器通过 / 独立审查待做**）
 
 [执行卡](tasks/P4-PLACE-CN.md)、[证据](reports/P4-PLACE-CN.md)、[ADR-0016](decisions/ADR-0016-cn-admin-boundaries.md)、[独立DS-H审查卡](tasks/P4-PLACE-CN-review.md)。PBF/MD5匹配，真实四区通过；约76.8MB复合包保留45,217条GeoNames＋3,013行政区。schema18独立facet、SQL成员/keyset、区县搜索、有界GPS更新/暂停继续/竞争拒绝，schema19/20仅兼容并行人物增量。最终JUnit **75/0/0/0**；真实包＋30万 **2/0/0/0**、最终30万复测 **1/0/0/0**，计数0.66–1.54秒/两页0.57–0.74秒，100张实际几何批次0.0252秒（不含冷加载）。107张合成浏览器闭环、Ruff/Node/scoped diff-check通过。未访问真实库/catalog，候选包未安装；不是全国完整覆盖/30万真实解析。最新[兼容修复与个人测试步骤](reports/P4-PLACE-CN-schema20.md)：人物增量0020导致旧桥失效，已明确支持schema20，定向JUnit **51/0/0/0**与两份公开包完整字节校验通过；用户需重启源码服务，新CN候选仍未导入。提交范围快照schema18定向JUnit **82/0/0/0**；人物schema19/20保留工作区。下一步独立DS-H全受影响面→Sol high聚焦，用户手动切换。
 
@@ -14,7 +22,7 @@
 
 ## P4-PERSON-MATCH-B — 合照候选、多样代表与页面补匹配（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
 
-[执行卡](tasks/P4-PERSON-MATCH-B.md)、[实现与验证](reports/P4-PERSON-MATCH-B-implementation.md)、[研究依据](reports/P4-PERSON-RESEARCH-2026-10-04.md)。修复同图A=.53提前挡住B=.90，先完整比较再保留冲突/歧义；每人最多32合格确认候选选8个多样代表，保留旧发布/版本保护；整理页新增原因摘要/筛选及显式20张照片续批补匹配，不加载模型或重建图文。JUnit **216/0/0/0**、Ruff/Node与本卡范围diff-check通过；未访问真实库/个人服务/模型或真实浏览器，不声明真实精度。重启应用刷新人物页生效；人工归属/排除/hold与.50/.29/.08保持。加入[既有人物独立DS-H完整审查](tasks/P4-PERSON-UX-A-review.md)，原图识别/增强检测仍未实现，保存[后续升级范围](tasks/P4-PERSON-DETAIL-A.md)。地图并行状态保持。
+此前[P4-PERSON-MATCH-B](tasks/P4-PERSON-MATCH-B.md)定向JUnit **216/0/0/0**，详情升级原规划及SOL关键规则核对见[规划](reports/P4-PERSON-DETAIL-A-planning.md)/[核对](reports/P4-PERSON-DETAIL-A-key-rules-review.md)；其旧“尚未实现”描述由本次实现报告取代。
 
 ## P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**IMPLEMENTED / 定向验证通过 / DS-H 审查待做**）
 

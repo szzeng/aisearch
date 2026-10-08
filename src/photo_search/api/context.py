@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Any
 
 from photo_search.api.errors import Redactor
+from photo_search.api.face_detail_runner import FaceDetailRunner
 from photo_search.api.refresher import LibraryRefresher
 from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
@@ -74,6 +75,8 @@ class ApiContext:
         self._refresh_batch_size = refresh_batch_size
         self._refresh_enrich = bool(refresh_enrich)
         self._refresher: LibraryRefresher | None = None
+        self._face_detail_runner: FaceDetailRunner | None = None
+        self._face_detail_recovery_started = False
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -83,6 +86,15 @@ class ApiContext:
         """The catalog service of the request-handling thread (opened once)."""
         if self._service is None:
             self._service = self._service_factory()
+        if not self._face_detail_recovery_started:
+            try:
+                from photo_search.face.source_detail_batches import running_batches
+
+                for batch_id in running_batches(self._service.catalog):
+                    self.face_detail_runner().submit_batch(batch_id)
+                self._face_detail_recovery_started = True
+            except Exception:  # noqa: BLE001 - app startup remains available if batch recovery fails
+                logger.exception("recovering source-detail face batches failed")
         return self._service
 
     def runner(self) -> ScanRunner:
@@ -129,6 +141,12 @@ class ApiContext:
         except Exception:  # noqa: BLE001 - reporting must work even when the catalog is not
             return Redactor(data_root=self.settings.data_root)
         return Redactor.for_catalog(service.catalog, data_root=self.settings.data_root)
+
+    def face_detail_runner(self) -> FaceDetailRunner:
+        """The serialized, on-demand worker for source-detail face jobs."""
+        if self._face_detail_runner is None:
+            self._face_detail_runner = FaceDetailRunner(self._service_factory)
+        return self._face_detail_runner
 
     def query_encoder(self) -> QueryEncoder | None:
         """The query half of the embedding adapter, or ``None`` when none is wired.
@@ -181,6 +199,13 @@ class ApiContext:
                 refresher.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("stopping the library refresher failed", exc_info=True)
+        face_detail_runner = self._face_detail_runner
+        self._face_detail_runner = None
+        if face_detail_runner is not None:
+            try:
+                face_detail_runner.close()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the source-detail face runner failed", exc_info=True)
         runner = self._runner
         self._runner = None
         if runner is not None:
@@ -190,6 +215,7 @@ class ApiContext:
                 logger.debug("stopping the scan runner failed", exc_info=True)
         service = self._service
         self._service = None
+        self._face_detail_recovery_started = False
         if service is not None:
             try:
                 service.close()

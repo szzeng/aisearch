@@ -9,7 +9,13 @@ from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
-from photo_search.face.contract import FACE_ARTIFACT_REVISION, FACE_PROCESSOR_ID, FACE_SPEC_REVISION
+from photo_search.face.contract import (
+    FACE_ARTIFACT_REVISION,
+    FACE_DETAIL_SPEC_REVISION,
+    FACE_PROCESSOR_ID,
+    FACE_SPEC_REVISION,
+)
+from photo_search.face.detail_policy import superseded_machine_sql
 from photo_search.persons.contracts import PERSON_REVISION_CONFLICT, fail
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
@@ -239,6 +245,11 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
     return {
         "face_id": face_id,
         "asset_id": int(row["asset_id"]),
+        "source_detail": str(row["spec_revision"]) == FACE_DETAIL_SPEC_REVISION,
+        "automatic_detail": str(row["spec_revision"]) == FACE_DETAIL_SPEC_REVISION and catalog.read_one(
+            "SELECT 1 FROM face_detail_auto_assets WHERE asset_id=? AND input_revision=? AND artifact_id=?",
+            (int(row["asset_id"]), row["input_revision"], row["artifact_id"]),
+        ) is not None,
         "mode": mode,
         "control_revision": int(row["control_revision"] or 0),
         "assigned_person_id": assigned_id,
@@ -273,7 +284,7 @@ END
 """
 _FACE_FROM = "FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
 _SELECT_FACES = (
-    "SELECT f.face_id, f.asset_id, f.quality_reason, c.mode, c.revision AS control_revision, "
+    "SELECT f.face_id, f.asset_id, f.spec_revision, f.input_revision, f.artifact_id, f.quality_reason, c.mode, c.revision AS control_revision, "
     + _ORGANIZATION_REASON
     + " AS organization_reason "
     + _FACE_FROM
@@ -281,13 +292,14 @@ _SELECT_FACES = (
 _NOT_HELD = "NOT EXISTS (SELECT 1 FROM face_redetection_groups AS g WHERE g.state = 'OPEN' AND (g.old_face_id = f.face_id OR EXISTS (SELECT 1 FROM face_redetection_mappings AS m WHERE m.old_face_id = g.old_face_id AND m.new_face_id = f.face_id AND m.state = 'SUGGESTED')))"
 # An untouched v1 library remains browsable. After a v2 publication (even NO_FACE),
 # obsolete machine faces leave this work queue; human-controlled anchors remain protected.
-_VISIBLE = "(f.spec_revision = ? OR c.mode IN ('MANUAL_ASSIGNED', 'MANUAL_UNASSIGNED') OR EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = f.face_id AND e.active = 1) OR (NOT EXISTS (SELECT 1 FROM faces AS n WHERE n.asset_id = f.asset_id AND n.spec_revision = ?) AND NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.processor_id = ? AND a.input_revision = f.input_revision AND a.artifact_revision = ? AND a.lifecycle_state = 'PUBLISHED')))"
+_VISIBLE = f"(f.spec_revision = '{FACE_DETAIL_SPEC_REVISION}' OR f.spec_revision = ? OR c.mode IN ('MANUAL_ASSIGNED', 'MANUAL_UNASSIGNED') OR EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = f.face_id AND e.active = 1) OR (NOT EXISTS (SELECT 1 FROM faces AS n WHERE n.asset_id = f.asset_id AND n.spec_revision = ?) AND NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.processor_id = ? AND a.input_revision = f.input_revision AND a.artifact_revision = ? AND a.lifecycle_state = 'PUBLISHED')))"
 _VISIBILITY_PARAMETERS = (
     FACE_SPEC_REVISION,
     FACE_SPEC_REVISION,
     FACE_PROCESSOR_ID,
     FACE_ARTIFACT_REVISION,
 )
+_VISIBLE += " AND NOT " + superseded_machine_sql()
 _NO_MEMBER = (
     "NOT EXISTS (SELECT 1 FROM face_person_links AS l WHERE l.face_id = f.face_id AND "
     + MEMBER_PREDICATE
@@ -362,8 +374,7 @@ def asset_faces(catalog: Any, asset_id: int) -> dict[str, Any]:
         _SELECT_FACES
         + "WHERE f.asset_id = ? AND "
         + _VISIBLE
-        + " AND "
-        + _NOT_HELD
+        + f" AND ({_NOT_HELD} OR f.spec_revision = '{FACE_DETAIL_SPEC_REVISION}')"
         + " ORDER BY f.face_id LIMIT 201",
         (asset_id, *_VISIBILITY_PARAMETERS),
     )

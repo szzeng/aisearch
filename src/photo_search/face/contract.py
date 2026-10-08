@@ -45,6 +45,14 @@ FACE_TASK_TYPE = "image_face"
 FACE_SPEC_REVISION = "face-buffalo-l-scrfd-arcface-v2"
 FACE_DETECTOR_ID = "scrfd-det-10g@1"
 FACE_ARTIFACT_REVISION = "face-document.v2"
+# Opt-in source-detail recognition is a separate scheduler/artifact profile. It deliberately
+# shares weights and nominal face space, but remains excluded from automatic cross-profile
+# comparison until the bounded real-model compatibility check is recorded.
+FACE_DETAIL_TASK_TYPE = "image_face_detail"
+FACE_DETAIL_AUTO_TASK_TYPE = "image_face_detail_auto"
+FACE_DETAIL_SPEC_REVISION = "face-buffalo-l-scrfd-arcface-source-crop-v1"
+FACE_DETAIL_ARTIFACT_REVISION = "face-document.source-crop.v1"
+FACE_DETAIL_PREPROCESS_VERSION = "face-scrfd-640-source-crop-align112-rgb-v1"
 #: An embedding-model spec must declare ``output_type = "embedding"`` in the frozen
 #: contract. The *published* artifact is nevertheless structured, and the reason is
 #: recorded in the report §3: an ``embedding`` artifact is asset-keyed and would create an

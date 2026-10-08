@@ -159,7 +159,11 @@ def recorded_face_frame(
     A real document must be published, checksum-valid and bound to this exact face
     and current content; a missing/corrupt document is refused rather than guessed.
     """
-    from photo_search.face.contract import FACE_PROCESSOR_ID
+    from photo_search.face.contract import (
+        FACE_DETAIL_ARTIFACT_REVISION,
+        FACE_DETAIL_SPEC_REVISION,
+        FACE_PROCESSOR_ID,
+    )
 
     if artifact is None and not str(face["artifact_id"]).startswith("face-document:"):
         return None
@@ -175,7 +179,8 @@ def recorded_face_frame(
         artifact is None
         or artifact["lifecycle_state"] != "PUBLISHED"
         or artifact["artifact_type"] != "structured"
-        or artifact["artifact_revision"] not in {"face-document.v1", "face-document.v2"}
+        or artifact["artifact_revision"]
+        not in {"face-document.v1", "face-document.v2", FACE_DETAIL_ARTIFACT_REVISION}
         or artifact["processor_id"] != FACE_PROCESSOR_ID
         or str(artifact["input_revision"]) != str(sha256)
         or str(face["input_revision"]) != str(sha256)
@@ -185,9 +190,18 @@ def recorded_face_frame(
     try:
         payload = json.loads(ArtifactStore(data_root).read(artifact))
         size = payload["original_size"]
+        detail = artifact["artifact_revision"] == FACE_DETAIL_ARTIFACT_REVISION
         if (
             payload["processor_id"] != FACE_PROCESSOR_ID
             or payload["input_revision"] != sha256
+            or (
+                detail
+                and (
+                    payload.get("spec_revision") != FACE_DETAIL_SPEC_REVISION
+                    or payload.get("artifact_revision") != FACE_DETAIL_ARTIFACT_REVISION
+                    or face["spec_revision"] != FACE_DETAIL_SPEC_REVISION
+                )
+            )
             or not isinstance(size, list)
             or len(size) != 2
             or any(type(value) is not int or value <= 0 for value in size)

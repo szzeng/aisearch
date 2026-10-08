@@ -145,6 +145,15 @@ class FaceIndexCoordinator:
         )
 
     def active_generation(self) -> Any:
+        if self.spec_revision == contract.FACE_DETAIL_SPEC_REVISION:
+            row = self.generation()
+            return row if row is not None and str(row["state"]) == "READY" and (
+                str(row["space_id"]) == contract.FACE_SPACE_ID
+                and str(row["processor_id"]) == contract.FACE_PROCESSOR_ID
+                and str(row["spec_revision"]) == self.spec_revision
+                and int(row["dimension"]) == contract.FACE_DIMENSION
+                and str(row["metric"]) == "cosine" and str(row["normalization"]) == "L2"
+            ) else None
         return self.catalog.read_one(
             "SELECT * FROM face_index_generations WHERE space_id = ? AND is_active = 1",
             (contract.FACE_SPACE_ID,),
@@ -154,9 +163,20 @@ class FaceIndexCoordinator:
     def process_next(self, *, now_ms: int, failpoint: str | None = None) -> bool:
         """Publish and confirm one event. ``after_publish`` simulates the crash window."""
         with self.catalog.write() as connection:
+            accepted_generations = [self.generation_id]
+            if self.spec_revision == _GEOMETRY_V2:
+                accepted_generations.append(
+                    generation_id_for(
+                        contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID,
+                        spec_revision=_GEOMETRY_V1,
+                    )
+                )
+            marks = ",".join("?" for _ in accepted_generations)
             event = connection.execute(
                 "SELECT * FROM face_index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
+                f"AND generation_id IN ({marks}) "
                 "ORDER BY created_at, event_id LIMIT 1"
+                , tuple(accepted_generations)
             ).fetchone()
             if event is None:
                 return False
@@ -248,6 +268,8 @@ class FaceIndexCoordinator:
         count = 0
         while count < int(limit) and self.process_next(now_ms=int(now_ms)):
             count += 1
+        with self.catalog.write() as connection:
+            self._make_generation_ready(connection, now_ms=int(now_ms))
         return count
 
     # ------------------------------------------------------------------- internals
@@ -385,7 +407,7 @@ class FaceIndexCoordinator:
             "AND is_active = 1",
             (row["space_id"],),
         ).fetchone()
-        if active is None:
+        if active is None and self.spec_revision != contract.FACE_DETAIL_SPEC_REVISION:
             connection.execute(
                 "UPDATE face_index_generations SET is_active = 1, updated_at = ? "
                 "WHERE generation_id = ?",
@@ -398,30 +420,31 @@ class FaceIndexCoordinator:
         generation = self.active_generation()
         if generation is None:
             return []
-        generation_ids = [str(generation["generation_id"])]
-        current = self.generation()
-        if (
-            self.spec_revision == _GEOMETRY_V2
-            and str(generation["spec_revision"]) == _GEOMETRY_V1
-            and str(generation["generation_id"])
-            == generation_id_for(
-                contract.FACE_SPACE_ID,
-                contract.FACE_PROCESSOR_ID,
-                spec_revision=_GEOMETRY_V1,
+        from photo_search.face import detail_policy
+
+        allowed_specs = (
+            detail_policy.COMPATIBLE_SPECS if detail_policy.compatibility_verified()
+            else (_GEOMETRY_V1, _GEOMETRY_V2)
+        )
+        if self.spec_revision not in allowed_specs:
+            return []
+        generation_ids = []
+        for revision in allowed_specs:
+            expected_id = generation_id_for(
+                contract.FACE_SPACE_ID, contract.FACE_PROCESSOR_ID, spec_revision=revision
             )
-            and str(generation["state"]) == "READY"
-            and current is not None
-            and str(current["spec_revision"]) == _GEOMETRY_V2
-            and str(current["state"]) == "READY"
-            and str(current["space_id"]) == str(generation["space_id"]) == contract.FACE_SPACE_ID
-            and str(current["processor_id"])
-            == str(generation["processor_id"])
-            == contract.FACE_PROCESSOR_ID
-            and int(current["dimension"]) == int(generation["dimension"]) == contract.FACE_DIMENSION
-            and str(current["metric"]) == str(generation["metric"]) == "cosine"
-            and str(current["normalization"]) == str(generation["normalization"]) == "L2"
-        ):
-            generation_ids.append(self.generation_id)
+            row = self.catalog.read_one(
+                "SELECT * FROM face_index_generations WHERE generation_id=?", (expected_id,)
+            )
+            if (row is not None and str(row["state"]) == "READY"
+                and str(row["spec_revision"]) == revision
+                and str(row["space_id"]) == contract.FACE_SPACE_ID
+                and str(row["processor_id"]) == contract.FACE_PROCESSOR_ID
+                and int(row["dimension"]) == contract.FACE_DIMENSION
+                and str(row["metric"]) == "cosine" and str(row["normalization"]) == "L2"):
+                generation_ids.append(expected_id)
+        if not generation_ids:
+            return []
         marks = ",".join("?" for _ in generation_ids)
         tables = human_control_tables(self.catalog.connection)
         eligibility = ""
@@ -435,6 +458,10 @@ class FaceIndexCoordinator:
                 " AND NOT EXISTS (SELECT 1 FROM face_exclusions AS x "
                 "WHERE x.face_id = c.face_id AND x.person_id = l.person_id AND x.active = 1)"
             )
+        from photo_search.face.detail_policy import superseded_machine_sql
+        eligibility += " AND NOT " + superseded_machine_sql()
+        eligibility += " AND f.spec_revision=(SELECT g.spec_revision FROM face_index_generations g WHERE g.generation_id=c.generation_id)"
+        eligibility += " AND c.vector_sha256=fe.vector_sha256"
         # Old publication flags only describe the size-ranked choice at that time.
         # Read a bounded pool of confirmed members so historical flags need no rebuild
         # and a smaller, different appearance can replace redundant large portraits.
@@ -446,6 +473,11 @@ class FaceIndexCoordinator:
             "FROM face_candidates AS c "
             "JOIN face_person_links AS l ON l.face_id = c.face_id AND l.decision = 'CONFIRMED' "
             "JOIN faces AS f ON f.face_id = c.face_id "
+            "JOIN assets AS a ON a.asset_id=f.asset_id AND a.state='ACTIVE' AND a.sha256=f.input_revision "
+            "JOIN face_embeddings AS fe ON fe.face_id=f.face_id "
+            "AND fe.processor_id='" + contract.FACE_PROCESSOR_ID + "' "
+            "AND fe.space_id='" + contract.FACE_SPACE_ID + "' "
+            "AND fe.dimension=512 AND fe.metric='cosine' AND fe.normalization='L2' "
             "JOIN face_index_entries AS e ON e.face_id = c.face_id "
             "AND e.generation_id = c.generation_id AND e.state = 'CONFIRMED' "
             "AND e.artifact_id = f.artifact_id "
@@ -619,6 +651,11 @@ def queued_assets(
     catalog: Catalog, *, spec_revision: str = contract.FACE_SPEC_REVISION,
     asset_ids: Sequence[int] | None = None,
 ) -> list[Any]:
+    queue_table = (
+        "face_detail_association_queue"
+        if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION
+        else "face_association_queue"
+    )
     if asset_ids is not None:
         selected = sorted({int(asset_id) for asset_id in asset_ids})
         rows: list[Any] = []
@@ -626,13 +663,13 @@ def queued_assets(
             batch = selected[offset : offset + 400]
             marks = ",".join("?" for _ in batch)
             rows.extend(catalog.read_all(
-                "SELECT * FROM face_association_queue WHERE spec_revision = ? "
+                f"SELECT * FROM {queue_table} WHERE spec_revision = ? "
                 f"AND asset_id IN ({marks})",
                 (str(spec_revision), *batch),
             ))
         return sorted(rows, key=lambda row: (int(row["queued_at"]), int(row["asset_id"])))
     return catalog.read_all(
-        "SELECT * FROM face_association_queue WHERE spec_revision = ? ORDER BY queued_at, asset_id",
+        f"SELECT * FROM {queue_table} WHERE spec_revision = ? ORDER BY queued_at, asset_id",
         (str(spec_revision),),
     )
 
@@ -725,6 +762,13 @@ def reconcile(
     must not produce.
     """
     index = coordinator or FaceIndexCoordinator(catalog, spec_revision=str(spec_revision))
+    if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION:
+        from photo_search.face.detail_policy import compatibility_verified
+        if not compatibility_verified():
+            return {"processed": 0, "deferred": len(queued_assets(catalog, spec_revision=spec_revision,
+                    asset_ids=asset_ids)), "decisions": [], "new_groups": 0, "merged": 0,
+                    "suggested": 0, "unassigned": 0, "human_controlled": 0,
+                    "late_control_conflicts": 0}
     selected = None if asset_ids is None else {int(asset) for asset in asset_ids}
     decisions: list[dict[str, Any]] = []
     processed = 0
@@ -770,7 +814,7 @@ def _index_complete(catalog: Catalog, index: FaceIndexCoordinator, *, asset_id: 
     row = catalog.read_one(
         "SELECT COUNT(*) AS total FROM faces AS f WHERE f.asset_id = ? AND f.spec_revision = ? "
         "AND NOT EXISTS (SELECT 1 FROM face_index_entries AS e WHERE e.face_id = f.face_id "
-        " AND e.generation_id = ? AND e.state = 'CONFIRMED')",
+        " AND e.generation_id = ? AND e.state = 'CONFIRMED' AND e.artifact_id=f.artifact_id)",
         (int(asset_id), index.spec_revision, index.generation_id),
     )
     return int(row["total"]) == 0
@@ -844,7 +888,9 @@ def _manually_locked_face_ids(
     }
 
 
-def _mapping_hold_face_ids(connection: sqlite3.Connection, *, asset_id: int) -> set[str]:
+def _mapping_hold_face_ids(
+    connection: sqlite3.Connection, *, asset_id: int, spec_revision: str
+) -> set[str]:
     """ADR-0010 §3.4: the *association* hold, deliberately separate from row retention.
 
     The detection-row retention predicate of ``processor.human_controlled_face_ids()`` is
@@ -861,7 +907,9 @@ def _mapping_hold_face_ids(connection: sqlite3.Connection, *, asset_id: int) -> 
         return set()
     from photo_search.persons import mapping as mapping_module
 
-    return mapping_module.hold_face_ids(connection, asset_id=int(asset_id))
+    return mapping_module.hold_face_ids(
+        connection, asset_id=int(asset_id), spec_revision=str(spec_revision)
+    )
 
 
 def _canonical_person_map(
@@ -915,6 +963,17 @@ def _reconcile_asset(
 ) -> list[dict[str, Any]]:
     from photo_search.persons import face_correction
 
+    if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION:
+        from photo_search.face import detail_policy
+        if not detail_policy.compatibility_verified() or catalog.read_one(
+            "SELECT 1 FROM face_detail_auto_assets d JOIN assets a ON a.asset_id=d.asset_id "
+            "AND a.sha256=d.input_revision WHERE d.asset_id=? AND d.policy_revision=?",
+            (asset_id, detail_policy.POLICY_REVISION),
+        ) is None:
+            return []
+        if index.active_generation() is None or not _index_complete(catalog, index, asset_id=asset_id):
+            return []
+
     candidates = index.candidates()
     faces = asset_faces(catalog.connection, asset_id=asset_id, spec_revision=str(spec_revision))
     face_ids = [str(face["face_id"]) for face in faces]
@@ -937,22 +996,40 @@ def _reconcile_asset(
         # denial tables are the authority, and the candidate set above was only a snapshot.
         late = _control_revision_gate(connection, observed, face_ids)
         protected = _manually_locked_face_ids(connection, asset_id=asset_id)
+        if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION:
+            from photo_search.persons.mapping import generate_candidates_for_asset
+            generate_candidates_for_asset(
+                connection, asset_id=asset_id, new_face_ids=face_ids,
+                now_ms=catalog.now_ms(), new_spec_revision=spec_revision,
+            )
         # ADR-0010 §3.4: read the provisional hold at the very same point - and inside the
         # same ``BEGIN IMMEDIATE`` - as the human locks and the active denials, so an
         # automatic result can never be written behind an undecided redetection review.
-        held = _mapping_hold_face_ids(connection, asset_id=asset_id)
+        held = _mapping_hold_face_ids(
+            connection, asset_id=asset_id, spec_revision=str(spec_revision)
+        )
         excluded_by_face = _active_exclusion_persons(connection, face_ids)
         canonical_of_person = _canonical_person_map(
             connection,
             [int(candidate.person_id) for candidate in candidates]
             + [int(person) for persons in excluded_by_face.values() for person in persons],
         )
+        from photo_search.face.detail_policy import superseded_machine_sql
+        # Only an authorized, fully published source result may supersede old machine
+        # occupancy. Human anchors remain authoritative, including a late human edit.
+        if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION:
+            connection.execute(
+                "UPDATE face_detail_auto_assets SET ready=1,updated_at=? WHERE asset_id=? "
+                "AND input_revision=(SELECT sha256 FROM assets WHERE asset_id=?)",
+                (catalog.now_ms(), asset_id, asset_id),
+            )
         person_in_asset = {
             int(row["person_id"])
             for row in connection.execute(
                 "SELECT DISTINCT l.person_id FROM face_person_links AS l "
                 "JOIN faces AS f ON f.face_id = l.face_id "
-                "WHERE f.asset_id = ? AND l.decision = 'CONFIRMED'",
+                "WHERE f.asset_id = ? AND l.decision = 'CONFIRMED' AND NOT "
+                + superseded_machine_sql(),
                 (int(asset_id),),
             ).fetchall()
         }
@@ -1092,10 +1169,15 @@ def _reconcile_asset(
         # kept, so releasing the hold can run the association again. Only a pass that leaves
         # nothing pending may drain the row.
         if held or late:
+            queue_table = (
+                "face_detail_association_queue"
+                if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION
+                else "face_association_queue"
+            )
+            conflict = "(asset_id, spec_revision)" if queue_table.startswith("face_detail") else "(asset_id)"
             connection.execute(
-                "INSERT INTO face_association_queue(asset_id, spec_revision, face_revision, "
-                "queued_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(asset_id) DO UPDATE SET spec_revision = excluded.spec_revision, "
+                f"INSERT INTO {queue_table}(asset_id, spec_revision, face_revision, queued_at) "
+                f"VALUES (?, ?, ?, ?) ON CONFLICT{conflict} DO UPDATE SET "
                 "face_revision = excluded.face_revision, queued_at = excluded.queued_at",
                 (
                     int(asset_id),
@@ -1112,8 +1194,13 @@ def _reconcile_asset(
                 ),
             )
         else:
+            queue_table = (
+                "face_detail_association_queue"
+                if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION
+                else "face_association_queue"
+            )
             connection.execute(
-                "DELETE FROM face_association_queue WHERE asset_id = ? AND spec_revision = ?",
+                f"DELETE FROM {queue_table} WHERE asset_id = ? AND spec_revision = ?",
                 (int(asset_id), str(spec_revision)),
             )
         # An assignment change changes which faces are representatives, so the affected

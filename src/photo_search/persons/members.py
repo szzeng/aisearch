@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from photo_search.face.detail_policy import superseded_machine_sql
+
 #: The membership predicate over an alias ``l`` of ``face_person_links``. It is a plain SQL
 #: fragment so it can be reused as a ``WHERE``/``JOIN`` condition without a second copy.
 MEMBER_PREDICATE = (
@@ -22,6 +24,8 @@ MEMBER_PREDICATE = (
     " WHERE c.face_id = l.face_id AND c.mode = 'MANUAL_UNASSIGNED') "
     "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e "
     " WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1)"
+    " AND NOT EXISTS (SELECT 1 FROM faces AS member_face WHERE member_face.face_id=l.face_id AND "
+    + superseded_machine_sql("member_face") + ")"
 )
 
 #: ``COUNT({aggregate})`` over the member set; ``*`` counts faces, ``DISTINCT f.asset_id``

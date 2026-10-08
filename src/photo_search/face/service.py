@@ -23,7 +23,9 @@ degradation instead of hiding it).
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Callable, Sequence
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,18 @@ from photo_search.jobs import queue as jobs
 from photo_search.runtime.device import CPU_PROVIDER, CUDA_PROVIDER
 from photo_search.scheduler import engine as scheduler_engine
 from photo_search.scheduler.contracts import RuntimeCapabilities
+
+BACKGROUND_MODEL_SLOT = threading.RLock()
+
+
+def _serialize_face_work(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Share one inference slot across refreshes, per-photo requests, and batches."""
+    @wraps(function)
+    def guarded(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        with BACKGROUND_MODEL_SLOT:
+            return function(*args, **kwargs)
+
+    return guarded
 
 #: States a forced re-detection may rewind: everything except a live execution.
 REWINDABLE_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "RETRY_WAIT")
@@ -82,6 +96,7 @@ def enqueue_targets(
     now_ms: int,
     force: bool = False,
     device: str = "auto",
+    task_type: str = contract.FACE_TASK_TYPE,
 ) -> dict[str, int]:
     """Queue (or force-requeue) one face job per target, idempotently."""
     requested = str(device)
@@ -96,10 +111,15 @@ def enqueue_targets(
         for target in targets:
             asset_id = int(target["asset_id"])
             revision = str(target["input_revision"])
-            if force and _rewind(connection, asset_id=asset_id, revision=revision, now_ms=now_ms):
+            if force and _rewind(
+                connection, asset_id=asset_id, revision=revision, now_ms=now_ms,
+                task_type=str(task_type),
+            ):
                 rewound += 1
                 continue
-            if force and _is_live(connection, asset_id=asset_id, revision=revision):
+            if force and _is_live(
+                connection, asset_id=asset_id, revision=revision, task_type=str(task_type)
+            ):
                 live += 1
                 continue
             jobs.enqueue(
@@ -107,7 +127,7 @@ def enqueue_targets(
                 subject_type="asset",
                 subject_id=str(asset_id),
                 input_revision=revision,
-                task_type=contract.FACE_TASK_TYPE,
+                task_type=str(task_type),
                 processor_id=contract.FACE_PROCESSOR_ID,
                 now_ms=int(now_ms),
                 requested_device=requested,
@@ -116,17 +136,94 @@ def enqueue_targets(
     return {"targets": len(targets), "queued": queued, "rewound": rewound, "live": live}
 
 
-def _is_live(connection: sqlite3.Connection, *, asset_id: int, revision: str) -> bool:
+def enqueue_source_detail(catalog: Catalog, *, asset_id: int, device: str = "auto") -> dict[str, Any]:
+    """Queue one opt-in source-detail run, deduplicated by the durable job identity."""
+    target = face_targets(catalog, asset_ids=[int(asset_id)], limit=1)
+    if not target:
+        raise CatalogError("ASSET_NOT_FOUND", "the selected photo has no readable original")
+    requested = str(device)
+    if requested not in ("auto", "cpu", "gpu"):
+        raise CatalogError("USAGE", "the requested device must be auto, cpu or gpu")
+    item = target[0]
+    now_ms = catalog.now_ms()
+    published = catalog.read_one(
+        "SELECT 1 FROM artifacts WHERE processor_id = ? AND input_revision = ? "
+        "AND artifact_revision = ? AND lifecycle_state = 'PUBLISHED' LIMIT 1",
+        (
+            contract.FACE_PROCESSOR_ID,
+            str(item["input_revision"]),
+            contract.FACE_DETAIL_ARTIFACT_REVISION,
+        ),
+    )
+    if published is not None:
+        succeeded = catalog.read_one(
+            "SELECT job_id FROM jobs WHERE subject_type = 'asset' AND subject_id = ? "
+            "AND input_revision = ? AND task_type = ? AND processor_id = ? "
+            "AND state = 'SUCCEEDED' ORDER BY job_id DESC LIMIT 1",
+            (
+                str(item["asset_id"]),
+                str(item["input_revision"]),
+                contract.FACE_DETAIL_TASK_TYPE,
+                contract.FACE_PROCESSOR_ID,
+            ),
+        )
+        return {
+            "job_id": None if succeeded is None else int(succeeded["job_id"]),
+            "state": "SUCCEEDED",
+            "asset_id": int(asset_id),
+            "already_available": True,
+        }
+    with catalog.write() as connection:
+        job_id = jobs.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(item["asset_id"]),
+            input_revision=str(item["input_revision"]),
+            task_type=contract.FACE_DETAIL_TASK_TYPE,
+            processor_id=contract.FACE_PROCESSOR_ID,
+            now_ms=now_ms,
+            requested_device=requested,
+        )
+        row = connection.execute("SELECT * FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if row is None:
+            raise CatalogError("JOB_NOT_FOUND", "the face enhancement task was not stored")
+        state_value = str(row["state"])
+        if state_value in REWINDABLE_STATES:
+            connection.execute(
+                "UPDATE jobs SET state = 'QUEUED', attempts = 0, progress = 0.0, "
+                "lease_token = NULL, lease_expires_at = NULL, worker_id = NULL, run_after = ?, "
+                "last_error_code = NULL, last_error_message = NULL, blocking_reason = NULL, "
+                "resolved_device = NULL, runtime_provider = NULL, precision = NULL, "
+                "runtime_capability_revision = NULL, dispatch_spec_revision = NULL, updated_at = ? "
+                "WHERE job_id = ?",
+                (now_ms, now_ms, int(job_id)),
+            )
+            state_value = "QUEUED"
+        return {
+            "job_id": int(job_id),
+            "state": state_value,
+            "asset_id": int(asset_id),
+            "already_available": False,
+        }
+
+
+def _is_live(
+    connection: sqlite3.Connection, *, asset_id: int, revision: str,
+    task_type: str = contract.FACE_TASK_TYPE,
+) -> bool:
     row = connection.execute(
         "SELECT 1 FROM jobs WHERE subject_type = 'asset' AND subject_id = ? "
         "AND input_revision = ? AND task_type = ? AND processor_id = ? AND state = 'RUNNING' "
         "AND lease_expires_at IS NOT NULL",
-        (str(int(asset_id)), str(revision), contract.FACE_TASK_TYPE, contract.FACE_PROCESSOR_ID),
+        (str(int(asset_id)), str(revision), str(task_type), contract.FACE_PROCESSOR_ID),
     ).fetchone()
     return row is not None
 
 
-def _rewind(connection: sqlite3.Connection, *, asset_id: int, revision: str, now_ms: int) -> bool:
+def _rewind(
+    connection: sqlite3.Connection, *, asset_id: int, revision: str, now_ms: int,
+    task_type: str = contract.FACE_TASK_TYPE,
+) -> bool:
     """Reuse the same logical job for a forced re-detection (never a second row)."""
     placeholders = ", ".join("?" for _ in REWINDABLE_STATES)
     cursor = connection.execute(
@@ -144,7 +241,7 @@ def _rewind(connection: sqlite3.Connection, *, asset_id: int, revision: str, now
             int(now_ms),
             str(int(asset_id)),
             str(revision),
-            contract.FACE_TASK_TYPE,
+            str(task_type),
             contract.FACE_PROCESSOR_ID,
             *REWINDABLE_STATES,
         ),
@@ -277,6 +374,7 @@ def record_runtime_evidence(
     }
 
 
+@_serialize_face_work
 def run_queue(
     catalog: Catalog,
     *,
@@ -288,10 +386,20 @@ def run_queue(
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
+    source_detail: bool = False,
+    automatic_detail: bool = False,
+    job_ids: Sequence[int] | None = None,
+    claim_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable face jobs; bounded, single-threaded, no sleeping."""
-    spec = face_processor_spec()
+    spec = face_processor_spec(
+        source_detail=source_detail, automatic_detail=automatic_detail
+    )
     scheduler = build_scheduler(catalog, spec)
+    scheduler.job_ids = None if job_ids is None else tuple(int(value) for value in job_ids)
+    if (job_ids is not None and not job_ids) or (claim_check is not None and not claim_check()):
+        return {"steps": 0, "jobs": job_counts(catalog, task_type=spec.task_type),
+                "pending_jobs": pending_job_count(catalog), "reason": "NO_CLAIM_ALLOWED"}
     cache = engine_cache or FaceEngineCache()
     evidence = record_runtime_evidence(
         scheduler,
@@ -308,15 +416,29 @@ def run_queue(
         cancel=cancel,
         deadline_ms=deadline_ms,
         clock=clock,
+        preserve_source_detail=source_detail,
     )
     steps = 0
     while limit is None or steps < max(0, int(limit)):
+        if claim_check is not None and not claim_check():
+            break
+        if cancel is not None and cancel():
+            break
         if not scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             break
         steps += 1
     return {
         "steps": steps,
-        "jobs": job_counts(catalog),
+        "jobs": job_counts(
+            catalog,
+            task_type=(
+                contract.FACE_DETAIL_AUTO_TASK_TYPE
+                if automatic_detail
+                else contract.FACE_DETAIL_TASK_TYPE
+                if source_detail
+                else contract.FACE_TASK_TYPE
+            ),
+        ),
         "pending_jobs": pending_job_count(catalog),
         **evidence,
     }
@@ -332,10 +454,13 @@ def catch_up_index(
 
 
 def catch_up_association(
-    catalog: Catalog, *, coordinator: FaceIndexCoordinator | None = None, limit: int = 100_000
+    catalog: Catalog, *, coordinator: FaceIndexCoordinator | None = None,
+    limit: int = 100_000, spec_revision: str = contract.FACE_SPEC_REVISION,
 ) -> dict[str, Any]:
     """Group the faces whose facts are already published and confirmed."""
-    return reconcile(catalog, coordinator=coordinator, limit=int(limit))
+    return reconcile(
+        catalog, coordinator=coordinator, limit=int(limit), spec_revision=str(spec_revision)
+    )
 
 
 def rematch_unassigned(
@@ -447,22 +572,45 @@ def detect(
     limit: int | None = None,
     asset_ids: Sequence[int] | None = None,
     engine_cache: FaceEngineCache | None = None,
+    source_detail: bool = False,
 ) -> dict[str, Any]:
     """The whole closed loop: queue, detect, publish candidates, group conservatively."""
     targets = face_targets(catalog, asset_ids=asset_ids, limit=limit)
+    all_targets = list(targets)
+    if source_detail:
+        from photo_search.face.detail_policy import restore
+        targets = [target for target in targets if not restore(
+            catalog, asset_id=int(target["asset_id"]), input_revision=str(target["input_revision"])
+        )]
+    task_type = contract.FACE_DETAIL_AUTO_TASK_TYPE if source_detail else contract.FACE_TASK_TYPE
     queued = enqueue_targets(
-        catalog, targets, now_ms=catalog.now_ms(), force=bool(force), device=str(device)
+        catalog, targets, now_ms=catalog.now_ms(), force=bool(force), device=str(device),
+        task_type=task_type,
     )
+    selected_jobs = [int(catalog.read_one(
+        "SELECT job_id FROM jobs WHERE subject_type='asset' AND subject_id=? "
+        "AND input_revision=? AND task_type=? AND processor_id=?",
+        (str(target["asset_id"]), target["input_revision"], task_type, contract.FACE_PROCESSOR_ID),
+    )["job_id"]) for target in targets]
     run = run_queue(
         catalog,
         data_root=data_root,
         device=str(device),
         limit=limit,
         engine_cache=engine_cache,
+        source_detail=bool(source_detail),
+        automatic_detail=bool(source_detail),
+        job_ids=selected_jobs,
+    ) if selected_jobs else {"steps": 0, "jobs": job_counts(catalog, task_type=task_type)}
+    spec_revision = (
+        contract.FACE_DETAIL_SPEC_REVISION if source_detail else contract.FACE_SPEC_REVISION
     )
-    index = FaceIndexCoordinator(catalog)
+    index = FaceIndexCoordinator(catalog, spec_revision=spec_revision)
     published = catch_up_index(catalog, coordinator=index)
-    association = catch_up_association(catalog, coordinator=index)
+    association = reconcile(
+        catalog, coordinator=index, spec_revision=spec_revision,
+        asset_ids=[int(target["asset_id"]) for target in all_targets],
+    )
     published_again = catch_up_index(catalog, coordinator=index)
     return {
         "enqueue": queued,

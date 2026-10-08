@@ -73,6 +73,24 @@ BUILD_ROUND_CAP = 10_000
 SEMANTIC_TASK_TYPE = "image_embedding"
 
 
+def resolve_face_profile(catalog: Any, *, source_ids: Sequence[int] | None,
+                         requested: str | None) -> str:
+    """Persist the choice before scanning; retry/restart cannot change the selected path."""
+    import json
+    key = "face_build_profile:" + json.dumps(sorted(set(source_ids or [])), separators=(",", ":"))
+    if requested is None:
+        row = catalog.read_one("SELECT value FROM metadata WHERE key=?", (key,))
+        profile = str(row["value"]) if row is not None else "source_detail"
+    else:
+        profile = str(requested)
+    if profile not in ("source_detail", "lightweight"):
+        raise ValueError("unknown face profile")
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) "
+                           "DO UPDATE SET value=excluded.value", (key, profile))
+    return profile
+
+
 def refresh_library(
     service: Any,
     status: RefreshStatus,
@@ -80,6 +98,7 @@ def refresh_library(
     source_ids: Sequence[int] | None = None,
     batch_size: int = DEFAULT_OBSERVATION_BATCH,
     mode: str = REFRESH_MODE_DAILY,
+    face_profile: str | None = None,
     encoder_factory: Callable[[], Any] | None = None,
     manifest_path: str | Path | None = None,
     device: str = "auto",
@@ -104,6 +123,8 @@ def refresh_library(
         raise ValueError(f"unknown refresh mode {mode!r}")
     build = mode == REFRESH_MODE_BUILD
     catalog = service.catalog
+    face_profile = resolve_face_profile(catalog, source_ids=source_ids, requested=face_profile)
+    status.set_face_profile(face_profile)
     started = time.perf_counter()
     content_delta: set[int] = set()
     location_delta: set[int] = set()
@@ -204,6 +225,7 @@ def refresh_library(
             service,
             status,
             mode=mode,
+            face_profile=face_profile,
             scopes=scopes,
             content_delta=content_delta,
             location_delta=location_delta,
@@ -1057,6 +1079,7 @@ def _enrichment_stages(
     status: RefreshStatus,
     *,
     mode: str = REFRESH_MODE_DAILY,
+    face_profile: str = "source_detail",
     scopes: Sequence[int | None] = (None,),
     content_delta: set[int],
     location_delta: set[int],
@@ -1079,12 +1102,17 @@ def _enrichment_stages(
     content = set(sorted(content_delta))
     location = set(sorted(location_delta))
     stages: dict[str, Any] = {}
+    from photo_search.face.engine import FaceEngineCache
+    face_cache = FaceEngineCache()
     runners: dict[str, Callable[[], dict[str, Any]]] = {
         "thumbnail": lambda: _thumbnail_stage(service, content, cancel_check),
         "taken_time": lambda: _taken_time_stage(catalog, content | location),
         "gps": lambda: _gps_stage(catalog, content),
         "place_resolver": lambda: _resolver_stage(catalog, service.data_root, content),
-        "face": lambda: _face_stage(catalog, service.data_root, content),
+        "face": lambda: _face_stage(
+            catalog, service.data_root, content, source_detail=face_profile == "source_detail",
+            engine_cache=face_cache,
+        ),
         "ocr": lambda: _ocr_stage(catalog, service.data_root, content),
     }
     if mode == REFRESH_MODE_BUILD:
@@ -1116,7 +1144,11 @@ def _enrichment_stages(
             "face": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
-                runner=lambda page: _face_stage(catalog, service.data_root, page),
+                runner=lambda page: _face_stage(
+                    catalog, service.data_root, page,
+                    source_detail=face_profile == "source_detail",
+                    engine_cache=face_cache,
+                ),
                 cancel_check=cancel_check,
             ),
             "ocr": lambda: _drain_scope(
@@ -1347,14 +1379,20 @@ def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str,
     return {"state": STAGE_OK, "targets": len(targets), "new_jobs": created, "steps": steps}
 
 
-def _face_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]:
+def _face_stage(
+    catalog: Any, data_root: Any, assets: set[int], *, source_detail: bool = True,
+    engine_cache: Any | None = None,
+) -> dict[str, Any]:
     from photo_search.face import service as face_service
     from photo_search.face import weights as face_weights
 
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "targets": 0, "steps": 0}
     try:
-        face_weights.resolve_and_verify(data_root)
+        if engine_cache is not None:
+            engine_cache.verified_weights(data_root)
+        else:
+            face_weights.resolve_and_verify(data_root)
     except CatalogError as error:
         return {
             "state": STAGE_SKIPPED,
@@ -1363,7 +1401,9 @@ def _face_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any
             "steps": 0,
         }
     result = face_service.detect(
-        catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT]
+        catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT],
+        source_detail=bool(source_detail),
+        engine_cache=engine_cache,
     )
     return {
         "state": STAGE_OK,

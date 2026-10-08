@@ -45,6 +45,7 @@ from photo_search.api.models import (
     FaceControlState,
     FaceCorrectionBatchRequest,
     FaceCorrectionRequest,
+    FaceDetailBatchRequest,
     FaceListResponse,
     FaceOperationResponse,
     FaceRematchRequest,
@@ -698,7 +699,10 @@ async def request_library_refresh(
     """
     source_ids = None if payload is None else payload.source_ids
     mode = "refresh" if payload is None else str(payload.mode)
-    return context_of(request).refresher().start(source_ids, mode=mode)
+    face_profile = None if payload is None else payload.face_profile
+    return context_of(request).refresher().start(
+        source_ids, mode=mode, face_profile=face_profile
+    )
 
 
 @router.get(
@@ -1412,9 +1416,87 @@ async def face_rematch(request: Request, payload: FaceRematchRequest) -> dict[st
     }
 
 
+@router.post("/faces/source-detail-batches", summary="Queue one durable source-detail face batch")
+async def post_source_detail_batch(
+    request: Request, payload: FaceDetailBatchRequest | None = Body(default=None)
+) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    catalog = service_of(request).catalog
+    result = source_detail_batches.create_batch(
+        catalog, source_id=None if payload is None else payload.source_id
+    )
+    if result["batch_id"] and result["state"] in ("QUEUED", "RUNNING"):
+        context_of(request).face_detail_runner().submit_batch(str(result["batch_id"]))
+    return result
+
+
+@router.get("/faces/source-detail-batches/active", summary="Current durable source-detail batch")
+async def get_active_source_detail_batch(request: Request, source_id: int | None = None) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    return source_detail_batches.status(service_of(request).catalog, source_id=source_id)
+
+
+@router.get("/faces/source-detail-preview", summary="Count eligible photos without reading originals")
+async def get_source_detail_preview(request: Request, source_id: int | None = None) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    return source_detail_batches.preview(service_of(request).catalog, source_id=source_id)
+
+
+@router.get("/faces/source-detail-batches/{batch_id}", summary="Durable source-detail batch progress")
+async def get_source_detail_batch(request: Request, batch_id: str) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    return source_detail_batches.status(service_of(request).catalog, str(batch_id))
+
+
+@router.post("/faces/source-detail-batches/{batch_id}/pause", summary="Pause after the current photo")
+async def pause_source_detail_batch(request: Request, batch_id: str) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    return source_detail_batches.pause(service_of(request).catalog, str(batch_id))
+
+
+@router.post("/faces/source-detail-batches/{batch_id}/resume", summary="Resume a paused face batch")
+async def resume_source_detail_batch(request: Request, batch_id: str) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    result = source_detail_batches.resume(service_of(request).catalog, str(batch_id))
+    context_of(request).face_detail_runner().submit_batch(str(batch_id))
+    return result
+
+
+@router.post("/faces/source-detail-batches/{batch_id}/retry", summary="Retry failed photos in a face batch")
+async def retry_source_detail_batch(request: Request, batch_id: str) -> dict[str, Any]:
+    from photo_search.face import source_detail_batches
+
+    result = source_detail_batches.resume(
+        service_of(request).catalog, str(batch_id), retry_failed=True
+    )
+    context_of(request).face_detail_runner().submit_batch(str(batch_id))
+    return result
+
+
 @router.get("/assets/{asset_id}/faces", summary="Safe cropped faces of one photo")
 async def photo_faces(request: Request, asset_id: int) -> dict[str, Any]:
     return person_albums.asset_faces(service_of(request).catalog, asset_id)
+
+
+@router.post("/assets/{asset_id}/face-detail", summary="Queue on-demand source-detail face recognition")
+async def post_face_detail(request: Request, asset_id: int) -> dict[str, Any]:
+    from photo_search.face.service import enqueue_source_detail
+
+    context = context_of(request)
+    result = enqueue_source_detail(service_of(request).catalog, asset_id=int(asset_id))
+    if not result["already_available"] and result["state"] in (
+        "QUEUED",
+        "RETRY_WAIT",
+        "RUNNING",
+    ):
+        context.face_detail_runner().submit(int(asset_id))
+    return result
 
 
 @router.put(

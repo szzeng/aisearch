@@ -333,6 +333,8 @@ def claimable_candidates(
     processor_ids: Sequence[str] | None,
     aging_window_ms: int,
     limit: int,
+    task_types: Sequence[str] | None = None,
+    job_ids: Sequence[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Runnable rows of the given processors, most eligible first.
 
@@ -361,6 +363,12 @@ def claimable_candidates(
     window = max(int(aging_window_ms), 1)
     bound = max(int(limit), 1)
     filter_sql, parameters = _processor_filter(processor_ids)
+    for column, values in (("task_type", task_types), ("job_id", job_ids)):
+        if values is not None:
+            if not values:
+                return []
+            filter_sql += f" AND {column} IN ({','.join('?' for _ in values)})"
+            parameters.extend(values)
     candidates: list[sqlite3.Row] = []
     for state, condition_sql in _CLAIM_SIDES:
         next_priority = connection.execute(
