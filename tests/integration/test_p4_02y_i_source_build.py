@@ -23,7 +23,10 @@ from integration.test_p4_02y_library_refresh import (
     asset_of,
     query_vector_for,
 )
+from photo_search.face import contract as face_contract
+from photo_search.jobs import queue as jobs
 from photo_search.refresh import pipeline
+from photo_search.refresh.progress import source_progress
 
 
 # ------------------------------------------------------------------------------- helpers
@@ -264,6 +267,90 @@ def test_a_new_source_never_reports_a_finished_analysis_stage(tmp_path: Path) ->
         assert later["taken_time"]["handled"] == 1
         assert later["taken_time"]["state"] == "PENDING"
         assert later["gps"]["state"] == "PENDING"
+    finally:
+        env.close()
+
+
+def test_face_progress_includes_auto_detail_jobs_without_double_counting_assets(
+    tmp_path: Path,
+) -> None:
+    env = RefreshEnv.build(tmp_path, photos=3, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        service = env.service()
+        catalog = service.catalog
+        assets = {
+            int(row["asset_id"]): str(row["sha256"])
+            for row in catalog.read_all(
+                "SELECT a.asset_id, a.sha256 FROM assets AS a "
+                "JOIN file_locations AS f ON f.asset_id=a.asset_id "
+                "WHERE f.source_id=1 AND f.availability='PRESENT' ORDER BY a.asset_id"
+            )
+        }
+        assert len(assets) == 3
+
+        def add_job(asset_id: int, task_type: str, revision: str, state: str) -> int:
+            with catalog.write() as connection:
+                job_id = jobs.enqueue(
+                    connection,
+                    subject_type="asset",
+                    subject_id=str(asset_id),
+                    input_revision=revision,
+                    task_type=task_type,
+                    processor_id=face_contract.FACE_PROCESSOR_ID,
+                    now_ms=catalog.now_ms(),
+                )
+                connection.execute("UPDATE jobs SET state=? WHERE job_id=?", (state, job_id))
+            return job_id
+
+        first, second, third = assets
+        add_job(first, face_contract.FACE_TASK_TYPE, assets[first], "SUCCEEDED")
+        first_auto = add_job(
+            first, face_contract.FACE_DETAIL_AUTO_TASK_TYPE, assets[first], "QUEUED"
+        )
+        add_job(second, face_contract.FACE_DETAIL_AUTO_TASK_TYPE, assets[second], "SUCCEEDED")
+        add_job(
+            third,
+            face_contract.FACE_DETAIL_AUTO_TASK_TYPE,
+            assets[third] + "-old-revision",
+            "SUCCEEDED",
+        )
+
+        progress = source_progress(
+            catalog, source_id=1, binding=None, available={"face": True}
+        )["stages"]["face"]
+        assert progress == {
+            "state": "IN_PROGRESS",
+            "handled": 2,
+            "pending": 1,
+            "attempted": 3,
+            "total": 3,
+        }
+
+        with catalog.write() as connection:
+            connection.execute("UPDATE jobs SET state='SUCCEEDED' WHERE job_id=?", (first_auto,))
+        progress = source_progress(
+            catalog, source_id=1, binding=None, available={"face": True}
+        )["stages"]["face"]
+        assert progress["state"] == "PENDING"
+        assert progress["handled"] == 2
+        assert progress["attempted"] == 3
+
+        third_auto = add_job(
+            third, face_contract.FACE_DETAIL_AUTO_TASK_TYPE, assets[third], "QUEUED"
+        )
+        progress = source_progress(
+            catalog, source_id=1, binding=None, available={"face": True}
+        )["stages"]["face"]
+        assert progress["state"] == "IN_PROGRESS"
+        assert progress["pending"] == 1
+
+        with catalog.write() as connection:
+            connection.execute("UPDATE jobs SET state='SUCCEEDED' WHERE job_id=?", (third_auto,))
+        progress = source_progress(
+            catalog, source_id=1, binding=None, available={"face": True}
+        )["stages"]["face"]
+        assert progress["state"] == "COMPLETE"
+        assert progress["handled"] == progress["total"] == 3
     finally:
         env.close()
 
