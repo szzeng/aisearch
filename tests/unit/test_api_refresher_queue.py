@@ -16,13 +16,31 @@ def test_home_build_buttons_follow_the_queue() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is not installed")
-    # Execute the shipped script; suppress boot and expose only its queue UI to this test.
+    # Execute the shipped script; suppress boot and expose its source-card UI to this test.
     script = r'''
 const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
 let source = fs.readFileSync("src/photo_search/web/app.js", "utf8");
 source = source.replace('  if (document.readyState === "loading") {',
-  '  globalThis.queueUI = {state, els, renderRefresh};\n  if (document.readyState === "loading") {');
-const context = {document: {readyState: "loading", addEventListener() {}}};
+  '  globalThis.queueUI = {state, els, renderRefresh, renderSourceDetail, sourceActionMode, setRequest(fn) { request = fn; }};\n  if (document.readyState === "loading") {');
+function node(tag) {
+  return {tag, children: [], attrs: {}, listeners: {}, disabled: false, textContent: "",
+    appendChild(child) { this.children.push(child); return child; },
+    addEventListener(name, fn) { this.listeners[name] = fn; },
+    setAttribute(name, value) { this.attrs[name] = String(value); },
+    getAttribute(name) { return this.attrs[name] ?? null; },
+    hasAttribute(name) { return name in this.attrs; },
+    querySelectorAll(selector) {
+      const names = selector.match(/data-[a-z]+/g) || [];
+      const found = [];
+      function visit(current) {
+        if (names.some(name => name in current.attrs)) found.push(current);
+        current.children.forEach(visit);
+      }
+      this.children.forEach(visit);
+      return found;
+    }};
+}
+const context = {document: {readyState: "loading", addEventListener() {}, createElement: node}};
 vm.createContext(context);
 vm.runInContext(source, context);
 const ui = context.queueUI;
@@ -53,6 +71,40 @@ assert.equal(b.disabled, false);
 assert.equal(b.textContent, "开始建库");
 assert.equal(remove.disabled, false);
 assert.equal(ui.els.refreshLibrary.disabled, false);
+
+const progress = {built:true, stages:{semantic:{state:"SEARCHABLE"}, face:{state:"PENDING"}}};
+assert.equal(ui.sourceActionMode(progress), "refresh");
+assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"BUILDING"}}}), "continue");
+const detail = {root_path:"C:/synthetic", counts:{assets:1,locations_present:1,locations_missing:0},
+  progress};
+const card = node("section");
+ui.renderSourceDetail({source_id:42,status:"ACTIVE"}, detail, card);
+const buttons = card.querySelectorAll("[data-build], [data-refresh], [data-scan], [data-delete]");
+const fast = buttons.find(x => x.getAttribute("data-refresh") === "42");
+const build = buttons.find(x => x.getAttribute("data-build") === "42");
+assert.ok(fast);
+assert.ok(build);
+ui.els.sourcesList = card;
+assert.equal(fast.textContent, "快速刷新此来源");
+assert.equal(build.textContent, "检查并补齐建库");
+const requests = [];
+ui.setRequest((path, options) => { requests.push({path, body:options.body}); return Promise.resolve({body:{}}); });
+fast.listeners.click();
+build.listeners.click();
+assert.deepEqual(JSON.parse(JSON.stringify(requests.map(x => [x.path, x.body.mode, x.body.source_ids]))), [
+  ["/library/refresh", "refresh", [42]], ["/library/refresh", "build", [42]]
+]);
+ui.state.refreshStatus = {pending_builds:[[42]], mode:"build"};
+ui.state.refreshRunning = true;
+ui.renderRefresh({state:"SCANNING",running:true,mode:"build",source_ids:[42],pending_builds:[]});
+assert.equal(build.disabled, true);
+assert.equal(build.textContent, "正在建库");
+ui.renderRefresh({state:"SCANNING",running:true,mode:"build",source_ids:[7],pending_builds:[[42]]});
+assert.equal(build.disabled, true);
+assert.equal(build.textContent, "已排队");
+ui.renderRefresh({state:"COMPLETE",running:false,mode:"build",source_ids:[42],pending_builds:[]});
+assert.equal(build.disabled, false);
+assert.equal(build.textContent, "检查并补齐建库");
 '''
     subprocess.run(
         [node, "-e", script],

@@ -691,6 +691,14 @@
           refreshLibrary([Number(source.source_id)], "refresh");
         });
         actions.appendChild(refreshOne);
+        var buildCheck = element("button", null, "检查并补齐建库");
+        buildCheck.type = "button";
+        buildCheck.setAttribute("data-build", String(source.source_id));
+        buildCheck.setAttribute("data-build-label", buildCheck.textContent);
+        buildCheck.addEventListener("click", function () {
+          refreshLibrary([Number(source.source_id)], "build");
+        });
+        actions.appendChild(buildCheck);
         var scan = element("button", null, "完整校验扫描");
         scan.type = "button";
         scan.setAttribute("data-scan", String(source.source_id));

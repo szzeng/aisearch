@@ -1,6 +1,10 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+## 最近完成 P4-SOURCE-RESUME-A — 来源断点续建入口（**实现与定向自检完成 / 用户图库手测待做**）
+
+[任务卡](tasks/P4-SOURCE-RESUME-A.md)、[实现报告](reports/P4-SOURCE-RESUME-A.md)。来源卡「快速刷新此来源」保留，新增「检查并补齐建库」，用户点击后复用既有 source-scoped `build`；不改模式判定、队列、去重或后端进度协议。定向 Node VM/JUnit **4/0/0/0**、Node syntax、diff-check通过。未重启用户服务、未访问真实图库或 PhotoSearchData；用户手测仍待做，故不标PASS。
+
 ## 最近完成 P4-PLACE-SCHEMA-COMPAT — 地名包旧版本兼容收敛（**IMPLEMENTED / 定向验证通过**）
 
 [执行卡](tasks/P4-PLACE-SCHEMA-COMPAT.md)、[报告](reports/P4-PLACE-SCHEMA-COMPAT.md)。当前 schema21 的 0021 migration 经核对仅增加来源身份映射，不改包契约；GeoNames maximum16 与 CN 复合包 maximum18 由显式 floor16/review ceiling21 统一桥接。定向 JUnit **30/0/0/0**、Ruff、scoped diff-check 通过；合成复合包关闭再打开 CatalogService 后 Tokyo 与济南区县均可加载，包文件字节/mtime 不变。未访问 PhotoSearchData；未跑全量/性能/GPU/浏览器，不代表真实目录验收。后续地点主线仍见下方 P4-PLACE-UNIFIED-A。
