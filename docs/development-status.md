@@ -2,9 +2,9 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 11。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## P4-PERSON-SORT-A — 本地 A 级范围已实现；远端 READY 卡的额外要求待核验
+## 最近完成：P4-PERSON-SORT-A — PASS（本地 A 级范围与当前会话审查）
 
-[执行卡](tasks/P4-PERSON-SORT-A.md)、[报告](reports/P4-PERSON-SORT-A.md)。服务端按有效去重照片数全局排序，稳定游标分页，API缺省顺序不变；定向JUnit 17/0/0/0、Ruff/Node/diff-check通过。额外全量2154/50 failures/43 errors/49 skipped，与前一JUnit的失败/错误集合完全一致。未访问PhotoSearchData或真实浏览器。拉取远端同名 READY 卡后发现其还要求计数复用、查询计划/耗时证据和 DS-H 独立审查；详情见任务卡与报告补记。
+[执行卡](tasks/P4-PERSON-SORT-A.md)、[报告](reports/P4-PERSON-SORT-A.md)。保留旧 `people1` 游标并为照片数排序使用独立前缀；排序聚合计数复用于当前页摘要。定向JUnit 18/0/0/0；完整单元/集成 2154/2012 passed/50 failures/43 errors/49 skipped，失败/错误与2152项基线一致、无新增；Ruff/Node/diff-check通过。查询计划使用 `idx_face_person_links_person`；243人合成热缓存中位数 ID/照片数排序0.353/1.238 ms。按用户要求在本会话直接审查；自动归组并发期间无快照保证，详情见报告。未访问PhotoSearchData或真实浏览器。
 
 ## 前置完成：P4-PERSON-ALBUM-PERF-A — PASS（个人相册基础功能）
 

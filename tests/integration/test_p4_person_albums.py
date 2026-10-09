@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import json
+
 from conftest import ApiEnv
 from p3_persons_page_fixtures import (
     add_link,
@@ -11,6 +14,9 @@ from p3_persons_page_fixtures import (
     set_control,
     set_exclusion,
 )
+
+from photo_search.persons.albums import people_page
+from photo_search.places.revision import read_filter_revision
 
 
 def seed(env: ApiEnv) -> dict:
@@ -103,6 +109,12 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
             "UPDATE face_person_links SET decision = 'CONFIRMED', reason = NULL WHERE face_id = ?",
             (data["pending"],),
         )
+    legacy_cursor = base64.urlsafe_b64encode(
+        json.dumps(
+            ["people1", "all", "", read_filter_revision(catalog.connection), data["dad"]],
+            separators=(",", ":"),
+        ).encode()
+    ).decode().rstrip("=")
 
     async def scenario(client):
         csrf = await api_env.authenticate(client)
@@ -125,6 +137,29 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
             "/api/v1/persons/browse",
             params={"kind": "all", "sort": "person_id", "limit": 1, "cursor": first.json()["next_cursor"]},
         )
+        legacy_default = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "limit": 1, "cursor": legacy_cursor},
+        )
+        wrong_sort_reverse = await client.get(
+            "/api/v1/persons/browse",
+            params={
+                "kind": "all",
+                "sort": "photos_desc",
+                "limit": 1,
+                "cursor": legacy_default.json()["next_cursor"],
+            },
+        )
+        wrong_query = await client.get(
+            "/api/v1/persons/browse",
+            params={
+                "kind": "named",
+                "q": "爸爸",
+                "sort": "photos_desc",
+                "limit": 1,
+                "cursor": first.json()["next_cursor"],
+            },
+        )
         changed = await client.put(
             f"/api/v1/persons/{data['mom']}/label",
             headers=api_env.post_headers(csrf),
@@ -135,9 +170,35 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
             params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": first.json()["next_cursor"]},
         )
         old_default = await client.get("/api/v1/persons/browse", params={"kind": "all", "limit": 1})
-        return first, page2, page3, scoped, invalid_sort, wrong_sort, changed, stale, old_default
+        return (
+            first,
+            page2,
+            page3,
+            scoped,
+            invalid_sort,
+            wrong_sort,
+            changed,
+            stale,
+            old_default,
+            legacy_default,
+            wrong_sort_reverse,
+            wrong_query,
+        )
 
-    first, page2, page3, scoped, invalid_sort, wrong_sort, changed, stale, old_default = api_env.scenario(scenario)
+    (
+        first,
+        page2,
+        page3,
+        scoped,
+        invalid_sort,
+        wrong_sort,
+        changed,
+        stale,
+        old_default,
+        legacy_default,
+        wrong_sort_reverse,
+        wrong_query,
+    ) = api_env.scenario(scenario)
     assert first.status_code == page2.status_code == page3.status_code == 200
     first_person, second_person, third_person = [
         response.json()["persons"][0] for response in (first, page2, page3)
@@ -156,6 +217,32 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
     assert stale.status_code == 409 and stale.json()["code"] == "INVALID_CURSOR"
     assert old_default.status_code == 200
     assert old_default.json()["persons"][0]["person_id"] == data["dad"]
+    assert legacy_default.status_code == 200
+    assert legacy_default.json()["persons"][0]["person_id"] == data["mom"]
+    assert wrong_sort_reverse.status_code == 409
+    assert wrong_sort_reverse.json()["code"] == "INVALID_CURSOR"
+    assert wrong_query.status_code == 409
+    assert wrong_query.json()["code"] == "INVALID_CURSOR"
+    summary_trace: list[str] = []
+    catalog.connection.set_trace_callback(summary_trace.append)
+    try:
+        people_page(catalog, kind="all", q="", limit=1, cursor=None, sort="photos_desc")
+    finally:
+        catalog.connection.set_trace_callback(None)
+    summary_sql = [query.upper() for query in summary_trace]
+    sort_counts = [
+        query
+        for query in summary_sql
+        if "EFFECTIVE_COUNTS AS" in query and "COUNT(DISTINCT F.ASSET_ID)" in query
+    ]
+    page_member_counts = [
+        query
+        for query in summary_sql
+        if "WITH PAGE(" in query and "COUNT(*) AS FACE_COUNT" in query
+    ]
+    assert len(sort_counts) == 1
+    assert len(page_member_counts) == 1
+    assert "COUNT(DISTINCT F.ASSET_ID)" not in page_member_counts[0]
 
 
 def test_album_is_complete_deduplicated_and_cursor_bound_to_person(api_env: ApiEnv) -> None:

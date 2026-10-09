@@ -64,7 +64,9 @@ def _album_summary(connection: Any, row: Any) -> dict[str, Any]:
     return summary
 
 
-def _album_summaries(connection: Any, rows: list[Any]) -> list[dict[str, Any]]:
+def _album_summaries(
+    connection: Any, rows: list[Any], *, reuse_asset_counts: bool = False
+) -> list[dict[str, Any]]:
     """Project one bounded people page with constant-count member/cover reads."""
     if not rows:
         return []
@@ -75,18 +77,32 @@ def _album_summaries(connection: Any, rows: list[Any]) -> list[dict[str, Any]]:
         for value in (int(row["person_id"]), row["avatar_face_id"] or "")
     )
     page = f"WITH page(person_id, stored_avatar) AS (VALUES {values}) "
+    asset_count_column = (
+        "" if reuse_asset_counts else ", COUNT(DISTINCT f.asset_id) AS asset_count"
+    )
     members = connection.execute(
         page
-        + "SELECT page.person_id, COUNT(*) AS face_count, "
-        "COUNT(DISTINCT f.asset_id) AS asset_count "
+        + "SELECT page.person_id, COUNT(*) AS face_count"
+        + asset_count_column
+        + " "
         "FROM page JOIN face_person_links AS l ON l.person_id = page.person_id "
         "JOIN faces AS f ON f.face_id = l.face_id WHERE "
         + MEMBER_PREDICATE
         + " GROUP BY page.person_id",
         parameters,
     ).fetchall()
+    page_asset_counts = (
+        {int(row["person_id"]): int(row["page_asset_count"]) for row in rows}
+        if reuse_asset_counts
+        else {}
+    )
     counts = {
-        int(member["person_id"]): (int(member["face_count"]), int(member["asset_count"]))
+        int(member["person_id"]): (
+            int(member["face_count"]),
+            page_asset_counts[int(member["person_id"])]
+            if reuse_asset_counts
+            else int(member["asset_count"]),
+        )
         for member in members
     }
     avatars = connection.execute(
@@ -249,18 +265,25 @@ def people_page(
     if kind not in ("all", "named", "unnamed") or sort not in ("person_id", "photos_desc") or len(q) > 200:
         raise ApiError(VALIDATION_ERROR, "invalid person query", status=422)
     query = q.strip()
-    binding = ["people2", kind, query, sort, read_filter_revision(catalog.connection)]
+    # Keep the legacy person_id cursor binding byte-for-byte compatible. Each sort mode
+    # has its own version prefix, so a cursor cannot cross from one ordering to the other.
+    binding = [
+        "people1" if sort == "person_id" else "people-count1",
+        kind,
+        query,
+        read_filter_revision(catalog.connection),
+    ]
     after = _position(cursor, binding, 0 if sort == "person_id" else None)
-    conditions = ["p.merged_into IS NULL"]
-    parameters: list[Any] = []
+    candidate_conditions = ["p.merged_into IS NULL"]
+    candidate_parameters: list[Any] = []
     if kind == "named":
-        conditions.append("p.name IS NOT NULL")
+        candidate_conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":
-        conditions.append("p.name IS NULL")
+        candidate_conditions.append("p.name IS NULL")
         # A correction can move the last face away while retaining the identity
         # for history/undo. Filter empty albums before pagination, without hiding
         # other unnamed faces in a shared photo or deleting those identities.
-        conditions.append(
+        candidate_conditions.append(
             "EXISTS (SELECT 1 FROM face_person_links AS l "
             "JOIN faces AS f ON f.face_id = l.face_id "
             "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
@@ -270,15 +293,15 @@ def people_page(
         )
     if query:
         # instr is literal, so '%'/'_' have no surprising wildcard meaning.
-        conditions.append(
+        candidate_conditions.append(
             "(instr(p.name, ?) > 0 OR EXISTS (SELECT 1 FROM person_aliases AS a WHERE a.person_id = p.person_id AND instr(a.alias, ?) > 0))"
         )
-        parameters.extend([query, query])
+        candidate_parameters.extend([query, query])
     if sort == "person_id":
         if type(after) is not int or after < 0:
             raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
-        conditions.append("p.person_id > ?")
-        parameters.append(after)
+        conditions = [*candidate_conditions, "p.person_id > ?"]
+        parameters = [*candidate_parameters, after]
         rows = catalog.read_all(
             "SELECT p.* FROM persons AS p WHERE "
             + " AND ".join(conditions)
@@ -296,24 +319,30 @@ def people_page(
             after_count, after_person_id = after
         member_counts = (
             "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
-            "FROM face_person_links AS l JOIN faces AS f ON f.face_id = l.face_id WHERE "
+            "FROM candidates AS candidate "
+            "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
+            "JOIN faces AS f ON f.face_id = l.face_id WHERE "
             + MEMBER_PREDICATE
             + " GROUP BY l.person_id)"
         )
+        continuation_conditions: list[str] = []
+        continuation_parameters: list[Any] = []
         if after is not None:
-            conditions.append(
+            continuation_conditions.append(
                 "(COALESCE(ec.asset_count, 0) < ? OR "
                 "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?))"
             )
-            parameters.extend([after_count, after_count, after_person_id])
+            continuation_parameters.extend([after_count, after_count, after_person_id])
         rows = catalog.read_all(
-            "WITH "
+            "WITH candidates AS (SELECT p.* FROM persons AS p WHERE "
+            + " AND ".join(candidate_conditions)
+            + "), "
             + member_counts
             + " SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count "
-            "FROM persons AS p LEFT JOIN effective_counts AS ec ON ec.person_id = p.person_id WHERE "
-            + " AND ".join(conditions)
+            "FROM candidates AS p LEFT JOIN effective_counts AS ec ON ec.person_id = p.person_id "
+            + ("WHERE " + " AND ".join(continuation_conditions) + " " if continuation_conditions else "")
             + " ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
-            (*parameters, limit + 1),
+            (*candidate_parameters, *continuation_parameters, limit + 1),
         )
     has_more = len(rows) > limit
     rows = rows[:limit]
@@ -323,8 +352,13 @@ def people_page(
             last_position = int(rows[-1]["person_id"])
         else:
             last_position = [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])]
+    summaries = (
+        _album_summaries(catalog.connection, rows, reuse_asset_counts=True)
+        if sort == "photos_desc"
+        else _album_summaries(catalog.connection, rows)
+    )
     return {
-        "persons": _album_summaries(catalog.connection, rows),
+        "persons": summaries,
         "has_more": has_more,
         "next_cursor": _encode(binding, last_position) if has_more else None,
         "sort": sort,

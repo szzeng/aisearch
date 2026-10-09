@@ -1,6 +1,6 @@
 # P4-PERSON-SORT-A — 按有效照片数排序人物
 
-日期：2026-10-09。状态：**本地 A 级范围已实现；远端 READY 卡的额外要求待核验**。基线：`b325b0e24e8a097fe7a9ba5bcdd819ac6289c631`。本卡由用户明确启动；上一张 P4-PERSON-ALBUM-PERF-A 已 PASS，但明确排除本功能。实现与结果见[报告](../reports/P4-PERSON-SORT-A.md)。
+日期：2026-10-09。状态：**PASS — 本地 A 级范围与用户要求的直接审查已完成**。基线：`b325b0e24e8a097fe7a9ba5bcdd819ac6289c631`。本卡由用户明确启动；上一张 P4-PERSON-ALBUM-PERF-A 已 PASS，但明确排除本功能。实现与结果见[报告](../reports/P4-PERSON-SORT-A.md)。
 
 ## 目标
 
@@ -34,13 +34,14 @@
 
 完成人物全局排序、直接回归和个人使用页面可选排序器后停止；不启动性能专项或扩大到真实图库。该只读小功能不需 Sol 终审，报告记录 `SOL_NOT_REQUIRED` 及理由。既有 P4-PERSON-DETAIL-B 工程审查及 Sol focused review 已通过；此卡完成后转日常使用与具体反馈，不自动续开性能优化任务。
 
-## 合并远端 READY 卡后的对齐记录（2026-10-09）
+## 合并远端 READY 卡后的核对与收口（2026-10-09）
 
-`origin/master` 同名 READY 卡在本地实现完成后到达。该卡包含更严格且部分不同的验收条件，不能用本卡原 PASS 记录代替：
+`origin/master` 的同名 READY 卡在本地实现完成后到达。用户要求继续验证并在当前会话直接审查。依此完成以下核对：
 
-- 远端计划的枚举值是 `id_asc|photo_count_desc`，实现使用 `person_id|photos_desc`；API 缺省仍为旧 `person_id` 顺序。远端要求人物主列表固定照片数降序且不增加排序开关；实现提供选择器并默认照片数优先，切回默认顺序也可用。
-- 排序 SQL 已求全局有效照片数，但随后 `_album_summaries` 会为当前页再次聚合计数；远端要求复用分页查询计数以避免本页重复计算。该项尚未调整。
-- 未记录旧/新 SQL 的 `EXPLAIN QUERY PLAN` 对比或合成耗时；不声称性能验收通过。
-- 本地报告未包含针对排序游标/API/调用面的独立 DS-H 全面审查；该审查尚待完成。
+- `person_id|photos_desc` 与 `id_asc|photo_count_desc`、可选排序器与固定照片数默认排序是两份卡片的接口/交互差异。本次保留原已执行的本地卡行为：API 缺省和可选 ID 顺序保持兼容，人物页默认照片数优先。未把后来到达的 READY 卡当作更改产品交互的授权。
+- 照片数排序将全局聚合得到的 `page_asset_count` 直接用于返回摘要；当前页摘要只再计算脸数和头像，不再重复 `COUNT(DISTINCT asset_id)`。默认 ID 路径保留原 `_album_summaries(connection, rows)` 调用形状及 `people1` 游标编码，实测旧游标可续页。
+- 用 243 人/483 张脸合成目录执行 SQLite `EXPLAIN QUERY PLAN`：排序聚合使用 `idx_face_person_links_person`；计划显示 `count(DISTINCT)` 与全局排序各使用临时 B-tree。另做31次热缓存对照，见报告的合成耗时；它只作查询回归信号，不代表真实图库性能。
+- 对人物浏览 API、SQL、前端请求、游标绑定/错误路径、摘要计数和直接回归做了本会话审查。用户明确选择这里直接审查，因此未另开独立 DS-H 会话；这不记作独立 DS-H 审查。
+- `catalog_filter_revision` 会由人工人物操作推动，但自动人物关联/新识别发布的 `face_person_links` 变化没有统一推动该 revision。游标无跨页数据库快照；后台自动归组若与滚动分页并发，照片数名次可能变化，用户应刷新列表后重新开始分页。没有新增持久版本机制。
 
-因此，原实现报告的定向功能回归结论仍成立，但在确认适用卡片范围、完成重复计数处理及远端卡要求的查询计划/独立审查前，不应把远端 READY 卡的全部验收标为完成。
+最终定向 JUnit **18 passed / 0 failed / 0 errors / 0 skipped**，包括相册性能测量；完整单元/集成 **2154 tests / 2012 passed / 50 failures / 43 errors / 49 skipped**。失败/错误名称与类型均和已保存的 2152 项基线相同（新增排序测试使总数增加2），新增失败/错误为0。Ruff、Node `--check`、`git diff --check` 通过。详见[报告](../reports/P4-PERSON-SORT-A.md)。
