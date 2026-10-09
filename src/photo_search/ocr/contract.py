@@ -23,9 +23,16 @@ from typing import Any
 #: The frozen job protocol this processor speaks (ADR-0003 §1/§2).
 CONTRACT_VERSION = "p2-contracts.v1"
 
-OCR_PROCESSOR_ID = "ocr-text@1"
+OCR_LEGACY_PROCESSOR_ID = "ocr-text@1"
+OCR_CPU_PROCESSOR_ID = "ocr-text-cpu-fp32@2"
+OCR_GPU_PROCESSOR_ID = "ocr-text-cuda-fp32@2"
+# The auto path starts on CUDA; legacy remains a read-only historical identity.
+OCR_PROCESSOR_ID = OCR_GPU_PROCESSOR_ID
+OCR_PROCESSOR_IDS = (OCR_CPU_PROCESSOR_ID, OCR_GPU_PROCESSOR_ID)
 OCR_TASK_TYPE = "image_ocr"
-OCR_SPEC_REVISION = "ocr-text-ppocrv4-mobile-v1"
+OCR_CPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cpu-fp32-v2"
+OCR_GPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cuda-fp32-v2"
+OCR_SPEC_REVISION = OCR_GPU_SPEC_REVISION
 OCR_ARTIFACT_REVISION = "ocr-document.v1"
 OCR_OUTPUT_TYPE = "ocr_document.v1"
 OCR_INPUT_TYPE = "asset_original"
@@ -36,8 +43,10 @@ OCR_RUNTIME_BACKEND = "onnxruntime"
 
 #: OCR executes pinned model weights but publishes a structured document, not a vector.
 OCR_PROCESSOR_KIND = "structured_model"
-OCR_DEVICE_POLICY = "CPU_ALLOWED"
-OCR_SUPPORTED_DEVICES = ("gpu", "cpu")
+OCR_DEVICE_POLICY = "GPU_REQUIRED"
+OCR_SUPPORTED_DEVICES = ("gpu",)
+OCR_CPU_DEVICE_POLICY = "CPU_PREFERRED"
+OCR_CPU_SUPPORTED_DEVICES = ("cpu",)
 OCR_SUPPORTED_PRECISIONS = ("FP32",)
 OCR_MODEL_ID = "rapidocr-ppocrv4-mobile"
 OCR_MODEL_REVISION = "rapidocr-onnxruntime@1.4.4"
@@ -99,6 +108,39 @@ CONFIG_HASH = str(
 
 #: The engine version recorded in every artifact payload.
 ENGINE_VERSION = "1.4.4"
+OCR_RUNTIME_PACKAGE_ID = "onnxruntime-gpu@1.30.0"
+
+
+def execution_config(device: str) -> dict[str, Any]:
+    """Canonical static identity input for one v2 single-device OCR profile."""
+    normalized = str(device)
+    if normalized not in ("cpu", "gpu"):
+        raise ValueError("OCR execution device must be cpu or gpu")
+    provider = "CPUExecutionProvider" if normalized == "cpu" else "CUDAExecutionProvider"
+    engine_config = {**ENGINE_CONFIG, "providers": [provider]}
+    return {
+        "version": "ocr-execution-config.v2",
+        "pinned_config_yaml_sha256": CONFIG_HASH,
+        "model_fingerprint": MODEL_FINGERPRINT,
+        "engine": OCR_ENGINE,
+        "engine_version": ENGINE_VERSION,
+        "recognition_and_preprocess": engine_config,
+        "output": {
+            "artifact_revision": OCR_ARTIFACT_REVISION,
+            "output_type": OCR_OUTPUT_TYPE,
+            "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
+            "coordinate_decimals": COORDINATE_DECIMALS,
+        },
+        "provider": provider,
+        "precision": "FP32",
+        "runtime_package_id": OCR_RUNTIME_PACKAGE_ID,
+    }
+
+
+def execution_config_hash(device: str) -> str:
+    return hashlib.sha256(_canonical(execution_config(device)).encode("utf-8")).hexdigest()
+
+
 
 # --------------------------------------------------------------------------- decoding
 #: Hard ceiling on the *declared* pixel count of one source image. It matches the P2-07
@@ -164,6 +206,9 @@ ENGINE_CONFIG: dict[str, Any] = {
     "min_side_len": 30,
     "providers": ["CPUExecutionProvider"],
 }
+
+OCR_CPU_CONFIG_HASH = execution_config_hash("cpu")
+OCR_GPU_CONFIG_HASH = execution_config_hash("gpu")
 
 
 def pinned_entry(role: str) -> dict[str, Any]:

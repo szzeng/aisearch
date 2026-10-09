@@ -822,7 +822,7 @@ def finish(
 def resume_blocked(connection: sqlite3.Connection, *, job_id: int, now_ms: int) -> Job:
     """Move a BLOCKED job back to QUEUED; the scan_run follows in the caller's transaction."""
     job = get_job(connection, job_id)
-    if STATE_QUEUED not in ALLOWED_TRANSITIONS[job.state]:
+    if job.state != STATE_BLOCKED or STATE_QUEUED not in ALLOWED_TRANSITIONS[job.state]:
         raise CatalogError(
             INVALID_STATE_TRANSITION,
             f"job {job_id} in state {job.state} cannot be resumed",

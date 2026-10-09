@@ -118,8 +118,15 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
     job = harness.catalog.read_one("SELECT * FROM jobs WHERE task_type = 'image_ocr'")
     assert str(job["state"]) == "SUCCEEDED"
     assert str(job["processor_id"]) == contract.OCR_PROCESSOR_ID
-    assert str(job["resolved_device"]) == "cpu"
-    assert str(job["runtime_provider"]) == "CPUExecutionProvider"
+    resolved_device = str(job["resolved_device"])
+    expected_provider = (
+        "CUDAExecutionProvider" if resolved_device == "gpu" else "CPUExecutionProvider"
+    )
+    assert resolved_device in summary["run"]["qualified_devices"]
+    assert summary["run"][f"{resolved_device}_provider"] == expected_provider
+    assert str(job["runtime_provider"]) == expected_provider
+    assert str(job["requested_device"]) == "auto"
+    assert str(job["precision"]) == contract.OCR_SUPPORTED_PRECISIONS[0]
     assert job["last_error_code"] is None
 
     # The artifact is a structured document with no vector of any kind.
@@ -289,22 +296,24 @@ def test_a_high_density_page_is_sliced_and_a_blank_page_stays_empty(harness: Har
     assert summary["state"] == "SYNCED"
 
 
-def test_the_ocr_job_runs_on_cpu_even_though_the_gpu_package_is_present(harness: Harness) -> None:
-    """The OCR processor is CPU_PREFERRED: a healthy GPU is never silently used."""
+def test_the_ocr_job_can_run_on_an_explicit_cpu_request(harness: Harness) -> None:
+    """The explicit diagnostic CPU path remains available with or without a GPU."""
     harness.install_weights()
     write_text_image(harness.library / "one.jpg", ["编号 20260914"], size=(900, 400), font_size=44)
     harness.scan()
     asset_id = harness.asset_id("one.jpg")
 
-    summary = harness.recognize()
+    summary = harness.recognize(requested_device="cpu")
     run = summary["run"]
-    assert run["precision"] == contract.OCR_SUPPORTED_PRECISIONS[0]
-    assert run["provider"] == "CPUExecutionProvider"
     job = harness.catalog.read_one(
         "SELECT * FROM jobs WHERE task_type = 'image_ocr' AND subject_id = ?", (str(asset_id),)
     )
-    assert str(job["requested_device"]) == "auto"
+    assert str(job["requested_device"]) == "cpu"
     assert str(job["resolved_device"]) == "cpu"
+    assert str(job["runtime_provider"]) == "CPUExecutionProvider"
+    assert str(job["precision"]) == contract.OCR_SUPPORTED_PRECISIONS[0]
+    assert "cpu" in run["qualified_devices"]
+    assert run["cpu_provider"] == "CPUExecutionProvider"
     assert str(job["runtime_capability_revision"]) == str(run["capability_revision"])
 
 

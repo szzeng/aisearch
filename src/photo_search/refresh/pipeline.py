@@ -1440,6 +1440,7 @@ def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]
         "queued": int(enqueued["queued"]),
         "steps": int(run["steps"]),
         "pending_jobs": int(run["pending_jobs"]),
+        "cpu_fallbacks": list(run.get("cpu_fallbacks", [])),
     }
 
 

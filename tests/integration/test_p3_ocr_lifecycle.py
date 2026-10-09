@@ -79,6 +79,7 @@ def enqueue_one(harness: Harness, asset_id: int) -> None:
         harness.catalog,
         [{"asset_id": int(asset_id), "input_revision": harness.sha_of(asset_id)}],
         now_ms=harness.clock(),
+        requested_device="cpu",
     )
 
 

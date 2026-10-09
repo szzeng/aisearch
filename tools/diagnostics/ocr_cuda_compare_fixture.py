@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import statistics
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
 
+from ocr_smoke_fixture import build_library, install_pinned_weights
+from p4_02y_l_workdir import new_work_dir, prepare_work_dir
+
 from photo_search.ocr.engine import OcrEngineCache, recognize_image
 from photo_search.ocr.processor import _decode
 from photo_search.runtime.device import runtime_capabilities
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.diagnostics.ocr_smoke_fixture import build_library, install_pinned_weights
 
 
 def _gpu_snapshot() -> str | None:
@@ -152,8 +150,7 @@ def _compare(cpu: dict[str, Any], gpu: dict[str, Any]) -> dict[str, Any]:
 def run(work_dir: Path, *, rounds: int = 3) -> dict[str, Any]:
     if rounds < 3:
         raise ValueError("at least three measured rounds are required")
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
+    work_dir = prepare_work_dir(work_dir)
     library = work_dir / "synthetic-library"
     data_root = work_dir / "PhotoSearchData"
     paths = build_library(library)
@@ -181,16 +178,13 @@ def run(work_dir: Path, *, rounds: int = 3) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--work-dir",
-        type=Path,
-        default=Path("tmp/p4-02y-l/compare"),
-        help="project-local synthetic fixture directory",
-    )
+    parser.add_argument("--work-dir", type=Path, default=None,
+                        help="an empty project OCR temp or system temp directory")
     parser.add_argument("--rounds", type=int, default=3)
     parser.add_argument("--output", type=Path, default=Path("test-results/p4-02y-l-cuda-compare.json"))
     args = parser.parse_args()
-    result = run(args.work_dir.resolve(), rounds=args.rounds)
+    work_dir = args.work_dir if args.work_dir is not None else new_work_dir("compare")
+    result = run(work_dir.resolve(), rounds=args.rounds)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     print(

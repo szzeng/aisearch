@@ -242,6 +242,41 @@ def ocr_summary(
             count for state, count in jobs.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
         )
         blocked = int(jobs.get("BLOCKED", 0))
+        current_profiles = {
+            str(row["processor_id"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT processor_id, COUNT(*) AS count FROM asset_ocr_text GROUP BY processor_id"
+            )
+        }
+        legacy_pending = int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM jobs WHERE task_type = ? AND processor_id = ? "
+                "AND state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')",
+                (str(ocr_contract.OCR_TASK_TYPE), str(ocr_contract.OCR_LEGACY_PROCESSOR_ID)),
+            ).fetchone()["count"]
+        )
+        fallback_reasons = {
+            str(row["reason"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT g.last_error_code AS reason, COUNT(*) AS count "
+                "FROM asset_ocr_text AS t JOIN jobs AS c ON c.subject_type = 'asset' "
+                "AND c.subject_id = CAST(t.asset_id AS TEXT) AND c.input_revision = t.input_revision "
+                "AND c.task_type = ? AND c.processor_id = ? "
+                "JOIN jobs AS g ON g.subject_type = c.subject_type AND g.subject_id = c.subject_id "
+                "AND g.input_revision = c.input_revision AND g.task_type = c.task_type "
+                "AND g.processor_id = ? WHERE t.processor_id = ? AND g.last_error_code IN (?, ?, ?) "
+                "GROUP BY g.last_error_code",
+                (
+                    str(ocr_contract.OCR_TASK_TYPE),
+                    str(ocr_contract.OCR_CPU_PROCESSOR_ID),
+                    str(ocr_contract.OCR_GPU_PROCESSOR_ID),
+                    str(ocr_contract.OCR_CPU_PROCESSOR_ID),
+                    "RUNTIME_CAPABILITY_UNAVAILABLE",
+                    "OCR_GPU_INITIALIZATION_FAILED",
+                    "OCR_GPU_EXECUTION_FAILED",
+                ),
+            )
+        }
         stale = stored - documents
         if pending or stale or projection_queued:
             state = "LAGGING"
@@ -253,9 +288,25 @@ def ocr_summary(
             state = "NOT_RUN"
         return {
             "processor_id": ocr_contract.OCR_PROCESSOR_ID,
+            "processor_profiles": {
+                "legacy": ocr_contract.OCR_LEGACY_PROCESSOR_ID,
+                "cpu": ocr_contract.OCR_CPU_PROCESSOR_ID,
+                "gpu": ocr_contract.OCR_GPU_PROCESSOR_ID,
+            },
+            "config_hashes": {
+                "cpu": ocr_contract.OCR_CPU_CONFIG_HASH,
+                "gpu": ocr_contract.OCR_GPU_CONFIG_HASH,
+                "legacy": ocr_contract.CONFIG_HASH,
+            },
+            "current_results_by_processor": current_profiles,
+            "legacy_pending_jobs": legacy_pending,
+            "cpu_fallbacks": {
+                "current_results": sum(fallback_reasons.values()),
+                "reasons": fallback_reasons,
+            },
             "task_type": ocr_contract.OCR_TASK_TYPE,
             "model_fingerprint": ocr_contract.MODEL_FINGERPRINT,
-            "config_hash": ocr_contract.CONFIG_HASH,
+            "config_hash": ocr_contract.OCR_GPU_CONFIG_HASH,
             "weights_present": weights_present,
             "documents": documents,
             "stale_documents": stale,

@@ -21,11 +21,11 @@ import argparse
 import json
 import shutil
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
+from p4_02y_l_workdir import new_work_dir, prepare_work_dir
 from PIL import Image, ImageDraw, ImageFont
 
 from photo_search.artifacts.store import ArtifactStore
@@ -42,7 +42,6 @@ from photo_search.ocr.weights import resolve, verify
 from photo_search.scheduler.projection import ocr_summary
 from photo_search.search.tokens import build_match
 
-DEFAULT_WORK_DIRNAME = "P3-01 OCR 验收"
 FONT_PATH = Path(r"C:\Windows\Fonts\msyh.ttc")
 
 INVOICE_LINES = [
@@ -109,10 +108,9 @@ def install_pinned_weights(data_root: Path) -> Path:
 
 
 def run(work_dir: Path, *, requested_device: str = "auto") -> dict[str, Any]:
+    work_dir = prepare_work_dir(work_dir)
     data_root = work_dir / "PhotoSearchData"
     library = work_dir / "照片库 中文 空格"
-    if work_dir.exists():
-        shutil.rmtree(work_dir)
     files = build_library(library)
     install_pinned_weights(data_root)
     resolved = verify(resolve(data_root))
@@ -216,20 +214,16 @@ def run(work_dir: Path, *, requested_device: str = "auto") -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--work-dir",
-        type=Path,
-        default=Path(tempfile.gettempdir()) / DEFAULT_WORK_DIRNAME,
-        help="the (recreated) work directory; never a real photo library",
-    )
+    parser.add_argument("--work-dir", type=Path, default=None,
+                        help="an empty project OCR temp or system temp directory")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto")
     parser.add_argument("--output", type=Path, default=None, help="also write the UTF-8 JSON report here")
-    parser.add_argument("--keep", action="store_true", help="keep the work directory on failure")
     args = parser.parse_args(argv)
     try:
-        report = run(args.work_dir.resolve(), requested_device=args.device)
-    except (CatalogError, AssertionError, FileNotFoundError) as error:
+        work_dir = args.work_dir if args.work_dir is not None else new_work_dir("smoke")
+        report = run(work_dir.resolve(), requested_device=args.device)
+    except (CatalogError, AssertionError, FileNotFoundError, FileExistsError, ValueError) as error:
         detail = error.as_dict() if isinstance(error, CatalogError) else str(error)
         print(
             json.dumps(
@@ -239,8 +233,6 @@ def main(argv: list[str] | None = None) -> int:
             ),
             file=sys.stderr,
         )
-        if not args.keep:
-            shutil.rmtree(args.work_dir.resolve(), ignore_errors=True)
         return 1
     if args.json:
         rendered = json.dumps(report, ensure_ascii=False, sort_keys=True)

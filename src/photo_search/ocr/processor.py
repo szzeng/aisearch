@@ -54,6 +54,8 @@ from photo_search.scheduler.contracts import ProcessorSpec, canonical_json
 from photo_search.search.tokens import TOKENIZER_VERSION, index_text
 
 ARTIFACT_ID_PREFIX = "ocr-document:"
+OCR_GPU_INITIALIZATION_FAILED = "OCR_GPU_INITIALIZATION_FAILED"
+OCR_GPU_EXECUTION_FAILED = "OCR_GPU_EXECUTION_FAILED"
 
 PAYLOAD_KEYS = frozenset(
     {
@@ -107,8 +109,15 @@ def onnx_runtime_package_id() -> str:
     return f"onnxruntime-gpu@{onnxruntime.__version__}"
 
 
-def ocr_processor_spec() -> ProcessorSpec:
-    """The frozen ``ProcessorSpec`` of the OCR structured model: CUDA/CPU, no vector."""
+def ocr_processor_spec(device: str = "gpu") -> ProcessorSpec:
+    """One frozen, versioned single-device OCR profile; neither profile is a vector."""
+    normalized = str(device)
+    if normalized not in ("cpu", "gpu"):
+        raise ValueError("OCR profile device must be cpu or gpu")
+    is_gpu = normalized == "gpu"
+    processor_id = contract.OCR_GPU_PROCESSOR_ID if is_gpu else contract.OCR_CPU_PROCESSOR_ID
+    spec_revision = contract.OCR_GPU_SPEC_REVISION if is_gpu else contract.OCR_CPU_SPEC_REVISION
+    config_hash = contract.OCR_GPU_CONFIG_HASH if is_gpu else contract.OCR_CPU_CONFIG_HASH
     weights = [
         {
             "name": str(entry["role"]),
@@ -121,17 +130,19 @@ def ocr_processor_spec() -> ProcessorSpec:
     return ProcessorSpec.from_envelope(
         {
             "contract_version": contract.CONTRACT_VERSION,
-            "spec_revision": contract.OCR_SPEC_REVISION,
-            "processor_id": contract.OCR_PROCESSOR_ID,
+            "spec_revision": spec_revision,
+            "processor_id": processor_id,
             "processor_kind": contract.OCR_PROCESSOR_KIND,
             "task_type": contract.OCR_TASK_TYPE,
-            "config_hash": contract.CONFIG_HASH,
+            "config_hash": config_hash,
             "input_type": contract.OCR_INPUT_TYPE,
             "output_type": contract.OCR_OUTPUT_TYPE,
-            "device_policy": contract.OCR_DEVICE_POLICY,
+            "device_policy": contract.OCR_DEVICE_POLICY if is_gpu else contract.OCR_CPU_DEVICE_POLICY,
             "runtime_backend": contract.OCR_RUNTIME_BACKEND,
-            "runtime_package_id": onnx_runtime_package_id(),
-            "supported_devices": list(contract.OCR_SUPPORTED_DEVICES),
+            "runtime_package_id": contract.OCR_RUNTIME_PACKAGE_ID,
+            "supported_devices": list(
+                contract.OCR_SUPPORTED_DEVICES if is_gpu else contract.OCR_CPU_SUPPORTED_DEVICES
+            ),
             "supported_precisions": list(contract.OCR_SUPPORTED_PRECISIONS),
             "max_batch_size": 1,
             "cancellation_supported": True,
@@ -143,12 +154,18 @@ def ocr_processor_spec() -> ProcessorSpec:
     )
 
 
-def artifact_id_for(input_revision: str) -> str:
-    return f"{ARTIFACT_ID_PREFIX}{contract.OCR_PROCESSOR_ID}:{str(input_revision)}"
+def artifact_id_for(
+    input_revision: str, processor_id: str = contract.OCR_PROCESSOR_ID
+) -> str:
+    return f"{ARTIFACT_ID_PREFIX}{str(processor_id)}:{str(input_revision)}"
 
 
-def ocr_document_id_for(input_revision: str, text_revision: int) -> str:
-    return f"ocr:{contract.OCR_PROCESSOR_ID}:{str(input_revision)}:{int(text_revision)}"
+def ocr_document_id_for(
+    input_revision: str,
+    text_revision: int,
+    processor_id: str = contract.OCR_PROCESSOR_ID,
+) -> str:
+    return f"ocr:{str(processor_id)}:{str(input_revision)}:{int(text_revision)}"
 
 
 def build_payload(
@@ -157,6 +174,7 @@ def build_payload(
     location_id: int | None,
     document: OcrDocument,
     decode_format: str,
+    processor_id: str = contract.OCR_PROCESSOR_ID,
 ) -> dict[str, Any]:
     """The deterministic document artifact of one content revision.
 
@@ -167,15 +185,25 @@ def build_payload(
     regions = [region.as_dict() for region in document.regions]
     return {
         "contract_version": contract.CONTRACT_VERSION,
-        "processor_id": contract.OCR_PROCESSOR_ID,
+        "processor_id": str(processor_id),
         "input_revision": str(input_revision),
         "location_id": None if location_id is None else int(location_id),
         "source": contract.OCR_SOURCE,
         "engine": contract.OCR_ENGINE,
         "engine_version": contract.ENGINE_VERSION,
         "model_fingerprint": contract.MODEL_FINGERPRINT,
-        "config_hash": contract.CONFIG_HASH,
-        "engine_config": dict(contract.ENGINE_CONFIG),
+        "config_hash": {
+            contract.OCR_LEGACY_PROCESSOR_ID: contract.CONFIG_HASH,
+            contract.OCR_CPU_PROCESSOR_ID: contract.OCR_CPU_CONFIG_HASH,
+            contract.OCR_GPU_PROCESSOR_ID: contract.OCR_GPU_CONFIG_HASH,
+        }[str(processor_id)],
+        "engine_config": (
+            dict(contract.ENGINE_CONFIG)
+            if str(processor_id) == contract.OCR_LEGACY_PROCESSOR_ID
+            else contract.execution_config(
+                "cpu" if str(processor_id) == contract.OCR_CPU_PROCESSOR_ID else "gpu"
+            )["recognition_and_preprocess"]
+        ),
         "decode_format": str(decode_format),
         "original_size": [int(document.original_size[0]), int(document.original_size[1])],
         "working_size": [int(document.working_size[0]), int(document.working_size[1])],
@@ -193,7 +221,9 @@ def artifact_ref(payload: Mapping[str, Any]) -> dict[str, Any]:
     """The ``ArtifactRef`` for one document; the executor never chooses a storage path."""
     data = canonical_json(dict(payload)).encode("utf-8")
     return {
-        "artifact_id": artifact_id_for(str(payload["input_revision"])),
+        "artifact_id": artifact_id_for(
+            str(payload["input_revision"]), str(payload["processor_id"])
+        ),
         "artifact_type": "structured",
         "artifact_revision": contract.OCR_ARTIFACT_REVISION,
         "media_type": contract.OCR_MEDIA_TYPE,
@@ -217,6 +247,7 @@ def extract_for_asset(
     resolved_device: str = "cpu",
     runtime_provider: str | None = None,
     precision: str = "FP32",
+    processor_id: str = contract.OCR_PROCESSOR_ID,
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
@@ -263,6 +294,7 @@ def extract_for_asset(
         location_id=int(location["location_id"]),
         document=document,
         decode_format=str(decoded.source_format),
+        processor_id=str(processor_id),
     )
     validate_payload(payload)
     return payload
@@ -401,6 +433,7 @@ def ocr_executor(
                 resolved_device=str(request["resolved_device"]),
                 runtime_provider=str(request["runtime_provider"]),
                 precision=str(request["precision"]),
+                processor_id=str(request["processor_id"]),
                 cancel=cancel,
                 deadline_ms=deadline_ms,
                 clock=clock,
@@ -420,7 +453,9 @@ def ocr_executor(
             return result
         except CatalogError as error:
             code = str(error.code)
-            if code == OCR_DEADLINE_EXCEEDED:
+            if code in (OCR_GPU_INITIALIZATION_FAILED, OCR_GPU_EXECUTION_FAILED):
+                state, retryable, blocking = "FAILED", False, None
+            elif code == OCR_DEADLINE_EXCEEDED:
                 # A bounded CPU budget that ran out is a transient condition: the job may
                 # be retried (and consumes one attempt), it is never a silent success.
                 state, retryable, blocking = "RETRY_WAIT", True, None
@@ -472,7 +507,12 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
         )
     if str(payload["contract_version"]) != contract.CONTRACT_VERSION:
         raise CatalogError(ARTIFACT_INVALID, "the OCR document carries a foreign contract")
-    if str(payload["processor_id"]) != contract.OCR_PROCESSOR_ID:
+    processor_id = str(payload["processor_id"])
+    if processor_id not in (
+        contract.OCR_LEGACY_PROCESSOR_ID,
+        contract.OCR_CPU_PROCESSOR_ID,
+        contract.OCR_GPU_PROCESSOR_ID,
+    ):
         raise CatalogError(ARTIFACT_INVALID, "the OCR document was produced by another processor")
     if str(payload["source"]) != contract.OCR_SOURCE:
         raise CatalogError(ARTIFACT_INVALID, "the OCR document source is not the pinned engine")
@@ -485,10 +525,24 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
             raise CatalogError(ARTIFACT_INVALID, f"{key} is not a sha256")
     if str(payload["model_fingerprint"]) != contract.MODEL_FINGERPRINT:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by other weights")
-    if str(payload["config_hash"]) != contract.CONFIG_HASH:
+    expected_hash = {
+        contract.OCR_LEGACY_PROCESSOR_ID: contract.CONFIG_HASH,
+        contract.OCR_CPU_PROCESSOR_ID: contract.OCR_CPU_CONFIG_HASH,
+        contract.OCR_GPU_PROCESSOR_ID: contract.OCR_GPU_CONFIG_HASH,
+    }[processor_id]
+    if str(payload["config_hash"]) != expected_hash:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by another config")
     if not isinstance(payload["engine_config"], Mapping):
         raise CatalogError(ARTIFACT_INVALID, "engine_config must be an object")
+    expected_engine_config = (
+        dict(contract.ENGINE_CONFIG)
+        if processor_id == contract.OCR_LEGACY_PROCESSOR_ID
+        else contract.execution_config(
+            "cpu" if processor_id == contract.OCR_CPU_PROCESSOR_ID else "gpu"
+        )["recognition_and_preprocess"]
+    )
+    if dict(payload["engine_config"]) != expected_engine_config:
+        raise CatalogError(ARTIFACT_INVALID, "the OCR engine config does not match its profile")
     if str(payload["decode_format"]) != str(payload["decode_format"]).upper():
         raise CatalogError(ARTIFACT_INVALID, "the decode format label must be upper case")
     for key in ("original_size", "working_size"):
@@ -568,6 +622,8 @@ def persist_ocr_document(
         for item in prepared
         if str(item.ref.artifact_type) == "structured"
         and str(item.ref.artifact_id).startswith(ARTIFACT_ID_PREFIX)
+        and str(job.processor_id)
+        in (contract.OCR_CPU_PROCESSOR_ID, contract.OCR_GPU_PROCESSOR_ID)
     ]
     if not documents:
         return False
@@ -592,6 +648,11 @@ def persist_ocr_document(
     current = connection.execute(
         "SELECT text_revision FROM asset_ocr_text WHERE asset_id = ?", (asset_id,)
     ).fetchone()
+    if str(payload["processor_id"]) != str(job.processor_id):
+        raise CatalogError(ARTIFACT_INVALID, "the OCR artifact processor does not match its job")
+    expected_artifact_id = artifact_id_for(str(result.input_revision), str(job.processor_id))
+    if str(item.ref.artifact_id) != expected_artifact_id:
+        raise CatalogError(ARTIFACT_INVALID, "the OCR artifact id does not match its processor")
     text_revision = 1 if current is None else int(current["text_revision"]) + 1
     confidences = [float(region["confidence"]) for region in payload["regions"]]
     connection.execute(
@@ -611,12 +672,16 @@ def persist_ocr_document(
         "updated_at = excluded.updated_at",
         (
             asset_id,
-            ocr_document_id_for(str(result.input_revision), text_revision),
+            ocr_document_id_for(str(result.input_revision), text_revision, str(job.processor_id)),
             str(result.input_revision),
             payload["location_id"],
             int(text_revision),
-            contract.OCR_PROCESSOR_ID,
-            contract.OCR_SPEC_REVISION,
+            str(job.processor_id),
+            (
+                contract.OCR_CPU_SPEC_REVISION
+                if str(job.processor_id) == contract.OCR_CPU_PROCESSOR_ID
+                else contract.OCR_GPU_SPEC_REVISION
+            ),
             str(payload["model_fingerprint"]),
             str(item.ref.artifact_id),
             len(confidences),

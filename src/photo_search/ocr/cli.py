@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "--device",
                 choices=("auto", "cpu", "gpu"),
                 default="auto",
-                help="requested OCR device; auto prefers a qualified GPU",
+                help="requested OCR device; auto queues CUDA first and uses qualified CPU after an eligible CUDA failure",
             )
             subparser.add_argument(
                 "--force",

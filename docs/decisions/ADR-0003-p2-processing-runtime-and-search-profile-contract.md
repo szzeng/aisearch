@@ -163,6 +163,11 @@ check 通过且专项 evidence 仍适用于当前 revision 后，scheduler 可�
 device/precision/runtime 变化是否仍属于同一 space 不能靠名称猜测：只有固定输入对照证明数值兼容、
 记录 tolerance 与 evidence 后才可复用 `processor_id/space_id`；否则发布新 ID。
 
+OCR 的不可变 structured artifact 还须满足字节/checksum 一致性，quality tolerance 不能代替它。
+2026-10-09 身份版本与用户明确授权的 OCR 协调层 GPU 优先、CPU 兜底，见
+[ADR-0018](ADR-0018-ocr-artifact-identity-and-fallback.md)。该局部策略用不同 processor 的任务完成，
+worker 和本节通用设备资格矩阵不允许隐式改选；其他处理器的 fallback 规则不变。
+
 ## 6. RuntimeCapabilities
 
 RuntimeCapabilities 是带 revision 的一次运行时事实快照，至少包含 runtime package ID/backend/name/

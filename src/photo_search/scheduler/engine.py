@@ -392,7 +392,7 @@ class Scheduler:
                 # module is touched unless this really is an OCR submission.
                 from photo_search.ocr import contract as ocr_contract
 
-                if str(spec.processor_id) == ocr_contract.OCR_PROCESSOR_ID:
+                if str(spec.processor_id) in ocr_contract.OCR_PROCESSOR_IDS:
                     from photo_search.ocr import processor as ocr_processor
 
                     ocr_processor.persist_ocr_document(

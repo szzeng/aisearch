@@ -92,12 +92,12 @@ STAGE_COMPLETE = "COMPLETE"
 #: needed for the taken-time extractor: unlike GPS/place/face/OCR - whose job revision *is*
 #: the content hash - the capture-time input revision also digests the recorded position
 #: facts (ADR-0011 §2), so no job revision can be compared against ``assets.sha256``.
-ENRICHMENT_STAGES: tuple[tuple[str, str | tuple[str, ...], str, str | None], ...] = (
+ENRICHMENT_STAGES: tuple[tuple[str, str | tuple[str, ...], str | tuple[str, ...], str | None], ...] = (
     ("taken_time", "taken_time_extract", "taken-time-exif@1", "asset_metadata"),
     ("gps", "geo_extract", "geo-exif-gps@1", None),
     ("place", "place_resolve", "geo-nearby-city@1", None),
     ("face", ("image_face", "image_face_detail_auto"), "face-model@1", None),
-    ("ocr", "image_ocr", "ocr-text@1", None),
+    ("ocr", "image_ocr", ("ocr-text@1", "ocr-text-cpu-fp32@2", "ocr-text-cuda-fp32@2"), None),
 )
 
 #: The stages whose availability depends on installed weights (the place stage depends on a
@@ -307,7 +307,7 @@ def enrichment_counts(
     catalog: Any,
     *,
     task_type: str | Sequence[str],
-    processor_id: str,
+    processor_id: str | Sequence[str],
     source_id: int | None = None,
     fact_table: str | None = None,
 ) -> dict[str, int]:
@@ -326,6 +326,10 @@ def enrichment_counts(
     if not task_types:
         raise ValueError("task_type must contain at least one task type")
     task_placeholders = _placeholders(task_types)
+    processor_ids = (str(processor_id),) if isinstance(processor_id, str) else tuple(map(str, processor_id))
+    if not processor_ids:
+        raise ValueError("processor_id must contain at least one processor")
+    processor_placeholders = _placeholders(processor_ids)
     clause, parameters = _scope_clause(source_id)
     if fact_table is None:
         handled = int(
@@ -333,11 +337,11 @@ def enrichment_counts(
                 "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
                 "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
                 f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-                "AND j.processor_id = ? "
+                f"AND j.processor_id IN ({processor_placeholders}) "
                 f"AND j.state IN ({_placeholders(_TERMINAL_JOB_STATES)}) "
                 "AND j.input_revision = a.sha256 "
                 f"AND a.asset_id IN ({clause})",
-                (*task_types, str(processor_id), *_TERMINAL_JOB_STATES, *parameters),
+                (*task_types, *processor_ids, *_TERMINAL_JOB_STATES, *parameters),
             )["n"]
         )
     else:
@@ -353,11 +357,11 @@ def enrichment_counts(
             "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
             "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
             f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-            "AND j.processor_id = ? "
+            f"AND j.processor_id IN ({processor_placeholders}) "
             f"AND j.state IN ({_placeholders(_LIVE_JOB_STATES)}) "
             "AND j.input_revision = a.sha256 "
             f"AND a.asset_id IN ({clause})",
-            (*task_types, str(processor_id), *_LIVE_JOB_STATES, *parameters),
+            (*task_types, *processor_ids, *_LIVE_JOB_STATES, *parameters),
         )["n"]
     )
     attempted = int(
@@ -365,9 +369,9 @@ def enrichment_counts(
             "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
             "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
             f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-            "AND j.processor_id = ? "
+            f"AND j.processor_id IN ({processor_placeholders}) "
             f"AND a.asset_id IN ({clause})",
-            (*task_types, str(processor_id), *parameters),
+            (*task_types, *processor_ids, *parameters),
         )["n"]
     )
     return {"handled": handled, "pending": pending, "attempted": attempted}

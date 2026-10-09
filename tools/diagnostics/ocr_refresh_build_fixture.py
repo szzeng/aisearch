@@ -16,9 +16,11 @@ sys.path.insert(0, str(ROOT / "tests" / "integration"))
 from test_p4_02y_library_refresh import MANIFEST, RefreshEnv, StubPinnedAdapter  # noqa: E402
 
 from tools.diagnostics.ocr_smoke_fixture import install_pinned_weights  # noqa: E402
+from tools.diagnostics.p4_02y_l_workdir import new_work_dir, prepare_work_dir  # noqa: E402
 
 
 def run(work_dir: Path) -> dict[str, Any]:
+    work_dir = prepare_work_dir(work_dir)
     env = RefreshEnv.build(
         work_dir,
         photos=3,
@@ -64,12 +66,14 @@ def run(work_dir: Path) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--work-dir", type=Path, default=Path("tmp/p4-02y-l/refresh-build"))
+    parser.add_argument("--work-dir", type=Path, default=None,
+                        help="an empty project OCR temp or system temp directory")
     parser.add_argument(
         "--output", type=Path, default=Path("test-results/p4-02y-l-refresh-build.json")
     )
     args = parser.parse_args()
-    result = run(args.work_dir.resolve())
+    work_dir = args.work_dir if args.work_dir is not None else new_work_dir("refresh-build")
+    result = run(work_dir.resolve())
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"

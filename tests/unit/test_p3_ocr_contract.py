@@ -66,12 +66,24 @@ def document(*regions: OcrRegion) -> OcrDocument:
 
 
 def payload(**overrides: object) -> dict:
+    processor_id = overrides.pop("processor_id", contract.OCR_PROCESSOR_ID)
+    build_processor_id = (
+        processor_id
+        if processor_id in (
+            contract.OCR_LEGACY_PROCESSOR_ID,
+            contract.OCR_CPU_PROCESSOR_ID,
+            contract.OCR_GPU_PROCESSOR_ID,
+        )
+        else contract.OCR_PROCESSOR_ID
+    )
     base = build_payload(
         input_revision=overrides.pop("input_revision", SHA),
         location_id=overrides.pop("location_id", 7),
         document=overrides.pop("document", document(region(0, "发票 金额 1280"), region(1, "编号 20260914"))),
         decode_format=overrides.pop("decode_format", "JPEG"),
+        processor_id=build_processor_id,
     )
+    base["processor_id"] = processor_id
     base.update(overrides)
     return base
 
@@ -123,14 +135,14 @@ def test_the_fingerprint_is_derived_from_the_pinned_triples() -> None:
 
 # ------------------------------------------------------------------------------- spec
 def test_the_processor_spec_is_the_frozen_structured_model_shell() -> None:
-    spec = ocr_processor_spec()
+    spec = ocr_processor_spec("gpu")
     assert isinstance(spec, ProcessorSpec)
     envelope = spec.to_envelope()
     # Round-tripping proves the envelope is a legal processor contract, not a lookalike.
     assert ProcessorSpec.from_envelope(envelope).processor_id == contract.OCR_PROCESSOR_ID
     assert envelope["processor_kind"] == "structured_model"
-    assert envelope["device_policy"] == "CPU_ALLOWED"
-    assert envelope["supported_devices"] == ["gpu", "cpu"]
+    assert envelope["device_policy"] == "GPU_REQUIRED"
+    assert envelope["supported_devices"] == ["gpu"]
     assert envelope["model_id"] == contract.OCR_MODEL_ID
     assert envelope["model_revision"] == contract.OCR_MODEL_REVISION
     assert {item["name"] for item in envelope["weights"]} == {
@@ -139,7 +151,7 @@ def test_the_processor_spec_is_the_frozen_structured_model_shell() -> None:
     assert envelope["runtime_backend"] == "onnxruntime"
     assert envelope["cancellation_supported"] is True
     assert envelope["max_batch_size"] == 1
-    assert envelope["config_hash"] == contract.CONFIG_HASH
+    assert envelope["config_hash"] == contract.OCR_GPU_CONFIG_HASH
     assert envelope["task_type"] == contract.OCR_TASK_TYPE
     assert set(envelope) == set(ProcessorSpec.from_envelope(envelope).to_envelope())
     # No vector-shaped field ever appears on an OCR processor.
@@ -148,13 +160,32 @@ def test_the_processor_spec_is_the_frozen_structured_model_shell() -> None:
 
 
 def test_the_processor_declares_gpu_and_cpu_without_vector_identity() -> None:
-    spec = ocr_processor_spec()
-    assert spec.supported_devices == ("gpu", "cpu")
-    assert spec.envelope["device_policy"] == contract.OCR_DEVICE_POLICY
-    assert ProcessorSpec.from_envelope(spec.envelope).processor_kind == "structured_model"
-    for field in ("space_id", "dimension", "metric"):
-        with pytest.raises(CatalogError):
-            ProcessorSpec.from_envelope({**spec.envelope, field: "invalid"})
+    for device, processor_id, policy, supported in (
+        ("gpu", contract.OCR_GPU_PROCESSOR_ID, "GPU_REQUIRED", ["gpu"]),
+        ("cpu", contract.OCR_CPU_PROCESSOR_ID, "CPU_PREFERRED", ["cpu"]),
+    ):
+        spec = ocr_processor_spec(device)
+        assert spec.processor_id == processor_id
+        assert spec.supported_devices == tuple(supported)
+        assert spec.envelope["device_policy"] == policy
+        assert ProcessorSpec.from_envelope(spec.envelope).processor_kind == "structured_model"
+        for field in ("space_id", "dimension", "metric"):
+            with pytest.raises(CatalogError):
+                ProcessorSpec.from_envelope({**spec.envelope, field: "invalid"})
+
+
+def test_v2_execution_hashes_are_versioned_and_device_specific() -> None:
+    cpu = contract.execution_config("cpu")
+    gpu = contract.execution_config("gpu")
+    assert cpu["version"] == gpu["version"] == "ocr-execution-config.v2"
+    assert cpu["provider"] == "CPUExecutionProvider"
+    assert gpu["provider"] == "CUDAExecutionProvider"
+    assert cpu["precision"] == gpu["precision"] == "FP32"
+    assert contract.OCR_CPU_CONFIG_HASH == contract.execution_config_hash("cpu")
+    assert contract.OCR_GPU_CONFIG_HASH == contract.execution_config_hash("gpu")
+    assert contract.OCR_CPU_CONFIG_HASH != contract.OCR_GPU_CONFIG_HASH
+    assert contract.OCR_CPU_CONFIG_HASH == "b34753ca9d2bd6f2c824d792b9af8debe1ecd788258e7bafbb2c56b76fd478f3"
+    assert contract.OCR_GPU_CONFIG_HASH == "6936ffae2b03479335a09ed69bb18d5d821ca4d2a1029c27d56f007c66aef5c6"
 
 
 # ---------------------------------------------------------------------------- payload
@@ -174,6 +205,15 @@ def test_a_valid_document_payload_round_trips_and_is_deterministic() -> None:
     assert TOKENIZER_VERSION == 1
 
 
+def test_legacy_v1_artifacts_remain_readable_with_their_original_identity() -> None:
+    legacy = payload(processor_id=contract.OCR_LEGACY_PROCESSOR_ID)
+    validate_payload(legacy)
+    ref = artifact_ref(legacy)
+    assert ref["artifact_id"] == f"ocr-document:{contract.OCR_LEGACY_PROCESSOR_ID}:{SHA}"
+    assert legacy["config_hash"] == contract.CONFIG_HASH
+    assert legacy["processor_id"] == contract.OCR_LEGACY_PROCESSOR_ID
+
+
 def test_low_confidence_regions_are_kept_and_counted() -> None:
     data = payload(
         document=document(region(0, "清晰", confidence=0.99), region(1, "模糊", confidence=0.4))
@@ -182,6 +222,19 @@ def test_low_confidence_regions_are_kept_and_counted() -> None:
     assert data["region_count"] == 2
     assert data["low_confidence_regions"] == 1
     assert data["regions"][1]["confidence"] == 0.4
+
+
+def test_low_confidence_boundary_preserves_raw_scores() -> None:
+    data = payload(
+        document=document(
+            region(0, "边界", confidence=0.6),
+            region(1, "高于边界", confidence=0.600001),
+        )
+    )
+    validate_payload(data)
+    assert data["regions"][0]["confidence"] == 0.6
+    assert data["regions"][1]["confidence"] == 0.600001
+    assert data["low_confidence_regions"] == 1
 
 
 @pytest.mark.parametrize(
@@ -253,6 +306,17 @@ def test_the_artifact_is_a_structured_document_without_a_vector() -> None:
     assert reference["space_id"] is None and reference["dimension"] is None
     assert reference["storage_uri"] is None
     assert reference["artifact_id"] == artifact_id_for(SHA)
+    cpu_reference = artifact_ref(
+        build_payload(
+            input_revision=SHA,
+            location_id=7,
+            document=document(region(0, "发票 金额 1280")),
+            decode_format="JPEG",
+            processor_id=contract.OCR_CPU_PROCESSOR_ID,
+        )
+    )
+    assert cpu_reference["artifact_id"] != reference["artifact_id"]
+    assert cpu_reference["payload"]["config_hash"] == contract.OCR_CPU_CONFIG_HASH
     assert "embedding" not in json.dumps(reference)
     # The checksum is the canonical JSON of the payload, byte for byte.
     import hashlib

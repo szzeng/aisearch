@@ -189,19 +189,31 @@ class Harness:
     def targets(self, **options: Any) -> list[dict[str, Any]]:
         return ocr_targets(self.catalog, **options)
 
-    def enqueue(self, targets: list[dict[str, Any]] | None = None, *, force: bool = False) -> dict[str, int]:
+    def enqueue(
+        self,
+        targets: list[dict[str, Any]] | None = None,
+        *,
+        force: bool = False,
+        requested_device: str = "auto",
+    ) -> dict[str, int]:
         if targets is None:
             targets = self.targets()
         return enqueue_targets(
-            self.catalog, targets, now_ms=self.clock(), force=bool(force)
+            self.catalog,
+            targets,
+            now_ms=self.clock(),
+            force=bool(force),
+            requested_device=str(requested_device),
         )
 
     def run_ocr(self, *, limit: int | None = None, **options: Any) -> dict[str, Any]:
         return run_queue(self.catalog, data_root=self.data_root, limit=limit, **options)
 
-    def recognize(self, *, force: bool = False, **options: Any) -> dict[str, Any]:
+    def recognize(
+        self, *, force: bool = False, requested_device: str = "auto", **options: Any
+    ) -> dict[str, Any]:
         """Install-independent end-to-end helper: enqueue everything, run, catch up."""
-        queued = self.enqueue(force=force)
+        queued = self.enqueue(force=force, requested_device=requested_device)
         run = self.run_ocr(**options)
         projection = catch_up_projection(self.catalog)
         return {"enqueue": queued, "run": run, "projection": projection}

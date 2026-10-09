@@ -2,7 +2,11 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 本次完成：P4-PERSONAL-REVIEW-SEARCH-A — ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED
+## 本次完成：P4-02Y-L-IDENTITY-A-FIX — ENGINEERING REVIEW PASS / F1–F7 CLOSED
+
+[独立复核报告](reports/P4-02Y-L-review-dsh.md)、[修复卡](tasks/P4-02Y-L-IDENTITY-A-fix.md)、[实现报告](reports/P4-02Y-L-IDENTITY-A.md)。当前审核会话独立关闭 F6/F7：普通终态不可恢复、OCR handoff 专用 CAS、provider-unverified 持久拒绝均核对通过；F1–F5 保持关闭，未见新增阻塞问题。独立定向 JUnit 60/60 passed、0 failures/errors/skips，Ruff/diff-check 通过；实现轮 65/65 证据已核对。ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED，仅限工程与合成范围；真实 weights/session/GPU 仍 PENDING，不标 OCR 总 PASS。不另跑整轮 DS-H/Sol，不自动启动其他任务；未加载模型、访问真实图库/服务、提交或推送。
+
+## 前序完成：P4-PERSONAL-REVIEW-SEARCH-A — ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED
 
 [执行报告](reports/P4-PERSONAL-REVIEW-SEARCH-A.md)、[任务卡](tasks/P4-PERSONAL-REVIEW-SEARCH-A.md)。按用户指定在当前会话完成W/W-Q/NL全受影响面工程复核，结论ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；没有声称切换DS-H。修复不同长度及重叠人名识别、失败查询残留旧条件标签；排序对照测试改用当前统计策略注入点。定向JUnit 12/0/0/0，Ruff/Node/diff-check通过；65张合成浏览器筛选/翻页/缩略图/人物相册往返通过。Qwen真实网页效果待验。现在只交接OCR卡，不自动开始；未运行全量/30万/GPU/打包，未访问真实图库或用户服务；按用户指示本地提交，未推送。
 
@@ -37,11 +41,11 @@
 | [人物组](tasks/P4-PERSONAL-REVIEW-PERSON-A.md) | ENGINEERING REVIEW PASS；AVATAR正常重启/刷新现场确认仍单项PENDING。 |
 | [地点组](tasks/P4-PERSONAL-REVIEW-PLACE-A.md) | ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；正式CN包导入/交付、实际catalog与真实照片现场效果仍按地点组报告保留PENDING。 |
 | [搜索与查看组](tasks/P4-PERSONAL-REVIEW-SEARCH-A.md) | ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；Qwen真实页面效果待验。PHOTO-VIEW复用用户已接受报告并复核基础查看路径。 |
-| [OCR](tasks/P4-02Y-L-review.md) | 独立工程证据核对；旧Sol冻结与CPU/GPU实验复用，不重复冻结/测速。 |
+| [OCR](tasks/P4-02Y-L-review.md) | ENGINEERING REVIEW PASS / F1–F7 CLOSED；独立定向 60/60。真实 weights/session/GPU 仍 PENDING。 |
 | [模型切换](tasks/P4-EMBEDDING-ARCH-review.md) | 独立工程面待审；维护select-profile与UpgradeRun门禁适用性若仍未裁决，保留一次Sol短裁决。 |
 
 P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照实保留，不默认修全仓。基础关键失败不得跳过。已有PASS任务不重开，不自动继续性能优化。
 
 ## 下一步
 
-搜索与查看组工程复核已完成，下一入口为[OCR审查卡](tasks/P4-02Y-L-review.md)。只交接该卡，不自动开始OCR；Qwen真实网页效果及人物/地点/照片查看既有现场PENDING继续按各自报告保留。
+OCR 版本化身份与兜底工程审核已闭环，SOL_NOT_REQUIRED；不重复 DS-H/Sol，不自动接续其他任务。后续真实 weights/session/GPU 验证由用户另行决定。OCR 总 PASS 以及 Qwen、人物、地点、照片查看原现场 PENDING 继续保留；不启动模型切换主审。

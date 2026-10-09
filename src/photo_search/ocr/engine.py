@@ -345,18 +345,27 @@ class PinnedOcrEngine:
         self.resolved_device = "gpu" if resolution.device == "cuda" else "cpu"
         self.runtime_provider = str(runtime_provider or resolution.provider)
         self.precision = str(precision)
-        self._engine = factory(
-            config_path=str(weights.config_path),
-            det_model_path=str(weights.detection_path),
-            cls_model_path=str(weights.classification_path),
-            rec_model_path=str(weights.recognition_path),
-            text_score=float(contract.MIN_TEXT_SCORE),
-            print_verbose=False,
-            max_side_len=int(contract.MAX_LONG_EDGE),
-            det_use_cuda=self.resolved_device == "gpu",
-            cls_use_cuda=self.resolved_device == "gpu",
-            rec_use_cuda=self.resolved_device == "gpu",
-        )
+        try:
+            self._engine = factory(
+                config_path=str(weights.config_path),
+                det_model_path=str(weights.detection_path),
+                cls_model_path=str(weights.classification_path),
+                rec_model_path=str(weights.recognition_path),
+                text_score=float(contract.MIN_TEXT_SCORE),
+                print_verbose=False,
+                max_side_len=int(contract.MAX_LONG_EDGE),
+                det_use_cuda=self.resolved_device == "gpu",
+                cls_use_cuda=self.resolved_device == "gpu",
+                rec_use_cuda=self.resolved_device == "gpu",
+            )
+        except Exception as error:
+            if self.resolved_device == "gpu" and _is_onnx_cuda_failure(error):
+                raise CatalogError(
+                    "OCR_GPU_INITIALIZATION_FAILED",
+                    "the dispatched CUDA OCR sessions failed during initialization",
+                    details={"exception_type": type(error).__name__},
+                ) from error
+            raise
         self.session_providers = self._read_session_providers(self._engine)
         expected_provider = (
             runtime_device.CUDA_PROVIDER
@@ -369,6 +378,18 @@ class PinnedOcrEngine:
             if not providers or providers[0] != expected_provider
         }
         if mismatches or self.runtime_provider != expected_provider:
+            if self.resolved_device == "gpu":
+                raise CatalogError(
+                    "OCR_GPU_INITIALIZATION_FAILED",
+                    "RapidOCR did not create all sessions on the dispatched CUDA provider",
+                    details={
+                        "resolved_device": self.resolved_device,
+                        "expected_provider": expected_provider,
+                        "reported_provider": self.runtime_provider,
+                        "session_providers": self.session_providers,
+                        "mismatched_roles": sorted(mismatches),
+                    },
+                )
             raise CatalogError(
                 RUNTIME_RESOLUTION_MISMATCH,
                 "RapidOCR did not create all sessions on the dispatched provider",
@@ -397,7 +418,7 @@ class PinnedOcrEngine:
                 observed[role] = tuple(str(item) for item in target.get_providers())
         except Exception as error:
             raise CatalogError(
-                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "OCR_SESSION_PROVIDER_UNVERIFIED",
                 "RapidOCR session providers could not be verified",
                 details={"reason": type(error).__name__},
             ) from error
@@ -405,8 +426,17 @@ class PinnedOcrEngine:
 
     def read(self, bgr: Any) -> Any:
         """Run detection + direction classification + recognition on one BGR array."""
-        raw, _elapsed = self._engine(bgr)
-        return raw
+        try:
+            raw, _elapsed = self._engine(bgr)
+            return raw
+        except Exception as error:
+            if self.resolved_device == "gpu" and _is_onnx_cuda_failure(error):
+                raise CatalogError(
+                    "OCR_GPU_EXECUTION_FAILED",
+                    "the dispatched CUDA OCR session failed during inference",
+                    details={"exception_type": type(error).__name__},
+                ) from error
+            raise
 
 
 def _rapidocr_factory() -> Callable[..., Any]:
@@ -414,11 +444,33 @@ def _rapidocr_factory() -> Callable[..., Any]:
         from rapidocr_onnxruntime import RapidOCR
     except Exception as error:  # pragma: no cover - a broken install
         raise CatalogError(
-            RUNTIME_CAPABILITY_UNAVAILABLE,
+            "OCR_RUNTIME_UNAVAILABLE",
             "this process has no rapidocr-onnxruntime runtime",
             details={"reason": type(error).__name__},
         ) from error
     return RapidOCR
+
+
+def _is_onnx_cuda_failure(error: BaseException) -> bool:
+    """Recognize CUDA faults from ORT itself or RapidOCR's known wrapper and cause."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        module = type(current).__module__
+        name = type(current).__name__
+        if module.startswith("onnxruntime") and name in {"RuntimeException", "EngineError", "Fail"}:
+            message = str(current).lower()
+            if any(marker in message for marker in ("cuda", "cudnn", "cublas", "executionprovider")):
+                return True
+        # RapidOCR 1.4.x wraps ORT session.run failures in this concrete exception.
+        if not (
+            module == "rapidocr_onnxruntime.utils.infer_engine"
+            and name == "ONNXRuntimeError"
+        ):
+            return False
+        current = current.__cause__
+    return False
 
 
 class OcrEngineCache:
