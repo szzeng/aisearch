@@ -42,10 +42,10 @@
 | [地点组](tasks/P4-PERSONAL-REVIEW-PLACE-A.md) | ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；正式CN包导入/交付、实际catalog与真实照片现场效果仍按地点组报告保留PENDING。 |
 | [搜索与查看组](tasks/P4-PERSONAL-REVIEW-SEARCH-A.md) | ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；Qwen真实页面效果待验。PHOTO-VIEW复用用户已接受报告并复核基础查看路径。 |
 | [OCR](tasks/P4-02Y-L-review.md) | ENGINEERING REVIEW PASS / F1–F7 CLOSED；独立定向 60/60。真实 weights/session/GPU 仍 PENDING。 |
-| [模型切换](tasks/P4-EMBEDDING-ARCH-review.md) | 独立工程面待审；维护select-profile与UpgradeRun门禁适用性若仍未裁决，保留一次Sol短裁决。 |
+| [模型切换](tasks/P4-EMBEDDING-ARCH-review.md) | 用户指定的当前会话个人短审ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED（非DS-H）；Qwen阈值变更后的真实页面效果仍PENDING。 |
 
 P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照实保留，不默认修全仓。基础关键失败不得跳过。已有PASS任务不重开，不自动继续性能优化。
 
 ## 下一步
 
-OCR 版本化身份与兜底工程审核已闭环，SOL_NOT_REQUIRED；不重复 DS-H/Sol，不自动接续其他任务。后续真实 weights/session/GPU 验证由用户另行决定。OCR 总 PASS 以及 Qwen、人物、地点、照片查看原现场 PENDING 继续保留；不启动模型切换主审。
+按用户指示在当前会话完成个人范围模型切换短审，ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；没有声称DS-H。审查修正W-Q遗留oracle，并补足CLI停机声明/受管lease拒绝测试，3项定向pytest通过。依据ADR-0003 §8与ADR-0013 §1/§7，当前不创建UpgradeRun的停机选择属于受控手动profile激活，不伪造升级run；未来run驱动激活仍须满足ADR-0013 §7。Qwen门限变更后的真实页面确认和其它原现场PENDING保持。未操作真实图库/用户服务/模型，无提交或推送。

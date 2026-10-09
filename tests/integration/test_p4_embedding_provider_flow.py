@@ -13,6 +13,7 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,12 +27,15 @@ from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     SELECTION_COVERAGE_INCOMPLETE,
     SELECTION_OUTBOX_PENDING,
+    SELECTION_WRITER_ACTIVE,
     CatalogError,
 )
 from photo_search.config import vectors_dir
 from photo_search.indexing import selection as selection_module
 from photo_search.indexing import semantic
 from photo_search.ingestion.service import CatalogService
+from photo_search.models.embedding import cli as embedding_cli
+from photo_search.runtime.data_root_lease import DataRootLeaseBusy
 from photo_search.search import profile as profile_module
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -204,6 +208,52 @@ def prepare_selection(catalog: Catalog, profile: Any) -> tuple[Any, dict[str, An
         processor_id=str(profile.embedding_processor_id),
         vectors_root=vectors_dir(catalog.data_root),
     )
+
+
+def test_select_profile_requires_stopped_attestation_before_touching_the_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unexpected_lease(_data_root: Path) -> Any:
+        raise AssertionError("the lease must not be acquired without --stopped")
+
+    monkeypatch.setattr(embedding_cli, "resolve_data_root", lambda _value: tmp_path)
+    monkeypatch.setattr(embedding_cli, "acquire_data_root_lease", unexpected_lease)
+    monkeypatch.setattr(
+        embedding_cli.Catalog,
+        "open",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("catalog must not open")),
+    )
+
+    with pytest.raises(CatalogError, match="--stopped") as caught:
+        embedding_cli._select_profile(
+            SimpleNamespace(data_root=str(tmp_path), stopped=False, profile="unused")
+        )
+    assert caught.value.code == "USAGE"
+
+
+def test_select_profile_refuses_a_managed_writer_lease_before_opening_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy_lease(_data_root: Path) -> Any:
+        raise DataRootLeaseBusy("synthetic-managed-writer")
+
+    monkeypatch.setattr(embedding_cli, "resolve_data_root", lambda _value: tmp_path)
+    monkeypatch.setattr(embedding_cli, "acquire_data_root_lease", busy_lease)
+    monkeypatch.setattr(
+        embedding_cli.Catalog,
+        "open",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("catalog must not open")),
+    )
+
+    with pytest.raises(CatalogError) as caught:
+        embedding_cli._select_profile(
+            SimpleNamespace(data_root=str(tmp_path), stopped=True, profile="unused")
+        )
+    assert caught.value.code == SELECTION_WRITER_ACTIVE
+    assert caught.value.details == {
+        "reason": "DATA_ROOT_LEASE_BUSY",
+        "lease": "synthetic-managed-writer",
+    }
 
 
 def test_a_candidate_build_never_moves_the_pointer_and_the_selection_does(tmp_path: Path) -> None:
@@ -412,7 +462,7 @@ def test_a_video_in_the_library_never_blocks_the_selection(tmp_path: Path) -> No
         service.close()
 
 
-def test_the_selected_provider_serves_search_and_hides_the_strong_match_statistic(
+def test_the_selected_provider_serves_search_and_reports_the_strong_match_statistic(
     tmp_path: Path,
 ) -> None:
     import asyncio
@@ -468,11 +518,12 @@ def test_the_selected_provider_serves_search_and_hides_the_strong_match_statisti
     assert model["provider_id"] == "qwen3-vl-embedding-2b"
     assert model["adapter"] == "qwen3_vl"
     assert model["dimension"] == DIMENSION
-    assert model["strong_match_available"] is False
+    assert model["strong_match_available"] is True
     assert capabilities["search"]["active_image_generation_id"] == str(
         candidate["build"]["generation"]["generation_id"]
     )
     vector = body["channels"]["vector"]
     assert vector["engaged"] is True
-    assert vector["strong_match_available"] is False
+    assert vector["strong_match_available"] is True
+    assert 0 <= vector["strong_match_count"] <= vector["candidates"]
     app.state.api.close()
