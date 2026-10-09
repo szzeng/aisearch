@@ -2,6 +2,12 @@
 
 更新：2026-10-09。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
 
+## 当前人物相册性能 P4-PERSON-ALBUM-PERF-A — **PASS（个人相册基础功能与小样本验证）**
+
+2026-10-09用户明确个人相册只做基础测试。按[限定验收](tasks/P4-PERSON-ALBUM-PERF-A.md)完成合成样本人物列表→人物相册→照片详情→前后切换→返回，图像可见；详情区域观察到合成临时库绝对路径，未在本次范围处理。浏览器夹具仅2张该人物照片，浏览器翻页未单独覆盖；既有定向集覆盖分页。真实 PhotoSearchData 未访问。全仓不先修绿、不新增性能/GPU/打包/多轮审查；[全量设计](plans/P4-TEST-BASELINE.md)及[地点基线卡](tasks/P4-TEST-BASELINE-PLACE-A.md)改为DEFERRED，[93项清单](reports/P4-TEST-BASELINE-inventory.json)保留。其他任务既有高风险审查状态不变。
+
+[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)、[实现与证据](reports/P4-PERSON-ALBUM-PERF-A-implementation.md)。人物页40人统计/封面与照片页60张时间/人脸改为限页批量读取；普通浏览不再读取来源和原图补识别状态，首屏少数图片优先加载。61图/42人合成API中位数2.52→1.82 ms、9.55→6.62 ms；真实图库图片可见与冷/热时间未测。既有定向JUnit **12/0/0/0**及Ruff/Node/diff-check通过。2026-10-09另完成一次隔离合成浏览器基本流程，截图中头像、照片缩略图与详情图可见；浏览器小夹具未测翻页，分页由定向测试覆盖。详情展示合成目录绝对路径，记录为观察项，本次不改。历史全量 **2152/50 failures/43 errors/49 skipped** 仍未通过且不作为个人收口前置；本次只标基础功能与小样本范围通过，不追认全仓/真实体感/发行。未访问PhotoSearchData。
+
 ## 当前头像反馈 P4-PERSON-AVATAR-FIX-A — 原图人物头像409（**IMPLEMENTED / 定向验证通过 / 现场重启待确认**）
 
 [执行卡](tasks/P4-PERSON-AVATAR-FIX-A.md)、[原因与反例](reports/P4-PERSON-AVATAR-FIX-A.md)。头像路由漏查spec_revision，原图文档校验因此返回FACE_STATE_CONFLICT/face_frame_invalid；已补字段，保持原有checksum/内容/脸/profile门禁，不改人脸或归属、不重识别。普通/原图×GET/HEAD冷缓存反例修前原图失败，修后定向JUnit **29/0/0/0**、Ruff/diff-check通过。源码服务重启刷新后现场待确认，未访问私人照片/真实catalog、未推送；补充纳入DETAIL-B既有独立审查。
@@ -37,9 +43,9 @@
 
 [实现报告](reports/P4-PERSON-DETAIL-B-implementation.md)、[独立工程与终审结果](reports/P4-PERSON-DETAIL-B-review.md)、[聚焦终审卡](tasks/P4-PERSON-DETAIL-B-sol-review.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)。聚焦终审未发现阻塞：白名单/独立source世代、CONFIRMED产物与向量绑定、事务内人工保护、JPEG不可验证hold、旧机器有效成员及撤销后按实际spec重排均与ADR一致；DETAIL-B审查闭环PASS。复核既有JUnit 34/34/16/29项均0失败/错误/跳过及公开CPU JSON（仅v2↔source），未重跑套件或改产品代码。未验真实图库/PhotoSearchData、现场catalog升级、浏览器/重启、私人准确率、GPU/30万吞吐；不追认DETAIL-A独立整卡通过。人物列表逐人物查询仍是未测量的另线线索，本轮不自动接续。
 
-## 人物体验新增待做：P4-PERSON-ALBUM-PERF-A — 相册加载加速（**PROPOSED / 未实施**）
+## 人物体验 P4-PERSON-ALBUM-PERF-A — 实施交接
 
-[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)。2026-10-09修订：明确与已完成的后台P4-PERSON-PERF-A不同；先量人物API、相册主SQL、首屏头像/首张照片可见时间及冷/热图片；普通人物浏览不再主动请求`/sources`完整来源统计、补识别active/preview，仅相关整理入口按需加载；限页批量化40人人物计数/封面和60张照片时间/人脸，检查`capture_desc`主查询执行计划。按简单合成测试与前后各3次对照，不因SQL次数下降冒充用户体感提升。**仅修订任务卡，未实施/测速；不访问真实PhotoSearchData、改schema/身份/模型、做30万性能或新Sol阶段**。推荐DS-H／高推理，GPT备选Luna／High；不改变其他任务状态及优先级。
+性能报告包含逐条投影等价、SQL变化、EXPLAIN和三次API对照；未测大库/真实图库绘制。2026-10-09已完成一次隔离合成浏览器基础交互；全量基线修复后置，不自动接续全局人物排序或其他性能阶段。
 
 ## 前置 P4-PERSON-DETAIL-A — 按需原图裁脸（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
 

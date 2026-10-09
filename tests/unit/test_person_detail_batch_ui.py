@@ -11,7 +11,7 @@ def test_detail_batch_ui_scope_progress_and_retry():
     script = r"""
 const fs=require("fs"), vm=require("vm"), assert=require("assert/strict");
 class Element {
-  constructor(){this.children=[];this.events={};this.value="";this.classList={add(){}};}
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.value="";this.classList={add(){}};}
   set textContent(v){this.text=v;this.children=[];} get textContent(){return this.text||"";}
   append(...v){this.children.push(...v);} replaceChildren(...v){this.children=v;}
   setAttribute(){} focus(){} addEventListener(k,v){this.events[k]=v;}
@@ -26,7 +26,7 @@ const result=()=>({batch_id:stage==="IDLE"?null:"batch-2",source_id:2,state:stag
 const response=body=>({ok:true,json:async()=>body});
 const context={URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
  setTimeout:fn=>{const t={fn};timers.push(t);return t;},clearTimeout:t=>{if(t)t.cancelled=true;},
- document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(){},getElementById:get,createElement:()=>new Element()},
+ document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url,options)=>{
    requests.push({url,options});
    if(url==="/api/v1/sources")return response({sources:[{source_id:1,display_name:"一"},{source_id:2,display_name:"二"}]});
@@ -40,15 +40,27 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
       stage=++polls===1?"PARTIAL_FAILED":"COMPLETE";return response(result());
    }
    if(url.includes("/active"))return response(result());
-   return response({persons:[],faces:[],has_more:false});
+ if(url.includes("/persons/browse"))return response({persons:[0,1,2,3,4].map(i=>({person_id:i+1,name:"人"+i,revision:1,asset_count:1,thumbnail_url:"/api/v1/faces/"+(String(i).repeat(64))+"/thumbnail"})),has_more:false});
+ return response({persons:[],faces:[],has_more:false});
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch,renderPhotos};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t.ran=true;await t.fn();await flush();};
 (async()=>{
  context.ui.boot();await flush();
+ const imageOf=card=>card.children[0].children.find(item=>item.tag==="img");
+ assert.equal(imageOf(get("pa-cards").children[0]).loading,"eager");
+ assert.equal(imageOf(get("pa-cards").children[3]).loading,"eager");
+ assert.equal(imageOf(get("pa-cards").children[4]).loading,"lazy");
+ context.ui.renderPhotos([1,2,3,4].map(asset_id=>({asset_id})));
+ assert.equal(imageOf(get("pa-photos").children[0]).fetchPriority,"high");
+ assert.equal(imageOf(get("pa-photos").children[2]).loading,"lazy");
+ assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
+ assert.equal(requests.some(x=>x.url.includes("source-detail-batches/active")),false);
+ await get("pa-organize").fire("click");await flush();
+ assert.equal(requests.some(x=>x.url==="/api/v1/sources"),true);
  get("pa-detail-source").value="1";const old=context.ui.loadDetailBatch();await flush();
  get("pa-detail-source").value="2";await context.ui.loadDetailBatch();oldResolve();await old;
  assert.equal(context.ui.state.detailBatch,null);

@@ -1,0 +1,795 @@
+{
+  "date": "2026-10-09",
+  "status": "PLANNING_EVIDENCE_ONLY; no tests rerun",
+  "head": "65386805f5365ad14a879a626f6b4a2613950c87",
+  "worktree_note": "uncommitted person album performance changes; HEAD alone is not the tested snapshot",
+  "source_xml": "test-results/p4-person-album-perf-full.xml",
+  "source_sha256": "bd13db2986a97d28a29db426c9d277b50e7a3bd9ebdb1dc591ccf3e2488011e4",
+  "suite": [
+    {
+      "name": "pytest",
+      "errors": "43",
+      "failures": "50",
+      "skipped": "49",
+      "tests": "2152",
+      "time": "404.429",
+      "timestamp": "2026-10-09T09:44:07.558455+08:00",
+      "hostname": "TCC_SZ"
+    }
+  ],
+  "derived_passed": 2010,
+  "group_counts": {
+    "CONTRACT-A": {
+      "failure": 3,
+      "error": 0
+    },
+    "FACE-A": {
+      "failure": 1,
+      "error": 0
+    },
+    "PLACE-A": {
+      "failure": 36,
+      "error": 43
+    },
+    "SCHEMA-A": {
+      "failure": 8,
+      "error": 0
+    },
+    "SEARCH-A": {
+      "failure": 2,
+      "error": 0
+    }
+  },
+  "native_exception": {
+    "report": "docs/reports/P4-PERSON-ALBUM-PERF-A-implementation.md",
+    "code": "0xc0000139",
+    "stack_trace_in_current_xml": false,
+    "cause": "UNCONFIRMED; separate runtime investigation"
+  },
+  "entries": [
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_retiring_a_referenced_place_is_refused",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_assign_unassign_restore_auto_and_late_automatic_results",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_idempotent_replay_and_payload_conflict",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_batch_is_atomic_with_a_500_bound",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: assert 'PLACE_NOT_FOUND' == 'PLACE_ASSIGNMENT_CONFLICT'\n  \n  - PLACE_ASSIGNMENT_CONFLICT\n  + PLACE_NOT_FOUND"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_undo_compensates_or_refuses_the_whole_operation",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_operation_log_is_append_only_and_listed",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_filter_revision_matrix_and_same_transaction_projection_refresh",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_place_filters_are_authoritative_and_deduplicated",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p2_place_directory.py::test_coverage_and_cursor_binding",
+      "file": "tests/unit/test_p2_place_directory.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/unit/test_p3_person_search_contracts.py::test_existing_companions_are_byte_identical",
+      "file": "tests/unit/test_p3_person_search_contracts.py",
+      "outcome": "failure",
+      "group": "CONTRACT-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: p2-contracts.v1.json\nassert '4270997cac64...d43d7730325fa' == 'ec7de5f0cbe6...61778ef0e4a57'\n  \n  - ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57\n  + 4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
+    },
+    {
+      "nodeid": "tests/unit/test_p3_person_search_contracts.py::test_person_hit_set_matches_the_person_asset_count",
+      "file": "tests/unit/test_p3_person_search_contracts.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "sqlite3.OperationalError: no such table: face_detail_auto_assets"
+    },
+    {
+      "nodeid": "tests/unit/test_p3_person_search_scope.py::test_the_person_predicate_and_the_member_count_are_the_same_set",
+      "file": "tests/unit/test_p3_person_search_scope.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "sqlite3.OperationalError: no such table: face_detail_auto_assets"
+    },
+    {
+      "nodeid": "tests/unit/test_p4_time_contracts.py::test_adr_records_the_companion_hash_and_every_frozen_companion_is_byte_identical",
+      "file": "tests/unit/test_p4_time_contracts.py",
+      "outcome": "failure",
+      "group": "CONTRACT-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: p2-contracts.v1.json\nassert '4270997cac64...d43d7730325fa' == 'ec7de5f0cbe6...61778ef0e4a57'\n  \n  - ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57\n  + 4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
+    },
+    {
+      "nodeid": "tests/unit/test_p4_upgrade_contracts.py::test_migration_contract_and_byte_identity",
+      "file": "tests/unit/test_p4_upgrade_contracts.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert 21 == 16"
+    },
+    {
+      "nodeid": "tests/unit/test_p4_upgrade_contracts.py::test_adr_records_the_companion_hash_and_the_earlier_companions_are_untouched",
+      "file": "tests/unit/test_p4_upgrade_contracts.py",
+      "outcome": "failure",
+      "group": "CONTRACT-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: p2-contracts.v1.json\nassert '4270997cac64...d43d7730325fa' == 'ec7de5f0cbe6...61778ef0e4a57'\n  \n  - ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57\n  + 4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_acceptance_recovery.py::test_an_interrupted_scan_resumes_after_a_restart_without_false_missing",
+      "file": "tests/integration/test_p2_acceptance_recovery.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_acceptance_search.py::test_add_rename_move_and_delete_stay_consistent_with_search",
+      "file": "tests/integration/test_p2_acceptance_search.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_acceptance_search.py::test_place_and_source_filters_stay_exact_and_reject_illegal_combinations",
+      "file": "tests/integration/test_p2_acceptance_search.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_acceptance_search.py::test_a_live_session_answers_with_identifiable_staleness_codes",
+      "file": "tests/integration/test_p2_acceptance_search.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_acceptance_search.py::test_upload_search_writes_nothing_and_reuses_the_authoritative_recheck",
+      "file": "tests/integration/test_p2_acceptance_search.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_place_api.py::test_assignment_batch_and_undo_over_the_api",
+      "file": "tests/integration/test_p2_place_api.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "KeyError: 'operation_id'"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_place_api.py::test_asset_place_filter_and_coordinate_privacy",
+      "file": "tests/integration/test_p2_place_api.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert [] == [1]\n  \n  Right contains one more item: 1\n  Use -v to get more diff"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_place_page.py::test_undo_compensates_and_refuses_after_a_later_edit",
+      "file": "tests/integration/test_p2_place_page.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "KeyError: 'operation_id'"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_place_page.py::test_a_missing_package_reports_itself_and_manual_curation_keeps_working",
+      "file": "tests/integration/test_p2_place_page.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: {\"code\":\"PLACE_NOT_FOUND\",\"message\":\"new manual assignments require a place from the active validated source directory\",\"request_id\":\"ded783d2b9631b63\",\"details\":{\"place_id\":1}}\nassert 404 == 200\n +  where 404 = <Response [404 Not Found]>.status_code"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_place_resolver.py::test_manual_places_and_assignment_work_with_a_missing_package",
+      "file": "tests/integration/test_p2_place_resolver.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_scheduler_recovery.py::test_v1_upgrade_preserves_every_existing_row_and_writes_a_backup",
+      "file": "tests/integration/test_p2_scheduler_recovery.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: assert {'active_geo_...regions', ...} == {'active_geo_...regions', ...}\n  \n  Extra items in the left set:\n  'face_detail_association_queue'\n  'cn_base_china_places'\n  'cn_admin_place_refs'\n  'face_detail_batch_assets'\n  'map_member_revision'...\n  \n  ...Full output truncated (10 lines hidden), use '-vv' to show"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_api.py::test_text_search_matches_file_names_and_the_effective_place",
+      "file": "tests/integration/test_p2_search_api.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: {\"code\":\"PLACE_NOT_FOUND\",\"message\":\"new manual assignments require a place from the active validated source directory\",\"request_id\":\"d6097ac1909c7872\",\"details\":{\"place_id\":1}}\nassert 404 == 200\n +  where 404 = <Response [404 Not Found]>.status_code"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_api.py::test_text_search_ands_with_the_authoritative_place_filter_and_keeps_the_cursor",
+      "file": "tests/integration/test_p2_search_api.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: {\"code\":\"PLACE_NOT_FOUND\",\"message\":\"new manual assignments require a place from the active validated source directory\",\"request_id\":\"bd70762b1fe65d1f\",\"details\":{\"place_id\":1}}\nassert 404 == 200\n +  where 404 = <Response [404 Not Found]>.status_code"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_authority.py::test_descendants_or_and_state_are_the_adr0005_semantics",
+      "file": "tests/integration/test_p2_search_authority.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_authority.py::test_a_filtered_semantic_query_never_falls_back_to_a_global_top_k",
+      "file": "tests/integration/test_p2_search_authority.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_authority.py::test_an_unusable_engine_filter_is_structured_and_never_unfiltered",
+      "file": "tests/integration/test_p2_search_authority.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_authority.py::test_a_query_is_a_pure_read_and_leaves_the_revisions_alone",
+      "file": "tests/integration/test_p2_search_authority.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_authority.py::test_the_read_only_projection_summary_reports_lag_without_paths_or_ids",
+      "file": "tests/integration/test_p2_search_authority.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_channels.py::test_a_text_hit_says_whether_the_file_name_or_the_place_matched",
+      "file": "tests/integration/test_p2_search_channels.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_channels.py::test_a_text_hit_reports_the_place_and_file_name_and_never_leaks_a_path",
+      "file": "tests/integration/test_p2_search_channels.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_endpoint.py::test_strong_match_annotation_does_not_change_search_order_or_candidate_count",
+      "file": "tests/integration/test_p2_search_endpoint.py",
+      "outcome": "failure",
+      "group": "SEARCH-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AttributeError: <module 'photo_search.search.service' from 'D:\\\\SZ\\\\project\\\\aisearch\\\\src\\\\photo_search\\\\search\\\\service.py'> has no attribute 'STRONG_MATCH_MAX_DISTANCE'"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_endpoint.py::test_a_place_edit_between_pages_is_stale_and_a_research_finds_the_new_hit",
+      "file": "tests/integration/test_p2_search_endpoint.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p2_search_image.py::test_a_lagging_semantic_entry_is_named_instead_of_hidden",
+      "file": "tests/integration/test_p2_search_image.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_place_interleave.py::test_authorities_do_not_overwrite_each_other",
+      "file": "tests/integration/test_p3_person_place_interleave.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_place_interleave.py::test_undo_across_families_is_independent",
+      "file": "tests/integration/test_p3_person_place_interleave.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_place_interleave.py::test_a_mapping_confirmation_moves_the_shared_filter_revision",
+      "file": "tests/integration/test_p3_person_place_interleave.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides0]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides1]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides2]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides3]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides4]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides5]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides6]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides7]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides8]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides9]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides10]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_shape_refusals_are_structured_and_write_nothing[overrides11]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_person_id_ceiling_is_its_own_frozen_refusal",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_all_any_and_every_other_condition_are_combined_with_and",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_availability_ands_with_the_person_condition",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_old_ids_fold_ids_and_unresolvable_ids",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_cyclic_redirect_chain_is_refused_whole",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_dangling_redirect_target_is_refused_whole",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_an_exhausted_retry_names_the_counter_that_moved[suggestion]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_an_exhausted_retry_names_the_counter_that_moved[both]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_hit_set_is_the_person_asset_count_on_the_real_fixture",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_suggestions_locks_and_exclusions_never_make_a_photo_a_member",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_manually_unassigned_face_is_not_a_member_even_without_a_rival",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_person_only_request_is_a_profile_free_filter_only_answer",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_person_filter_under_a_profile_never_engages_the_encoder_or_the_vector",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_every_person_edit_makes_the_old_session_stale_and_researching_works[rename]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_every_person_edit_makes_the_old_session_stale_and_researching_works[merge]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_every_person_edit_makes_the_old_session_stale_and_researching_works[split]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_every_person_edit_makes_the_old_session_stale_and_researching_works[face-correction]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_every_person_edit_makes_the_old_session_stale_and_researching_works[undo]",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_a_continuation_with_a_different_person_condition_is_refused_by_the_digest",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_an_expired_person_search_session_is_identified",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_projection_and_top_up_blocks_keep_their_frozen_shape_and_bounds",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_an_old_projection_never_resurrects_a_hit_the_person_condition_removed",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_person_search_responses_and_refusals_stay_inside_the_privacy_closure",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_filters_echo_is_the_frozen_closed_key_set",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_image_endpoint_echoes_the_empty_person_condition_and_refuses_the_fields",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_frozen_contracts_migrations_and_schema_version_are_untouched",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p3_person_search_filter.py::test_the_person_list_page_still_counts_the_same_members",
+      "file": "tests/integration/test_p3_person_search_filter.py",
+      "outcome": "error",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "failed on setup with \"photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory\""
+    },
+    {
+      "nodeid": "tests/integration/test_p4_01c_retrieval_blocks.py::test_the_rewritten_predicates_select_the_same_photos",
+      "file": "tests/integration/test_p4_01c_retrieval_blocks.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "sqlite3.OperationalError: no such table: face_detail_auto_assets"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_02e_migration.py::test_the_migration_chain_is_continuous_and_0016_is_the_claim_index_step",
+      "file": "tests/integration/test_p4_02e_migration.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert 21 == 16"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_02e_migration.py::test_v15_to_v16_is_continuous_backed_up_and_lossless",
+      "file": "tests/integration/test_p4_02e_migration.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: assert (15 == 15 and 21 == 16)\n +  where 15 = MigrationResult(db_path=WindowsPath('D:/SZ/project/aisearch/.pytest-tmp/test_v15_to_v16_is_continuous_0/PhotoSearchDat...search/.pytest-tmp/test_v15_to_v16_is_continuous_0/PhotoSearchData/backups/catalog/catalog-20261009T014814944000Z.db')).previous_version\n +  and   21 = MigrationResult(db_path=WindowsPath('D:/SZ/project/aisearch/.pytest-tmp/test_v15_to_v16_is_continuous_0/PhotoSearchDat...search/.pytest-tmp/test_v15_to_v16_is_continuous_0/PhotoSearchData/backups/catalog/catalog-20261009T014814944000Z.db')).schema_version"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_02e_migration.py::test_an_older_build_refuses_the_newer_catalog_and_writes_nothing",
+      "file": "tests/integration/test_p4_02e_migration.py",
+      "outcome": "failure",
+      "group": "SCHEMA-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: assert 21 == 16\n +  where 21 = inspect_database(WindowsPath('D:/SZ/project/aisearch/.pytest-tmp/test_an_older_build_refuses_th0/PhotoSearchData/catalog/catalog.db'))"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_05_backup_restore.py::test_empty_restore_keeps_text_and_semantic_pages_identical",
+      "file": "tests/integration/test_p4_05_backup_restore.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "photo_search.catalog.errors.CatalogError: PLACE_NOT_FOUND: new manual assignments require a place from the active validated source directory"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_embedding_provider_flow.py::test_the_selected_provider_serves_search_and_hides_the_strong_match_statistic",
+      "file": "tests/integration/test_p4_embedding_provider_flow.py",
+      "outcome": "failure",
+      "group": "SEARCH-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert True is False"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_person_face_upgrade.py::test_geometry_upgrade_keeps_old_people_and_matches_new_people_without_activating_partial_index",
+      "file": "tests/integration/test_p4_person_face_upgrade.py",
+      "outcome": "failure",
+      "group": "FACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert set() == {1}\n  \n  Extra items in the right set:\n  1\n  Use -v to get more diff"
+    },
+    {
+      "nodeid": "tests/integration/test_p4_taken_time_api.py::test_the_search_condition_joins_the_one_and_set_and_echoes_v2",
+      "file": "tests/integration/test_p4_taken_time_api.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "AssertionError: {\"code\":\"PLACE_NOT_FOUND\",\"message\":\"new manual assignments require a place from the active validated source directory\",\"request_id\":\"958fc0c49e178a2e\",\"details\":{\"place_id\":1}}\nassert 404 == 200\n +  where 404 = <Response [404 Not Found]>.status_code"
+    },
+    {
+      "nodeid": "tests/integration/test_place_package_startup_recovery.py::test_defective_package_never_becomes_active[missing-predecessor]",
+      "file": "tests/integration/test_place_package_startup_recovery.py",
+      "outcome": "failure",
+      "group": "PLACE-A",
+      "classification_status": "suspected; not independently root-cause confirmed in this planning turn",
+      "message": "assert <sqlite3.Row object at 0x000002B569646230> is None\n +  where <sqlite3.Row object at 0x000002B569646230> = <function active_row at 0x000002B4D7B5F060>(<sqlite3.Connection object at 0x000002B4A52FF880>)\n +    where <function active_row at 0x000002B4D7B5F060> = datasets.active_row\n +    and   <sqlite3.Connection object at 0x000002B4A52FF880> = <photo_search.catalog.db.Catalog object at 0x000002B5698D84A0>.connection\n +      where <photo_search.catalog.db.Catalog object at 0x000002B5698D84A0> = <photo_search.ingestion.service.CatalogService object at 0x000002B569646F30>.catalog"
+    }
+  ]
+}

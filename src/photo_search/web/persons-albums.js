@@ -8,7 +8,7 @@
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, edit: null, chosen: null,
     detailBusyAssets: new Set(),
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
-    detailBatch: null, writing: false, coverMode: false, searching: false, searchBody: null,
+    detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, coverMode: false, searching: false, searchBody: null,
     deepLinked: false, linkSeq: 0, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
@@ -26,12 +26,13 @@
   // Old responses declared these reusable id URLs immutable for a year. A new
   // URL bypasses those already-fresh browser entries; new responses revalidate.
   function mediaURL(url) { return url + "?v=person-media2"; }
-  function picture(url, label, className) {
+  function picture(url, label, className, priority) {
     const wrap = node("span", undefined, "pa-picture " + (className || ""));
     const fallback = node("span", url ? "正在加载图片…" : "没有可用人脸", "pa-image-fallback");
     wrap.append(fallback);
     if (url && /^\/api\/v1\/(faces\/[a-f0-9]{64}\/thumbnail|assets\/\d+\/(thumbnail|preview))$/.test(url)) {
-      const img = node("img"); img.alt = label; img.loading = "lazy";
+      const img = node("img"); img.alt = label; img.loading = priority ? "eager" : "lazy";
+      if (priority) img.fetchPriority = "high";
       img.addEventListener("load", () => wrap.classList.add("pa-image-ready"));
       img.addEventListener("error", () => { img.hidden = true; fallback.textContent = className && className.includes("avatar") ? "头像暂时无法加载" : "图片暂时无法加载"; }); img.src = mediaURL(url); wrap.append(img);
     }
@@ -117,9 +118,9 @@
     $("list-note").textContent = "正在找人物……";
     try {
       const page = await api("/persons/browse" + params(values)); if (seq !== state.listSeq) return;
-      page.persons.forEach((person) => {
+      page.persons.forEach((person, index) => {
         const card = button("", () => openAlbum(person), "pa-person-card");
-        card.append(picture(person.thumbnail_url, name(person), "pa-avatar"), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
+        card.append(picture(person.thumbnail_url, name(person), "pa-avatar", index < 4), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
         $("cards").append(card);
       });
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
@@ -278,12 +279,28 @@
         const option = node("option", source.display_name || "图库 " + source.source_id);
         option.value = String(source.source_id); $("detail-source").append(option);
       }
-    } catch (error) { /* The all-library scope remains available. */ }
+      return true;
+    } catch (error) { /* The all-library scope remains available. */ return false; }
+  }
+  async function loadDetailControls() {
+    if (!state.organize) return;
+    if (state.detailControlsPromise) return state.detailControlsPromise;
+    state.detailControlsPromise = (async () => {
+      if (!state.detailControlsLoaded) state.detailControlsLoaded = await loadDetailSources();
+      if (state.organize) await loadDetailBatch();
+    })().finally(() => { state.detailControlsPromise = null; });
+    return state.detailControlsPromise;
   }
   function setView(organize) {
-    state.organize = organize; $("people").setAttribute("aria-pressed", String(!organize));
+    state.organize = organize;
+    if (!organize) {
+      state.detailBatchSeq++;
+      if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
+    }
+    $("people").setAttribute("aria-pressed", String(!organize));
     $("organize").setAttribute("aria-pressed", String(organize)); $("inbox").hidden = !organize;
     $("query").value = ""; loadPeople(false); if (organize) loadInbox(false);
+    if (organize) loadDetailControls();
   }
   function albumHeading() {
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
@@ -302,7 +319,7 @@
       state.photoIds.push(id);
       const card = button("", () => preview(id), "pa-photo-card");
       card.setAttribute("aria-label", "查看照片 " + id);
-      card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo"));
+      card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo", state.photoIds.length < 3));
       if (item.person_faces && item.person_faces.length) {
         const faces = node("span", undefined, "pa-photo-person");
         faces.append(node("span", "这张照片里的这个人"));
@@ -599,7 +616,6 @@
     $("rematch").addEventListener("click", rematchFaces);
     $("detail-batch").addEventListener("click", startDetailBatch);
     $("detail-source").addEventListener("change", loadDetailBatch);
-    loadDetailSources();
     $("detail-pause").addEventListener("click", () => changeDetailBatch("pause"));
     $("detail-resume").addEventListener("click", () => changeDetailBatch("resume"));
     $("detail-retry").addEventListener("click", () => changeDetailBatch("retry"));
@@ -642,7 +658,6 @@
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
     else loadPeople(false);
-    loadDetailBatch();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

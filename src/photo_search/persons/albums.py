@@ -21,7 +21,8 @@ from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.persons.read import person_summary
 from photo_search.places.revision import read_filter_revision
-from photo_search.taken_time.read import asset_view
+from photo_search.taken_time import contract as taken_time_contract
+from photo_search.taken_time.read import rules_version_matches
 
 
 def _encode(binding: list[Any], position: Any) -> str:
@@ -61,6 +62,64 @@ def _album_summary(connection: Any, row: Any) -> dict[str, Any]:
     summary["avatar_face_id"] = face_id
     summary["thumbnail_url"] = None if face_id is None else f"/api/v1/faces/{face_id}/thumbnail"
     return summary
+
+
+def _album_summaries(connection: Any, rows: list[Any]) -> list[dict[str, Any]]:
+    """Project one bounded people page with constant-count member/cover reads."""
+    if not rows:
+        return []
+    values = ", ".join("(?, ?)" for _ in rows)
+    parameters = tuple(
+        value
+        for row in rows
+        for value in (int(row["person_id"]), row["avatar_face_id"] or "")
+    )
+    page = f"WITH page(person_id, stored_avatar) AS (VALUES {values}) "
+    members = connection.execute(
+        page
+        + "SELECT page.person_id, COUNT(*) AS face_count, "
+        "COUNT(DISTINCT f.asset_id) AS asset_count "
+        "FROM page JOIN face_person_links AS l ON l.person_id = page.person_id "
+        "JOIN faces AS f ON f.face_id = l.face_id WHERE "
+        + MEMBER_PREDICATE
+        + " GROUP BY page.person_id",
+        parameters,
+    ).fetchall()
+    counts = {
+        int(member["person_id"]): (int(member["face_count"]), int(member["asset_count"]))
+        for member in members
+    }
+    avatars = connection.execute(
+        page
+        + "SELECT person_id, face_id FROM (SELECT page.person_id, f.face_id, "
+        "ROW_NUMBER() OVER (PARTITION BY page.person_id ORDER BY "
+        "(f.face_id = page.stored_avatar) DESC, (f.quality_state = 'OK') DESC, "
+        "(f.spec_revision = ?) DESC, f.face_pixels DESC, f.face_id) AS position "
+        "FROM page JOIN face_person_links AS l ON l.person_id = page.person_id "
+        "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id = f.asset_id "
+        "WHERE a.state = 'ACTIVE' AND "
+        + MEMBER_PREDICATE
+        + ") WHERE position = 1",
+        (*parameters, FACE_SPEC_REVISION),
+    ).fetchall()
+    avatar_ids = {int(avatar["person_id"]): str(avatar["face_id"]) for avatar in avatars}
+    summaries = []
+    for row in rows:
+        person_id = int(row["person_id"])
+        face_count, asset_count = counts.get(person_id, (0, 0))
+        face_id = avatar_ids.get(person_id)
+        summaries.append(
+            {
+                "person_id": person_id,
+                "name": None if row["name"] is None else str(row["name"]),
+                "revision": int(row["revision"]),
+                "avatar_face_id": face_id,
+                "face_count": face_count,
+                "asset_count": asset_count,
+                "thumbnail_url": None if face_id is None else f"/api/v1/faces/{face_id}/thumbnail",
+            }
+        )
+    return summaries
 
 
 def set_cover(
@@ -125,6 +184,65 @@ def _photo_person_faces(connection: Any, *, asset_id: int, person_id: int) -> di
     }
 
 
+def _photo_page_facts(
+    connection: Any, *, asset_ids: list[int], person_id: int
+) -> tuple[dict[int, dict[str, Any] | None], dict[int, dict[str, Any]]]:
+    """Read time and member-face projections for only the current bounded photo page."""
+    if not asset_ids:
+        return {}, {}
+    placeholders = ", ".join("?" for _ in asset_ids)
+    time_views: dict[int, dict[str, Any] | None] = {asset_id: None for asset_id in asset_ids}
+    if rules_version_matches(connection):
+        rows = connection.execute(
+            "SELECT asset_id, taken_at_sort, time_source, time_confidence, "
+            "timezone_offset, camera FROM asset_metadata "
+            f"WHERE asset_id IN ({placeholders})",
+            tuple(asset_ids),
+        ).fetchall()
+        for row in rows:
+            sort_key = None if row["taken_at_sort"] is None else int(row["taken_at_sort"])
+            source = str(row["time_source"])
+            time_views[int(row["asset_id"])] = {
+                "taken_at": (
+                    None
+                    if sort_key is None
+                    else taken_time_contract.normalize_bound(sort_key)
+                ),
+                "taken_at_sort": sort_key,
+                "time_source": source,
+                "time_confidence": str(row["time_confidence"]),
+                "timezone_offset_minutes": (
+                    None if row["timezone_offset"] is None else int(row["timezone_offset"])
+                ),
+                "label": taken_time_contract.label_for(source),
+                "camera": None if row["camera"] is None else str(row["camera"]),
+            }
+    face_rows = connection.execute(
+        "SELECT asset_id, face_id, position FROM (SELECT f.asset_id, f.face_id, "
+        "ROW_NUMBER() OVER (PARTITION BY f.asset_id ORDER BY "
+        "(f.spec_revision = ?) DESC, f.face_pixels DESC, f.face_id) AS position "
+        "FROM faces AS f JOIN face_person_links AS l ON l.face_id = f.face_id "
+        f"WHERE f.asset_id IN ({placeholders}) AND l.person_id = ? AND "
+        + MEMBER_PREDICATE
+        + ") WHERE position <= 9 ORDER BY asset_id, position",
+        (FACE_SPEC_REVISION, *asset_ids, int(person_id)),
+    ).fetchall()
+    grouped: dict[int, list[str]] = {}
+    for row in face_rows:
+        grouped.setdefault(int(row["asset_id"]), []).append(str(row["face_id"]))
+    faces = {
+        asset_id: {
+            "person_faces": [
+                {"face_id": face_id, "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail"}
+                for face_id in face_ids[:8]
+            ],
+            "person_faces_has_more": len(face_ids) > 8,
+        }
+        for asset_id, face_ids in grouped.items()
+    }
+    return time_views, faces
+
+
 def people_page(
     catalog: Any, *, kind: str, q: str, limit: int, cursor: str | None
 ) -> dict[str, Any]:
@@ -167,7 +285,7 @@ def people_page(
     has_more = len(rows) > limit
     rows = rows[:limit]
     return {
-        "persons": [_album_summary(catalog.connection, row) for row in rows],
+        "persons": _album_summaries(catalog.connection, rows),
         "has_more": has_more,
         "next_cursor": _encode(binding, int(rows[-1]["person_id"])) if has_more else None,
     }
@@ -200,13 +318,16 @@ def photo_page(
             int(sort_key is not None), int(sort_key or 0), last_id, page["catalog_filter_revision"]
         )
         page["next_cursor"] = _encode(binding, continuation)
+    asset_ids = [int(item["asset_id"]) for item in page["assets"]]
+    time_views, person_faces = _photo_page_facts(
+        catalog.connection, asset_ids=asset_ids, person_id=canonical
+    )
     for item in page["assets"]:
         item.pop("current_location", None)
-        item["taken_time"] = asset_view(catalog.connection, int(item["asset_id"]))
+        item_id = int(item["asset_id"])
+        item["taken_time"] = time_views.get(item_id)
         item.update(
-            _photo_person_faces(
-                catalog.connection, asset_id=int(item["asset_id"]), person_id=canonical
-            )
+            person_faces.get(item_id, {"person_faces": [], "person_faces_has_more": False})
         )
     row = catalog.read_one("SELECT * FROM persons WHERE person_id = ?", (canonical,))
     page["person"] = _album_summary(catalog.connection, row)
