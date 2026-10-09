@@ -190,6 +190,24 @@ def load_normalized(
     )
 
 
+def read_normalized_dimensions(path: Path) -> tuple[int, int] | None:
+    """Read an image's upright pixel dimensions from its header without decoding pixels."""
+    heif.ensure_heif_support()
+    try:
+        with Image.open(path) as source:
+            _, decodable = plugin_format_decision(source.format)
+            if not decodable:
+                return None
+            width, height = (int(value) for value in source.size)
+            if width <= 0 or height <= 0:
+                return None
+            if read_orientation(source) in (5, 6, 7, 8):
+                width, height = height, width
+            return width, height
+    except (Image.DecompressionBombError, OSError, SyntaxError, ValueError):
+        return None
+
+
 def render_jpeg(image: Image.Image, *, long_edge: int, quality: int) -> bytes:
     """Resize to the long-edge contract and encode JPEG. Never enlarges.
 

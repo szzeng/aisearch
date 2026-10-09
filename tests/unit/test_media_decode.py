@@ -89,6 +89,18 @@ def test_every_exif_orientation_is_normalised_before_any_resize(tmp_path: Path) 
         decoded.image.close()
 
 
+def test_read_normalized_dimensions_uses_header_and_exif_orientation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = oriented_jpeg(tmp_path / "portrait.jpg", 6, image=quadrants(320, 200))
+
+    def fail_if_pixels_are_decoded(self, *args, **kwargs):
+        raise AssertionError("reading resolution must not decode the full image")
+
+    monkeypatch.setattr(Image.Image, "load", fail_if_pixels_are_decoded)
+    assert decode.read_normalized_dimensions(path) == (200, 320)
+
+
 def test_thumbnail_and_preview_honour_the_long_edge_contract(tmp_path: Path) -> None:
     photo = tmp_path / "photo.jpg"
     quadrants(4032, 3024).save(photo, "JPEG", quality=90)

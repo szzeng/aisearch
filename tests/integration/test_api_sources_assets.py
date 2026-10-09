@@ -551,6 +551,7 @@ def test_asset_detail_and_unknown_ids(api_env) -> None:
     body = result["detail"].json()
     assert body["asset_id"] == asset_id
     assert len(body["sha256"]) == 64
+    assert (body["width"], body["height"]) == (64, 48)
     assert body["location_count"] == 1
     location = body["locations"][0]
     assert location["availability"] == "PRESENT"

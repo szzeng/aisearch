@@ -69,6 +69,7 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   const host=new Element("aside"); document.body.append(host); let chosen=0;
   let first=context.window.AIPhotoInfo.render(host,101,{onPerson:id=>{chosen=id;}});
   await flush(); await flush();
+  assert.match(host.textContent,/分辨率1200 × 800 像素/,"photo facts show source pixel resolution");
   assert.match(host.textContent,/D:\\相册\\旅行\\照片\\海边\.jpg/);
   assert.match(host.textContent,/\\\\server\\share\\archive\\2020\\海边\.jpg/);
   assert.match(host.textContent,/D:\\根目录照片\.jpg/,"a drive root keeps its root separator when joined");
@@ -129,7 +130,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-photo-view-a-3" in document
+        assert "/web/photo-info.js?v=p4-photo-view-a-4" in document
         assert "/web/photo-info.css?v=p4-photo-view-a-3" in document
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")

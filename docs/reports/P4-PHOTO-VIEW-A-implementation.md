@@ -86,3 +86,11 @@ GPS 仅在 `/map/assets` 有效成员、`/geo` 为 VALID、revision 匹配、WGS
 ## 独立复核路由确认（2026-10-09）
 
 用户明确接受 GPT-6 有界独立复核替代 DS-H；复核记录见 [展示面复核报告](P4-PHOTO-VIEW-A-review.md)。这只关闭独立复核路由，不将未覆盖的真实浏览器验收组合标为通过；任务整体仍为 **IMPLEMENTED / VALIDATION PENDING**。
+
+## 分辨率补充（2026-10-09）
+
+用户提出在所有照片信息面板显示分辨率。`AssetDetail` 已有 `width`/`height` 字段，但合成图库证明入库记录可为空，故只改显示标签不足以满足实际查看。`GET /assets/{id}` 在宽高缺失时，使用既有受保护文件位置解析，仅读取当前所开照片的图像头，并按EXIF方向返回upright像素宽高；不解码像素、不写 catalog、不改数据库/API响应字段契约。文件离线、越界/变动、格式不支持或图像头不可读时，分辨率留空。
+
+共享面板标签改为“分辨率”，数值形如 `64 × 48 像素`。五个入口页面统一将共享 `photo-info.js` 缓存版本从 `p4-photo-view-a-3` 升到 `p4-photo-view-a-4`；其它页面入口继续复用同一组件。
+
+验证：JUnit **26/0/0/0**（`tests/unit/test_photo_view_info_ui.py`、`tests/unit/test_media_decode.py`、`tests/integration/test_api_sources_assets.py::test_asset_detail_and_unknown_ids`；`test-results/p4-photo-resolution-a-final.xml`）；覆盖UI字段、五页面资源版本、64×48 API返回和EXIF旋转图头读取（禁止完整像素decode）。Ruff（所有改动Python文件）、Node syntax、`git diff --check`通过。合成浏览器在首页详情和搜索结果预览实际看到 `64 × 48 像素`；证据截图 `.tmp/p4-photo-view-browser/search-preview.jpg`。未访问真实图库或PhotoSearchData，未跑全量回归。

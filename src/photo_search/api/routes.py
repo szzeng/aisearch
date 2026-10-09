@@ -146,6 +146,7 @@ from photo_search.media.contract import (
     THUMBNAIL,
     spec_for,
 )
+from photo_search.media.decode import read_normalized_dimensions
 from photo_search.media.face_crop import (
     crop_key,
     parse_bbox,
@@ -153,7 +154,7 @@ from photo_search.media.face_crop import (
     recorded_face_frame,
     render_crop,
 )
-from photo_search.media.pipeline import MediaInterrupted
+from photo_search.media.pipeline import MediaInterrupted, require_unchanged
 from photo_search.media.status import (
     MEDIA_STATE_FAILED,
     MEDIA_STATE_READY,
@@ -806,9 +807,26 @@ async def get_asset_admin_place(request: Request, asset_id: int) -> dict[str, An
 async def get_asset(request: Request, asset_id: int) -> dict[str, Any]:
     context = context_of(request)
     service = context.service()
-    return asset_detail(
+    detail = asset_detail(
         service.catalog, service.media_cache(), int(asset_id), redactor=context.redactor()
     )
+    if detail["width"] is None or detail["height"] is None:
+        location = resolve_optional_location(service.catalog, int(asset_id))
+        if location is not None:
+            observed = {
+                "location_id": location.location_id,
+                "size": location.size,
+                "mtime_ns": location.mtime_ns,
+            }
+            try:
+                require_unchanged(location.absolute_path, observed)
+                dimensions = read_normalized_dimensions(location.absolute_path)
+                require_unchanged(location.absolute_path, observed)
+            except CatalogError:
+                dimensions = None
+            if dimensions is not None:
+                detail["width"], detail["height"] = dimensions
+    return detail
 
 
 @router.get("/assets/{asset_id}/thumbnail", summary="Grid thumbnail (generated on demand)")

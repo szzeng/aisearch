@@ -159,7 +159,7 @@
       host.replaceChildren();
       var title = node("h3", fileName((detail.locations || []).filter(function (x) { return x.availability === "PRESENT"; })[0] || (detail.locations || [])[0], assetId)); host.append(title);
       var list = node("dl", undefined, "photo-info-facts");
-      addField(list, "尺寸", detail.width && detail.height ? detail.width + " × " + detail.height + " 像素" : null);
+      addField(list, "分辨率", detail.width && detail.height ? detail.width + " × " + detail.height + " 像素" : null);
       addField(list, "格式", detail.format ? String(detail.format).toUpperCase() : null);
       addField(list, "大小", bytes(detail.byte_size));
       var taken = detail.taken_time || null;
