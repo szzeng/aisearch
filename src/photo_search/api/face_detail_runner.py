@@ -236,7 +236,6 @@ class FaceDetailRunner:
                 limit=1,
                 publication_limit=400,
             )
-            coordinator.process_all(now_ms=catalog.now_ms(), limit=400)
             batches.sync_jobs(catalog, batch_id)
             remaining = batches.next_item(catalog, batch_id)
             if remaining is not None and remaining["asset_id"] == item["asset_id"]:

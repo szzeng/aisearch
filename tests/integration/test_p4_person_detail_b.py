@@ -444,7 +444,16 @@ def test_batch_single_failure_continues_and_retry_only_failed(api_env, monkeypat
     batch = batches.create_batch(catalog)
     failing = min(photo["asset_id"] for photo in library.values())
     counts = {}
+    flushes = 0
+    process_all = FaceIndexCoordinator.process_all
     monkeypatch.setattr(faces, "record_runtime_evidence", synthetic_runtime)
+
+    def counted_process_all(self, **options):
+        nonlocal flushes
+        flushes += 1
+        return process_all(self, **options)
+
+    monkeypatch.setattr(FaceIndexCoordinator, "process_all", counted_process_all)
 
     def factory(catalog, **options):
         success = synthetic_executor(catalog, **options)
@@ -475,11 +484,13 @@ def test_batch_single_failure_continues_and_retry_only_failed(api_env, monkeypat
     runner._run_batch(service, batch["batch_id"])
     state = batches.status(catalog, batch["batch_id"])
     assert state["state"] == "PARTIAL_FAILED" and state["succeeded"] == 2 and state["failed"] == 1
+    assert flushes == 3  # one pre-reconcile publication per photo; no extra empty flush
     batches.resume(catalog, batch["batch_id"], retry_failed=True)
     runner._run_batch(service, batch["batch_id"])
     state = batches.status(catalog, batch["batch_id"])
     assert state["state"] == "COMPLETE" and state["succeeded"] == 3
     assert counts[failing] == 2 and sorted(counts.values()) == [1, 1, 2]
+    assert flushes == 4  # retry performs one pre-reconcile publication
 
 
 def test_batch_api_session_csrf_scope_and_resume(api_env):
@@ -533,14 +544,22 @@ def test_schema19_upgrade_preserves_manual_facts_and_batch_cursor(api_env):
     destination = sqlite3.connect(path)
     catalog.connection.backup(destination)
     destination.executescript(
-        "DROP TABLE face_detail_coordinate_frames; DROP TABLE face_detail_auto_assets; DROP INDEX ux_face_detail_batch_asset_job; "
+        "DROP TABLE geo_dataset_place_refs; DROP TABLE cn_admin_place_refs; "
+        "DROP TABLE face_detail_coordinate_frames; DROP TABLE face_detail_auto_assets; "
+        "DROP INDEX ux_face_detail_batch_asset_job; "
         "CREATE UNIQUE INDEX ux_face_detail_batch_asset_job ON face_detail_batch_assets(job_id) "
         "WHERE job_id IS NOT NULL; UPDATE metadata SET value='19' WHERE key='schema_version';"
     )
     destination.close()
     upgraded = Catalog.open(path, data_root=path.parent.parent)
     try:
-        assert upgraded.schema_version == 20
+        assert upgraded.schema_version == 21
+        assert upgraded.read_one(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cn_admin_place_refs'"
+        ) is not None
+        assert upgraded.read_one(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='geo_dataset_place_refs'"
+        ) is not None
         assert (
             upgraded.read_one("SELECT mode FROM face_assignment_controls WHERE face_id=?", (face,))[
                 0
