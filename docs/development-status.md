@@ -37,6 +37,10 @@
 
 [实现报告](reports/P4-PERSON-DETAIL-B-implementation.md)、[独立工程与终审结果](reports/P4-PERSON-DETAIL-B-review.md)、[聚焦终审卡](tasks/P4-PERSON-DETAIL-B-sol-review.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)。聚焦终审未发现阻塞：白名单/独立source世代、CONFIRMED产物与向量绑定、事务内人工保护、JPEG不可验证hold、旧机器有效成员及撤销后按实际spec重排均与ADR一致；DETAIL-B审查闭环PASS。复核既有JUnit 34/34/16/29项均0失败/错误/跳过及公开CPU JSON（仅v2↔source），未重跑套件或改产品代码。未验真实图库/PhotoSearchData、现场catalog升级、浏览器/重启、私人准确率、GPU/30万吞吐；不追认DETAIL-A独立整卡通过。人物列表逐人物查询仍是未测量的另线线索，本轮不自动接续。
 
+## 人物体验新增待做：P4-PERSON-ALBUM-PERF-A — 相册加载加速（**PROPOSED / 未实施**）
+
+[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)。2026-10-09反馈人物页/相册加载偏慢；先测量再最小消除40人人物统计/头像与60张照片时间/人脸的N+1读取，补识别候选统计延迟到进入整理入口；缓存仅证实必要时小修。仅小型合成库SQL次数/耗时及定向测试，不触碰真实PhotoSearchData、schema、模型、归属、全局人物数量排序或现有待审结论。推荐DS-H／高推理，GPT备选Luna／High；本次仅立卡，不改变现有任务优先级。
+
 ## 前置 P4-PERSON-DETAIL-A — 按需原图裁脸（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
 
 [执行卡](tasks/P4-PERSON-DETAIL-A.md)、[实现与JUnit证据](reports/P4-PERSON-DETAIL-A-implementation.md)、[独立DS-H完整审查卡](tasks/P4-PERSON-DETAIL-A-review.md)。独立详情profile复用buffalo_l、640检测和112对齐；原图完整解码一次、局部裁剪，session/CSRF保护的照片按钮入持久队列并串行执行。A阶段结果仅供人工确认；上节B已增加显式授权的自动链。A阶段定向JUnit **24/0/0/0**、Ruff/Node/scoped diff-check通过；当时未访问真实照片/模型/浏览器。复用A的独立工程审查纳入B，Sol high聚焦核对仍待做。
