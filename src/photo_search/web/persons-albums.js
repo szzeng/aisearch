@@ -162,12 +162,13 @@
     const ids = Array.from(selected), action = hidden ? "忽略" : "恢复";
     if (!window.confirm("确定" + action + "所选 " + ids.length + " 张人脸吗？")) return;
     const expanded = Array.from($("inbox-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
+    const expandedHidden = Array.from($("inbox-hidden-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
     state.faceVisibilityBusy = true; renderFaceManagement();
     try {
       const result = await api("/faces/inbox/visibility", { face_ids: ids, hidden });
       selected.clear();
       await loadInbox(false, expanded);
-      if (state.inboxHiddenVisible) await loadHiddenFaces(false);
+      if (state.inboxHiddenVisible) await loadHiddenFaces(false, expandedHidden);
       message("已" + action + " " + result.changed + " 张人脸。", true);
     } catch (error) { message(action + "人脸没有完成：" + errorText(error)); }
     finally { state.faceVisibilityBusy = false; renderFaceManagement(); }
@@ -300,31 +301,33 @@
     } catch (error) { message(errorText(error)); }
     finally { state.writing = false; }
   }
-  async function loadInboxGroup(details, groupKey, kind, cursor) {
+  async function loadInboxGroup(details, groupKey, kind, cursor, hiddenFace) {
     const list = details.querySelector(".pa-inbox-group-faces");
     const more = details.querySelector(".pa-inbox-group-more");
     more.disabled = true;
     try {
       const values = { limit: 30, kind };
       if (cursor) values.cursor = cursor;
-      const page = await api("/faces/inbox/groups/" + encodeURIComponent(groupKey) + params(values));
-      page.faces.forEach((face) => renderInboxFace(list, face, false));
+      const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
+      const page = await api(route + encodeURIComponent(groupKey) + params(values));
+      page.faces.forEach((face) => renderInboxFace(list, face, Boolean(hiddenFace)));
       more.hidden = !page.has_more; more.dataset.cursor = page.next_cursor || "";
     } catch (error) { message(errorText(error)); }
     finally { more.disabled = false; }
   }
-  function renderInboxGroup(group, kind) {
+  function renderInboxGroup(group, kind, hiddenFace) {
     const details = node("details", undefined, "pa-inbox-group");
     const summary = node("summary", undefined, "pa-person-card");
     summary.append(picture(group.face.thumbnail_url, "可能是" + (group.candidate_name || "未命名的人"), "pa-avatar"),
       node("strong", "可能是" + (group.candidate_name || "未命名的人")),
-      node("span", group.photo_count + " 张待确认照片", "hint"));
+      node("span", group.photo_count + (hiddenFace ? " 张已忽略照片" : " 张待确认照片"), "hint"));
     const list = node("div", undefined, "pa-people-grid pa-inbox-group-faces");
-    const more = button("再看一些", () => loadInboxGroup(details, group.group_key, kind, more.dataset.cursor || null));
+    const more = button(hiddenFace ? "再看一些已忽略人脸" : "再看一些", () =>
+      loadInboxGroup(details, group.group_key, kind, more.dataset.cursor || null, hiddenFace));
     more.className += " pa-inbox-group-more"; more.hidden = true;
     let loaded = false; details.groupKey = group.group_key;
     details.openGroup = () => {
-      if (!loaded) { loaded = true; loadInboxGroup(details, group.group_key, kind, null); }
+      if (!loaded) { loaded = true; loadInboxGroup(details, group.group_key, kind, null, hiddenFace); }
     };
     details.addEventListener("toggle", () => {
       if (details.open) details.openGroup();
@@ -358,7 +361,7 @@
     } catch (error) { if (seq === state.inboxSeq) message(errorText(error)); }
     finally { if (seq === state.inboxSeq) { state.busy.delete("inbox"); $("inbox-more").disabled = false; } }
   }
-  async function loadHiddenFaces(more) {
+  async function loadHiddenFaces(more, reopenGroups) {
     if (more && state.busy.has("hidden-faces")) return;
     const seq = (state.hiddenFaceSeq || 0) + 1; state.hiddenFaceSeq = seq;
     state.busy.add("hidden-faces"); $("inbox-hidden-more").disabled = true;
@@ -366,9 +369,16 @@
     if (more && state.inboxHiddenCursor) values.cursor = state.inboxHiddenCursor;
     if (!more) { $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
     try {
-      const page = await api("/faces/inbox/hidden" + params(values));
+      const page = await api("/faces/inbox/hidden/groups" + params(values));
       if (seq !== state.hiddenFaceSeq) return;
-      page.faces.forEach((face) => renderInboxFace($("inbox-hidden-cards"), face, true));
+      page.cards.forEach((card) => $("inbox-hidden-cards").append(
+        card.type === "candidate_group" ? renderInboxGroup(card, "all", true) : (() => {
+          const wrapper = node("div", undefined, "pa-inbox-single");
+          renderInboxFace(wrapper, card.face, true); return wrapper;
+        })()));
+      if (reopenGroups && reopenGroups.length) Array.from($("inbox-hidden-cards").children).forEach((item) => {
+        if (item.groupKey && reopenGroups.includes(item.groupKey)) { item.open = true; item.openGroup(); }
+      });
       state.inboxHiddenCursor = page.next_cursor; $("inbox-hidden-more").hidden = !page.has_more;
       if (!$("inbox-hidden-cards").children.length) $("inbox-hidden-cards").append(node("p", "暂时没有已忽略的人脸。", "hint"));
     } catch (error) { if (seq === state.hiddenFaceSeq) message(errorText(error)); }

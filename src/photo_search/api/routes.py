@@ -1432,6 +1432,30 @@ async def face_inbox_hidden(
     )
 
 
+@router.get("/faces/inbox/hidden/groups", summary="Read grouped ignored inbox faces")
+async def face_inbox_hidden_groups(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_albums.inbox_hidden_group_page(
+        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor
+    )
+
+
+@router.get(
+    "/faces/inbox/hidden/groups/{group_key}",
+    summary="Read one ignored-face candidate group's faces",
+)
+async def face_inbox_hidden_group_faces(
+    request: Request, group_key: str, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_albums.inbox_hidden_group_faces(
+        service_of(request).catalog,
+        group_key=group_key,
+        limit=min(clamp_person_limit(limit), 30),
+        cursor=cursor,
+    )
+
+
 @router.post(
     "/faces/inbox/visibility",
     response_model=FaceInboxVisibilityResponse,

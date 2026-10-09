@@ -917,6 +917,41 @@ def test_inbox_face_visibility_is_atomic_persistent_and_scoped_to_selected_faces
             "SELECT face_id, person_id, decision FROM face_person_links ORDER BY face_id, person_id, decision"
         )] == [tuple(row) for row in before_links]
 
+        all_hidden = [hidden_a, hidden_b, visible_same_photo, visible_other_photo]
+        hidden_again = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": all_hidden, "hidden": True},
+        )
+        assert hidden_again.status_code == 200 and hidden_again.json()["changed"] == 4
+        snapshot = tuple(catalog.connection.iterdump())
+        first_cards = (await client.get(
+            "/api/v1/faces/inbox/hidden/groups", params={"limit": 1}
+        )).json()
+        assert first_cards["has_more"] and len(first_cards["cards"]) == 1
+        candidate_group = first_cards["cards"][0]
+        assert candidate_group["type"] == "candidate_group"
+        assert candidate_group["photo_count"] == 2
+        second_cards = (await client.get(
+            "/api/v1/faces/inbox/hidden/groups",
+            params={"limit": 1, "cursor": first_cards["next_cursor"]},
+        )).json()
+        assert len(second_cards["cards"]) == 1
+        assert second_cards["cards"][0]["type"] == "single_face"
+        assert second_cards["cards"][0]["face"]["face_id"] == visible_same_photo
+        group_page = (await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{candidate_group['group_key']}",
+            params={"limit": 1},
+        )).json()
+        group_faces = list(group_page["faces"])
+        while group_page["has_more"]:
+            group_page = (await client.get(
+                f"/api/v1/faces/inbox/hidden/groups/{candidate_group['group_key']}",
+                params={"limit": 1, "cursor": group_page["next_cursor"]},
+            )).json()
+            group_faces.extend(group_page["faces"])
+        assert {face["face_id"] for face in group_faces} == {hidden_a, hidden_b, visible_other_photo}
+        assert tuple(catalog.connection.iterdump()) == snapshot
+
     api_env.scenario(scenario)
 
 

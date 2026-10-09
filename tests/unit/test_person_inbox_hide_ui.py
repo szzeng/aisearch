@@ -29,7 +29,7 @@ const faceA={face_id:"a".repeat(64),asset_id:1,organization_reason:"BORDERLINE",
 const faceB={face_id:"b".repeat(64),asset_id:2,organization_reason:"NO_MATCH",suggestions:[]};
 const hiddenA={face_id:"c".repeat(64),asset_id:3,organization_reason:"BLURRY",suggestions:[]};
 const hiddenB={face_id:"d".repeat(64),asset_id:4,organization_reason:"SMALL",suggestions:[]};
-let groupPage=0, hiddenPage=0, confirmResult=true, failVisibility=false;
+let groupPage=0, hiddenPage=0, confirmResult=true, failVisibility=false, restored=false;
 const context={
   URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout, clearTimeout,
   window:{confirm:()=>confirmResult,addEventListener(){},location:{search:"",href:"http://local/persons"}},
@@ -46,14 +46,20 @@ const context={
       {type:"candidate_group",group_key:"candidate:17",candidate_name:"候选甲",photo_count:2,face:faceA},
     ],has_more:false,next_cursor:null};
     else if(url==="/api/v1/faces/inbox/summary") value={total:2,reasons:{BORDERLINE:1,NO_MATCH:1},held:0};
-    else if(url.startsWith("/api/v1/faces/inbox/hidden")) {
+    else if(url.startsWith("/api/v1/faces/inbox/hidden/groups/candidate%3A")) {
       hiddenPage++;
       const cursor=new URL("http://local"+url).searchParams.get("cursor");
       value=cursor ? {faces:[hiddenB],has_more:false,next_cursor:null}
         : {faces:[hiddenA],has_more:true,next_cursor:"hidden-two"};
-    } else if(url==="/api/v1/faces/inbox/visibility" && failVisibility) {
+    } else if(url.startsWith("/api/v1/faces/inbox/hidden/groups?")) value={cards:restored?[]:[
+      {type:"candidate_group",group_key:"candidate:17",candidate_name:"候选甲",photo_count:2,face:hiddenA},
+    ],has_more:false,next_cursor:null};
+    else if(url==="/api/v1/faces/inbox/visibility" && failVisibility) {
       return {ok:false,status:503,json:async()=>({code:"TEMPORARY"})};
-    } else if(url==="/api/v1/faces/inbox/visibility") value={hidden:JSON.parse(options.body).hidden,face_count:2,changed:2};
+    } else if(url==="/api/v1/faces/inbox/visibility") {
+      const body=JSON.parse(options.body); if(!body.hidden) restored=true;
+      value={hidden:body.hidden,face_count:body.face_ids.length,changed:body.face_ids.length};
+    }
     else if(url.startsWith("/api/v1/assets/")) value={faces:[]};
     else value={persons:[],has_more:false,next_cursor:null};
     return {ok:true,json:async()=>value};
@@ -98,15 +104,20 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
 
   ui.state.inboxHiddenVisible=true;ui.renderFaceManagement();await ui.loadHiddenFaces(false);
   const hiddenCards=get("pa-inbox-hidden-cards");
-  hiddenCards.children[0].selectionButton.fire("click");
-  await ui.loadHiddenFaces(true);
-  assert.equal(hiddenCards.children.length,2);
-  hiddenCards.children[1].selectionButton.fire("click");
+  const hiddenGroup=hiddenCards.children[0];
+  assert.equal(hiddenGroup.groupKey,"candidate:17");
+  hiddenGroup.children[0].fire("click"); // The group heading never selects every face.
+  assert.equal(ui.state.selectedHiddenFaces.size,0);
+  hiddenGroup.open=true;hiddenGroup.fire("toggle");await flush();
+  hiddenGroup.children[1].children[0].selectionButton.fire("click");
+  const hiddenMore=hiddenGroup.children[2];assert.equal(hiddenMore.hidden,false);await hiddenMore.fire("click");
+  hiddenGroup.children[1].children[1].selectionButton.fire("click");
+  assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),[hiddenA.face_id,hiddenB.face_id]);
   await ui.submitInboxVisibility(false);
   const restoreRequest=requests.filter(r=>r.url==="/api/v1/faces/inbox/visibility").at(-1);
   assert.deepEqual(JSON.parse(restoreRequest.options.body),{face_ids:[hiddenA.face_id,hiddenB.face_id],hidden:false});
   assert.equal(ui.state.selectedHiddenFaces.size,0);
-  assert(hiddenPage>=3);
+  assert(hiddenPage>=2);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

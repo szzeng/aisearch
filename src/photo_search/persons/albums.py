@@ -654,9 +654,15 @@ def set_inbox_visibility(catalog: Any, *, face_ids: list[str], hidden: bool) -> 
     return {"hidden": bool(hidden), "face_count": len(face_ids), "changed": changed}
 
 
-def _inbox_group_cte(kind: str) -> tuple[str, tuple[Any, ...]]:
+def _inbox_group_cte(kind: str, *, hidden: bool = False) -> tuple[str, tuple[Any, ...]]:
     if kind not in _INBOX_KINDS:
         raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
+    if hidden:
+        eligible_source = _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id "
+        parameters: tuple[Any, ...] = ()
+    else:
+        eligible_source = _SELECT_FACES + "WHERE " + _INBOX_WHERE
+        parameters = _VISIBILITY_PARAMETERS
     eligible = (
         "SELECT inbox.*, (SELECT p.person_id FROM face_person_links AS l "
         "JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = inbox.face_id "
@@ -665,7 +671,7 @@ def _inbox_group_cte(kind: str) -> tuple[str, tuple[Any, ...]]:
         "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id=l.face_id "
         "AND e.person_id=l.person_id AND e.active=1) "
         "ORDER BY l.confidence DESC, p.person_id ASC LIMIT 1) AS candidate_person_id "
-        "FROM (" + _SELECT_FACES + "WHERE " + _INBOX_WHERE + ") AS inbox WHERE " + _INBOX_KINDS[kind]
+        "FROM (" + eligible_source + ") AS inbox WHERE " + _INBOX_KINDS[kind]
     )
     return "WITH eligible AS (" + eligible + "), group_counts AS (" \
         "SELECT candidate_person_id, COUNT(DISTINCT asset_id) AS photo_count, " \
@@ -676,7 +682,7 @@ def _inbox_group_cte(kind: str) -> tuple[str, tuple[Any, ...]]:
         "FROM group_counts AS g JOIN persons AS p ON p.person_id=g.candidate_person_id " \
         "UNION ALL SELECT 'single_face', 'f:' || e.face_id, 1, NULL, e.face_id, NULL, e.face_id " \
         "FROM eligible AS e LEFT JOIN group_counts AS g ON g.candidate_person_id=e.candidate_person_id " \
-        "WHERE e.candidate_person_id IS NULL OR g.candidate_person_id IS NULL) ", _VISIBILITY_PARAMETERS
+        "WHERE e.candidate_person_id IS NULL OR g.candidate_person_id IS NULL) ", parameters
 
 
 def inbox_group_page(
@@ -743,6 +749,81 @@ def inbox_group_faces(
         "ON g.candidate_person_id=e.candidate_person_id WHERE e.candidate_person_id=? AND e.face_id>? "
         "ORDER BY e.face_id LIMIT ?",
         visibility_parameters + (person_id, after, limit + 1),
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "group_key": group_key,
+        "faces": [_face_view(catalog, row) for row in rows],
+        "has_more": has_more,
+        "next_cursor": _encode(binding, str(rows[-1]["face_id"])) if has_more else None,
+    }
+
+
+def inbox_hidden_group_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[str, Any]:
+    cte, parameters = _inbox_group_cte("all", hidden=True)
+    binding = ["faceinboxhiddengroups1", read_filter_revision(catalog.connection)]
+    after = _position(cursor, binding, None)
+    if after is not None and (
+        not isinstance(after, list) or len(after) != 2
+        or not isinstance(after[0], int) or after[0] < 1
+        or not isinstance(after[1], str) or len(after[1]) > 100
+    ):
+        raise ApiError(INVALID_CURSOR, "invalid hidden face group position", status=422)
+    predicate = "" if after is None else "WHERE photo_count < ? OR (photo_count = ? AND stable_key > ?)"
+    params = parameters + (() if after is None else (after[0], after[0], after[1])) + (limit + 1,)
+    rows = catalog.read_all(
+        cte + "SELECT * FROM cards " + predicate + " ORDER BY photo_count DESC, stable_key ASC LIMIT ?",
+        params,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    cards: list[dict[str, Any]] = []
+    for row in rows:
+        face_id = str(row["representative_face_id"] if row["card_type"] == "candidate_group" else row["face_id"])
+        face = catalog.read_one(
+            _SELECT_FACES
+            + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id=?",
+            (face_id,),
+        )
+        if row["card_type"] == "candidate_group":
+            cards.append({
+                "type": "candidate_group",
+                "group_key": f"candidate:{int(row['candidate_person_id'])}",
+                "candidate_name": row["candidate_name"],
+                "photo_count": int(row["photo_count"]),
+                "face": _face_view(catalog, face),
+            })
+        else:
+            cards.append({"type": "single_face", "photo_count": 1, "face": _face_view(catalog, face)})
+    return {
+        "cards": cards,
+        "has_more": has_more,
+        "next_cursor": _encode(binding, [int(rows[-1]["photo_count"]), str(rows[-1]["stable_key"])])
+        if has_more else None,
+    }
+
+
+def inbox_hidden_group_faces(
+    catalog: Any, *, group_key: str, limit: int, cursor: str | None
+) -> dict[str, Any]:
+    if not group_key.startswith("candidate:") or not group_key[10:].isdigit():
+        raise ApiError(VALIDATION_ERROR, "invalid candidate group", status=422)
+    person_id = int(group_key[10:])
+    cte, parameters = _inbox_group_cte("all", hidden=True)
+    binding = [
+        "faceinboxhiddengroupfaces1", read_filter_revision(catalog.connection), person_id
+    ]
+    after = _position(cursor, binding, "")
+    if not isinstance(after, str) or (
+        after and (len(after) != 64 or any(char not in "0123456789abcdef" for char in after))
+    ):
+        raise ApiError(INVALID_CURSOR, "invalid hidden candidate group position", status=422)
+    rows = catalog.read_all(
+        cte + "SELECT e.* FROM eligible AS e JOIN group_counts AS g "
+        "ON g.candidate_person_id=e.candidate_person_id "
+        "WHERE e.candidate_person_id=? AND e.face_id>? ORDER BY e.face_id LIMIT ?",
+        parameters + (person_id, after, limit + 1),
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
