@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 人物合并重复反馈：P4-PERSON-MERGE-DEDUPE-A — DIAGNOSED / FIELD PENDING
+
+[任务卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)、[报告](reports/P4-PERSON-MERGE-DEDUPE-A.md)。用户确认报告的是大照片卡片重复。正式合并 API 隔离合成回归覆盖共享合照＋A/B单人照、`limit=1`逐页、旧 ID 解析和正式撤销；合并后 3 个唯一 `asset_id`，双脸保留，撤销后双方各恢复 2 张。定向集成 14/0/0/0，Ruff/diff-check通过；没有复现实际现象，未改产品代码，不标PASS。待用户在原个人相册重试并反馈；未访问PhotoSearchData或现有服务。
+
 ## 新增实现：P4-PERSON-HIDE-A — IMPLEMENTED / PERSONAL-SCOPED IMPACT REVIEW PASS
 
 [实现卡](tasks/P4-PERSON-HIDE-A.md)、[报告](reports/P4-PERSON-HIDE-A-implementation.md)。schema22 独立隐藏标记、可见性 SQL 过滤/游标隔离、受保护批量 API 和人物相册多页选择/恢复已实现。定向 JUnit 25/0/0/0，Ruff/Node/diff-check通过；按用户要求未执行全量回归。同会话个人范围影响面复核通过；真实应用重启与浏览器操作待用户试用。未触碰PhotoSearchData、模型、服务或其它现有未跟踪文件。

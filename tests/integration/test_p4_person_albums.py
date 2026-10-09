@@ -427,6 +427,111 @@ def test_album_is_complete_deduplicated_and_cursor_bound_to_person(api_env: ApiE
     api_env.scenario(scenario)
 
 
+def test_merge_shared_photo_is_unique_across_pages_and_undo_restores_membership(api_env: ApiEnv) -> None:
+    photos = seed_library(
+        api_env,
+        {
+            "共同合照.jpg": [(20, 20, 90, 90), (150, 30, 220, 100)],
+            "人物A.jpg": [(40, 40, 120, 120)],
+            "人物B.jpg": [(50, 35, 130, 115)],
+        },
+    )
+    catalog = api_env.service.catalog
+    face_a_shared, face_b_shared = photos["共同合照.jpg"]["faces"]
+    face_a_solo = photos["人物A.jpg"]["faces"][0]
+    face_b_solo = photos["人物B.jpg"]["faces"][0]
+    person_a = add_person(catalog, name="人物A", avatar_face_id=face_a_shared)
+    person_b = add_person(catalog, name="人物B", avatar_face_id=face_b_shared)
+    add_link(catalog, face_a_shared, person_a)
+    add_link(catalog, face_a_solo, person_a)
+    add_link(catalog, face_b_shared, person_b)
+    add_link(catalog, face_b_solo, person_b)
+    shared_asset_id = photos["共同合照.jpg"]["asset_id"]
+    a_asset_id = photos["人物A.jpg"]["asset_id"]
+    b_asset_id = photos["人物B.jpg"]["asset_id"]
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        before_a = (await client.get(f"/api/v1/persons/{person_a}/photos")).json()
+        before_b = (await client.get(f"/api/v1/persons/{person_b}/photos")).json()
+        assert before_a["person"]["asset_count"] == 2
+        assert before_b["person"]["asset_count"] == 2
+        assert {item["asset_id"] for item in before_a["assets"]} == {shared_asset_id, a_asset_id}
+        assert {item["asset_id"] for item in before_b["assets"]} == {shared_asset_id, b_asset_id}
+
+        merged = await client.post(
+            "/api/v1/persons/merge",
+            headers=headers,
+            json={
+                "request_id": "shared-photo-merge",
+                "target_person_id": person_a,
+                "target_expected_revision": 1,
+                "sources": [{"person_id": person_b, "expected_revision": 1}],
+            },
+        )
+        assert merged.status_code == 200
+
+        all_pages = []
+        cursor = None
+        while True:
+            response = await client.get(
+                f"/api/v1/persons/{person_a}/photos",
+                params={"limit": 1, **({"cursor": cursor} if cursor else {})},
+            )
+            assert response.status_code == 200
+            page = response.json()
+            assert page["person"]["asset_count"] == 3
+            all_pages.extend(page["assets"])
+            if not page["has_more"]:
+                assert page["next_cursor"] is None
+                break
+            assert page["next_cursor"] and page["next_cursor"] != cursor
+            cursor = page["next_cursor"]
+        merged_ids = [item["asset_id"] for item in all_pages]
+        assert len(merged_ids) == len(set(merged_ids)) == 3
+        assert set(merged_ids) == {shared_asset_id, a_asset_id, b_asset_id}
+        shared = next(item for item in all_pages if item["asset_id"] == shared_asset_id)
+        assert {face["face_id"] for face in shared["person_faces"]} == {
+            face_a_shared,
+            face_b_shared,
+        }
+        redirected = (await client.get(f"/api/v1/persons/{person_b}/photos")).json()
+        assert redirected["person"]["person_id"] == person_a
+        assert redirected["person"]["asset_count"] == 3
+        assert {item["asset_id"] for item in redirected["assets"]} == set(merged_ids)
+
+        operation = merged.json()
+        undone = await client.post(
+            f"/api/v1/person-operations/{operation['operation_id']}/undo",
+            headers=headers,
+            json={
+                "request_id": "shared-photo-merge-undo",
+                "expected_operation_revision": operation["operation_revision"],
+            },
+        )
+        assert undone.status_code == 200
+        after_a = (await client.get(f"/api/v1/persons/{person_a}/photos")).json()
+        after_b = (await client.get(f"/api/v1/persons/{person_b}/photos")).json()
+        assert after_a["person"]["asset_count"] == 2
+        assert after_b["person"]["asset_count"] == 2
+        assert {item["asset_id"] for item in after_a["assets"]} == {shared_asset_id, a_asset_id}
+        assert {item["asset_id"] for item in after_b["assets"]} == {shared_asset_id, b_asset_id}
+        restored_faces = catalog.read_all(
+            "SELECT face_id, person_id FROM face_person_links WHERE face_id IN (?, ?, ?, ?) "
+            "AND decision = 'CONFIRMED' ORDER BY face_id, person_id",
+            (face_a_shared, face_b_shared, face_a_solo, face_b_solo),
+        )
+        assert {(row["face_id"], int(row["person_id"])) for row in restored_faces} == {
+            (face_a_shared, person_a),
+            (face_a_solo, person_a),
+            (face_b_shared, person_b),
+            (face_b_solo, person_b),
+        }
+
+    api_env.scenario(scenario)
+
+
 def test_safe_name_collision_writes_nothing_then_explicit_merge_and_undo(api_env: ApiEnv) -> None:
     data = seed(api_env)
     catalog = api_env.service.catalog
