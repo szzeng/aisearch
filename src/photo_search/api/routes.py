@@ -42,6 +42,8 @@ from photo_search.api.models import (
     AssetOrder,
     AssetPlaceResponse,
     CapabilitiesResponse,
+    CreatePersonFromFaceRequest,
+    CreatePersonFromFaceResponse,
     FaceControlState,
     FaceCorrectionBatchRequest,
     FaceCorrectionRequest,
@@ -1884,6 +1886,22 @@ async def put_face_assignment(
         target_person_id=payload.target_person_id,
         expected_revision=int(payload.expected_revision),
         request_id=payload.request_id,
+    )
+
+
+@router.post(
+    "/faces/{face_id}/create-person",
+    response_model=CreatePersonFromFaceResponse,
+    summary="Create one unnamed person from one explicitly selected inbox face",
+)
+async def post_create_person_from_face(
+    request: Request, face_id: str, payload: CreatePersonFromFaceRequest
+) -> dict[str, Any]:
+    return persons_of(request).create_person_from_face(
+        face_id=str(face_id),
+        contract_version=payload.contract_version,
+        request_id=payload.request_id,
+        expected_control_revision=int(payload.expected_control_revision),
     )
 
 

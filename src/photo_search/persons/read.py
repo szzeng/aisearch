@@ -238,6 +238,13 @@ def person_page(
         conditions.append("p.name IS NOT NULL")
     elif str(kind) == "unnamed":
         conditions.append("p.name IS NULL")
+    else:
+        conditions.append(
+            "(p.name IS NOT NULL OR EXISTS (SELECT 1 FROM face_person_links AS l "
+            "JOIN faces AS f ON f.face_id=l.face_id WHERE l.person_id=p.person_id AND "
+            + MEMBER_PREDICATE
+            + "))"
+        )
     parameters.append(int(limit) + 1)
     rows = list(
         catalog.read_all(

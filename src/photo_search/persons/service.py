@@ -15,6 +15,7 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.persons import contracts, face_correction
+from photo_search.persons import create_from_face as create_from_face_module
 from photo_search.persons import mapping as mapping_module
 from photo_search.persons import operations as operation_module
 from photo_search.persons import read as read_module
@@ -266,6 +267,25 @@ class PersonService:
                 request_id=request_id,
                 now_ms=now_ms,
                 refresh=self.refresh,
+            )
+
+    def create_person_from_face(
+        self,
+        *,
+        face_id: str,
+        contract_version: str,
+        expected_control_revision: int,
+        request_id: str,
+    ) -> dict[str, Any]:
+        now_ms = int(self.clock())
+        with self.catalog.write() as connection:
+            return create_from_face_module.create_person(
+                connection,
+                face_id=face_id,
+                contract_version=contract_version,
+                expected_control_revision=expected_control_revision,
+                request_id=request_id,
+                now_ms=now_ms,
             )
 
     def operation(self, operation_id: str) -> dict[str, Any] | None:

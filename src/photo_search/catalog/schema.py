@@ -71,7 +71,8 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0025 upgrades collection identity allocation without changing the v24 contract in place.
 # 0026 adds a persistent collection-instance token for requests surviving v24 ID reuse.
 # 0027 preserves compact replay/history receipts while pruning expired person snapshots.
-SUPPORTED_SCHEMA_VERSION = 27
+# 0028 adds a non-undoable create-person-from-face operation type.
+SUPPORTED_SCHEMA_VERSION = 28
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

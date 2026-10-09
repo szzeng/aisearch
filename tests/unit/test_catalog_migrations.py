@@ -102,6 +102,7 @@ CORE_TABLES = {
     "person_collection_members",
     "person_operation_items",
     "person_operations",
+    "person_operation_retention",
     "place_aliases",
     "place_external_refs",
     "place_operation_items",
@@ -147,6 +148,58 @@ def _db_path(tmp_path: Path) -> Path:
 
 def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _restore_schema_27_operation_checks(connection: sqlite3.Connection) -> None:
+    """Make current empty fixtures match the pre-0028 closed operation vocabulary."""
+    connection.execute("DROP TABLE person_operation_items")
+    connection.execute("DROP TABLE person_operations")
+    connection.executescript(
+        """
+        CREATE TABLE person_operations (
+            operation_id          TEXT PRIMARY KEY CHECK(operation_id <> ''),
+            request_id            TEXT NOT NULL UNIQUE CHECK(request_id <> ''),
+            payload_sha256        TEXT NOT NULL
+                CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+            type                  TEXT NOT NULL CHECK(type IN (
+                'RENAME', 'MERGE_BY_NAME', 'MERGE', 'BATCH_MERGE', 'UNDO',
+                'FACE_ASSIGN', 'FACE_UNASSIGN', 'FACE_RESTORE_AUTO', 'BATCH_FACE_EDIT',
+                'SPLIT', 'FACE_MAPPING_CONFIRM', 'FACE_MAPPING_REJECT')),
+            source_person_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_person_ids_json)),
+            target_person_id      INTEGER REFERENCES persons(person_id) ON DELETE RESTRICT,
+            state                 TEXT NOT NULL CHECK(state IN ('COMMITTED', 'UNDONE')),
+            operation_revision    INTEGER NOT NULL UNIQUE CHECK(operation_revision >= 1),
+            undo_of_operation_id  TEXT REFERENCES person_operations(operation_id) ON DELETE RESTRICT,
+            undone_by             TEXT REFERENCES person_operations(operation_id) ON DELETE RESTRICT,
+            catalog_filter_revision INTEGER NOT NULL DEFAULT 0 CHECK(catalog_filter_revision >= 0),
+            created_at            INTEGER NOT NULL CHECK(created_at >= 0),
+            committed_at          INTEGER NOT NULL CHECK(committed_at >= 0),
+            CHECK(undo_of_operation_id IS NULL OR undo_of_operation_id <> operation_id),
+            CHECK(undone_by IS NULL OR undone_by <> operation_id),
+            CHECK(state = 'COMMITTED' OR undone_by IS NOT NULL)
+        );
+        CREATE TABLE person_operation_items (
+            operation_id       TEXT NOT NULL REFERENCES person_operations(operation_id)
+                ON DELETE RESTRICT,
+            item_index         INTEGER NOT NULL CHECK(item_index >= 0),
+            entity_type        TEXT NOT NULL CHECK(entity_type IN (
+                'PERSON_BUNDLE', 'FACE_CONTROL', 'SPLIT_GROUP', 'FACE_MAPPING_GROUP')),
+            entity_id          INTEGER CHECK(entity_id IS NULL OR entity_id >= 1),
+            entity_key         TEXT CHECK(entity_key IS NULL OR entity_key <> ''),
+            before_value_json  TEXT NOT NULL CHECK(json_valid(before_value_json)),
+            after_value_json   TEXT NOT NULL CHECK(json_valid(after_value_json)),
+            after_revision     INTEGER NOT NULL CHECK(after_revision >= 0
+                AND (entity_type <> 'PERSON_BUNDLE' OR after_revision >= 1)),
+            PRIMARY KEY(operation_id, item_index),
+            CHECK((entity_type IN ('PERSON_BUNDLE', 'SPLIT_GROUP')) = (entity_id IS NOT NULL)),
+            CHECK((entity_type IN ('FACE_CONTROL', 'FACE_MAPPING_GROUP')) = (entity_key IS NOT NULL))
+        );
+        CREATE INDEX idx_person_operations_committed
+            ON person_operations(committed_at, operation_id);
+        CREATE INDEX idx_person_operation_items_entity
+            ON person_operation_items(entity_id, operation_id);
+        """
+    )
 
 
 class _Usage:
@@ -203,6 +256,8 @@ def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Pa
         connection.execute("DROP TABLE person_collections")
         connection.execute("DROP TABLE face_inbox_hidden")
         connection.execute("DROP TABLE person_hidden")
+        connection.execute("DROP TABLE person_operation_retention")
+        _restore_schema_27_operation_checks(connection)
         connection.execute(
             "UPDATE metadata SET value = '21' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
         )
@@ -236,6 +291,8 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
     try:
         connection.execute("DROP TABLE person_collection_members")
         connection.execute("DROP TABLE person_collections")
+        connection.execute("DROP TABLE person_operation_retention")
+        _restore_schema_27_operation_checks(connection)
         connection.executescript(
             (schema.MIGRATIONS_DIR / "0024_person_collections.sql").read_text(encoding="utf-8")
         )
@@ -268,7 +325,7 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
     result = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert result.previous_version == 24
     assert result.schema_version == SUPPORTED
-    assert result.applied == (25, 26)
+    assert result.applied == (25, 26, 27, 28)
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:
@@ -304,9 +361,9 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
         # token protects stale operations and cursors even when that integer is reused.
         assert replacement == deleted_id
         assert len(replacement_record["instance_token"]) == 32
+        from photo_search.api.errors import ApiError
         from photo_search.persons.collections import _encode, people_page
         from photo_search.places.revision import read_filter_revision
-        from photo_search.api.errors import ApiError
 
         stale_v24_cursor = _encode(
             "pcp1", [deleted_id, 1, read_filter_revision(catalog.connection)], 1

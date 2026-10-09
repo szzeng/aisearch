@@ -8,7 +8,7 @@
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
     detailBusyAssets: new Set(),
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
-    detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, coverMode: false, searching: false, searchBody: null, returnCollection: null,
+    detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, createPersonIntent: null, coverMode: false, searching: false, searchBody: null, returnCollection: null,
     deepLinked: false, linkSeq: 0, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
@@ -419,8 +419,8 @@
       const suggestion = face.organization_reason === "BORDERLINE" && face.suggestions && face.suggestions[0];
       if (suggestion) {
         card.append(button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion)));
-        card.append(button("选其他人", () => editFace(face)));
-      } else card.append(button("这是谁？", () => editFace(face)));
+        card.append(button("选其他人", () => editFace(face, { allowCreatePerson: true })));
+      } else card.append(button("这是谁？", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
   }
@@ -886,10 +886,17 @@
     $("edit-find").hidden = edit.mode === "name"; $("edit-label").textContent = edit.mode === "name" ? "名字" : "搜索并选择人物";
     $("edit-submit").textContent = edit.mode === "name" ? "保存名字" : edit.mode === "merge" ? "确认并入所选人物" : "归到所选人物";
     $("edit-submit").disabled = edit.mode !== "name";
+    $("create-person").hidden = !(edit.mode === "face" && edit.allowCreatePerson && !state.batchMode && !edit.face.assigned_person_id);
+    $("create-person").disabled = false;
+    $("create-person-note").hidden = $("create-person").hidden;
     $("edit").showModal(); $("edit-query").focus(); return true;
   }
-  function editFace(face) {
+  function editFace(face, options) {
+    options = options || {};
     if (editBase({ mode: "face", face }, "这张脸是谁？", "只整理选中的这张脸。合照里的其他人保持原来的归属。")) {
+      state.edit.allowCreatePerson = options.allowCreatePerson === true && !state.batchMode;
+      $("create-person").hidden = !state.edit.allowCreatePerson || Boolean(face.assigned_person_id);
+      $("create-person-note").hidden = $("create-person").hidden;
       const crop = picture(face.thumbnail_url, "正在更正的人脸", "pa-avatar"); $("choices").append(crop);
       if (face.assigned_person_id) $("choices").append(button("不是这个人，移出人物", () => writeFace("unassign")));
       loadChoices(false);
@@ -928,6 +935,45 @@
     if (operation.changed) state.undoTimer = setTimeout(() => {
       state.operation = null; $("undo-bar").hidden = true;
     }, 10000);
+  }
+  async function createPersonFromFace() {
+    const face = state.edit && state.edit.mode === "face" ? state.edit.face : null;
+    if (!face || state.batchMode || face.assigned_person_id || state.writing) return;
+    let intent = state.createPersonIntent;
+    if (!intent || intent.face_id !== face.face_id || intent.expected_control_revision !== Number(face.control_revision || 0)) {
+      intent = { face_id: face.face_id, expected_control_revision: Number(face.control_revision || 0), request_id: requestId() };
+      state.createPersonIntent = intent;
+    }
+    state.writing = true; $("create-person").disabled = true; $("edit-submit").disabled = true; $("edit-cancel").disabled = true;
+    $("edit-error").textContent = "正在新建未命名人物……";
+    try {
+      await api("/faces/" + encodeURIComponent(intent.face_id) + "/create-person", {
+        contract_version: "p4-person-create-from-face.v1",
+        request_id: intent.request_id,
+        expected_control_revision: intent.expected_control_revision,
+      }, "POST");
+      state.createPersonIntent = null;
+      clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true;
+      $("edit").close(); state.editSeq++; state.choiceSeq++;
+      message("已新建未命名人物（1 张脸）", true);
+      loadPeople(false);
+      if (state.organize) {
+        const openGroups = Array.from($("inbox-cards").children)
+          .filter((item) => item.open && item.groupKey).map((item) => item.groupKey);
+        loadInbox(false, openGroups);
+      }
+    } catch (error) {
+      // A transport failure leaves commit status unknown; retain this intent's request_id
+      // so clicking retry cannot create a second person. HTTP responses are definitive.
+      if (error.status && error.status < 500) state.createPersonIntent = null;
+      $("edit-error").textContent = error.status === 409
+        ? "整理状态有更新，请刷新后重新选择这张脸。"
+        : errorText(error);
+      $("create-person").hidden = false;
+    } finally {
+      state.writing = false; $("create-person").disabled = false; $("edit-cancel").disabled = false;
+      if (state.edit && state.edit.mode === "face") $("edit-submit").disabled = !state.chosen;
+    }
   }
   async function refreshAfterWrite(result, label) {
     rememberOperation(result, label); message(label, true);
@@ -1076,6 +1122,7 @@
     $("edit").addEventListener("cancel", (event) => { if (state.writing) event.preventDefault(); });
     $("edit").addEventListener("close", () => { state.editSeq++; state.choiceSeq++; });
     $("undo").addEventListener("click", undo);
+    $("create-person").addEventListener("click", createPersonFromFace);
     $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
     window.addEventListener("pagehide", () => {
       state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear();

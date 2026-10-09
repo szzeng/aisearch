@@ -1178,6 +1178,14 @@ class FaceCorrectionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class CreatePersonFromFaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: str
+    request_id: str = Field(min_length=1, max_length=64)
+    expected_control_revision: int = Field(ge=0)
+
+
 class FaceCorrectionItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1226,6 +1234,11 @@ class FaceOperationResponse(BaseModel):
     catalog_filter_revision: int
     replayed: bool
     items: list[FaceOperationItemResponse]
+
+
+class CreatePersonFromFaceResponse(FaceOperationResponse):
+    new_person_id: int
+    face_id: str
 
 
 class MappingOperationResponse(BaseModel):

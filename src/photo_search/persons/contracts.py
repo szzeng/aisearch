@@ -74,6 +74,8 @@ SPLIT_OPERATION_TYPES = ("SPLIT",)
 #: log. It brings the two ``FACE_MAPPING_*`` types and the ``FACE_MAPPING_GROUP`` item shape,
 #: so it gets its own tuple for exactly the same reason the face and split families do.
 MAPPING_OPERATION_TYPES = ("FACE_MAPPING_CONFIRM", "FACE_MAPPING_REJECT")
+# P4 person inbox creation has history and request identity, but is never undoable.
+CREATE_PERSON_OPERATION_TYPES = ("CREATE_PERSON_FROM_FACE",)
 #: Everything the shared ``/person-operations/{id}/undo`` endpoint may compensate.
 OPERATION_TYPE_SPLIT = SPLIT_OPERATION_TYPES[0]
 UNDOABLE_OPERATION_TYPES = WRITE_OPERATION_TYPES + FACE_OPERATION_TYPES
@@ -291,6 +293,7 @@ __all__ = [
     "CONTRACT_VERSION",
     "CAUSE_PERSON_CHANGED",
     "CONTROL_MODES",
+    "CREATE_PERSON_OPERATION_TYPES",
     "ENTITY_TYPE_FACE_CONTROL",
     "ENTITY_TYPE_MAPPING_GROUP",
     "ENTITY_TYPE_PERSON_BUNDLE",

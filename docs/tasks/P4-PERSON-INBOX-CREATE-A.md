@@ -1,6 +1,6 @@
 # P4-PERSON-INBOX-CREATE-A — 待整理人脸一键创建未命名人物（不支持撤销）
 
-日期：2026-10-09。状态：**PLANNED / 仅立卡、待实施**。立卡基线：`master` / `4440f746dcccaad4506887537711499dd20905c7`；实施前复核最新 HEAD。P4-PERSON-OPLOG-GC-A 已将 schema 推进至 27（当前代码工作树含该 migration，需先核对最终 Git 状态）；后续 migration 版本须基于实施时实际 schema 递增。**个人相册，一张小卡，两组定向测试**。
+日期：2026-10-09；实施更新：2026-10-10。状态：**IMPLEMENTED / 任务卡定向验证与当前会话工程复核通过；用户个人试用待确认**。立卡基线：`master` / `4440f746dcccaad4506887537711499dd20905c7`；实施前实际 HEAD：`b7e90614c74b34af8680b6fda2eb95b565e1ab8a`。schema 27 推进到 28。实施报告：[P4-PERSON-INBOX-CREATE-A-implementation.md](../reports/P4-PERSON-INBOX-CREATE-A-implementation.md)；独立复核卡：[P4-PERSON-INBOX-CREATE-A-review.md](P4-PERSON-INBOX-CREATE-A-review.md)。**个人相册，一张小卡，两组定向测试**。
 
 推荐执行：**GPT-6 High**，一次实现 + 简短聚焦核查。本卡不提交功能代码，不操作真实 `PhotoSearchData`、不运行识别/建库。
 
@@ -89,3 +89,9 @@
 - 简化实现，不新增另一套通用人物创建/撤销框架；两组最小测试通过。
 
 实施完成需报告实际改动文件、定向测试结果、未验证范围。推荐 **GPT-6 High** 一轮实现并聚焦核查身份、幂等、迁移与旧撤销入口；无需默认全仓审查或多模型循环。
+
+## 8. 实施结果与交接
+
+- schema 28 / migration 0028 已实现，接入单脸原子创建、新操作族、幂等回执、撤销拒绝和前端入口。
+- 后端及旧撤销回归 JUnit 40/0/0/0；迁移组 JUnit 13/0/0/0；前端轻量 DOM JUnit 1/0/0/0；受影响面 Ruff、Node、py_compile、diff-check 均通过。具体命令见实施报告。
+- 当前为 IMPLEMENTED 与定向验证通过；用户要求的当前会话受影响面工程复核已通过（非独立 DS-H/Sol）。复核修复 schema 27 带 RENAME→UNDO 历史时的 0028 外键升级失败，修复回归 JUnit 16/0/0/0。用户少量真实人物试用待确认。未访问真实图库/当前服务、未跑全仓/浏览器矩阵/GPU/模型/打包。

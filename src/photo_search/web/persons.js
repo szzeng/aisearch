@@ -47,6 +47,7 @@
     SPLIT: "拆分",
     FACE_MAPPING_CONFIRM: "重检测映射确认",
     FACE_MAPPING_REJECT: "重检测映射拒绝",
+    CREATE_PERSON_FROM_FACE: "新建未命名人物 · 不支持撤销",
   };
   var CANDIDATE_STATE_TEXT = {
     NO_CANDIDATE: "没有合格候选（只能拒绝确认）",
@@ -1170,7 +1171,9 @@
       )
     );
     var actions = element("p", "row-actions");
-    if (operation.expired) {
+    if (operation.operation_type === "CREATE_PERSON_FROM_FACE") {
+      actions.appendChild(element("span", "chip", "不支持撤销"));
+    } else if (operation.expired) {
       actions.appendChild(element("span", "chip", "已过期 · 不可撤销"));
     } else {
       var undo = element("button", null, "撤销此操作");

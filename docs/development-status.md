@@ -1,9 +1,9 @@
 # Development status
 
-更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
-## 新增待实施：P4-PERSON-INBOX-CREATE-A — PLANNED（仅任务卡）
+更新：2026-10-10。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+## P4-PERSON-INBOX-CREATE-A — 定向验证与当前会话工程复核通过；个人试用待确认
 
-[任务卡](tasks/P4-PERSON-INBOX-CREATE-A.md)。人物相册「这是谁？/选其他人」新增**一键创建未命名人物（仅选中的1张 face）**；采用独立原子接口、人工归属与幂等保护，并记录**不可撤销**的新操作类型（旧操作撤销保持不变）。开工时需核对 Schema 最新版本及与人物操作历史清理卡的迁移顺序。两组轻量合成/DOM 定向测试；推荐 GPT-6 High。**尚未实施，未执行迁移、测试、真实图库操作或服务重启**。
+[任务卡](tasks/P4-PERSON-INBOX-CREATE-A.md)、[实施报告](reports/P4-PERSON-INBOX-CREATE-A-implementation.md)、[复核卡](tasks/P4-PERSON-INBOX-CREATE-A-review.md)、[当前会话复核报告](reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)。schema27→28，新建人物仅归属所选单脸，新操作永不可撤销。后端与旧撤销 JUnit 40/0/0/0；原迁移组 13/0/0/0；DOM 1/0/0/0；复核修复回归与迁移组 16/0/0/0。Ruff、Node、py_compile、diff-check 通过。用户要求当前会话复核，受影响面工程复核通过（非独立 DS-H/Sol）；少量真实照片试用仍待确认。未跑全仓/浏览器矩阵/GPU/模型/打包，未访问 PhotoSearchData 或现有服务；未提交/推送。
 ## P4-PERSON-OPLOG-GC-A — IMPLEMENTED / 定向验证通过 / 同会话复核通过
 
 [任务卡](tasks/P4-PERSON-OPLOG-GC-A.md)、[实施报告](reports/P4-PERSON-OPLOG-GC-A-implementation.md)、[同会话复核记录](reports/P4-PERSON-OPLOG-GC-A-same-session-review.md)。schema27 手动预览/确认清理，严格同时满足 30 天与不在最近200条；每批最多检查100候选并可续批；预览展示原快照 JSON 字节及跳过原因。定向 JUnit 5/0/0/0，Ruff、Node、py_compile、diff-check通过。按用户要求在当前会话完成复核；未执行独立 DS-H，不冒称该结论。未跑全仓/真实图库或现有服务迁移、清理；未运行浏览器矩阵。实施时 HEAD `4440f74`；之后上游只新增 Inbox-create 文档提交至 `d628a87`，已保留。
@@ -80,4 +80,4 @@
 P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照实保留，不默认修全仓。基础关键失败不得跳过。已有PASS任务不重开，不自动继续性能优化。
 ## 下一步
 
-P4-PERSON-OPLOG-GC-A 已按用户选择完成同会话复核，未声称独立 DS-H；[P4-PERSON-INBOX-CREATE-A](tasks/P4-PERSON-INBOX-CREATE-A.md) 仍为下一张已立卡任务，开工以 schema27 为迁移基线。本轮未操作真实图库、服务或模型，未提交/推送。
+下一步由用户按任务卡用少量真实人物照片试用确认。当前会话复核是工程复核结论，不冒称独立 DS-H/Sol；真实 catalog 与浏览器矩阵未验证。

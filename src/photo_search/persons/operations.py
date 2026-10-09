@@ -156,6 +156,10 @@ def item_projection(row: Any) -> dict[str, Any]:
 
 def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
     """Rebuild the documented response of an already committed operation (a replay)."""
+    if str(operation["type"]) == "CREATE_PERSON_FROM_FACE":
+        from photo_search.persons import create_from_face
+
+        return create_from_face.result(connection, operation)
     from photo_search.persons import retention as retention_module
 
     retained_items = retention_module.replay_receipt(connection, str(operation["operation_id"]))
@@ -897,7 +901,7 @@ def merge_persons(
 
 # ------------------------------------------------------------------------- compensation
 def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
-    """``"face"``, ``"split"`` or ``"person"``: the vocabulary an operation answers in.
+    """Return the operation-family vocabulary, including permanent create-only history.
 
     An ``UNDO`` row is family-agnostic, so it inherits the family of the operation it
     compensates. That keeps "undo an UNDO" answered with the frozen code of the family the
@@ -910,6 +914,8 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
         return "split"
     if operation_type in contracts.MAPPING_OPERATION_TYPES:
         return "mapping"
+    if operation_type in contracts.CREATE_PERSON_OPERATION_TYPES:
+        return "create-person"
     if operation_type == "UNDO" and operation["undo_of_operation_id"] is not None:
         parent = operation_row(connection, str(operation["undo_of_operation_id"]))
         if parent is not None:
@@ -1131,6 +1137,13 @@ def undo_person_operation(
     )
     if replay is not None:
         return replay
+    if original is not None and str(original["type"]) in contracts.CREATE_PERSON_OPERATION_TYPES:
+        raise fail(
+            PERSON_OPERATION_NOT_UNDOABLE,
+            "this operation is permanently non-undoable",
+            operation_id=original_id,
+            reason="operation_type_not_undoable",
+        )
     from photo_search.persons import retention as retention_module
 
     if retention_module.is_expired(connection, original_id):
