@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -79,15 +80,13 @@ def test_reset_catalog_and_vectors_then_api_startup_restores_package(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    "defect", ["missing", "tampered", "incompatible", "wrong-directory", "missing-predecessor"]
+    "defect", ["missing", "tampered", "incompatible", "wrong-directory"]
 )
 def test_defective_package_never_becomes_active(tmp_path: Path, defect: str) -> None:
     root = tmp_path / "data"
     options = {}
     if defect == "incompatible":
         options["compatible"] = (1, 1)
-    elif defect == "missing-predecessor":
-        options["previous_dataset_id"] = "geo-mini-cn-missing"
     package = stored_package(root, **options)
     if defect == "missing":
         (package / "places.jsonl").unlink()
@@ -102,6 +101,48 @@ def test_defective_package_never_becomes_active(tmp_path: Path, defect: str) -> 
         assert datasets.active_row(service.catalog.connection) is None
         assert service.catalog.read_one("SELECT COUNT(*) FROM geo_datasets")[0] == 0
         assert service.catalog.read_one("SELECT COUNT(*) FROM places")[0] == 0
+
+
+def test_missing_predecessor_is_omitted_only_for_empty_registry_recovery(tmp_path: Path) -> None:
+    root = tmp_path / "recovery-data"
+    package = stored_package(root, previous_dataset_id="geo-mini-cn-missing")
+    original = package_snapshot(package)
+    manifest = (package / "manifest.json").read_bytes()
+
+    # Startup recovery may restore the sole complete package after catalog loss. The
+    # historical edge is absent from the new registry, while the immutable manifest
+    # and all package bytes remain unchanged.
+    with CatalogService.open(data_root=root) as service:
+        active = datasets.active_row(service.catalog.connection)
+        assert active is not None and active["dataset_id"] == "geo-mini-cn-1"
+        row = service.catalog.read_one(
+            "SELECT previous_dataset_id FROM geo_datasets WHERE dataset_id=?",
+            ("geo-mini-cn-1",),
+        )
+        assert row["previous_dataset_id"] is None
+        assert package_snapshot(package) == original
+        assert (package / "manifest.json").read_bytes() == manifest
+
+    # A normal package import does not receive the recovery exception. The foreign
+    # key remains authoritative when the manifest names an unregistered predecessor.
+    normal_root = tmp_path / "normal-import-data"
+    normal_package = stored_package(
+        normal_root, previous_dataset_id="geo-mini-cn-missing"
+    )
+    normal_original = package_snapshot(normal_package)
+    with Catalog.open(data_root=normal_root) as catalog:
+        with pytest.raises(sqlite3.IntegrityError):
+            datasets.stage_package(catalog, normal_package)
+        assert catalog.read_one("SELECT COUNT(*) FROM geo_datasets")[0] == 0
+    assert package_snapshot(normal_package) == normal_original
+
+    # Reopening after successful recovery is idempotent: no duplicate registration,
+    # place materialization, or active-pointer revision is created.
+    with CatalogService.open(data_root=root) as reopened:
+        assert reopened.catalog.read_one("SELECT COUNT(*) FROM geo_datasets")[0] == 1
+        assert reopened.catalog.read_one("SELECT revision FROM active_geo_dataset")[0] == 1
+        assert reopened.catalog.read_one("SELECT COUNT(*) FROM places")[0] == len(MINI_PLACES)
+    assert package_snapshot(package) == original
 
 
 def test_multiple_surviving_packages_require_explicit_selection(tmp_path: Path) -> None:

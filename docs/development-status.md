@@ -2,7 +2,11 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 本次完成：P4-PERSONAL-REVIEW-PERSON-A — ENGINEERING REVIEW PASS
+## 本次完成：P4-PERSONAL-REVIEW-PLACE-A — ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED
+
+[地点组审查报告](reports/P4-PERSONAL-REVIEW-PLACE-A.md)、[执行卡](tasks/P4-PERSONAL-REVIEW-PLACE-A.md)。按用户要求在当前会话完成工程审查，没有自动切换模型，故不声称本次为DS-H会话。逐项覆盖CN/UNIFIED/schema21兼容/包恢复与RECOVERY-B/MAP/地点NL；恢复缺前驱窄例外补隔离小包正例，地图API与UI定向JUnit 7/7，合并定向JUnit 12/12，Ruff通过；10张合成照片浏览器确认地点建议批量归属、地点词＋文本词搜索/取消条件保留、地图→详情→返回。原任务现场/正式数据事项仍按报告标记PENDING；未访真实图库、未重启用户服务、未运行全量/30万/GPU/PBF。代码差异仅恢复测试断言与新增专用正例；保留先前工作区文档改动与.tmp材料，未提交/推送。
+
+## 前序完成：P4-PERSONAL-REVIEW-PERSON-A — ENGINEERING REVIEW PASS
 
 [人物组审查报告](reports/P4-PERSONAL-REVIEW-PERSON-A.md)、[执行卡](tasks/P4-PERSONAL-REVIEW-PERSON-A.md)。逐原卡审查UX/DETAIL-A/MATCH-A+B/IMAGE/AVATAR/CLEANUP/COVER/PREVIEW新增面；复用DETAIL-B已审共享边界和可核对JUnit，补做当前版本隔离合成浏览器封面与前后导航。未重跑pytest。AVATAR正常重启/刷新现场确认仍PENDING，由用户决定正常更新服务后观察；不影响转交地点组，未追认其整卡或真实图库PASS。
 
@@ -27,7 +31,7 @@
 | 入口 | 当前缺口与复用 |
 |---|---|
 | [人物组](tasks/P4-PERSONAL-REVIEW-PERSON-A.md) | ENGINEERING REVIEW PASS；AVATAR正常重启/刷新现场确认仍单项PENDING。 |
-| [地点组](tasks/P4-PERSONAL-REVIEW-PLACE-A.md) | CN/UNIFIED/MAP/包恢复/兼容/地点NL合并；MAP已修短审复用，RECOVERY-B缺前驱运行时基础证据在隔离小包核对。真实现场重启由用户自行决定，不清空私库验收。 |
+| [地点组](tasks/P4-PERSONAL-REVIEW-PLACE-A.md) | ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；正式CN包导入/交付、实际catalog与真实照片现场效果仍按地点组报告保留PENDING。 |
 | [搜索与查看组](tasks/P4-PERSONAL-REVIEW-SEARCH-A.md) | W/W-Q/NL未审面与缺失基础浏览器；PHOTO-VIEW已有用户接受的独立GPT-6复核及六入口证据，不重开独立审查或全浏览器矩阵。 |
 | [OCR](tasks/P4-02Y-L-review.md) | 独立工程证据核对；旧Sol冻结与CPU/GPU实验复用，不重复冻结/测速。 |
 | [模型切换](tasks/P4-EMBEDDING-ARCH-review.md) | 独立工程面待审；维护select-profile与UpgradeRun门禁适用性若仍未裁决，保留一次Sol短裁决。 |
@@ -36,4 +40,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-只交接[地点组](tasks/P4-PERSONAL-REVIEW-PLACE-A.md)：由用户手动选择DS-H/高推理后开始。人物组新增工程审查已完成，逐原任务结论见报告；AVATAR现场重启/刷新仍PENDING，不要求清空私库或重启用户实际服务。地点组完成后再交接搜索与查看组，不自动并行启动。
+只交接[搜索与查看组](tasks/P4-PERSONAL-REVIEW-SEARCH-A.md)，由用户按该卡选择执行会话；本次不自动执行下一组。地点组逐原任务工程结论、JUnit与剩余事项见[地点组审查报告](reports/P4-PERSONAL-REVIEW-PLACE-A.md)。
