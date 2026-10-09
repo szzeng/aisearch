@@ -1358,6 +1358,7 @@ async def browse_persons(
     q: str = "",
     sort: Literal["person_id", "photos_desc"] = "person_id",
     visibility: Literal["all", "visible", "hidden"] = "all",
+    quality_view: Literal["all", "clean"] = "all",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -1369,6 +1370,7 @@ async def browse_persons(
         limit=clamp_person_limit(limit),
         cursor=cursor,
         visibility=visibility,
+        quality_view=quality_view,
     )
 
 
@@ -1495,9 +1497,10 @@ async def face_inbox(
     limit: int | None = None,
     cursor: str | None = None,
     kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
+    quality_view: Literal["all", "clean"] = "all",
 ) -> dict[str, Any]:
     return person_albums.inbox_page(
-        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor, kind=kind
+        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor, kind=kind, quality_view=quality_view
     )
 
 
@@ -1553,9 +1556,10 @@ async def face_inbox_groups(
     limit: int | None = None,
     cursor: str | None = None,
     kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
+    quality_view: Literal["all", "clean"] = "all",
 ) -> dict[str, Any]:
     return person_albums.inbox_group_page(
-        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor, kind=kind
+        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor, kind=kind, quality_view=quality_view
     )
 
 
@@ -1566,6 +1570,7 @@ async def face_inbox_group_faces(
     limit: int | None = None,
     cursor: str | None = None,
     kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
+    quality_view: Literal["all", "clean"] = "all",
 ) -> dict[str, Any]:
     return person_albums.inbox_group_faces(
         service_of(request).catalog,
@@ -1573,12 +1578,15 @@ async def face_inbox_group_faces(
         limit=min(clamp_person_limit(limit), 30),
         cursor=cursor,
         kind=kind,
+        quality_view=quality_view,
     )
 
 
 @router.get("/faces/inbox/summary", summary="Safe counts of face organization reasons")
-async def face_inbox_summary(request: Request) -> dict[str, Any]:
-    return person_albums.inbox_summary(service_of(request).catalog)
+async def face_inbox_summary(
+    request: Request, quality_view: Literal["all", "clean"] = "all"
+) -> dict[str, Any]:
+    return person_albums.inbox_summary(service_of(request).catalog, quality_view=quality_view)
 
 
 @router.post("/faces/rematch", summary="Reconsider one batch of unassigned stored faces")

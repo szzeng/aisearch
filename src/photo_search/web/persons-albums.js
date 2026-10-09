@@ -2,9 +2,9 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
-  const state = { organize: false, hiddenView: false, batchMode: false, selectedPeople: new Set(), collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
-    previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
+    previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
     detailBusyAssets: new Set(),
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
@@ -223,6 +223,7 @@
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
     const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: $("person-sort").value || "photos_desc", limit: 40 };
+    if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
     if (more && state.listCursor) values.cursor = state.listCursor;
     else { $("cards").replaceChildren(); state.listCursor = null; }
     $("list-note").textContent = "正在找人物……";
@@ -379,6 +380,7 @@
     $("people").focus();
   }
   function organizationText(face) {
+    if (face.display_quality_reason === "DISPLAY_LOW_QUALITY") return "疑似低质量，仅整理页自动收起";
     const reason = face.organization_reason || face.quality_reason;
     if (face.mode === "MANUAL_UNASSIGNED") return "已移出人物，等你指定";
     const labels = { SMALL: "脸太小，需确认", BLURRY: "脸有些模糊，需确认",
@@ -399,6 +401,7 @@
       SAME_IMAGE_CONFLICT: "合照冲突", MANUAL_UNASSIGNED: "已移出", WAITING_INDEX: "等待整理",
       NO_MATCH: "暂无匹配", OTHER_SUGGESTION: "其他建议" };
     Object.keys(labels).forEach((key) => { if (reasons[key]) pieces.push(labels[key] + " " + reasons[key]); });
+    if (state.qualityView === "clean" && summary.quality_hidden) pieces.push("另有 " + summary.quality_hidden + " 张疑似低质量脸暂时收起");
     if (summary.held) pieces.push("另有 " + summary.held + " 张脸等待识别更新确认");
     return pieces.join(" · ");
   }
@@ -438,11 +441,13 @@
     const list = details.querySelector(".pa-inbox-group-faces");
     const more = details.querySelector(".pa-inbox-group-more");
     more.disabled = true;
+    const filterSeq = state.inboxFilterSeq;
     try {
-      const values = { limit: 30, kind };
+      const values = { limit: 30, kind, quality_view: state.qualityView };
       if (cursor) values.cursor = cursor;
       const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
       const page = await api(route + encodeURIComponent(groupKey) + params(values));
+      if (!hiddenFace && filterSeq !== state.inboxFilterSeq) return;
       page.faces.forEach((face) => renderInboxFace(list, face, Boolean(hiddenFace)));
       more.hidden = !page.has_more; more.dataset.cursor = page.next_cursor || "";
     } catch (error) { message(errorText(error)); }
@@ -471,13 +476,13 @@
   async function loadInbox(more, reopenGroups) {
     if (more && state.busy.has("inbox")) return;
     const seq = ++state.inboxSeq; state.busy.add("inbox"); $("inbox-more").disabled = true;
-    const values = { limit: 30, kind: $("inbox-kind").value || "all" };
+    const values = { limit: 30, kind: $("inbox-kind").value || "all", quality_view: state.qualityView };
     const grouped = values.kind === "all" || values.kind === "suggested";
     if (more && state.inboxCursor) values.cursor = state.inboxCursor;
     if (!more) { $("inbox-cards").replaceChildren(); state.inboxCursor = null; }
     try {
       const [page, summary] = await Promise.all([
-        api((grouped ? "/faces/inbox/groups" : "/faces/inbox") + params(values)), more ? Promise.resolve(null) : api("/faces/inbox/summary"),
+        api((grouped ? "/faces/inbox/groups" : "/faces/inbox") + params(values)), more ? Promise.resolve(null) : api("/faces/inbox/summary" + params({ quality_view: state.qualityView })),
       ]);
       if (seq !== state.inboxSeq) return;
       if (summary) $("inbox-note").textContent = inboxSummaryText(summary);
@@ -636,9 +641,26 @@
     })().finally(() => { state.detailControlsPromise = null; });
     return state.detailControlsPromise;
   }
+  function setQualityView(view) {
+    if (!state.organize || !["clean", "all"].includes(view)) return Promise.resolve();
+    if (state.qualityView === view) return Promise.resolve();
+    const cleared = state.selectedPeople.size + state.selectedInboxFaces.size;
+    state.qualityView = view;
+    $("quality-toggle").checked = view === "all";
+    state.selectedPeople.clear(); state.selectedInboxFaces.clear();
+    state.inboxSeq++; state.inboxFilterSeq++; state.listSeq++; state.listCursor = null; state.inboxCursor = null;
+    renderPeopleManagement(); renderFaceManagement();
+    if (cleared) message("切换整理范围，已清除 " + cleared + " 项选择。", true);
+    return Promise.all([loadPeople(false), loadInbox(false)]);
+  }
   function setView(organize) {
     clearPeopleSelection(); state.hiddenView = false;
     state.organize = organize;
+    if (organize) {
+      state.qualityView = "clean"; $("quality-toggle").checked = false;
+      $("inbox-kind").value = "all";
+    }
+    state.inboxSeq++; state.inboxFilterSeq++; state.listSeq++;
     if (!organize) {
       state.detailBatchSeq++;
       if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
@@ -984,7 +1006,16 @@
     $("person-sort").addEventListener("change", () => loadPeople(false));
     $("refresh").addEventListener("click", () => { loadPeople(false); loadCollections(false); if (state.organize) loadInbox(false); });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
-    $("inbox-kind").addEventListener("change", () => loadInbox(false));
+    $("inbox-kind").addEventListener("change", () => {
+      const cleared = state.selectedInboxFaces.size;
+      state.selectedInboxFaces.clear(); state.inboxCursor = null;
+      state.inboxSeq++; state.inboxFilterSeq++; renderFaceManagement();
+      if (cleared) message("切换待整理原因，已清除 " + cleared + " 项人脸选择。", true);
+      loadInbox(false);
+    });
+    $("quality-toggle").addEventListener("change", () => {
+      setQualityView($("quality-toggle").checked ? "all" : "clean");
+    });
     $("inbox-hide-submit").addEventListener("click", () => submitInboxVisibility(true));
     $("inbox-restore-submit").addEventListener("click", () => submitInboxVisibility(false));
     $("inbox-hidden-toggle").addEventListener("click", () => {

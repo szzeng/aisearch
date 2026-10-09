@@ -100,7 +100,7 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(JSON.parse(hideRequest.options.body),{face_ids:[faceA.face_id,faceB.face_id],hidden:true});
   assert.equal(hideRequest.options.headers["X-CSRF-Token"],"synthetic-csrf");
   assert.equal(ui.state.selectedInboxFaces.size,0);
-  assert(requests.some(r=>r.url==="/api/v1/faces/inbox/groups?limit=30&kind=all"));
+  assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/groups?limit=30&kind=all&quality_view=clean")));
 
   ui.state.inboxHiddenVisible=true;ui.renderFaceManagement();await ui.loadHiddenFaces(false);
   const hiddenCards=get("pa-inbox-hidden-cards");

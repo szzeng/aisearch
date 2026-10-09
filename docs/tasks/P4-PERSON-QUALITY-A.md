@@ -1,6 +1,6 @@
 # P4-PERSON-QUALITY-A — 现有人脸质量统计与人物整理页自动收起低质量候选
 
-日期：2026-10-09。状态：**READY / 待实施**。设计基线：`master / 9b06b286113d2566b3f024f2b03deb2ffc951f92`（实施前复查最新 HEAD）。
+日期：2026-10-09。状态：**IMPLEMENTED / 定向合成验证通过；真实图库阈值试用待用户确认**。实际实施基线：`0959137e4916e2da3c8bacae0b09227f8715a7f10`。
 个人相册 **一张卡**；只读展示与统计优化，**不重识别、不改模型参数、不迁移 Schema、不写图库事实**。
 
 架构/策略对齐：V3.0 §8.3.1、§8.3.4、§10.2；V3.1 §2.4、§3.2。执行前按 `AGENTS.md`、`docs/development-status.md` 和本卡核对当前实施约束。
@@ -105,3 +105,10 @@
 **推荐 GPT-6 High** 实施及三组定向验证，同会话对直接改动范围做简短复核；仅在触及身份/人工状态/Schema/冻结协议时按 V3.1 升级审核，不默认全仓主审。
 
 **PASS**：现有库无需额外建库便默认以 `clean` 显示整理页；大量低质量自动候选不再占据普通整理列表，`all` 与 `quality` 可找回；已命名、人工确认/忽略/纠错、分组分页、照片集合及原 API 均保真。交付改动清单、三组小测试、三档诊断示例及未验的真实图库质量效果；更新任务卡、执行报告与 `docs/development-status.md`。
+
+
+## 10. 实施交接（2026-10-09）
+
+实现报告：[P4-PERSON-QUALITY-A-implementation.md](../reports/P4-PERSON-QUALITY-A-implementation.md)。实现文件为 `persons/quality_policy.py`、`persons/albums.py`、`api/routes.py`、`web/persons-albums.js`、`web/persons.html` 与只读工具 `tools/diagnostics/person_face_quality.py`；定向测试新增质量诊断/API与DOM用例，并更新受影响的忽略 UI 请求断言。JUnit 20/0/0/0；Ruff、Node、py_compile、diff-check 通过。
+
+真实图库阈值效果与正常应用现场仍待用户少量试用确认。未访问 PhotoSearchData、未运行诊断 CLI 对真实库、未执行浏览器矩阵/全仓/容量/GPU/打包、未迁移 Schema、未提交或推送。当前进入个人试用，无下一张工程任务卡；发现具体误收/漏收样本后再按实际反馈开卡。

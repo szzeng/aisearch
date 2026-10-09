@@ -1,9 +1,9 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
-## 当前任务：P4-PERSON-QUALITY-A — READY / 待实施
+## 本次完成：P4-PERSON-QUALITY-A — IMPLEMENTED / 定向合成验证通过；个人试用待确认
 
-[任务卡](tasks/P4-PERSON-QUALITY-A.md)。个人图库人脸质量展示筛选：直接复用 SQLite 中 det_score、face_pixels、blur_variance 与既有人工事实；整理页默认 clean（0.70/56/40），all 可找回，待整理质量分类仍可专门查看收起脸；保留人工忽略和现有旧 API。增加可选只读三档统计。**仅建卡，未实施、未运行测试；不重识别、不触碰 PhotoSearchData、不迁移 Schema。** 推荐 GPT-6 High，一张卡三组定向测试。
+[任务卡](tasks/P4-PERSON-QUALITY-A.md)、[实施报告](reports/P4-PERSON-QUALITY-A-implementation.md)。整理页默认 clean（均衡 0.70/56/40），旧 API 默认 all；质量入口、分组和分页一致，人工控制与忽略状态保真。只读三档 SQLite 诊断工具已新增。定向 JUnit 20/0/0/0，Ruff、Node、py_compile、diff-check 通过。真实图库阈值效果仍待用户少量试用；未访问 PhotoSearchData/用户服务，未运行真实诊断、浏览器矩阵、全仓/容量/GPU/模型/打包，未迁移、提交或推送。当前转个人试用，无下一张工程任务卡。
 
 ## 前序完成：P4-PERSON-COLLECTION-A — FOCUSED REVIEW PASS / F1–F6 CLOSED；用户试用待确认
 
@@ -91,4 +91,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步若用户明确下达实施指令，执行 [P4-PERSON-QUALITY-A](tasks/P4-PERSON-QUALITY-A.md)；否则仍按日常使用，不自动启动审查/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
+P4-PERSON-QUALITY-A 已交付，下一步为个人试用：更新应用后用少量已知清晰脸、模糊脸、合照小脸及人工指定人物检查整理视图和质量入口，反馈实际误收/漏收；在收到具体现象前不另开优化卡。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。

@@ -7,12 +7,12 @@
     <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-person-inbox-hide-a-1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-quality-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-view-a-3" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
     <script src="/web/persons.js?v=p4-photo-view-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-collection-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-quality-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -53,6 +53,7 @@
         <div id="pa-cards" class="pa-people-grid"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>
         <section id="pa-inbox" hidden>
+          <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
           <h3>还没认出是谁</h3>
           <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
           <div class="row-actions">

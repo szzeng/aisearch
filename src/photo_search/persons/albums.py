@@ -19,6 +19,12 @@ from photo_search.face.detail_policy import superseded_machine_sql
 from photo_search.persons.contracts import PERSON_REVISION_CONFLICT, fail
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
+from photo_search.persons.quality_policy import (
+    POLICY_REVISION,
+    fails_sql,
+    qualifies_sql,
+    reason_sql,
+)
 from photo_search.persons.read import person_summary
 from photo_search.places.revision import read_filter_revision
 from photo_search.taken_time import contract as taken_time_contract
@@ -65,7 +71,7 @@ def _album_summary(connection: Any, row: Any) -> dict[str, Any]:
 
 
 def _album_summaries(
-    connection: Any, rows: list[Any], *, reuse_asset_counts: bool = False
+    connection: Any, rows: list[Any], *, reuse_asset_counts: bool = False, quality_view: str = "all"
 ) -> list[dict[str, Any]]:
     """Project one bounded people page with constant-count member/cover reads."""
     if not rows:
@@ -109,8 +115,9 @@ def _album_summaries(
         page
         + "SELECT person_id, face_id FROM (SELECT page.person_id, f.face_id, "
         "ROW_NUMBER() OVER (PARTITION BY page.person_id ORDER BY "
-        "(f.face_id = page.stored_avatar) DESC, (f.quality_state = 'OK') DESC, "
-        "(f.spec_revision = ?) DESC, f.face_pixels DESC, f.face_id) AS position "
+        "(f.face_id = page.stored_avatar) DESC, "
+        + (qualifies_sql("f") + " DESC, " if quality_view == "clean" else "")
+        + "(f.quality_state = 'OK') DESC, (f.spec_revision = ?) DESC, f.face_pixels DESC, f.face_id) AS position "
         "FROM page JOIN face_person_links AS l ON l.person_id = page.person_id "
         "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id = f.asset_id "
         "WHERE a.state = 'ACTIVE' AND "
@@ -268,11 +275,13 @@ def people_page(
     cursor: str | None,
     sort: str = "person_id",
     visibility: str = "all",
+    quality_view: str = "all",
 ) -> dict[str, Any]:
     if (
         kind not in ("all", "named", "unnamed")
         or sort not in ("person_id", "photos_desc")
         or visibility not in ("all", "visible", "hidden")
+        or quality_view not in ("all", "clean")
         or len(q) > 200
     ):
         raise ApiError(VALIDATION_ERROR, "invalid person query", status=422)
@@ -287,6 +296,8 @@ def people_page(
     ]
     if visibility != "all":
         binding = [binding[0] + "-visibility1", visibility, *binding[1:]]
+    if quality_view != "all":
+        binding = [binding[0] + "-quality1", quality_view, POLICY_REVISION, *binding[1:]]
     after = _position(cursor, binding, 0 if sort == "person_id" else None)
     candidate_conditions = ["p.merged_into IS NULL"]
     candidate_parameters: list[Any] = []
@@ -313,6 +324,18 @@ def people_page(
             + MEMBER_PREDICATE
             + ")"
         )
+        if quality_view == "clean":
+            candidate_conditions[-1] = (
+                "EXISTS (SELECT 1 FROM face_person_links AS l "
+                "JOIN faces AS f ON f.face_id = l.face_id "
+                "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
+                "LEFT JOIN face_assignment_controls AS qc ON qc.face_id = f.face_id "
+                "WHERE l.person_id = p.person_id AND member_asset.state = 'ACTIVE' AND "
+                + MEMBER_PREDICATE
+                + " AND (" + qualifies_sql("f")
+                + " OR qc.mode = 'MANUAL_ASSIGNED' OR EXISTS (SELECT 1 FROM face_exclusions AS qe "
+                "WHERE qe.face_id=f.face_id AND qe.active=1)))"
+            )
     if query:
         # instr is literal, so '%'/'_' have no surprising wildcard meaning.
         candidate_conditions.append(
@@ -381,9 +404,9 @@ def people_page(
         else:
             last_position = [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])]
     summaries = (
-        _album_summaries(catalog.connection, rows, reuse_asset_counts=True)
+        _album_summaries(catalog.connection, rows, reuse_asset_counts=True, quality_view=quality_view)
         if sort == "photos_desc"
-        else _album_summaries(catalog.connection, rows)
+        else _album_summaries(catalog.connection, rows, quality_view=quality_view)
     )
     return {
         "persons": summaries,
@@ -481,6 +504,7 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
         "quality_reason": row["quality_reason"],
         "organization_reason": row["organization_reason"],
+        "display_quality_reason": row["display_quality_reason"],
         "suggestions": suggestions,
     }
 
@@ -507,10 +531,13 @@ CASE
 END
 """
 _FACE_FROM = "FROM faces AS f LEFT JOIN face_assignment_controls AS c ON c.face_id = f.face_id "
+_MANUAL_PROTECTED = "(COALESCE(c.mode, '') IN ('MANUAL_ASSIGNED', 'MANUAL_UNASSIGNED') OR EXISTS (SELECT 1 FROM face_exclusions AS qe WHERE qe.face_id=f.face_id AND qe.active=1))"
 _SELECT_FACES = (
-    "SELECT f.face_id, f.asset_id, f.spec_revision, f.input_revision, f.artifact_id, f.quality_reason, c.mode, c.revision AS control_revision, "
+    "SELECT f.face_id, f.asset_id, f.spec_revision, f.input_revision, f.artifact_id, f.quality_reason, "
+    "f.quality_state, f.det_score, f.face_pixels, f.blur_variance, c.mode, c.revision AS control_revision, "
     + _ORGANIZATION_REASON
-    + " AS organization_reason "
+    + " AS organization_reason, CASE WHEN " + _MANUAL_PROTECTED + " THEN NULL ELSE "
+    + reason_sql("f") + " END AS display_quality_reason "
     + _FACE_FROM
 )
 _NOT_HELD = "NOT EXISTS (SELECT 1 FROM face_redetection_groups AS g WHERE g.state = 'OPEN' AND (g.old_face_id = f.face_id OR EXISTS (SELECT 1 FROM face_redetection_mappings AS m WHERE m.old_face_id = g.old_face_id AND m.new_face_id = f.face_id AND m.state = 'SUGGESTED')))"
@@ -529,47 +556,80 @@ _NO_MEMBER = (
     + MEMBER_PREDICATE
     + ")"
 )
-_INBOX_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
-_INBOX_ELIGIBLE_WHERE = _INBOX_WHERE
-_INBOX_WHERE += " AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id = f.face_id)"
+_INBOX_ELIGIBLE_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
+_INBOX_WHERE = _INBOX_ELIGIBLE_WHERE + " AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id = f.face_id)"
+
+
+def _inbox_where(quality_view: str, kind: str = "all") -> str:
+    if quality_view not in ("all", "clean"):
+        raise ApiError(VALIDATION_ERROR, "invalid quality view", status=422)
+    # The quality reason is itself the explicit recovery path. Manual decisions are
+    # always visible, and all/omitted retains the original API projection.
+    if quality_view == "clean" and kind != "quality":
+        return _INBOX_WHERE + " AND (" + qualifies_sql("f") + " OR " + _MANUAL_PROTECTED + ")"
+    return _INBOX_WHERE
 _INBOX_KINDS = {
     "all": "1 = 1",
     "suggested": "organization_reason IN ('BORDERLINE', 'NEAR_TIE', 'SAME_IMAGE_CONFLICT', 'OTHER_SUGGESTION')",
-    "quality": "organization_reason IN ('SMALL', 'BLURRY', 'LOW_DETECTION_SCORE', 'LOW_QUALITY')",
+    "quality": "organization_reason IN ('SMALL', 'BLURRY', 'LOW_DETECTION_SCORE', 'LOW_QUALITY') OR display_quality_reason = 'DISPLAY_LOW_QUALITY'",
     "manual": "organization_reason = 'MANUAL_UNASSIGNED'",
     "pending": "organization_reason IN ('NO_MATCH', 'WAITING_INDEX')",
 }
 
 
-def inbox_summary(catalog: Any) -> dict[str, Any]:
+def inbox_summary(catalog: Any, *, quality_view: str = "all") -> dict[str, Any]:
+    if quality_view not in ("all", "clean"):
+        raise ApiError(VALIDATION_ERROR, "invalid quality view", status=422)
     rows = catalog.read_all(
-        "SELECT organization_reason, COUNT(*) AS total FROM (SELECT CASE WHEN "
-        + _NOT_HELD
-        + " THEN "
-        + _ORGANIZATION_REASON
-        + " ELSE 'REDETECTION_HOLD' END AS organization_reason "
-        + _FACE_FROM
-        + "WHERE "
-        + _VISIBLE
-        + " AND "
-        + _NO_MEMBER
+        "SELECT reason, hidden, low_quality, COUNT(*) AS total FROM (SELECT "
+        "CASE WHEN " + _NOT_HELD + " THEN " + _ORGANIZATION_REASON
+        + " ELSE 'REDETECTION_HOLD' END AS reason, "
+        "EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id=f.face_id) AS hidden, "
+        "CASE WHEN " + _NOT_HELD + " AND " + fails_sql("f") + " AND NOT "
+        + _MANUAL_PROTECTED + " THEN 1 ELSE 0 END AS low_quality "
+        + _FACE_FROM + "WHERE " + _VISIBLE + " AND " + _NO_MEMBER
         + " AND (NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id=f.face_id) OR NOT ("
-        + _NOT_HELD
-        + "))"
-        + ") GROUP BY organization_reason",
+        + _NOT_HELD + "))"
+        + ") GROUP BY reason, hidden, low_quality",
         _VISIBILITY_PARAMETERS,
     )
-    counts = {str(row["organization_reason"]): int(row["total"]) for row in rows}
-    held = counts.pop("REDETECTION_HOLD", 0)
-    return {"total": sum(counts.values()), "reasons": counts, "held": held}
+    counts: dict[str, int] = {}
+    all_total = 0
+    quality_hidden = 0
+    held = 0
+    for row in rows:
+        count = int(row["total"])
+        reason = str(row["reason"])
+        if reason == "REDETECTION_HOLD":
+            held += count
+            continue
+        if bool(row["hidden"]):
+            continue
+        all_total += count
+        if int(row["low_quality"]):
+            quality_hidden += count
+            if quality_view == "clean":
+                continue
+        counts[reason] = counts.get(reason, 0) + count
+    total = all_total - quality_hidden if quality_view == "clean" else all_total
+    return {
+        "total": total,
+        "all_total": all_total,
+        "quality_hidden": quality_hidden,
+        "reasons": counts,
+        "held": held,
+        "quality_view": quality_view,
+    }
 
 
 def inbox_page(
-    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all"
+    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all", quality_view: str = "all"
 ) -> dict[str, Any]:
-    if kind not in _INBOX_KINDS:
+    if kind not in _INBOX_KINDS or quality_view not in ("all", "clean"):
         raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
     binding = ["faceinbox2", read_filter_revision(catalog.connection), kind]
+    if quality_view != "all":
+        binding.extend([quality_view, POLICY_REVISION])
     after = _position(cursor, binding, "")
     if not isinstance(after, str) or (
         after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))
@@ -579,7 +639,7 @@ def inbox_page(
         "SELECT * FROM ("
         + _SELECT_FACES
         + "WHERE f.face_id > ? AND "
-        + _INBOX_WHERE
+        + _inbox_where(quality_view, kind)
         + ") WHERE "
         + _INBOX_KINDS[kind]
         + " ORDER BY face_id LIMIT ?",
@@ -654,14 +714,14 @@ def set_inbox_visibility(catalog: Any, *, face_ids: list[str], hidden: bool) -> 
     return {"hidden": bool(hidden), "face_count": len(face_ids), "changed": changed}
 
 
-def _inbox_group_cte(kind: str, *, hidden: bool = False) -> tuple[str, tuple[Any, ...]]:
+def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "all") -> tuple[str, tuple[Any, ...]]:
     if kind not in _INBOX_KINDS:
         raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
     if hidden:
         eligible_source = _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id "
         parameters: tuple[Any, ...] = ()
     else:
-        eligible_source = _SELECT_FACES + "WHERE " + _INBOX_WHERE
+        eligible_source = _SELECT_FACES + "WHERE " + _inbox_where(quality_view, kind)
         parameters = _VISIBILITY_PARAMETERS
     eligible = (
         "SELECT inbox.*, (SELECT p.person_id FROM face_person_links AS l "
@@ -686,10 +746,14 @@ def _inbox_group_cte(kind: str, *, hidden: bool = False) -> tuple[str, tuple[Any
 
 
 def inbox_group_page(
-    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all"
+    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all", quality_view: str = "all"
 ) -> dict[str, Any]:
-    cte, visibility_parameters = _inbox_group_cte(kind)
+    if quality_view not in ("all", "clean"):
+        raise ApiError(VALIDATION_ERROR, "invalid quality view", status=422)
+    cte, visibility_parameters = _inbox_group_cte(kind, quality_view=quality_view)
     binding = ["faceinboxgroups1", read_filter_revision(catalog.connection), kind]
+    if quality_view != "all":
+        binding.extend([quality_view, POLICY_REVISION])
     after = _position(cursor, binding, None)
     if after is not None and (
         not isinstance(after, list) or len(after) != 2
@@ -709,7 +773,7 @@ def inbox_group_page(
     for row in rows:
         if row["card_type"] == "candidate_group":
             face = catalog.read_one(
-                _SELECT_FACES + "WHERE f.face_id = ? AND " + _INBOX_WHERE,
+                _SELECT_FACES + "WHERE f.face_id = ? AND " + _inbox_where(quality_view, kind),
                 (row["representative_face_id"], *_VISIBILITY_PARAMETERS),
             )
             cards.append({
@@ -721,7 +785,7 @@ def inbox_group_page(
             })
         else:
             face = catalog.read_one(
-                _SELECT_FACES + "WHERE f.face_id = ? AND " + _INBOX_WHERE,
+                _SELECT_FACES + "WHERE f.face_id = ? AND " + _inbox_where(quality_view, kind),
                 (row["face_id"], *_VISIBILITY_PARAMETERS),
             )
             cards.append({"type": "single_face", "photo_count": 1, "face": _face_view(catalog, face)})
@@ -734,13 +798,15 @@ def inbox_group_page(
 
 
 def inbox_group_faces(
-    catalog: Any, *, group_key: str, limit: int, cursor: str | None, kind: str = "all"
+    catalog: Any, *, group_key: str, limit: int, cursor: str | None, kind: str = "all", quality_view: str = "all"
 ) -> dict[str, Any]:
     if not group_key.startswith("candidate:") or not group_key[10:].isdigit():
         raise ApiError(VALIDATION_ERROR, "invalid candidate group", status=422)
     person_id = int(group_key[10:])
-    cte, visibility_parameters = _inbox_group_cte(kind)
+    cte, visibility_parameters = _inbox_group_cte(kind, quality_view=quality_view)
     binding = ["faceinboxgroupfaces1", read_filter_revision(catalog.connection), kind, person_id]
+    if quality_view != "all":
+        binding.extend([quality_view, POLICY_REVISION])
     after = _position(cursor, binding, "")
     if not isinstance(after, str) or (after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))):
         raise ApiError(INVALID_CURSOR, "invalid candidate group position", status=422)
