@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["avatars", "no_assigned_people"])
+@pytest.mark.parametrize("scenario", ["avatars", "no_assigned_people", "no_assigned_people_more"])
 def test_search_preview_people(scenario: str) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the search-preview interaction check"
@@ -42,17 +42,19 @@ const context = {
     createElement:tag => new Element(tag)},
   window:{location},
   fetch:async url => {
-    if (url === "/api/v1/assets/15/faces") return response({has_more:false,faces:
-      process.argv[1] === "no_assigned_people" ? [{face_id:fallbackFace,assigned_person_id:null}] : [
+    if (url === "/api/v1/assets/15/faces") return response({has_more:process.argv[1] === "no_assigned_people_more",faces:
+      process.argv[1].startsWith("no_assigned_people") ? [{face_id:fallbackFace,assigned_person_id:null}] : [
         {face_id:"c".repeat(64),assigned_person_id:7,assigned_person_name:"\u5988\u5988",thumbnail_url:"/api/v1/faces/"+"c".repeat(64)+"/thumbnail"},
         {face_id:"d".repeat(64),assigned_person_id:7,assigned_person_name:"\u5988\u5988",thumbnail_url:"/api/v1/faces/"+"d".repeat(64)+"/thumbnail"},
         {face_id:fallbackFace,assigned_person_id:8,assigned_person_name:"\u7238\u7238",thumbnail_url:"/api/v1/faces/"+fallbackFace+"/thumbnail"},
+        {face_id:"e".repeat(64),assigned_person_id:9,assigned_person_name:"\u5988\u5988",thumbnail_url:"/api/v1/faces/"+"e".repeat(64)+"/thumbnail"},
         {face_id:"e".repeat(64),assigned_person_id:null}
       ]});
     if (url === "/api/v1/assets/15") return response({asset_id:15,width:400,height:300,format:"jpeg",
       byte_size:1536,availability:"present",taken_time:{taken_at:"2025-01-02T03:04:05.000",label:"capture",camera:null}});
     if (url === "/api/v1/persons/7") return response({person_id:7,name:"\u5988\u5988",avatar_face_id:avatar});
     if (url === "/api/v1/persons/8") return response({person_id:8,name:"\u7238\u7238",avatar_face_id:null});
+    if (url === "/api/v1/persons/9") return response({person_id:9,canonical_person_id:7,name:"\u5988\u5988",avatar_face_id:avatar});
     throw new Error("unexpected URL " + url);
   },
 };
@@ -82,20 +84,26 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   await flush(); await flush(); await flush();
   assert.match(get("preview-image").src, /assets\/15\/preview/);
   assert.match(get("preview-info").textContent, /400 × 300.*JPEG.*1\.50 KB.*2025-01-02 03:04:05/);
-  if (process.argv[1] === "no_assigned_people") {
+  if (process.argv[1].startsWith("no_assigned_people")) {
     assert.equal(get("people").hidden, false);
     assert.ok(get("note").textContent.length > 0);
     assert.equal(get("list").children.length, 0);
+    if (process.argv[1] === "no_assigned_people_more") {
+      assert.match(get("note").textContent, /前 200 张人脸/);
+      assert.match(get("note").textContent, /更多人脸待检查/);
+    } else {
+      assert.match(get("note").textContent, /还没有已归属的人物/);
+    }
     return;
   }
   const cards = get("list").children;
-  assert.equal(cards.length, 2); // Duplicate faces for one person become one avatar.
+  assert.equal(cards.length, 2); // Duplicate faces and merged IDs become one canonical avatar.
   assert.equal(cards[0].children[1].textContent, "\u5988\u5988");
   assert.equal(cards[0].children[0].src, "/api/v1/faces/"+avatar+"/thumbnail?v=p4-search-person-link-a-1");
   assert.equal(cards[1].children[1].textContent, "\u7238\u7238\uff08\u6682\u7528\u8fd9\u5f20\u7167\u7247\u7684\u4eba\u8138\uff09");
   assert.equal(cards[1].children[0].src, "/api/v1/faces/"+fallbackFace+"/thumbnail?v=p4-search-person-link-a-1");
   cards[0].fire("click");
-  assert.equal(modal.open, false);
+  assert.equal(modal.open, true, "keep the source photo open for browser-back restoration");
   assert.equal(location.href, "/persons?person_id=7");
 })().catch(error => { console.error(error); process.exitCode=1; });
 """

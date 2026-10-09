@@ -689,7 +689,14 @@
         image.parentNode.replaceChild(fallback, image);
       }
     });
-    item.appendChild(image);
+    var photoOpen = element("button", "pa-face-photo-open");
+    photoOpen.type = "button";
+    photoOpen.setAttribute("aria-label", "查看所属照片 " + face.asset_id);
+    photoOpen.appendChild(image);
+    photoOpen.addEventListener("click", function () {
+      if (window.AIPhotoInfo) window.AIPhotoInfo.open(face.asset_id, { returnFocus: photoOpen });
+    });
+    item.appendChild(photoOpen);
 
     var body = element("div");
     var head = element("p", "card-head");

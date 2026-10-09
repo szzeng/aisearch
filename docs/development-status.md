@@ -30,10 +30,9 @@
 
 [执行卡](tasks/P4-SEARCH-PLACE-NL-A.md)、[规划](reports/P4-SEARCH-PLACE-NL-A-planning.md)、[实现与证据](reports/P4-SEARCH-PLACE-NL-A-implementation.md)。2026-10-08截图已证明地点页济南相册是“济南市·山东省·GPS行政区”，30张；搜索原选key根因由合成夹具复现：已验证的旧GeoNames映射key与CN相册key不同，解析选择了空成员旧key。现用当前ACTIVE包`cn_legacy_links`将经证明映射的旧名称/别名路由到同一CN facet，未映射地点仍独立。任务卡定向集合JUnit **58/0/0/0**、Ruff/Node/diff-check通过；未访问真实图库/catalog或重启用户服务，需用户刷新/重启服务后复测“济南的照片”。
 
-## 下一 READY：P4-PHOTO-VIEW-A — 全页面照片查看与信息（**源码核对与立卡完成，未实施**）
+## 当前照片查看交接：P4-PHOTO-VIEW-A — **IMPLEMENTED / 2项复核问题已修、1项重分类为防御性加固 / 合成浏览器小样本通过 / GPT-6独立复核完成 / 整卡验证待补**
 
-[执行卡](tasks/P4-PHOTO-VIEW-A.md)、[规划与现状](reports/P4-PHOTO-VIEW-A-planning.md)。2026-10-08用户要求每页照片缩略图可查看，显示基本信息/完整路径、有GPS的在线地图标记及可点人物头像；个人使用、简单测试。复用现有查看器/受保护资产与来源详情、GPS/人物接口，收敛一张卡：共享信息→所有入口接入→定向JUnit与8～12张合成浏览器。沿用地图在线瓦片授权，无新确认开关；不改身份/归属/坐标/分页协议，不默认全量/性能/打包/模型/真实库。推荐DS-H（DeepSeek V4.1 Flash / 高推理），用户手动选择后实施。本轮仅规划文档，产品未实施/测试；其他待审状态保持。
-
+[执行卡](tasks/P4-PHOTO-VIEW-A.md)、[实现报告](reports/P4-PHOTO-VIEW-A-implementation.md)、[复核结果](reports/P4-PHOTO-VIEW-A-review.md)、[DS-H复核卡](tasks/P4-PHOTO-VIEW-A-review.md)。GPT-6有界复核发现并已修复：首页详情Back返回原网格，跨人物页恢复来源/筛选/已加载页数/滚动；搜索界面增加canonical ID二次去重（只读faces API本身已归一canonical ID，前端二次去重属防御性），空人脸页按`has_more`如实提示。修复后定向JUnit **113/0/0/0**、Ruff/Node/diff-check通过。修复后真实浏览器复测覆盖首页Back、人物往返、搜索结果/预览恢复、canonical alias归并显示、空页`has_more`、合成地点相册照片入口、在线地图标记与不可达瓦片降级；使用`.tmp`合成数据，无连接用户实际PhotoSearchData或真实照片。用户已明确接受本轮GPT-6有界独立复核替代DS-H；报告记录了复核方式和边界。状态保持 **IMPLEMENTED / VALIDATION PENDING**，主卡完整浏览器验收组合仍待补。
 ## 当前人物交接：P4-PERSON-DETAIL-B + P4-PERSON-PERF-A — **ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PASS / DETAIL-B REVIEW PASS**
 
 [实现报告](reports/P4-PERSON-DETAIL-B-implementation.md)、[独立工程与终审结果](reports/P4-PERSON-DETAIL-B-review.md)、[聚焦终审卡](tasks/P4-PERSON-DETAIL-B-sol-review.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)。聚焦终审未发现阻塞：白名单/独立source世代、CONFIRMED产物与向量绑定、事务内人工保护、JPEG不可验证hold、旧机器有效成员及撤销后按实际spec重排均与ADR一致；DETAIL-B审查闭环PASS。复核既有JUnit 34/34/16/29项均0失败/错误/跳过及公开CPU JSON（仅v2↔source），未重跑套件或改产品代码。未验真实图库/PhotoSearchData、现场catalog升级、浏览器/重启、私人准确率、GPU/30万吞吐；不追认DETAIL-A独立整卡通过。人物列表逐人物查询仍是未测量的另线线索，本轮不自动接续。

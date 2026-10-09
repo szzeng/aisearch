@@ -61,8 +61,9 @@
       if (version !== photoVersion) return;
       body.assets.forEach(function (asset) {
         var card = el("article", "album-photo");
-        var image = el("img"); image.loading = "lazy"; image.alt = "照片预览"; image.src = api + "/assets/" + encodeURIComponent(asset.asset_id) + "/thumbnail";
-        image.addEventListener("click", function () { showPreview(asset.asset_id); }); card.appendChild(image);
+        var view = el("button", "album-photo-open"); view.type = "button"; view.setAttribute("aria-label", "查看照片 " + asset.asset_id);
+        var image = el("img"); image.loading = "lazy"; image.alt = ""; image.src = api + "/assets/" + encodeURIComponent(asset.asset_id) + "/thumbnail";
+        view.appendChild(image); view.addEventListener("click", function () { showPreview(asset.asset_id, view); }); card.appendChild(view);
         card.appendChild(el("small", null, "照片 #" + asset.asset_id));
         var correction = el("div", "album-correction");
         correction.appendChild(el("label", null, "更正地点"));
@@ -73,7 +74,8 @@
       cursor = body.next_cursor; more.hidden = !cursor;
     }).catch(function (error) { if (version === photoVersion) photos.appendChild(el("p", "error", error.message)); });
   }
-  function showPreview(assetId) {
+  function showPreview(assetId, returnFocus) {
+    if (window.AIPhotoInfo) { window.AIPhotoInfo.open(assetId, { returnFocus: returnFocus }); return; }
     var dialog = document.createElement("dialog"); dialog.className = "album-preview";
     var close = el("button", null, "关闭"); close.type = "button"; close.addEventListener("click", function () { dialog.close(); dialog.remove(); });
     var image = el("img"); image.alt = "照片预览"; image.src = api + "/assets/" + encodeURIComponent(assetId) + "/preview";

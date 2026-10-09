@@ -6,9 +6,12 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-nl-ux-a-1" />
-    <script src="/web/search.js?v=p4-search-nl-ux-a-1" defer></script>
+    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-view-a-3" />
+    <script src="/web/map-config.js" defer></script>
+    <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
+    <script src="/web/search.js?v=p4-photo-view-a-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -206,7 +209,7 @@
 
       <dialog id="search-preview" class="search-preview" aria-labelledby="search-preview-title">
         <div class="search-preview-heading"><h2 id="search-preview-title">查看照片</h2><button id="search-preview-close" type="button">关闭</button></div>
-        <img id="search-preview-image" alt="搜索结果照片大图" />
+        <div class="search-preview-layout"><img id="search-preview-image" alt="搜索结果照片大图" /><aside id="search-preview-photo-info" class="photo-info-panel"></aside></div>
         <p id="search-preview-info" class="search-preview-info" role="status" aria-live="polite"></p>
         <section id="search-preview-people" class="search-preview-people" aria-label="照片中的人物" hidden>
           <h3>照片中的人物</h3>

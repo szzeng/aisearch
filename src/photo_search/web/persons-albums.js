@@ -375,6 +375,7 @@
   }
   async function preview(id) {
     const seq = ++state.previewSeq; $("preview-faces").replaceChildren();
+    if (state.previewInfoMount) state.previewInfoMount.dispose();
     state.previewAssetId = id; state.previewListSeq = state.photoListSeq;
     $("review").hidden = true;
     $("preview-note").textContent = "正在读取这张照片的人脸……";
@@ -382,6 +383,7 @@
     image.onerror = () => { if (seq === state.previewSeq) { image.hidden = true; $("preview-note").textContent = "大图暂时不可用；照片来源可能已离线。"; } };
     image.src = mediaURL(photoURL(id, "preview"));
     if (!$("preview").open) $("preview").showModal();
+    if (typeof window !== "undefined" && window.AIPhotoInfo) state.previewInfoMount = window.AIPhotoInfo.render($("preview-photo-info"), id);
     updatePreviewNavigation();
     try {
       const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
@@ -626,6 +628,7 @@
     $("review").addEventListener("click", () => { $("preview").close(); const advanced = document.getElementById("advanced-tools"); advanced.open = true; advanced.querySelector("summary").focus(); });
     $("preview").addEventListener("close", () => {
       state.previewSeq++; state.previewAssetId = null; $("preview-image").removeAttribute("src");
+      if (state.previewInfoMount) state.previewInfoMount.dispose(); state.previewInfoMount = null;
       updatePreviewNavigation();
     });
     $("edit-form").addEventListener("submit", submitEdit);

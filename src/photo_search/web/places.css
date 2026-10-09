@@ -150,6 +150,8 @@ textarea {
 .picker .place-list {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
 }
+.album-photo-open { display:block; width:100%; padding:0; border:0; background:transparent; cursor:zoom-in; }
+.album-photo-open img { width:100%; aspect-ratio:1; object-fit:cover; background:#555; }
 .album-controls { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; margin:1rem 0; }
 .album-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:1rem; }
 .album-card { display:flex; flex-direction:column; text-align:left; overflow:hidden; padding:0; border:1px solid var(--border,#777); border-radius:.6rem; background:var(--panel,#222); cursor:pointer; }

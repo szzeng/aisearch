@@ -183,6 +183,8 @@ async def static_asset(path: str) -> Response:
             "map-boot.js",
             "map.css",
             "map-config.js",
+            "photo-info.js",
+            "photo-info.css",
         )
         else ASSET_CACHE_CONTROL
     )

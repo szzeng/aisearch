@@ -37,10 +37,11 @@
     if (reset) { box.textContent = ""; gridAssets = []; }
     (data.assets || []).forEach(function (a) {
       gridAssets.push(a);
-      var tile = document.createElement("article"), img = document.createElement("img"), button = document.createElement("button");
+      var tile = document.createElement("article"), img = document.createElement("img"), button = document.createElement("button"), imageButton = document.createElement("button");
       tile.className = "tile"; img.loading = "lazy"; img.src = a.thumbnail || ("/api/v1/assets/" + encodeURIComponent(a.asset_id) + "/thumbnail"); img.alt = "照片 " + a.asset_id;
       button.textContent = "查看照片"; button.onclick = function () { openAsset(a.asset_id); };
-      tile.appendChild(img); tile.appendChild(button); box.appendChild(tile);
+      imageButton.type = "button"; imageButton.className = "map-photo-open"; imageButton.setAttribute("aria-label", "查看照片 " + a.asset_id); imageButton.onclick = button.onclick; imageButton.appendChild(img);
+      tile.appendChild(imageButton); tile.appendChild(button); box.appendChild(tile);
     });
     cursor = data.next_cursor;
     $("more").hidden = !cursor && !clusterPaging;

@@ -296,6 +296,11 @@ main {
   background: rgb(127 127 127 / 12%);
   border-radius: var(--radius);
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: zoom-in;
 }
 
 .thumb-frame img {

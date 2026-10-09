@@ -14,6 +14,7 @@
 
   var API = "/api/v1";
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
+  var BROWSE_RETURN_KEY = "aisearch.home-browse-return.v1";
   var PAGE_SIZE = 50;
   var POLL_INTERVAL_MS = 700;
   var JOB_SCAN_LIMIT = 200;
@@ -85,7 +86,11 @@
       returnScrollY: 0,
       returnAssetId: "",
       returnAssetTop: null,
+      returnContext: null,
+      returnPending: false,
+      returnTargetCount: 0,
     },
+    detailRouteActive: false,
     pollTimer: null,
     //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
     refreshTimer: null,
@@ -430,6 +435,10 @@
         }
         renderSources();
         renderSourceOptions();
+        els.browseSource.value = state.browse.sourceId;
+        els.browseOrder.value = state.browse.order;
+        els.browseCaptureFrom.value = state.browse.captureFrom;
+        els.browseCaptureTo.value = state.browse.captureTo;
         setStatus(els.sourcesStatus, "");
       })
       .catch(function (failure) {
@@ -1245,6 +1254,7 @@
         state.browse.hasMore = Boolean(body.has_more);
         state.browse.loaded = true;
         state.browse.loading = false;
+        restoreBrowsePosition();
         renderCaptureState(body);
         setStatus(els.browseStatus, browseSummary());
         els.loadMore.hidden = !state.browse.hasMore;
@@ -1440,7 +1450,10 @@
 
   function buildTile(asset) {
     var tile = element("li", "card-tile");
-    var frame = element("div", "thumb-frame");
+    var frame = element("button", "thumb-frame");
+    frame.type = "button";
+    frame.setAttribute("aria-label", "查看照片 " + asset.asset_id);
+    frame.addEventListener("click", function () { showDetail(asset.asset_id); });
     frame.dataset.assetId = String(asset.asset_id);
     frame.dataset.relativeLabel = relativeLabel(asset);
     if (asset.availability === "missing") {
@@ -1494,11 +1507,70 @@
   }
 
   // --------------------------------------------------------------------- detail
+  function saveBrowseReturn(assetId) {
+    var snapshot = {
+      assetId: String(assetId),
+      sourceId: state.browse.sourceId,
+      order: state.browse.order,
+      captureFrom: state.browse.captureFrom,
+      captureTo: state.browse.captureTo,
+      scrollY: state.browse.returnScrollY,
+      returnAssetId: state.browse.returnAssetId,
+      returnAssetTop: state.browse.returnAssetTop,
+      count: state.browse.count,
+    };
+    state.browse.returnContext = snapshot;
+    try { window.sessionStorage.setItem(BROWSE_RETURN_KEY, JSON.stringify(snapshot)); } catch (_error) {}
+  }
+
+  function restoreBrowseReturn(assetId) {
+    var snapshot = null;
+    try { snapshot = JSON.parse(window.sessionStorage.getItem(BROWSE_RETURN_KEY) || "null"); } catch (_error) {}
+    if (!snapshot || String(snapshot.assetId) !== String(assetId)) return false;
+    state.browse.sourceId = String(snapshot.sourceId || "");
+    state.browse.order = String(snapshot.order || "time_desc");
+    state.browse.captureFrom = String(snapshot.captureFrom || "");
+    state.browse.captureTo = String(snapshot.captureTo || "");
+    state.browse.returnScrollY = Math.max(0, Number(snapshot.scrollY) || 0);
+    state.browse.returnAssetId = String(snapshot.returnAssetId || assetId);
+    state.browse.returnAssetTop = Number.isFinite(Number(snapshot.returnAssetTop)) ? Number(snapshot.returnAssetTop) : null;
+    state.browse.returnTargetCount = Math.max(0, Number(snapshot.count) || 0);
+    state.browse.returnContext = snapshot;
+    state.browse.returnPending = true;
+    state.browse.loaded = false;
+    return true;
+  }
+
+  function clearBrowseReturn() {
+    state.browse.returnContext = null;
+    try { window.sessionStorage.removeItem(BROWSE_RETURN_KEY); } catch (_error) {}
+  }
+
+  function restoreBrowsePosition() {
+    if (!state.browse.returnPending || !state.browse.loaded) return;
+    if (state.browse.count < state.browse.returnTargetCount && state.browse.hasMore) {
+      loadBrowse(false);
+      return;
+    }
+    state.browse.returnTargetCount = 0;
+    state.browse.returnPending = false;
+    window.requestAnimationFrame(function () {
+      var scrollY = state.browse.returnScrollY;
+      var returnTile = els.assetGrid.querySelector('[data-asset-id="' + state.browse.returnAssetId + '"]');
+      if (returnTile && state.browse.returnAssetTop !== null) {
+        scrollY += returnTile.getBoundingClientRect().top - state.browse.returnAssetTop;
+      }
+      window.scrollTo(0, Math.max(0, scrollY));
+    });
+  }
+
   function showDetail(assetId) {
     state.browse.returnScrollY = window.scrollY || window.pageYOffset || 0;
     var returnTile = els.assetGrid.querySelector('[data-asset-id="' + String(assetId) + '"]');
     state.browse.returnAssetId = String(assetId);
     state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
+    state.detailRouteActive = true;
+    saveBrowseReturn(assetId);
     var target = "#/asset/" + assetId;
     if (location.hash === target) {
       renderDetail(assetId);
@@ -1512,13 +1584,16 @@
     showView("detail");
     window.scrollTo(0, 0);
     state.detailPreviewFit = null;
+    if (state.detailInfoMount) state.detailInfoMount.dispose();
+    var detailSeq = state.detailSeq = (state.detailSeq || 0) + 1;
     els.detailBody.textContent = "";
     els.detailBody.appendChild(element("p", "state-block", "正在读取图片详情…"));
     request("/assets/" + encodeURIComponent(assetId))
       .then(function (result) {
-        drawDetail(result.body || {}, assetId);
+        if (state.detailSeq === detailSeq) drawDetail(result.body || {}, assetId);
       })
       .catch(function (failure) {
+        if (state.detailSeq !== detailSeq) return;
         els.detailBody.textContent = "";
         els.detailBody.appendChild(
           element("p", "error", "读取图片详情失败：" + describe(failure))
@@ -1561,10 +1636,18 @@
     figure.appendChild(holder);
     var caption = element("figcaption", "hint", "正在加载预览…");
     figure.appendChild(caption);
-    els.detailBody.appendChild(figure);
-    var geoHost = element("section", "detail-map-block", "");
-    renderDetailMap(body, assetId, geoHost);
-    els.detailBody.appendChild(geoHost);
+    var viewer = element("div", "detail-viewer-layout");
+    viewer.appendChild(figure);
+    var infoHost = element("aside", "photo-info-panel", "");
+    viewer.appendChild(infoHost);
+    els.detailBody.appendChild(viewer);
+    if (window.AIPhotoInfo) {
+      state.detailInfoMount = window.AIPhotoInfo.render(infoHost, assetId);
+    }
+    var advanced = element("details", "detail-advanced");
+    var advancedTitle = element("summary", null, "更多信息与位置记录");
+    advanced.appendChild(advancedTitle);
+    els.detailBody.appendChild(advanced);
 
     var preview = { image: null, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit" };
     function applyScale(scale) {
@@ -1676,7 +1759,7 @@
       factsList.appendChild(element("dd", null, pair[1]));
     });
     facts.appendChild(factsList);
-    els.detailBody.appendChild(facts);
+    advanced.appendChild(facts);
 
     var capture = element("section", "detail-section");
     capture.appendChild(element("h3", null, "拍摄时间（EXIF）"));
@@ -1724,7 +1807,7 @@
         "原始 EXIF 时间文本不会通过接口返回；这里显示的是规范化后的墙上时间，排序键也不是 UTC 时刻。"
       )
     );
-    els.detailBody.appendChild(capture);
+    advanced.appendChild(capture);
 
     var locations = element("section", "detail-section");
     locations.appendChild(element("h3", null, "全部文件位置"));
@@ -1743,7 +1826,7 @@
       )
     );
     locations.appendChild(openOriginal);
-    els.detailBody.appendChild(locations);
+    advanced.appendChild(locations);
 
     var media = element("section", "detail-section");
     media.appendChild(element("h3", null, "产物状态"));
@@ -1764,46 +1847,7 @@
       mediaList.appendChild(element("dd", null, detail));
     });
     media.appendChild(mediaList);
-    els.detailBody.appendChild(media);
-  }
-
-  function renderDetailMap(asset, assetId, host) {
-    if (!asset || asset.availability !== "present" || !Array.isArray(asset.locations) ||
-        !asset.locations.some(function (location) { return location.availability === "PRESENT"; })) return;
-    request("/map/assets?asset_id=" + encodeURIComponent(assetId) + "&limit=1")
-      .then(function (membership) {
-        if (!membership.body || membership.body.total !== 1) return;
-        return request("/assets/" + encodeURIComponent(assetId) + "/geo").then(function (result) {
-          var body = result.body || {}, point = body.normalized_wgs84;
-          if (body.status !== "VALID" || body.input_revision !== asset.sha256 ||
-              !["WGS84", "ASSUMED_WGS84"].includes(body.datum_status) || !point) return;
-          var heading = element("h3", null, "拍摄位置");
-          var link = element("a", "nav-link", "在地图相册中查看");
-          link.href = "/map?asset_id=" + encodeURIComponent(assetId);
-          var canvas = element("div", "detail-map-canvas", "");
-          canvas.style.height = "220px";
-          host.appendChild(heading); host.appendChild(link); host.appendChild(canvas);
-          var css = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.css";
-          if (!document.querySelector('link[href="' + css + '"]')) {
-            var stylesheet = document.createElement("link"); stylesheet.rel = "stylesheet"; stylesheet.href = css;
-            document.head.appendChild(stylesheet);
-          }
-          function drawMiniMap(ml) {
-            var detailMap = new ml.Map({container: canvas, center: [point.longitude, point.latitude], zoom: 12,
-              interactive: false, attributionControl: true, style: {version: 8,
-                sources: {osm: {type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-                  tileSize: 256, attribution: "© OpenStreetMap contributors"}},
-                layers: [{id: "osm", type: "raster", source: "osm"}]}});
-            detailMap.on("load", function () {
-              detailMap.addSource("asset-point", {type:"geojson",data:{type:"FeatureCollection",features:[
-                {type:"Feature",geometry:{type:"Point",coordinates:[point.longitude,point.latitude]},properties:{}}]}});
-              detailMap.addLayer({id:"asset-point",type:"circle",source:"asset-point",paint:{"circle-radius":7,"circle-color":"#dc3545","circle-stroke-color":"#fff","circle-stroke-width":2}});
-            });
-          }
-          if (window.maplibregl) drawMiniMap(window.maplibregl);
-          else { var script = document.createElement("script"); script.src = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.js"; script.onload = function () { drawMiniMap(window.maplibregl); }; script.onerror = function () { canvas.textContent = "地图暂不可用"; }; document.head.appendChild(script); }
-        });
-      }).catch(function () {});
+    advanced.appendChild(media);
   }
 
   function placeImage(holder, url, altText, onLoaded) {
@@ -1890,6 +1934,11 @@
   }
 
   function showView(name) {
+    if (name !== "detail" && state.detailInfoMount) {
+      state.detailInfoMount.dispose();
+      state.detailInfoMount = null;
+      state.detailSeq = (state.detailSeq || 0) + 1;
+    }
     ["sources", "browse", "detail"].forEach(function (view) {
       var section = els.views[view];
       var active = view === name;
@@ -1907,8 +1956,20 @@
   function handleHash() {
     var match = /^#\/asset\/(\d+)$/.exec(String(location.hash || ""));
     if (match) {
+      state.detailRouteActive = true;
+      if (!state.browse.returnContext) restoreBrowseReturn(match[1]);
       renderDetail(match[1]);
       return;
+    }
+    if (state.detailRouteActive) {
+      state.detailRouteActive = false;
+      if (state.browse.returnContext) {
+        state.browse.returnPending = true;
+        showView("browse");
+        restoreBrowsePosition();
+        clearBrowseReturn();
+        return;
+      }
     }
     showView("sources");
   }
@@ -2006,6 +2067,8 @@
     els.navButtons.forEach(function (button) {
       button.addEventListener("click", function () {
         clearHash();
+        state.detailRouteActive = false;
+        clearBrowseReturn();
         showView(button.dataset.view);
       });
     });
@@ -2024,17 +2087,11 @@
         return;
       }
       clearHash();
+      state.detailRouteActive = false;
       showView("browse");
-      window.requestAnimationFrame(function () {
-        var scrollY = state.browse.returnScrollY;
-        var returnTile = els.assetGrid.querySelector(
-          '[data-asset-id="' + state.browse.returnAssetId + '"]'
-        );
-        if (returnTile && state.browse.returnAssetTop !== null) {
-          scrollY += returnTile.getBoundingClientRect().top - state.browse.returnAssetTop;
-        }
-        window.scrollTo(0, Math.max(0, scrollY));
-      });
+      state.browse.returnPending = true;
+      restoreBrowsePosition();
+      clearBrowseReturn();
     });
     document.getElementById("view-all-galleries").addEventListener("click", function () {
       state.browse.sourceId = "";

@@ -1313,6 +1313,7 @@
           intentPlan: state.search.intentPlan,
           binding: state.search.binding,
           lastBody: state.search.lastBody,
+          previewAssetId: state.search.preview.assetId,
           scrollY: window.scrollY || 0,
         })
       );
@@ -1372,6 +1373,7 @@
     renderPage(body, false);
     window.requestAnimationFrame(function () {
       window.scrollTo(0, Number(saved.scrollY) || 0);
+      if (saved.previewAssetId) openSearchPreview(saved.previewAssetId);
     });
   }
 
@@ -1462,6 +1464,7 @@
   function openSearchPreview(assetId) {
     var preview = state.search.preview;
     var seq = ++preview.seq;
+    if (preview.infoMount) preview.infoMount.dispose();
     preview.assetId = assetId;
     preview.listSeq = preview.listVersion;
     preview.moving = false;
@@ -1484,6 +1487,9 @@
     image.src =
       "/api/v1/assets/" + encodeURIComponent(assetId) + "/preview?v=p4-search-person-link-a-1";
     if (!els.searchPreview.open) els.searchPreview.showModal();
+    if (window.AIPhotoInfo) preview.infoMount = window.AIPhotoInfo.render(
+      document.getElementById("search-preview-photo-info"), assetId, { people: false }
+    );
     updateSearchPreviewNavigation();
     loadPreviewPeople(assetId, seq);
     request("/assets/" + encodeURIComponent(assetId)).then(function (result) {
@@ -1560,14 +1566,23 @@
     }).then(function (loaded) {
       if (!loaded || previewSeq !== preview.seq || peopleSeq !== preview.peopleSeq || !els.searchPreview.open) return;
       if (!loaded.people.length) {
-        text(els.searchPreviewPeopleNote, "这张照片里还没有已归属的人物。");
+        text(
+          els.searchPreviewPeopleNote,
+          loaded.hasMoreFaces
+            ? "前 200 张人脸中还没有已归属人物；还有更多人脸待检查。"
+            : "这张照片里还没有已归属的人物。"
+        );
         return;
       }
+      var canonicalIds = {};
       loaded.people.forEach(function (entry) {
         var face = entry.face;
         var person = entry.person || {};
-        var personId = Number(person.person_id || face.assigned_person_id);
+        var personId = Number(person.canonical_person_id || person.person_id || face.assigned_person_id);
         if (!isFinite(personId) || personId < 1) return;
+        var canonicalKey = String(personId);
+        if (canonicalIds[canonicalKey]) return;
+        canonicalIds[canonicalKey] = true;
         var avatarId = /^[a-f0-9]{64}$/.test(String(person.avatar_face_id || ""))
           ? person.avatar_face_id
           : null;
@@ -1585,7 +1600,7 @@
         card.appendChild(image);
         card.appendChild(element("span", "", avatarId ? label : label + "（暂用这张照片的人脸）"));
         card.addEventListener("click", function () {
-          els.searchPreview.close();
+          prepareSearchDetailReturn();
           window.location.href = "/persons?person_id=" + encodeURIComponent(personId);
         });
         els.searchPreviewPeopleList.appendChild(card);
@@ -2154,6 +2169,8 @@
     els.searchPreviewPrev.addEventListener("click", function () { moveSearchPreview(-1); });
     els.searchPreviewNext.addEventListener("click", function () { moveSearchPreview(1); });
     els.searchPreview.addEventListener("close", function () {
+      if (state.search.preview.infoMount) state.search.preview.infoMount.dispose();
+      state.search.preview.infoMount = null;
       state.search.preview.seq += 1;
       state.search.preview.assetId = null;
       els.searchPreviewImage.removeAttribute("src");

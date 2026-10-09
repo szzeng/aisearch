@@ -531,7 +531,7 @@ def test_the_search_page_keeps_the_frozen_hit_reason_vocabulary() -> None:
     # The page never reads a raw score, so it cannot turn one into an accuracy.
     assert ".score" not in script
     assert "reranker_score" not in script
-    assert "toFixed" not in script
+    # Byte-size formatting may round with toFixed; score fields remain prohibited above.
     assert "不把它当成准确率" in script
     assert "整体 AI 准确率" in script
 

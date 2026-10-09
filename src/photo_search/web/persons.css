@@ -274,6 +274,8 @@ button.pa-person-card:hover { background: var(--bg); }
 }
 
 .pa-album-identity { display: flex; gap: 1rem; align-items: center; }
+.pa-face-photo-open { width: max-content; }
+.pa-preview .photo-info-panel { max-width: none; margin: .75rem 0; }
 .pa-photo-person { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; padding: .5rem; font-size: .8rem; }
 .pa-photo-person .pa-choice-avatar { width: 3rem; height: 3rem; }
 .pa-selected-person { outline: 2px solid #4268c9; background: #edf2ff; }
