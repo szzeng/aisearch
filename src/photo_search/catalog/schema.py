@@ -67,7 +67,10 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0021 adds a sourced OSM identity bridge to the existing assignment Place FK.
 # 0022 stores person-album visibility independently from person identity and face ownership.
 # 0023 stores per-detection inbox visibility independently from face identity and ownership.
-SUPPORTED_SCHEMA_VERSION = 23
+# 0024 stores durable person collections and their stable person-ID membership anchors.
+# 0025 upgrades collection identity allocation without changing the v24 contract in place.
+# 0026 adds a persistent collection-instance token for requests surviving v24 ID reuse.
+SUPPORTED_SCHEMA_VERSION = 26
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

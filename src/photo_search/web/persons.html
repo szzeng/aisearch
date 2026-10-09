@@ -12,7 +12,7 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
     <script src="/web/persons.js?v=p4-photo-view-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-inbox-hide-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-collection-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -34,6 +34,8 @@
         <div class="pa-heading"><div><h2>熟悉的人，都在这里</h2><p class="hint">点头像看照片；取个名字，下次直接搜。</p></div>
           <div class="row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
         </div>
+        <div class="row-actions" aria-label="人物合集"><button type="button" id="pa-collections-toggle">人物合集</button><button type="button" id="pa-collection-create">新建合集</button></div>
+        <section id="pa-collections-panel" hidden><p class="hint">合集只是放在一起看照片。</p><div id="pa-collections" class="pa-people-grid"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
         <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
         <p class="pa-sort-control"><label for="pa-person-sort">人物排序</label><select id="pa-person-sort"><option value="photos_desc" selected>照片最多优先</option><option value="person_id">默认顺序</option></select></p>
         <div class="row-actions" aria-label="人物批量管理">
@@ -41,6 +43,9 @@
           <button type="button" id="pa-hidden-toggle">查看已忽略</button>
           <span id="pa-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
           <button type="button" id="pa-visibility-submit" hidden disabled>忽略所选</button>
+          <select id="pa-collection-choice" hidden aria-label="加入哪个合集"><option value="">选择合集</option></select>
+          <label id="pa-collection-hide-label" hidden><input id="pa-collection-hide" type="checkbox" />加入后忽略</label>
+          <button type="button" id="pa-collection-add" hidden disabled>加入合集</button>
           <button type="button" id="pa-batch-cancel" hidden>取消选择</button>
         </div>
         <p id="pa-list-count" class="hint" role="status" aria-live="polite" hidden></p>
@@ -91,6 +96,8 @@
       </section>
       <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>
         <button id="pa-back" type="button">← 所有人物</button>
+        <div id="pa-collection-view-controls" class="row-actions" hidden><button id="pa-collection-photos-tab" type="button" aria-pressed="true">照片</button><button id="pa-collection-people-tab" type="button" aria-pressed="false">人物</button><button id="pa-collection-rename" type="button">改合集名称</button><button id="pa-collection-delete" type="button">删除合集</button></div>
+        <div id="pa-collection-people-actions" class="row-actions" hidden><span id="pa-collection-people-selected" class="hint"></span><button id="pa-collection-remove" type="button" disabled>移出所选</button><button id="pa-collection-selection-clear" type="button">清除选择</button></div><div id="pa-collection-people" class="pa-people-grid" hidden></div><button id="pa-collection-people-more" type="button" hidden>更多人物</button>
         <div class="pa-heading"><div class="pa-album-identity"><span id="pa-album-avatar"></span><div><h2 id="pa-title"></h2><p class="hint" id="pa-album-note"></p></div></div><div class="row-actions"><button id="pa-cover" type="button">更换封面</button><button id="pa-name" type="button">取名字</button><button id="pa-merge" type="button">这是同一个人</button></div></div>
         <form id="pa-search-photos" class="pa-search"><label class="sr-only" for="pa-photo-query">在这个人的照片中搜索</label><input id="pa-photo-query" type="search" maxlength="256" placeholder="在这个人的照片里找：海边、生日……" /><button>搜索照片</button><button id="pa-all-photos" type="button">全部照片</button></form>
         <p id="pa-photo-note" class="hint" role="status"></p><div id="pa-photos" class="pa-photo-grid"></div><button id="pa-photos-more" type="button" hidden>再看一些照片</button>

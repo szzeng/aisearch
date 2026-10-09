@@ -1,7 +1,11 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
-## 当前任务：P4-PERSON-INBOX-HIDDEN-GROUP-A — IMPLEMENTED / 定向验证通过
+## 当前任务：P4-PERSON-COLLECTION-A — FOCUSED REVIEW PASS / F1–F6 CLOSED；用户试用待确认
+
+[任务卡](tasks/P4-PERSON-COLLECTION-A.md)、[实施报告](reports/P4-PERSON-COLLECTION-A-implementation.md)、[聚焦审核报告](reports/P4-PERSON-COLLECTION-A-focused-review.md)。用户要求在当前会话继续审核；F6跨升级实例保护已复核关闭，F1–F5保持关闭。独立定向JUnit 13/0/0/0：旧v24已空/删除最大ID后升级复用、旧人物/照片游标拒绝、六类实例API错误token及旧路径零写入、token不可变/重启保持、数据/FK与直接API/DOM通过。修复轮22/0/0/0已核对。限工程/合成聚焦范围，未宣称DS-H或指定Sol模型终审；真实页面试用与总验收仍待确认。未改产品代码、未跑全仓/真实图库/浏览器/模型，未提交/推送；不自动启动其他任务。
+
+## 前序完成：P4-PERSON-INBOX-HIDDEN-GROUP-A — PASS / 用户试用确认
 
 [任务卡](tasks/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)、[报告](reports/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)。已忽略人脸按当前首选有效 SUGGESTED 候选聚合，组卡与组内均分页；原隐藏平铺 API 兼容，恢复仍是逐 face_id。定向 JUnit 2/0/0/0，Ruff/Node/diff-check通过，用户已确认真实页面功能可用。未访问PhotoSearchData或现有服务，未提交/推送。
 

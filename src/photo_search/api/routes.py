@@ -64,6 +64,8 @@ from photo_search.api.models import (
     MappingListResponse,
     MappingOperationResponse,
     PageCapabilitiesResponse,
+    PersonCollectionMembersRequest,
+    PersonCollectionNameRequest,
     PersonCoverRequest,
     PersonListResponse,
     PersonMergeRequest,
@@ -159,6 +161,7 @@ from photo_search.media.status import (
 )
 from photo_search.ocr.weights import weights_present as ocr_weights_present
 from photo_search.persons import albums as person_albums
+from photo_search.persons import collections as person_collections
 from photo_search.persons.read import (
     clamp_page_limit as clamp_person_limit,
 )
@@ -1366,6 +1369,81 @@ async def browse_persons(
         limit=clamp_person_limit(limit),
         cursor=cursor,
         visibility=visibility,
+    )
+
+
+@router.get("/persons/collections", summary="List personal person collections")
+async def list_person_collections(
+    request: Request, limit: int = 40, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_collections.list_collections(service_of(request).catalog, limit=limit, cursor=cursor)
+
+
+@router.post("/persons/collections", summary="Create a personal person collection")
+async def create_person_collection(
+    request: Request, payload: PersonCollectionNameRequest
+) -> dict[str, Any]:
+    return person_collections.create_collection(service_of(request).catalog, payload.name)
+
+
+@router.get("/persons/collections/{collection_id}/{instance_token}", summary="Read a person collection instance")
+async def get_person_collection(
+    request: Request, collection_id: int, instance_token: str
+) -> dict[str, Any]:
+    return person_collections.collection_detail(
+        service_of(request).catalog, collection_id, instance_token=instance_token
+    )
+
+
+@router.patch("/persons/collections/{collection_id}/{instance_token}", summary="Rename a person collection")
+async def patch_person_collection(
+    request: Request, collection_id: int, instance_token: str, payload: PersonCollectionNameRequest
+) -> dict[str, Any]:
+    return person_collections.rename_collection(
+        service_of(request).catalog, collection_id, payload.name, instance_token=instance_token
+    )
+
+
+@router.delete("/persons/collections/{collection_id}/{instance_token}", summary="Delete a person collection instance")
+async def remove_person_collection(
+    request: Request, collection_id: int, instance_token: str
+) -> dict[str, Any]:
+    return person_collections.delete_collection(
+        service_of(request).catalog, collection_id, instance_token=instance_token
+    )
+
+
+@router.post("/persons/collections/{collection_id}/{instance_token}/members", summary="Add or remove collection members")
+async def edit_person_collection_members(
+    request: Request, collection_id: int, instance_token: str, payload: PersonCollectionMembersRequest
+) -> dict[str, Any]:
+    return person_collections.edit_members(
+        service_of(request).catalog,
+        collection_id,
+        instance_token=instance_token,
+        action=payload.action,
+        person_ids=payload.person_ids,
+        hide_after_add=payload.hide_after_add,
+    )
+
+
+@router.get("/persons/collections/{collection_id}/{instance_token}/people", summary="Page the people in a collection")
+async def person_collection_people(
+    request: Request, collection_id: int, instance_token: str, limit: int = 40, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_collections.people_page(
+        service_of(request).catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor
+    )
+
+
+@router.get("/persons/collections/{collection_id}/{instance_token}/photos", summary="Page collection photos")
+async def person_collection_photos(
+    request: Request, collection_id: int, instance_token: str, limit: int = 60, cursor: str | None = None
+) -> dict[str, Any]:
+    service = service_of(request)
+    return person_collections.photo_page(
+        service.catalog, service.media_cache(), collection_id,
+        instance_token=instance_token, limit=limit, cursor=cursor
     )
 
 

@@ -830,6 +830,27 @@ class PersonVisibilityResponse(BaseModel):
     changed: int
 
 
+class PersonCollectionNameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: StrictStr
+
+
+class PersonCollectionMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["add", "remove"]
+    person_ids: list[StrictInt] = Field(min_length=1, max_length=500)
+    hide_after_add: StrictBool = False
+
+    @field_validator("person_ids")
+    @classmethod
+    def valid_collection_person_ids(cls, value: list[int]) -> list[int]:
+        if any(person_id <= 0 for person_id in value) or len(set(value)) != len(value):
+            raise ValueError("person_ids must be distinct positive integers")
+        return value
+
+
 class PersonUndoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

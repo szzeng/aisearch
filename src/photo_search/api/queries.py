@@ -23,6 +23,7 @@ from photo_search.catalog.errors import (
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
+from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places import revision as revision_module
 from photo_search.places.filter import place_condition
 from photo_search.search import documents as search_documents
@@ -178,6 +179,27 @@ def locations_by_asset(catalog: Any, asset_ids: list[int]) -> dict[int, list[dic
     return grouped
 
 
+def _collection_condition(collection_id: int) -> tuple[str, tuple[int]]:
+    """Fixed, set-based person-collection filter used only by the collection album path."""
+    sql = (
+        "a.asset_id IN (SELECT DISTINCT f.asset_id FROM faces AS f "
+        "JOIN face_person_links AS l ON l.face_id = f.face_id "
+        "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
+        "WHERE member_asset.state = 'ACTIVE' AND l.person_id IN ("
+        "WITH RECURSIVE chain(origin_id, person_id, merged_into, path) AS ("
+        "SELECT m.person_id, p.person_id, p.merged_into, ',' || p.person_id || ',' "
+        "FROM person_collection_members AS m JOIN persons AS p ON p.person_id = m.person_id "
+        "WHERE m.collection_id = ? UNION ALL "
+        "SELECT c.origin_id, p.person_id, p.merged_into, c.path || p.person_id || ',' "
+        "FROM chain AS c JOIN persons AS p ON p.person_id = c.merged_into "
+        "WHERE c.merged_into IS NOT NULL AND instr(c.path, ',' || p.person_id || ',') = 0) "
+        "SELECT DISTINCT person_id FROM chain WHERE merged_into IS NULL) AND "
+        + MEMBER_PREDICATE
+        + ")"
+    )
+    return sql, (int(collection_id),)
+
+
 def summarize_asset(
     cache: MediaCache,
     *,
@@ -229,6 +251,7 @@ def asset_page(
     capture_from: str | None = None,
     capture_to_exclusive: str | None = None,
     person_ids: tuple[int, ...] = (),
+    collection_id: int | None = None,
 ) -> dict[str, Any]:
     """One bounded page of assets in a stable, caller-selected order.
 
@@ -296,6 +319,13 @@ def asset_page(
         person_sql, person_parameters = person_condition(SearchScope.build(person_ids=person_ids))
         place_sql = f"({place_sql}) AND ({person_sql})"
         place_parameters = [*place_parameters, *person_parameters]
+    if collection_id is not None:
+        # Keep the collection filter as one indexed, set-based predicate. Stable member
+        # anchors are recursively resolved at read time so merge/undo needs no collection
+        # side effects and large collections never cross the ordinary 100-person search cap.
+        collection_sql, collection_parameters = _collection_condition(collection_id)
+        place_sql = f"({place_sql}) AND ({collection_sql})"
+        place_parameters = [*place_parameters, *collection_parameters]
     # ADR-0005 §10: the ``suggested`` state has its own revision. A continuation (or a page)
     # that was computed under a different visible candidate set must be re-queried instead of
     # silently mixing two versions of the answer.

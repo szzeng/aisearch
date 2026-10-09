@@ -67,6 +67,8 @@ CORE_TABLES = {
     "face_redetection_groups",
     "face_redetection_mappings",
     "faces",
+    # P4-PERSON-INBOX-HIDE-A: visibility is independent for each detected face.
+    "face_inbox_hidden",
     "file_locations",
     # P4-PLACE-MAP-A materialized membership revision (0017).
     "map_member_revision",
@@ -95,6 +97,9 @@ CORE_TABLES = {
     "face_exclusions",
     "person_aliases",
     "person_hidden",
+    # P4-PERSON-COLLECTION-A: stable person anchors and collection metadata.
+    "person_collections",
+    "person_collection_members",
     "person_operation_items",
     "person_operations",
     "place_aliases",
@@ -194,6 +199,9 @@ def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Pa
     migrate_database(db_path, data_root=_data_root(tmp_path))
     connection = connect_rw(db_path)
     try:
+        connection.execute("DROP TABLE person_collection_members")
+        connection.execute("DROP TABLE person_collections")
+        connection.execute("DROP TABLE face_inbox_hidden")
         connection.execute("DROP TABLE person_hidden")
         connection.execute(
             "UPDATE metadata SET value = '21' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
@@ -209,15 +217,116 @@ def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Pa
     result = migrate_database(db_path, data_root=_data_root(tmp_path))
 
     assert result.previous_version == 21
-    assert result.schema_version == 22
-    assert result.applied == (22,)
+    assert result.schema_version == SUPPORTED
+    assert result.applied == tuple(range(22, SUPPORTED + 1))
     connection = open_readonly(db_path)
     try:
         assert connection.execute("SELECT COUNT(*) FROM persons").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM person_hidden").fetchone()[0] == 0
-        schema.verify_schema(connection, 22)
+        assert connection.execute("SELECT COUNT(*) FROM person_collections").fetchone()[0] == 0
+        schema.verify_schema(connection, SUPPORTED)
     finally:
         connection.close()
+
+
+def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp_path: Path) -> None:
+    db_path = _db_path(tmp_path)
+    migrate_database(db_path, data_root=_data_root(tmp_path))
+    connection = connect_rw(db_path)
+    try:
+        connection.execute("DROP TABLE person_collection_members")
+        connection.execute("DROP TABLE person_collections")
+        connection.executescript(
+            (schema.MIGRATIONS_DIR / "0024_person_collections.sql").read_text(encoding="utf-8")
+        )
+        person_id = int(connection.execute(
+            "INSERT INTO persons(name, name_key, avatar_face_id, merged_into, revision, "
+            "created_at, updated_at) VALUES (NULL, NULL, NULL, NULL, 1, 1, 1)"
+        ).lastrowid)
+        collection_id = 41
+        connection.execute(
+            "INSERT INTO person_collections(collection_id, name, name_key, revision, created_at, updated_at) "
+            "VALUES (?, '保留合集', 'nfc1:保留合集', 7, 10, 20)", (collection_id,)
+        )
+        deleted_id = collection_id + 1
+        connection.execute(
+            "INSERT INTO person_collections(collection_id, name, name_key, revision, created_at, updated_at) "
+            "VALUES (?, '升级前已删除', 'nfc1:升级前已删除', 1, 10, 10)", (deleted_id,)
+        )
+        connection.execute("DELETE FROM person_collections WHERE collection_id = ?", (deleted_id,))
+        connection.execute(
+            "INSERT INTO person_collection_members(collection_id, person_id) VALUES (?, ?)",
+            (collection_id, person_id),
+        )
+        connection.execute(
+            "UPDATE metadata SET value = '24' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert result.previous_version == 24
+    assert result.schema_version == SUPPORTED
+    assert result.applied == (25, 26)
+    assert result.backup_path is not None
+    backup = open_readonly(result.backup_path)
+    try:
+        schema.verify_schema(backup, 24)
+        assert backup.execute(
+            "SELECT person_id FROM person_collection_members WHERE collection_id = ?",
+            (collection_id,),
+        ).fetchone()["person_id"] == person_id
+    finally:
+        backup.close()
+
+    catalog = Catalog.open(db_path, data_root=_data_root(tmp_path))
+    try:
+        assert catalog.schema_version == SUPPORTED
+        row = catalog.read_one(
+            "SELECT name, revision, created_at, updated_at FROM person_collections WHERE collection_id = ?",
+            (collection_id,),
+        )
+        assert tuple(row) == ("保留合集", 7, 10, 20)
+        assert catalog.read_one(
+            "SELECT person_id FROM person_collection_members WHERE collection_id = ?",
+            (collection_id,),
+        )["person_id"] == person_id
+        from photo_search.persons import collections
+
+        collection_token = str(catalog.read_one(
+            "SELECT instance_token FROM person_collections WHERE collection_id = ?", (collection_id,)
+        )["instance_token"])
+        collections.delete_collection(catalog, collection_id, instance_token=collection_token)
+        replacement_record = collections.create_collection(catalog, "迁移后新合集")["collection"]
+        replacement = replacement_record["collection_id"]
+        # AUTOINCREMENT cannot recover a v24 deleted high-water ID. The durable instance
+        # token protects stale operations and cursors even when that integer is reused.
+        assert replacement == deleted_id
+        assert len(replacement_record["instance_token"]) == 32
+        from photo_search.persons.collections import _encode, people_page
+        from photo_search.places.revision import read_filter_revision
+        from photo_search.api.errors import ApiError
+
+        stale_v24_cursor = _encode(
+            "pcp1", [deleted_id, 1, read_filter_revision(catalog.connection)], 1
+        )
+        with pytest.raises(ApiError) as stale_cursor_error:
+            people_page(
+                catalog, replacement, instance_token=replacement_record["instance_token"],
+                cursor=stale_v24_cursor,
+            )
+        assert stale_cursor_error.value.status == 409
+        with pytest.raises(ApiError) as stale_instance_error:
+            collections.delete_collection(catalog, replacement, instance_token="")
+        assert stale_instance_error.value.status == 404
+        assert catalog.read_one(
+            "SELECT collection_id FROM person_collections WHERE collection_id = ?", (replacement,)
+        ) is not None
+        schema.verify_schema(catalog.connection, SUPPORTED)
+        assert catalog.connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        catalog.close()
 
 
 def test_versioned_database_with_missing_core_object_is_inconsistent(tmp_path: Path) -> None:
