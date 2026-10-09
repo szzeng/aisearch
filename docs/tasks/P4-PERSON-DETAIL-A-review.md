@@ -1,6 +1,8 @@
 # P4-PERSON-DETAIL-A — 手动原图识别审查索引
 
-日期：2026-10-09。状态：**待审 / 已并入个人基础审查组；未新增PASS**。
+日期：2026-10-09。当前状态：**本卡工程面已在人物组审查通过；原任务真实效果/现场未验项保留**。
+
+最新结论见[人物组报告](../reports/P4-PERSONAL-REVIEW-PERSON-A.md)及[五组收口核对](../reports/P4-PERSONAL-REVIEW-closeout.md)。A独有手动入口已审，共享面复用B。下文为原审查边界，不重复启动已审面；本次仅同步索引，不新增测试或原任务总PASS。
 
 当前唯一执行入口：[PERSON组](P4-PERSONAL-REVIEW-PERSON-A.md)，共同规则：[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)。本索引替代旧卡的重复测试与多轮审查要求，不另开一轮。
 

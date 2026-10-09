@@ -1,6 +1,8 @@
 # P4-PLACE-MAP-A — 地图个人审查索引
 
-日期：2026-10-09。状态：**既有短审修复可复用；未审增量待核对**。
+日期：2026-10-09。当前状态：**地图工程新增面已在地点组审查通过；真实图库/性能/现场未验项保留**。
+
+最新结论见[地点组报告](../reports/P4-PERSONAL-REVIEW-PLACE-A.md)及[五组收口核对](../reports/P4-PERSONAL-REVIEW-closeout.md)，当前API/UI直接7/7及合成地图→详情→返回已记录。下文为原边界，不重复审已关闭项；本次仅同步索引，不新增测试或原任务总PASS。
 
 当前入口：[地点组](P4-PERSONAL-REVIEW-PLACE-A.md)，共同规则：[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)。[历史审查报告](../reports/P4-PLACE-MAP-A-review.md)的5项发现与6项回归核对后复用，不重新跑一轮全部地图组合。
 

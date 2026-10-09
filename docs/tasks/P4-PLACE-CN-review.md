@@ -1,6 +1,8 @@
 # P4-PLACE-CN — 中国地点包审查索引
 
-日期：2026-10-09。状态：**待审 / 已并入个人基础审查组；未新增PASS**。
+日期：2026-10-09。当前状态：**本卡工程面已在地点组审查通过；正式包交付/真实catalog等原待验项保留**。
+
+最新结论见[地点组报告](../reports/P4-PERSONAL-REVIEW-PLACE-A.md)及[五组收口核对](../reports/P4-PERSONAL-REVIEW-closeout.md)。下文为原审查边界，不重复启动已审面；本次仅同步索引，不新增测试或原任务总PASS。
 
 当前唯一执行入口：[PLACE组](P4-PERSONAL-REVIEW-PLACE-A.md)，共同规则：[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)。本索引替代旧卡的重复测试与多轮审查要求，不另开一轮。
 

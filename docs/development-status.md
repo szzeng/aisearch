@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 当前总览：五组个人范围工程审核已闭环
+
+[收口核对](reports/P4-PERSONAL-REVIEW-closeout.md)：人物、地点、搜索与查看、OCR、模型切换均有工程PASS记录；本次核对报告、已有JUnit与后续直接产品差异，没有新跑pytest或重复主审。模型组为用户指定个人短审，非DS-H/Sol结论。原真实能力/现场PENDING、全量B级未转绿继续保留。五组之外[人物合并重复反馈卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)仍READY / 未实施，不计已修复。总计划与旧审查索引已同步，未把原任务批量标总PASS。
+
 ## 本次完成：P4-02Y-L-IDENTITY-A-FIX — ENGINEERING REVIEW PASS / F1–F7 CLOSED
 
 [独立复核报告](reports/P4-02Y-L-review-dsh.md)、[修复卡](tasks/P4-02Y-L-IDENTITY-A-fix.md)、[实现报告](reports/P4-02Y-L-IDENTITY-A.md)。当前审核会话独立关闭 F6/F7：普通终态不可恢复、OCR handoff 专用 CAS、provider-unverified 持久拒绝均核对通过；F1–F5 保持关闭，未见新增阻塞问题。独立定向 JUnit 60/60 passed、0 failures/errors/skips，Ruff/diff-check 通过；实现轮 65/65 证据已核对。ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED，仅限工程与合成范围；真实 weights/session/GPU 仍 PENDING，不标 OCR 总 PASS。不另跑整轮 DS-H/Sol，不自动启动其他任务；未加载模型、访问真实图库/服务、提交或推送。
@@ -48,4 +52,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-按用户指示在当前会话完成个人范围模型切换短审，ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED；没有声称DS-H。审查修正W-Q遗留oracle，并补足CLI停机声明/受管lease拒绝测试，3项定向pytest通过。依据ADR-0003 §8与ADR-0013 §1/§7，当前不创建UpgradeRun的停机选择属于受控手动profile激活，不伪造升级run；未来run驱动激活仍须满足ADR-0013 §7。Qwen门限变更后的真实页面确认和其它原现场PENDING保持。未操作真实图库/用户服务/模型，无提交或推送。
+五组工程报告按用户授权的个人范围收口，转日常使用与具体反馈，不默认新增审核/性能/全量基线修绿/发行任务。模型组已记录ADR-0003/0013适用性解释及SOL_NOT_REQUIRED，当前不另立Sol卡；未来run驱动激活仍须遵守冻结门禁。真实模型/GPU、Qwen页面、头像、CN包及其它原现场项由用户另行决定何时核对；人物合并重复反馈卡未自动启动。本次只做报告/状态/索引核对与同步，未操作真实图库、服务或模型，未提交/推送。
