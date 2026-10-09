@@ -2,9 +2,9 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 人物合并重复反馈：P4-PERSON-MERGE-DEDUPE-A — DIAGNOSED / FIELD PENDING
+## 人物合并重复反馈：P4-PERSON-MERGE-DEDUPE-A — PASS
 
-[任务卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)、[报告](reports/P4-PERSON-MERGE-DEDUPE-A.md)。用户确认报告的是大照片卡片重复。正式合并 API 隔离合成回归覆盖共享合照＋A/B单人照、`limit=1`逐页、旧 ID 解析和正式撤销；合并后 3 个唯一 `asset_id`，双脸保留，撤销后双方各恢复 2 张。定向集成 14/0/0/0，Ruff/diff-check通过；没有复现实际现象，未改产品代码，不标PASS。待用户在原个人相册重试并反馈；未访问PhotoSearchData或现有服务。
+[任务卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)、[报告](reports/P4-PERSON-MERGE-DEDUPE-A.md)。正式合并 API 隔离合成回归覆盖共享合照＋A/B单人照、`limit=1`逐页、旧 ID 解析和正式撤销；合并后 3 个唯一 `asset_id`，双脸保留，撤销后双方各恢复 2 张。定向集成 14/0/0/0，Ruff/diff-check通过。用户随后在个人相册复测并反馈没问题，现场验收关闭；未改产品代码。未访问PhotoSearchData或现有服务。
 
 ## 新增实现：P4-PERSON-HIDE-A — IMPLEMENTED / PERSONAL-SCOPED IMPACT REVIEW PASS
 
