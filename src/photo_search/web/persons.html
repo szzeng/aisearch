@@ -12,7 +12,7 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
     <script src="/web/persons.js?v=p4-photo-view-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-photo-view-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-sort-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -35,6 +35,7 @@
           <div class="row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
         </div>
         <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
+        <p class="pa-sort-control"><label for="pa-person-sort">人物排序</label><select id="pa-person-sort"><option value="photos_desc" selected>照片最多优先</option><option value="person_id">默认顺序</option></select></p>
         <p id="pa-list-note" class="hint"></p>
         <div id="pa-cards" class="pa-people-grid"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>

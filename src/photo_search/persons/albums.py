@@ -244,17 +244,15 @@ def _photo_page_facts(
 
 
 def people_page(
-    catalog: Any, *, kind: str, q: str, limit: int, cursor: str | None
+    catalog: Any, *, kind: str, q: str, limit: int, cursor: str | None, sort: str = "person_id"
 ) -> dict[str, Any]:
-    if kind not in ("all", "named", "unnamed") or len(q) > 200:
+    if kind not in ("all", "named", "unnamed") or sort not in ("person_id", "photos_desc") or len(q) > 200:
         raise ApiError(VALIDATION_ERROR, "invalid person query", status=422)
     query = q.strip()
-    binding = ["people1", kind, query, read_filter_revision(catalog.connection)]
-    after = _position(cursor, binding, 0)
-    if type(after) is not int or after < 0:
-        raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
-    conditions = ["p.merged_into IS NULL", "p.person_id > ?"]
-    parameters: list[Any] = [after]
+    binding = ["people2", kind, query, sort, read_filter_revision(catalog.connection)]
+    after = _position(cursor, binding, 0 if sort == "person_id" else None)
+    conditions = ["p.merged_into IS NULL"]
+    parameters: list[Any] = []
     if kind == "named":
         conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":
@@ -276,18 +274,60 @@ def people_page(
             "(instr(p.name, ?) > 0 OR EXISTS (SELECT 1 FROM person_aliases AS a WHERE a.person_id = p.person_id AND instr(a.alias, ?) > 0))"
         )
         parameters.extend([query, query])
-    rows = catalog.read_all(
-        "SELECT p.* FROM persons AS p WHERE "
-        + " AND ".join(conditions)
-        + " ORDER BY p.person_id LIMIT ?",
-        (*parameters, limit + 1),
-    )
+    if sort == "person_id":
+        if type(after) is not int or after < 0:
+            raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
+        conditions.append("p.person_id > ?")
+        parameters.append(after)
+        rows = catalog.read_all(
+            "SELECT p.* FROM persons AS p WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY p.person_id LIMIT ?",
+            (*parameters, limit + 1),
+        )
+    else:
+        if after is not None:
+            if (
+                not isinstance(after, list)
+                or len(after) != 2
+                or any(type(value) is not int or value < 0 for value in after)
+            ):
+                raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
+            after_count, after_person_id = after
+        member_counts = (
+            "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
+            "FROM face_person_links AS l JOIN faces AS f ON f.face_id = l.face_id WHERE "
+            + MEMBER_PREDICATE
+            + " GROUP BY l.person_id)"
+        )
+        if after is not None:
+            conditions.append(
+                "(COALESCE(ec.asset_count, 0) < ? OR "
+                "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?))"
+            )
+            parameters.extend([after_count, after_count, after_person_id])
+        rows = catalog.read_all(
+            "WITH "
+            + member_counts
+            + " SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count "
+            "FROM persons AS p LEFT JOIN effective_counts AS ec ON ec.person_id = p.person_id WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
+            (*parameters, limit + 1),
+        )
     has_more = len(rows) > limit
     rows = rows[:limit]
+    last_position: Any = None
+    if has_more and rows:
+        if sort == "person_id":
+            last_position = int(rows[-1]["person_id"])
+        else:
+            last_position = [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])]
     return {
         "persons": _album_summaries(catalog.connection, rows),
         "has_more": has_more,
-        "next_cursor": _encode(binding, int(rows[-1]["person_id"])) if has_more else None,
+        "next_cursor": _encode(binding, last_position) if has_more else None,
+        "sort": sort,
     }
 
 

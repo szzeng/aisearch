@@ -1349,11 +1349,17 @@ async def browse_persons(
     request: Request,
     kind: str = "all",
     q: str = "",
+    sort: Literal["person_id", "photos_desc"] = "person_id",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
     return person_albums.people_page(
-        service_of(request).catalog, kind=kind, q=q, limit=clamp_person_limit(limit), cursor=cursor
+        service_of(request).catalog,
+        kind=kind,
+        q=q,
+        sort=sort,
+        limit=clamp_person_limit(limit),
+        cursor=cursor,
     )
 
 

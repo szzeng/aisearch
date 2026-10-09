@@ -1,0 +1,148 @@
+# Development status
+
+更新：2026-10-09。当前规则：主架构**需求修订 9**、执行策略**修订 11**。本文件只保留最新交接，目标 ≤100 行；旧记录见[原样归档](development-status-archive-2026-09-27.md)，默认不读全文。
+
+## 最近完成 P4-PERSON-SORT-A — **PASS（人物列表全局排序与合成回归）**
+
+[执行卡](tasks/P4-PERSON-SORT-A.md)、[实现与证据](reports/P4-PERSON-SORT-A.md)。人物列表新增服务端全局照片数降序及稳定分页，缺省 API 顺序不变；合成 API/最小 DOM 定向JUnit **17/0/0/0**、Ruff/Node/diff-check通过。额外全量 **2154/50 failures/43 errors/49 skipped**；与前一份全量JUnit失败/错误项目完全相同，新增0项。未访问PhotoSearchData或真实浏览器。下一人物高风险闭环仍为既有[P4-PERSON-DETAIL-B Sol focused review](tasks/P4-PERSON-DETAIL-B-sol-review.md)，建议 GPT-5.6 Sol/high，用户手动切换后单独继续。
+
+## 当前人物相册性能 P4-PERSON-ALBUM-PERF-A — **PASS（个人相册基础功能与小样本验证）**
+
+2026-10-09用户明确个人相册只做基础测试。按[限定验收](tasks/P4-PERSON-ALBUM-PERF-A.md)完成合成样本人物列表→人物相册→照片详情→前后切换→返回，图像可见；详情区域观察到合成临时库绝对路径，未在本次范围处理。浏览器夹具仅2张该人物照片，浏览器翻页未单独覆盖；既有定向集覆盖分页。真实 PhotoSearchData 未访问。全仓不先修绿、不新增性能/GPU/打包/多轮审查；[全量设计](plans/P4-TEST-BASELINE.md)及[地点基线卡](tasks/P4-TEST-BASELINE-PLACE-A.md)改为DEFERRED，[93项清单](reports/P4-TEST-BASELINE-inventory.json)保留。其他任务既有高风险审查状态不变。
+
+[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)、[实现与证据](reports/P4-PERSON-ALBUM-PERF-A-implementation.md)。人物页40人统计/封面与照片页60张时间/人脸改为限页批量读取；普通浏览不再读取来源和原图补识别状态，首屏少数图片优先加载。61图/42人合成API中位数2.52→1.82 ms、9.55→6.62 ms；真实图库图片可见与冷/热时间未测。既有定向JUnit **12/0/0/0**及Ruff/Node/diff-check通过。2026-10-09另完成一次隔离合成浏览器基本流程，截图中头像、照片缩略图与详情图可见；浏览器小夹具未测翻页，分页由定向测试覆盖。详情展示合成目录绝对路径，记录为观察项，本次不改。历史全量 **2152/50 failures/43 errors/49 skipped** 仍未通过且不作为个人收口前置；本次只标基础功能与小样本范围通过，不追认全仓/真实体感/发行。未访问PhotoSearchData。
+
+## 当前头像反馈 P4-PERSON-AVATAR-FIX-A — 原图人物头像409（**IMPLEMENTED / 定向验证通过 / 现场重启待确认**）
+
+[执行卡](tasks/P4-PERSON-AVATAR-FIX-A.md)、[原因与反例](reports/P4-PERSON-AVATAR-FIX-A.md)。头像路由漏查spec_revision，原图文档校验因此返回FACE_STATE_CONFLICT/face_frame_invalid；已补字段，保持原有checksum/内容/脸/profile门禁，不改人脸或归属、不重识别。普通/原图×GET/HEAD冷缓存反例修前原图失败，修后定向JUnit **29/0/0/0**、Ruff/diff-check通过。源码服务重启刷新后现场待确认，未访问私人照片/真实catalog、未推送；补充纳入DETAIL-B既有独立审查。
+
+## 最近完成 P4-SEARCH-NL-UX-A — 自然语言搜索与纯条件完整分页（**IMPLEMENTED / 定向验证通过 / 本机浏览器交互待补**）
+
+[执行卡](tasks/P4-SEARCH-NL-UX-A.md)、[实现报告](reports/P4-SEARCH-NL-UX-A-implementation.md)。新增确定性日期/人物解析和歧义选择；扩展个人 `/search/place-aware`，纯筛选 SQL keyset 分页完整覆盖5005项，不进 encoder 或搜索会话；语义搜索与旧 `/search` 契约保留。搜索页加入自然语言提示、可取消条件标签、高级筛选折叠和当前页有界窗口。定向JUnit **27/0/0/0**、Ruff、Node syntax、diff-check通过。浏览器能打开合成搜索页，但本机浏览器拦截 `/api/v1/session`，认证后交互与返回闭环待补；无真实图库、PhotoSearchData、模型/GPU访问。P4-PHOTO-VIEW-A实现已完成，浏览器闭环与独立DS-H复核状态见下节。
+
+## 最近完成 P4-SOURCE-RESUME-A / P4-SOURCE-PROGRESS-A — 来源建库入口与人物进度（**定向验证通过**）
+
+[入口任务卡](tasks/P4-SOURCE-RESUME-A.md)、[进度修复卡](tasks/P4-SOURCE-PROGRESS-A.md)、[进度实现报告](reports/P4-SOURCE-PROGRESS-A.md)。来源卡保留快速刷新并新增手动补齐建库；人物进度现统计 `image_face` 与 `image_face_detail_auto`，按当前 revision 和 distinct asset 聚合。来源建库集成JUnit **20/0/0/0**，Ruff/diff-check通过。未访问真实图库或 PhotoSearchData；应用服务重启与现场显示待用户确认。
+
+## 最近完成 P4-PLACE-SCHEMA-COMPAT — 地名包旧版本兼容收敛（**IMPLEMENTED / 定向验证通过**）
+
+[执行卡](tasks/P4-PLACE-SCHEMA-COMPAT.md)、[报告](reports/P4-PLACE-SCHEMA-COMPAT.md)。当前 schema21 的 0021 migration 经核对仅增加来源身份映射，不改包契约；GeoNames maximum16 与 CN 复合包 maximum18 由显式 floor16/review ceiling21 统一桥接。定向 JUnit **30/0/0/0**、Ruff、scoped diff-check 通过；合成复合包关闭再打开 CatalogService 后 Tokyo 与济南区县均可加载，包文件字节/mtime 不变。未访问 PhotoSearchData；未跑全量/性能/GPU/浏览器，不代表真实目录验收。后续地点主线仍见下方 P4-PLACE-UNIFIED-A。
+
+## 当前地点任务 P4-PLACE-UNIFIED-A — OSM优先、GeoNames兜底与真实来源人工指定（**IMPLEMENTED / 定向验证通过 / 本机浏览器验收待做 / DS-H待审**）
+
+[执行卡](tasks/P4-PLACE-UNIFIED-A.md)、[实现报告](reports/P4-PLACE-UNIFIED-A.md)、[DS-H全受影响面审查卡](tasks/P4-PLACE-UNIFIED-A-review.md)。共享来源选择层、活动包来源证明与schema21加性桥、行政区FK承载映射、单张/批量新增人工归属校验、父级共用成员路径与目录代理隐藏已实现；历史Assignment/撤销协议复用。定向JUnit **116/0/0/0**，Ruff、Node、Python compileall、diff-check通过；真实JS页面行为用小型DOM桩验证。Uvicorn为合成浏览器试验绑定127.0.0.1:8765时遭Windows `WinError 10013` 拒绝，故真实浏览器闭环待本机端口可用后补做；无ACL改动、未访问PhotoSearchData。不得标整卡PASS。下一步独立DS-H全受影响面工程审查，推荐DeepSeek V4.1 Flash / 高推理，用户手动切换；DS-MAX仅按V3.1 §2.2命名条件，Sol high条件式聚焦终审。
+
+## 当前实现待验：P4-PLACE-RECOVERY-B — 单复合地名包清库后自动恢复（**IMPLEMENTED / MANUAL TEST PENDING**）
+
+[执行卡](tasks/P4-PLACE-RECOVERY-B.md)、[报告](reports/P4-PLACE-RECOVERY-B.md)、[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。唯一完整复合包的 manifest 前驱在空 registry 中缺失时，新 catalog 行仅将 `previous_dataset_id` 置 NULL；原 manifest/包字节不变，其他唯一包校验与事务边界不变。未运行 pytest（按卡要求）；真实空库恢复与重启由用户在备份后手动验收，未访问 PhotoSearchData，不标 PASS。
+
+## 当前反馈闭环：P4-SEARCH-PLACE-NL-A — 自然语言地点查询（**映射根因已修 / 合成回归通过 / 现场复测待用户完成**）
+
+[执行卡](tasks/P4-SEARCH-PLACE-NL-A.md)、[规划](reports/P4-SEARCH-PLACE-NL-A-planning.md)、[实现与证据](reports/P4-SEARCH-PLACE-NL-A-implementation.md)。2026-10-08截图已证明地点页济南相册是“济南市·山东省·GPS行政区”，30张；搜索原选key根因由合成夹具复现：已验证的旧GeoNames映射key与CN相册key不同，解析选择了空成员旧key。现用当前ACTIVE包`cn_legacy_links`将经证明映射的旧名称/别名路由到同一CN facet，未映射地点仍独立。任务卡定向集合JUnit **58/0/0/0**、Ruff/Node/diff-check通过；未访问真实图库/catalog或重启用户服务，需用户刷新/重启服务后复测“济南的照片”。
+
+## 当前照片查看交接：P4-PHOTO-VIEW-A — **IMPLEMENTED / 2项复核问题已修、1项重分类为防御性加固 / 合成浏览器小样本通过 / GPT-6独立复核完成 / 整卡验证待补**
+
+[执行卡](tasks/P4-PHOTO-VIEW-A.md)、[实现报告](reports/P4-PHOTO-VIEW-A-implementation.md)、[复核结果](reports/P4-PHOTO-VIEW-A-review.md)、[DS-H复核卡](tasks/P4-PHOTO-VIEW-A-review.md)。GPT-6有界复核发现并已修复：首页详情Back返回原网格，跨人物页恢复来源/筛选/已加载页数/滚动；搜索界面增加canonical ID二次去重（只读faces API本身已归一canonical ID，前端二次去重属防御性），空人脸页按`has_more`如实提示。修复后定向JUnit **113/0/0/0**、Ruff/Node/diff-check通过。修复后真实浏览器复测覆盖首页Back、人物往返、搜索结果/预览恢复、canonical alias归并显示、空页`has_more`、合成地点相册照片入口、在线地图标记与不可达瓦片降级；使用`.tmp`合成数据，无连接用户实际PhotoSearchData或真实照片。用户已明确接受本轮GPT-6有界独立复核替代DS-H；报告记录了复核方式和边界。状态保持 **IMPLEMENTED / VALIDATION PENDING**，主卡完整浏览器验收组合仍待补。
+## 当前人物交接：P4-PERSON-DETAIL-B + P4-PERSON-PERF-A — **ENGINEERING REVIEW PASS / SOL FOCUSED REVIEW PASS / DETAIL-B REVIEW PASS**
+
+[实现报告](reports/P4-PERSON-DETAIL-B-implementation.md)、[独立工程与终审结果](reports/P4-PERSON-DETAIL-B-review.md)、[聚焦终审卡](tasks/P4-PERSON-DETAIL-B-sol-review.md)、[ADR-0017](decisions/ADR-0017-person-source-detail-auto.md)。聚焦终审未发现阻塞：白名单/独立source世代、CONFIRMED产物与向量绑定、事务内人工保护、JPEG不可验证hold、旧机器有效成员及撤销后按实际spec重排均与ADR一致；DETAIL-B审查闭环PASS。复核既有JUnit 34/34/16/29项均0失败/错误/跳过及公开CPU JSON（仅v2↔source），未重跑套件或改产品代码。未验真实图库/PhotoSearchData、现场catalog升级、浏览器/重启、私人准确率、GPU/30万吞吐；不追认DETAIL-A独立整卡通过。人物列表逐人物查询仍是未测量的另线线索，本轮不自动接续。
+
+## 人物体验 P4-PERSON-ALBUM-PERF-A — 实施交接
+
+性能报告包含逐条投影等价、SQL变化、EXPLAIN和三次API对照；未测大库/真实图库绘制。2026-10-09已完成一次隔离合成浏览器基础交互；全量基线修复后置，不自动接续全局人物排序或其他性能阶段。
+
+## 前置 P4-PERSON-DETAIL-A — 按需原图裁脸（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-DETAIL-A.md)、[实现与JUnit证据](reports/P4-PERSON-DETAIL-A-implementation.md)、[独立DS-H完整审查卡](tasks/P4-PERSON-DETAIL-A-review.md)。独立详情profile复用buffalo_l、640检测和112对齐；原图完整解码一次、局部裁剪，session/CSRF保护的照片按钮入持久队列并串行执行。A阶段结果仅供人工确认；上节B已增加显式授权的自动链。A阶段定向JUnit **24/0/0/0**、Ruff/Node/scoped diff-check通过；当时未访问真实照片/模型/浏览器。复用A的独立工程审查纳入B，Sol high聚焦核对仍待做。
+
+## 并行未结任务：P4-PLACE-CN — 中国省／市／区县（**IMPLEMENTED / 定向与合成浏览器通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PLACE-CN.md)、[证据](reports/P4-PLACE-CN.md)、[ADR-0016](decisions/ADR-0016-cn-admin-boundaries.md)、[独立DS-H审查卡](tasks/P4-PLACE-CN-review.md)。PBF/MD5匹配，真实四区通过；约76.8MB复合包保留45,217条GeoNames＋3,013行政区。schema18独立facet、SQL成员/keyset、区县搜索、有界GPS更新/暂停继续/竞争拒绝，schema19/20仅兼容并行人物增量。最终JUnit **75/0/0/0**；真实包＋30万 **2/0/0/0**、最终30万复测 **1/0/0/0**，计数0.66–1.54秒/两页0.57–0.74秒，100张实际几何批次0.0252秒（不含冷加载）。107张合成浏览器闭环、Ruff/Node/scoped diff-check通过。未访问真实库/catalog，候选包未安装；不是全国完整覆盖/30万真实解析。最新[兼容修复与个人测试步骤](reports/P4-PLACE-CN-schema20.md)：人物增量0020导致旧桥失效，已明确支持schema20，定向JUnit **51/0/0/0**与两份公开包完整字节校验通过；用户需重启源码服务，新CN候选仍未导入。提交范围快照schema18定向JUnit **82/0/0/0**；人物schema19/20保留工作区。下一步独立DS-H全受影响面→Sol high聚焦，用户手动切换。
+
+## P4-PLACE-MAP-A — 个人地图相册（**简审 5 项修复与桩复验通过 / DS-H 待审**）
+
+[执行卡](tasks/P4-PLACE-MAP-A.md)；[实现报告](reports/P4-PLACE-MAP-A.md)；[简审与反例](reports/P4-PLACE-MAP-A-review.md)。5 项修复在独立短审范围内关闭：资源已解除忽略、同坐标成员入口、版本/分页竞态、缺组件列表回退、详情聚焦早到/晚到。实际 JS 合成桩回归 JUnit **6/0/0/0**，Node 语法与 scoped diff-check 通过；本轮未改功能代码、访问真实图库、重跑 30 万计时或真实浏览器。CN 已实现待审，见上节；独立 DS-H 全受影响面审查仍待做，不标整卡 PASS。
+
+补充：[旧包兼容修复](reports/P4-PLACE-MAP-A-schema-compat.md)已明确允许 schema 17 使用 maximum=16 的有效包，JUnit **64/0/0/0**、Ruff/diff-check 通过；现存 GeoNames 45,217 条只读完整校验通过且包未改，无需重新下载。退出重启应用加载修复；实际重启验收与 DS-H 待做。
+
+## P4-PERSON-MATCH-B — 合照候选、多样代表与页面补匹配（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
+
+此前[P4-PERSON-MATCH-B](tasks/P4-PERSON-MATCH-B.md)定向JUnit **216/0/0/0**，详情升级原规划及SOL关键规则核对见[规划](reports/P4-PERSON-DETAIL-A-planning.md)/[核对](reports/P4-PERSON-DETAIL-A-key-rules-review.md)；其旧“尚未实现”描述由本次实现报告取代。
+
+## 前置 P4-PLACE-PACKAGE-RECOVERY — 地名包 catalog 重建后恢复（**既有恢复实现；复合包前驱例外见 RECOVERY-B**）
+
+报告：[恢复与实现（第二轮）](reports/P4-PLACE-PACKAGE-RECOVERY.md)；审查卡：[DS-H](tasks/P4-PLACE-PACKAGE-RECOVERY-review.md)；[ADR-0015](decisions/ADR-0015-place-package-catalog-recovery.md)。应用打开空地名 registry 时自动校验/激活唯一健康现存包，删除 catalog/vectors 后重启可恢复；保留包字节/mtime、已有选择及多包拒绝边界。PhotoSearchData 已自动恢复 ACTIVE（45,217条）；定向JUnit **29/0/0/0**，最终恢复/并发 **10/0/0/0**，Ruff/diff-check通过。最终全量 **1968/6/0/48**，禁用新增钩子后6项失败仍复现（旧契约哈希/高度匹配测试），详见报告；人工历史不复原，独立DS-H及决策冻结待做，未标PASS。
+
+## P4-SEARCH-RETURN-A — 搜索结果返回恢复（**IMPLEMENTED / 定向验证通过 / 浏览器验收阻塞**）
+
+报告：[实现与验收记录](reports/P4-SEARCH-RETURN-A-implementation.md)。`search.js` 以 `sessionStorage` 保存/恢复筛选、已加载结果、分页 session/cursor、地点状态与离开滚动位置；详情页「返回浏览」会回到搜索页；恢复复用既有渲染且不发起搜索。新搜索/重置清除现场。JUnit **95/0/0/0**、Node 语法与 diff-check 通过。24 张合成夹具已建立于项目 `.tmp`；Windows 回环端口绑定 `WinError 10013`，提权重试仍失败，浏览器往返验收未执行，因此任务尚不能标 PASS。
+
+## P4-SEARCH-PREVIEW-A — 搜索照片查看、人物头像入口与相册直达（**人物关联定向验证通过 / 搜索查看器完整交互待验**）
+
+[执行卡](tasks/P4-SEARCH-PREVIEW-A.md)、[实现记录](reports/P4-SEARCH-PREVIEW-A-implementation.md)。查看器新增已归属人物头像及直达其人物相册的入口；人物去重、封面缺失头像回退、无人归属状态、人物页定向打开/返回与既有人物 UI 回归 JUnit **10/0/0/0**，Ruff/Node/diff-check通过。原搜索查看器点击、续页导航、错误重试及关闭竞态仍待动态验收；未访问真实图库/服务/模型。
+
+## P4-02Y-W-Q — Qwen 高度匹配恢复（**IMPLEMENTED / 定向验证通过 / 个人网页确认待完成**）
+
+报告：[P4-02Y-W-Q](reports/P4-02Y-W-Q-qwen-strong-match.md)。Qwen 门限为 cosine ≥0.25（距离 ≤1.5）；CLIP 仍为 1.3，未知空间仍隐藏。核查确认门限只在候选冻结后计算显示统计；新回归断言覆盖候选数/顺序与分页元数据不变。指定 JUnit **27/0/0/0**、Ruff、Node 语法、diff-check 通过。个人网页确认尚未完成：检查时无打开浏览器标签，8000/8001/8080 无监听服务；未启动可能写入 PhotoSearchData 的服务。恢复现有网页后需完成三条只读搜索，故本卡暂不标 PASS。
+
+## 并行待验收 P4-HOME-UX-A — 首页快速可用、图库来源辨识与照片预览适配（**IMPLEMENTED / VALIDATION PENDING**）
+
+2026-10-04首页改名：[功能与简单验证](reports/P4-HOME-UX-A-source-rename.md)。每张图库卡片新增“修改名称”→保存/取消；持久更新显示名，卡片/筛选同步，离线及后台建库时可用，不改ID/目录/原图/任务。定向JUnit **147/0/0/0**、Ruff/Node/diff-check通过；重启应用刷新首页生效，无需重建图库。仅合成API及实际JS最小DOM验证，未访问真实库/重启服务/做真实浏览器验收；本补充功能完成，其他状态不变。
+
+2026-10-03新增图库排队小修：[实现与简单验证](reports/P4-HOME-UX-A-build-queue.md)。开始/继续建库可在其他任务运行时立即排队，后台FIFO串行执行、相同scope去重，按钮显示“已排队/正在建库”。定向JUnit **139/0/0/0**（含实际JS最小DOM行为）、Ruff/Node/diff-check通过。重启应用刷新首页生效；等待队列为进程内，重启后需重新点击，持久进度保留。未访问真实库/重启服务/运行全量，本小修完成，其他验收状态不变。
+
+执行卡：[P4-HOME-UX-A](tasks/P4-HOME-UX-A.md)；调查：[代码调查](reports/P4-HOME-UX-A-investigation.md)；实现与证据：[实现报告](reports/P4-HOME-UX-A-implementation.md)。后续修正首页请求顺序、显式展开完整来源路径、预览缩放/适合窗口/实际大小；修复空查询纯筛选搜索将空文本传到接口造成的422。116个相关/直接回归测试 **0失败/0错误/0跳过**、Ruff、Node语法、diff-check通过；合成浏览器确认6张纯筛选搜索结果可见。普通文本搜索 API 在确定性合成编码器下返回命中。2026-10-03只读发现本机8000服务健康；新开的未认证页面取来源摘要返回`SESSION_REQUIRED`，未发起搜索，因此真实会话下搜索结果仍待核。用户需在尝试搜索的浏览器打开启动器打印的一次性链接；不得分享链接/令牌。只运行隔离小型合成夹具；**未访问或重建30万夹具**、真实库或PhotoSearchData，未加载模型。其他待审任务不变。
+
+2026-10-03搜索页进入加速：[修复与证据](reports/P4-HOME-UX-A-search-entry.md)。首页/搜索使用不初始化模型的轻量页面能力接口，来源筛选读取摘要，覆盖率改为按点击读取；定向JUnit **116/0/0/0**、Ruff/Node及合成浏览器通过。需重启应用并刷新页面生效；首次实际搜索仍可能等待模型准备，真实搜索待核状态不变。 本次暂存整理保留搜索返回功能，补交取消启动时自动读取覆盖率的遗漏修正；前端JUnit **95/0/0/0**、Ruff/Node/diff-check通过，详细范围见同报告“暂存区整理与遗漏修正”。
+
+## 当前人物任务 P4-PERSON-PREVIEW-A — 大图上一张/下一张（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-PREVIEW-A.md)、[实现与简单验证](reports/P4-PERSON-PREVIEW-A-implementation.md)。查看照片新增上一张/下一张和当前位置，按当前相册/搜索结果顺序切换；首尾禁用，跨页复用有界分页，失败可重试，图与人脸同步；关闭/新列表后旧响应不切图。定向JUnit **7/0/0/0**、Ruff/Node/diff-check通过，仅实际JS最小DOM合成HTTP验证；刷新人物页生效，无需建库。未访问真实库/重启服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审。
+
+## 人物前一补修 P4-PERSON-COVER-A — 手动选择人物封面（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-COVER-A.md)、[实现与简单验证](reports/P4-PERSON-COVER-A-implementation.md)。人物相册“更换封面”→照片→本人脸“设为封面”，相册/人物卡片同步，复用avatar_face_id持久保存；有效成员/revision/session/CSRF保护，封面失效只读补选。只更新persons显示元数据，不改schema/归属/索引；旧撤销拒绝覆盖新封面。定向JUnit **23/0/0/0**、Ruff/Node/diff-check通过，仅合成API与实际JS最小DOM。重启刷新生效，无需建库；未访问真实库/重启服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审。
+
+## 人物前一补修 P4-PERSON-CLEANUP-A — 更正后空分组与成功提示（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[执行卡](tasks/P4-PERSON-CLEANUP-A.md)、[实现与简单测试](reports/P4-PERSON-CLEANUP-A-implementation.md)。更正后没有有效人脸的未命名分组在分页前隐藏，保留人物身份与撤销；合照其他未命名人脸仍正常显示。“已归到/已并入/已保存”成功状态3秒消失，撤销条保留10秒，旧计时不清除后续错误。定向JUnit **13/0/0/0**、Ruff/Node/diff-check通过，仅小型合成API与实际JS最小DOM验证。重启刷新生效，无需建库；未访问真实库/重启用户服务/做真实浏览器验证，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)加审，未标独立PASS。
+
+## 人物前一补修 P4-PERSON-IMAGE-A — 相册错图与人脸裁剪偏移（**IMPLEMENTED / 简单验证通过 / 独立审查待做**）
+
+[补充卡](tasks/P4-PERSON-IMAGE-A.md)、[实现与截图](reports/P4-PERSON-IMAGE-A-implementation.md)。ID图片URL重新验证且新版人物JS绕开已有一年旧缓存；裁剪按校验后的检测文档坐标帧处理JPEG draft和旋转，face-crop@2不复用旧错误裁剪；人脸ID/不可变产物/向量/人工归属不变。定向JUnit **29/0/0/0**、Ruff/Node/diff-check与合成旧缓存→相册→预览浏览器验证通过。重启应用并刷新人物页生效，**不用重新识别或建库**。未访问真实库/PhotoSearchData或重启8000，真实照片效果待确认；独立审查加审本面，沿用[P4-PERSON-UX-A-review](tasks/P4-PERSON-UX-A-review.md)。此前图片补修已由3bab1c3撤回，仅保留撤销提示；以此新证据为准。
+
+## 人物基础待审 P4-PERSON-UX-A — 个人相册与简单整理（**IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**）
+
+[实现报告](reports/P4-PERSON-UX-A-implementation.md)、[功能卡](tasks/P4-PERSON-UX-A.md)、[最小决策ADR-0014](decisions/ADR-0014-person-album-geometry-repair.md)。人物默认点头像看完整照片、按名字选人、取名/明确并入、合照选单脸更正及撤销；未命名与机器/人工待归类集中到“整理一下”，高级流程折叠保留。修复长边>1280的scale及原图坐标错误；新旧产物分版本，保留人工映射hold，明确同空间v1/v2代表兼容且不激活部分新索引。按用户“个人项目，完成后简单测试”收尾：定向JUnit **219/0/0/0**，升级边界补充子集 **3/0/0/0**、Ruff/Node/diff-check通过；合成浏览器完成命名/冲突并入/单脸更正/撤销。未访问真实库/PhotoSearchData或大夹具、未加载模型/调整阈值/自动重检，不声明真实识别率或正式PASS。唯一下一人物阶段：[独立受影响面审查](tasks/P4-PERSON-UX-A-review.md)，建议DS-H→Sol high聚焦身份/人工知识及兼容决策；由用户手动切换，不自动继续Agent或全量测试。首页/搜索/Qwen并行任务原状态保留。
+
+2026-10-03个人反馈修复：自动未命名人物NULL头像现在从自己的有效人脸只读补选；每张相册照片显示对应人物裁剪、预览标出本相册人脸。定向JUnit **20/0/0/0**、Ruff/Node/diff-check与合成浏览器通过，两个人物可对应同一合照但展示不同人脸，见报告末节。未改识别阈值/自动合并/真实数据；真实错分仍未验证，源码需重启应用刷新生效。
+
+2026-10-03当前人物授权补充[P4-PERSON-MATCH-A](tasks/P4-PERSON-MATCH-A.md)：自动归人相似度0.56→0.50，检测0.50/建议0.29及质量/冲突/人工保护不变；历史校准独立保留。新增`face.cli rematch`复用已存同空间v1/v2特征重匹配未归人的脸，保持已有归属，不需要图文重建；错误目录不建空库，新零脸产物不复活旧机器脸。定向JUnit **79/0/0/0**、Ruff/CLI帮助/diff-check通过，见[报告与操作命令](reports/P4-PERSON-MATCH-A-implementation.md)。未对真实库执行/加载模型，不声称真实识别率；独立审查加审本补充面，状态仍PENDING。
+
+## 上一任务 P4-PLACE-SEARCH-A — 普通搜索支持地点＋内容（**PASS — 本机个人地点＋内容搜索与小样本验证**）
+
+用户新增补充：[执行卡](tasks/P4-PLACE-SEARCH-A.md)。基线`f3b04af`。报告：[实现记录](reports/P4-PLACE-SEARCH-A-implementation.md)。新增地点感知搜索入口、共用权威地点成员scope、无语义Top-K限制的纯地点分页、可取消条件chip；active省份INDEX即使无照片也可识别，同名选项附上级地名。定向JUnit 28/0/0/0（含共同向量block路径）、Ruff与diff-check通过。合成浏览器完成`济南的日落`→普通照片结果/预览→取消后保留日落查询并全范围搜索；将样片人工改至上海后重载并重新搜索，济南范围0张。仅合成资产；不代表真实模型准确率或真实图库效果。未访问真实库，不建B/C卡、不跑全量或性能测试；实现已提交c812d10；本次补交方案与交接文档，未重复运行测试，未覆盖项见实现报告。
+
+## 待审任务 P4-EMBEDDING-ARCH — 可插拔语义 provider + Qwen3-VL 512D（**实现完成；独立审查待做**）
+
+实现报告：[P4-EMBEDDING-ARCH 实现](reports/P4-EMBEDDING-ARCH-implementation.md)；独立审查卡：[P4-EMBEDDING-ARCH-review](tasks/P4-EMBEDDING-ARCH-review.md)；[执行卡](tasks/P4-EMBEDDING-ARCH.md)、[接入策略](plans/P4-EMBEDDING-ARCH.md)、[设计核对](reports/P4-EMBEDDING-ARCH-design.md)。状态 **IMPLEMENTED / SCOPED VALIDATION COMPLETE / INDEPENDENT REVIEW PENDING**；下一步 **DS-H 全受影响面工程审查 → Sol high 聚焦终审**，模型由用户手动选择。本轮完成 registry/factory/Qwen adapter、`embedding list|prepare-local|build-candidate|select-profile`、候选不激活、受控停机选择的事务内覆盖/outbox/artifact/Lance/资格门禁、页面 `strong_match_available`，并把主环境锁定到 torch `2.8.0+cu128`/torchvision `0.23.0+cu128`/transformers `4.57.0`/qwen-vl-utils `0.0.14`。已按用户要求把 Qwen 装入真实数据根 `D:\SZ\project\PhotoSearchData` 并完成全库切换（3182 张图像、候选建库 17.4 分钟、受控选择覆盖 3182/3182、真实 HTTP 三查询 200）。证据：定向 JUnit **203 tests / 0 failed / 0 errors / 6 skipped**、真实双 provider CUDA smoke **24/24**（`test-results/p4-embedding-arch-smoke.json`，12 合成图、8 中文 query、2 上传自查询、Qwen 峰值显存 4.29 GB）、现有页面文字+上传各一次真实浏览器确认；Ruff/`uv lock --check`/`git diff --check` 通过。未验证项见报告 §5（OOM/GTX 1660 未注入、Lance 行数核对 ≤2 万行、CLIP 侧未做候选选择演练、未打包、未跑性能专项）。onnxruntime 的 PyTorch CUDA 主版本提示已消除：ONNX worker 进程改为 `USE_TORCH=0`（torch 不再进入该进程），见报告 §5.6。真实数据根的日常增量/切回只做机制验证；切回 CLIP 需先补建那张 HEIC。额外全量套件发现 4 个**既有**失败（`p2-contracts.v1.json` 冻结哈希与 `c1d0a34` 不一致，非本卡改动），建议路由 P4-02Y-L 审查，见实现报告 §7。
+
+## P4-PLACE-AUTO-A — 个人GPS地点相册（**PASS — 本机个人地点相册与小样本验证**）
+
+实现报告：[P4-PLACE-AUTO-A](reports/P4-PLACE-AUTO-A-implementation.md)；[唯一功能卡](tasks/P4-PLACE-AUTO-A.md)、[简化方案](plans/P4-PLACE-AUTO.md)、[核对记录](reports/P4-PLACE-AUTO-design.md)。新增地点相册 API/UI、别名地名入口、省份可选包 INDEX 和有界 GPS/解析补齐；人工 assignment/取消及旧搜索语义保留。合成集成覆盖24张照片及边界/分页/控制；JUnit **40/0/0/0**，Ruff 与 diff-check 通过；浏览器验证 Hangzhou入口→杭州网格/预览→改一张到上海后重载保持上海1/杭州23；再将另一张留空取消归类，刷新仍为杭州23且首张为照片 #2，未被GPS归回。仅临时合成图库；未访问真实个人库，不声称真实省份包已安装、行政区准确或大规模性能。P2-04A维持已删除；P4-EMBEDDING-ARCH独立审查状态不变。
+
+## P4-02Y-L — OCR CUDA 设备契约（**实现验收通过；独立 DS-H 审查待做**）
+
+实现报告：[P4-02Y-L OCR CUDA](reports/P4-02Y-L-ocr-cuda.md)；审查卡：[P4-02Y-L-review](tasks/P4-02Y-L-review.md)。Sol 冻结通过；RTX 4060 Laptop 实测 auto 3/3 job 走 CUDA，显式 CPU 3/3 成功；CPU/GPU 输出等价，round-total 中位数 5227.72/843.33 ms（6.199×），synthetic refresh/build 3/3 CUDA。P2/OCR JUnit **119 passed / 0 failed / 0 errors / 19 skipped**；Ruff、lock、diff-check 通过。P4-02Y-L 总任务仍**待独立 DS-H 全受影响面审查**，未标 PASS。
+
+## 待审任务 P4-02Y-W — 5000 搜索结果 + 高度匹配（实现与验收完成，独立审查待做）
+
+实现报告：[P4-02Y-W](reports/P4-02Y-W-5000-results-strong-match.md)；独立审查卡：[P4-02Y-W-review](tasks/P4-02Y-W-review.md)。当前暂定阈值 `distance <= 1.3`（约 `cosine >= 0.35`）；边界测试/文档已同步。此前 B 级 JUnit **1878/0/0/48**、30 万 smoke 及静态检查早于此门限修正，按用户要求未重跑测试，故新门限未验证；总任务仍待独立 DS-H 复核。
+
+## 旁路纯测量 P4-QWEN-SPEED — 完成
+
+报告：[P4-QWEN-SPEED](reports/P4-QWEN-SPEED.md)；原始样本：`test-results/p4-qwen-speed.json`。Qwen query P50 **72.86 ms**；2048D 30 万向量 P50 **23957.95 ms**，20 blocks / 300000 scanned / fallback 0 / truncated false。8 GB RTX 4060 Laptop FP16 CUDA 路径成功；估算搜索时间：512D **3.81 s**、2048D **24.34 s**（均非 HTTP 端到端实测）。
+
+## 上一任务 P4-02Y-V — `top_k` 性能测试（DONE）
+
+纯测量完成（2026-09-30；[报告](reports/P4-02Y-V-top-k.md)、[任务卡](tasks/P4-02Y-V.md)、原始数据 `test-results/p4-02y-v-top-k.json`）。30 万固定夹具两轮交错共 60 样本；向量前缀检查 5/5 通过。Service P50：K200 3894 ms、K500 3946 ms、K1000 4132 ms、K2000 4162 ms、K3000 4340 ms、K5000 3733 ms；K5000 非单调偏快，结论未见可信拐点。纯性能数据不单独决定产品上限。

@@ -112,7 +112,7 @@
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
-    const values = { kind: state.organize ? "unnamed" : "named", q: $("query").value.trim(), limit: 40 };
+    const values = { kind: state.organize ? "unnamed" : "named", q: $("query").value.trim(), sort: $("person-sort").value || "photos_desc", limit: 40 };
     if (more && state.listCursor) values.cursor = state.listCursor;
     else { $("cards").replaceChildren(); state.listCursor = null; }
     $("list-note").textContent = "正在找人物……";
@@ -610,6 +610,7 @@
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
     $("query").addEventListener("search", () => loadPeople(false));
+    $("person-sort").addEventListener("change", () => loadPeople(false));
     $("refresh").addEventListener("click", () => { loadPeople(false); if (state.organize) loadInbox(false); });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
     $("inbox-kind").addEventListener("change", () => loadInbox(false));

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from conftest import ApiEnv
-from p3_persons_page_fixtures import add_link, add_person, seed_library, set_control, set_exclusion
+from p3_persons_page_fixtures import (
+    add_link,
+    add_person,
+    insert_face,
+    seed_library,
+    set_control,
+    set_exclusion,
+)
 
 
 def seed(env: ApiEnv) -> dict:
@@ -63,6 +70,92 @@ def test_people_query_is_literal_paged_and_session_protected(api_env: ApiEnv) ->
         assert "bbox" not in repr(matches) and "name_key" not in repr(matches)
 
     api_env.scenario(scenario)
+
+
+def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -> None:
+    data = seed(api_env)
+    catalog = api_env.service.catalog
+    api_env.add_photo("extra-mom.jpg", noise=20)
+    source = catalog.read_one("SELECT source_id FROM source_roots LIMIT 1")
+    api_env.scan(int(source["source_id"]))
+    extra_asset = catalog.read_one(
+        "SELECT a.asset_id, a.sha256, l.location_id FROM assets AS a "
+        "JOIN file_locations AS l ON l.asset_id = a.asset_id WHERE l.relative_path = ?",
+        ("extra-mom.jpg",),
+    )
+    extra_face = insert_face(
+        catalog,
+        asset_id=int(extra_asset["asset_id"]),
+        sha256=str(extra_asset["sha256"]),
+        bbox=(40, 40, 120, 120),
+        ordinal=0,
+        location_id=int(extra_asset["location_id"]),
+    )
+    add_link(catalog, extra_face, data["mom"])
+    with catalog.write() as connection:
+        # A second confirmed face in one group photo must not increase the photo count;
+        # confirming the pending face gives Mom a second distinct asset.
+        connection.execute(
+            "UPDATE face_person_links SET person_id = ? WHERE face_id = ?",
+            (data["dad"], data["neighbour"]),
+        )
+        connection.execute(
+            "UPDATE face_person_links SET decision = 'CONFIRMED', reason = NULL WHERE face_id = ?",
+            (data["pending"],),
+        )
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        first = await client.get(
+            "/api/v1/persons/browse", params={"kind": "all", "sort": "photos_desc", "limit": 1}
+        )
+        page2 = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+        page3 = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": page2.json()["next_cursor"]},
+        )
+        scoped = await client.get(
+            "/api/v1/persons/browse", params={"kind": "named", "q": "爸爸", "sort": "photos_desc"}
+        )
+        invalid_sort = await client.get("/api/v1/persons/browse", params={"sort": "recent"})
+        wrong_sort = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "sort": "person_id", "limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+        changed = await client.put(
+            f"/api/v1/persons/{data['mom']}/label",
+            headers=api_env.post_headers(csrf),
+            json={"request_id": "sort-revision", "name": "Mom 2", "expected_revision": 1},
+        )
+        stale = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": first.json()["next_cursor"]},
+        )
+        old_default = await client.get("/api/v1/persons/browse", params={"kind": "all", "limit": 1})
+        return first, page2, page3, scoped, invalid_sort, wrong_sort, changed, stale, old_default
+
+    first, page2, page3, scoped, invalid_sort, wrong_sort, changed, stale, old_default = api_env.scenario(scenario)
+    assert first.status_code == page2.status_code == page3.status_code == 200
+    first_person, second_person, third_person = [
+        response.json()["persons"][0] for response in (first, page2, page3)
+    ]
+    assert (first_person["person_id"], first_person["asset_count"]) == (data["dad"], 2)
+    assert (second_person["person_id"], second_person["asset_count"]) == (data["mom"], 2)
+    assert (third_person["person_id"], third_person["asset_count"]) == (data["unnamed"], 0)
+    assert [first_person["person_id"], second_person["person_id"], third_person["person_id"]] == [
+        data["dad"], data["mom"], data["unnamed"]
+    ]
+    assert scoped.status_code == 200
+    assert [person["person_id"] for person in scoped.json()["persons"]] == [data["dad"]]
+    assert invalid_sort.status_code == 422
+    assert wrong_sort.status_code == 409 and wrong_sort.json()["code"] == "INVALID_CURSOR"
+    assert changed.status_code == 200
+    assert stale.status_code == 409 and stale.json()["code"] == "INVALID_CURSOR"
+    assert old_default.status_code == 200
+    assert old_default.json()["persons"][0]["person_id"] == data["dad"]
 
 
 def test_album_is_complete_deduplicated_and_cursor_bound_to_person(api_env: ApiEnv) -> None:
