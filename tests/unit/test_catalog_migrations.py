@@ -94,6 +94,7 @@ CORE_TABLES = {
     "face_assignment_controls",
     "face_exclusions",
     "person_aliases",
+    "person_hidden",
     "person_operation_items",
     "person_operations",
     "place_aliases",
@@ -186,6 +187,37 @@ def test_repeated_migration_is_idempotent(tmp_path: Path) -> None:
     assert second.applied == ()
     assert second.backup_path is None
     assert _file_digest(db_path) == before
+
+
+def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Path) -> None:
+    db_path = _db_path(tmp_path)
+    migrate_database(db_path, data_root=_data_root(tmp_path))
+    connection = connect_rw(db_path)
+    try:
+        connection.execute("DROP TABLE person_hidden")
+        connection.execute(
+            "UPDATE metadata SET value = '21' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
+        )
+        connection.execute(
+            "INSERT INTO persons(name, name_key, avatar_face_id, merged_into, revision, "
+            "created_at, updated_at) VALUES (NULL, NULL, NULL, NULL, 1, 1, 1)"
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    result = migrate_database(db_path, data_root=_data_root(tmp_path))
+
+    assert result.previous_version == 21
+    assert result.schema_version == 22
+    assert result.applied == (22,)
+    connection = open_readonly(db_path)
+    try:
+        assert connection.execute("SELECT COUNT(*) FROM persons").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM person_hidden").fetchone()[0] == 0
+        schema.verify_schema(connection, 22)
+    finally:
+        connection.close()
 
 
 def test_versioned_database_with_missing_core_object_is_inconsistent(tmp_path: Path) -> None:

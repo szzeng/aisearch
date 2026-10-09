@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新增实现：P4-PERSON-HIDE-A — IMPLEMENTED / PERSONAL-SCOPED IMPACT REVIEW PASS
+
+[实现卡](tasks/P4-PERSON-HIDE-A.md)、[报告](reports/P4-PERSON-HIDE-A-implementation.md)。schema22 独立隐藏标记、可见性 SQL 过滤/游标隔离、受保护批量 API 和人物相册多页选择/恢复已实现。定向 JUnit 25/0/0/0，Ruff/Node/diff-check通过；按用户要求未执行全量回归。同会话个人范围影响面复核通过；真实应用重启与浏览器操作待用户试用。未触碰PhotoSearchData、模型、服务或其它现有未跟踪文件。
+
 ## 新增完成：P4-PERSON-INBOX-CONFIRM-A — PASS / PERSONAL-SCOPED REVIEW
 
 [任务卡](tasks/P4-PERSON-INBOX-CONFIRM-A.md)、[执行报告](reports/P4-PERSON-INBOX-CONFIRM-A.md)。候选单脸可直接“确认是XX”，复用逐脸人工归属接口和 revision/CSRF/撤销路径；保留“选其他人”与无候选时的“这是谁？”。定向 UI＋单脸纠错/撤销 2/0/0/0，Ruff、Node、diff-check通过。按用户要求在当前会话简审；未跑浏览器、全仓、真实图库/服务或模型。
@@ -60,4 +64,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-五组工程报告按用户授权的个人范围收口，转日常使用与具体反馈，不默认新增审核/性能/全量基线修绿/发行任务。模型组已记录ADR-0003/0013适用性解释及SOL_NOT_REQUIRED，当前不另立Sol卡；未来run驱动激活仍须遵守冻结门禁。真实模型/GPU、Qwen页面、头像、CN包及其它原现场项由用户另行决定何时核对；人物合并重复反馈卡未自动启动。本次只做报告/状态/索引核对与同步，未操作真实图库、服务或模型，未提交/推送。
+下一步由用户在个人相册手动验证忽略、恢复与应用重启；其余转日常使用，不默认新增审核/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。

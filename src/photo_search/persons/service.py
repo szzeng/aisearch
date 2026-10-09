@@ -127,6 +127,25 @@ class PersonService:
                 refresh=self.refresh,
             )
 
+    def set_visibility(self, *, person_ids: Sequence[int], hidden: bool) -> dict[str, Any]:
+        """Set album visibility for active canonical people as one atomic write."""
+        with self.catalog.write() as connection:
+            canonical_ids = sorted(
+                {resolve_canonical_person_id(connection, int(person_id)) for person_id in person_ids}
+            )
+            changed = 0
+            for person_id in canonical_ids:
+                if hidden:
+                    result = connection.execute(
+                        "INSERT OR IGNORE INTO person_hidden(person_id) VALUES (?)", (person_id,)
+                    )
+                else:
+                    result = connection.execute(
+                        "DELETE FROM person_hidden WHERE person_id = ?", (person_id,)
+                    )
+                changed += max(0, int(result.rowcount))
+            return {"hidden": bool(hidden), "person_count": len(canonical_ids), "changed": changed}
+
     def undo(
         self,
         *,

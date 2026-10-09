@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
-  const state = { organize: false, person: null, listCursor: null, inboxCursor: null,
+  const state = { organize: false, hiddenView: false, batchMode: false, selectedPeople: new Set(), visibilityBusy: false, person: null, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, edit: null, chosen: null,
@@ -70,6 +70,43 @@
     }, 3000);
   }
   function params(values) { return "?" + new URLSearchParams(values); }
+  function renderPeopleManagement() {
+    $("batch-toggle").setAttribute("aria-pressed", String(state.batchMode));
+    $("batch-toggle").textContent = state.batchMode ? "退出批量管理" : "批量管理";
+    $("hidden-toggle").textContent = state.hiddenView ? "返回人物列表" : "查看已忽略";
+    $("selection-count").hidden = !state.batchMode;
+    $("selection-count").textContent = "已选 " + state.selectedPeople.size + " 人";
+    $("visibility-submit").hidden = !state.batchMode;
+    $("visibility-submit").disabled = state.visibilityBusy || state.selectedPeople.size === 0;
+    $("visibility-submit").textContent = state.hiddenView ? "恢复所选" : "忽略所选";
+    $("batch-cancel").hidden = !state.batchMode;
+    $("batch-cancel").disabled = state.visibilityBusy;
+    $("batch-toggle").disabled = state.visibilityBusy;
+    $("hidden-toggle").disabled = state.visibilityBusy;
+  }
+  function clearPeopleSelection() {
+    state.selectedPeople.clear(); state.batchMode = false; renderPeopleManagement();
+  }
+  function togglePersonSelection(personId) {
+    if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
+    else if (state.selectedPeople.size >= 500) { message("一次最多选择 500 人，请先提交当前选择。"); return; }
+    else state.selectedPeople.add(personId);
+    renderPeopleManagement(); loadPeople(false);
+  }
+  async function submitVisibility() {
+    if (state.visibilityBusy || !state.selectedPeople.size) return;
+    if (state.selectedPeople.size > 500) { message("一次最多操作 500 人。"); return; }
+    const ids = Array.from(state.selectedPeople);
+    const action = state.hiddenView ? "恢复" : "忽略";
+    if (!window.confirm("确定" + action + "所选 " + ids.length + " 个人物吗？")) return;
+    state.visibilityBusy = true; renderPeopleManagement();
+    try {
+      const result = await api("/persons/visibility", { person_ids: ids, hidden: !state.hiddenView });
+      clearPeopleSelection(); state.listCursor = null; await loadPeople(false);
+      message("已" + action + " " + result.changed + " 个人物。", true);
+    } catch (error) { message(action + "没有完成：" + errorText(error)); }
+    finally { state.visibilityBusy = false; renderPeopleManagement(); }
+  }
   function requestedPersonId() {
     const search = typeof window !== "undefined" && window.location ? window.location.search : "";
     const value = new URLSearchParams(search || "").get("person_id");
@@ -112,19 +149,23 @@
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
-    const values = { kind: state.organize ? "unnamed" : "named", q: $("query").value.trim(), sort: $("person-sort").value || "photos_desc", limit: 40 };
+    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: $("person-sort").value || "photos_desc", limit: 40 };
     if (more && state.listCursor) values.cursor = state.listCursor;
     else { $("cards").replaceChildren(); state.listCursor = null; }
     $("list-note").textContent = "正在找人物……";
     try {
       const page = await api("/persons/browse" + params(values)); if (seq !== state.listSeq) return;
       page.persons.forEach((person, index) => {
-        const card = button("", () => openAlbum(person), "pa-person-card");
+        const personId = Number(person.person_id);
+        const selected = state.selectedPeople.has(personId);
+        const card = button("", () => state.batchMode ? togglePersonSelection(personId) : openAlbum(person), "pa-person-card");
+        card.setAttribute("aria-pressed", String(selected));
         card.append(picture(person.thumbnail_url, name(person), "pa-avatar", index < 4), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
+        if (state.batchMode) card.append(node("span", selected ? "已选择" : "点按选择", "hint"));
         $("cards").append(card);
       });
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
-      $("list-note").textContent = $("cards").children.length ? (state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.q ? "没有找到这个名字，试试“整理一下”。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
+      $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; } }
   }
@@ -349,6 +390,7 @@
     return state.detailControlsPromise;
   }
   function setView(organize) {
+    clearPeopleSelection(); state.hiddenView = false;
     state.organize = organize;
     if (!organize) {
       state.detailBatchSeq++;
@@ -665,7 +707,19 @@
     finally { state.writing = false; $("undo").disabled = false; }
   }
   function boot() {
+    renderPeopleManagement();
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
+    $("batch-toggle").addEventListener("click", () => {
+      state.batchMode = !state.batchMode;
+      if (!state.batchMode) state.selectedPeople.clear();
+      renderPeopleManagement(); loadPeople(false);
+    });
+    $("batch-cancel").addEventListener("click", clearPeopleSelection);
+    $("visibility-submit").addEventListener("click", submitVisibility);
+    $("hidden-toggle").addEventListener("click", () => {
+      state.hiddenView = !state.hiddenView; clearPeopleSelection();
+      $("query").value = ""; loadPeople(false);
+    });
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
     $("query").addEventListener("search", () => loadPeople(false));
     $("person-sort").addEventListener("change", () => loadPeople(false));
@@ -715,6 +769,7 @@
     $("edit").addEventListener("close", () => { state.editSeq++; state.choiceSeq++; });
     $("undo").addEventListener("click", undo);
     $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
+    window.addEventListener("pagehide", () => state.selectedPeople.clear());
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
     else loadPeople(false);

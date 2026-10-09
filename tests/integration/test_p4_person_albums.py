@@ -16,7 +16,9 @@ from p3_persons_page_fixtures import (
     set_exclusion,
 )
 
+from photo_search.catalog.db import Catalog
 from photo_search.persons.albums import _inbox_group_cte, people_page
+from photo_search.persons.service import PersonService
 from photo_search.places.revision import read_filter_revision
 
 
@@ -77,6 +79,146 @@ def test_people_query_is_literal_paged_and_session_protected(api_env: ApiEnv) ->
         assert "bbox" not in repr(matches) and "name_key" not in repr(matches)
 
     api_env.scenario(scenario)
+
+
+def test_person_visibility_is_atomic_persistent_and_paged_before_sort(api_env: ApiEnv) -> None:
+    catalog = api_env.service.catalog
+    person_ids = [add_person(catalog, name=f"人物{i:02d}") for i in range(50)]
+    hidden_ids = person_ids[:5]
+
+    async def scenario(client):
+        assert (await client.post("/api/v1/persons/visibility", json={"person_ids": hidden_ids, "hidden": True})).status_code == 401
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        no_csrf = await client.post(
+            "/api/v1/persons/visibility", json={"person_ids": hidden_ids, "hidden": True}
+        )
+        assert no_csrf.status_code == 403
+        initial_hide = await client.post(
+            "/api/v1/persons/visibility",
+            headers=headers,
+            json={"person_ids": hidden_ids, "hidden": True},
+        )
+        assert initial_hide.status_code == 200 and initial_hide.json()["changed"] == 5
+        reopened = Catalog.open(catalog.db_path)
+        try:
+            assert reopened.read_one("SELECT COUNT(*) AS n FROM person_hidden")["n"] == 5
+        finally:
+            reopened.close()
+        first = await client.get(
+            "/api/v1/persons/browse", params={"visibility": "visible", "limit": 40}
+        )
+        assert first.status_code == 200
+        assert first.json()["has_more"] is True
+        wrong_mode_cursor = await client.get(
+            "/api/v1/persons/browse",
+            params={"visibility": "hidden", "limit": 40, "cursor": first.json()["next_cursor"]},
+        )
+        assert wrong_mode_cursor.status_code == 409
+        second = await client.get(
+            "/api/v1/persons/browse",
+            params={"visibility": "visible", "limit": 40, "cursor": first.json()["next_cursor"]},
+        )
+        hidden = await client.get(
+            "/api/v1/persons/browse", params={"visibility": "hidden", "kind": "all"}
+        )
+        assert len(first.json()["persons"]) + len(second.json()["persons"]) == 45
+        assert {p["person_id"] for p in hidden.json()["persons"]} == set(hidden_ids)
+        assert not ({p["person_id"] for p in first.json()["persons"] + second.json()["persons"]} & set(hidden_ids))
+        old_default = await client.get("/api/v1/persons/browse", params={"limit": 40})
+        assert len(old_default.json()["persons"]) == 40
+        assert set(hidden_ids) <= {p["person_id"] for p in old_default.json()["persons"]}
+        rejected = await client.post(
+            "/api/v1/persons/visibility",
+            headers=headers,
+            json={"person_ids": [person_ids[5], 999999], "hidden": True},
+        )
+        assert rejected.status_code == 404
+        assert catalog.read_one("SELECT COUNT(*) AS n FROM person_hidden")["n"] == 5
+        repeated = await client.post(
+            "/api/v1/persons/visibility",
+            headers=headers,
+            json={"person_ids": hidden_ids, "hidden": True},
+        )
+        assert repeated.status_code == 200 and repeated.json()["changed"] == 0
+        restored = await client.post(
+            "/api/v1/persons/visibility",
+            headers=headers,
+            json={"person_ids": hidden_ids, "hidden": False},
+        )
+        assert restored.status_code == 200 and restored.json()["changed"] == 5
+        return await client.get("/api/v1/persons/browse", params={"visibility": "visible"})
+
+    final_page = api_env.scenario(scenario)
+    assert final_page.status_code == 200
+    assert catalog.read_one("SELECT COUNT(*) AS n FROM person_hidden")["n"] == 0
+
+
+def test_visibility_filter_precedes_photo_count_order_and_limit(api_env: ApiEnv) -> None:
+    data = seed(api_env)
+    PersonService.open(api_env.service.catalog).set_visibility(
+        person_ids=[data["dad"]], hidden=True
+    )
+    page = people_page(
+        api_env.service.catalog,
+        kind="named",
+        q="",
+        limit=1,
+        cursor=None,
+        sort="photos_desc",
+        visibility="visible",
+    )
+    assert [person["person_id"] for person in page["persons"]] == [data["mom"]]
+
+
+def test_visibility_follows_canonical_identity_and_survives_merge_undo(api_env: ApiEnv) -> None:
+    catalog = api_env.service.catalog
+    service = PersonService.open(catalog)
+    source_hidden = add_person(catalog, name="隐藏来源")
+    visible_target = add_person(catalog, name="可见目标")
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO person_hidden(person_id) VALUES (?)", (source_hidden,))
+    merged = service.merge(
+        target_person_id=visible_target,
+        target_expected_revision=1,
+        sources=[{"person_id": source_hidden, "expected_revision": 1}],
+        request_id="hide-merge-source",
+    )
+    assert catalog.read_one("SELECT person_id FROM person_hidden WHERE person_id = ?", (source_hidden,))
+    visible = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="visible")
+    hidden = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")
+    assert [p["person_id"] for p in visible["persons"]] == [visible_target]
+    assert source_hidden not in {p["person_id"] for p in hidden["persons"]}
+    service.set_visibility(person_ids=[source_hidden], hidden=True)
+    assert visible_target in {
+        p["person_id"]
+        for p in people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
+    }
+    service.set_visibility(person_ids=[source_hidden], hidden=False)
+    undone = service.undo(
+        operation_id=merged["operation_id"],
+        request_id="hide-merge-undo",
+        expected_operation_revision=merged["operation_revision"],
+    )
+    assert undone["changed"] is True
+    hidden_after_undo = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")
+    assert source_hidden in {p["person_id"] for p in hidden_after_undo["persons"]}
+
+    hidden_target = add_person(catalog, name="隐藏目标")
+    visible_source = add_person(catalog, name="可见来源")
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO person_hidden(person_id) VALUES (?)", (hidden_target,))
+    service.merge(
+        target_person_id=hidden_target,
+        target_expected_revision=1,
+        sources=[{"person_id": visible_source, "expected_revision": 1}],
+        request_id="hide-merge-target",
+    )
+    assert people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
+    assert hidden_target in {
+        p["person_id"]
+        for p in people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
+    }
 
 
 def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -> None:

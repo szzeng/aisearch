@@ -7,12 +7,12 @@
     <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-hide-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-view-a-3" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
     <script src="/web/persons.js?v=p4-photo-view-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-sort-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-hide-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -36,6 +36,13 @@
         </div>
         <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
         <p class="pa-sort-control"><label for="pa-person-sort">人物排序</label><select id="pa-person-sort"><option value="photos_desc" selected>照片最多优先</option><option value="person_id">默认顺序</option></select></p>
+        <div class="row-actions" aria-label="人物批量管理">
+          <button type="button" id="pa-batch-toggle">批量管理</button>
+          <button type="button" id="pa-hidden-toggle">查看已忽略</button>
+          <span id="pa-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
+          <button type="button" id="pa-visibility-submit" hidden disabled>忽略所选</button>
+          <button type="button" id="pa-batch-cancel" hidden>取消选择</button>
+        </div>
         <p id="pa-list-note" class="hint"></p>
         <div id="pa-cards" class="pa-people-grid"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>

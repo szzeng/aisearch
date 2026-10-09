@@ -72,6 +72,8 @@ from photo_search.api.models import (
     PersonSplitOperationResponse,
     PersonSplitRequest,
     PersonUndoRequest,
+    PersonVisibilityRequest,
+    PersonVisibilityResponse,
     PlaceAssignmentRequest,
     PlaceAwareSearchRequestModel,
     PlaceBatchRequest,
@@ -1350,6 +1352,7 @@ async def browse_persons(
     kind: str = "all",
     q: str = "",
     sort: Literal["person_id", "photos_desc"] = "person_id",
+    visibility: Literal["all", "visible", "hidden"] = "all",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -1360,6 +1363,20 @@ async def browse_persons(
         sort=sort,
         limit=clamp_person_limit(limit),
         cursor=cursor,
+        visibility=visibility,
+    )
+
+
+@router.post(
+    "/persons/visibility",
+    response_model=PersonVisibilityResponse,
+    summary="Hide or restore selected people in album lists",
+)
+async def post_person_visibility(
+    request: Request, payload: PersonVisibilityRequest
+) -> dict[str, Any]:
+    return persons_of(request).set_visibility(
+        person_ids=payload.person_ids, hidden=bool(payload.hidden)
     )
 
 

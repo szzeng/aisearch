@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
 
 from photo_search.search.contracts import (
     DEFAULT_PAGE_SIZE,
@@ -806,6 +806,28 @@ class PersonMergeRequest(BaseModel):
     #: place batch: a transport-level ``max_length`` would replace the frozen code with a
     #: generic validation error and hide which limit was hit.
     sources: list[PersonMergeSource] = Field(default_factory=list)
+
+
+class PersonVisibilityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    person_ids: list[StrictInt] = Field(min_length=1, max_length=500)
+    hidden: StrictBool
+
+    @field_validator("person_ids")
+    @classmethod
+    def valid_person_ids(cls, value: list[int]) -> list[int]:
+        if any(person_id <= 0 for person_id in value) or len(set(value)) != len(value):
+            raise ValueError("person_ids must be distinct positive integers")
+        return value
+
+
+class PersonVisibilityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hidden: bool
+    person_count: int
+    changed: int
 
 
 class PersonUndoRequest(BaseModel):

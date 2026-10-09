@@ -260,9 +260,21 @@ def _photo_page_facts(
 
 
 def people_page(
-    catalog: Any, *, kind: str, q: str, limit: int, cursor: str | None, sort: str = "person_id"
+    catalog: Any,
+    *,
+    kind: str,
+    q: str,
+    limit: int,
+    cursor: str | None,
+    sort: str = "person_id",
+    visibility: str = "all",
 ) -> dict[str, Any]:
-    if kind not in ("all", "named", "unnamed") or sort not in ("person_id", "photos_desc") or len(q) > 200:
+    if (
+        kind not in ("all", "named", "unnamed")
+        or sort not in ("person_id", "photos_desc")
+        or visibility not in ("all", "visible", "hidden")
+        or len(q) > 200
+    ):
         raise ApiError(VALIDATION_ERROR, "invalid person query", status=422)
     query = q.strip()
     # Keep the legacy person_id cursor binding byte-for-byte compatible. Each sort mode
@@ -273,9 +285,19 @@ def people_page(
         query,
         read_filter_revision(catalog.connection),
     ]
+    if visibility != "all":
+        binding = [binding[0] + "-visibility1", visibility, *binding[1:]]
     after = _position(cursor, binding, 0 if sort == "person_id" else None)
     candidate_conditions = ["p.merged_into IS NULL"]
     candidate_parameters: list[Any] = []
+    if visibility == "visible":
+        candidate_conditions.append(
+            "NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id = p.person_id)"
+        )
+    elif visibility == "hidden":
+        candidate_conditions.append(
+            "EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id = p.person_id)"
+        )
     if kind == "named":
         candidate_conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":

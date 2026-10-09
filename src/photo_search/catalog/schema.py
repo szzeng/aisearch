@@ -65,7 +65,8 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0019 stores source-detail batches; 0020 adds their derived auto policy without replacing
 # either the immutable inference product or the historical manual records.
 # 0021 adds a sourced OSM identity bridge to the existing assignment Place FK.
-SUPPORTED_SCHEMA_VERSION = 21
+# 0022 stores person-album visibility independently from person identity and face ownership.
+SUPPORTED_SCHEMA_VERSION = 22
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
