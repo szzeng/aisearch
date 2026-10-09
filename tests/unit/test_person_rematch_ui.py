@@ -16,7 +16,7 @@ class Element {
   append(...items) { this.children.push(...items); }
   replaceChildren(...items) { this.children = items; }
   setAttribute() {} addEventListener(name, callback) { this.listeners[name] = callback; }
-  fire(name) { if (this.listeners[name]) this.listeners[name](); }
+  fire(name) { if (this.listeners[name]) return this.listeners[name](); }
   querySelector(selector) { return this.children.find(item => String(item.className || "").includes(selector.slice(1))); }
   focus() {}
 }
@@ -25,7 +25,8 @@ const get = id => { if (!elements.has(id)) elements.set(id, new Element("div"));
 get("pa-inbox-kind").value = "suggested";
 let reply, fail = false, posts = 0;
 const faces = [
-  {face_id:"a".repeat(64),asset_id:1,organization_reason:"BORDERLINE",suggestions:[{name:"妈妈"}]},
+  {face_id:"a".repeat(64),asset_id:1,control_revision:4,organization_reason:"BORDERLINE",
+    suggestions:[{person_id:17,name:"妈妈"}]},
   {face_id:"b".repeat(64),asset_id:1,organization_reason:"SAME_IMAGE_CONFLICT",suggestions:[]},
 ];
 const context = {
@@ -35,7 +36,9 @@ const context = {
   fetch:async (url, options) => {
     requests.push({url, options});
     let value;
-    if (url === "/api/v1/faces/rematch") {
+    if (url === "/api/v1/faces/" + faces[0].face_id + "/assignment") {
+      value = {changed:true,operation_id:"operation-1",operation_revision:1};
+    } else if (url === "/api/v1/faces/rematch") {
       posts++;
       if (fail) return {ok:false,status:503,json:async()=>({code:"TEMPORARY"})};
       value = await new Promise(resolve=>{reply=resolve;});
@@ -66,6 +69,18 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   const groupCard = get("pa-inbox-cards").children[0]; groupCard.open = true; groupCard.fire("toggle"); await flush();
   assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/groups/candidate%3A1?")));
   assert.equal(groupCard.children[1].children.length,1);
+  const suggestedCard = groupCard.children[1].children[0];
+  assert.equal(suggestedCard.children[2].textContent,"确认是妈妈");
+  assert.equal(suggestedCard.children[3].textContent,"选其他人");
+  await suggestedCard.children[2].fire("click");
+  const confirm = requests.find(r=>r.url === "/api/v1/faces/" + faces[0].face_id + "/assignment");
+  assert.equal(confirm.options.method,"PUT");
+  assert.deepEqual(JSON.parse(confirm.options.body),{
+    contract_version:"p3-face-correction-contracts.v1",request_id:"album-synthetic-request",
+    action:"assign",target_person_id:17,expected_revision:4,
+  });
+  assert.equal(confirm.options.headers["X-CSRF-Token"],"synthetic-csrf");
+  assert.equal(get("pa-status").textContent,"已确认是“妈妈”");
   assert(get("pa-inbox-note").textContent.includes("另有 1 张脸等待识别更新确认"));
   assert.equal(ui.organizationText({quality_reason:"SMALL"}),"脸太小，需确认");
   assert.equal(ui.organizationText({organization_reason:"BLURRY"}),"脸有些模糊，需确认");

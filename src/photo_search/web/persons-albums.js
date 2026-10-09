@@ -156,8 +156,26 @@
     const card = node("div", undefined, "pa-person-card");
     const view = button("", () => preview(face.asset_id), "pa-face-button");
     view.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"));
-    card.append(view, node("span", organizationText(face), "hint"), button("这是谁？", () => editFace(face)));
+    card.append(view, node("span", organizationText(face), "hint"));
+    const suggestion = face.organization_reason === "BORDERLINE" && face.suggestions && face.suggestions[0];
+    if (suggestion) {
+      card.append(button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion)));
+      card.append(button("选其他人", () => editFace(face)));
+    } else card.append(button("这是谁？", () => editFace(face)));
     container.append(card);
+  }
+  async function confirmSuggestion(face, person) {
+    if (state.writing) return;
+    state.writing = true;
+    try {
+      const result = await api("/faces/" + encodeURIComponent(face.face_id) + "/assignment", {
+        contract_version: "p3-face-correction-contracts.v1", request_id: requestId(),
+        action: "assign", target_person_id: person.person_id,
+        expected_revision: face.control_revision,
+      }, "PUT");
+      await refreshAfterWrite(result, "已确认是“" + name(person) + "”");
+    } catch (error) { message(errorText(error)); }
+    finally { state.writing = false; }
   }
   async function loadInboxGroup(details, groupKey, kind, cursor) {
     const list = details.querySelector(".pa-inbox-group-faces");
@@ -589,7 +607,8 @@
     }, 10000);
   }
   async function refreshAfterWrite(result, label) {
-    rememberOperation(result, label); message(label, true); $("edit").close(); state.editSeq++; state.choiceSeq++;
+    rememberOperation(result, label); message(label, true);
+    if ($("edit").open) $("edit").close(); state.editSeq++; state.choiceSeq++;
     loadPeople(false); if (state.organize) loadInbox(false);
     if (state.person) {
       const id = state.person.person_id;
