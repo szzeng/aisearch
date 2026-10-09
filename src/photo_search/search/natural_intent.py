@@ -120,13 +120,21 @@ def parse_natural_intent(text: str, *, connection: Any, today: date | None = Non
         for spelling in [person["name"], *person["aliases"]]:
             if not spelling:
                 continue
-            match = re.search(re.escape(spelling), folded, re.IGNORECASE)
-            if match:
+            for match in re.finditer(re.escape(spelling), folded, re.IGNORECASE):
                 found.append((match.start(), match.end(), person, spelling))
-    # Prefer the longest spelling at each location; preserve distinct people sharing aliases.
+    # Prefer a longer spelling only when it overlaps a shorter one. Unrelated names in
+    # the same query may have different lengths and must both remain person filters.
     if found:
-        longest = max(end - start for start, end, _, _ in found)
-        found = [hit for hit in found if hit[1] - hit[0] == longest]
+        found = [
+            hit
+            for hit in found
+            if not any(
+                other[0] < hit[1]
+                and hit[0] < other[1]
+                and other[1] - other[0] > hit[1] - hit[0]
+                for other in found
+            )
+        ]
     by_id = {hit[2]["person_id"]: hit[2] for hit in found}
     same_span: dict[tuple[int, int], set[int]] = {}
     for start, end, person, _ in found:

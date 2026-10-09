@@ -891,6 +891,7 @@
     state.search.binding = null;
     releaseObjectUrls();
     clear(els.resultGrid);
+    renderIntentChips(null);
     renderNotices(els.resultNotices, []);
     text(els.captureEcho, "");
     setStatus(els.captureState, "");

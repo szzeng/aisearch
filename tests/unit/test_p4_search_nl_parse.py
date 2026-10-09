@@ -68,3 +68,37 @@ def test_time_person_and_content_are_separated() -> None:
     assert plan["capture_from"] == "2023-01-01"
     assert [item["person_id"] for item in plan["choices"]] == [1, 3]
     assert plan["content_query"] == "日落"
+
+
+def test_differently_sized_person_names_both_become_filters() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        "CREATE TABLE persons(person_id INTEGER PRIMARY KEY,name TEXT,merged_into INTEGER);"
+        "CREATE TABLE person_aliases(person_id INTEGER,alias TEXT);"
+        "INSERT INTO persons VALUES (1,'Alice',NULL),(2,'Bo',NULL);"
+    )
+
+    plan = parse_natural_intent("Alice和Bo的合照", connection=connection)
+
+    assert plan["state"] == "ready"
+    assert [item["person_id"] for item in plan["choices"]] == [1, 2]
+    assert plan["person_match"] == "all"
+    assert plan["content_query"] is None
+
+
+def test_overlapping_person_name_does_not_hide_later_standalone_name() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        "CREATE TABLE persons(person_id INTEGER PRIMARY KEY,name TEXT,merged_into INTEGER);"
+        "CREATE TABLE person_aliases(person_id INTEGER,alias TEXT);"
+        "INSERT INTO persons VALUES (1,'Ann',NULL),(2,'Anna',NULL);"
+    )
+
+    plan = parse_natural_intent("Anna和Ann的合照", connection=connection)
+
+    assert plan["state"] == "ready"
+    assert [item["person_id"] for item in plan["choices"]] == [1, 2]
+    assert plan["person_match"] == "all"
+    assert plan["content_query"] is None

@@ -30,7 +30,7 @@ const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeOb
  window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
  fetch:async()=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({})})};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderPage,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderPage,renderIntentChips,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui;
 const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
@@ -50,6 +50,51 @@ for(let page=0;page<51;page++){
 }
 assert.equal(ui.state.search.count,5005);assert.equal(ui.state.search.cursor,null);
 assert.match(els.queryStatus.textContent,/符合条件共 5005 张/);assert.match(els.queryStatus.textContent,/已到末尾/);
+"""
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [node, "-e", script], cwd=root, capture_output=True, text=True,
+        encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_intent_cancel_keeps_content_and_new_search_drops_stale_chips() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the search-page interaction check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Element {
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.hidden=false;this.value="";this.dataset={};this.disabled=false;}
+  set textContent(value){this.text=String(value);this.children=[];}
+  get textContent(){return this.text||this.children.map(child=>child.textContent).join("");}
+  get firstChild(){return this.children[0]||null;}
+  appendChild(child){this.children.push(child);return child;}
+  removeChild(child){this.children.splice(this.children.indexOf(child),1);return child;}
+  addEventListener(name,callback){this.events[name]=callback;}
+  setAttribute(name,value){this[name]=String(value);}
+  fire(name){if(this.events[name])this.events[name]({preventDefault(){}});}
+}
+const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
+const storage=new Map();
+const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
+ document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
+ window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
+ fetch:()=>new Promise(()=>{})};
+let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderIntentChips,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+vm.createContext(context);vm.runInContext(code,context);
+const ui=context.ui;
+const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
+const els={};ids.forEach(id=>els[id]=get(id));
+els.queryText.value="2026年爸爸日落照片";els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
+ui.setElements(els);
+const plan={capture_from:"2026-01-01",capture_to_exclusive:"2027-01-01",person_ids:[7],person_names:["爸爸"],person_match:"any",content_query:"日落"};
+ui.state.search.intentPlan=plan;ui.renderIntentChips(plan);
+els.resultIntentScope.children[3].fire("click");
+assert.equal(els.queryText.value,"日落","cancelling one condition must preserve the remaining content query");
+ui.state.search.loading=false;els.queryText.value="2026年爸爸日落照片";ui.renderIntentChips(plan);ui.submitSearch();
+assert.equal(els.resultIntentScope.children.length,0,"a new query must clear condition chips from the previous search");
 """
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(

@@ -151,10 +151,10 @@ def test_strong_match_annotation_does_not_change_search_order_or_candidate_count
 ) -> None:
     async def scenario(client: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         csrf = await search_env.authenticate(client)
-        monkeypatch.setattr(search_service, "STRONG_MATCH_MAX_DISTANCE", -1.0)
+        monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: -1.0)
         below = await post_search(client, search_body(search_env), csrf)
         assert below.status_code == 200, below.text
-        monkeypatch.setattr(search_service, "STRONG_MATCH_MAX_DISTANCE", 1_000_000.0)
+        monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: 1_000_000.0)
         above = await post_search(client, search_body(search_env), csrf)
         assert above.status_code == 200, above.text
         return below.json(), above.json()
