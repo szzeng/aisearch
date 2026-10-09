@@ -39,7 +39,7 @@
 
 ## 人物体验新增待做：P4-PERSON-ALBUM-PERF-A — 相册加载加速（**PROPOSED / 未实施**）
 
-[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)。2026-10-09反馈人物页/相册加载偏慢；先测量再最小消除40人人物统计/头像与60张照片时间/人脸的N+1读取，补识别候选统计延迟到进入整理入口；缓存仅证实必要时小修。仅小型合成库SQL次数/耗时及定向测试，不触碰真实PhotoSearchData、schema、模型、归属、全局人物数量排序或现有待审结论。推荐DS-H／高推理，GPT备选Luna／High；本次仅立卡，不改变现有任务优先级。
+[执行卡](tasks/P4-PERSON-ALBUM-PERF-A.md)。2026-10-09修订：明确与已完成的后台P4-PERSON-PERF-A不同；先量人物API、相册主SQL、首屏头像/首张照片可见时间及冷/热图片；普通人物浏览不再主动请求`/sources`完整来源统计、补识别active/preview，仅相关整理入口按需加载；限页批量化40人人物计数/封面和60张照片时间/人脸，检查`capture_desc`主查询执行计划。按简单合成测试与前后各3次对照，不因SQL次数下降冒充用户体感提升。**仅修订任务卡，未实施/测速；不访问真实PhotoSearchData、改schema/身份/模型、做30万性能或新Sol阶段**。推荐DS-H／高推理，GPT备选Luna／High；不改变其他任务状态及优先级。
 
 ## 前置 P4-PERSON-DETAIL-A — 按需原图裁脸（**IMPLEMENTED / 定向验证通过 / 独立审查待做**）
 
