@@ -2,10 +2,10 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
-  const state = { organize: false, hiddenView: false, batchMode: false, selectedPeople: new Set(), visibilityBusy: false, person: null, listCursor: null, inboxCursor: null,
+  const state = { organize: false, hiddenView: false, batchMode: false, selectedPeople: new Set(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
-    choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, edit: null, chosen: null,
+    choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
     detailBusyAssets: new Set(),
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
     detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, coverMode: false, searching: false, searchBody: null,
@@ -86,7 +86,7 @@
     $("batch-toggle").textContent = state.batchMode ? "退出批量管理" : "批量管理";
     $("hidden-toggle").textContent = state.hiddenView ? "返回人物列表" : "查看已忽略";
     $("selection-count").hidden = !state.batchMode;
-    $("selection-count").textContent = "已选 " + state.selectedPeople.size + " 人";
+    $("selection-count").textContent = "已选 " + state.selectedPeople.size + " 个人物";
     $("visibility-submit").hidden = !state.batchMode;
     $("visibility-submit").disabled = state.visibilityBusy || state.selectedPeople.size === 0;
     $("visibility-submit").textContent = state.hiddenView ? "恢复所选" : "忽略所选";
@@ -95,9 +95,10 @@
     $("batch-toggle").disabled = state.visibilityBusy;
     $("hidden-toggle").disabled = state.visibilityBusy;
     syncPeopleCards();
+    renderFaceManagement();
   }
   function clearPeopleSelection() {
-    state.selectedPeople.clear(); state.batchMode = false; renderPeopleManagement();
+    state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.batchMode = false; renderPeopleManagement();
   }
   function togglePersonSelection(personId) {
     if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
@@ -114,10 +115,62 @@
     state.visibilityBusy = true; renderPeopleManagement();
     try {
       const result = await api("/persons/visibility", { person_ids: ids, hidden: !state.hiddenView });
-      clearPeopleSelection(); state.listCursor = null; await loadPeople(false);
+      state.selectedPeople.clear(); state.listCursor = null; renderPeopleManagement(); await loadPeople(false);
       message("已" + action + " " + result.changed + " 个人物。", true);
     } catch (error) { message(action + "没有完成：" + errorText(error)); }
     finally { state.visibilityBusy = false; renderPeopleManagement(); }
+  }
+  function syncInboxFaceCards(container) {
+    if (!container) return;
+    Array.from(container.children || []).forEach((item) => {
+      if (item.faceId && item.selectionButton) {
+        const selected = (item.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(item.faceId);
+        item.selectionButton.hidden = !state.batchMode;
+        item.selectionButton.textContent = selected ? "取消选择" : "选择这张脸";
+        item.selectionButton.setAttribute("aria-pressed", String(selected));
+      }
+      syncInboxFaceCards(item);
+    });
+  }
+  function renderFaceManagement() {
+    const selected = state.selectedInboxFaces.size + state.selectedHiddenFaces.size;
+    $("inbox-selection-count").hidden = !state.batchMode;
+    $("inbox-selection-count").textContent = "已选 " + selected + " 张脸";
+    $("inbox-hide-submit").hidden = !state.batchMode;
+    $("inbox-hide-submit").disabled = state.faceVisibilityBusy || state.selectedInboxFaces.size === 0 || state.selectedInboxFaces.size > 500;
+    $("inbox-restore-submit").hidden = !state.batchMode || !state.inboxHiddenVisible;
+    $("inbox-restore-submit").disabled = state.faceVisibilityBusy || state.selectedHiddenFaces.size === 0 || state.selectedHiddenFaces.size > 500;
+    $("inbox-hidden-selection-count").hidden = !state.batchMode || !state.inboxHiddenVisible;
+    $("inbox-hidden-selection-count").textContent = "已选 " + state.selectedHiddenFaces.size + " 张已忽略人脸";
+    $("inbox-hidden-toggle").setAttribute("aria-expanded", String(state.inboxHiddenVisible));
+    $("inbox-hidden-toggle").textContent = state.inboxHiddenVisible ? "收起已忽略人脸" : "查看已忽略人脸";
+    $("inbox-hidden-content").hidden = !state.inboxHiddenVisible;
+    syncInboxFaceCards($("inbox-cards")); syncInboxFaceCards($("inbox-hidden-cards"));
+  }
+  function toggleInboxFace(faceId, hidden) {
+    const selected = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces;
+    if (selected.has(faceId)) selected.delete(faceId);
+    else if (selected.size >= 500) { message("一次最多选择 500 张脸，请先提交当前选择。"); return; }
+    else selected.add(faceId);
+    renderFaceManagement();
+  }
+  async function submitInboxVisibility(hidden) {
+    if (state.faceVisibilityBusy) return;
+    const selected = hidden ? state.selectedInboxFaces : state.selectedHiddenFaces;
+    if (!selected.size) return;
+    if (selected.size > 500) { message("一次最多操作 500 张脸。"); return; }
+    const ids = Array.from(selected), action = hidden ? "忽略" : "恢复";
+    if (!window.confirm("确定" + action + "所选 " + ids.length + " 张人脸吗？")) return;
+    const expanded = Array.from($("inbox-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
+    state.faceVisibilityBusy = true; renderFaceManagement();
+    try {
+      const result = await api("/faces/inbox/visibility", { face_ids: ids, hidden });
+      selected.clear();
+      await loadInbox(false, expanded);
+      if (state.inboxHiddenVisible) await loadHiddenFaces(false);
+      message("已" + action + " " + result.changed + " 张人脸。", true);
+    } catch (error) { message(action + "人脸没有完成：" + errorText(error)); }
+    finally { state.faceVisibilityBusy = false; renderFaceManagement(); }
   }
   function requestedPersonId() {
     const search = typeof window !== "undefined" && window.location ? window.location.search : "";
@@ -215,16 +268,23 @@
     if (summary.held) pieces.push("另有 " + summary.held + " 张脸等待识别更新确认");
     return pieces.join(" · ");
   }
-  function renderInboxFace(container, face) {
+  function renderInboxFace(container, face, hiddenFace) {
     const card = node("div", undefined, "pa-person-card");
+    card.faceId = String(face.face_id); card.hiddenFace = Boolean(hiddenFace);
+    const selected = (card.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(card.faceId);
+    const selection = button(selected ? "取消选择" : "选择这张脸", () => toggleInboxFace(card.faceId, card.hiddenFace), "pa-inbox-face-select");
+    selection.setAttribute("aria-pressed", String(selected));
+    selection.hidden = !state.batchMode; card.selectionButton = selection; card.append(selection);
     const view = button("", () => preview(face.asset_id), "pa-face-button");
     view.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"));
     card.append(view, node("span", organizationText(face), "hint"));
-    const suggestion = face.organization_reason === "BORDERLINE" && face.suggestions && face.suggestions[0];
-    if (suggestion) {
-      card.append(button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion)));
-      card.append(button("选其他人", () => editFace(face)));
-    } else card.append(button("这是谁？", () => editFace(face)));
+    if (!state.batchMode && !hiddenFace) {
+      const suggestion = face.organization_reason === "BORDERLINE" && face.suggestions && face.suggestions[0];
+      if (suggestion) {
+        card.append(button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion)));
+        card.append(button("选其他人", () => editFace(face)));
+      } else card.append(button("这是谁？", () => editFace(face)));
+    }
     container.append(card);
   }
   async function confirmSuggestion(face, person) {
@@ -248,7 +308,7 @@
       const values = { limit: 30, kind };
       if (cursor) values.cursor = cursor;
       const page = await api("/faces/inbox/groups/" + encodeURIComponent(groupKey) + params(values));
-      page.faces.forEach((face) => renderInboxFace(list, face));
+      page.faces.forEach((face) => renderInboxFace(list, face, false));
       more.hidden = !page.has_more; more.dataset.cursor = page.next_cursor || "";
     } catch (error) { message(errorText(error)); }
     finally { more.disabled = false; }
@@ -262,14 +322,17 @@
     const list = node("div", undefined, "pa-people-grid pa-inbox-group-faces");
     const more = button("再看一些", () => loadInboxGroup(details, group.group_key, kind, more.dataset.cursor || null));
     more.className += " pa-inbox-group-more"; more.hidden = true;
-    let loaded = false;
+    let loaded = false; details.groupKey = group.group_key;
+    details.openGroup = () => {
+      if (!loaded) { loaded = true; loadInboxGroup(details, group.group_key, kind, null); }
+    };
     details.addEventListener("toggle", () => {
-      if (details.open && !loaded) { loaded = true; loadInboxGroup(details, group.group_key, kind, null); }
+      if (details.open) details.openGroup();
     });
     details.append(summary, list, more);
     return details;
   }
-  async function loadInbox(more) {
+  async function loadInbox(more, reopenGroups) {
     if (more && state.busy.has("inbox")) return;
     const seq = ++state.inboxSeq; state.busy.add("inbox"); $("inbox-more").disabled = true;
     const values = { limit: 30, kind: $("inbox-kind").value || "all" };
@@ -284,13 +347,32 @@
       if (summary) $("inbox-note").textContent = inboxSummaryText(summary);
       if (grouped) page.cards.forEach((card) => $("inbox-cards").append(
         card.type === "candidate_group" ? renderInboxGroup(card, values.kind) : (() => {
-          const wrapper = node("div", undefined, "pa-inbox-single"); renderInboxFace(wrapper, card.face); return wrapper;
+          const wrapper = node("div", undefined, "pa-inbox-single"); renderInboxFace(wrapper, card.face, false); return wrapper;
         })()));
-      else page.faces.forEach((face) => renderInboxFace($("inbox-cards"), face));
+      else page.faces.forEach((face) => renderInboxFace($("inbox-cards"), face, false));
+      if (reopenGroups && reopenGroups.length) Array.from($("inbox-cards").children).forEach((item) => {
+        if (item.groupKey && reopenGroups.includes(item.groupKey)) { item.open = true; item.openGroup(); }
+      });
       state.inboxCursor = page.next_cursor; $("inbox-more").hidden = !page.has_more;
       if (!$("inbox-cards").children.length) $("inbox-cards").append(node("p", "暂时没有待归组的人脸。", "hint"));
     } catch (error) { if (seq === state.inboxSeq) message(errorText(error)); }
     finally { if (seq === state.inboxSeq) { state.busy.delete("inbox"); $("inbox-more").disabled = false; } }
+  }
+  async function loadHiddenFaces(more) {
+    if (more && state.busy.has("hidden-faces")) return;
+    const seq = (state.hiddenFaceSeq || 0) + 1; state.hiddenFaceSeq = seq;
+    state.busy.add("hidden-faces"); $("inbox-hidden-more").disabled = true;
+    const values = { limit: 30 };
+    if (more && state.inboxHiddenCursor) values.cursor = state.inboxHiddenCursor;
+    if (!more) { $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
+    try {
+      const page = await api("/faces/inbox/hidden" + params(values));
+      if (seq !== state.hiddenFaceSeq) return;
+      page.faces.forEach((face) => renderInboxFace($("inbox-hidden-cards"), face, true));
+      state.inboxHiddenCursor = page.next_cursor; $("inbox-hidden-more").hidden = !page.has_more;
+      if (!$("inbox-hidden-cards").children.length) $("inbox-hidden-cards").append(node("p", "暂时没有已忽略的人脸。", "hint"));
+    } catch (error) { if (seq === state.hiddenFaceSeq) message(errorText(error)); }
+    finally { if (seq === state.hiddenFaceSeq) { state.busy.delete("hidden-faces"); $("inbox-hidden-more").disabled = false; } }
   }
   async function rematchFaces(restart) {
     if (state.writing || state.busy.has("rematch")) return;
@@ -733,13 +815,13 @@
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
     $("batch-toggle").addEventListener("click", () => {
       state.batchMode = !state.batchMode;
-      if (!state.batchMode) state.selectedPeople.clear();
-      renderPeopleManagement();
+      if (!state.batchMode) clearPeopleSelection();
+      else renderPeopleManagement();
     });
     $("batch-cancel").addEventListener("click", clearPeopleSelection);
     $("visibility-submit").addEventListener("click", submitVisibility);
     $("hidden-toggle").addEventListener("click", () => {
-      state.hiddenView = !state.hiddenView; clearPeopleSelection();
+      state.hiddenView = !state.hiddenView; state.selectedPeople.clear(); renderPeopleManagement();
       $("query").value = ""; loadPeople(false);
     });
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
@@ -748,6 +830,14 @@
     $("refresh").addEventListener("click", () => { loadPeople(false); if (state.organize) loadInbox(false); });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
     $("inbox-kind").addEventListener("change", () => loadInbox(false));
+    $("inbox-hide-submit").addEventListener("click", () => submitInboxVisibility(true));
+    $("inbox-restore-submit").addEventListener("click", () => submitInboxVisibility(false));
+    $("inbox-hidden-toggle").addEventListener("click", () => {
+      state.inboxHiddenVisible = !state.inboxHiddenVisible;
+      renderFaceManagement();
+      if (state.inboxHiddenVisible) loadHiddenFaces(false);
+    });
+    $("inbox-hidden-more").addEventListener("click", () => loadHiddenFaces(true));
     $("rematch").addEventListener("click", () => rematchFaces(false));
     $("rematch-restart").addEventListener("click", () => rematchFaces(true));
     $("detail-batch").addEventListener("click", startDetailBatch);
@@ -791,7 +881,9 @@
     $("edit").addEventListener("close", () => { state.editSeq++; state.choiceSeq++; });
     $("undo").addEventListener("click", undo);
     $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
-    window.addEventListener("pagehide", () => state.selectedPeople.clear());
+    window.addEventListener("pagehide", () => {
+      state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear();
+    });
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
     else loadPeople(false);

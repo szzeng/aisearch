@@ -530,6 +530,8 @@ _NO_MEMBER = (
     + ")"
 )
 _INBOX_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
+_INBOX_ELIGIBLE_WHERE = _INBOX_WHERE
+_INBOX_WHERE += " AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id = f.face_id)"
 _INBOX_KINDS = {
     "all": "1 = 1",
     "suggested": "organization_reason IN ('BORDERLINE', 'NEAR_TIE', 'SAME_IMAGE_CONFLICT', 'OTHER_SUGGESTION')",
@@ -551,6 +553,9 @@ def inbox_summary(catalog: Any) -> dict[str, Any]:
         + _VISIBLE
         + " AND "
         + _NO_MEMBER
+        + " AND (NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id=f.face_id) OR NOT ("
+        + _NOT_HELD
+        + "))"
         + ") GROUP BY organization_reason",
         _VISIBILITY_PARAMETERS,
     )
@@ -587,6 +592,66 @@ def inbox_page(
         "has_more": has_more,
         "next_cursor": _encode(binding, str(rows[-1]["face_id"])) if has_more else None,
     }
+
+
+def inbox_hidden_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[str, Any]:
+    binding = ["faceinboxhidden1"]
+    after = _position(cursor, binding, "")
+    if not isinstance(after, str) or (
+        after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))
+    ):
+        raise ApiError(INVALID_CURSOR, "invalid face position", status=422)
+    rows = catalog.read_all(
+        _SELECT_FACES
+        + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id>? "
+        + "ORDER BY f.face_id LIMIT ?",
+        (after, limit + 1),
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "faces": [_face_view(catalog, row) for row in rows],
+        "has_more": has_more,
+        "next_cursor": _encode(binding, str(rows[-1]["face_id"])) if has_more else None,
+    }
+
+
+def set_inbox_visibility(catalog: Any, *, face_ids: list[str], hidden: bool) -> dict[str, Any]:
+    """Hide or restore explicit face detections atomically without changing their ownership."""
+    if not 1 <= len(face_ids) <= 500 or len(set(face_ids)) != len(face_ids):
+        raise ApiError(VALIDATION_ERROR, "face_ids must contain 1 to 500 distinct faces", status=422)
+    with catalog.write() as connection:
+        for face_id in face_ids:
+            exists = connection.execute("SELECT 1 FROM faces WHERE face_id=?", (face_id,)).fetchone()
+            if exists is None:
+                raise ApiError(VALIDATION_ERROR, "face does not exist", status=422, details={"face_id": face_id})
+            marked = connection.execute(
+                "SELECT 1 FROM face_inbox_hidden WHERE face_id=?", (face_id,)
+            ).fetchone() is not None
+            if hidden and not marked:
+                eligible = connection.execute(
+                    _SELECT_FACES + "WHERE f.face_id=? AND " + _INBOX_ELIGIBLE_WHERE,
+                    (face_id, *_VISIBILITY_PARAMETERS),
+                ).fetchone()
+                if eligible is None:
+                    raise ApiError(
+                        VALIDATION_ERROR,
+                        "only faces currently in the organization inbox can be hidden",
+                        status=422,
+                        details={"face_id": face_id},
+                    )
+        changed = 0
+        for face_id in face_ids:
+            if hidden:
+                result = connection.execute(
+                    "INSERT OR IGNORE INTO face_inbox_hidden(face_id) VALUES (?)", (face_id,)
+                )
+            else:
+                result = connection.execute(
+                    "DELETE FROM face_inbox_hidden WHERE face_id=?", (face_id,)
+                )
+            changed += max(0, int(result.rowcount))
+    return {"hidden": bool(hidden), "face_count": len(face_ids), "changed": changed}
 
 
 def _inbox_group_cte(kind: str) -> tuple[str, tuple[Any, ...]]:

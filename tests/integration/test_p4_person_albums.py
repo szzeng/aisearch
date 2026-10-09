@@ -827,6 +827,99 @@ def test_inbox_group_card_page_has_a_30_card_boundary(api_env: ApiEnv) -> None:
     api_env.scenario(scenario)
 
 
+def test_inbox_face_visibility_is_atomic_persistent_and_scoped_to_selected_faces(api_env: ApiEnv) -> None:
+    seeded = seed_library(api_env, {
+        "shared.jpg": [(20, 20, 80, 80), (110, 20, 170, 80), (200, 20, 260, 80)],
+        "another.jpg": [(30, 30, 100, 100)],
+    })
+    catalog = api_env.service.catalog
+    candidate = add_person(catalog, name="候选甲")
+    hidden_a, hidden_b, visible_same_photo = seeded["shared.jpg"]["faces"]
+    visible_other_photo = seeded["another.jpg"]["faces"][0]
+    add_link(catalog, hidden_a, candidate, decision="SUGGESTED", confidence=0.9)
+    add_link(catalog, hidden_b, candidate, decision="SUGGESTED", confidence=0.8)
+    add_link(catalog, visible_other_photo, candidate, decision="SUGGESTED", confidence=0.9)
+    before_links = catalog.read_all(
+        "SELECT face_id, person_id, decision FROM face_person_links ORDER BY face_id, person_id, decision"
+    )
+    ids_to_hide = [hidden_a, hidden_b]
+
+    async def scenario(client):
+        assert (await client.get("/api/v1/faces/inbox/hidden")).status_code == 401
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        initial = (await client.get("/api/v1/faces/inbox/groups", params={"kind": "suggested"})).json()
+        group = next(card for card in initial["cards"] if card["type"] == "candidate_group")
+        assert group["photo_count"] == 2
+        group_faces = (await client.get(
+            f"/api/v1/faces/inbox/groups/{group['group_key']}", params={"kind": "suggested", "limit": 30}
+        )).json()["faces"]
+        assert {face["face_id"] for face in group_faces} == {
+            hidden_a, hidden_b, visible_other_photo
+        }
+        assert (await client.get("/api/v1/faces/inbox/summary")).json()["total"] == 4
+
+        invalid = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": [hidden_a, "f" * 64], "hidden": True},
+        )
+        assert invalid.status_code == 422
+        assert catalog.read_one("SELECT COUNT(*) AS n FROM face_inbox_hidden")["n"] == 0
+        no_csrf = await client.post(
+            "/api/v1/faces/inbox/visibility", json={"face_ids": ids_to_hide, "hidden": True}
+        )
+        assert no_csrf.status_code == 403
+
+        hidden = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": ids_to_hide, "hidden": True},
+        )
+        assert hidden.status_code == 200 and hidden.json()["changed"] == 2
+        repeated = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": ids_to_hide, "hidden": True},
+        )
+        assert repeated.status_code == 200 and repeated.json()["changed"] == 0
+        ignored_page = (await client.get("/api/v1/faces/inbox/hidden", params={"limit": 1})).json()
+        assert ignored_page["has_more"] and len(ignored_page["faces"]) == 1
+        ignored_next = (await client.get(
+            "/api/v1/faces/inbox/hidden",
+            params={"limit": 1, "cursor": ignored_page["next_cursor"]},
+        )).json()
+        assert {face["face_id"] for face in ignored_page["faces"] + ignored_next["faces"]} == set(ids_to_hide)
+
+        reopened = Catalog.open(catalog.db_path)
+        try:
+            assert reopened.read_one("SELECT COUNT(*) AS n FROM face_inbox_hidden")["n"] == 2
+        finally:
+            reopened.close()
+        remaining_summary = (await client.get("/api/v1/faces/inbox/summary")).json()
+        assert remaining_summary["total"] == 2
+        remaining = (await client.get("/api/v1/faces/inbox/groups")).json()
+        assert all(card["type"] == "single_face" for card in remaining["cards"])
+        remaining_ids = {card["face"]["face_id"] for card in remaining["cards"]}
+        assert remaining_ids == {visible_other_photo, visible_same_photo}
+        current_links = catalog.read_all(
+            "SELECT face_id, person_id, decision FROM face_person_links ORDER BY face_id, person_id, decision"
+        )
+        assert [tuple(row) for row in current_links] == [tuple(row) for row in before_links]
+
+        restored = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": ids_to_hide, "hidden": False},
+        )
+        assert restored.status_code == 200 and restored.json()["changed"] == 2
+        assert (await client.get("/api/v1/faces/inbox/hidden")).json()["faces"] == []
+        after_restore = (await client.get("/api/v1/faces/inbox/groups")).json()
+        group_after_restore = next(card for card in after_restore["cards"] if card["type"] == "candidate_group")
+        assert group_after_restore["photo_count"] == 2
+        assert [tuple(row) for row in catalog.read_all(
+            "SELECT face_id, person_id, decision FROM face_person_links ORDER BY face_id, person_id, decision"
+        )] == [tuple(row) for row in before_links]
+
+    api_env.scenario(scenario)
+
+
 def test_inbox_includes_machine_suggestions_low_quality_and_retained_v1(api_env: ApiEnv) -> None:
     data = seed(api_env)
     catalog = api_env.service.catalog

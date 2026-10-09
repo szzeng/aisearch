@@ -46,6 +46,8 @@ from photo_search.api.models import (
     FaceCorrectionBatchRequest,
     FaceCorrectionRequest,
     FaceDetailBatchRequest,
+    FaceInboxVisibilityRequest,
+    FaceInboxVisibilityResponse,
     FaceListResponse,
     FaceOperationResponse,
     FaceRematchRequest,
@@ -1418,6 +1420,28 @@ async def face_inbox(
 ) -> dict[str, Any]:
     return person_albums.inbox_page(
         service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor, kind=kind
+    )
+
+
+@router.get("/faces/inbox/hidden", summary="Read a page of explicitly hidden inbox faces")
+async def face_inbox_hidden(
+    request: Request, limit: int | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_albums.inbox_hidden_page(
+        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor
+    )
+
+
+@router.post(
+    "/faces/inbox/visibility",
+    response_model=FaceInboxVisibilityResponse,
+    summary="Hide or restore selected detected faces in the personal inbox",
+)
+async def post_face_inbox_visibility(
+    request: Request, payload: FaceInboxVisibilityRequest
+) -> dict[str, Any]:
+    return person_albums.set_inbox_visibility(
+        service_of(request).catalog, face_ids=payload.face_ids, hidden=bool(payload.hidden)
     )
 
 

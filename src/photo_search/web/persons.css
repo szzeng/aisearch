@@ -21,6 +21,8 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .pa-inbox-group > summary::-webkit-details-marker { display: none; }
 .pa-inbox-group-faces { padding-inline-start: 1rem; }
 .pa-inbox-single .pa-person-card { height: 100%; }
+.pa-inbox-hidden { margin-top: 1.5rem; }
+.pa-inbox-face-select { justify-self: start; }
 .pa-picture { display: grid; overflow: hidden; position: relative; background: var(--bg); color: var(--fg-muted); border: 1px solid var(--line); }
 .pa-picture img, .pa-image-fallback { grid-area: 1 / 1; width: 100%; height: 100%; min-height: 0; min-width: 0; }
 .pa-picture img { object-fit: cover; z-index: 1; }

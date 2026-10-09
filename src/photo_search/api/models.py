@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 
 from photo_search.search.contracts import (
     DEFAULT_PAGE_SIZE,
@@ -1105,6 +1105,33 @@ class FaceRematchRequest(BaseModel):
 
     limit: StrictInt = Field(default=20, ge=1, le=50)
     after_asset_id: StrictInt = Field(default=0, ge=0)
+
+
+class FaceInboxVisibilityRequest(BaseModel):
+    """Hide or restore 1..500 explicit detected faces in the personal inbox."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    face_ids: list[StrictStr] = Field(min_length=1, max_length=500)
+    hidden: StrictBool
+
+    @field_validator("face_ids")
+    @classmethod
+    def valid_face_ids(cls, value: list[str]) -> list[str]:
+        if len(set(value)) != len(value) or any(
+            len(face_id) != 64 or any(char not in "0123456789abcdef" for char in face_id)
+            for face_id in value
+        ):
+            raise ValueError("face_ids must be distinct lowercase 64-character face ids")
+        return value
+
+
+class FaceInboxVisibilityResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hidden: bool
+    face_count: int
+    changed: int
 
 
 class FaceDetailBatchRequest(BaseModel):

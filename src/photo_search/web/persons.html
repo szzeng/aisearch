@@ -7,12 +7,12 @@
     <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-person-hide-ui-fix-a-1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-inbox-hide-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-view-a-3" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-view-a-3" defer></script>
     <script src="/web/persons.js?v=p4-photo-view-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-count-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-inbox-hide-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -68,8 +68,25 @@
           </div>
           <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
           <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p>
+          <div class="row-actions" aria-label="待整理人脸批量管理">
+            <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
+            <button id="pa-inbox-hide-submit" type="button" hidden disabled>忽略所选人脸</button>
+          </div>
           <div id="pa-inbox-cards" class="pa-people-grid"></div>
           <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
+          <section class="pa-inbox-hidden" aria-label="已忽略人脸">
+            <h3>已忽略的人脸</h3>
+            <p class="hint">这里只隐藏待整理列表中的单张人脸；恢复后仍符合待整理条件的人脸会重新出现。</p>
+            <button id="pa-inbox-hidden-toggle" type="button" aria-expanded="false">查看已忽略人脸</button>
+            <div id="pa-inbox-hidden-content" hidden>
+              <div class="row-actions">
+                <span id="pa-inbox-hidden-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
+                <button id="pa-inbox-restore-submit" type="button" hidden disabled>恢复所选人脸</button>
+              </div>
+              <div id="pa-inbox-hidden-cards" class="pa-people-grid"></div>
+              <button id="pa-inbox-hidden-more" type="button" hidden>再看一些已忽略人脸</button>
+            </div>
+          </section>
         </section>
       </section>
       <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>
