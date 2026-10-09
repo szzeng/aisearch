@@ -1,5 +1,7 @@
 # P4-02Y-W-Q — Qwen 高度匹配恢复
 
+> **2026-10-09个人待审范围更新（当前优先）：** 按[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)与[本组唯一入口](P4-PERSONAL-REVIEW-SEARCH-A.md)收口。下文保留历史实现要求；冲突的重复全量/30万/模型/打包/固定多轮审查及浏览器组合要求，以本次个人基础范围为准。先复用可核对证据，缺口才补最小测试；首次审查覆盖完整未审新增面，身份、人工状态、撤销、迁移/恢复保护仍必留。此更新未执行审查或新增PASS；已有现场未验事项照实保留。
+
 **状态：IMPLEMENTED / TARGETED VALIDATION COMPLETE / PERSONAL WEB CONFIRMATION PENDING**
 
 性质：个人试用小改。

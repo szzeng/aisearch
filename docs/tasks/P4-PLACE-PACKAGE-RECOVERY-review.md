@@ -1,24 +1,17 @@
-# P4-PLACE-PACKAGE-RECOVERY — DS-H 独立审查卡
+# P4-PLACE-PACKAGE-RECOVERY — 保留地点包恢复审查索引
 
-执行模型：DS-H；对地点包注册、校验、激活和恢复的完整受影响面进行独立审查。模型切换由用户手动完成。
+日期：2026-10-09。状态：**待审 / 已并入个人基础审查组；未新增PASS**。
 
-## 必读
+当前唯一执行入口：[PLACE组](P4-PERSONAL-REVIEW-PLACE-A.md)，共同规则：[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)。本索引替代旧卡的重复测试与多轮审查要求，不另开一轮。
 
-1. `AGENTS.md`、`docs/development-status.md`、实现卡与实现报告。
-2. `docs/decisions/ADR-0005-place-facts-assignment-and-search-contract.md` 的数据包/生命周期相关章节、`docs/reports/P2-03B-offline-name-dataset-and-nearby-city-suggestions.md` §3。
-3. `src/photo_search/places/datasets.py`、`src/photo_search/geo/dataset.py`、`src/photo_search/ingestion/service.py`、API lazy service factory、`tools/places/manage_dataset.py`、`tests/integration/test_p2_dataset_lifecycle.py`、`tests/integration/test_place_package_startup_recovery.py`。
-4. `docs/decisions/ADR-0015-place-package-catalog-recovery.md`；以第二轮自动启动恢复证据为准，不能只复核第一轮手动导入。
+## 必须保留的范围
 
-## 审查问题
+只在空registry且唯一完整合法包时恢复；保留hash/路径/兼容检查、正常import外键、失败回滚及幂等。RECOVERY-B缺前驱例外仅catalog新行置NULL，manifest字节不变，合并审查。必要补测用隔离小包，不能清空私人catalog验收。
 
-- 同规范路径判断是否覆盖 Windows 大小写、相对路径与解析路径，且没有绕过数据根安全边界？
-- 跳过复制时是否仍完整校验包内容，并保持原子写入 catalog、VALIDATED/ACTIVE 转换和激活失败回滚语义？
-- 针对只读、现存包恢复的回归证据是否充分，是否有同路径/链接/损坏包反例？
-- 是否存在必须先停服务或额外保护用户数据的操作前提？
-- 注册表全空时唯一包自动恢复的边界、已有未激活选择、多包/链接/缺件/不兼容拒绝和并发检查是否正确？真实 API 冷启动、合成删除 catalog/vectors 与事务故障是否完整覆盖？
+首次独立工程审查覆盖本任务全部未审新增文件及直接调用链；先列已有证据和当前差异，缺口才补最小测试。人工状态、身份、迁移/恢复的关键拒绝、零写入或撤销证据不能省略。没有新冻结决定或高风险未决问题时不固定追加Sol，记录SOL_NOT_REQUIRED。
 
-## 结果要求
+## 历史证据与结论
 
-审查完整改动和本卡验证证据，报告 PASS/FAIL/阻塞及具体证据。发现状态机或事务风险时扩展审查范围；不要重跑全量套件，除非发现有证据的影响面需要它。
+[原实现报告](../reports/P4-PLACE-PACKAGE-RECOVERY.md)保留历史事实；不改写历史报告或把旧测试当本次执行。按组卡输出报告，逐原任务列“已覆盖、剩余、当前状态”；组内相关任务通过不自动推及本卡。
 
-本轮有新的启动自动激活语义；DS-H 先收敛 ADR-0015、原子注册/物化和损坏/多包的边界证据。正式冻结恢复语义前生成 Sol high 聚焦终审卡，只审这些不变量和 DS-H 未决项。不得把实现者自检当作独立审查或提前标总任务 PASS。
+用户手动选择独立审查模型；不自动切换或派Agent。禁私人图库/服务重启、模型下载、全量/30万/打包重复执行、提交/推送。

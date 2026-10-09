@@ -1,5 +1,7 @@
 # P4-PLACE-UNIFIED-A — 统一地点选择与人工归属（OSM 优先 / GeoNames 兜底）
 
+> **2026-10-09个人待审范围更新（当前优先）：** 按[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)与[本组唯一入口](P4-PERSONAL-REVIEW-PLACE-A.md)收口。下文保留历史实现要求；冲突的重复全量/30万/模型/打包/固定多轮审查及浏览器组合要求，以本次个人基础范围为准。先复用可核对证据，缺口才补最小测试；首次审查覆盖完整未审新增面，身份、人工状态、撤销、迁移/恢复保护仍必留。此更新未执行审查或新增PASS；已有现场未验事项照实保留。
+
 日期：2026-10-08（实现交接更新：2026-10-09）。状态：**IMPLEMENTED / SCOPED VALIDATION COMPLETE / 本机浏览器验收待做 / 独立审查待做**。报告：[P4-PLACE-UNIFIED-A](../reports/P4-PLACE-UNIFIED-A.md)。执行起点 HEAD 为 `fdd10457e9cb5a60e07e6181846d01424855a7e3`；另有 P4-SEARCH-PLACE-NL-A 工作区改动期间已由用户提交至 `a5aaab19`，本卡叠加该提交。任务卡原记基线 `5d7bc139` 与实际仓库不符。
 定位：个人 PhotoSearch 一张功能卡；基于现有 P4-PLACE-CN、P4-PLACE-SEARCH-A，不重做地点系统。
 前置：建议 P4-PLACE-CN 独立受影响面审查先收口；旧包与中国复合包实际安装/更新由用户另行决定，本卡不操作真实图库。

@@ -1,6 +1,8 @@
 # P4-EMBEDDING-ARCH — 实现可插拔语义模型架构并接入 Qwen3-VL-Embedding-2B 512D
 
-日期：2026-09-30。状态：**READY FOR IMPLEMENTATION / NOT STARTED**。
+> **2026-10-09个人待审范围更新（当前优先）：** 按[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)与[本组唯一入口](P4-EMBEDDING-ARCH-review.md)收口。下文保留历史实现要求；冲突的重复全量/30万/模型/打包/固定多轮审查及浏览器组合要求，以本次个人基础范围为准。先复用可核对证据，缺口才补最小测试；首次审查覆盖完整未审新增面，身份、人工状态、撤销、迁移/恢复保护仍必留。此更新未执行审查或新增PASS；已有现场未验事项照实保留。
+
+日期：2026-09-30。状态：**IMPLEMENTED / ENGINEERING REVIEW PENDING**。
 基线：`2d5fd94`（设计起点）；开工必须重新核对 HEAD/工作区，保留并行编辑。
 上层需求：P4-Embedding-Provider。唯一当前接受任务：本卡。
 推荐实现：**DS-H / DeepSeek V4.1 Flash / 高推理**；模型由用户手动选择。
