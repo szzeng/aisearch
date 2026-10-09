@@ -21,3 +21,7 @@
 ## 范围与后续
 
 此结论覆盖合成 API/最小 DOM 与既有客户端兼容；未做真实浏览器或真实图库验收，也未测量全人物规模上的排序延迟。未接触 `PhotoSearchData`，未运行模型/GPU/打包。该只读功能无 Sol 高风险终审事项，记录 `SOL_NOT_REQUIRED`。既有 `P4-PERSON-DETAIL-B` 工程审查与 Sol focused review 已在先前闭环通过，不由本卡重开；本功能完成后转日常使用与具体反馈。
+
+## 合并核对补记（2026-10-09）
+
+拉取 `origin/master` 后发现远端新增了同名 READY 任务卡。与本报告对应的实现卡相比，它额外要求复用全局排序查询得到的计数、提供 SQLite 查询计划与合成耗时证据，并要求独立 DS-H 全面审查；这些项目在本次实现中没有完成。此外，`people_page` 的排序查询后仍由 `_album_summaries` 对当前页重新聚合计数。实现 API 使用 `person_id|photos_desc` 并提供排序选择器，与远端 READY 卡提出的 `id_asc|photo_count_desc` 固定主列表排序方案不同。功能回归数据不受影响，但远端 READY 卡的额外要求目前未验收。

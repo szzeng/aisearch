@@ -2,9 +2,9 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 11。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 最近完成：P4-PERSON-SORT-A — PASS（人物列表全局排序与合成回归）
+## P4-PERSON-SORT-A — 本地 A 级范围已实现；远端 READY 卡的额外要求待核验
 
-[执行卡](tasks/P4-PERSON-SORT-A.md)、[报告](reports/P4-PERSON-SORT-A.md)。服务端按有效去重照片数全局排序，稳定游标分页，API缺省顺序不变；定向JUnit 17/0/0/0、Ruff/Node/diff-check通过。额外全量2154/50 failures/43 errors/49 skipped，与前一JUnit的失败/错误集合完全一致。未访问PhotoSearchData或真实浏览器。
+[执行卡](tasks/P4-PERSON-SORT-A.md)、[报告](reports/P4-PERSON-SORT-A.md)。服务端按有效去重照片数全局排序，稳定游标分页，API缺省顺序不变；定向JUnit 17/0/0/0、Ruff/Node/diff-check通过。额外全量2154/50 failures/43 errors/49 skipped，与前一JUnit的失败/错误集合完全一致。未访问PhotoSearchData或真实浏览器。拉取远端同名 READY 卡后发现其还要求计数复用、查询计划/耗时证据和 DS-H 独立审查；详情见任务卡与报告补记。
 
 ## 前置完成：P4-PERSON-ALBUM-PERF-A — PASS（个人相册基础功能）
 
