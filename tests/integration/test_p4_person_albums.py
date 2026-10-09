@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from time import perf_counter
 
 from conftest import ApiEnv
 from p3_persons_page_fixtures import (
@@ -15,7 +16,7 @@ from p3_persons_page_fixtures import (
     set_exclusion,
 )
 
-from photo_search.persons.albums import people_page
+from photo_search.persons.albums import _inbox_group_cte, people_page
 from photo_search.places.revision import read_filter_revision
 
 
@@ -413,6 +414,111 @@ def test_single_face_correction_leaves_neighbour_alone_and_undo_restores(api_env
             next(f for f in faces if f["face_id"] == data["first"])["assigned_person_id"]
             == data["dad"]
         )
+
+    api_env.scenario(scenario)
+
+
+def test_inbox_candidate_groups_sort_distinct_photos_and_page_consistently(api_env: ApiEnv) -> None:
+    photos = {f"a-{i}.jpg": [(20, 20, 90, 90)] for i in range(10)}
+    photos["a-0.jpg"] = [(20, 20, 90, 90), (130, 20, 200, 90)]
+    photos.update({f"b-{i}.jpg": [(20, 20, 90, 90)] for i in range(5)})
+    photos.update({f"c-{i}.jpg": [(20, 20, 90, 90)] for i in range(2)})
+    photos["loose.jpg"] = [(20, 20, 90, 90)]
+    seeded = seed_library(api_env, photos)
+    catalog = api_env.service.catalog
+    people = [add_person(catalog, name=name) for name in ("甲", "乙", "丙", "竞争候选")]
+    faces = {path: value["faces"] for path, value in seeded.items()}
+    for path, path_faces in faces.items():
+        if path.startswith("a-"):
+            for face in path_faces:
+                add_link(catalog, face, people[0], decision="SUGGESTED", confidence=0.8)
+        elif path.startswith("b-"):
+            add_link(catalog, path_faces[0], people[1], decision="SUGGESTED", confidence=0.8)
+        elif path.startswith("c-"):
+            add_link(catalog, path_faces[0], people[2], decision="SUGGESTED", confidence=0.8)
+    add_link(catalog, faces["a-1.jpg"][0], people[3], decision="SUGGESTED", confidence=0.2)
+    add_link(catalog, faces["loose.jpg"][0], people[3], decision="SUGGESTED", confidence=0.9)
+    set_exclusion(catalog, faces["a-9.jpg"][0], people[0])
+    cte, params = _inbox_group_cte("all")
+    plan = catalog.read_all(
+        "EXPLAIN QUERY PLAN " + cte + "SELECT * FROM cards ORDER BY photo_count DESC, stable_key ASC LIMIT 31",
+        params,
+    )
+    plan_details = [str(row["detail"]) for row in plan]
+    assert any("face_person_links" in detail and "INDEX" in detail.upper() for detail in plan_details)
+
+    async def scenario(client):
+        assert (await client.get("/api/v1/faces/inbox/groups")).status_code == 401
+        await api_env.authenticate(client)
+        before = tuple(catalog.connection.iterdump())
+        first = (await client.get("/api/v1/faces/inbox/groups", params={"limit": 2})).json()
+        assert [(card["type"], card["photo_count"]) for card in first["cards"]] == [
+            ("candidate_group", 9), ("candidate_group", 5)
+        ]
+        assert first["cards"][0]["candidate_name"] == "甲"
+        second = (await client.get(
+            "/api/v1/faces/inbox/groups", params={"limit": 2, "cursor": first["next_cursor"]}
+        )).json()
+        assert [(card["type"], card["photo_count"]) for card in second["cards"]] == [
+            ("candidate_group", 2), ("single_face", 1)
+        ]
+        expanded = (await client.get(
+            f"/api/v1/faces/inbox/groups/{first['cards'][0]['group_key']}", params={"limit": 2}
+        )).json()
+        assert expanded["has_more"] and len(expanded["faces"]) == 2
+        expanded2 = (await client.get(
+            f"/api/v1/faces/inbox/groups/{first['cards'][0]['group_key']}",
+            params={"limit": 20, "cursor": expanded["next_cursor"]},
+        )).json()
+        all_faces = expanded["faces"] + expanded2["faces"]
+        assert len(all_faces) == 10
+        assert len({face["asset_id"] for face in all_faces}) == 9
+        assert (await client.get(
+            f"/api/v1/faces/inbox/groups/{first['cards'][0]['group_key']}",
+            params={"kind": "suggested", "cursor": expanded["next_cursor"]},
+        )).status_code == 409
+        assert (await client.get(
+            f"/api/v1/faces/inbox/groups/{second['cards'][0]['group_key']}",
+            params={"cursor": expanded["next_cursor"]},
+        )).status_code == 409
+        third = (await client.get(
+            "/api/v1/faces/inbox/groups", params={"limit": 2, "cursor": second["next_cursor"]}
+        )).json()
+        assert len(third["cards"]) == 1 and third["cards"][0]["type"] == "single_face"
+        assert {second["cards"][1]["face"]["face_id"], third["cards"][0]["face"]["face_id"]} == {
+            faces["a-9.jpg"][0], faces["loose.jpg"][0]
+        }
+        assert (await client.get(
+            "/api/v1/faces/inbox/groups", params={"kind": "suggested", "cursor": first["next_cursor"]}
+        )).status_code == 409
+        assert (await client.get("/api/v1/faces/inbox/groups", params={"cursor": "bad"})).status_code == 409
+        legacy = (await client.get("/api/v1/faces/inbox", params={"limit": 30})).json()
+        assert "faces" in legacy and "cards" not in legacy
+        assert (await client.get("/api/v1/faces/inbox/summary")).json()["total"] == 19
+        assert tuple(catalog.connection.iterdump()) == before
+        set_exclusion(catalog, faces["a-9.jpg"][0], people[0], active=False)
+        refreshed = (await client.get("/api/v1/faces/inbox/groups", params={"limit": 1})).json()
+        assert refreshed["cards"][0]["photo_count"] == 10
+
+    api_env.scenario(scenario)
+
+
+def test_inbox_group_card_page_has_a_30_card_boundary(api_env: ApiEnv) -> None:
+    seeded = seed_library(api_env, {f"single-{i}.jpg": [(20, 20, 90, 90)] for i in range(31)})
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        started = perf_counter()
+        first_response = await client.get("/api/v1/faces/inbox/groups", params={"limit": 100})
+        print(f"synthetic_31_face_group_page_ms={(perf_counter() - started) * 1000:.3f}")
+        first = first_response.json()
+        assert len(first["cards"]) == 30 and first["has_more"]
+        second = (await client.get(
+            "/api/v1/faces/inbox/groups", params={"limit": 100, "cursor": first["next_cursor"]}
+        )).json()
+        assert len(second["cards"]) == 1 and not second["has_more"]
+        ids = [card["face"]["face_id"] for card in first["cards"] + second["cards"]]
+        assert len(ids) == len(set(ids)) == len(seeded)
 
     api_env.scenario(scenario)
 

@@ -1404,6 +1404,35 @@ async def face_inbox(
     )
 
 
+@router.get("/faces/inbox/groups", summary="Read globally ordered candidate groups and single faces")
+async def face_inbox_groups(
+    request: Request,
+    limit: int | None = None,
+    cursor: str | None = None,
+    kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
+) -> dict[str, Any]:
+    return person_albums.inbox_group_page(
+        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor, kind=kind
+    )
+
+
+@router.get("/faces/inbox/groups/{group_key}", summary="Read one candidate group's pending faces")
+async def face_inbox_group_faces(
+    request: Request,
+    group_key: str,
+    limit: int | None = None,
+    cursor: str | None = None,
+    kind: Literal["all", "suggested", "quality", "manual", "pending"] = "all",
+) -> dict[str, Any]:
+    return person_albums.inbox_group_faces(
+        service_of(request).catalog,
+        group_key=group_key,
+        limit=min(clamp_person_limit(limit), 30),
+        cursor=cursor,
+        kind=kind,
+    )
+
+
 @router.get("/faces/inbox/summary", summary="Safe counts of face organization reasons")
 async def face_inbox_summary(request: Request) -> dict[str, Any]:
     return person_albums.inbox_summary(service_of(request).catalog)

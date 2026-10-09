@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新增完成：P4-PERSON-INBOX-GROUP-SORT-A — PASS / PERSONAL-SCOPED REVIEW
+
+[执行报告](reports/P4-PERSON-INBOX-GROUP-SORT-A.md)。候选收件箱服务端按不同待确认照片数全局排序并分组，旧 inbox/summary 兼容；显式从头补匹配保留原批次续批位置。用户指定个人范围与当前会话简审；相关定向23/0/0/0，Ruff/Node/diff-check通过，31脸合成页约23.2ms，本会话复核未发现本任务阻断缺陷。全量回归另记录既有语法错误、48失败、43错误、49跳过及一次ONNX Runtime CUDA DLL fatal exception；不作为本次个人范围验收门槛，也不声称全仓通过。不访问真实图库/服务、不提交/推送。
+
 ## 当前总览：五组个人范围工程审核已闭环
 
 [收口核对](reports/P4-PERSONAL-REVIEW-closeout.md)：人物、地点、搜索与查看、OCR、模型切换均有工程PASS记录；本次核对报告、已有JUnit与后续直接产品差异，没有新跑pytest或重复主审。模型组为用户指定个人短审，非DS-H/Sol结论。原真实能力/现场PENDING、全量B级未转绿继续保留。五组之外[人物合并重复反馈卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)仍READY / 未实施，不计已修复。总计划与旧审查索引已同步，未把原任务批量标总PASS。

@@ -560,6 +560,106 @@ def inbox_page(
     }
 
 
+def _inbox_group_cte(kind: str) -> tuple[str, tuple[Any, ...]]:
+    if kind not in _INBOX_KINDS:
+        raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
+    eligible = (
+        "SELECT inbox.*, (SELECT p.person_id FROM face_person_links AS l "
+        "JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = inbox.face_id "
+        "AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL "
+        "AND inbox.organization_reason IN ('BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION') "
+        "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id=l.face_id "
+        "AND e.person_id=l.person_id AND e.active=1) "
+        "ORDER BY l.confidence DESC, p.person_id ASC LIMIT 1) AS candidate_person_id "
+        "FROM (" + _SELECT_FACES + "WHERE " + _INBOX_WHERE + ") AS inbox WHERE " + _INBOX_KINDS[kind]
+    )
+    return "WITH eligible AS (" + eligible + "), group_counts AS (" \
+        "SELECT candidate_person_id, COUNT(DISTINCT asset_id) AS photo_count, " \
+        "MIN(face_id) AS representative_face_id FROM eligible WHERE candidate_person_id IS NOT NULL " \
+        "GROUP BY candidate_person_id HAVING COUNT(DISTINCT asset_id) >= 2), cards AS (" \
+        "SELECT 'candidate_group' AS card_type, 'g:' || printf('%020d', g.candidate_person_id) AS stable_key, " \
+        "g.photo_count, g.candidate_person_id, g.representative_face_id, p.name AS candidate_name, NULL AS face_id " \
+        "FROM group_counts AS g JOIN persons AS p ON p.person_id=g.candidate_person_id " \
+        "UNION ALL SELECT 'single_face', 'f:' || e.face_id, 1, NULL, e.face_id, NULL, e.face_id " \
+        "FROM eligible AS e LEFT JOIN group_counts AS g ON g.candidate_person_id=e.candidate_person_id " \
+        "WHERE e.candidate_person_id IS NULL OR g.candidate_person_id IS NULL) ", _VISIBILITY_PARAMETERS
+
+
+def inbox_group_page(
+    catalog: Any, *, limit: int, cursor: str | None, kind: str = "all"
+) -> dict[str, Any]:
+    cte, visibility_parameters = _inbox_group_cte(kind)
+    binding = ["faceinboxgroups1", read_filter_revision(catalog.connection), kind]
+    after = _position(cursor, binding, None)
+    if after is not None and (
+        not isinstance(after, list) or len(after) != 2
+        or not isinstance(after[0], int) or after[0] < 1
+        or not isinstance(after[1], str) or len(after[1]) > 100
+    ):
+        raise ApiError(INVALID_CURSOR, "invalid inbox group position", status=422)
+    predicate = "" if after is None else "WHERE photo_count < ? OR (photo_count = ? AND stable_key > ?)"
+    params = visibility_parameters + (() if after is None else (after[0], after[0], after[1])) + (limit + 1,)
+    rows = catalog.read_all(
+        cte + "SELECT * FROM cards " + predicate + " ORDER BY photo_count DESC, stable_key ASC LIMIT ?",
+        params,
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    cards: list[dict[str, Any]] = []
+    for row in rows:
+        if row["card_type"] == "candidate_group":
+            face = catalog.read_one(
+                _SELECT_FACES + "WHERE f.face_id = ? AND " + _INBOX_WHERE,
+                (row["representative_face_id"], *_VISIBILITY_PARAMETERS),
+            )
+            cards.append({
+                "type": "candidate_group",
+                "group_key": f"candidate:{int(row['candidate_person_id'])}",
+                "candidate_name": row["candidate_name"],
+                "photo_count": int(row["photo_count"]),
+                "face": _face_view(catalog, face),
+            })
+        else:
+            face = catalog.read_one(
+                _SELECT_FACES + "WHERE f.face_id = ? AND " + _INBOX_WHERE,
+                (row["face_id"], *_VISIBILITY_PARAMETERS),
+            )
+            cards.append({"type": "single_face", "photo_count": 1, "face": _face_view(catalog, face)})
+    return {
+        "cards": cards,
+        "has_more": has_more,
+        "next_cursor": _encode(binding, [int(rows[-1]["photo_count"]), str(rows[-1]["stable_key"])])
+        if has_more else None,
+    }
+
+
+def inbox_group_faces(
+    catalog: Any, *, group_key: str, limit: int, cursor: str | None, kind: str = "all"
+) -> dict[str, Any]:
+    if not group_key.startswith("candidate:") or not group_key[10:].isdigit():
+        raise ApiError(VALIDATION_ERROR, "invalid candidate group", status=422)
+    person_id = int(group_key[10:])
+    cte, visibility_parameters = _inbox_group_cte(kind)
+    binding = ["faceinboxgroupfaces1", read_filter_revision(catalog.connection), kind, person_id]
+    after = _position(cursor, binding, "")
+    if not isinstance(after, str) or (after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))):
+        raise ApiError(INVALID_CURSOR, "invalid candidate group position", status=422)
+    rows = catalog.read_all(
+        cte + "SELECT e.* FROM eligible AS e JOIN group_counts AS g "
+        "ON g.candidate_person_id=e.candidate_person_id WHERE e.candidate_person_id=? AND e.face_id>? "
+        "ORDER BY e.face_id LIMIT ?",
+        visibility_parameters + (person_id, after, limit + 1),
+    )
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    return {
+        "group_key": group_key,
+        "faces": [_face_view(catalog, row) for row in rows],
+        "has_more": has_more,
+        "next_cursor": _encode(binding, str(rows[-1]["face_id"])) if has_more else None,
+    }
+
+
 def asset_faces(catalog: Any, asset_id: int) -> dict[str, Any]:
     from photo_search.catalog.errors import ASSET_NOT_FOUND, CatalogError
 
