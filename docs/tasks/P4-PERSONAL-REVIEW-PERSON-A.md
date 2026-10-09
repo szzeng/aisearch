@@ -1,6 +1,6 @@
 # P4-PERSONAL-REVIEW-PERSON-A — 人物待审任务一次收口
 
-日期：2026-10-09。状态：**READY / 未执行审查**。推荐独立DS-H/高推理；用户手动选择，未自动切模型或派Agent。按[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)执行；不再分别跑八张卡的重叠回归或固定追加Sol。
+日期：2026-10-09。状态：**ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED**。独立审查已完成，见[人物组审查报告](../reports/P4-PERSONAL-REVIEW-PERSON-A.md)。AVATAR-FIX-A的正常重启/刷新现场确认仍单项PENDING；不重启用户实际服务。按[个人审查约定](../plans/P4-PERSONAL-REVIEW.md)收口；未重跑有可核对证据的套件。
 
 入口：AGENTS → development-status → 本卡 → 各项直接报告/当前Git。只读主架构§5.4、8.3～8.3.5、10.3及ADR-0006/0007/0010/0014/0017相关条款；不全仓重读。
 
