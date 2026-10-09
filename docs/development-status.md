@@ -1,9 +1,13 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+## 本次完成：P4-PERSON-CAPTION-A — PASS / 定向 DOM 验证通过
+
+[任务卡](tasks/P4-PERSON-CAPTION-A.md)、[执行报告](reports/P4-PERSON-CAPTION-A.md)。人物相册照片卡移除“这张照片里的这个人”，保留脸部缩略图和合集说明。定向 JUnit 1/0/0/0，Node、Ruff、diff-check通过；未访问真实图库/服务。下一步仍为少量个人试用，无后续工程卡。
+
 ## 本次完成：P4-PERSON-QUALITY-A — IMPLEMENTED / 定向合成验证通过；个人试用待确认
 
-[任务卡](tasks/P4-PERSON-QUALITY-A.md)、[实施报告](reports/P4-PERSON-QUALITY-A-implementation.md)。整理页默认 clean（均衡 0.70/56/40），旧 API 默认 all；质量入口、分组和分页一致，人工控制与忽略状态保真。只读三档 SQLite 诊断工具已新增。定向 JUnit 20/0/0/0，Ruff、Node、py_compile、diff-check 通过。真实图库阈值效果仍待用户少量试用；未访问 PhotoSearchData/用户服务，未运行真实诊断、浏览器矩阵、全仓/容量/GPU/模型/打包，未迁移、提交或推送。当前转个人试用，无下一张工程任务卡。
+[任务卡](tasks/P4-PERSON-QUALITY-A.md)、[实施报告](reports/P4-PERSON-QUALITY-A-implementation.md)。整理页默认 clean（均衡 0.70/56/40），旧 API 默认 all；质量入口、分组和分页一致，人工控制与忽略状态保真。只读三档 SQLite 诊断工具已新增。定向 JUnit 20/0/0/0，Ruff、Node、py_compile、diff-check 通过。真实图库阈值效果仍待用户少量试用；未访问 PhotoSearchData/用户服务，未运行真实诊断、浏览器矩阵、全仓/容量/GPU/模型/打包，未迁移；实现随后本地提交为 `eae58ea`，未推送。当前转个人试用，无下一张工程任务卡。
 
 ## 前序完成：P4-PERSON-COLLECTION-A — FOCUSED REVIEW PASS / F1–F6 CLOSED；用户试用待确认
 

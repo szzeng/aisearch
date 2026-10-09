@@ -693,7 +693,7 @@
       card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo", state.photoIds.length < 3));
       if (item.person_faces && item.person_faces.length) {
         const faces = node("span", undefined, "pa-photo-person");
-        faces.append(node("span", state.collection ? "这张照片包含合集成员" : "这张照片里的这个人"));
+        if (state.collection) faces.append(node("span", "这张照片包含合集成员"));
         item.person_faces.forEach((face) => faces.append(picture(face.thumbnail_url, state.collection ? "合集成员的人脸" : "本相册人物的人脸", "pa-choice-avatar")));
         if (item.person_faces_has_more) faces.append(node("span", "更多人脸请点开查看"));
         card.append(faces);
