@@ -1,7 +1,11 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
-## 当前任务：P4-PERSON-INBOX-HIDDEN-GROUP-A — IMPLEMENTED / 定向验证通过
+## 当前任务：P4-PERSON-QUALITY-A — READY / 待实施
+
+[任务卡](tasks/P4-PERSON-QUALITY-A.md)。个人图库人脸质量展示筛选：直接复用 SQLite 中 det_score、face_pixels、blur_variance 与既有人工事实；整理页默认 clean（0.70/56/40），all 可找回，待整理质量分类仍可专门查看收起脸；保留人工忽略和现有旧 API。增加可选只读三档统计。**仅建卡，未实施、未运行测试；不重识别、不触碰 PhotoSearchData、不迁移 Schema。** 推荐 GPT-6 High，一张卡三组定向测试。
+
+## 前序完成：P4-PERSON-INBOX-HIDDEN-GROUP-A — IMPLEMENTED / 定向验证通过
 
 [任务卡](tasks/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)、[报告](reports/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)。已忽略人脸按当前首选有效 SUGGESTED 候选聚合，组卡与组内均分页；原隐藏平铺 API 兼容，恢复仍是逐 face_id。定向 JUnit 2/0/0/0，Ruff/Node/diff-check通过，用户已确认真实页面功能可用。未访问PhotoSearchData或现有服务，未提交/推送。
 
@@ -83,4 +87,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步转日常使用，不默认新增审核/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
+下一步若用户明确下达实施指令，执行 [P4-PERSON-QUALITY-A](tasks/P4-PERSON-QUALITY-A.md)；否则仍按日常使用，不自动启动审查/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
