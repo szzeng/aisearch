@@ -167,6 +167,14 @@
     $("list-note").textContent = "正在找人物……";
     try {
       const page = await api("/persons/browse" + params(values)); if (seq !== state.listSeq) return;
+      if (Number.isSafeInteger(page.total) && page.total >= 0) {
+        const label = state.hiddenView ? "已忽略" : state.organize ? "未命名人物" : "人物";
+        $("list-count").textContent = label + " " + page.total + " 人";
+        $("list-count").hidden = false;
+      } else {
+        $("list-count").textContent = "";
+        $("list-count").hidden = true;
+      }
       page.persons.forEach((person, index) => {
         const personId = Number(person.person_id);
         const card = button("", () => state.batchMode ? togglePersonSelection(personId) : openAlbum(person), "pa-person-card");

@@ -319,6 +319,12 @@ def people_page(
             "(instr(p.name, ?) > 0 OR EXISTS (SELECT 1 FROM person_aliases AS a WHERE a.person_id = p.person_id AND instr(a.alias, ?) > 0))"
         )
         candidate_parameters.extend([query, query])
+    total_row = catalog.read_one(
+        "SELECT COUNT(*) AS total FROM persons AS p WHERE "
+        + " AND ".join(candidate_conditions),
+        tuple(candidate_parameters),
+    )
+    total = int(total_row["total"])
     if sort == "person_id":
         if type(after) is not int or after < 0:
             raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
@@ -381,6 +387,7 @@ def people_page(
     )
     return {
         "persons": summaries,
+        "total": total,
         "has_more": has_more,
         "next_cursor": _encode(binding, last_position) if has_more else None,
         "sort": sort,

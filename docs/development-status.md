@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新增完成：P4-PERSON-COUNT-A — PASS / 定向 API 与 DOM 回归
+
+[任务卡](tasks/P4-PERSON-COUNT-A.md)、[报告](reports/P4-PERSON-COUNT-A.md)。人物页分别显示已命名、有效未命名、已忽略人物的服务端完整数量；计数按搜索/类型/可见性过滤，不随分页或排序重复累计。定向 API＋DOM 3/0/0/0，Ruff、Node、diff-check通过。未运行全量回归或真实浏览器；现场显示待用户使用确认。
+
 ## 新增完成：P4-PERSON-HIDE-UI-FIX-A — PASS / 定向 DOM 回归
 
 [任务卡](tasks/P4-PERSON-HIDE-UI-FIX-A.md)、[报告](reports/P4-PERSON-HIDE-UI-FIX-A.md)。多页批量选择、取消与模式切换改为原位更新人物卡片，不再重载首屏/清游标；120 人选择、第4页追加、失败保留和成功恢复刷新用例 1/0/0/0，Ruff/Node/diff-check通过。滚动以 DOM 节点/请求/游标不变作合成替代验证，未做真实浏览器观察；不访问PhotoSearchData或用户服务。

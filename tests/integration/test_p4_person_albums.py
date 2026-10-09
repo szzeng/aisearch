@@ -81,6 +81,63 @@ def test_people_query_is_literal_paged_and_session_protected(api_env: ApiEnv) ->
     api_env.scenario(scenario)
 
 
+def test_people_page_total_matches_filters_without_pagination_or_sort(api_env: ApiEnv) -> None:
+    data = seed(api_env)
+    extra = data["photos"]["待整理.jpg"]
+    extra_face = insert_face(
+        api_env.service.catalog,
+        asset_id=extra["asset_id"],
+        sha256=extra["sha256"],
+        bbox=(220, 20, 280, 80),
+        ordinal=2,
+    )
+    unnamed = add_person(api_env.service.catalog)
+    add_link(api_env.service.catalog, extra_face, unnamed)
+    add_person(api_env.service.catalog, name="叔叔")
+    PersonService.open(api_env.service.catalog).set_visibility(person_ids=[data["mom"]], hidden=True)
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        first_named = await client.get(
+            "/api/v1/persons/browse",
+            params={
+                "kind": "named",
+                "visibility": "visible",
+                "sort": "photos_desc",
+                "limit": 1,
+            },
+        )
+        second_named = await client.get(
+            "/api/v1/persons/browse",
+            params={
+                "kind": "named",
+                "visibility": "visible",
+                "sort": "photos_desc",
+                "limit": 1,
+                "cursor": first_named.json()["next_cursor"],
+            },
+        )
+        unnamed_page = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "unnamed", "visibility": "visible", "limit": 1},
+        )
+        hidden_page = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "all", "visibility": "hidden", "limit": 1},
+        )
+        searched = await client.get(
+            "/api/v1/persons/browse",
+            params={"kind": "named", "visibility": "visible", "q": "叔"},
+        )
+        assert first_named.json()["total"] == second_named.json()["total"] == 2
+        assert first_named.json()["has_more"] is True
+        assert unnamed_page.json()["total"] == 1
+        assert hidden_page.json()["total"] == 1
+        assert searched.json()["total"] == 1
+
+    api_env.scenario(scenario)
+
+
 def test_person_visibility_is_atomic_persistent_and_paged_before_sort(api_env: ApiEnv) -> None:
     catalog = api_env.service.catalog
     person_ids = [add_person(catalog, name=f"人物{i:02d}") for i in range(50)]
