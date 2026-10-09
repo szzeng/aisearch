@@ -78,6 +78,10 @@
 | [模型切换](tasks/P4-EMBEDDING-ARCH-review.md) | 用户指定的当前会话个人短审ENGINEERING REVIEW PASS / SOL_NOT_REQUIRED（非DS-H）；Qwen阈值变更后的真实页面效果仍PENDING。 |
 
 P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照实保留，不默认修全仓。基础关键失败不得跳过。已有PASS任务不重开，不自动继续性能优化。
+## UI 优化规划 — v0.1讨论稿 / 未实施
+
+[总计划](plans/P4-UI-PERSONAL.md)、[规划报告](reports/P4-UI-PERSONAL-planning.md)、[布局草图](mockups/P4-UI-PERSONAL.html)、[逐页效果图](mockups/README.md)。用户要求先本地提交讨论版本，后续继续交流，未定稿。9张PNG已保存，六张卡均要求执行前实际看对应图、实现后截图对照。已补[逐页现状盘点](plans/P4-UI-INFORMATION-CHECKLIST.md)，119项仅作备份参考；按用户澄清撤回全量保留/逐项验收要求，只有此前明确强调的必要项需落实。照片/人物/地点为日常入口，图库管理与高级工具次级；首批业务 API/schema/Python 业务代码零改动。候选卡优先 A/B/C；首张 [P4-UI-SHELL-A](tasks/P4-UI-SHELL-A.md)，推荐 GPT-6.1 Sol / High，用户手动选择。仅规划，不自动替换下方个人试用交接；用户明确指定后开始。未改产品代码或真实图库。
+
 ## 下一步
 
 下一步由用户按任务卡用少量真实人物照片试用确认。当前会话复核是工程复核结论，不冒称独立 DS-H/Sol；真实 catalog 与浏览器矩阵未验证。
