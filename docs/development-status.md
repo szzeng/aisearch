@@ -2,6 +2,10 @@
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新增完成：P4-PERSON-HIDE-UI-FIX-A — PASS / 定向 DOM 回归
+
+[任务卡](tasks/P4-PERSON-HIDE-UI-FIX-A.md)、[报告](reports/P4-PERSON-HIDE-UI-FIX-A.md)。多页批量选择、取消与模式切换改为原位更新人物卡片，不再重载首屏/清游标；120 人选择、第4页追加、失败保留和成功恢复刷新用例 1/0/0/0，Ruff/Node/diff-check通过。滚动以 DOM 节点/请求/游标不变作合成替代验证，未做真实浏览器观察；不访问PhotoSearchData或用户服务。
+
 ## 人物合并重复反馈：P4-PERSON-MERGE-DEDUPE-A — PASS
 
 [任务卡](tasks/P4-PERSON-MERGE-DEDUPE-A.md)、[报告](reports/P4-PERSON-MERGE-DEDUPE-A.md)。正式合并 API 隔离合成回归覆盖共享合照＋A/B单人照、`limit=1`逐页、旧 ID 解析和正式撤销；合并后 3 个唯一 `asset_id`，双脸保留，撤销后双方各恢复 2 张。定向集成 14/0/0/0，Ruff/diff-check通过。用户随后在个人相册复测并反馈没问题，现场验收关闭；未改产品代码。未访问PhotoSearchData或现有服务。
@@ -68,4 +72,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步由用户在个人相册手动验证忽略、恢复与应用重启；其余转日常使用，不默认新增审核/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
+下一步由用户在个人相册手动验证多页选择不收起、忽略/恢复与应用重启；其余转日常使用，不默认新增审核/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。

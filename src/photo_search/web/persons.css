@@ -12,9 +12,10 @@
 .pa-search button, .pa-heading button { border-radius: 999px; }
 .pa-heading button[aria-pressed="true"], .pa-choice[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--bg); outline: 2px solid var(--accent); }
 .pa-people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr)); gap: 1rem; margin: 1.4rem 0; }
-.pa-person-card { min-width: 0; display: flex; align-items: center; flex-direction: column; gap: 0.4rem; border: 0; border-radius: 1rem; background: transparent; padding: 0.6rem; text-align: center; overflow-wrap: anywhere; }
+.pa-person-card { min-width: 0; position: relative; display: flex; align-items: center; flex-direction: column; gap: 0.4rem; border: 0; border-radius: 1rem; background: transparent; padding: 0.6rem; text-align: center; overflow-wrap: anywhere; }
 button.pa-person-card:hover { background: var(--bg); }
 button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); background: var(--bg); }
+.pa-person-selection { position: absolute; top: 0.2rem; right: 0.2rem; padding: 0.1rem 0.4rem; border: 1px solid var(--accent); border-radius: 999px; background: var(--panel); font-size: 0.7rem; }
 .pa-inbox-group { min-width: 0; border-radius: 1rem; }
 .pa-inbox-group > summary { cursor: pointer; list-style: none; }
 .pa-inbox-group > summary::-webkit-details-marker { display: none; }

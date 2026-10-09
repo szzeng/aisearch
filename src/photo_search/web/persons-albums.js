@@ -70,6 +70,17 @@
     }, 3000);
   }
   function params(values) { return "?" + new URLSearchParams(values); }
+  function syncPeopleCards() {
+    Array.from($("cards").children).forEach((card) => {
+      const personId = Number(card.personId);
+      const selected = state.batchMode && state.selectedPeople.has(personId);
+      card.setAttribute("aria-pressed", String(selected));
+      if (card.selectionHint) {
+        card.selectionHint.hidden = !state.batchMode;
+        card.selectionHint.textContent = selected ? "已选择" : "点按选择";
+      }
+    });
+  }
   function renderPeopleManagement() {
     $("batch-toggle").setAttribute("aria-pressed", String(state.batchMode));
     $("batch-toggle").textContent = state.batchMode ? "退出批量管理" : "批量管理";
@@ -83,6 +94,7 @@
     $("batch-cancel").disabled = state.visibilityBusy;
     $("batch-toggle").disabled = state.visibilityBusy;
     $("hidden-toggle").disabled = state.visibilityBusy;
+    syncPeopleCards();
   }
   function clearPeopleSelection() {
     state.selectedPeople.clear(); state.batchMode = false; renderPeopleManagement();
@@ -91,7 +103,7 @@
     if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
     else if (state.selectedPeople.size >= 500) { message("一次最多选择 500 人，请先提交当前选择。"); return; }
     else state.selectedPeople.add(personId);
-    renderPeopleManagement(); loadPeople(false);
+    renderPeopleManagement();
   }
   async function submitVisibility() {
     if (state.visibilityBusy || !state.selectedPeople.size) return;
@@ -157,13 +169,15 @@
       const page = await api("/persons/browse" + params(values)); if (seq !== state.listSeq) return;
       page.persons.forEach((person, index) => {
         const personId = Number(person.person_id);
-        const selected = state.selectedPeople.has(personId);
         const card = button("", () => state.batchMode ? togglePersonSelection(personId) : openAlbum(person), "pa-person-card");
-        card.setAttribute("aria-pressed", String(selected));
+        card.personId = personId;
+        card.setAttribute("data-person-id", String(personId));
         card.append(picture(person.thumbnail_url, name(person), "pa-avatar", index < 4), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
-        if (state.batchMode) card.append(node("span", selected ? "已选择" : "点按选择", "hint"));
+        card.selectionHint = node("span", "", "hint pa-person-selection");
+        card.append(card.selectionHint);
         $("cards").append(card);
       });
+      syncPeopleCards();
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
       $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
@@ -712,7 +726,7 @@
     $("batch-toggle").addEventListener("click", () => {
       state.batchMode = !state.batchMode;
       if (!state.batchMode) state.selectedPeople.clear();
-      renderPeopleManagement(); loadPeople(false);
+      renderPeopleManagement();
     });
     $("batch-cancel").addEventListener("click", clearPeopleSelection);
     $("visibility-submit").addEventListener("click", submitVisibility);

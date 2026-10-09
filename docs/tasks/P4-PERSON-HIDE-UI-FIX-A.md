@@ -1,6 +1,6 @@
 # P4-PERSON-HIDE-UI-FIX-A — 批量管理多页选人不收起
 
-日期：2026-10-09。状态：**READY / 待实施**。基线：`3fda522b0a784264a1155b5ec60ae6c8b37b4655`；开工前复核实际 HEAD。个人相册 **P4-PERSON-HIDE-A** 的前端现场反馈小修复；仅设计任务，不表示代码已修。
+日期：2026-10-09。状态：**PASS / 定向 DOM 回归通过**。计划基线：`3fda522b0a784264a1155b5ec60ae6c8b37b4655`；实际实施基线：`8a4bfc5299460e4e15fe4028c5aceb2e5d554bf2`。个人相册 **P4-PERSON-HIDE-A** 的前端现场反馈小修复。执行记录见[实现报告](../reports/P4-PERSON-HIDE-UI-FIX-A.md)。
 
 ## 1. 已证实的问题与目标
 
