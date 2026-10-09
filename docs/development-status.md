@@ -1,6 +1,10 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+## 新增待实施：P4-PERSON-OPLOG-GC-A — PLANNED（仅任务卡）
+
+[任务卡](tasks/P4-PERSON-OPLOG-GC-A.md)。个人相册人物操作历史手动清理：仅对同时超过30天且不属于最近200条的操作，安全清理可替换的撤销快照，保留主操作ID、幂等、引用和精简历史；预览确认、按批事务、过期不可撤销。三组定向简测，推荐GPT-6 High。**尚未实施、未执行真实图库清理、迁移或测试**。
+
 ## 本次完成：P4-PERSON-CAPTION-A — PASS / 定向 DOM 验证通过
 
 [任务卡](tasks/P4-PERSON-CAPTION-A.md)、[执行报告](reports/P4-PERSON-CAPTION-A.md)。人物相册照片卡移除“这张照片里的这个人”，保留脸部缩略图和合集说明。定向 JUnit 1/0/0/0，Node、Ruff、diff-check通过；未访问真实图库/服务。下一步仍为少量个人试用，无后续工程卡。
