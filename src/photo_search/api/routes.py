@@ -72,6 +72,7 @@ from photo_search.api.models import (
     PersonNameRequest,
     PersonOperationListResponse,
     PersonOperationResponse,
+    PersonOperationRetentionCleanupRequest,
     PersonRecord,
     PersonSplitOperationResponse,
     PersonSplitRequest,
@@ -1307,6 +1308,26 @@ async def list_person_operations(
         service_of(request).catalog,
         limit=clamp_person_limit(limit),
         cursor=cursor,
+    )
+
+
+@router.get(
+    "/person-operations/retention-preview",
+    summary="Preview expired person-operation snapshots eligible for manual cleanup",
+)
+async def person_operation_retention_preview(request: Request) -> dict[str, Any]:
+    return persons_of(request).retention_preview()
+
+
+@router.post(
+    "/person-operations/retention-cleanup",
+    summary="Manually remove one bounded batch of expired person-operation snapshots",
+)
+async def person_operation_retention_cleanup(
+    request: Request, payload: PersonOperationRetentionCleanupRequest
+) -> dict[str, Any]:
+    return persons_of(request).retention_cleanup(
+        after_operation_revision=payload.after_operation_revision
     )
 
 

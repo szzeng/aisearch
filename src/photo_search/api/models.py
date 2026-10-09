@@ -989,8 +989,8 @@ class PersonOperationSummary(BaseModel):
     The log itself is the authority for idempotency and history, but a page only needs the
     identity, the status and *which ids* an operation touched. ``request_id``,
     ``payload_sha256``, the before/after snapshots, names, aliases and face geometry are
-    deliberately absent, and no "can this be undone?" verdict is predicted here: the shared
-    compensation endpoint decides that against the frozen conflict matrix.
+    deliberately absent. ``expired`` is server-owned; the compensation endpoint remains
+    authoritative for the full conflict matrix.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -1009,6 +1009,7 @@ class PersonOperationSummary(BaseModel):
     catalog_filter_revision: int
     created_at: int
     committed_at: int
+    expired: bool = False
 
 
 class PersonOperationListResponse(BaseModel):
@@ -1508,3 +1509,11 @@ class FeedbackListResponseModel(BaseModel):
     limit: int
     next_cursor: str | None = None
     has_more: bool
+
+
+class PersonOperationRetentionCleanupRequest(BaseModel):
+    """Optional continuation cursor for one bounded expired-snapshot cleanup batch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    after_operation_revision: int | None = Field(default=None, ge=0)

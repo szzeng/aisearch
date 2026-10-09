@@ -520,6 +520,13 @@ def operation_summary(
     never leaves this function. ``request_id`` and ``payload_sha256`` are deliberately not
     part of the projection either.
     """
+    from photo_search.persons import retention as retention_module
+
+    retained = retention_module.history_projection(
+        connection, str(row["operation_id"]), row
+    )
+    if retained is not None:
+        return retained
     person_ids: set[int] = set()
     face_ids: set[str] = set()
     changed = False
@@ -551,6 +558,7 @@ def operation_summary(
         "catalog_filter_revision": int(row["catalog_filter_revision"]),
         "created_at": int(row["created_at"]),
         "committed_at": int(row["committed_at"]),
+        "expired": False,
     }
 
 

@@ -29,7 +29,12 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from photo_search.catalog.errors import FACE_MAPPING_IDEMPOTENCY_CONFLICT, CatalogError
+from photo_search.catalog.errors import (
+    FACE_MAPPING_IDEMPOTENCY_CONFLICT,
+    FACE_MAPPING_OPERATION_NOT_UNDOABLE,
+    FACE_OPERATION_NOT_UNDOABLE,
+    CatalogError,
+)
 from photo_search.face.contract import FACE_PROCESSOR_ID, FACE_SPACE_ID, FACE_SPEC_REVISION
 from photo_search.face.processor import generation_id_for, queue_candidate
 from photo_search.persons import bundle as bundle_module
@@ -151,9 +156,17 @@ def item_projection(row: Any) -> dict[str, Any]:
 
 def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
     """Rebuild the documented response of an already committed operation (a replay)."""
-    items = [
-        _item_projection(row) for row in _operation_items(connection, operation["operation_id"])
-    ]
+    from photo_search.persons import retention as retention_module
+
+    retained_items = retention_module.replay_receipt(connection, str(operation["operation_id"]))
+    items = (
+        retained_items
+        if retained_items is not None
+        else [
+            _item_projection(row)
+            for row in _operation_items(connection, operation["operation_id"])
+        ]
+    )
     family = operation_family(connection, operation)
     if family == "mapping":
         # A mapping replay keeps the ADR-0010 envelope (its own ``contract_version`` and the
@@ -1118,6 +1131,22 @@ def undo_person_operation(
     )
     if replay is not None:
         return replay
+    from photo_search.persons import retention as retention_module
+
+    if retention_module.is_expired(connection, original_id):
+        original_type = str(original["type"]) if original is not None else ""
+        if original_type in contracts.FACE_OPERATION_TYPES:
+            expired_code = FACE_OPERATION_NOT_UNDOABLE
+        elif original_type in contracts.MAPPING_OPERATION_TYPES:
+            expired_code = FACE_MAPPING_OPERATION_NOT_UNDOABLE
+        else:
+            expired_code = PERSON_OPERATION_NOT_UNDOABLE
+        raise fail(
+            expired_code,
+            "this operation has expired and can no longer be undone",
+            operation_id=original_id,
+            reason="operation_expired",
+        )
     if original is None:
         raise fail(
             PERSON_NOT_FOUND,

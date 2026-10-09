@@ -1847,22 +1847,28 @@ def undo_face_mapping_operation(
 
 def mapping_operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
     """Rebuild a recorded mapping operation (an idempotent replay or a read echo)."""
-    rows = list(
-        connection.execute(
-            "SELECT item_index, entity_type, entity_id, entity_key, before_value_json, "
-            "after_value_json, after_revision FROM person_operation_items "
-            "WHERE operation_id = ? ORDER BY item_index",
-            (str(operation["operation_id"]),),
-        ).fetchall()
-    )
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        if str(row["entity_type"]) == ENTITY_TYPE_MAPPING_GROUP:
-            items.append(group_item_projection(row))
-        else:
-            from photo_search.persons import face_correction
+    from photo_search.persons import retention as retention_module
 
-            items.append(face_correction.recorded_item_projection(row))
+    retained_items = retention_module.replay_receipt(connection, str(operation["operation_id"]))
+    if retained_items is not None:
+        items = retained_items
+    else:
+        rows = list(
+            connection.execute(
+                "SELECT item_index, entity_type, entity_id, entity_key, before_value_json, "
+                "after_value_json, after_revision FROM person_operation_items "
+                "WHERE operation_id = ? ORDER BY item_index",
+                (str(operation["operation_id"]),),
+            ).fetchall()
+        )
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            if str(row["entity_type"]) == ENTITY_TYPE_MAPPING_GROUP:
+                items.append(group_item_projection(row))
+            else:
+                from photo_search.persons import face_correction
+
+                items.append(face_correction.recorded_item_projection(row))
     return {
         "contract_version": CONTRACT_VERSION,
         "operation_id": str(operation["operation_id"]),
@@ -1895,6 +1901,11 @@ def operation_asset_id(connection: sqlite3.Connection, operation_id: str) -> int
     ).fetchone()
     if row is not None:
         return int(row["asset_id"])
+    from photo_search.persons import retention as retention_module
+
+    retained_asset_id = retention_module.mapping_asset_id(connection, str(operation_id))
+    if retained_asset_id is not None:
+        return int(retained_asset_id)
     row = connection.execute(
         "SELECT f.asset_id AS asset_id FROM person_operation_items AS i "
         "JOIN faces AS f ON f.face_id = i.entity_key "

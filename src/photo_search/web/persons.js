@@ -108,6 +108,8 @@
     },
     unassigned: { limit: FACE_LIMIT, cursor: null, hasMore: false, loading: false },
     operations: { limit: OPERATION_LIMIT, cursor: null, hasMore: false, loading: false },
+    retentionPreview: null,
+    retentionAfterRevision: null,
     mappings: {
       hasSupport: false,
       limit: MAPPING_LIMIT,
@@ -1168,14 +1170,90 @@
       )
     );
     var actions = element("p", "row-actions");
-    var undo = element("button", null, "撤销此操作");
-    undo.type = "button";
-    undo.addEventListener("click", function () {
-      undoOperation(operation);
-    });
-    actions.appendChild(undo);
+    if (operation.expired) {
+      actions.appendChild(element("span", "chip", "已过期 · 不可撤销"));
+    } else {
+      var undo = element("button", null, "撤销此操作");
+      undo.type = "button";
+      undo.addEventListener("click", function () {
+        undoOperation(operation);
+      });
+      actions.appendChild(undo);
+    }
     item.appendChild(actions);
     return item;
+  }
+
+  function previewOperationRetention(preserveCursor, batchSummary, batchFailed) {
+    if (!preserveCursor) {
+      state.retentionAfterRevision = null;
+    }
+    els.retentionConfirm.disabled = true;
+    setStatus(els.retentionStatus, "正在预览过期快照…");
+    request("/person-operations/retention-preview")
+      .then(function (result) {
+        var body = result.body || {};
+        state.retentionPreview = body;
+        var previewSummary =
+          "候选 " + body.candidate_operation_count + " 条，可安全清理 " +
+            body.safe_operation_count + " 条，跳过 " + body.skipped_operation_count +
+            " 条" + formatRetentionSkippedReasons(body.skipped_reasons) +
+            "；待删快照 " + body.item_count + " 项，原快照 JSON " +
+            body.snapshot_json_bytes + " 字节，预计净节省 " +
+            body.estimated_net_savings_bytes + " 字节。过期后不可恢复撤销能力。";
+        setStatus(
+          els.retentionStatus,
+          (batchSummary ? batchSummary + "\n" : "") + previewSummary,
+          batchFailed ? "error" : null
+        );
+        els.retentionConfirm.disabled = !(body.safe_operation_count > 0);
+      })
+      .catch(function (failure) {
+        state.retentionPreview = null;
+        setStatus(
+          els.retentionStatus,
+          (batchSummary ? batchSummary + "\n" : "") + "预览失败：" + describe(failure),
+          "error"
+        );
+      });
+  }
+
+  function confirmOperationRetention() {
+    var preview = state.retentionPreview;
+    if (!preview || !(preview.safe_operation_count > 0)) {
+      return;
+    }
+    if (!window.confirm("确认清理一批过期撤销快照？清理后这些操作不能再撤销。")) {
+      return;
+    }
+    els.retentionConfirm.disabled = true;
+    setStatus(els.retentionStatus, "正在提交一批清理…");
+    request("/person-operations/retention-cleanup", {
+      method: "POST",
+      body: { after_operation_revision: state.retentionAfterRevision },
+    })
+      .then(function (result) {
+        var body = result.body || {};
+        if (!body.failed_operations) {
+          state.retentionAfterRevision = body.next_after_operation_revision || null;
+        }
+        var batchSummary =
+          "本批完成 " + body.cleaned_operations + " 条，跳过 " + body.skipped_operations +
+          " 条，失败 " + body.failed_operations + " 条；" +
+          (body.has_more ? "仍有后续批次，请继续确认。" : "当前没有后续批次。");
+        loadOperations(true);
+        previewOperationRetention(true, batchSummary, Boolean(body.failed_operations));
+      })
+      .catch(function (failure) {
+        setStatus(els.retentionStatus, "清理失败：" + describe(failure), "error");
+      });
+  }
+
+  function formatRetentionSkippedReasons(reasons) {
+    var entries = Object.keys(reasons || {}).sort().map(function (reason) {
+      return reason + " " + reasons[reason] + " 条";
+    });
+    return entries.length ? "（" + entries.join("、") + "）" : "";
   }
 
   function appendUndoLog(message, failed) {
@@ -1606,6 +1684,9 @@
       mergeResult: document.getElementById("merge-result"),
       operationsLoad: document.getElementById("operations-load"),
       operationsMore: document.getElementById("operations-more"),
+      retentionPreview: document.getElementById("operations-retention-preview"),
+      retentionConfirm: document.getElementById("operations-retention-confirm"),
+      retentionStatus: document.getElementById("operations-retention-status"),
       operationsStatus: document.getElementById("operations-status"),
       operationsList: document.getElementById("operations-list"),
       undoLog: document.getElementById("undo-log"),
@@ -1713,6 +1794,8 @@
     els.operationsMore.addEventListener("click", function () {
       loadOperations(false);
     });
+    els.retentionPreview.addEventListener("click", previewOperationRetention);
+    els.retentionConfirm.addEventListener("click", confirmOperationRetention);
     els.mappingsState.addEventListener("change", function () {
       state.mappings.state = els.mappingsState.value === "all" ? "all" : "open";
       loadMappings(true);

@@ -18,6 +18,7 @@ from photo_search.persons import contracts, face_correction
 from photo_search.persons import mapping as mapping_module
 from photo_search.persons import operations as operation_module
 from photo_search.persons import read as read_module
+from photo_search.persons import retention as retention_module
 from photo_search.persons import split as split_module
 from photo_search.persons.contracts import person_view
 from photo_search.persons.identity import (
@@ -163,6 +164,36 @@ class PersonService:
                 now_ms=now_ms,
                 refresh=self.refresh,
             )
+
+    def retention_preview(self) -> dict[str, Any]:
+        return retention_module.preview(self.catalog.connection, now_ms=int(self.clock()))
+
+    def retention_cleanup(self, *, after_operation_revision: int | None = None) -> dict[str, Any]:
+        now_ms = int(self.clock())
+        try:
+            with self.catalog.write() as connection:
+                batch = retention_module.cleanup_batch(
+                    connection,
+                    now_ms=now_ms,
+                    after_operation_revision=after_operation_revision,
+                )
+            return {
+                **batch,
+                "failed_operations": 0,
+                "max_batch_size": retention_module.MAX_BATCH_SIZE,
+            }
+        except Exception:
+            # Catalog.write rolled the active batch back; earlier independent calls are durable.
+            return {
+                "cleaned_operations": 0,
+                "skipped_operations": 0,
+                "deleted_items": 0,
+                "failed_operations": 1,
+                "failure_code": "RETENTION_BATCH_FAILED",
+                "max_batch_size": retention_module.MAX_BATCH_SIZE,
+                "has_more": True,
+                "next_after_operation_revision": after_operation_revision,
+            }
 
     # ------------------------------------------------------------------ split
     def split(

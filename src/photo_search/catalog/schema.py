@@ -70,7 +70,8 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0024 stores durable person collections and their stable person-ID membership anchors.
 # 0025 upgrades collection identity allocation without changing the v24 contract in place.
 # 0026 adds a persistent collection-instance token for requests surviving v24 ID reuse.
-SUPPORTED_SCHEMA_VERSION = 26
+# 0027 preserves compact replay/history receipts while pruning expired person snapshots.
+SUPPORTED_SCHEMA_VERSION = 27
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

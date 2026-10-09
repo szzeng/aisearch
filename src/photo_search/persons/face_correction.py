@@ -864,10 +864,17 @@ def _replay_face(
             "this request_id is already bound to a different payload",
             operation_id=str(row["operation_id"]),
         )
-    items = [
-        recorded_item_projection(item)
-        for item in stored_items(connection, str(row["operation_id"]))
-    ]
+    from photo_search.persons import retention as retention_module
+
+    retained_items = retention_module.replay_receipt(connection, str(row["operation_id"]))
+    items = (
+        retained_items
+        if retained_items is not None
+        else [
+            recorded_item_projection(item)
+            for item in stored_items(connection, str(row["operation_id"]))
+        ]
+    )
     return {
         "contract_version": CONTRACT_VERSION,
         "operation_id": str(row["operation_id"]),

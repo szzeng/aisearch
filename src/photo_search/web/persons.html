@@ -276,13 +276,15 @@
       <section id="panel-operations" class="panel" aria-labelledby="operations-title">
         <h2 id="operations-title">最近操作与撤销</h2>
         <p class="hint">
-          操作日志只追加、不删除（最新的在最上方）。撤销是新的补偿操作；能否撤销由服务器的冲突矩阵
-          决定，页面不预测结果。
+          操作身份与精简历史会保留。超过 30 天且不在最近 200 条的撤销快照可手动清理；确认后这些操作不可撤销。
         </p>
         <p>
           <button type="button" id="operations-load">加载 / 刷新操作日志</button>
           <button type="button" id="operations-more" disabled>加载更多操作</button>
+          <button type="button" id="operations-retention-preview">预览清理过期撤销历史</button>
+          <button type="button" id="operations-retention-confirm" disabled>确认清理一批</button>
         </p>
+        <div id="operations-retention-status" class="state-block" role="status" aria-live="polite"></div>
         <div id="operations-status" class="state-block" role="status" aria-live="polite"></div>
         <ul id="operations-list" class="place-list" aria-label="人物操作日志"></ul>
         <h3>撤销结果</h3>
