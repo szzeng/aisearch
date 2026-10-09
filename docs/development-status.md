@@ -1,11 +1,15 @@
 # Development status
 
 更新：2026-10-09。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
-## 当前任务：P4-PERSON-COLLECTION-A — FOCUSED REVIEW PASS / F1–F6 CLOSED；用户试用待确认
+## 当前任务：P4-PERSON-QUALITY-A — READY / 待实施
 
-[任务卡](tasks/P4-PERSON-COLLECTION-A.md)、[实施报告](reports/P4-PERSON-COLLECTION-A-implementation.md)、[聚焦审核报告](reports/P4-PERSON-COLLECTION-A-focused-review.md)。用户要求在当前会话继续审核；F6跨升级实例保护已复核关闭，F1–F5保持关闭。独立定向JUnit 13/0/0/0：旧v24已空/删除最大ID后升级复用、旧人物/照片游标拒绝、六类实例API错误token及旧路径零写入、token不可变/重启保持、数据/FK与直接API/DOM通过。修复轮22/0/0/0已核对。限工程/合成聚焦范围，未宣称DS-H或指定Sol模型终审；真实页面试用与总验收仍待确认。未改产品代码、未跑全仓/真实图库/浏览器/模型，未提交/推送；不自动启动其他任务。
+[任务卡](tasks/P4-PERSON-QUALITY-A.md)。个人图库人脸质量展示筛选：直接复用 SQLite 中 det_score、face_pixels、blur_variance 与既有人工事实；整理页默认 clean（0.70/56/40），all 可找回，待整理质量分类仍可专门查看收起脸；保留人工忽略和现有旧 API。增加可选只读三档统计。**仅建卡，未实施、未运行测试；不重识别、不触碰 PhotoSearchData、不迁移 Schema。** 推荐 GPT-6 High，一张卡三组定向测试。
 
-## 前序完成：P4-PERSON-INBOX-HIDDEN-GROUP-A — PASS / 用户试用确认
+## 前序完成：P4-PERSON-COLLECTION-A — FOCUSED REVIEW PASS / F1–F6 CLOSED；用户试用待确认
+
+[任务卡](tasks/P4-PERSON-COLLECTION-A.md)、[实施报告](reports/P4-PERSON-COLLECTION-A-implementation.md)、[聚焦审核报告](reports/P4-PERSON-COLLECTION-A-focused-review.md)。v24→v26合集迁移及跨升级旧实例保护已完成；迁移前已删除 ID 即使复用，旧人物/照片游标和 ID-only 请求也不能操作新实例。修复轮定向 JUnit 22/0/0/0，用户要求的受影响面复核 JUnit 13/0/0/0；限工程/合成范围，真实页面试用仍待确认。不宣称指定 Sol 模型或全量验收；不访问真实图库，未推送。
+
+## 前序完成：P4-PERSON-INBOX-HIDDEN-GROUP-A — IMPLEMENTED / 定向验证通过
 
 [任务卡](tasks/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)、[报告](reports/P4-PERSON-INBOX-HIDDEN-GROUP-A.md)。已忽略人脸按当前首选有效 SUGGESTED 候选聚合，组卡与组内均分页；原隐藏平铺 API 兼容，恢复仍是逐 face_id。定向 JUnit 2/0/0/0，Ruff/Node/diff-check通过，用户已确认真实页面功能可用。未访问PhotoSearchData或现有服务，未提交/推送。
 
@@ -87,4 +91,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步转日常使用，不默认新增审核/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
+下一步若用户明确下达实施指令，执行 [P4-PERSON-QUALITY-A](tasks/P4-PERSON-QUALITY-A.md)；否则仍按日常使用，不自动启动审查/性能/全量基线修绿/发行任务。模型组既有ADR-0003/0013适用性与SOL_NOT_REQUIRED记录保持有效；人物合并重复反馈卡未自动启动。本轮未操作真实图库、服务或模型，未提交/推送。
