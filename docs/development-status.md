@@ -6,6 +6,10 @@
 
 [执行卡](tasks/P4-PERSON-AVATAR-FIX-A.md)、[原因与反例](reports/P4-PERSON-AVATAR-FIX-A.md)。头像路由漏查spec_revision，原图文档校验因此返回FACE_STATE_CONFLICT/face_frame_invalid；已补字段，保持原有checksum/内容/脸/profile门禁，不改人脸或归属、不重识别。普通/原图×GET/HEAD冷缓存反例修前原图失败，修后定向JUnit **29/0/0/0**、Ruff/diff-check通过。源码服务重启刷新后现场待确认，未访问私人照片/真实catalog、未推送；补充纳入DETAIL-B既有独立审查。
 
+## 最近完成 P4-SEARCH-NL-UX-A — 自然语言搜索与纯条件完整分页（**IMPLEMENTED / 定向验证通过 / 本机浏览器交互待补**）
+
+[执行卡](tasks/P4-SEARCH-NL-UX-A.md)、[实现报告](reports/P4-SEARCH-NL-UX-A-implementation.md)。新增确定性日期/人物解析和歧义选择；扩展个人 `/search/place-aware`，纯筛选 SQL keyset 分页完整覆盖5005项，不进 encoder 或搜索会话；语义搜索与旧 `/search` 契约保留。搜索页加入自然语言提示、可取消条件标签、高级筛选折叠和当前页有界窗口。定向JUnit **27/0/0/0**、Ruff、Node syntax、diff-check通过。浏览器能打开合成搜索页，但本机浏览器拦截 `/api/v1/session`，认证后交互与返回闭环待补；无真实图库、PhotoSearchData、模型/GPU访问。下一项仍为 P4-PHOTO-VIEW-A。
+
 ## 最近完成 P4-SOURCE-RESUME-A — 来源断点续建入口（**实现与定向自检完成 / 用户图库手测待做**）
 
 [任务卡](tasks/P4-SOURCE-RESUME-A.md)、[实现报告](reports/P4-SOURCE-RESUME-A.md)。来源卡「快速刷新此来源」保留，新增「检查并补齐建库」，用户点击后复用既有 source-scoped `build`；不改模式判定、队列、去重或后端进度协议。定向 Node VM/JUnit **4/0/0/0**、Node syntax、diff-check通过。未重启用户服务、未访问真实图库或 PhotoSearchData；用户手测仍待做，故不标PASS。

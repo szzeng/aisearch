@@ -7,8 +7,8 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-home-ux-a-3" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-place-nl-a-1" />
-    <script src="/web/search.js?v=p4-search-place-nl-a-3" defer></script>
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-nl-ux-a-1" />
+    <script src="/web/search.js?v=p4-search-nl-ux-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -29,7 +29,7 @@
 
     <main id="main" tabindex="-1">
       <p class="hint">
-        可以直接用日常说法搜索，例如“在济南拍的日落照片”；识别到地点后会显示可取消的范围条件。其余查询仍按原样搜索。页面只展示后端给回的字段：
+        用一个输入框说出想找的照片，例如“2023年张三在济南拍的日落”或“去年夏天的照片”。识别到的拍摄时间、人物和地点会显示为可取消条件；剩余内容词继续进行语义与文字搜索。纯条件结果可以继续翻页到末尾，语义结果最多浏览5000条。
         命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成
         “准确率”或百分比。
       </p>
@@ -45,10 +45,13 @@
               type="search"
               maxlength="256"
               autocomplete="off"
-              placeholder="例如：在济南拍的日落照片"
+              placeholder="例如：2023年张三在济南拍的日落"
             />
           </p>
           <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
+          <div id="result-intent-scope" class="wide" hidden aria-live="polite"></div>
+          <details class="advanced-search-filter wide">
+            <summary>高级筛选</summary>
           <p>
             <label for="query-source">来源</label>
             <select id="query-source">
@@ -171,6 +174,7 @@
             <p class="hint" id="person-echo"></p>
             <p class="state-block" id="person-status" role="status" aria-live="polite"></p>
           </fieldset>
+          </details>
           <p>
             <label for="query-page-size">每页数量</label>
             <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />

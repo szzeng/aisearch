@@ -1853,6 +1853,7 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     original = payload.original_query
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
     parse_notice = None
+    intent_plan = payload.intent_plan
     if payload.place_cancelled:
         kind = key = None
         query_text = (content if content is not None else original).strip() or None
@@ -1903,19 +1904,157 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
             None,
         )
         place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "source": None if source_choice is None else source_choice["source"], "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
-    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled"})
+    # A continuation reuses the structured first-page plan and never re-parses relative dates.
+    if payload.cursor is None and intent_plan is None:
+        from photo_search.search.natural_intent import parse_natural_intent
+
+        natural = parse_natural_intent(query_text or "", connection=service.catalog.connection)
+        if parse_notice and natural["state"] != "ambiguous" and not natural["choices"] and not natural["capture_from"]:
+            # Keep unknown/negative/multi-place phrases intact unless another condition is
+            # positively grounded in the active catalog or capture-time syntax.
+            natural = {"state": "ready", "choices": [], "person_match": "any",
+                       "capture_from": None, "capture_to_exclusive": None,
+                       "content_query": query_text, "notice": parse_notice}
+        if natural["state"] == "ambiguous":
+            return {"needs_person_choice": True, "original_query": original,
+                    "content_query": natural["content_query"], "person_choices": natural["choices"],
+                    "intent_plan": {"original_query": original,
+                                    "content_query": natural["content_query"],
+                                    "capture_from": natural["capture_from"],
+                                    "capture_to_exclusive": natural["capture_to_exclusive"],
+                                    "person_ids": natural.get("known_person_ids", []),
+                                    "person_names": natural.get("known_person_names", []),
+                                    "person_match": natural.get("person_match", "any"),
+                                    "place_kind": kind, "place_key": key}}
+        if payload.capture_from is None and payload.capture_to_exclusive is None:
+            values_time = {
+                "capture_from": natural["capture_from"],
+                "capture_to_exclusive": natural["capture_to_exclusive"],
+            }
+        else:
+            values_time = {"capture_from": payload.capture_from,
+                           "capture_to_exclusive": payload.capture_to_exclusive}
+        inferred_people = [int(item["person_id"]) for item in natural["choices"]]
+        if payload.person_ids:
+            inferred_people = list(payload.person_ids)
+            inferred_match = payload.person_match
+        else:
+            inferred_match = natural["person_match"]
+        query_text = natural["content_query"]
+        intent_plan = {
+            "original_query": original,
+            "content_query": query_text,
+            "capture_from": values_time["capture_from"],
+            "capture_to_exclusive": values_time["capture_to_exclusive"],
+            "person_ids": inferred_people,
+            "person_match": inferred_match,
+            "person_names": [str(item["name"]) for item in natural["choices"]],
+            "place_kind": kind,
+            "place_key": key,
+            "unresolved": parse_notice,
+        }
+    elif intent_plan is not None:
+        query_text = intent_plan.get("content_query")
+    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan"})
     values["text"] = query_text
+    if intent_plan is not None:
+        values["capture_from"] = intent_plan.get("capture_from", values.get("capture_from"))
+        values["capture_to_exclusive"] = intent_plan.get("capture_to_exclusive", values.get("capture_to_exclusive"))
+        values["person_ids"] = intent_plan.get("person_ids", values.get("person_ids", []))
+        values["person_match"] = intent_plan.get("person_match", values.get("person_match", "any"))
     envelope = SearchRequest.from_envelope(values)
     if kind is not None and key is not None and query_text is None:
         result = _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block, original_query=original)
         result["place_parse_notice"] = parse_notice
+        result["intent_plan"] = intent_plan
+        return result
+    if envelope.text is None:
+        result = _filter_only_search_page(service, envelope)
+        result["original_query"] = original
+        result["content_query"] = None
+        result["place_parse_notice"] = parse_notice
+        result["intent_plan"] = intent_plan
+        result["place_scope"] = None
         return result
     result = search_request(service.catalog, envelope, sessions=context.search_sessions, encoder=context.query_encoder(), reranker=context.reranker(), album_asset_ids=album_ids, album_scope_revision=revision)
     result["place_scope"] = place_block
     result["original_query"] = original
     result["content_query"] = query_text
     result["place_parse_notice"] = parse_notice
+    result["intent_plan"] = intent_plan
     return result
+
+
+def _filter_only_search_page(service: Any, request: SearchRequest) -> dict[str, Any]:
+    """Unbounded keyset pages for pure filters, without materializing IDs or sessions."""
+    from photo_search.search.service import _person_authority_base
+
+    catalog = service.catalog
+    base = _person_authority_base(catalog, request)
+    scope = SearchScope.build(
+        source_id=request.source_id, availability=request.availability,
+        place_ids=request.place_ids, include_descendants=request.include_descendants,
+        place_state=request.place_state, person_ids=base.canonical_person_ids,
+        person_match=request.person_match, capture=request.capture_range,
+    )
+    fingerprint = json.dumps({
+        "source_id": scope.source_id, "availability": scope.availability,
+        "place_ids": list(scope.place_ids), "include_descendants": scope.include_descendants,
+        "place_state": scope.place_state, "person_ids": list(scope.person_ids),
+        "person_match": scope.person_match, "capture_from": request.capture_from,
+        "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size,
+    }, sort_keys=True, separators=(",", ":"))
+    revisions = (base.filter_revision, base.suggestion_revision, "filter-only", fingerprint)
+    session_id = "filter-only"
+    if request.cursor is not None:
+        if request.search_session_id != session_id:
+            raise ApiError(INVALID_CURSOR, "the filter cursor does not match this search")
+        after = place_albums._decode(request.cursor, revisions)
+    else:
+        after = 0
+    where, params = scope_condition(catalog.connection, scope)
+    total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+    rows = catalog.read_all(
+        f"SELECT a.asset_id FROM assets AS a WHERE ({where}) AND a.asset_id>? ORDER BY a.asset_id LIMIT ?",
+        (*params, int(after), int(request.page_size) + 1),
+    )
+    if (place_revision.read_filter_revision(catalog.connection),
+        place_revision.read_suggestion_revision(catalog.connection)) != revisions[:2]:
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "the filters changed; restart the search", status=409)
+    page = rows[: int(request.page_size)]
+    ids = [int(row["asset_id"]) for row in page]
+    offset = int(catalog.read_one(
+        f"SELECT COUNT(*) AS value FROM assets AS a WHERE ({where}) AND a.asset_id<=?",
+        (*params, int(after)),
+    )["value"]) if after else 0
+    has_more = len(rows) > len(page)
+    token = place_albums._token(ids[-1], revisions) if has_more and ids else None
+    hits = [{"asset_id": asset_id, "rank": offset + index + 1,
+             "score": None, "matched_by": {"filter": offset + index + 1},
+             "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False}
+            for index, asset_id in enumerate(ids)]
+    return {
+        "contract_version": "p2-contracts.v1", "request_id": request.request_id,
+        "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
+        "space_id": None, "dimension": None,
+        "catalog_filter_revision": int(base.filter_revision),
+        "suggestion_revision": int(base.suggestion_revision), "fusion_config": {},
+        "query": None,
+        "filters": {"source_id": scope.source_id, "availability": scope.availability,
+                    "place_ids": list(scope.place_ids), "include_descendants": scope.include_descendants,
+                    "place_state": scope.place_state, "person_ids": list(scope.person_ids),
+                    "person_match": scope.person_match, "capture_from": request.capture_from,
+                    "capture_to_exclusive": request.capture_to_exclusive},
+        "hits": hits, "page_size": int(request.page_size), "page_offset": offset,
+        "next_cursor": token, "has_more": has_more, "total_candidates": total,
+        "candidates_truncated": False,
+        "channels": {"fts": {"engaged": False, "candidates": 0, "truncated": False},
+                     "vector": {"engaged": False, "candidates": 0, "scan_truncated": False},
+                     "authoritative": {"total": total, "listed": len(ids),
+                                       "truncated": False, "order": "asset_id"}},
+        "pending_semantic": None, "search_projection": _projection_block(catalog, match=None, catch_up=None),
+        "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
+    }
 
 
 def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str) -> dict[str, Any]:

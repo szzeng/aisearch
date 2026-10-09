@@ -1278,6 +1278,7 @@ class PlaceAwareSearchRequestModel(SearchRequestModel):
     place_kind: Literal["city", "province", "country", "district"] | None = None
     place_key: str | None = Field(default=None, max_length=128)
     place_cancelled: bool = False
+    intent_plan: dict[str, Any] | None = None
 
 
 class SearchHitModel(BaseModel):

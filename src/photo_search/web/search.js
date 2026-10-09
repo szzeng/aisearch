@@ -94,6 +94,7 @@
       //: The condition digest this session is bound to (null while no session is open).
       binding: null,
       placeAware: null,
+      intentPlan: null,
       hits: [],
       lastBody: null,
       preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false },
@@ -881,6 +882,7 @@
     state.search.hits = [];
     state.search.lastBody = null;
     state.search.placeAware = null;
+    state.search.intentPlan = null;
     state.search.mode = "text";
     state.search.sessionId = null;
     state.search.cursor = null;
@@ -945,6 +947,13 @@
           showPlaceChoices(body);
           return true;
         }
+        if (body && body.needs_person_choice) {
+          showPersonChoices(body);
+          return true;
+        }
+        if (body && body.intent_plan) {
+          state.search.intentPlan = body.intent_plan;
+        }
         if (body && body.place_scope) {
           state.search.placeAware = {
             original_query: body.original_query || els.queryText.value.trim(),
@@ -986,6 +995,10 @@
         body.place_kind = placeAware.place_kind;
         body.place_key = placeAware.place_key;
       }
+    }
+    if (state.search.intentPlan) {
+      body.intent_plan = state.search.intentPlan;
+      body.content_query = state.search.intentPlan.content_query || "";
     }
     if (queryText) {
       body.text = queryText;
@@ -1044,6 +1057,63 @@
     setStatus(els.queryStatus, "地点范围尚未确定，请选择后再搜索。", "error");
   }
 
+  function showPersonChoices(body) {
+    clear(els.resultIntentScope);
+    els.resultIntentScope.hidden = false;
+    els.resultIntentScope.appendChild(element("span", "", "检测到同名人物，请选择："));
+    (body.person_choices || []).forEach(function (person) {
+      var button = element("button", "", String(person.name || "人物") + " #" + number(person.person_id));
+      button.type = "button";
+      button.addEventListener("click", function () {
+        var plan = Object.assign({}, body.intent_plan || {});
+        plan.person_ids = (plan.person_ids || []).concat([Number(person.person_id)]);
+        plan.person_names = (plan.person_names || []).concat([String(person.name || "人物")]);
+        state.search.intentPlan = plan;
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        sendSearch(false);
+      });
+      els.resultIntentScope.appendChild(button);
+    });
+    setStatus(els.queryStatus, "人物范围尚未确定，请选择后再搜索。", "error");
+  }
+
+  function renderIntentChips(plan) {
+    clear(els.resultIntentScope);
+    if (!plan || (!plan.capture_from && !(plan.person_ids || []).length)) {
+      els.resultIntentScope.hidden = true;
+      return;
+    }
+    els.resultIntentScope.hidden = false;
+    function add(label, remove) {
+      els.resultIntentScope.appendChild(element("span", "", label + " "));
+      var button = element("button", "", "取消");
+      button.type = "button";
+      button.addEventListener("click", remove);
+      els.resultIntentScope.appendChild(button);
+    }
+    if (plan.capture_from) {
+      add("拍摄时间：" + plan.capture_from + " 至 " + plan.capture_to_exclusive + "（不含）", function () {
+        plan.capture_from = null;
+        plan.capture_to_exclusive = null;
+        state.search.intentPlan = plan;
+        els.queryText.value = plan.content_query || "";
+        sendSearch(false);
+      });
+    }
+    if ((plan.person_ids || []).length) {
+      var names = plan.person_names || plan.person_ids.map(function (id) { return "#" + id; });
+      add("人物：" + names.join("、") + (plan.person_match === "all" ? "（合照）" : ""), function () {
+        plan.person_ids = [];
+        plan.person_names = [];
+        plan.person_match = "any";
+        state.search.intentPlan = plan;
+        els.queryText.value = plan.content_query || "";
+        sendSearch(false);
+      });
+    }
+  }
+
   function sendImageSearch(continuation, filters) {
     var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
     if (!file) {
@@ -1099,6 +1169,11 @@
       content_query: body.content_query || "",
       place_cancelled: true,
     };
+    if (state.search.intentPlan) {
+      state.search.intentPlan.place_kind = null;
+      state.search.intentPlan.place_key = null;
+      state.search.intentPlan.content_query = state.search.placeAware.content_query;
+    }
     els.queryText.value = state.search.placeAware.content_query;
     state.search.sessionId = null;
     state.search.cursor = null;
@@ -1130,16 +1205,23 @@
       els.resultPlaceScope.hidden = true;
     }
     var hits = body.hits || [];
+    var filterOnly = body.search_session_id === "filter-only" || String(body.search_session_id || "").indexOf("place-album:") === 0;
+    var visibleStart = Number(body.page_offset) || 0;
     if (!continuation) {
       releaseObjectUrls();
       clear(els.resultGrid);
       state.search.count = 0;
+    } else if (filterOnly) {
+      // Pure filter browsing keeps one page in the DOM/session snapshot, regardless of total.
+      releaseObjectUrls();
+      clear(els.resultGrid);
+      state.search.count = visibleStart;
     }
     hits.forEach(function (hit) {
       els.resultGrid.appendChild(buildHit(hit));
     });
     state.search.count += hits.length;
-    state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
+    state.search.hits = continuation && !filterOnly ? state.search.hits.concat(hits) : hits.slice();
     state.search.lastBody = body;
     state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
@@ -1151,14 +1233,17 @@
     if (body.place_parse_notice) {
       notices.unshift({ kind: "informational", text: body.place_parse_notice });
     }
+    renderIntentChips(state.search.intentPlan);
     renderNotices(els.resultNotices, notices);
     renderPersonEcho(body.filters, state.search.mode);
     renderCaptureEcho(body.filters, state.search.mode);
-    var parts = [
-      "已显示 " + state.search.count + " 行",
-      "候选共 " + number(body.total_candidates) + " 个",
-      body.has_more ? "还有下一页" : "已到末尾",
-    ];
+    var parts = filterOnly
+      ? ["符合条件共 " + number(body.total_candidates) + " 张",
+         "当前显示 " + (visibleStart + 1) + "–" + (visibleStart + hits.length) + " 张",
+         body.has_more ? "还有下一页" : "已到末尾"]
+      : ["已显示 " + state.search.count + " 行",
+         "候选共 " + number(body.total_candidates) + " 个",
+         body.has_more ? "还有下一页" : "已到末尾"];
     var vector = (body.channels || {}).vector || {};
     // This is a read-only count computed from retrieved vector distances. Availability and
     // threshold are representation-space specific; neither changes the returned hits or order.
@@ -1225,6 +1310,7 @@
           count: state.search.count,
           total_candidates: state.search.total,
           placeAware: state.search.placeAware,
+          intentPlan: state.search.intentPlan,
           binding: state.search.binding,
           lastBody: state.search.lastBody,
           scrollY: window.scrollY || 0,
@@ -1273,6 +1359,7 @@
     state.search.count = 0;
     state.search.total = saved.total_candidates;
     state.search.placeAware = saved.placeAware || null;
+    state.search.intentPlan = saved.intentPlan || null;
     state.search.binding = saved.binding || null;
     state.search.lastBody = saved.lastBody;
     var body = Object.assign({}, saved.lastBody, {
@@ -1968,10 +2055,13 @@
     state.search.lastBody = null;
     state.search.binding = null;
     state.search.placeAware = null;
+    state.search.intentPlan = null;
     releaseObjectUrls();
     clear(els.resultGrid);
     clear(els.resultPlaceScope);
     els.resultPlaceScope.hidden = true;
+    clear(els.resultIntentScope);
+    els.resultIntentScope.hidden = true;
     renderNotices(els.resultNotices, []);
     els.loadMore.hidden = true;
     els.queryActions.hidden = true;
@@ -2009,6 +2099,7 @@
       searchForm: document.getElementById("search-form"),
       queryText: document.getElementById("query-text"),
       resultPlaceScope: document.getElementById("result-place-scope"),
+      resultIntentScope: document.getElementById("result-intent-scope"),
       querySource: document.getElementById("query-source"),
       queryAvailability: document.getElementById("query-availability"),
       queryPlaceState: document.getElementById("query-place-state"),
