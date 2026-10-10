@@ -23,6 +23,17 @@
   }
   function name(person) { return person.name || "未命名的人"; }
   function photoId(item) { return Number(item.asset_id); }
+  function emptySearchNote(page) {
+    const channels = page && page.channels || {};
+    const vector = channels.vector || {};
+    const fts = channels.fts || {};
+    const authoritative = channels.authoritative || {};
+    if (Number(authoritative.total) > 0 && vector.engaged &&
+        Number(vector.engine_blocks) === 0 && Number(fts.candidates) === 0) {
+      return "此人物的语义索引尚未就绪，可先查看全部照片。";
+    }
+    return "没有找到匹配的照片。";
+  }
   function photoURL(id, kind) { return "/api/v1/assets/" + id + "/" + kind; }
   function collectionPath(collection, suffix) {
     return "/persons/collections/" + collection.collection_id + "/" + collection.instance_token + (suffix || "");
@@ -872,7 +883,7 @@
       if (page.collection) { state.collection = { ...state.collection, ...page.collection }; collectionHeading(); }
       renderPhotos(page.assets || page.hits || []); state.photoCursor = page.next_cursor;
       $("photos-more").hidden = !page.has_more && !page.next_cursor;
-      $("photo-note").textContent = $("photos").children.length ? (collectionId ? "点照片查看大图；合集只把人物放在一起浏览。" : state.coverMode ? "点一张喜欢的照片，再选这个人的脸设为封面。" : state.searching ? "搜索结果仅包含这个人的照片。点“全部照片”返回相册。" + (page.candidates_truncated ? " 搜索结果较多，请缩小查询范围。" : "") : "点照片查看大图；认错了可选择对应的人脸更正。") : (state.searching ? "没有找到匹配的照片。" : collectionId ? "这个合集还没有照片。" : "这个人物还没有照片。");
+      $("photo-note").textContent = $("photos").children.length ? (collectionId ? "点照片查看大图；合集只把人物放在一起浏览。" : state.coverMode ? "点一张喜欢的照片，再选这个人的脸设为封面。" : state.searching ? "搜索结果仅包含这个人的照片。点“全部照片”返回相册。" + (page.candidates_truncated ? " 搜索结果较多，请缩小查询范围。" : "") : "点照片查看大图；认错了可选择对应的人脸更正。") : (state.searching ? emptySearchNote(page) : collectionId ? "这个合集还没有照片。" : "这个人物还没有照片。");
       return true;
     } catch (error) { if (seq === state.photoSeq) { $("photo-note").textContent = errorText(error); $("photos-more").hidden = true; } return false; }
     finally { if (seq === state.photoSeq) { state.busy.delete("photos"); $("photos-more").disabled = false; updatePreviewNavigation(); } }

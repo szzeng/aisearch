@@ -44,7 +44,6 @@ from typing import Any
 
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CatalogError
-from photo_search.indexing.maintenance import is_busy_rejection
 from photo_search.places.directory import active_alias_rows, ancestor_rows, get_place_row
 from photo_search.search.tokens import FTS_GENERATION_ID, TOKENIZER_VERSION, index_text
 
@@ -305,6 +304,10 @@ def catch_up(
                     connection, now_ms=catalog.now_ms(), limit=int(batch_size)
                 )
         except CatalogError as error:
+            # Keep the maintenance dependency local: maintenance imports scheduler
+            # projections, which reach this module through the person/API package.
+            from photo_search.indexing.maintenance import is_busy_rejection
+
             if not is_busy_rejection(error):
                 raise
             # The background drain owns the write lock for the whole build (P4-02U):
