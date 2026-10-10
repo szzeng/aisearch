@@ -2,6 +2,10 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新规划：P4-STORAGE-GC-A / B — 存储体检、安全文件 GC 与离线 Vector GC（PLANNED / 未实施）
+
+[卡 A：空间统计与安全文件 GC](tasks/P4-STORAGE-GC-A.md)、[卡 B：LanceDB / SQLite 离线维护](tasks/P4-STORAGE-GC-B.md)。按用户要求先立两张个人相册任务卡，执行顺序 **A → B**，推荐 GPT-6 High，每卡仅四组隔离合成定向测试。A 复用 Artifact/媒体/人物撤销历史既有能力，严禁按 `artifacts/pending` 文件夹名误删、严禁碰原图/人工事实；普通网页只读体检，不能证明发布互斥时清理只走停机 CLI。B 先检查向量索引覆盖，再按需压缩和清理 LanceDB 旧物理版本（保守保留 14 天），提供可选离线 SQLite VACUUM；不删除当前表孤儿 asset 向量，不删除 face 向量或任何业务世代。优先不修改 Schema。**本提交只有任务文档与状态索引，未实施产品代码、未运行测试、未访问或清理真实 PhotoSearchData，不得标 GC PASS。**
+
 ## P4-PERSON-COLLECTION-MANAGE-A — IMPLEMENTED / 当前会话受影响面工程审查通过；用户浏览器测试已确认
 
 [实施报告](reports/P4-PERSON-COLLECTION-MANAGE-A.md)、[当前会话审查报告](reports/P4-PERSON-COLLECTION-MANAGE-A-review.md)、[实施卡](tasks/P4-PERSON-COLLECTION-MANAGE-A.md)。人物 `/persons/browse` 默认响应增加 canonical 合集标签批量投影；`collection_state=none` 在 SQL 计数/排序/分页前排除属于现存合集的人物，并把合集实例/revision 摘要绑定到新游标。筛选覆盖命名、未命名、已忽略列表，和原查询条件组合；筛选变化清空选择但保留批量模式；加入、改名、删除合集后刷新标签并通知其他人物页。任务卡相关定向 JUnit 27/0/0/0，Ruff、Python 编译、Node 语法及 diff-check 通过。用户确认浏览器功能测试 OK。本会话受影响面工程审查通过；按用户要求在当前会话完成，未切换模型，结论不称独立 DS-H。未访问真实图库或运行服务；未提交/推送。
