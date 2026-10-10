@@ -46,6 +46,7 @@ indexes/
 
 # Logs
 *.log
+.tmp/
 
 # IDE / editor
 .vscode/
