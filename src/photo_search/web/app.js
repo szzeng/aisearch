@@ -449,6 +449,39 @@
       });
   }
 
+  function loadStorageSummary() {
+    setStatus(els.storageSummary, "正在读取数据库页统计…");
+    return request("/storage/summary")
+      .then(function (result) {
+        var payload = result.body || {};
+        var catalog = payload.catalog || {};
+        var rows = [
+          "目录数据库：" + (catalog.exists ? formatBytes(catalog.physical_bytes || 0) : "尚未创建"),
+        ];
+        if (catalog.page_count !== undefined) {
+          rows.push("数据库页：" + catalog.page_count + " × " + formatBytes(catalog.page_size || 0));
+          rows.push("可复用空闲页：" + catalog.freelist_count + "（逻辑 " + formatBytes(catalog.freelist_reusable_bytes || 0) + "，不会立即缩小数据库文件）");
+        }
+        if (catalog.counts) {
+          rows.push("记录概览：" + Object.keys(catalog.counts).map(function (key) {
+            return key + " " + catalog.counts[key];
+          }).join("；"));
+        }
+        if (catalog.logical_blob_breakdown && Object.keys(catalog.logical_blob_breakdown).length) {
+          rows.push("人脸向量 BLOB 为数据库内部逻辑分解，不重复计入目录空间。");
+        }
+        if (payload.last_deep_scan && payload.last_deep_scan.completed_at_ms) {
+          rows.push("最近深度扫描：" + new Date(payload.last_deep_scan.completed_at_ms).toLocaleString() + (payload.last_deep_scan.partial ? "（部分结果）" : ""));
+        } else {
+          rows.push("尚无深度扫描记录。");
+        }
+        setStatus(els.storageSummary, rows.join("\n") + (catalog.partial ? "\n数据库细项读取不完整。" : ""));
+      })
+      .catch(function (failure) {
+        setStatus(els.storageSummary, "读取空间概览失败：" + describe(failure), "error");
+      });
+  }
+
   function renderSources() {
     els.sourcesList.textContent = "";
     if (!state.sources.length) {
@@ -2038,6 +2071,7 @@
       sourcesList: document.getElementById("sources-list"),
       sourcesStatus: document.getElementById("sources-status"),
       refreshLibrary: document.getElementById("refresh-library"),
+      storageSummary: document.getElementById("storage-summary"),
       faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
@@ -2130,6 +2164,7 @@
     els.refreshLibrary.addEventListener("click", function () {
       refreshLibrary(null);
     });
+    document.getElementById("storage-summary-refresh").addEventListener("click", loadStorageSummary);
     window.addEventListener("hashchange", handleHash);
 
     state.observer = buildObserver();

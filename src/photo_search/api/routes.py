@@ -222,6 +222,7 @@ from photo_search.search.upload import (
     parse_multipart_form,
     stage_upload,
 )
+from photo_search.storage import quick_storage_summary
 
 APP_VERSION = "0.1.0"
 
@@ -537,6 +538,12 @@ async def stats(request: Request) -> dict[str, Any]:
         "partial": bool(report["partial"]),
         "indexing": index_summary(service.catalog.db_path),
     }
+
+
+@router.get("/storage/summary", summary="Read-only quick storage overview")
+async def storage_summary(request: Request) -> dict[str, Any]:
+    """Quick accounting only; never recursively walks local storage directories."""
+    return quick_storage_summary(service_of(request).data_root)
 
 
 # ----------------------------------------------------------------------------- sources

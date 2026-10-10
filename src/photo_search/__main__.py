@@ -33,6 +33,7 @@ from photo_search.ingestion.cli import add_catalog_parser, run_catalog_command
 from photo_search.models.embedding.cli import add_embedding_parser, run_embedding_command
 from photo_search.models.embedding.registry import registry_for
 from photo_search.runtime.device import DevicePolicy
+from photo_search.storage import storage_clean, storage_inspect
 from photo_search.workers.client import AiWorkerClient
 from photo_search.workers.query_encoder import (
     EncoderWiring,
@@ -303,6 +304,18 @@ def main() -> None:
                 action="store_true",
                 help="confirm all writers and catalog/Lance handles are stopped",
             )
+    storage = subparsers.add_parser("storage", help="read-only storage accounting and stopped-service file GC")
+    storage_commands = storage.add_subparsers(dest="storage_command")
+    storage_inspect_parser = storage_commands.add_parser("inspect", help="inspect storage usage")
+    storage_inspect_parser.add_argument("--data-root", type=Path, required=True)
+    storage_inspect_parser.add_argument("--deep", action="store_true", help="bounded recursive scan; otherwise only inspect catalog and sidecars")
+    storage_inspect_parser.add_argument("--json", action="store_true")
+    storage_clean_parser = storage_commands.add_parser("clean", help="preview or clean derived files")
+    storage_clean_parser.add_argument("--data-root", type=Path, required=True)
+    storage_clean_parser.add_argument("--scope", choices=("artifacts", "media-cache", "previews", "face-crops"), required=True)
+    storage_clean_parser.add_argument("--stopped", action="store_true", help="confirm all data-root writers are stopped")
+    storage_clean_parser.add_argument("--apply", action="store_true", help="execute the fresh eligibility check; without this flag only preview")
+    storage_clean_parser.add_argument("--json", action="store_true")
     parser.add_argument(
         "--host",
         default=None,
@@ -376,6 +389,23 @@ def main() -> None:
             code = 0
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True) if args.json else payload)
         raise SystemExit(code)
+    if args.command == "storage":
+        try:
+            if args.storage_command == "inspect":
+                payload = storage_inspect(args.data_root, deep=args.deep)
+            elif args.storage_command == "clean":
+                payload = storage_clean(
+                    args.data_root,
+                    scopes=(args.scope,),
+                    apply=args.apply,
+                    stopped=args.stopped,
+                )
+            else:
+                payload = {"status": "error", "code": "USAGE", "message": "choose storage inspect or clean"}
+        except (OSError, ValueError, RuntimeError) as error:
+            payload = {"status": "error", "code": "STORAGE_OPERATION_FAILED", "reason": type(error).__name__}
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True) if args.json else json.dumps(payload, ensure_ascii=False, indent=2))
+        raise SystemExit(0 if payload.get("status") in {"ok", "preview"} else 1)
     if args.command == "demo-search":
         raise SystemExit(
             _demo_search(

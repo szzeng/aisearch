@@ -10,7 +10,7 @@
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-photo-local-open-a-1" defer></script>
-    <script src="/web/app.js?v=p4-photo-view-a-2" defer></script>
+    <script src="/web/app.js?v=p4-storage-gc-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -42,6 +42,15 @@
         <ul id="sources-list" class="sources"></ul>
         <details class="management-panel">
           <summary>图库管理与分析明细</summary>
+          <details>
+            <summary>存储空间</summary>
+            <p><button type="button" id="storage-summary-refresh">快速查看空间</button></p>
+            <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
+            <p class="hint">快速查看只读取目录数据库和 SQLite 页统计，不递归扫描文件。深度扫描和文件清理请在所有写入者停止后使用命令行；原图和人工整理信息不会被清理。</p>
+            <p class="hint">深度扫描：<code>photo-search storage inspect --data-root "数据目录" --deep --json</code></p>
+            <p class="hint">安全文件清理预览：<code>photo-search storage clean --data-root "数据目录" --scope artifacts --json</code></p>
+            <p class="hint">执行前请停止应用及其他写入者，再增加 <code>--stopped --apply</code>。单独清除预览缓存用 <code>--scope previews</code>；原图不会受影响，再次打开详情时可能重新生成预览。</p>
+          </details>
           <p>
           <button type="button" id="refresh-library">刷新图库</button>
           <span id="refresh-status" class="hint" role="status" aria-live="polite"></span>
