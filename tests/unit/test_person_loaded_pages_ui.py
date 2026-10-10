@@ -10,17 +10,22 @@ from pathlib import Path
 def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
+    page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
+    assert 'persons-albums.js?v=p4-person-avatar-reuse-a-2' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
 class Element {
- constructor(tag){this.tag=tag;this.children=[];this.value='';this.text='';this.hidden=false;this.disabled=false;
+ constructor(tag){this.tag=tag;this.tagName=String(tag).toUpperCase();this.children=new HTMLCollectionMock();this.value='';this.text='';this.hidden=false;this.disabled=false;
   this.events={};this.attributes={};this.dataset={};this.open=false;this.classList={add(){}};}
- set textContent(v){this.text=String(v);this.children=[];}get textContent(){return this.text+this.children.map(c=>c.textContent).join('');}
- append(...items){items.forEach(c=>{c.parent=this;this.children.push(c);});}
- replaceChildren(...items){this.children=[];this.text='';this.append(...items);}
+ set textContent(v){this.text=String(v);this.children=new HTMLCollectionMock();}get textContent(){return this.text+this.children.map(c=>c.textContent).join('');}
+ append(...items){items.forEach(c=>{if(c.parent)c.parent.children=c.parent.children.filter(x=>x!==c);c.parent=this;this.children.push(c);});}
+ replaceChildren(...items){this.children.forEach(c=>c.parent=null);this.children=new HTMLCollectionMock();this.text='';this.append(...items);}
+ replaceChild(next,old){const index=this.children.indexOf(old);if(index<0)throw Error('missing child');old.parent=null;if(next.parent)next.parent.children=next.parent.children.filter(x=>x!==next);next.parent=this;this.children[index]=next;return old;}
+ remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);this.parent=null;}
  setAttribute(k,v){this.attributes[k]=v;}removeAttribute(k){delete this.attributes[k];}
  addEventListener(n,fn){this.events[n]=fn;}fire(n){return this.events[n]?.();}
- querySelector(s){return this.children.find(c=>String(c.className||'').split(' ').includes(s.slice(1)));}
+ querySelector(s){return Array.from(this.children).find(c=>String(c.className||'').split(' ').includes(s.slice(1)));}
  querySelectorAll(){return [];}focus(options){this.focusOptions=options;}
  showModal(){this.open=true;}close(){this.open=false;}
  getBoundingClientRect(){const index=this.parent?.children.indexOf(this)||0;
@@ -28,7 +33,7 @@ class Element {
 }
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 const calls=[];let revision=1,uuid=0,failSecond=false,delayed=null;
-let people=[1,2,3,4].map(id=>({person_id:id,name:null,revision:1,asset_count:5,thumbnail_url:null}));
+let people=[1,2,3,4].map(id=>{const face=(id).toString(16).padStart(64,'0');return {person_id:id,name:null,revision:1,asset_count:5,avatar_face_id:face,thumbnail_url:`/api/v1/faces/${face}/thumbnail`};});
 let groups=[11,22,33,44];const groupFaces=new Map(groups.map(id=>[id,Array.from({length:5},(_,i)=>({
  face_id:(id*10+i).toString(16).padStart(64,'0'),asset_id:id*10+i,control_revision:0,thumbnail_url:null,
  organization_reason:'NEAR_TIE',suggestions:[{person_id:id,name:'候选'+id}]}))]));
@@ -63,7 +68,7 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,refreshPeopleViews,refreshAfterWrite,backToLibrary};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
 (async()=>{
@@ -74,6 +79,29 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  for(const g of get('inbox-cards').children.slice(1)){g.open=true;g.fire('toggle');await flush();await g.children[2].fire('click');}
  const group22=get('inbox-cards').children[1],group33=get('inbox-cards').children[2];
  assert.equal(group22.children[1].children.length,4);assert.equal(group33.children[1].children.length,4);
+ // Refresh reconciles cards by person id and keeps the loaded image object.
+ const originalCard=get('cards').children[0],originalImage=originalCard.avatarImage;
+ people=[people[1],{...people[0],name:'最新人物名',revision:9,asset_count:42,collections:[{collection_id:4,name:'旅行'}]},...people.slice(2)];
+ await ui.loadPeople(false);assert.deepEqual(ids(),[2,1,3]);
+ const refreshed=get('cards').children[1];assert.equal(refreshed,originalCard);assert.equal(refreshed.avatarImage,originalImage);
+ assert.equal(refreshed.personName.textContent,'最新人物名');assert.equal(refreshed.personCount.textContent,'42 张照片');
+ assert.equal(refreshed.collectionLabels.children[0].textContent,'旅行');
+ refreshed.fire('click');await flush();assert.equal(ui.state.person.revision,9,'click reads the refreshed person object');
+ const browseBeforeReturn=calls.filter(c=>c.url.includes('/persons/browse?')).length;
+ ui.backToLibrary();await flush();ui.backToLibrary();await flush();
+ assert.equal(calls.filter(c=>c.url.includes('/persons/browse?')).length,browseBeforeReturn,'two fresh returns do not refetch people');
+ const imageBeforeRevalidate=refreshed.avatarImage;await ui.loadPeople(false);
+ assert.equal(get('cards').children[1].avatarImage,imageBeforeRevalidate,'explicit refresh revalidates without replacing the img element');
+ const browseBeforeExpiry=calls.filter(c=>c.url.includes('/persons/browse?')).length;
+ ui.state.peopleLastLoadedAt-=61000;ui.refreshChangedPeople();await flush();await flush();await flush();
+ assert(calls.filter(c=>c.url.includes('/persons/browse?')).length>browseBeforeExpiry,'stale list is checked on focus without a token change');
+ const beforeAvatarChange=get('cards').children[1].avatarImage,changedFace='f'.repeat(64);
+ people=people.map(p=>p.person_id===1?{...p,avatar_face_id:changedFace,thumbnail_url:`/api/v1/faces/${changedFace}/thumbnail`}:p);
+ await ui.loadPeople(false);assert.notEqual(get('cards').children[1].avatarImage,beforeAvatarChange,'a changed avatar identity replaces the image');
+ const queryBeforeRepeat=get('query').value;ui.state.selectedPeople.add(1);const browseBeforeMode=calls.filter(c=>c.url.includes('/persons/browse?')).length;
+ await ui.setView(true);assert.equal(get('query').value,queryBeforeRepeat);assert(ui.state.selectedPeople.has(1));
+ assert.equal(calls.filter(c=>c.url.includes('/persons/browse?')).length,browseBeforeMode,'same mode click preserves state and does not reload');
+ ui.state.selectedPeople.clear();people=[people[1],people[0],...people.slice(2)];await ui.loadPeople(false);
  context.window.scrollY=1900;const atConfirm=calls.length;
  await group33.children[1].children[0].confirmButton.fire('click');assert.equal(calls.length,atConfirm+1);
  groups=groups.filter(id=>id!==11);group33.open=false;group33.fire('toggle');await flush();await flush();await flush();

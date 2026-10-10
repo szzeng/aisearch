@@ -10,7 +10,8 @@
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
     detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, createPersonIntent: null, coverMode: false, searching: false, searchBody: null, returnCollection: null,
     deepLinked: false, linkSeq: 0, peopleChangeToken: null, inboxConfirmationsPending: false,
-    peoplePages: 0, peopleBinding: null, inboxPages: 0, inboxBinding: null, libraryPosition: null, busy: new Set() };
+    peoplePages: 0, peopleBinding: null, peopleLastLoadedAt: 0, peopleRefreshPending: true,
+    peopleLoadPromise: null, peopleLoadBinding: null, inboxPages: 0, inboxBinding: null, libraryPosition: null, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -122,6 +123,11 @@
   async function refreshPeopleViews(position) {
     // DOM events pass an Event, whereas returning from an album passes a saved position.
     position = position && position.anchors ? position : captureLibraryPosition();
+    state.peopleRefreshPending = true;
+    // A write/explicit refresh takes precedence over a request started before it.
+    if (state.peopleLoadPromise) {
+      state.listSeq++; state.peopleLoadPromise = null; state.peopleLoadBinding = null; state.busy.delete("people");
+    }
     const loads = [loadPeople(false), loadCollections(false)];
     const openGroups = (host) => Array.from(host.children).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
     if (state.organize) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
@@ -138,17 +144,94 @@
   }
   function notifyPeopleChanged() {
     state.peopleChangeToken = requestId();
+    state.peopleRefreshPending = true;
     try { window.localStorage.setItem("aisearch.persons.changed", state.peopleChangeToken); }
     catch (error) { /* Focus/refresh still works if browser storage is unavailable. */ }
   }
   function refreshChangedPeople() {
     if (state.writing) return;
+    let changed = false;
     try {
       const token = window.localStorage.getItem("aisearch.persons.changed");
-      if (token === state.peopleChangeToken) return;
+      if (token === state.peopleChangeToken) {
+        if (peopleListIsFresh() || (state.busy.has("people") && state.peopleLoadBinding === JSON.stringify(peopleValues()))) return;
+      } else changed = true;
       state.peopleChangeToken = token;
     } catch (error) { /* Refresh when returning to a window without browser storage. */ }
+    if (!changed && peopleListIsFresh()) return;
+    state.peopleRefreshPending = true;
     refreshPeopleViews();
+  }
+  function peopleValues() {
+    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"),
+      visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_desc", limit: 40,
+      collection_state: $("collection-state").checked ? "none" : "all" };
+    if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
+    return values;
+  }
+  function peopleListIsFresh() {
+    return state.peoplePages > 0 && state.peopleBinding === JSON.stringify(peopleValues()) &&
+      !state.peopleRefreshPending && !state.busy.has("people") &&
+      Date.now() - state.peopleLastLoadedAt < 60000;
+  }
+  function updatePersonCard(card, person, index, refreshAvatar) {
+    const personId = Number(person.person_id), thumbnailURL = person.thumbnail_url || null;
+    const avatarFaceId = person.avatar_face_id || null;
+    const avatarChanged = card.thumbnailURL !== thumbnailURL || card.avatarFaceId !== avatarFaceId;
+    if (avatarChanged) {
+      const replacement = picture(thumbnailURL, name(person), "pa-avatar", index < 4);
+      card.replaceChild(replacement, card.avatarPicture); card.avatarPicture = replacement;
+      card.thumbnailURL = thumbnailURL; card.avatarFaceId = avatarFaceId;
+    }
+    const image = Array.from(card.avatarPicture.children).find((child) => child.tagName === "IMG" || child.tag === "img");
+    card.avatarImage = image || null;
+    if (refreshAvatar && !avatarChanged && card.avatarImage && thumbnailURL) {
+      // The media endpoint revalidates with ETag/304. Reassigning the current URL
+      // asks the browser to validate without replacing a successfully loaded img.
+      card.avatarImage.src = mediaURL(thumbnailURL);
+    }
+    if (card.avatarImage) {
+      card.avatarImage.loading = index < 4 ? "eager" : "lazy";
+      card.avatarImage.fetchPriority = index < 4 ? "high" : "auto";
+    }
+    card.personId = personId; card.latestPerson = person;
+    card.setAttribute("data-person-id", String(personId));
+    card.avatarImage && (card.avatarImage.alt = name(person));
+    card.personName.textContent = name(person);
+    card.personCount.textContent = person.asset_count + " 张照片";
+    card.collectionLabels.replaceChildren();
+    (Array.isArray(person.collections) ? person.collections : []).forEach((collection) => {
+      const label = node("span", collection.name, "pa-person-collection");
+      label.title = collection.name; label.setAttribute("aria-label", "所属合集：" + collection.name);
+      card.collectionLabels.append(label);
+    });
+    card.collectionLabels.hidden = !card.collectionLabels.children.length;
+  }
+  function createPersonCard(person, index) {
+    const card = button("", () => state.batchMode ? togglePersonSelection(card.personId) : openAlbum(card.latestPerson), "pa-person-card");
+    card.avatarPicture = picture(person.thumbnail_url, name(person), "pa-avatar", index < 4);
+    card.personName = node("strong", ""); card.personCount = node("span", "", "hint");
+    card.collectionLabels = node("span", undefined, "pa-person-collections");
+    card.selectionHint = node("span", "", "hint pa-person-selection");
+    card.append(card.avatarPicture, card.personName, card.personCount, card.collectionLabels, card.selectionHint);
+    updatePersonCard(card, person, index, false);
+    return card;
+  }
+  function reconcilePeopleCards(persons, seq) {
+    const host = $("cards"), oldCards = new Map();
+    Array.from(host.children).forEach((card) => { if (card.personId && !oldCards.has(Number(card.personId))) oldCards.set(Number(card.personId), card); });
+    const kept = new Set(), ordered = [];
+    persons.forEach((person, index) => {
+      const id = Number(person.person_id);
+      if (!Number.isSafeInteger(id) || id <= 0 || kept.has(id)) return;
+      kept.add(id);
+      const card = oldCards.get(id) || createPersonCard(person, index);
+      updatePersonCard(card, person, index, Boolean(oldCards.has(id)));
+      ordered.push(card);
+    });
+    if (seq !== state.listSeq) return;
+    ordered.forEach((card) => host.append(card));
+    Array.from(host.children).forEach((card) => { if (!ordered.includes(card)) card.remove(); });
   }
   function syncPeopleCards() {
     Array.from($("cards").children).forEach((card) => {
@@ -298,21 +381,31 @@
   }
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
+    const values = peopleValues(), binding = JSON.stringify(values);
+    if (!more && state.peopleLoadPromise && state.peopleLoadBinding === binding) return state.peopleLoadPromise;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
-    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_desc", limit: 40, collection_state: $("collection-state").checked ? "none" : "all" };
-    if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
-    const binding = JSON.stringify(values), sameView = binding === state.peopleBinding;
+    const sameView = binding === state.peopleBinding;
     const append = Boolean(more && state.listCursor && sameView);
     const pageCount = append ? 1 : sameView ? Math.max(1, state.peoplePages) : 1;
     const position = sameView ? captureLibraryPosition() : null;
     if (more && state.listCursor) values.cursor = state.listCursor;
-    if (!sameView) { delete values.cursor; $("cards").replaceChildren(); state.listCursor = null; }
+    if (!sameView) { delete values.cursor; state.listCursor = null; }
     $("list-note").textContent = "正在找人物……";
-    try {
+    const loading = (async () => { try {
       const page = await readLoadedPages("/persons/browse", values, "persons", pageCount, () => seq === state.listSeq);
       if (!page) return;
-      if (!append) $("cards").replaceChildren();
+      if (!append) reconcilePeopleCards(page.persons || [], seq);
+      else {
+        const existing = new Set(Array.from($("cards").children).map((card) => Number(card.personId)));
+        page.persons.forEach((person, index) => {
+          const id = Number(person.person_id);
+          if (!Number.isSafeInteger(id) || id <= 0 || existing.has(id)) return;
+          const card = createPersonCard(person, $("cards").children.length + index);
+          $("cards").append(card); existing.add(id);
+        });
+      }
       state.peopleBinding = binding; state.peoplePages = append ? state.peoplePages + page.loadedPages : pageCount;
+      state.peopleLastLoadedAt = Date.now(); state.peopleRefreshPending = false;
       if (Number.isSafeInteger(page.total) && page.total >= 0) {
         const label = state.hiddenView ? "已忽略" : state.organize ? "未命名人物" : "人物";
         $("list-count").textContent = label + " " + page.total + " 人";
@@ -321,32 +414,16 @@
         $("list-count").textContent = "";
         $("list-count").hidden = true;
       }
-      page.persons.forEach((person, index) => {
-        const personId = Number(person.person_id);
-        const card = button("", () => state.batchMode ? togglePersonSelection(personId) : openAlbum(person), "pa-person-card");
-        card.personId = personId;
-        card.setAttribute("data-person-id", String(personId));
-        card.append(picture(person.thumbnail_url, name(person), "pa-avatar", index < 4), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
-        if (Array.isArray(person.collections) && person.collections.length) {
-          const labels = node("span", undefined, "pa-person-collections");
-          person.collections.forEach((collection) => {
-            const label = node("span", collection.name, "pa-person-collection");
-            label.title = collection.name;
-            label.setAttribute("aria-label", "所属合集：" + collection.name);
-            labels.append(label);
-          });
-          card.append(labels);
-        }
-        card.selectionHint = node("span", "", "hint pa-person-selection");
-        card.append(card.selectionHint);
-        $("cards").append(card);
-      });
       syncPeopleCards();
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
       $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
       restoreLibraryPosition(position);
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
-    finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; } }
+    finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; }
+      if (state.peopleLoadPromise === loading) { state.peopleLoadPromise = null; state.peopleLoadBinding = null; } }
+    })();
+    state.peopleLoadPromise = loading; state.peopleLoadBinding = binding;
+    return loading;
   }
   async function loadCollections(more) {
     const seq = ++state.collectionListSeq;
@@ -487,7 +564,10 @@
     state.person = null; state.collection = null; state.collectionSeq++; state.photoSeq++; state.busy.delete("photos");
     $("library").hidden = false; $("album").hidden = true; $("collection-view-controls").hidden = true;
     $("name").hidden = false; $("merge").hidden = false; $("cover").hidden = false; $("search-photos").hidden = false;
-    restoreLibraryPosition(state.libraryPosition); refreshPeopleViews(state.libraryPosition);
+    restoreLibraryPosition(state.libraryPosition);
+    if (!peopleListIsFresh() && !(state.busy.has("people") && state.peopleLoadBinding === JSON.stringify(peopleValues()))) {
+      refreshPeopleViews(state.libraryPosition);
+    }
     $("people").focus({ preventScroll: true });
   }
   function organizationText(face) {
@@ -818,6 +898,7 @@
     return Promise.all([loadPeople(false), loadInbox(false)]);
   }
   function setView(organize) {
+    if (state.organize === organize && !state.hiddenView) return;
     clearPeopleSelection(); state.hiddenView = false;
     state.organize = organize;
     if (organize) {
@@ -1258,8 +1339,9 @@
     $("detail-resume").addEventListener("click", () => changeDetailBatch("resume"));
     $("detail-retry").addEventListener("click", () => changeDetailBatch("retry"));
     $("back").addEventListener("click", () => {
+      const deepLinked = state.deepLinked;
+      if (deepLinked) { state.deepLinked = false; state.linkSeq++; clearPersonRoute(); }
       backToLibrary();
-      if (state.deepLinked) { state.deepLinked = false; state.linkSeq++; clearPersonRoute(); loadPeople(false); }
     });
     $("collections-toggle").addEventListener("click", () => { $("collections-panel").hidden = !$("collections-panel").hidden; if (!$("collections-panel").hidden) loadCollections(false); });
     $("collection-create").addEventListener("click", async () => { const collection = await createCollection(); if (collection) { $("collections-panel").hidden = false; message("已新建人物合集。", true); } });
