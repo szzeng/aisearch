@@ -177,6 +177,14 @@ def test_manual_osm_district_assignment_uses_existing_lock_membership_undo_and_r
                 user_place_id = directory.create_place(
                     connection, kind="custom", canonical_name="Forged custom place", now_ms=1
                 )
+            refusal_state = (
+                int(env.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignments")[0]),
+                int(env.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignment_history")[0]),
+                int(env.catalog.read_one("SELECT COUNT(*) FROM place_operations")[0]),
+                int(env.catalog.read_one(
+                    "SELECT revision FROM catalog_filter_revision WHERE revision_id=1"
+                )[0]),
+            )
             blocked_single = await client.put(
                 f"/api/v1/assets/{asset_id}/place-assignment",
                 json={
@@ -204,6 +212,16 @@ def test_manual_osm_district_assignment_uses_existing_lock_membership_undo_and_r
             )
             assert blocked_single.status_code == 404
             assert blocked_batch.status_code == 404
+            assert blocked_single.json()["code"] == "PLACE_NOT_FOUND"
+            assert blocked_batch.json()["code"] == "PLACE_NOT_FOUND"
+            assert refusal_state == (
+                int(env.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignments")[0]),
+                int(env.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignment_history")[0]),
+                int(env.catalog.read_one("SELECT COUNT(*) FROM place_operations")[0]),
+                int(env.catalog.read_one(
+                    "SELECT revision FROM catalog_filter_revision WHERE revision_id=1"
+                )[0]),
+            )
             undone = await client.post(
                 f"/api/v1/place-operations/{operation['operation_id']}/undo",
                 json={"request_id": "unified-osm-undo", "expected_operation_revision": operation["operation_revision"]},

@@ -505,6 +505,75 @@ def create_place(
         )
 
 
+def install_source_places(catalog: Any) -> dict[str, int]:
+    """Install a tiny validated source package and return its selectable place IDs."""
+    from p2_dataset_fixtures import build_package, mini_spec
+
+    from photo_search.places import datasets
+
+    dataset_id = "p2-search-source-mini-1"
+    places = (
+        {
+            "dataset_place_id": "country-cn",
+            "kind": "country",
+            "display_name": "中国",
+            "country_code": "CN",
+            "latitude": 35.0,
+            "longitude": 105.0,
+        },
+        {
+            "dataset_place_id": "city-aa-hangzhou",
+            "kind": "city",
+            "display_name": "杭州",
+            "country_code": "CN",
+            "latitude": 30.2741,
+            "longitude": 120.1551,
+            "population": 11936010,
+            "parent_dataset_place_id": "country-cn",
+        },
+        {
+            "dataset_place_id": "city-ab-west-lake",
+            "kind": "city",
+            "display_name": "西湖",
+            "country_code": "CN",
+            "latitude": 30.25,
+            "longitude": 120.15,
+            "parent_dataset_place_id": "city-aa-hangzhou",
+        },
+        {
+            "dataset_place_id": "city-ac-beijing",
+            "kind": "city",
+            "display_name": "北京",
+            "country_code": "CN",
+            "latitude": 39.9042,
+            "longitude": 116.4074,
+            "population": 1000000,
+            "parent_dataset_place_id": "country-cn",
+        },
+    )
+    aliases = ({"dataset_place_id": "city-aa-hangzhou", "text": "Hangzhou", "language": "en"},)
+    spec = mini_spec(dataset_id=dataset_id, places=places, aliases=aliases)
+    source = Path(catalog.data_root) / "test-fixtures" / dataset_id
+    build_package(source, spec=spec)
+    staged = datasets.stage_package(catalog, source)
+    validated = datasets.validate_dataset(catalog, str(staged["dataset_id"]))
+    active = datasets.activate_dataset(catalog, str(validated["dataset_id"]))
+    active_id = str(active["dataset_id"])
+    rows = catalog.read_all(
+        "SELECT external_id, place_id FROM geo_dataset_place_refs "
+        "WHERE dataset_id = ? ORDER BY external_id",
+        (active_id,),
+    )
+    by_external_id = {str(row["external_id"]): int(row["place_id"]) for row in rows}
+    names = {
+        "china": "country-cn",
+        "hangzhou": "city-aa-hangzhou",
+        "west_lake": "city-ab-west-lake",
+        "beijing": "city-ac-beijing",
+    }
+    return {name: by_external_id[external_id] for name, external_id in names.items()}
+
+
 def assign_place(
     catalog: Any,
     *,

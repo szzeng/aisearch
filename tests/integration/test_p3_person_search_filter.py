@@ -27,8 +27,8 @@ from p2_search_fixtures import (
     FakeImageEncoder,
     assign_place,
     confirm_pending,
-    create_place,
     embedding_spec,
+    install_source_places,
 )
 from p3_person_search_fixtures import PersonSearchEnv, build_person_search_env
 
@@ -149,8 +149,9 @@ def seed(env: PersonSearchEnv) -> Seeded:
     env.link(f_lake_c_suggested, c, decision="SUGGESTED")
     env.link(f_image_c_locked, c)
     env.control(f_image_c_locked, "MANUAL_UNASSIGNED")
-    place_sunset = create_place(env.catalog, "北京", kind="city")
-    place_lake = create_place(env.catalog, "杭州", kind="city")
+    source_places = install_source_places(env.catalog)
+    place_sunset = source_places["beijing"]
+    place_lake = source_places["hangzhou"]
     assign_place(env.catalog, asset_id=sunset, place_id=place_sunset, request_id="req-p-sunset")
     assign_place(env.catalog, asset_id=lake, place_id=place_lake, request_id="req-p-lake")
     # A place edit queues the affected confirmed vectors for reprojection. Replaying the

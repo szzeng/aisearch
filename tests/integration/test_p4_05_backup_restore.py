@@ -11,9 +11,9 @@ from p2_search_fixtures import (
     assign_place,
     build_library,
     configured_scheduler,
-    create_place,
     embedding_spec,
     index_vector,
+    install_source_places,
 )
 
 from photo_search.backup import create_backup, restore_backup
@@ -42,7 +42,7 @@ def test_empty_restore_keeps_text_and_semantic_pages_identical(tmp_path: Path) -
         vector=[0.0, 1.0, 0.0],
         artifact_id="lake",
     )
-    place_id = create_place(library.catalog, "杭州")
+    place_id = install_source_places(library.catalog)["hangzhou"]
     assign_place(
         library.catalog,
         asset_id=assets["beach sunset.jpg"],

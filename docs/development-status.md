@@ -14,9 +14,9 @@
 
 [任务卡](tasks/P4-PERSON-AVATAR-REUSE-A.md)、[执行报告](reports/P4-PERSON-AVATAR-REUSE-A.md)。用户指定从 `f140e82` 执行此卡；60 秒内无变化返回复用列表 DOM，人物卡片刷新复用稳定头像 `<img>`，同模式重复点击不重载。2026-10-11 修复真实 DOM `HTMLCollection` 不支持 `.find()` 导致人物卡片渲染中断的问题，并更新脚本版本 URL 以避开旧缓存；Node 测试桩覆盖 DOM 差异并检查版本 URL。任务卡 Node 语法、两份定向 UI pytest（JUnit 2/0/0/0）和 `git diff --check` 通过。真实浏览器图片缓存/用户图库观察未做，C 后置；工作区变更未提交。原 `P4-TEST-BASELINE-LITE-A` 状态和其后续入口保持不变。
 
-## P4-TEST-BASELINE-LITE-A — READY / 轻量测试基线整理（仅立卡）
+## P4-TEST-BASELINE-LITE-A — PARTIAL / 地点 fixture 修复与轻量分类
 
-[任务卡](tasks/P4-TEST-BASELINE-LITE-A.md)。针对 GC-A 全量 2,338 项中 70 failures、43 errors、49 skipped：优先核实并小范围修复地点 `PLACE_NOT_FOUND` 共享测试夹具，对其余失败按 nodeid/签名归类并区分既有、新回归、未知；只做定向验证，不强制一次修绿全仓。不修改生产代码、不放宽地点安全规则、不跳过失败；此前七阶段完整基线计划仍为 DEFERRED。本次仅提交计划，**未执行修复/测试**。本卡范围 SCOPED PASS 不能代替 GC-A 全量门禁或独立 DS-H 安全审查。
+[任务卡](tasks/P4-TEST-BASELINE-LITE-A.md)、[执行报告](reports/P4-TEST-BASELINE-LITE-A.md)。GC-A 全量历史结果仍为 2,338 项 / 70 failures / 43 errors / 49 skipped，未重跑。地点 ASSIGN fixture 改为使用正式激活的微型合成来源包；搜索权威、人物/地点搜索、备份恢复及来源拒绝零写入共 50 项定向结果为 **48/2/0/0**，两项为冻结哈希与未命名人物列表断言，需后续确认。Ruff、py_compile、diff-check 通过。52 个全量 failure 签名差异尚未规范化；本卡为 **PARTIAL**，不代表全仓通过。此前七阶段完整基线计划仍为 DEFERRED。
 
 ## P4-STORAGE-GC-A — IMPLEMENTED / 定向验收通过；GC-B 前置条件按路由例外满足
 
@@ -24,4 +24,4 @@
 
 ## 下一步
 
-[P4-TEST-BASELINE-LITE-A](tasks/P4-TEST-BASELINE-LITE-A.md) 仍为 READY / 仅立卡，针对 GC-A 全量历史失败按卡片范围处理。GC-B 已关闭；没有启动全量回归或修改历史失败结果。
+[P4-TEST-BASELINE-LITE-A](tasks/P4-TEST-BASELINE-LITE-A.md) 已执行轻量范围，报告列出余项与分类；GC-B 已关闭；没有启动全量回归或改写历史失败结果。

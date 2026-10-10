@@ -19,9 +19,9 @@ from p2_search_fixtures import (
     build_library,
     configured_scheduler,
     confirm_pending,
-    create_place,
     embedding_spec,
     index_vector,
+    install_source_places,
 )
 
 from photo_search.artifacts.store import generation_id_for
@@ -58,10 +58,11 @@ def env(tmp_path: Any):
         catalog, scheduler, spec,
         asset_id=assets["家 合影.jpg"], vector=[0.2, 0.2, 0.9], artifact_id="art-d",
     )
-    china = create_place(catalog, "中国", kind="country")
-    hangzhou = create_place(catalog, "杭州", parent_place_id=china)
-    west_lake = create_place(catalog, "西湖", kind="attraction", parent_place_id=hangzhou)
-    beijing = create_place(catalog, "北京")
+    source_places = install_source_places(catalog)
+    china = source_places["china"]
+    hangzhou = source_places["hangzhou"]
+    west_lake = source_places["west_lake"]
+    beijing = source_places["beijing"]
     assign_place(
         catalog,
         asset_id=assets["杭州西湖 照片.jpg"],
