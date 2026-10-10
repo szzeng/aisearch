@@ -1,10 +1,10 @@
 # Development status
 
+更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+
 ## 新增待实施：P4-PERSON-SEMANTIC-REPAIR-A — READY / 人物相册语义索引恢复
 
 [修复任务卡](tasks/P4-PERSON-SEMANTIC-REPAIR-A.md)。现场：人物 19 有 131 张有效照片，当前活动 Chinese-CLIP 世代该人物 CONFIRMED 向量 0、全库 2924；相册搜索 Vector engaged 但 engine_blocks=0。另已确认索引 CLI 的 status/drain 均因 search/documents ↔ indexing/maintenance 循环导入在启动阶段失败（未执行恢复）。实施先用最小延迟导入断环，再按 PENDING_REPAIR/outbox 与 NO_ENTRY 等只读分类复用现有有界 drain/增量索引能力，使改名后可追赶；只做 2～3 个隔离小场景、受影响静态检查，不动真实 PhotoSearchData、schema、模型或搜索协议。本次**仅提交任务卡与 status，不代表修复已经实施或现场恢复**。建议 GPT-6 High 实施、受影响面简审。
-
-更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
 ## 当前：P4-SEARCH-INTENT-UNIFIED-A-FIX2 — GeoNames 同名父子候选选择修复完成 / 定向验证通过
 
