@@ -2,6 +2,10 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新增待实施：P4-SEARCH-INTENT-NL-COVERAGE-FIX-A — READY / 统一搜索句式覆盖与前端状态修复
+
+[任务卡](tasks/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)。基于已实现的 P4-SEARCH-INTENT-UNIFIED-A 与 FIX1/FIX2，不再重构搜索引擎，聚焦日常自然语言遗漏及条件一致性：`AI里的照片` / `AI里的裙子`、来源“的照片”、`今年10月`、年份＋地点、人物同框、多合集 OR 不得错误执行单侧范围，以及快速连续搜索/取消 chip/续页/返回状态安全。先将 37 条解析例句落地为参数化红灯测试，再自行按根因修复与复测；仅 4 组 API＋2 组合成 DOM/Promise 直接场景及受影响原测试、Ruff、Node、diff-check。推荐 GPT-6 High；实现后按 AGENTS.md 做独立 DS-H High 完整新增受影响面审查。与人物相册向量恢复任务 P4-PERSON-SEMANTIC-REPAIR-A 独立，不访问真实 PhotoSearchData、不改 Schema/FTS/Vector/冻结搜索协议。本次**仅提交任务文档与 status，产品代码未实施、测试未执行、真实图库未验收**。
+
 ## 新增待实施：P4-PERSON-SEMANTIC-REPAIR-A — READY / 人物相册语义索引恢复
 
 [修复任务卡](tasks/P4-PERSON-SEMANTIC-REPAIR-A.md)。现场：人物 19 有 131 张有效照片，当前活动 Chinese-CLIP 世代该人物 CONFIRMED 向量 0、全库 2924；相册搜索 Vector engaged 但 engine_blocks=0。另已确认索引 CLI 的 status/drain 均因 search/documents ↔ indexing/maintenance 循环导入在启动阶段失败（未执行恢复）。实施先用最小延迟导入断环，再按 PENDING_REPAIR/outbox 与 NO_ENTRY 等只读分类复用现有有界 drain/增量索引能力，使改名后可追赶；只做 2～3 个隔离小场景、受影响静态检查，不动真实 PhotoSearchData、schema、模型或搜索协议。本次**仅提交任务卡与 status，不代表修复已经实施或现场恢复**。建议 GPT-6 High 实施、受影响面简审。
