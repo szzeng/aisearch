@@ -2,6 +2,10 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新规划：P4-PERSON-COLLECTION-MANAGE-A — 人物合集标签与“只看未加入合集”（PLANNED / 未实施）
+
+[任务卡](tasks/P4-PERSON-COLLECTION-MANAGE-A.md)。人物头像下展示当前 canonical 人物所属合集；人物列表增加可选“只看未加入合集”，SQLite 权威过滤先于计数/排序/分页，与已命名、未命名、已忽略及现有查询条件组合。仅扩展 `/persons/browse`，默认行为不变；限定合并/撤销语义、旧游标兼容和筛选页成员变更失效；保留批量管理多页/滚动状态。推荐 GPT-6 High，定向测试和受影响面审查，不改 Schema、识别、成员写协议，不访问真实图库。**本次仅登记任务卡，产品代码未实施、测试未运行、现场未验收。**
+
 ## 新增实施：P4-SEARCH-INTENT-NL-COVERAGE-FIX-A — 已实现 / 定向验证与当前会话工程复核通过；独立审查与现场试用待完成
 
 [任务卡](tasks/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)、[执行报告](reports/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)。新增 37 条解析红灯后按根因修复合集范围连接词/多合集拒绝、时间与地点上下文、人物同框关系、来源句式及前端 request generation；`all` 人物 chip 全取消后可继续检索。当前会话复核另补月份区间边界，反向/跨年范围明确拒绝，重复年份同年范围完整执行。任务卡六个测试文件 JUnit 102/0/0/0，Ruff、Node、diff-check 通过。后续补修 `filter-only` 与地点相册续页累加显示，定向 JS 测试 1/0/0/0。当前会话工程复核通过（非独立 DS-H）；独立 DS-H High 复核和现场少量真实数据复测待完成。未跑全仓/浏览器矩阵/GPU/真实模型/打包，未访问真实 PhotoSearchData 或运行服务，未提交/推送。与 P4-PERSON-SEMANTIC-REPAIR-A 独立。
