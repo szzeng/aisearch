@@ -2,6 +2,10 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## P4-TEST-BASELINE-TAIL-A — READY / 地点测试基线最小收尾（仅立卡）
+
+[任务卡](tasks/P4-TEST-BASELINE-TAIL-A.md)。沿四阶段 PARTIAL 遗留，仅处理三个测试问题：更正合成北京→日本错误父级并保持跨国反例；核对 `needs_scope_choice` 与 `needs_place_choice` 两条消歧响应并验证实际选中后范围；以历史合成状态覆盖 USER/custom 人工归属、退休保护和当前无来源拒绝。推荐 GPT-6 Medium；仅运行关联定向测试、Ruff/编译/diff-check，不改产品代码、不跑全仓、不访问真实 PhotoSearchData。**本次只提交任务卡，尚未实施。**
+
 ## P4-TEST-BASELINE-CONTINUE-A — COMPLETE WITH PARTIALS / 四阶段完成
 
 [总控入口](tasks/P4-TEST-BASELINE-CONTINUE-A.md)；四阶段报告：[LITE-B](reports/P4-TEST-BASELINE-LITE-B.md) **SCOPED PASS**（JUnit 43/0/0/0），[PLACE-RESIDUAL-A](reports/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md) **PARTIAL**（54/0/0/0），[UI-A](reports/P4-TEST-BASELINE-UI-A.md) **SCOPED PASS**（9/0/0/0），[CORE-A](reports/P4-TEST-BASELINE-CORE-A.md) **PARTIAL**（108/0/0/0）。更新测试 fixture/历史断言；未改生产代码、SQL 或正式迁移。剩余：地点同名查询返回 `needs_scope_choice` 而旧断言预期 `needs_place_choice`；历史 USER/custom 归属/退休保护未建立明确旧版本状态；OCR 原生运行时 `RUNTIME_UNCONFIRMED`；其余历史全量失败未复跑。GC-A 全量历史 2,338 项（70 failures/43 errors/49 skipped）未复跑；LITE-A 的 50 项定向 48/2 仍是历史阶段结果，不推断当前全量余项。全仓门禁没有被标 PASS。
@@ -28,4 +32,4 @@
 
 ## 下一步
 
-P4-TEST-BASELINE-CONTINUE-A 四阶段已完成；当前没有自动后续任务。GC-B 状态独立保持已完成。
+下一任务为 [P4-TEST-BASELINE-TAIL-A](tasks/P4-TEST-BASELINE-TAIL-A.md)（三项地点测试尾项；仅简单定向验收）。完成后停止本轮基线专项，GC-B 已完成状态不变。
