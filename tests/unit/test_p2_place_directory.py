@@ -311,13 +311,13 @@ def test_the_database_refuses_a_non_manual_control_row(catalog: Catalog) -> None
 def test_assign_unassign_restore_auto_and_late_automatic_results(
     catalog: Catalog, service: PlaceService
 ) -> None:
+    from p2_search_fixtures import install_source_places
+
     assets = seed_assets(catalog, 1)
     asset_id = assets[0]
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
-        lake = directory.create_place(
-            connection, kind="attraction", canonical_name="西湖", parent_place_id=city, now_ms=2
-        )
+    places = install_source_places(catalog)
+    city = places["hangzhou"]
+    lake = places["west_lake"]
 
     first = service.write_assignment(
         asset_id=asset_id,
@@ -392,7 +392,7 @@ def test_assign_unassign_restore_auto_and_late_automatic_results(
             city,
             lake,
         ]
-        assert restarted.asset_place(asset_id)["suggested"]["state"] == "unavailable"
+        assert restarted.asset_place(asset_id)["suggested"]["state"] == "no_resolution"
     finally:
         reopened.close()
 
@@ -435,9 +435,10 @@ def test_idempotent_replay_and_payload_conflict(catalog: Catalog, service: Place
 
 
 def test_batch_is_atomic_with_a_500_bound(catalog: Catalog, service: PlaceService) -> None:
+    from p2_search_fixtures import install_source_places
+
     assets = seed_assets(catalog, 4)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
 
     with pytest.raises(CatalogError) as empty:
         service.write_batch(items=[], request_id="b0")

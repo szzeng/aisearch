@@ -222,10 +222,13 @@ def test_place_and_source_filters_stay_exact_and_reject_illegal_combinations(
     env = acceptance_env(tmp_path)
     try:
         catalog = env.catalog
-        country = make_place(catalog, "中国", kind="country")
-        city = make_place(catalog, "杭州", parent_place_id=country)
-        homonym = make_place(catalog, "杭州")
-        custom = make_place(catalog, "我的地点", kind="custom")
+        from p2_search_fixtures import install_source_places
+
+        places = install_source_places(catalog)
+        country = places["china"]
+        city = places["hangzhou"]
+        homonym = places["hangzhou_homonym"]
+        custom = places["beijing"]
         under_country = env.assets["杭州西湖 照片.jpg"]
         under_homonym = env.assets["beach sunset.jpg"]
         unassigned = env.assets["IMG_0001.JPG"]

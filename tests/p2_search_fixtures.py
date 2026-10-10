@@ -541,6 +541,14 @@ def install_source_places(catalog: Any) -> dict[str, int]:
             "parent_dataset_place_id": "city-aa-hangzhou",
         },
         {
+            "dataset_place_id": "country-jp",
+            "kind": "country",
+            "display_name": "日本",
+            "country_code": "JP",
+            "latitude": 36.0,
+            "longitude": 138.0,
+        },
+        {
             "dataset_place_id": "city-ac-beijing",
             "kind": "city",
             "display_name": "北京",
@@ -548,7 +556,15 @@ def install_source_places(catalog: Any) -> dict[str, int]:
             "latitude": 39.9042,
             "longitude": 116.4074,
             "population": 1000000,
-            "parent_dataset_place_id": "country-cn",
+            "parent_dataset_place_id": "country-jp",
+        },
+        {
+            "dataset_place_id": "city-ad-hangzhou-homonym",
+            "kind": "city",
+            "display_name": "杭州",
+            "country_code": "CN",
+            "latitude": 31.2304,
+            "longitude": 121.4737,
         },
     )
     aliases = ({"dataset_place_id": "city-aa-hangzhou", "text": "Hangzhou", "language": "en"},)
@@ -567,9 +583,11 @@ def install_source_places(catalog: Any) -> dict[str, int]:
     by_external_id = {str(row["external_id"]): int(row["place_id"]) for row in rows}
     names = {
         "china": "country-cn",
+        "japan": "country-jp",
         "hangzhou": "city-aa-hangzhou",
         "west_lake": "city-ab-west-lake",
         "beijing": "city-ac-beijing",
+        "hangzhou_homonym": "city-ad-hangzhou-homonym",
     }
     return {name: by_external_id[external_id] for name, external_id in names.items()}
 

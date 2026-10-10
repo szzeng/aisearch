@@ -253,18 +253,13 @@ def test_place_directory_endpoints(api_env) -> None:
 
 
 def test_assignment_batch_and_undo_over_the_api(api_env) -> None:
+    from p2_search_fixtures import install_source_places
+
     assets = prepare(api_env)
+    place_id = install_source_places(api_env.service.catalog)["hangzhou"]
 
     async def scenario(client: AsyncClient) -> dict[str, Any]:
         csrf = await api_env.authenticate(client)
-        city = (
-            await client.post(
-                "/api/v1/places",
-                json={"kind": "city", "canonical_name": "杭州"},
-                headers=api_env.post_headers(csrf),
-            )
-        ).json()
-        place_id = city["place_id"]
         assign = await client.put(
             f"/api/v1/assets/{assets[0]}/place-assignment",
             json={
@@ -413,52 +408,39 @@ def test_assignment_batch_and_undo_over_the_api(api_env) -> None:
     assert result["asset_place"]["assignment"]["mode"] == "MANUAL_ASSIGNED"
     assert result["asset_place"]["place"]["place_id"] == result["place_id"]
     assert result["asset_place"]["gps_state"] == "NOT_EXTRACTED"
-    assert result["asset_place"]["suggested"]["state"] == "unavailable"
+    assert result["asset_place"]["suggested"]["state"] == "no_resolution"
     assert result["asset_place"]["suggested"]["candidates"] == []
     assert result["asset_place"]["exclusions"] == []
 
 
 def test_asset_place_filter_and_coordinate_privacy(api_env) -> None:
+    from p2_search_fixtures import install_source_places
+
     assets = prepare(api_env)
     seed_geo_fact(api_env, assets[0])
+    places = install_source_places(api_env.service.catalog)
 
     async def scenario(client: AsyncClient) -> dict[str, Any]:
         csrf = await api_env.authenticate(client)
-        city = (
-            await client.post(
-                "/api/v1/places",
-                json={"kind": "city", "canonical_name": "杭州"},
-                headers=api_env.post_headers(csrf),
-            )
-        ).json()
-        lake = (
-            await client.post(
-                "/api/v1/places",
-                json={
-                    "kind": "attraction",
-                    "canonical_name": "西湖",
-                    "parent_place_id": city["place_id"],
-                },
-                headers=api_env.post_headers(csrf),
-            )
-        ).json()
+        city_id = places["hangzhou"]
+        lake_id = places["west_lake"]
         await client.put(
             f"/api/v1/assets/{assets[0]}/place-assignment",
             json={
                 "action": "assign",
-                "target_place_id": lake["place_id"],
+                "target_place_id": lake_id,
                 "request_id": "filter-1",
                 "expected_revision": 0,
             },
             headers=api_env.post_headers(csrf),
         )
         ancestor_page = await get_json(
-            client, "/api/v1/assets", params={"place_ids": city["place_id"]}
+            client, "/api/v1/assets", params={"place_ids": city_id}
         )
         exact_page = await get_json(
             client,
             "/api/v1/assets",
-            params={"place_ids": city["place_id"], "include_descendants": "false"},
+            params={"place_ids": city_id, "include_descendants": "false"},
         )
         unassigned = await get_json(
             client, "/api/v1/assets", params={"place_state": "unassigned"}
@@ -470,7 +452,7 @@ def test_asset_place_filter_and_coordinate_privacy(api_env) -> None:
         invalid = await get_json(
             client,
             "/api/v1/assets",
-            params={"place_ids": city["place_id"], "place_state": "manual_unassigned"},
+            params={"place_ids": city_id, "place_state": "manual_unassigned"},
         )
         geo = await get_json(client, f"/api/v1/assets/{assets[0]}/geo")
         missing_geo = await get_json(client, f"/api/v1/assets/{assets[1]}/geo")
@@ -486,8 +468,8 @@ def test_asset_place_filter_and_coordinate_privacy(api_env) -> None:
             "missing_geo": missing_geo,
             "detail": detail["body"],
             "assets": assets,
-            "city_id": city["place_id"],
-            "lake_id": lake["place_id"],
+            "city_id": city_id,
+            "lake_id": lake_id,
         }
 
     result = api_env.scenario(scenario)
