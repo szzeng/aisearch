@@ -174,6 +174,31 @@ def parse_unified_intent(
                 candidates.append({"type": "place", **item, "start": span[0], "end": span[1],
                                    "status": "needs_choice" if place["state"] == "ambiguous" else "confirmed"})
     candidates.extend(_source_candidates(raw, connection))
+    # A person's canonical name can also be stored as one of their aliases. The
+    # recognizer visits both spellings, but they represent one identity at one span.
+    # Collapse those repeats before overlap/conflict detection; otherwise the same
+    # person is incorrectly sent to the scope-choice UI twice.
+    identity_fields = {
+        "collection": ("collection_id", "instance_token", "revision"),
+        "person": ("person_id",),
+        "place": ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version"),
+        "source": ("source_id",),
+        "time": ("value",),
+    }
+    unique_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for candidate in candidates:
+        kind = str(candidate.get("type", ""))
+        identity = tuple(
+            tuple(value) if isinstance(value := candidate.get(field), list) else value
+            for field in identity_fields.get(kind, ())
+        )
+        key = (kind, identity, int(candidate["start"]), int(candidate["end"]))
+        existing = unique_candidates.get(key)
+        if existing is None:
+            unique_candidates[key] = candidate
+        elif candidate.get("status") == "needs_choice":
+            existing["status"] = "needs_choice"
+    candidates = list(unique_candidates.values())
     if len(candidates) > MAX_CANDIDATES:
         return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw,
                 "content_query": raw, "candidates": [], "notice": "可选条件过多，请缩小查询范围。"}

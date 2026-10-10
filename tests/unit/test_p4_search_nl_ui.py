@@ -110,3 +110,54 @@ assert.equal(els.resultIntentScope.children.length,0,"a new query must clear con
         encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_same_name_person_scope_choices_have_person_heading_and_distinct_labels() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the search-page interaction check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Element {
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.hidden=false;this.value="";this.dataset={};}
+  set textContent(value){this.text=String(value);this.children=[];}
+  get textContent(){return this.text||this.children.map(child=>child.textContent).join("");}
+  get firstChild(){return this.children[0]||null;}
+  appendChild(child){this.children.push(child);return child;}
+  removeChild(child){this.children.splice(this.children.indexOf(child),1);return child;}
+  addEventListener(name,callback){this.events[name]=callback;}
+}
+const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
+const context={URLSearchParams,encodeURIComponent,isFinite,console,
+ document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
+ window:{location:{href:"/search",search:""}}};
+let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
+code=code.replace('  if (document.readyState === "loading")',
+ '  globalThis.ui={state,showScopeChoices,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+vm.createContext(context);vm.runInContext(code,context);
+const scope=get("scope"),status=get("status");
+context.ui.setElements({resultIntentScope:scope,queryStatus:status});
+context.ui.showScopeChoices({scope_choices:[
+ {type:"person",label:"人物：SZ #1",intent_plan:{person_ids:[1]}},
+ {type:"person",label:"人物：SZ #2",intent_plan:{person_ids:[2]}}
+]});
+assert.equal(scope.children[0].textContent,"该名称对应多个人物，请选择：");
+assert.equal(scope.children[1].textContent,"人物：SZ #1");
+assert.equal(scope.children[2].textContent,"人物：SZ #2");
+context.ui.showScopeChoices({scope_choices:[
+ {type:"place",label:"地点：香港（广东省 · 深圳市 · OSM）"},
+ {type:"place",label:"地点：香港（香港特别行政区 · OSM）"}
+]});
+assert.equal(scope.children[0].textContent,"该名称对应多个地点，请选择：");
+assert.equal(scope.children[1].textContent,"地点：香港（广东省 · 深圳市 · OSM）");
+context.ui.showScopeChoices({scope_choices:[
+ {type:"source",label:"图库来源：手机图库 #1"},
+ {type:"source",label:"图库来源：手机图库 #2"}
+]});
+assert.equal(scope.children[0].textContent,"该名称对应多个图库来源，请选择：");
+"""
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [node, "-e", script], cwd=root, capture_output=True, text=True,
+        encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

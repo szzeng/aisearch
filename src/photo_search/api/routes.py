@@ -2117,7 +2117,7 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                 for candidate in unified.get("candidates", []):
                     scope = {key: candidate[key] for key in
                              ("collection_id", "instance_token", "revision", "name")}
-                    choices.append({**scope, "intent_plan": {
+                    choices.append({**scope, "label": str(candidate["name"]), "intent_plan": {
                         "plan_version": unified["plan_version"], "original_query": original,
                         "collection_scope": scope, "collection_query": unified.get("content_query") or "",
                         "content_query": unified.get("content_query"), "capture_from": unified.get("capture_from"),
@@ -2129,6 +2129,12 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                         "place_selection": unified.get("place_selection"),
                         "source_id": unified.get("source_id"), "source_name": unified.get("source_name"),
                     }})
+                collection_label_counts: dict[str, int] = {}
+                for choice in choices:
+                    collection_label_counts[choice["label"]] = collection_label_counts.get(choice["label"], 0) + 1
+                for choice in choices:
+                    if collection_label_counts[choice["label"]] > 1:
+                        choice["label"] += " #" + str(choice["collection_id"])
                 return {"needs_collection_choice": True, "original_query": original,
                         "collection_choices": choices}
             if unified.get("choice_kind") == "person_match":
@@ -2174,12 +2180,17 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                     if int(candidate["person_id"]) not in plan["person_ids"]:
                         plan["person_ids"].append(int(candidate["person_id"]))
                         plan["person_names"].append(label)
-                    label = "人物：" + label
+                    label = "人物：" + label + " #" + str(candidate["person_id"])
                 elif kind == "place":
                     plan["place_kind"], plan["place_key"] = candidate["kind"], str(candidate["key"])
                     plan["place_selection"] = {key: candidate.get(key) for key in
                         ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version")}
                     label = "地点：" + label
+                    place_context = [str(candidate.get(field) or "").strip()
+                                     for field in ("parent", "source")]
+                    place_context = [value for value in place_context if value]
+                    if place_context:
+                        label += "（" + " · ".join(place_context) + "）"
                 elif kind == "time":
                     plan["capture_from"], plan["capture_to_exclusive"] = candidate["value"]
                     label = "拍摄时间：" + "—".join(candidate["value"])
@@ -2189,6 +2200,27 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                     label = "图库来源：" + label
                 choices.append({"type": kind, "label": label, "intent_plan": plan,
                                 "place": candidate if kind == "place" else None})
+            label_counts: dict[str, int] = {}
+            for choice in choices:
+                label_counts[choice["label"]] = label_counts.get(choice["label"], 0) + 1
+            for choice in choices:
+                if label_counts[choice["label"]] < 2:
+                    continue
+                if choice["type"] == "place" and choice.get("place"):
+                    identity_fields = ("kind", "key", "source", "source_id", "selection_ref",
+                                       "dataset_id", "dataset_version")
+                    identity = " / ".join(
+                        str(choice["place"][field]) for field in identity_fields
+                        if choice["place"].get(field) not in (None, "")
+                    )
+                elif choice["type"] == "source":
+                    identity = str(choice["intent_plan"].get("source_id", ""))
+                elif choice["type"] == "collection":
+                    identity = str((choice["intent_plan"].get("collection_scope") or {}).get("collection_id", ""))
+                else:
+                    identity = ""
+                if identity:
+                    choice["label"] += " #" + identity
             return {"needs_scope_choice": True, "original_query": original,
                     "scope_choices": choices, "content_query": unified.get("content_query")}
         if unified["state"] == "unsupported":

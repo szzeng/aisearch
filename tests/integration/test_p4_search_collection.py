@@ -414,3 +414,99 @@ def test_collection_name_shared_with_person_and_place_requires_explicit_choice(a
         }
 
     api_env.scenario(scenario)
+
+
+def test_same_name_person_choices_include_identity_disambiguators(api_env: ApiEnv) -> None:
+    from photo_search.persons.contracts import name_key_for
+
+    catalog = api_env.service.catalog
+    first, second = add_person(catalog, name="SZ"), add_person(catalog, name="Other")
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO person_aliases(person_id, alias, normalized_alias, created_at) VALUES(?, ?, ?, 1)",
+            (second, "SZ", name_key_for("SZ")),
+        )
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "same-name-person-choice", "original_query": "SZ的照片",
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["needs_scope_choice"] is True
+        choices = [choice for choice in body["scope_choices"] if choice["type"] == "person"]
+        assert {choice["intent_plan"]["person_ids"][0] for choice in choices} == {first, second}
+        assert {choice["label"] for choice in choices} == {f"人物：SZ #{first}", f"人物：Other #{second}"}
+
+    api_env.scenario(scenario)
+
+
+def test_same_name_place_choices_show_parent_source_and_identity(api_env: ApiEnv, monkeypatch: Any) -> None:
+    from photo_search.api import routes
+
+    monkeypatch.setattr(routes.place_choices, "choices", lambda *args, **kwargs: [
+        {"kind": "city", "key": "osm:hk-city-1", "name": "香港", "parent": "广东省 · 深圳市",
+         "source": "OSM", "aliases": []},
+        {"kind": "city", "key": "osm:hk-city-2", "name": "香港", "parent": "香港特别行政区",
+         "source": "OSM", "aliases": []},
+    ])
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "same-name-hong-kong-place-choice", "original_query": "香港的照片",
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["needs_scope_choice"] is True
+        choices = [choice for choice in body["scope_choices"] if choice["type"] == "place"]
+        assert {choice["label"] for choice in choices} == {
+            "地点：香港（广东省 · 深圳市 · OSM）",
+            "地点：香港（香港特别行政区 · OSM）",
+        }
+
+        monkeypatch.setattr(routes.place_choices, "choices", lambda *args, **kwargs: [
+            {"kind": "city", "key": "osm:hk-alias-1", "name": "香港", "parent": "同一上级",
+             "source": "OSM", "aliases": []},
+            {"kind": "city", "key": "osm:hk-alias-2", "name": "香港", "parent": "同一上级",
+             "source": "OSM", "aliases": []},
+        ])
+        same_context = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "same-name-hong-kong-place-key-choice", "original_query": "香港的照片",
+        })
+        assert same_context.status_code == 200, same_context.text
+        same_context_choices = [choice for choice in same_context.json()["scope_choices"]
+                                if choice["type"] == "place"]
+        assert {choice["label"] for choice in same_context_choices} == {
+            "地点：香港（同一上级 · OSM） #city / osm:hk-alias-1 / OSM",
+            "地点：香港（同一上级 · OSM） #city / osm:hk-alias-2 / OSM",
+        }
+
+    api_env.scenario(scenario)
+
+
+def test_same_name_source_choices_include_source_identity(api_env: ApiEnv) -> None:
+    seed_library(api_env, {"source.jpg": []})
+    catalog = api_env.service.catalog
+    first = int(catalog.read_one("SELECT source_id FROM source_roots ORDER BY source_id LIMIT 1")["source_id"])
+    with catalog.write() as connection:
+        connection.execute("UPDATE source_roots SET display_name='手机图库' WHERE source_id=?", (first,))
+        second = int(connection.execute(
+            "INSERT INTO source_roots(display_name,root_path,status) VALUES('手机图库','D:/other','ONLINE')"
+        ).lastrowid)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "same-name-source-choice", "original_query": "手机图库里的照片",
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["needs_scope_choice"] is True
+        choices = [choice for choice in body["scope_choices"] if choice["type"] == "source"]
+        assert {choice["label"] for choice in choices} == {
+            f"图库来源：手机图库 #{first}", f"图库来源：手机图库 #{second}",
+        }
+
+    api_env.scenario(scenario)

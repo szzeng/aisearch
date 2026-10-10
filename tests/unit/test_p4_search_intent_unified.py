@@ -67,6 +67,18 @@ def test_conflicts_relations_and_unsupported_phrases_do_not_guess() -> None:
     assert place_and_collection["content_query"] is None
 
 
+def test_same_person_canonical_name_and_identical_alias_are_one_candidate() -> None:
+    db = catalog()
+    db.execute("INSERT INTO person_aliases VALUES(3, 'Alice')")
+    plan = parse_unified_intent(
+        "Alice的照片", connection=db, place_choices=[], today=date(2026, 10, 9),
+    )
+    people = [item for item in plan["candidates"] if item["type"] == "person"]
+    assert plan["state"] == "ready"
+    assert plan["person_ids"] == [3]
+    assert len(people) == 1
+
+
 def test_visual_text_and_old_years_are_preserved_or_parsed_with_context() -> None:
     assert parse("照片上写着2024年")["content_query"] == "照片上写着2024年"
     old = parse("1905年的照片")

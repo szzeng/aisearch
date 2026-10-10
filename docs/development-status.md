@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 当前：P4-SEARCH-INTENT-UNIFIED-A — 工程任务完成 / 定向验证通过 / 用户确认当前会话主审通过
+## 当前：P4-SEARCH-INTENT-UNIFIED-A-FIX1 — 搜索候选重复与同名选择回归修复完成 / 定向验证通过
 
-[任务卡](tasks/P4-SEARCH-INTENT-UNIFIED-A.md)、[实施报告](reports/P4-SEARCH-INTENT-UNIFIED-A-implementation.md)、[当前会话影响面审](reports/P4-SEARCH-INTENT-UNIFIED-A-review-current-session.md)。统一原句候选与有界版本化计划已接入加性 `/search/place-aware`，覆盖合集、人物、地点、拍摄时间和已登记来源；复用既有三条执行路径。计划改写、手动条件覆盖、Unicode 原文偏移及 unsupported 计划绕过均已修复；最终定向 JUnit 54/0/0/0，Ruff、Node、diff-check 通过。用户确认当前会话主审通过；没有切换模型，不冒称独立 DS-H。个人页面试用待确认。未访问真实图库/服务，未跑全仓、30万、GPU、真实模型、浏览器矩阵或打包。未提交/推送。
+[修复卡](tasks/P4-SEARCH-INTENT-UNIFIED-A-FIX1.md)、[修复报告](reports/P4-SEARCH-INTENT-UNIFIED-A-FIX1.md)、[关联主卡](tasks/P4-SEARCH-INTENT-UNIFIED-A.md)。根因是相同人物身份/区间的正式名与别名重复生成候选，被重叠检查误判为选择；不同人物、地点或来源身份同名时，统一 UI 又丢失区分信息。已通用按对象身份和原文区间去重；真实身份冲突保留，地点展示父级/来源并在必要时附 key，人物/来源/合集重复标签附身份 ID，单类提示也按类型显示。定向 JUnit 20/0/0/0，Ruff、Node、diff-check 通过。未读真实图库或现有服务记录，无法指认现场属于哪一类；未跑全仓/浏览器矩阵/GPU/模型/打包，未提交/推送。
 
 ## FIX1：P4-PLACE-UNIFIED-A-FIX1 — IMPLEMENTED / 定向验证通过；现场复测待完成
 

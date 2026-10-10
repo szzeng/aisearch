@@ -1106,7 +1106,7 @@
     els.resultIntentScope.hidden = false;
     els.resultIntentScope.appendChild(element("span", "", "检测到多个同名合集，请选择："));
     (body.collection_choices || []).forEach(function (collection) {
-      var button = element("button", "", String(collection.name || "人物合集"));
+      var button = element("button", "", String(collection.label || collection.name || "人物合集"));
       button.type = "button";
       button.addEventListener("click", function () {
         var plan = collection.intent_plan || { original_query: body.original_query,
@@ -1129,8 +1129,15 @@
   function showScopeChoices(body) {
     clear(els.resultIntentScope);
     els.resultIntentScope.hidden = false;
-    els.resultIntentScope.appendChild(element("span", "", "该名称同时对应不同范围，请选择："));
-    (body.scope_choices || []).forEach(function (choice) {
+    var choices = body.scope_choices || [];
+    var peopleOnly = choices.length > 0 && choices.every(function (choice) { return choice.type === "person"; });
+    var placesOnly = choices.length > 0 && choices.every(function (choice) { return choice.type === "place"; });
+    var sourcesOnly = choices.length > 0 && choices.every(function (choice) { return choice.type === "source"; });
+    els.resultIntentScope.appendChild(element("span", "", peopleOnly
+      ? "该名称对应多个人物，请选择：" : placesOnly
+        ? "该名称对应多个地点，请选择：" : sourcesOnly
+          ? "该名称对应多个图库来源，请选择：" : "该名称同时对应不同范围，请选择："));
+    choices.forEach(function (choice) {
       var button = element("button", "", String(choice.label || "选择范围"));
       button.type = "button";
       button.addEventListener("click", function () {
