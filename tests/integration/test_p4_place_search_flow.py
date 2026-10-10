@@ -215,13 +215,12 @@ def test_place_aware_api_parses_daily_phrasing_and_keeps_unsafe_queries_unfilter
         for body in (prefix, suffix, spaced):
             assert body["place_scope"]["source"] == "OSM"
             assert body["content_query"] == "日落"
-        assert negative["place_scope"] is None
-        assert negative["place_parse_notice"]
-        assert negative["original_query"] == "不是在杭州拍的照片"
-        assert ambiguous["needs_place_choice"] is True
+        assert negative["unsupported_intent"] is True
+        assert "notice" in negative
+        assert ambiguous["needs_scope_choice"] is True
         assert ambiguous["content_query"] == "日落"
-        assert len(ambiguous["place_choices"]) == 2
-        assert {choice["content_query"] for choice in ambiguous["place_choices"]} == {"日落"}
+        assert len(ambiguous["scope_choices"]) == 2
+        assert {choice["intent_plan"]["content_query"] for choice in ambiguous["scope_choices"]} == {"日落"}
     finally:
         env.context.close()
         env.library.close()

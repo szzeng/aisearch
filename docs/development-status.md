@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 新增待实施：P4-SEARCH-INTENT-UNIFIED-A — READY / 仅任务设计
+## 当前：P4-SEARCH-INTENT-UNIFIED-A — 工程任务完成 / 定向验证通过 / 用户确认当前会话主审通过
 
-[任务卡](tasks/P4-SEARCH-INTENT-UNIFIED-A.md)。统一个人自然语言搜索的合集、人物、地点、拍摄时间和已登记来源五类候选识别；以单一有效计划处理重叠/歧义、条件取消、续页冻结和服务端权威校验。抽离个人搜索协调层，继续复用现有 SQLite 完整纯条件分页、FTS/Vector/RRF、合集与地点成员口径，并保留 FIX1 已实现的 OSM 优先、无 OSM 才用 GeoNames 的同名地点行为。推荐 GPT-6 High；仅必要解析、API 和前端定向合成测试及受影响静态检查，不跑全仓、30万、GPU、模型或打包。本次只提交任务文档与 status，**未实施产品代码、未运行测试、未访问真实图库**；独立受影响面审查在实现后按卡执行。
+[任务卡](tasks/P4-SEARCH-INTENT-UNIFIED-A.md)、[实施报告](reports/P4-SEARCH-INTENT-UNIFIED-A-implementation.md)、[当前会话影响面审](reports/P4-SEARCH-INTENT-UNIFIED-A-review-current-session.md)。统一原句候选与有界版本化计划已接入加性 `/search/place-aware`，覆盖合集、人物、地点、拍摄时间和已登记来源；复用既有三条执行路径。计划改写、手动条件覆盖、Unicode 原文偏移及 unsupported 计划绕过均已修复；最终定向 JUnit 54/0/0/0，Ruff、Node、diff-check 通过。用户确认当前会话主审通过；没有切换模型，不冒称独立 DS-H。个人页面试用待确认。未访问真实图库/服务，未跑全仓、30万、GPU、真实模型、浏览器矩阵或打包。未提交/推送。
 
 ## FIX1：P4-PLACE-UNIFIED-A-FIX1 — IMPLEMENTED / 定向验证通过；现场复测待完成
 

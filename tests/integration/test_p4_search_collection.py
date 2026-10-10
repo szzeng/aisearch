@@ -22,6 +22,109 @@ def _url(catalog: Any, collection_id: int) -> str:
     return f"/api/v1/persons/collections/{collection_id}/{row['instance_token']}"
 
 
+def test_registered_source_is_a_validated_filter(api_env: ApiEnv) -> None:
+    seeded = seed_library(api_env, {"source-one.jpg": [], "source-two.jpg": []})
+    catalog = api_env.service.catalog
+    source = catalog.read_one("SELECT source_id FROM source_roots ORDER BY source_id LIMIT 1")
+    source_id = int(source["source_id"])
+    with catalog.write() as connection:
+        connection.execute("UPDATE source_roots SET display_name='手机图库' WHERE source_id=?", (source_id,))
+        second_source = connection.execute(
+            "INSERT INTO source_roots(display_name,root_path,status) VALUES('other','D:/other','ONLINE')"
+        ).lastrowid
+        connection.execute(
+            "UPDATE file_locations SET source_id=? WHERE asset_id=?", (second_source, seeded["source-two.jpg"]["asset_id"])
+        )
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "unified-source-filter", "original_query": "手机图库里的照片", "page_size": 10,
+        })
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["intent_plan"]["source_id"] == source_id
+        assert body["filters"]["source_id"] == source_id
+        assert [hit["asset_id"] for hit in body["hits"]] == [seeded["source-one.jpg"]["asset_id"]]
+
+    api_env.scenario(scenario)
+
+
+def test_unified_plan_preserves_manual_filters_and_rejects_tampering(api_env: ApiEnv, monkeypatch: Any) -> None:
+    catalog = api_env.service.catalog
+    person_id = add_person(catalog)
+    from photo_search.api import routes
+    observed: dict[str, Any] = {}
+
+    def capture_semantic_request(_catalog: Any, envelope: Any, **_kwargs: Any) -> dict[str, Any]:
+        observed["envelope"] = envelope
+        return {"filters": {}, "hits": [], "total_candidates": 0}
+
+    monkeypatch.setattr(routes, "search_request", capture_semantic_request)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        manual = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "unified-manual-filter-preserved", "original_query": "海边风景",
+            "person_ids": [person_id], "person_match": "all",
+            "capture_from": "2024-01-01", "capture_to_exclusive": "2025-01-01",
+        })
+        assert manual.status_code == 200, manual.text
+        envelope = observed["envelope"]
+        assert list(envelope.person_ids) == [person_id]
+        assert envelope.person_match == "all"
+        assert str(envelope.capture_from).startswith("2024-01-01")
+        assert str(envelope.capture_to_exclusive).startswith("2025-01-01")
+
+        plan = manual.json()["intent_plan"]
+        tampered = dict(plan)
+        tampered["content_query"] = "越权替换内容"
+        rejected = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "unified-plan-content-tampering", "original_query": "海边风景",
+            "intent_plan": tampered,
+        })
+        assert rejected.status_code == 409, rejected.text
+
+        unversioned = dict(plan)
+        unversioned.pop("plan_version", None)
+        rejected_version = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "unified-plan-version-required", "original_query": "海边风景",
+            "intent_plan": unversioned,
+        })
+        assert rejected_version.status_code == 409, rejected_version.text
+
+    api_env.scenario(scenario)
+
+
+def test_unsupported_unified_plan_cannot_execute_person_filter(api_env: ApiEnv, monkeypatch: Any) -> None:
+    from photo_search.api import routes
+    from photo_search.search.personal_search import PersonalSearchCoordinator
+
+    catalog = api_env.service.catalog
+    person_id = add_person(catalog, name="小张")
+    coordinator = PersonalSearchCoordinator(catalog, api_env.data_root)
+    parsed = coordinator.collect("排除小张的照片")
+    assert parsed["state"] == "unsupported"
+    assert parsed["person_ids"] == [person_id]
+    plan = {**parsed, "collection_query": parsed.get("content_query") or ""}
+    search_calls: list[Any] = []
+    monkeypatch.setattr(routes, "search_request", lambda *args, **kwargs: search_calls.append(args))
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post("/api/v1/search/place-aware", headers=api_env.post_headers(csrf), json={
+            "request_id": "unsupported-person-plan-rejected",
+            "original_query": "排除小张的照片",
+            "intent_plan": plan,
+        })
+        assert response.status_code == 409, response.text
+        assert "暂不支持" in response.text
+        assert search_calls == []
+
+    api_env.scenario(scenario)
+
+
 def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: ApiEnv, monkeypatch: Any) -> None:
     seeded = seed_library(api_env, {
         "shared.jpg": [(20, 20, 90, 90), (150, 30, 220, 100)],

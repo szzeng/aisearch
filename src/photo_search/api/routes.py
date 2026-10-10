@@ -2098,8 +2098,136 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
     parse_notice = None
     intent_plan = payload.intent_plan
+    client_plan_supplied = intent_plan is not None
     collection_scope = None
     query_source = original
+    from photo_search.search.personal_search import PersonalSearchCoordinator
+
+    coordinator = PersonalSearchCoordinator(service.catalog, service.data_root)
+    unified = None
+    if payload.cursor is None and intent_plan is None:
+        unified = coordinator.collect(original)
+        if (kind is not None and key is not None and unified.get("place_kind") is not None
+                and (kind != unified.get("place_kind") or str(key) != str(unified.get("place_key")))):
+            raise ApiError(INVALID_CURSOR, "自动识别地点与手动地点条件冲突，请重新搜索", status=409)
+        if unified["state"] == "needs_choice":
+            choice_types = {str(candidate.get("type")) for candidate in unified.get("candidates", [])}
+            if choice_types == {"collection"}:
+                choices = []
+                for candidate in unified.get("candidates", []):
+                    scope = {key: candidate[key] for key in
+                             ("collection_id", "instance_token", "revision", "name")}
+                    choices.append({**scope, "intent_plan": {
+                        "plan_version": unified["plan_version"], "original_query": original,
+                        "collection_scope": scope, "collection_query": unified.get("content_query") or "",
+                        "content_query": unified.get("content_query"), "capture_from": unified.get("capture_from"),
+                        "capture_to_exclusive": unified.get("capture_to_exclusive"),
+                        "person_ids": list(unified.get("person_ids", [])),
+                        "person_names": list(unified.get("person_names", [])),
+                        "person_match": unified.get("person_match", "any"),
+                        "place_kind": unified.get("place_kind"), "place_key": unified.get("place_key"),
+                        "place_selection": unified.get("place_selection"),
+                        "source_id": unified.get("source_id"), "source_name": unified.get("source_name"),
+                    }})
+                return {"needs_collection_choice": True, "original_query": original,
+                        "collection_choices": choices}
+            if unified.get("choice_kind") == "person_match":
+                choices = []
+                for match_mode, label in (("any", "任一人物的照片"), ("all", "两人同框的合照")):
+                    plan = {"plan_version": unified["plan_version"], "original_query": original,
+                            "collection_query": unified.get("content_query") or "",
+                            "content_query": unified.get("content_query"),
+                            "capture_from": unified.get("capture_from"),
+                            "capture_to_exclusive": unified.get("capture_to_exclusive"),
+                            "person_ids": list(unified["person_ids"]),
+                            "person_match": match_mode, "person_names": list(unified.get("person_names", [])),
+                            "place_kind": unified.get("place_kind"), "place_key": unified.get("place_key"),
+                            "place_name": unified.get("place_name"),
+                            "place_selection": unified.get("place_selection"),
+                            "source_id": unified.get("source_id"), "source_name": unified.get("source_name"),
+                            "collection_scope": unified.get("collection_scope")}
+                    choices.append({"type": "person", "label": label, "intent_plan": plan})
+                return {"needs_scope_choice": True, "original_query": original,
+                        "scope_choices": choices, "content_query": unified.get("content_query")}
+            choices = []
+            for candidate in unified.get("candidates", []):
+                plan = {"plan_version": unified["plan_version"], "original_query": original,
+                        "collection_query": unified.get("content_query") or "",
+                        "content_query": unified.get("content_query"),
+                        "capture_from": unified.get("capture_from"),
+                        "capture_to_exclusive": unified.get("capture_to_exclusive"),
+                        "person_ids": list(unified.get("person_ids", [])),
+                        "person_match": unified.get("person_match", "any"),
+                        "person_names": list(unified.get("person_names", [])),
+                        "place_kind": unified.get("place_kind"), "place_key": unified.get("place_key"),
+                        "place_name": unified.get("place_name"),
+                        "place_selection": unified.get("place_selection"),
+                        "source_id": unified.get("source_id"), "source_name": unified.get("source_name"),
+                        "collection_scope": unified.get("collection_scope")}
+                kind = str(candidate.get("type", ""))
+                label = str(candidate.get("name") or kind)
+                if kind == "collection":
+                    plan["collection_scope"] = {key: candidate[key] for key in
+                        ("collection_id", "instance_token", "revision", "name")}
+                    label = "人物合集：" + label
+                elif kind == "person":
+                    if int(candidate["person_id"]) not in plan["person_ids"]:
+                        plan["person_ids"].append(int(candidate["person_id"]))
+                        plan["person_names"].append(label)
+                    label = "人物：" + label
+                elif kind == "place":
+                    plan["place_kind"], plan["place_key"] = candidate["kind"], str(candidate["key"])
+                    plan["place_selection"] = {key: candidate.get(key) for key in
+                        ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version")}
+                    label = "地点：" + label
+                elif kind == "time":
+                    plan["capture_from"], plan["capture_to_exclusive"] = candidate["value"]
+                    label = "拍摄时间：" + "—".join(candidate["value"])
+                elif kind == "source":
+                    plan["source_id"] = int(candidate["source_id"])
+                    plan["source_name"] = label
+                    label = "图库来源：" + label
+                choices.append({"type": kind, "label": label, "intent_plan": plan,
+                                "place": candidate if kind == "place" else None})
+            return {"needs_scope_choice": True, "original_query": original,
+                    "scope_choices": choices, "content_query": unified.get("content_query")}
+        if unified["state"] == "unsupported":
+            return {"unsupported_intent": True, "original_query": original,
+                    "notice": unified.get("notice") or "这组条件暂不支持自动筛选，请改写或使用明确筛选。"}
+        intent_plan = {**unified, "collection_query": unified.get("content_query") or ""}
+        if unified.get("place_kind") is not None:
+            kind, key = unified.get("place_kind"), unified.get("place_key")
+        query_source = str(unified.get("content_query") or "")
+
+    if intent_plan is not None and intent_plan.get("plan_version") is None:
+        raise ApiError(INVALID_CURSOR, "搜索计划版本已过期，请重新搜索", status=409)
+    if intent_plan is not None:
+        try:
+            intent_plan = coordinator.validate(
+                intent_plan, original_query=original, parsed=unified,
+                continuation=payload.cursor is not None,
+            )
+        except ValueError as error:
+            code = CATALOG_FILTER_REVISION_STALE if "已变化" in str(error) else INVALID_CURSOR
+            raise ApiError(code, str(error), status=409) from error
+        plan_source = intent_plan.get("source_id")
+        if plan_source is not None:
+            if payload.source_id is not None and int(payload.source_id) != plan_source:
+                raise ApiError(INVALID_CURSOR, "自动识别来源与手动来源条件冲突，请重新搜索", status=409)
+        planned_people = set(map(int, intent_plan.get("person_ids", [])))
+        if payload.person_ids and planned_people and set(map(int, payload.person_ids)) != planned_people:
+            raise ApiError(INVALID_CURSOR, "自动识别人物与手动人物条件冲突，请重新搜索", status=409)
+        if payload.person_ids and planned_people and payload.person_match != intent_plan.get("person_match", "any"):
+            raise ApiError(INVALID_CURSOR, "自动识别人物匹配方式与手动人物条件冲突，请重新搜索", status=409)
+        for bound in ("capture_from", "capture_to_exclusive"):
+            planned, explicit = intent_plan.get(bound), getattr(payload, bound)
+            if explicit is not None and planned is not None and str(explicit) != str(planned):
+                raise ApiError(INVALID_CURSOR, "自动识别时间与手动时间条件冲突，请重新搜索", status=409)
+        planned_kind, planned_key = intent_plan.get("place_kind"), intent_plan.get("place_key")
+        if payload.place_kind is not None and planned_kind is not None and (
+            payload.place_kind != planned_kind or str(payload.place_key) != str(planned_key)
+        ):
+            raise ApiError(INVALID_CURSOR, "自动识别地点与手动地点条件冲突，请重新搜索", status=409)
     if intent_plan and isinstance(intent_plan.get("collection_scope"), dict):
         requested = intent_plan["collection_scope"]
         try:
@@ -2122,105 +2250,23 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                             "instance_token": str(current["instance_token"]),
                             "revision": int(current["revision"]), "name": str(current["name"])}
         query_source = str(intent_plan.get("collection_query", ""))
-        kind = intent_plan.get("place_kind", kind)
-        key = intent_plan.get("place_key", key)
+        if intent_plan.get("place_kind") is not None:
+            kind, key = intent_plan.get("place_kind"), intent_plan.get("place_key")
     elif intent_plan is not None and "collection_query" in intent_plan:
         query_source = str(intent_plan.get("collection_query") or "")
-        kind = intent_plan.get("place_kind", kind)
-        key = intent_plan.get("place_key", key)
-    elif payload.cursor is None and intent_plan is None:
-        from photo_search.search.natural_intent import parse_collection_intent
-
-        parsed_collection = parse_collection_intent(original, connection=service.catalog.connection)
-        if parsed_collection["state"] == "ambiguous":
-            from photo_search.search.natural_intent import parse_natural_intent
-
-            natural = parse_natural_intent(parsed_collection.get("content_query") or "",
-                                           connection=service.catalog.connection)
-            choices = []
-            for row in parsed_collection["choices"]:
-                scope = {"collection_id": int(row["collection_id"]),
-                         "instance_token": str(row["instance_token"]),
-                         "revision": int(row["revision"]), "name": str(row["name"])}
-                choices.append({**scope, "intent_plan": {
-                    "original_query": original, "collection_scope": scope,
-                    "collection_query": parsed_collection.get("content_query") or "",
-                    "content_query": natural["content_query"],
-                    "capture_from": natural["capture_from"],
-                    "capture_to_exclusive": natural["capture_to_exclusive"],
-                    "person_ids": [int(item["person_id"]) for item in natural["choices"]],
-                    "person_names": [str(item["name"]) for item in natural["choices"]],
-                    "person_match": natural["person_match"], "place_kind": None, "place_key": None,
-                }})
-            return {"needs_collection_choice": True, "original_query": original,
-                    "collection_choices": choices}
-        if parsed_collection["state"] == "recognized":
-            collection_scope = parsed_collection["collection"]
-            query_source = parsed_collection["content_query"]
-            collection_name = str(collection_scope["name"]).casefold()
-            person_rows = service.catalog.read_all(
-                "SELECT DISTINCT p.person_id, p.name, a.alias FROM persons p LEFT JOIN person_aliases a "
-                "ON a.person_id=p.person_id WHERE p.merged_into IS NULL AND "
-                "(lower(p.name)=lower(?) OR lower(a.alias)=lower(?)) ORDER BY p.person_id",
-                (collection_scope["name"], collection_scope["name"]),
-            )
-            matching_people = [row for row in person_rows
-                               if str(row["name"] or "").casefold() == collection_name
-                               or str(row["alias"] or "").casefold() == collection_name]
-            matching_places = [item for item in place_choices.choices(
-                service.catalog, text=original, data_root=service.data_root
-            ) if any(str(spelling).casefold() == collection_name for spelling in
-                     [item.get("name", ""), *item.get("aliases", [])])]
-            if matching_people or matching_places:
-                from photo_search.search.natural_intent import parse_natural_intent
-
-                base_intent = parse_natural_intent(query_source, connection=service.catalog.connection)
-                base_plan = {"original_query": original, "collection_scope": collection_scope,
-                             "collection_query": query_source,
-                             "content_query": base_intent["content_query"],
-                             "capture_from": base_intent["capture_from"],
-                             "capture_to_exclusive": base_intent["capture_to_exclusive"],
-                             "person_ids": [int(item["person_id"]) for item in base_intent["choices"]],
-                             "person_names": [str(item["name"]) for item in base_intent["choices"]],
-                             "person_match": base_intent["person_match"],
-                             "place_kind": None, "place_key": None}
-                choices = [{"type": "collection", "label": "人物合集：" + collection_scope["name"],
-                            "intent_plan": base_plan}]
-                person_query = parse_natural_intent(original, connection=service.catalog.connection)
-                for person in matching_people:
-                    person_plan = dict(base_plan)
-                    person_plan.update({"collection_scope": None,
-                                        "collection_query": person_query["content_query"] or "",
-                                        "content_query": person_query["content_query"],
-                                        "person_ids": [int(person["person_id"])],
-                                        "person_names": [str(person["name"])]})
-                    choices.append({"type": "person", "label": "人物：" + str(person["name"]),
-                                    "person": {"person_id": int(person["person_id"]),
-                                               "name": str(person["name"])},
-                                    "intent_plan": person_plan})
-                for place in matching_places:
-                    place_intent = parse_natural_intent(
-                        str(place.get("content_query", "")), connection=service.catalog.connection
-                    )
-                    place_plan = dict(base_plan)
-                    place_plan.update({"collection_scope": None,
-                                       "collection_query": place.get("content_query", ""),
-                                       "content_query": place_intent["content_query"],
-                                       "capture_from": place_intent["capture_from"],
-                                       "capture_to_exclusive": place_intent["capture_to_exclusive"],
-                                       "person_ids": [int(item["person_id"]) for item in place_intent["choices"]],
-                                       "person_names": [str(item["name"]) for item in place_intent["choices"]],
-                                       "place_kind": place["kind"], "place_key": place["key"]})
-                    choices.append({"type": "place", "label": "地点：" + str(place["name"]),
-                                    "place": place, "intent_plan": place_plan})
-                return {"needs_scope_choice": True, "original_query": original,
-                        "scope_choices": choices}
-    elif payload.cursor is not None and intent_plan is None:
+        if intent_plan.get("place_kind") is not None:
+            kind, key = intent_plan.get("place_kind"), intent_plan.get("place_key")
+    elif payload.cursor is not None and intent_plan is None and not (kind is not None and key is not None):
         raise ApiError(INVALID_CURSOR, "合集搜索计划缺失，请重新搜索", status=409)
     if payload.place_cancelled:
         kind = key = None
-        query_text = (content if content is not None else query_source).strip() or None
-    elif kind is None and key is None:
+        if client_plan_supplied and intent_plan is not None:
+            intent_plan["place_kind"] = intent_plan["place_key"] = None
+            intent_plan["place_name"] = intent_plan["place_selection"] = None
+            query_text = (intent_plan.get("content_query") or "").strip() or None
+        else:
+            query_text = (content if content is not None else query_source).strip() or None
+    elif kind is None and key is None and intent_plan is None:
         from photo_search.places.natural_search import parse_place_query
 
         plan = parse_place_query(
@@ -2261,12 +2307,19 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
                 album = {"name": str(region["name"]), "parent": "", "origin": None}
         if album is None:
             raise ApiError("PLACE_NOT_FOUND", "the selected place is no longer available", status=409)
-        source_choice = next(
-            (item for item in place_choices.choices(service.catalog, data_root=service.data_root)
-             if item["kind"] == kind and str(item["key"]) == str(key)),
-            None,
-        )
-        place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "source": None if source_choice is None else source_choice["source"], "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
+        place_selection = intent_plan.get("place_selection") if intent_plan is not None else None
+        if not isinstance(place_selection, dict) or (
+            place_selection.get("kind") != kind or str(place_selection.get("key")) != str(key)
+        ):
+            source_choice = next(
+                (item for item in place_choices.choices(service.catalog, data_root=service.data_root)
+                 if item["kind"] == kind and str(item["key"]) == str(key)),
+                None,
+            )
+            place_source = None if source_choice is None else source_choice["source"]
+        else:
+            place_source = place_selection.get("source")
+        place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "source": place_source, "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
     # A continuation reuses the structured first-page plan and never re-parses relative dates.
     if payload.cursor is None and intent_plan is None:
         from photo_search.search.natural_intent import parse_natural_intent
@@ -2320,23 +2373,31 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
             "place_key": key,
             "unresolved": parse_notice,
         }
-    elif intent_plan is not None:
-        query_text = intent_plan.get("content_query")
+    elif intent_plan is not None and not payload.place_cancelled:
+        query_text = (intent_plan.get("content_query") or "").strip() or None
     values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan"})
     values["text"] = query_text
     if intent_plan is not None:
-        values["capture_from"] = intent_plan.get("capture_from", values.get("capture_from"))
-        values["capture_to_exclusive"] = intent_plan.get("capture_to_exclusive", values.get("capture_to_exclusive"))
-        values["person_ids"] = intent_plan.get("person_ids", values.get("person_ids", []))
-        values["person_match"] = intent_plan.get("person_match", values.get("person_match", "any"))
+        for bound in ("capture_from", "capture_to_exclusive"):
+            if intent_plan.get(bound) is not None:
+                values[bound] = intent_plan[bound]
+        if intent_plan.get("person_ids"):
+            values["person_ids"] = intent_plan["person_ids"]
+            values["person_match"] = intent_plan.get("person_match", "any")
+        if intent_plan.get("source_id") is not None:
+            values["source_id"] = int(intent_plan["source_id"])
     envelope = SearchRequest.from_envelope(values)
-    if kind is not None and key is not None and query_text is None:
+    execution_path = coordinator.execution_path(
+        place_scope=kind is not None and key is not None,
+        content_query=envelope.text,
+    )
+    if execution_path == "place_album":
         result = _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block, original_query=original, person_collection=collection_scope)
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = intent_plan
         _verify_person_collection(service.catalog, collection_scope)
         return result
-    if envelope.text is None:
+    if execution_path == "filter_only":
         result = _filter_only_search_page(service, envelope, collection_scope=collection_scope)
         result["original_query"] = original
         result["content_query"] = None

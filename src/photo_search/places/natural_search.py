@@ -185,6 +185,14 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
             content_start = _original_boundary(offsets, raw, hit.end + 1)
             parsed.append((hit, _trim_content(raw[content_start:])))
             continue
+        if suffix.startswith("的") and prefix.endswith("在"):
+            before_place = raw[: _original_boundary(offsets, raw, hit.start)].rstrip(" \t\r\n")
+            if before_place.endswith("在"):
+                before_place = before_place[:-1].rstrip(" \t\r\n")
+            after_place = raw[_original_boundary(offsets, raw, hit.end):]
+            content = _trim_content(before_place + " " + after_place.lstrip("的"))
+            parsed.append((hit, content))
+            continue
         if leading and not suffix.strip(_PUNCTUATION):
             parsed.append((hit, ""))
             continue
@@ -204,6 +212,9 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
             trimmed = before_raw.rstrip(" \t\r\n")
             if trimmed.endswith("在"):
                 trimmed = trimmed[:-1].rstrip(" \t\r\n")
+                content = _trim_content(trimmed)
+                if content:
+                    parsed.append((hit, content))
             if trimmed.endswith(("，", ",", "；", ";")):
                 content = _trim_content(trimmed[:-1])
                 if content:

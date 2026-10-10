@@ -960,6 +960,19 @@
           showPersonChoices(body);
           return true;
         }
+        if (body && body.unsupported_intent) {
+          clear(els.resultIntentScope);
+          els.resultIntentScope.hidden = false;
+          state.search.hits = [];
+          state.search.count = 0;
+          state.search.total = null;
+          state.search.sessionId = null;
+          state.search.cursor = null;
+          clear(els.resultGrid);
+          els.loadMore.hidden = true;
+          setStatus(els.queryStatus, String(body.notice || "这组条件暂不支持自动筛选，请改写查询。"), "error");
+          return true;
+        }
         if (body && body.intent_plan) {
           state.search.intentPlan = body.intent_plan;
         }
@@ -1007,6 +1020,7 @@
     }
     if (state.search.intentPlan) {
       body.intent_plan = state.search.intentPlan;
+      body.original_query = state.search.intentPlan.original_query || body.original_query;
       body.content_query = state.search.intentPlan.content_query || "";
     }
     if (queryText) {
@@ -1121,11 +1135,13 @@
       button.type = "button";
       button.addEventListener("click", function () {
         state.search.intentPlan = choice.intent_plan || null;
-        state.search.placeAware = choice.type === "place" && choice.place ? {
-          original_query: body.original_query,
-          content_query: choice.place.content_query || "",
-          place_kind: choice.place.kind, place_key: choice.place.key,
-        } : null;
+        if (choice.type === "place" && choice.place) {
+          state.search.placeAware = {
+            original_query: body.original_query,
+            content_query: choice.place.content_query || "",
+            place_kind: choice.place.kind, place_key: choice.place.key,
+          };
+        }
         els.queryText.value = (choice.intent_plan && choice.intent_plan.content_query) || "";
         state.search.sessionId = null;
         state.search.cursor = null;
@@ -1139,7 +1155,8 @@
 
   function renderIntentChips(plan) {
     clear(els.resultIntentScope);
-    if (!plan || (!plan.collection_scope && !plan.capture_from && !(plan.person_ids || []).length)) {
+    if (!plan || (!plan.collection_scope && !plan.capture_from && !(plan.person_ids || []).length
+        && !plan.place_kind && plan.source_id == null)) {
       els.resultIntentScope.hidden = true;
       return;
     }
@@ -1180,6 +1197,29 @@
         plan.person_match = "any";
         state.search.intentPlan = plan;
         els.queryText.value = plan.content_query || "";
+        sendSearch(false);
+      });
+    }
+    if (plan.place_kind && plan.place_key) {
+      add("地点：" + String(plan.place_name || plan.place_key), function () {
+        plan.place_kind = null;
+        plan.place_key = null;
+        plan.place_name = null;
+        plan.place_selection = null;
+        state.search.intentPlan = plan;
+        els.queryText.value = plan.content_query || "";
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        sendSearch(false);
+      });
+    }
+    if (plan.source_id != null) {
+      add("图库来源：" + String(plan.source_name || ("#" + plan.source_id)), function () {
+        plan.source_id = null;
+        state.search.intentPlan = plan;
+        els.queryText.value = plan.content_query || "";
+        state.search.sessionId = null;
+        state.search.cursor = null;
         sendSearch(false);
       });
     }

@@ -12,8 +12,8 @@ from datetime import date, timedelta
 from typing import Any
 
 _DATE_PATTERNS = (
-    re.compile(r"(?P<year>20\d{2})年(?:(?P<month>1[0-2]|0?[1-9])月(?:(?P<day>3[01]|[12]\d|0?[1-9])日?)?)?"),
-    re.compile(r"(?P<year>20\d{2})-(?P<month>1[0-2]|0?[1-9])(?:-(?P<day>3[01]|[12]\d|0?[1-9]))?"),
+    re.compile(r"(?P<year>(?:19|20)\d{2})年(?:(?P<month>1[0-2]|0?[1-9])月(?:(?P<day>3[01]|[12]\d|0?[1-9])日?)?)?"),
+    re.compile(r"(?P<year>(?:19|20)\d{2})-(?P<month>1[0-2]|0?[1-9])(?:-(?P<day>3[01]|[12]\d|0?[1-9]))?"),
 )
 _SEASONS = {"春": (3, 6), "夏": (6, 9), "秋": (9, 12)}
 
@@ -89,7 +89,7 @@ def _bounds(year: int, month: int | None = None, day: int | None = None) -> tupl
 
 
 def _take_date(text: str, today: date) -> tuple[str, str, str] | None:
-    match = re.search(r"(?P<year>20\d{2})年?(?P<season>春|夏|秋|冬)(?:天|季)?", text)
+    match = re.search(r"(?P<year>(?:19|20)\d{2})年?(?P<season>春|夏|秋|冬)(?:天|季)?", text)
     if match:
         year = int(match.group("year"))
         season = match.group("season")

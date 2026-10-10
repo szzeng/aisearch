@@ -89,13 +89,18 @@ const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryText.value="2026年爸爸日落照片";els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);
-const plan={collection_scope:{collection_id:7,instance_token:"token",revision:2,name:"同事"},capture_from:"2026-01-01",capture_to_exclusive:"2027-01-01",person_ids:[7],person_names:["爸爸"],person_match:"any",content_query:"日落"};
+const plan={collection_scope:{collection_id:7,instance_token:"token",revision:2,name:"同事"},capture_from:"2026-01-01",capture_to_exclusive:"2027-01-01",person_ids:[7],person_names:["爸爸"],person_match:"any",place_kind:"city",place_key:"3",place_name:"济南",place_selection:{kind:"city",key:"3"},source_id:4,source_name:"手机备份图库",content_query:"日落"};
 ui.state.search.intentPlan=plan;ui.renderIntentChips(plan);
 els.resultIntentScope.children[1].fire("click");
 assert.equal(plan.collection_scope,null,"cancelling the collection must remove only its own scope");
 assert.equal(plan.capture_from,"2026-01-01","cancelling collection keeps the date scope");
 assert.equal(els.queryText.value,"日落","cancelling one condition must preserve the remaining content query");
 ui.renderIntentChips(plan);els.resultIntentScope.children[3].fire("click");
+ui.renderIntentChips(plan);els.resultIntentScope.children[3].fire("click");
+assert.equal(plan.person_ids.length,0,"cancelling people keeps the other committed conditions");
+ui.renderIntentChips(plan);els.resultIntentScope.children[3].fire("click");
+assert.equal(plan.place_kind,null);assert.equal(plan.place_selection,null,"place identity must clear with its chip");
+assert.equal(plan.source_id,null,"cancelling a source chip removes only its source filter");
 ui.state.search.loading=false;els.queryText.value="2026年爸爸日落照片";ui.renderIntentChips(plan);ui.submitSearch();
 assert.equal(els.resultIntentScope.children.length,0,"a new query must clear condition chips from the previous search");
 """
