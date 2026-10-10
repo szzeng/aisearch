@@ -16,11 +16,13 @@ class Element {
   constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.value="";this.checked=false;this.hidden=false;this.disabled=false;this.classList={add(){},remove(){}};}
   set textContent(value){this.text=String(value);this.children=[];}
   get textContent(){return this.text||"";}
-  append(...items){items.forEach(item=>{if(item&&typeof item==="object")item.parentNode=this;this.children.push(item);});}
-  replaceChildren(...items){this.text="";this.children=[];this.append(...items);}
+  append(...items){items.forEach(item=>{if(item&&typeof item==="object"){if(item.parentNode){const old=item.parentNode.children.indexOf(item);if(old>=0)item.parentNode.children.splice(old,1);}item.parentNode=this;}this.children.push(item);});}
+  replaceChild(next,old){const index=this.children.indexOf(old);if(index<0)throw new Error("replaceChild target missing");if(next.parentNode){const oldIndex=next.parentNode.children.indexOf(next);if(oldIndex>=0)next.parentNode.children.splice(oldIndex,1);}this.children[index]=next;next.parentNode=this;old.parentNode=null;}
+  replaceChildren(...items){this.children.forEach(item=>item.parentNode=null);this.text="";this.children=[];this.append(...items);}
   setAttribute(name,value){this.attributes[name]=String(value);}
   getAttribute(name){return this.attributes[name]??null;}
   removeAttribute(name){delete this.attributes[name];}
+  remove(){if(this.parentNode){const index=this.parentNode.children.indexOf(this);if(index>=0)this.parentNode.children.splice(index,1);this.parentNode=null;}}
   focus(){} close(){this.open=false;} showModal(){this.open=true;}
   addEventListener(name,fn){this.events[name]=fn;}
   async fire(name){return await this.events[name]({preventDefault(){}});}
@@ -31,7 +33,7 @@ const context={URLSearchParams,URL,Date,crypto:{randomUUID:()=>"synthetic"},setT
  window:{location:{search:"",href:"http://local/persons"},confirm:()=>true,prompt:()=>null,history:{replaceState(){}},addEventListener(){}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url,options={})=>{requests.push({url,options});
-   if(url.includes("/persons/browse")){const current=++page,start=(current-1)*40+1,filter=new URL(url,"http://local").searchParams.get("collection_state"),empty=collectionAdded&&filter==="none";return {ok:true,json:async()=>({persons:empty?[]:Array.from({length:40},(_,i)=>({person_id:start+i,name:"person"+(start+i),revision:1,asset_count:1,thumbnail_url:null,collections:filter==="none"?[]:[{collection_id:7,name:"路人"}]})),total:empty?0:40,has_more:!empty&&current<3,next_cursor:!empty&&current<3?"cursor-"+current:null})};}
+   if(url.includes("/persons/browse")){const params=new URL(url,"http://local").searchParams,filter=params.get("collection_state"),current=params.has("cursor")?Number(params.get("cursor").replace("cursor-",""))+1:1,start=(current-1)*40+1,empty=collectionAdded&&filter==="none";return {ok:true,json:async()=>({persons:empty?[]:Array.from({length:40},(_,i)=>({person_id:start+i,name:"person"+(start+i),revision:1,asset_count:1,thumbnail_url:null,collections:filter==="none"?[]:[{collection_id:7,name:"路人"}]})),total:empty?0:40,has_more:!empty&&current<3,next_cursor:!empty&&current<3?"cursor-"+current:null})};}
    if(url.startsWith("/api/v1/persons/collections?")||url==="/api/v1/persons/collections"){return {ok:true,json:async()=>({collections:[{collection_id:7,instance_token:"a".repeat(32),name:"路人",member_count:0}],has_more:false,next_cursor:null})};}
    if(url.includes("/api/v1/persons/collections/7/")&&options.method==="PATCH")return {ok:true,json:async()=>({collection:{collection_id:7,instance_token:"a".repeat(32),name:"新名字",member_count:0}})};
    if(url.endsWith("/members")&&options.method==="POST")collectionAdded=true;

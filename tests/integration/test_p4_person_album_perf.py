@@ -41,8 +41,10 @@ def test_people_page_batches_only_the_selected_forty_people(tmp_path) -> None:
 
         assert len(page["persons"]) == 40 and page["has_more"]
         assert page["next_cursor"]
-        assert len(statements) == 4  # filter revision, page, counts, avatar candidates
+        assert len(statements) == 8  # page/count/avatar plus bounded collection projections
         expected = [_album_summary(catalog.connection, row) for row in selected[:40]]
+        for summary in expected:
+            summary["collections"] = []
         assert page["persons"] == expected
     finally:
         harness.close()

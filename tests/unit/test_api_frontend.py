@@ -680,7 +680,11 @@ def test_the_persons_page_has_no_external_reference_credential_or_html_sink() ->
     assert "ps_csrf" in script
     assert "X-CSRF-Token" in script
     assert 'credentials: "same-origin"' in script
-    assert "localStorage" not in script
+    # The only localStorage write is a non-secret cross-tab invalidation marker.
+    assert 'window.localStorage.setItem("aisearch.persons.changed", newRequestId("people-change"))' in script
+    assert "localStorage.getItem" not in script
+    assert 'localStorage.setItem("csrf' not in script
+    assert 'localStorage.setItem("token' not in script
     assert "sessionStorage" not in script
     assert "console." not in script
     assert "innerHTML" not in script
@@ -724,9 +728,11 @@ def test_the_persons_page_reaches_data_only_through_the_protected_api() -> None:
         "similarity",
         "confidence",
         "name_key",
-        "snapshot",
     ):
         assert fragment not in script, fragment
+    # Retention preview exposes aggregate byte counts, never the snapshot payload.
+    assert "body.snapshot_json_bytes" in script
+    assert "body.snapshot =" not in script
 
 
 def test_the_persons_page_keeps_the_frozen_person_vocabulary() -> None:
@@ -767,7 +773,7 @@ def test_the_persons_page_keeps_the_frozen_person_vocabulary() -> None:
     assert "同一张照片的其他脸不会被自动带入" in shell
     assert "不会因为同一张照片的其它脸而联动" in shell
     assert "同名合并" in shell + script
-    assert "能否撤销由服务器的冲突矩阵" in shell
+    assert "能否撤销，全部由服务器判定" in shell
     assert "缺模型" in shell + script or "缺少模型权重" in shell
     assert "服务端按权威人脸框裁剪" in shell
 
@@ -806,8 +812,8 @@ def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists(
 def test_the_search_page_reads_the_person_choice_from_the_paged_person_api() -> None:
     _, script, _ = _search_documents()
 
-    assert 'request("/persons" + query)' in script
-    assert '"?kind=all&limit=" + PERSON_LIMIT' in script
+    assert 'request("/persons/browse" + query)' in script
+    assert '"?kind=all&sort=photos_desc&limit=" + PERSON_LIMIT' in script
     assert 'query += "&cursor=" + encodeURIComponent(state.person.cursor);' in script
     # One bounded page at a time: the whole person list is never materialised in the DOM.
     assert "var PERSON_LIMIT = 25;" in script
