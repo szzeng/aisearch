@@ -161,15 +161,16 @@ def build_v15_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         connection.execute("COMMIT")
     finally:
         connection.close()
-    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
-    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
+    # These tests are specifically the historical 0016 migration contract, so the synthetic
+    # build under test ends at v16 even though the running application supports a newer schema.
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, V16))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", V16)
     return path
 
 
 def test_the_migration_chain_is_continuous_and_0016_is_the_claim_index_step() -> None:
     files = schema.migration_files()
     assert [number for number, _ in files] == list(range(1, SUPPORTED + 1))
-    assert SUPPORTED == V16
     names = [path.name for _, path in files]
     assert names[:15] == [
         "0001_initial.sql",
@@ -250,9 +251,9 @@ def test_v15_to_v16_is_continuous_backed_up_and_lossless(
     assert job_columns(path) == columns_before
     assert snapshot(path, PRESERVED_TABLES) == before
     assert metadata_without_version(path) == metadata_before
-    # The chain continues to whatever this build supports, then settles.
+    # A v16 historical build remains at v16 on an idempotent second open.
     again = migrate_database(path, data_root=data_root(tmp_path))
-    assert again.applied == () and again.previous_version == SUPPORTED
+    assert again.applied == () and again.previous_version == V16
 
 
 def test_the_new_indexes_are_the_ones_the_claim_uses(

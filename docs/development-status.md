@@ -2,9 +2,9 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## P4-TEST-BASELINE-CONTINUE-A — ACTIVE / 阶段 3 完成，进入阶段 4
+## P4-TEST-BASELINE-CONTINUE-A — COMPLETE WITH PARTIALS / 四阶段完成
 
-[总控入口](tasks/P4-TEST-BASELINE-CONTINUE-A.md)；[LITE-B 报告](reports/P4-TEST-BASELINE-LITE-B.md) **SCOPED PASS**（JUnit 43/0/0/0）；[PLACE-RESIDUAL-A 报告](reports/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md) **PARTIAL**（JUnit 54/0/0/0）；[UI-A 报告](reports/P4-TEST-BASELINE-UI-A.md) **SCOPED PASS**（JUnit 9/0/0/0）。修复无来源旧地点 fixture，并复核 `no_resolution` 状态；同名选择响应形态待决，旧人工归属/退休保护需历史合成状态。UI 静态和合成 DOM 断言已对齐当前行为，安全断言与定向 CSRF 检查通过；未做真实浏览器验收。下一阶段 [CORE-A](tasks/P4-TEST-BASELINE-CORE-A.md)。GC-A 全量历史 2,338 项（70 failures/43 errors/49 skipped）未复跑；LITE-A 的 50 项定向 48/2 仍是历史阶段结果，不推断当前全量余项。旧七阶段完整基线方案仍 DEFERRED。
+[总控入口](tasks/P4-TEST-BASELINE-CONTINUE-A.md)；四阶段报告：[LITE-B](reports/P4-TEST-BASELINE-LITE-B.md) **SCOPED PASS**（JUnit 43/0/0/0），[PLACE-RESIDUAL-A](reports/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md) **PARTIAL**（54/0/0/0），[UI-A](reports/P4-TEST-BASELINE-UI-A.md) **SCOPED PASS**（9/0/0/0），[CORE-A](reports/P4-TEST-BASELINE-CORE-A.md) **PARTIAL**（108/0/0/0）。更新测试 fixture/历史断言；未改生产代码、SQL 或正式迁移。剩余：地点同名查询返回 `needs_scope_choice` 而旧断言预期 `needs_place_choice`；历史 USER/custom 归属/退休保护未建立明确旧版本状态；OCR 原生运行时 `RUNTIME_UNCONFIRMED`；其余历史全量失败未复跑。GC-A 全量历史 2,338 项（70 failures/43 errors/49 skipped）未复跑；LITE-A 的 50 项定向 48/2 仍是历史阶段结果，不推断当前全量余项。全仓门禁没有被标 PASS。
 
 ## P4-PERSON-COLLECTION-COUNT-A — PASS / 合集照片数展示
 
@@ -28,4 +28,4 @@
 
 ## 下一步
 
-按 [P4-TEST-BASELINE-CONTINUE-A](tasks/P4-TEST-BASELINE-CONTINUE-A.md) 继续 CORE-A；仅做定向验证、每阶段独立记录与提交；不自动更改历史全量门禁。GC-B 状态独立保持已完成。
+P4-TEST-BASELINE-CONTINUE-A 四阶段已完成；当前没有自动后续任务。GC-B 状态独立保持已完成。

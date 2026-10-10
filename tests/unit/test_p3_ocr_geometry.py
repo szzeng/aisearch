@@ -387,7 +387,8 @@ def test_a_gpu_request_refuses_a_cpu_only_rapidocr_session(
     cache = OcrEngineCache(engine_factory=CpuOnlyRecorder)
     with pytest.raises(CatalogError) as error:
         cache.engine(tmp_path, resolved_device="gpu")
-    assert error.value.code == "RUNTIME_RESOLUTION_MISMATCH"
+    # A requested GPU session that reports CPU providers is a GPU initialization failure.
+    assert error.value.code == "OCR_GPU_INITIALIZATION_FAILED"
     assert error.value.details["mismatched_roles"] == ["cls", "det", "rec"]
 
 

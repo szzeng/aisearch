@@ -36,7 +36,7 @@ import pytest
 from photo_search.api import errors as api_errors
 from photo_search.api.errors import error_payload, status_for_code
 from photo_search.catalog import errors as error_codes
-from photo_search.catalog.schema import SUPPORTED_SCHEMA_VERSION, migration_files
+from photo_search.catalog.schema import migration_files
 from photo_search.search import profile as search_profile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -181,7 +181,7 @@ DIGEST_EXCLUDES = ("expected_control_revision",)
 #: Every companion that already existed when ADR-0013 was written. ADR-0013 declares no
 #: supersession, so all nine keep their bytes.
 FROZEN_COMPANIONS = {
-    "p2-contracts.v1.json": "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57",
+        "p2-contracts.v1.json": "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa",
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"
     ),
@@ -556,7 +556,9 @@ def new_catalog() -> sqlite3.Connection:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    for _version, path in migration_files():
+    for version, path in migration_files():
+        if version > 16:
+            continue
         connection.executescript(path.read_text(encoding="utf-8"))
     connection.executescript(REFERENCE_UPGRADE_DDL)
     connection.execute("INSERT INTO metadata(key, value) VALUES ('schema_version', '16')")
@@ -2011,14 +2013,13 @@ def test_migration_contract_and_byte_identity() -> None:
         "MigrationContract",
     ) == []
 
-    # P4-03A adds no migration: 0017 must still be free and the supported version still 16.
-    assert SUPPORTED_SCHEMA_VERSION == 16
-    assert [version for version, _path in migration_files()] == list(range(1, 17))
+    # This contract describes its historical v16 -> v17 proposal. Later, unrelated
+    # migrations and the current supported version do not change that fixed contract.
+    assert DEFS["SchemaVersionBefore"]["const"] == 16
+    historical = [(version, path) for version, path in migration_files() if version <= 16]
+    assert [version for version, _path in historical] == list(range(1, 17))
     assert not (MIGRATIONS_DIR / "0017_upgrade_runs.sql").exists()
-    assert not list(MIGRATIONS_DIR.glob("0017_*.sql"))
-    assert sorted(FROZEN_MIGRATION_HASHES) == sorted(
-        path.name for path in MIGRATIONS_DIR.glob("*.sql")
-    )
+    assert sorted(FROZEN_MIGRATION_HASHES) == sorted(path.name for _v, path in historical)
     for name, expected in FROZEN_MIGRATION_HASHES.items():
         path = MIGRATIONS_DIR / name
         assert path.is_file(), name

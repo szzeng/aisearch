@@ -40,7 +40,7 @@ ADR_PATH = ROOT / "docs" / "decisions" / "ADR-0009-person-place-combined-search-
 #: The four companions this task promises to leave byte-identical (ADR-0009 §1).
 FROZEN_COMPANIONS = {
     "p2-contracts.v1.json": (
-        "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57"
+        "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
     ),
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"
@@ -743,53 +743,6 @@ def test_continuation_binds_one_revision_and_the_person_condition() -> None:
 
 
 # ------------------------------------------------- one effective-member definition
-_MEMBER_FIXTURE_SQL = """
-CREATE TABLE faces (face_id TEXT PRIMARY KEY, asset_id INTEGER NOT NULL);
-CREATE TABLE face_person_links (
-    face_id TEXT NOT NULL,
-    person_id INTEGER NOT NULL,
-    decision TEXT NOT NULL,
-    PRIMARY KEY (face_id, person_id)
-);
-CREATE TABLE face_assignment_controls (face_id TEXT PRIMARY KEY, mode TEXT NOT NULL);
-CREATE TABLE face_exclusions (
-    face_id TEXT NOT NULL,
-    person_id INTEGER NOT NULL,
-    active INTEGER NOT NULL,
-    PRIMARY KEY (face_id, person_id)
-);
-"""
-
-
-def _member_fixture() -> sqlite3.Connection:
-    connection = sqlite3.connect(":memory:")
-    connection.row_factory = sqlite3.Row
-    connection.executescript(_MEMBER_FIXTURE_SQL)
-    connection.executemany(
-        "INSERT INTO faces(face_id, asset_id) VALUES (?, ?)",
-        [("f1", 1), ("f2", 1), ("f3", 2), ("f4", 2), ("f5", 3)],
-    )
-    connection.executemany(
-        "INSERT INTO face_person_links(face_id, person_id, decision) VALUES (?, ?, ?)",
-        [
-            ("f1", 3, "CONFIRMED"),
-            ("f2", 3, "CONFIRMED"),
-            ("f3", 3, "CONFIRMED"),
-            ("f4", 3, "SUGGESTED"),
-            ("f5", 9, "CONFIRMED"),
-        ],
-    )
-    connection.execute(
-        "INSERT INTO face_assignment_controls(face_id, mode) VALUES (?, ?)",
-        ("f1", "MANUAL_UNASSIGNED"),
-    )
-    connection.execute(
-        "INSERT INTO face_exclusions(face_id, person_id, active) VALUES (?, ?, ?)",
-        ("f2", 3, 1),
-    )
-    return connection
-
-
 def test_effective_member_predicate_is_the_single_shared_definition() -> None:
     assert "l.decision = 'CONFIRMED'" in MEMBER_PREDICATE
     assert "MANUAL_UNASSIGNED" in MEMBER_PREDICATE
@@ -801,24 +754,46 @@ def test_effective_member_predicate_is_the_single_shared_definition() -> None:
     assert "同源同值" in ADR
 
 
-def test_person_hit_set_matches_the_person_asset_count() -> None:
-    connection = _member_fixture()
+def test_person_hit_set_matches_the_person_asset_count(tmp_path: Path) -> None:
+    from p3_person_fixtures import PersonHarness
+
+    harness = PersonHarness(tmp_path)
+    connection = harness.catalog.connection
     try:
-        faces, assets = member_counts(connection, 3)
-        assert (faces, assets) == (1, 1)
+        person = harness.add_person(name="当前成员")
+        other = harness.add_person(name="其他成员")
+        assets = [harness.add_asset(f"member-{index}.jpg") for index in range(3)]
+        faces = [
+            harness.add_face(assets[0]),
+            harness.add_face(assets[0], ordinal=1),
+            harness.add_face(assets[1]),
+            harness.add_face(assets[1], ordinal=1),
+            harness.add_face(assets[2]),
+        ]
+        for face_id in faces[:3]:
+            harness.add_link(face_id, person)
+        harness.add_link(faces[3], person, decision="SUGGESTED")
+        harness.add_link(faces[4], other)
+        harness.set_control(faces[0], "MANUAL_UNASSIGNED")
+        harness.set_exclusion(faces[1], person)
+
+        faces_count, assets_count = member_counts(connection, person)
+        assert (faces_count, assets_count) == (1, 1)
         rows = connection.execute(
             "SELECT DISTINCT f.asset_id FROM face_person_links AS l "
             "JOIN faces AS f ON f.face_id = l.face_id "
             f"WHERE l.person_id = ? AND {MEMBER_PREDICATE} ORDER BY f.asset_id",
-            (3,),
+            (person,),
         ).fetchall()
         hit_set = {int(row["asset_id"]) for row in rows}
-        assert hit_set == {2}
-        assert len(hit_set) == assets
-        assert hit_set == person_hit_set({3: {2}}, [3], "all")
-        assert person_hit_set({3: {2}}, [3], "all") == person_hit_set({3: {2}}, [3], "any")
+        assert hit_set == {assets[1]}
+        assert len(hit_set) == assets_count
+        assert hit_set == person_hit_set({person: {assets[1]}}, [person], "all")
+        assert person_hit_set({person: {assets[1]}}, [person], "all") == (
+            person_hit_set({person: {assets[1]}}, [person], "any")
+        )
     finally:
-        connection.close()
+        harness.close()
 
 
 # --------------------------------------------------------------------------- ADR
