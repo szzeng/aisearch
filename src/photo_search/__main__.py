@@ -34,6 +34,7 @@ from photo_search.models.embedding.cli import add_embedding_parser, run_embeddin
 from photo_search.models.embedding.registry import registry_for
 from photo_search.runtime.device import DevicePolicy
 from photo_search.storage import storage_clean, storage_inspect
+from photo_search.storage_maintenance import storage_optimize_vectors, storage_vacuum
 from photo_search.workers.client import AiWorkerClient
 from photo_search.workers.query_encoder import (
     EncoderWiring,
@@ -316,6 +317,15 @@ def main() -> None:
     storage_clean_parser.add_argument("--stopped", action="store_true", help="confirm all data-root writers are stopped")
     storage_clean_parser.add_argument("--apply", action="store_true", help="execute the fresh eligibility check; without this flag only preview")
     storage_clean_parser.add_argument("--json", action="store_true")
+    for name, help_text in (
+        ("optimize-vectors", "inspect or maintain active LanceDB vectors (stopped service only)"),
+        ("vacuum", "inspect or compact SQLite free pages (stopped service only)"),
+    ):
+        command = storage_commands.add_parser(name, help=help_text)
+        command.add_argument("--data-root", type=Path, required=True)
+        command.add_argument("--stopped", action="store_true", help="confirm all data-root writers are stopped")
+        command.add_argument("--apply", action="store_true", help="run offline maintenance; default is preview")
+        command.add_argument("--json", action="store_true")
     parser.add_argument(
         "--host",
         default=None,
@@ -399,6 +409,14 @@ def main() -> None:
                     scopes=(args.scope,),
                     apply=args.apply,
                     stopped=args.stopped,
+                )
+            elif args.storage_command == "optimize-vectors":
+                payload = storage_optimize_vectors(
+                    args.data_root, apply=args.apply, stopped=args.stopped
+                )
+            elif args.storage_command == "vacuum":
+                payload = storage_vacuum(
+                    args.data_root, apply=args.apply, stopped=args.stopped
                 )
             else:
                 payload = {"status": "error", "code": "USAGE", "message": "choose storage inspect or clean"}

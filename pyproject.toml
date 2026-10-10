@@ -7,7 +7,7 @@ requires-python = "==3.12.10"
 dependencies = [
     "fastapi>=0.115,<1",
     "insightface>=2.0,<3",
-    "lancedb>=0.38.0",
+    "lancedb[pylance]>=0.38.0",
     "onnx>=1.17,<2",
     "onnxruntime-gpu[cuda,cudnn]>=1.30,<2",
     "pillow>=10,<12",

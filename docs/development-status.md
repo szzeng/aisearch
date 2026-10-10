@@ -2,6 +2,10 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## P4-STORAGE-GC-B — IMPLEMENTED / 任务卡定向验收通过
+
+[任务卡](tasks/P4-STORAGE-GC-B.md)、[执行报告](reports/P4-STORAGE-GC-B.md)。新增停机 LanceDB 活跃图像 generation 诊断/按需标量索引修复/fragment compaction/14 天原生版本清理，以及独立可选 SQLite VACUUM 与 `storage optimize-vectors`、`storage vacuum` CLI。四组 synthetic JUnit 定向测试 **4/0/0/0**；Ruff、`uv lock --check`、Python 编译、CLI help 和 `git diff --check` 通过。合成 fixture 中压缩 3→1 fragments、当前检索等价；版本清理实际释放 0 bytes（保留期内）；VACUUM fixture 实际缩小 9,850,880 bytes。未访问真实 PhotoSearchData/图库/模型/GPU，未跑全量回归。为锁定 LanceDB 0.38.0 的 compaction/cleanup API 启用 `pylance` extra。GC-A 的 GPT-6 Luna/High 路由例外维持原记录，**不是 DS-H PASS**；GC-A 全量历史失败单独保留，不作为 GC-B 验收，也未重跑。
+
 ## P4-PERSON-AVATAR-REUSE-A — A+B 定向验收通过（2026-10-11 修复列表渲染回归）；C 后置
 
 [任务卡](tasks/P4-PERSON-AVATAR-REUSE-A.md)、[执行报告](reports/P4-PERSON-AVATAR-REUSE-A.md)。用户指定从 `f140e82` 执行此卡；60 秒内无变化返回复用列表 DOM，人物卡片刷新复用稳定头像 `<img>`，同模式重复点击不重载。2026-10-11 修复真实 DOM `HTMLCollection` 不支持 `.find()` 导致人物卡片渲染中断的问题，并更新脚本版本 URL 以避开旧缓存；Node 测试桩覆盖 DOM 差异并检查版本 URL。任务卡 Node 语法、两份定向 UI pytest（JUnit 2/0/0/0）和 `git diff --check` 通过。真实浏览器图片缓存/用户图库观察未做，C 后置；工作区变更未提交。原 `P4-TEST-BASELINE-LITE-A` 状态和其后续入口保持不变。
@@ -16,4 +20,4 @@
 
 ## 下一步
 
-[P4-STORAGE-GC-B](tasks/P4-STORAGE-GC-B.md) 前置条件已满足，可开始实施。按卡片执行四组定向测试、Ruff 和最小 CLI 检查；不扩展为全仓回归。GC-A 全量历史失败仍单独跟踪，不宣称全量通过。
+[P4-TEST-BASELINE-LITE-A](tasks/P4-TEST-BASELINE-LITE-A.md) 仍为 READY / 仅立卡，针对 GC-A 全量历史失败按卡片范围处理。GC-B 已关闭；没有启动全量回归或修改历史失败结果。
