@@ -6,6 +6,10 @@
 
 [实施卡](tasks/P4-PERSON-NAME-CASE-A.md)、[报告](reports/P4-PERSON-NAME-CASE-A.md)、[当前会话复核](reports/P4-PERSON-NAME-CASE-A-current-session-review.md)。姓名保存同名已忽略大小写，自己改写大小写可普通改名，旧存储/undo兼容。按用户要求，仅做相关测试并在当前会话简要复核，覆盖原全仓及独立 DS-H/Sol安排：相关 JUnit109/0/0/0，既有Ruff/Node与最新diff-check通过，复核未发现需继续修复的问题；未改产品代码、未重复pytest，不冒称独立审查或总项目PASS。历史全仓尝试仅保留报告，不扩展地点等范围。schema仍28，未访问真实库/当前服务；用户已授权将本会话全部人物修复整合本地提交，未授权推送。下一步仅用户重启刷新后少量试用。
 
+## 新增待实施：P4-SEARCH-COLLECTION-A — READY / 仅任务设计
+
+[任务卡](tasks/P4-SEARCH-COLLECTION-A.md)。个人相册新增按真实人物合集名称自然语言搜索：复用合集 canonical 成员 SQL，单合集与时间/地点/语义取交集，纯条件完整 SQLite 分页，语义维持 Top5000，不展开普通搜索最多100个 `person_ids`；合集 `instance_token` / `revision` 绑定首次发布和续页，避免编辑后旧结果混入。只要求4组小型合成定向验证及用户少量页面试用；不迁移schema、不重建向量、不默认全仓/GPU/30万/打包。**本次仅新建文档并登记入口，未实施/运行测试/访问真实图库；不改变当前人物小修现场试用的交接。** 推荐 GPT-6 High，由用户手动选择。
+
 ## 前序小修：P4-PERSON-SMALL-FIX-A — IMPLEMENTED / 定向验证通过；现场试用待确认
 
 [任务卡](tasks/P4-PERSON-SMALL-FIX-A.md)、[报告](reports/P4-PERSON-SMALL-FIX-A.md)。排序、大小写搜索、改名/合集刷新、移出恢复可见及待整理确认打勾已修。同日补齐待整理/未命名写后刷新保留已加载页数、展开组人脸页和浏览位置，最新游标重取成功才替换；新筛选仍从第一页。最新定向 JUnit 11/0/0/0，Ruff、Node、diff-check通过；前轮证据详见报告。schema仍28，未改身份/归属/人工锁/撤销协议；当前会话自检非独立DS-H/Sol。用户正常重启刷新后少量试用；旧已移出且隐藏人物用“已忽略人物”恢复。未访问真实库/现有服务、未跑全仓/GPU/模型/打包/浏览器矩阵、未提交/推送。
