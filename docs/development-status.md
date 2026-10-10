@@ -2,9 +2,9 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## P4-TEST-BASELINE-CONTINUE-A — READY / 四阶段轻量基线清理（仅提交任务卡）
+## P4-TEST-BASELINE-CONTINUE-A — ACTIVE / 阶段 1 完成，进入阶段 2
 
-[总控入口](tasks/P4-TEST-BASELINE-CONTINUE-A.md)；依次 [LITE-B](tasks/P4-TEST-BASELINE-LITE-B.md) → [PLACE-RESIDUAL-A](tasks/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md) → [UI-A](tasks/P4-TEST-BASELINE-UI-A.md) → [CORE-A](tasks/P4-TEST-BASELINE-CORE-A.md)。用户要求同一会话连续完成、阶段独立定向验证和提交；默认 GPT-6 Medium，遇生产语义/迁移/契约修改必须停止该分支并手动升级审查。以个人项目简单测试为准，每卡只运行直接受影响测试，不要求全仓回归。历史 GC-A 全量 2,338 项（70 failures/43 errors/49 skipped）未复跑，LITE-A 当前 50 项定向 48/2；未声称当前全量余项数量。**本次仅立卡、未实施或运行测试。** 旧七阶段完整基线方案仍 DEFERRED。
+[总控入口](tasks/P4-TEST-BASELINE-CONTINUE-A.md)；[LITE-B 报告](reports/P4-TEST-BASELINE-LITE-B.md) **SCOPED PASS**，定向 JUnit 43/0/0/0。下一阶段 [PLACE-RESIDUAL-A](tasks/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md)，随后 [UI-A](tasks/P4-TEST-BASELINE-UI-A.md) → [CORE-A](tasks/P4-TEST-BASELINE-CORE-A.md)。按用户授权同一会话连续执行，每阶段独立测试、报告和提交；默认 GPT-6 Medium，遇生产语义/迁移/契约修改暂停该分支并保留反例。GC-A 全量历史 2,338 项（70 failures/43 errors/49 skipped）未复跑；LITE-A 的 50 项定向 48/2 仍是历史阶段结果，不推断当前全量余项。旧七阶段完整基线方案仍 DEFERRED。
 
 ## P4-PERSON-COLLECTION-COUNT-A — PASS / 合集照片数展示
 
@@ -28,4 +28,4 @@
 
 ## 下一步
 
-按 [P4-TEST-BASELINE-CONTINUE-A](tasks/P4-TEST-BASELINE-CONTINUE-A.md) 依次处理四张小卡；仅做定向验证、每阶段独立记录与提交；不自动更改历史全量门禁。GC-B 状态独立保持已完成。
+按 [P4-TEST-BASELINE-CONTINUE-A](tasks/P4-TEST-BASELINE-CONTINUE-A.md) 继续 PLACE-RESIDUAL-A；仅做定向验证、每阶段独立记录与提交；不自动更改历史全量门禁。GC-B 状态独立保持已完成。

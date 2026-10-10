@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,7 +62,7 @@ COMPANION = json.loads(
 #: The four companions P3-07B promises to leave byte-identical, plus the P3-07A one.
 FROZEN_CONTRACT_SHA256 = {
     "p2-contracts.v1.json": (
-        "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57"
+        "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
     ),
     "p2-place-contracts.v1.json": (
         "192db8ca53a9aaef835872187c4afbbfdbe2ad7f0fffa56a28061f86f84221fc"
@@ -73,6 +74,9 @@ FROZEN_CONTRACT_SHA256 = {
         "462f09358a7088ad1634b096c50fe297cfb85a9c87d8bff7f0725451af89b2ff"
     ),
 }
+
+P2_CONTRACT_HISTORY_REVISION = "2222450459c5a6f64f2a50de0f7c9f17d20f4c75"
+P2_CONTRACT_HISTORY_SHA256 = "ec7de5f0cbe6d4c2ef2bf357326fa79abc3b427e6133e42186d61778ef0e4a57"
 
 #: The query the deterministic fake adapter can encode, for the semantic AND cases.
 TEXT_QUERY = "jpg"
@@ -1346,9 +1350,28 @@ def test_the_frozen_contracts_migrations_and_schema_version_are_untouched(
     seeded: Seeded,
 ) -> None:
     state = seeded
+    historical_contract = subprocess.run(
+        [
+            "git",
+            "show",
+            f"{P2_CONTRACT_HISTORY_REVISION}:docs/decisions/contracts/p2-contracts.v1.json",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert hashlib.sha256(historical_contract).hexdigest() == P2_CONTRACT_HISTORY_SHA256
     for name, expected in FROZEN_CONTRACT_SHA256.items():
         raw = (CONTRACTS / name).read_bytes()
         assert hashlib.sha256(raw).hexdigest() == expected, name
+    current_p2_contract = json.loads(
+        (CONTRACTS / "p2-contracts.v1.json").read_text(encoding="utf-8")
+    )
+    assert "structured_model" in current_p2_contract["$defs"]["ProcessorKind"]["enum"]
+    structured_spec = current_p2_contract["$defs"]["StructuredModelProcessorSpec"]
+    assert structured_spec["properties"]["processor_kind"]["const"] == "structured_model"
+    assert {"model_id", "model_revision", "weights"} <= set(structured_spec["required"])
+    assert structured_spec["properties"]["output_type"]["allOf"][1]["not"]["const"] == "embedding"
     companion = CONTRACTS / "p3-person-search-contracts.v1.json"
     assert json.loads(companion.read_text(encoding="utf-8")) == COMPANION
 
@@ -1376,7 +1399,17 @@ def test_the_person_list_page_still_counts_the_same_members(seeded: Seeded) -> N
     counts = {int(row["person_id"]): int(row["asset_count"]) for row in page["persons"]}
     assert counts[state.a] == len(state.member_assets(state.a)) == 2
     assert counts[state.b] == len(state.member_assets(state.b)) == 2
-    assert counts[state.c] == 0
     assert counts[state.d] == 1
+    assert state.c not in counts
+
+    unnamed_page = person_page(state.env.catalog, limit=50, kind="unnamed")
+    unnamed_counts = {
+        int(row["person_id"]): int(row["asset_count"])
+        for row in unnamed_page["persons"]
+    }
+    assert unnamed_counts[state.c] == len(state.member_assets(state.c)) == 0
+    assert unnamed_counts[state.a] == len(state.member_assets(state.a)) == 2
+    assert unnamed_counts[state.b] == len(state.member_assets(state.b)) == 2
+    assert unnamed_counts[state.d] == len(state.member_assets(state.d)) == 1
     with pytest.raises(ApiError):
         person_page(state.env.catalog, limit=50, kind="some")
