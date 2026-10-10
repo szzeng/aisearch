@@ -14,6 +14,7 @@ from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
 from photo_search.catalog.errors import CATALOG_FILTER_REVISION_STALE
 from photo_search.persons import albums
+from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.contracts import normalize_person_name
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
@@ -137,6 +138,26 @@ def _collection_summary(row: Any) -> dict[str, Any]:
     }
 
 
+def _collection_photo_counts(connection: Any, collection_ids: list[int]) -> dict[int, int]:
+    """Count distinct active assets for one bounded page of collections."""
+    if not collection_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in collection_ids)
+    rows = connection.execute(
+        _canonical_cte()
+        + "SELECT cm.collection_id, COUNT(DISTINCT f.asset_id) AS photo_count "
+        "FROM canonical_members AS cm "
+        "JOIN face_person_links AS l ON l.person_id = cm.person_id "
+        "JOIN faces AS f ON f.face_id = l.face_id "
+        "JOIN assets AS a ON a.asset_id = f.asset_id "
+        "WHERE cm.collection_id IN (" + placeholders + ") AND a.state = 'ACTIVE' AND "
+        + MEMBER_PREDICATE
+        + " GROUP BY cm.collection_id",
+        tuple(int(collection_id) for collection_id in collection_ids),
+    ).fetchall()
+    return {int(row["collection_id"]): int(row["photo_count"]) for row in rows}
+
+
 def list_collections(catalog: Any, *, limit: int = 40, cursor: str | None = None) -> dict[str, Any]:
     limit = max(1, min(int(limit), 100))
     binding: list[Any] = ["collections1"]
@@ -154,8 +175,14 @@ def list_collections(catalog: Any, *, limit: int = 40, cursor: str | None = None
     )
     more = len(rows) > limit
     rows = rows[:limit]
+    photo_counts = _collection_photo_counts(
+        catalog.connection, [int(row["collection_id"]) for row in rows]
+    )
     return {
-        "collections": [_collection_summary(row) for row in rows],
+        "collections": [
+            {**_collection_summary(row), "photo_count": photo_counts.get(int(row["collection_id"]), 0)}
+            for row in rows
+        ],
         "has_more": more,
         "next_cursor": _encode(_CURSOR_PREFIX, binding, int(rows[-1]["collection_id"])) if more else None,
     }
@@ -381,6 +408,12 @@ def photo_page(
     inner = _decode(cursor, _PHOTOS_CURSOR_PREFIX, binding)
     if inner is not None and not isinstance(inner, str):
         raise ApiError(INVALID_CURSOR, "合集照片游标无效", status=409)
+    condition, condition_parameters = collection_condition(int(collection_id))
+    photo_count = int(
+        catalog.read_one(
+            f"SELECT COUNT(*) AS total FROM assets AS a WHERE {condition}", condition_parameters
+        )["total"]
+    )
     page = asset_page(
         catalog, cache, limit=limit + 1, cursor=inner, order="capture_desc", collection_id=int(collection_id)
     )
@@ -404,7 +437,13 @@ def photo_page(
         asset_id = int(item["asset_id"])
         item["taken_time"] = time_views.get(asset_id)
         item.update(faces.get(asset_id, {"person_faces": [], "person_faces_has_more": False}))
-    page["collection"] = {"collection_id": int(collection_id), "instance_token": str(collection["instance_token"]), "name": str(collection["name"]), "revision": int(collection["revision"])}
+    page["collection"] = {
+        "collection_id": int(collection_id),
+        "instance_token": str(collection["instance_token"]),
+        "name": str(collection["name"]),
+        "revision": int(collection["revision"]),
+        "photo_count": photo_count,
+    }
     page.pop("search", None)
     return page
 

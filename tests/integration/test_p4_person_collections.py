@@ -104,6 +104,9 @@ def test_collection_photo_stream_deduplicates_and_tracks_new_confirmed_faces(api
         collection_id = (await client.post("/api/v1/persons/collections", headers=headers, json={"name": "同学"})).json()["collection"]["collection_id"]
         collection_ids.append(collection_id)
         assert (await client.post(_collection_url(catalog, collection_id, "/members"), headers=headers, json={"action": "add", "person_ids": [a, b]})).status_code == 200
+        listed = await client.get("/api/v1/persons/collections")
+        assert listed.status_code == 200
+        assert next(item for item in listed.json()["collections"] if item["collection_id"] == collection_id)["photo_count"] == 3
         condition, parameters = _collection_condition(collection_id)
         plan = catalog.read_all(
             f"EXPLAIN QUERY PLAN SELECT a.asset_id FROM assets AS a WHERE {condition}", parameters
@@ -112,6 +115,13 @@ def test_collection_photo_stream_deduplicates_and_tracks_new_confirmed_faces(api
         assert "person_collection_members" in plan_text
         assert "idx_face_person_links_person" in plan_text or "sqlite_autoindex_person_collection_members_1" in plan_text
         empty = (await client.post("/api/v1/persons/collections", headers=headers, json={"name": "空"})).json()["collection"]["collection_id"]
+        empty_page = await client.get(_collection_url(catalog, empty, "/photos"))
+        assert empty_page.json()["collection"]["photo_count"] == 0
+        listed = (await client.get("/api/v1/persons/collections")).json()["collections"]
+        empty_list_item = next(
+            item for item in listed if item["collection_id"] == empty
+        )
+        assert empty_list_item["photo_count"] == 0
         cursor = None
         asset_ids = []
         first_page_cursor = None
@@ -122,6 +132,7 @@ def test_collection_photo_stream_deduplicates_and_tracks_new_confirmed_faces(api
             page_response = await client.get(_collection_url(catalog, collection_id, "/photos"), params=params)
             assert page_response.status_code == 200, page_response.text
             page = page_response.json()
+            assert page["collection"]["photo_count"] == 3
             if first_page_cursor is None:
                 first_page_cursor = page.get("next_cursor")
             asset_ids.extend(asset["asset_id"] for asset in page["assets"])
@@ -152,6 +163,7 @@ def test_collection_photo_stream_deduplicates_and_tracks_new_confirmed_faces(api
         response = await client.get(_collection_url(catalog, collection_ids[0], "/photos"), params={"limit": 100})
         assert response.status_code == 200
         assert seeded["new.jpg"]["asset_id"] in {item["asset_id"] for item in response.json()["assets"]}
+        assert response.json()["collection"]["photo_count"] == 4
     api_env.scenario(refreshed)
 
 

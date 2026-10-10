@@ -435,9 +435,9 @@
       if (!more) select.replaceChildren(Object.assign(node("option", "选择合集"), { value: "" }));
       (page.collections || []).forEach((collection) => {
         state.collectionById.set(String(collection.collection_id), collection);
-        const option = node("option", collection.name + "（" + collection.member_count + " 人）"); option.value = String(collection.collection_id); select.append(option);
+        const option = node("option", collection.name + "（" + collection.member_count + " 人 · " + collection.photo_count + " 张照片）"); option.value = String(collection.collection_id); select.append(option);
         const card = node("article", undefined, "pa-collection-card");
-        card.append(button(collection.name + " · " + collection.member_count + " 人", () => openCollection(collection), "pa-collection-open"));
+        card.append(button(collection.name + " · " + collection.member_count + " 人 · " + collection.photo_count + " 张照片", () => openCollection(collection), "pa-collection-open"));
         card.append(button("改名", () => renameCollection(collection), "pa-collection-action"));
         card.append(button("删除", () => deleteCollection(collection), "pa-collection-action"));
         $("collections").append(card);
@@ -460,7 +460,7 @@
     try {
       const result = await api(collectionPath(collection), { name }, "PATCH");
       await loadCollections(false);
-      if (state.collection && state.collection.collection_id === collection.collection_id) { state.collection = result.collection; collectionHeading(); }
+      if (state.collection && state.collection.collection_id === collection.collection_id) { state.collection = { ...state.collection, ...result.collection }; collectionHeading(); }
       await loadPeople(false); notifyPeopleChanged();
     } catch (error) { message("改名失败：" + errorText(error)); }
   }
@@ -475,7 +475,7 @@
   function collectionHeading() {
     $("title").textContent = state.collection.name;
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
-    $("album-note").textContent = "合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
+    $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
   }
