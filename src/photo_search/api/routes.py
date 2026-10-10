@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import json
+import sys
 from collections.abc import Mapping
 from email.utils import formatdate
 from pathlib import Path
@@ -34,12 +36,15 @@ from photo_search.api.files import (
     parse_range,
     resolve_optional_location,
     resolve_present_location,
+    resolve_registered_location,
     safe_display_filename,
     stream_file,
 )
+from photo_search.api.local_actions import perform_local_action
 from photo_search.api.models import (
     AssetDetail,
     AssetListResponse,
+    AssetLocalActionRequest,
     AssetOrder,
     AssetPlaceResponse,
     CapabilitiesResponse,
@@ -226,6 +231,10 @@ ARTIFACT_CACHE_CONTROL = "private, no-cache, must-revalidate"
 ORIGINAL_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
 router = APIRouter(prefix="/api/v1", tags=["photo-search"])
+
+
+def _desktop_supported() -> bool:
+    return sys.platform == "win32"
 
 
 def context_of(request: Request) -> ApiContext:
@@ -907,6 +916,41 @@ async def asset_original(request: Request, asset_id: int) -> Response:
 async def asset_original_head(request: Request, asset_id: int) -> Response:
     """``HEAD`` shares the whole guarded path of ``GET`` and drops the body."""
     return await asset_original(request, asset_id)
+
+
+@router.post("/assets/{asset_id}/local-action", summary="Request a Windows action on a registered original")
+async def asset_local_action(
+    request: Request, asset_id: int, payload: AssetLocalActionRequest
+) -> dict[str, str]:
+    """Open or reveal exactly one validated, registered original on the local desktop."""
+    settings = context_of(request).settings
+    peer = request.client.host if request.client is not None else None
+    try:
+        peer_is_loopback = bool(peer) and ipaddress.ip_address(str(peer).strip("[]")).is_loopback
+    except ValueError:
+        peer_is_loopback = False
+    if not settings.loopback_only or not peer_is_loopback:
+        raise ApiError(
+            "LOCAL_ACTION_UNAVAILABLE",
+            "local desktop actions are unavailable for this connection",
+            status=403,
+        )
+    if not _desktop_supported():
+        raise ApiError("LOCAL_ACTION_UNAVAILABLE", "local desktop actions are available only on Windows", status=409)
+
+    service = service_of(request)
+    location = resolve_registered_location(service.catalog, int(asset_id), payload.location_id)
+    try:
+        await asyncio.to_thread(perform_local_action, location, payload.action)
+    except ApiError:
+        raise
+    except OSError as error:
+        raise ApiError(
+            "LOCAL_ACTION_FAILED",
+            "Windows could not start the requested file action",
+            status=409,
+        ) from error
+    return {"status": "accepted", "action": payload.action}
 
 
 async def _media_response(request: Request, asset_id: int, kind: str) -> Response:

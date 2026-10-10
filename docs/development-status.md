@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 新任务：P4-PHOTO-LOCAL-OPEN-A — 系统默认程序打开原图 / Windows 资源管理器定位（PLANNED）
+## 最近完成：P4-PHOTO-LOCAL-OPEN-A — IMPLEMENTED / 合成定向验证通过；Windows 手动试点待用户执行
 
-[任务卡](tasks/P4-PHOTO-LOCAL-OPEN-A.md)。个人 Windows 本机相册小型功能：公共 `photo-info.js` 每个已登记文件位置增加「系统打开原图」「定位文件位置」，后端基于 `(asset_id, location_id)` 复用受控路径校验、会话/CSRF 和仅 loopback 桌面动作约束；多来源精确定位，离线拒绝，禁止任意路径/程序启动。不改 schema、模型、原图、预览缓存及查看器状态机；与 [P4-UI-VIEWER-F](tasks/P4-UI-VIEWER-F.md) 的视觉调整分开，避免并行冲突。推荐 GPT-6 Medium，仅隔离合成 API/UI 定向测试和静态检查。本次**只提交任务文档与状态索引，尚未实现或运行产品测试**。
+[任务卡](tasks/P4-PHOTO-LOCAL-OPEN-A.md)、[执行报告](reports/P4-PHOTO-LOCAL-OPEN-A.md)。公共照片详情位置行提供系统关联打开原图与 Explorer 选中文件；API 精确绑定 `(asset_id, location_id)`，复用受控路径和 metadata 校验、session/CSRF，并拒绝非 Windows、非 loopback、离线、越界和非图片扩展名。定向 JUnit 9/0/0/0，Ruff、Python 编译、Node 语法、diff-check 通过。只用隔离合成数据和 mock adapter，未真实启动 Windows 应用、访问 PhotoSearchData 或运行服务；未跑全仓/浏览器矩阵/GPU/模型/打包，未提交/推送。
 
 ## 新规划：P4-STORAGE-GC-A / B — 存储体检、安全文件 GC 与离线 Vector GC（PLANNED / 未实施）
 
@@ -121,4 +121,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步按 P4-PERSON-SMALL-FIX-A 修复卡正常重启/刷新后少量试用四项反馈。当前为实施与定向验证通过，不冒称独立 DS-H/Sol 或现场验收；不自动续开性能/工程卡。
+按已有 [P4-STORAGE-GC-A](tasks/P4-STORAGE-GC-A.md) 继续存储体检与安全文件 GC，之后再看卡 B。该卡推荐 GPT-6 High；继续前由用户在 Codex 手动选择相应模型/推理档。本次不自动启动下一卡。

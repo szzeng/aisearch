@@ -30,7 +30,7 @@ class Element {
   showModal() { this.open=true; }
   close() { this.open=false; this.fire("close"); }
 }
-const document={createElement:t=>new Element(t),querySelector:()=>null};
+const document={cookie:"ps_csrf=synthetic-token",createElement:t=>new Element(t),querySelector:()=>null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
@@ -38,13 +38,15 @@ const window={location:{href:"/"},maplibregl:{Map:FakeMap}};
 const fetches=[]; let releaseDetail;
 const ok=body=>({ok:true,status:200,json:async()=>body});
 const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height:800,format:"jpeg",availability:"present",taken_time:{label:"file_time",taken_at:"2020-01-02T03:04:05.000",camera:"Camera X"},locations:[
-  {source_id:1,source_display_name:"旅行",relative_path:"照片/海边.jpg",availability:"PRESENT"},
-  {source_id:2,source_display_name:"备份",relative_path:"2020\\海边.jpg",availability:"MISSING"},
-  {source_id:3,source_display_name:"盘符根目录",relative_path:"根目录照片.jpg",availability:"PRESENT"},
-  {source_id:4,source_display_name:"非法位置",relative_path:"../escape.jpg",availability:"PRESENT"},
-  {source_id:4,source_display_name:"绝对位置",relative_path:"\\rooted.jpg",availability:"PRESENT"},
-  {source_id:4,source_display_name:"盘符相对位置",relative_path:"E:drive-relative.jpg",availability:"PRESENT"}]});
-const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},fetch:async url=>{
+  {location_id:11,source_id:1,source_display_name:"旅行",relative_path:"照片/海边.jpg",availability:"PRESENT"},
+  {location_id:12,source_id:2,source_display_name:"备份",relative_path:"2020\\海边.jpg",availability:"MISSING"},
+  {location_id:13,source_id:3,source_display_name:"盘符根目录",relative_path:"根目录照片.jpg",availability:"PRESENT"},
+  {location_id:14,source_id:4,source_display_name:"非法位置",relative_path:"../escape.jpg",availability:"PRESENT"},
+  {location_id:15,source_id:4,source_display_name:"绝对位置",relative_path:"\\rooted.jpg",availability:"PRESENT"},
+  {location_id:16,source_id:4,source_display_name:"盘符相对位置",relative_path:"E:drive-relative.jpg",availability:"PRESENT"}]});
+const postCalls=[]; let deferLocal=false,releaseLocal;
+const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},fetch:async (url,options)=>{
+  if(url.includes("/local-action")) { postCalls.push({url,options}); const body={status:"accepted",action:JSON.parse(options.body).action}; return deferLocal?new Promise(resolve=>{releaseLocal=()=>resolve(ok(body));}):ok(body); }
   fetches.push(url);
   if(url==="/api/v1/assets/201") { await new Promise(r=>{releaseDetail=r;}); return ok(detail(201)); }
   if(/^\/api\/v1\/assets\/\d+$/.test(url)) return ok(detail(Number(url.split("/").pop())));
@@ -84,6 +86,16 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(maps[0].options.center[0],0); assert.equal(maps[0].options.center[1],0);
   maps[0].events.load(); assert.equal(JSON.stringify(maps[0].source.source.data.geometry.coordinates),"[0,0]");
   assert.equal(all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径").length,3);
+  const localButtons=all(host,n=>n.className==="photo-info-local-action");
+  assert.equal(localButtons.length,10,"each PRESENT location has both local actions; missing locations do not");
+  const openButton=localButtons.find(n=>n.textContent==="系统打开原图");
+  openButton.fire("click"); assert.equal(openButton.disabled,true,"the clicked action disables immediately");
+  openButton.fire("click"); assert.equal(postCalls.length,1,"duplicate clicks are blocked while the request is pending");
+  await flush(); assert.equal(openButton.disabled,false);
+  assert.match(postCalls[0].url,/assets\/101\/local-action$/);
+  assert.equal(postCalls[0].options.method,"POST");
+  assert.equal(postCalls[0].options.headers["X-CSRF-Token"],"synthetic-token");
+  assert.deepEqual(JSON.parse(postCalls[0].options.body),{action:"open",location_id:11});
   const copy=all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径")[0]; copy.fire("click"); await flush();
   assert.ok(all(host,n=>n.tagName==="textarea"&&n.selected).length===1);
   all(host,n=>n.tagName==="button"&&n.className==="photo-info-person")[0].fire("click"); assert.equal(chosen,7);
@@ -123,6 +135,13 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   const dialog=context.window.AIPhotoInfo.open(101,{returnFocus:null});
   await flush(); await flush(); dialog.close(); await flush();
   assert.equal(maps.at(-1).removed,true,"closing the viewer removes its map instance");
+
+  const staleActionHost=new Element("aside"); document.body.append(staleActionHost);
+  const pendingAction=context.window.AIPhotoInfo.render(staleActionHost,101); await flush(); await flush();
+  deferLocal=true;
+  all(staleActionHost,n=>n.className==="photo-info-local-action"&&n.textContent==="定位文件位置")[0].fire("click");
+  await flush(); pendingAction.dispose(); staleActionHost.replaceChildren(new Element("p")); releaseLocal(); await flush();
+  assert.ok(!staleActionHost.textContent.includes("已请求资源管理器定位"),"a response after dispose cannot update the replacement panel");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
@@ -140,8 +159,8 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-person-small-fix-a-1" in document
-        assert "/web/photo-info.css?v=p4-photo-view-a-3" in document
+        assert "/web/photo-info.js?v=p4-photo-local-open-a-1" in document
+        assert "/web/photo-info.css?v=p4-photo-local-open-a-1" in document
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")
     assert 'className = "map-photo-open"' in (web / "map.js").read_text(encoding="utf-8")

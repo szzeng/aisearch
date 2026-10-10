@@ -6,6 +6,8 @@
 .photo-info-paths, .photo-info-people, .photo-info-map { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid var(--line, #d5d9df); }
 .photo-info-location { margin: .5rem 0; padding: .5rem; border-radius: .4rem; background: var(--bg, #f6f7f9); }
 .photo-info-location p { margin: .35rem 0; }
+.photo-info-local-action { margin: .15rem .35rem .15rem 0; }
+.photo-info-local-action:disabled { cursor: wait; opacity: .65; }
 .photo-info-full-path { user-select: all; font-family: ui-monospace, Consolas, monospace; font-size: .8rem; }
 .photo-info-copy-fallback { display: block; width: 100%; min-height: 3rem; margin-top: .35rem; font: inherit; overflow-wrap: anywhere; }
 .photo-info-people-list { display: flex; flex-wrap: wrap; gap: .4rem; }

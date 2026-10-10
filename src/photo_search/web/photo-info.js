@@ -21,6 +21,29 @@
         });
       });
   }
+  function localAction(assetId, locationId, action, button, status, current) {
+    if (button.disabled) return;
+    var csrf = document.cookie.split(";").map(function (part) { return part.trim(); })
+      .find(function (part) { return part.indexOf("ps_csrf=") === 0; });
+    var headers = { Accept: "application/json", "Content-Type": "application/json" };
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice(8));
+    button.disabled = true;
+    fetch(API + "/assets/" + encodeURIComponent(assetId) + "/local-action", {
+      method: "POST", credentials: "same-origin", cache: "no-store", headers: headers,
+      body: JSON.stringify({ action: action, location_id: Number(locationId) })
+    }).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (body) {
+        if (!response.ok) throw new Error(body.message || body.code || "本机操作失败");
+        return body;
+      });
+    }).then(function () {
+      if (current()) status.textContent = action === "open" ? "已请求系统打开原图。" : "已请求资源管理器定位文件。";
+    }).catch(function (error) {
+      if (current()) status.textContent = error.message || "本机操作失败。";
+    }).then(function () {
+      if (current()) button.disabled = false;
+    });
+  }
   function safePath(root, relative) {
     if (!root || !relative) return null;
     var normalizedRoot = String(root).replace(/\//g, "\\");
@@ -178,6 +201,17 @@
         var row = node("div", undefined, "photo-info-location");
         row.append(node("strong", (location.source_display_name || ("来源 #" + location.source_id)) + " · " + (location.availability === "PRESENT" ? "在库" : "不可用")));
         var relative = node("p", location.relative_path || "（无相对路径）", "photo-info-relative"); row.append(relative);
+        if (location.availability === "PRESENT") {
+          var openOriginal = node("button", "系统打开原图", "photo-info-local-action"); openOriginal.type = "button";
+          openOriginal.addEventListener("click", function () {
+            localAction(assetId, location.location_id, "open", openOriginal, status, current);
+          });
+          var revealFile = node("button", "定位文件位置", "photo-info-local-action"); revealFile.type = "button";
+          revealFile.addEventListener("click", function () {
+            localAction(assetId, location.location_id, "reveal", revealFile, status, current);
+          });
+          row.append(openOriginal, revealFile);
+        }
         sourceRoot(location.source_id).then(function (root) {
           if (!current()) return;
           var complete = safePath(root, location.relative_path);

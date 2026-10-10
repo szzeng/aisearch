@@ -33,6 +33,7 @@ from photo_search.api.errors import (
     INVALID_RANGE,
     RANGE_NOT_SATISFIABLE,
     SOURCE_FILE_MISSING,
+    SOURCE_OFFLINE,
     ApiError,
 )
 from photo_search.catalog.errors import FILE_READ_ERROR, INPUT_UNSTABLE, CatalogError
@@ -55,7 +56,7 @@ _MEDIA_TYPES = {
 
 _LOCATION_SQL = """
 SELECT l.location_id, l.source_id, l.relative_path, l.path_key, l.size, l.mtime_ns,
-       l.availability, s.root_path
+       l.availability, s.root_path, s.status AS source_status
   FROM file_locations AS l
   JOIN source_roots AS s ON s.source_id = l.source_id
  WHERE l.asset_id = ?
@@ -121,6 +122,27 @@ def resolve_present_locations(catalog: Any, asset_id: int) -> list[ControlledLoc
         except (ApiError, CatalogError):
             continue
     return resolved
+
+
+def resolve_registered_location(
+    catalog: Any, asset_id: int, location_id: int
+) -> ControlledLocation:
+    """Resolve one exact, online, present location owned by ``asset_id``.
+
+    Local desktop actions must never fall back to another copy of the same asset. This
+    therefore selects by both ids, checks current source/location state, then uses the same
+    controlled path and unchanged-file checks as original reads.
+    """
+    rows = list_asset_locations(catalog, int(asset_id))
+    row = next((item for item in rows if int(item["location_id"]) == int(location_id)), None)
+    if row is None:
+        raise ApiError(
+            SOURCE_FILE_MISSING,
+            "the requested registered position does not belong to this asset",
+        )
+    if str(row["availability"]) != "PRESENT" or str(row["source_status"]) != "ONLINE":
+        raise ApiError(SOURCE_OFFLINE, "the requested file position is not currently available")
+    return _resolve_row(row)
 
 
 def resolve_optional_location(catalog: Any, asset_id: int) -> ControlledLocation | None:

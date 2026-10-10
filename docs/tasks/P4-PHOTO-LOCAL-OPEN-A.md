@@ -1,7 +1,7 @@
 # P4-PHOTO-LOCAL-OPEN-A — 用系统程序打开原图、在文件管理器中定位
 
-日期：2026-10-10。状态：**PLANNED / 未实施**。基于 `szzeng/aisearch` 的 `master` 当前代码立卡；开工前复核最新 HEAD。
-推荐执行：**GPT-6 Medium**，个人项目小范围定向测试。本卡只有任务设计，**未实现功能、未测试产品**。
+日期：2026-10-10。状态：**IMPLEMENTED / 任务卡合成验证通过；Windows 现场手动验收待用户执行**。基于 `szzeng/aisearch` 的 `master` 当前代码立卡；实施基线 HEAD `75ccbe3`。
+推荐执行：**GPT-6 Medium**，个人项目小范围定向测试。
 
 ## 目标和交互
 
@@ -66,3 +66,7 @@
 ## 交付与停止
 
 实现完成后写简短 `docs/reports/P4-PHOTO-LOCAL-OPEN-A.md`，记录必要定向测试及本机手动未验项；按仓库约定更新 `docs/development-status.md`。仅任务完成后才能标 IMPLEMENTED/PASS。如果发现必须放宽本机调用安全边界或需要跨平台桌面架构，停止扩大范围、记录问题另行决策。
+
+## 执行结果
+
+实现与定向验证详见[执行报告](../reports/P4-PHOTO-LOCAL-OPEN-A.md)。JUnit 9/0/0/0，Ruff、Python 编译、Node 语法和 diff-check 通过。未真实启动 Windows 文件关联程序或 Explorer；真实 Windows 手动试点仍待用户执行。

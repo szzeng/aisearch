@@ -190,6 +190,15 @@ class SourceRenameRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
+class AssetLocalActionRequest(BaseModel):
+    """One fixed desktop action on one database-registered file location."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["open", "reveal"]
+    location_id: int = Field(gt=0, strict=True)
+
+
 class SourceDeleteResponse(BaseModel):
     """``DELETE /api/v1/sources/{id}``: what leaving the managed set removed (P4-02Y-I §5).
 
