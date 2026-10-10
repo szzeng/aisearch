@@ -20,7 +20,7 @@ from photo_search.places.revision import read_filter_revision
 
 _MISSING = "PERSON_COLLECTION_NOT_FOUND"
 _CURSOR_PREFIX = "pc1"
-_PEOPLE_CURSOR_PREFIX = "pcp1"
+_PEOPLE_CURSOR_PREFIX = "pcp-count1"
 _PHOTOS_CURSOR_PREFIX = "pcf1"
 _MAX_BATCH = 500
 _MAX_NAME = 80
@@ -216,15 +216,30 @@ def edit_members(
                 )
         else:
             marks = ",".join("?" for _ in canonical)
+            removed_people = connection.execute(
+                _canonical_cte()
+                + "SELECT DISTINCT person_id FROM canonical_members WHERE collection_id = ? "
+                "AND person_id IN (" + marks + ")",
+                (int(collection_id), *canonical),
+            ).fetchall()
             query = (
                 _canonical_cte()
                 + "DELETE FROM person_collection_members WHERE collection_id = ? AND person_id IN ("
                 "SELECT origin_id FROM canonical_members WHERE collection_id = ? AND person_id IN ("
                 + marks + ")) RETURNING person_id"
             )
-            changed = len(connection.execute(
+            removed_anchors = connection.execute(
                 query, (int(collection_id), int(collection_id), *canonical)
-            ).fetchall())
+            ).fetchall()
+            changed = len(removed_anchors)
+            # Removing an actual member returns it to the normal named/unnamed
+            # lists, including source identities if a later undo splits the merge.
+            # A repeated removal of a non-member must not undo a later explicit hide.
+            restored_ids = {int(row["person_id"]) for row in [*removed_people, *removed_anchors]}
+            connection.executemany(
+                "DELETE FROM person_hidden WHERE person_id = ?",
+                [(person_id,) for person_id in sorted(restored_ids)],
+            )
         if changed:
             connection.execute(
                 "UPDATE person_collections SET revision = revision + 1, updated_at = ? WHERE collection_id = ?",
@@ -245,17 +260,31 @@ def people_page(
     filter_revision = read_filter_revision(connection)
     binding = [int(collection_id), str(collection["instance_token"]), int(collection["revision"]), int(filter_revision)]
     after = _decode(cursor, _PEOPLE_CURSOR_PREFIX, binding)
-    if after is not None and (type(after) is not int or after < 1):
+    if after is not None and (
+        not isinstance(after, list) or len(after) != 2
+        or type(after[0]) is not int or after[0] < 0
+        or type(after[1]) is not int or after[1] < 1
+    ):
         raise ApiError(INVALID_CURSOR, "合集人物游标无效", status=409)
+    continuation = ""
+    parameters: list[Any] = [int(collection_id)]
+    if after is not None:
+        continuation = (
+            "WHERE (COALESCE(ec.asset_count, 0) < ? OR "
+            "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?)) "
+        )
+        parameters.extend([after[0], after[0], after[1]])
     rows = catalog.read_all(
         _canonical_cte()
-        + "SELECT p.*, (SELECT COUNT(DISTINCT f.asset_id) FROM face_person_links AS l "
-        "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id=f.asset_id "
-        "WHERE l.person_id = p.person_id AND a.state='ACTIVE' AND " + MEMBER_PREDICATE + ") AS page_asset_count "
-        "FROM canonical_members AS cm JOIN persons AS p ON p.person_id = cm.person_id "
-        "WHERE cm.collection_id = ? AND p.person_id > ? GROUP BY p.person_id "
-        "ORDER BY p.person_id LIMIT ?",
-        (int(collection_id), int(after or 0), limit + 1),
+        + ", candidates AS (SELECT DISTINCT p.* FROM canonical_members AS cm "
+        "JOIN persons AS p ON p.person_id = cm.person_id WHERE cm.collection_id = ?), "
+        "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
+        "FROM candidates AS c JOIN face_person_links AS l ON l.person_id=c.person_id "
+        "JOIN faces AS f ON f.face_id=l.face_id WHERE " + MEMBER_PREDICATE + " GROUP BY l.person_id) "
+        "SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count FROM candidates AS p "
+        "LEFT JOIN effective_counts AS ec ON ec.person_id=p.person_id "
+        + continuation + "ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
+        (*parameters, limit + 1),
     )
     more = len(rows) > limit
     rows = rows[:limit]
@@ -264,7 +293,10 @@ def people_page(
         "collection": {"collection_id": int(collection_id), "instance_token": str(collection["instance_token"]), "name": str(collection["name"]), "revision": int(collection["revision"])},
         "people": summaries,
         "has_more": more,
-        "next_cursor": _encode(_PEOPLE_CURSOR_PREFIX, binding, int(rows[-1]["person_id"])) if more else None,
+        "next_cursor": _encode(
+            _PEOPLE_CURSOR_PREFIX, binding,
+            [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])],
+        ) if more else None,
     }
 
 

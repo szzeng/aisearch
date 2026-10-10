@@ -26,7 +26,7 @@ class Element {
   fire(name){return this.events[name]({preventDefault(){}});}
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-const requests=[],pageByVisibility={visible:0,hidden:0};let confirmResult=false,visibilityFailure=true;
+const requests=[],hiddenRemoved=new Set();let confirmResult=false,visibilityFailure=true;
 const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
  window:{location:{search:"",href:"http://local/persons"},scrollY:700,confirm:()=>confirmResult,addEventListener(){}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
@@ -34,11 +34,13 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeo
    requests.push({url,options});
    if(url.includes("/persons/browse")){
      const values=new URLSearchParams(url.split("?")[1]||""),visibility=values.get("visibility")||"visible";
-     const page=++pageByVisibility[visibility],start=(page-1)*40+1;
-     return {ok:true,json:async()=>({persons:Array.from({length:40},(_,i)=>({person_id:start+i,name:"person"+(start+i),revision:1,asset_count:1,thumbnail_url:null})),has_more:true,next_cursor:visibility+"-"+page})};
+     const page=values.has('cursor')?Number(values.get('cursor').split('-')[1])+1:1,start=(page-1)*40;
+     const ids=Array.from({length:200},(_,i)=>i+1).filter(id=>visibility!=="hidden"||!hiddenRemoved.has(id));
+     return {ok:true,json:async()=>({persons:ids.slice(start,start+40).map(id=>({person_id:id,name:"person"+id,revision:1,asset_count:1,thumbnail_url:null})),has_more:true,next_cursor:visibility+"-"+page})};
    }
    if(url==="/api/v1/persons/visibility"){
      if(visibilityFailure)return {ok:false,json:async()=>({code:"SYNTHETIC_FAILURE"})};
+     JSON.parse(options.body).person_ids.forEach(id=>hiddenRemoved.add(id));
      return {ok:true,json:async()=>({hidden:false,person_count:1,changed:1})};
    }
    return {ok:true,json:async()=>({persons:[],faces:[],has_more:false,next_cursor:null})};
@@ -90,8 +92,9 @@ const clickPerson=async id=>{await get("pa-cards").children[id-1].fire("click");
  visibilityFailure=false;await get("pa-visibility-submit").fire("click");await flush();
  const write=requests.filter(request=>request.url==="/api/v1/persons/visibility").at(-1);
  assert.deepEqual(JSON.parse(write.options.body),{person_ids:[101],hidden:false});
- assert.equal(selectedCount(),0);assert.equal(cards.children.length,40);
- assert.equal(browseCount(),hiddenBrowseCount+1);assert.equal(context.ui.state.listCursor,"hidden-4");
+ assert.equal(selectedCount(),0);assert.equal(cards.children.length,120);
+ assert.equal(browseCount(),hiddenBrowseCount+3);assert.equal(context.ui.state.listCursor,"hidden-3");
+ assert(!cards.children.some(card=>card.personId===101),"restored person leaves the retained hidden pages");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

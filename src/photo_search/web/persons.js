@@ -322,6 +322,10 @@
         })
         .then(function (payload) {
           if (response.ok) {
+            if (method !== "GET" && method !== "HEAD" && payload && payload.changed) {
+              try { window.localStorage.setItem("aisearch.persons.changed", newRequestId("people-change")); }
+              catch (_) { /* Returning to the personal page still offers an explicit refresh. */ }
+            }
             return { status: status, body: payload };
           }
           var failure = failureFrom(response, payload);
@@ -444,7 +448,7 @@
     }
     state.persons.loading = true;
     var limit = state.persons.limit;
-    var query = "?kind=" + encodeURIComponent(state.view) + "&limit=" + limit;
+    var query = "?kind=" + encodeURIComponent(state.view) + "&sort=photos_desc&limit=" + limit;
     if (!reset && state.persons.cursor) {
       query += "&cursor=" + encodeURIComponent(state.persons.cursor);
     }
@@ -452,7 +456,7 @@
       els.personsStatus,
       reset ? "正在读取" + VIEW_TEXT[state.view] + "…" : "正在读取下一页…"
     );
-    request("/persons" + query)
+    request("/persons/browse" + query)
       .then(function (result) {
         var body = result.body || {};
         var rows = body.persons || [];

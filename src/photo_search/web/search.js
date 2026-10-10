@@ -758,14 +758,14 @@
     state.person.loading = true;
     setStatus(
       els.personStatus,
-      reset ? "正在读取人物（active canonical，按 person_id 分页）…" : "正在读取更多人物…"
+      reset ? "正在读取人物（照片最多优先）…" : "正在读取更多人物…"
     );
-    var query = "?kind=all&limit=" + PERSON_LIMIT;
+    var query = "?kind=all&sort=photos_desc&limit=" + PERSON_LIMIT;
     if (!reset && state.person.cursor) {
       query += "&cursor=" + encodeURIComponent(state.person.cursor);
     }
     syncPersonControls();
-    return request("/persons" + query).then(
+    return request("/persons/browse" + query).then(
       function (result) {
         var body = result.body || {};
         var rows = body.persons || [];
@@ -1576,7 +1576,11 @@
         return;
       }
       var canonicalIds = {};
-      loaded.people.forEach(function (entry) {
+      loaded.people.sort(function (a, b) {
+        return Number((b.person || {}).asset_count || 0) - Number((a.person || {}).asset_count || 0)
+          || Number((a.person || {}).canonical_person_id || (a.person || {}).person_id || a.face.assigned_person_id)
+           - Number((b.person || {}).canonical_person_id || (b.person || {}).person_id || b.face.assigned_person_id);
+      }).forEach(function (entry) {
         var face = entry.face;
         var person = entry.person || {};
         var personId = Number(person.canonical_person_id || person.person_id || face.assigned_person_id);

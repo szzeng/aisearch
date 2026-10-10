@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["avatars", "no_assigned_people", "no_assigned_people_more"])
+@pytest.mark.parametrize("scenario", ["avatars", "count_order", "no_assigned_people", "no_assigned_people_more"])
 def test_search_preview_people(scenario: str) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the search-preview interaction check"
@@ -52,9 +52,9 @@ const context = {
       ]});
     if (url === "/api/v1/assets/15") return response({asset_id:15,width:400,height:300,format:"jpeg",
       byte_size:1536,availability:"present",taken_time:{taken_at:"2025-01-02T03:04:05.000",label:"capture",camera:null}});
-    if (url === "/api/v1/persons/7") return response({person_id:7,name:"\u5988\u5988",avatar_face_id:avatar});
-    if (url === "/api/v1/persons/8") return response({person_id:8,name:"\u7238\u7238",avatar_face_id:null});
-    if (url === "/api/v1/persons/9") return response({person_id:9,canonical_person_id:7,name:"\u5988\u5988",avatar_face_id:avatar});
+    if (url === "/api/v1/persons/7") return response({person_id:7,name:"\u5988\u5988",avatar_face_id:avatar,asset_count:2});
+    if (url === "/api/v1/persons/8") return response({person_id:8,name:"\u7238\u7238",avatar_face_id:null,asset_count:process.argv[1]==="count_order"?20:2});
+    if (url === "/api/v1/persons/9") return response({person_id:9,canonical_person_id:7,name:"\u5988\u5988",avatar_face_id:avatar,asset_count:2});
     throw new Error("unexpected URL " + url);
   },
 };
@@ -96,7 +96,12 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
     }
     return;
   }
-  const cards = get("list").children;
+  const cards = get("list").children.slice();
+  if(process.argv[1]==="count_order") {
+    assert.match(cards[0].attributes["aria-label"],/爸爸/);
+    assert.match(cards[1].attributes["aria-label"],/妈妈/);
+    cards.reverse(); // Reuse the avatar/navigation assertions after verifying count order.
+  }
   assert.equal(cards.length, 2); // Duplicate faces and merged IDs become one canonical avatar.
   assert.equal(cards[0].children[1].textContent, "\u5988\u5988");
   assert.equal(cards[0].children[0].src, "/api/v1/faces/"+avatar+"/thumbnail?v=p4-search-person-link-a-1");
@@ -141,7 +146,7 @@ const response=body=>({ok:true,status:200,headers:{get:()=>"application/json"},j
 const context={
   URLSearchParams, URL, encodeURIComponent, crypto:{randomUUID:()=>"synthetic"}, setTimeout:()=>1, clearTimeout(){},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-  window:{location,history:{replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
+      window:{addEventListener(){},location,history:{replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
   fetch:async url=>{
     calls.push(url);
     if(url==="/api/v1/persons/7") return response({person_id:7,canonical_person_id:7,name:"\u7238\u7238",revision:2,asset_count:3,face_count:4,avatar_face_id:avatar});

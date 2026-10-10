@@ -755,8 +755,8 @@ def rename_person(
         connection, canonical_person_id=canonical, person_id=requested, expected=expected
     )
     operation_id = operation_id_for(request_id)
-    target = active_person_id_for_name_key(connection, name_key)
-    merging = target is not None and int(target) != int(canonical)
+    target = active_person_id_for_name_key(connection, name_key, exclude_person_id=canonical)
+    merging = target is not None
     if merging and not merge_by_name:
         raise CatalogError(
             PERSON_REVISION_CONFLICT,
@@ -785,7 +785,7 @@ def rename_person(
             operation_id=operation_id,
             now_ms=int(now_ms),
         )
-    elif target is not None:
+    elif require_person_row(connection, canonical)["name_key"] == name_key:
         # The same display value saved again: an answered request, not a new state.
         unchanged = {int(canonical): bundle_module.read_bundle(connection, int(canonical))}
         before, after = dict(unchanged), dict(unchanged)

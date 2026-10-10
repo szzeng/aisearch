@@ -91,14 +91,27 @@ def resolve_redirect(connection: sqlite3.Connection, person_id: int) -> dict[str
     }
 
 
-def active_person_id_for_name_key(connection: sqlite3.Connection, name_key: str) -> int | None:
-    """The active (non-merged) person that already owns this key, if any.
+def active_person_id_for_name_key(
+    connection: sqlite3.Connection, name_key: str, *, exclude_person_id: int | None = None
+) -> int | None:
+    """Find an active same-name person using Unicode case-insensitive comparison.
 
     Same-name resolution happens only here, i.e. only while a user is submitting a name
-    (ADR-0006 §2/§6). Nothing in the background path calls it, and an alias is never a key.
+    (ADR-0019). Nothing in the background path calls it, and an alias is never a key.
+    Stored nfc1 keys keep their original spelling for old snapshots and undo. Excluding
+    the person being renamed lets an explicit save discover legacy case-only duplicates.
+    Exact spelling takes priority, then the lowest id makes legacy ties deterministic.
     """
-    row = connection.execute(
-        "SELECT person_id FROM persons WHERE name_key = ? AND merged_into IS NULL",
-        (str(name_key),),
-    ).fetchone()
-    return None if row is None else int(row["person_id"])
+    folded = str(name_key).casefold()
+    rows = connection.execute(
+        "SELECT person_id, name_key FROM persons "
+        "WHERE name_key IS NOT NULL AND merged_into IS NULL "
+        "AND (? IS NULL OR person_id != ?) "
+        "ORDER BY (name_key = ?) DESC, person_id ASC",
+        (exclude_person_id, exclude_person_id, str(name_key)),
+    )
+    # SQLite NOCASE only handles ASCII, so compare Unicode keys in Python.
+    for row in rows:
+        if str(row["name_key"]).casefold() == folded:
+            return int(row["person_id"])
+    return None

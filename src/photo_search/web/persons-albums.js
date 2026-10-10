@@ -9,7 +9,8 @@
     detailBusyAssets: new Set(),
     operation: null, undoTimer: null, messageTimer: null, detailBatchTimer: null, detailBatchSeq: 0,
     detailBatch: null, detailControlsLoaded: false, detailControlsPromise: null, writing: false, createPersonIntent: null, coverMode: false, searching: false, searchBody: null, returnCollection: null,
-    deepLinked: false, linkSeq: 0, busy: new Set() };
+    deepLinked: false, linkSeq: 0, peopleChangeToken: null, inboxConfirmationsPending: false,
+    peoplePages: 0, peopleBinding: null, inboxPages: 0, inboxBinding: null, libraryPosition: null, busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -73,6 +74,71 @@
     }, 3000);
   }
   function params(values) { return "?" + new URLSearchParams(values); }
+  // Replay only the pages the user already opened, using fresh revision-bound cursors.
+  async function readLoadedPages(path, values, key, count, current) {
+    const items = []; let page, pages = 0;
+    for (let index = 0; index < count; index++) {
+      page = await api(path + params(values));
+      if (!current()) return null;
+      items.push(...(page[key] || [])); pages++;
+      if (!page.has_more || !page.next_cursor) break;
+      values = { ...values, cursor: page.next_cursor };
+    }
+    return { ...page, [key]: items, loadedPages: pages };
+  }
+  function libraryItems() { return [...$("cards").children, ...$("inbox-cards").children]; }
+  function itemKey(item) { return item.groupKey || (item.personId ? "person:" + item.personId : item.faceId ? "face:" + item.faceId : null); }
+  function captureLibraryPosition() {
+    if ($("library").hidden) return state.libraryPosition;
+    const position = { y: window.scrollY || 0, anchors: [] };
+    libraryItems().forEach((item) => {
+      if (!item.getBoundingClientRect || !itemKey(item)) return;
+      const rect = item.getBoundingClientRect();
+      if (rect.bottom > 0 && position.anchors.length < 4) position.anchors.push({ key: itemKey(item), top: rect.top });
+    });
+    return position;
+  }
+  function restoreLibraryPosition(position) {
+    if (!position || $("library").hidden) return;
+    for (const anchor of position.anchors) {
+      const item = libraryItems().find((entry) => itemKey(entry) === anchor.key);
+      if (item && item.getBoundingClientRect && window.scrollBy) {
+        window.scrollBy(0, item.getBoundingClientRect().top - anchor.top); return;
+      }
+    }
+    if (window.scrollTo) window.scrollTo(0, position.y);
+  }
+  async function refreshPeopleViews(position) {
+    // DOM events pass an Event, whereas returning from an album passes a saved position.
+    position = position && position.anchors ? position : captureLibraryPosition();
+    const loads = [loadPeople(false), loadCollections(false)];
+    const openGroups = (host) => Array.from(host.children).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
+    if (state.organize) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
+    if (state.inboxHiddenVisible) loads.push(loadHiddenFaces(false, openGroups($("inbox-hidden-cards"))));
+    // Entering a member album suspends the parent collection rather than closing it.
+    const collection = state.collection || state.returnCollection;
+    state.collectionSelectedPeople.clear(); updateCollectionSelection();
+    if (collection) loads.push(loadCollectionPeople(false, collection));
+    if (state.collection && state.collectionMode === "photos") loads.push(loadPhotos(false));
+    if ($("edit").open && state.edit && state.edit.mode !== "name") loads.push(loadChoices(false));
+    const listSeq = state.listSeq, inboxSeq = state.inboxSeq;
+    await Promise.all(loads);
+    if (listSeq === state.listSeq && inboxSeq === state.inboxSeq) restoreLibraryPosition(position);
+  }
+  function notifyPeopleChanged() {
+    state.peopleChangeToken = requestId();
+    try { window.localStorage.setItem("aisearch.persons.changed", state.peopleChangeToken); }
+    catch (error) { /* Focus/refresh still works if browser storage is unavailable. */ }
+  }
+  function refreshChangedPeople() {
+    if (state.writing) return;
+    try {
+      const token = window.localStorage.getItem("aisearch.persons.changed");
+      if (token === state.peopleChangeToken) return;
+      state.peopleChangeToken = token;
+    } catch (error) { /* Refresh when returning to a window without browser storage. */ }
+    refreshPeopleViews();
+  }
   function syncPeopleCards() {
     Array.from($("cards").children).forEach((card) => {
       const personId = Number(card.personId);
@@ -222,13 +288,20 @@
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
-    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: $("person-sort").value || "photos_desc", limit: 40 };
+    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_desc", limit: 40 };
     if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
+    const binding = JSON.stringify(values), sameView = binding === state.peopleBinding;
+    const append = Boolean(more && state.listCursor && sameView);
+    const pageCount = append ? 1 : sameView ? Math.max(1, state.peoplePages) : 1;
+    const position = sameView ? captureLibraryPosition() : null;
     if (more && state.listCursor) values.cursor = state.listCursor;
-    else { $("cards").replaceChildren(); state.listCursor = null; }
+    if (!sameView) { delete values.cursor; $("cards").replaceChildren(); state.listCursor = null; }
     $("list-note").textContent = "正在找人物……";
     try {
-      const page = await api("/persons/browse" + params(values)); if (seq !== state.listSeq) return;
+      const page = await readLoadedPages("/persons/browse", values, "persons", pageCount, () => seq === state.listSeq);
+      if (!page) return;
+      if (!append) $("cards").replaceChildren();
+      state.peopleBinding = binding; state.peoplePages = append ? state.peoplePages + page.loadedPages : pageCount;
       if (Number.isSafeInteger(page.total) && page.total >= 0) {
         const label = state.hiddenView ? "已忽略" : state.organize ? "未命名人物" : "人物";
         $("list-count").textContent = label + " " + page.total + " 人";
@@ -250,6 +323,7 @@
       syncPeopleCards();
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
       $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
+      restoreLibraryPosition(position);
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; } }
   }
@@ -305,20 +379,24 @@
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
   }
   function openCollection(collection) {
+    state.returnCollection = null; state.collectionSeq++;
     state.collection = collection; state.person = null; state.collectionMode = "photos"; state.collectionPeopleCursor = null; state.collectionSelectedPeople.clear();
     state.coverMode = false; state.searching = false; $("library").hidden = true; $("album").hidden = false;
-    $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
+    $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
     $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false");
     collectionHeading(); loadPhotos(false); $("back").focus();
   }
-  async function loadCollectionPeople(more) {
-    if (!state.collection || (more && !state.collectionPeopleCursor)) return;
-    const collection = state.collection, seq = ++state.collectionSeq;
+  async function loadCollectionPeople(more, parentCollection) {
+    const collection = parentCollection || state.collection;
+    if (!collection || (more && !state.collectionPeopleCursor)) return;
+    const seq = ++state.collectionSeq;
     const values = { limit: 40 }; if (more) values.cursor = state.collectionPeopleCursor;
     else { $("collection-people").replaceChildren(); state.collectionPeopleCursor = null; }
     try {
       const page = await api(collectionPath(collection, "/people") + params(values));
-      if (seq !== state.collectionSeq || !state.collection || state.collection.collection_id !== collection.collection_id) return;
+      const current = state.collection || state.returnCollection;
+      if (seq !== state.collectionSeq || !current || current.collection_id !== collection.collection_id
+          || current.instance_token !== collection.instance_token) return;
       (page.people || []).forEach((person) => {
         const card = node("article", undefined, "pa-collection-card");
         const id = Number(person.person_id), selected = state.collectionSelectedPeople.has(id);
@@ -326,13 +404,18 @@
           if (state.collectionSelectedPeople.has(id)) state.collectionSelectedPeople.delete(id); else state.collectionSelectedPeople.add(id);
           choose.textContent = state.collectionSelectedPeople.has(id) ? "取消移出选择" : "选择移出"; updateCollectionSelection();
         });
-        const open = button("", () => { state.returnCollection = state.collection; openAlbum(person); }, "pa-person-card");
+        const open = button("", () => { state.returnCollection = collection; openAlbum(person); }, "pa-person-card");
         open.append(picture(person.thumbnail_url, name(person), "pa-avatar"), node("strong", name(person)), node("span", person.asset_count + " 张照片"));
         card.append(choose, open); $("collection-people").append(card);
       });
-      $("collection-people-actions").hidden = false; updateCollectionSelection();
-      state.collectionPeopleCursor = page.next_cursor; $("collection-people-more").hidden = !page.has_more;
-    } catch (error) { if (seq === state.collectionSeq) message("合集人物加载失败：" + errorText(error)); }
+      const showingPeople = Boolean(state.collection && state.collectionMode === "people");
+      $("collection-people-actions").hidden = !showingPeople; updateCollectionSelection();
+      state.collectionPeopleCursor = page.next_cursor; $("collection-people-more").hidden = !showingPeople || !page.has_more;
+    } catch (error) {
+      const current = state.collection || state.returnCollection;
+      if (seq === state.collectionSeq && current && current.collection_id === collection.collection_id
+          && current.instance_token === collection.instance_token) message("合集人物加载失败：" + errorText(error));
+    }
   }
   function updateCollectionSelection() {
     $("collection-people-selected").textContent = "已选 " + state.collectionSelectedPeople.size + " 人";
@@ -341,11 +424,12 @@
   async function removeCollectionSelection() {
     if (!state.collection || !state.collectionSelectedPeople.size) return;
     const ids = Array.from(state.collectionSelectedPeople);
-    if (!window.confirm("从这个合集中移出所选 " + ids.length + " 人？")) return;
+    if (!window.confirm("从这个合集中移出所选 " + ids.length + " 人，并恢复到人物或未命名列表？")) return;
     try {
       await api(collectionPath(state.collection, "/members"), { action: "remove", person_ids: ids });
       state.collectionSelectedPeople.clear(); state.collectionPeopleCursor = null; await loadCollectionPeople(false); await loadCollections(false);
-      message("已从合集移出。", true);
+      await loadPeople(false); notifyPeopleChanged();
+      message("已从合集移出，可在人物或未命名列表找到。", true);
     } catch (error) { message("移出合集失败：" + errorText(error)); }
   }
   async function addSelectionToCollection() {
@@ -372,12 +456,14 @@
       state.collectionMode = "people"; state.collectionSeq++; state.photoSeq++;
       $("album").hidden = false; $("library").hidden = true; $("collection-view-controls").hidden = false;
       $("collection-people").hidden = false; $("collection-people-actions").hidden = false;
-      $("photos").hidden = true; $("photos-more").hidden = true; collectionHeading(); $("back").focus(); return;
+      $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true");
+      $("photos").hidden = true; $("photos-more").hidden = true; collectionHeading(); loadCollectionPeople(false); $("back").focus(); return;
     }
     state.person = null; state.collection = null; state.collectionSeq++; state.photoSeq++; state.busy.delete("photos");
     $("library").hidden = false; $("album").hidden = true; $("collection-view-controls").hidden = true;
     $("name").hidden = false; $("merge").hidden = false; $("cover").hidden = false; $("search-photos").hidden = false;
-    $("people").focus();
+    restoreLibraryPosition(state.libraryPosition); refreshPeopleViews(state.libraryPosition);
+    $("people").focus({ preventScroll: true });
   }
   function organizationText(face) {
     if (face.display_quality_reason === "DISPLAY_LOW_QUALITY") return "疑似低质量，仅整理页自动收起";
@@ -405,7 +491,7 @@
     if (summary.held) pieces.push("另有 " + summary.held + " 张脸等待识别更新确认");
     return pieces.join(" · ");
   }
-  function renderInboxFace(container, face, hiddenFace) {
+  function renderInboxFace(container, face, hiddenFace, groupDetails) {
     const card = node("div", undefined, "pa-person-card");
     card.faceId = String(face.face_id); card.hiddenFace = Boolean(hiddenFace);
     const selected = (card.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(card.faceId);
@@ -416,40 +502,77 @@
     view.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"));
     card.append(view, node("span", organizationText(face), "hint"));
     if (!state.batchMode && !hiddenFace) {
-      const suggestion = face.organization_reason === "BORDERLINE" && face.suggestions && face.suggestions[0];
+      const suggestion = face.suggestions && face.suggestions[0];
       if (suggestion) {
-        card.append(button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion)));
-        card.append(button("选其他人", () => editFace(face, { allowCreatePerson: true })));
+        const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
+        confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
+        card.otherPersonButton = button("选其他人", () => editFace(face, { allowCreatePerson: true }));
+        card.append(confirm, card.otherPersonButton);
       } else card.append(button("这是谁？", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
   }
-  async function confirmSuggestion(face, person) {
-    if (state.writing) return;
+  function flushInboxConfirmations() {
+    if (!state.inboxConfirmationsPending || state.writing) return;
+    const openConfirmed = Array.from($("inbox-cards").children).some((item) => item.open && item.confirmationDirty);
+    if (!openConfirmed) { state.inboxConfirmationsPending = false; refreshPeopleViews(); }
+  }
+  async function confirmSuggestion(face, person, card, groupDetails) {
+    if (state.writing || card.confirmed) return;
     state.writing = true;
+    const confirm = card.confirmButton, label = "确认是" + name(person);
+    confirm.disabled = true; confirm.textContent = "正在确认……"; card.otherPersonButton.disabled = true;
+    card.confirmRequestId = card.confirmRequestId || requestId();
     try {
       const result = await api("/faces/" + encodeURIComponent(face.face_id) + "/assignment", {
-        contract_version: "p3-face-correction-contracts.v1", request_id: requestId(),
+        contract_version: "p3-face-correction-contracts.v1", request_id: card.confirmRequestId,
         action: "assign", target_person_id: person.person_id,
         expected_revision: face.control_revision,
       }, "PUT");
-      await refreshAfterWrite(result, "已确认是“" + name(person) + "”");
-    } catch (error) { message(errorText(error)); }
-    finally { state.writing = false; }
+      card.confirmed = true; confirm.textContent = "✓ 已确认是" + name(person); confirm.setAttribute("aria-pressed", "true");
+      rememberOperation(result, "已确认是“" + name(person) + "”"); notifyPeopleChanged();
+      state.inboxConfirmationsPending = true;
+      $("inbox-more").disabled = true;
+      // Every group cursor shares the catalog revision changed by this confirmation.
+      Array.from($("inbox-cards").children).filter((item) => item.groupKey).forEach((item) => {
+        item.confirmationVersion = (item.confirmationVersion || 0) + 1;
+        item.querySelector(".pa-inbox-group-more").dataset.cursor = "";
+      });
+      if (groupDetails) {
+        groupDetails.confirmationDirty = true;
+      }
+    } catch (error) {
+      if (error.status && error.status < 500) card.confirmRequestId = null;
+      confirm.textContent = label; message(errorText(error));
+    }
+    finally {
+      state.writing = false; confirm.disabled = Boolean(card.confirmed); card.otherPersonButton.disabled = Boolean(card.confirmed);
+      // Closing while the request is in flight also waits for the saved result.
+      if (groupDetails && !groupDetails.open) flushInboxConfirmations();
+    }
   }
   async function loadInboxGroup(details, groupKey, kind, cursor, hiddenFace) {
     const list = details.querySelector(".pa-inbox-group-faces");
     const more = details.querySelector(".pa-inbox-group-more");
     more.disabled = true;
     const filterSeq = state.inboxFilterSeq;
+    const listSeq = hiddenFace ? state.hiddenFaceSeq : state.inboxSeq;
+    const current = () => hiddenFace ? listSeq === state.hiddenFaceSeq : listSeq === state.inboxSeq && filterSeq === state.inboxFilterSeq;
+    const confirmationVersion = details.confirmationVersion || 0;
     try {
       const values = { limit: 30, kind, quality_view: state.qualityView };
       if (cursor) values.cursor = cursor;
       const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
-      const page = await api(route + encodeURIComponent(groupKey) + params(values));
-      if (!hiddenFace && filterSeq !== state.inboxFilterSeq) return;
-      page.faces.forEach((face) => renderInboxFace(list, face, Boolean(hiddenFace)));
-      more.hidden = !page.has_more; more.dataset.cursor = page.next_cursor || "";
+      const page = await readLoadedPages(route + encodeURIComponent(groupKey), values, "faces",
+        cursor ? 1 : Math.max(1, details.loadedPages || 0), current);
+      if (!page) return;
+      const shown = new Set(Array.from(list.children).map((card) => card.faceId));
+      page.faces.forEach((face) => {
+        if (!shown.has(String(face.face_id))) { renderInboxFace(list, face, Boolean(hiddenFace), details); shown.add(String(face.face_id)); }
+      });
+      more.hidden = !page.has_more;
+      details.loadedPages = cursor ? (details.loadedPages || 0) + page.loadedPages : Math.max(details.loadedPages || 0, page.loadedPages);
+      more.dataset.cursor = confirmationVersion === (details.confirmationVersion || 0) ? page.next_cursor || "" : "";
     } catch (error) { message(errorText(error)); }
     finally { more.disabled = false; }
   }
@@ -465,37 +588,53 @@
     more.className += " pa-inbox-group-more"; more.hidden = true;
     let loaded = false; details.groupKey = group.group_key;
     details.openGroup = () => {
-      if (!loaded) { loaded = true; loadInboxGroup(details, group.group_key, kind, null, hiddenFace); }
+      if (!loaded) { loaded = true; return loadInboxGroup(details, group.group_key, kind, null, hiddenFace); }
     };
     details.addEventListener("toggle", () => {
       if (details.open) details.openGroup();
+      else if (details.confirmationDirty) flushInboxConfirmations();
     });
     details.append(summary, list, more);
     return details;
   }
   async function loadInbox(more, reopenGroups) {
-    if (more && state.busy.has("inbox")) return;
+    if (more && (state.busy.has("inbox") || state.inboxConfirmationsPending)) return;
     const seq = ++state.inboxSeq; state.busy.add("inbox"); $("inbox-more").disabled = true;
     const values = { limit: 30, kind: $("inbox-kind").value || "all", quality_view: state.qualityView };
     const grouped = values.kind === "all" || values.kind === "suggested";
+    const binding = JSON.stringify(values), sameView = binding === state.inboxBinding;
+    const append = Boolean(more && state.inboxCursor && sameView);
+    const pageCount = append ? 1 : sameView ? Math.max(1, state.inboxPages) : 1;
+    const position = sameView ? captureLibraryPosition() : null;
+    const oldGroups = new Map(Array.from($("inbox-cards").children).filter((item) => item.groupKey).map((item) => [item.groupKey, item]));
+    const expanded = sameView ? reopenGroups || Array.from(oldGroups.values()).filter((item) => item.open).map((item) => item.groupKey) : [];
     if (more && state.inboxCursor) values.cursor = state.inboxCursor;
-    if (!more) { $("inbox-cards").replaceChildren(); state.inboxCursor = null; }
+    if (!sameView) { delete values.cursor; $("inbox-cards").replaceChildren(); state.inboxCursor = null; }
     try {
       const [page, summary] = await Promise.all([
-        api((grouped ? "/faces/inbox/groups" : "/faces/inbox") + params(values)), more ? Promise.resolve(null) : api("/faces/inbox/summary" + params({ quality_view: state.qualityView })),
+        readLoadedPages(grouped ? "/faces/inbox/groups" : "/faces/inbox", values, grouped ? "cards" : "faces",
+          pageCount, () => seq === state.inboxSeq), append ? Promise.resolve(null) : api("/faces/inbox/summary" + params({ quality_view: state.qualityView })),
       ]);
-      if (seq !== state.inboxSeq) return;
+      if (!page || seq !== state.inboxSeq) return;
+      if (!append) { state.inboxConfirmationsPending = false; $("inbox-cards").replaceChildren(); }
+      state.inboxBinding = binding; state.inboxPages = append ? state.inboxPages + page.loadedPages : pageCount;
       if (summary) $("inbox-note").textContent = inboxSummaryText(summary);
       if (grouped) page.cards.forEach((card) => $("inbox-cards").append(
         card.type === "candidate_group" ? renderInboxGroup(card, values.kind) : (() => {
-          const wrapper = node("div", undefined, "pa-inbox-single"); renderInboxFace(wrapper, card.face, false); return wrapper;
+          const wrapper = node("div", undefined, "pa-inbox-single"); wrapper.faceId = String(card.face.face_id); renderInboxFace(wrapper, card.face, false); return wrapper;
         })()));
       else page.faces.forEach((face) => renderInboxFace($("inbox-cards"), face, false));
-      if (reopenGroups && reopenGroups.length) Array.from($("inbox-cards").children).forEach((item) => {
-        if (item.groupKey && reopenGroups.includes(item.groupKey)) { item.open = true; item.openGroup(); }
+      const groupLoads = [];
+      if (!append && expanded.length) Array.from($("inbox-cards").children).forEach((item) => {
+        if (item.groupKey && expanded.includes(item.groupKey)) {
+          item.loadedPages = oldGroups.get(item.groupKey)?.loadedPages || 0;
+          item.open = true; groupLoads.push(item.openGroup());
+        }
       });
       state.inboxCursor = page.next_cursor; $("inbox-more").hidden = !page.has_more;
       if (!$("inbox-cards").children.length) $("inbox-cards").append(node("p", "暂时没有待归组的人脸。", "hint"));
+      await Promise.all(groupLoads);
+      if (seq === state.inboxSeq) restoreLibraryPosition(position);
     } catch (error) { if (seq === state.inboxSeq) message(errorText(error)); }
     finally { if (seq === state.inboxSeq) { state.busy.delete("inbox"); $("inbox-more").disabled = false; } }
   }
@@ -679,8 +818,10 @@
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
   function openAlbum(person) {
+    if (!$("library").hidden) state.libraryPosition = captureLibraryPosition();
     state.collection = null; state.collectionSeq++; state.person = person; state.coverMode = false; $("library").hidden = true; $("album").hidden = false;
     $("collection-people").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
+    $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true;
     $("photo-query").value = ""; state.searching = false; albumHeading(); loadPhotos(false);
     $("back").focus();
   }
@@ -908,7 +1049,7 @@
   async function loadChoices(more) {
     if (!state.edit || state.edit.mode === "name" || state.writing) return;
     const seq = ++state.choiceSeq; const editSeq = state.editSeq;
-    const query = $("edit-query").value.trim(); const values = { kind: "all", q: query, limit: 20 };
+    const query = $("edit-query").value.trim(); const values = { kind: "all", q: query, sort: "photos_desc", limit: 20 };
     if (more && state.choiceCursor && query === state.choiceQuery) values.cursor = state.choiceCursor;
     else $("choices").querySelectorAll(".pa-choice").forEach((item) => item.remove());
     state.choiceQuery = query; state.chosen = null; $("edit-submit").disabled = true;
@@ -955,6 +1096,7 @@
       state.createPersonIntent = null;
       clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true;
       $("edit").close(); state.editSeq++; state.choiceSeq++;
+      notifyPeopleChanged();
       message("已新建未命名人物（1 张脸）", true);
       loadPeople(false);
       if (state.organize) {
@@ -978,7 +1120,7 @@
   async function refreshAfterWrite(result, label) {
     rememberOperation(result, label); message(label, true);
     if ($("edit").open) $("edit").close(); state.editSeq++; state.choiceSeq++;
-    loadPeople(false); if (state.organize) loadInbox(false);
+    notifyPeopleChanged(); refreshPeopleViews();
     if (state.person) {
       const id = state.person.person_id;
       try { const person = await api("/persons/" + id); if (!state.person || id !== state.person.person_id) return;
@@ -1028,7 +1170,7 @@
     try {
       await api("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", { request_id: requestId(), expected_operation_revision: operation.operation_revision });
       clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。", true);
-      loadPeople(false); if (state.organize) loadInbox(false);
+      notifyPeopleChanged(); refreshPeopleViews();
       if (state.person) { state.person = await api("/persons/" + state.person.person_id); albumHeading(); state.searching = false; loadPhotos(false); }
     } catch (error) { message("无法撤销：" + errorText(error)); }
     finally { state.writing = false; $("undo").disabled = false; }
@@ -1049,8 +1191,14 @@
     });
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
     $("query").addEventListener("search", () => loadPeople(false));
-    $("person-sort").addEventListener("change", () => loadPeople(false));
-    $("refresh").addEventListener("click", () => { loadPeople(false); loadCollections(false); if (state.organize) loadInbox(false); });
+    $("refresh").addEventListener("click", refreshPeopleViews);
+    try { state.peopleChangeToken = window.localStorage.getItem("aisearch.persons.changed"); }
+    catch (error) { /* Browser storage is optional. */ }
+    window.addEventListener("focus", refreshChangedPeople);
+    window.addEventListener("pageshow", (event) => { if (event.persisted) refreshChangedPeople(); });
+    window.addEventListener("storage", (event) => {
+      if (event.key === "aisearch.persons.changed") refreshChangedPeople();
+    });
     $("more").addEventListener("click", () => loadPeople(true)); $("inbox-more").addEventListener("click", () => loadInbox(true));
     $("inbox-kind").addEventListener("change", () => {
       const cleared = state.selectedInboxFaces.size;
@@ -1085,7 +1233,7 @@
     $("collection-create").addEventListener("click", async () => { const collection = await createCollection(); if (collection) { $("collections-panel").hidden = false; message("已新建人物合集。", true); } });
     $("collections-more").addEventListener("click", () => loadCollections(true));
     $("collection-add").addEventListener("click", addSelectionToCollection);
-    $("collection-photos-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; loadPhotos(false); });
+    $("collection-photos-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; loadPhotos(false); });
     $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);

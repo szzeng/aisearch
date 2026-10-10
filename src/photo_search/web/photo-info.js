@@ -126,7 +126,11 @@
       })).then(function (entries) {
         if (!state.active) return;
         var canonicalIds = new Set();
-        entries.forEach(function (entry) {
+        entries.sort(function (a, b) {
+          return Number((b.person || {}).asset_count || 0) - Number((a.person || {}).asset_count || 0)
+            || Number((a.person || {}).canonical_person_id || (a.person || {}).person_id || a.face.assigned_person_id)
+             - Number((b.person || {}).canonical_person_id || (b.person || {}).person_id || b.face.assigned_person_id);
+        }).forEach(function (entry) {
           var face = entry.face, person = entry.person || {};
           var id = Number(person.canonical_person_id || person.person_id || face.assigned_person_id);
           if (!Number.isSafeInteger(id) || id < 1) return;

@@ -1,6 +1,15 @@
 # Development status
 
-更新：2026-10-10。当前规则：主架构需求修订 9、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
+
+## 当前：P4-PERSON-NAME-CASE-A — IMPLEMENTED / 相关验证与当前会话简要复核通过
+
+[实施卡](tasks/P4-PERSON-NAME-CASE-A.md)、[报告](reports/P4-PERSON-NAME-CASE-A.md)、[当前会话复核](reports/P4-PERSON-NAME-CASE-A-current-session-review.md)。姓名保存同名已忽略大小写，自己改写大小写可普通改名，旧存储/undo兼容。按用户要求，仅做相关测试并在当前会话简要复核，覆盖原全仓及独立 DS-H/Sol安排：相关 JUnit109/0/0/0，既有Ruff/Node与最新diff-check通过，复核未发现需继续修复的问题；未改产品代码、未重复pytest，不冒称独立审查或总项目PASS。历史全仓尝试仅保留报告，不扩展地点等范围。schema仍28，未访问真实库/当前服务；用户已授权将本会话全部人物修复整合本地提交，未授权推送。下一步仅用户重启刷新后少量试用。
+
+## 前序小修：P4-PERSON-SMALL-FIX-A — IMPLEMENTED / 定向验证通过；现场试用待确认
+
+[任务卡](tasks/P4-PERSON-SMALL-FIX-A.md)、[报告](reports/P4-PERSON-SMALL-FIX-A.md)。排序、大小写搜索、改名/合集刷新、移出恢复可见及待整理确认打勾已修。同日补齐待整理/未命名写后刷新保留已加载页数、展开组人脸页和浏览位置，最新游标重取成功才替换；新筛选仍从第一页。最新定向 JUnit 11/0/0/0，Ruff、Node、diff-check通过；前轮证据详见报告。schema仍28，未改身份/归属/人工锁/撤销协议；当前会话自检非独立DS-H/Sol。用户正常重启刷新后少量试用；旧已移出且隐藏人物用“已忽略人物”恢复。未访问真实库/现有服务、未跑全仓/GPU/模型/打包/浏览器矩阵、未提交/推送。
+
 ## P4-PERSON-INBOX-CREATE-A — 定向验证与当前会话工程复核通过；个人试用待确认
 
 [任务卡](tasks/P4-PERSON-INBOX-CREATE-A.md)、[实施报告](reports/P4-PERSON-INBOX-CREATE-A-implementation.md)、[复核卡](tasks/P4-PERSON-INBOX-CREATE-A-review.md)、[当前会话复核报告](reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)。schema27→28，新建人物仅归属所选单脸，新操作永不可撤销。后端与旧撤销 JUnit 40/0/0/0；原迁移组 13/0/0/0；DOM 1/0/0/0；复核修复回归与迁移组 16/0/0/0。Ruff、Node、py_compile、diff-check 通过。用户要求当前会话复核，受影响面工程复核通过（非独立 DS-H/Sol）；少量真实照片试用仍待确认。未跑全仓/浏览器矩阵/GPU/模型/打包，未访问 PhotoSearchData 或现有服务；未提交/推送。
@@ -84,4 +93,4 @@ P4-TEST-BASELINE及地点基线修绿卡保持DEFERRED；历史全量失败照�
 
 ## 下一步
 
-下一步由用户按任务卡用少量真实人物照片试用确认。当前会话复核是工程复核结论，不冒称独立 DS-H/Sol；真实 catalog 与浏览器矩阵未验证。
+下一步按 P4-PERSON-SMALL-FIX-A 修复卡正常重启/刷新后少量试用四项反馈。当前为实施与定向验证通过，不冒称独立 DS-H/Sol 或现场验收；不自动续开性能/工程卡。

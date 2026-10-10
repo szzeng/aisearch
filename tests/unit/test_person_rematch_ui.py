@@ -31,6 +31,7 @@ const faces = [
 ];
 const context = {
   URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout, clearTimeout,
+  window:{scrollY:0,addEventListener(){},localStorage:{getItem:()=>null,setItem(){}}},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic-csrf",addEventListener(){},
     getElementById:get,createElement:tag=>new Element(tag)},
   fetch:async (url, options) => {
@@ -42,7 +43,7 @@ const context = {
       posts++;
       if (fail) return {ok:false,status:503,json:async()=>({code:"TEMPORARY"})};
       value = await new Promise(resolve=>{reply=resolve;});
-    } else if (url === "/api/v1/faces/inbox/summary") {
+    } else if (url.startsWith("/api/v1/faces/inbox/summary?")) {
       value = {total:2,reasons:{BORDERLINE:1,SAME_IMAGE_CONFLICT:1},held:1};
     } else if (url.startsWith("/api/v1/faces/inbox/groups/candidate%3A")) value = {faces:[faces[0]],has_more:false,next_cursor:null};
     else if (url.startsWith("/api/v1/faces/inbox/groups?")) value = {cards:[
@@ -70,9 +71,9 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/groups/candidate%3A1?")));
   assert.equal(groupCard.children[1].children.length,1);
   const suggestedCard = groupCard.children[1].children[0];
-  assert.equal(suggestedCard.children[2].textContent,"确认是妈妈");
-  assert.equal(suggestedCard.children[3].textContent,"选其他人");
-  await suggestedCard.children[2].fire("click");
+  assert.equal(suggestedCard.confirmButton.textContent,"确认是妈妈");
+  assert.equal(suggestedCard.otherPersonButton.textContent,"选其他人");
+  await suggestedCard.confirmButton.fire("click");
   const confirm = requests.find(r=>r.url === "/api/v1/faces/" + faces[0].face_id + "/assignment");
   assert.equal(confirm.options.method,"PUT");
   assert.deepEqual(JSON.parse(confirm.options.body),{
@@ -80,7 +81,9 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
     action:"assign",target_person_id:17,expected_revision:4,
   });
   assert.equal(confirm.options.headers["X-CSRF-Token"],"synthetic-csrf");
-  assert.equal(get("pa-status").textContent,"已确认是“妈妈”");
+  assert.equal(suggestedCard.confirmButton.textContent,"✓ 已确认是妈妈");
+  assert.equal(suggestedCard.confirmButton.disabled,true);
+  assert.equal(get("pa-inbox-cards").children[0],groupCard,"confirmation keeps the expanded group in place");
   assert(get("pa-inbox-note").textContent.includes("另有 1 张脸等待识别更新确认"));
   assert.equal(ui.organizationText({quality_reason:"SMALL"}),"脸太小，需确认");
   assert.equal(ui.organizationText({organization_reason:"BLURRY"}),"脸有些模糊，需确认");

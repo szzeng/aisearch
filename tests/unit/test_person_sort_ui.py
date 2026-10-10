@@ -1,11 +1,11 @@
-"""Execute the real people-list UI and verify sort changes reset pagination."""
+"""All personal people views request global count order and independent first pages."""
 
 import shutil
 import subprocess
 from pathlib import Path
 
 
-def test_person_sort_ui_sends_selection_and_restarts_keyset() -> None:
+def test_person_sort_ui_sends_count_order_for_named_unnamed_and_hidden_pages() -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the person sort interaction check"
     script = r"""
@@ -20,18 +20,22 @@ class Element {
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const requests=[]; let page=0;
 const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
+ window:{addEventListener(){},location:{search:""}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url)=>{requests.push(url);if(url.includes("/persons/browse")){page++;return {ok:true,json:async()=>({persons:[{person_id:page,name:"person"+page,revision:1,asset_count:page,thumbnail_url:null}],has_more:true,next_cursor:"cursor-"+page})};}return {ok:true,json:async()=>({persons:[],faces:[],has_more:false,next_cursor:null})};}};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
- get("pa-person-sort").value="photos_desc";context.document.ready();await flush();
+ context.document.ready();await flush();
  assert.match(requests[0],/sort=photos_desc/);
- get("pa-person-sort").value="person_id";get("pa-person-sort").fire("change");await flush();
- assert.match(requests[1],/sort=person_id/);assert.doesNotMatch(requests[1],/cursor=/);
+ get("pa-organize").fire("click");await flush();
+ const browse=()=>requests.filter(url=>url.includes('/persons/browse?'));
+ assert.match(browse()[1],/sort=photos_desc/);assert.match(browse()[1],/kind=unnamed/);assert.doesNotMatch(browse()[1],/cursor=/);
  await get("pa-more").fire("click");await flush();
- assert.match(requests[2],/sort=person_id/);assert.match(requests[2],/cursor=cursor-2/);
+ assert.match(browse()[2],/sort=photos_desc/);assert.match(browse()[2],/cursor=cursor-2/);
+ get("pa-hidden-toggle").fire("click");await flush();
+ assert.match(browse()[3],/sort=photos_desc/);assert.match(browse()[3],/visibility=hidden/);assert.doesNotMatch(browse()[3],/cursor=/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

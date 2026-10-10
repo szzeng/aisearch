@@ -338,10 +338,17 @@ def people_page(
             )
     if query:
         # instr is literal, so '%'/'_' have no surprising wildcard meaning.
-        candidate_conditions.append(
-            "(instr(p.name, ?) > 0 OR EXISTS (SELECT 1 FROM person_aliases AS a WHERE a.person_id = p.person_id AND instr(a.alias, ?) > 0))"
+        # Search folding is independent of the case-sensitive persisted name_key.
+        catalog.connection.create_function(
+            "person_search_fold", 1,
+            lambda value: None if value is None else str(value).casefold(),
+            deterministic=True,
         )
-        candidate_parameters.extend([query, query])
+        candidate_conditions.append(
+            "(instr(person_search_fold(p.name), ?) > 0 OR EXISTS (SELECT 1 FROM person_aliases AS a "
+            "WHERE a.person_id = p.person_id AND instr(person_search_fold(a.alias), ?) > 0))"
+        )
+        candidate_parameters.extend([query.casefold(), query.casefold()])
     total_row = catalog.read_one(
         "SELECT COUNT(*) AS total FROM persons AS p WHERE "
         + " AND ".join(candidate_conditions),

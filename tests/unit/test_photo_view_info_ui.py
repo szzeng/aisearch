@@ -53,11 +53,15 @@ const context={document,window,navigator:{clipboard:{writeText:()=>Promise.rejec
   if(url.includes("/sources/3")) return ok({root_path:"D:\\"});
   if(url.includes("/sources/4")) return ok({root_path:"D:\\library"});
   if(url.endsWith("/assets/302/faces")) return ok({has_more:true,faces:[]});
+  if(url.endsWith("/assets/401/faces")) return ok({faces:[
+    {assigned_person_id:7,assigned_person_name:"爸爸",thumbnail_url:"/face/current"},
+    {assigned_person_id:9,assigned_person_name:"妈妈",thumbnail_url:"/face/mom"}]});
   if(url.endsWith("/faces")) return ok({has_more:true,faces:[
     {assigned_person_id:7,assigned_person_name:"爸爸",thumbnail_url:"/face/current"},
     {assigned_person_id:7,assigned_person_name:"爸爸",thumbnail_url:"/face/duplicate"},
     {assigned_person_id:8,assigned_person_name:"爸爸",thumbnail_url:"/face/merged"}]});
-  if(url.endsWith("/persons/7")) return ok({person_id:7,canonical_person_id:7,name:"爸爸",avatar_face_id:"a".repeat(64)});
+  if(url.endsWith("/persons/7")) return ok({person_id:7,canonical_person_id:7,name:"爸爸",avatar_face_id:"a".repeat(64),asset_count:2});
+  if(url.endsWith("/persons/9")) return ok({person_id:9,canonical_person_id:9,name:"妈妈",avatar_face_id:"b".repeat(64),asset_count:20});
   if(url.endsWith("/persons/8")) return ok({person_id:8,canonical_person_id:7,name:"爸爸",avatar_face_id:"a".repeat(64)});
   if(url.includes("/map/assets")) return ok({total:url.includes("asset_id=301")||url.includes("asset_id=302")?0:1});
   if(url.endsWith("/geo")) return ok({status:"VALID",input_revision:"sha-101",datum_status:"WGS84",normalized_wgs84:{latitude:0,longitude:0}});
@@ -86,6 +90,12 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(all(host,n=>n.className==="photo-info-person").length,1,"different person IDs merged to one canonical ID render once");
   assert.equal((fetches.filter(url=>url.endsWith("/faces"))).length,1,"the face list is fetched once");
   first.dispose(); assert.equal(maps[0].removed,true);
+
+  const ordered=context.window.AIPhotoInfo.render(host,401);
+  await flush();await flush();
+  const orderedPeople=all(host,n=>n.className==="photo-info-person");
+  assert.deepEqual(orderedPeople.map(n=>n.textContent),["妈妈","爸爸"],"all shared photo viewers put the most matched photos first");
+  ordered.dispose();
 
   const stale=context.window.AIPhotoInfo.render(host,201);
   const current=context.window.AIPhotoInfo.render(host,102);
@@ -130,7 +140,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-photo-view-a-4" in document
+        assert "/web/photo-info.js?v=p4-person-small-fix-a-1" in document
         assert "/web/photo-info.css?v=p4-photo-view-a-3" in document
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")

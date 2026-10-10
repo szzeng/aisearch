@@ -134,7 +134,8 @@ def normalize_person_name(value: Any) -> tuple[str, str]:
     Unicode NFC, every run of Unicode whitespace collapses to one ASCII space, and the
     result is trimmed. The display text keeps its case (no casefold, no NFKC, no pinyin, no
     simplified/traditional folding, no synonym or alias matching) and the key is the prefix
-    plus exactly that text.
+    plus exactly that text. Same-name comparison casefolds these stored keys separately
+    (ADR-0019); it never changes their persisted representation or old undo snapshots.
     """
     if not isinstance(value, str):
         raise fail(PERSON_NAME_INVALID, "a person name must be a string", field="name")
