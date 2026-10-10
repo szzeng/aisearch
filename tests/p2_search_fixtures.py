@@ -556,6 +556,15 @@ def install_source_places(catalog: Any) -> dict[str, int]:
             "latitude": 39.9042,
             "longitude": 116.4074,
             "population": 1000000,
+            "parent_dataset_place_id": "country-cn",
+        },
+        {
+            "dataset_place_id": "city-ae-tokyo",
+            "kind": "city",
+            "display_name": "东京",
+            "country_code": "JP",
+            "latitude": 35.6762,
+            "longitude": 139.6503,
             "parent_dataset_place_id": "country-jp",
         },
         {
@@ -587,6 +596,7 @@ def install_source_places(catalog: Any) -> dict[str, int]:
         "hangzhou": "city-aa-hangzhou",
         "west_lake": "city-ab-west-lake",
         "beijing": "city-ac-beijing",
+        "tokyo": "city-ae-tokyo",
         "hangzhou_homonym": "city-ad-hangzhou-homonym",
     }
     return {name: by_external_id[external_id] for name, external_id in names.items()}

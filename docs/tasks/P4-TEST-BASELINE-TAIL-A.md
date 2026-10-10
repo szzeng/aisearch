@@ -1,6 +1,6 @@
 # P4-TEST-BASELINE-TAIL-A — 地点测试基线最小收尾
 
-日期：2026-10-11。状态：**READY / 待实施**。立卡基线 `4b8d66e`（开工重核最新 master、工作区）；推荐 **GPT-6 Medium**。个人相册，**只做必要定向测试**，不开展全仓测试修绿工程。
+日期：2026-10-11。状态：**SCOPED PASS / 已完成**。立卡基线 `4b8d66e`；执行报告：[P4-TEST-BASELINE-TAIL-A](../reports/P4-TEST-BASELINE-TAIL-A.md)。个人相册，**只做必要定向测试**，不开展全仓测试修绿工程。
 
 关联：[四阶段总控](P4-TEST-BASELINE-CONTINUE-A.md)、[PLACE 残余报告](../reports/P4-TEST-BASELINE-PLACE-RESIDUAL-A.md)、[CORE 报告](../reports/P4-TEST-BASELINE-CORE-A.md)。四阶段定向各自通过，但 PLACE/CORE 为 PARTIAL；GC-A 全量历史结果 2,338 项（70 failures / 43 errors / 49 skipped）**未重跑**，不是当前已证实的剩余数。本卡不改写其他任务验收状态。
 

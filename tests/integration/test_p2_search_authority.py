@@ -63,6 +63,7 @@ def env(tmp_path: Any):
     hangzhou = source_places["hangzhou"]
     west_lake = source_places["west_lake"]
     beijing = source_places["beijing"]
+    tokyo = source_places["tokyo"]
     assign_place(
         catalog,
         asset_id=assets["杭州西湖 照片.jpg"],
@@ -87,6 +88,7 @@ def env(tmp_path: Any):
                 "hangzhou": hangzhou,
                 "west_lake": west_lake,
                 "beijing": beijing,
+                "tokyo": tokyo,
             },
         }
     finally:
@@ -103,7 +105,6 @@ def test_descendants_or_and_state_are_the_adr0005_semantics(env: dict[str, Any])
     places = env["places"]
     lake = assets["杭州西湖 照片.jpg"]
     image = assets["IMG_0001.JPG"]
-    sunset = assets["beach sunset.jpg"]
     home = assets["家 合影.jpg"]
 
     subtree = search_assets(catalog, place_ids=[places["hangzhou"]], include_descendants=True)
@@ -118,11 +119,28 @@ def test_descendants_or_and_state_are_the_adr0005_semantics(env: dict[str, Any])
     exact = search_assets(catalog, place_ids=[places["hangzhou"]], include_descendants=False)
     assert ids(exact["hits"]) == [image]
 
-    union = search_assets(catalog, place_ids=[places["hangzhou"], places["beijing"]])
-    assert sorted(ids(union["hits"])) == sorted([lake, image])
+    # Beijing belongs below China. A synthetic Tokyo asset proves that country filters
+    # do not cross the China/Japan boundary even when both countries are requested.
+    assign_place(
+        catalog,
+        asset_id=assets["beach sunset.jpg"],
+        place_id=places["tokyo"],
+        request_id="req-tokyo",
+    )
+    china = search_assets(catalog, place_ids=[places["china"]])
+    assert sorted(ids(china["hits"])) == sorted([lake, image])
+    china_tree = catalog.read_all(
+        "WITH RECURSIVE tree(place_id) AS (SELECT ? UNION ALL "
+        "SELECT p.place_id FROM places p JOIN tree t ON p.parent_place_id=t.place_id) "
+        "SELECT place_id FROM tree", (places["china"],)
+    )
+    assert places["beijing"] in {int(row[0]) for row in china_tree}
+    assert places["tokyo"] not in {int(row[0]) for row in china_tree}
+    union = search_assets(catalog, place_ids=[places["china"], places["tokyo"]])
+    assert sorted(ids(union["hits"])) == sorted([lake, image, assets["beach sunset.jpg"]])
 
     unassigned = search_assets(catalog, place_state="unassigned")
-    assert sorted(ids(unassigned["hits"])) == sorted([sunset, home])
+    assert sorted(ids(unassigned["hits"])) == [home]
 
     # Only a candidate-visibility change moves the suggestion revision; a place with no
     # resolution row and no dataset is deterministically empty, never "everything".

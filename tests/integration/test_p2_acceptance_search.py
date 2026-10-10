@@ -228,7 +228,7 @@ def test_place_and_source_filters_stay_exact_and_reject_illegal_combinations(
         country = places["china"]
         city = places["hangzhou"]
         homonym = places["hangzhou_homonym"]
-        custom = places["beijing"]
+        assigned_place = places["tokyo"]
         under_country = env.assets["杭州西湖 照片.jpg"]
         under_homonym = env.assets["beach sunset.jpg"]
         unassigned = env.assets["IMG_0001.JPG"]
@@ -250,8 +250,8 @@ def test_place_and_source_filters_stay_exact_and_reject_illegal_combinations(
             catalog,
             asset_id=unassigned,
             action="ASSIGN",
-            target_place_id=custom,
-            request_id="p2-08-case7-custom",
+            target_place_id=assigned_place,
+            request_id="p2-08-case7-tokyo",
         )
 
         # Ancestor expansion is a default, not an accident: the city is reachable from the

@@ -315,6 +315,13 @@ def test_cn_content_search_with_bound_synthetic_encoder(tmp_path):
 
 def test_cn_same_name_requires_parent_choice(api_env):
     install(api_env.service.catalog, api_env.tmp_path, duplicate=True)
+    ids = seed(api_env, count=2)
+    with api_env.service.catalog.write() as connection:
+        connection.execute(
+            "UPDATE asset_geo_facts SET latitude=31.4, longitude=121.5 WHERE asset_id=?",
+            (ids[1],),
+        )
+    resolve_batch(api_env.service.catalog, api_env.data_root)
 
     async def scenario(client):
         csrf = await api_env.authenticate(client)
@@ -325,8 +332,31 @@ def test_cn_same_name_requires_parent_choice(api_env):
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["needs_place_choice"] and len(body["place_choices"]) == 2
-        assert len({c["parent"] for c in body["place_choices"]}) == 2
+        assert body["needs_scope_choice"] is True
+        choices = [c for c in body["scope_choices"] if c["type"] == "place"]
+        assert len(choices) == 2
+        candidates = [choice["place"] for choice in choices]
+        assert len({
+            (candidate["parent"], candidate["source"], candidate["selection_ref"])
+            for candidate in candidates
+        }) == 2
+        plans = [choice["intent_plan"] for choice in choices]
+        assert len({(plan["place_kind"], str(plan["place_key"])) for plan in plans}) == 2
+        assert len({tuple((plan.get("place_selection") or {}).items()) for plan in plans}) == 2
+
+        selected_results = []
+        for index, (plan, expected_asset) in enumerate(zip(plans, ids, strict=True)):
+            selected = await client.post(
+                "/api/v1/search/place-aware",
+                json={"request_id": f"cn-selected-{index}", "original_query": "西湖区",
+                      "intent_plan": plan},
+                headers=api_env.post_headers(csrf),
+            )
+            assert selected.status_code == 200, selected.text
+            selected_body = selected.json()
+            assert selected_body["place_scope"]["key"] == str(plan["place_key"])
+            selected_results.append([int(row["asset_id"]) for row in selected_body["hits"]])
+        assert selected_results == [[ids[0]], [ids[1]]]
 
     api_env.scenario(scenario)
 

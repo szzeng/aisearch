@@ -15,6 +15,7 @@ from photo_search.catalog import schema
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     MIGRATION_FAILED,
+    PLACE_REFERENCED,
     SCHEMA_INCONSISTENT,
     SCHEMA_TOO_NEW,
     CatalogError,
@@ -169,6 +170,29 @@ def test_v4_to_v5_is_continuous_backed_up_and_lossless(
 
     again = migrate_database(path, data_root=data_root(tmp_path))
     assert again.applied == () and again.backup_path is None and again.previous_version == SUPPORTED
+
+
+def test_migrated_v4_user_custom_assignment_is_readable_and_protected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legal v4 USER/custom assignment stays visible and blocks retirement after upgrade."""
+    path = build_v4(tmp_path, monkeypatch)
+    catalog = Catalog.open(path, data_root=data_root(tmp_path))
+    try:
+        from photo_search.places.service import PlaceService
+
+        service = PlaceService(catalog)
+        view = service.asset_place(1)
+        place = service.get_place(1)
+        assert view["assignment"]["mode"] == "MANUAL_ASSIGNED"
+        assert view["assignment"]["origin"] == "MANUAL"
+        assert view["place"]["canonical_name"] == "外婆家"
+        assert place["origin"] == "USER" and place["kind"] == "custom"
+        with pytest.raises(CatalogError) as referenced:
+            service.retire_place(place_id=1)
+        assert referenced.value.code == PLACE_REFERENCED
+    finally:
+        catalog.close()
 
 
 def test_an_interrupted_0005_rolls_back_to_v4(
