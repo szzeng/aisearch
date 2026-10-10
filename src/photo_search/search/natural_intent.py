@@ -7,6 +7,7 @@ the semantic query, and ambiguous spellings are returned for explicit user choic
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, timedelta
 from typing import Any
 
@@ -15,6 +16,63 @@ _DATE_PATTERNS = (
     re.compile(r"(?P<year>20\d{2})-(?P<month>1[0-2]|0?[1-9])(?:-(?P<day>3[01]|[12]\d|0?[1-9]))?"),
 )
 _SEASONS = {"春": (3, 6), "夏": (6, 9), "秋": (9, 12)}
+
+
+def parse_collection_intent(text: str, *, connection: Any) -> dict[str, Any]:
+    """Resolve an explicitly referenced collection by its saved name, never by fuzzy match."""
+    raw = unicodedata.normalize("NFC", str(text or ""))
+    rows = connection.execute(
+        "SELECT collection_id, instance_token, name, revision FROM person_collections ORDER BY collection_id"
+    ).fetchall()
+    hits: list[tuple[int, int, Any]] = []
+    for row in rows:
+        name = unicodedata.normalize("NFC", str(row["name"])).strip()
+        if not name:
+            continue
+        pattern = r"\s+".join(re.escape(part) for part in name.split())
+        for match in re.finditer(pattern, raw, re.IGNORECASE):
+            # A collection becomes a hard filter only in an explicit collection/photo
+            # construction. Arbitrary occurrences such as "同事聚会" remain ordinary text.
+            tail = raw[match.end():].casefold()
+            prefix = raw[:match.start()].casefold()
+            if not (re.match(r"(?:合集|的照片|的图片|的合照|的合影|照片|图片|合照|合影)", tail)
+                    or (tail.startswith("的") and re.search(r"(?:照片|图片|合照|合影)$", tail))
+                    or (tail.startswith("的") and bool(tail[1:].strip()))
+                    or (tail.startswith("在") and re.search(r"(?:照片|图片|合照|合影)$", tail))
+                    or re.match(r"(?:和|与|、|及).{1,24}(?:的)?(?:照片|图片|合照|合影|合集)$", tail)
+                    or re.search(r"(?:人物)?合集(?:叫|是)?$", prefix)):
+                continue
+            hits.append((match.start(), match.end(), row))
+    # For overlapping names, keep the longest whole-name hit. Multiple distinct explicit
+    # collections are surfaced for a user choice rather than silently taking the first.
+    hits = [hit for hit in hits if not any(
+        other[0] <= hit[0] and other[1] >= hit[1]
+        and (other[1] - other[0] > hit[1] - hit[0]) for other in hits
+    )]
+    by_id = {int(hit[2]["collection_id"]): hit[2] for hit in hits}
+    if not by_id:
+        return {"state": "none", "choices": [], "content_query": raw}
+    if len(by_id) > 1:
+        residual = raw
+        for start, end in sorted({(hit[0], hit[1]) for hit in hits}, reverse=True):
+            residual = residual[:start] + " " + residual[end:]
+        residual = re.sub(r"(?:人物)?合集|(?:的)?(?:照片|图片|合照|合影)", " ", residual)
+        residual = re.sub(r"(?:和|与|或|或者|、|及)", " ", residual)
+        residual = re.sub(r"[，,。；;\s]+", " ", residual).strip()
+        return {"state": "ambiguous", "choices": [dict(row) for row in by_id.values()],
+                "content_query": residual or None}
+    selected_id, row = next(iter(by_id.items()))
+    # Remove the matched name and its collection marker; keep dates, place words and content.
+    start, end, _ = next(hit for hit in hits if int(hit[2]["collection_id"]) == selected_id)
+    remaining = raw[:start] + " " + raw[end:]
+    # A trailing "的照片/合集" belongs to the collection reference, while "在 ..." starts
+    # a place/content condition and is retained for the place parser.
+    remaining = re.sub(r"^\s*(?:合集|的照片|的图片|的合照|的合影|照片|图片|合照|合影)", " ", remaining)
+    remaining = re.sub(r"(?:的)?(?:照片|图片|合照|合影|合集)(?=\s*(?:$|[，,。；;]))", " ", remaining)
+    return {"state": "recognized", "choices": [dict(row)], "content_query": remaining.strip(),
+            "collection": {"collection_id": int(row["collection_id"]),
+                           "instance_token": str(row["instance_token"]),
+                           "revision": int(row["revision"]), "name": str(row["name"])} }
 
 
 def _bounds(year: int, month: int | None = None, day: int | None = None) -> tuple[str, str]:

@@ -10,6 +10,7 @@ connection is never touched from a second thread.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Mapping
 from email.utils import formatdate
@@ -2097,15 +2098,134 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
     parse_notice = None
     intent_plan = payload.intent_plan
+    collection_scope = None
+    query_source = original
+    if intent_plan and isinstance(intent_plan.get("collection_scope"), dict):
+        requested = intent_plan["collection_scope"]
+        try:
+            requested_id = int(requested.get("collection_id", 0))
+            requested_revision = int(requested.get("revision", -1))
+        except (TypeError, ValueError, OverflowError) as error:
+            raise ApiError(INVALID_CURSOR, "人物合集计划无效，请重新搜索", status=409) from error
+        requested_token = str(requested.get("instance_token", ""))
+        if requested_id < 1 or requested_revision < 0 or len(requested_token) != 32 or any(
+            character not in "0123456789abcdef" for character in requested_token
+        ):
+            raise ApiError(INVALID_CURSOR, "人物合集计划无效，请重新搜索", status=409)
+        current = person_collections._require_collection_instance(
+            service.catalog.connection, requested_id, requested_token,
+        )
+        if (int(current["revision"]) != requested_revision
+                or str(current["name"]) != str(requested.get("name", ""))):
+            raise ApiError(CATALOG_FILTER_REVISION_STALE, "人物合集已变化，请重新搜索", status=409)
+        collection_scope = {"collection_id": int(current["collection_id"]),
+                            "instance_token": str(current["instance_token"]),
+                            "revision": int(current["revision"]), "name": str(current["name"])}
+        query_source = str(intent_plan.get("collection_query", ""))
+        kind = intent_plan.get("place_kind", kind)
+        key = intent_plan.get("place_key", key)
+    elif intent_plan is not None and "collection_query" in intent_plan:
+        query_source = str(intent_plan.get("collection_query") or "")
+        kind = intent_plan.get("place_kind", kind)
+        key = intent_plan.get("place_key", key)
+    elif payload.cursor is None and intent_plan is None:
+        from photo_search.search.natural_intent import parse_collection_intent
+
+        parsed_collection = parse_collection_intent(original, connection=service.catalog.connection)
+        if parsed_collection["state"] == "ambiguous":
+            from photo_search.search.natural_intent import parse_natural_intent
+
+            natural = parse_natural_intent(parsed_collection.get("content_query") or "",
+                                           connection=service.catalog.connection)
+            choices = []
+            for row in parsed_collection["choices"]:
+                scope = {"collection_id": int(row["collection_id"]),
+                         "instance_token": str(row["instance_token"]),
+                         "revision": int(row["revision"]), "name": str(row["name"])}
+                choices.append({**scope, "intent_plan": {
+                    "original_query": original, "collection_scope": scope,
+                    "collection_query": parsed_collection.get("content_query") or "",
+                    "content_query": natural["content_query"],
+                    "capture_from": natural["capture_from"],
+                    "capture_to_exclusive": natural["capture_to_exclusive"],
+                    "person_ids": [int(item["person_id"]) for item in natural["choices"]],
+                    "person_names": [str(item["name"]) for item in natural["choices"]],
+                    "person_match": natural["person_match"], "place_kind": None, "place_key": None,
+                }})
+            return {"needs_collection_choice": True, "original_query": original,
+                    "collection_choices": choices}
+        if parsed_collection["state"] == "recognized":
+            collection_scope = parsed_collection["collection"]
+            query_source = parsed_collection["content_query"]
+            collection_name = str(collection_scope["name"]).casefold()
+            person_rows = service.catalog.read_all(
+                "SELECT DISTINCT p.person_id, p.name, a.alias FROM persons p LEFT JOIN person_aliases a "
+                "ON a.person_id=p.person_id WHERE p.merged_into IS NULL AND "
+                "(lower(p.name)=lower(?) OR lower(a.alias)=lower(?)) ORDER BY p.person_id",
+                (collection_scope["name"], collection_scope["name"]),
+            )
+            matching_people = [row for row in person_rows
+                               if str(row["name"] or "").casefold() == collection_name
+                               or str(row["alias"] or "").casefold() == collection_name]
+            matching_places = [item for item in place_choices.choices(
+                service.catalog, text=original, data_root=service.data_root
+            ) if any(str(spelling).casefold() == collection_name for spelling in
+                     [item.get("name", ""), *item.get("aliases", [])])]
+            if matching_people or matching_places:
+                from photo_search.search.natural_intent import parse_natural_intent
+
+                base_intent = parse_natural_intent(query_source, connection=service.catalog.connection)
+                base_plan = {"original_query": original, "collection_scope": collection_scope,
+                             "collection_query": query_source,
+                             "content_query": base_intent["content_query"],
+                             "capture_from": base_intent["capture_from"],
+                             "capture_to_exclusive": base_intent["capture_to_exclusive"],
+                             "person_ids": [int(item["person_id"]) for item in base_intent["choices"]],
+                             "person_names": [str(item["name"]) for item in base_intent["choices"]],
+                             "person_match": base_intent["person_match"],
+                             "place_kind": None, "place_key": None}
+                choices = [{"type": "collection", "label": "人物合集：" + collection_scope["name"],
+                            "intent_plan": base_plan}]
+                person_query = parse_natural_intent(original, connection=service.catalog.connection)
+                for person in matching_people:
+                    person_plan = dict(base_plan)
+                    person_plan.update({"collection_scope": None,
+                                        "collection_query": person_query["content_query"] or "",
+                                        "content_query": person_query["content_query"],
+                                        "person_ids": [int(person["person_id"])],
+                                        "person_names": [str(person["name"])]})
+                    choices.append({"type": "person", "label": "人物：" + str(person["name"]),
+                                    "person": {"person_id": int(person["person_id"]),
+                                               "name": str(person["name"])},
+                                    "intent_plan": person_plan})
+                for place in matching_places:
+                    place_intent = parse_natural_intent(
+                        str(place.get("content_query", "")), connection=service.catalog.connection
+                    )
+                    place_plan = dict(base_plan)
+                    place_plan.update({"collection_scope": None,
+                                       "collection_query": place.get("content_query", ""),
+                                       "content_query": place_intent["content_query"],
+                                       "capture_from": place_intent["capture_from"],
+                                       "capture_to_exclusive": place_intent["capture_to_exclusive"],
+                                       "person_ids": [int(item["person_id"]) for item in place_intent["choices"]],
+                                       "person_names": [str(item["name"]) for item in place_intent["choices"]],
+                                       "place_kind": place["kind"], "place_key": place["key"]})
+                    choices.append({"type": "place", "label": "地点：" + str(place["name"]),
+                                    "place": place, "intent_plan": place_plan})
+                return {"needs_scope_choice": True, "original_query": original,
+                        "scope_choices": choices}
+    elif payload.cursor is not None and intent_plan is None:
+        raise ApiError(INVALID_CURSOR, "合集搜索计划缺失，请重新搜索", status=409)
     if payload.place_cancelled:
         kind = key = None
-        query_text = (content if content is not None else original).strip() or None
+        query_text = (content if content is not None else query_source).strip() or None
     elif kind is None and key is None:
         from photo_search.places.natural_search import parse_place_query
 
         plan = parse_place_query(
-            original,
-            place_choices.choices(service.catalog, text=original, data_root=service.data_root),
+            query_source,
+            place_choices.choices(service.catalog, text=query_source, data_root=service.data_root),
         )
         if plan["state"] == "ambiguous":
             return {"needs_place_choice": True, "original_query": original,
@@ -2117,10 +2237,10 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
         else:
             # SearchRequest treats an empty text field as invalid; a blank query is the
             # documented pure-filter search, so normalize it to None at this boundary.
-            query_text = original.strip() or None
+            query_text = query_source.strip() or None
         parse_notice = plan["notice"]
     else:
-        query_text = (content if content is not None else original).strip() or None
+        query_text = (content if content is not None else query_source).strip() or None
     album_ids = None
     revision = None
     place_block = None
@@ -2162,6 +2282,8 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
             return {"needs_person_choice": True, "original_query": original,
                     "content_query": natural["content_query"], "person_choices": natural["choices"],
                     "intent_plan": {"original_query": original,
+                                    "collection_scope": collection_scope,
+                                    "collection_query": query_source,
                                     "content_query": natural["content_query"],
                                     "capture_from": natural["capture_from"],
                                     "capture_to_exclusive": natural["capture_to_exclusive"],
@@ -2186,6 +2308,8 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
         query_text = natural["content_query"]
         intent_plan = {
             "original_query": original,
+            "collection_scope": collection_scope,
+            "collection_query": query_source,
             "content_query": query_text,
             "capture_from": values_time["capture_from"],
             "capture_to_exclusive": values_time["capture_to_exclusive"],
@@ -2207,28 +2331,49 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
         values["person_match"] = intent_plan.get("person_match", values.get("person_match", "any"))
     envelope = SearchRequest.from_envelope(values)
     if kind is not None and key is not None and query_text is None:
-        result = _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block, original_query=original)
+        result = _place_album_search_page(service, envelope, kind=kind, key=str(key), album_ids=album_ids or [], collection=collection, place_block=place_block, original_query=original, person_collection=collection_scope)
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = intent_plan
+        _verify_person_collection(service.catalog, collection_scope)
         return result
     if envelope.text is None:
-        result = _filter_only_search_page(service, envelope)
+        result = _filter_only_search_page(service, envelope, collection_scope=collection_scope)
         result["original_query"] = original
         result["content_query"] = None
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = intent_plan
         result["place_scope"] = None
+        result["collection_scope"] = collection_scope
+        _verify_person_collection(service.catalog, collection_scope)
         return result
-    result = search_request(service.catalog, envelope, sessions=context.search_sessions, encoder=context.query_encoder(), reranker=context.reranker(), album_asset_ids=album_ids, album_scope_revision=revision)
+    collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
+    session_revision = tuple(revision or ()) + collection_revision
+    result = search_request(service.catalog, envelope, sessions=context.search_sessions, encoder=context.query_encoder(), reranker=context.reranker(), album_asset_ids=album_ids, album_scope_revision=session_revision or None, collection_id=None if collection_scope is None else collection_scope["collection_id"])
     result["place_scope"] = place_block
     result["original_query"] = original
     result["content_query"] = query_text
     result["place_parse_notice"] = parse_notice
     result["intent_plan"] = intent_plan
+    result["collection_scope"] = collection_scope
+    if collection_scope is not None:
+        result["filters"]["person_collection"] = dict(collection_scope)
+    _verify_person_collection(service.catalog, collection_scope)
     return result
 
 
-def _filter_only_search_page(service: Any, request: SearchRequest) -> dict[str, Any]:
+def _verify_person_collection(catalog: Any, collection_scope: dict[str, Any] | None) -> None:
+    if collection_scope is None:
+        return
+    row = catalog.read_one(
+        "SELECT instance_token, revision FROM person_collections WHERE collection_id = ?",
+        (int(collection_scope["collection_id"]),),
+    )
+    if (row is None or str(row["instance_token"]) != str(collection_scope["instance_token"])
+            or int(row["revision"]) != int(collection_scope["revision"])):
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "人物合集已变化，请重新搜索", status=409)
+
+
+def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None) -> dict[str, Any]:
     """Unbounded keyset pages for pure filters, without materializing IDs or sessions."""
     from photo_search.search.service import _person_authority_base
 
@@ -2239,15 +2384,20 @@ def _filter_only_search_page(service: Any, request: SearchRequest) -> dict[str, 
         place_ids=request.place_ids, include_descendants=request.include_descendants,
         place_state=request.place_state, person_ids=base.canonical_person_ids,
         person_match=request.person_match, capture=request.capture_range,
+        collection_id=None if collection_scope is None else collection_scope["collection_id"],
     )
-    fingerprint = json.dumps({
+    fingerprint_payload = json.dumps({
         "source_id": scope.source_id, "availability": scope.availability,
         "place_ids": list(scope.place_ids), "include_descendants": scope.include_descendants,
         "place_state": scope.place_state, "person_ids": list(scope.person_ids),
         "person_match": scope.person_match, "capture_from": request.capture_from,
         "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size,
+        "person_collection": collection_scope,
     }, sort_keys=True, separators=(",", ":"))
-    revisions = (base.filter_revision, base.suggestion_revision, "filter-only", fingerprint)
+    fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+    revisions = (base.filter_revision, base.suggestion_revision, "filter-only", fingerprint,
+                 None if collection_scope is None else collection_scope["instance_token"],
+                 None if collection_scope is None else collection_scope["revision"])
     session_id = "filter-only"
     if request.cursor is not None:
         if request.search_session_id != session_id:
@@ -2287,7 +2437,8 @@ def _filter_only_search_page(service: Any, request: SearchRequest) -> dict[str, 
                     "place_ids": list(scope.place_ids), "include_descendants": scope.include_descendants,
                     "place_state": scope.place_state, "person_ids": list(scope.person_ids),
                     "person_match": scope.person_match, "capture_from": request.capture_from,
-                    "capture_to_exclusive": request.capture_to_exclusive},
+                    "capture_to_exclusive": request.capture_to_exclusive,
+                    "person_collection": collection_scope},
         "hits": hits, "page_size": int(request.page_size), "page_offset": offset,
         "next_cursor": token, "has_more": has_more, "total_candidates": total,
         "candidates_truncated": False,
@@ -2300,7 +2451,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest) -> dict[str, 
     }
 
 
-def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str) -> dict[str, Any]:
+def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str, person_collection: dict[str, Any] | None = None) -> dict[str, Any]:
     """Uncapped SQLite pages for a pure selected place; keeps album membership authoritative."""
     catalog = service.catalog
     base = _person_authority_base(catalog, request)
@@ -2314,9 +2465,12 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         person_match=request.person_match,
         capture=request.capture_range,
         album_asset_ids=None if str(key).startswith("cn:") else album_ids,
+        collection_id=None if person_collection is None else person_collection["collection_id"],
     )
     filter_fingerprint = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": scope.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size}, sort_keys=True, separators=(",", ":"))
-    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint)
+    filter_payload = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": request.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size, "person_collection": person_collection}, sort_keys=True, separators=(",", ":"))
+    filter_fingerprint = hashlib.sha256(filter_payload.encode("utf-8")).hexdigest()
+    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint, None if person_collection is None else person_collection["instance_token"], None if person_collection is None else person_collection["revision"])
     session_id = f"place-album:{kind}:{key}"
     admin_page = str(key).startswith("cn:")
     if request.cursor is not None:
@@ -2367,7 +2521,8 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
                     "person_ids": list(scope.person_ids), "person_match": scope.person_match,
                     "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive,
                     "catalog_filter_revision": int(collection["catalog_filter_revision"]),
-                    "suggestion_revision": int(collection["suggestion_revision"])},
+                    "suggestion_revision": int(collection["suggestion_revision"]),
+                    "person_collection": person_collection},
         "hits": hits, "page_size": int(request.page_size), "page_offset": offset,
         "next_cursor": token, "has_more": has_more, "total_candidates": total,
         "candidates_truncated": False,
@@ -2377,7 +2532,8 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         "pending_semantic": None,
         "search_projection": _projection_block(catalog, match=None, catch_up=None),
         "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
-        "place_scope": place_block, "original_query": original_query, "content_query": None,
+        "place_scope": place_block, "collection_scope": person_collection,
+        "original_query": original_query, "content_query": None,
     }
 
 

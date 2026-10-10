@@ -230,6 +230,7 @@ def search_assets(
     vector_index: LanceVectorIndex | None = None,
     query_vector: Sequence[float] | None = None,
     album_asset_ids: Sequence[int] | None = None,
+    collection_id: int | None = None,
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -264,6 +265,7 @@ def search_assets(
         # ``label = capture`` rows may satisfy it.
         capture=capture,
         album_asset_ids=album_asset_ids,
+        collection_id=collection_id,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -977,6 +979,7 @@ def search_request(
     query_identity: str | None = None,
     album_asset_ids: Sequence[int] | None = None,
     album_scope_revision: Sequence[Any] | None = None,
+    collection_id: int | None = None,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1010,6 +1013,7 @@ def search_request(
             person_match=request.person_match,
             capture=capture,
             album_asset_ids=album_asset_ids,
+            collection_id=collection_id,
         )
 
     scope = build_scope(base.canonical_person_ids)
@@ -1113,6 +1117,7 @@ def search_request(
                 list(query_vector) if query_vector is not None and uses_vector_channel else None
             ),
             album_asset_ids=scope.album_asset_ids,
+            collection_id=scope.collection_id,
         )
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a

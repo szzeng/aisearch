@@ -33,6 +33,7 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.indexing.store import LanceVectorIndex
+from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places.filter import place_condition, place_filter_summary
 from photo_search.search import query as search_query
@@ -112,6 +113,8 @@ class SearchScope:
     #: P4-PLACE-SEARCH-A: effective personal album membership, resolved from the shared
     #: album reader before retrieval. None means unrestricted; an empty tuple means empty.
     album_asset_ids: tuple[int, ...] | None = None
+    #: A single parameterized person-collection scope. None means unrestricted.
+    collection_id: int | None = None
 
     @classmethod
     def build(
@@ -126,6 +129,7 @@ class SearchScope:
         person_match: str = "any",
         capture: time_contract.CaptureRange | None = None,
         album_asset_ids: Sequence[int] | None = None,
+        collection_id: int | None = None,
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -171,6 +175,7 @@ class SearchScope:
             album_asset_ids=(
                 None if album_asset_ids is None else tuple(sorted({int(v) for v in album_asset_ids}))
             ),
+            collection_id=None if collection_id is None else int(collection_id),
         )
 
 
@@ -273,6 +278,12 @@ def scope_condition(
             placeholders = ", ".join("?" for _ in scope.album_asset_ids)
             conditions.append(f"{alias}.asset_id IN ({placeholders})")
             parameters.extend(scope.album_asset_ids)
+    if scope.collection_id is not None:
+        collection_sql, collection_parameters = collection_condition(
+            scope.collection_id, alias=alias
+        )
+        conditions.append(collection_sql)
+        parameters.extend(collection_parameters)
     if scope.source_id is not None:
         # Set membership instead of a correlated ``EXISTS``: P4-01B measured the correlated
         # form at 19.4 s for ONE block of a 20 000-row generation (and >60 s at 300 000),

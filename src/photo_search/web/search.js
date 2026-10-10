@@ -948,6 +948,14 @@
           showPlaceChoices(body);
           return true;
         }
+        if (body && body.needs_collection_choice) {
+          showCollectionChoices(body);
+          return true;
+        }
+        if (body && body.needs_scope_choice) {
+          showScopeChoices(body);
+          return true;
+        }
         if (body && body.needs_person_choice) {
           showPersonChoices(body);
           return true;
@@ -1079,9 +1087,59 @@
     setStatus(els.queryStatus, "人物范围尚未确定，请选择后再搜索。", "error");
   }
 
+  function showCollectionChoices(body) {
+    clear(els.resultIntentScope);
+    els.resultIntentScope.hidden = false;
+    els.resultIntentScope.appendChild(element("span", "", "检测到多个同名合集，请选择："));
+    (body.collection_choices || []).forEach(function (collection) {
+      var button = element("button", "", String(collection.name || "人物合集"));
+      button.type = "button";
+      button.addEventListener("click", function () {
+        var plan = collection.intent_plan || { original_query: body.original_query,
+          collection_scope: { collection_id: Number(collection.collection_id),
+            instance_token: String(collection.instance_token), revision: Number(collection.revision),
+            name: String(collection.name) },
+          collection_query: "", content_query: "", capture_from: null,
+          capture_to_exclusive: null, person_ids: [], person_match: "any", person_names: [],
+          place_kind: null, place_key: null };
+        state.search.intentPlan = plan;
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        sendSearch(false);
+      });
+      els.resultIntentScope.appendChild(button);
+    });
+    setStatus(els.queryStatus, "人物合集范围尚未确定，请选择后再搜索。", "error");
+  }
+
+  function showScopeChoices(body) {
+    clear(els.resultIntentScope);
+    els.resultIntentScope.hidden = false;
+    els.resultIntentScope.appendChild(element("span", "", "该名称同时对应不同范围，请选择："));
+    (body.scope_choices || []).forEach(function (choice) {
+      var button = element("button", "", String(choice.label || "选择范围"));
+      button.type = "button";
+      button.addEventListener("click", function () {
+        state.search.intentPlan = choice.intent_plan || null;
+        state.search.placeAware = choice.type === "place" && choice.place ? {
+          original_query: body.original_query,
+          content_query: choice.place.content_query || "",
+          place_kind: choice.place.kind, place_key: choice.place.key,
+        } : null;
+        els.queryText.value = (choice.intent_plan && choice.intent_plan.content_query) || "";
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        state.search.binding = null;
+        sendSearch(false);
+      });
+      els.resultIntentScope.appendChild(button);
+    });
+    setStatus(els.queryStatus, "请先确定要搜索的人物、合集或地点。", "error");
+  }
+
   function renderIntentChips(plan) {
     clear(els.resultIntentScope);
-    if (!plan || (!plan.capture_from && !(plan.person_ids || []).length)) {
+    if (!plan || (!plan.collection_scope && !plan.capture_from && !(plan.person_ids || []).length)) {
       els.resultIntentScope.hidden = true;
       return;
     }
@@ -1092,6 +1150,18 @@
       button.type = "button";
       button.addEventListener("click", remove);
       els.resultIntentScope.appendChild(button);
+    }
+    if (plan.collection_scope) {
+      add("人物合集：" + String(plan.collection_scope.name || "合集"), function () {
+        plan.collection_scope = null;
+        state.search.intentPlan = plan;
+        els.queryText.value = plan.content_query || "";
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        state.search.binding = null;
+        clear(els.resultGrid);
+        sendSearch(false);
+      });
     }
     if (plan.capture_from) {
       add("拍摄时间：" + plan.capture_from + " 至 " + plan.capture_to_exclusive + "（不含）", function () {
@@ -1150,6 +1220,14 @@
     if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR") {
       state.search.sessionId = null;
       state.search.cursor = null;
+      els.loadMore.hidden = true;
+    }
+    if (failure.code === "CATALOG_FILTER_REVISION_STALE") {
+      state.search.sessionId = null;
+      state.search.cursor = null;
+      clear(els.resultGrid);
+      state.search.hits = [];
+      state.search.count = 0;
       els.loadMore.hidden = true;
     }
     setStatus(els.queryStatus, "本次查询没有成功：" + describe(failure), "error");

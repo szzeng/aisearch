@@ -1,6 +1,6 @@
 # P4-SEARCH-COLLECTION-A — 人物合集自然语言照片搜索
 
-日期：2026-10-10。状态：**READY / 待实施，只有任务设计，尚无实现或验收**。
+日期：2026-10-10。状态：**IMPLEMENTED / 任务卡定向合成验证通过 / 个人页面试用待确认**。实施报告：[P4-SEARCH-COLLECTION-A-implementation.md](../reports/P4-SEARCH-COLLECTION-A-implementation.md)。
 性质：个人相册增量功能，**一张卡、一次实现、少量必要定向测试**。
 实施推荐：**GPT-6 / High**；由用户在 Codex 手动选择，不自动切换模型。无新冻结协议或高风险争议时，完成后做一次完整新增受影响面聚焦复核即可，不默认全仓/多轮 Sol。
 立卡基线：GitHub `szzeng/aisearch` master `0736b843459a22d4883d6d21cc6340525ebbc166`（开始实施时重新核对最新 HEAD 和工作树，勿覆盖并行修改）。

@@ -2,13 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 当前：P4-PERSON-NAME-CASE-A — IMPLEMENTED / 相关验证与当前会话简要复核通过
+## 当前：P4-SEARCH-COLLECTION-A — IMPLEMENTED / 语义合集 500 回归已修复 / 定向验证通过
 
-[实施卡](tasks/P4-PERSON-NAME-CASE-A.md)、[报告](reports/P4-PERSON-NAME-CASE-A.md)、[当前会话复核](reports/P4-PERSON-NAME-CASE-A-current-session-review.md)。姓名保存同名已忽略大小写，自己改写大小写可普通改名，旧存储/undo兼容。按用户要求，仅做相关测试并在当前会话简要复核，覆盖原全仓及独立 DS-H/Sol安排：相关 JUnit109/0/0/0，既有Ruff/Node与最新diff-check通过，复核未发现需继续修复的问题；未改产品代码、未重复pytest，不冒称独立审查或总项目PASS。历史全仓尝试仅保留报告，不扩展地点等范围。schema仍28，未访问真实库/当前服务；用户已授权将本会话全部人物修复整合本地提交，未授权推送。下一步仅用户重启刷新后少量试用。
-
-## 新增待实施：P4-SEARCH-COLLECTION-A — READY / 仅任务设计
-
-[任务卡](tasks/P4-SEARCH-COLLECTION-A.md)。个人相册新增按真实人物合集名称自然语言搜索：复用合集 canonical 成员 SQL，单合集与时间/地点/语义取交集，纯条件完整 SQLite 分页，语义维持 Top5000，不展开普通搜索最多100个 `person_ids`；合集 `instance_token` / `revision` 绑定首次发布和续页，避免编辑后旧结果混入。只要求4组小型合成定向验证及用户少量页面试用；不迁移schema、不重建向量、不默认全仓/GPU/30万/打包。**本次仅新建文档并登记入口，未实施/运行测试/访问真实图库；不改变当前人物小修现场试用的交接。** 推荐 GPT-6 High，由用户手动选择。
+[实施卡](tasks/P4-SEARCH-COLLECTION-A.md)、[报告](reports/P4-SEARCH-COLLECTION-A-implementation.md)。合集自然语言查询接入统一 scope。修复两个现场反馈：`query_hash()` 不再收到不支持的合集参数；入口支持“合集名 + 的 + 内容词”（如“AI的裙子”），将“裙子”作为语义词并绑定 AI 合集。任务卡限定 JUnit 81/0/0/0，两个关键回归节点各 1/0/0/0，Ruff、Node、diff-check 通过。之前宽受影响面尝试的 4 个旧地点包兼容上限失败及 1 个缺失表夹具失败详见报告；未扩大修复无关夹具。未访问真实图库/运行中服务，现场刷新后试用待确认；不代表真实库验收。未做全仓/GPU/30万/打包/发行验证。
 
 ## 前序小修：P4-PERSON-SMALL-FIX-A — IMPLEMENTED / 定向验证通过；现场试用待确认
 
