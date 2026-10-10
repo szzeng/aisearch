@@ -1,0 +1,1062 @@
+{
+  "root": "D:\\SZ\\project\\aisearch\\tmp",
+  "method": "robocopy /L /E /XJ /BYTES: read-only listing; logical bytes, junctions skipped; exit 1 denotes hypothetical copies in listing",
+  "complete": true,
+  "items": [
+    {
+      "name": "docs-personal-scope",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :    109723    109723         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 109723,
+      "files": 8,
+      "dirs": 1
+    },
+    {
+      "name": "greps.txt",
+      "directory": false,
+      "bytes": 2,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "mk700",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p4-02m-after.log",
+      "directory": false,
+      "bytes": 11116,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02m-after2.log",
+      "directory": false,
+      "bytes": 765,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02m-before.log",
+      "directory": false,
+      "bytes": 11115,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02m-bounded-rounds3.log",
+      "directory": false,
+      "bytes": 24405,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02m-bounded-smoke.log",
+      "directory": false,
+      "bytes": 18273,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02m-bounded-vs-exhaustive.py",
+      "directory": false,
+      "bytes": 2479,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02n-nomodel.log",
+      "directory": false,
+      "bytes": 2582,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02n-real",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        18        18         0         0         0         0\r\n   Files :        16        16         0         0         0         0\r\n   Bytes :    856898    856898         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 856898,
+      "files": 16,
+      "dirs": 18
+    },
+    {
+      "name": "p4-02n-real-run.log",
+      "directory": false,
+      "bytes": 6831,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02o-build",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        47        47         0         0         0         0\r\n   Files :        43        43         0         0         0         0\r\n   Bytes :   1156551   1156551         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 1156551,
+      "files": 43,
+      "dirs": 47
+    },
+    {
+      "name": "p4-02o-run.log",
+      "directory": false,
+      "bytes": 12960,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02p-build.err",
+      "directory": false,
+      "bytes": 860,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02p-thumbs.err",
+      "directory": false,
+      "bytes": 1040,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02q-build2.err",
+      "directory": false,
+      "bytes": 0,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02r.log",
+      "directory": false,
+      "bytes": 4898,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02s-queries.log",
+      "directory": false,
+      "bytes": 5124,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02s-thumbs.err",
+      "directory": false,
+      "bytes": 0,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02s-thumbs2.err",
+      "directory": false,
+      "bytes": 0,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02t-upload",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        17        17         0         0         0         0\r\n   Files :        14        14         0         0         0         0\r\n   Bytes :    836712    836712         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 836712,
+      "files": 14,
+      "dirs": 17
+    },
+    {
+      "name": "p4-02w",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                 Total      Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     1221347     1221347         0         0         0         0\r\n   Files :      632035      632035         0         0         0         0\r\n   Bytes : 10063627184 10063627184         0         0         0         0\r\n   Times :     0:01:20     0:00:00                       0:00:00   0:01:20\r\n   Ended : 2026年10月3日 0:24:58\r\n\r\n",
+      "bytes": 10063627184,
+      "files": 632035,
+      "dirs": 1221347
+    },
+    {
+      "name": "p4-02x-attribution.log",
+      "directory": false,
+      "bytes": 128,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02x-fallback-probe.py",
+      "directory": false,
+      "bytes": 6451,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02x-offline.log",
+      "directory": false,
+      "bytes": 11740,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02x-pytest",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     23773     23770         3         0         0         0\r\n   Files :     17941     17941         0         0         0         0\r\n   Bytes : 823835670 823835670         0         0         0         0\r\n   Times :   0:00:01   0:00:00                       0:00:00   0:00:01\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 823835670,
+      "files": 17941,
+      "dirs": 23773
+    },
+    {
+      "name": "p4-02x-review-commit-msg.txt",
+      "directory": false,
+      "bytes": 2837,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02x-ties",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        72        72         0         0         0         0\r\n   Files :       157       157         0         0         0         0\r\n   Bytes :   1506439   1506439         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 1506439,
+      "files": 157,
+      "dirs": 72
+    },
+    {
+      "name": "p4-02x-warm-text-control.log",
+      "directory": false,
+      "bytes": 131,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02x-warm-text.log",
+      "directory": false,
+      "bytes": 118,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-02y",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     578174     578174         0         0         0         0\r\n   Files :     298644     298644         0         0         0         0\r\n   Bytes : 6476277497 6476277497         0         0         0         0\r\n   Times :    0:00:56    0:00:00                       0:00:00   0:00:56\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 6476277497,
+      "files": 298644,
+      "dirs": 578174
+    },
+    {
+      "name": "p4-02y-i-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :       261       261         0         0         0         0\r\n   Files :       172       172         0         0         0         0\r\n   Bytes :   7435265   7435265         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 7435265,
+      "files": 172,
+      "dirs": 261
+    },
+    {
+      "name": "p4-02y-j",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        37        37         0         0         0         0\r\n   Files :        27        27         0         0         0         0\r\n   Bytes : 210797556 210797556         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 210797556,
+      "files": 27,
+      "dirs": 37
+    },
+    {
+      "name": "p4-02y-k",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p4-02y-k-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         3         3         0         0         0         0\r\n   Bytes :      7385      7385         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 7385,
+      "files": 3,
+      "dirs": 1
+    },
+    {
+      "name": "p4-02y-l",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        85        85         0         0         0         0\r\n   Files :        62        62         0         0         0         0\r\n   Bytes :  68001400  68001400         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 68001400,
+      "files": 62,
+      "dirs": 85
+    },
+    {
+      "name": "p4-02y-p",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         64         64         0         0         0         0\r\n   Files :         61         61         0         0         0         0\r\n   Bytes : 1154748178 1154748178         0         0         0         0\r\n   Times :    0:00:00    0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 1154748178,
+      "files": 61,
+      "dirs": 64
+    },
+    {
+      "name": "p4-02y-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         5         5         0         0         0         0\r\n   Files :         6         6         0         0         0         0\r\n   Bytes :    788052    788052         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 788052,
+      "files": 6,
+      "dirs": 5
+    },
+    {
+      "name": "p4-02y-t",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         2         2         0         0         0         0\r\n   Files :        10        10         0         0         0         0\r\n   Bytes :    148597    148597         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 148597,
+      "files": 10,
+      "dirs": 2
+    },
+    {
+      "name": "p4-02y-v-top-k.py",
+      "directory": false,
+      "bytes": 5627,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p4-embedding-arch",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         72         72         0         0         0         0\r\n   Files :        122        122         0         0         0         0\r\n   Bytes : 5021268889 5021268889         0         0         0         0\r\n   Times :    0:00:00    0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 5021268889,
+      "files": 122,
+      "dirs": 72
+    },
+    {
+      "name": "p4-person-ux",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         2         2         0         0         0         0\r\n   Files :         2         2         0         0         0         0\r\n   Bytes :      7622      7622         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:38\r\n\r\n",
+      "bytes": 7622,
+      "files": 2,
+      "dirs": 2
+    },
+    {
+      "name": "p4-qwen-speed",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     110853     110853         0         0         0         0\r\n   Files :      60183      60183         0         0         0         0\r\n   Bytes : 4810399000 4810399000         0         0         0         0\r\n   Times :    0:00:11    0:00:00                       0:00:00   0:00:11\r\n   Ended : 2026年10月3日 0:23:50\r\n\r\n",
+      "bytes": 4810399000,
+      "files": 60183,
+      "dirs": 110853
+    },
+    {
+      "name": "p401-commit-msg.txt",
+      "directory": false,
+      "bytes": 1238,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401b-commit-msg.txt",
+      "directory": false,
+      "bytes": 1417,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401b2-commit-msg.txt",
+      "directory": false,
+      "bytes": 2010,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401c-closure-commit-msg.txt",
+      "directory": false,
+      "bytes": 2418,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401c-commit-msg.txt",
+      "directory": false,
+      "bytes": 2679,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401c-fix-commit-msg.txt",
+      "directory": false,
+      "bytes": 2795,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p401c-fix2-commit-msg.txt",
+      "directory": false,
+      "bytes": 3346,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402-m-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :      2574      2574         0         0         0         0\r\n   Files :      1542      1542         0         0         0         0\r\n   Bytes :  25982753  25982753         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 25982753,
+      "files": 1542,
+      "dirs": 2574
+    },
+    {
+      "name": "p402-review-limit",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        16        16         0         0         0         0\r\n   Files :        13        13         0         0         0         0\r\n   Bytes :    794266    794266         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 794266,
+      "files": 13,
+      "dirs": 16
+    },
+    {
+      "name": "p402-review-mpo",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :      2846      2846         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 2846,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "p402-review-probe",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         4         4         0         0         0         0\r\n   Files :         3         3         0         0         0         0\r\n   Bytes :    779584    779584         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 779584,
+      "files": 3,
+      "dirs": 4
+    },
+    {
+      "name": "p402-review-t-parity",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes :      5940      5940         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 5940,
+      "files": 8,
+      "dirs": 1
+    },
+    {
+      "name": "p402a-commit-msg.txt",
+      "directory": false,
+      "bytes": 1931,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402a-fix-commit-msg.txt",
+      "directory": false,
+      "bytes": 2001,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402a-review-commit-msg.txt",
+      "directory": false,
+      "bytes": 2126,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402b-dsh",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        12        12         0         0         0         0\r\n   Files :         8         8         0         0         0         0\r\n   Bytes : 146809726 146809726         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:40\r\n\r\n",
+      "bytes": 146809726,
+      "files": 8,
+      "dirs": 12
+    },
+    {
+      "name": "p402b-dsh 复核 验证",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     31493     31493         0         0         0         0\r\n   Files :     31824     31824         0         0         0         0\r\n   Bytes : 241854481 241854481         0         0         0         0\r\n   Times :   0:00:03   0:00:00                       0:00:00   0:00:03\r\n   Ended : 2026年10月3日 0:23:44\r\n\r\n",
+      "bytes": 241854481,
+      "files": 31824,
+      "dirs": 31493
+    },
+    {
+      "name": "p402b-dsh-rerun.txt",
+      "directory": false,
+      "bytes": 4209,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402b-dsh-run1",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:44\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402c-commit-msg.txt",
+      "directory": false,
+      "bytes": 3035,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402c-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     13676     13676         0         0         0         0\r\n   Files :      7439      7439         0         0         0         0\r\n   Bytes : 145507986 145507986         0         0         0         0\r\n   Times :   0:00:01   0:00:00                       0:00:00   0:00:01\r\n   Ended : 2026年10月3日 0:23:46\r\n\r\n",
+      "bytes": 145507986,
+      "files": 7439,
+      "dirs": 13676
+    },
+    {
+      "name": "p402c-review2",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         2         2         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:46\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 2
+    },
+    {
+      "name": "p402c-sol",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :      4064      4064         0         0         0         0\r\n   Files :      2171      2171         0         0         0         0\r\n   Bytes :  41053094  41053094         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:46\r\n\r\n",
+      "bytes": 41053094,
+      "files": 2171,
+      "dirs": 4064
+    },
+    {
+      "name": "p402d",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         5         5         0         0         0         0\r\n   Bytes :     31101     31101         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:23:46\r\n\r\n",
+      "bytes": 31101,
+      "files": 5,
+      "dirs": 1
+    },
+    {
+      "name": "p402d 归因",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     229584     229584         0         0         0         0\r\n   Files :     121690     121690         0         0         0         0\r\n   Bytes : 1807433524 1807433524         0         0         0         0\r\n   Times :    0:00:25    0:00:00                       0:00:00   0:00:25\r\n   Ended : 2026年10月3日 0:24:11\r\n\r\n",
+      "bytes": 1807433524,
+      "files": 121690,
+      "dirs": 229584
+    },
+    {
+      "name": "p402d 归因 验证",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     609355     609355         0         0         0         0\r\n   Files :     612681     612681         0         0         0         0\r\n   Bytes : 6811904039 6811904039         0         0         0         0\r\n   Times :    0:01:28    0:00:00                       0:00:00   0:01:28\r\n   Ended : 2026年10月3日 0:25:18\r\n\r\n",
+      "bytes": 6811904039,
+      "files": 612681,
+      "dirs": 609355
+    },
+    {
+      "name": "p402d-dsh",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :      4233      4233         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:11\r\n\r\n",
+      "bytes": 4233,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "p402e",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :        10        10         0         0         0         0\r\n   Bytes :     62668     62668         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:12\r\n\r\n",
+      "bytes": 62668,
+      "files": 10,
+      "dirs": 1
+    },
+    {
+      "name": "p402e 主审 10k",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     20264     20264         0         0         0         0\r\n   Files :     20158     20158         0         0         0         0\r\n   Bytes : 193134499 193134499         0         0         0         0\r\n   Times :   0:00:02   0:00:00                       0:00:00   0:00:02\r\n   Ended : 2026年10月3日 0:24:14\r\n\r\n",
+      "bytes": 193134499,
+      "files": 20158,
+      "dirs": 20264
+    },
+    {
+      "name": "p402e 领取 10k",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     20264     20264         0         0         0         0\r\n   Files :     20158     20158         0         0         0         0\r\n   Bytes : 193134501 193134501         0         0         0         0\r\n   Times :   0:00:02   0:00:00                       0:00:00   0:00:02\r\n   Ended : 2026年10月3日 0:24:17\r\n\r\n",
+      "bytes": 193134501,
+      "files": 20158,
+      "dirs": 20264
+    },
+    {
+      "name": "p402e 领取 回归",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     602153     602153         0         0         0         0\r\n   Files :     606982     606982         0         0         0         0\r\n   Bytes : 5905108963 5905108963         0         0         0         0\r\n   Times :    0:01:40    0:00:00                       0:00:00   0:01:40\r\n   Ended : 2026年10月3日 0:25:57\r\n\r\n",
+      "bytes": 5905108963,
+      "files": 606982,
+      "dirs": 602153
+    },
+    {
+      "name": "p402e-claim-probe",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-claim-probe-detail",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-claim-probe-index",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-claim-probe-index2",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-claim-probe-noanalyze",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-claim-probe-smoke",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-diag",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes : 126517248 126517248         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 126517248,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-distinct",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes : 111808512 111808512         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 111808512,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-lease",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :  37105664  37105664         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 37105664,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-opcodes",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :  37101568  37101568         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 37101568,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-partial",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes : 102621184 102621184         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 102621184,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-partial-correctness",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :    995328    995328         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 995328,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-diag-pinned",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes : 111808512 111808512         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 111808512,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-diag-plain",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :  25841664  25841664         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 25841664,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "p402e-diag-walk",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         3         3         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes : 111804416 111804416         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 111804416,
+      "files": 1,
+      "dirs": 3
+    },
+    {
+      "name": "p402e-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        45        45         0         0         0         0\r\n   Files :        16        16         0         0         0         0\r\n   Bytes : 579980762 579980762         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 579980762,
+      "files": 16,
+      "dirs": 45
+    },
+    {
+      "name": "p402f",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         9         9         0         0         0         0\r\n   Files :        15        15         0         0         0         0\r\n   Bytes :     32579     32579         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:34\r\n\r\n",
+      "bytes": 32579,
+      "files": 15,
+      "dirs": 9
+    },
+    {
+      "name": "p402f-阶段0",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     800541     800541         0         0         0         0\r\n   Files :     806134     806134         0         0         0         0\r\n   Bytes : 7814349752 7814349752         0         0         0         0\r\n   Times :    0:02:07    0:00:00                       0:00:00   0:02:07\r\n   Ended : 2026年10月3日 0:26:42\r\n\r\n",
+      "bytes": 7814349752,
+      "files": 806134,
+      "dirs": 800541
+    },
+    {
+      "name": "p402h-recheck",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :        85        85         0         0         0         0\r\n   Files :       104       104         0         0         0         0\r\n   Bytes :  19575846  19575846         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:58\r\n\r\n",
+      "bytes": 19575846,
+      "files": 104,
+      "dirs": 85
+    },
+    {
+      "name": "p402h-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :     13371     13371         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:24:58\r\n\r\n",
+      "bytes": 13371,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "p402i-isolation",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :      8377      8377         0         0         0         0\r\n   Files :      4283      4283         0         0         0         0\r\n   Bytes :  81574098  81574098         0         0         0         0\r\n   Times :   0:00:01   0:00:00                       0:00:00   0:00:01\r\n   Ended : 2026年10月3日 0:25:00\r\n\r\n",
+      "bytes": 81574098,
+      "files": 4283,
+      "dirs": 8377
+    },
+    {
+      "name": "p402i-smoke",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :       953       953         0         0         0         0\r\n   Files :       571       571         0         0         0         0\r\n   Bytes :  18461433  18461433         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:25:00\r\n\r\n",
+      "bytes": 18461433,
+      "files": 571,
+      "dirs": 953
+    },
+    {
+      "name": "p402j-contention",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         2         2         0         0         0         0\r\n   Files :         6         6         0         0         0         0\r\n   Bytes :     41359     41359         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:25:00\r\n\r\n",
+      "bytes": 41359,
+      "files": 6,
+      "dirs": 2
+    },
+    {
+      "name": "p402j-contention-close",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     993712     993712         0         0         0         0\r\n   Files :     698758     698758         0         0         0         0\r\n   Bytes : 9882239243 9882239243         0         0         0         0\r\n   Times :    0:02:12    0:00:00                       0:00:00   0:02:12\r\n   Ended : 2026年10月3日 0:27:12\r\n\r\n",
+      "bytes": 9882239243,
+      "files": 698758,
+      "dirs": 993712
+    },
+    {
+      "name": "p402j-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     40414     40414         0         0         0         0\r\n   Files :     20217     20217         0         0         0         0\r\n   Bytes : 358555325 358555325         0         0         0         0\r\n   Times :   0:00:06   0:00:00                       0:00:00   0:00:06\r\n   Ended : 2026年10月3日 0:25:25\r\n\r\n",
+      "bytes": 358555325,
+      "files": 20217,
+      "dirs": 40414
+    },
+    {
+      "name": "p402j-争用",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     600434     600434         0         0         0         0\r\n   Files :     300265     300265         0         0         0         0\r\n   Bytes : 5339504190 5339504190         0         0         0         0\r\n   Times :    0:01:40    0:00:00                       0:00:00   0:01:40\r\n   Ended : 2026年10月3日 0:27:06\r\n\r\n",
+      "bytes": 5339504190,
+      "files": 300265,
+      "dirs": 600434
+    },
+    {
+      "name": "p402j-覆盖",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     800617     800617         0         0         0         0\r\n   Files :     806328     806328         0         0         0         0\r\n   Bytes : 7888623271 7888623271         0         0         0         0\r\n   Times :    0:01:58    0:00:00                       0:00:00   0:01:58\r\n   Ended : 2026年10月3日 0:27:56\r\n\r\n",
+      "bytes": 7888623271,
+      "files": 806328,
+      "dirs": 800617
+    },
+    {
+      "name": "p402m-blocksize-commit-msg.txt",
+      "directory": false,
+      "bytes": 4554,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402m-flat-exact-commit-msg.txt",
+      "directory": false,
+      "bytes": 1086,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402m-status-commit-msg.txt",
+      "directory": false,
+      "bytes": 786,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402n-t-commit-msg.txt",
+      "directory": false,
+      "bytes": 993,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p402u",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         2         2         0         0         0         0\r\n   Files :        30        30         0         0         0         0\r\n   Bytes :   7019632   7019632         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:42\r\n\r\n",
+      "bytes": 7019632,
+      "files": 30,
+      "dirs": 2
+    },
+    {
+      "name": "p402v",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :        11        11         0         0         0         0\r\n   Bytes :    311937    311937         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:42\r\n\r\n",
+      "bytes": 311937,
+      "files": 11,
+      "dirs": 1
+    },
+    {
+      "name": "p402v-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :     15990     15987         3         0         0         0\r\n   Files :     13571     13571         0         0         0         0\r\n   Bytes : 728227409 728227409         0         0         0         0\r\n   Times :   0:00:02   0:00:00                       0:00:00   0:00:02\r\n   Ended : 2026年10月3日 0:26:44\r\n\r\n",
+      "bytes": 728227409,
+      "files": 13571,
+      "dirs": 15990
+    },
+    {
+      "name": "p402x-commit-msg.txt",
+      "directory": false,
+      "bytes": 5807,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "p405-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :      82241      82226        15         0         0         0\r\n   Files :      69601      69601         0         0         0         0\r\n   Bytes : 3739046674 3739046674         0         0         0         0\r\n   Times :    0:00:11    0:00:00                       0:00:00   0:00:11\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 3739046674,
+      "files": 69601,
+      "dirs": 82241
+    },
+    {
+      "name": "p405-sol-disclosure-review",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         2         2         0         0         0         0\r\n   Bytes :      6402      6402         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 6402,
+      "files": 2,
+      "dirs": 1
+    },
+    {
+      "name": "ps-visibility-test",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :        15        15         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 15,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "qwen-speed-env",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :       1909       1909         0         0         0         0\r\n   Files :      21461      21461         0         0         0         0\r\n   Bytes : 7710275281 7710275281         0         0         0         0\r\n   Times :    0:00:00    0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 7710275281,
+      "files": 21461,
+      "dirs": 1909
+    },
+    {
+      "name": "qwen-speed-model",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n                Total     Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :          9          9         0         0         0         0\r\n   Files :         38         38         0         0         0         0\r\n   Bytes : 4271086839 4271086839         0         0         0         0\r\n   Times :    0:00:00    0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 4271086839,
+      "files": 38,
+      "dirs": 9
+    },
+    {
+      "name": "qwen-speed-model-hf-cache",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         8         8         0         0         0         0\r\n   Files :         2         2         0         0         0         0\r\n   Bytes :        40        40         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 40,
+      "files": 2,
+      "dirs": 8
+    },
+    {
+      "name": "review-py-mk",
+      "directory": true,
+      "exit_code": 0,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         0         0         0         0         0         0\r\n   Bytes :         0         0         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 0,
+      "files": 0,
+      "dirs": 1
+    },
+    {
+      "name": "search-reevaluation",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :      2281      2281         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 2281,
+      "files": 1,
+      "dirs": 1
+    },
+    {
+      "name": "search-reevaluation-sdk",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         5         5         0         0         0         0\r\n   Files :        10        10         0         0         0         0\r\n   Bytes :      4029      4029         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 4029,
+      "files": 10,
+      "dirs": 5
+    },
+    {
+      "name": "uv-b67700ac461bb3f3.lock",
+      "directory": false,
+      "bytes": 0,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "v30-head.md",
+      "directory": false,
+      "bytes": 110647,
+      "files": 1,
+      "dirs": 0,
+      "exit_code": 0
+    },
+    {
+      "name": "__pycache__",
+      "directory": true,
+      "exit_code": 1,
+      "raw_summary": "\r\n\r\n------------------------------------------------------------------------------\r\n\r\n               Total    Copied   Skipped  Mismatch    FAILED    Extras\r\n    Dirs :         1         1         0         0         0         0\r\n   Files :         1         1         0         0         0         0\r\n   Bytes :     10668     10668         0         0         0         0\r\n   Times :   0:00:00   0:00:00                       0:00:00   0:00:00\r\n   Ended : 2026年10月3日 0:26:56\r\n\r\n",
+      "bytes": 10668,
+      "files": 1,
+      "dirs": 1
+    }
+  ]
+}

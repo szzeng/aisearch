@@ -1,0 +1,60 @@
+[
+  {
+    "path": "tmp/p4-embedding-arch/smoke/data/models",
+    "bytes": 5020018546,
+    "files": 10,
+    "dirs": 5
+  },
+  {
+    "path": "tmp/p4-02y-p/asia-package",
+    "bytes": 12192894,
+    "files": 5,
+    "dirs": 1
+  },
+  {
+    "path": "tmp/p4-02y-p/asia-cities.spec.json",
+    "bytes": 15542003
+  },
+  {
+    "path": "tmp/p4-02y-p/raw",
+    "bytes": 0,
+    "files": 0,
+    "dirs": 1
+  },
+  {
+    "path": "tmp/p4-02y-p/raw-2026-09-15",
+    "bytes": 1043548845,
+    "files": 6,
+    "dirs": 1
+  },
+  {
+    "path": "tmp/p4-02y-p/raw-official-2026-09-29",
+    "bytes": 55497717,
+    "files": 3,
+    "dirs": 1
+  },
+  {
+    "path": "tmp/p4-02y-p/verify",
+    "bytes": 27151149,
+    "files": 18,
+    "dirs": 29
+  },
+  {
+    "path": "tmp/p4-qwen-speed/data-2048",
+    "bytes": 4810396091,
+    "files": 60180,
+    "dirs": 110852
+  },
+  {
+    "path": "tmp/p402f-阶段0/scale-100000-wave",
+    "bytes": 1934840538,
+    "files": 201514,
+    "dirs": 200270
+  },
+  {
+    "path": "tmp/p402f-阶段0/scale-300000-wave",
+    "bytes": 5878626812,
+    "files": 604581,
+    "dirs": 600270
+  }
+]

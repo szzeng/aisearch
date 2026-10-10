@@ -1,0 +1,1244 @@
+{
+  "docs-personal-scope": [
+    {
+      "path": "baseline.json",
+      "bytes": 66614
+    },
+    {
+      "path": "checks.json",
+      "bytes": 317
+    },
+    {
+      "path": "check_docs.py",
+      "bytes": 2195
+    },
+    {
+      "path": "create_handoff.py",
+      "bytes": 13127
+    },
+    {
+      "path": "edit_architecture.py",
+      "bytes": 11522
+    },
+    {
+      "path": "edit_strategy.py",
+      "bytes": 11385
+    },
+    {
+      "path": "finalize.py",
+      "bytes": 4499
+    }
+  ],
+  "mk700": [],
+  "p4-02n-real": [],
+  "p4-02o-build": [],
+  "p4-02t-upload": [],
+  "p4-02w": [
+    {
+      "path": "check_bg.py",
+      "bytes": 1141
+    },
+    {
+      "path": "check_bg2.py",
+      "bytes": 1010
+    },
+    {
+      "path": "commit-msg-r2.txt",
+      "bytes": 2554
+    },
+    {
+      "path": "commit-msg.txt",
+      "bytes": 2725
+    },
+    {
+      "path": "encoder_probe.py",
+      "bytes": 725
+    },
+    {
+      "path": "encode_rate.py",
+      "bytes": 1512
+    },
+    {
+      "path": "inspect2.py",
+      "bytes": 1093
+    },
+    {
+      "path": "inspect3.py",
+      "bytes": 1461
+    },
+    {
+      "path": "inspect4.py",
+      "bytes": 439
+    },
+    {
+      "path": "inspect_fixture.py",
+      "bytes": 1709
+    },
+    {
+      "path": "offline_smoke.py",
+      "bytes": 5193
+    },
+    {
+      "path": "patch1.py",
+      "bytes": 1203
+    },
+    {
+      "path": "patch2.py",
+      "bytes": 6044
+    },
+    {
+      "path": "patch3.py",
+      "bytes": 721
+    },
+    {
+      "path": "patch4.py",
+      "bytes": 6003
+    },
+    {
+      "path": "patch5.py",
+      "bytes": 395
+    },
+    {
+      "path": "patch6.py",
+      "bytes": 2376
+    },
+    {
+      "path": "patch_report.py",
+      "bytes": 4945
+    },
+    {
+      "path": "patch_status.py",
+      "bytes": 2107
+    },
+    {
+      "path": "patch_status2.py",
+      "bytes": 2752
+    },
+    {
+      "path": "probe_cli.py",
+      "bytes": 457
+    },
+    {
+      "path": "probe_db.py",
+      "bytes": 774
+    },
+    {
+      "path": "provider_probe.py",
+      "bytes": 232
+    },
+    {
+      "path": "read_b.py",
+      "bytes": 911
+    },
+    {
+      "path": "read_c.py",
+      "bytes": 580
+    },
+    {
+      "path": "read_d.py",
+      "bytes": 1668
+    },
+    {
+      "path": "read_d2.py",
+      "bytes": 687
+    },
+    {
+      "path": "repair1.py",
+      "bytes": 1090
+    },
+    {
+      "path": "selftest.py",
+      "bytes": 527
+    },
+    {
+      "path": "trial-a.json",
+      "bytes": 8932
+    },
+    {
+      "path": "offline\\logs\\offline-server.log",
+      "bytes": 1397
+    },
+    {
+      "path": "logs\\background-build.log",
+      "bytes": 1134
+    },
+    {
+      "path": "logs\\background-server.log",
+      "bytes": 3253
+    },
+    {
+      "path": "logs\\first-screen-server.log",
+      "bytes": 9557
+    },
+    {
+      "path": "logs\\upload-server.log",
+      "bytes": 3465
+    },
+    {
+      "path": "logs\\warm-text-server.log",
+      "bytes": 3327
+    }
+  ],
+  "p4-02x-pytest": [],
+  "p4-02x-ties": [],
+  "p4-02y": [
+    {
+      "path": "delta.log",
+      "bytes": 10153
+    },
+    {
+      "path": "full.log",
+      "bytes": 3505
+    },
+    {
+      "path": "noop-128.log",
+      "bytes": 4808
+    },
+    {
+      "path": "noop-128b.log",
+      "bytes": 4808
+    },
+    {
+      "path": "noop-256.log",
+      "bytes": 4808
+    },
+    {
+      "path": "noop-256b.log",
+      "bytes": 4808
+    }
+  ],
+  "p4-02y-i-review": [
+    {
+      "path": "commit-msg-rereview.txt",
+      "bytes": 2950
+    },
+    {
+      "path": "probe_daily_only_docs_source.py",
+      "bytes": 2727
+    },
+    {
+      "path": "probe_docs_source_after_generation.py",
+      "bytes": 2127
+    },
+    {
+      "path": "probe_new_source_stage_states.py",
+      "bytes": 2205
+    },
+    {
+      "path": "probe_no_confirmable_content.py",
+      "bytes": 4312
+    },
+    {
+      "path": "probe_refused_plus_overflow.py",
+      "bytes": 2782
+    },
+    {
+      "path": "probe_source_delete_edges.py",
+      "bytes": 3795
+    },
+    {
+      "path": "probe_stage_state_edges.py",
+      "bytes": 4937
+    },
+    {
+      "path": "query_attempted_rows.py",
+      "bytes": 1065
+    },
+    {
+      "path": "work-no-images\\a\\documents\\notes.txt",
+      "bytes": 11
+    },
+    {
+      "path": "work-edges\\docs\\note.txt",
+      "bytes": 5
+    },
+    {
+      "path": "work-docs-after\\documents\\notes.txt",
+      "bytes": 11
+    },
+    {
+      "path": "work-daily-docs\\documents\\notes.txt",
+      "bytes": 11
+    },
+    {
+      "path": "work\\no-images\\documents\\notes.txt",
+      "bytes": 11
+    }
+  ],
+  "p4-02y-j": [
+    {
+      "path": "verify_artifacts.py",
+      "bytes": 3086
+    }
+  ],
+  "p4-02y-k": [],
+  "p4-02y-k-review": [
+    {
+      "path": "compare_smoke.py",
+      "bytes": 3018
+    },
+    {
+      "path": "ort_provider_probe.py",
+      "bytes": 3036
+    },
+    {
+      "path": "repro_gpu_jobs.py",
+      "bytes": 1331
+    }
+  ],
+  "p4-02y-l": [],
+  "p4-02y-p": [
+    {
+      "path": "asia-cities.spec.json",
+      "bytes": 15542003
+    },
+    {
+      "path": "catalog_forensics.py",
+      "bytes": 1708
+    },
+    {
+      "path": "catalog_sources.py",
+      "bytes": 1740
+    },
+    {
+      "path": "inspect_catalog_history.py",
+      "bytes": 2797
+    },
+    {
+      "path": "inspect_spec.py",
+      "bytes": 2815
+    },
+    {
+      "path": "verify_asia_package.py",
+      "bytes": 12280
+    },
+    {
+      "path": "raw-official-2026-09-29\\cities500.txt",
+      "bytes": 41603573
+    },
+    {
+      "path": "raw-official-2026-09-29\\countryInfo.txt",
+      "bytes": 31678
+    },
+    {
+      "path": "raw-2026-09-15\\alternateNamesV2.txt",
+      "bytes": 784366173
+    },
+    {
+      "path": "raw-2026-09-15\\cities500.txt",
+      "bytes": 40979864
+    },
+    {
+      "path": "raw-2026-09-15\\countryInfo.txt",
+      "bytes": 31678
+    },
+    {
+      "path": "raw-2026-09-15\\iso-languagecodes.txt",
+      "bytes": 137908
+    },
+    {
+      "path": "mini-package\\LICENSE.txt",
+      "bytes": 86
+    },
+    {
+      "path": "mini-package\\manifest.json",
+      "bytes": 2568
+    },
+    {
+      "path": "asia-package\\LICENSE.txt",
+      "bytes": 477
+    },
+    {
+      "path": "asia-package\\manifest.json",
+      "bytes": 3300
+    }
+  ],
+  "p4-02y-review": [
+    {
+      "path": "commit-msg.txt",
+      "bytes": 4299
+    },
+    {
+      "path": "scratch_restored_unbound.py",
+      "bytes": 3497
+    }
+  ],
+  "p4-02y-t": [
+    {
+      "path": "commit-msg.txt",
+      "bytes": 3250
+    },
+    {
+      "path": "packaged-smoke-stdout.log",
+      "bytes": 18854
+    },
+    {
+      "path": "probe.py",
+      "bytes": 5634
+    },
+    {
+      "path": "query-evidence.json",
+      "bytes": 34156
+    },
+    {
+      "path": "real-trial.json",
+      "bytes": 25023
+    },
+    {
+      "path": "shutdown_probe.py",
+      "bytes": 790
+    },
+    {
+      "path": "trial-stdout.log",
+      "bytes": 1282
+    },
+    {
+      "path": "trial.py",
+      "bytes": 20591
+    }
+  ],
+  "p4-embedding-arch": [
+    {
+      "path": "browser_check_server.py",
+      "bytes": 1810
+    },
+    {
+      "path": "build_stats.py",
+      "bytes": 1134
+    },
+    {
+      "path": "channels.json",
+      "bytes": 4905
+    },
+    {
+      "path": "channel_probe.py",
+      "bytes": 4163
+    },
+    {
+      "path": "check_clip_backfill.py",
+      "bytes": 474
+    },
+    {
+      "path": "classify_real_library.py",
+      "bytes": 2382
+    },
+    {
+      "path": "demo-after-fix.json",
+      "bytes": 2169
+    },
+    {
+      "path": "demo-final.json",
+      "bytes": 2169
+    },
+    {
+      "path": "fts_columns.py",
+      "bytes": 703
+    },
+    {
+      "path": "head-p2.json",
+      "bytes": 25403
+    },
+    {
+      "path": "heic_audit.py",
+      "bytes": 1507
+    },
+    {
+      "path": "inspect_real_root.py",
+      "bytes": 1640
+    },
+    {
+      "path": "iso.json",
+      "bytes": 2169
+    },
+    {
+      "path": "preload_matrix.py",
+      "bytes": 759
+    },
+    {
+      "path": "preload_probe.py",
+      "bytes": 666
+    },
+    {
+      "path": "probe_load.py",
+      "bytes": 1080
+    },
+    {
+      "path": "probe_load2.py",
+      "bytes": 2363
+    },
+    {
+      "path": "qwen_failures.py",
+      "bytes": 749
+    },
+    {
+      "path": "qwen_progress.py",
+      "bytes": 638
+    },
+    {
+      "path": "real_app_check.py",
+      "bytes": 2544
+    },
+    {
+      "path": "real_http_client.py",
+      "bytes": 1679
+    },
+    {
+      "path": "strong_match_offline.py",
+      "bytes": 3045
+    },
+    {
+      "path": "strong_match_probe.py",
+      "bytes": 1248
+    },
+    {
+      "path": "tokenizer_modes.py",
+      "bytes": 1310
+    },
+    {
+      "path": "verify_pointer.py",
+      "bytes": 864
+    },
+    {
+      "path": "worker_probe.py",
+      "bytes": 977
+    }
+  ],
+  "p4-person-ux": [
+    {
+      "path": "test_face_resize_probe.py",
+      "bytes": 2087
+    }
+  ],
+  "p4-qwen-speed": [
+    {
+      "path": "fixture-artifact-copy.log",
+      "bytes": 616
+    },
+    {
+      "path": "fixture-vector-copy.log",
+      "bytes": 1265
+    },
+    {
+      "path": "query-encoding.json",
+      "bytes": 1028
+    }
+  ],
+  "p402-m-review": [
+    {
+      "path": "ab-100k-t20.log",
+      "bytes": 531
+    },
+    {
+      "path": "ab-300k.log",
+      "bytes": 533
+    },
+    {
+      "path": "commit-agents.txt",
+      "bytes": 804
+    },
+    {
+      "path": "commit-p4-02m.txt",
+      "bytes": 2594
+    },
+    {
+      "path": "mutation.log",
+      "bytes": 2870
+    },
+    {
+      "path": "no_cleanup_plugin.py",
+      "bytes": 340
+    },
+    {
+      "path": "oracle-100k.log",
+      "bytes": 1556
+    },
+    {
+      "path": "oracle-300k.log",
+      "bytes": 762
+    },
+    {
+      "path": "p4_02m_review_probe.py",
+      "bytes": 21617
+    },
+    {
+      "path": "small.log",
+      "bytes": 6368
+    }
+  ],
+  "p402-review-limit": [],
+  "p402-review-mpo": [],
+  "p402-review-probe": [],
+  "p402-review-t-parity": [],
+  "p402b-dsh": [
+    {
+      "path": "f1_claim_probe.py",
+      "bytes": 12668
+    },
+    {
+      "path": "f2_block_probe.py",
+      "bytes": 7474
+    },
+    {
+      "path": "f4_coverage_probe.py",
+      "bytes": 5328
+    }
+  ],
+  "p402b-dsh 复核 验证": [],
+  "p402b-dsh-run1": [],
+  "p402c-review": [
+    {
+      "path": "audit_growth_probe.py",
+      "bytes": 7798
+    },
+    {
+      "path": "cli_encoding_probe.py",
+      "bytes": 2721
+    },
+    {
+      "path": "dry_run_probe.py",
+      "bytes": 4027
+    },
+    {
+      "path": "f3_probe.py",
+      "bytes": 5960
+    },
+    {
+      "path": "isolation_probe.py",
+      "bytes": 9421
+    },
+    {
+      "path": "mutation_m1.py",
+      "bytes": 439
+    },
+    {
+      "path": "mutation_m2.py",
+      "bytes": 1224
+    },
+    {
+      "path": "mutation_m3.py",
+      "bytes": 704
+    },
+    {
+      "path": "mutation_m4.py",
+      "bytes": 2354
+    },
+    {
+      "path": "mutation_m5.py",
+      "bytes": 3792
+    },
+    {
+      "path": "mutation_m6.py",
+      "bytes": 3735
+    },
+    {
+      "path": "mutation_m8.py",
+      "bytes": 3871
+    },
+    {
+      "path": "nonascii_probe.py",
+      "bytes": 2369
+    },
+    {
+      "path": "reclaim_probe.py",
+      "bytes": 3399
+    },
+    {
+      "path": "run_recovery_zh.py",
+      "bytes": 1607
+    },
+    {
+      "path": "triple_probe.py",
+      "bytes": 3344
+    },
+    {
+      "path": "mut_f2_json\\sitecustomize.py",
+      "bytes": 619
+    }
+  ],
+  "p402c-review2": [],
+  "p402c-sol": [
+    {
+      "path": "tie_probe.py",
+      "bytes": 2809
+    }
+  ],
+  "p402d": [
+    {
+      "path": "fragment_mapping_probe.py",
+      "bytes": 7410
+    },
+    {
+      "path": "index_path_probe.py",
+      "bytes": 6208
+    },
+    {
+      "path": "mechanism_probe.py",
+      "bytes": 7505
+    },
+    {
+      "path": "probe_lance_api.py",
+      "bytes": 1762
+    },
+    {
+      "path": "residual_probe.py",
+      "bytes": 8216
+    }
+  ],
+  "p402d 归因": [],
+  "p402d 归因 验证": [],
+  "p402d-dsh": [
+    {
+      "path": "commit-message.txt",
+      "bytes": 4233
+    }
+  ],
+  "p402e": [
+    {
+      "path": "diag_class_walk.py",
+      "bytes": 3339
+    },
+    {
+      "path": "diag_distinct.py",
+      "bytes": 2667
+    },
+    {
+      "path": "diag_distinct_opcodes.py",
+      "bytes": 1973
+    },
+    {
+      "path": "diag_lease_predicate.py",
+      "bytes": 3924
+    },
+    {
+      "path": "diag_partial_correctness.py",
+      "bytes": 2746
+    },
+    {
+      "path": "diag_partial_index.py",
+      "bytes": 3670
+    },
+    {
+      "path": "diag_pinned_plan.py",
+      "bytes": 4230
+    },
+    {
+      "path": "diag_plain_sqlite.py",
+      "bytes": 3364
+    },
+    {
+      "path": "diag_requeue.py",
+      "bytes": 10418
+    },
+    {
+      "path": "queue_head_snapshot.py",
+      "bytes": 26337
+    }
+  ],
+  "p402e 主审 10k": [],
+  "p402e 领取 10k": [],
+  "p402e 领取 回归": [],
+  "p402e-claim-probe": [],
+  "p402e-claim-probe-detail": [],
+  "p402e-claim-probe-index": [],
+  "p402e-claim-probe-index2": [],
+  "p402e-claim-probe-noanalyze": [],
+  "p402e-claim-probe-smoke": [],
+  "p402e-diag": [],
+  "p402e-diag-distinct": [],
+  "p402e-diag-lease": [],
+  "p402e-diag-opcodes": [],
+  "p402e-diag-partial": [],
+  "p402e-diag-partial-correctness": [],
+  "p402e-diag-pinned": [],
+  "p402e-diag-plain": [],
+  "p402e-diag-walk": [],
+  "p402e-review": [
+    {
+      "path": "review_probe.py",
+      "bytes": 33812
+    }
+  ],
+  "p402f": [
+    {
+      "path": "rebuild_probe.py",
+      "bytes": 1800
+    }
+  ],
+  "p402f-阶段0": [
+    {
+      "path": "build-wave-100k.log",
+      "bytes": 354
+    },
+    {
+      "path": "build-wave-300k.log",
+      "bytes": 356
+    },
+    {
+      "path": "coverage-inventory.json",
+      "bytes": 20615
+    },
+    {
+      "path": "full-suite-p402g.log",
+      "bytes": 660468
+    },
+    {
+      "path": "full-suite-p402g2.log",
+      "bytes": 2729
+    },
+    {
+      "path": "full-suite-u2.log",
+      "bytes": 2729
+    },
+    {
+      "path": "full-suite-u3.log",
+      "bytes": 2729
+    },
+    {
+      "path": "full-suite.log",
+      "bytes": 6081
+    },
+    {
+      "path": "p402h-fix-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-fix2-full.log",
+      "bytes": 2730
+    },
+    {
+      "path": "p402h-r3-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-r4-full.log",
+      "bytes": 3823
+    },
+    {
+      "path": "p402h-r4-full2.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-r5-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-r6-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-r7-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402h-r8-full.log",
+      "bytes": 2729
+    },
+    {
+      "path": "p402j-concurrency-300k.log",
+      "bytes": 3182
+    },
+    {
+      "path": "p402j-focused.log",
+      "bytes": 162
+    },
+    {
+      "path": "p402j-full.log",
+      "bytes": 2810
+    },
+    {
+      "path": "p402j-stage0-100k.log",
+      "bytes": 5955
+    },
+    {
+      "path": "p402j-stage0-300k.log",
+      "bytes": 6067
+    },
+    {
+      "path": "p402j-wave-100k.log",
+      "bytes": 352
+    },
+    {
+      "path": "p402j-wave-300k.log",
+      "bytes": 354
+    },
+    {
+      "path": "run1-stages-100k.log",
+      "bytes": 13940
+    },
+    {
+      "path": "run10-refined-split.log",
+      "bytes": 4341
+    },
+    {
+      "path": "run2-blocks-full.log",
+      "bytes": 5852
+    },
+    {
+      "path": "run3-blocks-partial.log",
+      "bytes": 5777
+    },
+    {
+      "path": "run4-f4.log",
+      "bytes": 9760
+    },
+    {
+      "path": "run5-blocks-postrebuild.log",
+      "bytes": 5826
+    },
+    {
+      "path": "run6-stages-300k.log",
+      "bytes": 8426
+    },
+    {
+      "path": "run7-f4-300k.log",
+      "bytes": 9917
+    },
+    {
+      "path": "run8-blocks-300k.log",
+      "bytes": 5909
+    },
+    {
+      "path": "run9-gate-a-ceiling.log",
+      "bytes": 8315
+    },
+    {
+      "path": "smoke-10k.json",
+      "bytes": 35728
+    },
+    {
+      "path": "verify.log",
+      "bytes": 5207
+    },
+    {
+      "path": "verify300k.log",
+      "bytes": 5313
+    },
+    {
+      "path": "wave-100k-layout.json",
+      "bytes": 8693
+    },
+    {
+      "path": "wave-300k-layout.json",
+      "bytes": 8799
+    }
+  ],
+  "p402h-recheck": [
+    {
+      "path": "recheck.py",
+      "bytes": 31825
+    },
+    {
+      "path": "review_r2_probes.py",
+      "bytes": 12942
+    },
+    {
+      "path": "run_window_tests.py",
+      "bytes": 1831
+    }
+  ],
+  "p402h-review": [
+    {
+      "path": "probe_r5.py",
+      "bytes": 13371
+    }
+  ],
+  "p402i-isolation": [],
+  "p402i-smoke": [],
+  "p402j-contention": [
+    {
+      "path": "probe_catchup_control.py",
+      "bytes": 2501
+    },
+    {
+      "path": "probe_contention_close.py",
+      "bytes": 13591
+    },
+    {
+      "path": "probe_contention_unwarmed.py",
+      "bytes": 3137
+    },
+    {
+      "path": "probe_idle_compare.py",
+      "bytes": 2200
+    },
+    {
+      "path": "smoke_publish_drain.py",
+      "bytes": 2332
+    }
+  ],
+  "p402j-contention-close": [],
+  "p402j-review": [
+    {
+      "path": "probe_concurrency_overlap.py",
+      "bytes": 3598
+    },
+    {
+      "path": "probe_scalar_index.py",
+      "bytes": 4195
+    }
+  ],
+  "p402j-争用": [],
+  "p402j-覆盖": [],
+  "p402u": [
+    {
+      "path": "arm-control.log",
+      "bytes": 405
+    },
+    {
+      "path": "arm-drain-process-30k.log",
+      "bytes": 542
+    },
+    {
+      "path": "arm-drain-process-6000-rerun.log",
+      "bytes": 541
+    },
+    {
+      "path": "arm-drain-process.log",
+      "bytes": 520
+    },
+    {
+      "path": "arm-drain-thread.log",
+      "bytes": 518
+    },
+    {
+      "path": "arm-drain-thread2.log",
+      "bytes": 544
+    },
+    {
+      "path": "arm-interleaved.log",
+      "bytes": 489
+    },
+    {
+      "path": "arm-interleaved2.log",
+      "bytes": 570
+    },
+    {
+      "path": "arm-no-drain.log",
+      "bytes": 442
+    },
+    {
+      "path": "inject-12000.log",
+      "bytes": 427
+    },
+    {
+      "path": "inject-30000.log",
+      "bytes": 698
+    },
+    {
+      "path": "inject-30000b.log",
+      "bytes": 698
+    },
+    {
+      "path": "inject-6000.log",
+      "bytes": 313
+    },
+    {
+      "path": "inject-6000b.log",
+      "bytes": 329
+    },
+    {
+      "path": "review_analysis.py",
+      "bytes": 7619
+    },
+    {
+      "path": "review_analysis_r2.py",
+      "bytes": 6669
+    },
+    {
+      "path": "review_gap_probe.py",
+      "bytes": 7509
+    },
+    {
+      "path": "review_gil_probe.py",
+      "bytes": 4803
+    },
+    {
+      "path": "review_gil_probe2.py",
+      "bytes": 3655
+    },
+    {
+      "path": "thread-dumps-process.txt",
+      "bytes": 324473
+    },
+    {
+      "path": "thread-dumps-thread.txt",
+      "bytes": 26567
+    },
+    {
+      "path": "review-gap\\review-gap-probe.json",
+      "bytes": 3183
+    },
+    {
+      "path": "review-gap\\review-gil-probe.json",
+      "bytes": 790
+    }
+  ],
+  "p402v": [
+    {
+      "path": "calib_reembed.py",
+      "bytes": 3145
+    },
+    {
+      "path": "drain_batch.py",
+      "bytes": 1355
+    },
+    {
+      "path": "extract.py",
+      "bytes": 2738
+    },
+    {
+      "path": "pending.py",
+      "bytes": 422
+    },
+    {
+      "path": "run_calib.py",
+      "bytes": 167
+    },
+    {
+      "path": "smoke-conc-tiny.json",
+      "bytes": 95650
+    },
+    {
+      "path": "smoke-fixed.json",
+      "bytes": 103329
+    },
+    {
+      "path": "smoke-legacy.json",
+      "bytes": 102377
+    },
+    {
+      "path": "smoke-seed.json",
+      "bytes": 1116
+    },
+    {
+      "path": "smoke-seed2.json",
+      "bytes": 1116
+    },
+    {
+      "path": "time_open.py",
+      "bytes": 522
+    }
+  ],
+  "p402v-review": [
+    {
+      "path": "busy_timeout_window_probe.py",
+      "bytes": 3944
+    },
+    {
+      "path": "commit-p4-02u.txt",
+      "bytes": 1869
+    },
+    {
+      "path": "commit-p4-02v.txt",
+      "bytes": 2687
+    }
+  ],
+  "p405-review": [
+    {
+      "path": "failure_boundary_probe.py",
+      "bytes": 14438
+    },
+    {
+      "path": "lease_boundary_probe.py",
+      "bytes": 8527
+    },
+    {
+      "path": "review-probe.json",
+      "bytes": 3265
+    },
+    {
+      "path": "review_probe.py",
+      "bytes": 8849
+    },
+    {
+      "path": "lease\\lease-boundary-report.json",
+      "bytes": 236
+    },
+    {
+      "path": "lease\\l3\\bundle2\\backup-manifest.json",
+      "bytes": 925
+    },
+    {
+      "path": "lease\\l3\\bundle\\backup-manifest.json",
+      "bytes": 925
+    },
+    {
+      "path": "boundary\\failure-boundary-report.json",
+      "bytes": 4210
+    },
+    {
+      "path": "boundary\\cases\\b8\\keep.txt",
+      "bytes": 4
+    },
+    {
+      "path": "boundary\\cases\\B7\\backup-manifest.json",
+      "bytes": 1134
+    },
+    {
+      "path": "boundary\\cases\\B6\\backup-manifest.json",
+      "bytes": 1180
+    },
+    {
+      "path": "boundary\\cases\\B5\\backup-manifest.json",
+      "bytes": 1124
+    },
+    {
+      "path": "boundary\\cases\\b4\\backup-manifest.json",
+      "bytes": 1223
+    },
+    {
+      "path": "boundary\\cases\\b2\\bundle\\backup-manifest.json",
+      "bytes": 1223
+    },
+    {
+      "path": "boundary\\cases\\b18\\backup-manifest.json",
+      "bytes": 1004
+    },
+    {
+      "path": "boundary\\cases\\b16\\outside.json",
+      "bytes": 7
+    },
+    {
+      "path": "boundary\\cases\\b12\\backup-manifest.json",
+      "bytes": 1008
+    },
+    {
+      "path": "armB\\bundle\\backup-manifest.json",
+      "bytes": 4284
+    },
+    {
+      "path": "armA\\bundle\\backup-manifest.json",
+      "bytes": 4284
+    }
+  ],
+  "p405-sol-disclosure-review": [
+    {
+      "path": "probe.json",
+      "bytes": 3216
+    },
+    {
+      "path": "r2-probe.json",
+      "bytes": 3186
+    }
+  ],
+  "ps-visibility-test": [
+    {
+      "path": "x.txt",
+      "bytes": 15
+    }
+  ],
+  "review-py-mk": [],
+  "search-reevaluation": [
+    {
+      "path": "sdk_probe.py",
+      "bytes": 2281
+    }
+  ],
+  "search-reevaluation-sdk": [
+    {
+      "path": "probe.lance\\_versions\\latest_version_hint.json",
+      "bytes": 13
+    }
+  ],
+  "__pycache__": []
+}

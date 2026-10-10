@@ -1,0 +1,1737 @@
+{
+  "p4-02y-k": [
+    {
+      "file": "docs\\reports\\P4-02Y-K-face-mixed-cuda-cpu.md",
+      "line": 25,
+      "text": "所有 smoke 只使用工具自带的公开 fixture，工作目录为项目内 `tmp/p4-02y-k/`；它从"
+    }
+  ],
+  "p405-sol-disclosure-review": [
+    {
+      "file": "docs\\reports\\P4-05-sol-disclosure-r2-rereview.md",
+      "line": 43,
+      "text": "| 独立探针明细 | `tmp/p405-sol-disclosure-review/r2-probe.json`：五个输入、预期、实际输出及当前完整源文件 SHA-256；不覆盖上轮失败产物 |"
+    },
+    {
+      "file": "docs\\reports\\P4-05-sol-disclosure-short-review.md",
+      "line": 68,
+      "text": "| 小探针细节 | `tmp/p405-sol-disclosure-review/probe.json` 保存五个输入、预期、实际输出及完整源文件 SHA-256 |"
+    }
+  ],
+  "p402d": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2945,
+      "text": "除写入形状外参数完全相同，数据在 `tmp/p402d 归因 验证/`（可丢弃、`tmp/` 被忽略）。同夹具与同一检索由"
+    },
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 3006,
+      "text": "A 为 full→full 对照）；`tmp/p402d/*.py` 探针全部调用产品 `search_candidates`/`search_assets`，无硬编码。"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 41,
+      "text": "  --label wave --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 44,
+      "text": "  --label burst --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 48,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 49,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 54,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 55,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 67,
+      "text": "一次性探针（`tmp/p402d/*.py`）与可丢弃 data root 在 `tmp/` 内，`tmp/` 被 `.gitignore` 忽略。"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 293,
+      "text": "- `tmp/` 内探针：`tmp/p402d/mechanism_probe.py`、`tmp/p402d/residual_probe.py`、"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 294,
+      "text": "  `tmp/p402d/fragment_mapping_probe.py`、`tmp/p402d/index_path_probe.py`、`tmp/p402d/probe_lance_api.py`；"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 295,
+      "text": "  可丢弃 data root 在 `tmp/p402d 归因 验证/`、`tmp/p402d 归因/`（`tmp/` 被忽略，不随提交入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 7,
+      "text": "`test-results/p4-02d-*.json|xml`、`tmp/p402d/*.py` 探针"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 57,
+      "text": "- **探针（`tmp/p402d/*.py`，未入库）**：`mechanism_probe`、`residual_probe`、"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 132,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 133,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 45,
+      "text": "| A（突发，10 万） | `tmp/p402d 归因 验证/scale-100000-burst/data`（P4-02D 建，`--burst-sample 100000 --publish-wave 100000`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 67,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 74,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 75,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 78,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 81,
+      "text": "  --roots \"tmp/p402d 归因 验证/scale-100000-wave\",\"tmp/p402d 归因 验证/scale-100000-burst\" `"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 33,
+      "text": "        --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 34,
+      "text": "        --wave-root \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02f_stage0.py",
+      "line": 52,
+      "text": "        --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    }
+  ],
+  "qwen-speed-env": [
+    {
+      "file": "docs\\reports\\P4-QWEN-SPEED.md",
+      "line": 30,
+      "text": "环境和约 4.26 GB 模型权重保存在 `tmp/qwen-speed-env/`、`tmp/qwen-speed-model/`，没有放入 PhotoSearchData 或 Git 跟踪文件。模型卡列出 Transformers ≥4.57.0、qwen-vl-utils ≥0.0.14、torch 2.8.0，并说明支持 64–2048D MRL；临时环境使用官方 CUDA 12.8 wheel。[Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)；[PyTorch 官方历史版本安装命令](https://pytorch.org/get-started/previous-versions/)。"
+    },
+    {
+      "file": "docs\\tasks\\P4-QWEN-SPEED.md",
+      "line": 113,
+      "text": "tmp/qwen-speed-env/"
+    },
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 25,
+      "text": "QWEN_ENV = ROOT / \"tmp/qwen-speed-env/Scripts/python.exe\""
+    }
+  ],
+  "p4-02y-l": [
+    {
+      "file": "docs\\reports\\P4-02Y-L-ocr-cuda.md",
+      "line": 18,
+      "text": "使用本机 NVIDIA GeForce RTX 4060 Laptop GPU、`onnxruntime-gpu@1.30.0` 和项目既有权重。所有图像均由 fixture 生成在项目 `tmp/p4-02y-l` 下；没有扫描真实图库，也没有下载/安装模型、CUDA Toolkit、TensorRT 或 Python 依赖。"
+    },
+    {
+      "file": "tools\\diagnostics\\ocr_cuda_compare_fixture.py",
+      "line": 187,
+      "text": "        default=Path(\"tmp/p4-02y-l/compare\"),"
+    },
+    {
+      "file": "tools\\diagnostics\\ocr_refresh_build_fixture.py",
+      "line": 67,
+      "text": "    parser.add_argument(\"--work-dir\", type=Path, default=Path(\"tmp/p4-02y-l/refresh-build\"))"
+    }
+  ],
+  "p4-02n-real": [
+    {
+      "file": "docs\\reports\\P4-02N-O-Q-S-dsh-affected-surface-review.md",
+      "line": 43,
+      "text": "| `p4_02n_no_model_startup.py --data-root tmp/p4-02n-real/PhotoSearchData --port 8129` | 7/7、`MODEL_DIR_MISSING`、文本/上传两处 409 逐字一致（`test-results/p402-review-n-no-model.json`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02N-real-query-encoder-wiring.md",
+      "line": 74,
+      "text": "  --data-root 'tmp/p4-02n-real/PhotoSearchData' --port 8129 `"
+    },
+    {
+      "file": "docs\\reports\\P4-02N-real-query-encoder-wiring.md",
+      "line": 80,
+      "text": "| 启动行 | `photo-search: semantic channel MODEL_DIR_MISSING (model_dir=tmp\\p4-02n-real\\PhotoSearchData\\models\\chinese_clip\\vit-b-16, manifest=…\\chinese-clip-vit-b-16.json)` |"
+    },
+    {
+      "file": "docs\\reports\\P4-02N-real-query-encoder-wiring.md",
+      "line": 99,
+      "text": "`test-results/*.json|xml` 与 `tmp/p4-02n-real*` 按 `.gitignore` 不入库，关键数字已逐条引用。"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02n_real_search.py",
+      "line": 316,
+      "text": "        \"--work-dir\", type=Path, default=REPO_ROOT / \"tmp\" / \"p4-02n-real\""
+    }
+  ],
+  "p402e 主审 10k": [],
+  "p4-qwen-speed": [
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 23,
+      "text": "SCRATCH = ROOT / \"tmp/p4-qwen-speed/data-2048\""
+    },
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 27,
+      "text": "QUERY_OUTPUT = ROOT / \"tmp/p4-qwen-speed/query-encoding.json\""
+    }
+  ],
+  "p402e-claim-probe-smoke": [],
+  "p4-02y-review": [
+    {
+      "file": "docs\\reports\\P4-02Y-dsh-narrow-affected-surface-review.md",
+      "line": 27,
+      "text": "* 为一个可疑点写只读探针 `tmp/p4-02y-review/scratch_restored_unbound.py`（`tmp/` 已 gitignore）。"
+    }
+  ],
+  "p402-m-review": [
+    {
+      "file": "docs\\reports\\P4-02M-dsh-affected-surface-review.md",
+      "line": 28,
+      "text": "**独立证据（不依赖实现者产物）**：审查用探针 `tmp/p402-m-review/p4_02m_review_probe.py`（审查者自有，不入产品）："
+    },
+    {
+      "file": "docs\\reports\\P4-02M-sol-focused-review.md",
+      "line": 11,
+      "text": "- 读取主审探针的穷举代理、块对照与整页 A/B 代码，并抽查 `tmp/p402-m-review/{small,oracle-300k,ab-300k,mutation}.log`。外部 NumPy 的两处排序差异已在主审 F4 标注，不能写成 NumPy 真值零差异；产品新旧路径对照是另一项检查。"
+    }
+  ],
+  "p402j-review": [
+    {
+      "file": "docs\\reports\\P4-02J-contention-closure.md",
+      "line": 36,
+      "text": "  `p4-02j-contention-catchup-control.json`（§6）、`tmp/p402j-review/*`（主审阶段探针）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02J-dsh-engineering-review.md",
+      "line": 50,
+      "text": "| 覆盖自愈探针 | `uv run --no-sync python tmp/p402j-review/probe_scalar_index.py` | 见 §4（`test-results/p4-02j-review-probes.json`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02J-dsh-engineering-review.md",
+      "line": 51,
+      "text": "| 争用仪器时序探针 | `uv run --no-sync python tmp/p402j-review/probe_concurrency_overlap.py` | 见 §6（同一证据文件） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02J-dsh-engineering-review.md",
+      "line": 214,
+      "text": "  不被提交；本主审的探针与证据同样只留在本地（`tmp/p402j-review/**`、"
+    },
+    {
+      "file": "docs\\reports\\P4-02J-dsh-engineering-review.md",
+      "line": 233,
+      "text": "- `tmp/p402j-review/probe_scalar_index.py`、`tmp/p402j-review/probe_concurrency_overlap.py`"
+    }
+  ],
+  "p402e-diag-distinct": [],
+  "p402e-claim-probe": [
+    {
+      "file": "tools\\diagnostics\\claim_cost_probe.py",
+      "line": 638,
+      "text": "    parser.add_argument(\"--work-dir\", type=Path, default=REPO / \"tmp\" / \"p402e-claim-probe\")"
+    }
+  ],
+  "p402u": [
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-rereview.md",
+      "line": 24,
+      "text": "- 机器可读证据全部在 `test-results/`（被忽略）；本轮我另写的复算脚本只在 `tmp/p402u/review_analysis_r2.py`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-rereview.md",
+      "line": 114,
+      "text": "& D:\\SZ\\project\\aisearch\\.venv\\Scripts\\python.exe tmp\\p402u\\review_analysis_r2.py"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 42,
+      "text": "  运行日志 `tmp/p402u/*.log`、线程转储 `tmp/p402u/thread-dumps-{thread,process}.txt`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 43,
+      "text": "- 我另写、只落在 `tmp/` 的独立复算/校准脚本：`tmp/p402u/review_analysis.py`（从 JSON 重算）、"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 44,
+      "text": "  `tmp/p402u/review_gap_probe.py`、`tmp/p402u/review_gil_probe.py`、`tmp/p402u/review_gil_probe2.py`（机制校准，见 §5/F4）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 62,
+      "text": "| 6 000 档进程臂 3 809 探针 / 142 blocked、最长 3 242.6 ms、单条 apply 持锁 3 150.7 ms | 日志 `tmp/p402u/arm-drain-process.log` 只留下探针计数（3 809/142）；同名 JSON `p4-02u-arm-drain-process.json` 已被 30 000 档覆盖 | **不可回溯（F1）** |"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 81,
+      "text": "`tmp/p402u/arm-drain-thread.log`（23:09，第一轮线程臂）是 **0/6 被拒、6 000 探针 / 0 blocked**，与最终 5/6 的结论相反，"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 90,
+      "text": "本轮我用到的复算方法（`tmp/p402u/review_analysis.py` 等价物）或把它作为 `tools/diagnostics/` 的一部分入库。"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 105,
+      "text": "≈ 前一事务的 COMMIT 时间 + 真正空闲时间。我的独立微校准（`tmp/p402u/review_gap_probe.py`，独立 SQLite WAL、与产品无关）："
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 151,
+      "text": "& D:\\SZ\\project\\aisearch\\.venv\\Scripts\\python.exe tmp\\p402u\\review_analysis.py"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 153,
+      "text": "& D:\\SZ\\project\\aisearch\\.venv\\Scripts\\python.exe tmp\\p402u\\review_gap_probe.py"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 154,
+      "text": "& D:\\SZ\\project\\aisearch\\.venv\\Scripts\\python.exe tmp\\p402u\\review_gil_probe.py"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 155,
+      "text": "& D:\\SZ\\project\\aisearch\\.venv\\Scripts\\python.exe tmp\\p402u\\review_gil_probe2.py"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-lock-attribution.md",
+      "line": 102,
+      "text": "- **首轮线程臂（0/6 被拒、6 000 探针 / 0 blocked、日志 `tmp/p402u/arm-drain-thread.log`）不是另一种夹具形态，而是器具缺陷**："
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02u_lock_attribution.py",
+      "line": 51,
+      "text": "WORK = PROJECT_ROOT / \"tmp\" / \"p402u\""
+    }
+  ],
+  "p402e 领取 10k": [],
+  "p402e-claim-probe-noanalyze": [],
+  "p4-02x-ties": [],
+  "p402j-争用": [],
+  "p4-02o-build": [
+    {
+      "file": "docs\\reports\\P4-02O-semantic-index-build.md",
+      "line": 74,
+      "text": "`.pytest-basetemp-p402o/u*`，**未改 ACL**。`test-results/*`、`tmp/p4-02o-build*` 按 `.gitignore` 不入库。"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02o_semantic_build.py",
+      "line": 259,
+      "text": "    parser.add_argument(\"--work-dir\", type=Path, default=REPO_ROOT / \"tmp\" / \"p4-02o-build\")"
+    }
+  ],
+  "p402e-claim-probe-index2": [],
+  "docs-personal-scope": [
+    {
+      "file": "docs\\reports\\2026-09-27-personal-scope-alignment.md",
+      "line": 27,
+      "text": "- `.venv/Scripts/python.exe tmp/docs-personal-scope/check_docs.py`：exit 0，34 个本地文档链接有效，601 个本轮禁止修改的既有文件 SHA-256 均与开工一致（包括已有产品、测试、契约与报告），旧策略 P3-08A 指针已移除。"
+    },
+    {
+      "file": "docs\\reports\\2026-09-27-personal-scope-alignment.md",
+      "line": 30,
+      "text": "- 核验辅助文件在项目 `tmp/docs-personal-scope/`，不入库；本轮不增加产品测试或测试依赖。旧报告中的 JUnit 数字仅作既有证据引用，没有重新执行或宣称新通过。"
+    }
+  ],
+  "p402h-review": [
+    {
+      "file": "docs\\reports\\P4-02H-a3-contract-review-r5.md",
+      "line": 21,
+      "text": "- 独立探针（不改仓库任何冻结面）：`tmp/p402h-review/probe_r5.py` ⇒"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-a3-contract-review-r5.md",
+      "line": 57,
+      "text": "**可执行证据**（同一有效 M3 证书，`tmp/p402h-review/probe_r5.py`）："
+    }
+  ],
+  "review-py-mk": [],
+  "p402-review-t-parity": [],
+  "p402b-dsh": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2900,
+      "text": "**F1 已复现并给出最小修**（`tmp/p402b-dsh/f1_claim_probe.py` → `test-results/p4-02b-dsh-f1-claim.json`）："
+    },
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2908,
+      "text": "**F2 在同一代真实 data root 上被拆开测量**（`tmp/p402b-dsh/f2_block_probe.py` →"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 90,
+      "text": "  --work-dir \"tmp/p402b-dsh 复核 验证\" --queries 5 --warm-seconds 0 \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 94,
+      "text": "`status=ok`，`seed=20260924`，`work_dir=\"tmp\\\\p402b-dsh 复核 验证\"`：scan `SUCCEEDED` 800（444.5 件/秒）、"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 106,
+      "text": "### 4.4 F1 独立复现与最小修验证（`tmp/p402b-dsh/f1_claim_probe.py` → `test-results/p4-02b-dsh-f1-claim.json`）"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 135,
+      "text": "### 4.5 F2 在真实 data root 上的分块刻画（`tmp/p402b-dsh/f2_block_probe.py` → `test-results/p4-02b-dsh-f2-blocks.json`）"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 137,
+      "text": "主审自建 10 000 档**真实产品** data root（`tmp/p402b-dsh 复核 验证/scale-10000`，"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 277,
+      "text": "- **本轮未改任何产品代码/测试/文档之外的交付**：只新增本报告、`tmp/p402b-dsh/` 两个探针、"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 115,
+      "text": "的 10 000 档产品 root（`tmp/p402b-dsh 复核 验证/scale-10000`，真实部分覆盖 `5000/5000`）做同型检验"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 116,
+      "text": "（探针 `tmp/p402b-dsh/f4_coverage_probe.py` → `test-results/p4-02d-dsh-coverage-check.json`）："
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 195,
+      "text": "  探针 `tmp/p402b-dsh/f4_coverage_probe.py`（均在忽略目录内）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02E-backlog-claim.md",
+      "line": 29,
+      "text": "| 依赖证据（只读复用） | `test-results/p4-02b-dsh-f1-claim.json`、`tmp/p402b-dsh/f1_claim_probe.py` |"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 22,
+      "text": "  `--reuse-data-root` / `--keep`）、`tmp/p402b-dsh/f2_block_probe.py`（块数×每块耗时与索引覆盖）。"
+    },
+    {
+      "file": "docs\\tasks\\P4-02E.md",
+      "line": 18,
+      "text": "- 依赖证据（只读）：`test-results/p4-02b-dsh-f1-claim.json`、`tmp/p402b-dsh/f1_claim_probe.py`"
+    },
+    {
+      "file": "docs\\tasks\\P4-02E.md",
+      "line": 69,
+      "text": "2. **成本曲线**：复用 `tmp/p402b-dsh/f1_claim_probe.py`，给出 10 000 / 50 000 / 100 000 / 300 000"
+    },
+    {
+      "file": "docs\\tasks\\P4-02F.md",
+      "line": 16,
+      "text": "- 依赖证据（只读）：`test-results/p4-02b-dsh-f2-blocks.json` 与 `tmp/p402b-dsh/f2_block_probe.py`"
+    },
+    {
+      "file": "docs\\tasks\\P4-02F.md",
+      "line": 17,
+      "text": "  （真实 10 万档 data root `tmp/p402b-dsh 复核 验证/scale-10000` 的块数×每块耗时、walk/engine 拆分、"
+    },
+    {
+      "file": "tools\\diagnostics\\claim_cost_probe.py",
+      "line": 6,
+      "text": "permanent form of that review probe (``tmp/p402b-dsh/f1_claim_probe.py``) and answers three"
+    }
+  ],
+  "p4-person-ux": [],
+  "p402j-contention": [
+    {
+      "file": "docs\\reports\\P4-02J-contention-closure.md",
+      "line": 22,
+      "text": "- **仪器**：`tmp/p402j-contention/probe_contention_close.py`（主测量）与"
+    },
+    {
+      "file": "docs\\reports\\P4-02J-contention-closure.md",
+      "line": 23,
+      "text": "  `tmp/p402j-contention/probe_contention_unwarmed.py`（用户可见口径，见 §5）。"
+    }
+  ],
+  "mk700": [],
+  "p402d 归因 验证": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2945,
+      "text": "除写入形状外参数完全相同，数据在 `tmp/p402d 归因 验证/`（可丢弃、`tmp/` 被忽略）。同夹具与同一检索由"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 41,
+      "text": "  --label wave --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 44,
+      "text": "  --label burst --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 48,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 49,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 54,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 55,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 295,
+      "text": "  可丢弃 data root 在 `tmp/p402d 归因 验证/`、`tmp/p402d 归因/`（`tmp/` 被忽略，不随提交入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 132,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 133,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 45,
+      "text": "| A（突发，10 万） | `tmp/p402d 归因 验证/scale-100000-burst/data`（P4-02D 建，`--burst-sample 100000 --publish-wave 100000`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 67,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 74,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 75,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 78,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 81,
+      "text": "  --roots \"tmp/p402d 归因 验证/scale-100000-wave\",\"tmp/p402d 归因 验证/scale-100000-burst\" `"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 33,
+      "text": "        --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 34,
+      "text": "        --wave-root \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02f_stage0.py",
+      "line": 52,
+      "text": "        --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    }
+  ],
+  "p4-02t-upload": [
+    {
+      "file": "tools\\diagnostics\\p4_02t_upload_formats.py",
+      "line": 258,
+      "text": "    parser.add_argument(\"--work-dir\", type=Path, default=REPO_ROOT / \"tmp\" / \"p4-02t-upload\")"
+    }
+  ],
+  "p402j-contention-close": [
+    {
+      "file": "docs\\reports\\P4-02J-contention-closure.md",
+      "line": 7,
+      "text": "**一次性副本**（`tmp/p402j-contention-close/data`，复制后与源 root 的目录计数/字节完全一致），"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 22,
+      "text": "| 夹具隔离、未扫真实图库 | 数据根 = `tmp/p402j-contention-close/data`（P4-02J 丢弃式副本）；参考夹具 `tmp/p402f-阶段0/scale-300000-wave/data/catalog` 的 `catalog.db` mtime = 2026-09-25 02:36、`-shm`/`-wal` = 2026-09-27 22:09，**均早于本轮 23:03–23:16 的运行窗口** | 成立 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-lock-attribution.md",
+      "line": 40,
+      "text": "- 夹具：P4-02J 的**丢弃式副本** `tmp/p402j-contention-close/data`；事件按真实 artifact/outbox 协议注入"
+    },
+    {
+      "file": "docs\\reports\\P4-02V-contention-fix.md",
+      "line": 97,
+      "text": "夹具：P4-02U/P4-02J 的丢弃式副本 `tmp/p402j-contention-close/data`（**未触碰**参考夹具"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02u_lock_attribution.py",
+      "line": 49,
+      "text": "ROOT = PROJECT_ROOT / \"tmp\" / \"p402j-contention-close\" / \"data\""
+    }
+  ],
+  "__pycache__": [],
+  "p402v-review": [
+    {
+      "file": "docs\\reports\\P4-02V-dsh-affected-surface-review.md",
+      "line": 122,
+      "text": "python tmp/p402v-review/busy_timeout_window_probe.py                                        # 跨线程使用同一连接 ⇒ ProgrammingError（F4 证据）"
+    }
+  ],
+  "p402-review-probe": [],
+  "p402e-diag": [],
+  "p402e-diag-lease": [],
+  "p402v": [],
+  "p402e": [
+    {
+      "file": "docs\\reports\\P4-02E-backlog-claim.md",
+      "line": 91,
+      "text": "（`tmp/p402e/diag_distinct_opcodes.py` 输出）。产品从不执行 `ANALYZE`，因此本卡改为**显式递增 seek**"
+    },
+    {
+      "file": "docs\\reports\\P4-02E-backlog-claim.md",
+      "line": 113,
+      "text": "`USE TEMP B-TREE FOR ORDER BY`（实测 30 万积压类查询 65.2 ms，见 `tmp/p402e/diag_pinned_plan.py`）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02E-backlog-claim.md",
+      "line": 131,
+      "text": "  使用（退回 `SCAN jobs`）。证据 `tmp/p402e/diag_lease_predicate.py`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02E-backlog-claim.md",
+      "line": 135,
+      "text": "**语义不变性反证**（部分索引以绑定参数为谓词时的正确性）：`tmp/p402e/diag_partial_correctness.py` 在"
+    },
+    {
+      "file": "docs\\tasks\\P4-02E.md",
+      "line": 93,
+      "text": "  --work-dir \"tmp/p402e 领取 回归\" --output test-results/p4-02e-burst-300k.json"
+    }
+  ],
+  "qwen-speed-model-hf-cache": [
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 400,
+      "text": "            \"HF_HOME\": str(ROOT / \"tmp/qwen-speed-model-hf-cache\"),"
+    }
+  ],
+  "p4-embedding-arch": [
+    {
+      "file": "docs\\reports\\P4-EMBEDDING-ARCH-implementation.md",
+      "line": 141,
+      "text": "`tmp/p4-embedding-arch/smoke/data`（保留），不读取任何真实照片来源。"
+    },
+    {
+      "file": "docs\\reports\\P4-EMBEDDING-ARCH-implementation.md",
+      "line": 161,
+      "text": "在保留的 smoke data root 上启动本机服务（临时脚本 `tmp/p4-embedding-arch/browser_check_server.py`，"
+    },
+    {
+      "file": "docs\\tasks\\P4-EMBEDDING-ARCH.md",
+      "line": 86,
+      "text": "uv run --no-sync pytest -q -p no:cacheprovider --basetemp=.pytest-tmp/p4-embedding-arch --junitxml=test-results/p4-embedding-arch.xml tests/unit/test_p4_embedding_provider.py tests/integration/test_p4_embedding_provider_flow.py tests/unit/test_p4_02n_query_encoder_wiring.py tests/unit/test_p4_02o_semantic_build.py tests/unit/test_p4_02y_w_search_capacity.py tests/unit/test_p2_contracts.py tests/un"
+    },
+    {
+      "file": "docs\\tasks\\P4-EMBEDDING-ARCH.md",
+      "line": 107,
+      "text": "不扫描任何真实个人照片来源。夹具/数据库/临时数据放 `tmp/p4-embedding-arch/`，pytest 放 `.pytest-tmp/`；模型不入 Git。WinError 5 按正常权限路径重跑，不改 ACL。没有证据的项目写 PENDING/BLOCKED，不能写 PASS。"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_embedding_provider_smoke.py",
+      "line": 493,
+      "text": "        \"--work-dir\", type=Path, default=REPO_ROOT / \"tmp\" / \"p4-embedding-arch\" / \"smoke\""
+    },
+    {
+      "file": "tests\\unit\\test_p4_embedding_provider.py",
+      "line": 320,
+      "text": "    registry = registry_for(REPO_ROOT / \"tmp\" / \"p4-embedding-arch\" / \"empty-data-root\")"
+    }
+  ],
+  "p402b-dsh 复核 验证": [
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 90,
+      "text": "  --work-dir \"tmp/p402b-dsh 复核 验证\" --queries 5 --warm-seconds 0 \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 94,
+      "text": "`status=ok`，`seed=20260924`，`work_dir=\"tmp\\\\p402b-dsh 复核 验证\"`：scan `SUCCEEDED` 800（444.5 件/秒）、"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 137,
+      "text": "主审自建 10 000 档**真实产品** data root（`tmp/p402b-dsh 复核 验证/scale-10000`，"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 115,
+      "text": "的 10 000 档产品 root（`tmp/p402b-dsh 复核 验证/scale-10000`，真实部分覆盖 `5000/5000`）做同型检验"
+    },
+    {
+      "file": "docs\\tasks\\P4-02F.md",
+      "line": 17,
+      "text": "  （真实 10 万档 data root `tmp/p402b-dsh 复核 验证/scale-10000` 的块数×每块耗时、walk/engine 拆分、"
+    }
+  ],
+  "p402c-review": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2649,
+      "text": "`src`/测试/工具/文档代码**（证据仅落在被忽略的 `tmp/p402c-review/**`、"
+    },
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2701,
+      "text": "`tmp/p402c-review/audit_growth_probe.py`，更新实现报告与本状态；随后先回 **DS-H 全量工程主审**"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 9,
+      "text": "  （`tmp/p402c-review/**`、`.pytest-basetemp-p402c-review/**`）下的临时夹具与探针脚本，"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 38,
+      "text": "（`.pytest-basetemp-p402c-review/**`、`tmp/p402c-review/**`），未复用被审运行产物。"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 53,
+      "text": "| `tmp/p402c-review/audit_growth_probe.py` → `p4-02c-review-audit-growth.json` | **F1 反例**：审计非幂等（5→7→9→11；卡住时 5→7→9） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 54,
+      "text": "| `tmp/p402c-review/isolation_probe.py` → `p4-02c-review-isolation.json` | 11 个隔离事件：`count 11 / sample 10 / sample_truncated true`、字段集精确、无路径字段、`semantic_ready` 不受影响；多目标重执行互不影响 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 55,
+      "text": "| `tmp/p402c-review/triple_probe.py` → `p4-02c-review-triple.json` | F1 反例的三元组事实：同一 asset/processor 的两条 `PUBLISHED` 工件，两个事件同 `(space, asset, generation)`、revision 0/1 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 56,
+      "text": "| `tmp/p402c-review/dry_run_probe.py` → `p4-02c-review-dry-run.json` | `--dry-run` 零写库：快照 `identical=true`、SQLite trace 的写语句列表为 `[]` |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 57,
+      "text": "| `tmp/p402c-review/cli_encoding_probe.py` → `p4-02c-review-cli-encoding.json` | **F2 根因**：非 ASCII 路径下 `--json` 输出不是 UTF-8 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 58,
+      "text": "| `tmp/p402c-review/reclaim_probe.py` → `p4-02c-review-reclaim.json` | 显式 `reclaim` **不能**隔离未确认事件（`ARTIFACT_CONFLICT`），见 §9 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 186,
+      "text": "**复核口径**：`tmp/p402c-review/audit_growth_probe.py` 的两个变体（A 不增长、B 卡住不增长）"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 197,
+      "text": "  --work-dir \"tmp/p402c-review/复核 证据\" --injection-assets 40 --output test-results/p4-02c-review-recovery.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 240,
+      "text": "主审用**临时 pytest 插件**（`tmp/p402c-review/mutation_m*.py`，通过 `-p` 注入，**不改仓库文件**）"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 276,
+      "text": "  + `tmp/p402c-review/audit_growth_probe.py`，更新实现报告与 `docs/development-status.md`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 306,
+      "text": "- 复核口径：不使用第一轮的结论，直接跑仓库套件 + 主审自建探针（`tmp/p402c-review/**`）+"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 341,
+      "text": "  （`tmp/p402c-review/run_recovery_zh.py`，路径由 `\\uXXXX` 转义构造）→ 工具 **exit 0**、"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-dsh-engineering-review.md",
+      "line": 354,
+      "text": "主审反例（`tmp/p402c-review/f3_probe.py`，2 工件三元组 + 损坏最新工件）："
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 239,
+      "text": "修复前后对照（主审自建探针 `tmp/p402c-review/audit_growth_probe.py`，同一夹具同一状态）："
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 247,
+      "text": "`test-results/p4-02c-review-audit-growth.json`（修复后，均在 `tmp/p402c-review/` 的项目内临时夹具上）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 260,
+      "text": "反向验证（变异）：把审计退回修复前的「逐工件」实现（`tmp/p402c-review/mutation_m4.py`，"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 273,
+      "text": "修复前后对照（同一探针 `tmp/p402c-review/cli_encoding_probe.py`，均为真实 CLI 子进程的原始字节）："
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 283,
+      "text": "**卡面必测命令现在可按原文执行**：用 `tmp/p402c-review/run_recovery_zh.py`（工作目录名以"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 307,
+      "text": "修复前后对照（`tmp/p402c-review/f3_probe.py`，2 工件三元组 + 损坏最新工件，逐字节等价重执行）："
+    }
+  ],
+  "p402e-diag-opcodes": [],
+  "p4-02y-i-review": [
+    {
+      "file": "docs\\reports\\P4-02Y-I-b1-fix-round.md",
+      "line": 63,
+      "text": "* 复核四份只读探针（`tmp/p4-02y-i-review/probe_*.py`，未改动脚本、未进提交）复跑：全部无异常、输出见 §2 表；"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-b1-fix-round.md",
+      "line": 88,
+      "text": "| 复核探针 | `tmp/p4-02y-i-review/`（gitignored） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-b1-fix-round.md",
+      "line": 109,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_no_confirmable_content.py    # B1 A/B/D/C"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-b1-fix-round.md",
+      "line": 110,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_refused_plus_overflow.py     # F1"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-b1-fix-round.md",
+      "line": 111,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_docs_source_after_generation.py  # F2"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 19,
+      "text": "重跑首次复核的探针（`tmp/p4-02y-i-review/probe_no_confirmable_content.py` 等）得到："
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 110,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_no_confirmable_content.py      # B1 A/B/D/C"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 111,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_refused_plus_overflow.py       # F1"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 112,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_docs_source_after_generation.py # F2"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 113,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_source_delete_edges.py         # 删除后事实存活"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-rereview.md",
+      "line": 114,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_daily_only_docs_source.py      # F1（本轮新增）"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-review.md",
+      "line": 15,
+      "text": "（`tmp/p4-02y-i-review/probe_*.py`，`tmp/` 已 gitignore）。未重跑 30 万真实建库、未改任何产品代码。"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-dsh-narrow-affected-surface-review.md",
+      "line": 194,
+      "text": "本次复核的探针脚本保存在 `tmp/p4-02y-i-review/`（gitignored，不进提交）："
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix-review.md",
+      "line": 14,
+      "text": "并新写两个一次性只读探针（`tmp/p4-02y-i-review/probe_stage_state_edges.py`、"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix-review.md",
+      "line": 141,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_stage_state_edges.py   # 四情形 + attempted vs total + 全离线"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix-review.md",
+      "line": 142,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/query_attempted_rows.py      # 只读核对同一 asset 的两条 job"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix.md",
+      "line": 10,
+      "text": "探针 `tmp/p4-02y-i-review/probe_new_source_stage_states.py`（一次性，gitignore）在**同一夹具**下打印"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix.md",
+      "line": 74,
+      "text": "| 探针 | `tmp/p4-02y-i-review/probe_new_source_stage_states.py`（gitignored） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-I-stage-state-fix.md",
+      "line": 91,
+      "text": ".venv\\Scripts\\python.exe tmp/p4-02y-i-review/probe_new_source_stage_states.py"
+    }
+  ],
+  "p4-02y-j": [
+    {
+      "file": "docs\\reports\\P4-02Y-J-personal-ai-resources.md",
+      "line": 43,
+      "text": "校验入口（只读，`tmp\\p4-02y-j\\verify_artifacts.py`，证据 `test-results/p4-02y-j-artifacts.json`）："
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-J-personal-ai-resources.md",
+      "line": 138,
+      "text": "* 一次性只读校验脚本（`tmp\\`，不入库）：`tmp\\p4-02y-j\\verify_artifacts.py`。"
+    }
+  ],
+  "p402f-阶段0": [
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 46,
+      "text": "| B（波次，10 万） | `tmp/p402f-阶段0/scale-100000-wave/data`（**本卡在 `efeecf3` 上重建**，`--burst-sample 0 --publish-wave 5000`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 47,
+      "text": "| W（波次，30 万） | `tmp/p402f-阶段0/scale-300000-wave/data`（本卡重建，同上形状） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 63,
+      "text": "  --label wave --work-dir \"tmp/p402f-阶段0\" --output test-results/p4-02f-wave-100k.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 68,
+      "text": "  --root \"B=tmp/p402f-阶段0/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 77,
+      "text": "  --root \"B=tmp/p402f-阶段0/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 82,
+      "text": "  --root \"B=tmp/p402f-阶段0/scale-100000-wave/data\" --rebuild-root B --rebuild-samples 3 `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 85,
+      "text": "  --root \"B=tmp/p402f-阶段0/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 91,
+      "text": "  --label wave --work-dir \"tmp/p402f-阶段0\" --output test-results/p4-02f-wave-300k.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 94,
+      "text": "  --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 97,
+      "text": "  --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" --rebuild-root W --rebuild-samples 3 `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 100,
+      "text": "  --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 550,
+      "text": "- 可丢弃 root：`tmp/p402f-阶段0/scale-100000-wave`、`tmp/p402f-阶段0/scale-300000-wave`、`tmp/p402f/`"
+    },
+    {
+      "file": "docs\\reports\\P4-02M-bounded-block-size-retest.md",
+      "line": 38,
+      "text": "- 夹具：`tmp/p402f-阶段0/scale-300000-wave/data`（300000 assets / 300000 CONFIRMED；Lance 表"
+    },
+    {
+      "file": "docs\\reports\\P4-02M-bounded-block-size-retest.md",
+      "line": 145,
+      "text": "& .\\.venv\\Scripts\\python.exe tools\\diagnostics\\p4_02f_stage0.py --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02M-bounded-block-size-retest.md",
+      "line": 150,
+      "text": "& .\\.venv\\Scripts\\python.exe tools\\diagnostics\\p4_02f_stage0.py --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02M-exact-search-optimization.md",
+      "line": 148,
+      "text": "口径：复用既有 30 万夹具 `tmp/p402f-阶段0/scale-300000-wave/data`（300 000 assets / 300 000 CONFIRMED /"
+    },
+    {
+      "file": "docs\\reports\\P4-02M-exact-search-optimization.md",
+      "line": 174,
+      "text": "  --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" --order W `"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-dsh-capacity-evidence-review.md",
+      "line": 22,
+      "text": "| 夹具隔离、未扫真实图库 | 数据根 = `tmp/p402j-contention-close/data`（P4-02J 丢弃式副本）；参考夹具 `tmp/p402f-阶段0/scale-300000-wave/data/catalog` 的 `catalog.db` mtime = 2026-09-25 02:36、`-shm`/`-wal` = 2026-09-27 22:09，**均早于本轮 23:03–23:16 的运行窗口** | 成立 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02U-lock-attribution.md",
+      "line": 41,
+      "text": "  （`bench.publish_embedding`）。**未触碰**参考夹具 `tmp/p402f-阶段0/scale-300000-wave/data`，未扫真实图库。"
+    },
+    {
+      "file": "docs\\reports\\P4-02V-contention-fix.md",
+      "line": 98,
+      "text": "`tmp/p402f-阶段0/scale-300000-wave/data`，未扫真实图库）。**资产数在两段之间不变（444 000）**：积压用「既有向量重投影」"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-rereview.md",
+      "line": 41,
+      "text": "- 图片集合规：`tmp/p4-02w/upload-images/photo-0000000{0..5}.jpg` 与冻结母版库 `tmp/p402f-阶段0/scale-300000-wave/library/bucket-0000/photo-0000000{0..5}.jpg` **同名同字节数**，是**库内受支持 JPEG**，非合成图、非预计算向量。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-review.md",
+      "line": 17,
+      "text": "| 30 万夹具复用/重建得当、形状可信 | PASS（元数据级） | 副本 `tmp/p4-02w/warm/data` 与源 `tmp/p402f-阶段0/scale-300000-wave/data` 的 `catalog.db` 字节数（926 244 864）与 `LastWriteTime` 相同；两端 DB 的 schema=16 / assets=300000 / index_entries CONFIRMED=300000 / search_documents=300000 / search_projection_queue=0 / index_outbox=CONFIRMED 300000 / generation（id·space·processor·dim·state）逐项相同 ⇒ 源目录未被写入 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 42,
+      "text": "- 母版：`tmp/p402f-阶段0/scale-300000-wave/data`（**只读，未修改**）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 128,
+      "text": "& .\\.venv\\Scripts\\python.exe tools\\diagnostics\\p4_02f_stage0.py --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-library-refresh.md",
+      "line": 73,
+      "text": "夹具：`tmp/p402f-阶段0/scale-300000-wave`（只读；工具把 `data/` 复制到 `tmp/p4-02y/scale-300k`，**不触碰**"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-V-top-k.md",
+      "line": 25,
+      "text": "- 固定夹具：`tmp/p402f-阶段0/scale-300000-wave/data`；300,000 assets / 300,000 index entries；同一 generation、查询文本 `西湖 sunset 全家福`、deterministic encoder 和 query vector。"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-W-5000-results-strong-match.md",
+      "line": 18,
+      "text": "- 30 万 smoke：复用 `tmp/p402f-阶段0/scale-300000-wave/data`，执行 `p4_02f_stage0.py --modes stages --samples 2 --top-k 5000`。status=ok；预热约 7595 ms；两次正式 Service 样本中位数 4216.28 ms；20 blocks、300000 scanned、fallback_calls=0、truncated=false；相同轮内页面与融合结果均一致。完整数据在 `test-results/p4-02y-w-smoke.json`。这是少量 warm smoke，不是新性能曲线。"
+    },
+    {
+      "file": "docs\\tasks\\P4-02U.md",
+      "line": 63,
+      "text": "- 夹具：复用 `tmp/p402f-阶段0/scale-300000-wave/data` 的**副本隔离**；不改历史证据，不重扫真实图库。"
+    },
+    {
+      "file": "docs\\tasks\\P4-02W.md",
+      "line": 89,
+      "text": "`tmp/p402f-阶段0/scale-300000-wave/data`"
+    },
+    {
+      "file": "docs\\tasks\\P4-QWEN-SPEED.md",
+      "line": 42,
+      "text": "tmp/p402f-阶段0/scale-300000-wave/data"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02f_stage0.py",
+      "line": 53,
+      "text": "        --root \"B=tmp/p402f-阶段0/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02f_stage0.py",
+      "line": 58,
+      "text": "        --root \"W=tmp/p402f-阶段0/scale-300000-wave/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02y_refresh_scale.py",
+      "line": 3,
+      "text": "The 300 000-asset wave fixture (``tmp/p402f-阶段0/scale-300000-wave``) is used **read-only**:"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02y_refresh_scale.py",
+      "line": 43,
+      "text": "DEFAULT_FIXTURE = REPO_ROOT / \"tmp\" / \"p402f-阶段0\" / \"scale-300000-wave\""
+    },
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 22,
+      "text": "FIXTURE = ROOT / \"tmp/p402f-阶段0/scale-300000-wave/data\""
+    }
+  ],
+  "p402d-dsh": [],
+  "p402f": [
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 550,
+      "text": "- 可丢弃 root：`tmp/p402f-阶段0/scale-100000-wave`、`tmp/p402f-阶段0/scale-300000-wave`、`tmp/p402f/`"
+    },
+    {
+      "file": "docs\\tasks\\P4-02F.md",
+      "line": 122,
+      "text": "  --queries 40 --work-dir \"tmp/p402f 检索 验证\" --output test-results/p4-02f-capacity.json"
+    }
+  ],
+  "p402c-sol": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2798,
+      "text": "**Sol 自己的反例探针 `tmp/p402c-sol/tie_probe.py`**：修复前 `scheduled=['p4-02c-41']`（旧内容）、"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-recovery-and-audit-idempotency.md",
+      "line": 372,
+      "text": "主审用 Sol 自己的探针 `tmp/p402c-sol/tie_probe.py` 独立复现（修复前）："
+    },
+    {
+      "file": "docs\\reports\\P4-02C-sol-focused-review.md",
+      "line": 8,
+      "text": "`tmp/p402c-sol/tie_probe.py` 现在是 **1 / 0 / 0 / 0**（修复前 **1 / 1 failure**）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-sol-focused-review.md",
+      "line": 22,
+      "text": "最小反例（项目内合成夹具，`tmp/p402c-sol/tie_probe.py`）："
+    },
+    {
+      "file": "docs\\reports\\P4-02C-sol-focused-review.md",
+      "line": 32,
+      "text": "  tmp/p402c-sol/tie_probe.py `"
+    },
+    {
+      "file": "docs\\reports\\P4-02C-sol-focused-review.md",
+      "line": 56,
+      "text": "- 独立重跑本报告原反例 `tmp/p402c-sol/tie_probe.py`：同毫秒旧工件 rev 0、新工件 rev 1；审计 `scheduled=[]`，未新增 rev 2；drain 确认 2 条事件，Lance revision **1**，与新向量距离 **0.0**、与旧向量距离 **1.883802890777588**。JUnit `test-results/p4-02c-sol-rereview-f4.xml` **1 / 0 / 0 / 0**，exit 0。"
+    }
+  ],
+  "p402e-diag-pinned": [],
+  "search-reevaluation": [
+    {
+      "file": "docs\\reports\\2026-09-27-project-search-reevaluation.md",
+      "line": 122,
+      "text": "- 完整复现源码保存在项目内`tmp/search-reevaluation/sdk_probe.py`，3行fixture在`tmp/search-reevaluation-sdk`；不访问真实catalog。详细JSON、JUnit在test-results内，均忽略不入库。"
+    },
+    {
+      "file": "docs\\reports\\2026-09-27-project-search-reevaluation.md",
+      "line": 134,
+      "text": "| `.venv/Scripts/python.exe tmp/search-reevaluation/sdk_probe.py` | 首次to_query方法不存在，纠正为to_query_object后exit0、5/5 |"
+    },
+    {
+      "file": "docs\\reports\\2026-09-27-project-search-reevaluation.md",
+      "line": 135,
+      "text": "| `uv run --no-sync python tmp/search-reevaluation/sdk_probe.py` | exit0、5/5；实际SDK0.38.0，JUnit/JSON已读回 |"
+    }
+  ],
+  "p4-02x-pytest": [
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 89,
+      "text": "临时目录创建），属既有环境限制；按正常权限路由重跑（basetemp 固定在项目内 `tmp/p4-02x-pytest/*`），未修改 ACL。"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 141,
+      "text": "  --basetemp=tmp/p4-02x-pytest/full                                                                    # exit 0"
+    }
+  ],
+  "search-reevaluation-sdk": [
+    {
+      "file": "docs\\reports\\2026-09-27-project-search-reevaluation.md",
+      "line": 122,
+      "text": "- 完整复现源码保存在项目内`tmp/search-reevaluation/sdk_probe.py`，3行fixture在`tmp/search-reevaluation-sdk`；不访问真实catalog。详细JSON、JUnit在test-results内，均忽略不入库。"
+    }
+  ],
+  "p402-review-limit": [],
+  "p402b-dsh-run1": [
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 276,
+      "text": "  `tmp/p402b-dsh-run1`（上一会话遗留）当前对本令牌不可读，未做清理，也不影响本次结论。"
+    },
+    {
+      "file": "docs\\reports\\P4-02B-dsh-engineering-review.md",
+      "line": 280,
+      "text": "  与 `tmp/p402b-dsh-run1/`（本令牌不可读）——本报告**不引用**它们，本轮结论全部来自上面"
+    }
+  ],
+  "p402e-diag-walk": [],
+  "p402i-isolation": [],
+  "ps-visibility-test": [],
+  "p4-02y": [
+    {
+      "file": "docs\\reports\\P4-02Y-library-refresh.md",
+      "line": 73,
+      "text": "夹具：`tmp/p402f-阶段0/scale-300000-wave`（只读；工具把 `data/` 复制到 `tmp/p4-02y/scale-300k`，**不触碰**"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-library-refresh.md",
+      "line": 169,
+      "text": "uv run --no-sync python tools/diagnostics/p4_02y_refresh_scale.py --mode noop  --work tmp/p4-02y/scale-300k       --reuse-work --repair-revisions --batch 128 --output test-results/p4-02y-noop-128.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-library-refresh.md",
+      "line": 170,
+      "text": "uv run --no-sync python tools/diagnostics/p4_02y_refresh_scale.py --mode delta --work tmp/p4-02y/scale-300k-delta --repair-revisions --batch 128 --photos 300 --duplicates 10 --renames 10 --deletes 10 --output test-results/p4-02y-delta.json"
+    }
+  ],
+  "p402h-recheck": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 3737,
+      "text": "（基线 `7ecd363`；只新增 `tmp/p402h-recheck/**` 探针与 `test-results/p4-02h-recheck*.json`）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-a3-contract-review-r2.md",
+      "line": 24,
+      "text": "  且**自写探针**（`tmp/p402h-recheck/review_r2_probes.py`）重新计算三方一致性、并列/块界、"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-a3-contract-review-r2.md",
+      "line": 93,
+      "text": "| 三方一致性 + 并列/块界 + `top_k` 两端 + 更正窗口 | `tmp/p402h-recheck/review_r2_probes.py` → `test-results/p4-02h-r2-review-probes.json` | 见 §3 第 4 行、§4.1 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-independent-recheck.md",
+      "line": 8,
+      "text": "  不接触真实照片库。新增物只有 `tmp/p402h-recheck/**`（探针）与 `test-results/p4-02h-recheck*.json`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-independent-recheck.md",
+      "line": 225,
+      "text": "| 仓库自身窗口用例（2 例） | `tmp/p402h-recheck/run_window_tests.py` → `test-results/p4-02h-recheck-window-tests.json` | **2 / 2 PASSED** |"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-independent-recheck.md",
+      "line": 226,
+      "text": "| 复跑探针 | `tmp/p402h-recheck/recheck.py` → `test-results/p4-02h-recheck.json` | exit 0 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02H-independent-recheck.md",
+      "line": 240,
+      "text": "`tmp/p402h-recheck/mk700b`）。这不是产品缺陷，也未因此修改任何 ACL；§5 的两条窗口用例改用"
+    }
+  ],
+  "p402e 领取 回归": [
+    {
+      "file": "docs\\tasks\\P4-02E.md",
+      "line": 93,
+      "text": "  --work-dir \"tmp/p402e 领取 回归\" --output test-results/p4-02e-burst-300k.json"
+    }
+  ],
+  "p405-review": [
+    {
+      "file": "docs\\reports\\P4-05-dsh-affected-surface-review.md",
+      "line": 4,
+      "text": "状态行与 `docs/development-status.md` 的交接行（并把主审自己的复核脚本留在 `tmp/p405-review/`，不入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-affected-surface-review.md",
+      "line": 30,
+      "text": "| **主审自建探针（`tmp/p405-review/review_probe.py`）** | 见下 §3 | 实现者未做该项 |"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-affected-surface-review.md",
+      "line": 112,
+      "text": "- **最小反例与命令**：`tmp/p405-review/review_probe.py`（Arm A/B），结果 `tmp/p405-review/review-probe.json`；"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 4,
+      "text": "（复核脚本留在 `tmp/p405-review/`，不入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 42,
+      "text": "## 3. 租约与停止边界的 8 项独立边界（自建探针 `tmp/p405-review/lease_boundary_probe.py`）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 99,
+      "text": "python tmp/p405-review/lease_boundary_probe.py          # L1–L8（8/8 符合预期）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 100,
+      "text": "python tmp/p405-review/lease_boundary_probe.py cross    # L8 跨进程单独复跑"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 101,
+      "text": "python tmp/p405-review/failure_boundary_probe.py        # 上一轮 19 个失败边界（19/19）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-f1r2-affected-surface-review.md",
+      "line": 102,
+      "text": "python tmp/p405-review/review_probe.py                  # Arm A（无回归）/ Arm B（未接入租约写者的残余）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-failure-boundary-rereview.md",
+      "line": 3,
+      "text": "**性质**：只读短复审 + 失败边界专项。本轮未改产品/测试；新增产物只有本报告 + 卡/状态行（复核脚本留在 `tmp/p405-review/`，不入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-failure-boundary-rereview.md",
+      "line": 29,
+      "text": "## 3. 失败边界矩阵（主审自建探针：`tmp/p405-review/failure_boundary_probe.py`，19 个边界）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-failure-boundary-rereview.md",
+      "line": 84,
+      "text": "python tmp/p405-review/failure_boundary_probe.py        # 19 边界矩阵，产物 tmp/p405-review/failure-boundary-report.json"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-failure-boundary-rereview.md",
+      "line": 85,
+      "text": "python tmp/p405-review/review_probe.py                  # Arm A/B（正确性 + 显式确认下的残余）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-r1-rereview.md",
+      "line": 4,
+      "text": "本轮未改产品/测试；新增产物只有本报告 + 卡/状态行（复核脚本留在 `tmp/p405-review/`，不入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-r1-rereview.md",
+      "line": 21,
+      "text": "| **有界复跑 B15/B18/B19**（`tmp/p405-review/failure_boundary_probe.py B15 B18 B19`） | **3/3 符合预期，0 不符**：B15 `BACKUP_INVALID`、B18 `BACKUP_INVALID`、B19 `exit=1 + json + clean-stderr`；产物 `tmp/p405-review/boundary/failure-boundary-report.json`（cases 恰好 3 条） |"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-r1-rereview.md",
+      "line": 54,
+      "text": "python tmp/p405-review/failure_boundary_probe.py B15 B18 B19     # 3/3 符合预期（有界复跑）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-r1-rereview.md",
+      "line": 55,
+      "text": "python tmp/p405-review/failure_boundary_probe.py                 # 19/19（全矩阵，含 B16 限制项）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-dsh-r1-rereview.md",
+      "line": 60,
+      "text": "python tmp/p405-review/review_probe.py                            # Arm A 无回归（全表 0 差异、页面逐字段相同）"
+    },
+    {
+      "file": "docs\\reports\\P4-05-sol-f1r2-focused-review.md",
+      "line": 54,
+      "text": "| L8 | `tmp/p405-review/lease/lease-boundary-report.json` 现存 1 条，另一进程持租约时 `BACKUP_SERVICE_ACTIVE`，`failed=0` |"
+    },
+    {
+      "file": "docs\\reports\\P4-05-sol-f1r2-focused-review.md",
+      "line": 55,
+      "text": "| B15/B18/B19 | `tmp/p405-review/boundary/failure-boundary-report.json` 三条均符合预期：create/restore 的损坏 catalog 为 `BACKUP_INVALID`，CLI 为退出码 1、JSON、无 traceback |"
+    }
+  ],
+  "p402e-diag-partial": [],
+  "p4-02y-t": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 4379,
+      "text": "`tmp/p4-02y-t/{trial,probe,shutdown_probe}.py`）按 `.gitignore` 不入库。真实试用刻意保留的产物："
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-T-personal-trial-start.md",
+      "line": 33,
+      "text": "  --work-dir \"D:\\SZ\\project\\aisearch\\tmp\\p4-02y-t\\packaged-smoke-e\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-T-personal-trial-start.md",
+      "line": 104,
+      "text": "- 一次性试用驱动（`tmp/` 内、不入库）：`tmp/p4-02y-t/{trial,probe,shutdown_probe}.py`。"
+    }
+  ],
+  "p4-02w": [
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-rereview.md",
+      "line": 16,
+      "text": "- 后台入口是**真实产品维护入口**：`python -m photo_search.indexing.cli build --data-root tmp/p4-02w/bg/data --model-dir …chinese_clip\\vit-b-16 --manifest … --device cuda --source-id 2 --limit 12000 --skip-profile --json`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-rereview.md",
+      "line": 23,
+      "text": "结论：D 的“后台建库”不是纯文字投影或轻量重投影冒充，**成立**。并用一次性副本 `tmp/p4-02w/bg/data`，未污染 A/C 复用的 `warm/data`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-rereview.md",
+      "line": 41,
+      "text": "- 图片集合规：`tmp/p4-02w/upload-images/photo-0000000{0..5}.jpg` 与冻结母版库 `tmp/p402f-阶段0/scale-300000-wave/library/bucket-0000/photo-0000000{0..5}.jpg` **同名同字节数**，是**库内受支持 JPEG**，非合成图、非预计算向量。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-review.md",
+      "line": 17,
+      "text": "| 30 万夹具复用/重建得当、形状可信 | PASS（元数据级） | 副本 `tmp/p4-02w/warm/data` 与源 `tmp/p402f-阶段0/scale-300000-wave/data` 的 `catalog.db` 字节数（926 244 864）与 `LastWriteTime` 相同；两端 DB 的 schema=16 / assets=300000 / index_entries CONFIRMED=300000 / search_documents=300000 / search_projection_queue=0 / index_outbox=CONFIRMED 300000 / generation（id·space·processor·dim·state）逐项相同 ⇒ 源目录未被写入 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-review.md",
+      "line": 18,
+      "text": "| 是否走真实产品入口 | PASS | JSON `launcher_lines` 与 `tmp/p4-02w/logs/warm-text-server.log` 均为 `python -m photo_search … --model-device cuda`；日志逐条为真实 HTTP 的 health / session / capabilities / search |"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-review.md",
+      "line": 56,
+      "text": "旁证：`tmp/p4-02w/logs/warm-text-server.log` 计 **35** 次 `POST /api/v1/search`（= 1 冷 + 4 smoke + 30 正式）与 **38** 次 `200 OK`（= 35 + health + session + capabilities），与 JSON 结构一致。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-dsh-capacity-evidence-review.md",
+      "line": 112,
+      "text": "Get-Content tmp\\p4-02w\\logs\\warm-text-server.log              # 35×POST, 38×200 OK"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 43,
+      "text": "- 稳定工作目录（A/B/C 复用）：`tmp/p4-02w/warm/data`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 44,
+      "text": "- D 一次性副本：`tmp/p4-02w/bg/data`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 169,
+      "text": "  --samples 30 --smoke 4 --output test-results\\p4-02w-warm-text.json warm-text --data-root tmp\\p4-02w\\warm\\data"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 172,
+      "text": "  --data-root tmp\\p4-02w\\bg\\data --backlog-library tmp\\p4-02w\\backlog-library --backlog 12000 --background-grace-s 900"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 174,
+      "text": "  --samples 30 --smoke 4 --output test-results\\p4-02w-upload-search.json upload --data-root tmp\\p4-02w\\warm\\data --image …"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 176,
+      "text": "  --output test-results\\p4-02w-browser-first-screen.json first-screen --data-root tmp\\p4-02w\\warm\\data --rounds 5 --first-screen 24"
+    },
+    {
+      "file": "docs\\reports\\P4-02W-personal-trial-performance.md",
+      "line": 178,
+      "text": "  --output test-results\\p4-02w-attribution.json attribution --data-root tmp\\p4-02w\\warm\\data --rounds 5"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 93,
+      "text": "口径：同一 30 万夹具 `tmp/p4-02w/warm/data`、同一查询、`top_k = page_size = 20`、真实中文 CLIP"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 136,
+      "text": "  --data-root \"tmp/p4-02w/warm/data\" --threshold-ms 5000                                             # exit 0, PASS"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-block-size-15000.md",
+      "line": 138,
+      "text": "  --output test-results/p4-02x-attribution.json attribution --data-root \"tmp/p4-02w/warm/data\" --rounds 5  # exit 0"
+    },
+    {
+      "file": "docs\\reports\\P4-02X-dsh-narrow-affected-surface-review.md",
+      "line": 69,
+      "text": "- `p4-02x-warm-text.json` 口径字段：`git_head=b42c341`、`data_root=tmp/p4-02w/warm/data`、`device=cuda`、"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02w_personal_trial.py",
+      "line": 1208,
+      "text": "    parser.add_argument(\"--work-dir\", type=Path, default=REPO_ROOT / \"tmp\" / \"p4-02w\")"
+    }
+  ],
+  "p402e-claim-probe-detail": [],
+  "p402e-review": [],
+  "p402e-diag-plain": [],
+  "p402e-diag-partial-correctness": [],
+  "p4-02y-p": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 4151,
+      "text": "**下一步 = 继续日常试用**：激活后日常刷新会自动给增量的 GPS 照片产出附近城市建议；`tmp/p4-02y-p/`（约 1.1 GB"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 39,
+      "text": "> （分片已删除、官方文件单独归档在 `tmp/p4-02y-p/raw-official-2026-09-29\\`）。若日后要用纯官方链路重做，"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 50,
+      "text": "    --raw-dir tmp/p4-02y-p/raw-2026-09-15 --spec-out tmp/p4-02y-p/asia-cities.spec.json \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 53,
+      "text": "    --spec tmp/p4-02y-p/asia-cities.spec.json --out tmp/p4-02y-p/asia-package"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 55,
+      "text": "    import --source tmp/p4-02y-p/asia-package --activate"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 143,
+      "text": "* 原始数据（`tmp/`，不入库，约 **1.1 GB**，可直接删除）：`tmp/p4-02y-p/raw-2026-09-15\\`（建包用快照）、"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 144,
+      "text": "  `tmp/p4-02y-p/raw-official-2026-09-29\\`（官方对照）、`asia-cities.spec.json`、`asia-package\\`。"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 181,
+      "text": "    import --source tmp/p4-02y-p/asia-package --activate   # 重新 stage → validate → activate"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-P-asia-geonames.md",
+      "line": 196,
+      "text": "`tmp\\p4-02y-p\\asia-package\\`。"
+    }
+  ],
+  "p402j-覆盖": [
+    {
+      "file": "docs\\tasks\\P4-02J.md",
+      "line": 61,
+      "text": "  --label wave --work-dir \"tmp/p402j-覆盖\" --output test-results/p4-02j-wave.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02J.md",
+      "line": 63,
+      "text": "  --root \"W=tmp/p402j-覆盖/scale-300000-wave/data\" --samples 5 `"
+    }
+  ],
+  "p402d 归因": [
+    {
+      "file": "docs\\development-status-archive-2026-09-27.md",
+      "line": 2945,
+      "text": "除写入形状外参数完全相同，数据在 `tmp/p402d 归因 验证/`（可丢弃、`tmp/` 被忽略）。同夹具与同一检索由"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 41,
+      "text": "  --label wave --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 44,
+      "text": "  --label burst --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 48,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 49,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 54,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 55,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-attribution.md",
+      "line": 295,
+      "text": "  可丢弃 data root 在 `tmp/p402d 归因 验证/`、`tmp/p402d 归因/`（`tmp/` 被忽略，不随提交入库）。"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 132,
+      "text": "  --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02D-dsh-review.md",
+      "line": 133,
+      "text": "  --wave-root  \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 45,
+      "text": "| A（突发，10 万） | `tmp/p402d 归因 验证/scale-100000-burst/data`（P4-02D 建，`--burst-sample 100000 --publish-wave 100000`） |"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 67,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\reports\\P4-02F-retrieval-latency.md",
+      "line": 74,
+      "text": "  --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" `"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 75,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-wave.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 78,
+      "text": "  --work-dir \"tmp/p402d 归因 验证\" --output test-results/p4-02d-burst.json"
+    },
+    {
+      "file": "docs\\tasks\\P4-02D.md",
+      "line": 81,
+      "text": "  --roots \"tmp/p402d 归因 验证/scale-100000-wave\",\"tmp/p402d 归因 验证/scale-100000-burst\" `"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 33,
+      "text": "        --burst-root \"tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02d_attribution.py",
+      "line": 34,
+      "text": "        --wave-root \"tmp/p402d 归因 验证/scale-100000-wave/data\" \\"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_02f_stage0.py",
+      "line": 52,
+      "text": "        --root \"A=tmp/p402d 归因 验证/scale-100000-burst/data\" \\"
+    }
+  ],
+  "p402e-claim-probe-index": [],
+  "qwen-speed-model": [
+    {
+      "file": "docs\\plans\\P4-EMBEDDING-ARCH.md",
+      "line": 32,
+      "text": "官方模型支持 64–2048D MRL，512D 可作为该模型的输出配置。[官方模型卡](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)。本机已有权重与参考脚本位于 `tmp/qwen-speed-model/`；执行时校验 revision/hash 后复用，不重新下载。临时环境仅供参考，不能成为产品的隐含运行依赖。"
+    },
+    {
+      "file": "docs\\reports\\P4-QWEN-SPEED.md",
+      "line": 30,
+      "text": "环境和约 4.26 GB 模型权重保存在 `tmp/qwen-speed-env/`、`tmp/qwen-speed-model/`，没有放入 PhotoSearchData 或 Git 跟踪文件。模型卡列出 Transformers ≥4.57.0、qwen-vl-utils ≥0.0.14、torch 2.8.0，并说明支持 64–2048D MRL；临时环境使用官方 CUDA 12.8 wheel。[Qwen 官方模型卡](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B)；[PyTorch 官方历史版本安装命令](https://pytorch.org/get-started/previous-versions/)。"
+    },
+    {
+      "file": "docs\\tasks\\P4-EMBEDDING-ARCH.md",
+      "line": 54,
+      "text": "优先复用 `tmp/qwen-speed-model/` 的本地权重；正式模型目录 `<data_root>/models/qwen3_vl_embedding/`。固定代码来源和许可证、拒绝远程输入和隐式下载。升级主环境 transformers 并锁定实测 torch/torchvision/qwen-vl-utils 组合；检查当前 CLIP tokenizer、ONNX、Face/OCR import/启动的直接回归，必要结果写报告。"
+    },
+    {
+      "file": "docs\\tasks\\P4-QWEN-SPEED.md",
+      "line": 114,
+      "text": "tmp/qwen-speed-model/"
+    },
+    {
+      "file": "tools\\diagnostics\\p4_embedding_provider_smoke.py",
+      "line": 53,
+      "text": "DEFAULT_QWEN_SOURCE = REPO_ROOT / \"tmp\" / \"qwen-speed-model\""
+    },
+    {
+      "file": "tools\\diagnostics\\qwen_speed_probe.py",
+      "line": 24,
+      "text": "MODEL = ROOT / \"tmp/qwen-speed-model\""
+    }
+  ],
+  "p402c-review2": [],
+  "p402i-smoke": [],
+  "p4-02y-k-review": [
+    {
+      "file": "docs\\reports\\P4-02Y-K-review-dsh.md",
+      "line": 22,
+      "text": "| ORT provider 事实 | `tmp/p4-02y-k-review/ort_provider_probe.py`（真实固定权重；先走产品 `preload_runtime_dlls()`） | 见下表 |"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-K-review-dsh.md",
+      "line": 25,
+      "text": "| 业务结果等价 | `tmp/p4-02y-k-review/compare_smoke.py` 与实现者两份 artifact 逐字段比对 | 12 脸 / 8 组 / 1 同图冲突 / 逐脸质量 / 人物成员 **完全一致** |"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-K-review-dsh.md",
+      "line": 60,
+      "text": "  （或用 `tmp/p4-02y-k-review/repro_gpu_jobs.py` 直接打印 jobs 行）"
+    },
+    {
+      "file": "docs\\reports\\P4-02Y-K-review-dsh.md",
+      "line": 113,
+      "text": "   `tmp/p4-02y-k-review/`（三个复核脚本；F1 复现时复制的权重副本已删除）。"
+    }
+  ],
+  "p402-review-mpo": []
+}
