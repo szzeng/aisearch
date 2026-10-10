@@ -299,7 +299,7 @@
   async function loadPeople(more) {
     if (more && state.busy.has("people")) return;
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
-    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_desc", limit: 40 };
+    const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"), visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_desc", limit: 40, collection_state: $("collection-state").checked ? "none" : "all" };
     if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
     const binding = JSON.stringify(values), sameView = binding === state.peopleBinding;
     const append = Boolean(more && state.listCursor && sameView);
@@ -327,13 +327,23 @@
         card.personId = personId;
         card.setAttribute("data-person-id", String(personId));
         card.append(picture(person.thumbnail_url, name(person), "pa-avatar", index < 4), node("strong", name(person)), node("span", person.asset_count + " 张照片", "hint"));
+        if (Array.isArray(person.collections) && person.collections.length) {
+          const labels = node("span", undefined, "pa-person-collections");
+          person.collections.forEach((collection) => {
+            const label = node("span", collection.name, "pa-person-collection");
+            label.title = collection.name;
+            label.setAttribute("aria-label", "所属合集：" + collection.name);
+            labels.append(label);
+          });
+          card.append(labels);
+        }
         card.selectionHint = node("span", "", "hint pa-person-selection");
         card.append(card.selectionHint);
         $("cards").append(card);
       });
       syncPeopleCards();
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
-      $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
+      $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
       restoreLibraryPosition(position);
     } catch (error) { if (seq === state.listSeq) $("list-note").textContent = errorText(error); }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; } }
@@ -374,12 +384,15 @@
       const result = await api(collectionPath(collection), { name }, "PATCH");
       await loadCollections(false);
       if (state.collection && state.collection.collection_id === collection.collection_id) { state.collection = result.collection; collectionHeading(); }
+      await loadPeople(false); notifyPeopleChanged();
     } catch (error) { message("改名失败：" + errorText(error)); }
   }
   async function deleteCollection(collection) {
     if (!window.confirm("删除合集“" + collection.name + "”？只删除合集和成员关系。")) return;
     try { await api(collectionPath(collection), {}, "DELETE"); await loadCollections(false);
       if (state.collection && state.collection.collection_id === collection.collection_id) backToLibrary();
+      else await loadPeople(false);
+      notifyPeopleChanged();
     } catch (error) { message("删除合集失败：" + errorText(error)); }
   }
   function collectionHeading() {
@@ -457,6 +470,7 @@
     try {
       await api(collectionPath(collection, "/members"), { action: "add", person_ids: ids, hide_after_add: $("collection-hide").checked });
       state.selectedPeople.clear(); state.listCursor = null; await loadPeople(false); await loadCollections(false);
+      notifyPeopleChanged();
       message("已加入合集。", true);
     } catch (error) { message("加入合集失败：" + errorText(error)); }
     finally { state.visibilityBusy = false; renderPeopleManagement(); }
@@ -1202,6 +1216,13 @@
     });
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
     $("query").addEventListener("search", () => loadPeople(false));
+    $("collection-state").addEventListener("change", () => {
+      const cleared = state.selectedPeople.size;
+      state.selectedPeople.clear();
+      renderPeopleManagement();
+      if (cleared) message("已切换未加入合集筛选，并清除 " + cleared + " 项人物选择。", true);
+      loadPeople(false);
+    });
     $("refresh").addEventListener("click", refreshPeopleViews);
     try { state.peopleChangeToken = window.localStorage.getItem("aisearch.persons.changed"); }
     catch (error) { /* Browser storage is optional. */ }

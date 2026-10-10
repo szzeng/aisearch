@@ -114,6 +114,32 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
 }
 
+.pa-collection-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.35rem 0 0.75rem;
+}
+
+.pa-person-collections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pa-person-collection {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 .person-card {
   display: grid;
   grid-template-columns: 5rem 1fr;

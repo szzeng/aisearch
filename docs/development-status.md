@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 新规划：P4-PERSON-COLLECTION-MANAGE-A — 人物合集标签与“只看未加入合集”（PLANNED / 未实施）
+## P4-PERSON-COLLECTION-MANAGE-A — IMPLEMENTED / 当前会话受影响面工程审查通过；用户浏览器测试已确认
 
-[任务卡](tasks/P4-PERSON-COLLECTION-MANAGE-A.md)。人物头像下展示当前 canonical 人物所属合集；人物列表增加可选“只看未加入合集”，SQLite 权威过滤先于计数/排序/分页，与已命名、未命名、已忽略及现有查询条件组合。仅扩展 `/persons/browse`，默认行为不变；限定合并/撤销语义、旧游标兼容和筛选页成员变更失效；保留批量管理多页/滚动状态。推荐 GPT-6 High，定向测试和受影响面审查，不改 Schema、识别、成员写协议，不访问真实图库。**本次仅登记任务卡，产品代码未实施、测试未运行、现场未验收。**
+[实施报告](reports/P4-PERSON-COLLECTION-MANAGE-A.md)、[当前会话审查报告](reports/P4-PERSON-COLLECTION-MANAGE-A-review.md)、[实施卡](tasks/P4-PERSON-COLLECTION-MANAGE-A.md)。人物 `/persons/browse` 默认响应增加 canonical 合集标签批量投影；`collection_state=none` 在 SQL 计数/排序/分页前排除属于现存合集的人物，并把合集实例/revision 摘要绑定到新游标。筛选覆盖命名、未命名、已忽略列表，和原查询条件组合；筛选变化清空选择但保留批量模式；加入、改名、删除合集后刷新标签并通知其他人物页。任务卡相关定向 JUnit 27/0/0/0，Ruff、Python 编译、Node 语法及 diff-check 通过。用户确认浏览器功能测试 OK。本会话受影响面工程审查通过；按用户要求在当前会话完成，未切换模型，结论不称独立 DS-H。未访问真实图库或运行服务；未提交/推送。
 
 ## 新增实施：P4-SEARCH-INTENT-NL-COVERAGE-FIX-A — 已实现 / 定向验证与当前会话工程复核通过；独立审查与现场试用待完成
 

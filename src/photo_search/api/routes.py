@@ -1401,6 +1401,7 @@ async def browse_persons(
     sort: Literal["person_id", "photos_desc"] = "person_id",
     visibility: Literal["all", "visible", "hidden"] = "all",
     quality_view: Literal["all", "clean"] = "all",
+    collection_state: Literal["all", "none"] = "all",
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
@@ -1413,6 +1414,7 @@ async def browse_persons(
         cursor=cursor,
         visibility=visibility,
         quality_view=quality_view,
+        collection_state=collection_state,
     )
 
 

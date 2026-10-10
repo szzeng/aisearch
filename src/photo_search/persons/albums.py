@@ -276,12 +276,14 @@ def people_page(
     sort: str = "person_id",
     visibility: str = "all",
     quality_view: str = "all",
+    collection_state: str = "all",
 ) -> dict[str, Any]:
     if (
         kind not in ("all", "named", "unnamed")
         or sort not in ("person_id", "photos_desc")
         or visibility not in ("all", "visible", "hidden")
         or quality_view not in ("all", "clean")
+        or collection_state not in ("all", "none")
         or len(q) > 200
     ):
         raise ApiError(VALIDATION_ERROR, "invalid person query", status=422)
@@ -298,6 +300,13 @@ def people_page(
         binding = [binding[0] + "-visibility1", visibility, *binding[1:]]
     if quality_view != "all":
         binding = [binding[0] + "-quality1", quality_view, POLICY_REVISION, *binding[1:]]
+    collection_cte = ""
+    if collection_state == "none":
+        from photo_search.persons import collections
+
+        version = collections.membership_version(catalog.connection)
+        binding = ["people-collection-none1", version, *binding]
+        collection_cte = collections._canonical_cte()
     after = _position(cursor, binding, 0 if sort == "person_id" else None)
     candidate_conditions = ["p.merged_into IS NULL"]
     candidate_parameters: list[Any] = []
@@ -349,8 +358,12 @@ def people_page(
             "WHERE a.person_id = p.person_id AND instr(person_search_fold(a.alias), ?) > 0))"
         )
         candidate_parameters.extend([query.casefold(), query.casefold()])
+    if collection_state == "none":
+        candidate_conditions.append(
+            "NOT EXISTS (SELECT 1 FROM canonical_members AS cm WHERE cm.person_id = p.person_id)"
+        )
     total_row = catalog.read_one(
-        "SELECT COUNT(*) AS total FROM persons AS p WHERE "
+        collection_cte + "SELECT COUNT(*) AS total FROM persons AS p WHERE "
         + " AND ".join(candidate_conditions),
         tuple(candidate_parameters),
     )
@@ -361,7 +374,7 @@ def people_page(
         conditions = [*candidate_conditions, "p.person_id > ?"]
         parameters = [*candidate_parameters, after]
         rows = catalog.read_all(
-            "SELECT p.* FROM persons AS p WHERE "
+            collection_cte + "SELECT p.* FROM persons AS p WHERE "
             + " AND ".join(conditions)
             + " ORDER BY p.person_id LIMIT ?",
             (*parameters, limit + 1),
@@ -392,7 +405,8 @@ def people_page(
             )
             continuation_parameters.extend([after_count, after_count, after_person_id])
         rows = catalog.read_all(
-            "WITH candidates AS (SELECT p.* FROM persons AS p WHERE "
+            (collection_cte + ", " if collection_cte else "WITH ")
+            + "candidates AS (SELECT p.* FROM persons AS p WHERE "
             + " AND ".join(candidate_conditions)
             + "), "
             + member_counts
@@ -402,6 +416,14 @@ def people_page(
             + " ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
             (*candidate_parameters, *continuation_parameters, limit + 1),
         )
+    if collection_state == "none":
+        from photo_search.persons import collections
+
+        if (
+            collections.membership_version(catalog.connection) != binding[1]
+            or read_filter_revision(catalog.connection) != binding[-1]
+        ):
+            raise ApiError(INVALID_CURSOR, "合集成员已变化，请刷新后继续", status=409)
     has_more = len(rows) > limit
     rows = rows[:limit]
     last_position: Any = None
@@ -415,6 +437,17 @@ def people_page(
         if sort == "photos_desc"
         else _album_summaries(catalog.connection, rows, quality_view=quality_view)
     )
+    if collection_state == "all":
+        from photo_search.persons import collections
+
+        version = collections.membership_version(catalog.connection)
+        projected = collections.project_person_collections(
+            catalog.connection, [int(row["person_id"]) for row in rows]
+        )
+        if collections.membership_version(catalog.connection) != version:
+            raise ApiError(INVALID_CURSOR, "合集已变化，请刷新人物列表", status=409)
+        for summary in summaries:
+            summary["collections"] = projected.get(int(summary["person_id"]), [])
     return {
         "persons": summaries,
         "total": total,

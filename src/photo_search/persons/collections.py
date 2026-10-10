@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import secrets
 import unicodedata
@@ -82,6 +83,46 @@ def _canonical_cte() -> str:
         "canonical_members AS (SELECT DISTINCT collection_id, origin_id, person_id "
         "FROM chain WHERE merged_into IS NULL) "
     )
+
+
+def membership_version(connection: Any) -> str:
+    """Return a stable version for all collection membership/name changes."""
+    rows = connection.execute(
+        "SELECT collection_id, instance_token, revision FROM person_collections "
+        "ORDER BY collection_id"
+    ).fetchall()
+    payload = json.dumps(
+        [(int(row["collection_id"]), str(row["instance_token"]), int(row["revision"])) for row in rows],
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def project_person_collections(connection: Any, person_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Batch-project current canonical collection labels for one bounded people page."""
+    if not person_ids:
+        return {}
+    page_values = ", ".join("(?)" for _ in person_ids)
+    rows = connection.execute(
+        "WITH RECURSIVE page(person_id) AS (VALUES " + page_values + "), "
+        "lineage(canonical_id, anchor_id, path) AS ("
+        "SELECT person_id, person_id, ',' || person_id || ',' FROM page "
+        "UNION ALL SELECT lineage.canonical_id, p.person_id, "
+        "lineage.path || p.person_id || ',' FROM lineage JOIN persons AS p "
+        "ON p.merged_into = lineage.anchor_id "
+        "WHERE instr(lineage.path, ',' || p.person_id || ',') = 0) "
+        "SELECT DISTINCT lineage.canonical_id AS person_id, pc.collection_id, pc.name "
+        "FROM lineage JOIN person_collection_members AS m ON m.person_id = lineage.anchor_id "
+        "JOIN person_collections AS pc ON pc.collection_id = m.collection_id "
+        "ORDER BY lineage.canonical_id, pc.collection_id",
+        tuple(int(person_id) for person_id in person_ids),
+    ).fetchall()
+    result: dict[int, list[dict[str, Any]]] = {int(person_id): [] for person_id in person_ids}
+    for row in rows:
+        result[int(row["person_id"])].append(
+            {"collection_id": int(row["collection_id"]), "name": str(row["name"])}
+        )
+    return result
 
 
 def _collection_summary(row: Any) -> dict[str, Any]:

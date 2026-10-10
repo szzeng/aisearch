@@ -26,21 +26,24 @@ class Element {
   async fire(name){return await this.events[name]({preventDefault(){}});}
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-const requests=[];let page=0;
+const requests=[];let page=0,collectionAdded=false;
 const context={URLSearchParams,URL,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
  window:{location:{search:"",href:"http://local/persons"},confirm:()=>true,prompt:()=>null,history:{replaceState(){}},addEventListener(){}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url,options={})=>{requests.push({url,options});
-   if(url.includes("/persons/browse")){const current=++page,start=(current-1)*40+1;return {ok:true,json:async()=>({persons:Array.from({length:40},(_,i)=>({person_id:start+i,name:"person"+(start+i),revision:1,asset_count:1,thumbnail_url:null})),has_more:current<3,next_cursor:current<3?"cursor-"+current:null})};}
+   if(url.includes("/persons/browse")){const current=++page,start=(current-1)*40+1,filter=new URL(url,"http://local").searchParams.get("collection_state"),empty=collectionAdded&&filter==="none";return {ok:true,json:async()=>({persons:empty?[]:Array.from({length:40},(_,i)=>({person_id:start+i,name:"person"+(start+i),revision:1,asset_count:1,thumbnail_url:null,collections:filter==="none"?[]:[{collection_id:7,name:"路人"}]})),total:empty?0:40,has_more:!empty&&current<3,next_cursor:!empty&&current<3?"cursor-"+current:null})};}
    if(url.startsWith("/api/v1/persons/collections?")||url==="/api/v1/persons/collections"){return {ok:true,json:async()=>({collections:[{collection_id:7,instance_token:"a".repeat(32),name:"路人",member_count:0}],has_more:false,next_cursor:null})};}
+   if(url.includes("/api/v1/persons/collections/7/")&&options.method==="PATCH")return {ok:true,json:async()=>({collection:{collection_id:7,instance_token:"a".repeat(32),name:"新名字",member_count:0}})};
+   if(url.endsWith("/members")&&options.method==="POST")collectionAdded=true;
    return {ok:true,json:async()=>({changed:120,has_more:false,next_cursor:null})};
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renameCollection,deleteCollection};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
  context.document.ready();await flush();
+ assert.equal(get("pa-cards").children[0].children.some(item=>item.className==="pa-person-collections"),true,"person card shows returned collection labels");
  await get("pa-batch-toggle").fire("click");
  await get("pa-more").fire("click");await flush();await get("pa-more").fire("click");await flush();
  const cards=get("pa-cards"),sequence=context.ui.state.listSeq,calls=requests.filter(r=>r.url.includes("/persons/browse")).length;
@@ -53,6 +56,32 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
  const write=requests.find(r=>r.url==="/api/v1/persons/collections/7/"+"a".repeat(32)+"/members");
  assert.ok(write);assert.deepEqual(JSON.parse(write.options.body),{action:"add",person_ids:Array.from({length:120},(_,i)=>i+1),hide_after_add:true});
  assert.equal(context.ui.state.selectedPeople.size,0);
+ assert.equal(context.ui.state.peopleChangeToken,"album-synthetic","adding members notifies other open people pages");
+ await get("pa-cards").children[0].fire("click");
+ assert.equal(context.ui.state.selectedPeople.size,1);
+ get("pa-collection-state").checked=true;await get("pa-collection-state").fire("change");await flush();
+ assert.equal(context.ui.state.selectedPeople.size,0,"changing collection filter clears the cross-page selection");
+ assert.equal(context.ui.state.batchMode,true,"collection filter keeps batch management open");
+ assert.ok(requests.some(r=>r.url.includes("collection_state=none")),"filter is sent to the server query");
+ assert.equal(get("pa-cards").children.length,0,"successfully added people leave the unassigned result");
+ assert.match(get("pa-list-note").textContent,/当前没有尚未加入合集的人物/);
+ collectionAdded=false;get("pa-collection-state").checked=false;await get("pa-collection-state").fire("change");await flush();
+ assert.equal(get("pa-cards").children[0].children.some(item=>item.className==="pa-person-collections"),true,"turning off the filter restores labels");
+ get("pa-collection-state").checked=true;await get("pa-collection-state").fire("change");await flush();
+ await get("pa-batch-toggle").fire("click");
+ await get("pa-cards").children[0].fire("click");await flush();
+ await get("pa-back").fire("click");await flush();
+ assert.equal(get("pa-collection-state").checked,true,"detail return preserves the collection filter");
+ assert.ok(requests.filter(r=>r.url.includes("/persons/browse")).at(-1).url.includes("collection_state=none"));
+ context.ui.state.peopleChangeToken=null;context.window.prompt=()=>"同学";
+ const browseCount=()=>requests.filter(r=>r.url.includes("/persons/browse")).length,beforeRename=browseCount();
+ await context.ui.renameCollection({collection_id:7,instance_token:"a".repeat(32),name:"路人"});
+ assert.ok(browseCount()>beforeRename,"renaming a collection refreshes person labels");
+ assert.equal(context.ui.state.peopleChangeToken,"album-synthetic","renaming a collection notifies other open people pages");
+ context.ui.state.peopleChangeToken=null;const beforeDelete=browseCount();
+ await context.ui.deleteCollection({collection_id:7,instance_token:"a".repeat(32),name:"同学"});
+ assert.ok(browseCount()>beforeDelete,"deleting a collection refreshes person labels");
+ assert.equal(context.ui.state.peopleChangeToken,"album-synthetic","deleting a collection notifies other open people pages");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
