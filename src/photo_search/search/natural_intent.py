@@ -31,16 +31,20 @@ def parse_collection_intent(text: str, *, connection: Any) -> dict[str, Any]:
             continue
         pattern = r"\s+".join(re.escape(part) for part in name.split())
         for match in re.finditer(pattern, raw, re.IGNORECASE):
-            # A collection becomes a hard filter only in an explicit collection/photo
-            # construction. Arbitrary occurrences such as "同事聚会" remain ordinary text.
+            # Longest range connectors are recognized together with the name. Keeping
+            # this grammar catalog-backed avoids treating ordinary "AI风格" content as
+            # a collection merely because a collection named AI exists.
             tail = raw[match.end():].casefold()
             prefix = raw[:match.start()].casefold()
-            if not (re.match(r"(?:合集|的照片|的图片|的合照|的合影|照片|图片|合照|合影)", tail)
-                    or (tail.startswith("的") and re.search(r"(?:照片|图片|合照|合影)$", tail))
-                    or (tail.startswith("的") and bool(tail[1:].strip()))
-                    or (tail.startswith("在") and re.search(r"(?:照片|图片|合照|合影)$", tail))
-                    or re.match(r"(?:和|与|、|及).{1,24}(?:的)?(?:照片|图片|合照|合影|合集)$", tail)
-                    or re.search(r"(?:人物)?合集(?:叫|是)?$", prefix)):
+            connector = re.match(r"(?:合集(?:里面|里|中的|中)?(?:的)?|里面的|里面|里的|里|中的|中|的)", tail)
+            explicit_tail = bool(
+                re.match(r"(?:照片|图片|合照|合影|合集)", tail)
+                or connector and (bool(tail[connector.end():].strip()) or connector.group(0) != "的")
+                or tail.startswith("在") and re.search(r"(?:照片|图片|合照|合影)$", tail)
+                or re.match(r"(?:和|与|或|或者|、|及).{1,24}(?:的)?(?:照片|图片|合照|合影|合集)$", tail)
+                or re.search(r"(?:人物)?合集(?:叫|是)?$", prefix)
+            )
+            if not explicit_tail:
                 continue
             hits.append((match.start(), match.end(), row))
     # For overlapping names, keep the longest whole-name hit. Multiple distinct explicit
@@ -53,6 +57,11 @@ def parse_collection_intent(text: str, *, connection: Any) -> dict[str, Any]:
     if not by_id:
         return {"state": "none", "choices": [], "content_query": raw}
     if len(by_id) > 1:
+        spans = sorted({(hit[0], hit[1]) for hit in hits})
+        between = [raw[left[1]:right[0]] for left, right in zip(spans, spans[1:])]
+        if any(re.fullmatch(r"\s*(?:或|或者|和|与|及|、)\s*", part) for part in between):
+            return {"state": "unsupported", "choices": [], "content_query": None,
+                    "notice": "多个合集之间的联合条件暂不支持，请改用单个合集。"}
         residual = raw
         for start, end in sorted({(hit[0], hit[1]) for hit in hits}, reverse=True):
             residual = residual[:start] + " " + residual[end:]
@@ -89,6 +98,19 @@ def _bounds(year: int, month: int | None = None, day: int | None = None) -> tupl
 
 
 def _take_date(text: str, today: date) -> tuple[str, str, str] | None:
+    # A fixed, consecutive month range has an unambiguous half-open interval.
+    month_range = re.search(
+        r"(?P<year>(?:19|20)\d{2})年(?P<first>1[0-2]|0?[1-9])月到"
+        r"(?:(?P<last_year>(?:19|20)\d{2})年)?(?P<last>1[0-2]|0?[1-9])月",
+        text,
+    )
+    if month_range:
+        year, first, last = map(int, (month_range.group("year"), month_range.group("first"), month_range.group("last")))
+        last_year = int(month_range.group("last_year") or year)
+        if last_year == year and first <= last:
+            start = date(year, first, 1)
+            end = date(year + (last == 12), last % 12 + 1, 1)
+            return month_range.group(0), start.isoformat(), end.isoformat()
     match = re.search(r"(?P<year>(?:19|20)\d{2})年?(?P<season>春|夏|秋|冬)(?:天|季)?", text)
     if match:
         year = int(match.group("year"))
@@ -100,10 +122,14 @@ def _take_date(text: str, today: date) -> tuple[str, str, str] | None:
             start, end = date(year, first, 1), date(year, after, 1)
         return match.group(0), start.isoformat(), end.isoformat()
     for word, delta in (("去年", -1), ("今年", 0), ("前年", -2)):
-        match = re.search(word + r"(?:(春|夏|秋|冬)(?:天|季)?)?", text)
+        match = re.search(word + r"(?:(?P<month>1[0-2]|0?[1-9])月|(?P<season>春|夏|秋|冬)(?:天|季)?)?", text)
         if match:
             year = today.year + delta
-            season = match.group(1)
+            month = int(match.group("month")) if match.group("month") else None
+            season = match.group("season")
+            if month is not None:
+                first, after = _bounds(year, month)
+                return match.group(0), first, after
             if season == "冬":
                 start = date(year - 1, 12, 1) if delta == 0 and today.month < 3 else date(year, 12, 1)
                 end = date(start.year + 1, 3, 1)

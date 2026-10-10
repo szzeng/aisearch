@@ -50,6 +50,83 @@ def test_registered_source_is_a_validated_filter(api_env: ApiEnv) -> None:
     api_env.scenario(scenario)
 
 
+def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or(
+    api_env: ApiEnv, monkeypatch: Any,
+) -> None:
+    seeded = seed_library(api_env, {
+        "shared.jpg": [(20, 20, 90, 90), (150, 30, 220, 100)],
+        "ai-only.jpg": [(30, 30, 100, 100)],
+        "outside.jpg": [(40, 40, 110, 110)],
+    })
+    catalog = api_env.service.catalog
+    first, second, outside = add_person(catalog), add_person(catalog), add_person(catalog)
+    add_link(catalog, seeded["shared.jpg"]["faces"][0], first)
+    add_link(catalog, seeded["shared.jpg"]["faces"][1], second)
+    add_link(catalog, seeded["ai-only.jpg"]["faces"][0], first)
+    add_link(catalog, seeded["outside.jpg"]["faces"][0], outside)
+
+    async def scenario(client):
+        from photo_search.api import routes
+
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        ai = await client.post("/api/v1/persons/collections", headers=headers, json={"name": "AI"})
+        colleague = await client.post("/api/v1/persons/collections", headers=headers, json={"name": "同事"})
+        assert ai.status_code == colleague.status_code == 200
+        ai_id = int(ai.json()["collection"]["collection_id"])
+        await client.post(_url(catalog, ai_id) + "/members", headers=headers,
+                          json={"action": "add", "person_ids": [first, second]})
+
+        captured: dict[str, Any] = {}
+
+        def capture_semantic(_catalog: Any, envelope: Any, **kwargs: Any) -> dict[str, Any]:
+            captured["text"] = envelope.text
+            captured["collection_id"] = kwargs["collection_id"]
+            return {"filters": {}, "hits": [], "total_candidates": 0}
+
+        with monkeypatch.context() as scoped_patch:
+            scoped_patch.setattr(routes, "search_request", capture_semantic)
+            semantic = await client.post("/api/v1/search/place-aware", headers=headers, json={
+                "request_id": "ai-collection-skirt", "original_query": "AI里的裙子", "page_size": 10,
+            })
+        assert semantic.status_code == 200, semantic.text
+        assert semantic.json()["content_query"] == "裙子"
+        assert captured == {"text": "裙子", "collection_id": ai_id}
+
+        # Pure collection scope uses the authoritative SQLite path and never reaches
+        # the semantic/vector entry point; the shared asset appears once across pages.
+        with monkeypatch.context() as scoped_patch:
+            scoped_patch.setattr(routes, "search_request", lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("pure collection scope must not encode text")))
+            page = await client.post("/api/v1/search/place-aware", headers=headers, json={
+                "request_id": "ai-collection-photos", "original_query": "AI里的照片", "page_size": 1,
+            })
+            assert page.status_code == 200, page.text
+            first_page = page.json()
+            assert first_page["total_candidates"] == 2
+            assert first_page["has_more"] is True
+            more = await client.post("/api/v1/search/place-aware", headers=headers, json={
+                "request_id": "ai-collection-photos-more", "original_query": "AI里的照片",
+                "intent_plan": first_page["intent_plan"], "page_size": 1,
+                "search_session_id": first_page["search_session_id"], "cursor": first_page["next_cursor"],
+            })
+            assert more.status_code == 200, more.text
+            assert len({first_page["hits"][0]["asset_id"], more.json()["hits"][0]["asset_id"]}) == 2
+
+        search_calls: list[Any] = []
+        with monkeypatch.context() as scoped_patch:
+            scoped_patch.setattr(routes, "search_request", lambda *args, **kwargs: search_calls.append(args))
+            unsupported = await client.post("/api/v1/search/place-aware", headers=headers, json={
+                "request_id": "ai-or-colleague", "original_query": "AI或同事的照片",
+            })
+        assert unsupported.status_code == 200, unsupported.text
+        assert unsupported.json()["unsupported_intent"] is True
+        assert unsupported.json().get("collection_scope") is None
+        assert search_calls == []
+
+    api_env.scenario(scenario)
+
+
 def test_unified_plan_preserves_manual_filters_and_rejects_tampering(api_env: ApiEnv, monkeypatch: Any) -> None:
     catalog = api_env.service.catalog
     person_id = add_person(catalog)
@@ -93,6 +170,46 @@ def test_unified_plan_preserves_manual_filters_and_rejects_tampering(api_env: Ap
             "intent_plan": unversioned,
         })
         assert rejected_version.status_code == 409, rejected_version.text
+
+    api_env.scenario(scenario)
+
+
+def test_canceling_all_person_chip_drops_server_parsed_all_relation(api_env: ApiEnv) -> None:
+    seeded = seed_library(api_env, {
+        "together.jpg": [(20, 20, 90, 90), (150, 30, 220, 100)],
+        "other.jpg": [(30, 30, 100, 100)],
+    })
+    catalog = api_env.service.catalog
+    first = add_person(catalog, name="张三")
+    second = add_person(catalog, name="李四")
+    add_link(catalog, seeded["together.jpg"]["faces"][0], first)
+    add_link(catalog, seeded["together.jpg"]["faces"][1], second)
+    add_link(catalog, seeded["other.jpg"]["faces"][0], first)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        original = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "person-all-chip-before", "original_query": "张三和李四的合照", "page_size": 10,
+        })
+        assert original.status_code == 200, original.text
+        first_body = original.json()
+        assert first_body["intent_plan"]["person_match"] == "all"
+        assert len(first_body["hits"]) == 1
+
+        plan = dict(first_body["intent_plan"])
+        plan["person_ids"] = []
+        plan["person_names"] = []
+        plan["person_match"] = "any"
+        cancelled = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "person-all-chip-after", "original_query": "张三和李四的合照",
+            "intent_plan": plan, "page_size": 10,
+        })
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["filters"]["person_ids"] == []
+        assert {hit["asset_id"] for hit in cancelled.json()["hits"]} == {
+            seeded["together.jpg"]["asset_id"], seeded["other.jpg"]["asset_id"],
+        }
 
     api_env.scenario(scenario)
 

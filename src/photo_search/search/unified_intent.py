@@ -29,6 +29,20 @@ def _span(raw: str, value: str) -> tuple[int, int] | None:
     return None if match is None else (match.start(), match.end())
 
 
+def _collection_span(raw: str, value: str) -> tuple[int, int] | None:
+    span = _span(raw, value)
+    if span is None:
+        return None
+    start, end = span
+    suffix = raw[end:]
+    connector = re.match(r"(?:合集(?:里面|里|中的|中)?(?:的)?|里面的|里面|里的|里|中的|中|的)", suffix)
+    if connector and connector.group(0) != "的":
+        end += connector.end()
+    elif connector and connector.group(0) == "的":
+        end += 1
+    return start, end
+
+
 def _name_spans(raw: str, spelling: str, all_spellings: list[str]) -> list[tuple[int, int]]:
     if not spelling:
         return []
@@ -63,11 +77,22 @@ def _erase(raw: str, items: list[dict[str, Any]]) -> str | None:
             elif re.match(r"\s*的", suffix):
                 end += re.match(r"\s*的", suffix).end()
         elif kind == "collection":
-            marker = next((value for value in ("合集里的", "合集中的", "合集", "的照片", "的图片", "的合照", "的合影", "的")
+            marker = next((value for value in ("合集里面的", "合集里的", "合集中的", "合集里", "合集中", "合集", "里面的", "里面", "里的", "里", "中的", "中", "的照片", "的图片", "的合照", "的合影", "的")
                            if suffix.startswith(value)), None)
             if marker:
                 end += len(marker)
-        elif kind in {"person", "time", "source"} and suffix.startswith("的"):
+                suffix = raw[end:]
+            if kind == "collection" and re.match(r"(?:照片|图片|合照|合影)$", suffix.strip(" \t\r\n，,。；;、")):
+                tail = re.match(r"\s*(?:照片|图片|合照|合影)", suffix)
+                if tail:
+                    end += tail.end()
+        elif kind == "source":
+            if prefix.endswith("来自"):
+                start -= 2
+            marker = re.match(r"(?:里面的|里面|里的|里|中的|中|的)?", suffix)
+            if marker:
+                end += marker.end()
+        elif kind in {"person", "time"} and suffix.startswith("的"):
             end += 1
         ranges.append((start, end))
     people = [item for item in ordered if item.get("type") == "person"]
@@ -80,6 +105,7 @@ def _erase(raw: str, items: list[dict[str, Any]]) -> str | None:
         result = result[:start] + " " + result[end:]
     result = re.sub(r"(?:请帮我找一下|请帮我找|帮我找一下|帮我找|找一下|搜索一下|查找一下)", " ", result)
     result = result.strip(" \t\r\n，,。；;、")
+    result = re.sub(r"(?:同框|一起拍(?:摄)?)(?:的)?(?=(?:照片|图片|合照|合影))", " ", result)
     result = re.sub(r"(?:人物)?合集|(?:的)?(?:照片|图片|合照|合影)$", " ", result)
     return re.sub(r"[，,。；;、\s]+", " ", result).strip() or None
 
@@ -99,12 +125,15 @@ def _source_candidates(raw: str, connection: Any) -> list[dict[str, Any]]:
         for match in re.finditer(re.escape(name), folded, re.IGNORECASE):
             around = folded[max(0, match.start() - 10):match.start()].casefold()
             tail = folded[match.end():].casefold()
-            explicit_tail = re.match(r"(?:里|中的|中)", tail) and re.search(r"(?:图库|来源|备份)", name)
-            if not (re.search(r"(?:图库|来源|备份)(?:里|中的|中)?$", around)
-                    or re.match(r"(?:图库|来源|备份)(?:里|中的|中)?", tail)
-                    or explicit_tail):
+            if not re.search(r"(?:图库|来源|备份)", name):
                 continue
-            normalized_end = match.end() + (len(explicit_tail.group(0)) if explicit_tail else 0)
+            connector = re.match(r"(?:里面的|里面|里的|里|中的|中|的)?", tail)
+            following = tail[connector.end():] if connector else tail
+            explicit_tail = bool(connector and (connector.group(0) or re.match(r"(?:照片|图片|合照|合影)", following)))
+            from_prefix = around.endswith("来自")
+            if not (explicit_tail or from_prefix):
+                continue
+            normalized_end = match.end() + (len(connector.group(0)) if connector else 0)
             found.append({"type": "source", "source_id": int(row["source_id"]),
                           "name": name,
                           "start": original_boundaries.get(match.start(), match.start()),
@@ -123,12 +152,32 @@ def parse_unified_intent(
         return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw[:256],
                 "content_query": None, "candidates": [], "notice": "查询过长，请缩短后重试。"}
 
+    month_range = re.search(
+        r"(?P<year>(?:19|20)\d{2})年(?P<first>1[0-2]|0?[1-9])月到"
+        r"(?:(?P<last_year>(?:19|20)\d{2})年)?(?P<last>1[0-2]|0?[1-9])月",
+        raw,
+    )
+    supported_explicit_month_range = False
+    if month_range:
+        first_year = int(month_range.group("year"))
+        last_year = int(month_range.group("last_year") or first_year)
+        first_month, last_month = int(month_range.group("first")), int(month_range.group("last"))
+        if last_year != first_year or first_month > last_month:
+            return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw,
+                    "content_query": None, "candidates": [],
+                    "notice": "该月份区间暂不支持，请改用同一年内递增的月份范围。"}
+        supported_explicit_month_range = True
+
     candidates: list[dict[str, Any]] = []
     collection = parse_collection_intent(raw, connection=connection)
     choice_required = collection["state"] == "ambiguous"
+    if collection["state"] == "unsupported":
+        return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw,
+                "content_query": None, "collection_scope": None, "candidates": [],
+                "notice": collection.get("notice") or "多个合集的联合条件暂不支持。"}
     if collection["state"] == "recognized":
         item = collection["collection"]
-        span = _span(raw, item["name"])
+        span = _collection_span(raw, item["name"])
         if span:
             candidates.append({"type": "collection", **item, "start": span[0], "end": span[1], "status": "confirmed"})
     elif collection["state"] == "ambiguous":
@@ -163,7 +212,9 @@ def parse_unified_intent(
         if span and (not re.fullmatch(r"20\d{2}年?", hit[0]) or re.search(r"(?:照片|图片|拍|的|年)$", raw[span[1]:]) or span[0] == 0):
             candidates.append({"type": "time", "value": [hit[1], hit[2]], "start": span[0], "end": span[1], "status": "confirmed"})
 
-    place = parse_place_query(raw, place_choices or [])
+    context_spans = [(int(item["start"]), int(item["end"])) for item in candidates
+                     if item["type"] in {"person", "time"}]
+    place = parse_place_query(raw, place_choices or [], contextual_prefix_spans=context_spans)
     choice_required = choice_required or place["state"] == "ambiguous"
     if place["state"] in {"recognized", "ambiguous"}:
         for item in place["choices"]:
@@ -271,7 +322,10 @@ def parse_unified_intent(
     ))
     time_candidates = [item for item in candidates if item["type"] == "time"]
     explicit_times = list(re.finditer(r"(?<!\d)(?:19|20)\d{2}(?:年|-(?:1[0-2]|0?[1-9]))|(?:去年|前年|今年)(?:(?:春|夏|秋|冬)(?:天|季)?)?", raw))
-    if len(time_candidates) > 1 or (len(explicit_times) > 1 and not re.search(r"(?:写着|写有|标着|编号|文字)", raw)):
+    multiple_explicit_times = len(explicit_times) > 1 and not (
+        supported_explicit_month_range and len(explicit_times) == 2
+    )
+    if len(time_candidates) > 1 or (multiple_explicit_times and not re.search(r"(?:写着|写有|标着|编号|文字)", raw)):
         unsupported = True
     confirmed = [item for item in candidates if item["status"] == "confirmed"]
     spans = [(int(item["start"]), int(item["end"])) for item in confirmed]
@@ -291,7 +345,7 @@ def parse_unified_intent(
     if len(unique_people) > 1:
         if "或者" in raw or "或" in raw:
             person_match = "any"
-        elif "合照" in raw or "合影" in raw:
+        elif "合照" in raw or "合影" in raw or "同框" in raw or "一起拍" in raw:
             person_match = "all"
         else:
             for item in confirmed:
@@ -314,6 +368,11 @@ def parse_unified_intent(
     chosen_source = next((item for item in confirmed if item["type"] == "source"), None)
     chosen_time = next((item for item in confirmed if item["type"] == "time"), None)
     state = "unsupported" if unsupported else ("ready" if confirmed else "none")
+    if state == "unsupported":
+        # Multiple explicit years are a refused union, so never expose the first
+        # parsed year as if it were an executable single-year plan.
+        if multiple_explicit_times:
+            chosen_time = None
     return {"plan_version": PLAN_VERSION, "state": state, "original_query": raw,
             "content_query": None if state == "unsupported" else (raw if state == "none" else residual),
             "collection_scope": None if chosen_collection is None else {

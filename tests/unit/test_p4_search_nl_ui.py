@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 
-def test_filter_pages_replace_the_dom_and_saved_snapshot_stays_page_bounded() -> None:
+def test_filter_pages_append_and_saved_snapshot_keeps_loaded_results() -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the search-page interaction check"
     script = r"""
@@ -37,19 +37,23 @@ const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryPageSize.value="100";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);ui.state.search.mode="text";ui.state.observer={observe(){}};
-const makePage=(start,more)=>({search_session_id:"filter-only",page_offset:start,page_size:100,total_candidates:5005,has_more:more,next_cursor:more?"cursor-"+(start+100):null,
- hits:Array.from({length:Math.min(100,5005-start)},(_,i)=>({asset_id:start+i+1,rank:start+i+1,hit_reason:"FILTER_ONLY",matched_by:{filter:start+i+1}})),
+const makePage=(start,more,session)=>({search_session_id:session,page_offset:start,page_size:100,total_candidates:205,has_more:more,next_cursor:more?"cursor-"+(start+100):null,
+ hits:Array.from({length:Math.min(100,205-start)},(_,i)=>({asset_id:start+i+1,rank:start+i+1,hit_reason:"FILTER_ONLY",matched_by:{filter:start+i+1}})),
  filters:{source_id:null,availability:"any",place_ids:[],include_descendants:true,place_state:"any",person_ids:[],person_match:"any",capture_from:null,capture_to_exclusive:null},
  channels:{fts:{},vector:{},authoritative:{order:"asset_id"}},search_projection:{state:"SYNCED"},pending_semantic:null,state:"OK"});
-for(let page=0;page<51;page++){
- ui.renderPage(makePage(page*100,page<50),page>0);
- assert.ok(els.resultGrid.children.length<=100,"DOM must hold at most one bounded page");
- assert.ok(ui.state.search.hits.length<=100,"in-memory preview list must hold at most one bounded page");
- const snapshot=JSON.parse(storage.get("aisearch.search-return.v1"));
- assert.ok(snapshot.hits.length<=100,"return snapshot must not grow with total results");
+for(const session of ["filter-only","place-album:test"]){
+ for(let page=0;page<3;page++){
+  const loaded=Math.min((page+1)*100,205);
+  ui.renderPage(makePage(page*100,page<2,session),page>0);
+  assert.equal(els.resultGrid.children.length,loaded,"a continued search must keep previous result cards");
+  assert.equal(ui.state.search.hits.length,loaded,"preview navigation must include every loaded page");
+  const snapshot=JSON.parse(storage.get("aisearch.search-return.v1"));
+  assert.equal(snapshot.hits.length,loaded,"return snapshot must retain all loaded result pages");
+ }
+ assert.equal(ui.state.search.count,205);assert.equal(ui.state.search.cursor,null);
+ assert.match(els.queryStatus.textContent,/符合条件共 205 张/);assert.match(els.queryStatus.textContent,/已加载 205 张/);
 }
-assert.equal(ui.state.search.count,5005);assert.equal(ui.state.search.cursor,null);
-assert.match(els.queryStatus.textContent,/符合条件共 5005 张/);assert.match(els.queryStatus.textContent,/已到末尾/);
+assert.match(els.queryStatus.textContent,/已到末尾/);
 """
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
@@ -106,6 +110,75 @@ assert.equal(plan.place_kind,null);assert.equal(plan.place_selection,null,"place
 assert.equal(plan.source_id,null,"cancelling a source chip removes only its source filter");
 ui.state.search.loading=false;els.queryText.value="2026年爸爸日落照片";ui.renderIntentChips(plan);ui.submitSearch();
 assert.equal(els.resultIntentScope.children.length,0,"a new query must clear condition chips from the previous search");
+"""
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [node, "-e", script], cwd=root, capture_output=True, text=True,
+        encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_new_search_generation_ignores_stale_success_choice_and_error() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the search-page interaction check"
+    script = r"""
+(async()=>{
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Element {
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.hidden=false;this.value="";this.dataset={};this.disabled=false;}
+  set textContent(value){this.text=String(value);this.children=[];}
+  get textContent(){return this.text||this.children.map(child=>child.textContent).join("");}
+  get firstChild(){return this.children[0]||null;}
+  appendChild(child){this.children.push(child);return child;}
+  removeChild(child){this.children.splice(this.children.indexOf(child),1);return child;}
+  addEventListener(name,callback){this.events[name]=callback;}
+  setAttribute(name,value){this[name]=String(value);}
+}
+const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
+const storage=new Map(),pending=[],rendered=[],failures=[];
+const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
+ document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
+ window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
+ fetch:(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}))};
+let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
+code=code.replace('  if (document.readyState === "loading")',
+ '  globalThis.ui={state,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+code=code.replace('        renderPage(body, continuation);','        globalThis.rendered.push(body);');
+code=code.replace('        onSearchFailure(failure);','        globalThis.failures.push(failure);');
+context.rendered=rendered;context.failures=failures;
+vm.createContext(context);vm.runInContext(code,context);
+const ui=context.ui;
+const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
+const els={};ids.forEach(id=>els[id]=get(id));
+els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
+ui.setElements(els);
+function search(query){els.queryText.value=query;ui.submitSearch();}
+function reply(index,body){pending[index].resolve({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>body});}
+search("A");assert.equal(pending.length,1);
+search("B");assert.equal(pending.length,2,"a new query must start while A is still loading");
+reply(0,{intent_plan:{original_query:"A",content_query:"A"},hits:[]});
+reply(1,{intent_plan:{original_query:"B",content_query:"B"},hits:[]});
+ await new Promise(resolve=>setTimeout(resolve,0));
+assert.equal(ui.state.search.intentPlan.original_query,"B");
+assert.deepEqual(rendered.map(body=>body.intent_plan.original_query),["B"]);
+
+search("C");search("D");
+reply(3,{intent_plan:{original_query:"D",content_query:"D"},hits:[]});
+pending[2].reject({code:"OLD_FAILURE",message:"stale failure"});
+ await new Promise(resolve=>setTimeout(resolve,0));
+assert.equal(ui.state.search.intentPlan.original_query,"D");
+assert.equal(failures.length,0,"an older error must not replace the current search state");
+assert.deepEqual(rendered.map(body=>body.intent_plan.original_query),["B","D"]);
+
+search("E");search("F");
+reply(4,{needs_scope_choice:true,scope_choices:[{type:"person",label:"old choice"}]});
+reply(5,{intent_plan:{original_query:"F",content_query:"F"},hits:[]});
+ await new Promise(resolve=>setTimeout(resolve,0));
+assert.equal(ui.state.search.intentPlan.original_query,"F");
+assert.deepEqual(rendered.map(body=>body.intent_plan.original_query),["B","D","F"]);
+assert.equal(els.resultIntentScope.children.length,0,"a stale disambiguation must not replace current results");
+})().catch(error=>{console.error(error);process.exitCode=1;});
 """
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(

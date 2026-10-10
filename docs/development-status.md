@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 新增待实施：P4-SEARCH-INTENT-NL-COVERAGE-FIX-A — READY / 统一搜索句式覆盖与前端状态修复
+## 新增实施：P4-SEARCH-INTENT-NL-COVERAGE-FIX-A — 已实现 / 定向验证与当前会话工程复核通过；独立审查与现场试用待完成
 
-[任务卡](tasks/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)。基于已实现的 P4-SEARCH-INTENT-UNIFIED-A 与 FIX1/FIX2，不再重构搜索引擎，聚焦日常自然语言遗漏及条件一致性：`AI里的照片` / `AI里的裙子`、来源“的照片”、`今年10月`、年份＋地点、人物同框、多合集 OR 不得错误执行单侧范围，以及快速连续搜索/取消 chip/续页/返回状态安全。先将 37 条解析例句落地为参数化红灯测试，再自行按根因修复与复测；仅 4 组 API＋2 组合成 DOM/Promise 直接场景及受影响原测试、Ruff、Node、diff-check。推荐 GPT-6 High；实现后按 AGENTS.md 做独立 DS-H High 完整新增受影响面审查。与人物相册向量恢复任务 P4-PERSON-SEMANTIC-REPAIR-A 独立，不访问真实 PhotoSearchData、不改 Schema/FTS/Vector/冻结搜索协议。本次**仅提交任务文档与 status，产品代码未实施、测试未执行、真实图库未验收**。
+[任务卡](tasks/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)、[执行报告](reports/P4-SEARCH-INTENT-NL-COVERAGE-FIX-A.md)。新增 37 条解析红灯后按根因修复合集范围连接词/多合集拒绝、时间与地点上下文、人物同框关系、来源句式及前端 request generation；`all` 人物 chip 全取消后可继续检索。当前会话复核另补月份区间边界，反向/跨年范围明确拒绝，重复年份同年范围完整执行。任务卡六个测试文件 JUnit 102/0/0/0，Ruff、Node、diff-check 通过。后续补修 `filter-only` 与地点相册续页累加显示，定向 JS 测试 1/0/0/0。当前会话工程复核通过（非独立 DS-H）；独立 DS-H High 复核和现场少量真实数据复测待完成。未跑全仓/浏览器矩阵/GPU/真实模型/打包，未访问真实 PhotoSearchData 或运行服务，未提交/推送。与 P4-PERSON-SEMANTIC-REPAIR-A 独立。
 
 ## 当前实施：P4-PERSON-SEMANTIC-REPAIR-A — 已实现 / 工程复核通过；验证待完成
 

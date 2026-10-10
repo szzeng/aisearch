@@ -95,6 +95,7 @@
       binding: null,
       placeAware: null,
       intentPlan: null,
+      requestGeneration: 0,
       hits: [],
       lastBody: null,
       preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false },
@@ -905,9 +906,14 @@
   }
 
   function sendSearch(continuation) {
-    if (state.search.loading) {
+    if (state.search.loading && continuation) {
       return;
     }
+    if (!continuation) {
+      state.search.requestGeneration += 1;
+      state.search.loading = false;
+    }
+    var requestGeneration = state.search.requestGeneration;
     var filters = collectFilters();
     if (filters.problem) {
       setStatus(els.queryStatus, filters.problem, "error");
@@ -943,6 +949,9 @@
         : sendTextSearch(continuation, filters);
     return promise.then(
       function (body) {
+        if (requestGeneration !== state.search.requestGeneration) {
+          return false;
+        }
         state.search.loading = false;
         if (body && body.needs_place_choice) {
           showPlaceChoices(body);
@@ -988,6 +997,9 @@
         return true;
       },
       function (failure) {
+        if (requestGeneration !== state.search.requestGeneration) {
+          return false;
+        }
         state.search.loading = false;
         onSearchFailure(failure);
         // The caller learns *whether* the query succeeded instead of seeing a resolved
@@ -1339,23 +1351,18 @@
       els.resultPlaceScope.hidden = true;
     }
     var hits = body.hits || [];
+    // Filter-only and place-album cursors keep every loaded page visible as users continue.
     var filterOnly = body.search_session_id === "filter-only" || String(body.search_session_id || "").indexOf("place-album:") === 0;
-    var visibleStart = Number(body.page_offset) || 0;
     if (!continuation) {
       releaseObjectUrls();
       clear(els.resultGrid);
       state.search.count = 0;
-    } else if (filterOnly) {
-      // Pure filter browsing keeps one page in the DOM/session snapshot, regardless of total.
-      releaseObjectUrls();
-      clear(els.resultGrid);
-      state.search.count = visibleStart;
     }
     hits.forEach(function (hit) {
       els.resultGrid.appendChild(buildHit(hit));
     });
     state.search.count += hits.length;
-    state.search.hits = continuation && !filterOnly ? state.search.hits.concat(hits) : hits.slice();
+    state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
     state.search.lastBody = body;
     state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
@@ -1373,7 +1380,7 @@
     renderCaptureEcho(body.filters, state.search.mode);
     var parts = filterOnly
       ? ["符合条件共 " + number(body.total_candidates) + " 张",
-         "当前显示 " + (visibleStart + 1) + "–" + (visibleStart + hits.length) + " 张",
+         "已加载 " + number(state.search.count) + " 张",
          body.has_more ? "还有下一页" : "已到末尾"]
       : ["已显示 " + state.search.count + " 行",
          "候选共 " + number(body.total_candidates) + " 个",

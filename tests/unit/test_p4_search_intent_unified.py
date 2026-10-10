@@ -33,6 +33,84 @@ def parse(text: str):
     return parse_unified_intent(text, connection=catalog(), place_choices=PLACES, today=date(2026, 10, 9))
 
 
+def coverage_catalog() -> sqlite3.Connection:
+    db = catalog()
+    db.execute("DELETE FROM source_roots WHERE source_id=21")
+    db.execute(
+        "INSERT INTO person_collections VALUES(12,'2123456789abcdef0123456789abcdef','AI',1)"
+    )
+    return db
+
+
+@__import__("pytest").mark.parametrize(
+    ("query", "expected"),
+    [
+        ("AI的照片", {"collection": 12, "content": None}),
+        ("AI里的照片", {"collection": 12, "content": None}),
+        ("AI里面的照片", {"collection": 12, "content": None}),
+        ("AI中的照片", {"collection": 12, "content": None}),
+        ("AI合集里的照片", {"collection": 12, "content": None}),
+        ("AI的裙子", {"collection": 12, "content": "裙子"}),
+        ("AI里的裙子", {"collection": 12, "content": "裙子"}),
+        ("AI里面穿裙子的照片", {"collection": 12, "content": "穿裙子"}),
+        ("2024年AI里的照片", {"collection": 12, "capture_from": "2024-01-01", "capture_to_exclusive": "2025-01-01", "content": None}),
+        ("AI技术照片", {"collection": None, "content_contains": "AI技术"}),
+        ("AI风格的照片", {"collection": None, "content_contains": "AI风格"}),
+        ("AI或同事的照片", {"state": "unsupported", "collection": None}),
+        ("AI和同事的照片", {"state": "unsupported", "collection": None}),
+        ("张三的照片", {"person_ids": [1], "content": None}),
+        ("张三或李四的照片", {"person_ids": [1, 2], "person_match": "any", "content": None}),
+        ("张三和李四的合照", {"person_ids": [1, 2], "person_match": "all", "content": None}),
+        ("张三与李四同框的照片", {"person_ids": [1, 2], "person_match": "all", "content": None}),
+        ("张三和李四一起拍的照片", {"person_ids": [1, 2], "person_match": "all", "content": None}),
+        ("张三和李四的照片", {"state": "needs_choice", "person_ids": [1, 2]}),
+        ("济南的照片", {"place_key": "7", "content": None}),
+        ("2024年济南的照片", {"place_key": "7", "capture_from": "2024-01-01", "capture_to_exclusive": "2025-01-01", "content": None}),
+        ("去年济南的照片", {"place_key": "7", "capture_from": "2025-01-01", "capture_to_exclusive": "2026-01-01", "content": None}),
+        ("2024年张三在济南拍的日落", {"place_key": "7", "capture_from": "2024-01-01", "capture_to_exclusive": "2025-01-01", "person_ids": [1], "content": "日落"}),
+        ("济南路上的夜景", {"place_key": None, "content": "济南路上的夜景"}),
+        ("济南或上海的照片", {"state": "unsupported", "place_key": None}),
+        ("2024年10月的照片", {"capture_from": "2024-10-01", "capture_to_exclusive": "2024-11-01", "content": None}),
+        ("今年10月的照片", {"capture_from": "2026-10-01", "capture_to_exclusive": "2026-11-01", "content": None}),
+        ("去年8月的照片", {"capture_from": "2025-08-01", "capture_to_exclusive": "2025-09-01", "content": None}),
+        ("去年夏天的照片", {"capture_from": "2025-06-01", "capture_to_exclusive": "2025-09-01", "content": None}),
+        ("2024年10月到12月的照片", {"capture_from": "2024-10-01", "capture_to_exclusive": "2025-01-01", "content": None}),
+        ("2024年10月到2024年12月的照片", {"capture_from": "2024-10-01", "capture_to_exclusive": "2025-01-01", "content": None}),
+        ("2024年12月到10月的照片", {"state": "unsupported", "capture_from": None}),
+        ("2024年10月到2025年12月的照片", {"state": "unsupported", "capture_from": None}),
+        ("2024年或2025年的照片", {"state": "unsupported", "capture_from": None}),
+        ("照片上写着2024年", {"capture_from": None, "content": "照片上写着2024年"}),
+        ("手机备份图库里的照片", {"source_id": 20, "content": None}),
+        ("手机备份图库的照片", {"source_id": 20, "content": None}),
+        ("来自手机备份图库的照片", {"source_id": 20, "content": None}),
+        ("手机备份图库里的张三照片", {"source_id": 20, "person_ids": [1], "content": None}),
+        ("手机拍的照片", {"source_id": None, "content_contains": "手机拍"}),
+    ],
+)
+def test_natural_language_coverage_contract(query: str, expected: dict[str, Any]) -> None:
+    plan = parse_unified_intent(
+        query, connection=coverage_catalog(), place_choices=PLACES,
+        today=date(2026, 10, 10),
+    )
+    if "state" in expected:
+        assert plan["state"] == expected["state"]
+    if "collection" in expected:
+        actual = plan.get("collection_scope")
+        assert (actual or {}).get("collection_id") == expected["collection"]
+    if "source_id" in expected:
+        sources = [item["source_id"] for item in plan["candidates"] if item["type"] == "source"]
+        assert sources == ([] if expected["source_id"] is None else [expected["source_id"]])
+    for field in ("capture_from", "capture_to_exclusive", "place_key", "person_match"):
+        if field in expected:
+            assert plan.get(field) == expected[field]
+    if "person_ids" in expected:
+        assert plan["person_ids"] == expected["person_ids"]
+    if "content" in expected:
+        assert plan["content_query"] == expected["content"]
+    if "content_contains" in expected:
+        assert expected["content_contains"] in (plan["content_query"] or "")
+
+
 def test_five_grounded_intents_and_content_are_resolved_from_original_query() -> None:
     plan = parse("2024年小张在济南拍的日落")
     assert plan["state"] == "ready"

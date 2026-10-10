@@ -132,7 +132,7 @@ class PersonalSearchCoordinator:
             person_match = value.get("person_match", "any")
             if person_match == "all" and len(value.get("person_ids", [])) < 2:
                 raise ValueError("搜索计划人物匹配方式无效")
-            if parsed.get("choice_kind") != "person_match" and person_match != parsed.get("person_match", "any"):
+            if value.get("person_ids") and parsed.get("choice_kind") != "person_match" and person_match != parsed.get("person_match", "any"):
                 raise ValueError("搜索计划人物匹配方式与原查询不一致，请重新搜索")
         source_id = value.get("source_id")
         if source_id is not None:

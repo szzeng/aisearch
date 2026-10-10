@@ -6,6 +6,7 @@ active place choices; returned keys therefore always refer to existing authorita
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
@@ -165,7 +166,12 @@ def _is_explicit_multi_or_negative(text: str, normalized: str, hits: list[_Hit])
     return False
 
 
-def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any]:
+def parse_place_query(
+    text: str,
+    choices: list[dict[str, Any]],
+    *,
+    contextual_prefix_spans: list[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
     """Return a recognized place plan, or preserve the original query without hard filtering."""
     raw = str(text)
     normalized, offsets = _normalize_with_map(raw)
@@ -179,7 +185,17 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
         prefix = normalized[: hit.start]
         suffix = normalized[hit.end :]
         clean_prefix = _strip_request_prefix(prefix)
-        leading = clean_prefix is None or _parent_chain_prefix(prefix, hit, hits)
+        source_hit_start = _original_boundary(offsets, raw, hit.start)
+        original_prefix = raw[:source_hit_start]
+        masked_prefix = list(original_prefix)
+        for start, end in contextual_prefix_spans or []:
+            if 0 <= start < end <= source_hit_start:
+                masked_prefix[start:end] = " " * (end - start)
+        contextual_prefix = "".join(masked_prefix).rstrip()
+        if contextual_prefix.endswith("在"):
+            contextual_prefix = contextual_prefix[:-1].rstrip()
+        contextual_leading = not contextual_prefix
+        leading = clean_prefix is None or _parent_chain_prefix(prefix, hit, hits) or contextual_leading
         marker = next((item for item in _PLACE_MARKERS if suffix.startswith(_norm(item))), None)
         if leading and marker:
             remainder_start = hit.end + len(_norm(marker))
@@ -358,11 +374,16 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
                 "notice": "当前地点目录无法确认这段地点层级；仍按原句检索，没有添加地点条件。"}
 
     if not hits:
+        probe_chars = list(raw)
+        for start, end in contextual_prefix_spans or []:
+            if 0 <= start < end <= len(probe_chars):
+                probe_chars[start:end] = " " * (end - start)
+        probe = _norm("".join(probe_chars))
         for marker in _PLACE_MARKERS:
-            marker_at = normalized.find(_norm(marker))
+            marker_at = probe.find(_norm(marker))
             if marker_at < 0:
                 continue
-            before_marker = normalized[:marker_at]
+            before_marker = probe[:marker_at]
             location_at = before_marker.rfind("在")
             if location_at >= 0 and marker_at - location_at <= 28:
                 return {"state": "unresolved", "choices": [], "content_query": None,
@@ -372,12 +393,13 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
         # request. With no local directory match, keep the text query intact and say why
         # no location filter was applied. This is informational only; it never invents a
         # place or changes the retrieval scope.
-        of = normalized.find("的")
-        if 0 < of <= 12 and normalized[of + 1 :].startswith(
+        of = probe.find("的")
+        if 0 < of <= 12 and probe[of + 1 :].startswith(
             ("照片", "图片", "夜景", "海边", "风景", "旅游", "旅行")
         ):
-            leading = normalized[:of]
-            if leading and not any(leading.startswith(_norm(token)) for token in _CONTENT_PROTECTED):
+            leading = probe[:of]
+            if (leading and not any(leading.startswith(_norm(token)) for token in _CONTENT_PROTECTED)
+                    and not re.search(r"(?:风格|技术|生成|拍)$", leading)):
                 return {"state": "unresolved", "choices": [], "content_query": None,
                         "notice": "当前地点目录没有可确认的地点；仍按原句检索，没有添加地点条件。"}
 

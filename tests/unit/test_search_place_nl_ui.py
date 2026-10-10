@@ -191,7 +191,16 @@ code=code.replace('  if (document.readyState === "loading")',
  '  globalThis.ui={state,showPlaceChoices,cancelPlaceScope,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 vm.createContext(context); vm.runInContext(code,context);
 const ui=context.ui, query=get("query-text"), grid=get("grid");
-ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid});
+  ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid,
+    resultIntentScope:get("intent"),resultNotices:get("notices"),loadMore:get("more"),queryActions:get("actions"),
+    querySource:get("source"),queryAvailability:get("availability"),queryPlaceState:get("place-state"),
+    queryPlaceIds:get("place-ids"),queryDescendants:get("descendants"),queryCaptureFrom:get("capture-from"),
+    queryCaptureTo:get("capture-to"),queryPageSize:get("page-size"),queryPersonMatch:get("person-match"),
+    personEcho:get("person-echo"),captureEcho:get("capture-echo"),captureState:get("capture-state"),
+    searchPreviewNav:get("preview-nav"),searchPreviewPosition:get("preview-position"),
+    searchPreviewPrev:get("preview-prev"),searchPreviewNext:get("preview-next")});
+  get("page-size").value="20";get("availability").value="any";get("place-state").value="any";
+  get("descendants").value="true";get("person-match").value="any";
 ui.state.search.loading=true;
 ui.showPlaceChoices({original_query:"西湖的日落",content_query:"日落",place_choices:[
  {kind:"city",key:"local:1",name:"西湖",parent:"杭州",content_query:"日落"},
