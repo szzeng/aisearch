@@ -1,6 +1,6 @@
 # P4-STORAGE-GC-B — LanceDB Vector GC 与 SQLite 离线维护
 
-日期：2026-10-10。状态：**PLANNED / 依赖 P4-STORAGE-GC-A**。立卡基线：`6210c4df3a80560b6acb22aae97356802af2ea15`；实施前核对最新 master、`uv.lock` 中实际 LanceDB 版本及其 API。推荐实施模型：**GPT-6 High**。个人相册、四组定向测试，聚焦索引一致性与数据安全。
+日期：2026-10-10；开工状态更新：2026-10-11。状态：**READY / GC-A 前置条件满足：相关定向测试通过，独立 GPT-6 Luna / High 复核按用户批准的路由例外接受；这不是 DS-H PASS。GC-A 全量 D 级失败仍作为历史问题单独保留，不作为本卡开工阻塞**。立卡基线：`6210c4df3a80560b6acb22aae97356802af2ea15`；实施前核对最新 master、`uv.lock` 中实际 LanceDB 版本及其 API。推荐实施模型：**GPT-6 High**。个人相册、四组定向测试，聚焦索引一致性与数据安全。
 
 ## 1. 目的
 

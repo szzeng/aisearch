@@ -1,6 +1,6 @@
 # P4-STORAGE-GC-A 执行报告
 
-日期：2026-10-10。实现基线：`8a8a6ae`。状态：**IMPLEMENTED / 定向验证通过；D 级回归与独立 DS-H 复核待完成**。
+日期：2026-10-10；交接更新：2026-10-11。实现基线：`8a8a6ae`。状态：**IMPLEMENTED / GC-A 定向验证通过；全量 D 级历史失败保留；GPT-6 Luna High 独立复核按用户批准的路由例外接受（非 DS-H PASS）**。
 
 ## 实施内容
 
@@ -48,3 +48,12 @@
 - 结论：**P2 修复复核通过，未发现该修复范围内的遗留问题。** 这只关闭当前会话复核发现的结构校验项，不构成独立 DS-H，也不代表任务 PASS。
 - 证据：只读取现存 `test-results/P4-STORAGE-GC-A-related.xml`（76/0/0/0）与 `test-results/P4-STORAGE-GC-A-full.xml`（2,338 项；70 failures / 43 errors / 49 skipped）；本次未运行 pytest。`git diff --check` 通过。
 - D 级结果仍有跨任务失败/错误，独立 DS-H 复核仍待完成；不扩大本次修复轮去修改无关地点/人物/搜索夹具。
+
+
+## 2026-10-11 独立复核路由与 GC-B 前置条件
+
+- 用户确认：GC-A 已由独立 GPT-6 Luna / High 完成复核并通过；本次只核对本地记录，没有重复审核。核对时本报告此前没有该复核条目，也没有找到单独的 GC-A 复核报告，因此本条记录以用户本次明确提供的结论为依据，不补写未提供的逐文件覆盖清单或 finding。
+- 原任务及 V3.1 §2.4 对此高风险文件清理面要求独立 DS-H 全受影响面主审。GPT-6 Luna / High 不符合该原路由；按用户明确指示记录路由/验收例外，接受该独立复核结果作为 GC-B 的前置 review gate。此例外**不构成 DS-H PASS**，也不改写原路由规则。
+- GC-A 相关定向 JUnit `test-results/P4-STORAGE-GC-A-related.xml` 现存结果为 **76 tests / 0 failures / 0 errors / 0 skipped**，本次未重跑；据此，在 GC-A 直接受影响的定向覆盖中未见新增回归。
+- 全量 unit/integration 的既有结果仍为 **2,338 tests / 2,176 passed / 70 failures / 43 errors / 49 skipped**，保留在 `test-results/P4-STORAGE-GC-A-full.xml`，不修改结果、不重跑，也不把它标为通过。早期 2,152 项 JUnit 与当前失败 nodeid 并非完全相同；本记录不以计数相同推断失败集合相同，也不宣称全量零回归。GC-A 直接受影响定向集合无失败；全量历史失败继续单独跟踪，不阻止按用户批准的路由例外启动 GC-B。
+- 据此，GC-A 的定向验收与 review 前置条件可供 GC-B 使用；全量失败仍单独开放。
