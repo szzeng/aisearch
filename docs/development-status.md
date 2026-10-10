@@ -2,6 +2,10 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## FIX1：P4-PLACE-UNIFIED-A-FIX1 — IMPLEMENTED / 定向验证通过；现场复测待完成
+
+[修复卡](tasks/P4-PLACE-UNIFIED-A-FIX1.md)、[报告记录](reports/P4-SEARCH-PLACE-NL-A-implementation.md)。自然语言同名片段默认优先当前候选中的 OSM；无 OSM 时 GeoNames 回退；已验证的区域父链约束优先，多个不同 OSM 同名仍要求选择。JUnit 28/0/0/0，Ruff、diff-check通过。未访问真实图库或服务，现场刷新/重启后效果待用户确认；未提交/推送。
+
 ## 当前：P4-SEARCH-COLLECTION-A — IMPLEMENTED / 语义合集 500 回归已修复 / 定向验证通过
 
 [实施卡](tasks/P4-SEARCH-COLLECTION-A.md)、[报告](reports/P4-SEARCH-COLLECTION-A-implementation.md)。合集自然语言查询接入统一 scope。修复两个现场反馈：`query_hash()` 不再收到不支持的合集参数；入口支持“合集名 + 的 + 内容词”（如“AI的裙子”），将“裙子”作为语义词并绑定 AI 合集。任务卡限定 JUnit 81/0/0/0，两个关键回归节点各 1/0/0/0，Ruff、Node、diff-check 通过。之前宽受影响面尝试的 4 个旧地点包兼容上限失败及 1 个缺失表夹具失败详见报告；未扩大修复无关夹具。未访问真实图库/运行中服务，现场刷新后试用待确认；不代表真实库验收。未做全仓/GPU/30万/打包/发行验证。

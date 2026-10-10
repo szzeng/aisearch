@@ -1,6 +1,6 @@
 # P4-PLACE-UNIFIED-A-FIX1 — 自然语言地点搜索 OSM 优先修复
 
-日期：2026-10-10。状态：**DRAFT — 待执行（仅任务卡）**。立卡基线：master `07c192ef0bf50e1a086a3e90b0d4d6bbb09a1016`。
+日期：2026-10-10。状态：**IMPLEMENTED / 定向验证通过；现场复测待用户完成**。立卡基线：master `07c192ef0bf50e1a086a3e90b0d4d6bbb09a1016`；实际执行 HEAD `c5bcfd3f715fa2328d40542d10be6081ecb8cbd5`。
 性质：P4-PLACE-UNIFIED-A 的小型行为修复；**只处理自然语言搜索地点候选优先级**，不改变地点身份、人工归属或地理数据。
 推荐执行：GPT-6 Luna / Medium；同一会话完成最小修复与定向测试。
 
@@ -59,3 +59,9 @@
 通过上述最小用例后，在已有实现报告（优先 `docs/reports/P4-SEARCH-PLACE-NL-A-implementation.md`）末尾记录问题原因、具体修复、测试命令/结果和未验证事项；按仓库现有流程更新开发状态。无需新增复杂报告或重复全仓审查。
 
 **本卡不授权访问或修改真实 `PhotoSearchData`，不自动提交功能实现，也不启动其他任务。** 实现与定向验证完成即停止。
+
+## 5. 执行记录
+
+解析器仅在同一最长匹配片段上优先 OSM；无 OSM 时保留 GeoNames 回退，多个 OSM 同名仍歧义。已识别的前置区域词只有在候选声明父链匹配时才约束子地点；区域词不能可靠约束子地点时返回未确认，不猜测或把区域本身当搜索目标。未改地点目录、身份折叠、成员规则或API。
+
+`tests/unit/test_search_place_nl_ui.py` JUnit **28/0/0/0**；Ruff、`git diff --check` 通过。报告见 [P4-SEARCH-PLACE-NL-A implementation](../reports/P4-SEARCH-PLACE-NL-A-implementation.md) 末尾。未访问真实图库/服务；用户现场刷新重启后的实际搜索效果仍待确认。

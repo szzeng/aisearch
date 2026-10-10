@@ -55,3 +55,19 @@
 验证：任务卡列出的七个直接相关测试文件JUnit **58/0/0/0**（`test-results/p4-search-place-nl-a.xml`）；Ruff覆盖API、解析模块、CN fixture及相关集成/UI测试通过；`node --check src/photo_search/web/search.js`及`git diff --check`通过。第一次测试收集仅因没有配置PYTHONPATH导致`tools` namespace不可导入，设置`PYTHONPATH=src;tests;.`后完整集合通过。合成边界按名称/坐标证明映射；无有效映射地点仍单独列出，不执行名称字符串合并。
 
 尚未访问/启动用户实际服务、私人照片或catalog。需用户重启/刷新当前后端后重新搜“济南的照片”，确认来源标记和照片行恢复；现场复测前此反馈闭环不标PASS。
+
+## 后续修复：P4-PLACE-UNIFIED-A-FIX1（2026-10-10）
+
+修复自然语言解析对未限定同名地点的候选优先级，不触及 `places/choices.py` 的身份折叠。`parse_place_query()` 在最长匹配片段确定后，同名候选存在 OSM 时优先 OSM；没有 OSM 时继续用 GeoNames；两个不同 OSM 候选仍保留歧义。显式“区域的地点”只在目录父链证明该关系时选择子地点；无法证明时保留原句并返回未确认，不错误选择区域或猜测子地点。每个返回候选仍携带自己的 `content_query`。
+
+测试新增覆盖：深圳（OSM 与台湾 GeoNames 同名）、深圳的海边保留内容词、台湾的深圳依父级选择 GeoNames、东京 GeoNames 回退、多个 OSM 同名继续歧义。命令：
+
+~~~powershell
+$env:UV_CACHE_DIR = Join-Path $PWD '.uv-cache'
+$env:PYTHONPATH = 'src;tests;.'
+uv run --no-sync pytest -q tests/unit/test_search_place_nl_ui.py --junitxml=test-results/p4-place-unified-a-fix1.xml --basetemp=.pytest-tmp/p4-place-unified-a-fix1
+uv run --no-sync ruff check src/photo_search/places/natural_search.py tests/unit/test_search_place_nl_ui.py
+git diff --check
+~~~
+
+结果：JUnit **28 tests / 0 failures / 0 errors / 0 skipped**；Ruff 与 diff-check 通过。未运行API额外回归（修复限于解析输出，现有入口消费原 recognized/ambiguous 结构）；未运行浏览器、全仓测试；未访问真实照片/catalog/服务。现场结果待用户正常刷新或重启服务后确认，不据合成测试追认现场PASS。

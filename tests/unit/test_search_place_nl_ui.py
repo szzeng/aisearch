@@ -86,6 +86,44 @@ def test_real_same_name_choices_keep_their_own_content_and_parent_context() -> N
     }
 
 
+def test_osm_is_default_for_unqualified_same_name_place() -> None:
+    choices = [
+        {"kind": "city", "key": "osm:shenzhen", "name": "深圳市", "parent": "广东省", "aliases": ["深圳"], "source": "OSM"},
+        {"kind": "city", "key": "gn:shenzhen-tw", "name": "深圳", "parent": "台湾", "aliases": [], "source": "GEONAMES"},
+    ]
+    for query, content in [("深圳", ""), ("深圳的海边", "海边")]:
+        result = parse_place_query(query, choices)
+        assert result["state"] == "recognized"
+        assert result["choices"][0]["key"] == "osm:shenzhen"
+        assert result["content_query"] == content
+
+
+def test_explicit_parent_selects_only_verified_child() -> None:
+    choices = [
+        {"kind": "city", "key": "osm:shenzhen", "name": "深圳市", "parent": "广东省", "aliases": ["深圳"], "source": "OSM"},
+        {"kind": "city", "key": "gn:shenzhen-tw", "name": "深圳", "parent": "台湾", "aliases": [], "source": "GEONAMES"},
+        {"kind": "province", "key": "gn:taiwan", "name": "台湾", "parent": "", "aliases": [], "source": "GEONAMES"},
+    ]
+    result = parse_place_query("台湾的深圳", choices)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == "gn:shenzhen-tw"
+
+
+def test_osm_fallback_and_distinct_osm_duplicates() -> None:
+    geonames = [{"kind": "city", "key": "gn:tokyo", "name": "东京", "parent": "日本", "aliases": [], "source": "GEONAMES"}]
+    result = parse_place_query("东京", geonames)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == "gn:tokyo"
+
+    duplicate_osm = [
+        {"kind": "city", "key": "osm:1", "name": "朝阳", "parent": "甲省", "aliases": [], "source": "OSM"},
+        {"kind": "district", "key": "osm:2", "name": "朝阳", "parent": "乙省", "aliases": [], "source": "OSM"},
+    ]
+    result = parse_place_query("朝阳", duplicate_osm)
+    assert result["state"] == "ambiguous"
+    assert {choice["key"] for choice in result["choices"]} == {"osm:1", "osm:2"}
+
+
 def test_unavailable_parent_data_does_not_invent_a_hierarchy() -> None:
     result = parse_place_query(
         "山东省济南市拍的日落",

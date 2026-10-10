@@ -123,7 +123,8 @@ def _parent_chain_prefix(prefix: str, hit: _Hit, hits: list[_Hit]) -> bool:
     for item in preceding:
         name = _norm(str(item.choice.get("name", "")))
         gap = prefix[item.end : hit.start]
-        if name and name in parent and not gap:
+        # Chinese region qualifiers commonly connect the parent and child with 的.
+        if name and name in parent and gap in {"", "的"}:
             before_parent = prefix[: item.start]
             return _strip_request_prefix(before_parent) is None
     return False
@@ -220,9 +221,79 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
     # A hierarchy written as adjacent known names is resolved only by the selected child's
     # declared parent. Overlapping same-name sources remain separate choices.
     if parsed:
+        # A known region followed by 的 + another known place is a qualifier expression.
+        # Never return the region itself as the search target when the child relationship
+        # cannot be verified by the directory.
+        qualified_spans = [
+            (parent_hit.start, parent_hit.end)
+            for parent_hit in hits
+            if any(
+                parent_hit.end < child_hit.start
+                and normalized[parent_hit.end : child_hit.start] == "的"
+                for child_hit in hits
+            )
+        ]
+        if qualified_spans:
+            parsed = [
+                item for item in parsed
+                if (item[0].start, item[0].end) not in qualified_spans
+            ]
+        if not parsed and qualified_spans:
+            return {"state": "unresolved", "choices": [], "content_query": None,
+                    "notice": "当前地点目录无法确认这段地点层级；仍按原句检索，没有添加地点条件。"}
+    if parsed:
         parsed.sort(key=lambda item: (item[0].end - item[0].start, item[0].start), reverse=True)
         best_span = parsed[0][0].end - parsed[0][0].start
         best = [item for item in parsed if item[0].end - item[0].start == best_span]
+        # If a preceding directory candidate is a verified parent of the matched child,
+        # treat it as a qualifier rather than as a competing search target (e.g. 台湾的深圳).
+        qualified_children = [
+            child for child in best
+            if any(
+                parent_hit.end <= child[0].start
+                and _norm(str(parent_hit.choice.get("name", "")))
+                in _norm(str(child[0].choice.get("parent", "")))
+                and normalized[parent_hit.end : child[0].start] == "的"
+                for parent_hit, _ in parsed
+            )
+        ]
+        if qualified_children:
+            best = qualified_children
+        elif best:
+            # An explicit regional qualifier excludes unrelated same-name candidates.
+            # Only candidates whose declared parent contains that qualifier survive.
+            qualifiers = [
+                parent_hit for parent_hit, _ in parsed
+                if any(
+                    parent_hit.end <= child[0].start
+                    and normalized[parent_hit.end : child[0].start] == "的"
+                    for child in best
+                )
+            ]
+            if qualifiers:
+                qualified = [
+                    item for item in best
+                    if any(
+                        _norm(str(q.choice.get("name", "")))
+                        in _norm(str(item[0].choice.get("parent", "")))
+                        for q in qualifiers
+                    )
+                ]
+                if qualified:
+                    best = qualified
+        # For one identical matched spelling with no explicit region qualifier, prefer
+        # OSM when present. This affects only candidates at the selected span.
+        if best and not any(
+            parent_hit.end <= child[0].start
+            and normalized[parent_hit.end : child[0].start] == "的"
+            for parent_hit, _ in parsed for child in best
+        ):
+            osm = [item for item in best if str(item[0].choice.get("source", "")).upper() == "OSM"]
+            geonames = [item for item in best if str(item[0].choice.get("source", "")).upper() == "GEONAMES"]
+            if osm:
+                best = osm
+            elif geonames:
+                best = geonames
         identities = {(str(hit.choice.get("kind")), str(hit.choice.get("key"))) for hit, _ in best}
         if len(identities) == 1:
             hit, content = best[0]
