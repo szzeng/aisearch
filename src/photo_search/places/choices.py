@@ -34,7 +34,10 @@ def verified_geo_source_ids(catalog: Any, data_root: Any) -> set[str]:
     return set(map(str, index.get("city_to_admin1", {}).keys()))
 
 
-def choices(catalog: Any, text: str | None = None, *, data_root: Any = None) -> list[dict[str, Any]]:
+def choices(
+    catalog: Any, text: str | None = None, *, data_root: Any = None,
+    include_parent_identity: bool = False,
+) -> list[dict[str, Any]]:
     """List source-proven candidates, optionally restricting to spellings in ``text``."""
     active = _active_dataset(catalog)
     if active is None:
@@ -96,21 +99,22 @@ def choices(catalog: Any, text: str | None = None, *, data_root: Any = None) -> 
                 (place_id,),
             )
         ]
-        geo.append(
-            {
-                "kind": str(row["kind"]),
-                "key": str(place_id),
-                "name": str(row["canonical_name"]),
-                "parent": str(row["parent_name"] or ""),
-                "aliases": aliases,
-                "source": "GEONAMES",
-                "source_id": str(row["external_id"]),
-                "dataset_id": package_id,
-                "dataset_version": str(active["package_version"]),
-                "selection_ref": f"geonames|{package_id}|{row['external_id']}",
-                "place_id": place_id,
-            }
-        )
+        item = {
+            "kind": str(row["kind"]),
+            "key": str(place_id),
+            "name": str(row["canonical_name"]),
+            "parent": str(row["parent_name"] or ""),
+            "aliases": aliases,
+            "source": "GEONAMES",
+            "source_id": str(row["external_id"]),
+            "dataset_id": package_id,
+            "dataset_version": str(active["package_version"]),
+            "selection_ref": f"geonames|{package_id}|{row['external_id']}",
+            "place_id": place_id,
+        }
+        if include_parent_identity and row["parent_place_id"] is not None:
+            item["_parent_key"] = str(row["parent_place_id"])
+        geo.append(item)
 
     # Only package-generated cn_legacy_links prove identity. Names are retained as
     # searchable spellings only after the link itself has mapped this exact GeoNames row.

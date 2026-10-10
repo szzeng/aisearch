@@ -56,6 +56,11 @@ def _norm(value: str) -> str:
     return _normalize_with_map(value)[0]
 
 
+def _public_choice(choice: dict[str, Any]) -> dict[str, Any]:
+    """Drop parser-only identity metadata from returned choices."""
+    return {key: value for key, value in choice.items() if not key.startswith("_")}
+
+
 def _trim_content(value: str) -> str:
     result = value.strip(" \t\r\n，,。；;、:：")
     normalized = _norm(result)
@@ -299,6 +304,32 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
             and normalized[parent_hit.end : child[0].start] == "的"
             for parent_hit, _ in parsed for child in best
         ):
+            # When identical canonical names are connected by an explicit directory
+            # parent identity (for example a GeoNames country and its same-named city),
+            # the broader parent is the safe default for an unqualified query. Do not
+            # apply this to unrelated same-name places or name-only parent matches.
+            parented_child_ids = {
+                (str(child[0].choice.get("kind")), str(child[0].choice.get("key")))
+                for child in best
+                for parent in best
+                if str(child[0].choice.get("_parent_key", "")) == str(parent[0].choice.get("key", ""))
+                and bool(child[0].choice.get("source"))
+                and str(child[0].choice.get("source", "")).upper()
+                    == str(parent[0].choice.get("source", "")).upper()
+                and bool(child[0].choice.get("dataset_id"))
+                and str(child[0].choice.get("dataset_id", ""))
+                    == str(parent[0].choice.get("dataset_id", ""))
+                and str(child[0].choice.get("kind", "")) == "city"
+                and str(parent[0].choice.get("kind", "")) == "country"
+                and _norm(str(child[0].choice.get("name", "")))
+                    == _norm(str(parent[0].choice.get("name", "")))
+            }
+            if parented_child_ids:
+                best = [
+                    item for item in best
+                    if (str(item[0].choice.get("kind")), str(item[0].choice.get("key")))
+                    not in parented_child_ids
+                ]
             osm = [item for item in best if str(item[0].choice.get("source", "")).upper() == "OSM"]
             geonames = [item for item in best if str(item[0].choice.get("source", "")).upper() == "GEONAMES"]
             if osm:
@@ -308,11 +339,11 @@ def parse_place_query(text: str, choices: list[dict[str, Any]]) -> dict[str, Any
         identities = {(str(hit.choice.get("kind")), str(hit.choice.get("key"))) for hit, _ in best}
         if len(identities) == 1:
             hit, content = best[0]
-            return {"state": "recognized", "choices": [dict(hit.choice, content_query=content)],
+            return {"state": "recognized", "choices": [dict(_public_choice(hit.choice), content_query=content)],
                     "content_query": content, "notice": None}
         contents = {content for _, content in best}
         common = next(iter(contents)) if len(contents) == 1 else None
-        options = [dict(hit.choice, content_query=content) for hit, content in best]
+        options = [dict(_public_choice(hit.choice), content_query=content) for hit, content in best]
         return {"state": "ambiguous", "choices": options,
                 "content_query": common, "notice": None}
 

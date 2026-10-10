@@ -2303,7 +2303,10 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
 
         plan = parse_place_query(
             query_source,
-            place_choices.choices(service.catalog, text=query_source, data_root=service.data_root),
+            place_choices.choices(
+                service.catalog, text=query_source, data_root=service.data_root,
+                include_parent_identity=True,
+            ),
         )
         if plan["state"] == "ambiguous":
             return {"needs_place_choice": True, "original_query": original,

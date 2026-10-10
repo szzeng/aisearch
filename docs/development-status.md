@@ -2,9 +2,9 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## 当前：P4-SEARCH-INTENT-UNIFIED-A-FIX1 — 搜索候选重复与同名选择回归修复完成 / 定向验证通过
+## 当前：P4-SEARCH-INTENT-UNIFIED-A-FIX2 — GeoNames 同名父子候选选择修复完成 / 定向验证通过
 
-[修复卡](tasks/P4-SEARCH-INTENT-UNIFIED-A-FIX1.md)、[修复报告](reports/P4-SEARCH-INTENT-UNIFIED-A-FIX1.md)、[关联主卡](tasks/P4-SEARCH-INTENT-UNIFIED-A.md)。根因是相同人物身份/区间的正式名与别名重复生成候选，被重叠检查误判为选择；不同人物、地点或来源身份同名时，统一 UI 又丢失区分信息。已通用按对象身份和原文区间去重；真实身份冲突保留，地点展示父级/来源并在必要时附 key，人物/来源/合集重复标签附身份 ID，单类提示也按类型显示。定向 JUnit 20/0/0/0，Ruff、Node、diff-check 通过。未读真实图库或现有服务记录，无法指认现场属于哪一类；未跑全仓/浏览器矩阵/GPU/模型/打包，未提交/推送。
+[修复卡](tasks/P4-SEARCH-INTENT-UNIFIED-A-FIX2.md)、[修复报告](reports/P4-SEARCH-INTENT-UNIFIED-A-FIX2.md)、[前序修复](reports/P4-SEARCH-INTENT-UNIFIED-A-FIX1.md)。同名 GeoNames 国家/城市候选可在相同文本跨度同时命中；此前只按来源优先，两个候选同为 GeoNames 时仍要求选择。现在仅当活动目录的父记录 ID、来源和数据包均证明同名城市直接隶属同名国家时，才默认国家范围；不相关同名地点继续保留歧义，内部父身份不进入解析器返回选项。定向 JUnit 41/0/0/0，Ruff、diff-check 通过。根据按钮父级文字推断现场匹配此类情况，未访问真实图库/活动目录确认具体 GeoNames 行；未跑全仓/浏览器矩阵/GPU/模型/打包，未提交/推送。
 
 ## FIX1：P4-PLACE-UNIFIED-A-FIX1 — IMPLEMENTED / 定向验证通过；现场复测待完成
 

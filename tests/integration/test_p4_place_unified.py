@@ -36,6 +36,15 @@ def test_unified_choices_prioritize_verified_osm_fold_linked_city_and_fallback_t
         assert tokyo[0]["kind"] == "city"
         assert tokyo[0]["parent"] == "日本"
         assert tokyo[0]["selection_ref"].startswith("geonames|")
+        assert "_parent_key" not in tokyo[0]
+        tokyo_with_parent_identity = place_choices.choices(
+            env.catalog, text="东京", data_root=env.data_root, include_parent_identity=True,
+        )
+        parent = env.catalog.read_one(
+            "SELECT kind,canonical_name FROM places WHERE place_id=?",
+            (int(tokyo_with_parent_identity[0]["_parent_key"]),),
+        )
+        assert (parent["kind"], parent["canonical_name"]) == ("country", "日本")
         assert _source_rows(env, "不存在的地区") == []
     finally:
         env.context.close()

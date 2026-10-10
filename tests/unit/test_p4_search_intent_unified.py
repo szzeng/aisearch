@@ -79,6 +79,20 @@ def test_same_person_canonical_name_and_identical_alias_are_one_candidate() -> N
     assert len(people) == 1
 
 
+def test_same_named_verified_place_parent_and_child_resolve_to_broader_scope() -> None:
+    plan = parse_unified_intent(
+        "香港的照片", connection=catalog(), today=date(2026, 10, 9), place_choices=[
+            {"kind": "country", "key": "hk-country", "name": "香港", "parent": "", "aliases": [],
+             "source": "GEONAMES", "dataset_id": "geo-1"},
+            {"kind": "city", "key": "hk-city", "name": "香港", "parent": "香港", "aliases": [],
+             "source": "GEONAMES", "dataset_id": "geo-1", "_parent_key": "hk-country"},
+        ],
+    )
+    assert plan["state"] == "ready"
+    assert plan["place_kind"] == "country"
+    assert plan["place_key"] == "hk-country"
+
+
 def test_visual_text_and_old_years_are_preserved_or_parsed_with_context() -> None:
     assert parse("照片上写着2024年")["content_query"] == "照片上写着2024年"
     old = parse("1905年的照片")

@@ -30,6 +30,7 @@ class PersonalSearchCoordinator:
     def collect(self, original_query: str, *, today: date | None = None) -> dict[str, Any]:
         choices = place_choices.choices(
             self.catalog, text=original_query, data_root=self.data_root,
+            include_parent_identity=True,
         )
         return parse_unified_intent(
             original_query, connection=self.catalog.connection,

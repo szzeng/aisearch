@@ -124,6 +124,31 @@ def test_osm_fallback_and_distinct_osm_duplicates() -> None:
     assert {choice["key"] for choice in result["choices"]} == {"osm:1", "osm:2"}
 
 
+def test_same_named_verified_parent_and_child_prefers_the_broader_parent() -> None:
+    choices = [
+        {"kind": "country", "key": "hk-country", "name": "香港", "parent": "", "aliases": [],
+         "source": "GEONAMES", "dataset_id": "geo-1"},
+        {"kind": "city", "key": "hk-city", "name": "香港", "parent": "香港", "aliases": [],
+         "source": "GEONAMES", "dataset_id": "geo-1", "_parent_key": "hk-country"},
+    ]
+    result = parse_place_query("香港的照片", choices)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == "hk-country"
+    assert "_parent_key" not in result["choices"][0]
+
+    unrelated = [choices[0], {**choices[1], "_parent_key": "other-country"}]
+    result = parse_place_query("香港的照片", unrelated)
+    assert result["state"] == "ambiguous"
+    assert {choice["key"] for choice in result["choices"]} == {"hk-country", "hk-city"}
+
+    city_parent = [
+        {**choices[0], "kind": "city", "key": "parent-city"},
+        {**choices[1], "_parent_key": "parent-city"},
+    ]
+    result = parse_place_query("香港的照片", city_parent)
+    assert result["state"] == "ambiguous"
+
+
 def test_unavailable_parent_data_does_not_invent_a_hierarchy() -> None:
     result = parse_place_query(
         "山东省济南市拍的日落",
