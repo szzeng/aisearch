@@ -37,6 +37,19 @@ class PersonalSearchCoordinator:
             place_choices=choices, today=today,
         )
 
+    def refresh_person_names(self, plan: dict[str, Any]) -> None:
+        """Keep display names tied to the active catalog identities in a search plan."""
+        person_ids = plan.get("person_ids", [])
+        if not person_ids:
+            plan["person_names"] = []
+            return
+        rows = self.catalog.read_all(
+            "SELECT person_id, name FROM persons WHERE merged_into IS NULL AND person_id IN ("
+            + ",".join("?" for _ in person_ids) + ")", tuple(person_ids),
+        )
+        names = {int(row["person_id"]): str(row["name"] or "未命名人物") for row in rows}
+        plan["person_names"] = [names.get(person_id, "未命名人物") for person_id in person_ids]
+
     def validate(
         self, plan: Any, *, original_query: str, parsed: dict[str, Any] | None = None,
         continuation: bool = False,
@@ -130,11 +143,15 @@ class PersonalSearchCoordinator:
         person_ids = value.get("person_ids", [])
         if person_ids:
             rows = self.catalog.read_all(
-                "SELECT person_id FROM persons WHERE merged_into IS NULL AND person_id IN ("
+                "SELECT person_id, name FROM persons WHERE merged_into IS NULL AND person_id IN ("
                 + ",".join("?" for _ in person_ids) + ")", tuple(person_ids),
             )
             if {int(row["person_id"]) for row in rows} != set(person_ids):
                 raise ValueError("人物身份已变化，请重新搜索")
+            names = {int(row["person_id"]): str(row["name"] or "未命名人物") for row in rows}
+            value["person_names"] = [names[person_id] for person_id in person_ids]
+        else:
+            value["person_names"] = []
         place_kind, place_key = value.get("place_kind"), value.get("place_key")
         selection = value.get("place_selection")
         if (place_kind is None) != (place_key is None):

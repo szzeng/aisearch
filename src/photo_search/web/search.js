@@ -1197,7 +1197,15 @@
       });
     }
     if ((plan.person_ids || []).length) {
-      var names = plan.person_names || plan.person_ids.map(function (id) { return "#" + id; });
+      var suppliedNames = Array.isArray(plan.person_names) ? plan.person_names : [];
+      var names = plan.person_ids.map(function (id, index) {
+        var supplied = suppliedNames[index];
+        if (supplied != null && String(supplied).trim()) {
+          return String(supplied);
+        }
+        var person = state.person.rows[personKey(id)] || state.person.selected[personKey(id)];
+        return personDisplayName(person);
+      });
       add("人物：" + names.join("、") + (plan.person_match === "all" ? "（合照）" : ""), function () {
         plan.person_ids = [];
         plan.person_names = [];

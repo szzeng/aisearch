@@ -89,6 +89,9 @@ const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryText.value="2026年爸爸日落照片";els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);
+ui.state.person.rows["19"]={person_id:19,name:"爸爸"};
+ui.renderIntentChips({person_ids:[19],person_names:[],person_match:"any"});
+assert.equal(els.resultIntentScope.children[0].textContent,"人物：爸爸 ","missing chip names should use the loaded catalog name, not the internal id");
 const plan={collection_scope:{collection_id:7,instance_token:"token",revision:2,name:"同事"},capture_from:"2026-01-01",capture_to_exclusive:"2027-01-01",person_ids:[7],person_names:["爸爸"],person_match:"any",place_kind:"city",place_key:"3",place_name:"济南",place_selection:{kind:"city",key:"3"},source_id:4,source_name:"手机备份图库",content_query:"日落"};
 ui.state.search.intentPlan=plan;ui.renderIntentChips(plan);
 els.resultIntentScope.children[1].fire("click");

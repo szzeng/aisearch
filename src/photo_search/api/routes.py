@@ -2410,6 +2410,8 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
         }
     elif intent_plan is not None and not payload.place_cancelled:
         query_text = (intent_plan.get("content_query") or "").strip() or None
+    if intent_plan is not None:
+        coordinator.refresh_person_names(intent_plan)
     values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan"})
     values["text"] = query_text
     if intent_plan is not None:
