@@ -2,6 +2,10 @@
 
 更新：2026-10-10。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。当前简要交接；较早逐项记录归档于[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## 新任务：P4-PHOTO-LOCAL-OPEN-A — 系统默认程序打开原图 / Windows 资源管理器定位（PLANNED）
+
+[任务卡](tasks/P4-PHOTO-LOCAL-OPEN-A.md)。个人 Windows 本机相册小型功能：公共 `photo-info.js` 每个已登记文件位置增加「系统打开原图」「定位文件位置」，后端基于 `(asset_id, location_id)` 复用受控路径校验、会话/CSRF 和仅 loopback 桌面动作约束；多来源精确定位，离线拒绝，禁止任意路径/程序启动。不改 schema、模型、原图、预览缓存及查看器状态机；与 [P4-UI-VIEWER-F](tasks/P4-UI-VIEWER-F.md) 的视觉调整分开，避免并行冲突。推荐 GPT-6 Medium，仅隔离合成 API/UI 定向测试和静态检查。本次**只提交任务文档与状态索引，尚未实现或运行产品测试**。
+
 ## 新规划：P4-STORAGE-GC-A / B — 存储体检、安全文件 GC 与离线 Vector GC（PLANNED / 未实施）
 
 [卡 A：空间统计与安全文件 GC](tasks/P4-STORAGE-GC-A.md)、[卡 B：LanceDB / SQLite 离线维护](tasks/P4-STORAGE-GC-B.md)。按用户要求先立两张个人相册任务卡，执行顺序 **A → B**，推荐 GPT-6 High，每卡仅四组隔离合成定向测试。A 复用 Artifact/媒体/人物撤销历史既有能力，严禁按 `artifacts/pending` 文件夹名误删、严禁碰原图/人工事实；普通网页只读体检，不能证明发布互斥时清理只走停机 CLI。B 先检查向量索引覆盖，再按需压缩和清理 LanceDB 旧物理版本（保守保留 14 天），提供可选离线 SQLite VACUUM；不删除当前表孤儿 asset 向量，不删除 face 向量或任何业务世代。优先不修改 Schema。**本提交只有任务文档与状态索引，未实施产品代码、未运行测试、未访问或清理真实 PhotoSearchData，不得标 GC PASS。**
