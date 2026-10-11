@@ -58,4 +58,4 @@
 
 ## 下一步
 
-当前 P4-PLACE-ALBUM-PERF-A 后台预生成已实现并通过定向验收，等待用户重启后验证真实冷首屏收益；任务维持 PARTIAL。若实测仍慢，再用浏览器 Network 逐图定位。之后再回到用户已确认的 [P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)。[P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md) 仍保持 READY；全仓、真实图库和 30 万性能未验证。
+先收口 P4-PERSON-UX-UNIFY-A：按报告补做隔离合成图片浏览器点击，并完成多源合并入口迁移；旧高级入口保持可用。LUNA / High 复审已完成。之后再按此前安排验证 P4-PLACE-ALBUM-PERF-A 的真实冷首屏，并回到用户已确认的 [P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)。全仓、真实图库和 30 万性能未验证。

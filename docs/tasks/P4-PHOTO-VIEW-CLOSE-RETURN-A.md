@@ -13,7 +13,7 @@
 
 ## 2. 必读入口与依据
 
-已核对 `AGENTS.md`、`docs/development-status.md`、当前指向的 `P4-OCR-RUNTIME-CONFIRM-A` 卡、`docs/task-launcher.md`、Git 基线及相关实现/报告。因本任务卡此前不存在，已按仓库规则核对两份当前架构/策略文档；本卡直接相关依据：
+已核对 `AGENTS.md`、`docs/development-status.md`、当时开发状态指向的任务卡、`docs/task-launcher.md`、Git 基线及相关实现/报告。因本任务卡此前不存在，已按仓库规则核对两份当前架构/策略文档；本卡直接相关依据：
 
 - 主架构 §10.1（核心页面与图片详情）及 §10.2（前端/API 边界）；
 - V3.1 §2.4、§3.2、§3.3、§9.4（低风险展示行为、定向测试和既有个人功能审查边界）；
