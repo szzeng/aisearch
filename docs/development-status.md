@@ -3,9 +3,9 @@
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
 
-## P4-PERSON-UX-UNIFY-A — READY / 人物整理统一任务卡，尚未实施
+## P4-PERSON-UX-UNIFY-A — PARTIAL / 照片直达与映射审核已接入
 
-[任务卡](tasks/P4-PERSON-UX-UNIFY-A.md)。2026-10-11 已提交**仅文档方案**：整合旧人物列表、逐脸批量调整/拆分、识别更新按照片直达、撤销历史；沿用现有 assign/unassign/restore_auto、原子 split/merge、mapping confirm/reject/undo 与人工 hold 保护，旧入口仅在替代能力验收后退场。必要时只新增照片定向映射的有界只读接口；保留最近完成的头像复用、全局排序及分区按需加载。与 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 已加避免并行重叠的说明。推荐 GPT-6.1 Sol / High（成本优先可选 GPT-6 Luna / High）；个人项目六组定向合成验收，涉及冻结人工写语义时停止另立高风险卡。**未实施、未测试、未访问真实 PhotoSearchData**；不改变此前 OCR 下一步安排。
+[任务卡](tasks/P4-PERSON-UX-UNIFY-A.md)、[执行报告](reports/P4-PERSON-UX-UNIFY-A.md)。人物相册可进入逐脸整理；照片预览即使已有其他可见人脸仍显示该照片 OPEN 映射提示，并可直达审核。新增 asset-scoped 有界只读 API 和 `fa1` 游标；同照片 `limit=1` 双页、跨照片隔离和完整查询计划使用现有 `idx_faces_asset` 均通过，不改 schema。照片切换迟到映射响应隔离，拒绝说明和单脸更正文案统一。任务范围 JUnit **90/0/0/0**；Ruff、Python 编译、Node 语法、diff-check 通过。用户指定的独立 LUNA / High 最终复审：修复有效、无阻塞性代码问题；未做 DS-H。**PARTIAL**：多源合并入口尚未迁入新批量管理（旧高级入口保留），隔离合成图片的真实浏览器点击未执行；一项既有 schema 27 断言因仓库当前 schema 28 而从本次命令排除。未访问 PhotoSearchData/真实图库。
 
 ## P4-PHOTO-VIEW-CLOSE-RETURN-A — SCOPED PASS
 

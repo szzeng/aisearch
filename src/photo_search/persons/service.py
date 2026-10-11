@@ -311,6 +311,14 @@ class PersonService:
         """ADR-0010 §8.1: one review group with its live candidate array."""
         return read_module.mapping_group(self.catalog, str(old_face_id))
 
+    def asset_mapping_page(
+        self, asset_id: int, *, limit: Any = None, cursor: str | None = None
+    ) -> dict[str, Any]:
+        """Read the bounded OPEN mapping reviews attached to one photo."""
+        return read_module.asset_mapping_page(
+            self.catalog, int(asset_id), limit=limit, cursor=cursor
+        )
+
     def decide_face_mappings(
         self,
         *,

@@ -530,7 +530,7 @@
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
     $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
-    $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
+    $("search-photos").hidden = true; $("collection-view-controls").hidden = false; $("organize-faces").hidden = true;
   }
   function openCollection(collection) {
     state.returnCollection = null; state.collectionSeq++;
@@ -669,9 +669,9 @@
       if (suggestion) {
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
         confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
-        card.otherPersonButton = button("选其他人", () => editFace(face, { allowCreatePerson: true }));
+        card.otherPersonButton = button("更正这张脸", () => editFace(face, { allowCreatePerson: true }));
         card.append(confirm, card.otherPersonButton);
-      } else card.append(button("这是谁？", () => editFace(face, { allowCreatePerson: true })));
+      } else card.append(button("更正这张脸", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
   }
@@ -989,7 +989,21 @@
     $("people").setAttribute("aria-pressed", String(!organize));
     $("organize").setAttribute("aria-pressed", String(organize)); $("inbox").hidden = !organize;
     $("query").value = ""; loadPeople(false); if (organize) loadInbox(false);
-    if (organize) loadDetailBatch(false);
+    if (organize) { loadDetailBatch(false); loadOpenMappingsNotice(); }
+  }
+  let mappingNoticeSeq = 0;
+  async function loadOpenMappingsNotice() {
+    const seq = ++mappingNoticeSeq;
+    $("open-mappings").hidden = true; $("mappings-note").textContent = "正在检查识别更新……";
+    try {
+      const page = await api("/face-mappings?state=open&limit=1");
+      if (seq !== mappingNoticeSeq || !state.organize) return;
+      const pending = (page.groups || []).length > 0;
+      $("open-mappings").hidden = !pending;
+      $("mappings-note").textContent = pending ? "有待确认的识别更新。" : "";
+    } catch (error) {
+      if (seq === mappingNoticeSeq && state.organize) $("mappings-note").textContent = "识别更新状态暂时无法读取。";
+    }
   }
   function albumHeading() {
     $("collection-view-controls").hidden = true; $("search-photos").hidden = false;
@@ -997,6 +1011,7 @@
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
     $("title").textContent = name(state.person); $("name").textContent = state.person.name ? "改名字" : "取名字";
     $("cover").textContent = state.coverMode ? "取消选择封面" : "更换封面";
+    $("organize-faces").hidden = state.coverMode;
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
   function openAlbum(person) {
@@ -1101,7 +1116,12 @@
     if (typeof window !== "undefined" && window.AIPhotoInfo) state.previewInfoMount = window.AIPhotoInfo.render($("preview-photo-info"), id);
     updatePreviewNavigation();
     try {
-      const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
+      const [page, reviews] = await Promise.all([
+        api("/assets/" + id + "/faces"),
+        state.collection ? Promise.resolve({ groups: [], has_more: false }) :
+          api("/assets/" + id + "/face-mapping-reviews?limit=50").catch(() => null),
+      ]);
+      if (seq !== state.previewSeq || !$("preview").open) return;
       if (state.collection) {
         $("preview-faces").replaceChildren(); $("face-detail").hidden = true; $("review").hidden = true;
         $("preview-note").textContent = "人物合集只用于集中浏览照片。";
@@ -1129,8 +1149,19 @@
       $("face-detail").hidden = state.coverMode || hasDetail;
       $("face-detail").disabled = state.detailBusyAssets.has(Number(id));
       $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
-      $("review").hidden = page.faces.length !== 0;
-    } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+      const openReviews = reviews && reviews.groups || [];
+      $("review").hidden = openReviews.length === 0;
+      $("review").textContent = openReviews.length
+        ? "识别结果更新，需要确认（" + openReviews.length + (reviews.has_more ? "+）" : "）")
+        : "查看识别更新待确认";
+      $("review").dataset.assetId = String(id);
+      if (!reviews) $("preview-note").textContent += " 识别更新状态暂时无法读取。";
+    } catch (error) {
+      if (seq === state.previewSeq) {
+        $("review").hidden = true;
+        $("preview-note").textContent = errorText(error) + "；识别更新状态暂时无法读取。";
+      }
+    }
   }
   async function sourceDetail() {
     const assetId = state.previewAssetId;
@@ -1360,6 +1391,16 @@
   function boot() {
     renderPeopleManagement();
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
+    $("open-mappings").addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("person-mapping-review", { detail: { assetId: null } }));
+    });
+    $("open-history").addEventListener("click", () => {
+      window.dispatchEvent(new CustomEvent("person-open-history"));
+    });
+    $("organize-faces").addEventListener("click", () => {
+      if (!state.person) return;
+      window.dispatchEvent(new CustomEvent("person-organize-faces", { detail: { personId: state.person.person_id } }));
+    });
     $("batch-toggle").addEventListener("click", () => {
       state.batchMode = !state.batchMode;
       if (!state.batchMode) clearPeopleSelection();
@@ -1455,7 +1496,11 @@
     $("face-detail").addEventListener("click", sourceDetail);
     $("preview-prev").addEventListener("click", () => movePreview(-1));
     $("preview-next").addEventListener("click", () => movePreview(1));
-    $("review").addEventListener("click", () => { $("preview").close(); const advanced = document.getElementById("advanced-tools"); advanced.open = true; advanced.querySelector("summary").focus(); });
+    $("review").addEventListener("click", () => {
+      const assetId = Number($("review").dataset.assetId || state.previewAssetId);
+      $("preview").close();
+      window.dispatchEvent(new CustomEvent("person-mapping-review", { detail: { assetId } }));
+    });
     $("preview").addEventListener("close", () => {
       state.previewSeq++; state.previewAssetId = null; $("preview-image").removeAttribute("src");
       if (state.previewInfoMount) state.previewInfoMount.dispose(); state.previewInfoMount = null;

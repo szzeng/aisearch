@@ -32,6 +32,8 @@ FACE_CURSOR_PREFIX = "pf1"
 OPERATION_CURSOR_PREFIX = "po1"
 #: ADR-0010 §8.1: the mapping review list pages in its own independent cursor space.
 MAPPING_CURSOR_PREFIX = "fm1"
+# Photo-scoped mapping reviews have their own cursor space and bind the asset ID.
+ASSET_MAPPING_CURSOR_PREFIX = "fa1"
 
 #: ADR-0010 §8.1: the mapping list *rejects* an out-of-range limit instead of clamping it,
 #: because the caller's bound is part of the frozen surface of that endpoint.
@@ -97,6 +99,10 @@ def encode_mapping_cursor(old_face_id: str) -> str:
     return _encode(MAPPING_CURSOR_PREFIX, (str(old_face_id),))
 
 
+def encode_asset_mapping_cursor(asset_id: int, old_face_id: str) -> str:
+    return _encode(ASSET_MAPPING_CURSOR_PREFIX, (str(int(asset_id)), str(old_face_id)))
+
+
 def decode_person_cursor(text: str | None) -> int | None:
     values = _decode(text, prefix=PERSON_CURSOR_PREFIX, arity=1)
     if values is None:
@@ -160,6 +166,19 @@ def decode_mapping_cursor(text: str | None) -> str | None:
             closure_details=True,
         )
     return value
+
+
+def decode_asset_mapping_cursor(text: str | None, *, asset_id: int) -> str | None:
+    values = _decode(text, prefix=ASSET_MAPPING_CURSOR_PREFIX, arity=2)
+    if values is None:
+        return None
+    try:
+        cursor_asset_id = int(values[0])
+    except ValueError as error:
+        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid") from error
+    if cursor_asset_id != int(asset_id) or cursor_asset_id < 1 or not values[1]:
+        raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+    return values[1]
 
 
 def clamp_page_limit(
@@ -488,6 +507,86 @@ def mapping_group(catalog: Any, old_face_id: str) -> dict[str, Any]:
     return mapping_module.group_detail(catalog.connection, row)
 
 
+def asset_mapping_page(
+    catalog: Any, asset_id: int, *, limit: Any, cursor: str | None = None
+) -> dict[str, Any]:
+    """Return a bounded, asset-scoped page of OPEN mapping reviews only."""
+    from photo_search.catalog.errors import ASSET_NOT_FOUND
+
+    checked_asset_id = int(asset_id)
+    if checked_asset_id < 1:
+        raise ApiError(VALIDATION_ERROR, "asset_id must be positive", status=422)
+    limit_value = check_mapping_limit(limit)
+    after = decode_asset_mapping_cursor(cursor, asset_id=checked_asset_id)
+    if catalog.read_one("SELECT 1 FROM assets WHERE asset_id=?", (checked_asset_id,)) is None:
+        raise CatalogError(ASSET_NOT_FOUND, "the photo does not exist")
+    rows = list(catalog.read_all(
+        "SELECT g.old_face_id, g.asset_id, g.old_spec_revision, g.candidate_state, g.state, g.revision, "
+        "COALESCE(c.mode, 'AUTO_ALLOWED') AS control_mode, COALESCE(c.revision, 0) AS control_revision, "
+        "CASE WHEN COALESCE(c.mode, 'AUTO_ALLOWED')='MANUAL_UNASSIGNED' THEN NULL "
+        "ELSE MAX(l.person_id) END AS assigned_person_id, COUNT(DISTINCT f.face_id) AS candidate_count "
+        "FROM faces AS old_face INDEXED BY idx_faces_asset "
+        "JOIN face_redetection_groups AS g ON g.old_face_id=old_face.face_id "
+        "LEFT JOIN face_assignment_controls AS c ON c.face_id=g.old_face_id "
+        "LEFT JOIN face_person_links AS l ON l.face_id=g.old_face_id AND l.decision='CONFIRMED' "
+        "LEFT JOIN face_redetection_mappings AS m ON m.old_face_id=g.old_face_id AND m.state!='STALE' "
+        "LEFT JOIN faces AS f ON f.face_id=m.new_face_id "
+        "WHERE old_face.asset_id=? AND g.asset_id=? AND g.state='OPEN' AND g.old_face_id>? "
+        "GROUP BY g.old_face_id ORDER BY g.old_face_id LIMIT ?",
+        (checked_asset_id, checked_asset_id, "" if after is None else after, limit_value + 1),
+    ))
+    has_more = len(rows) > limit_value
+    rows = rows[:limit_value]
+    assigned_ids = sorted({int(row["assigned_person_id"]) for row in rows if row["assigned_person_id"] is not None})
+    canonical_ids: dict[int, int] = {}
+    if assigned_ids:
+        values_sql = ",".join("(?)" for _ in assigned_ids)
+        canonical_rows = catalog.read_all(
+            "WITH RECURSIVE wanted(person_id) AS (VALUES " + values_sql + "), "
+            "chain(origin_id, person_id, merged_into, path) AS ("
+            "SELECT p.person_id, p.person_id, p.merged_into, ',' || p.person_id || ',' "
+            "FROM persons AS p JOIN wanted AS w ON w.person_id=p.person_id "
+            "UNION ALL SELECT chain.origin_id, p.person_id, p.merged_into, "
+            "chain.path || p.person_id || ',' FROM chain JOIN persons AS p "
+            "ON p.person_id=chain.merged_into WHERE chain.merged_into IS NOT NULL "
+            "AND instr(chain.path, ',' || p.person_id || ',')=0) "
+            "SELECT origin_id, person_id FROM chain WHERE merged_into IS NULL",
+            tuple(assigned_ids),
+        )
+        canonical_ids = {int(row["origin_id"]): int(row["person_id"]) for row in canonical_rows}
+        for person_id in assigned_ids:
+            if person_id not in canonical_ids:
+                # Keep the canonical resolver's established refusal for dangling/cyclic IDs.
+                canonical_ids[person_id] = resolve_canonical_person_id(catalog.connection, person_id)
+    groups = []
+    for row in rows:
+        assigned = row["assigned_person_id"]
+        groups.append({
+            "contract_version": mapping_module.CONTRACT_VERSION,
+            "old_face_id": str(row["old_face_id"]),
+            "asset_id": int(row["asset_id"]),
+            "old_spec_revision": str(row["old_spec_revision"]),
+            "candidate_state": str(row["candidate_state"]),
+            "state": str(row["state"]),
+            "revision": int(row["revision"]),
+            "control_mode": str(row["control_mode"]),
+            "control_revision": int(row["control_revision"]),
+            "assigned_person_id": None if assigned is None else canonical_ids[int(assigned)],
+            "candidate_count": int(row["candidate_count"]),
+            "thumbnail_url": FACE_THUMBNAIL_TEMPLATE.format(face_id=str(row["old_face_id"])),
+        })
+    return {
+        "contract_version": mapping_module.CONTRACT_VERSION,
+        "limit": limit_value,
+        "next_cursor": (
+            encode_asset_mapping_cursor(checked_asset_id, str(rows[-1]["old_face_id"]))
+            if has_more and rows else None
+        ),
+        "has_more": has_more,
+        "groups": groups,
+    }
+
+
 # ---------------------------------------------------------------------- operations log
 _OPERATION_COLUMNS = (
     "operation_id, type, state, operation_revision, undo_of_operation_id, undone_by, "
@@ -637,6 +736,7 @@ __all__ = [
     "face_summary",
     "mapping_group",
     "mapping_page",
+    "asset_mapping_page",
     "operation_page",
     "operation_summary",
     "person_page",
