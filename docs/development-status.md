@@ -1,5 +1,9 @@
 # Development status
 
+## P4-PERSON-EMPTY-VISIBILITY-A — READY / 空人物自动隐藏与列表统一（仅任务卡）
+
+[任务卡](tasks/P4-PERSON-EMPTY-VISIBILITY-A.md)。已命名/未命名/已忽略人物统一按活动资产及有效成员规则在 SQL 分页前过滤 0 照片人物，保留 person ID、合并重定向、历史/撤销及人工排除；核对另一列表入口与现有刷新。增加空人物与有照片人物合并的最小防丢数据回归，若合并归属异常则单列后续缺陷，不用隐藏掩盖。不改 Schema/GC/合并算法、不操作真实图库，仅定向简单测试。**当前仅设计提交，尚未实施或运行测试**。推荐 GPT-6 Luna / Medium。
+
 ## P4-LIBRARY-VIDEO-EXCLUDE-A — READY / 视频扫描排除与已入库视频安全退出（仅文档）
 
 [任务卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md)。新增视频后缀最前置过滤，建库/fast/full 一致；历史已登记视频在来源成功 fast 刷新后依现有原子对账转 MISSING，再用统一 SQL 权威资格使视频退出普通照片浏览、搜索及相关照片列表（含默认 availability=any），保护图片/视频共享 asset、真实缺失照片与来源范围。仅计划只读历史视频统计、3～4 组合成定向测试；不改 Schema/原文件/人工归属，不做资产或向量永久删除、真实图库/GPU/全仓回归。**本次仅提交任务卡，未实施、未运行测试**。推荐 GPT-6 Luna / Medium；必要时 Luna / High 定向复核。
