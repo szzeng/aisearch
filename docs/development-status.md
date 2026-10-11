@@ -9,7 +9,11 @@
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
 
-## P4-PERSON-UX-UNIFY-A — READY / 人物整理统一任务卡，尚未实施
+## P4-PERSON-UX-SIMPLIFY-A — READY / 用户指定新版人物整理方案，未实施
+
+[任务卡](tasks/P4-PERSON-UX-SIMPLIFY-A.md)。2026-10-11 根据用户选择的简洁版重新立卡，**取代 P4-PERSON-UX-UNIFY-A 作为唯一后续实施依据**：人物相册里直接逐脸更正/移出/拆分，识别更新按照片直达，操作历史与撤销收进次级入口；补齐多源人物原子批量合并、照片范围有界只读审核、人工归属/排除/OPEN hold 保护及六组最少定向验收。保留旧卡历史，不叠加实施；此前相关实现 `ca246ab` 已由 `b573fe4` 回退，开工必须对照最新 HEAD。与 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 不得并行修改同一人物前端文件。推荐 GPT-6.1 Sol / High（有 GPT-6 常规思考档位时可用 High），独立按策略核对高风险身份调用链。**仅文档提交，未实施、未测试、未访问真实 PhotoSearchData。**
+
+## P4-PERSON-UX-UNIFY-A — 历史立卡 / 已由 SIMPLIFY-A 替代，勿重复执行
 
 [任务卡](tasks/P4-PERSON-UX-UNIFY-A.md)。2026-10-11 已提交**仅文档方案**：整合旧人物列表、逐脸批量调整/拆分、识别更新按照片直达、撤销历史；沿用现有 assign/unassign/restore_auto、原子 split/merge、mapping confirm/reject/undo 与人工 hold 保护，旧入口仅在替代能力验收后退场。必要时只新增照片定向映射的有界只读接口；保留最近完成的头像复用、全局排序及分区按需加载。与 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 已加避免并行重叠的说明。推荐 GPT-6.1 Sol / High（成本优先可选 GPT-6 Luna / High）；个人项目六组定向合成验收，涉及冻结人工写语义时停止另立高风险卡。**未实施、未测试、未访问真实 PhotoSearchData**；不改变此前 OCR 下一步安排。
 
@@ -64,4 +68,4 @@
 
 ## 下一步
 
-P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。此前 [P4-PERSON-UX-UNIFY-A](tasks/P4-PERSON-UX-UNIFY-A.md) 的剩余项及 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。
+P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。后续 [P4-PERSON-UX-SIMPLIFY-A](tasks/P4-PERSON-UX-SIMPLIFY-A.md) 的待实施项及 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。
