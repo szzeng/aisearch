@@ -215,6 +215,14 @@ main {
   gap: 0.5rem;
 }
 
+.library-actions,
+.source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .source-rename {
   margin-top: 0.5rem;
 }

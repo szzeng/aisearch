@@ -79,7 +79,8 @@ class LibraryRefresher:
         self._running = False
         self._closed = False
         self._thread: threading.Thread | None = None
-        self._pending_builds: deque[tuple[list[int], str | None]] = deque()
+        # ``None`` is an all-sources scope; concrete lists remain source-scoped.
+        self._pending_builds: deque[tuple[list[int] | None, str | None]] = deque()
 
     # ------------------------------------------------------------------ public API
     def start(
@@ -100,19 +101,19 @@ class LibraryRefresher:
             requested_profile = None if face_profile is None else str(face_profile)
             if requested_profile not in (None, "source_detail", "lightweight"):
                 raise ValueError("unknown face profile")
-            if requested_mode == "build" and requested:
+            if requested_mode == "build" and requested is not None:
                 requested = sorted(set(requested))
             if self._running:
-                if requested_mode != "build" or not requested:
+                if requested_mode != "build":
                     return self._snapshot_locked(accepted=False)
                 active = self._status.snapshot() if self._status is not None else {}
                 if active.get("mode") == "build" and (
-                    active.get("source_ids") is None or active.get("source_ids") == requested
+                    active.get("source_ids") == requested
                 ) and (
                     requested_profile is None or active.get("face_profile") == requested_profile
                 ):
                     return self._snapshot_locked(accepted=False)
-                pending_item = (requested or [], requested_profile)
+                pending_item = (requested, requested_profile)
                 if pending_item in self._pending_builds:
                     return self._snapshot_locked(accepted=False, queued=True)
                 self._pending_builds.append(pending_item)
@@ -198,6 +199,14 @@ class LibraryRefresher:
         service: Any | None = None
         try:
             service = self._service_factory()
+            if mode == "build" and source_ids is None and hasattr(service, "list_sources"):
+                if not service.list_sources():
+                    status.note_error(
+                        stage="build", code="EMPTY_LIBRARY",
+                        message="No registered sources were available when the build started.",
+                    )
+                    status.finish(state="FAILED", elapsed_ms=0)
+                    return
             if self._executor is not None:
                 self._executor(service, status, source_ids)
             else:
@@ -260,7 +269,12 @@ class LibraryRefresher:
         payload["accepted"] = bool(accepted)
         payload["running"] = bool(self._running)
         payload["queued"] = bool(queued)
-        payload["pending_builds"] = [list(ids) for ids, _profile in self._pending_builds]
+        payload["pending_builds"] = [
+            list(ids) for ids, _profile in self._pending_builds if ids is not None
+        ]
+        payload["pending_all_build"] = any(
+            ids is None for ids, _profile in self._pending_builds
+        )
         return payload
 
 

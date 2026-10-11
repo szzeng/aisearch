@@ -800,9 +800,10 @@ async def request_library_refresh(
     The request never waits for the scan, the embeddings or the enrichment stages: the
     refresh runs on its own worker thread and reports through
     ``GET /api/v1/library/refresh``. Daily refresh requests reuse the active run. A distinct
-    scoped build is queued in FIFO order (``accepted = true, queued = true``); duplicate
-    builds are reused. Status fields still describe the active run, with ``pending_builds``
-    listing the waiting source scopes. This process-local queue is lost on shutdown.
+    source-scoped or all-sources build is queued in FIFO order
+    (``accepted = true, queued = true``); duplicate builds are reused. Status fields still
+    describe the active run, with ``pending_builds`` and ``pending_all_build`` listing waiting
+    scopes. This process-local queue is lost on shutdown.
 
     ``mode = "build"`` is the P4-02Y-I first build ("开始建库"): the same additive entry, but
     it drains the durable backlog of the named sources in bounded batches instead of stopping

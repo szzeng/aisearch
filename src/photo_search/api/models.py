@@ -447,6 +447,8 @@ class LibraryRefreshStatus(BaseModel):
     #: Scoped builds waiting behind the active run, in FIFO order (process-local).
     queued: bool = False
     pending_builds: list[list[int]] = Field(default_factory=list)
+    #: Whether one all-sources build is waiting in this process's FIFO.
+    pending_all_build: bool = False
     #: ``refresh`` (daily incremental) or ``build`` (P4-02Y-I first build); ``null`` while the
     #: process has not started any refresh yet.
     mode: str | None = None

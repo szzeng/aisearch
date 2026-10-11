@@ -124,6 +124,24 @@ def processor_jobs(env: RefreshEnv, task_type: str) -> int:
 
 
 # ------------------------------------------------------------- §1/§2 one click builds a source
+def test_global_build_request_builds_every_registered_synthetic_source(tmp_path: Path) -> None:
+    env = RefreshEnv.build(tmp_path, photos=1, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        for source_index in (2, 3):
+            root = tmp_path / f"library-{source_index}"
+            write_jpeg(root / f"photo-{source_index}.jpg", noise=source_index + 40)
+            register_source(env, f"library-{source_index}", root)
+
+        # No source_ids are sent: the product executes the all-sources build scope.
+        status = run(env, mode="build")
+
+        assert status["counters"]["sources_requested"] == 3
+        assert status["counters"]["sources_scanned"] == 3
+        assert {item["source_id"] for item in status["sources"]} == {1, 2, 3}
+    finally:
+        env.close()
+
+
 def test_one_build_click_on_a_new_source_scans_indexes_and_searches(tmp_path: Path) -> None:
     env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
     try:
@@ -903,7 +921,7 @@ def test_a_refused_image_is_counted_on_the_card_without_hiding_the_rest(tmp_path
 
 
 # --------------------------------------------------------------------------- Web wiring
-def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path: Path) -> None:
+def test_the_sources_page_carries_the_unified_build_and_sync_entries(tmp_path: Path) -> None:
     """§1/§3/§5 at asset level: the served shell and script really carry the new entries."""
     env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
     try:
@@ -915,8 +933,14 @@ def test_the_sources_page_carries_the_build_progress_and_delete_entries(tmp_path
             return {"shell": shell.text, "script": script.text}
 
         served = env.scenario(scenario)
-        for phrase in ("开始建库", "删除来源", "完整校验扫描", "快速刷新此来源"):
+        for phrase in ("继续全部建库", "同步全部变化", "开始建库", "建库/补齐", "同步变化"):
             assert phrase in served["shell"] or phrase in served["script"], phrase
+        assert 'id="build-all-library" disabled' in served["shell"]
+        assert 'id="refresh-library" disabled' in served["shell"]
+        assert "source_ids" in served["script"]
+        assert "pending_all_build" in served["script"]
+        assert "完整校验扫描" in served["script"]
+        assert "删除来源" in served["script"]
         assert "删除来源只会移除 PhotoSearch 中的记录，不会删除文件夹中的照片" in served["script"]
         assert "可以语义搜索" in served["script"]
         assert '"build"' in served["script"]

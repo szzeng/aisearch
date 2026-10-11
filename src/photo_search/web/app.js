@@ -423,6 +423,7 @@
           return;
         }
         state.sources = (result.body && result.body.sources) || [];
+        updateGlobalRefreshActions();
         if (
           state.browse.sourceId &&
           !state.sources.some(function (source) {
@@ -448,6 +449,7 @@
           return;
         }
         setStatus(els.sourcesStatus, "读取来源失败：" + describe(failure), "error");
+        updateGlobalRefreshActions();
       });
   }
 
@@ -692,6 +694,7 @@
   function renderSources() {
     els.sourcesList.textContent = "";
     if (!state.sources.length) {
+      updateGlobalRefreshActions();
       els.sourcesList.appendChild(
         element("li", "hint", "还没有登记图库。展开“图库管理与分析明细”添加一个图库。")
       );
@@ -724,6 +727,29 @@
         showView("browse");
       });
       card.appendChild(open);
+      var summaryActions = element("p", "source-actions");
+      var sourceProgress = state.sourceDetails[String(source.source_id)];
+      var actionMode = sourceProgress ? sourceActionMode(sourceProgress.progress) : "unknown";
+      var buildAction = element("button", null, actionMode === "build"
+        ? "开始建库" : (actionMode === "continue" ? "继续建库" : "建库/补齐"));
+      buildAction.type = "button";
+      buildAction.setAttribute("data-build", String(source.source_id));
+      buildAction.setAttribute("data-primary-build", String(source.source_id));
+      buildAction.setAttribute("data-build-label", buildAction.textContent);
+      buildAction.addEventListener("click", function () {
+        refreshLibrary([Number(source.source_id)], "build");
+      });
+      buildAction.hidden = actionMode === "refresh";
+      summaryActions.appendChild(buildAction);
+      var refreshAction = element("button", null, "同步变化");
+      refreshAction.type = "button";
+      refreshAction.setAttribute("data-refresh", String(source.source_id));
+      refreshAction.setAttribute("data-primary-refresh", String(source.source_id));
+      refreshAction.addEventListener("click", function () {
+        refreshLibrary([Number(source.source_id)], "refresh");
+      });
+      summaryActions.appendChild(refreshAction);
+      card.appendChild(summaryActions);
       addSourceRename(card, source, title);
 
       var detail = element("details", "source-detail");
@@ -910,8 +936,12 @@
         list.appendChild(element("dd", null, pair[1]));
       });
       container.appendChild(list);
+      updatePrimarySourceActions(source.source_id, progress);
       var mode = sourceActionMode(progress);
-      var actions = element("p");
+      var advanced = element("details", "source-advanced");
+      var advancedSummary = element("summary", null, "更多操作（完整校验扫描、补齐建库、删除来源）");
+      advanced.appendChild(advancedSummary);
+      var actions = element("p", "source-actions");
       if (mode === "build" || mode === "continue") {
         // §1/§2: a source that was never built, or one whose durable backlog still holds work
         // (semantic index incomplete, or an enrichment stage with unfinished jobs), gets the
@@ -924,23 +954,8 @@
           refreshLibrary([Number(source.source_id)], "build");
         });
         actions.appendChild(build);
-        var buildScan = element("button", null, "完整校验扫描");
-        buildScan.type = "button";
-        buildScan.setAttribute("data-scan", String(source.source_id));
-        buildScan.addEventListener("click", function () {
-          startScan(source.source_id);
-        });
-        actions.appendChild(buildScan);
       } else {
-        // §4: once a source is built the daily action is a fast source-scoped refresh; the
-        // complete-verification scan stays as the secondary maintenance entry.
-        var refreshOne = element("button", null, "快速刷新此来源");
-        refreshOne.type = "button";
-        refreshOne.setAttribute("data-refresh", String(source.source_id));
-        refreshOne.addEventListener("click", function () {
-          refreshLibrary([Number(source.source_id)], "refresh");
-        });
-        actions.appendChild(refreshOne);
+        // Keep a manual build repair entry after the source is searchable.
         var buildCheck = element("button", null, "检查并补齐建库");
         buildCheck.type = "button";
         buildCheck.setAttribute("data-build", String(source.source_id));
@@ -949,14 +964,12 @@
           refreshLibrary([Number(source.source_id)], "build");
         });
         actions.appendChild(buildCheck);
-        var scan = element("button", null, "完整校验扫描");
-        scan.type = "button";
-        scan.setAttribute("data-scan", String(source.source_id));
-        scan.addEventListener("click", function () {
-          startScan(source.source_id);
-        });
-        actions.appendChild(scan);
       }
+      var scan = element("button", null, "完整校验扫描");
+      scan.type = "button";
+      scan.setAttribute("data-scan", String(source.source_id));
+      scan.addEventListener("click", function () { startScan(source.source_id); });
+      actions.appendChild(scan);
       var remove = element("button", "danger", "删除来源");
       remove.type = "button";
       remove.setAttribute("data-delete", String(source.source_id));
@@ -965,12 +978,31 @@
       });
       actions.appendChild(remove);
       updateSourceActions(actions);
-      container.appendChild(actions);
+      advanced.appendChild(actions);
+      container.appendChild(advanced);
       var progressLine = element("p", "hint", "");
       progressLine.setAttribute("data-progress", String(source.source_id));
       progressLine.setAttribute("role", "status");
       progressLine.setAttribute("aria-live", "polite");
       container.appendChild(progressLine);
+  }
+
+  function updatePrimarySourceActions(sourceId, progress) {
+    var mode = sourceActionMode(progress);
+    Array.prototype.forEach.call(els.sourcesList.querySelectorAll("[data-primary-build]"), function (button) {
+      if (Number(button.getAttribute("data-primary-build")) !== Number(sourceId)) return;
+      button.hidden = mode === "refresh";
+      var label = mode === "build" ? "开始建库" : (mode === "continue" ? "继续建库" : "建库/补齐");
+      button.setAttribute("data-build-label", label);
+      button.textContent = label;
+    });
+  }
+
+  function updateGlobalRefreshActions() {
+    if (!els.buildAllLibrary || !els.refreshLibrary) return;
+    var noSources = !state.sources.length;
+    els.buildAllLibrary.disabled = noSources;
+    els.refreshLibrary.disabled = noSources || state.refreshRunning;
   }
 
   function updateSourceActions(container) {
@@ -1202,6 +1234,11 @@
   };
 
   function refreshLibrary(sourceIds, mode) {
+    if (!sourceIds && !state.sources.length) {
+      setStatus(els.refreshStatus, "还没有登记图库，不能启动全部建库或同步。", "error");
+      updateGlobalRefreshActions();
+      return;
+    }
     var timer = state.refreshTimer;
     if (timer !== null) {
       clearTimeout(timer);
@@ -1218,7 +1255,19 @@
     }
     request("/library/refresh", { method: "POST", body: body })
       .then(function (result) {
-        renderRefresh(result.body || {});
+        var status = result.body || {};
+        var sameActiveBuild = status.running && status.mode === "build" &&
+          (sourceIds
+            ? Array.isArray(status.source_ids) && sourceIds.every(function (id) {
+              return status.source_ids.indexOf(id) >= 0;
+            })
+            : status.source_ids === null);
+        if (!status.accepted && !status.queued && !sameActiveBuild) {
+          setStatus(els.refreshStatus, "有任务执行中，请结束后重试。", "error");
+          if (status.running) pollRefresh();
+          return;
+        }
+        renderRefresh(status);
         pollRefresh();
       })
       .catch(function (failure) {
@@ -1258,14 +1307,20 @@
 
   function renderRefresh(status) {
     var counters = status.counters || {};
+    var sourceRows = Array.isArray(status.sources) ? status.sources : [];
+    var sourcesFailed = Number(counters.sources_failed || 0);
     var failedStages = status.failed_stages || [];
     var unfinished = failedStages.indexOf("semantic-backlog") >= 0;
     var refusedAll = failedStages.indexOf("semantic-confirmed-nothing") >= 0;
-    var stateText = unfinished
-      ? "尚未完成建立语义索引（可再次点击继续）"
-      : (refusedAll
-        ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
-        : (REFRESH_STATE_TEXT[status.state] || String(status.state || "")));
+    var stateText = sourcesFailed > 0
+      ? (status.running
+        ? "部分来源扫描失败，本轮仍在进行"
+        : "部分来源扫描失败（可重试）")
+      : (unfinished
+        ? "尚未完成建立语义索引（可再次点击继续）"
+        : (refusedAll
+          ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
+          : (REFRESH_STATE_TEXT[status.state] || String(status.state || ""))));
     var parts = [];
     if (status.mode === "build") {
       parts.push("开始建库");
@@ -1274,12 +1329,15 @@
     state.refreshRunning = Boolean(status.running);
     state.refreshStatus = status;
     updateSourceActions(els.sourcesList);
-    els.refreshLibrary.disabled = state.refreshRunning;
+    updateGlobalRefreshActions();
     if (status.queued) {
       parts.push("已加入建库队列，当前任务结束后自动开始");
     }
     if ((status.pending_builds || []).length) {
       parts.push("等待建库 " + status.pending_builds.length + " 项");
+    }
+    if (status.pending_all_build) {
+      parts.push("全部建库已排队（执行时包含当时登记的所有图库）");
     }
     var semantic = status.stages && status.stages.semantic ? status.stages.semantic : null;
     if (semantic && semantic.backlog_total !== undefined) {
@@ -1288,23 +1346,128 @@
         "（待处理 " + String(semantic.backlog_pending) + "）"
       );
     }
-    if (counters.hash_targets !== undefined) {
-      parts.push(
-        "已重新校验 " + String(counters.hash_targets) + " 个位置" +
-        "（复用 " + String(counters.unchanged_reused || 0) + " 个未变位置）"
-      );
-    }
-    if (counters.content_delta_count !== undefined) {
-      parts.push("新增/变化内容 " + String(counters.content_delta_count) + " 项");
-    }
     if (!status.search_ready && status.search_ready_basis) {
       var gate = String(status.search_ready_basis);
       parts.push("原因：" + (SEARCH_GATE_TEXT[gate] || gate));
     }
-    var kind = status.state === "FAILED"
+    var terminal = !status.running &&
+      ["COMPLETE", "PARTIAL_FAILED", "FAILED"].indexOf(status.state) >= 0 &&
+      Number(counters.sources_requested || 0) > 0;
+    if (terminal) {
+      parts.push(refreshOutcomeSummary(counters, sourcesFailed, status.mode === "build"));
+    }
+    var kind = status.state === "FAILED" || sourcesFailed > 0
       ? "error"
       : (status.state === "PARTIAL_FAILED" ? "error" : "");
-    setStatus(els.refreshStatus, parts.join("；"), kind);
+    setStatus(els.refreshStatus, "", kind);
+    if (parts.length) {
+      els.refreshStatus.hidden = false;
+      var summary = element("p", null, parts.join("；"));
+      els.refreshStatus.appendChild(summary);
+    }
+    if (terminal && sourceRows.length) {
+      var details = element("details", "refresh-details");
+      details.appendChild(element("summary", null, "按图库明细"));
+      if (counters.scan_ms !== undefined) {
+        details.appendChild(element("p", "hint", "本轮扫描累计耗时 " + String(counters.scan_ms) + " ms。"));
+      }
+      var list = element("ul", "refresh-source-results");
+      sourceRows.forEach(function (source) {
+        list.appendChild(renderRefreshSource(source, counters));
+      });
+      details.appendChild(list);
+      els.refreshStatus.appendChild(details);
+    }
+  }
+
+  function refreshOutcomeSummary(counters, sourcesFailed, isBuild) {
+    var requested = Number(counters.sources_requested || 0);
+    var scanned = Number(counters.sources_scanned || 0);
+    var added = Number(counters.locations_added || 0);
+    var missing = Number(counters.locations_missing || 0);
+    var hashed = Number(counters.hash_targets || 0);
+    var newAssets = Number(counters.new_assets || 0);
+    var rebound = Number(counters.rebound_assets || 0);
+    var unchanged = Number(counters.unchanged_reused || 0);
+    var changed = added + missing + hashed + newAssets + rebound > 0;
+    var action = isBuild ? "扫描" : "同步";
+    var line = sourcesFailed
+      ? (isBuild ? "已扫描 " : "已同步成功 ") + scanned + "/" + requested +
+        " 个图库，另有 " + sourcesFailed + " 个图库" + action + "失败"
+      : "已" + action + " " + scanned + "/" + requested + " 个图库";
+    if (!changed) {
+      line += sourcesFailed
+        ? "；已成功" + action + "的图库未发现文件变化"
+        : "；未发现文件变化";
+      if (counters.enumerated !== undefined) {
+        line += "，检查了 " + String(counters.enumerated) + " 个文件位置";
+      }
+      return line + "。";
+    }
+    var changes = [];
+    if (added) changes.push("新增文件位置 " + added + " 个");
+    if (missing) changes.push("变为缺失的位置 " + missing + " 个");
+    if (hashed) changes.push("重新校验文件内容 " + hashed + " 个位置");
+    if (newAssets) changes.push("真正新内容 " + newAssets + " 个");
+    if (rebound) changes.push("重新关联已有内容 " + rebound + " 个");
+    line += "；" + changes.slice(0, 5).join("、");
+    return line + "。";
+  }
+
+  function renderRefreshSource(source, aggregate) {
+    var sourceId = Number(source.source_id);
+    var identity = state.sources.find(function (item) {
+      return Number(item.source_id) === sourceId;
+    });
+    var name = identity ? safeText(identity.display_name) : "图库 #" + sourceId;
+    var failed = String(source.state || "").toUpperCase() === "FAILED";
+    var row = element("li", failed ? "error" : "");
+    row.appendChild(element("strong", null, String(name)));
+    row.appendChild(element("span", null, failed
+      ? "：扫描失败（" + refreshFailureLabel(source.code) + "，可重试）"
+      : "：扫描完成"));
+    var keys = [
+      ["enumerated", "检查文件位置"],
+      ["unchanged_reused", "未变化并跳过内容校验的位置"],
+      ["hash_targets", "重新校验文件内容的位置"],
+      ["new_assets", "真正新内容"],
+      ["rebound_assets", "重新关联已有内容"],
+      ["locations_added", "新增文件位置"],
+      ["locations_missing", "本轮新确认缺失的位置"],
+      ["content_delta_count", "涉及的内容记录数"],
+      ["location_delta_count", "位置状态变化记录数"],
+    ];
+    if (source.elapsed_ms !== undefined) keys.push(["elapsed_ms", "扫描耗时 ms"]);
+    var metrics = [];
+    keys.forEach(function (entry) {
+      var value = source[entry[0]];
+      if (value !== undefined && value !== null) {
+        metrics.push(entry[1] + " " + String(value));
+      }
+    });
+    if (!failed && metrics.length === 0) {
+      keys.forEach(function (entry) {
+        var value = aggregate[entry[0]];
+        if (value !== undefined && value !== null) metrics.push(entry[1] + " " + String(value));
+      });
+    }
+    if (metrics.length) row.appendChild(element("span", "hint", "（" + metrics.join("；") + "）"));
+    if (source.delta_overflow) {
+      row.appendChild(element("span", "hint", "变化明细达到记录上限，实际数量可能更多。"));
+    }
+    return row;
+  }
+
+  function refreshFailureLabel(code) {
+    var labels = {
+      SOURCE_OFFLINE: "来源暂时不可用",
+      ACCESS_DENIED: "访问被拒绝",
+      FILE_READ_ERROR: "读取文件失败",
+      SOURCE_NOT_FOUND: "来源不存在",
+      SCAN_INTERRUPTED: "扫描中断",
+    };
+    var safeCode = /^[A-Z0-9_]+$/.test(String(code || "")) ? String(code) : "未知错误";
+    return labels[safeCode] || "扫描未完成（" + safeCode + "）";
   }
 
   function deleteSource(source) {
@@ -2309,6 +2472,7 @@
       sourcesList: document.getElementById("sources-list"),
       sourcesStatus: document.getElementById("sources-status"),
       refreshLibrary: document.getElementById("refresh-library"),
+      buildAllLibrary: document.getElementById("build-all-library"),
       storageSummary: document.getElementById("storage-summary"),
       storageMaintenancePreview: document.getElementById("storage-maintenance-preview"),
       storageBackupDirectory: document.getElementById("storage-backup-directory"),
@@ -2403,7 +2567,10 @@
     });
     els.sourceForm.addEventListener("submit", submitSource);
     els.refreshLibrary.addEventListener("click", function () {
-      refreshLibrary(null);
+      refreshLibrary(null, "refresh");
+    });
+    els.buildAllLibrary.addEventListener("click", function () {
+      refreshLibrary(null, "build");
     });
     document.getElementById("storage-summary-refresh").addEventListener("click", loadStorageSummary);
     document.getElementById("storage-deep-check").addEventListener("click", runStorageDeepCheck);

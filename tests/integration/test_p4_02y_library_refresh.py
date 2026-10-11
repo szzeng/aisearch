@@ -808,6 +808,40 @@ def test_a_source_scoped_refresh_leaves_the_other_source_alone(tmp_path: Path) -
         env.close()
 
 
+def test_a_global_refresh_reports_a_cross_source_move_as_location_changes(tmp_path: Path) -> None:
+    adapter = StubPinnedAdapter()
+    env = RefreshEnv.build(tmp_path, photos=2, adapter=adapter, manifest=MANIFEST)
+    try:
+        second = tmp_path / "second-library"
+        second.mkdir()
+        env.service().register_source(display_name="second", root_path=second)
+        initial = env.refresh()
+        assert initial["counters"]["sources_scanned"] == 2
+
+        source_path = env.library / "photo-000.jpg"
+        moved_asset = asset_of(env, "photo-000.jpg")
+        os.rename(source_path, second / source_path.name)
+
+        status = env.refresh()
+
+        assert status["counters"]["sources_requested"] == 2
+        assert status["counters"]["sources_scanned"] == 2
+        assert status["counters"]["locations_added"] == 1
+        assert status["counters"]["locations_missing"] == 1
+        assert status["counters"]["new_assets"] == 0
+        assert status["counters"]["rebound_assets"] == 1
+        rows = env.service().catalog.read_all(
+            "SELECT source_id, relative_path, availability, asset_id "
+            "FROM file_locations WHERE relative_path = 'photo-000.jpg' ORDER BY source_id"
+        )
+        assert [(int(row["source_id"]), str(row["availability"]), int(row["asset_id"])) for row in rows] == [
+            (1, "MISSING", moved_asset),
+            (2, "PRESENT", moved_asset),
+        ]
+    finally:
+        env.close()
+
+
 def test_an_offline_source_does_not_stop_the_others(tmp_path: Path) -> None:
     env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
     try:

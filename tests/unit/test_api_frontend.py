@@ -194,7 +194,9 @@ def test_frontend_reaches_data_only_through_the_protected_api() -> None:
     # The original bytes are reached by navigating to a controlled asset id, not a path.
     assert 'link.href = API + "/assets/"' in script
     # The page never opens the catalog or a source directory itself.
-    assert "sqlite" not in script.lower()
+    # User-facing storage labels may name SQLite; the page must not open a browser-side DB.
+    assert "sqlite3" not in script.lower()
+    assert "indexeddb" not in script.lower()
     assert "catalog.db" not in script
 
 

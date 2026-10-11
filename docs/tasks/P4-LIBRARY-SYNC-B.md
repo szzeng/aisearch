@@ -1,6 +1,6 @@
 # P4-LIBRARY-SYNC-B（V2）— 文件变动同步结果与可靠性反馈
 
-**状态**：READY / 文档方案，尚未实施。**日期**：2026-10-11。**前置**：A 卡的按钮及全局作用域；扫描核心仍使用现有 P4-02Y。**参考仓库**：`szzeng/aisearch master @ 3b9d472`，开工核对实际 HEAD。**推荐**：GPT-6 Luna / Medium；遇到 scanner 事务/权威缺失判定改动才升级 Luna / High。只做合成小测试。
+**状态**：SCOPED PASS / 用户指定 LUNA-H 复核路由例外。**日期**：2026-10-11。**执行报告**：[P4-LIBRARY-SYNC-B.md](../reports/P4-LIBRARY-SYNC-B.md)。**前置**：A 卡的按钮及全局作用域；扫描核心仍使用现有 P4-02Y。**参考仓库**：`szzeng/aisearch master @ 3b9d472`，开工时 HEAD 为 `cc321f7`，工作树含未提交的 A 卡已验收改动。**实现建议**：GPT-6 Luna / Medium；独立 LUNA / High 子代理复核 PASS / finding=none。只做合成小测试；此结论不是 DS-H PASS。
 
 ## 一、本卡只负责“同步后告诉用户发生了什么”
 

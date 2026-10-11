@@ -84,10 +84,11 @@
               <p class="hint">仅在点击备份后创建 SQLite catalog 一致性快照；不含原图、LanceDB/人脸外部产物或模型。快照不能直接覆盖任意重建图库并保证归属可恢复。软件不会轮换或删除这些备份。</p>
             </section>
           </details>
-          <p>
-          <button type="button" id="refresh-library">刷新图库</button>
-          <span id="refresh-status" class="hint" role="status" aria-live="polite"></span>
-          </p>
+          <div class="library-actions">
+          <button type="button" id="build-all-library" disabled>继续全部建库</button>
+          <button type="button" id="refresh-library" disabled>同步全部变化</button>
+          <div id="refresh-status" class="hint" role="status" aria-live="polite"></div>
+          </div>
           <p>
             <label for="face-profile">人脸处理</label>
             <select id="face-profile">
@@ -100,9 +101,10 @@
           <p class="hint">
           新登记的来源显示「未建库」，点「开始建库」会一次完成扫描、搜索投影与语义索引，
           再在后台继续缩略图、拍摄时间、地点与人脸/文字识别；语义索引进度由图库记录推导，
-          完整覆盖后才会显示「✓ 可以语义搜索」。建库完成后日常点「快速刷新此来源」即可，
-          它只处理变化。「刷新图库」对全部来源做同样的增量刷新；「完整校验扫描」仍会完整
-          校验每个位置的内容（次要维护入口）。「删除来源」只移除 PhotoSearch 中的记录，
+          完整覆盖后才会显示「✓ 可以语义搜索」。日常点击「同步变化」即可，
+          它只处理变化。「继续全部建库」会继续处理点击执行时已登记来源的建库任务；
+          「同步全部变化」只处理新增、删除、移动或改写的文件。「完整校验扫描」与删除来源
+          位于单个图库的更多操作中。「删除来源」只移除 PhotoSearch 中的记录，
           不会删除、移动或修改文件夹中的照片。
           </p>
           <form id="source-form" class="card" novalidate>
