@@ -1,5 +1,9 @@
 # Development status
 
+## P4-RELEASE-020 — READY / v0.2.0 个人预览版任务卡（未实施）
+
+[任务卡](tasks/P4-RELEASE-020.md)。按用户要求只立简化版本冻结卡：0.1.0→0.2.0、更新日志、版本一致性定向测试/最小启动搜索检查；不改 Schema 29、原图、模型、识别/搜索逻辑，不做全量 pytest、GPU/30 万/Windows 打包验收。推荐 **GPT-6 Luna / Medium**，发布代码推送/Tag/GitHub Pre-release 须另经用户确认。当前仅文档提交，**没有升级程序或运行测试**；本卡不取代现有其他任务的后续安排。
+
 ## P4-PERSON-SELECT-RANGE-A — SCOPED PASS / 人物整理范围与已加载快捷选择
 
 [任务卡](tasks/P4-PERSON-SELECT-RANGE-A.md)、[执行报告](reports/P4-PERSON-SELECT-RANGE-A.md)。人物相册、人物批量管理、待整理/已忽略脸、人物合集成员支持各自范围锚点、已加载全选/反选和清空；候选组/隐藏区域隔离，超过 500 的选择整体拒绝，保留 person snapshot 与既有逐脸/API语义。合成 UI 定向 JUnit **14/0/0/0**，Node 语法、diff-check 通过。未做真实浏览器手测、真图库、GPU、全仓或性能验收；工作区原有 `geo/dataset.py` 改动保留。
