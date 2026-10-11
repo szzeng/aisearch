@@ -613,8 +613,6 @@
       .catch(function (failure) { setStatus(els.storageSummary, "深度扫描失败：" + describe(failure), "error"); });
   }
 
-  function saveStorageBackupDirectory() {
-    return request("/storage/backup", { method: "PUT", body: { directory: els.storageBackupDirectory.value } }).then(function (result) {
   function renderLibraryRetention() {
     var model = state.libraryRetention;
     var lines = [];
@@ -656,6 +654,8 @@
     });
   }
 
+  function saveStorageBackupDirectory() {
+    return request("/storage/backup", { method: "PUT", body: { directory: els.storageBackupDirectory.value } }).then(function (result) {
       var body = result.body || {};
       if (body.status !== "ok") throw { code: "BACKUP_DIRECTORY_INVALID", message: body.message || "目录不可用" };
       setStatus(els.storageBackupStatus, "备份目录已保存并检查可写，剩余 " + formatBytes(body.free_bytes || 0) + "。\n" + body.directory);
@@ -2477,6 +2477,8 @@
       storageMaintenancePreview: document.getElementById("storage-maintenance-preview"),
       storageBackupDirectory: document.getElementById("storage-backup-directory"),
       storageBackupStatus: document.getElementById("storage-backup-status"),
+      libraryRetentionStatus: document.getElementById("library-retention-status"),
+      libraryRetentionMore: document.getElementById("library-retention-more"),
       faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
@@ -2580,6 +2582,11 @@
     document.getElementById("storage-maintenance-cancel").addEventListener("click", cancelStorageMaintenance);
     document.getElementById("storage-backup-save").addEventListener("click", saveStorageBackupDirectory);
     document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);
+    document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
+    els.libraryRetentionMore.addEventListener("click", function () { loadLibraryRetention(false); });
+    document.getElementById("library-retention-details").addEventListener("toggle", function (event) {
+      if (event.currentTarget.open && !state.libraryRetention.overview) loadLibraryRetention(true);
+    });
     document.getElementById("storage-management-details").addEventListener("toggle", function (event) {
       if (event.currentTarget.open && !state.storageBackupLoaded) {
         state.storageBackupLoaded = true;
@@ -2605,10 +2612,3 @@
     boot();
   }
 })();
-      libraryRetentionStatus: document.getElementById("library-retention-status"),
-      libraryRetentionMore: document.getElementById("library-retention-more"),
-    document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
-    els.libraryRetentionMore.addEventListener("click", function () { loadLibraryRetention(false); });
-    document.getElementById("library-retention-details").addEventListener("toggle", function (event) {
-      if (event.currentTarget.open && !state.libraryRetention.overview) loadLibraryRetention(true);
-    });
