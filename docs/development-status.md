@@ -43,6 +43,10 @@
 
 [任务卡](tasks/P4-STORAGE-GC-A.md)、[执行报告](reports/P4-STORAGE-GC-A.md)。GC-A 相关定向 JUnit 现存结果 **76/0/0/0**，未见直接受影响面新增回归。用户确认独立 GPT-6 Luna / High 复核通过；原 V3.1 路由要求 DS-H 全受影响面主审，本次按用户明确指示记录并接受路由例外。该结论**不是 DS-H PASS**。全量 unit/integration 既有 **2,338 项：2,176 passed、70 failures、43 errors、49 skipped** 原样保留，仍未通过，作为独立历史基线问题跟踪；本次未重跑或修改测试结果。未访问真实 PhotoSearchData、真实图库或用户服务；未改 Schema/依赖。
 
+## P4-PLACE-ALBUM-PERF-A — READY / 地点相册首次加载优化待执行
+
+[任务卡](tasks/P4-PLACE-ALBUM-PERF-A.md)。2026-10-11 已立卡并提交，**仅文档，尚未实施或测试**。借鉴人物相册优化，消除地点列表 N+1/重复分组、先显示地点相册并延迟无关管理查询、优化首屏封面；地名包冷校验只在有耗时证据且不削弱完整性保护时处理。建议 GPT-6 Luna / High，个人项目只做小型合成与直接相关 Node/pytest、Ruff、diff-check；不改地点归属、Schema 或真实 PhotoSearchData，不要求全仓回归。
+
 ## 下一步
 
 下一项： [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md)，仅用现存固定权重和合成图片核验 OCR native provider；执行建议 GPT-5.6 Terra / medium（C1），需用户手动切换。全仓回归、OCR GPU/真实图库、30万性能仍各自保持未验证，不因本任务结论自动通过。
