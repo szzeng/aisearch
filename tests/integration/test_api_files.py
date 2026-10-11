@@ -5,18 +5,24 @@ Every fixture is created under ``tmp_path`` (``%TEMP%``); no real photo library 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import os
 import random
 import stat
 import subprocess
+import time
 from pathlib import Path
 
 from httpx import AsyncClient
 from PIL import Image
 
+from photo_search.api import place_cover_warmer
+from photo_search.api.place_cover_warmer import PlaceCoverWarmer
 from photo_search.ingestion.service import CatalogService
+from photo_search.media.cache import MediaCache
+from photo_search.media.contract import THUMBNAIL_SPEC
 
 OLD_MTIME_NS = (1_700_000_000_000 - 3_600_000) * 1_000_000
 ARTIFACT_CACHE = "private, no-cache, must-revalidate"
@@ -180,6 +186,72 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     # Exactly one thumbnail artifact exists: a repeated request never recomputes.
     published = sorted(path.name for path in (api_env.data_root / "thumbnails").rglob("*.jpg"))
     assert published == [f"{sha256}.jpg"]
+
+
+def test_cold_thumbnail_generation_does_not_block_other_async_requests(api_env, monkeypatch) -> None:
+    api_env.add_photo("async-cover.jpg", size=(1200, 900), color=(20, 100, 180))
+    api_env.scan(api_env.register_source()["source_id"])
+    asset_id = api_env.first_asset_id()
+
+    from photo_search.api import routes
+
+    original_generate_one = routes._generate_one
+
+    def delayed_generate_one(service, selected_asset_id, kind):
+        time.sleep(0.2)
+        original_generate_one(service, selected_asset_id, kind)
+
+    monkeypatch.setattr(routes, "_generate_one", delayed_generate_one)
+
+    async def scenario(client: AsyncClient) -> None:
+        await api_env.authenticate(client)
+        task = asyncio.create_task(client.get(f"/api/v1/assets/{asset_id}/thumbnail"))
+        await asyncio.sleep(0.02)
+        assert not task.done(), "cold generation should still be running in a worker"
+        response = await task
+        assert response.status_code == 200, response.text
+
+    api_env.scenario(scenario)
+
+
+def test_place_cover_warmer_generates_and_reuses_the_existing_thumbnail_cache(
+    api_env, monkeypatch
+) -> None:
+    api_env.add_photo("place-cover.jpg", size=(640, 480), color=(80, 120, 180))
+    api_env.scan(api_env.register_source()["source_id"])
+    asset_id = api_env.first_asset_id()
+    row = api_env.service.catalog.read_one(
+        "SELECT sha256 FROM assets WHERE asset_id = ?", (asset_id,)
+    )
+    cache = MediaCache.open(api_env.data_root)
+    artifact = cache.artifact_path(spec=THUMBNAIL_SPEC, sha256=str(row["sha256"]))
+    assert not artifact.exists()
+
+    monkeypatch.setattr(
+        place_cover_warmer.place_albums,
+        "albums",
+        lambda _catalog, _root, *, kind: {
+            "albums": [{"cover_asset_id": asset_id}] if kind == "city" else []
+        },
+    )
+
+    def service_factory() -> CatalogService:
+        return CatalogService.open(data_root=api_env.data_root, disk_usage=api_env.disk_usage)
+
+    warmer = PlaceCoverWarmer(service_factory)
+    try:
+        assert warmer.request()
+        assert warmer.wait_idle(timeout=10)
+        assert artifact.is_file()
+        first_mtime_ns = artifact.stat().st_mtime_ns
+        first_bytes = artifact.read_bytes()
+
+        assert warmer.request()
+        assert warmer.wait_idle(timeout=10)
+        assert artifact.stat().st_mtime_ns == first_mtime_ns
+        assert artifact.read_bytes() == first_bytes
+    finally:
+        warmer.close()
 
 
 def test_original_bytes_ranges_and_headers(api_env) -> None:

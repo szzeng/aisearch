@@ -164,47 +164,130 @@ def _key(kind: str, row: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def albums(catalog: Any, data_root: Any, *, kind: str = "city", name: str | None = None) -> dict[str, Any]:
-    if kind not in ("city", "province", "country", "district"):
-        raise ValueError("kind must be city, province or country")
-    if kind == "district":
-        return cn_facets.collection(catalog, kind=kind, name=name)
-    before_filter = revision_module.read_filter_revision(catalog.connection)
-    before_suggestion = revision_module.read_suggestion_revision(catalog.connection)
-    rows, package_revision = _album_rows(catalog, data_root, suppress_cn=kind != "country")
+def _chunks(values: list[int], size: int = 500) -> list[list[int]]:
+    return [values[index : index + size] for index in range(0, len(values), size)]
+
+
+def _sort_albums(values: list[dict[str, Any]]) -> None:
+    """Rank albums by match count, then by newest catalog addition and stable label."""
+    values.sort(
+        key=lambda value: (
+            -int(value.get("total", 0)),
+            -int(value.get("_latest_added_at", 0)),
+            str(value.get("name", "")),
+            str(value.get("parent", "")),
+            str(value.get("key", "")),
+        )
+    )
+    for value in values:
+        value.pop("_latest_added_at", None)
+
+
+def _group_rows(
+    catalog: Any, kind: str, rows: list[dict[str, Any]]
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Group one ordered member read, fetching place labels/aliases in batches."""
+    place_ids = sorted({int(row["place_id"]) for row in rows if row["place_id"] is not None})
+    parent_ids = sorted(
+        {
+            int(row["parent_place_id"])
+            for row in rows
+            if row["parent_place_id"] is not None and kind == "city"
+        }
+    )
+    if kind == "country":
+        parent_ids = sorted(
+            {
+                int(row["parent_place_id"])
+                for row in rows
+                if row["kind"] == "city" and row["parent_place_id"] is not None
+            }
+        )
+        parent_ids.extend(value for value in place_ids if value not in parent_ids)
+    names: dict[int, str] = {}
+    aliases: dict[int, list[str]] = {}
+    for batch in _chunks(sorted(set(parent_ids))):
+        placeholders = ",".join("?" for _ in batch)
+        names.update(
+            {
+                int(row["place_id"]): str(row["canonical_name"])
+                for row in catalog.read_all(
+                    f"SELECT place_id, canonical_name FROM places WHERE place_id IN ({placeholders})",
+                    tuple(batch),
+                )
+            }
+        )
+    if kind == "city":
+        for batch in _chunks(place_ids):
+            placeholders = ",".join("?" for _ in batch)
+            for row in catalog.read_all(
+                f"SELECT place_id, text FROM place_aliases WHERE place_id IN ({placeholders}) AND lifecycle = 'ACTIVE' ORDER BY place_id, alias_id",
+                tuple(batch),
+            ):
+                aliases.setdefault(int(row["place_id"]), []).append(str(row["text"]))
+
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         key = _key(kind, row)
         if key is None:
             continue
-        label = row["name"]
-        aliases: list[str] = []
+        region = row.get("region")
+        label = names.get(int(key[1]), "") if kind == "country" else str(row["name"])
         parent = ""
-        if kind == "country":
-            parent_row = catalog.read_one("SELECT canonical_name FROM places WHERE place_id = ?", (int(key[1]),))
-            label = str(parent_row["canonical_name"]) if parent_row else ""
+        row_aliases: list[str] = []
+        if kind == "city":
+            parent = names.get(int(row["parent_place_id"]), "") if row["parent_place_id"] else ""
+            row_aliases = aliases.get(int(row["place_id"]), [])
         elif kind == "province":
-            region = row["region"]
             label = str(region.get("name", ""))
-            aliases = [str(value) for value in region.get("aliases", [])]
-        else:
-            parent_row = catalog.read_one("SELECT canonical_name FROM places WHERE place_id = ?", (int(row["parent_place_id"]),)) if row["parent_place_id"] else None
-            parent = str(parent_row["canonical_name"]) if parent_row else ""
-            aliases = [str(alias["text"]) for alias in catalog.read_all("SELECT text FROM place_aliases WHERE place_id = ? AND lifecycle = 'ACTIVE' ORDER BY alias_id", (int(row["place_id"]),))]
-        bucket = grouped.setdefault(key, {"kind": kind, "key": key[1], "name": label, "aliases": aliases, "parent": parent, "asset_ids": [], "cover_asset_id": row["asset_id"], "origins": set()})
+            row_aliases = [str(value) for value in region.get("aliases", [])]
+        bucket = grouped.setdefault(
+            key,
+            {
+                "kind": kind,
+                "key": key[1],
+                "name": label,
+                "aliases": row_aliases,
+                "parent": parent,
+                "asset_ids": [],
+                "asset_id_set": set(),
+                "cover_asset_id": int(row["asset_id"]),
+                "_latest_added_at": int(row["created_at"] or 0),
+                "origins": set(),
+            },
+        )
+        bucket["_latest_added_at"] = max(
+            int(bucket["_latest_added_at"]), int(row["created_at"] or 0)
+        )
         bucket["origins"].add(row["origin"])
-        if row["asset_id"] not in bucket["asset_ids"]:
-            bucket["asset_ids"].append(row["asset_id"])
+        asset_id = int(row["asset_id"])
+        if asset_id not in bucket["asset_id_set"]:
+            bucket["asset_id_set"].add(asset_id)
+            bucket["asset_ids"].append(asset_id)
         if kind == "city" and parent:
             bucket["parent"] = parent
+    return grouped
+
+
+def albums(catalog: Any, data_root: Any, *, kind: str = "city", name: str | None = None) -> dict[str, Any]:
+    if kind not in ("city", "province", "country", "district"):
+        raise ValueError("kind must be city, province or country")
+    if kind == "district":
+        result = cn_facets.collection(catalog, kind=kind, name=name)
+        _sort_albums(result["albums"])
+        return result
+    before_filter = revision_module.read_filter_revision(catalog.connection)
+    before_suggestion = revision_module.read_suggestion_revision(catalog.connection)
+    rows, package_revision = _album_rows(catalog, data_root, suppress_cn=kind != "country")
+    grouped = _group_rows(catalog, kind, rows)
     result = [value for value in grouped.values() if value["asset_ids"]]
     for item in result:
         item["total"] = len(item.pop("asset_ids"))
+        item.pop("asset_id_set", None)
         item["aliases"] = sorted(set(item["aliases"]))
     if name:
         needle = normalize_name(name)
         result = [item for item in result if needle in normalize_name(item["name"] + " " + item["parent"] + " " + " ".join(item["aliases"]))]
-    result.sort(key=lambda value: (value["name"], value["parent"], value["key"]))
     filter_revision = revision_module.read_filter_revision(catalog.connection)
     suggestion_revision = revision_module.read_suggestion_revision(catalog.connection)
     _, current_package_revision, _, _ = _index(catalog, data_root)
@@ -218,21 +301,24 @@ def albums(catalog: Any, data_root: Any, *, kind: str = "city", name: str | None
         if (chinese["catalog_filter_revision"], chinese["suggestion_revision"], chinese["package_revision"]) != (before_filter, before_suggestion, package_revision):
             raise ApiError(CATALOG_FILTER_REVISION_STALE, "the albums changed; reload", status=409)
         result.extend(chinese["albums"])
-        result.sort(key=lambda value: (value["name"], value["parent"], value["key"]))
+    _sort_albums(result)
     return {"kind": kind, "catalog_filter_revision": filter_revision, "suggestion_revision": suggestion_revision, "package_revision": package_revision, "albums": result}
 
 
 def album_assets(catalog: Any, data_root: Any, *, kind: str, key: str, limit: int = PAGE_SIZE, cursor: str | None = None) -> dict[str, Any]:
     if str(key).startswith("cn:") or kind == "district":
         return cn_facets.page(catalog, kind=kind, key=key, limit=limit, cursor=cursor)
-    collection = albums(catalog, data_root, kind=kind)
-    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, str(key))
+    before_filter = revision_module.read_filter_revision(catalog.connection)
+    before_suggestion = revision_module.read_suggestion_revision(catalog.connection)
+    rows, package_revision = _album_rows(catalog, data_root, suppress_cn=kind != "country")
+    revisions = (before_filter, before_suggestion, package_revision, kind, str(key))
     start = _decode(cursor, revisions)
-    selected = next((item for item in collection["albums"] if item["key"] == str(key)), None)
+    grouped = _group_rows(catalog, kind, rows)
+    selected = grouped.get((kind, str(key)))
     if selected is None:
-        return {"assets": [], "total": 0, "next_cursor": None, "catalog_filter_revision": revisions[0], "suggestion_revision": revisions[1], "package_revision": revisions[2]}
-    rows, _ = _album_rows(catalog, data_root, suppress_cn=kind != "country")
-    ids = [row["asset_id"] for row in rows if _key(kind, row) == (kind, str(key))]
+        ids: list[int] = []
+    else:
+        ids = selected["asset_ids"]
     _, current_package_revision, _, _ = _index(catalog, data_root)
     if (revision_module.read_filter_revision(catalog.connection), revision_module.read_suggestion_revision(catalog.connection), current_package_revision) != revisions[:3]:
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the album changed; reload the page", status=409)

@@ -12,6 +12,9 @@
   var cursor = null;
   var albumRequest = 0;
   var photoVersion = 0;
+  var initialKind = null;
+  var initialKey = null;
+  var cnCapabilityStarted = false;
   function el(tag, cls, value) {
     var node = document.createElement(tag);
     if (cls) node.className = cls;
@@ -34,18 +37,36 @@
     get("/places/albums?" + params.toString()).then(function (body) {
       if (request !== albumRequest) return;
       cards.replaceChildren();
+      loadCnCapability();
       if (!body.albums.length) { cards.appendChild(el("p", "hint", kind.value === "province" ? "暂无省份索引或暂无照片。旧地名包仍可浏览城市和国家。" : "当前没有可浏览的地点照片。")); return; }
-      body.albums.forEach(function (album) {
+      body.albums.forEach(function (album, index) {
         var button = el("button", "album-card"); button.type = "button";
-        var image = el("img", "album-cover"); image.loading = "lazy"; image.alt = ""; image.src = api + "/assets/" + encodeURIComponent(album.cover_asset_id) + "/thumbnail";
+        var image = el("img", "album-cover"); image.loading = index < 4 ? "eager" : "lazy"; image.alt = "";
+        if ("fetchPriority" in image) image.fetchPriority = index < 4 ? "high" : "auto";
+        image.src = api + "/assets/" + encodeURIComponent(album.cover_asset_id) + "/thumbnail";
         button.appendChild(image);
         var title = el("strong", "album-title", album.name); button.appendChild(title);
         button.appendChild(el("span", "album-parent", album.parent || ""));
         if (album.origin === "GPS_NEARBY_CITY" || album.origin === "MIXED" || album.origin === "GPS_ADMIN") button.appendChild(el("span", "album-origin", album.origin === "MIXED" ? "含机器地点与人工归类" : album.origin === "GPS_ADMIN" ? "GPS行政区 · 机器解析" : "GPS附近城市"));
         button.appendChild(el("span", "album-total", album.total + " 张照片"));
         button.addEventListener("click", function () { openAlbum(album); }); cards.appendChild(button);
+        if (initialKind === kind.value && initialKey && String(album.key) === initialKey) {
+          initialKey = null;
+          openAlbum(album);
+        }
       });
     }).catch(function (error) { if (request === albumRequest) cards.replaceChildren(el("p", "error", error.message)); });
+  }
+  function loadCnCapability() {
+    if (cnCapabilityStarted) return;
+    cnCapabilityStarted = true;
+    get("/places/admin/capabilities").then(function (body) {
+      cnCapability = body; cnUpdate.hidden = !body.available;
+      if (body.available && body.update && !body.update.complete) cnStatus.textContent = "中国地点更新尚未完成，点击继续；已完成的结果会复用。";
+    }).catch(function (error) {
+      cnStatus.textContent = "无法读取中国地点更新能力：" + error.message;
+      cnCapabilityStarted = false;
+    });
   }
   function openAlbum(album) {
     photoVersion++; current = album; cursor = null; photos.replaceChildren(); photos.hidden = false; more.hidden = true;
@@ -143,12 +164,9 @@
   var cnCapability = null;
   var cnStop = false;
   if (cnUpdate && cnPause && cnStatus) {
-    get("/places/admin/capabilities").then(function (body) {
-      cnCapability = body; cnUpdate.hidden = !body.available;
-      if (body.available && body.update && !body.update.complete) cnStatus.textContent = "中国地点更新尚未完成，点击继续；已完成的结果会复用。";
-    }).catch(function () {});
     cnPause.addEventListener("click", function () { cnStop = true; cnPause.disabled = true; cnStatus.textContent = "正在完成当前批次，然后暂停…"; });
     cnUpdate.addEventListener("click", function () {
+      if (!cnCapability && !cnCapabilityStarted) loadCnCapability();
       if (!cnCapability || !cnCapability.available || cnUpdate.disabled) return;
       cnStop = false; cnUpdate.disabled = true; cnPause.hidden = false; cnPause.disabled = false;
       cnStatus.textContent = "正在更新中国地点，仅使用已有GPS…";
@@ -170,15 +188,11 @@
   }
   var timer = null; name.addEventListener("input", function () { window.clearTimeout(timer); timer = window.setTimeout(loadAlbums, 220); });
   more.addEventListener("click", loadPhotos);
-  loadAlbums();
   var params = new URLSearchParams(window.location.search);
-  var initialKind = params.get("album_kind");
-  var initialKey = params.get("album_key");
+  initialKind = params.get("album_kind");
+  initialKey = params.get("album_key");
   if (initialKind && initialKey) {
     kind.value = initialKind;
-    get("/places/albums?" + new URLSearchParams({ kind: initialKind })).then(function (body) {
-      var album = (body.albums || []).find(function (item) { return String(item.key) === initialKey; });
-      if (album) openAlbum(album);
-    }).catch(function () {});
   }
+  loadAlbums();
 })();

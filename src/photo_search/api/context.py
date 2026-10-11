@@ -8,6 +8,7 @@ or unreadable has to be re-checked on the next request instead of poisoning the 
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -65,6 +66,9 @@ class ApiContext:
         self._reranker_resolved = False
         self._service: CatalogService | None = None
         self._runner: ScanRunner | None = None
+        self._place_cover_warmer: Any | None = None
+        self._lifecycle_lock = threading.Lock()
+        self._closed = False
         #: P4-02Y: the single background library refresh. It reuses the *same* ADR-0003 §7
         #: adapter as the query path (never a second model instance), resolves its own
         #: connection inside its worker thread, and reports through ``photo_search.refresh``.
@@ -101,9 +105,23 @@ class ApiContext:
         """The single background scan executor; it opens its own service/connection."""
         if self._runner is None:
             self._runner = ScanRunner(
-                self._service_factory, executor=self._runner_executor, worker_id=self._worker_id
+                self._service_factory,
+                executor=self._runner_executor,
+                on_idle_after_success=self.start_place_cover_warming,
+                worker_id=self._worker_id,
             )
         return self._runner
+
+    def start_place_cover_warming(self) -> None:
+        """Warm the current first-screen album covers without blocking API or scan work."""
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            if self._place_cover_warmer is None:
+                from photo_search.api.place_cover_warmer import PlaceCoverWarmer
+
+                self._place_cover_warmer = PlaceCoverWarmer(self._service_factory)
+            self._place_cover_warmer.request()
 
     def refresher(self) -> LibraryRefresher:
         """The single background library refresh; one active refresh per process."""
@@ -192,6 +210,10 @@ class ApiContext:
 
     def close(self) -> None:
         """Stop the worker, the query encoder and both connections; safe to call twice."""
+        with self._lifecycle_lock:
+            self._closed = True
+            place_cover_warmer = self._place_cover_warmer
+            self._place_cover_warmer = None
         refresher = self._refresher
         self._refresher = None
         if refresher is not None:
@@ -213,6 +235,11 @@ class ApiContext:
                 runner.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("stopping the scan runner failed", exc_info=True)
+        if place_cover_warmer is not None:
+            try:
+                place_cover_warmer.close()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the place-cover warmer failed", exc_info=True)
         service = self._service
         self._service = None
         self._face_detail_recovery_started = False

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import time
 from typing import Any
 
 from httpx import AsyncClient
@@ -12,7 +13,7 @@ from p2_dataset_fixtures import build_package, mini_spec, write_gps_jpeg
 
 from photo_search.geo import extract as geo_extract
 from photo_search.geo import resolver
-from photo_search.places import datasets, revision
+from photo_search.places import albums, datasets, revision
 
 
 def install_fixture(api_env: Any) -> int:
@@ -96,7 +97,45 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
 
     async def scenario(client: AsyncClient) -> None:
         csrf = await api_env.authenticate(client)
+        catalog = api_env.service.catalog
+        albums._INDEX_CACHE.clear()
+        sql_trace: list[str] = []
+        catalog.connection.set_trace_callback(sql_trace.append)
+        started = time.perf_counter()
+        direct = albums.albums(catalog, api_env.data_root, kind="city")
+        cold_ms = (time.perf_counter() - started) * 1000
+        cold_sql_count = len(sql_trace)
+        cold_trace = list(sql_trace)
+        sql_trace.clear()
+        started = time.perf_counter()
+        albums.albums(catalog, api_env.data_root, kind="city")
+        warm_ms = (time.perf_counter() - started) * 1000
+        warm_sql_count = len(sql_trace)
+        sql_trace.clear()
+        started = time.perf_counter()
+        datasets.dataset_status(catalog.connection, data_root=api_env.data_root)
+        datasets_ms = (time.perf_counter() - started) * 1000
+        datasets_sql_count = len(sql_trace)
+        sql_trace.clear()
+        started = time.perf_counter()
+        first_page = albums.album_assets(
+            catalog, api_env.data_root, kind="city", key=direct["albums"][0]["key"], limit=7
+        )
+        page_ms = (time.perf_counter() - started) * 1000
+        page_sql_count = len(sql_trace)
+        catalog.connection.set_trace_callback(None)
+        label_reads = [sql for sql in cold_trace if "SELECT place_id, canonical_name FROM places WHERE place_id IN" in sql]
+        alias_reads = [sql for sql in cold_trace if "SELECT place_id, text FROM place_aliases WHERE place_id IN" in sql]
+        assert len(label_reads) <= 1 and len(alias_reads) <= 1
+        print(
+            f"synthetic city albums: cold={cold_ms:.2f}ms/{cold_sql_count} SQL, "
+            f"warm={warm_ms:.2f}ms/{warm_sql_count} SQL; datasets={datasets_ms:.2f}ms/{datasets_sql_count} SQL; "
+            f"page={page_ms:.2f}ms/{page_sql_count} SQL; batched labels={len(label_reads)}, aliases={len(alias_reads)}"
+        )
+        assert len(first_page["assets"]) == 7 and first_page["next_cursor"]
+        assert sum(sql.lstrip().upper().startswith("SELECT A.ASSET_ID, A.SHA256") for sql in sql_trace) == 1
         unfiltered = (await client.get("/api/v1/places/albums", params={"kind": "city"})).json()
+        assert direct["albums"] == unfiltered["albums"]
         assert unfiltered["albums"] and unfiltered["albums"][0]["total"] == 20
         city = (await client.get("/api/v1/places/albums", params={"kind": "city", "name": "Hangzhou"})).json()
         assert len(city["albums"]) == 1
@@ -153,6 +192,65 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
     api_env.scenario(scenario)
 
 
+def test_non_cn_album_keeps_48_plus_1_offset_cursor_and_rejects_stale_revision(api_env: Any) -> None:
+    city_id = install_fixture(api_env)
+    for index in range(50):
+        api_env.add_photo(f"page-{index:02}.jpg", noise=index + 1)
+    source = api_env.register_source("album-page-library")
+    api_env.scan(int(source["source_id"]))
+    asset_ids = [
+        int(row["asset_id"])
+        for row in api_env.service.catalog.read_all("SELECT asset_id FROM assets ORDER BY asset_id")
+    ]
+
+    async def scenario(client: AsyncClient) -> None:
+        csrf = await api_env.authenticate(client)
+        for asset_id in asset_ids[:49]:
+            response = await client.put(
+                f"/api/v1/assets/{asset_id}/place-assignment",
+                json={
+                    "action": "assign",
+                    "target_place_id": city_id,
+                    "expected_revision": 0,
+                    "request_id": f"album-page-{asset_id}",
+                },
+                headers=api_env.post_headers(csrf),
+            )
+            assert response.status_code == 200, response.text
+        first = await client.get(
+            f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 48}
+        )
+        assert first.status_code == 200, first.text
+        page_one = first.json()
+        assert page_one["total"] == 49 and len(page_one["assets"]) == 48
+        second = await client.get(
+            f"/api/v1/places/albums/city/{city_id}/assets",
+            params={"limit": 48, "cursor": page_one["next_cursor"]},
+        )
+        assert second.status_code == 200, second.text
+        page_two = second.json()
+        all_ids = [item["asset_id"] for item in page_one["assets"] + page_two["assets"]]
+        assert len(all_ids) == 49 and len(set(all_ids)) == 49
+        added = await client.put(
+            f"/api/v1/assets/{asset_ids[49]}/place-assignment",
+            json={
+                "action": "assign",
+                "target_place_id": city_id,
+                "expected_revision": 0,
+                "request_id": "album-page-revision-change",
+            },
+            headers=api_env.post_headers(csrf),
+        )
+        assert added.status_code == 200, added.text
+        stale = await client.get(
+            f"/api/v1/places/albums/city/{city_id}/assets",
+            params={"limit": 48, "cursor": page_one["next_cursor"]},
+        )
+        assert stale.status_code == 409
+
+    api_env.scenario(scenario)
+
+
 def test_place_backfill_reuses_gps_and_resolver_jobs_without_duplicate_results(api_env: Any) -> None:
     install_fixture(api_env)
     write_gps_jpeg(api_env.library / "needs-place.jpg")
@@ -175,3 +273,35 @@ def test_place_backfill_reuses_gps_and_resolver_jobs_without_duplicate_results(a
         assert sum(item["total"] for item in album["albums"]) == 1
 
     api_env.scenario(scenario)
+
+
+def test_place_album_sort_prefers_count_then_latest_catalog_addition() -> None:
+    class CatalogStub:
+        def read_all(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+            return []
+
+    rows = []
+    for place_id, name, count, created_at in (
+        (1, "Older", 3, 10),
+        (2, "Smaller", 4, 100),
+        (3, "Newer", 3, 20),
+    ):
+        for offset in range(count):
+            rows.append(
+                {
+                    "place_id": place_id,
+                    "asset_id": place_id * 10 + offset,
+                    "kind": "city",
+                    "name": name,
+                    "parent_place_id": None,
+                    "origin": "MANUAL",
+                    "created_at": created_at + offset,
+                }
+            )
+    values = list(albums._group_rows(CatalogStub(), "city", rows).values())
+    for value in values:
+        value["total"] = len(value.pop("asset_ids"))
+        value.pop("asset_id_set")
+    albums._sort_albums(values)
+    assert [value["name"] for value in values] == ["Smaller", "Newer", "Older"]
+    assert all("_latest_added_at" not in value for value in values)

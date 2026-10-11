@@ -109,6 +109,29 @@ def test_cn_current_members_manual_exclusion_and_cursor(api_env):
     assert original_jobs == [tuple(r) for r in catalog.read_all("SELECT * FROM jobs")]
 
 
+def test_cn_album_paginates_more_than_48_members(api_env):
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path)
+    ids = seed(api_env, count=50)
+    assert resolve_batch(catalog, api_env.data_root)["processed"] == 50
+    selected = albums.albums(catalog, api_env.data_root, kind="district")["albums"][0]
+    first = albums.album_assets(
+        catalog, api_env.data_root, kind="district", key=selected["key"], limit=48
+    )
+    second = albums.album_assets(
+        catalog,
+        api_env.data_root,
+        kind="district",
+        key=selected["key"],
+        limit=48,
+        cursor=first["next_cursor"],
+    )
+    actual = [item["asset_id"] for item in first["assets"] + second["assets"]]
+    assert first["total"] == second["total"] == 50
+    assert len(first["assets"]) == 48 and len(second["assets"]) == 2
+    assert actual == ids and len(set(actual)) == 50
+
+
 def test_cn_source_geometry_and_versioned_package(api_env):
     catalog = api_env.service.catalog
     dataset_id, package = install(catalog, api_env.tmp_path)

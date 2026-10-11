@@ -63,6 +63,7 @@ class ScanRunner:
         service_factory: Callable[[], Any],
         *,
         executor: Callable[[Any, int], Any] | None = None,
+        on_idle_after_success: Callable[[], None] | None = None,
         worker_id: str | None = None,
         now_ms: Callable[[], int] | None = None,
         name: str = "photo-search-scan",
@@ -70,6 +71,7 @@ class ScanRunner:
         self._service_factory = service_factory
         self._service: Any | None = None
         self._executor = executor
+        self._on_idle_after_success = on_idle_after_success
         self._worker_id = worker_id
         self._now_ms = now_ms or (lambda: time.time_ns() // 1_000_000)
         self._condition = threading.Condition()
@@ -153,6 +155,7 @@ class ScanRunner:
 
     # ---------------------------------------------------------------------- worker
     def _loop(self) -> None:
+        succeeded_while_pending = False
         while True:
             with self._condition:
                 while not self._pending and not self._stop:
@@ -162,13 +165,21 @@ class ScanRunner:
                 source_id = self._pending.popleft()
                 self._active = source_id
                 self._condition.notify_all()
-            self._run_one(source_id)
+            succeeded_while_pending = self._run_one(source_id) or succeeded_while_pending
             with self._condition:
                 self._active = None
                 self._completed += 1
+                notify_warmer = not self._pending and succeeded_while_pending
+                if notify_warmer:
+                    succeeded_while_pending = False
                 self._condition.notify_all()
+            if notify_warmer and self._on_idle_after_success is not None:
+                try:
+                    self._on_idle_after_success()
+                except Exception:  # noqa: BLE001 - warming must not affect future scans
+                    logger.exception("scheduling place-cover pre-generation failed")
 
-    def _run_one(self, source_id: int) -> None:
+    def _run_one(self, source_id: int) -> bool:
         started = int(self._now_ms())
         try:
             outcome = self._execute(source_id)
@@ -194,6 +205,8 @@ class ScanRunner:
             with self._condition:
                 self._last = record
                 self._condition.notify_all()
+            return record.state == "SUCCEEDED"
+        return False
 
     def _record_failure(self, source_id: int, code: str, message: str, started: int) -> None:
         with self._condition:

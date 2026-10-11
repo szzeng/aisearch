@@ -1,10 +1,10 @@
 """The read-only business API plus the controlled file endpoints (architecture §10.2).
 
 Every handler is ``async`` and does its catalog work on the event loop thread, which is the
-thread the owned SQLite connection was opened on. Blocking work that can be moved off the
-loop (reading original bytes) is done in a worker thread; the decode of a single asset
-(tens of milliseconds, one asset per request) stays synchronous on purpose so the catalog
-connection is never touched from a second thread.
+thread the owned SQLite connection was opened on. Media generation uses a separate
+thread-owned read-only catalog connection and a bounded worker slot, so first-view image
+decodes do not block other API requests or serialize every eager cover on the event loop.
+Reading published media bytes also stays in a worker thread.
 """
 
 from __future__ import annotations
@@ -42,6 +42,12 @@ from photo_search.api.files import (
     stream_file,
 )
 from photo_search.api.local_actions import perform_local_action
+from photo_search.api.media_generation import (
+    generate_one as _generate_one_core,
+)
+from photo_search.api.media_generation import (
+    generate_one_in_worker as _generate_one_in_worker_core,
+)
 from photo_search.api.models import (
     AssetDetail,
     AssetListResponse,
@@ -164,7 +170,7 @@ from photo_search.media.face_crop import (
     recorded_face_frame,
     render_crop,
 )
-from photo_search.media.pipeline import MediaInterrupted, require_unchanged
+from photo_search.media.pipeline import require_unchanged
 from photo_search.media.status import (
     MEDIA_STATE_FAILED,
     MEDIA_STATE_READY,
@@ -1055,7 +1061,7 @@ async def _media_response(request: Request, asset_id: int, kind: str) -> Respons
             raise ApiError(
                 refusal.code, refusal.message, details=refusal.details, headers=refusal.headers
             ) from refusal
-        _generate_one(service, asset_id, kind)
+        await asyncio.to_thread(_generate_one_in_worker, service, asset_id, kind)
         state = media_state(service.catalog, cache, asset_id, kind)
     if state["state"] != MEDIA_STATE_READY:
         raise ApiError(
@@ -1084,12 +1090,14 @@ async def _media_response(request: Request, asset_id: int, kind: str) -> Respons
 
 def _generate_one(service: CatalogService, asset_id: int, kind: str) -> None:
     """Run the frozen P1-03 single-asset pipeline; per-asset failures become 409s."""
-    try:
-        service.generate_media(kind, asset_ids=[int(asset_id)], limit=1)
-    except MediaInterrupted as interrupted:  # pragma: no cover - no cancel hook here
-        raise ApiError("MEDIA_INTERRUPTED", str(interrupted)) from interrupted
-    except CatalogError as error:
-        raise ApiError(error.code, error.message, details=error.details) from error
+    _generate_one_core(service, asset_id, kind)
+
+
+def _generate_one_in_worker(service: CatalogService, asset_id: int, kind: str) -> None:
+    """Generate on a worker with its own read-only SQLite connection."""
+    _generate_one_in_worker_core(
+        service, asset_id, kind, generator=_generate_one
+    )
 
 
 def _not_modified(request: Request, etag: str) -> bool:
@@ -1102,7 +1110,6 @@ def _not_modified(request: Request, etag: str) -> bool:
 
 # ------------------------------------------------------------------------------ places
 _ACTION_BY_REQUEST = {"assign": "ASSIGN", "unassign": "UNASSIGN", "restore_auto": "RESTORE_AUTO"}
-
 
 @router.get("/places", response_model=PlaceListResponse, summary="Paged place directory")
 async def list_places(

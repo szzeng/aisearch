@@ -43,9 +43,9 @@
 
 [任务卡](tasks/P4-STORAGE-GC-A.md)、[执行报告](reports/P4-STORAGE-GC-A.md)。GC-A 相关定向 JUnit 现存结果 **76/0/0/0**，未见直接受影响面新增回归。用户确认独立 GPT-6 Luna / High 复核通过；原 V3.1 路由要求 DS-H 全受影响面主审，本次按用户明确指示记录并接受路由例外。该结论**不是 DS-H PASS**。全量 unit/integration 既有 **2,338 项：2,176 passed、70 failures、43 errors、49 skipped** 原样保留，仍未通过，作为独立历史基线问题跟踪；本次未重跑或修改测试结果。未访问真实 PhotoSearchData、真实图库或用户服务；未改 Schema/依赖。
 
-## P4-PLACE-ALBUM-PERF-A — READY / 地点相册首次加载优化待执行
+## P4-PLACE-ALBUM-PERF-A — PARTIAL / 列表已变快，后台预生成已实现，实际首屏待验证
 
-[任务卡](tasks/P4-PLACE-ALBUM-PERF-A.md)。2026-10-11 已立卡并提交，**仅文档，尚未实施或测试**。借鉴人物相册优化，消除地点列表 N+1/重复分组、先显示地点相册并延迟无关管理查询、优化首屏封面；地名包冷校验只在有耗时证据且不削弱完整性保护时处理。建议 GPT-6 Luna / High，个人项目只做小型合成与直接相关 Node/pytest、Ruff、diff-check；不改地点归属、Schema 或真实 PhotoSearchData，不要求全仓回归。
+[任务卡](tasks/P4-PLACE-ALBUM-PERF-A.md)、[执行报告](reports/P4-PLACE-ALBUM-PERF-A.md)。地点列表已变快；用户确认首次只有一张封面立即显示、其余需数秒，同批再次刷新明显变快，支持冷缩略图首次生成等待的判断。新增有界后台预生成：应用启动和成功扫描队列排空后，城市/省份/区县/国家各取前 4 张（最多 16 张），写入并复用现有 content-addressed 缩略图缓存，不阻塞扫描；前台与预热共用最多两路生成限制，同一资产并发会合并。定向 JUnit **15/0/0/0**（含缓存复用、后台边界与 scan queue 触发），Ruff、py_compile、Node 语法和 diff-check 通过。真实冷首屏收益待重启实测；真实 PhotoSearchData 未由本次开发测试访问。目录手动加载；相册按匹配数量降序，同数按最近加入图库时间降序。任务仍 PARTIAL，未提交。
 
 ## P4-OCR-LIFECYCLE-A — READY / OCR 旧任务自动收尾与来源进度治本修复
 
@@ -53,6 +53,4 @@
 
 ## 下一步
 
-下一项（用户当前确认）：[P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)，先治本修复 OCR 退役任务与来源状态；建议 GPT-6 Luna / High（用户在 Codex 手动切换）。原计划 [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md) 继续保持 READY，等待后续独立执行，真实固定权重/本机 native provider 的工程核验不因本卡而视作已通过。既有全仓回归及真实图库/30万性能仍未验证。
-
-下一项： [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md)，仅用现存固定权重和合成图片核验 OCR native provider；执行建议 GPT-5.6 Terra / medium（C1），需用户手动切换。全仓回归、OCR GPU/真实图库、30万性能仍各自保持未验证，不因本任务结论自动通过。
+当前 P4-PLACE-ALBUM-PERF-A 后台预生成已实现并通过定向验收，等待用户重启后验证真实冷首屏收益；任务维持 PARTIAL。若实测仍慢，再用浏览器 Network 逐图定位。之后再回到用户已确认的 [P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)。[P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md) 仍保持 READY；全仓、真实图库和 30 万性能未验证。

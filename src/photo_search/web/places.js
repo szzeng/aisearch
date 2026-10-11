@@ -78,6 +78,7 @@
     operations: { cursor: null, hasMore: false, loading: false },
     requestCounter: 0,
   };
+  var panelLoaded = { datasets: false, directory: false, operations: false };
 
   var els = {};
 
@@ -404,9 +405,11 @@
     setStatus(els.datasetBody, "正在读取地名包状态…");
     request("/places/datasets")
       .then(function (result) {
+        panelLoaded.datasets = true;
         drawDatasets(result.body || {});
       })
       .catch(function (failure) {
+        panelLoaded.datasets = false;
         setStatus(els.datasetBody, "读取地名包状态失败：" + describe(failure), "error");
       });
   }
@@ -558,6 +561,7 @@
         state.directory.cursor = body.next_cursor || null;
         state.directory.hasMore = Boolean(body.has_more);
         state.directory.loading = false;
+        panelLoaded.directory = true;
         setStatus(
           els.directoryStatus,
           state.directory.count
@@ -575,6 +579,7 @@
       })
       .catch(function (failure) {
         state.directory.loading = false;
+        panelLoaded.directory = false;
         els.dirMore.hidden = true;
         var prefix =
           failure.code === "CATALOG_FILTER_REVISION_STALE"
@@ -1437,6 +1442,7 @@
         state.operations.cursor = body.next_cursor || null;
         state.operations.hasMore = Boolean(body.has_more);
         state.operations.loading = false;
+        panelLoaded.operations = true;
         els.operationsMore.disabled = !state.operations.hasMore;
         setStatus(
           els.operationsStatus,
@@ -1447,6 +1453,7 @@
       })
       .catch(function (failure) {
         state.operations.loading = false;
+        panelLoaded.operations = false;
         els.operationsMore.disabled = true;
         setStatus(els.operationsStatus, "读取操作日志失败：" + describe(failure), "error");
       });
@@ -1673,7 +1680,10 @@
       }
       loadPlaceIntoEditor(els.editPlaceId.value);
     });
-    els.datasetReload.addEventListener("click", loadDatasets);
+    els.datasetReload.addEventListener("click", function () {
+      panelLoaded.datasets = false;
+      loadDatasets();
+    });
 
     els.suggestedLimit.addEventListener("change", function () {
       state.suggested.limit = Number(els.suggestedLimit.value) || DEFAULT_LIMIT;
@@ -1719,9 +1729,38 @@
     state.suggested.limit = Number(els.suggestedLimit.value) || DEFAULT_LIMIT;
     updateSelectionSummary();
     probeCapabilities();
-    loadDatasets();
-    loadDirectory(true);
-    loadOperations(true);
+    setupDeferredPanels();
+  }
+
+  function setupDeferredPanels() {
+    var panels = [
+      { id: "panel-datasets", key: "datasets", observe: true, load: function () { if (!panelLoaded.datasets) loadDatasets(); } },
+      { id: "panel-directory", key: "directory", observe: false, load: function () { if (!panelLoaded.directory) loadDirectory(true); } },
+      { id: "panel-operations", key: "operations", observe: true, load: function () { if (!panelLoaded.operations) loadOperations(true); } },
+    ];
+    function loadForHash() {
+      var hash = String(window.location.hash || "").slice(1);
+      panels.forEach(function (panel) { if (panel.id === hash) panel.load(); });
+    }
+    if (typeof window.IntersectionObserver === "function") {
+      var observer = new window.IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          var panel = panels.find(function (item) { return item.id === entry.target.id; });
+          if (panel) panel.load();
+        });
+      }, { rootMargin: "160px" });
+      panels.forEach(function (panel) {
+        if (!panel.observe) return;
+        var node = document.getElementById(panel.id);
+        if (node) observer.observe(node);
+      });
+    } else {
+      // Older browsers still load visible status/history panels instead of leaving them blank.
+      panels.forEach(function (panel) { if (panel.observe) panel.load(); });
+    }
+    window.addEventListener("hashchange", loadForHash);
+    loadForHash();
   }
 
   if (document.readyState === "loading") {

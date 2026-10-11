@@ -75,7 +75,8 @@ def members_sql(kind: str, *, key: str | None = None) -> tuple[str, tuple[Any, .
         manual_admin = "CASE WHEN r.kind='district' THEN r.admin_id END"
     manual = f" AND ({manual_admin}) = ?" if key is not None else f" AND ({manual_admin}) IS NOT NULL"
     sql = f"""
-        SELECT r.asset_id, r.{column} AS admin_id, 'GPS_ADMIN' AS origin
+        SELECT r.asset_id, r.{column} AS admin_id, 'GPS_ADMIN' AS origin,
+               a.created_at AS added_at
           FROM cn_admin_resolutions r JOIN active_geo_dataset active
             ON active.singleton=1 AND active.dataset_id=r.dataset_id
           JOIN assets a ON a.asset_id=r.asset_id AND a.sha256=r.input_revision AND a.state='ACTIVE'
@@ -90,7 +91,8 @@ def members_sql(kind: str, *, key: str | None = None) -> tuple[str, tuple[Any, .
     """
     params: tuple[Any, ...] = () if key is None else (admin_key(key),)
     sql += f""" UNION ALL
-        SELECT ap.asset_id,({manual_admin}) AS admin_id,'MANUAL' AS origin
+        SELECT ap.asset_id,({manual_admin}) AS admin_id,'MANUAL' AS origin,
+               a.created_at AS added_at
           FROM asset_place_assignments ap JOIN assets a ON a.asset_id=ap.asset_id AND a.state='ACTIVE'
           JOIN places p ON p.place_id=ap.place_id AND p.lifecycle='ACTIVE'
           JOIN cn_admin_place_refs m ON m.place_id=ap.place_id
@@ -108,7 +110,8 @@ def members_sql(kind: str, *, key: str | None = None) -> tuple[str, tuple[Any, .
             else f" AND l.{legacy_column} IS NOT NULL"
         )
         sql += f""" UNION ALL
-            SELECT ap.asset_id,l.{legacy_column} AS admin_id,'MANUAL' AS origin
+            SELECT ap.asset_id,l.{legacy_column} AS admin_id,'MANUAL' AS origin,
+                   a.created_at AS added_at
               FROM asset_place_assignments ap JOIN assets a ON a.asset_id=ap.asset_id AND a.state='ACTIVE'
               JOIN places p ON p.place_id=ap.place_id AND p.lifecycle='ACTIVE'
               JOIN cn_legacy_links l ON l.place_id=ap.place_id
@@ -179,7 +182,7 @@ def collection(catalog: Any, *, kind: str, name: str | None = None) -> dict[str,
     counts = {
         int(row["admin_id"]): row
         for row in catalog.read_all(
-            f"SELECT admin_id,COUNT(*) AS total,MIN(asset_id) AS cover,COUNT(DISTINCT origin) AS origins,MIN(origin) AS origin FROM ({sql}) GROUP BY admin_id",
+            f"SELECT admin_id,COUNT(*) AS total,MIN(asset_id) AS cover,COUNT(DISTINCT origin) AS origins,MIN(origin) AS origin,MAX(added_at) AS latest_added_at FROM ({sql}) GROUP BY admin_id",
             params,
         )
     }
@@ -197,6 +200,7 @@ def collection(catalog: Any, *, kind: str, name: str | None = None) -> dict[str,
                 item,
                 total=int(count["total"]),
                 cover_asset_id=int(count["cover"]),
+                _latest_added_at=int(count["latest_added_at"] or 0),
                 origin="MIXED" if count["origins"] > 1 else count["origin"],
             )
         )

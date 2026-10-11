@@ -64,6 +64,9 @@ def create_app(
         # The same OS lease is acquired by backup only after this service has stopped.
         lease = acquire_data_root_lease(api.settings.data_root)
         try:
+            # Warm only the first-screen covers in a separate daemon worker. The existing
+            # thumbnail cache is reused and a cold cache never delays API startup.
+            api.start_place_cover_warming()
             yield
         finally:
             api.close()
