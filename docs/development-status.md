@@ -2,6 +2,11 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+
+## P4-PERSON-UX-UNIFY-A — READY / 人物整理统一任务卡，尚未实施
+
+[任务卡](tasks/P4-PERSON-UX-UNIFY-A.md)。2026-10-11 已提交**仅文档方案**：整合旧人物列表、逐脸批量调整/拆分、识别更新按照片直达、撤销历史；沿用现有 assign/unassign/restore_auto、原子 split/merge、mapping confirm/reject/undo 与人工 hold 保护，旧入口仅在替代能力验收后退场。必要时只新增照片定向映射的有界只读接口；保留最近完成的头像复用、全局排序及分区按需加载。与 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 已加避免并行重叠的说明。推荐 GPT-6.1 Sol / High（成本优先可选 GPT-6 Luna / High）；个人项目六组定向合成验收，涉及冻结人工写语义时停止另立高风险卡。**未实施、未测试、未访问真实 PhotoSearchData**；不改变此前 OCR 下一步安排。
+
 ## P4-PHOTO-VIEW-CLOSE-RETURN-A — SCOPED PASS
 
 [任务卡](tasks/P4-PHOTO-VIEW-CLOSE-RETURN-A.md)、[执行报告](reports/P4-PHOTO-VIEW-CLOSE-RETURN-A.md)。照片查看对话框支持遮罩点击关闭；从照片人物头像进入人物页后可用“返回查看照片”回到来源，普通入口保留“所有人物”。定向 JUnit **9/0/0/0**，Ruff、Python 编译、相关 Node 语法和 diff-check 通过；真实浏览器/图库未验证。
