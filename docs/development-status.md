@@ -4,9 +4,9 @@
 
 [任务卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md)、[执行报告](reports/P4-LIBRARY-VIDEO-EXCLUDE-A.md)。视频扩展名在共享扫描枚举层过滤；历史视频成功 fast 刷新后通过原有 reconcile 转 `MISSING`，中断不误标。列表、SearchScope 权威候选、人物/合集照片计数及地点相册在分页/排名前应用统一视频路径资格，保留缺失图片、孤儿资产与跨来源共享图片语义。只读历史视频统计脚本已新增。定向 JUnit **25/0/0/0**（含任务合成用例及人物/合集/地点受影响面用例），Ruff、Python 编译、diff-check 通过。未访问真实图库/PhotoSearchData、未跑全仓/GPU/浏览器/规模或打包验收；未独立复核（按用户要求）。开工前 `geo/dataset.py` 改动保留，未提交。
 
-## P4-PERSON-EMPTY-VISIBILITY-A — READY / 空人物自动隐藏与列表统一（仅任务卡）
+## P4-PERSON-EMPTY-VISIBILITY-A — SCOPED PASS / 用户指定 LUNA High 审查路由例外
 
-[任务卡](tasks/P4-PERSON-EMPTY-VISIBILITY-A.md)。已命名/未命名/已忽略人物统一按活动资产及有效成员规则在 SQL 分页前过滤 0 照片人物，保留 person ID、合并重定向、历史/撤销及人工排除；核对另一列表入口与现有刷新。增加空人物与有照片人物合并的最小防丢数据回归，若合并归属异常则单列后续缺陷，不用隐藏掩盖。不改 Schema/GC/合并算法、不操作真实图库，仅定向简单测试。**当前仅设计提交，尚未实施或运行测试**。推荐 GPT-6 Luna / Medium。
+[任务卡](tasks/P4-PERSON-EMPTY-VISIBILITY-A.md)、[执行报告](reports/P4-PERSON-EMPTY-VISIBILITY-A.md)、[LUNA High 审查报告](reports/P4-PERSON-EMPTY-VISIBILITY-REVIEW-A.md)。列表资格应用活动资产、`MEMBER_PREDICATE` 与 `photo_asset_sql`；视频专属人物隐藏，同资产具备图片和视频路径仍展示。定向 JUnit **70/0/0/0**，Ruff、diff-check 通过。用户指定 LUNA / High 子代理审查（路由例外，不是 DS-H）；首轮 P2 已修并由修复轮确认 CLOSED，无新增 finding。真实浏览器、图库、全仓、GPU/模型、容量和打包未验。
 
 ## P4-RELEASE-020 — READY / v0.2.0 个人预览版任务卡（未实施）
 

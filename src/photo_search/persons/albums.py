@@ -324,29 +324,32 @@ def people_page(
         candidate_conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":
         candidate_conditions.append("p.name IS NULL")
-        # A correction can move the last face away while retaining the identity
-        # for history/undo. Filter empty albums before pagination, without hiding
-        # other unnamed faces in a shared photo or deleting those identities.
-        candidate_conditions.append(
+    # Empty identities stay available to history/undo and canonical ID reads, but
+    # leave every day-to-day list before COUNT, ordering, and cursor pagination.
+    member_exists = (
+        "EXISTS (SELECT 1 FROM face_person_links AS l "
+        "JOIN faces AS f ON f.face_id = l.face_id "
+        "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
+        "WHERE l.person_id = p.person_id AND member_asset.state = 'ACTIVE' AND "
+        + photo_asset_sql(asset_alias="member_asset")[0] + " AND "
+        + MEMBER_PREDICATE + ")"
+    )
+    if kind == "unnamed" and quality_view == "clean":
+        # Preserve this view's existing exception for manually accepted / excluded
+        # faces, while the common effective-member predicate still protects empties.
+        member_exists = (
             "EXISTS (SELECT 1 FROM face_person_links AS l "
             "JOIN faces AS f ON f.face_id = l.face_id "
             "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
+            "LEFT JOIN face_assignment_controls AS qc ON qc.face_id = f.face_id "
             "WHERE l.person_id = p.person_id AND member_asset.state = 'ACTIVE' AND "
+            + photo_asset_sql(asset_alias="member_asset")[0] + " AND "
             + MEMBER_PREDICATE
-            + ")"
+            + " AND (" + qualifies_sql("f")
+            + " OR qc.mode = 'MANUAL_ASSIGNED' OR EXISTS (SELECT 1 FROM face_exclusions AS qe "
+            "WHERE qe.face_id=f.face_id AND qe.active=1)))"
         )
-        if quality_view == "clean":
-            candidate_conditions[-1] = (
-                "EXISTS (SELECT 1 FROM face_person_links AS l "
-                "JOIN faces AS f ON f.face_id = l.face_id "
-                "JOIN assets AS member_asset ON member_asset.asset_id = f.asset_id "
-                "LEFT JOIN face_assignment_controls AS qc ON qc.face_id = f.face_id "
-                "WHERE l.person_id = p.person_id AND member_asset.state = 'ACTIVE' AND "
-                + MEMBER_PREDICATE
-                + " AND (" + qualifies_sql("f")
-                + " OR qc.mode = 'MANUAL_ASSIGNED' OR EXISTS (SELECT 1 FROM face_exclusions AS qe "
-                "WHERE qe.face_id=f.face_id AND qe.active=1)))"
-            )
+    candidate_conditions.append(member_exists)
     if query:
         # instr is literal, so '%'/'_' have no surprising wildcard meaning.
         # Search folding is independent of the case-sensitive persisted name_key.

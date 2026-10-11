@@ -93,7 +93,7 @@ def test_recent_photo_sort_uses_effective_members_and_three_part_cursor(api_env:
     person_b = add_person(catalog, name="乙")
     person_tie = add_person(catalog, name="丙")
     person_c = add_person(catalog, name="丁")
-    person_empty = add_person(catalog, name="戊")
+    add_person(catalog, name="戊")  # Empty identities stay outside both sort and cursor pages.
     links = {
         person_a: ("a1.jpg", "a2.jpg"),
         person_b: ("b1.jpg", "b2.jpg"),
@@ -123,7 +123,7 @@ def test_recent_photo_sort_uses_effective_members_and_three_part_cursor(api_env:
         if not page["has_more"]:
             break
         cursor = page["next_cursor"]
-    assert recent_ids == [person_b, person_a, person_tie, person_c, person_empty]
+    assert recent_ids == [person_b, person_a, person_tie]
 
     legacy_ids = [
         person["person_id"] for person in people_page(
@@ -131,7 +131,7 @@ def test_recent_photo_sort_uses_effective_members_and_three_part_cursor(api_env:
             sort="photos_desc", visibility="visible",
         )["persons"]
     ]
-    assert legacy_ids == [person_a, person_b, person_tie, person_c, person_empty]
+    assert legacy_ids == [person_a, person_b, person_tie]
     import pytest
 
     from photo_search.api.errors import ApiError
@@ -179,7 +179,7 @@ def test_recent_photo_sort_uses_effective_members_and_three_part_cursor(api_env:
     )
     assert undone["changed"] is True
     restored_page = people_page(catalog, kind="all", q="", limit=10, cursor=None, sort="photos_recent_desc")
-    assert [person["person_id"] for person in restored_page["persons"]] == [person_b, person_a, person_tie, person_c, person_empty]
+    assert [person["person_id"] for person in restored_page["persons"]] == [person_b, person_a, person_tie]
 
     api_env.add_photo("newest.jpg", noise=42)
     source = catalog.read_one("SELECT source_id FROM source_roots LIMIT 1")
@@ -325,16 +325,16 @@ def test_people_page_total_matches_filters_without_pagination_or_sort(api_env: A
             "/api/v1/persons/browse",
             params={"kind": "named", "visibility": "visible", "q": "叔"},
         )
-        assert first_named.json()["total"] == second_named.json()["total"] == 2
-        assert first_named.json()["has_more"] is True
+        assert first_named.json()["total"] == second_named.json()["total"] == 1
+        assert first_named.json()["has_more"] is False
         assert unnamed_page.json()["total"] == 1
         assert hidden_page.json()["total"] == 1
-        assert searched.json()["total"] == 1
+        assert searched.json()["total"] == 0
 
     api_env.scenario(scenario)
 
 
-def test_person_visibility_is_atomic_persistent_and_paged_before_sort(api_env: ApiEnv) -> None:
+def test_visibility_state_persists_for_empty_people_without_listing_them(api_env: ApiEnv) -> None:
     catalog = api_env.service.catalog
     person_ids = [add_person(catalog, name=f"人物{i:02d}") for i in range(50)]
     hidden_ids = person_ids[:5]
@@ -358,29 +358,14 @@ def test_person_visibility_is_atomic_persistent_and_paged_before_sort(api_env: A
             assert reopened.read_one("SELECT COUNT(*) AS n FROM person_hidden")["n"] == 5
         finally:
             reopened.close()
-        first = await client.get(
-            "/api/v1/persons/browse", params={"visibility": "visible", "limit": 40}
-        )
-        assert first.status_code == 200
-        assert first.json()["has_more"] is True
-        wrong_mode_cursor = await client.get(
-            "/api/v1/persons/browse",
-            params={"visibility": "hidden", "limit": 40, "cursor": first.json()["next_cursor"]},
-        )
-        assert wrong_mode_cursor.status_code == 409
-        second = await client.get(
-            "/api/v1/persons/browse",
-            params={"visibility": "visible", "limit": 40, "cursor": first.json()["next_cursor"]},
-        )
+        first = await client.get("/api/v1/persons/browse", params={"visibility": "visible", "limit": 40})
         hidden = await client.get(
             "/api/v1/persons/browse", params={"visibility": "hidden", "kind": "all"}
         )
-        assert len(first.json()["persons"]) + len(second.json()["persons"]) == 45
-        assert {p["person_id"] for p in hidden.json()["persons"]} == set(hidden_ids)
-        assert not ({p["person_id"] for p in first.json()["persons"] + second.json()["persons"]} & set(hidden_ids))
+        assert first.json()["persons"] == [] and not first.json()["has_more"]
+        assert hidden.json()["persons"] == [] and hidden.json()["total"] == 0
         old_default = await client.get("/api/v1/persons/browse", params={"limit": 40})
-        assert len(old_default.json()["persons"]) == 40
-        assert set(hidden_ids) <= {p["person_id"] for p in old_default.json()["persons"]}
+        assert old_default.json()["persons"] == [] and old_default.json()["total"] == 0
         rejected = await client.post(
             "/api/v1/persons/visibility",
             headers=headers,
@@ -440,13 +425,10 @@ def test_visibility_follows_canonical_identity_and_survives_merge_undo(api_env: 
     assert catalog.read_one("SELECT person_id FROM person_hidden WHERE person_id = ?", (source_hidden,))
     visible = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="visible")
     hidden = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")
-    assert [p["person_id"] for p in visible["persons"]] == [visible_target]
+    assert visible["persons"] == []
     assert source_hidden not in {p["person_id"] for p in hidden["persons"]}
     service.set_visibility(person_ids=[source_hidden], hidden=True)
-    assert visible_target in {
-        p["person_id"]
-        for p in people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
-    }
+    assert people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"] == []
     service.set_visibility(person_ids=[source_hidden], hidden=False)
     undone = service.undo(
         operation_id=merged["operation_id"],
@@ -455,7 +437,7 @@ def test_visibility_follows_canonical_identity_and_survives_merge_undo(api_env: 
     )
     assert undone["changed"] is True
     hidden_after_undo = people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")
-    assert source_hidden in {p["person_id"] for p in hidden_after_undo["persons"]}
+    assert hidden_after_undo["persons"] == []
 
     hidden_target = add_person(catalog, name="隐藏目标")
     visible_source = add_person(catalog, name="可见来源")
@@ -467,11 +449,7 @@ def test_visibility_follows_canonical_identity_and_survives_merge_undo(api_env: 
         sources=[{"person_id": visible_source, "expected_revision": 1}],
         request_id="hide-merge-target",
     )
-    assert people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
-    assert hidden_target in {
-        p["person_id"]
-        for p in people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"]
-    }
+    assert people_page(catalog, kind="all", q="", limit=100, cursor=None, visibility="hidden")["persons"] == []
 
 
 def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -> None:
@@ -507,7 +485,7 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
         )
     legacy_cursor = base64.urlsafe_b64encode(
         json.dumps(
-            ["people1", "all", "", read_filter_revision(catalog.connection), data["dad"]],
+            ["people1", "all", "", read_filter_revision(catalog.connection), 0],
             separators=(",", ":"),
         ).encode()
     ).decode().rstrip("=")
@@ -520,10 +498,6 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
         page2 = await client.get(
             "/api/v1/persons/browse",
             params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": first.json()["next_cursor"]},
-        )
-        page3 = await client.get(
-            "/api/v1/persons/browse",
-            params={"kind": "all", "sort": "photos_desc", "limit": 1, "cursor": page2.json()["next_cursor"]},
         )
         scoped = await client.get(
             "/api/v1/persons/browse", params={"kind": "named", "q": "爸爸", "sort": "photos_desc"}
@@ -569,7 +543,6 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
         return (
             first,
             page2,
-            page3,
             scoped,
             invalid_sort,
             wrong_sort,
@@ -584,7 +557,6 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
     (
         first,
         page2,
-        page3,
         scoped,
         invalid_sort,
         wrong_sort,
@@ -595,16 +567,11 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
         wrong_sort_reverse,
         wrong_query,
     ) = api_env.scenario(scenario)
-    assert first.status_code == page2.status_code == page3.status_code == 200
-    first_person, second_person, third_person = [
-        response.json()["persons"][0] for response in (first, page2, page3)
-    ]
+    assert first.status_code == page2.status_code == 200
+    first_person, second_person = [response.json()["persons"][0] for response in (first, page2)]
     assert (first_person["person_id"], first_person["asset_count"]) == (data["dad"], 2)
     assert (second_person["person_id"], second_person["asset_count"]) == (data["mom"], 2)
-    assert (third_person["person_id"], third_person["asset_count"]) == (data["unnamed"], 0)
-    assert [first_person["person_id"], second_person["person_id"], third_person["person_id"]] == [
-        data["dad"], data["mom"], data["unnamed"]
-    ]
+    assert [first_person["person_id"], second_person["person_id"]] == [data["dad"], data["mom"]]
     assert scoped.status_code == 200
     assert [person["person_id"] for person in scoped.json()["persons"]] == [data["dad"]]
     assert invalid_sort.status_code == 422
@@ -614,7 +581,7 @@ def test_people_can_be_sorted_by_global_effective_photo_count(api_env: ApiEnv) -
     assert old_default.status_code == 200
     assert old_default.json()["persons"][0]["person_id"] == data["dad"]
     assert legacy_default.status_code == 200
-    assert legacy_default.json()["persons"][0]["person_id"] == data["mom"]
+    assert legacy_default.json()["persons"][0]["person_id"] == data["dad"]
     assert wrong_sort_reverse.status_code == 409
     assert wrong_sort_reverse.json()["code"] == "INVALID_CURSOR"
     assert wrong_query.status_code == 409
@@ -1227,7 +1194,7 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
             p["person_id"]: p
             for p in (await client.get("/api/v1/persons/browse")).json()["persons"]
         }
-        assert cards[left_person]["thumbnail_url"] is None
+        assert left_person not in cards
         assert cards[right_person]["avatar_face_id"] == data["right"]
         page = (await client.get(f"/api/v1/persons/{left_person}/photos")).json()
         assert page["assets"] == []

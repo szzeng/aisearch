@@ -1407,7 +1407,7 @@ def test_the_person_list_page_still_counts_the_same_members(seeded: Seeded) -> N
         int(row["person_id"]): int(row["asset_count"])
         for row in unnamed_page["persons"]
     }
-    assert unnamed_counts[state.c] == len(state.member_assets(state.c)) == 0
+    assert state.c not in unnamed_counts
     assert unnamed_counts[state.a] == len(state.member_assets(state.a)) == 2
     assert unnamed_counts[state.b] == len(state.member_assets(state.b)) == 2
     assert unnamed_counts[state.d] == len(state.member_assets(state.d)) == 1

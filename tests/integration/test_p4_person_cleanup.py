@@ -122,6 +122,7 @@ def test_empty_or_ineffective_groups_are_filtered_before_paging(api_env: ApiEnv)
         api_env,
         {
             "合照.jpg": [(20 + 35 * i, 20, 45 + 35 * i, 50) for i in range(5)],
+            "命名.jpg": [(20, 20, 90, 90)],
         },
     )
     catalog = api_env.service.catalog
@@ -142,6 +143,8 @@ def test_empty_or_ineffective_groups_are_filtered_before_paging(api_env: ApiEnv)
     last_person = add_person(catalog)
     add_link(catalog, last, last_person)
     add_person(catalog)  # Empty tail must not produce a spurious next page.
+    named_person = add_person(catalog, name="爸爸")
+    add_link(catalog, photos["命名.jpg"]["faces"][0], named_person)
 
     async def scenario(client):
         await api_env.authenticate(client)
@@ -160,9 +163,90 @@ def test_empty_or_ineffective_groups_are_filtered_before_paging(api_env: ApiEnv)
         assert [p["person_id"] for p in last_page["persons"]] == [last_person]
         assert not last_page["has_more"] and last_page["next_cursor"] is None
         named = (await client.get("/api/v1/persons/browse", params={"kind": "named"})).json()
-        assert [p["person_id"] for p in named["persons"]] == [empty_named]
+        assert [p["person_id"] for p in named["persons"]] == [named_person]
+        assert named["total"] == 1
         all_people = (await client.get("/api/v1/persons/browse")).json()
-        assert empty in {p["person_id"] for p in all_people["persons"]}
+        assert all_people["total"] == 3
+        assert empty not in {p["person_id"] for p in all_people["persons"]}
+        assert empty_named not in {p["person_id"] for p in all_people["persons"]}
+        assert empty not in {
+            p["person_id"] for p in (await client.get("/api/v1/persons")).json()["persons"]
+        }
+        assert empty_named not in {
+            p["person_id"] for p in (await client.get("/api/v1/persons")).json()["persons"]
+        }
         assert tuple(catalog.connection.iterdump()) == before
+
+    api_env.scenario(scenario)
+
+
+def test_empty_person_merge_keeps_canonical_members_and_resolves_old_id(api_env: ApiEnv) -> None:
+    photos = seed_library(api_env, {"爸爸.jpg": [(20, 20, 90, 90)]})
+    face = photos["爸爸.jpg"]["faces"][0]
+    catalog = api_env.service.catalog
+    empty_source = add_person(catalog)
+    named_target = add_person(catalog, name="爸爸")
+    add_link(catalog, face, named_target)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        result = await client.post(
+            "/api/v1/persons/merge",
+            headers=api_env.post_headers(csrf),
+            json={
+                "request_id": "empty-source-merge",
+                "target_person_id": named_target,
+                "target_expected_revision": 1,
+                "sources": [{"person_id": empty_source, "expected_revision": 1}],
+            },
+        )
+        assert result.status_code == 200
+        assert (await client.get(f"/api/v1/persons/{empty_source}")).json()["person_id"] == named_target
+        album = (await client.get(f"/api/v1/persons/{named_target}/photos")).json()
+        assert [asset["asset_id"] for asset in album["assets"]] == [photos["爸爸.jpg"]["asset_id"]]
+        assert face in {item["face_id"] for item in album["assets"][0]["person_faces"]}
+        for path in ("/api/v1/persons", "/api/v1/persons/browse"):
+            page = (await client.get(path, params={"kind": "named"})).json()
+            assert named_target in {person["person_id"] for person in page["persons"]}
+            assert empty_source not in {person["person_id"] for person in page["persons"]}
+
+    api_env.scenario(scenario)
+
+
+def test_video_only_effective_members_do_not_make_a_person_visible(api_env: ApiEnv) -> None:
+    photos = seed_library(
+        api_env,
+        {"video-only.jpg": [(20, 20, 90, 90)], "photo-and-video.jpg": [(20, 20, 90, 90)]},
+    )
+    catalog = api_env.service.catalog
+    video_person = add_person(catalog, name="只在视频")
+    mixed_person = add_person(catalog, name="照片和视频")
+    video_asset = photos["video-only.jpg"]["asset_id"]
+    mixed_asset = photos["photo-and-video.jpg"]["asset_id"]
+    add_link(catalog, photos["video-only.jpg"]["faces"][0], video_person)
+    add_link(catalog, photos["photo-and-video.jpg"]["faces"][0], mixed_person)
+    source_id = int(catalog.read_one("SELECT source_id FROM source_roots LIMIT 1")["source_id"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET relative_path='only.mp4', path_key='only.mp4' WHERE asset_id=?",
+            (video_asset,),
+        )
+        connection.execute(
+            "INSERT INTO file_locations(source_id, relative_path, path_key, asset_id, size, "
+            "mtime_ns, availability) VALUES (?, 'copy.mp4', 'copy.mp4', ?, 1, 1, 'PRESENT')",
+            (source_id, mixed_asset),
+        )
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        for path in ("/api/v1/persons", "/api/v1/persons/browse"):
+            page = (await client.get(path, params={"kind": "named"})).json()
+            ids = {person["person_id"] for person in page["persons"]}
+            assert mixed_person in ids
+            assert video_person not in ids
+        sorted_page = (
+            await client.get("/api/v1/persons/browse", params={"kind": "named", "sort": "photos_desc"})
+        ).json()
+        assert sorted_page["persons"][0]["person_id"] == mixed_person
 
     api_env.scenario(scenario)

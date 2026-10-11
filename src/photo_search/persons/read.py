@@ -20,6 +20,7 @@ from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.catalog.errors import FACE_MAPPING_NOT_FOUND, CatalogError
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.persons import mapping as mapping_module
 from photo_search.persons import operations as operation_module
 from photo_search.persons.contracts import ENTITY_TYPE_FACE_CONTROL
@@ -232,19 +233,21 @@ def person_page(
             details={"kind": str(kind)},
         )
     after = decode_person_cursor(cursor)
-    conditions = ["p.merged_into IS NULL", "p.person_id > ?"]
+    conditions = [
+        "p.merged_into IS NULL",
+        "p.person_id > ?",
+        "EXISTS (SELECT 1 FROM face_person_links AS l "
+        "JOIN faces AS f ON f.face_id=l.face_id "
+        "JOIN assets AS a ON a.asset_id=f.asset_id "
+        "WHERE l.person_id=p.person_id AND a.state='ACTIVE' AND "
+        + photo_asset_sql(asset_alias="a")[0] + " AND "
+        + MEMBER_PREDICATE + ")",
+    ]
     parameters: list[Any] = [0 if after is None else int(after)]
     if str(kind) == "named":
         conditions.append("p.name IS NOT NULL")
     elif str(kind) == "unnamed":
         conditions.append("p.name IS NULL")
-    else:
-        conditions.append(
-            "(p.name IS NOT NULL OR EXISTS (SELECT 1 FROM face_person_links AS l "
-            "JOIN faces AS f ON f.face_id=l.face_id WHERE l.person_id=p.person_id AND "
-            + MEMBER_PREDICATE
-            + "))"
-        )
     parameters.append(int(limit) + 1)
     rows = list(
         catalog.read_all(
