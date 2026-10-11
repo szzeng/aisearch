@@ -27,7 +27,7 @@ class Element {
   setAttribute(key, value) { this.attributes[key] = value; }
   removeAttribute(key) { delete this[key]; }
   addEventListener(event, callback) { this.events[event] = callback; }
-  fire(event) { if (this.events[event]) this.events[event]({preventDefault() {}}); }
+  fire(event, extra={}) { if (this.events[event]) this.events[event](Object.assign({target:this,preventDefault() {}},extra)); }
   showModal() { this.open = true; }
   close() { this.open = false; }
 }
@@ -60,11 +60,12 @@ const context = {
 };
 let code = fs.readFileSync("src/photo_search/web/search.js", "utf8");
 code = code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui = {state, openSearchPreview, setElements(value) { els = value; }};\n  if (document.readyState === "loading")');
+  '  globalThis.ui = {state, openSearchPreview, closeOnBackdrop, setElements(value) { els = value; }};\n  if (document.readyState === "loading")');
 vm.createContext(context); vm.runInContext(code, context);
 const ui = context.ui, flush = () => new Promise(setImmediate);
 (async () => {
   const modal = get("modal"); modal.open = true;
+  ui.closeOnBackdrop(modal);
   ui.state.search.preview.seq = 1;
   ui.state.search.hits = [{asset_id:15,rank:3}];
   ui.setElements({
@@ -109,7 +110,11 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   assert.equal(cards[1].children[0].src, "/api/v1/faces/"+fallbackFace+"/thumbnail?v=p4-search-person-link-a-1");
   cards[0].fire("click");
   assert.equal(modal.open, true, "keep the source photo open for browser-back restoration");
-  assert.equal(location.href, "/persons?person_id=7");
+  assert.equal(location.href, "/persons?person_id=7&from_photo=photo");
+  modal.fire("click",{target:get("preview-image")});
+  assert.equal(modal.open,true,"clicks inside the search viewer do not dismiss it");
+  modal.fire("click",{target:modal});
+  assert.equal(modal.open,false,"clicking the search viewer backdrop dismisses it");
 })().catch(error => { console.error(error); process.exitCode=1; });
 """
     result = subprocess.run(
@@ -123,7 +128,8 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
     assert result.returncode == 0, result.stderr
 
 
-def test_person_page_opens_requested_album_and_back_clears_route() -> None:
+@pytest.mark.parametrize("from_photo", [False, True])
+def test_person_page_opens_requested_album_and_contextual_back(from_photo: bool) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the people-album route check"
     script = r"""
@@ -137,16 +143,17 @@ class Element {
   setAttribute() {} removeAttribute(key) { delete this[key]; } focus() {}
   addEventListener(event, callback) { this.events[event]=callback; }
   showModal() { this.open=true; } close() { this.open=false; }
-  fire(event) { if(this.events[event]) this.events[event]({preventDefault(){}}); }
+  fire(event,extra={}) { if(this.events[event]) this.events[event](Object.assign({target:this,preventDefault(){}},extra)); }
 }
-const elements=new Map(), get=id => { if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
-const avatar="f".repeat(64), location={search:"?person_id=7",href:"http://localhost/persons?person_id=7",pathname:"/persons",hash:""};
+const fromPhoto=process.argv[1]==="from_photo", elements=new Map(), get=id => { if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+const avatar="f".repeat(64), search="?person_id=7"+(fromPhoto?"&from_photo=photo":""), location={search,href:"http://localhost/persons"+search,pathname:"/persons",hash:""};
+let backCalls=0;
 const calls=[];
 const response=body=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>body});
 const context={
   URLSearchParams, URL, encodeURIComponent, crypto:{randomUUID:()=>"synthetic"}, setTimeout:()=>1, clearTimeout(){},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-      window:{addEventListener(){},location,history:{replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
+      window:{addEventListener(){},location,history:{length:2,back(){backCalls++;},replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
   fetch:async url=>{
     calls.push(url);
     if(url==="/api/v1/persons/7") return response({person_id:7,canonical_person_id:7,name:"\u7238\u7238",revision:2,asset_count:3,face_count:4,avatar_face_id:avatar});
@@ -157,25 +164,32 @@ const context={
 };
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui = {state, boot, requestedPersonId};\n  if (document.readyState === "loading")');
+  '  globalThis.ui = {state, boot, requestedPersonId, photoReturnRequested, closeOnBackdrop};\n  if (document.readyState === "loading")');
 vm.createContext(context); vm.runInContext(code,context);
 const ui=context.ui, flush=()=>new Promise(setImmediate);
 (async()=>{
   assert.equal(ui.requestedPersonId(),7);
+  assert.equal(ui.photoReturnRequested(),fromPhoto);
+  get("pa-back").textContent="\u2190 \u6240\u6709\u4eba\u7269";
   ui.boot(); await flush(); await flush();
   assert.equal(ui.state.person.person_id,7);
   assert.equal(get("pa-library").hidden,true); assert.equal(get("pa-album").hidden,false);
   assert.equal(get("pa-title").textContent,"\u7238\u7238");
   assert.equal(get("pa-photos").children.length,1);
+  assert.equal(get("pa-back").textContent,fromPhoto?"\u2190 \u8fd4\u56de\u67e5\u770b\u7167\u7247":"\u2190 \u6240\u6709\u4eba\u7269");
+  const preview=get("pa-preview"); preview.open=true;
+  preview.fire("click",{target:get("pa-preview-image")}); assert.equal(preview.open,true,"clicks inside the person viewer do not dismiss it");
+  preview.fire("click",{target:preview}); assert.equal(preview.open,false,"clicking the person viewer backdrop dismisses it");
   assert.ok(calls.includes("/api/v1/persons/7"));
   assert.ok(calls.some(url=>url.startsWith("/api/v1/persons/7/photos")));
   get("pa-back").fire("click"); await flush();
+  if(fromPhoto) { assert.equal(backCalls,1,"photo-origin people routes return through browser history"); return; }
   assert.equal(get("pa-library").hidden,false); assert.equal(get("pa-album").hidden,true);
   assert.equal(location.search,"");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
-        [node, "-e", script],
+        [node, "-e", script, "from_photo" if from_photo else "direct"],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         text=True,

@@ -132,8 +132,20 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   pending.dispose(); releaseDetail(); await flush();
   assert.ok(!closedHost.textContent.includes("2020"),"late detail after close cannot revive the panel");
 
-  const dialog=context.window.AIPhotoInfo.open(101,{returnFocus:null});
-  await flush(); await flush(); dialog.close(); await flush();
+  const photoReturn=context.window.AIPhotoInfo.render(host,501);
+  await flush(); await flush();
+  all(host,n=>n.className==="photo-info-person")[0].fire("click");
+  assert.equal(window.location.href,"/persons?person_id=7&from_photo=photo","shared photo viewers mark their person-navigation return context");
+  photoReturn.dispose();
+
+  const viewer=context.window.AIPhotoInfo.open(101,{returnFocus:null});
+  await flush(); await flush();
+  const dialog=document.body.children.find(n=>n.className==="photo-viewer-dialog");
+  dialog.fire("click",{target:dialog.children[0]});
+  assert.equal(dialog.open,true,"clicks inside the photo viewer do not dismiss it");
+  dialog.fire("click",{target:dialog});
+  assert.equal(dialog.open,false,"clicking the backdrop dismisses the shared viewer");
+  await flush();
   assert.equal(maps.at(-1).removed,true,"closing the viewer removes its map instance");
 
   const staleActionHost=new Element("aside"); document.body.append(staleActionHost);
@@ -159,8 +171,12 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-photo-local-open-a-1" in document
+        assert "/web/photo-info.js?v=p4-photo-view-close-return-a-1" in document
         assert "/web/photo-info.css?v=p4-photo-local-open-a-1" in document
+    assert "search.js?v=p4-photo-view-close-return-a-1" in (web / "search.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-photo-view-close-return-a-1" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "places-albums.js?v=p4-photo-view-close-return-a-1" in (web / "places.html").read_text(encoding="utf-8")
+    assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")
     assert 'className = "map-photo-open"' in (web / "map.js").read_text(encoding="utf-8")

@@ -23,6 +23,7 @@
   var DEFAULT_PAGE_SIZE = 20;
   var SEARCH_SNAPSHOT_KEY = "aisearch.search-return.v1";
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
+  var backdropBoundDialogs = new WeakSet();
   //: One page of the person picker. The page never materialises the whole person list: the
   //: server's own keyset cursor drives "加载更多人物", so a large catalog stays a paged read.
   var PERSON_LIMIT = 25;
@@ -152,6 +153,14 @@
       node.removeChild(node.firstChild);
     }
     return node;
+  }
+
+  function closeOnBackdrop(dialog) {
+    if (!dialog || backdropBoundDialogs.has(dialog)) return;
+    backdropBoundDialogs.add(dialog);
+    dialog.addEventListener("click", function (event) {
+      if (event.target === dialog) dialog.close();
+    });
   }
 
   function number(value) {
@@ -1746,7 +1755,7 @@
         card.appendChild(element("span", "", avatarId ? label : label + "（暂用这张照片的人脸）"));
         card.addEventListener("click", function () {
           prepareSearchDetailReturn();
-          window.location.href = "/persons?person_id=" + encodeURIComponent(personId);
+          window.location.href = "/persons?person_id=" + encodeURIComponent(personId) + "&from_photo=photo";
         });
         els.searchPreviewPeopleList.appendChild(card);
       });
@@ -2321,6 +2330,7 @@
       els.searchPreviewImage.removeAttribute("src");
       updateSearchPreviewNavigation();
     });
+    closeOnBackdrop(els.searchPreview);
     els.personMore.addEventListener("click", function () {
       loadPersons(false);
     });

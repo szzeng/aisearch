@@ -2,6 +2,9 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## P4-PHOTO-VIEW-CLOSE-RETURN-A — SCOPED PASS
+
+[任务卡](tasks/P4-PHOTO-VIEW-CLOSE-RETURN-A.md)、[执行报告](reports/P4-PHOTO-VIEW-CLOSE-RETURN-A.md)。照片查看对话框支持遮罩点击关闭；从照片人物头像进入人物页后可用“返回查看照片”回到来源，普通入口保留“所有人物”。定向 JUnit **9/0/0/0**，Ruff、Python 编译、相关 Node 语法和 diff-check 通过；真实浏览器/图库未验证。
 ## P4-PERSON-ORGANIZE-SECTION-PERF-A — SCOPED PASS
 
 [任务卡](tasks/P4-PERSON-ORGANIZE-SECTION-PERF-A.md)、[执行报告](reports/P4-PERSON-ORGANIZE-SECTION-PERF-A.md)。人物/未命名人物页使用有效照片数与 `assets.created_at` 排序及独立三段游标；整理区块独立加载，合集不预加载，待整理 summary 不阻塞卡片；代表脸投影有界批量读取。定向 JUnit **29/0/0/0**，Ruff、`py_compile`、Node 语法、diff-check 通过。真实浏览器、真实图库、Uvicorn/30万性能未验证；不代表个人试用或全仓 PASS。未访问 PhotoSearchData/真实图库。

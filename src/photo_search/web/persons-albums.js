@@ -2,6 +2,7 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
+  const backdropBoundDialogs = new WeakSet();
   const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
@@ -22,6 +23,11 @@
   function button(label, action, className) {
     const item = node("button", label, className); item.type = "button";
     item.addEventListener("click", action); return item;
+  }
+  function closeOnBackdrop(dialog) {
+    if (!dialog || backdropBoundDialogs.has(dialog)) return;
+    backdropBoundDialogs.add(dialog);
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   }
   function name(person) { return person.name || "未命名的人"; }
   function photoId(item) { return Number(item.asset_id); }
@@ -349,6 +355,10 @@
     const id = Number(value);
     return Number.isSafeInteger(id) ? id : null;
   }
+  function photoReturnRequested() {
+    const search = typeof window !== "undefined" && window.location ? window.location.search : "";
+    return new URLSearchParams(search || "").get("from_photo") === "photo";
+  }
   async function openPersonById(personId) {
     const seq = ++state.linkSeq;
     state.deepLinked = true;
@@ -379,6 +389,7 @@
   function clearPersonRoute() {
     const url = new URL(window.location.href);
     url.searchParams.delete("person_id");
+    url.searchParams.delete("from_photo");
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
   async function loadPeople(more) {
@@ -1408,7 +1419,10 @@
     $("detail-pause").addEventListener("click", () => changeDetailBatch("pause"));
     $("detail-resume").addEventListener("click", () => changeDetailBatch("resume"));
     $("detail-retry").addEventListener("click", () => changeDetailBatch("retry"));
+    const photoReturn = photoReturnRequested();
+    if (photoReturn) $("back").textContent = "← 返回查看照片";
     $("back").addEventListener("click", () => {
+      if (photoReturn && window.history && window.history.length > 1) { window.history.back(); return; }
       const deepLinked = state.deepLinked;
       if (deepLinked) { state.deepLinked = false; state.linkSeq++; clearPersonRoute(); }
       backToLibrary();
@@ -1447,6 +1461,7 @@
       if (state.previewInfoMount) state.previewInfoMount.dispose(); state.previewInfoMount = null;
       updatePreviewNavigation();
     });
+    closeOnBackdrop($("preview"));
     $("edit-form").addEventListener("submit", submitEdit);
     $("edit-find").addEventListener("click", () => loadChoices(false)); $("choice-more").addEventListener("click", () => loadChoices(true));
     $("edit-query").addEventListener("input", () => { if (state.edit && state.edit.mode !== "name") { state.chosen = null; state.choiceSeq++; $("edit-submit").disabled = true; } });

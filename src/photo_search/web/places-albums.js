@@ -79,7 +79,9 @@
     var dialog = document.createElement("dialog"); dialog.className = "album-preview";
     var close = el("button", null, "关闭"); close.type = "button"; close.addEventListener("click", function () { dialog.close(); dialog.remove(); });
     var image = el("img"); image.alt = "照片预览"; image.src = api + "/assets/" + encodeURIComponent(assetId) + "/preview";
-    dialog.append(close, image); document.body.appendChild(dialog); dialog.addEventListener("close", function () { dialog.remove(); }); dialog.showModal();
+    dialog.append(close, image); document.body.appendChild(dialog);
+    dialog.addEventListener("click", function (event) { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener("close", function () { dialog.remove(); }); dialog.showModal();
   }
   function csrf() {
     var match = document.cookie.match(/(?:^|;\s*)ps_csrf=([^;]+)/); return match ? decodeURIComponent(match[1]) : "";

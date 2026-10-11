@@ -167,7 +167,10 @@
           var image = node("img"); image.alt = ""; image.loading = "lazy"; image.src = avatar || "";
           image.addEventListener("error", function () { if (avatar !== face.thumbnail_url && face.thumbnail_url) { image.src = face.thumbnail_url; avatar = face.thumbnail_url; } else image.hidden = true; });
           button.append(image, node("span", label));
-          button.addEventListener("click", function () { if (typeof state.onPerson === "function") state.onPerson(id); else window.location.href = "/persons?person_id=" + encodeURIComponent(id); });
+          button.addEventListener("click", function () {
+            if (typeof state.onPerson === "function") { state.onPerson(id); return; }
+            window.location.href = "/persons?person_id=" + encodeURIComponent(id) + "&from_photo=photo";
+          });
           host.append(button);
         });
         if (body.has_more) host.append(node("p", "只检查了接口返回的人脸范围，人物按有效归属去重。", "hint"));
