@@ -1,5 +1,9 @@
 # Development status
 
+## P4-LIBRARY-OPS-A / SYNC-B / RETENTION-C — READY / 图库维护统一优化任务卡（V2）
+
+[方案总览](plans/P4-LIBRARY-UNIFIED-V2.md)；[A：全部/单独建库与同步入口](tasks/P4-LIBRARY-OPS-A.md)、[B：文件增删移动与同步结果](tasks/P4-LIBRARY-SYNC-B.md)、[C1：失效照片保留资格与只读清理预览](tasks/P4-LIBRARY-RETENTION-C.md)。2026-10-11 仅新增文档任务卡，未实施、未运行测试、未访问真实图库或 `PhotoSearchData`。执行顺序 A → B → C1；A/B 可顺序实现，C1 单独执行并核对人工记录/离线/共享保护；C2 业务与向量数据永久删除未获授权、需另立卡。只做直接相关的最小合成回归，不改变现有 OCR 下一步安排。
+
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
 
