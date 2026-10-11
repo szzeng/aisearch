@@ -32,7 +32,6 @@ function advance(ms) {
 const requests = [];
 const context = {
   URLSearchParams, crypto: {randomUUID: () => "synthetic-request"},
-      window: {scrollY:0, addEventListener(){}, localStorage:{getItem:() => null}, location:{search:"",href:"http://local/persons"}},
   document: {readyState: "loading", cookie: "ps_csrf=synthetic-csrf", addEventListener() {},
     getElementById: get, createElement: () => new Element()},
   setTimeout: (callback, ms) => { const id = ++nextTimer; timers.set(id,{callback, at: now+ms}); return id; },

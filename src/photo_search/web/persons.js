@@ -94,7 +94,6 @@
   };
 
   var state = {
-    booted: false,
     sessionMissing: false,
     requestCounter: 0,
     view: "named",
@@ -114,8 +113,6 @@
     retentionAfterRevision: null,
     mappings: {
       hasSupport: false,
-      assetId: null,
-      requestSeq: 0,
       limit: MAPPING_LIMIT,
       cursor: null,
       hasMore: false,
@@ -1309,27 +1306,24 @@
   // ---------------------------------------------------------------------- refresh
   // ------------------------------------------------------- redetection review list
   function loadMappings(reset) {
-    if (!state.mappings.hasSupport) {
+    if (!state.mappings.hasSupport || state.mappings.loading) {
       return;
     }
     if (reset) {
-      state.mappings.requestSeq += 1;
-      state.mappings.loading = false;
       state.mappings.cursor = null;
       clear(els.mappingsList);
     }
-    if (state.mappings.loading) return;
-    var requestSeq = state.mappings.requestSeq;
     state.mappings.loading = true;
-    var query = state.mappings.assetId
-      ? "/assets/" + encodeURIComponent(state.mappings.assetId) + "/face-mapping-reviews?limit=" + encodeURIComponent(state.mappings.limit)
-      : "/face-mappings?state=" + encodeURIComponent(state.mappings.state) + "&limit=" + encodeURIComponent(state.mappings.limit);
+    var query =
+      "/face-mappings?state=" +
+      encodeURIComponent(state.mappings.state) +
+      "&limit=" +
+      encodeURIComponent(state.mappings.limit);
     if (state.mappings.cursor) {
       query += "&cursor=" + encodeURIComponent(state.mappings.cursor);
     }
     request(query)
       .then(function (result) {
-        if (requestSeq !== state.mappings.requestSeq) return;
         var body = result.body || {};
         var groups = body.groups || [];
         groups.forEach(function (group) {
@@ -1344,22 +1338,24 @@
         }).length;
         setStatus(
           els.mappingsStatus,
-          state.mappings.assetId
-            ? "照片 #" + state.mappings.assetId + " · " + groups.length + " 组待确认" + (state.mappings.hasMore ? " · 还有更多" : "")
-            : "本页 " + groups.length + " 组 · " + (state.mappings.state === "open" ? "待确认" : "全部") +
-              " · 本页待确认 " + open + (state.mappings.hasMore ? " · 还有更多" : " · 已到末尾"),
+          "本页 " +
+            groups.length +
+            " 组 · " +
+            (state.mappings.state === "open" ? "待确认" : "全部") +
+            " · 本页待确认 " +
+            open +
+            (state.mappings.hasMore ? " · 还有更多" : " · 已到末尾"),
           null
         );
       })
       .catch(function (failure) {
-        if (requestSeq !== state.mappings.requestSeq) return;
         setStatus(els.mappingsStatus, "读取待确认列表失败：" + describe(failure), "error");
         if (failure.code === "VALIDATION_ERROR" || failure.code === "INVALID_CURSOR") {
           state.mappings.cursor = null;
         }
       })
       .finally(function () {
-        if (requestSeq === state.mappings.requestSeq) state.mappings.loading = false;
+        state.mappings.loading = false;
       });
   }
 
@@ -1426,20 +1422,12 @@
       rejectOnly.addEventListener("click", function () {
         submitMappingDecision(group, []);
       });
-      actions.appendChild(element("p", "mapping-safety-note", "拒绝可能解除这条映射的待确认保护；这不等于把旧人脸指定给其他人物。"));
       actions.appendChild(rejectOnly);
     }
     card.appendChild(actions);
     var detail = element("ul", "log");
     detail.dataset.role = "candidates";
     card.appendChild(detail);
-    var defer = element("button", null, "暂不处理（保持待确认）");
-    defer.type = "button";
-    defer.addEventListener("click", function () {
-      clear(detail);
-      detail.appendChild(element("li", null, "未提交任何更改；OPEN hold 继续保留。"));
-    });
-    card.appendChild(defer);
     return card;
   }
 
@@ -1528,7 +1516,6 @@
             submitMappingDecision(group, []);
           });
           actions.appendChild(confirm);
-          actions.appendChild(element("p", "mapping-safety-note", "拒绝可能解除这条映射的待确认保护；这不等于把旧人脸指定给其他人物。"));
           actions.appendChild(reject);
           detail.appendChild(actions);
         }
@@ -1657,13 +1644,6 @@
 
   // ------------------------------------------------------------------------- boot
   function boot() {
-    if (state.booted) return;
-    state.booted = true;
-    if (typeof window !== "undefined" && window.location) {
-      var route = new URLSearchParams(window.location.search || "");
-      var assetId = integerOrNull(route.get("asset_id"));
-      if (assetId) state.mappings.assetId = assetId;
-    }
     els = {
       appMeta: document.getElementById("app-meta"),
       notice: document.getElementById("notice"),
@@ -1729,7 +1709,6 @@
       mappingsUndo: document.getElementById("mappings-undo"),
       mappingsLog: document.getElementById("mappings-log"),
     };
-    els.mappingsState.disabled = Boolean(state.mappings.assetId);
 
     Object.keys(els.tabs).forEach(function (name) {
       els.tabs[name].addEventListener("click", function () {
@@ -1843,82 +1822,13 @@
     probeCapabilities();
     selectView("named");
     loadOperations(true);
-    if (typeof window !== "undefined" && window.location) {
-      var personId = integerOrNull(new URLSearchParams(window.location.search || "").get("person_id"));
-      if (personId) {
-        els.facesPersonId.value = String(personId);
-        loadFaces(personId, true);
-      }
-    }
   }
 
   function bootWhenOpened() {
     var advanced = document.getElementById("advanced-tools");
-    if (typeof window !== "undefined" && window.location &&
-        (/(?:^|&)(?:asset_id|person_id)=\d+(?:&|$)/.test(window.location.search.slice(1)) ||
-         /^#panel-(?:faces|mappings|operations)$/.test(window.location.hash))) {
-      advanced.open = true;
-    }
     if (!advanced || advanced.open) { boot(); return; }
     advanced.addEventListener("toggle", function firstOpen() {
       if (advanced.open) { advanced.removeEventListener("toggle", firstOpen); boot(); }
-    });
-  }
-  if (typeof window !== "undefined") {
-    window.addEventListener("person-mapping-review", function (event) {
-      var requestedAssetId = event && event.detail ? event.detail.assetId : null;
-      var assetId = requestedAssetId === null || requestedAssetId === undefined ? null : integerOrNull(requestedAssetId);
-      if (requestedAssetId !== null && requestedAssetId !== undefined && !assetId) return;
-      var url = new URL(window.location.href);
-      if (assetId) url.searchParams.set("asset_id", String(assetId));
-      else url.searchParams.delete("asset_id");
-      url.hash = "panel-mappings";
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-      var advanced = document.getElementById("advanced-tools");
-      advanced.open = true;
-      if (state.booted) {
-        state.mappings.assetId = assetId;
-        state.mappings.state = "open";
-        els.mappingsState.value = "open";
-        els.mappingsState.disabled = Boolean(assetId);
-        loadMappings(true);
-      }
-      window.setTimeout(function () {
-        var panel = document.getElementById("panel-mappings");
-        if (panel) panel.scrollIntoView({ block: "start" });
-      }, 0);
-    });
-    window.addEventListener("person-open-history", function () {
-      var url = new URL(window.location.href);
-      url.searchParams.delete("asset_id");
-      url.hash = "panel-operations";
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-      var advanced = document.getElementById("advanced-tools");
-      advanced.open = true;
-      if (state.booted) loadOperations(true);
-      window.setTimeout(function () {
-        var panel = document.getElementById("panel-operations");
-        if (panel) panel.scrollIntoView({ block: "start" });
-      }, 0);
-    });
-    window.addEventListener("person-organize-faces", function (event) {
-      var personId = integerOrNull(event && event.detail && event.detail.personId);
-      if (!personId) return;
-      var url = new URL(window.location.href);
-      url.searchParams.set("person_id", String(personId));
-      url.searchParams.delete("asset_id");
-      url.hash = "panel-faces";
-      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
-      var advanced = document.getElementById("advanced-tools");
-      advanced.open = true;
-      if (state.booted) {
-        els.facesPersonId.value = String(personId);
-        loadFaces(personId, true);
-      }
-      window.setTimeout(function () {
-        var panel = document.getElementById("panel-faces");
-        if (panel) panel.scrollIntoView({ block: "start" });
-      }, 0);
     });
   }
   if (document.readyState === "loading") {

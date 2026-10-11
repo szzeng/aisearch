@@ -1504,23 +1504,6 @@ async def get_face_mapping(request: Request, old_face_id: str) -> dict[str, Any]
     return persons_of(request).mapping_group(str(old_face_id))
 
 
-@router.get(
-    "/assets/{asset_id}/face-mapping-reviews",
-    response_model=MappingListResponse,
-    summary="Bounded OPEN face-mapping reviews for one photo",
-)
-async def list_asset_face_mapping_reviews(
-    request: Request,
-    asset_id: int,
-    limit: str | None = None,
-    cursor: str | None = None,
-) -> dict[str, Any]:
-    """A read-only, asset-scoped projection; its cursor cannot resume global mappings."""
-    return persons_of(request).asset_mapping_page(
-        asset_id, limit=limit, cursor=cursor
-    )
-
-
 @router.post(
     "/face-mappings/decisions",
     response_model=MappingOperationResponse,

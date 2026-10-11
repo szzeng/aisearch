@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["order", "failure", "search", "close", "stale_faces", "mapping_with_visible_faces"])
+@pytest.mark.parametrize("scenario", ["order", "failure", "search", "close", "stale_faces"])
 def test_person_preview_navigation(scenario: str) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the personal preview interaction check"
@@ -18,7 +18,7 @@ const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
 class Element {
   constructor(tag) {
     this.tag = tag; this.children = []; this.events = {}; this.value = ""; this.hidden = false;
-    this.classList = {add() {}}; this.modalCalls = 0; this.dataset = {};
+    this.classList = {add() {}}; this.modalCalls = 0;
   }
   set textContent(value) { this.text = value; this.children = []; }
   get textContent() { return this.text || ""; }
@@ -39,15 +39,10 @@ const faceId = id => id.toString(16).padStart(64,"0");
 const result = data => ({ok:true,json:async () => data});
 const context = {
   URLSearchParams, crypto:{randomUUID:() => "synthetic-request"}, setTimeout:() => 1, clearTimeout() {},
-      window:{scrollY:0,addEventListener(){},localStorage:{getItem:() => null},location:{search:"",href:"http://local/persons"}},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic-csrf",addEventListener() {},
     getElementById:get,createElement:tag => new Element(tag)},
   fetch:async (url,options) => {
     requests.push({url,options});
-    if (url.includes("face-mapping-reviews")) {
-      const id = Number(url.match(/assets\/(\d+)/)[1]);
-      return result({groups:id === 30 ? [{old_face_id:faceId(300),asset_id:30,state:"OPEN"}] : [],has_more:false});
-    }
     if (url.includes("/assets/")) {
       const id = Number(url.match(/assets\/(\d+)/)[1]);
       if (holdFace && id === 30) await new Promise(resolve => {releaseFace=resolve;});
@@ -136,13 +131,6 @@ const pages = () => requests.filter(r => r.url.includes("/photos") && r.url.incl
     holdFace=true; const earlier = ui.preview(30);
     await ui.preview(10); current(10); releaseFace(); await earlier; current(10);
     assert.equal(get("pa-preview-position").textContent,"第 2 张");
-  } else if (scenario === "mapping_with_visible_faces") {
-    await ui.preview(30);
-    assert.equal(get("pa-preview-faces").children.length,1);
-    assert.equal(get("pa-review").hidden,false);
-    assert.match(get("pa-review").textContent,/识别结果更新，需要确认/);
-    await ui.preview(10);
-    assert.equal(get("pa-review").hidden,true);
   }
 })().catch(error => {console.error(error);process.exitCode=1;});
 """

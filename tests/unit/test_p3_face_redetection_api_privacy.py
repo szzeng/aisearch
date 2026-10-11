@@ -35,7 +35,6 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.persons import mapping as mapping_module
-from photo_search.persons import read as person_read
 
 PRIVATE_KEYS = (
     "bbox",
@@ -158,76 +157,6 @@ def test_mapping_surface_has_no_private_fields(harness: RedetectionHarness) -> N
         }
 
 
-def test_asset_review_page_is_scoped_bounded_and_uses_a_separate_cursor(
-    harness: RedetectionHarness,
-) -> None:
-    first = _review(harness, tag="photo-a")
-    second = _review(harness, tag="photo-b")
-    second_anchor = harness.seed_anchor(
-        int(first["asset_id"]),
-        person_id=int(first["dad"]),
-        ordinal=1,
-        bbox=shifted_bbox(20.0),
-        landmarks=shifted_landmarks(15.0, 15.0),
-    )
-    harness.write_face_document(
-        int(first["asset_id"]),
-        [
-            make_record(ordinal=0, bbox=shifted_bbox(0.0), landmarks=shifted_landmarks(0.0)),
-            make_record(
-                ordinal=1,
-                bbox=shifted_bbox(20.0),
-                landmarks=shifted_landmarks(15.0, 15.0),
-                seed=0.7,
-            ),
-        ],
-    )
-    first_page = person_read.asset_mapping_page(
-        harness.catalog, int(first["asset_id"]), limit="1"
-    )
-    assert first_page["has_more"] is True
-    assert first_page["next_cursor"]
-    second_page = person_read.asset_mapping_page(
-        harness.catalog,
-        int(first["asset_id"]),
-        limit="1",
-        cursor=first_page["next_cursor"],
-    )
-    assert second_page["has_more"] is False
-    ids = [
-        group["old_face_id"]
-        for page in (first_page, second_page)
-        for group in page["groups"]
-    ]
-    assert ids == sorted([str(first["anchor"]), second_anchor])
-    assert len(ids) == len(set(ids)) == 2
-    assert all(group["asset_id"] == first["asset_id"] for page in (first_page, second_page) for group in page["groups"])
-    assert _scan(first_page) == _scan(second_page) == []
-    cursor = person_read.encode_asset_mapping_cursor(
-        int(first["asset_id"]), str(first["anchor"])
-    )
-    assert person_read.decode_asset_mapping_cursor(cursor, asset_id=int(first["asset_id"])) == first["anchor"]
-    with pytest.raises(ApiError, match="cursor"):
-        person_read.decode_asset_mapping_cursor(cursor, asset_id=int(second["asset_id"]))
-    plan = harness.catalog.read_all(
-        "EXPLAIN QUERY PLAN SELECT g.old_face_id, g.asset_id, g.old_spec_revision, g.candidate_state, "
-        "g.state, g.revision, COALESCE(c.mode, 'AUTO_ALLOWED') AS control_mode, "
-        "COALESCE(c.revision, 0) AS control_revision, "
-        "CASE WHEN COALESCE(c.mode, 'AUTO_ALLOWED')='MANUAL_UNASSIGNED' THEN NULL ELSE MAX(l.person_id) END, "
-        "COUNT(DISTINCT f.face_id) FROM faces AS old_face INDEXED BY idx_faces_asset "
-        "JOIN face_redetection_groups AS g ON g.old_face_id=old_face.face_id "
-        "LEFT JOIN face_assignment_controls AS c ON c.face_id=g.old_face_id "
-        "LEFT JOIN face_person_links AS l ON l.face_id=g.old_face_id AND l.decision='CONFIRMED' "
-        "LEFT JOIN face_redetection_mappings AS m ON m.old_face_id=g.old_face_id AND m.state!='STALE' "
-        "LEFT JOIN faces AS f ON f.face_id=m.new_face_id "
-        "WHERE old_face.asset_id=? AND g.asset_id=? AND g.state='OPEN' AND g.old_face_id>? "
-        "GROUP BY g.old_face_id ORDER BY g.old_face_id LIMIT ?",
-        (int(first["asset_id"]), int(first["asset_id"]), "", 51),
-    )
-    assert plan
-    assert any("idx_faces_asset" in str(row["detail"]) for row in plan)
-    assert any("face_redetection_groups" in str(row["detail"]) for row in plan)
-    assert any("face_redetection_mappings" in str(row["detail"]) for row in plan)
 def test_capabilities_gate_is_honest(harness: RedetectionHarness, tmp_path: Path) -> None:
     """MAP-025: the four counts appear only when the mapping tables exist."""
     from photo_search.scheduler.projection import face_summary
@@ -620,15 +549,6 @@ def test_mapping_endpoints_are_closed_over_http(api_env: Any) -> None:
     async def scenario(client: AsyncClient) -> dict[str, Any]:
         anonymous = await client.get("/api/v1/face-mappings")
         csrf = await api_env.authenticate(client)
-        asset_page = await client.get(
-            f"/api/v1/assets/{seeded['asset_id']}/face-mapping-reviews",
-            params={"limit": 50},
-        )
-        wrong_asset_cursor = await client.get(
-            f"/api/v1/assets/{seeded['asset_id']}/face-mapping-reviews",
-            params={"cursor": base64.urlsafe_b64encode(b"fa1:999:" + b"a" * 64).decode().rstrip("=")},
-        )
-        missing_asset = await client.get("/api/v1/assets/999999/face-mapping-reviews")
         page = await client.get("/api/v1/face-mappings", params={"state": "open", "limit": 50})
         detail = await client.get(f"/api/v1/face-mappings/{seeded['old_face_id']}")
         bad_limit = await client.get("/api/v1/face-mappings", params={"limit": 999})
@@ -704,9 +624,6 @@ def test_mapping_endpoints_are_closed_over_http(api_env: Any) -> None:
         )
         return {
             "anonymous": anonymous,
-            "asset_page": asset_page,
-            "wrong_asset_cursor": wrong_asset_cursor,
-            "missing_asset": missing_asset,
             "page": page,
             "detail": detail,
             "bad_limit": bad_limit,
@@ -724,14 +641,6 @@ def test_mapping_endpoints_are_closed_over_http(api_env: Any) -> None:
     result = api_env.scenario(scenario)
     assert result["anonymous"].status_code == 401
     assert result["page"].status_code == 200, result["page"].text
-    assert result["asset_page"].status_code == 200, result["asset_page"].text
-    asset_body = result["asset_page"].json()
-    assert [group["asset_id"] for group in asset_body["groups"]] == [seeded["asset_id"]]
-    assert [group["old_face_id"] for group in asset_body["groups"]] == [seeded["old_face_id"]]
-    assert _scan(asset_body) == []
-    assert result["wrong_asset_cursor"].status_code == 422
-    assert result["wrong_asset_cursor"].json()["code"] == "INVALID_CURSOR"
-    assert result["missing_asset"].status_code == 404
     body = result["page"].json()
     assert body["contract_version"] == mapping_module.CONTRACT_VERSION
     assert body["limit"] == 50
