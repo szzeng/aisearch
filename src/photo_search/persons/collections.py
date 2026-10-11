@@ -22,7 +22,7 @@ from photo_search.places.revision import read_filter_revision
 
 _MISSING = "PERSON_COLLECTION_NOT_FOUND"
 _CURSOR_PREFIX = "pc1"
-_PEOPLE_CURSOR_PREFIX = "pcp-count1"
+_PEOPLE_CURSOR_PREFIX = "pcp-recent1"
 _PHOTOS_CURSOR_PREFIX = "pcf1"
 _MAX_BATCH = 500
 _MAX_NAME = 80
@@ -329,9 +329,9 @@ def people_page(
     binding = [int(collection_id), str(collection["instance_token"]), int(collection["revision"]), int(filter_revision)]
     after = _decode(cursor, _PEOPLE_CURSOR_PREFIX, binding)
     if after is not None and (
-        not isinstance(after, list) or len(after) != 2
-        or type(after[0]) is not int or after[0] < 0
-        or type(after[1]) is not int or after[1] < 1
+        not isinstance(after, list) or len(after) != 3
+        or any(type(value) is not int or value < 0 for value in after[:2])
+        or type(after[2]) is not int or after[2] < 1
     ):
         raise ApiError(INVALID_CURSOR, "合集人物游标无效", status=409)
     continuation = ""
@@ -339,19 +339,22 @@ def people_page(
     if after is not None:
         continuation = (
             "WHERE (COALESCE(ec.asset_count, 0) < ? OR "
-            "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?)) "
+            "(COALESCE(ec.asset_count, 0) = ? AND COALESCE(ec.latest_asset_added_at, 0) < ?) OR "
+            "(COALESCE(ec.asset_count, 0) = ? AND COALESCE(ec.latest_asset_added_at, 0) = ? AND p.person_id > ?)) "
         )
-        parameters.extend([after[0], after[0], after[1]])
+        parameters.extend([after[0], after[0], after[1], after[0], after[1], after[2]])
     rows = catalog.read_all(
         _canonical_cte()
         + ", candidates AS (SELECT DISTINCT p.* FROM canonical_members AS cm "
         "JOIN persons AS p ON p.person_id = cm.person_id WHERE cm.collection_id = ?), "
-        "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
+        "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count, "
+        "COALESCE(MAX(a.created_at), 0) AS latest_asset_added_at "
         "FROM candidates AS c JOIN face_person_links AS l ON l.person_id=c.person_id "
-        "JOIN faces AS f ON f.face_id=l.face_id WHERE " + MEMBER_PREDICATE + " GROUP BY l.person_id) "
-        "SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count FROM candidates AS p "
+        "JOIN faces AS f ON f.face_id=l.face_id JOIN assets AS a ON a.asset_id=f.asset_id WHERE " + MEMBER_PREDICATE + " GROUP BY l.person_id) "
+        "SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count, "
+        "COALESCE(ec.latest_asset_added_at, 0) AS page_latest_asset_added_at FROM candidates AS p "
         "LEFT JOIN effective_counts AS ec ON ec.person_id=p.person_id "
-        + continuation + "ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
+        + continuation + "ORDER BY COALESCE(ec.asset_count, 0) DESC, COALESCE(ec.latest_asset_added_at, 0) DESC, p.person_id LIMIT ?",
         (*parameters, limit + 1),
     )
     more = len(rows) > limit
@@ -363,7 +366,7 @@ def people_page(
         "has_more": more,
         "next_cursor": _encode(
             _PEOPLE_CURSOR_PREFIX, binding,
-            [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])],
+            [int(rows[-1]["page_asset_count"]), int(rows[-1]["page_latest_asset_added_at"]), int(rows[-1]["person_id"])],
         ) if more else None,
     }
 

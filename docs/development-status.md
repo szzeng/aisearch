@@ -2,6 +2,10 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
+## P4-PERSON-ORGANIZE-SECTION-PERF-A — SCOPED PASS
+
+[任务卡](tasks/P4-PERSON-ORGANIZE-SECTION-PERF-A.md)、[执行报告](reports/P4-PERSON-ORGANIZE-SECTION-PERF-A.md)。人物/未命名人物页使用有效照片数与 `assets.created_at` 排序及独立三段游标；整理区块独立加载，合集不预加载，待整理 summary 不阻塞卡片；代表脸投影有界批量读取。定向 JUnit **29/0/0/0**，Ruff、`py_compile`、Node 语法、diff-check 通过。真实浏览器、真实图库、Uvicorn/30万性能未验证；不代表个人试用或全仓 PASS。未访问 PhotoSearchData/真实图库。
+
 ## P4-STORAGE-UI-A — SCOPED PASS；门闩已按用户确认开放
 
 [任务卡](tasks/P4-STORAGE-UI-A.md)、[执行报告](reports/P4-STORAGE-UI-A.md)。已实现存储诊断 UI、用户点击触发的后台有界扫描、维护预览、可配置备份目录、手动 SQLite catalog 快照及一次性多选维护。用户确认报告通过并授权开闸后，`MAINTENANCE_REVIEWED=True`；启用后 API→启动消费合成闭环及原关闭拒绝路径均通过。P2 缓存版本/逐项实际结果展示已修复；任务定向 JUnit **28/0/0/0**（含 GC-A/GC-B 定向复用和 JS 渲染桩），Ruff、Python 编译/导入、Node 语法、diff-check 通过。状态为 **SCOPED PASS**；不代表真实图库、真实浏览器或全仓 PASS。未访问真实 PhotoSearchData/图库。
@@ -38,4 +42,4 @@
 
 ## 下一步
 
-P4-STORAGE-UI-A 已按用户确认开放门闩并完成合成启用路径验证。后续若用户图库执行维护，需由用户明确操作并先按 UI 提示手动备份；真实图库/浏览器验收仍是独立未验证项。GC-B 已完成状态不变；OCR 原生运行时确认及新的全仓回归仍是独立后续工作。
+下一项： [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md)，仅用现存固定权重和合成图片核验 OCR native provider；执行建议 GPT-5.6 Terra / medium（C1），需用户手动切换。全仓回归、OCR GPU/真实图库、30万性能仍各自保持未验证，不因本任务结论自动通过。

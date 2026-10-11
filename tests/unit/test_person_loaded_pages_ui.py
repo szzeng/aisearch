@@ -11,7 +11,7 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-person-collection-count-a-1' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-person-organize-perf-a-1' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
@@ -32,7 +32,8 @@ class Element {
   const top=(this.parent===get('inbox-cards')?1800:0)+index*100-context.window.scrollY;return {top,bottom:top+100};}
 }
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
-const calls=[];let revision=1,uuid=0,failSecond=false,delayed=null;
+const calls=[];let revision=1,uuid=0,failSecond=false,delayed=null,summaryGate=null,releaseSummary=null;
+const collections=Array.from({length:45},(_,i)=>({collection_id:i+1,name:'合集'+i,member_count:1,photo_count:2,instance_token:'token'+i}));
 let people=[1,2,3,4].map(id=>{const face=(id).toString(16).padStart(64,'0');return {person_id:id,name:null,revision:1,asset_count:5,avatar_face_id:face,thumbnail_url:`/api/v1/faces/${face}/thumbnail`};});
 let groups=[11,22,33,44];const groupFaces=new Map(groups.map(id=>[id,Array.from({length:5},(_,i)=>({
  face_id:(id*10+i).toString(16).padStart(64,'0'),asset_id:id*10+i,control_revision:0,thumbnail_url:null,
@@ -43,7 +44,7 @@ function page(items,params,key,cap=1){let index=0;
  const has_more=index+cap<items.length;return {[key]:items.slice(index,index+cap),total:items.length,has_more,
   next_cursor:has_more?revision+':'+(index+cap):null};}
 const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTimeout:()=>1,clearTimeout(){},
- window:{scrollY:0,scrollBy(x,y){this.scrollY+=y;},scrollTo(x,y){this.scrollY=y;},addEventListener(){},
+ window:{scrollY:0,scrollBy(x,y){this.scrollY+=y;},scrollTo(x,y){this.scrollY=y;},addEventListener(){},confirm:()=>true,
   location:{href:'http://local/persons',search:''},localStorage:{getItem:()=>null,setItem(){}}},
  document:{readyState:'loading',cookie:'ps_csrf=test',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},
  fetch:async(url,options={})=>{calls.push({url,options});const u=new URL(url,'http://local');
@@ -60,18 +61,41 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
   }
   if(url.includes('/faces/inbox/groups?'))return ok(page(groups.map(id=>({type:'candidate_group',group_key:'candidate:'+id,
    candidate_name:'候选'+id,photo_count:groupFaces.get(id).length,face:groupFaces.get(id)[0]})),u.searchParams,'cards'));
-  if(url.includes('/faces/inbox/summary?'))return ok({total:20,reasons:{},held:0});
+  if(url.includes('/faces/inbox/summary?'))return summaryGate||ok({total:20,reasons:{},held:0});
+  if(url.includes('/persons/collections/')&&url.endsWith('/members'))return ok({changed:1});
   if(url.includes('/faces/inbox?'))return ok(page(groupFaces.get(22),u.searchParams,'faces',2));
-  if(url.includes('/persons/collections?'))return ok({collections:[],has_more:false});
+  if(url.includes('/persons/collections?')){const index=Number(u.searchParams.get('cursor')||0),items=collections.slice(index,index+40),next=index+40<collections.length?String(index+40):null;return ok({collections:items,has_more:!!next,next_cursor:next});}
   if(url==='/api/v1/persons/3')return ok({...people[0],person_id:3,name:'已命名'});
   if(url.includes('/persons/3/photos?'))return ok({assets:[],has_more:false});
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,boot};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
 (async()=>{
+ ui.boot();await flush();
+ assert(!calls.some(c=>c.url.includes('/persons/collections')),'collapsed collections do not load on entry');
+ assert(!calls.some(c=>c.url.includes('/faces/source-detail-preview')||c.url==='/api/v1/sources'),'unused rematch preview and source list are deferred');
+ assert(calls.find(c=>c.url.includes('/persons/browse?')).url.includes('sort=photos_recent_desc'));
+ await ui.setView(true);await flush();
+ assert(calls.some(c=>c.url.includes('/faces/source-detail-batches/active')),'current active rematch status remains visible');
+ summaryGate=new Promise(resolve=>{releaseSummary=resolve;});
+ await ui.loadInbox(false);
+ assert(get('inbox-cards').children.length>0,'candidate cards render while summary is still pending');
+ assert.equal(get('inbox-note').textContent,'统计中……');
+ releaseSummary({ok:false,status:503,json:async()=>({code:'TEMPORARY'})});await flush();await flush();
+ assert.equal(get('inbox-note').textContent,'统计暂不可用。');
+ assert(get('inbox-cards').children.length>0,'summary failure preserves loaded candidate cards');
+ summaryGate=null;
+ const collectionCalls=calls.filter(c=>c.url.includes('/persons/collections')).length;
+ assert(await ui.ensureAllCollectionsLoaded());
+ assert.equal(calls.filter(c=>c.url.includes('/persons/collections')).length-collectionCalls,2,'batch chooser loads every collection page on demand');
+ assert.equal(get('collection-choice').children.length,46);
+ ui.state.selectedPeople.add(1);ui.state.batchMode=true;ui.renderPeopleManagement();get('collection-choice').value='1';
+ await ui.addSelectionToCollection();
+ assert(calls.some(c=>c.url.includes('/persons/collections/1/token0/members')),'batch add remains connected to the selected collection after lazy loading');
+ ui.state.batchMode=false;ui.renderPeopleManagement();
  ui.state.organize=true;get('inbox-kind').value='all';
  await ui.loadPeople(false);await ui.loadPeople(true);await ui.loadPeople(true);
  await ui.loadInbox(false);await ui.loadInbox(true);await ui.loadInbox(true);

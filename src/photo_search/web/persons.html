@@ -12,7 +12,7 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-local-open-a-1" defer></script>
     <script src="/web/persons.js?v=p4-person-small-fix-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-collection-count-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-organize-perf-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -35,7 +35,7 @@
           <div class="row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
         </div>
         <div class="row-actions" aria-label="人物合集"><button type="button" id="pa-collections-toggle">人物合集</button><button type="button" id="pa-collection-create">新建合集</button></div>
-        <section id="pa-collections-panel" hidden><p class="hint">合集只是放在一起看照片。</p><div id="pa-collections" class="pa-people-grid"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
+        <section id="pa-collections-panel" hidden><p class="hint">合集只是放在一起看照片。</p><p id="pa-collections-note" class="hint" role="status" aria-live="polite"></p><button id="pa-collections-retry" type="button" hidden>重试加载合集</button><div id="pa-collections" class="pa-people-grid"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
         <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
         <label class="pa-collection-filter"><input id="pa-collection-state" type="checkbox" />只看未加入合集</label>
         <p class="hint">人物按照片数量从多到少排列。</p>
@@ -51,6 +51,7 @@
         </div>
         <p id="pa-list-count" class="hint" role="status" aria-live="polite" hidden></p>
         <p id="pa-list-note" class="hint"></p>
+        <button id="pa-people-retry" type="button" hidden>重试加载人物</button>
         <div id="pa-cards" class="pa-people-grid"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>
         <section id="pa-inbox" hidden>
@@ -74,7 +75,8 @@
             <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
           </div>
           <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
-          <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p>
+          <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-summary-retry" type="button" hidden>重试统计</button>
+          <p id="pa-inbox-load-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-retry" type="button" hidden>重试加载待整理人脸</button>
           <div class="row-actions" aria-label="待整理人脸批量管理">
             <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
             <button id="pa-inbox-hide-submit" type="button" hidden disabled>忽略所选人脸</button>

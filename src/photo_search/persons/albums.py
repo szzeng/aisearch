@@ -280,7 +280,7 @@ def people_page(
 ) -> dict[str, Any]:
     if (
         kind not in ("all", "named", "unnamed")
-        or sort not in ("person_id", "photos_desc")
+        or sort not in ("person_id", "photos_desc", "photos_recent_desc")
         or visibility not in ("all", "visible", "hidden")
         or quality_view not in ("all", "clean")
         or collection_state not in ("all", "none")
@@ -291,7 +291,7 @@ def people_page(
     # Keep the legacy person_id cursor binding byte-for-byte compatible. Each sort mode
     # has its own version prefix, so a cursor cannot cross from one ordering to the other.
     binding = [
-        "people1" if sort == "person_id" else "people-count1",
+        "people1" if sort == "person_id" else "people-count1" if sort == "photos_desc" else "people-recent1",
         kind,
         query,
         read_filter_revision(catalog.connection),
@@ -383,37 +383,67 @@ def people_page(
         if after is not None:
             if (
                 not isinstance(after, list)
-                or len(after) != 2
+                or len(after) != (2 if sort == "photos_desc" else 3)
                 or any(type(value) is not int or value < 0 for value in after)
             ):
                 raise ApiError(INVALID_CURSOR, "invalid person position", status=422)
-            after_count, after_person_id = after
-        member_counts = (
-            "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
-            "FROM candidates AS candidate "
-            "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
-            "JOIN faces AS f ON f.face_id = l.face_id WHERE "
-            + MEMBER_PREDICATE
-            + " GROUP BY l.person_id)"
-        )
+            after_count = after[0]
+            if sort == "photos_desc":
+                after_person_id = after[1]
+            else:
+                after_latest_asset_added_at, after_person_id = after[1], after[2]
+        if sort == "photos_desc":
+            member_counts = (
+                "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count "
+                "FROM candidates AS candidate "
+                "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
+                "JOIN faces AS f ON f.face_id = l.face_id WHERE "
+                + MEMBER_PREDICATE
+                + " GROUP BY l.person_id)"
+            )
+            latest_select = ""
+        else:
+            member_counts = (
+                "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count, "
+                "COALESCE(MAX(a.created_at), 0) AS latest_asset_added_at "
+                "FROM candidates AS candidate "
+                "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
+                "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id = f.asset_id WHERE "
+                + MEMBER_PREDICATE
+                + " GROUP BY l.person_id)"
+            )
+            latest_select = ", COALESCE(ec.latest_asset_added_at, 0) AS page_latest_asset_added_at"
         continuation_conditions: list[str] = []
         continuation_parameters: list[Any] = []
         if after is not None:
-            continuation_conditions.append(
-                "(COALESCE(ec.asset_count, 0) < ? OR "
-                "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?))"
-            )
-            continuation_parameters.extend([after_count, after_count, after_person_id])
+            if sort == "photos_desc":
+                continuation_conditions.append(
+                    "(COALESCE(ec.asset_count, 0) < ? OR "
+                    "(COALESCE(ec.asset_count, 0) = ? AND p.person_id > ?))"
+                )
+                continuation_parameters.extend([after_count, after_count, after_person_id])
+            else:
+                continuation_conditions.append(
+                    "(COALESCE(ec.asset_count, 0) < ? OR "
+                    "(COALESCE(ec.asset_count, 0) = ? AND COALESCE(ec.latest_asset_added_at, 0) < ?) OR "
+                    "(COALESCE(ec.asset_count, 0) = ? AND COALESCE(ec.latest_asset_added_at, 0) = ? AND p.person_id > ?))"
+                )
+                continuation_parameters.extend([
+                    after_count, after_count, after_latest_asset_added_at,
+                    after_count, after_latest_asset_added_at, after_person_id,
+                ])
         rows = catalog.read_all(
             (collection_cte + ", " if collection_cte else "WITH ")
             + "candidates AS (SELECT p.* FROM persons AS p WHERE "
             + " AND ".join(candidate_conditions)
             + "), "
             + member_counts
-            + " SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count "
+            + " SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count"
+            + latest_select + " "
             "FROM candidates AS p LEFT JOIN effective_counts AS ec ON ec.person_id = p.person_id "
             + ("WHERE " + " AND ".join(continuation_conditions) + " " if continuation_conditions else "")
-            + " ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?",
+            + (" ORDER BY COALESCE(ec.asset_count, 0) DESC, p.person_id LIMIT ?" if sort == "photos_desc" else
+               " ORDER BY COALESCE(ec.asset_count, 0) DESC, COALESCE(ec.latest_asset_added_at, 0) DESC, p.person_id LIMIT ?"),
             (*candidate_parameters, *continuation_parameters, limit + 1),
         )
     if collection_state == "none":
@@ -430,11 +460,13 @@ def people_page(
     if has_more and rows:
         if sort == "person_id":
             last_position = int(rows[-1]["person_id"])
-        else:
+        elif sort == "photos_desc":
             last_position = [int(rows[-1]["page_asset_count"]), int(rows[-1]["person_id"])]
+        else:
+            last_position = [int(rows[-1]["page_asset_count"]), int(rows[-1]["page_latest_asset_added_at"]), int(rows[-1]["person_id"])]
     summaries = (
         _album_summaries(catalog.connection, rows, reuse_asset_counts=True, quality_view=quality_view)
-        if sort == "photos_desc"
+        if sort in ("photos_desc", "photos_recent_desc")
         else _album_summaries(catalog.connection, rows, quality_view=quality_view)
     )
     if collection_state == "all":
@@ -809,13 +841,22 @@ def inbox_group_page(
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
+    representative_ids = [
+        str(row["representative_face_id"] if row["card_type"] == "candidate_group" else row["face_id"])
+        for row in rows
+    ]
+    representative_faces: dict[str, Any] = {}
+    if representative_ids:
+        placeholders = ", ".join("?" for _ in representative_ids)
+        face_rows = catalog.read_all(
+            _SELECT_FACES + "WHERE f.face_id IN (" + placeholders + ") AND " + _inbox_where(quality_view, kind),
+            (*representative_ids, *_VISIBILITY_PARAMETERS),
+        )
+        representative_faces = {str(face["face_id"]): face for face in face_rows}
     cards: list[dict[str, Any]] = []
     for row in rows:
         if row["card_type"] == "candidate_group":
-            face = catalog.read_one(
-                _SELECT_FACES + "WHERE f.face_id = ? AND " + _inbox_where(quality_view, kind),
-                (row["representative_face_id"], *_VISIBILITY_PARAMETERS),
-            )
+            face = representative_faces.get(str(row["representative_face_id"]))
             cards.append({
                 "type": "candidate_group",
                 "group_key": f"candidate:{int(row['candidate_person_id'])}",
@@ -824,10 +865,7 @@ def inbox_group_page(
                 "face": _face_view(catalog, face),
             })
         else:
-            face = catalog.read_one(
-                _SELECT_FACES + "WHERE f.face_id = ? AND " + _inbox_where(quality_view, kind),
-                (row["face_id"], *_VISIBILITY_PARAMETERS),
-            )
+            face = representative_faces.get(str(row["face_id"]))
             cards.append({"type": "single_face", "photo_count": 1, "face": _face_view(catalog, face)})
     return {
         "cards": cards,

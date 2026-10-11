@@ -1514,7 +1514,7 @@ async def browse_persons(
     request: Request,
     kind: str = "all",
     q: str = "",
-    sort: Literal["person_id", "photos_desc"] = "person_id",
+    sort: Literal["person_id", "photos_desc", "photos_recent_desc"] = "person_id",
     visibility: Literal["all", "visible", "hidden"] = "all",
     quality_view: Literal["all", "clean"] = "all",
     collection_state: Literal["all", "none"] = "all",

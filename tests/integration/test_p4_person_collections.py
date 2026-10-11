@@ -268,6 +268,67 @@ def test_collection_list_first_page_and_pagination(api_env: ApiEnv) -> None:
     api_env.scenario(scenario)
 
 
+def test_collection_people_use_recent_asset_tie_break_and_new_cursor(api_env: ApiEnv) -> None:
+    photos = seed_library(
+        api_env,
+        {name: [(20, 20, 90, 90)] for name in ("甲1.jpg", "甲2.jpg", "乙1.jpg", "乙2.jpg", "丙1.jpg")},
+    )
+    catalog = api_env.service.catalog
+    first = add_person(catalog, name="甲")
+    second = add_person(catalog, name="乙")
+    third = add_person(catalog, name="丙")
+    empty = add_person(catalog, name="丁")
+    for person_id, names in ((first, ("甲1.jpg", "甲2.jpg")), (second, ("乙1.jpg", "乙2.jpg")), (third, ("丙1.jpg",))):
+        for name in names:
+            add_link(catalog, photos[name]["faces"][0], person_id)
+    with catalog.write() as connection:
+        for name, created_at in {"甲1.jpg": 10, "甲2.jpg": 20, "乙1.jpg": 10, "乙2.jpg": 30, "丙1.jpg": 40}.items():
+            connection.execute("UPDATE assets SET created_at=? WHERE asset_id=?", (created_at, photos[name]["asset_id"]))
+
+    import pytest
+
+    from photo_search.api.errors import ApiError
+    from photo_search.persons import collections
+    from photo_search.places.revision import read_filter_revision
+
+    created = collections.create_collection(catalog, "最近入库")["collection"]
+    collection_id = int(created["collection_id"])
+    token = str(created["instance_token"])
+    collections.edit_members(catalog, collection_id, action="add", person_ids=[first, second, third, empty], instance_token=token)
+    collection_statements: list[str] = []
+    catalog.connection.set_trace_callback(collection_statements.append)
+    try:
+        first_page = collections.people_page(catalog, collection_id, instance_token=token, limit=1, cursor=None)
+    finally:
+        catalog.connection.set_trace_callback(None)
+    collection_query = next(statement for statement in collection_statements if "EFFECTIVE_COUNTS AS" in statement.upper())
+    collection_plan = catalog.read_all("EXPLAIN QUERY PLAN " + collection_query)
+    assert collection_plan
+    print("collection people plan: " + "; ".join(str(row["detail"]) for row in collection_plan if "SEARCH" in str(row["detail"]) or "SCAN" in str(row["detail"]) or "TEMP B-TREE" in str(row["detail"])))
+    ids = [person["person_id"] for person in first_page["people"]]
+    cursor = first_page["next_cursor"]
+    if not first_page["has_more"]:
+        cursor = None
+    while True:
+        if cursor is None:
+            break
+        page = collections.people_page(catalog, collection_id, instance_token=token, limit=1, cursor=cursor)
+        ids.extend(person["person_id"] for person in page["people"])
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    assert ids == [second, first, third, empty]
+    current = catalog.read_one("SELECT revision FROM person_collections WHERE collection_id=?", (collection_id,))
+    old_cursor = collections._encode(
+        "pcp-count1",
+        [collection_id, token, int(current["revision"]), read_filter_revision(catalog.connection)],
+        [2, first],
+    )
+    with pytest.raises(ApiError) as stale_prefix:
+        collections.people_page(catalog, collection_id, instance_token=token, limit=1, cursor=old_cursor)
+    assert stale_prefix.value.status == 409
+
+
 def test_deleted_collection_id_is_not_reused_for_stale_requests(api_env: ApiEnv) -> None:
     catalog = api_env.service.catalog
     people = [add_person(catalog) for _ in range(4)]

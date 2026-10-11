@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from time import perf_counter
@@ -79,6 +80,201 @@ def test_people_query_is_literal_paged_and_session_protected(api_env: ApiEnv) ->
         assert "bbox" not in repr(matches) and "name_key" not in repr(matches)
 
     api_env.scenario(scenario)
+
+
+def test_recent_photo_sort_uses_effective_members_and_three_part_cursor(api_env: ApiEnv) -> None:
+    photos = seed_library(
+        api_env,
+        {name: ([(20, 20, 90, 90), (120, 20, 190, 90)] if name == "b1.jpg" else [(20, 20, 90, 90)])
+         for name in ("a1.jpg", "a2.jpg", "b1.jpg", "b2.jpg", "t1.jpg", "t2.jpg", "c1.jpg")},
+    )
+    catalog = api_env.service.catalog
+    person_a = add_person(catalog, name="甲")
+    person_b = add_person(catalog, name="乙")
+    person_tie = add_person(catalog, name="丙")
+    person_c = add_person(catalog, name="丁")
+    person_empty = add_person(catalog, name="戊")
+    links = {
+        person_a: ("a1.jpg", "a2.jpg"),
+        person_b: ("b1.jpg", "b2.jpg"),
+        person_tie: ("t1.jpg", "t2.jpg"),
+        person_c: ("c1.jpg",),
+    }
+    for person_id, names in links.items():
+        for name in names:
+            add_link(catalog, photos[name]["faces"][0], person_id)
+    add_link(catalog, photos["b1.jpg"]["faces"][1], person_b)
+    set_control(catalog, photos["c1.jpg"]["faces"][0], "MANUAL_UNASSIGNED")
+    timestamps = {"a1.jpg": 100, "a2.jpg": 200, "b1.jpg": 100, "b2.jpg": 300,
+                  "t1.jpg": 100, "t2.jpg": 200, "c1.jpg": 400}
+    with catalog.write() as connection:
+        for name, created_at in timestamps.items():
+            connection.execute("UPDATE assets SET created_at = ? WHERE asset_id = ?", (created_at, photos[name]["asset_id"]))
+        connection.execute("UPDATE face_person_links SET updated_at=9999 WHERE person_id=?", (person_a,))
+
+    recent_ids: list[int] = []
+    cursor = None
+    while True:
+        page = people_page(
+            catalog, kind="all", q="", limit=2, cursor=cursor,
+            sort="photos_recent_desc", visibility="visible",
+        )
+        recent_ids.extend(person["person_id"] for person in page["persons"])
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    assert recent_ids == [person_b, person_a, person_tie, person_c, person_empty]
+
+    legacy_ids = [
+        person["person_id"] for person in people_page(
+            catalog, kind="all", q="", limit=10, cursor=None,
+            sort="photos_desc", visibility="visible",
+        )["persons"]
+    ]
+    assert legacy_ids == [person_a, person_b, person_tie, person_c, person_empty]
+    import pytest
+
+    from photo_search.api.errors import ApiError
+
+    sort_statements: list[str] = []
+    catalog.connection.set_trace_callback(sort_statements.append)
+    try:
+        first_recent = people_page(catalog, kind="all", q="", limit=1, cursor=None, sort="photos_recent_desc")
+    finally:
+        catalog.connection.set_trace_callback(None)
+    sort_query = next(statement for statement in sort_statements if "EFFECTIVE_COUNTS AS" in statement.upper())
+    sort_plan = catalog.read_all("EXPLAIN QUERY PLAN " + sort_query)
+    assert sort_plan
+    sort_details = [str(row["detail"]) for row in sort_plan]
+    print("people recent-sort plan: " + "; ".join(detail for detail in sort_details if "SEARCH" in detail or "TEMP B-TREE" in detail))
+    with pytest.raises(ApiError):
+        people_page(catalog, kind="all", q="", limit=1, cursor=first_recent["next_cursor"], sort="photos_desc")
+    first_legacy = people_page(catalog, kind="all", q="", limit=1, cursor=None, sort="photos_desc")
+    with pytest.raises(ApiError):
+        people_page(catalog, kind="all", q="", limit=1, cursor=first_legacy["next_cursor"], sort="photos_recent_desc")
+
+    async def route_accepts_new_sort(client):
+        await api_env.authenticate(client)
+        response = await client.get(
+            "/api/v1/persons/browse", params={"sort": "photos_recent_desc", "limit": 1}
+        )
+        assert response.status_code == 200
+        assert response.json()["persons"][0]["person_id"] == person_b
+
+    api_env.scenario(route_accepts_new_sort)
+
+    service = PersonService.open(catalog)
+    merged = service.merge(
+        target_person_id=person_a,
+        target_expected_revision=1,
+        sources=[{"person_id": person_tie, "expected_revision": 1}],
+        request_id="recent-sort-merge",
+    )
+    merged_page = people_page(catalog, kind="all", q="", limit=1, cursor=None, sort="photos_recent_desc")
+    assert (merged_page["persons"][0]["person_id"], merged_page["persons"][0]["asset_count"]) == (person_a, 4)
+    undone = service.undo(
+        operation_id=merged["operation_id"],
+        request_id="recent-sort-merge-undo",
+        expected_operation_revision=merged["operation_revision"],
+    )
+    assert undone["changed"] is True
+    restored_page = people_page(catalog, kind="all", q="", limit=10, cursor=None, sort="photos_recent_desc")
+    assert [person["person_id"] for person in restored_page["persons"]] == [person_b, person_a, person_tie, person_c, person_empty]
+
+    api_env.add_photo("newest.jpg", noise=42)
+    source = catalog.read_one("SELECT source_id FROM source_roots LIMIT 1")
+    api_env.scan(int(source["source_id"]))
+    newest = catalog.read_one(
+        "SELECT a.asset_id, a.sha256, l.location_id FROM assets AS a "
+        "JOIN file_locations AS l ON l.asset_id=a.asset_id WHERE l.relative_path=?",
+        ("newest.jpg",),
+    )
+    newest_face = insert_face(
+        catalog,
+        asset_id=int(newest["asset_id"]),
+        sha256=str(newest["sha256"]),
+        bbox=(20, 20, 90, 90),
+        ordinal=0,
+        location_id=int(newest["location_id"]),
+    )
+    add_link(catalog, newest_face, person_a)
+    added_page = people_page(catalog, kind="all", q="", limit=1, cursor=None, sort="photos_recent_desc")
+    assert (added_page["persons"][0]["person_id"], added_page["persons"][0]["asset_count"]) == (person_a, 3)
+
+
+def test_inbox_representative_face_projection_is_batched_and_explainable(api_env: ApiEnv) -> None:
+    seed_library(
+        api_env,
+        {f"pending-{index:02d}.jpg": [(20, 20, 90, 90)] for index in range(30)},
+    )
+    catalog = api_env.service.catalog
+    statements: list[str] = []
+    catalog.connection.set_trace_callback(statements.append)
+    try:
+        from photo_search.persons.albums import inbox_group_page
+
+        page = inbox_group_page(catalog, limit=30, cursor=None)
+        from photo_search.persons.albums import inbox_summary
+
+        inbox_summary(catalog)
+    finally:
+        catalog.connection.set_trace_callback(None)
+    assert len(page["cards"]) == 30
+    representative_queries = [
+        statement for statement in statements
+        if statement.upper().startswith("SELECT F.FACE_ID") and "F.FACE_ID IN (" in statement.upper()
+    ]
+    assert len(representative_queries) == 1
+    plan = catalog.read_all("EXPLAIN QUERY PLAN " + representative_queries[0])
+    assert plan
+    group_query = next(statement for statement in statements if "SELECT * FROM CARDS" in statement.upper())
+    summary_query = next(statement for statement in statements if "GROUP BY REASON, HIDDEN, LOW_QUALITY" in statement.upper())
+    group_plan = catalog.read_all("EXPLAIN QUERY PLAN " + group_query)
+    summary_plan = catalog.read_all("EXPLAIN QUERY PLAN " + summary_query)
+    assert group_plan and summary_plan
+    print("inbox group plan: " + "; ".join(str(row["detail"]) for row in group_plan if "SEARCH" in str(row["detail"]) or "SCAN" in str(row["detail"]) or "TEMP B-TREE" in str(row["detail"])))
+    print("inbox summary plan rows: " + str(len(summary_plan)))
+    face_ids = [card["face"]["face_id"] for card in page["cards"]]
+    from photo_search.persons import albums
+
+    old_projection_start = perf_counter()
+    for face_id in face_ids:
+        catalog.read_one(
+            albums._SELECT_FACES + "WHERE f.face_id = ? AND " + albums._inbox_where("all", "all"),
+            (face_id, *albums._VISIBILITY_PARAMETERS),
+        )
+    old_projection_ms = (perf_counter() - old_projection_start) * 1000
+    placeholders = ", ".join("?" for _ in face_ids)
+    new_projection_start = perf_counter()
+    catalog.read_all(
+        albums._SELECT_FACES + "WHERE f.face_id IN (" + placeholders + ") AND " + albums._inbox_where("all", "all"),
+        (*face_ids, *albums._VISIBILITY_PARAMETERS),
+    )
+    new_projection_ms = (perf_counter() - new_projection_start) * 1000
+    print(f"synthetic inbox representative projection: {len(face_ids)} rows; old-equivalent {old_projection_ms:.3f} ms / {len(face_ids)} SQL calls; batched {new_projection_ms:.3f} ms / 1 SQL call")
+    print("batched representative query plan: " + " | ".join(str(row["detail"]) for row in plan))
+
+    async def event_loop_timing(client):
+        await api_env.authenticate(client)
+        started = perf_counter()
+        health = await client.get("/api/v1/health")
+        health_ms = (perf_counter() - started) * 1000
+        durations: dict[str, float] = {}
+
+        async def timed(name: str, path: str) -> None:
+            start = perf_counter()
+            response = await client.get(path)
+            durations[name] = (perf_counter() - start) * 1000
+            assert response.status_code == 200
+
+        await asyncio.gather(
+            timed("groups", "/api/v1/faces/inbox/groups?limit=30"),
+            timed("health", "/api/v1/health"),
+        )
+        assert health.status_code == 200
+        print(f"synthetic API timing: health-alone {health_ms:.3f} ms; concurrent groups {durations['groups']:.3f} ms / health {durations['health']:.3f} ms")
+
+    api_env.scenario(event_loop_timing)
 
 
 def test_people_page_total_matches_filters_without_pagination_or_sort(api_env: ApiEnv) -> None:
