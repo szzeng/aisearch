@@ -1,5 +1,9 @@
 # Development status
 
+## P4-PERSON-SELECT-RANGE-A — READY / 人物整理 Shift 连选与已加载批量选择
+
+[任务卡](tasks/P4-PERSON-SELECT-RANGE-A.md)。2026-10-11 新增独立**前端选择体验**任务：在人物相册“整理照片”、人物批量管理、待整理/已忽略人脸、人物合集成员中支持 Shift 范围连选、全选已加载、反选已加载、清空选择；保留跨页已选、500 脸上限、现有人物 snapshot、合照逐脸语义及忙时锁定。不选未加载/隐藏组成员，不改后端 API、人工锁/排除/撤销或识别算法。五组最小合成 UI 验收，Node 语法、定向 JUnit、diff-check；不跑真图库/GPU/全仓。推荐 GPT-6 Luna / Medium（复杂交互时 High）。**仅立卡，尚未实施/测试，不影响已完成 P4-PERSON-REGROUP-A。**
+
 ## P4-PERSON-REGROUP-A — SCOPED PASS / 用户指定当前会话复核
 
 [任务卡](tasks/P4-PERSON-REGROUP-A.md)、[执行报告](reports/P4-PERSON-REGROUP-A.md)、[加性协议 ADR-0020](decisions/ADR-0020-selected-face-regroup.md)。仅完成选中脸“移出并重新智能分组”与“整理照片→完成整理”：复用已存向量/候选和门限，源排除、人工控制、OPEN hold、双 CAS、幂等、原子回滚/重启重放及共享 undo 保留，三种移出/拆分语义明确；反馈实际归组/新人物/仍需整理数。新增 FACE_REGROUP、0029/schema 29，未改旧 action/companion。定向 JUnit **133/0/0/0 + 72/0/0/0**，最终忙时退出补充 **8/0/0/0**（去重 197 项），Ruff、编译、Node、diff-check 通过。当前会话受影响面复核，非独立 DS-H/Sol 冻结。按用户授权本地提交，未推送；未访问真实图库，未做本轮真实浏览器/模型/GPU/全仓/性能/实际库升级验收。下一步仅用户少量试用，不自动扩展任务；此前其他图库任务记录与工作树保留。
