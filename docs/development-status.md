@@ -47,6 +47,12 @@
 
 [任务卡](tasks/P4-PLACE-ALBUM-PERF-A.md)。2026-10-11 已立卡并提交，**仅文档，尚未实施或测试**。借鉴人物相册优化，消除地点列表 N+1/重复分组、先显示地点相册并延迟无关管理查询、优化首屏封面；地名包冷校验只在有耗时证据且不削弱完整性保护时处理。建议 GPT-6 Luna / High，个人项目只做小型合成与直接相关 Node/pytest、Ruff、diff-check；不改地点归属、Schema 或真实 PhotoSearchData，不要求全仓回归。
 
+## P4-OCR-LIFECYCLE-A — READY / OCR 旧任务自动收尾与来源进度治本修复
+
+[任务卡](tasks/P4-OCR-LIFECYCLE-A.md)。2026-10-11 已立卡；**仅文档提交，尚未实施或测试**。基于用户只读诊断：旧 `ocr-text@1` 遗留 909 QUEUED + 1 过期 RUNNING，其中 906 张已有新版结果、4 张新版 `DECODE_FAILED`；下一步实现 OCR 退役版本声明、租约安全幂等收尾、统一有效进度和来源卡失败提示。个人相册只需四组定向合成 JUnit、Ruff/JS 语法/diff-check；不触碰真实图库，不要求全仓回归。建议 GPT-6 Luna / High，按现有高风险租约/结果保护原则做必要受影响面复核。
+
 ## 下一步
+
+下一项（用户当前确认）：[P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)，先治本修复 OCR 退役任务与来源状态；建议 GPT-6 Luna / High（用户在 Codex 手动切换）。原计划 [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md) 继续保持 READY，等待后续独立执行，真实固定权重/本机 native provider 的工程核验不因本卡而视作已通过。既有全仓回归及真实图库/30万性能仍未验证。
 
 下一项： [P4-OCR-RUNTIME-CONFIRM-A](tasks/P4-OCR-RUNTIME-CONFIRM-A.md)，仅用现存固定权重和合成图片核验 OCR native provider；执行建议 GPT-5.6 Terra / medium（C1），需用户手动切换。全仓回归、OCR GPU/真实图库、30万性能仍各自保持未验证，不因本任务结论自动通过。
