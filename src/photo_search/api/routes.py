@@ -809,8 +809,9 @@ async def request_library_refresh(
     scopes. This process-local queue is lost on shutdown.
 
     ``mode = "build"`` is the P4-02Y-I first build ("开始建库"): the same additive entry, but
-    it drains the durable backlog of the named sources in bounded batches instead of stopping
-    at one bounded delta. The requested mode is echoed in the status so the caller sees which
+    it drains the durable backlog of the selected sources in bounded batches instead of stopping
+    at one bounded delta. Omitting ``source_ids`` means all sources registered when execution
+    starts. The requested mode is echoed in the status so the caller sees which
     pass it is watching.
     """
     source_ids = None if payload is None else payload.source_ids
