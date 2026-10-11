@@ -1,5 +1,9 @@
 # Development status
 
+## P4-LIBRARY-VIDEO-EXCLUDE-A — READY / 视频扫描排除与已入库视频安全退出（仅文档）
+
+[任务卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md)。新增视频后缀最前置过滤，建库/fast/full 一致；历史已登记视频在来源成功 fast 刷新后依现有原子对账转 MISSING，再用统一 SQL 权威资格使视频退出普通照片浏览、搜索及相关照片列表（含默认 availability=any），保护图片/视频共享 asset、真实缺失照片与来源范围。仅计划只读历史视频统计、3～4 组合成定向测试；不改 Schema/原文件/人工归属，不做资产或向量永久删除、真实图库/GPU/全仓回归。**本次仅提交任务卡，未实施、未运行测试**。推荐 GPT-6 Luna / Medium；必要时 Luna / High 定向复核。
+
 ## P4-RELEASE-020 — READY / v0.2.0 个人预览版任务卡（未实施）
 
 [任务卡](tasks/P4-RELEASE-020.md)。按用户要求只立简化版本冻结卡：0.1.0→0.2.0、更新日志、版本一致性定向测试/最小启动搜索检查；不改 Schema 29、原图、模型、识别/搜索逻辑，不做全量 pytest、GPU/30 万/Windows 打包验收。推荐 **GPT-6 Luna / Medium**，发布代码推送/Tag/GitHub Pre-release 须另经用户确认。当前仅文档提交，**没有升级程序或运行测试**；本卡不取代现有其他任务的后续安排。
