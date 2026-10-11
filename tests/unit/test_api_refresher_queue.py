@@ -21,7 +21,7 @@ def test_home_build_buttons_follow_the_queue() -> None:
 const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
 let source = fs.readFileSync("src/photo_search/web/app.js", "utf8");
 source = source.replace('  if (document.readyState === "loading") {',
-  '  globalThis.queueUI = {state, els, renderRefresh, renderSourceDetail, sourceActionMode, setRequest(fn) { request = fn; }};\n  if (document.readyState === "loading") {');
+  '  globalThis.queueUI = {state, els, renderRefresh, renderSourceDetail, sourceActionMode, ocrProgressText, setRequest(fn) { request = fn; }};\n  if (document.readyState === "loading") {');
 function node(tag) {
   return {tag, children: [], attrs: {}, listeners: {}, disabled: false, textContent: "",
     appendChild(child) { this.children.push(child); return child; },
@@ -75,6 +75,15 @@ assert.equal(ui.els.refreshLibrary.disabled, false);
 const progress = {built:true, stages:{semantic:{state:"SEARCHABLE"}, face:{state:"PENDING"}}};
 assert.equal(ui.sourceActionMode(progress), "refresh");
 assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"BUILDING"}}}), "continue");
+const failedOcr = {state:"COMPLETE", succeeded:0, failed:3, blocked:0, pending:0,
+  unattempted:0, total:3, runtime_available:true};
+assert.equal(ui.ocrProgressText(failedOcr), "已处理（3 张失败）");
+assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"SEARCHABLE"}, ocr:failedOcr}}), "refresh");
+const waitingOcr = {...failedOcr, state:"PENDING", failed:1, unattempted:2};
+assert.match(ui.ocrProgressText(waitingOcr), /待处理/);
+assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"SEARCHABLE"}, ocr:waitingOcr}}), "continue");
+const unavailableOcr = {...waitingOcr, runtime_available:false};
+assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"SEARCHABLE"}, ocr:unavailableOcr}}), "refresh");
 const detail = {root_path:"C:/synthetic", counts:{assets:1,locations_present:1,locations_missing:0},
   progress};
 const card = node("section");

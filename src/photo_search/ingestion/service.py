@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import ntpath
 import os
 import shutil
@@ -32,6 +33,8 @@ from photo_search.media.cache import MediaCache
 from photo_search.media.contract import KINDS, spec_for
 from photo_search.media.pipeline import MediaGenerator, select_targets
 from photo_search.media.status import media_status
+
+logger = logging.getLogger("photo_search.ingestion")
 
 
 def system_wall_clock_ms() -> int:
@@ -103,6 +106,19 @@ class CatalogService:
         except BaseException:
             catalog.close()
             raise
+        try:
+            from photo_search.ocr.service import reconcile_retired_ocr_jobs
+
+            reconciliation = reconcile_retired_ocr_jobs(
+                catalog, now_ms=catalog.now_ms(), batch_size=100
+            )
+            if any(
+                int(reconciliation[key]) > 0
+                for key in ("cancelled", "live_leases", "lease_anomalies", "cas_conflicts")
+            ) or bool(reconciliation["has_more"]):
+                logger.info("retired OCR job reconciliation: %s", reconciliation)
+        except Exception:  # noqa: BLE001 - startup remains available if optional cleanup fails
+            logger.exception("reconciling retired OCR jobs during catalog startup failed")
         return cls(
             catalog,
             data_root=root,

@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CatalogError
 from photo_search.config import resolve_data_root
 from photo_search.ingestion.service import CatalogService
@@ -35,11 +36,12 @@ from photo_search.ocr.service import (
     enqueue_targets,
     job_counts,
     ocr_targets,
+    reconcile_retired_ocr_jobs,
     run_queue,
 )
 from photo_search.scheduler.projection import ocr_summary
 
-COMMANDS = ("weights", "status", "enqueue", "run", "recognize")
+COMMANDS = ("weights", "status", "reconcile", "enqueue", "run", "recognize")
 
 
 def _common_options() -> argparse.ArgumentParser:
@@ -77,6 +79,13 @@ def build_parser() -> argparse.ArgumentParser:
     common = _common_options()
     commands.add_parser("weights", parents=[common], help="verify the pinned PP-OCRv4 files")
     commands.add_parser("status", parents=[common], help="read-only OCR readiness summary")
+    reconcile = commands.add_parser(
+        "reconcile", parents=[common], help="cancel a bounded batch of explicitly retired OCR jobs"
+    )
+    reconcile_mode = reconcile.add_mutually_exclusive_group(required=True)
+    reconcile_mode.add_argument("--dry-run", action="store_true", help="report candidates without changing jobs")
+    reconcile_mode.add_argument("--apply", action="store_true", help="cancel safe candidates")
+    reconcile.add_argument("--limit", type=int, default=100, help="process at most this many old jobs")
     for name, help_text in (
         ("enqueue", "queue OCR jobs for the selected assets"),
         ("recognize", "enqueue and run OCR for the selected assets"),
@@ -197,6 +206,16 @@ def run_command(args: argparse.Namespace) -> int:
             return 0
         if command == "status":
             _emit(args, _status_payload(data_root))
+            return 0
+        if command == "reconcile":
+            with Catalog.open(data_root=data_root) as catalog:
+                result = reconcile_retired_ocr_jobs(
+                    catalog,
+                    now_ms=catalog.now_ms(),
+                    batch_size=int(args.limit),
+                    dry_run=bool(args.dry_run),
+                )
+            _emit(args, {"status": "ok", "command": "reconcile", **result})
             return 0
         # Every work command proves the pinned weights before anything is queued, so a
         # broken model root is one structured failure instead of a queue full of blocked jobs.

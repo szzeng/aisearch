@@ -28,7 +28,18 @@ from photo_search.search import documents as search_documents
 
 #: States a forced re-recognition may rewind: everything except a live execution.
 REWINDABLE_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "RETRY_WAIT")
-_LIVE_PROCESSOR_IDS = (contract.OCR_LEGACY_PROCESSOR_ID, *contract.OCR_PROCESSOR_IDS)
+_LIVE_PROCESSOR_IDS = (
+    *contract.OCR_RETIRED_PROCESSOR_IDS,
+    *contract.OCR_ACTIVE_PROCESSOR_IDS,
+)
+_RETIRED_PENDING_STATES = (
+    jobs.STATE_QUEUED,
+    jobs.STATE_RETRY_WAIT,
+    jobs.STATE_BLOCKED,
+    jobs.STATE_RUNNING,
+)
+_RETIRED_REASON = "OCR_PROCESSOR_RETIRED"
+DEFAULT_RECONCILE_BATCH_SIZE = 100
 
 
 def processor_id_for_request(requested_device: str) -> str:
@@ -76,6 +87,129 @@ def ocr_targets(
     return targets
 
 
+def reconcile_retired_ocr_jobs(
+    catalog: Catalog,
+    *,
+    now_ms: int | None = None,
+    batch_size: int = DEFAULT_RECONCILE_BATCH_SIZE,
+    dry_run: bool = False,
+) -> dict[str, int | bool]:
+    """Safely cancel one bounded batch of jobs for explicitly retired OCR processors.
+
+    A RUNNING row is eligible only when its lease is structurally complete and expired.
+    The write is a short state-and-lease CAS; a worker that renewed or replaced its lease
+    wins. Unknown processor IDs and all historical terminal rows are left untouched.
+    """
+    limit = max(0, int(batch_size))
+    if limit == 0 or not contract.OCR_RETIRED_PROCESSOR_IDS:
+        return {
+            "examined": 0,
+            "would_cancel": 0,
+            "cancelled": 0,
+            "live_leases": 0,
+            "lease_anomalies": 0,
+            "cas_conflicts": 0,
+            "remaining": _retired_pending_count(catalog),
+            "has_more": _retired_pending_count(catalog) > 0,
+        }
+    now = int(catalog.now_ms() if now_ms is None else now_ms)
+    processors = tuple(contract.OCR_RETIRED_PROCESSOR_IDS)
+    processor_slots = ", ".join("?" for _ in processors)
+    state_slots = ", ".join("?" for _ in _RETIRED_PENDING_STATES)
+    select_sql = (
+        "SELECT job_id, subject_type, subject_id, input_revision, task_type, processor_id, "
+        "state, lease_token, lease_expires_at, worker_id FROM jobs "
+        f"WHERE task_type = ? AND processor_id IN ({processor_slots}) "
+        f"AND state IN ({state_slots}) "
+        "ORDER BY CASE WHEN state = 'RUNNING' THEN 1 ELSE 0 END, job_id LIMIT ?"
+    )
+    parameters = (contract.OCR_TASK_TYPE, *processors, *_RETIRED_PENDING_STATES, limit)
+    counters: dict[str, int | bool] = {
+        "examined": 0,
+        "would_cancel": 0,
+        "cancelled": 0,
+        "live_leases": 0,
+        "lease_anomalies": 0,
+        "cas_conflicts": 0,
+    }
+
+    def visit(connection: sqlite3.Connection, *, apply: bool) -> None:
+        rows = connection.execute(select_sql, parameters).fetchall()
+        counters["examined"] = len(rows)
+        for row in rows:
+            state = str(row["state"])
+            if state == jobs.STATE_RUNNING:
+                token = row["lease_token"]
+                worker = row["worker_id"]
+                expires_raw = row["lease_expires_at"]
+                try:
+                    expires = None if expires_raw is None else int(expires_raw)
+                except (TypeError, ValueError, OverflowError):
+                    expires = None
+                if not token or not worker or expires is None:
+                    counters["lease_anomalies"] = int(counters["lease_anomalies"]) + 1
+                    continue
+                if expires > now:
+                    counters["live_leases"] = int(counters["live_leases"]) + 1
+                    continue
+            if jobs.STATE_CANCELLED not in jobs.ALLOWED_TRANSITIONS.get(state, frozenset()):
+                continue
+            counters["would_cancel"] = int(counters["would_cancel"]) + 1
+            if not apply:
+                continue
+            cursor = connection.execute(
+                "UPDATE jobs SET state = 'CANCELLED', lease_token = NULL, "
+                "lease_expires_at = NULL, worker_id = NULL, last_error_code = ?, "
+                "last_error_message = ?, blocking_reason = NULL, updated_at = ? "
+                "WHERE job_id = ? AND subject_type = ? AND subject_id = ? "
+                "AND input_revision = ? AND task_type = ? AND processor_id = ? AND state = ? "
+                "AND lease_token IS ? AND lease_expires_at IS ? AND worker_id IS ?",
+                (
+                    _RETIRED_REASON,
+                    f"OCR processor {row['processor_id']} is retired; no new work will be claimed",
+                    now,
+                    int(row["job_id"]),
+                    str(row["subject_type"]),
+                    str(row["subject_id"]),
+                    str(row["input_revision"]),
+                    str(row["task_type"]),
+                    str(row["processor_id"]),
+                    state,
+                    row["lease_token"],
+                    row["lease_expires_at"],
+                    row["worker_id"],
+                ),
+            )
+            if cursor.rowcount:
+                counters["cancelled"] = int(counters["cancelled"]) + 1
+            else:
+                counters["cas_conflicts"] = int(counters["cas_conflicts"]) + 1
+
+    if dry_run:
+        visit(catalog.connection, apply=False)
+    else:
+        with catalog.write() as connection:
+            visit(connection, apply=True)
+    remaining = _retired_pending_count(catalog)
+    counters["remaining"] = remaining
+    counters["has_more"] = remaining > 0
+    return counters
+
+
+def _retired_pending_count(catalog: Catalog) -> int:
+    processors = tuple(contract.OCR_RETIRED_PROCESSOR_IDS)
+    if not processors:
+        return 0
+    processor_slots = ", ".join("?" for _ in processors)
+    state_slots = ", ".join("?" for _ in _RETIRED_PENDING_STATES)
+    row = catalog.read_one(
+        "SELECT COUNT(*) AS total FROM jobs WHERE task_type = ? "
+        f"AND processor_id IN ({processor_slots}) AND state IN ({state_slots})",
+        (contract.OCR_TASK_TYPE, *processors, *_RETIRED_PENDING_STATES),
+    )
+    return int(row["total"])
+
+
 def enqueue_targets(
     catalog: Catalog,
     targets: Sequence[dict[str, Any]],
@@ -85,6 +219,7 @@ def enqueue_targets(
     requested_device: str = "auto",
 ) -> dict[str, int]:
     """Queue (or force-requeue) one OCR job per target, idempotently."""
+    reconcile_retired_ocr_jobs(catalog, now_ms=now_ms)
     queued = rewound = live = 0
     processor_id = processor_id_for_request(str(requested_device))
     with catalog.write() as connection:
@@ -152,7 +287,8 @@ def _is_live(
     row = connection.execute(
         "SELECT 1 FROM jobs WHERE subject_type = 'asset' AND subject_id = ? "
         "AND input_revision = ? AND task_type = ? AND processor_id IN (" + placeholders + ") "
-        "AND state = 'RUNNING' AND lease_expires_at > ?",
+        "AND state = 'RUNNING' AND (lease_expires_at > ? OR lease_expires_at IS NULL "
+        "OR lease_token IS NULL OR lease_token = '' OR worker_id IS NULL OR worker_id = '')",
         (str(int(asset_id)), str(revision), contract.OCR_TASK_TYPE, *_LIVE_PROCESSOR_IDS, int(now_ms)),
     ).fetchone()
     return row is not None
@@ -236,10 +372,18 @@ def job_counts(catalog: Catalog, *, task_type: str = contract.OCR_TASK_TYPE) -> 
 
 
 def pending_job_count(catalog: Catalog) -> int:
-    counts = job_counts(catalog)
-    return sum(
-        count for state, count in counts.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
+    processors = tuple(contract.OCR_ACTIVE_PROCESSOR_IDS)
+    slots = ", ".join("?" for _ in processors)
+    row = catalog.read_one(
+        "SELECT COUNT(DISTINCT j.subject_id) AS total FROM jobs AS j "
+        "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+        "WHERE j.subject_type = 'asset' AND j.task_type = ? "
+        f"AND j.processor_id IN ({slots}) AND j.state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT') "
+        "AND j.input_revision = a.sha256 AND NOT EXISTS (SELECT 1 FROM asset_ocr_text AS t "
+        "WHERE t.asset_id = a.asset_id AND t.input_revision = a.sha256)",
+        (contract.OCR_TASK_TYPE, *processors),
     )
+    return int(row["total"])
 
 
 def record_runtime_evidence(
@@ -517,6 +661,7 @@ def run_queue(
     clock: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable OCR jobs; bounded, single-threaded, no sleeping."""
+    reconcile_retired_ocr_jobs(catalog, now_ms=catalog.now_ms())
     specs = (ocr_processor_spec("cpu"), ocr_processor_spec("gpu"))
     scheduler = scheduler_engine.Scheduler(catalog, specs, lease_seconds=catalog.lease_seconds)
     spec = next(item for item in specs if item.processor_id == contract.OCR_GPU_PROCESSOR_ID)

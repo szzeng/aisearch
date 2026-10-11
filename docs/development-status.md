@@ -52,9 +52,9 @@
 
 [任务卡](tasks/P4-PLACE-ALBUM-PERF-A.md)、[执行报告](reports/P4-PLACE-ALBUM-PERF-A.md)。地点列表已变快；用户确认首次只有一张封面立即显示、其余需数秒，同批再次刷新明显变快，支持冷缩略图首次生成等待的判断。新增有界后台预生成：应用启动和成功扫描队列排空后，城市/省份/区县/国家各取前 4 张（最多 16 张），写入并复用现有 content-addressed 缩略图缓存，不阻塞扫描；前台与预热共用最多两路生成限制，同一资产并发会合并。定向 JUnit **15/0/0/0**（含缓存复用、后台边界与 scan queue 触发），Ruff、py_compile、Node 语法和 diff-check 通过。真实冷首屏收益待重启实测；真实 PhotoSearchData 未由本次开发测试访问。目录手动加载；相册按匹配数量降序，同数按最近加入图库时间降序。任务仍 PARTIAL，未提交。
 
-## P4-OCR-LIFECYCLE-A — READY / OCR 旧任务自动收尾与来源进度治本修复
+## P4-OCR-LIFECYCLE-A — SCOPED PASS / 退役任务收尾与来源进度修复
 
-[任务卡](tasks/P4-OCR-LIFECYCLE-A.md)。2026-10-11 已立卡；**仅文档提交，尚未实施或测试**。基于用户只读诊断：旧 `ocr-text@1` 遗留 909 QUEUED + 1 过期 RUNNING，其中 906 张已有新版结果、4 张新版 `DECODE_FAILED`；下一步实现 OCR 退役版本声明、租约安全幂等收尾、统一有效进度和来源卡失败提示。个人相册只需四组定向合成 JUnit、Ruff/JS 语法/diff-check；不触碰真实图库，不要求全仓回归。建议 GPT-6 Luna / High，按现有高风险租约/结果保护原则做必要受影响面复核。
+[任务卡](tasks/P4-OCR-LIFECYCLE-A.md)、[执行报告](reports/P4-OCR-LIFECYCLE-A.md)。集中声明 active/retired processor IDs；通过有界 lease/CAS 安全协调退役任务，接入 Catalog 启动、OCR 入队和运行入口；按当前 SHA 与 distinct asset 统计 OCR 结果、等待、失败、受阻和未尝试，更新来源提示与继续操作条件。任务范围 JUnit **10/0/0/0**，Ruff、Python 编译、Node 语法和 `git diff --check` 通过。用户指定独立 **LUNA H REVIEW PASS，finding=none；不做 DS-H**。既有 `test_p4_02y_l_identity.py` 的 HEAD 第 824 行字面量 `\\n` 导致额外收集 SyntaxError；本任务定向测试中的迟交拒绝/历史数据保护反例已实际执行。未访问真实图库、PhotoSearchData、GPU/模型或浏览器；真实 OCR 状态和来源进度待用户自主实测，不代表全仓或生产运行 PASS。
 
 ## 下一步
 

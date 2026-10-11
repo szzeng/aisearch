@@ -14,9 +14,11 @@ from p3_ocr_fixtures import (
     SKIP_WITHOUT_FONT,
     SKIP_WITHOUT_WEIGHTS,
     Harness,
+    write_blank_image,
     write_text_image,
 )
 
+from photo_search.jobs import queue as jobs
 from photo_search.ocr import contract
 from photo_search.ocr.cli import main
 from photo_search.search.tokens import build_match
@@ -76,6 +78,34 @@ def test_status_is_read_only_and_reports_not_run(
     assert payload["ocr"]["documents"] == 0
     assert payload["ocr"]["regions"] == 0
     assert harness.catalog.read_one("SELECT COUNT(*) AS t FROM asset_ocr_text")["t"] == 0
+
+
+def test_reconcile_cli_dry_run_and_apply_report_only_the_retired_jobs(
+    harness: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_blank_image(harness.library / "retired-cli.jpg", size=(801, 500))
+    harness.scan()
+    asset_id = harness.asset_id("retired-cli.jpg")
+    with harness.catalog.write() as connection:
+        job_id = jobs.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(asset_id),
+            input_revision=harness.sha_of(asset_id),
+            task_type=contract.OCR_TASK_TYPE,
+            processor_id=contract.OCR_LEGACY_PROCESSOR_ID,
+            now_ms=harness.clock(),
+        )
+    code, preview = invoke(
+        capsys, "reconcile", "--dry-run", "--json", "--data-root", str(harness.data_root)
+    )
+    assert code == 0 and preview["would_cancel"] == 1 and preview["cancelled"] == 0
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "QUEUED"
+    code, applied = invoke(
+        capsys, "reconcile", "--apply", "--json", "--data-root", str(harness.data_root)
+    )
+    assert code == 0 and applied["cancelled"] == 1 and applied["remaining"] == 0
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "CANCELLED"
 
 
 @SKIP_WITHOUT_WEIGHTS

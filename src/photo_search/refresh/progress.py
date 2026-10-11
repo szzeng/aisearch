@@ -30,6 +30,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photo_search.ocr import contract as ocr_contract
+
 #: The frozen semantic task type (P2/P4 spelling), the same constant
 #: :mod:`photo_search.refresh.pipeline` routes on.
 SEMANTIC_TASK_TYPE = "image_embedding"
@@ -97,7 +99,7 @@ ENRICHMENT_STAGES: tuple[tuple[str, str | tuple[str, ...], str | tuple[str, ...]
     ("gps", "geo_extract", "geo-exif-gps@1", None),
     ("place", "place_resolve", "geo-nearby-city@1", None),
     ("face", ("image_face", "image_face_detail_auto"), "face-model@1", None),
-    ("ocr", "image_ocr", ("ocr-text@1", "ocr-text-cpu-fp32@2", "ocr-text-cuda-fp32@2"), None),
+    ("ocr", ocr_contract.OCR_TASK_TYPE, ocr_contract.OCR_ACTIVE_PROCESSOR_IDS, None),
 )
 
 #: The stages whose availability depends on installed weights (the place stage depends on a
@@ -377,6 +379,68 @@ def enrichment_counts(
     return {"handled": handled, "pending": pending, "attempted": attempted}
 
 
+def ocr_enrichment_counts(catalog: Any, *, source_id: int | None) -> dict[str, int]:
+    """Classify each readable current asset by its final OCR fact, once per asset.
+
+    A current document (including an empty one) wins, followed by current active work,
+    BLOCKED, FAILED, then unresolved work. Legacy jobs are excluded, while a current
+    document written by a legacy processor remains successful historical data.
+    """
+    scope, scope_parameters = _scope_clause(source_id)
+    processors = tuple(ocr_contract.OCR_ACTIVE_PROCESSOR_IDS)
+    processor_slots = _placeholders(processors)
+    task = str(ocr_contract.OCR_TASK_TYPE)
+    sql = (
+        f"WITH scoped AS ({scope}), classified AS ("
+        "SELECT a.asset_id, "
+        "EXISTS(SELECT 1 FROM asset_ocr_text AS t WHERE t.asset_id = a.asset_id "
+        "AND t.input_revision = a.sha256) AS has_result, "
+        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
+        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
+        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
+        "AND j.state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')) AS has_pending, "
+        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
+        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
+        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
+        "AND j.state = 'BLOCKED') AS has_blocked, "
+        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
+        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
+        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
+        "AND j.state = 'FAILED') AS has_failed "
+        "FROM scoped AS s JOIN assets AS a ON a.asset_id = s.asset_id) "
+        "SELECT COUNT(*) AS total, "
+        "SUM(CASE WHEN has_result THEN 1 ELSE 0 END) AS succeeded, "
+        "SUM(CASE WHEN NOT has_result AND has_pending THEN 1 ELSE 0 END) AS pending, "
+        "SUM(CASE WHEN NOT has_result AND NOT has_pending AND has_blocked THEN 1 ELSE 0 END) AS blocked, "
+        "SUM(CASE WHEN NOT has_result AND NOT has_pending AND NOT has_blocked AND has_failed "
+        "THEN 1 ELSE 0 END) AS failed "
+        "FROM classified"
+    )
+    parameters = (
+        *scope_parameters,
+        task, *processors,
+        task, *processors,
+        task, *processors,
+    )
+    row = catalog.read_one(sql, parameters)
+    total = int(row["total"] or 0)
+    succeeded = int(row["succeeded"] or 0)
+    pending = int(row["pending"] or 0)
+    blocked = int(row["blocked"] or 0)
+    failed = int(row["failed"] or 0)
+    unattempted = max(total - succeeded - pending - blocked - failed, 0)
+    return {
+        "total": total,
+        "succeeded": succeeded,
+        "handled": succeeded + blocked + failed,
+        "pending": pending,
+        "failed": failed,
+        "blocked": blocked,
+        "unattempted": unattempted,
+        "attempted": total - unattempted,
+    }
+
+
 def served_binding(
     catalog: Any, *, manifest_path: str | None, device_policy: str = "cpu_allowed"
 ) -> dict[str, Any] | None:
@@ -486,7 +550,7 @@ def source_progress(
     stages["semantic"] = semantic
     total_assets = scoped_asset_count(catalog, source_id=int(source_id))
     for name, task_type, processor_id, fact_table in ENRICHMENT_STAGES:
-        if not bool(available.get(name, name not in _NEEDS_WEIGHTS)):
+        if name != "ocr" and not bool(available.get(name, name not in _NEEDS_WEIGHTS)):
             stages[name] = {
                 "state": STAGE_UNAVAILABLE,
                 "handled": 0,
@@ -495,17 +559,29 @@ def source_progress(
                 "total": total_assets,
             }
             continue
-        counts = enrichment_counts(
-            catalog,
-            source_id=int(source_id),
-            task_type=task_type,
-            processor_id=processor_id,
-            fact_table=fact_table,
-        )
+        if name == "ocr":
+            counts = ocr_enrichment_counts(catalog, source_id=int(source_id))
+            runtime_available = bool(available.get("ocr", True))
+            stage_state = _ocr_enrichment_state(counts)
+            if not runtime_available and (
+                int(counts["unattempted"]) > 0 or int(counts["total"]) == 0
+            ):
+                stage_state = STAGE_UNAVAILABLE
+        else:
+            counts = enrichment_counts(
+                catalog,
+                source_id=int(source_id),
+                task_type=task_type,
+                processor_id=processor_id,
+                fact_table=fact_table,
+            )
+            runtime_available = True
+            stage_state = _enrichment_state(counts, total_assets)
         stages[name] = {
-            "state": _enrichment_state(counts, total_assets),
+            "state": stage_state,
             **counts,
             "total": total_assets,
+            **({"runtime_available": runtime_available} if name == "ocr" else {}),
         }
     return {
         "source_id": int(source_id),
@@ -540,6 +616,19 @@ def _enrichment_state(counts: Mapping[str, int], total_assets: int) -> str:
     return STAGE_PENDING
 
 
+def _ocr_enrichment_state(counts: Mapping[str, int]) -> str:
+    """OCR failures are terminal and visible; only real active work is IN_PROGRESS."""
+    if int(counts["total"]) <= 0:
+        return STAGE_NOT_STARTED
+    if int(counts["pending"]) > 0:
+        return STAGE_IN_PROGRESS
+    if int(counts["unattempted"]) > 0:
+        return STAGE_PENDING
+    if int(counts["blocked"]) > 0:
+        return "BLOCKED"
+    return STAGE_COMPLETE
+
+
 __all__ = [
     "BUILT_MARKER_PREFIX",
     "ENRICHMENT_STAGES",
@@ -558,6 +647,7 @@ __all__ = [
     "built_marker_key",
     "enrichment_availability",
     "enrichment_counts",
+    "ocr_enrichment_counts",
     "mark_source_built",
     "scan_progress",
     "scoped_asset_count",

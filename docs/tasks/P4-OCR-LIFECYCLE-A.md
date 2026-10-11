@@ -1,8 +1,8 @@
 # P4-OCR-LIFECYCLE-A — OCR 退役任务自动收尾与来源进度治本修复
 
-日期：2026-10-11。状态：**READY / 仅立卡，尚未实施或测试**。
-立卡仓库基线：`szzeng/aisearch` master `f05464c9`；实施前先核对最新 HEAD/工作区，保护并行改动。
-建议：**GPT-6 Luna / High**，单会话实现、修复及最小定向验收；个人相册，不做全量回归。模型由用户手动切换。
+日期：2026-10-11。状态：**SCOPED PASS / 定向验收与 LUNA H 复核通过**。
+立卡基线：`szzeng/aisearch` master `f05464c9`。实施时核对了实际 HEAD/工作区并保留并行改动；完整结果见[执行报告](../reports/P4-OCR-LIFECYCLE-A.md)。
+实施及定向验收在单会话完成；按用户指定直接由 **GPT-6 Luna / High（LUNA H）**独立复核，不做 DS-H。模型由用户手动切换。
 
 ## 1. 目标与实测证据
 
@@ -78,5 +78,7 @@
 - 简短报告 `docs/reports/P4-OCR-LIFECYCLE-A.md`：变更文件、自动收尾数量（合成/真实明确区分）、四组 JUnit、历史产物保护、未验证事项；同步 `docs/development-status.md`。
 - 只在受影响定向测试真实通过后写 **SCOPED PASS**；若还没有实际运行则保持 READY/未验证。按 AGENTS/V3.1 对高风险租约/持久化语义执行必要的独立**受影响面**复核；用户要求的简单测试不等于跳过必需安全性反例，且无需全仓回归。
 - 完成后提供用户自主验收步骤：OCR `status --json` 和来源 3/4 的实际进度；禁止实施会话擅自操作用户真实图库。
+
+**交付记录（2026-10-11）：** 实施已完成，任务范围 JUnit `10/0/0/0`，Ruff、Python 编译、Node 语法及 `git diff --check` 通过；独立 LUNA H 复核 **PASS，finding=none**。定向报告及未验证边界见[执行报告](../reports/P4-OCR-LIFECYCLE-A.md)。真实图库、GPU/模型与浏览器运行仍待用户自主实测。
 
 **核心验收：** 当前 910 条旧队列安全自动收尾，以后 OCR 版本升级时只维护版本声明和实际新实现，历史任务、进度与结果都能自然收敛。 

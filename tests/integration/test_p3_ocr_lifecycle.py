@@ -18,6 +18,7 @@ from p3_ocr_fixtures import (
     SKIP_WITHOUT_FONT,
     SKIP_WITHOUT_WEIGHTS,
     Harness,
+    write_blank_image,
     write_text_image,
 )
 
@@ -37,6 +38,7 @@ from photo_search.ocr.service import (
     build_scheduler,
     catch_up_projection,
     enqueue_targets,
+    reconcile_retired_ocr_jobs,
     record_runtime_evidence,
     run_queue,
 )
@@ -480,3 +482,306 @@ def test_the_executor_result_never_carries_a_path_or_text(harness: Harness) -> N
     assert "编号" not in body and "999" not in body
     assert "polygon" not in body and "confidence" not in body
     assert raw["artifacts"] == []
+
+
+def _seed_retired_job(harness: Harness, asset_id: int, *, processor_id: str | None = None) -> int:
+    with harness.catalog.write() as connection:
+        return jobs_module.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(asset_id),
+            input_revision=harness.sha_of(asset_id),
+            task_type=contract.OCR_TASK_TYPE,
+            processor_id=processor_id or contract.OCR_LEGACY_PROCESSOR_ID,
+            now_ms=harness.clock(),
+        )
+
+
+def _seed_current_legacy_result(harness: Harness, asset_id: int, job_id: int) -> None:
+    from photo_search.search.tokens import TOKENIZER_VERSION
+
+    revision = harness.sha_of(asset_id)
+    location = harness.catalog.read_one(
+        "SELECT location_id FROM file_locations WHERE asset_id=? AND availability='PRESENT'",
+        (asset_id,),
+    )
+    artifact_id = f"ocr-document:{contract.OCR_LEGACY_PROCESSOR_ID}:{revision}"
+    with harness.catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO artifacts (artifact_id, processor_id, input_revision, artifact_type, "
+            "artifact_revision, media_type, checksum_sha256, byte_size, storage_uri, job_id, "
+            "lifecycle_state, created_at, updated_at) VALUES (?, ?, ?, 'structured', ?, "
+            "'application/json', ?, 0, 'ocr/legacy.json', ?, 'PUBLISHED', 1, 1)",
+            (
+                artifact_id, contract.OCR_LEGACY_PROCESSOR_ID, revision,
+                contract.OCR_ARTIFACT_REVISION, "b" * 64, job_id,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO asset_ocr_text (asset_id, ocr_document_id, input_revision, location_id, "
+            "text_revision, processor_id, spec_revision, model_fingerprint, artifact_id, "
+            "region_count, min_confidence, mean_confidence, max_confidence, search_text, "
+            "tokenizer_version, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, "
+            "1, 0.9, 0.9, 0.9, '', ?, 1, 1)",
+            (
+                asset_id, "ocr:empty-current", revision, location["location_id"],
+                contract.OCR_LEGACY_PROCESSOR_ID, "legacy-readable", "a" * 64,
+                artifact_id, TOKENIZER_VERSION,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO asset_ocr_regions (asset_id, region_index, text_revision, box_json, confidence) "
+            "VALUES (?, 0, 1, '[0,0,1,1]', 0.9)",
+            (asset_id,),
+        )
+
+
+def _make_assets(harness: Harness, count_assets: int) -> list[int]:
+    for index in range(count_assets):
+        write_blank_image(harness.library / f"retired-{index}.jpg", size=(800 + index, 500))
+    harness.scan()
+    return [harness.asset_id(f"retired-{index}.jpg") for index in range(count_assets)]
+
+
+def test_retired_reconciliation_cas_preserves_live_anomalous_and_terminal_jobs(
+    harness: Harness,
+) -> None:
+    assets = _make_assets(harness, 7)
+    queued = _seed_retired_job(harness, assets[0])
+    blocked = _seed_retired_job(harness, assets[1])
+    live = _seed_retired_job(harness, assets[2])
+    expired = _seed_retired_job(harness, assets[3])
+    malformed = _seed_retired_job(harness, assets[4])
+    terminal = _seed_retired_job(harness, assets[5])
+    unknown = _seed_retired_job(harness, assets[6], processor_id="ocr-text-unregistered@9")
+    now = harness.clock()
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='BLOCKED' WHERE job_id=?", (blocked,))
+        jobs_module.claim_job(
+            connection, job_id=live, worker_id="worker-live", now_ms=now,
+            lease_seconds=harness.catalog.lease_seconds,
+        )
+        expired_job = jobs_module.claim_job(
+            connection, job_id=expired, worker_id="worker-expired", now_ms=now,
+            lease_seconds=harness.catalog.lease_seconds,
+        )
+        malformed_job = jobs_module.claim_job(
+            connection, job_id=malformed, worker_id="worker-malformed", now_ms=now,
+            lease_seconds=harness.catalog.lease_seconds,
+        )
+        connection.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE job_id=?",
+            (now - 1, expired),
+        )
+        connection.execute(
+            "UPDATE jobs SET lease_expires_at=NULL WHERE job_id=?", (malformed,)
+        )
+        connection.execute(
+            "UPDATE jobs SET state='SUCCEEDED', last_error_code='KEEP_TERMINAL' WHERE job_id=?",
+            (terminal,),
+        )
+    _seed_current_legacy_result(harness, assets[5], terminal)
+    with harness.catalog.write() as connection:
+        connection.execute(
+            "DELETE FROM search_projection_queue WHERE asset_id=?", (assets[5],)
+        )
+    protected_rows = {
+        "document": dict(harness.catalog.read_one(
+            "SELECT * FROM asset_ocr_text WHERE asset_id=?", (assets[5],)
+        )),
+        "regions": [dict(row) for row in harness.catalog.read_all(
+            "SELECT * FROM asset_ocr_regions WHERE asset_id=?", (assets[5],)
+        )],
+        "artifact": dict(harness.catalog.read_one(
+            "SELECT * FROM artifacts WHERE job_id=?", (terminal,)
+        )),
+        "projection": harness.catalog.read_one(
+            "SELECT * FROM search_projection_queue WHERE asset_id=?", (assets[5],)
+        ),
+    }
+
+    result = reconcile_retired_ocr_jobs(harness.catalog, now_ms=now)
+    assert result == {
+        "examined": 5,
+        "would_cancel": 3,
+        "cancelled": 3,
+        "live_leases": 1,
+        "lease_anomalies": 1,
+        "cas_conflicts": 0,
+        "remaining": 2,
+        "has_more": True,
+    }
+    for job_id in (queued, blocked, expired):
+        row = harness.catalog.read_one("SELECT * FROM jobs WHERE job_id=?", (job_id,))
+        assert row["state"] == "CANCELLED"
+        assert row["last_error_code"] == "OCR_PROCESSOR_RETIRED"
+        assert row["lease_token"] is None and row["lease_expires_at"] is None and row["worker_id"] is None
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (live,))["state"] == "RUNNING"
+    malformed_row = harness.catalog.read_one("SELECT * FROM jobs WHERE job_id=?", (malformed,))
+    assert malformed_row["state"] == "RUNNING" and malformed_row["lease_token"] == malformed_job.lease_token
+    assert harness.catalog.read_one("SELECT last_error_code FROM jobs WHERE job_id=?", (terminal,))["last_error_code"] == "KEEP_TERMINAL"
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (unknown,))["state"] == "QUEUED"
+
+    with pytest.raises(CatalogError) as late:
+        with harness.catalog.write() as connection:
+            jobs_module.validate_submission(
+                connection,
+                job_id=expired,
+                lease_token=expired_job.lease_token or "",
+                now_ms=now,
+                input_revision=harness.sha_of(assets[3]),
+                processor_id=contract.OCR_LEGACY_PROCESSOR_ID,
+            )
+    assert late.value.code in (STALE_LEASE, "LEASE_CONFLICT")
+    protected_enqueue = enqueue_targets(
+        harness.catalog,
+        [{"asset_id": assets[4], "input_revision": harness.sha_of(assets[4])}],
+        now_ms=now,
+        requested_device="cpu",
+    )
+    assert protected_enqueue["live"] == 1 and protected_enqueue["queued"] == 0
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (malformed,))["state"] == "RUNNING"
+    repeated = reconcile_retired_ocr_jobs(harness.catalog, now_ms=now)
+    assert repeated["cancelled"] == repeated["would_cancel"] == 0
+    assert repeated["remaining"] == 2
+    from photo_search.scheduler.projection import ocr_summary
+
+    status = ocr_summary(harness.catalog.db_path)
+    assert status["pending_jobs"] == 0
+    assert status["retired_pending_jobs"] == 2
+    assert status["state"] == "SYNCED"
+    from photo_search.ocr.service import pending_job_count
+
+    assert pending_job_count(harness.catalog) == 0
+    assert dict(harness.catalog.read_one(
+        "SELECT * FROM asset_ocr_text WHERE asset_id=?", (assets[5],)
+    )) == protected_rows["document"]
+    assert [dict(row) for row in harness.catalog.read_all(
+        "SELECT * FROM asset_ocr_regions WHERE asset_id=?", (assets[5],)
+    )] == protected_rows["regions"]
+    assert dict(harness.catalog.read_one(
+        "SELECT * FROM artifacts WHERE job_id=?", (terminal,)
+    )) == protected_rows["artifact"]
+    assert harness.catalog.read_one(
+        "SELECT * FROM search_projection_queue WHERE asset_id=?", (assets[5],)
+    ) == protected_rows["projection"]
+
+
+def test_retired_reconciliation_is_bounded_and_ocr_enqueue_triggers_it(
+    harness: Harness,
+) -> None:
+    assets = _make_assets(harness, 4)
+    for asset_id in assets[:3]:
+        _seed_retired_job(harness, asset_id)
+    bounded = reconcile_retired_ocr_jobs(harness.catalog, now_ms=harness.clock(), batch_size=2)
+    assert bounded["cancelled"] == 2 and bounded["remaining"] == 1 and bounded["has_more"] is True
+    final = reconcile_retired_ocr_jobs(harness.catalog, now_ms=harness.clock(), batch_size=2)
+    assert final["cancelled"] == 1 and final["remaining"] == 0
+    assert reconcile_retired_ocr_jobs(harness.catalog, now_ms=harness.clock())["cancelled"] == 0
+
+    auto_job = _seed_retired_job(harness, assets[3])
+    queued = enqueue_targets(
+        harness.catalog,
+        [{"asset_id": assets[3], "input_revision": harness.sha_of(assets[3])}],
+        now_ms=harness.clock(),
+        requested_device="cpu",
+    )
+    assert queued["queued"] == 1
+    assert harness.catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (auto_job,))["state"] == "CANCELLED"
+    assert harness.catalog.read_one(
+        "SELECT state FROM jobs WHERE subject_id=? AND processor_id=?",
+        (str(assets[3]), contract.OCR_CPU_PROCESSOR_ID),
+    )["state"] == "QUEUED"
+
+
+def test_catalog_startup_automatically_reconciles_a_bounded_retired_batch(
+    harness: Harness,
+) -> None:
+    from photo_search.ingestion.service import CatalogService
+
+    assets = _make_assets(harness, 1)
+    job_id = _seed_retired_job(harness, assets[0])
+    with CatalogService.open(
+        data_root=harness.data_root,
+        clock=harness.clock,
+        lease_seconds=harness.catalog.lease_seconds,
+        wall_clock_ms=harness.clock,
+    ) as reopened:
+        assert reopened.catalog.read_one(
+            "SELECT state FROM jobs WHERE job_id=?", (job_id,)
+        )["state"] == "CANCELLED"
+
+
+def test_retirement_scope_follows_the_declared_processor_version_set(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assets = _make_assets(harness, 2)
+    future_retired = _seed_retired_job(harness, assets[0], processor_id="ocr-text@2")
+    unknown = _seed_retired_job(harness, assets[1], processor_id="ocr-text-unregistered@9")
+    monkeypatch.setattr(contract, "OCR_ACTIVE_PROCESSOR_IDS", ("ocr-text@3",))
+    monkeypatch.setattr(contract, "OCR_RETIRED_PROCESSOR_IDS", ("ocr-text@2",))
+    result = reconcile_retired_ocr_jobs(harness.catalog, now_ms=harness.clock())
+    assert result["cancelled"] == 1
+    assert harness.catalog.read_one(
+        "SELECT state FROM jobs WHERE job_id=?", (future_retired,)
+    )["state"] == "CANCELLED"
+    assert harness.catalog.read_one(
+        "SELECT state FROM jobs WHERE job_id=?", (unknown,)
+    )["state"] == "QUEUED"
+
+
+def test_ocr_source_progress_uses_current_results_and_active_asset_jobs_once(
+    harness: Harness,
+) -> None:
+    from photo_search.refresh.progress import source_progress
+    assets = _make_assets(harness, 5)
+    # A current empty document is a successful result, independent of its old processor ID.
+    successful_legacy = _seed_retired_job(harness, assets[0])
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='SUCCEEDED' WHERE job_id=?", (successful_legacy,))
+    _seed_current_legacy_result(harness, assets[0], successful_legacy)
+    failed_gpu = _seed_retired_job(harness, assets[1], processor_id=contract.OCR_GPU_PROCESSOR_ID)
+    queued_cpu = _seed_retired_job(harness, assets[1], processor_id=contract.OCR_CPU_PROCESSOR_ID)
+    blocked = _seed_retired_job(harness, assets[2], processor_id=contract.OCR_GPU_PROCESSOR_ID)
+    failed = _seed_retired_job(harness, assets[3], processor_id=contract.OCR_CPU_PROCESSOR_ID)
+    legacy = _seed_retired_job(harness, assets[4])
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (failed_gpu,))
+        connection.execute("UPDATE jobs SET state='BLOCKED' WHERE job_id=?", (blocked,))
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (failed,))
+
+    stage = source_progress(
+        harness.catalog, source_id=1, binding=None, available={"ocr": True}
+    )["stages"]["ocr"]
+    assert stage == {
+        "state": "IN_PROGRESS",
+        "total": 5,
+        "succeeded": 1,
+        "handled": 3,
+        "pending": 1,
+        "failed": 1,
+        "blocked": 1,
+        "unattempted": 1,
+        "attempted": 4,
+        "runtime_available": True,
+    }
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (queued_cpu,))
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (blocked,))
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (legacy,))
+    stage = source_progress(
+        harness.catalog, source_id=1, binding=None, available={"ocr": True}
+    )["stages"]["ocr"]
+    assert stage["state"] == "PENDING"
+    assert stage["pending"] == 0 and stage["failed"] == 3 and stage["unattempted"] == 1
+    assert "IN_PROGRESS" != stage["state"]
+    final_failure = _seed_retired_job(
+        harness, assets[4], processor_id=contract.OCR_CPU_PROCESSOR_ID
+    )
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='FAILED' WHERE job_id=?", (final_failure,))
+    stage = source_progress(
+        harness.catalog, source_id=1, binding=None, available={"ocr": True}
+    )["stages"]["ocr"]
+    assert stage["state"] == "COMPLETE"
+    assert stage["pending"] == 0 and stage["failed"] == 4 and stage["unattempted"] == 0

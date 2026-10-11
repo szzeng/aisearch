@@ -8,6 +8,7 @@ database that predates the P2-02 migration simply reports "unavailable".
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -238,21 +239,66 @@ def ocr_summary(
                     ("OCR_TEXT_CHANGED",),
                 ).fetchone()["total"]
             )
+        active_ids = tuple(ocr_contract.OCR_ACTIVE_PROCESSOR_IDS)
+        active_slots = ", ".join("?" for _ in active_ids)
+        active_backlog = connection.execute(
+            "SELECT j.subject_id, j.state FROM jobs AS j JOIN assets AS a "
+            "ON a.asset_id = CAST(j.subject_id AS INTEGER) WHERE j.subject_type = 'asset' "
+            "AND j.task_type = ? AND j.processor_id IN (" + active_slots + ") "
+            "AND j.input_revision = a.sha256 AND j.state IN "
+            "('QUEUED', 'RUNNING', 'RETRY_WAIT', 'BLOCKED', 'FAILED') "
+            "AND NOT EXISTS (SELECT 1 FROM asset_ocr_text AS t WHERE t.asset_id = a.asset_id "
+            "AND t.input_revision = a.sha256)",
+            (str(ocr_contract.OCR_TASK_TYPE), *active_ids),
+        ).fetchall()
+        by_asset: dict[str, set[str]] = {}
+        for row in active_backlog:
+            by_asset.setdefault(str(row["subject_id"]), set()).add(str(row["state"]))
         pending = sum(
-            count for state, count in jobs.items() if state in ("QUEUED", "RUNNING", "RETRY_WAIT")
+            1 for states in by_asset.values()
+            if states.intersection({"QUEUED", "RUNNING", "RETRY_WAIT"})
         )
-        blocked = int(jobs.get("BLOCKED", 0))
+        blocked = sum(
+            1 for states in by_asset.values()
+            if not states.intersection({"QUEUED", "RUNNING", "RETRY_WAIT"})
+            and "BLOCKED" in states
+        )
+        failed = sum(
+            1 for states in by_asset.values()
+            if not states.intersection({"QUEUED", "RUNNING", "RETRY_WAIT", "BLOCKED"})
+            and "FAILED" in states
+        )
         current_profiles = {
             str(row["processor_id"]): int(row["count"])
             for row in connection.execute(
                 "SELECT processor_id, COUNT(*) AS count FROM asset_ocr_text GROUP BY processor_id"
             )
         }
-        legacy_pending = int(
+        retired_ids = tuple(ocr_contract.OCR_RETIRED_PROCESSOR_IDS)
+        retired_slots = ", ".join("?" for _ in retired_ids)
+        retired_pending = int(
             connection.execute(
-                "SELECT COUNT(*) AS count FROM jobs WHERE task_type = ? AND processor_id = ? "
-                "AND state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')",
-                (str(ocr_contract.OCR_TASK_TYPE), str(ocr_contract.OCR_LEGACY_PROCESSOR_ID)),
+                "SELECT COUNT(*) AS count FROM jobs WHERE task_type = ? "
+                "AND processor_id IN (" + retired_slots + ") "
+                "AND state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT', 'BLOCKED')",
+                (str(ocr_contract.OCR_TASK_TYPE), *retired_ids),
+            ).fetchone()["count"]
+        )
+        retired_live_leases = int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM jobs WHERE task_type = ? "
+                "AND processor_id IN (" + retired_slots + ") AND state = 'RUNNING' "
+                "AND lease_expires_at > ? AND lease_token IS NOT NULL AND worker_id IS NOT NULL",
+                (str(ocr_contract.OCR_TASK_TYPE), *retired_ids, time.time_ns() // 1_000_000),
+            ).fetchone()["count"]
+        )
+        retired_lease_anomalies = int(
+            connection.execute(
+                "SELECT COUNT(*) AS count FROM jobs WHERE task_type = ? "
+                "AND processor_id IN (" + retired_slots + ") AND state = 'RUNNING' "
+                "AND (lease_expires_at IS NULL OR lease_token IS NULL OR lease_token = '' "
+                "OR worker_id IS NULL OR worker_id = '')",
+                (str(ocr_contract.OCR_TASK_TYPE), *retired_ids),
             ).fetchone()["count"]
         )
         fallback_reasons = {
@@ -278,10 +324,12 @@ def ocr_summary(
             )
         }
         stale = stored - documents
-        if pending or stale or projection_queued:
+        if pending or projection_queued:
             state = "LAGGING"
         elif blocked:
             state = "BLOCKED"
+        elif failed:
+            state = "FAILED"
         elif documents:
             state = "SYNCED"
         else:
@@ -299,7 +347,10 @@ def ocr_summary(
                 "legacy": ocr_contract.CONFIG_HASH,
             },
             "current_results_by_processor": current_profiles,
-            "legacy_pending_jobs": legacy_pending,
+            "legacy_pending_jobs": retired_pending,
+            "retired_pending_jobs": retired_pending,
+            "retired_live_leases": retired_live_leases,
+            "retired_lease_anomalies": retired_lease_anomalies,
             "cpu_fallbacks": {
                 "current_results": sum(fallback_reasons.values()),
                 "reasons": fallback_reasons,
@@ -316,6 +367,7 @@ def ocr_summary(
             "jobs": jobs,
             "pending_jobs": int(pending),
             "blocked_jobs": blocked,
+            "failed_jobs": failed,
             "projection_queued": projection_queued,
             "state": state,
         }

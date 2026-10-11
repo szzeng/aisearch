@@ -851,7 +851,8 @@
       ENRICHMENT_LABELS.forEach(function (pair) {
         var stage = progress && progress.stages ? progress.stages[pair[0]] : null;
         if (stage) {
-          rows.push([pair[1], STAGE_STATE_TEXT[stage.state] || String(stage.state)]);
+          rows.push([pair[1], pair[0] === "ocr" ? ocrProgressText(stage) :
+            (STAGE_STATE_TEXT[stage.state] || String(stage.state))]);
         }
       });
       rows.push(
@@ -965,6 +966,7 @@
     PENDING: "待处理",
     IN_PROGRESS: "处理中",
     COMPLETE: "完成",
+    BLOCKED: "受阻",
     UNAVAILABLE: "不可用",
   };
   var SEMANTIC_STATE_TEXT = {
@@ -975,6 +977,31 @@
     SEARCHABLE: "✓ 可以语义搜索",
     UNAVAILABLE: "语义通道不可用",
   };
+
+  function ocrProgressText(stage) {
+    var notes = [];
+    if (Number(stage.succeeded) > 0) {
+      notes.push("已识别 " + String(stage.succeeded) + " 张");
+    }
+    if (Number(stage.failed) > 0) {
+      notes.push(String(stage.failed) + " 张失败");
+    }
+    if (Number(stage.blocked) > 0) {
+      notes.push(String(stage.blocked) + " 张受阻");
+    }
+    if (Number(stage.pending) > 0) {
+      notes.push(String(stage.pending) + " 张处理中");
+    }
+    if (Number(stage.unattempted) > 0) {
+      notes.push(String(stage.unattempted) + " 张待处理");
+    }
+    var label = stage.state === "IN_PROGRESS" ? "处理中" :
+      (stage.state === "PENDING" ? "待处理" :
+        (stage.state === "BLOCKED" ? "受阻" :
+          (stage.state === "COMPLETE" ? "已处理" :
+            (STAGE_STATE_TEXT[stage.state] || String(stage.state)))));
+    return notes.length ? label + "（" + notes.join("，") + "）" : label;
+  }
 
   function semanticProgressText(progress) {
     var semantic = progress && progress.stages ? progress.stages.semantic : null;
@@ -1036,6 +1063,10 @@
     for (var index = 0; index < names.length; index += 1) {
       var stage = progress.stages[names[index]];
       if (stage && stage.state === "IN_PROGRESS") {
+        return "continue";
+      }
+      if (names[index] === "ocr" && stage && stage.state === "PENDING" &&
+          stage.runtime_available !== false && Number(stage.unattempted) > 0) {
         return "continue";
       }
     }

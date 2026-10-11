@@ -26,9 +26,13 @@ CONTRACT_VERSION = "p2-contracts.v1"
 OCR_LEGACY_PROCESSOR_ID = "ocr-text@1"
 OCR_CPU_PROCESSOR_ID = "ocr-text-cpu-fp32@2"
 OCR_GPU_PROCESSOR_ID = "ocr-text-cuda-fp32@2"
+# Keep the executable and retired identities in one declaration. A future processor
+# upgrade must explicitly move an identity from active to retired here.
+OCR_ACTIVE_PROCESSOR_IDS = (OCR_CPU_PROCESSOR_ID, OCR_GPU_PROCESSOR_ID)
+OCR_RETIRED_PROCESSOR_IDS = (OCR_LEGACY_PROCESSOR_ID,)
 # The auto path starts on CUDA; legacy remains a read-only historical identity.
 OCR_PROCESSOR_ID = OCR_GPU_PROCESSOR_ID
-OCR_PROCESSOR_IDS = (OCR_CPU_PROCESSOR_ID, OCR_GPU_PROCESSOR_ID)
+OCR_PROCESSOR_IDS = OCR_ACTIVE_PROCESSOR_IDS
 OCR_TASK_TYPE = "image_ocr"
 OCR_CPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cpu-fp32-v2"
 OCR_GPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cuda-fp32-v2"
