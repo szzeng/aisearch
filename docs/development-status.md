@@ -1,8 +1,10 @@
 # Development status
 
-## P4-LIBRARY-OPS-A / SYNC-B / RETENTION-C — READY / 图库维护统一优化任务卡（V2）
+## P4-LIBRARY-RETENTION-C — SCOPED PASS / USER-DIRECTED LUNA-H REVIEW ROUTE EXCEPTION
 
-[方案总览](plans/P4-LIBRARY-UNIFIED-V2.md)；[A：全部/单独建库与同步入口](tasks/P4-LIBRARY-OPS-A.md)、[B：文件增删移动与同步结果](tasks/P4-LIBRARY-SYNC-B.md)、[C1：失效照片保留资格与只读清理预览](tasks/P4-LIBRARY-RETENTION-C.md)。2026-10-11 仅新增文档任务卡，未实施、未运行测试、未访问真实图库或 `PhotoSearchData`。执行顺序 A → B → C1；A/B 可顺序实现，C1 单独执行并核对人工记录/离线/共享保护；C2 业务与向量数据永久删除未获授权、需另立卡。只做直接相关的最小合成回归，不改变现有 OCR 下一步安排。
+[任务卡](tasks/P4-LIBRARY-RETENTION-C.md)、[执行报告](reports/P4-LIBRARY-RETENTION-C.md)。完成登录保护的只读失效资产统计与最多 50 条 keyset 分页、人工/任务/索引引用保护分类、未知引用 fail-closed、空间信息说明及按需展开 UI；首次失效时间仍未知，不推断 30 天资格。定向 JUnit **8/0/0/0**，Ruff、Node 语法、py_compile、diff-check 通过。独立 LUNA / High **PASS / finding=none**；按用户指定记录为**路由例外，不是 DS-H**。未访问真实图库/`PhotoSearchData`，未做真实浏览器手测、全量回归或 GPU 验证。C2 任何业务数据/向量逻辑或物理删除仍需单独授权。
+
+前置 [P4-LIBRARY-SYNC-B](tasks/P4-LIBRARY-SYNC-B.md) 与 [P4-LIBRARY-OPS-A 报告](reports/P4-LIBRARY-OPS-A.md) 已按各自范围完成；其既有工作树改动保留。
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
@@ -62,4 +64,4 @@
 
 ## 下一步
 
-先收口 P4-PERSON-UX-UNIFY-A：按报告补做隔离合成图片浏览器点击，并完成多源合并入口迁移；旧高级入口保持可用。LUNA / High 复审已完成。之后再按此前安排验证 P4-PLACE-ALBUM-PERF-A 的真实冷首屏，并回到用户已确认的 [P4-OCR-LIFECYCLE-A](tasks/P4-OCR-LIFECYCLE-A.md)。全仓、真实图库和 30 万性能未验证。
+P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。此前 [P4-PERSON-UX-UNIFY-A](tasks/P4-PERSON-UX-UNIFY-A.md) 的剩余项及 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。

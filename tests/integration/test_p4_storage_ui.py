@@ -96,8 +96,10 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert "存储与维护" in shell
     assert "storage-deep-check" in shell
     assert "storage-backup-create" in shell
+    assert "失效照片与数据占用" in shell
+    assert "此处不会删除原图、索引、机器识别或人工记录" in shell
     assert "storage-maintenance-confirm" in shell
-    assert '/web/app.js?v=p4-storage-ui-a-2' in shell
+    assert '/web/app.js?v=p4-library-retention-c-1' in shell
     assert shell.count('type="checkbox" name="storage-maintenance-operation"') == 6
     assert 'id="storage-maintenance-confirm" disabled' in shell
     assert 'body: { operations: operations, confirmed: true }' in script
@@ -107,6 +109,7 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert 'item.freed_bytes !== undefined' in script
     assert 'item.actual_bytes_freed !== undefined' in script
     assert 'item.actual_reclaimed_bytes !== undefined' in script
+    assert 'request("/storage/library-retention"' in script
     assert '阶段实际释放 ' in script
     assert 'request("/storage/inspect", { method: "POST"' in script
     assert 'request("/storage/backup", { method: "POST"' in script

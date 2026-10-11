@@ -553,6 +553,18 @@ async def storage_summary(request: Request) -> dict[str, Any]:
     return quick_storage_summary(service_of(request).data_root)
 
 
+@router.get("/storage/library-retention", summary="Read-only unavailable-photo retention preview")
+async def storage_library_retention(
+    request: Request,
+    after_asset_id: int = Query(default=0, ge=0, le=9223372036854775807),
+    limit: int = Query(default=50, ge=1, le=50),
+) -> dict[str, Any]:
+    """Summarize missing locations without inferring deletion or changing the catalog."""
+    from photo_search.library_retention import library_retention_preview
+
+    return library_retention_preview(service_of(request).catalog, after_asset_id=after_asset_id, limit=limit)
+
+
 @router.post("/storage/inspect", summary="Run a bounded storage scan")
 async def storage_deep_inspect(request: Request) -> dict[str, Any]:
     from photo_search.storage import storage_inspect

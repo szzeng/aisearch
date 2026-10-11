@@ -10,7 +10,7 @@
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-photo-view-close-return-a-1" defer></script>
-    <script src="/web/app.js?v=p4-storage-ui-a-2" defer></script>
+    <script src="/web/app.js?v=p4-library-retention-c-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -49,6 +49,13 @@
               <p><button type="button" id="storage-summary-refresh">快速查看空间</button> <button type="button" id="storage-deep-check">检查空间（有界深扫）</button></p>
               <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
             </section>
+            <details id="library-retention-details">
+              <summary>失效照片与数据占用</summary>
+              <p class="hint">只读预览，不加载原图或启动模型。此处不会删除原图、索引、机器识别或人工记录。30 天是未来可验证观察期，不是当前自动删除阈值。</p>
+              <p><button type="button" id="library-retention-refresh">读取失效照片统计</button></p>
+              <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
+              <button type="button" id="library-retention-more" hidden>继续读取</button>
+            </details>
             <section aria-labelledby="storage-maintenance-title">
               <h3 id="storage-maintenance-title">可选维护</h3>
               <p class="hint">先检查预览，再勾选一项或多项并确认。所选项目会在下次启动时按顺序串行维护，只需重启一次。建议先手动备份人工整理数据。没有备份不会阻止维护，也不会自动创建备份。</p>

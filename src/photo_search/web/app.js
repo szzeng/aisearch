@@ -100,6 +100,7 @@
     objectUrls: [],
     observer: null,
     storageBackupLoaded: false,
+      libraryRetention: { cursor: 0, overview: null, items: [] },
   };
 
   var els = {};
@@ -612,6 +613,47 @@
 
   function saveStorageBackupDirectory() {
     return request("/storage/backup", { method: "PUT", body: { directory: els.storageBackupDirectory.value } }).then(function (result) {
+  function renderLibraryRetention() {
+    var model = state.libraryRetention;
+    var lines = [];
+    if (model.overview) {
+      var counts = model.overview.counts || {};
+      lines.push("按数据库计数：MISSING 位置 " + (counts.missing_locations || 0) + "；无 PRESENT 位置的唯一资产 " + (counts.assets_without_present || 0) + "；零位置资产 " + (counts.zero_location_assets || 0) + "；有 PRESENT 副本的资产 " + (counts.assets_with_present_copy || 0) + "。这些数字有交集，不可相加。 ");
+      lines.push(model.overview.retention_time_evidence || "首次失效时间未知，不具备清理资格。");
+      var storage = model.overview.storage || {};
+      lines.push("SQLite：catalog 文件 " + (storage.sqlite_catalog_file_bytes == null ? "无法准确估计" : formatBytes(storage.sqlite_catalog_file_bytes)) + "；逻辑页 " + (storage.sqlite_logical_page_bytes == null ? "无法准确估计" : formatBytes(storage.sqlite_logical_page_bytes)) + "；可回收量无法准确估计。LanceDB 逻辑行数与物理可回收量无法准确估计。");
+    }
+    model.items.forEach(function (item) {
+      lines.push("asset " + item.asset_id + "：" + item.classification + "；" + item.availability_summary + "；" + item.reason + "；人工/受保护引用：" + (item.has_human_or_protected_references ? "有" : "未发现已知引用") + "；" + item.retention_eligibility);
+    });
+    if (!model.items.length && model.overview) lines.push("当前页没有失效位置或零位置资产。");
+    text(els.libraryRetentionStatus, lines.join("\n"));
+    els.libraryRetentionMore.hidden = !model.overview || model.overview.next_cursor == null;
+    els.libraryRetentionMore.disabled = state.libraryRetentionLoading === true;
+  }
+
+  function loadLibraryRetention(reset) {
+    if (state.libraryRetentionLoading) return Promise.resolve();
+    if (reset) state.libraryRetention = { cursor: 0, overview: null, items: [] };
+    var cursor = state.libraryRetention.cursor || 0;
+    state.libraryRetentionLoading = true;
+    els.libraryRetentionMore.disabled = true;
+    setStatus(els.libraryRetentionStatus, "正在读取只读统计…");
+    var suffix = cursor ? "?after_asset_id=" + encodeURIComponent(cursor) : "";
+    return request("/storage/library-retention" + suffix).then(function (result) {
+      var page = result.body || {};
+      if (!state.libraryRetention.overview) state.libraryRetention.overview = page;
+      state.libraryRetention.items = state.libraryRetention.items.concat(page.items || []);
+      state.libraryRetention.cursor = page.next_cursor || 0;
+      renderLibraryRetention();
+    }).catch(function (failure) {
+      setStatus(els.libraryRetentionStatus, "读取失效照片预览失败：" + describe(failure), "error");
+    }).then(function () {
+      state.libraryRetentionLoading = false;
+      els.libraryRetentionMore.disabled = false;
+    });
+  }
+
       var body = result.body || {};
       if (body.status !== "ok") throw { code: "BACKUP_DIRECTORY_INVALID", message: body.message || "目录不可用" };
       setStatus(els.storageBackupStatus, "备份目录已保存并检查可写，剩余 " + formatBytes(body.free_bytes || 0) + "。\n" + body.directory);
@@ -2396,3 +2438,10 @@
     boot();
   }
 })();
+      libraryRetentionStatus: document.getElementById("library-retention-status"),
+      libraryRetentionMore: document.getElementById("library-retention-more"),
+    document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
+    els.libraryRetentionMore.addEventListener("click", function () { loadLibraryRetention(false); });
+    document.getElementById("library-retention-details").addEventListener("toggle", function (event) {
+      if (event.currentTarget.open && !state.libraryRetention.overview) loadLibraryRetention(true);
+    });
