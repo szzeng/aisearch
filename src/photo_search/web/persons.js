@@ -4,7 +4,7 @@
   let ui;
   const $ = (id) => document.getElementById("pt-" + id);
   const state = { installed: false, faceSeq: 0, faceBusy: false, person: null, faceCursor: null,
-    selected: new Map(), reviewSeq: 0, reviewBusy: false, assetId: null, reviewCursor: null,
+    selected: new Map(), faceAnchor: null, reviewSeq: 0, reviewBusy: false, assetId: null, reviewCursor: null,
     historySeq: 0, historyBusy: false, historyCursor: null, summarySeq: 0,
     retention: null, retentionAfter: null, retentionBusy: false, retentionSeq: 0 };
   const names = { RENAME: "改名字", MERGE_BY_NAME: "同名合并", MERGE: "合并人物", BATCH_MERGE: "批量合并人物",
@@ -23,11 +23,11 @@
   }
   function show(dialog) { if (!dialog.open) dialog.showModal(); }
   function updateSelection() {
-    status("face-count", "已选 " + state.selected.size + " 张脸");
+    status("face-count", "已选 " + state.selected.size + " / 500 张脸");
     $("organize").textContent = $("faces").hidden ? "整理照片" : "完成整理";
     $("organize").disabled = ui.isWriting();
     $("organize").setAttribute("aria-expanded", String(!$("faces").hidden));
-    ["face-clear", "face-retry"].forEach((id) => { $(id).disabled = ui.isWriting(); });
+    ["face-clear", "face-clear-all", "face-all", "face-invert", "face-retry"].forEach((id) => { $(id).disabled = ui.isWriting(); });
     ["face-assign", "face-unassign", "face-regroup", "face-split", "face-restore"].forEach((id) => {
       $(id).disabled = ui.isWriting() || !state.selected.size;
     });
@@ -36,12 +36,35 @@
         card.pick.checked = selected; card.pick.disabled = ui.isWriting(); card.setAttribute("data-selected", String(selected)); }
     });
   }
-  function clearSelection() { state.selected.clear(); updateSelection(); }
+  function clearSelection() { state.selected.clear(); state.faceAnchor = null; updateSelection(); }
+  function selectFaceRange(card, event) {
+    if (!event.shiftKey || !state.faceAnchor || ui.isWriting()) return false;
+    const cards = Array.from($("face-list").children).filter((item) => item.face && item.pick);
+    const from = cards.findIndex((item) => item.face.face_id === state.faceAnchor), to = cards.indexOf(card);
+    if (from < 0 || to < 0) { state.faceAnchor = card.face.face_id; return false; }
+    const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
+    if (state.selected.size + range.filter((item) => !state.selected.has(item.face.face_id)).length > 500) {
+      status("face-status", "这次连选会超过 500 张脸，未更改已有选择。"); return true;
+    }
+    range.forEach((item) => state.selected.set(item.face.face_id, { ...item.face }));
+    state.faceAnchor = card.face.face_id; updateSelection(); return true;
+  }
+  function loadedFaceAction(action) {
+    if (ui.isWriting()) return;
+    const next = new Map(state.selected);
+    Array.from($("face-list").children).filter((item) => item.face && item.pick).forEach((card) => {
+      const id = card.face.face_id;
+      if (action === "clear" || (action === "invert" && next.has(id))) next.delete(id);
+      else if (action === "all" || action === "invert") next.set(id, { ...card.face });
+    });
+    if (next.size > 500) { status("face-status", "已加载选择会超过 500 张脸，未更改已有选择。"); return; }
+    state.selected = next; if (action === "clear") state.faceAnchor = null; updateSelection();
+  }
   function cancelSelection() { if (!ui.isWriting()) clearSelection(); }
   async function loadFaces(more) {
     if (!state.person || (more && state.faceBusy)) return;
     const seq = ++state.faceSeq, personId = state.person.person_id;
-    if (!more) { state.faceCursor = null; clearSelection(); $("face-list").replaceChildren(); }
+    if (!more) { state.faceCursor = null; state.faceAnchor = null; clearSelection(); $("face-list").replaceChildren(); }
     state.faceBusy = true; $("face-more").disabled = true; status("face-status", "正在读取人脸……");
     const values = { person_id: personId, limit: 40 };
     if (more && state.faceCursor) values.cursor = state.faceCursor;
@@ -59,12 +82,14 @@
         crop.append(ui.picture(face.thumbnail_url, "勾选这张人脸", "pa-avatar"));
         card.pick = ui.node("input"); card.pick.type = "checkbox"; card.pick.className = "pt-avatar-checkbox";
         card.pick.setAttribute("aria-label", "选择这张人脸");
+        card.pick.addEventListener("click", (event) => { if (event.shiftKey && selectFaceRange(card, event)) event.preventDefault(); });
         card.pick.addEventListener("change", () => {
           if (ui.isWriting()) { updateSelection(); return; }
           if (card.pick.checked && !state.selected.has(face.face_id)) {
             if (state.selected.size < 500) state.selected.set(face.face_id, { ...face });
             else status("face-status", "一次最多选择 500 张脸。");
-          } else if (!card.pick.checked) state.selected.delete(face.face_id);
+            state.faceAnchor = face.face_id;
+          } else if (!card.pick.checked) { state.selected.delete(face.face_id); state.faceAnchor = face.face_id; }
           updateSelection();
         });
         crop.append(card.pick); card.append(crop, ui.node("span", face.mode === "MANUAL_ASSIGNED" ? "已人工指定" : "机器归组"));
@@ -280,6 +305,8 @@
     $("organize").addEventListener("click", () => $("faces").hidden ? openFaces(ui.currentPerson()) : hideFaces());
     $("face-more").addEventListener("click", () => loadFaces(true));
     $("face-retry").addEventListener("click", () => { if (!ui.isWriting()) loadFaces(false); }); $("face-clear").addEventListener("click", cancelSelection);
+    ["all", "invert"].forEach((action) => $("face-" + action).addEventListener("click", () => loadedFaceAction(action)));
+    $("face-clear-all").addEventListener("click", () => loadedFaceAction("clear"));
     ["assign", "unassign", "regroup", "split", "restore"].forEach((action) => $("face-" + action).addEventListener("click", () => faceAction(action === "restore" ? "restore_auto" : action)));
     $("review-entry").addEventListener("click", () => openReview(null)); $("review-summary-retry").addEventListener("click", summary);
     $("history-entry").addEventListener("click", openHistory);

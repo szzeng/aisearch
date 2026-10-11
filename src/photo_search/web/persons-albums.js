@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById("pa-" + id);
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
-  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -217,14 +217,35 @@
     });
     card.collectionLabels.hidden = !card.collectionLabels.children.length;
   }
+  function choosePersonRange(target, event) {
+    if (!event || !event.shiftKey || !state.batchMode || state.visibilityBusy || state.writing) return false;
+    const cards = Array.from($("cards").children).filter((item) => Number.isSafeInteger(item.personId));
+    const key = "people:" + String(state.hiddenView) + ":" + JSON.stringify(peopleValues());
+    const from = cards.findIndex((item) => item.personId === state.selectAnchors.get(key)), to = cards.indexOf(target);
+    if (from < 0 || to < 0) { state.selectAnchors.set(key, target.personId); return false; }
+    const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
+    if (state.selectedPeople.size + range.filter((item) => !state.selectedPeople.has(item.personId)).length > 500) { message("这次连选会超过 500 个人物，未更改已有选择。"); return true; }
+    range.forEach((card) => { state.selectedPeople.add(card.personId); state.selectedPeopleSnapshots.set(card.personId, { ...card.latestPerson }); });
+    state.selectAnchors.set(key, target.personId); renderPeopleManagement(); return true;
+  }
+  function peopleSelectionAction(action) {
+    if (state.visibilityBusy || state.writing) return;
+    const cards = Array.from($("cards").children).filter((item) => Number.isSafeInteger(item.personId));
+    const next = new Set(state.selectedPeople);
+    cards.forEach((card) => { if (action === "clear" || (action === "invert" && next.has(card.personId))) next.delete(card.personId); else if (action !== "clear") next.add(card.personId); });
+    if (next.size > 500) { message("已加载选择会超过 500 个人物，未更改已有选择。"); return; }
+    state.selectedPeople = next;
+    cards.forEach((card) => { if (next.has(card.personId)) state.selectedPeopleSnapshots.set(card.personId, { ...card.latestPerson }); });
+    renderPeopleManagement();
+  }
   function createPersonCard(person, index) {
     const card = node("div", undefined, "pa-person-card"); card.tabIndex = 0; card.setAttribute("role", "button");
-    const activate = () => { if (state.visibilityBusy || state.writing) return; state.batchMode ? togglePersonSelection(card.personId) : openAlbum(card.latestPerson); };
+    const activate = (event) => { if (state.visibilityBusy || state.writing) return; if (state.batchMode) { if (!choosePersonRange(card, event)) togglePersonSelection(card.personId); } else openAlbum(card.latestPerson); };
     card.addEventListener("click", activate);
     card.addEventListener("keydown", (event) => { if (event.target === card && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } });
     card.selectionBox = node("input"); card.selectionBox.type = "checkbox"; card.selectionBox.className = "pt-person-checkbox";
     card.selectionBox.setAttribute("aria-label", "选择这个人物"); card.selectionBox.hidden = true;
-    card.selectionBox.addEventListener("click", (event) => event.stopPropagation());
+    card.selectionBox.addEventListener("click", (event) => { event.stopPropagation(); if (event.shiftKey) { event.preventDefault(); choosePersonRange(card, event); } });
     card.selectionBox.addEventListener("change", () => { if (!state.visibilityBusy && !state.writing) togglePersonSelection(card.personId); syncPeopleCards(); });
     card.avatarPicture = picture(person.thumbnail_url, name(person), "pa-avatar", index < 4);
     card.personName = node("strong", ""); card.personCount = node("span", "", "hint");
@@ -278,6 +299,7 @@
     $("collection-choice").hidden = !state.batchMode;
     $("collection-hide-label").hidden = !state.batchMode;
     $("batch-cancel").hidden = !state.batchMode;
+    ["people-all", "people-invert", "people-clear"].forEach((id) => { $(id).hidden = !state.batchMode; $(id).disabled = state.visibilityBusy || state.writing; });
     $("batch-cancel").disabled = state.visibilityBusy;
     $("batch-toggle").disabled = state.visibilityBusy;
     $("hidden-toggle").disabled = state.visibilityBusy;
@@ -288,6 +310,7 @@
     state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.batchMode = false; renderPeopleManagement();
   }
   function togglePersonSelection(personId) {
+    state.selectAnchors.set("people:" + String(state.hiddenView) + ":" + JSON.stringify(peopleValues()), personId);
     if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
     else if (state.selectedPeople.size >= 500) { message("一次最多选择 500 人，请先提交当前选择。"); return; }
     else {
@@ -327,13 +350,15 @@
   function renderFaceManagement() {
     const selected = state.selectedInboxFaces.size + state.selectedHiddenFaces.size;
     $("inbox-selection-count").hidden = !state.batchMode;
-    $("inbox-selection-count").textContent = "已选 " + selected + " 张脸";
+    $("inbox-selection-count").textContent = "已选 " + selected + " / 500 张脸";
     $("inbox-hide-submit").hidden = !state.batchMode;
     $("inbox-hide-submit").disabled = state.faceVisibilityBusy || state.selectedInboxFaces.size === 0 || state.selectedInboxFaces.size > 500;
     $("inbox-restore-submit").hidden = !state.batchMode || !state.inboxHiddenVisible;
     $("inbox-restore-submit").disabled = state.faceVisibilityBusy || state.selectedHiddenFaces.size === 0 || state.selectedHiddenFaces.size > 500;
     $("inbox-hidden-selection-count").hidden = !state.batchMode || !state.inboxHiddenVisible;
     $("inbox-hidden-selection-count").textContent = "已选 " + state.selectedHiddenFaces.size + " 张已忽略人脸";
+    ["inbox-all", "inbox-invert", "inbox-clear"].forEach((id) => { $(id).hidden = !state.batchMode; $(id).disabled = state.writing || state.faceVisibilityBusy; });
+    ["inbox-hidden-all", "inbox-hidden-invert", "inbox-hidden-clear"].forEach((id) => { $(id).hidden = !state.batchMode || !state.inboxHiddenVisible; $(id).disabled = state.writing || state.faceVisibilityBusy; });
     $("inbox-hidden-toggle").setAttribute("aria-expanded", String(state.inboxHiddenVisible));
     $("inbox-hidden-toggle").textContent = state.inboxHiddenVisible ? "收起已忽略人脸" : "查看已忽略人脸";
     $("inbox-hidden-content").hidden = !state.inboxHiddenVisible;
@@ -346,9 +371,39 @@
   function toggleInboxFace(faceId, hidden) {
     if (!state.batchMode || state.writing || state.faceVisibilityBusy) { renderFaceManagement(); return; }
     const selected = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces;
+    state.selectAnchors.set("faces:" + (hidden ? "hidden:list" : "inbox:list"), faceId);
     if (selected.has(faceId)) selected.delete(faceId);
     else if (state.selectedInboxFaces.size + state.selectedHiddenFaces.size >= 500) { message("一次最多选择 500 张脸，请先提交当前选择。"); renderFaceManagement(); return; }
     else selected.add(faceId);
+    renderFaceManagement();
+  }
+  function loadedInboxCards(hidden) {
+    const root = hidden ? $("inbox-hidden-cards") : $("inbox-cards");
+    const found = [];
+    const walk = (item) => { if (item.faceId && item.selectionButton && item.hiddenFace === hidden) found.push(item); (item.children || []).forEach(walk); };
+    Array.from(root.children || []).forEach(walk); return found;
+  }
+  function selectInboxRange(card, event) {
+    if (!event.shiftKey || !state.batchMode || state.writing || state.faceVisibilityBusy) return false;
+    const hidden = card.hiddenFace, set = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces;
+    const cards = loadedInboxCards(hidden).filter((item) => item.rangeScope === card.rangeScope);
+    const key = "faces:" + card.rangeScope, from = cards.findIndex((item) => item.faceId === state.selectAnchors.get(key)), to = cards.indexOf(card);
+    if (from < 0 || to < 0) { state.selectAnchors.set(key, card.faceId); return false; }
+    const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
+    const total = state.selectedInboxFaces.size + state.selectedHiddenFaces.size;
+    if (total + range.filter((item) => !set.has(item.faceId)).length > 500) { message("这次连选会超过 500 张脸，未更改已有选择。"); return true; }
+    range.forEach((item) => set.add(item.faceId)); state.selectAnchors.set(key, card.faceId); renderFaceManagement(); return true;
+  }
+  function inboxSelectionAction(hidden, action) {
+    if (!state.batchMode || state.writing || state.faceVisibilityBusy) return;
+    if (action === "clear") {
+      state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.selectAnchors.clear(); inboxFaceSnapshots.clear(); renderFaceManagement(); return;
+    }
+    const set = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces, next = new Set(set);
+    loadedInboxCards(hidden).forEach((card) => { if (action === "invert" && next.has(card.faceId)) next.delete(card.faceId); else next.add(card.faceId); });
+    if (state.selectedInboxFaces.size + state.selectedHiddenFaces.size - set.size + next.size > 500) { message("已加载选择会超过 500 张脸，未更改已有选择。"); return; }
+    loadedInboxCards(hidden).forEach((card) => { if (next.has(card.faceId)) inboxFaceSnapshots.set(card.faceId, { ...card.face }); });
+    if (hidden) state.selectedHiddenFaces = next; else state.selectedInboxFaces = next;
     renderFaceManagement();
   }
   async function editSelectedInbox(action) {
@@ -431,6 +486,7 @@
     const seq = ++state.listSeq; state.busy.add("people"); $("more").disabled = true;
     const sameView = binding === state.peopleBinding;
     const append = Boolean(more && state.listCursor && sameView);
+    if (!append) state.selectAnchors.delete("people:" + String(state.hiddenView) + ":" + binding);
     const pageCount = append ? 1 : sameView ? Math.max(1, state.peoplePages) : 1;
     const position = sameView ? captureLibraryPosition() : null;
     $("people-retry").hidden = true;
@@ -578,6 +634,7 @@
   async function loadCollectionPeople(more, parentCollection) {
     const collection = parentCollection || state.collection;
     if (!collection || (more && !state.collectionPeopleCursor)) return;
+    if (!more) state.selectAnchors.delete("collection:" + collection.collection_id + ":" + collection.instance_token);
     const seq = ++state.collectionSeq;
     const values = { limit: 40 }; if (more) values.cursor = state.collectionPeopleCursor;
     else { $("collection-people").replaceChildren(); state.collectionPeopleCursor = null; }
@@ -589,10 +646,27 @@
       (page.people || []).forEach((person) => {
         const card = node("article", undefined, "pa-collection-card");
         const id = Number(person.person_id), selected = state.collectionSelectedPeople.has(id);
-        const choose = button(selected ? "取消移出选择" : "选择移出", () => {
-          if (state.collectionSelectedPeople.has(id)) state.collectionSelectedPeople.delete(id); else state.collectionSelectedPeople.add(id);
-          choose.textContent = state.collectionSelectedPeople.has(id) ? "取消移出选择" : "选择移出"; updateCollectionSelection();
+        card.personId = id;
+        const choose = button(selected ? "取消移出选择" : "选择移出", (event) => {
+          const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
+          const key = "collection:" + collection.collection_id + ":" + collection.instance_token;
+          if (event && event.shiftKey) {
+            const from = cards.findIndex((item) => item.personId === state.selectAnchors.get(key)), to = cards.indexOf(card);
+            if (from >= 0 && to >= 0) {
+              const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
+              if (state.collectionSelectedPeople.size + range.filter((item) => !state.collectionSelectedPeople.has(item.personId)).length > 500) { message("这次连选会超过 500 个人物，未更改已有选择。"); return; }
+              range.forEach((item) => state.collectionSelectedPeople.add(item.personId));
+            }
+            else if (!state.collectionSelectedPeople.has(id)) {
+              if (state.collectionSelectedPeople.size >= 500) { message("一次最多选择 500 个人物。"); return; }
+              state.collectionSelectedPeople.add(id);
+            }
+          } else if (state.collectionSelectedPeople.has(id)) state.collectionSelectedPeople.delete(id);
+          else if (state.collectionSelectedPeople.size >= 500) { message("一次最多选择 500 个人物。"); return; }
+          else state.collectionSelectedPeople.add(id);
+          state.selectAnchors.set(key, id); updateCollectionSelection();
         });
+        card.chooseButton = choose;
         const open = button("", () => { state.returnCollection = collection; openAlbum(person); }, "pa-person-card");
         open.append(picture(person.thumbnail_url, name(person), "pa-avatar"), node("strong", name(person)), node("span", person.asset_count + " 张照片"));
         card.append(choose, open); $("collection-people").append(card);
@@ -608,10 +682,23 @@
   }
   function updateCollectionSelection() {
     $("collection-people-selected").textContent = "已选 " + state.collectionSelectedPeople.size + " 人";
+    Array.from($("collection-people").children).forEach((card) => { if (card.chooseButton) card.chooseButton.textContent = state.collectionSelectedPeople.has(card.personId) ? "取消移出选择" : "选择移出"; });
     $("collection-remove").disabled = state.collectionSelectedPeople.size === 0;
+    const busy = state.writing || Boolean(state.pendingWrite);
+    ["collection-people-all", "collection-people-invert", "collection-selection-clear", "collection-remove"].forEach((id) => { $(id).disabled = busy || (id === "collection-remove" && state.collectionSelectedPeople.size === 0); });
+  }
+  function collectionSelectionAction(action) {
+    if (state.writing || state.pendingWrite) return;
+    const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
+    const next = new Set(state.collectionSelectedPeople);
+    cards.forEach((card) => { if (action === "clear" || (action === "invert" && next.has(card.personId))) next.delete(card.personId); else if (action !== "clear") next.add(card.personId); });
+    if (next.size > 500) { message("已加载选择会超过 500 个人物，未更改已有选择。"); return; }
+    state.collectionSelectedPeople = next;
+    updateCollectionSelection();
   }
   async function removeCollectionSelection() {
-    if (!state.collection || !state.collectionSelectedPeople.size) return;
+    if (state.writing || state.pendingWrite || !state.collection || !state.collectionSelectedPeople.size) return;
+    if (state.collectionSelectedPeople.size > 500) { message("一次最多移出 500 个人物。"); return; }
     const ids = Array.from(state.collectionSelectedPeople);
     if (!window.confirm("从这个合集中移出所选 " + ids.length + " 人，并恢复到人物或未命名列表？")) return;
     try {
@@ -693,12 +780,14 @@
   }
   function renderInboxFace(container, face, hiddenFace, groupDetails) {
     const card = node("div", undefined, "pa-person-card");
-    card.faceId = String(face.face_id); card.hiddenFace = Boolean(hiddenFace);
+    card.faceId = String(face.face_id); card.face = face; card.hiddenFace = Boolean(hiddenFace);
+    card.rangeScope = (hiddenFace ? "hidden:" : "inbox:") + (groupDetails ? "group:" + groupDetails.groupKey : "list");
     const selected = (card.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(card.faceId);
     if (!selected) inboxFaceSnapshots.set(card.faceId, { ...face });
     const selection = node("input"); selection.type = "checkbox"; selection.className = "pt-avatar-checkbox";
     selection.checked = selected; selection.setAttribute("aria-label", "选择这张待整理人脸");
-    selection.addEventListener("change", () => toggleInboxFace(card.faceId, card.hiddenFace));
+    selection.addEventListener("click", (event) => { if (event.shiftKey && selectInboxRange(card, event)) event.preventDefault(); });
+    selection.addEventListener("change", () => { state.selectAnchors.set("faces:" + card.rangeScope, card.faceId); toggleInboxFace(card.faceId, card.hiddenFace); });
     selection.hidden = !state.batchMode; card.selectionButton = selection;
     const avatar = node("label", undefined, "pt-avatar-select");
     avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
@@ -797,7 +886,10 @@
     };
     details.addEventListener("toggle", () => {
       if (details.open) details.openGroup();
-      else if (details.confirmationDirty) flushInboxConfirmations();
+      else {
+        state.selectAnchors.delete("faces:" + (hiddenFace ? "hidden:" : "inbox:") + "group:" + group.group_key);
+        if (details.confirmationDirty) flushInboxConfirmations();
+      }
     });
     details.append(summary, list, more);
     return details;
@@ -824,6 +916,7 @@
     const grouped = values.kind === "all" || values.kind === "suggested";
     const binding = JSON.stringify(values), sameView = binding === state.inboxBinding;
     const append = Boolean(more && state.inboxCursor && sameView);
+    if (!append) state.selectAnchors.forEach((_, key) => { if (key.startsWith("faces:inbox:")) state.selectAnchors.delete(key); });
     const pageCount = append ? 1 : sameView ? Math.max(1, state.inboxPages) : 1;
     const position = sameView ? captureLibraryPosition() : null;
     const oldGroups = new Map(Array.from($("inbox-cards").children).filter((item) => item.groupKey).map((item) => [item.groupKey, item]));
@@ -865,7 +958,7 @@
     state.busy.add("hidden-faces"); $("inbox-hidden-more").disabled = true;
     const values = { limit: 30 };
     if (more && state.inboxHiddenCursor) values.cursor = state.inboxHiddenCursor;
-    if (!more) { $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
+    if (!more) { state.selectAnchors.forEach((_, key) => { if (key.startsWith("faces:hidden:")) state.selectAnchors.delete(key); }); $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
     try {
       const page = await api("/faces/inbox/hidden/groups" + params(values));
       if (seq !== state.hiddenFaceSeq) return;
@@ -1399,6 +1492,7 @@
     if (state.pendingWrite && state.pendingWrite.key !== key) throw { code: "PENDING_WRITE" };
     const intent = state.pendingWrite || { key, path, method, label, body: { ...payload, request_id: body.request_id || requestId() } };
     state.pendingWrite = intent; state.writing = true;
+    renderPeopleManagement(); updateCollectionSelection();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.writeStateChanged();
     $("edit-submit").disabled = true; $("edit-cancel").disabled = true;
     try {
@@ -1488,6 +1582,11 @@
       else renderPeopleManagement();
     });
     $("batch-cancel").addEventListener("click", clearPeopleSelection);
+    $("people-all").addEventListener("click", () => peopleSelectionAction("all"));
+    $("people-invert").addEventListener("click", () => peopleSelectionAction("invert"));
+    $("people-clear").addEventListener("click", () => peopleSelectionAction("clear"));
+    ["all", "invert", "clear"].forEach((action) => $("inbox-" + action).addEventListener("click", () => inboxSelectionAction(false, action)));
+    ["all", "invert", "clear"].forEach((action) => $("inbox-hidden-" + action).addEventListener("click", () => inboxSelectionAction(true, action)));
     $("visibility-submit").addEventListener("click", submitVisibility);
     $("hidden-toggle").addEventListener("click", () => {
       state.hiddenView = !state.hiddenView; state.selectedPeople.clear(); renderPeopleManagement();
@@ -1561,7 +1660,9 @@
     $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);
-    $("collection-selection-clear").addEventListener("click", () => { state.collectionSelectedPeople.clear(); updateCollectionSelection(); loadCollectionPeople(false); });
+    $("collection-selection-clear").addEventListener("click", () => collectionSelectionAction("clear"));
+    $("collection-people-all").addEventListener("click", () => collectionSelectionAction("all"));
+    $("collection-people-invert").addEventListener("click", () => collectionSelectionAction("invert"));
     $("collection-rename").addEventListener("click", () => renameCollection(state.collection));
     $("collection-delete").addEventListener("click", () => deleteCollection(state.collection));
     $("name").addEventListener("click", () => editBase({ mode: "name", person: { ...state.person } }, "给这个人取名字", "可用家人的称呼或你习惯的名字。"));

@@ -1,8 +1,8 @@
 # Development status
 
-## P4-PERSON-SELECT-RANGE-A — READY / 人物整理 Shift 连选与已加载批量选择
+## P4-PERSON-SELECT-RANGE-A — SCOPED PASS / 人物整理范围与已加载快捷选择
 
-[任务卡](tasks/P4-PERSON-SELECT-RANGE-A.md)。2026-10-11 新增独立**前端选择体验**任务：在人物相册“整理照片”、人物批量管理、待整理/已忽略人脸、人物合集成员中支持 Shift 范围连选、全选已加载、反选已加载、清空选择；保留跨页已选、500 脸上限、现有人物 snapshot、合照逐脸语义及忙时锁定。不选未加载/隐藏组成员，不改后端 API、人工锁/排除/撤销或识别算法。五组最小合成 UI 验收，Node 语法、定向 JUnit、diff-check；不跑真图库/GPU/全仓。推荐 GPT-6 Luna / Medium（复杂交互时 High）。**仅立卡，尚未实施/测试，不影响已完成 P4-PERSON-REGROUP-A。**
+[任务卡](tasks/P4-PERSON-SELECT-RANGE-A.md)、[执行报告](reports/P4-PERSON-SELECT-RANGE-A.md)。人物相册、人物批量管理、待整理/已忽略脸、人物合集成员支持各自范围锚点、已加载全选/反选和清空；候选组/隐藏区域隔离，超过 500 的选择整体拒绝，保留 person snapshot 与既有逐脸/API语义。合成 UI 定向 JUnit **14/0/0/0**，Node 语法、diff-check 通过。未做真实浏览器手测、真图库、GPU、全仓或性能验收；工作区原有 `geo/dataset.py` 改动保留。
 
 ## P4-PERSON-REGROUP-A — SCOPED PASS / 用户指定当前会话复核
 

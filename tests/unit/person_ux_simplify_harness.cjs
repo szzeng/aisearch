@@ -14,7 +14,7 @@ class Element {
   setAttribute(k,v){this.attributes[k]=String(v);} getAttribute(k){return this.attributes[k]??null;}
   removeAttribute(k){delete this.attributes[k];} focus(){} scrollIntoView(){}
   addEventListener(k,fn){this.events[k]=fn;}
-  fire(k){return this.events[k]?.({preventDefault(){},stopPropagation(){},key:'Enter'});}
+  fire(k,extra={}){return this.events[k]?.({preventDefault(){this.defaultPrevented=true;},stopPropagation(){},key:'Enter',...extra});}
   showModal(){this.open=true;} close(){this.open=false;this.fire('close');}
 }
 const descendants=e=>e.children.flatMap(c=>[c,...descendants(c)]);
@@ -40,6 +40,7 @@ const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(reques
     return response({operation_id:'op1',operation_revision:8,operation_type:'BATCH_FACE_EDIT',changed:1});
   }
   if(url.includes('/persons/browse')){const q=new URLSearchParams(url.split('?')[1]);const second=q.has('cursor');return response({persons:q.get('limit')==='20'?people.slice(0,20):people.slice(second?40:0,second?45:40),has_more:!second,next_cursor:second?null:'next'});}
+  if(url.includes('/persons/collections/1/tok/people'))return response({people:people.slice(0,2),has_more:false,next_cursor:null});
   if(url==='/api/v1/persons/1')return response({...people[0],revision:personRevision});
   if(url.includes('/photos'))return response({person:people[0],assets:[],has_more:false});
   if(url.includes('/faces?')){const q=new URLSearchParams(url.split('?')[1]);return response({faces:q.has('cursor')?[f(41),f(42)]:[f(1),f(2)],canonical_person_id:1,person_revision:personRevision,has_more:!q.has('cursor'),next_cursor:'faces2'});}
@@ -51,9 +52,10 @@ const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(reques
   return response({persons:[],faces:[],groups:[],has_more:false});
  }};
 vm.createContext(context);
-vm.runInContext(fs.readFileSync('src/photo_search/web/persons.js','utf8'),context);
+let personCode=fs.readFileSync('src/photo_search/web/persons.js','utf8').replace('window.AIPersonTools = { install,','window.AIPersonTools = { _state: state, install,');
+vm.runInContext(personCode,context);
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,loadCollectionPeople,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 const choose=async(card)=>{card.pick.checked=true;card.pick.fire('change');await flush();};
@@ -66,7 +68,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   album.openAlbum(people[0]);await flush();assert.equal(get('pt-organize').textContent,'整理照片');
   await get('pt-organize').fire('click');await flush();assert.equal(get('pt-organize').textContent,'完成整理');
   await choose(get('pt-face-list').children[0]);get('pt-face-clear').fire('click');
-  assert.equal(get('pt-face-count').textContent,'已选 0 张脸');assert.equal(get('pt-organize').textContent,'完成整理');
+  assert.equal(get('pt-face-count').textContent,'已选 0 / 500 张脸');assert.equal(get('pt-organize').textContent,'完成整理');
   await choose(get('pt-face-list').children[0]);get('pt-organize').fire('click');
   assert(get('pt-faces').hidden);assert.equal(get('pt-organize').textContent,'整理照片');assert.equal(mutations.length,0);
   await get('pt-organize').fire('click');await flush();
@@ -74,13 +76,13 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   holdSave=true;const saving=get('pt-face-regroup').fire('click');await flush();
   let prevented=false;const exitEvent={preventDefault(){prevented=true;}};windowEvents.beforeunload(exitEvent);
   assert(prevented&&exitEvent.returnValue==='','busy browser reload requests confirmation');
-  assert(get('pt-organize').disabled&&get('pt-face-clear').disabled&&get('pt-face-retry').disabled);
+  assert(get('pt-organize').disabled&&get('pt-face-clear').disabled&&get('pt-face-retry').disabled&&get('pt-face-all').disabled&&get('pt-face-invert').disabled);
   get('pt-organize').fire('click');get('pt-face-clear').fire('click');get('pt-face-regroup').fire('click');
   album.openAlbum(people[1]);album.backToLibrary();assert.equal(album.state.person.person_id,1);
-  assert(!get('pt-faces').hidden);assert.equal(get('pt-face-count').textContent,'已选 2 张脸');assert.equal(mutations.length,1);
+  assert(!get('pt-faces').hidden);assert.equal(get('pt-face-count').textContent,'已选 2 / 500 张脸');assert.equal(mutations.length,1);
   releaseSave();await saving;await flush();holdSave=false;
   assert.equal(mutations[0].url,'/api/v1/persons/1/regroup');assert.equal(mutations[0].body.contract_version,'p4-face-regroup.v1');
-  assert.equal(mutations[0].body.faces.length,2);assert.equal(get('pt-face-count').textContent,'已选 0 张脸');
+  assert.equal(mutations[0].body.faces.length,2);assert.equal(get('pt-face-count').textContent,'已选 0 / 500 张脸');
   assert(get('pa-status').textContent.includes('已归组 1 张脸 · 新增 1 个人物 · 1 张仍需整理'));
   assert(!get('pt-organize').disabled);assert.equal(get('pt-organize').textContent,'完成整理');
   prevented=false;windowEvents.beforeunload({preventDefault(){prevented=true;}});assert(!prevented);
@@ -88,24 +90,63 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   await get('pt-organize').fire('click');await flush();album.openAlbum(people[1]);await flush();
   assert(get('pt-faces').hidden);assert.equal(get('pt-organize').textContent,'整理照片');
   tools.openFaces(people[1]);await flush();get('pt-face-retry').fire('click');await flush();
-  assert.equal(get('pt-organize').textContent,'完成整理');assert.equal(get('pt-face-count').textContent,'已选 0 张脸');
+  assert.equal(get('pt-organize').textContent,'完成整理');assert.equal(get('pt-face-count').textContent,'已选 0 / 500 张脸');
  }
  if(scenario==='faces'){
   tools.openFaces(people[0]);await flush();
   const cards=get('pt-face-list');assert.equal(cards.children[0].children[0].tag,'label');assert.equal(cards.children[0].pick.className,'pt-avatar-checkbox');
   await choose(cards.children[0]);await get('pt-face-more').fire('click');await flush();await choose(cards.children[2]);
-  assert.equal(get('pt-face-count').textContent,'已选 2 张脸');
+  assert.equal(get('pt-face-count').textContent,'已选 2 / 500 张脸');
   get('pt-face-assign').fire('click');await flush();
   button(get('pa-choices'),'人物2 · 1 张').fire('click');await get('pa-edit-form').fire('submit');await flush();
   assert.equal(mutations.length,1);assert.deepEqual(mutations[0].body.items.map(i=>i.face_id),[f(1).face_id,f(41).face_id]);
   assert(mutations[0].body.items.every(i=>i.expected_revision===3&&i.target_person_id===2));
   assert(cards.children.every(c=>!c.pick.disabled),'a successful write releases avatar checkboxes');
   await choose(cards.children[0]);personRevision=8;await get('pt-face-more').fire('click');await flush();
-  assert.equal(get('pt-face-count').textContent,'已选 0 张脸');assert(get('pt-face-status').textContent.includes('PERSON_REVISION_CONFLICT'));
+  assert.equal(get('pt-face-count').textContent,'已选 0 / 500 张脸');assert(get('pt-face-status').textContent.includes('PERSON_REVISION_CONFLICT'));
   tools.openFaces({...people[0],revision:8});await flush();await choose(cards.children[0]);
   await get('pt-face-split').fire('click');await flush();
   assert.equal(mutations.at(-1).url,'/api/v1/persons/1/split');assert.equal(mutations.at(-1).body.source_expected_revision,8);
   assert.equal(mutations.at(-1).body.faces[0].expected_assignment_revision,4);
+ }
+ if(scenario==='selection'){
+  tools.openFaces(people[0]);await flush();const faces=get('pt-face-list');
+  await choose(faces.children[0]);await get('pt-face-more').fire('click');await flush();faces.children[3].pick.fire('click',{shiftKey:true});
+  assert.equal(tools._state.selected.size,4,'Shift selects the inclusive range across loaded pages');
+  assert.equal(mutations.length,0,'selection is UI-only');
+  get('pt-face-invert').fire('click');assert.equal(tools._state.selected.size,0);
+  get('pt-face-all').fire('click');assert.equal(tools._state.selected.size,4);
+  get('pt-face-clear-all').fire('click');assert.equal(tools._state.selected.size,0);
+
+  get('pa-batch-toggle').fire('click');const peopleCards=get('pa-cards');
+  peopleCards.children[0].fire('click');peopleCards.children[2].fire('click',{shiftKey:true});
+  assert.equal(album.state.selectedPeople.size,3,'person range uses canonical person ids');
+  assert.equal(album.state.selectedPeopleSnapshots.get(3).revision,7,'range selection keeps snapshots');
+  get('pa-people-clear').fire('click');assert.equal(album.state.selectedPeople.size,0);
+
+  album.state.batchMode=true;const inbox=get('pa-inbox-cards'), group={groupKey:'g1'};
+  album.renderInboxFace(inbox,f(3),false,group);album.renderInboxFace(inbox,f(4),false,group);
+  const a=inbox.children[0],b=inbox.children[1];a.selectionButton.checked=true;a.selectionButton.fire('change');b.selectionButton.fire('click',{shiftKey:true});
+  assert.equal(album.state.selectedInboxFaces.size,2,'same candidate group supports range selection');
+  const hidden=get('pa-inbox-hidden-cards');album.renderInboxFace(hidden,f(5),true,{groupKey:'g1'});
+  get('pa-inbox-all').fire('click');assert.equal(album.state.selectedInboxFaces.size,2,'only loaded inbox faces are selected');
+  album.renderInboxFace(inbox,f(6),false,{groupKey:'g2'});inbox.children[2].selectionButton.fire('click',{shiftKey:true});
+  inbox.children[2].selectionButton.checked=true;inbox.children[2].selectionButton.fire('change');
+  assert.equal(album.state.selectedInboxFaces.size,3,'a different group does not extend the previous range');
+  get('pa-inbox-clear').fire('click');assert.equal(album.state.selectedInboxFaces.size+album.state.selectedHiddenFaces.size,0,'clear removes hidden cross-area selections');
+  assert.equal(mutations.length,0,'all selection actions avoid write requests');
+
+  album.state.collection={collection_id:1,instance_token:'tok'};await album.loadCollectionPeople(false);await flush();
+  const collectionCards=get('pa-collection-people');collectionCards.children[0].children[0].fire('click');
+  collectionCards.children[1].children[0].fire('click',{shiftKey:true});
+  assert.equal(album.state.collectionSelectedPeople.size,2,'collection members support Shift selection');
+  get('pa-collection-people-invert').fire('click');assert.equal(album.state.collectionSelectedPeople.size,0);
+  assert.equal(mutations.length,0,'collection selection remains read-only');
+
+  tools._state.selected=new Map(Array.from({length:499},(_,i)=>['old'+i,{}]));tools._state.faceAnchor=faces.children[0].face.face_id;
+  faces.children[3].pick.fire('click',{shiftKey:true});
+  assert.equal(tools._state.selected.size,499,'over-limit ranges preserve the old selection atomically');
+  assert(get('pt-face-status').textContent.includes('超过 500'));
  }
  if(scenario==='merge'){
   get('pa-batch-toggle').fire('click');const cards=get('pa-cards');cards.children[0].selectionBox.checked=true;cards.children[0].selectionBox.fire('change');
@@ -121,7 +162,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   album.state.batchMode=true;const cards=get('pa-inbox-cards');album.renderInboxFace(cards,f(3),false);album.renderInboxFace(cards,f(4),false);
   assert.equal(cards.children[0].children[0].tag,'label');assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
   cards.children.forEach(card=>{card.selectionButton.checked=true;card.selectionButton.fire('change');});
-  assert.equal(get('pa-inbox-selection-count').textContent,'已选 2 张脸');get('pa-inbox-assign').fire('click');await flush();
+  assert.equal(get('pa-inbox-selection-count').textContent,'已选 2 / 500 张脸');get('pa-inbox-assign').fire('click');await flush();
   button(get('pa-choices'),'人物2 · 1 张').fire('click');await get('pa-edit-form').fire('submit');await flush();
   assert.equal(mutations.length,1);assert.deepEqual(mutations[0].body.items.map(i=>i.face_id),[f(3).face_id,f(4).face_id]);
   assert.equal(album.state.selectedInboxFaces.size,0);

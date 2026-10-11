@@ -1,6 +1,6 @@
 # P4-PERSON-SELECT-RANGE-A — 人物整理 Shift 连选与批量快捷选择
 
-**状态：READY / 待实施（仅任务卡）**  
+**状态：SCOPED PASS / 已按任务卡实施和定向验收**
 **日期：2026-10-11；仓库：`szzeng/aisearch`，master。**  
 **范围：人物相册与整理页面的前端选中体验；个人项目，最少定向测试。**
 
