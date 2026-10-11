@@ -1,8 +1,8 @@
 # P4-STORAGE-UI-A-REVIEW — 独立窄审与维护入口开放判断
 
-日期：2026-10-11。状态：**READY / 待独立审查**。
+日期：2026-10-11。状态：**READY / 待独立 GPT-6 Luna High 审查**。
 项目：`D:\SZ\project\aisearch`。开始前按 `AGENTS.md` → `docs/development-status.md` → 本卡恢复真实 HEAD、工作区及报告。
-推荐路由：**DS-H / DeepSeek High**。用户在 Codex 中手动切换模型；不得自动切换或宣称已切换。
+审查路由：**GPT-6 Luna / High**。用户明确批准该路由替代 DS-H；由独立审查者执行。用户在 Codex 中手动切换模型；不得自动切换或宣称已切换。
 
 ## 目标
 

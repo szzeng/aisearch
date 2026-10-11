@@ -97,4 +97,4 @@
 ## 10. 当前会话复核记录（2026-10-11）
 
 - 已完成当前会话受影响面复核，未发现具体代码缺陷；详见[复核报告](../reports/P4-STORAGE-UI-A-REVIEW.md)。
-- 本记录不是独立 DS-H 审查。按 V3.1 §2.4，门闩 `MAINTENANCE_REVIEWED` 继续为 `False`，实现状态继续为 **PARTIAL**；独立 DS-H 审查及门闩开放后的 API/UI/启动闭环仍待完成。
+- 本记录不是独立审查。按 V3.1 §2.4，门闩 `MAINTENANCE_REVIEWED` 继续为 `False`，实现状态继续为 **PARTIAL**；按用户批准的 GPT-6 Luna High 替代路由完成独立审查及门闩开放后的 API/UI/启动闭环仍待完成。
