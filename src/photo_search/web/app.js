@@ -505,14 +505,59 @@
     return "无法维护：" + (value.code || value.reason || value.status || "状态未知");
   }
 
+  function selectedStorageMaintenanceOperations() {
+    return Array.prototype.slice.call(document.querySelectorAll('input[name="storage-maintenance-operation"]:checked')).map(function (input) { return input.value; });
+  }
+
+  function storageMaintenanceOperationLabel(operation) {
+    var labels = {
+      "clean:artifacts": "孤立产物",
+      "clean:media-cache": "旧媒体缓存",
+      "clean:previews": "预览缓存",
+      "clean:face-crops": "人脸裁剪缓存",
+      "optimize-vectors": "向量索引",
+      vacuum: "SQLite VACUUM"
+    };
+    return labels[operation] || operation;
+  }
+
+  function storageMaintenanceItemDetails(item) {
+    var details = [];
+    if (item.deleted_files !== undefined) details.push("删除 " + item.deleted_files + " 个文件");
+    var reclaimedBytes;
+    if (item.freed_bytes !== undefined) reclaimedBytes = item.freed_bytes;
+    else if (item.actual_bytes_freed !== undefined) reclaimedBytes = item.actual_bytes_freed;
+    else if (item.actual_reclaimed_bytes !== undefined) reclaimedBytes = item.actual_reclaimed_bytes;
+    if (reclaimedBytes !== undefined) {
+      details.push("实际释放 " + formatBytes(reclaimedBytes));
+    } else if (Array.isArray(item.stages)) {
+      var reclaimedStages = item.stages.filter(function (stage) {
+        return stage && typeof stage.actual_reclaimed_bytes === "number";
+      });
+      if (reclaimedStages.length) {
+        var stageBytes = reclaimedStages.reduce(function (total, stage) { return total + stage.actual_reclaimed_bytes; }, 0);
+        details.push("阶段实际释放 " + formatBytes(stageBytes));
+      }
+    }
+    return details;
+  }
+
+  function updateStorageMaintenanceConfirm() {
+    var button = document.getElementById("storage-maintenance-confirm");
+    if (!button) return;
+    button.disabled = button.dataset.executionEnabled !== "true" || button.dataset.requestPending === "true" || selectedStorageMaintenanceOperations().length === 0;
+  }
+
   function renderMaintenance(payload) {
     var labels = { artifacts: "孤立产物", "media-cache": "旧媒体缓存", previews: "预览缓存", "face-crops": "人脸裁剪缓存", vectors: "向量索引", vacuum: "SQLite VACUUM" };
     var rows = Object.keys(labels).map(function (key) { return labels[key] + "：" + storageStatusText((payload.items || {})[key]); });
-    if (payload.pending) rows.push("待执行：" + payload.pending.operation + "；请正常关闭相册后重新启动。有效期至 " + new Date(payload.pending.expires_at_ms).toLocaleString());
+    if (payload.pending) rows.push("待执行：" + (payload.pending.operations || [payload.pending.operation]).filter(Boolean).map(storageMaintenanceOperationLabel).join("、") + "；请正常关闭相册后重新启动。有效期至 " + new Date(payload.pending.expires_at_ms).toLocaleString());
     else rows.push("待执行维护：无");
     var confirmButton = document.getElementById("storage-maintenance-confirm");
     var gate = document.getElementById("storage-maintenance-review-gate");
-    confirmButton.disabled = payload.execution_enabled !== true;
+    confirmButton.dataset.executionEnabled = payload.execution_enabled === true ? "true" : "false";
+    confirmButton.dataset.requestPending = payload.pending ? "true" : "false";
+    updateStorageMaintenanceConfirm();
     text(gate, payload.review_required || "自动维护入口已通过独立窄审。");
     if (payload.last_result) {
       var last = payload.last_result;
@@ -520,8 +565,12 @@
       if (last.deleted_files !== undefined) details.push("删除 " + last.deleted_files + " 个文件");
       if (last.freed_bytes !== undefined) details.push("释放 " + formatBytes(last.freed_bytes));
       if (last.actual_bytes_freed !== undefined) details.push("释放 " + formatBytes(last.actual_bytes_freed));
-      if (last.status === "running") details.push("上次启动时操作中断，未自动重试");
-      rows.push("上次启动结果：" + last.status + "（" + (last.operation || last.reason || "") + "）" + (details.length ? "；" + details.join("；") : ""));
+      if (last.status === "running") details.push("上次启动时操作中断，已完成部分不自动重试");
+      var itemResults = (last.items || []).map(function (item) {
+        var itemDetails = storageMaintenanceItemDetails(item);
+        return storageMaintenanceOperationLabel(item.operation) + "：" + item.status + (item.partial ? "（部分结果）" : "") + (item.reason ? "（" + item.reason + "）" : "") + (itemDetails.length ? "；" + itemDetails.join("，") : "");
+      });
+      rows.push("上次启动结果：" + last.status + "（" + (last.operations || [last.operation]).filter(Boolean).map(storageMaintenanceOperationLabel).join("、") + (last.reason ? "；" + last.reason : "") + "）" + (itemResults.length ? "；" + itemResults.join("；") : "") + (details.length ? "；" + details.join("；") : ""));
     }
     setStatus(els.storageMaintenancePreview, rows.join("\n"));
   }
@@ -579,12 +628,14 @@
   }
 
   function confirmStorageMaintenance() {
-    var operation = document.getElementById("storage-maintenance-operation").value;
-    if (!window.confirm("确认安排“" + operation + "”在相册下次启动前执行？请先按需手动备份人工整理数据。确认后关闭并重新启动相册；系统不会自动备份。")) return;
-    request("/storage/maintenance/request", { method: "POST", body: { operation: operation, confirmed: true } }).then(function (result) {
+    var operations = selectedStorageMaintenanceOperations();
+    if (!operations.length) return;
+    var labels = operations.map(storageMaintenanceOperationLabel);
+    if (!window.confirm("确认安排“" + labels.join("、") + "”在相册下次启动时依次执行？请先按需手动备份人工整理数据。确认后只需关闭并重新启动一次；系统不会自动备份。")) return;
+    request("/storage/maintenance/request", { method: "POST", body: { operations: operations, confirmed: true } }).then(function (result) {
       var body = result.body || {};
       if (body.status === "error") throw { code: "MAINTENANCE_REQUEST_FAILED", message: body.message || "无法安排维护" };
-      setStatus(els.storageMaintenancePreview, "已确认一次性维护：" + operation + "。请关闭相册后重新启动；有效期一小时。没有执行自动备份。", "success");
+      setStatus(els.storageMaintenancePreview, "已确认 " + operations.length + " 项一次性维护。请关闭相册后重新启动一次；有效期一小时。没有执行自动备份。", "success");
       loadStorageMaintenance();
     }).catch(function (failure) { setStatus(els.storageMaintenancePreview, "安排维护失败：" + (failure.message || describe(failure)), "error"); });
   }
@@ -2285,6 +2336,7 @@
     document.getElementById("storage-deep-check").addEventListener("click", runStorageDeepCheck);
     document.getElementById("storage-maintenance-refresh").addEventListener("click", loadStorageMaintenance);
     document.getElementById("storage-maintenance-confirm").addEventListener("click", confirmStorageMaintenance);
+    document.querySelectorAll('input[name="storage-maintenance-operation"]').forEach(function (input) { input.addEventListener("change", updateStorageMaintenanceConfirm); });
     document.getElementById("storage-maintenance-cancel").addEventListener("click", cancelStorageMaintenance);
     document.getElementById("storage-backup-save").addEventListener("click", saveStorageBackupDirectory);
     document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -156,6 +158,7 @@ def test_unreviewed_startup_gate_consumes_any_pending_authorization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _data(tmp_path)
+    monkeypatch.setattr("photo_search.storage_ui.MAINTENANCE_REVIEWED", False)
     request_path = root / "runtime" / "storage-maintenance-request.json"
     request_path.parent.mkdir(parents=True, exist_ok=True)
     request_path.write_text(
@@ -193,3 +196,99 @@ def test_backup_contract_reports_catalog_only_snapshot(tmp_path: Path) -> None:
     assert outcome["scope"] == "catalog_only"
     assert "原图" not in str(outcome)
     assert catalog_db_path(root).exists()
+
+
+def test_batch_maintenance_runs_selected_operations_in_order_and_records_each_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _data(tmp_path)
+    monkeypatch.setattr("photo_search.storage_ui.MAINTENANCE_REVIEWED", True)
+    queued = queue_maintenance(
+        root,
+        ["vacuum", "clean:previews", "clean:artifacts"],
+        confirmed=True,
+    )
+    assert queued["operations"] == ["clean:artifacts", "clean:previews", "vacuum"]
+    assert "operation" not in queued
+    called: list[str] = []
+
+    def run(data_root: Path, operation: str) -> dict[str, object]:
+        called.append(operation)
+        assert data_root == root.resolve()
+        if operation == "clean:previews":
+            checkpoint = json.loads((root / "runtime" / "storage-maintenance-result.json").read_text(encoding="utf-8"))
+            assert [item["operation"] for item in checkpoint["items"]] == ["clean:artifacts"]
+            raise RuntimeError("synthetic preview cleanup failure")
+        return {"status": "ok", "freed_bytes": 0}
+
+    monkeypatch.setattr("photo_search.storage_ui._run_maintenance", run)
+    result = execute_pending_maintenance(root)
+    assert result and result["status"] == "partial"
+    assert called == ["clean:artifacts", "clean:previews", "vacuum"]
+    assert [(item["operation"], item["status"]) for item in result["items"]] == [
+        ("clean:artifacts", "ok"),
+        ("clean:previews", "error"),
+        ("vacuum", "ok"),
+    ]
+    assert execute_pending_maintenance(root) is None
+
+
+def test_batch_maintenance_rejects_empty_unknown_and_duplicate_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _data(tmp_path)
+    monkeypatch.setattr("photo_search.storage_ui.MAINTENANCE_REVIEWED", True)
+    for operations in ([], ["vacuum", "unknown"], ["vacuum", "vacuum"]):
+        with pytest.raises(ValueError):
+            queue_maintenance(root, operations, confirmed=True)
+
+
+def test_single_batch_item_preserves_partial_aggregate_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _data(tmp_path)
+    monkeypatch.setattr("photo_search.storage_ui.MAINTENANCE_REVIEWED", True)
+    queue_maintenance(root, ["clean:artifacts"], confirmed=True)
+    monkeypatch.setattr(
+        "photo_search.storage_ui._run_maintenance",
+        lambda *_: {"status": "ok", "partial": True, "deleted_files": 1},
+    )
+    result = execute_pending_maintenance(root)
+    assert result and result["status"] == "partial"
+    assert result["operation"] == "clean:artifacts"
+    assert result["items"][0]["partial"] is True
+
+
+def test_batch_result_dom_renders_actual_per_item_cleanup_metrics() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is not installed")
+    script = r'''
+const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+const nodes = {
+  "storage-maintenance-confirm": {dataset:{}, disabled:false},
+  "storage-maintenance-review-gate": {textContent:""},
+};
+const context = {document:{readyState:"loading", addEventListener(){}, getElementById:id=>nodes[id], querySelectorAll:()=>[]}};
+let code = fs.readFileSync("src/photo_search/web/app.js", "utf8");
+code = code.replace('  if (document.readyState === "loading") {',
+  '  globalThis.storageUI = {renderMaintenance, els};\n  if (document.readyState === "loading") {');
+vm.createContext(context); vm.runInContext(code, context);
+context.storageUI.els.storageMaintenancePreview = {textContent:"", className:"", hidden:false};
+context.storageUI.renderMaintenance({execution_enabled:true, last_result:{
+  status:"partial", operations:["clean:artifacts","optimize-vectors","vacuum"], items:[
+    {operation:"clean:artifacts",status:"ok",deleted_files:2,freed_bytes:1024},
+    {operation:"optimize-vectors",status:"ok",stages:[{name:"cleanup_old_versions",actual_reclaimed_bytes:128}]},
+    {operation:"vacuum",status:"ok",actual_reclaimed_bytes:256},
+  ]
+}});
+const rendered = context.storageUI.els.storageMaintenancePreview.textContent;
+assert.match(rendered,/孤立产物：ok；删除 2 个文件，实际释放 1\.0 KiB/);
+assert.match(rendered,/向量索引：ok；阶段实际释放 128 B/);
+assert.match(rendered,/SQLite VACUUM：ok；实际释放 256 B/);
+'''
+    result = subprocess.run(
+        [node, "-e", script], cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

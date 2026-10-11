@@ -10,7 +10,7 @@
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-photo-local-open-a-1" defer></script>
-    <script src="/web/app.js?v=p4-storage-ui-a-1" defer></script>
+    <script src="/web/app.js?v=p4-storage-ui-a-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -51,18 +51,18 @@
             </section>
             <section aria-labelledby="storage-maintenance-title">
               <h3 id="storage-maintenance-title">可选维护</h3>
-              <p class="hint">先检查预览，再选一项并确认。确认只排入一次请求；关闭相册后，下次启动时复核并执行。建议先手动备份人工整理数据。没有备份不会阻止维护，也不会自动创建备份。</p>
+              <p class="hint">先检查预览，再勾选一项或多项并确认。所选项目会在下次启动时按顺序串行维护，只需重启一次。建议先手动备份人工整理数据。没有备份不会阻止维护，也不会自动创建备份。</p>
               <p><button type="button" id="storage-maintenance-refresh">检查维护项目</button></p>
               <pre id="storage-maintenance-preview" class="state-block" role="status" aria-live="polite"></pre>
-              <label for="storage-maintenance-operation">维护项目</label>
-              <select id="storage-maintenance-operation">
-                <option value="clean:artifacts">清理符合条件的孤立产物</option>
-                <option value="clean:media-cache">清理旧媒体缓存</option>
-                <option value="clean:previews">清理可重建的预览缓存</option>
-                <option value="clean:face-crops">清理可重建的人脸裁剪缓存</option>
-                <option value="optimize-vectors">优化向量索引</option>
-                <option value="vacuum">整理 SQLite 数据库</option>
-              </select>
+              <fieldset id="storage-maintenance-operations">
+                <legend>维护项目（可多选）</legend>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:artifacts">清理符合条件的孤立产物</label>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:media-cache">清理旧媒体缓存</label>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:previews">清理可重建的预览缓存</label>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:face-crops">清理可重建的人脸裁剪缓存</label>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="optimize-vectors">优化向量索引</label>
+                <label><input type="checkbox" name="storage-maintenance-operation" value="vacuum">整理 SQLite 数据库</label>
+              </fieldset>
               <button type="button" id="storage-maintenance-confirm" disabled>确认并安排下次启动维护</button>
               <p id="storage-maintenance-review-gate" class="hint" role="status">自动维护入口须经独立窄审后开放；当前只提供预览。</p>
               <button type="button" id="storage-maintenance-cancel">取消待执行维护</button>

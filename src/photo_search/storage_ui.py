@@ -21,8 +21,9 @@ from photo_search.storage_maintenance import storage_optimize_vectors, storage_v
 
 REQUEST_TTL_MS = 60 * 60 * 1000
 SCOPES = frozenset({"clean:artifacts", "clean:media-cache", "clean:previews", "clean:face-crops", "optimize-vectors", "vacuum"})
-# The card keeps destructive startup execution closed until an independent focused audit.
-MAINTENANCE_REVIEWED = False
+OPERATION_ORDER = ("clean:artifacts", "clean:media-cache", "clean:previews", "clean:face-crops", "optimize-vectors", "vacuum")
+# User confirmed the P4-STORAGE-UI-A review report passed and explicitly authorized opening.
+MAINTENANCE_REVIEWED = True
 
 
 def _state_path(root: Path, name: str) -> Path:
@@ -262,17 +263,35 @@ def maintenance_request_state(data_root: str | Path) -> dict[str, Any]:
     }
 
 
-def queue_maintenance(data_root: str | Path, operation: str, *, confirmed: bool) -> dict[str, Any]:
+def _normalize_operations(value: object) -> list[str]:
+    if isinstance(value, str):
+        requested = [value]
+    elif isinstance(value, list):
+        requested = value
+    else:
+        raise ValueError("请选择至少一项有效维护项目")
+    if not requested or any(not isinstance(item, str) or item not in SCOPES for item in requested):
+        raise ValueError("维护项目无效")
+    if len(requested) != len(set(requested)):
+        raise ValueError("维护项目不能重复")
+    selected = set(requested)
+    return [operation for operation in OPERATION_ORDER if operation in selected]
+
+
+def queue_maintenance(data_root: str | Path, operations: object, *, confirmed: bool) -> dict[str, Any]:
     root = resolve_data_root(data_root).resolve()
     if not MAINTENANCE_REVIEWED:
         raise ValueError("独立窄审完成前暂不开放离线维护执行")
-    if not confirmed or operation not in SCOPES:
+    if not confirmed:
         raise ValueError("维护项目无效或未确认")
+    selected = _normalize_operations(operations)
     path = _state_path(root, "storage-maintenance-request.json")
     existing = _read_json(path)
     if existing and int(existing.get("expires_at_ms", 0)) > time.time_ns() // 1_000_000:
         raise ValueError("已有一项待执行维护，请先取消")
-    request = {"request_id": uuid.uuid4().hex, "operation": operation, "created_at_ms": time.time_ns() // 1_000_000, "expires_at_ms": time.time_ns() // 1_000_000 + REQUEST_TTL_MS, "identity": _data_identity(root), "status": "pending"}
+    request = {"request_id": uuid.uuid4().hex, "operations": selected, "created_at_ms": time.time_ns() // 1_000_000, "expires_at_ms": time.time_ns() // 1_000_000 + REQUEST_TTL_MS, "identity": _data_identity(root), "status": "pending"}
+    if len(selected) == 1:
+        request["operation"] = selected[0]  # Preserve compatibility with older one-action launchers.
     _atomic_json(path, request)
     return request
 
@@ -301,22 +320,59 @@ def execute_pending_maintenance(data_root: str | Path) -> dict[str, Any] | None:
     reason = None
     if not MAINTENANCE_REVIEWED:
         reason = "independent_review_required"
-    elif not request or request.get("status") != "pending" or request.get("operation") not in SCOPES:
+    elif not request or request.get("status") != "pending":
         reason = "invalid_request"
     elif int(request.get("expires_at_ms", 0)) < time.time_ns() // 1_000_000:
         reason = "request_expired"
     elif request.get("identity") != _data_identity(root):
         reason = "data_identity_changed"
+    else:
+        try:
+            raw_operations = request.get("operations", request.get("operation"))
+            operations = _normalize_operations(raw_operations)
+        except ValueError:
+            reason = "invalid_request"
     if reason:
         result = {"status": "skipped", "reason": reason, "request_id": (request or {}).get("request_id"), "completed_at": datetime.now(timezone.utc).isoformat()}
     else:
-        _atomic_json(_state_path(root, "storage-maintenance-result.json"), {"status": "running", "operation": request["operation"], "request_id": request["request_id"], "started_at": datetime.now(timezone.utc).isoformat()})
-        try:
-            result = _run_maintenance(root, str(request["operation"]))
-            result.update({"request_id": request["request_id"], "operation": request["operation"], "completed_at": datetime.now(timezone.utc).isoformat(), "backup_reminder": "建议先手动备份人工整理数据；本次没有自动备份。"})
-        except Exception as error:  # noqa: BLE001 - consumed requests never replay after failure.
-            result = {"status": "error", "reason": type(error).__name__, "message": str(error), "request_id": request["request_id"], "operation": request["operation"], "completed_at": datetime.now(timezone.utc).isoformat()}
-    _atomic_json(_state_path(root, "storage-maintenance-result.json"), result)
+        result_path = _state_path(root, "storage-maintenance-result.json")
+        started_at = datetime.now(timezone.utc).isoformat()
+        result = {
+            "status": "running",
+            "operations": operations,
+            "items": [],
+            "request_id": request["request_id"],
+            "started_at": started_at,
+            "backup_reminder": "建议先手动备份人工整理数据；本次没有自动备份。",
+        }
+        if len(operations) == 1:
+            result["operation"] = operations[0]
+        _atomic_json(result_path, result)
+        for operation in operations:
+            try:
+                item = {**_run_maintenance(root, operation), "operation": operation}
+            except Exception as error:  # noqa: BLE001 - one failed item does not suppress the remaining selections.
+                item = {"operation": operation, "status": "error", "reason": type(error).__name__, "message": str(error)}
+            result["items"].append(item)
+            _atomic_json(result_path, result)
+        statuses = [str(item.get("status", "error")) for item in result["items"]]
+        if all(status == "ok" and not item.get("partial") for status, item in zip(statuses, result["items"], strict=True)):
+            result["status"] = "ok"
+        elif any(status == "ok" for status in statuses):
+            result["status"] = "partial"
+        elif any(status in {"error", "failed"} for status in statuses):
+            result["status"] = "error"
+        elif all(status == "skipped" for status in statuses):
+            result["status"] = "skipped"
+        else:
+            result["status"] = "partial"
+        if len(operations) == 1:
+            single_item = result["items"][0]
+            result.update({key: value for key, value in single_item.items() if key not in {"operation", "status"}})
+            result["operation"] = operations[0]
+            result["operations"] = operations
+        result.update({"request_id": request["request_id"], "completed_at": datetime.now(timezone.utc).isoformat()})
+        _atomic_json(result_path, result)
     return result
 
 

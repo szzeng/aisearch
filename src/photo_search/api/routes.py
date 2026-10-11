@@ -590,7 +590,7 @@ async def storage_create_manual_backup(request: Request) -> dict[str, Any]:
         return {"status": "error", "message": str(error)}
 
 
-@router.post("/storage/maintenance/request", summary="Confirm one offline maintenance action")
+@router.post("/storage/maintenance/request", summary="Confirm one offline maintenance batch")
 async def storage_request_maintenance(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     from photo_search.storage_ui import MAINTENANCE_REVIEWED, queue_maintenance
 
@@ -598,7 +598,8 @@ async def storage_request_maintenance(request: Request, payload: dict[str, Any] 
         return {"status": "error", "code": "INDEPENDENT_REVIEW_REQUIRED", "message": "独立窄审完成前暂不开放离线维护执行"}
 
     try:
-        return queue_maintenance(context_of(request).settings.data_root, str(payload.get("operation", "")), confirmed=payload.get("confirmed") is True)
+        operations = payload.get("operations", payload.get("operation"))
+        return queue_maintenance(context_of(request).settings.data_root, operations, confirmed=payload.get("confirmed") is True)
     except (OSError, ValueError) as error:
         return {"status": "error", "message": str(error)}
 

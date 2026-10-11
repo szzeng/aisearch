@@ -2,11 +2,11 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## P4-STORAGE-UI-A — IMPLEMENTED / PARTIAL；当前会话复核完成，独立 GPT-6 Luna High 审查与门闩开放待办
+## P4-STORAGE-UI-A — SCOPED PASS；门闩已按用户确认开放
 
-[任务卡](tasks/P4-STORAGE-UI-A.md)、[执行报告](reports/P4-STORAGE-UI-A.md)。已实现存储诊断 UI、用户点击触发的后台有界扫描、维护预览、可配置备份目录和手动 SQLite catalog 在线一致性快照；测试快照保留合成人物、合集成员及人工地点，连续备份不删除旧快照。一次性离线维护入口已实现但由 `MAINTENANCE_REVIEWED=False` 门闩关闭；CSRF/身份/持锁/一次性消费/旧备份授权过滤均有定向合成证据。修复提交后 `storage_ui.py` 字面量换行导致的启动 SyntaxError 后，定向 pytest **23/0/0/0**（含 GC-A/GC-B 定向复用），Ruff、Python 编译/导入、Node 语法、diff-check 通过。独立窄审通过前不开放执行，故整卡为 **PARTIAL**，非产品 PASS。未访问真实 PhotoSearchData/图库，未做真实浏览器观察或全量回归。
+[任务卡](tasks/P4-STORAGE-UI-A.md)、[执行报告](reports/P4-STORAGE-UI-A.md)。已实现存储诊断 UI、用户点击触发的后台有界扫描、维护预览、可配置备份目录、手动 SQLite catalog 快照及一次性多选维护。用户确认报告通过并授权开闸后，`MAINTENANCE_REVIEWED=True`；启用后 API→启动消费合成闭环及原关闭拒绝路径均通过。P2 缓存版本/逐项实际结果展示已修复；任务定向 JUnit **28/0/0/0**（含 GC-A/GC-B 定向复用和 JS 渲染桩），Ruff、Python 编译/导入、Node 语法、diff-check 通过。状态为 **SCOPED PASS**；不代表真实图库、真实浏览器或全仓 PASS。未访问真实 PhotoSearchData/图库。
 
-当前会话受影响面复核未发现具体代码缺陷，但不将其记作独立审查；用户已批准 GPT-6 Luna High 替代 DS-H 路由。复核报告：[P4-STORAGE-UI-A-REVIEW](reports/P4-STORAGE-UI-A-REVIEW.md)。`MAINTENANCE_REVIEWED=False` 保持不变，待独立 Luna High 审查后再判断是否开放，并补验开放后的 API/UI/启动闭环。
+后续复核发现并修复两个 P2 UI 交付问题：更新脚本缓存版本，并在批次结果中显示每项实际删除数/释放量。用户确认报告通过并明确授权开放维护门闩；现 `MAINTENANCE_REVIEWED=True`，启用后的合成 API/启动消费闭环定向通过。复核报告：[P4-STORAGE-UI-A-REVIEW](reports/P4-STORAGE-UI-A-REVIEW.md)。真实浏览器、真实图库和全仓回归仍未验证。
 
 ## P4-TEST-BASELINE-TAIL-A — SCOPED PASS / 地点测试基线收尾完成
 
@@ -38,4 +38,4 @@
 
 ## 下一步
 
-按 V3.1 §2.4 对 [P4-STORAGE-UI-A-REVIEW](tasks/P4-STORAGE-UI-A-REVIEW.md) 做独立 DeepSeek-H 受影响面窄审；当前会话复核报告已记录但不替代该审查。通过后才考虑开放离线维护门闩，并补验启用后的 API/UI/启动闭环。用户需在 Codex 内手动切换模型。GC-B 已完成状态不变；OCR 原生运行时确认及新的全仓回归仍是独立后续工作。
+P4-STORAGE-UI-A 已按用户确认开放门闩并完成合成启用路径验证。后续若用户图库执行维护，需由用户明确操作并先按 UI 提示手动备份；真实图库/浏览器验收仍是独立未验证项。GC-B 已完成状态不变；OCR 原生运行时确认及新的全仓回归仍是独立后续工作。
