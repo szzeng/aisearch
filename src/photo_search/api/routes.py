@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import sqlite3
 import sys
 from collections.abc import Mapping
 from email.utils import formatdate
@@ -544,6 +545,69 @@ async def stats(request: Request) -> dict[str, Any]:
 async def storage_summary(request: Request) -> dict[str, Any]:
     """Quick accounting only; never recursively walks local storage directories."""
     return quick_storage_summary(service_of(request).data_root)
+
+
+@router.post("/storage/inspect", summary="Run a bounded storage scan")
+async def storage_deep_inspect(request: Request) -> dict[str, Any]:
+    from photo_search.storage import storage_inspect
+
+    return await asyncio.to_thread(storage_inspect, context_of(request).settings.data_root, deep=True)
+
+
+@router.get("/storage/maintenance/preview", summary="Preview available maintenance")
+async def storage_maintenance_preview(request: Request) -> dict[str, Any]:
+    from photo_search.storage_ui import maintenance_request_state, preview_maintenance
+
+    root = context_of(request).settings.data_root
+    preview = await asyncio.to_thread(preview_maintenance, root)
+    return {**preview, **maintenance_request_state(root)}
+
+
+@router.get("/storage/backup", summary="Read manual catalog backup settings")
+async def storage_backup_settings(request: Request) -> dict[str, Any]:
+    from photo_search.storage_ui import backup_settings
+
+    return backup_settings(context_of(request).settings.data_root)
+
+
+@router.put("/storage/backup", summary="Save and check manual backup directory")
+async def storage_save_backup_settings(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from photo_search.storage_ui import save_backup_directory
+
+    try:
+        return await asyncio.to_thread(save_backup_directory, context_of(request).settings.data_root, payload.get("directory", ""))
+    except (OSError, ValueError, sqlite3.Error) as error:
+        return {"status": "error", "message": str(error)}
+
+
+@router.post("/storage/backup", summary="Create a manually requested catalog snapshot")
+async def storage_create_manual_backup(request: Request) -> dict[str, Any]:
+    from photo_search.storage_ui import create_catalog_snapshot
+
+    try:
+        return await asyncio.to_thread(create_catalog_snapshot, context_of(request).settings.data_root)
+    except (OSError, ValueError, sqlite3.Error) as error:
+        return {"status": "error", "message": str(error)}
+
+
+@router.post("/storage/maintenance/request", summary="Confirm one offline maintenance action")
+async def storage_request_maintenance(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from photo_search.storage_ui import MAINTENANCE_REVIEWED, queue_maintenance
+
+    if not MAINTENANCE_REVIEWED:
+        return {"status": "error", "code": "INDEPENDENT_REVIEW_REQUIRED", "message": "独立窄审完成前暂不开放离线维护执行"}
+
+    try:
+        return queue_maintenance(context_of(request).settings.data_root, str(payload.get("operation", "")), confirmed=payload.get("confirmed") is True)
+    except (OSError, ValueError) as error:
+        return {"status": "error", "message": str(error)}
+
+
+@router.delete("/storage/maintenance/request", summary="Cancel pending offline maintenance")
+async def storage_cancel_maintenance(request: Request) -> dict[str, Any]:
+    from photo_search.storage_ui import cancel_maintenance
+
+    return cancel_maintenance(context_of(request).settings.data_root)
 
 
 # ----------------------------------------------------------------------------- sources

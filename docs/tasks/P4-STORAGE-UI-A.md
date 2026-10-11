@@ -1,6 +1,6 @@
 # P4-STORAGE-UI-A — 个人相册存储与维护 UI（仅手动备份）
 
-日期：2026-10-11。状态：**READY / 仅立卡，未实施**。
+日期：2026-10-11。状态：**IMPLEMENTED / 定向验收完成；自动维护执行保持关闭，待独立窄审**。
 立卡仓库基线：szzeng/aisearch master eee605f（实施前核对新 HEAD）。推荐 GPT-6 High。
 原则：**个人相册、复用已完成的 GC-A/GC-B、轻量 UI、简单定向测试、用户手动备份且绝不自动删除备份**。
 
@@ -86,3 +86,15 @@
 交付 UI、少量受保护 API、路径设置与手动快照、单次维护入口、简短测试报告及 development-status 更新。
 
 **验收关键：用户手动点击才备份；所有手动备份由用户管理，软件不自动轮换/清理；垃圾清理仍由用户明确确认并遵守已有 GC 安全规则。**
+
+## 9. 本次实现记录（2026-10-11）
+
+- 已实现存储与维护 UI、快速概览、手动有界深扫、维护项目预览、备份目录检查、SQLite catalog 在线一致性快照及结果显示。
+- 手动快照包含人工人物、合集成员、地点等 catalog 表；唯一文件名、SQLite integrity_check、原子无覆盖发布。新备份会排除一次性维护授权，旧备份恢复也会过滤该授权。
+- 一次性离线维护协调器、data-root 身份复核、启动前消费及 GC-A/GC-B 复用已实现并有合成测试。按 §8 要求，`MAINTENANCE_REVIEWED` 当前为 `False`；排队 API 与 UI 执行按钮默认关闭，启动时发现遗留授权会消费并记录跳过。独立窄审完成前不开放删除/整理执行路径。
+- 定向报告：[P4-STORAGE-UI-A](../reports/P4-STORAGE-UI-A.md)，JUnit：[XML](../reports/P4-STORAGE-UI-A-junit.xml)。验收结论为 **PARTIAL**，不能标记整卡 PASS。
+
+## 10. 当前会话复核记录（2026-10-11）
+
+- 已完成当前会话受影响面复核，未发现具体代码缺陷；详见[复核报告](../reports/P4-STORAGE-UI-A-REVIEW.md)。
+- 本记录不是独立 DS-H 审查。按 V3.1 §2.4，门闩 `MAINTENANCE_REVIEWED` 继续为 `False`，实现状态继续为 **PARTIAL**；独立 DS-H 审查及门闩开放后的 API/UI/启动闭环仍待完成。

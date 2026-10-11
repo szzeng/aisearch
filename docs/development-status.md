@@ -2,9 +2,11 @@
 
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
-## P4-STORAGE-UI-A — READY / 存储维护 UI（仅手动备份）
+## P4-STORAGE-UI-A — IMPLEMENTED / PARTIAL；当前会话复核完成，独立 DS-H 与门闩开放待办
 
-[任务卡](tasks/P4-STORAGE-UI-A.md)。对 GC-A/GC-B 增加存储空间 UI、独立维护项目预览、一次性确认后下次停机启动执行和结果展示；备份文件夹支持自行设置，用户点击「备份人工整理数据」才创建 SQLite catalog 一致性快照。**不在 GC 前/启动时自动备份，不轮换两份、不自动删除手动备份；备份不是 GC 的强制前置。** 严格复用现有锁、数据引用和索引健康保护，仅做合成数据定向测试。当前**仅立卡、未实施**。
+[任务卡](tasks/P4-STORAGE-UI-A.md)、[执行报告](reports/P4-STORAGE-UI-A.md)。已实现存储诊断 UI、用户点击触发的后台有界扫描、维护预览、可配置备份目录和手动 SQLite catalog 在线一致性快照；测试快照保留合成人物、合集成员及人工地点，连续备份不删除旧快照。一次性离线维护入口已实现但由 `MAINTENANCE_REVIEWED=False` 门闩关闭；CSRF/身份/持锁/一次性消费/旧备份授权过滤均有定向合成证据。pytest **23/0/0/0**（含 GC-A/GC-B 定向复用），Ruff、Python/Node 语法、diff-check 通过。独立窄审通过前不开放执行，故整卡为 **PARTIAL**，非产品 PASS。未访问真实 PhotoSearchData/图库，未做真实浏览器观察或全量回归。
+
+当前会话受影响面复核未发现具体代码缺陷，但按 V3.1 §2.4 不将其记作独立 DS-H；复核报告：[P4-STORAGE-UI-A-REVIEW](reports/P4-STORAGE-UI-A-REVIEW.md)。`MAINTENANCE_REVIEWED=False` 保持不变，需独立 DS-H 审查后再判断是否开放，并补验开放后的 API/UI/启动闭环。
 
 ## P4-TEST-BASELINE-TAIL-A — SCOPED PASS / 地点测试基线收尾完成
 
@@ -36,4 +38,4 @@
 
 ## 下一步
 
-本轮轻量测试基线专项已结束，恢复日常相册开发/试用；GC-B 已完成状态不变。OCR 原生运行时确认及新的全仓回归仍是独立后续工作。
+按 V3.1 §2.4 对 [P4-STORAGE-UI-A-REVIEW](tasks/P4-STORAGE-UI-A-REVIEW.md) 做独立 DeepSeek-H 受影响面窄审；当前会话复核报告已记录但不替代该审查。通过后才考虑开放离线维护门闩，并补验启用后的 API/UI/启动闭环。用户需在 Codex 内手动切换模型。GC-B 已完成状态不变；OCR 原生运行时确认及新的全仓回归仍是独立后续工作。

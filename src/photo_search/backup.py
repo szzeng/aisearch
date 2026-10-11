@@ -98,7 +98,10 @@ def _members(source_root: Path, staging: Path, hook: CopyHook | None) -> list[di
             if relative_path == f"runtime/{LEASE_FILENAME}" or relative_path in {
                 "catalog/catalog.db-wal",
                 "catalog/catalog.db-shm",
+                "runtime/storage-maintenance-request.json",
             }:
+                continue
+            if relative_path.startswith("runtime/storage-maintenance-consuming-"):
                 continue
             target = staging / relative
             _copy(source, target, hook)
@@ -328,13 +331,25 @@ def restore_backup(
             schema_version=manifest.get("schema_version"),
             supported_schema_version=int(SUPPORTED_SCHEMA_VERSION),
         )
+    restorable_members = [
+        item
+        for item in manifest["members"]
+        if isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and item["path"] != "runtime/storage-maintenance-request.json"
+        and not item["path"].startswith("runtime/storage-maintenance-consuming-")
+    ]
     staging = target.with_name(f".{target.name}.restore-staging-{uuid.uuid4().hex}")
     try:
         staging.mkdir(parents=True)
-        for item in manifest["members"]:
+        for item in restorable_members:
             relative = Path(str(item["path"]))
+            # Legacy bundles may contain recoverable runtime files. Never resurrect a
+            # one-shot destructive authorization from any backup generation.
+            if relative.as_posix() == "runtime/storage-maintenance-request.json" or relative.as_posix().startswith("runtime/storage-maintenance-consuming-"):
+                continue
             _copy(source / relative, staging / relative, copy_hook)
-        _verify(staging, manifest["members"])
+        _verify(staging, restorable_members)
         version = _schema(staging, int(manifest["schema_version"]))
         if target.exists():
             target.rmdir()
@@ -346,6 +361,6 @@ def restore_backup(
         "status": "ok",
         "data_root": str(target),
         "schema_version": version,
-        "restored_members": len(manifest["members"]),
+        "restored_members": len(restorable_members),
         "consistency": _restored_consistency(manifest),
     }

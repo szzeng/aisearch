@@ -99,6 +99,7 @@
     refreshStatus: {},
     objectUrls: [],
     observer: null,
+    storageBackupLoaded: false,
   };
 
   var els = {};
@@ -472,6 +473,10 @@
         }
         if (payload.last_deep_scan && payload.last_deep_scan.completed_at_ms) {
           rows.push("最近深度扫描：" + new Date(payload.last_deep_scan.completed_at_ms).toLocaleString() + (payload.last_deep_scan.partial ? "（部分结果）" : ""));
+          Object.keys(payload.last_deep_scan.directories || {}).forEach(function (key) {
+            var item = payload.last_deep_scan.directories[key] || {};
+            rows.push(key + "：" + formatBytes(item.bytes || 0) + "，" + (item.files || 0) + " 个文件");
+          });
         } else {
           rows.push("尚无深度扫描记录。");
         }
@@ -480,6 +485,115 @@
       .catch(function (failure) {
         setStatus(els.storageSummary, "读取空间概览失败：" + describe(failure), "error");
       });
+  }
+
+  function storageStatusText(value) {
+    if (!value) return "未知";
+    if (value.status === "ok") return "正常";
+    if (value.status === "preview") {
+      if (value.eligible_files !== undefined) {
+        var estimate = value.eligible_files ? "可优化：约 " + formatBytes(value.eligible_bytes || 0) + "，最多本次检查 " + (value.preview_batch_files || 0) + " 个文件" : "正常：没有符合条件的文件";
+        return estimate + (value.partial ? "（扫描部分结果）" : "");
+      }
+      if (value.recommended === "vacuum") return "可优化：SQLite 完整性检查通过";
+      if (value.recommended === "skip") return "正常：无需 VACUUM（" + (value.reason || "") + "）";
+      var actions = (value.actions || []).filter(function (item) { return item.state === "would_run"; });
+      return actions.length ? "可优化：" + actions.map(function (item) { return item.action; }).join("、") : "正常：无需向量维护";
+    }
+    if (value.status === "busy") return "无法维护：扫描正在运行";
+    if (value.status === "skipped") return "无法维护：" + (value.reason || "条件不满足");
+    return "无法维护：" + (value.code || value.reason || value.status || "状态未知");
+  }
+
+  function renderMaintenance(payload) {
+    var labels = { artifacts: "孤立产物", "media-cache": "旧媒体缓存", previews: "预览缓存", "face-crops": "人脸裁剪缓存", vectors: "向量索引", vacuum: "SQLite VACUUM" };
+    var rows = Object.keys(labels).map(function (key) { return labels[key] + "：" + storageStatusText((payload.items || {})[key]); });
+    if (payload.pending) rows.push("待执行：" + payload.pending.operation + "；请正常关闭相册后重新启动。有效期至 " + new Date(payload.pending.expires_at_ms).toLocaleString());
+    else rows.push("待执行维护：无");
+    var confirmButton = document.getElementById("storage-maintenance-confirm");
+    var gate = document.getElementById("storage-maintenance-review-gate");
+    confirmButton.disabled = payload.execution_enabled !== true;
+    text(gate, payload.review_required || "自动维护入口已通过独立窄审。");
+    if (payload.last_result) {
+      var last = payload.last_result;
+      var details = [];
+      if (last.deleted_files !== undefined) details.push("删除 " + last.deleted_files + " 个文件");
+      if (last.freed_bytes !== undefined) details.push("释放 " + formatBytes(last.freed_bytes));
+      if (last.actual_bytes_freed !== undefined) details.push("释放 " + formatBytes(last.actual_bytes_freed));
+      if (last.status === "running") details.push("上次启动时操作中断，未自动重试");
+      rows.push("上次启动结果：" + last.status + "（" + (last.operation || last.reason || "") + "）" + (details.length ? "；" + details.join("；") : ""));
+    }
+    setStatus(els.storageMaintenancePreview, rows.join("\n"));
+  }
+
+  function loadStorageMaintenance() {
+    setStatus(els.storageMaintenancePreview, "正在读取维护预览…");
+    return request("/storage/maintenance/preview").then(function (result) { renderMaintenance(result.body || {}); })
+      .catch(function (failure) { setStatus(els.storageMaintenancePreview, "读取维护预览失败：" + describe(failure), "error"); });
+  }
+
+  function loadStorageBackup() {
+    return request("/storage/backup").then(function (result) {
+      var value = result.body || {};
+      els.storageBackupDirectory.value = value.directory || "";
+      var last = value.last_backup;
+      setStatus(els.storageBackupStatus, last ? "最近手动备份：" + last.created_at + "\n文件：" + last.path + "\n状态：" + last.status + "；大小：" + formatBytes(last.bytes || 0) : "尚无手动备份记录。");
+    }).catch(function (failure) { setStatus(els.storageBackupStatus, "读取备份设置失败：" + describe(failure), "error"); });
+  }
+
+  function renderDeepStorage(result) {
+    var rows = ["深度扫描状态：" + (result.status || "unknown")];
+    if (result.completed_at_ms) rows.push("检查时间：" + new Date(result.completed_at_ms).toLocaleString());
+    if (result.status === "busy") rows.push("已有扫描占用检查锁，请稍后再试。");
+    if (result.partial !== undefined) rows.push("扫描结果：" + (result.partial ? "部分结果" : "完整结果"));
+    if (result.directories) Object.keys(result.directories).forEach(function (key) {
+      var item = result.directories[key] || {};
+      rows.push(key + "：" + formatBytes(item.bytes || item.total_bytes || 0) + (item.files !== undefined ? "，" + item.files + " 个文件" : ""));
+    });
+    var catalog = result.catalog || {};
+    if (catalog.physical_bytes !== undefined) rows.push("数据库及 WAL：" + formatBytes(catalog.physical_bytes));
+    setStatus(els.storageSummary, rows.join("\n"));
+  }
+
+  function runStorageDeepCheck() {
+    setStatus(els.storageSummary, "正在后台进行有界深度扫描…HTTP 页面仍可响应。");
+    return request("/storage/inspect", { method: "POST", body: {} }).then(function (result) { renderDeepStorage(result.body || {}); })
+      .catch(function (failure) { setStatus(els.storageSummary, "深度扫描失败：" + describe(failure), "error"); });
+  }
+
+  function saveStorageBackupDirectory() {
+    return request("/storage/backup", { method: "PUT", body: { directory: els.storageBackupDirectory.value } }).then(function (result) {
+      var body = result.body || {};
+      if (body.status !== "ok") throw { code: "BACKUP_DIRECTORY_INVALID", message: body.message || "目录不可用" };
+      setStatus(els.storageBackupStatus, "备份目录已保存并检查可写，剩余 " + formatBytes(body.free_bytes || 0) + "。\n" + body.directory);
+    }).catch(function (failure) { setStatus(els.storageBackupStatus, "保存备份目录失败：" + (failure.message || describe(failure)), "error"); });
+  }
+
+  function createManualStorageBackup() {
+    setStatus(els.storageBackupStatus, "正在后台创建并校验 SQLite catalog 快照…");
+    return request("/storage/backup", { method: "POST", body: {} }).then(function (result) {
+      var body = result.body || {};
+      if (body.status !== "ok") throw { code: "BACKUP_FAILED", message: body.message || "快照创建失败" };
+      setStatus(els.storageBackupStatus, "手动快照已完成：" + body.created_at + "\n文件：" + body.path + "\n大小：" + formatBytes(body.bytes || 0) + "。不含原图、向量外部产物或模型。");
+    }).catch(function (failure) { setStatus(els.storageBackupStatus, "手动备份失败：" + (failure.message || describe(failure)), "error"); });
+  }
+
+  function confirmStorageMaintenance() {
+    var operation = document.getElementById("storage-maintenance-operation").value;
+    if (!window.confirm("确认安排“" + operation + "”在相册下次启动前执行？请先按需手动备份人工整理数据。确认后关闭并重新启动相册；系统不会自动备份。")) return;
+    request("/storage/maintenance/request", { method: "POST", body: { operation: operation, confirmed: true } }).then(function (result) {
+      var body = result.body || {};
+      if (body.status === "error") throw { code: "MAINTENANCE_REQUEST_FAILED", message: body.message || "无法安排维护" };
+      setStatus(els.storageMaintenancePreview, "已确认一次性维护：" + operation + "。请关闭相册后重新启动；有效期一小时。没有执行自动备份。", "success");
+      loadStorageMaintenance();
+    }).catch(function (failure) { setStatus(els.storageMaintenancePreview, "安排维护失败：" + (failure.message || describe(failure)), "error"); });
+  }
+
+  function cancelStorageMaintenance() {
+    request("/storage/maintenance/request", { method: "DELETE" }).then(function (result) {
+      setStatus(els.storageMaintenancePreview, result.body && result.body.status === "cancelled" ? "待执行维护已取消。" : "没有待执行维护。");
+      loadStorageMaintenance();
+    }).catch(function (failure) { setStatus(els.storageMaintenancePreview, "取消维护失败：" + describe(failure), "error"); });
   }
 
   function renderSources() {
@@ -2072,6 +2186,9 @@
       sourcesStatus: document.getElementById("sources-status"),
       refreshLibrary: document.getElementById("refresh-library"),
       storageSummary: document.getElementById("storage-summary"),
+      storageMaintenancePreview: document.getElementById("storage-maintenance-preview"),
+      storageBackupDirectory: document.getElementById("storage-backup-directory"),
+      storageBackupStatus: document.getElementById("storage-backup-status"),
       faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
@@ -2165,6 +2282,18 @@
       refreshLibrary(null);
     });
     document.getElementById("storage-summary-refresh").addEventListener("click", loadStorageSummary);
+    document.getElementById("storage-deep-check").addEventListener("click", runStorageDeepCheck);
+    document.getElementById("storage-maintenance-refresh").addEventListener("click", loadStorageMaintenance);
+    document.getElementById("storage-maintenance-confirm").addEventListener("click", confirmStorageMaintenance);
+    document.getElementById("storage-maintenance-cancel").addEventListener("click", cancelStorageMaintenance);
+    document.getElementById("storage-backup-save").addEventListener("click", saveStorageBackupDirectory);
+    document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);
+    document.getElementById("storage-management-details").addEventListener("toggle", function (event) {
+      if (event.currentTarget.open && !state.storageBackupLoaded) {
+        state.storageBackupLoaded = true;
+        loadStorageBackup();
+      }
+    });
     window.addEventListener("hashchange", handleHash);
 
     state.observer = buildObserver();

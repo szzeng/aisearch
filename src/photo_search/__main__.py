@@ -25,7 +25,6 @@ from uvicorn.config import LOGGING_CONFIG
 from photo_search.api.context import ApiContext
 from photo_search.api.session import bootstrap_session_credential
 from photo_search.api.settings import ApiSettings, BindNotAllowed
-from photo_search.app import create_app
 from photo_search.backup import create_backup, restore_backup
 from photo_search.catalog.errors import CatalogError
 from photo_search.config import resolve_data_root
@@ -116,7 +115,21 @@ def _serve(args: argparse.Namespace) -> int:
     except BindNotAllowed as error:
         print(f"error: BIND_NOT_ALLOWED: {error}", file=sys.stderr)
         return 2
+    # A user-confirmed one-shot maintenance request must run before session creation,
+    # model/GPU wiring, HTTP startup and the service's data-root lease.
+    from photo_search.storage_ui import execute_pending_maintenance
+
+    try:
+        maintenance = execute_pending_maintenance(settings.data_root)
+    except Exception as error:  # noqa: BLE001 - consumed authorizations are never replayed.
+        maintenance = {"status": "error", "reason": type(error).__name__}
+    if maintenance is not None:
+        print("photo-search: offline maintenance " + json.dumps(maintenance, ensure_ascii=False, sort_keys=True))
     bootstrap = bootstrap_session_credential(settings)
+    # Importing the ASGI module constructs a default application context; defer it until
+    # after the pre-start maintenance boundary and the one-time request has been consumed.
+    from photo_search.app import create_app
+
     # P4-02N: the running application gets the real, worker-backed query encoder when this
     # machine has the pinned model; without it the factory stays ``None`` and every semantic
     # request keeps its documented structured refusal.
