@@ -13,6 +13,7 @@ from typing import Any
 from photo_search.api.errors import ApiError
 from photo_search.catalog import schema as schema_module
 from photo_search.catalog.errors import CATALOG_FILTER_REVISION_STALE, INVALID_CURSOR
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.geo import dataset as dataset_module
 from photo_search.places import cn_facets
 from photo_search.places import datasets as datasets_module
@@ -57,8 +58,9 @@ def _index(catalog: Any, data_root: Any) -> tuple[dict[str, Any], str | None, st
 def _album_rows(catalog: Any, data_root: Any, *, suppress_cn: bool = True) -> tuple[list[dict[str, Any]], str | None]:
     province_index, package_revision, provider, package_available = _index(catalog, data_root)
     city_regions = province_index.get("city_to_admin1", {})
+    photo_sql, photo_parameters = photo_asset_sql()
     rows = catalog.read_all(
-        """SELECT a.asset_id, a.sha256, a.byte_size, a.created_at,
+        f"""SELECT a.asset_id, a.sha256, a.byte_size, a.created_at,
                   CASE WHEN ap.mode = 'MANUAL_ASSIGNED' THEN ap.place_id
                        ELSE pc.local_place_id END AS place_id,
                   CASE WHEN ap.mode = 'MANUAL_ASSIGNED' THEN p.kind
@@ -82,7 +84,8 @@ def _album_rows(catalog: Any, data_root: Any, *, suppress_cn: bool = True) -> tu
              LEFT JOIN place_resolution_candidates pc
                ON pc.resolution_id = pr.resolution_id AND pc.rank = 1
              LEFT JOIN places candidate ON candidate.place_id = pc.local_place_id
-            WHERE EXISTS (SELECT 1 FROM file_locations l WHERE l.asset_id = a.asset_id
+            WHERE ({photo_sql})
+              AND EXISTS (SELECT 1 FROM file_locations l WHERE l.asset_id = a.asset_id
                            AND l.availability = 'PRESENT')
               AND (ap.mode = 'MANUAL_ASSIGNED' OR
                    (COALESCE(ap.mode, 'AUTO_ALLOWED') = 'AUTO_ALLOWED'
@@ -103,7 +106,7 @@ def _album_rows(catalog: Any, data_root: Any, *, suppress_cn: bool = True) -> tu
                       AND EXISTS(SELECT 1 FROM cn_base_china_places cp
                            WHERE cp.dataset_id=active.dataset_id AND cp.place_id=pc.local_place_id))))
             ORDER BY a.asset_id""",
-        (AUTO_MAX_DISTANCE_M, int(package_available), int(suppress_cn)),
+        (*photo_parameters, AUTO_MAX_DISTANCE_M, int(package_available), int(suppress_cn)),
     )
     result: list[dict[str, Any]] = []
     external_ids: dict[int, str] = {}

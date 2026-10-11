@@ -48,6 +48,7 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.catalog.paths import path_key
+from photo_search.catalog.video import is_video_path
 from photo_search.jobs import queue as jobs
 
 HASH_CHUNK_BYTES = 1024 * 1024
@@ -333,11 +334,15 @@ def iter_observations(root: Path) -> Iterator[FileObservation]:
         subdirectories: list[tuple[str, Path]] = []
         for entry in entries:
             try:
+                relative = f"{relative_dir}\\{entry.name}" if relative_dir else entry.name
                 if _is_reparse_point(entry):
                     continue
-                relative = f"{relative_dir}\\{entry.name}" if relative_dir else entry.name
                 if entry.is_dir(follow_symlinks=False):
                     subdirectories.append((relative, Path(entry.path)))
+                    continue
+                # Video paths are excluded before file stat/hash observation. We still
+                # enumerate the parent directory, but never register or process these files.
+                if is_video_path(relative):
                     continue
                 if not entry.is_file(follow_symlinks=False):
                     continue

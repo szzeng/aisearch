@@ -9,6 +9,7 @@ from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.face.contract import (
     FACE_ARTIFACT_REVISION,
     FACE_DETAIL_SPEC_REVISION,
@@ -83,8 +84,9 @@ def _album_summaries(
         for value in (int(row["person_id"]), row["avatar_face_id"] or "")
     )
     page = f"WITH page(person_id, stored_avatar) AS (VALUES {values}) "
+    photo_sql, _photo_parameters = photo_asset_sql(asset_alias="f")
     asset_count_column = (
-        "" if reuse_asset_counts else ", COUNT(DISTINCT f.asset_id) AS asset_count"
+        "" if reuse_asset_counts else f", COUNT(DISTINCT CASE WHEN {photo_sql} THEN f.asset_id END) AS asset_count"
     )
     members = connection.execute(
         page
@@ -399,7 +401,7 @@ def people_page(
                 "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
                 "JOIN faces AS f ON f.face_id = l.face_id WHERE "
                 + MEMBER_PREDICATE
-                + " GROUP BY l.person_id)"
+                + " AND " + photo_asset_sql(asset_alias="f")[0] + " GROUP BY l.person_id)"
             )
             latest_select = ""
         else:
@@ -410,7 +412,7 @@ def people_page(
                 "JOIN face_person_links AS l ON l.person_id = candidate.person_id "
                 "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id = f.asset_id WHERE "
                 + MEMBER_PREDICATE
-                + " GROUP BY l.person_id)"
+                + " AND " + photo_asset_sql(asset_alias="f")[0] + " GROUP BY l.person_id)"
             )
             latest_select = ", COALESCE(ec.latest_asset_added_at, 0) AS page_latest_asset_added_at"
         continuation_conditions: list[str] = []

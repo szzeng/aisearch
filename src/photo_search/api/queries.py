@@ -20,6 +20,7 @@ from photo_search.catalog.errors import (
     JOB_NOT_FOUND,
     PLACE_SUGGESTION_REVISION_STALE,
 )
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.media.status import asset_media_states
@@ -508,6 +509,9 @@ def _asset_chunk(
             "AND l.source_id = ?)"
         )
         parameters.append(int(source_id))
+    photo_sql, photo_parameters = photo_asset_sql(source_id=source_id)
+    conditions.append(photo_sql)
+    parameters.extend(photo_parameters)
     if availability == "present":
         conditions.append(
             "EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = a.asset_id "

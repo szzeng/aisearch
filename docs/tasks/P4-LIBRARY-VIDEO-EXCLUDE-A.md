@@ -1,6 +1,6 @@
 # P4-LIBRARY-VIDEO-EXCLUDE-A（V2）— 视频扫描排除与已入库视频安全退出
 
-**状态**：READY / 仅任务卡，尚未实施。**日期**：2026-10-11。**参考**：`szzeng/aisearch master @ f09c0379`，开工前复核最新 HEAD/Schema 与未提交改动。**推荐执行**：GPT-6 Luna / Medium；视查询资格变更风险可由 Luna / High 定向复核。**测试**：个人项目，只做少量合成定向测试，不做全仓/GPU/真图库。**禁止**修改原始视频、直接删除历史资产/向量/人工归属。
+**状态**：SCOPED PASS / 已按任务卡完成合成定向验收。**日期**：2026-10-11。**基线**：`master @ 70fc82a`，保留既有 `src/photo_search/geo/dataset.py` 改动。**报告**：[`docs/reports/P4-LIBRARY-VIDEO-EXCLUDE-A.md`](../reports/P4-LIBRARY-VIDEO-EXCLUDE-A.md)。按用户要求仅做任务卡定向测试、未做独立复核。未访问真实图库或 PhotoSearchData。
 
 ## 一、目标及边界
 

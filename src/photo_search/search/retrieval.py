@@ -32,6 +32,7 @@ from photo_search.catalog.errors import (
     SPACE_MISMATCH,
     CatalogError,
 )
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.indexing.store import LanceVectorIndex
 from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.members import MEMBER_PREDICATE
@@ -296,6 +297,9 @@ def scope_condition(
             "WHERE l.source_id = ?)"
         )
         parameters.append(int(scope.source_id))
+    photo_sql, photo_parameters = photo_asset_sql(source_id=scope.source_id, asset_alias=alias)
+    conditions.append(photo_sql)
+    parameters.extend(photo_parameters)
     if scope.availability == "present":
         conditions.append(
             "EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = "

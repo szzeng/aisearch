@@ -13,6 +13,7 @@ from typing import Any
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 from photo_search.api.queries import asset_page, encode_capture_cursor
 from photo_search.catalog.errors import CATALOG_FILTER_REVISION_STALE
+from photo_search.catalog.video import photo_asset_sql
 from photo_search.persons import albums
 from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.contracts import normalize_person_name
@@ -143,6 +144,7 @@ def _collection_photo_counts(connection: Any, collection_ids: list[int]) -> dict
     if not collection_ids:
         return {}
     placeholders = ", ".join("?" for _ in collection_ids)
+    photo_sql, _photo_parameters = photo_asset_sql(asset_alias="f")
     rows = connection.execute(
         _canonical_cte()
         + "SELECT cm.collection_id, COUNT(DISTINCT f.asset_id) AS photo_count "
@@ -152,7 +154,7 @@ def _collection_photo_counts(connection: Any, collection_ids: list[int]) -> dict
         "JOIN assets AS a ON a.asset_id = f.asset_id "
         "WHERE cm.collection_id IN (" + placeholders + ") AND a.state = 'ACTIVE' AND "
         + MEMBER_PREDICATE
-        + " GROUP BY cm.collection_id",
+        + " AND " + photo_sql + " GROUP BY cm.collection_id",
         tuple(int(collection_id) for collection_id in collection_ids),
     ).fetchall()
     return {int(row["collection_id"]): int(row["photo_count"]) for row in rows}
@@ -335,6 +337,7 @@ def people_page(
     ):
         raise ApiError(INVALID_CURSOR, "合集人物游标无效", status=409)
     continuation = ""
+    photo_sql, _photo_parameters = photo_asset_sql(asset_alias="f")
     parameters: list[Any] = [int(collection_id)]
     if after is not None:
         continuation = (
@@ -350,7 +353,7 @@ def people_page(
         "effective_counts AS (SELECT l.person_id, COUNT(DISTINCT f.asset_id) AS asset_count, "
         "COALESCE(MAX(a.created_at), 0) AS latest_asset_added_at "
         "FROM candidates AS c JOIN face_person_links AS l ON l.person_id=c.person_id "
-        "JOIN faces AS f ON f.face_id=l.face_id JOIN assets AS a ON a.asset_id=f.asset_id WHERE " + MEMBER_PREDICATE + " GROUP BY l.person_id) "
+        "JOIN faces AS f ON f.face_id=l.face_id JOIN assets AS a ON a.asset_id=f.asset_id WHERE " + MEMBER_PREDICATE + " AND " + photo_sql + " GROUP BY l.person_id) "
         "SELECT p.*, COALESCE(ec.asset_count, 0) AS page_asset_count, "
         "COALESCE(ec.latest_asset_added_at, 0) AS page_latest_asset_added_at FROM candidates AS p "
         "LEFT JOIN effective_counts AS ec ON ec.person_id=p.person_id "
@@ -412,9 +415,11 @@ def photo_page(
     if inner is not None and not isinstance(inner, str):
         raise ApiError(INVALID_CURSOR, "合集照片游标无效", status=409)
     condition, condition_parameters = collection_condition(int(collection_id))
+    photo_sql, photo_parameters = photo_asset_sql()
     photo_count = int(
         catalog.read_one(
-            f"SELECT COUNT(*) AS total FROM assets AS a WHERE {condition}", condition_parameters
+            f"SELECT COUNT(*) AS total FROM assets AS a WHERE {condition} AND {photo_sql}",
+            (*condition_parameters, *photo_parameters),
         )["total"]
     )
     page = asset_page(
