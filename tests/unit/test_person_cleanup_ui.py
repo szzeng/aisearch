@@ -19,6 +19,9 @@ class Element {
   setAttribute() {} addEventListener() {}
   close() { this.open = false; }
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements = new Map();
 const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
 let now = 0, nextTimer = 0;
@@ -46,6 +49,7 @@ const context = {
 let code = fs.readFileSync("src/photo_search/web/persons-albums.js", "utf8");
 code = code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui = {state, writeFace, message};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context); vm.runInContext(code, context);
 const ui = context.ui;
 const flush = () => new Promise(setImmediate);

@@ -14,6 +14,8 @@ class Element {
   constructor(tag){this.tag=tag;this.children=[];this.events={};this.value="";this.hidden=false;this.classList={add(){}};}
   set textContent(value){this.text=value;this.children=[];} get textContent(){return this.text||"";}
   append(...items){this.children.push(...items);} replaceChildren(...items){this.children=items;}
+  replaceChild(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;return old;}
+  remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(x=>x!==this);}
   setAttribute(){} removeAttribute(){} focus(){} addEventListener(name,fn){this.events[name]=fn;}
   fire(name){return this.events[name]({preventDefault(){}});}
 }
@@ -28,14 +30,14 @@ vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
  context.document.ready();await flush();
- assert.match(requests[0],/sort=photos_desc/);
+ assert.match(requests[0],/sort=photos_recent_desc/);
  get("pa-organize").fire("click");await flush();
  const browse=()=>requests.filter(url=>url.includes('/persons/browse?'));
- assert.match(browse()[1],/sort=photos_desc/);assert.match(browse()[1],/kind=unnamed/);assert.doesNotMatch(browse()[1],/cursor=/);
+ assert.match(browse()[1],/sort=photos_recent_desc/);assert.match(browse()[1],/kind=unnamed/);assert.doesNotMatch(browse()[1],/cursor=/);
  await get("pa-more").fire("click");await flush();
- assert.match(browse()[2],/sort=photos_desc/);assert.match(browse()[2],/cursor=cursor-2/);
+ assert.match(browse()[2],/sort=photos_recent_desc/);assert.match(browse()[2],/cursor=cursor-2/);
  get("pa-hidden-toggle").fire("click");await flush();
- assert.match(browse()[3],/sort=photos_desc/);assert.match(browse()[3],/visibility=hidden/);assert.doesNotMatch(browse()[3],/cursor=/);
+ assert.match(browse()[3],/sort=photos_recent_desc/);assert.match(browse()[3],/visibility=hidden/);assert.doesNotMatch(browse()[3],/cursor=/);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

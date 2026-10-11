@@ -16,7 +16,7 @@ class Element {
   constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.value="";this.hidden=false;this.disabled=false;this.scrollTop=0;this.parentNode=null;this.classList={add(){},remove(){}};}
   set textContent(value){this.text=String(value);this.children.forEach(child=>child.parentNode=null);this.children=[];}
   get textContent(){return this.text||"";}
-  append(...items){items.forEach(item=>{if(item&&typeof item==="object")item.parentNode=this;this.children.push(item);});}
+  append(...items){items.forEach(item=>{if(item&&typeof item==="object"){if(item.parentNode)item.remove();item.parentNode=this;}this.children.push(item);});}
   replaceChildren(...items){this.text="";this.children.forEach(child=>child.parentNode=null);this.children=[];this.append(...items);}
   setAttribute(name,value){this.attributes[name]=String(value);}
   getAttribute(name){return this.attributes[name]??null;}
@@ -25,6 +25,9 @@ class Element {
   addEventListener(name,fn){this.events[name]=fn;}
   fire(name){return this.events[name]({preventDefault(){}});}
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const requests=[],hiddenRemoved=new Set();let confirmResult=false,visibilityFailure=true;
 const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
@@ -47,6 +50,7 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeo
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const browseCount=()=>requests.filter(request=>request.url.includes("/persons/browse")).length;

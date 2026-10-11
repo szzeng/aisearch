@@ -325,7 +325,7 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
     result = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert result.previous_version == 24
     assert result.schema_version == SUPPORTED
-    assert result.applied == (25, 26, 27, 28)
+    assert result.applied == tuple(range(25, SUPPORTED + 1))
     assert result.backup_path is not None
     backup = open_readonly(result.backup_path)
     try:

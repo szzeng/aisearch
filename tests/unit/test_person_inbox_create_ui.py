@@ -28,6 +28,9 @@ class Element {
   showModal(){this.open=true;}
   close(){this.open=false;}
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),calls=[];let uuid=0,createCount=0,releaseSecond;
 const get=id=>{if(!id.startsWith("pa-"))id="pa-"+id;if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const context={URLSearchParams,crypto:{randomUUID:()=>"intent-"+(++uuid)},setTimeout,clearTimeout,
@@ -51,6 +54,7 @@ const context={URLSearchParams,crypto:{randomUUID:()=>"intent-"+(++uuid)},setTim
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui={state,renderInboxFace,createPersonFromFace}; $("create-person").addEventListener("click",createPersonFromFace);\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const flush=()=>new Promise(r=>setImmediate(r));
 const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/api/v1/faces/"+id.repeat(64)+"/thumbnail",
@@ -92,8 +96,8 @@ const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/a
   }
   const history=fs.readFileSync("src/photo_search/web/persons.js","utf8");
   assert(history.includes("CREATE_PERSON_FROM_FACE:"));
-  assert(history.includes('if (operation.operation_type === "CREATE_PERSON_FROM_FACE")'));
-  assert(history.includes('undoOperation(operation);'),"existing operation undo remains wired");
+  assert(history.includes('operation.operation_type === "CREATE_PERSON_FROM_FACE"'));
+  assert(history.includes('ui.mutate("/person-operations/" + operation.operation_id + "/undo"'),"existing operation undo remains wired");
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(

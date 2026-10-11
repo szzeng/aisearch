@@ -1110,6 +1110,16 @@ class MappingListResponse(BaseModel):
     groups: list[MappingGroupSummary] = Field(default_factory=list)
 
 
+class AssetFaceReviewSummary(MappingGroupSummary):
+    """Add only the old face's exclusion presence on the new photo-scoped read."""
+
+    has_active_exclusions: bool
+
+
+class AssetFaceReviewResponse(MappingListResponse):
+    groups: list[AssetFaceReviewSummary] = Field(default_factory=list)
+
+
 class MappingOperationCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1206,6 +1216,21 @@ class FaceCorrectionItem(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class FaceRegroupItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    face_id: str
+    expected_control_revision: int = Field(ge=0)
+    expected_assignment_revision: int = Field(ge=1)
+
+
+class FaceRegroupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    contract_version: str
+    request_id: str = Field(min_length=1, max_length=64)
+    source_expected_revision: int = Field(ge=1)
+    faces: list[FaceRegroupItem]
+
+
 class FaceCorrectionBatchRequest(BaseModel):
     """``POST /api/v1/face-assignments/batch``: 1..500 explicit face items."""
 
@@ -1245,6 +1270,12 @@ class FaceOperationResponse(BaseModel):
     catalog_filter_revision: int
     replayed: bool
     items: list[FaceOperationItemResponse]
+
+
+class FaceRegroupResponse(FaceOperationResponse):
+    grouped_faces: int
+    new_persons: int
+    remaining_faces: int
 
 
 class CreatePersonFromFaceResponse(FaceOperationResponse):

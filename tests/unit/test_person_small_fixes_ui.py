@@ -24,6 +24,9 @@ class Element {
  remove(){this.parent.children=this.parent.children.filter(x=>x!==this);}focus(){}
  showModal(){this.open=true;}close(){this.open=false;this.fire('close');}
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
  const calls=[],events={},storage=new Map();let display=null,revision=1,uuid=0,assetCount=5,collectionPeople=null,merged=false,delayedPeople=null;
 const target={person_id:8,name:'合并目标',revision:1,asset_count:6,thumbnail_url:null};
@@ -54,6 +57,7 @@ const context={URLSearchParams,URL,setTimeout:()=>1,clearTimeout(){},crypto:{ran
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
  code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,boot,editBase,editFace,editMerge,writeFace,undo,refreshAfterWrite,backToLibrary,loadCollectionPeople,removeCollectionSelection};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui,flush=()=>new Promise(setImmediate);
 (async()=>{
  ui.boot();await flush();ui.state.organize=true;ui.state.inboxHiddenVisible=true;

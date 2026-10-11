@@ -2,8 +2,9 @@
 (function () {
   "use strict";
   const $ = (id) => document.getElementById("pa-" + id);
+  const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
-  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -64,7 +65,8 @@
   function requestId() { return "album-" + crypto.randomUUID(); }
   function errorText(error) {
     if (error.status === 401 || error.status === 403) return "会话已失效，请从启动器的一次性链接重新打开。";
-    if (error.status === 409) return "整理状态有更新，请刷新后再试。";
+    if (error.code === "PENDING_WRITE") return "上次保存结果尚未确认，请先点“重试上次保存”。";
+    if (error.status === 409) return "整理状态有更新，请刷新后再试。" + (error.details && error.details.reason ? "（" + error.details.reason + "）" : "");
     if (error.code && /MODEL|RUNTIME|PROFILE|SPACE|GENERATION/.test(error.code)) return "搜索模型尚未就绪，仍可点“全部照片”浏览相册。";
     return "这次操作没有完成，请重试。" + (error.code ? "（" + error.code + "）" : "");
   }
@@ -216,12 +218,19 @@
     card.collectionLabels.hidden = !card.collectionLabels.children.length;
   }
   function createPersonCard(person, index) {
-    const card = button("", () => state.batchMode ? togglePersonSelection(card.personId) : openAlbum(card.latestPerson), "pa-person-card");
+    const card = node("div", undefined, "pa-person-card"); card.tabIndex = 0; card.setAttribute("role", "button");
+    const activate = () => { if (state.visibilityBusy || state.writing) return; state.batchMode ? togglePersonSelection(card.personId) : openAlbum(card.latestPerson); };
+    card.addEventListener("click", activate);
+    card.addEventListener("keydown", (event) => { if (event.target === card && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } });
+    card.selectionBox = node("input"); card.selectionBox.type = "checkbox"; card.selectionBox.className = "pt-person-checkbox";
+    card.selectionBox.setAttribute("aria-label", "选择这个人物"); card.selectionBox.hidden = true;
+    card.selectionBox.addEventListener("click", (event) => event.stopPropagation());
+    card.selectionBox.addEventListener("change", () => { if (!state.visibilityBusy && !state.writing) togglePersonSelection(card.personId); syncPeopleCards(); });
     card.avatarPicture = picture(person.thumbnail_url, name(person), "pa-avatar", index < 4);
     card.personName = node("strong", ""); card.personCount = node("span", "", "hint");
     card.collectionLabels = node("span", undefined, "pa-person-collections");
     card.selectionHint = node("span", "", "hint pa-person-selection");
-    card.append(card.avatarPicture, card.personName, card.personCount, card.collectionLabels, card.selectionHint);
+    card.append(card.avatarPicture, card.personName, card.personCount, card.collectionLabels, card.selectionHint, card.selectionBox);
     updatePersonCard(card, person, index, false);
     return card;
   }
@@ -246,6 +255,7 @@
       const personId = Number(card.personId);
       const selected = state.batchMode && state.selectedPeople.has(personId);
       card.setAttribute("aria-pressed", String(selected));
+      if (card.selectionBox) { card.selectionBox.hidden = !state.batchMode; card.selectionBox.checked = selected; card.selectionBox.disabled = state.visibilityBusy || state.writing; }
       if (card.selectionHint) {
         card.selectionHint.hidden = !state.batchMode;
         card.selectionHint.textContent = selected ? "已选择" : "点按选择";
@@ -258,6 +268,8 @@
     $("hidden-toggle").textContent = state.hiddenView ? "返回人物列表" : "查看已忽略";
     $("selection-count").hidden = !state.batchMode;
     $("selection-count").textContent = "已选 " + state.selectedPeople.size + " 个人物";
+    $("batch-merge").hidden = !state.batchMode;
+    $("batch-merge").disabled = state.visibilityBusy || state.writing || state.hiddenView || state.selectedPeople.size === 0;
     $("visibility-submit").hidden = !state.batchMode;
     $("visibility-submit").disabled = state.visibilityBusy || state.selectedPeople.size === 0;
     $("visibility-submit").textContent = state.hiddenView ? "恢复所选" : "忽略所选";
@@ -278,7 +290,11 @@
   function togglePersonSelection(personId) {
     if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
     else if (state.selectedPeople.size >= 500) { message("一次最多选择 500 人，请先提交当前选择。"); return; }
-    else state.selectedPeople.add(personId);
+    else {
+      state.selectedPeople.add(personId);
+      const card = Array.from($("cards").children).find((item) => item.personId === personId);
+      if (card) state.selectedPeopleSnapshots.set(personId, { ...card.latestPerson });
+    }
     renderPeopleManagement();
   }
   async function submitVisibility() {
@@ -301,8 +317,9 @@
       if (item.faceId && item.selectionButton) {
         const selected = (item.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(item.faceId);
         item.selectionButton.hidden = !state.batchMode;
-        item.selectionButton.textContent = selected ? "取消选择" : "选择这张脸";
-        item.selectionButton.setAttribute("aria-pressed", String(selected));
+        item.selectionButton.checked = selected;
+        item.selectionButton.disabled = !state.batchMode || state.writing || state.faceVisibilityBusy;
+        item.setAttribute("data-selected", String(selected));
       }
       syncInboxFaceCards(item);
     });
@@ -320,14 +337,29 @@
     $("inbox-hidden-toggle").setAttribute("aria-expanded", String(state.inboxHiddenVisible));
     $("inbox-hidden-toggle").textContent = state.inboxHiddenVisible ? "收起已忽略人脸" : "查看已忽略人脸";
     $("inbox-hidden-content").hidden = !state.inboxHiddenVisible;
+    ["inbox-assign", "inbox-unassign", "inbox-auto"].forEach(id => {
+      $(id).hidden = !state.batchMode;
+      $(id).disabled = state.writing || state.faceVisibilityBusy || !selected || selected > 500;
+    });
     syncInboxFaceCards($("inbox-cards")); syncInboxFaceCards($("inbox-hidden-cards"));
   }
   function toggleInboxFace(faceId, hidden) {
+    if (!state.batchMode || state.writing || state.faceVisibilityBusy) { renderFaceManagement(); return; }
     const selected = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces;
     if (selected.has(faceId)) selected.delete(faceId);
-    else if (selected.size >= 500) { message("一次最多选择 500 张脸，请先提交当前选择。"); return; }
+    else if (state.selectedInboxFaces.size + state.selectedHiddenFaces.size >= 500) { message("一次最多选择 500 张脸，请先提交当前选择。"); renderFaceManagement(); return; }
     else selected.add(faceId);
     renderFaceManagement();
+  }
+  async function editSelectedInbox(action) {
+    if (state.writing || state.faceVisibilityBusy) return;
+    const faces = Array.from(new Set([...state.selectedInboxFaces, ...state.selectedHiddenFaces])).map(id => inboxFaceSnapshots.get(id));
+    if (!faces.length || faces.length > 500 || faces.some(face => !face)) return;
+    if (action === "assign") { editBatchFaces(faces); return; }
+    if (!window.confirm(action === "unassign" ? "将所选脸移出人物？之后仍需整理。" : "恢复所选脸的自动判断？人工排除保留，不会立即重新检测。")) return;
+    try { await mutate("/face-assignments/batch", { contract_version: "p3-face-correction-contracts.v1",
+      items: faces.map(face => ({face_id:face.face_id, action, target_person_id:null, expected_revision:face.control_revision})) }, "POST", "已更正所选人脸"); }
+    catch (error) { message(errorText(error)); }
   }
   async function submitInboxVisibility(hidden) {
     if (state.faceVisibilityBusy) return;
@@ -526,6 +558,8 @@
     } catch (error) { message("删除合集失败：" + errorText(error)); }
   }
   function collectionHeading() {
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
+    document.getElementById("pt-organize").hidden = true;
     $("title").textContent = state.collection.name;
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
     $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
@@ -533,6 +567,7 @@
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
   }
   function openCollection(collection) {
+    if (state.writing || state.pendingWrite) return;
     state.returnCollection = null; state.collectionSeq++;
     state.collection = collection; state.person = null; state.collectionMode = "photos"; state.collectionPeopleCursor = null; state.collectionSelectedPeople.clear();
     state.coverMode = false; state.searching = false; $("library").hidden = true; $("album").hidden = false;
@@ -611,6 +646,8 @@
     finally { state.visibilityBusy = false; renderPeopleManagement(); }
   }
   function backToLibrary() {
+    if (state.writing || state.pendingWrite) return;
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     if (state.returnCollection) {
       state.collection = state.returnCollection; state.returnCollection = null; state.person = null;
       state.collectionMode = "people"; state.collectionSeq++; state.photoSeq++;
@@ -658,12 +695,16 @@
     const card = node("div", undefined, "pa-person-card");
     card.faceId = String(face.face_id); card.hiddenFace = Boolean(hiddenFace);
     const selected = (card.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces).has(card.faceId);
-    const selection = button(selected ? "取消选择" : "选择这张脸", () => toggleInboxFace(card.faceId, card.hiddenFace), "pa-inbox-face-select");
-    selection.setAttribute("aria-pressed", String(selected));
-    selection.hidden = !state.batchMode; card.selectionButton = selection; card.append(selection);
-    const view = button("", () => preview(face.asset_id), "pa-face-button");
-    view.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"));
-    card.append(view, node("span", organizationText(face), "hint"));
+    if (!selected) inboxFaceSnapshots.set(card.faceId, { ...face });
+    const selection = node("input"); selection.type = "checkbox"; selection.className = "pt-avatar-checkbox";
+    selection.checked = selected; selection.setAttribute("aria-label", "选择这张待整理人脸");
+    selection.addEventListener("change", () => toggleInboxFace(card.faceId, card.hiddenFace));
+    selection.hidden = !state.batchMode; card.selectionButton = selection;
+    const avatar = node("label", undefined, "pt-avatar-select");
+    avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
+    selection.disabled = !state.batchMode || state.writing || state.faceVisibilityBusy;
+    avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id); } });
+    card.append(avatar, button("查看整张照片", () => preview(face.asset_id)), node("span", organizationText(face), "hint"));
     if (!state.batchMode && !hiddenFace) {
       const suggestion = face.suggestions && face.suggestions[0];
       if (suggestion) {
@@ -681,6 +722,7 @@
     if (!openConfirmed) { state.inboxConfirmationsPending = false; refreshPeopleViews(); }
   }
   async function confirmSuggestion(face, person, card, groupDetails) {
+    if (state.pendingWrite) { message(errorText({code:"PENDING_WRITE"})); return; }
     if (state.writing || card.confirmed) return;
     state.writing = true;
     const confirm = card.confirmButton, label = "确认是" + name(person);
@@ -990,9 +1032,11 @@
     $("organize").setAttribute("aria-pressed", String(organize)); $("inbox").hidden = !organize;
     $("query").value = ""; loadPeople(false); if (organize) loadInbox(false);
     if (organize) loadDetailBatch(false);
+    if (organize && window.AIPersonTools) window.AIPersonTools.summary();
   }
   function albumHeading() {
     $("collection-view-controls").hidden = true; $("search-photos").hidden = false;
+    document.getElementById("pt-organize").hidden = false;
     $("name").hidden = false; $("merge").hidden = false; $("cover").hidden = false;
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
     $("title").textContent = name(state.person); $("name").textContent = state.person.name ? "改名字" : "取名字";
@@ -1000,12 +1044,15 @@
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
   function openAlbum(person) {
+    if (state.writing || state.pendingWrite) return;
     if (!$("library").hidden) state.libraryPosition = captureLibraryPosition();
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     state.collection = null; state.collectionSeq++; state.person = person; state.coverMode = false; $("library").hidden = true; $("album").hidden = false;
     $("collection-people").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
     $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true;
     $("photo-query").value = ""; state.searching = false; albumHeading(); loadPhotos(false);
     $("back").focus();
+    if (window.AIPersonTools && window.location.hash === "#panel-faces") window.AIPersonTools.openFaces(person);
   }
   function renderPhotos(items) {
     items.forEach((item) => {
@@ -1100,6 +1147,7 @@
     if (!$("preview").open) $("preview").showModal();
     if (typeof window !== "undefined" && window.AIPhotoInfo) state.previewInfoMount = window.AIPhotoInfo.render($("preview-photo-info"), id);
     updatePreviewNavigation();
+    loadPreviewReviews(id, seq);
     try {
       const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
       if (state.collection) {
@@ -1129,8 +1177,20 @@
       $("face-detail").hidden = state.coverMode || hasDetail;
       $("face-detail").disabled = state.detailBusyAssets.has(Number(id));
       $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
-      $("review").hidden = page.faces.length !== 0;
+
     } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+  }
+  async function loadPreviewReviews(id, seq) {
+    const reviewSeq = (state.previewReviewSeq || 0) + 1; state.previewReviewSeq = reviewSeq;
+    state.previewReviewFailed = false;
+    try {
+      const page = await api("/assets/" + id + "/face-review?limit=1");
+      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !$("preview").open || state.collection) return;
+      $("review").hidden = !page.groups.length; $("review").textContent = "查看这张照片的识别更新待确认";
+    } catch (error) {
+      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !$("preview").open || state.collection) return;
+      state.previewReviewFailed = true; $("review").hidden = false; $("review").textContent = "重试读取识别更新提示";
+    }
   }
   async function sourceDetail() {
     const assetId = state.previewAssetId;
@@ -1200,6 +1260,7 @@
     finally { state.writing = false; control.disabled = false; updatePreviewNavigation(); }
   }
   function editBase(edit, title, note) {
+    if (state.pendingWrite) { message(errorText({code:"PENDING_WRITE"})); return false; }
     if (state.writing) return false;
     state.edit = edit; state.chosen = null; state.editSeq++; state.choiceSeq++;
     $("edit-title").textContent = title; $("edit-note").textContent = note;
@@ -1207,7 +1268,7 @@
     $("edit-query").value = edit.mode === "name" ? edit.person.name || "" : "";
     $("edit-query").disabled = false;
     $("edit-find").hidden = edit.mode === "name"; $("edit-label").textContent = edit.mode === "name" ? "名字" : "搜索并选择人物";
-    $("edit-submit").textContent = edit.mode === "name" ? "保存名字" : edit.mode === "merge" ? "确认并入所选人物" : "归到所选人物";
+    $("edit-submit").textContent = edit.mode === "name" ? "保存名字" : (edit.mode === "merge" || edit.mode === "batchMerge") ? "确认并入所选人物" : "归到所选人物";
     $("edit-submit").disabled = edit.mode !== "name";
     $("create-person").hidden = !(edit.mode === "face" && edit.allowCreatePerson && !state.batchMode && !edit.face.assigned_person_id);
     $("create-person").disabled = false;
@@ -1228,6 +1289,18 @@
   function editMerge(person) {
     if (editBase({ mode: "merge", person }, "这是同一个人", "选择已有的人物，把这个分组的照片并进去。确认后可撤销。")) loadChoices(false);
   }
+  function editBatchFaces(faces) {
+    if (!faces.length || faces.length > 500) return;
+    if (editBase({ mode: "batchFaces", faces: faces.map((face) => ({ ...face })) }, "更正所选人脸", "仅修改所选 " + faces.length + " 张脸，不影响合照里的其他人。")) {
+      loadChoices(false);
+    }
+  }
+  function editBatchMerge() {
+    if (state.hiddenView || state.writing || !state.selectedPeople.size) return;
+    const sources = Array.from(state.selectedPeople).map((id) => state.selectedPeopleSnapshots.get(id));
+    if (sources.some((person) => !person)) { message("人物选择已失效，请取消后重新选择。"); return; }
+    if (editBase({ mode: "batchMerge", sources }, "合并到已有的人物", "来源：" + sources.map(name).join("、") + "。选择目标后一次原子合并，可撤销。")) loadChoices(false);
+  }
   async function loadChoices(more) {
     if (!state.edit || state.edit.mode === "name" || state.writing) return;
     const seq = ++state.choiceSeq; const editSeq = state.editSeq;
@@ -1240,9 +1313,11 @@
       const page = await api("/persons/browse" + params(values)); if (seq !== state.choiceSeq || editSeq !== state.editSeq) return;
       page.persons.forEach((person) => {
         if (state.edit.person && person.person_id === state.edit.person.person_id) return;
+        if (state.edit.sources && state.edit.sources.some((source) => source.person_id === person.person_id)) return;
         const card = button("", () => {
           state.chosen = person; $("choices").querySelectorAll(".pa-choice").forEach((item) => item.setAttribute("aria-pressed", "false"));
           card.setAttribute("aria-pressed", "true"); $("edit-submit").disabled = false;
+          if (state.edit.mode === "batchMerge") $("edit-note").textContent = "将“" + state.edit.sources.map(name).join("、") + "”一次合并到“" + name(person) + "”。确认后可撤销。";
         }, "pa-choice"); card.setAttribute("aria-pressed", "false");
         card.append(picture(person.thumbnail_url, name(person), "pa-choice-avatar"), node("span", name(person) + " · " + person.asset_count + " 张")); $("choices").append(card);
       });
@@ -1253,13 +1328,15 @@
   }
   function rememberOperation(operation, label) {
     state.operation = operation; $("undo-text").textContent = label;
-    $("undo-bar").hidden = !operation.changed; $("undo").disabled = false;
+    const undoable = operation.operation_type !== "UNDO" && operation.operation_type !== "CREATE_PERSON_FROM_FACE" && (operation.changed || /FACE_MAPPING/.test(operation.operation_type || ""));
+    $("undo-bar").hidden = !undoable; $("undo").disabled = false;
     clearTimeout(state.undoTimer);
-    if (operation.changed) state.undoTimer = setTimeout(() => {
+    if (undoable) state.undoTimer = setTimeout(() => {
       state.operation = null; $("undo-bar").hidden = true;
     }, 10000);
   }
   async function createPersonFromFace() {
+    if (state.pendingWrite) { message(errorText({code:"PENDING_WRITE"})); return; }
     const face = state.edit && state.edit.mode === "face" ? state.edit.face : null;
     if (!face || state.batchMode || face.assigned_person_id || state.writing) return;
     let intent = state.createPersonIntent;
@@ -1300,9 +1377,14 @@
     }
   }
   async function refreshAfterWrite(result, label) {
-    rememberOperation(result, label); message(label, true);
+    if (result.operation_type === "FACE_REGROUP") {
+      label = result.status === "UNDONE" ? "这次重新分组已被撤销" :
+        "已归组 " + result.grouped_faces + " 张脸 · 新增 " + result.new_persons + " 个人物 · " + result.remaining_faces + " 张仍需整理";
+    }
+    rememberOperation(result, label); message(label, result.operation_type !== "FACE_REGROUP");
     if ($("edit").open) $("edit").close(); state.editSeq++; state.choiceSeq++;
     notifyPeopleChanged(); refreshPeopleViews();
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.refreshVisible();
     if (state.person) {
       const id = state.person.person_id;
       try { const person = await api("/persons/" + id); if (!state.person || id !== state.person.person_id) return;
@@ -1310,24 +1392,52 @@
       catch (error) { message(label + "。" + errorText(error)); }
     }
   }
+  async function mutate(path, body, method, label) {
+    if (state.writing) throw { code: "WRITE_BUSY" };
+    const payload = { ...body }; delete payload.request_id;
+    const key = JSON.stringify([path, method || "POST", payload]);
+    if (state.pendingWrite && state.pendingWrite.key !== key) throw { code: "PENDING_WRITE" };
+    const intent = state.pendingWrite || { key, path, method, label, body: { ...payload, request_id: body.request_id || requestId() } };
+    state.pendingWrite = intent; state.writing = true;
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.writeStateChanged();
+    $("edit-submit").disabled = true; $("edit-cancel").disabled = true;
+    try {
+      const result = await api(intent.path, intent.body, intent.method);
+      state.pendingWrite = null; $("write-retry").hidden = true;
+      if (path === "/face-assignments/batch") { state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); }
+      if (/\/persons\/merge$/.test(path)) { state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear(); renderPeopleManagement(); }
+      await refreshAfterWrite(result, label);
+      return result;
+    } catch (error) {
+      if (error.status && error.status < 500) state.pendingWrite = null;
+      $("write-retry").hidden = !state.pendingWrite;
+      if (state.pendingWrite) message("保存结果尚未确认，请重试上次保存以读取实际结果。");
+      throw error;
+    } finally {
+      state.writing = false; $("edit-submit").disabled = state.edit && state.edit.mode !== "name" && !state.chosen;
+      $("edit-cancel").disabled = false;
+      renderPeopleManagement();
+      renderFaceManagement();
+      if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.writeStateChanged();
+    }
+  }
   async function write(path, body, method, label) {
     if (state.writing) return;
-    state.writing = true; $("edit-submit").disabled = true; $("edit-cancel").disabled = true;
     $("edit-error").textContent = "正在保存……";
-    try { const result = await api(path, body, method); await refreshAfterWrite(result, label); }
+    try { await mutate(path, body, method, label); }
     catch (error) {
-      if (error.details && error.details.reason === "NAME_IN_USE" && state.edit.mode === "name") {
+      if (error.details && error.details.reason === "NAME_IN_USE" && state.edit && state.edit.mode === "name") {
         const source = state.edit.person;
         try {
           const target = await api("/persons/" + error.details.target_person_id);
           state.edit = { mode: "merge", person: source }; state.chosen = target;
           $("edit-title").textContent = "已有这个名字的人";
           $("edit-note").textContent = "“" + name(target) + "”已经存在。确认后会把这两组照片并成一个人物。";
-          $("edit-query").disabled = true;
+          $("edit-query").disabled = true; $("edit-submit").disabled = false;
           $("edit-submit").textContent = "确认并入“" + name(target) + "”"; $("edit-error").textContent = "";
         } catch (lookupError) { $("edit-error").textContent = errorText(lookupError); }
-      } else { $("edit-error").textContent = errorText(error) + (error.status === 409 ? " 关闭窗口，点刷新后重新选择；未保存你的更改。" : ""); }
-    } finally { state.writing = false; $("edit-submit").disabled = state.edit && state.edit.mode !== "name" && !state.chosen; $("edit-cancel").disabled = false; }
+      } else $("edit-error").textContent = errorText(error) + (error.status === 409 ? " 关闭窗口，点刷新后重新选择。" : "");
+    }
   }
   function writeFace(action) {
     const edit = state.edit; if (!edit || edit.mode !== "face" || (action === "assign" && !state.chosen)) return;
@@ -1343,22 +1453,34 @@
       write("/persons/" + edit.person.person_id + "/label", { request_id: requestId(), name: value, expected_revision: edit.person.revision }, "PUT", "已保存名字“" + value + "”");
     } else if (!state.chosen) loadChoices(false);
     else if (edit.mode === "face") writeFace("assign");
+    else if (edit.mode === "batchFaces") write("/face-assignments/batch", { contract_version: "p3-face-correction-contracts.v1",
+      items: edit.faces.map((face) => ({ face_id: face.face_id, action: "assign", target_person_id: state.chosen.person_id, expected_revision: face.control_revision })) }, "POST", "已更正所选人脸归属");
+    else if (edit.mode === "batchMerge") write("/persons/merge", { target_person_id: state.chosen.person_id,
+      target_expected_revision: state.chosen.revision, sources: edit.sources.map((person) => ({ person_id: person.person_id, expected_revision: person.revision })) }, "POST", "已将所选人物合并到“" + name(state.chosen) + "”");
     else if (state.chosen) write("/persons/merge", { request_id: requestId(), target_person_id: state.chosen.person_id,
       target_expected_revision: state.chosen.revision, sources: [{ person_id: edit.person.person_id, expected_revision: edit.person.revision }] }, "POST", "已并入“" + name(state.chosen) + "”");
   }
   async function undo() {
     if (!state.operation || state.writing) return;
-    const operation = state.operation; state.writing = true; $("undo").disabled = true;
+    const operation = state.operation; $("undo").disabled = true;
     try {
-      await api("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", { request_id: requestId(), expected_operation_revision: operation.operation_revision });
-      clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true; message("已撤销刚才的整理。", true);
-      notifyPeopleChanged(); refreshPeopleViews();
-      if (state.person) { state.person = await api("/persons/" + state.person.person_id); albumHeading(); state.searching = false; loadPhotos(false); }
+      await mutate("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", { expected_operation_revision: operation.operation_revision }, "POST", "已撤销刚才的整理。");
+      clearTimeout(state.undoTimer); state.operation = null; $("undo-bar").hidden = true;
     } catch (error) { message("无法撤销：" + errorText(error)); }
-    finally { state.writing = false; $("undo").disabled = false; }
+    finally { $("undo").disabled = false; }
   }
   function boot() {
+    if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.install({ api, node, button, picture, errorText, message, mutate, preview, editBatchFaces,
+      isWriting: () => state.writing || Boolean(state.pendingWrite), isOrganizing: () => state.organize, currentPerson: () => state.person,
+      organizeView: () => setView(true), peopleView: () => { backToLibrary(); setView(false); } });
     renderPeopleManagement();
+    $("batch-merge").addEventListener("click", editBatchMerge);
+    $("write-retry").addEventListener("click", async () => {
+      if (!state.pendingWrite || state.writing) return;
+      const intent = state.pendingWrite;
+      try { await mutate(intent.path, intent.body, intent.method, intent.label); }
+      catch (error) { message(errorText(error)); }
+    });
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
     $("batch-toggle").addEventListener("click", () => {
       state.batchMode = !state.batchMode;
@@ -1405,6 +1527,9 @@
       setQualityView($("quality-toggle").checked ? "all" : "clean");
     });
     $("inbox-hide-submit").addEventListener("click", () => submitInboxVisibility(true));
+    $("inbox-assign").addEventListener("click", () => editSelectedInbox("assign"));
+    $("inbox-unassign").addEventListener("click", () => editSelectedInbox("unassign"));
+    $("inbox-auto").addEventListener("click", () => editSelectedInbox("restore_auto"));
     $("inbox-restore-submit").addEventListener("click", () => submitInboxVisibility(false));
     $("inbox-hidden-toggle").addEventListener("click", () => {
       state.inboxHiddenVisible = !state.inboxHiddenVisible;
@@ -1415,6 +1540,7 @@
     $("rematch").addEventListener("click", () => rematchFaces(false));
     $("rematch-restart").addEventListener("click", () => rematchFaces(true));
     $("detail-batch").addEventListener("click", startDetailBatch);
+    $("recognition-tools").addEventListener("toggle", () => { if ($("recognition-tools").open) loadDetailControls(); });
     $("detail-source").addEventListener("change", loadDetailBatch);
     $("detail-pause").addEventListener("click", () => changeDetailBatch("pause"));
     $("detail-resume").addEventListener("click", () => changeDetailBatch("resume"));
@@ -1455,7 +1581,11 @@
     $("face-detail").addEventListener("click", sourceDetail);
     $("preview-prev").addEventListener("click", () => movePreview(-1));
     $("preview-next").addEventListener("click", () => movePreview(1));
-    $("review").addEventListener("click", () => { $("preview").close(); const advanced = document.getElementById("advanced-tools"); advanced.open = true; advanced.querySelector("summary").focus(); });
+    $("review").addEventListener("click", () => {
+      const id = state.previewAssetId;
+      if (state.previewReviewFailed) { loadPreviewReviews(id, state.previewSeq); return; }
+      $("preview").close(); if (window.AIPersonTools) window.AIPersonTools.openReview(id);
+    });
     $("preview").addEventListener("close", () => {
       state.previewSeq++; state.previewAssetId = null; $("preview-image").removeAttribute("src");
       if (state.previewInfoMount) state.previewInfoMount.dispose(); state.previewInfoMount = null;
@@ -1471,12 +1601,14 @@
     $("undo").addEventListener("click", undo);
     $("create-person").addEventListener("click", createPersonFromFace);
     $("undo-dismiss").addEventListener("click", () => { clearTimeout(state.undoTimer); state.undoTimer = null; state.operation = null; $("undo-bar").hidden = true; });
-    window.addEventListener("pagehide", () => {
+    if (typeof window !== "undefined") window.addEventListener("pagehide", () => {
       state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear();
     });
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
     else { loadPeople(false); }
+    const assetId = Number(new URLSearchParams(typeof window !== "undefined" ? window.location.search : "").get("asset_id"));
+    if (Number.isSafeInteger(assetId) && assetId > 0 && window.location.hash !== "#panel-mappings") preview(assetId);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
 })();

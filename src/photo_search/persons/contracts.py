@@ -66,6 +66,8 @@ FACE_OPERATION_TYPES = (
     "FACE_RESTORE_AUTO",
     "BATCH_FACE_EDIT",
 )
+# Separate additive envelope; the frozen P3 face vocabulary remains unchanged.
+REGROUP_OPERATION_TYPES = ("FACE_REGROUP",)
 #: ADR-0008 §5: splitting a person group is the third writer of the *same* operation log.
 #: It brings one operation type and one item shape, so it gets its own tuple exactly like
 #: the face family does - ``OPERATION_TYPES`` stays the frozen P3-03 person vocabulary.

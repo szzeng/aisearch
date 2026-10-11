@@ -75,7 +75,7 @@ def _receipt_for(
 
 def _unsupported_reason(connection: sqlite3.Connection, operation: Any) -> str | None:
     operation_type = str(operation["type"])
-    if operation_type in {"SPLIT", "FACE_MAPPING_CONFIRM", "FACE_MAPPING_REJECT"}:
+    if operation_type in {"SPLIT", "FACE_MAPPING_CONFIRM", "FACE_MAPPING_REJECT", "FACE_REGROUP"}:
         return "operation_family_not_enabled_for_cleanup"
     if operation_type == "UNDO" and operation["undo_of_operation_id"] is not None:
         parent = connection.execute(
@@ -83,6 +83,7 @@ def _unsupported_reason(connection: sqlite3.Connection, operation: Any) -> str |
             (str(operation["undo_of_operation_id"]),),
         ).fetchone()
         if parent is not None and str(parent["type"]) in {
+            "FACE_REGROUP",
             "SPLIT",
             "FACE_MAPPING_CONFIRM",
             "FACE_MAPPING_REJECT",

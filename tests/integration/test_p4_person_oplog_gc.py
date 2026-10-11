@@ -301,7 +301,7 @@ def test_v26_upgrade_shape_batch_rollback_and_page_controls(api_env) -> None:
     objects_v27 = schema.expected_objects(27)
     assert ("table", "person_operation_retention") not in objects_v26
     assert ("table", "person_operation_retention") in objects_v27
-    assert [version for version, _ in schema.migration_files()][-1] == 27
+    assert 27 in [version for version, _ in schema.migration_files()]
     upgraded = sqlite3.connect(":memory:")
     try:
         for version, migration_path in schema.migration_files():
@@ -368,11 +368,11 @@ def test_v26_upgrade_shape_batch_rollback_and_page_controls(api_env) -> None:
     ) is not None
     html = Path("src/photo_search/web/persons.html").read_text(encoding="utf-8")
     script = Path("src/photo_search/web/persons.js").read_text(encoding="utf-8")
-    assert 'id="operations-retention-preview"' in html
-    assert 'id="operations-retention-confirm"' in html
+    assert 'id="pt-retention-preview"' in html
+    assert 'id="pt-retention-confirm"' in html
     assert "window.confirm(" in script
     assert "/person-operations/retention-preview" in script
     assert "/person-operations/retention-cleanup" in script
-    assert "body.snapshot_json_bytes" in script
-    assert "body.skipped_reasons" in script
-    assert "after_operation_revision: state.retentionAfterRevision" in script
+    assert "page.estimated_net_savings_bytes" in script
+    assert "page.skipped_operation_count" in script
+    assert "after_operation_revision: state.retentionAfter" in script

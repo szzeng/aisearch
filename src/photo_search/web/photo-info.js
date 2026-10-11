@@ -228,6 +228,26 @@
       if (!(options && options.people === false)) {
         var people = node("section", undefined, "photo-info-people"); people.append(node("h3", "照片中的人物"));
         var peopleRows = node("div", undefined, "photo-info-people-list"); people.append(peopleRows); host.append(people);
+        var correctPeople = node("a", "更正这张照片中的人脸");
+        correctPeople.href = "/persons?asset_id=" + encodeURIComponent(assetId); people.append(correctPeople);
+        var reviewNote = node("div"); people.append(reviewNote);
+        var reviewRequestSeq = 0;
+        function loadReviewNote() {
+          var reviewSeq = ++reviewRequestSeq;
+          reviewNote.textContent = "";
+          request("/assets/" + encodeURIComponent(assetId) + "/face-review?limit=1").then(function (page) {
+            if (!current() || reviewSeq !== reviewRequestSeq) return;
+            if ((page.groups || []).length) {
+              var review = node("a", "这张照片有识别更新待确认");
+              review.href = "/persons?asset_id=" + encodeURIComponent(assetId) + "#panel-mappings"; reviewNote.append(review);
+            }
+          }).catch(function () {
+            if (!current() || reviewSeq !== reviewRequestSeq) return;
+            var retry = node("button", "重试读取识别更新提示"); retry.type = "button";
+            retry.addEventListener("click", loadReviewNote); reviewNote.append(retry);
+          });
+        }
+        loadReviewNote();
         renderPeople(peopleRows, assetId, state).catch(function () { if (current()) peopleRows.replaceChildren(node("p", "人物信息暂时无法读取。", "hint")); });
       }
       request("/map/assets?asset_id=" + encodeURIComponent(assetId) + "&limit=1").then(function (members) {

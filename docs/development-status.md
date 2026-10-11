@@ -1,5 +1,9 @@
 # Development status
 
+## P4-PERSON-REGROUP-A — SCOPED PASS / 用户指定当前会话复核
+
+[任务卡](tasks/P4-PERSON-REGROUP-A.md)、[执行报告](reports/P4-PERSON-REGROUP-A.md)、[加性协议 ADR-0020](decisions/ADR-0020-selected-face-regroup.md)。仅完成选中脸“移出并重新智能分组”与“整理照片→完成整理”：复用已存向量/候选和门限，源排除、人工控制、OPEN hold、双 CAS、幂等、原子回滚/重启重放及共享 undo 保留，三种移出/拆分语义明确；反馈实际归组/新人物/仍需整理数。新增 FACE_REGROUP、0029/schema 29，未改旧 action/companion。定向 JUnit **133/0/0/0 + 72/0/0/0**，最终忙时退出补充 **8/0/0/0**（去重 197 项），Ruff、编译、Node、diff-check 通过。当前会话受影响面复核，非独立 DS-H/Sol 冻结。按用户授权本地提交，未推送；未访问真实图库，未做本轮真实浏览器/模型/GPU/全仓/性能/实际库升级验收。下一步仅用户少量试用，不自动扩展任务；此前其他图库任务记录与工作树保留。
+
 ## P4-LIBRARY-RETENTION-C — SCOPED PASS / USER-DIRECTED LUNA-H REVIEW ROUTE EXCEPTION
 
 [任务卡](tasks/P4-LIBRARY-RETENTION-C.md)、[执行报告](reports/P4-LIBRARY-RETENTION-C.md)。完成登录保护的只读失效资产统计与最多 50 条 keyset 分页、人工/任务/索引引用保护分类、未知引用 fail-closed、空间信息说明及按需展开 UI；首次失效时间仍未知，不推断 30 天资格。定向 JUnit **8/0/0/0**，Ruff、Node 语法、py_compile、diff-check 通过。独立 LUNA / High **PASS / finding=none**；按用户指定记录为**路由例外，不是 DS-H**。未访问真实图库/`PhotoSearchData`，未做真实浏览器手测、全量回归或 GPU 验证。C2 任何业务数据/向量逻辑或物理删除仍需单独授权。
@@ -9,9 +13,9 @@
 更新：2026-10-11。当前规则：主架构需求修订 10、执行策略修订 12 / §9.4个人待审去重。较早逐项记录归档于[本次执行前快照](development-status-archive-2026-10-10-pre-P4-STORAGE-GC-A.md)、[2026-10-10 快照](development-status-archive-2026-10-10.md)、[2026-10-09 快照](development-status-archive-2026-10-09.md)及[2026-09-27 归档](development-status-archive-2026-09-27.md)。
 
 
-## P4-PERSON-UX-SIMPLIFY-A — READY / 用户指定新版人物整理方案，未实施
+## P4-PERSON-UX-SIMPLIFY-A — SCOPED PASS / 用户指定当前会话复核
 
-[任务卡](tasks/P4-PERSON-UX-SIMPLIFY-A.md)。2026-10-11 根据用户选择的简洁版重新立卡，**取代 P4-PERSON-UX-UNIFY-A 作为唯一后续实施依据**：人物相册里直接逐脸更正/移出/拆分，识别更新按照片直达，操作历史与撤销收进次级入口；补齐多源人物原子批量合并、照片范围有界只读审核、人工归属/排除/OPEN hold 保护及六组最少定向验收。保留旧卡历史，不叠加实施；此前相关实现 `ca246ab` 已由 `b573fe4` 回退，开工必须对照最新 HEAD。与 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 不得并行修改同一人物前端文件。推荐 GPT-6.1 Sol / High（有 GPT-6 常规思考档位时可用 High），独立按策略核对高风险身份调用链。**仅文档提交，未实施、未测试、未访问真实 PhotoSearchData。**
+[任务卡](tasks/P4-PERSON-UX-SIMPLIFY-A.md)、[执行报告](reports/P4-PERSON-UX-SIMPLIFY-A.md)。人物/相册/待整理脸支持头像上直接跨图跨页勾选；逐脸更正、原子多源合并/拆分、照片定向映射审核、统一历史/撤销/清理已迁入普通入口，旧高级重复 DOM 退场。仅新增按 asset 有界 OPEN 只读查询，身份写协议/人工排除/hold/CAS 保持。定向 JUnit **107/0/0/0 + 38/0/0/0**，Ruff、Python 编译、Node 语法、diff-check 通过；隔离合成图库真实浏览器完成单脸/多图更正、两页人物合并、拆分、映射确认/拒绝及撤销、历史撤销和清理预览。用户明确“这里复核”，记录为**同会话受影响面复核，不是独立 DS-H/Sol**。按用户授权本地提交，未推送；未访问真实图库，未做全仓/模型/GPU/30万性能验收。D 卡已协调完成范围，余下纯视觉目标不追认 PASS。
 
 ## P4-PERSON-UX-UNIFY-A — 历史立卡 / 已由 SIMPLIFY-A 替代，勿重复执行
 
@@ -68,4 +72,4 @@
 
 ## 下一步
 
-P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。后续 [P4-PERSON-UX-SIMPLIFY-A](tasks/P4-PERSON-UX-SIMPLIFY-A.md) 的待实施项及 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。
+P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。[P4-PERSON-UX-SIMPLIFY-A](tasks/P4-PERSON-UX-SIMPLIFY-A.md) 本卡闭环已完成，下一步由用户少量试用人物多图勾选、更正/拆分及照片待确认入口并反馈；无新增算法或安全缺口，不强行新建优化卡。[P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 余下纯视觉目标与 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。

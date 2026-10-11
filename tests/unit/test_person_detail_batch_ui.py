@@ -17,6 +17,9 @@ class Element {
   setAttribute(){} focus(){} addEventListener(k,v){this.events[k]=v;}
   fire(k){return this.events[k]({preventDefault(){}});}
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(), get=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
 const requests=[], timers=[]; let oldResolve, stage="IDLE", polls=0;
 const result=()=>({batch_id:stage==="IDLE"?null:"batch-2",source_id:2,state:stage,total:3,
@@ -45,6 +48,7 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch,renderPhotos};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t.ran=true;await t.fn();await flush();};
@@ -60,6 +64,8 @@ const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t
  assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
  assert.equal(requests.some(x=>x.url.includes("source-detail-batches/active")),false);
  await get("pa-organize").fire("click");await flush();
+ assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
+ get("pa-recognition-tools").open=true; await get("pa-recognition-tools").fire("toggle");await flush();
  assert.equal(requests.some(x=>x.url==="/api/v1/sources"),true);
  get("pa-detail-source").value="1";const old=context.ui.loadDetailBatch();await flush();
  get("pa-detail-source").value="2";await context.ui.loadDetailBatch();oldResolve();await old;

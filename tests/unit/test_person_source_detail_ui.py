@@ -37,6 +37,7 @@ const context={URLSearchParams,crypto:{randomUUID:()=>"synthetic"},Date,
   }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,preview,state};\n  if (document.readyState === "loading")');
+context.window={location:{search:"",hash:""},addEventListener(){}};
 vm.createContext(context); vm.runInContext(code,context);
 (async()=>{
   context.ui.boot(); await context.ui.preview(5);

@@ -412,7 +412,7 @@ def face_page(
     return payload
 
 
-# ---------------------------------------------------------------------- operations log
+# --------------------------------------------------------------- photo-scoped reviews
 # ------------------------------------------------------------------ mapping review list
 def mapping_page(
     catalog: Any, *, limit: Any, cursor: str | None = None, state: Any = "open"
@@ -486,6 +486,56 @@ def mapping_group(catalog: Any, old_face_id: str) -> dict[str, Any]:
             details={"old_face_id": checked},
         )
     return mapping_module.group_detail(catalog.connection, row)
+
+
+# ---------------------------------------------------------------------- operations log
+def asset_mapping_page(
+    catalog: Any, asset_id: int, *, limit: Any = None, cursor: str | None = None
+) -> dict[str, Any]:
+    """Read OPEN reviews of this photo using an asset-bound keyset cursor.
+
+    Reuse the frozen summary projection and start from the indexed asset's faces.
+    Candidates are fetched through the existing detail endpoint only when reviewed.
+    """
+    from photo_search.catalog.errors import ASSET_NOT_FOUND
+
+    limit_value = check_mapping_limit(limit)
+    values = _decode(cursor, prefix="fa1", arity=2)
+    after = ""
+    if values is not None:
+        if values[0] != str(asset_id) or len(values[1]) != 64 or any(
+            char not in "0123456789abcdef" for char in values[1]
+        ):
+            raise ApiError(INVALID_CURSOR, "the pagination cursor is not valid")
+        after = values[1]
+    if catalog.read_one("SELECT 1 FROM assets WHERE asset_id=?", (asset_id,)) is None:
+        raise CatalogError(ASSET_NOT_FOUND, "the photo does not exist")
+    rows = list(catalog.read_all(
+        "SELECT g.old_face_id, g.asset_id, g.old_spec_revision, g.candidate_state, "
+        "g.state, g.revision FROM faces AS f INDEXED BY idx_faces_asset "
+        "JOIN face_redetection_groups AS g ON g.old_face_id=f.face_id "
+        "WHERE f.asset_id=? AND g.asset_id=? AND g.state='OPEN' AND g.old_face_id>? "
+        "ORDER BY g.old_face_id LIMIT ?",
+        (asset_id, asset_id, after, limit_value + 1),
+    ))
+    has_more = len(rows) > limit_value
+    rows = rows[:limit_value]
+    groups = []
+    for row in rows:
+        summary = mapping_module.group_summary(catalog.connection, row)
+        summary["has_active_exclusions"] = catalog.read_one(
+            "SELECT 1 FROM face_exclusions WHERE face_id=? AND active=1 LIMIT 1",
+            (str(row["old_face_id"]),),
+        ) is not None
+        groups.append(summary)
+    return {
+        "contract_version": mapping_module.CONTRACT_VERSION,
+        "limit": limit_value,
+        "has_more": has_more,
+        "next_cursor": _encode("fa1", (str(asset_id), str(rows[-1]["old_face_id"])))
+        if has_more and rows else None,
+        "groups": groups,
+    }
 
 
 # ---------------------------------------------------------------------- operations log

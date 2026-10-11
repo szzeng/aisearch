@@ -7,7 +7,7 @@ from pathlib import Path
 
 def test_collection_list_and_photo_page_show_total_distinct_photo_count() -> None:
     html = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert "persons-albums.js?v=p4-person-collection-count-a-1" in html.read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-person-regroup-a-1" in html.read_text(encoding="utf-8")
     node = shutil.which("node")
     assert node is not None, "Node is required for the person collection count UI check"
     script = r"""

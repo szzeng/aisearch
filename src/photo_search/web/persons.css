@@ -317,3 +317,20 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .pa-photo-person { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; padding: .5rem; font-size: .8rem; }
 .pa-photo-person .pa-choice-avatar { width: 3rem; height: 3rem; }
 .pa-selected-person { outline: 2px solid #4268c9; background: #edf2ff; }
+
+.pt-dialog { width: min(900px, 94vw); max-height: 90vh; overflow: auto; }
+.pt-candidates { display: grid; gap: 12px; width: 100%; }
+.pt-candidates label { display: block; margin: 8px 0; }
+.pt-operation { border-bottom: 1px solid var(--border, #ddd); padding: 14px 0; }
+#pt-faces { padding: 16px 0; }
+#pt-face-list button { white-space: normal; }
+
+.pt-avatar-select { position: relative; display: inline-block; cursor: pointer; }
+.pt-avatar-checkbox, .pt-person-checkbox { position: absolute; width: 24px; height: 24px; margin: 0; accent-color: #238477; cursor: pointer; z-index: 1; }
+.pt-avatar-checkbox { top: 4px; right: 4px; }
+#pa-cards .pa-person-card { position: relative; cursor: pointer; }
+.pt-person-checkbox { top: 12px; left: calc(50% + 20px); }
+.pa-person-selection { position: static; }
+.pa-person-card[data-selected="true"] { outline: 3px solid #238477; background: #eaf5f1; }
+#pt-face-list .pa-person-card[data-selected="true"], #pa-cards .pa-person-card[aria-pressed="true"] { outline: 3px solid #238477; background: #eaf5f1; }
+#pa-cards .pa-person-card:focus-visible, .pt-avatar-select:focus-within { outline: 3px solid #238477; outline-offset: 3px; }

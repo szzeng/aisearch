@@ -11,7 +11,7 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-person-organize-perf-a-1' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-person-regroup-a-1' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
@@ -31,6 +31,9 @@ class Element {
  getBoundingClientRect(){const index=this.parent?.children.indexOf(this)||0;
   const top=(this.parent===get('inbox-cards')?1800:0)+index*100-context.window.scrollY;return {top,bottom:top+100};}
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 const calls=[];let revision=1,uuid=0,failSecond=false,delayed=null,summaryGate=null,releaseSummary=null;
 const collections=Array.from({length:45},(_,i)=>({collection_id:i+1,name:'合集'+i,member_count:1,photo_count:2,instance_token:'token'+i}));
@@ -71,6 +74,7 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,boot};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
 (async()=>{

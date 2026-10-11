@@ -1,1839 +1,301 @@
-/* Local person-curation page for the read-only API plus the frozen P3-03..P3-05 write
- * surface.
- *
- * Ground rules this file keeps (P3-06):
- *  - every piece of data comes from the session-protected /api/v1 endpoints; the page never
- *    opens the catalog, a source root or a file;
- *  - the CSRF token is read from the ps_csrf cookie and sent in X-CSRF-Token only: it is
- *    never stored, never logged and never put in a URL;
- *  - the page never receives or renders face geometry, an embedding, a score, an internal
- *    naming key, an operation record's stored values, or a local absolute path;
- *  - the page never decides a conflict: same-name merging, revision checks, idempotency,
- *    split eligibility and undo compensability are all answers the server gives;
- *  - nothing is loaded from the network except this same origin.
- */
+/* On-demand person organization. All writes use the existing protected protocols. */
 (function () {
   "use strict";
-
-  var API = "/api/v1";
-  var PERSON_LIMIT = 25;
-  var FACE_LIMIT = 50;
-  var OPERATION_LIMIT = 25;
-  var MAPPING_LIMIT = 50;
-  var MAX_BATCH = 500;
-
-  var VIEW_TEXT = {
-    named: "已命名人物",
-    unnamed: "未命名分组",
-    manual_unassigned: "待手动归类",
-  };
-  var MODE_TEXT = {
-    //: ``AUTO_ALLOWED`` means "no human lock on this face" - the machine may still have
-    //: linked it to somebody, which the row states separately as 有效归属.
-    AUTO_ALLOWED: "自动（没有人工锁）",
-    MANUAL_ASSIGNED: "人工指定（带锁）",
-    MANUAL_UNASSIGNED: "人工取消归类（带锁）",
-  };
-  var OPERATION_TEXT = {
-    RENAME: "保存名字",
-    MERGE_BY_NAME: "同名合并",
-    MERGE: "合并",
-    BATCH_MERGE: "批量合并",
-    UNDO: "撤销",
-    FACE_ASSIGN: "指定归属",
-    FACE_UNASSIGN: "取消归类",
-    FACE_RESTORE_AUTO: "恢复自动",
-    BATCH_FACE_EDIT: "批量脸纠错",
-    SPLIT: "拆分",
-    FACE_MAPPING_CONFIRM: "重检测映射确认",
-    FACE_MAPPING_REJECT: "重检测映射拒绝",
-    CREATE_PERSON_FROM_FACE: "新建未命名人物 · 不支持撤销",
-  };
-  var CANDIDATE_STATE_TEXT = {
-    NO_CANDIDATE: "没有合格候选（只能拒绝确认）",
-    UNIQUE_HIGH: "唯一高强度候选（仍需人工确认）",
-    UNIQUE_WEAK: "唯一但证据较弱",
-    AMBIGUOUS: "多个候选，需要人工选择",
-  };
-  var MATCH_TEXT = { HIGH: "强匹配", WEAK: "弱匹配" };
-  var MAPPING_STATE_TEXT = { OPEN: "待确认", CONFIRMED: "已确认", REJECTED: "已拒绝" };
-  var MAPPING_ROW_STATE_TEXT = {
-    SUGGESTED: "建议（未决定）",
-    CONFIRMED: "已确认",
-    REJECTED: "已拒绝",
-    STALE: "已失效（候选已被后续检测删除）",
-  };
-  var STATUS_TEXT = { COMMITTED: "已提交", UNDONE: "已撤销（已被补偿）" };
-  var SESSION_HINT = "请使用启动器打印的一次性链接建立会话。";
-  //: A drive-absolute or UNC spelling inside server-side text is never rendered.
-  var PATH_LIKE = /(?:[A-Za-z]:[\\/])|(?:\\\\[^\s'"])/;
-  var PATH_NOTE = "错误详情包含本机路径，已省略。";
-
-  //: A write whose refusal means "the state moved while you were looking at it": the page
-  //: reloads the affected lists instead of leaving a half-updated view behind.
-  var CONFLICT_CODES = {
-    PERSON_REVISION_CONFLICT: true,
-    PERSON_IDEMPOTENCY_CONFLICT: true,
-    PERSON_NOT_FOUND: true,
-    PERSON_REDIRECT_CYCLE: true,
-    PERSON_SPLIT_CONFLICT: true,
-    FACE_ASSIGNMENT_CONFLICT: true,
-    FACE_IDEMPOTENCY_CONFLICT: true,
-    FACE_STATE_CONFLICT: true,
-    FACE_NOT_FOUND: true,
-    PERSON_OPERATION_NOT_UNDOABLE: true,
-    FACE_OPERATION_NOT_UNDOABLE: true,
-    FACE_MAPPING_NOT_FOUND: true,
-    FACE_MAPPING_CONFLICT: true,
-    FACE_MAPPING_STALE: true,
-    FACE_MAPPING_TARGET_CONTROLLED: true,
-    FACE_MAPPING_IDEMPOTENCY_CONFLICT: true,
-    FACE_MAPPING_OPERATION_NOT_UNDOABLE: true,
-    FACE_NOT_FOUND: true,
-    INVALID_CURSOR: true,
-  };
-
-  var state = {
-    sessionMissing: false,
-    requestCounter: 0,
-    view: "named",
-    persons: { limit: PERSON_LIMIT, cursor: null, hasMore: false, loading: false },
-    faces: {
-      personId: null,
-      canonical: null,
-      revision: null,
-      limit: FACE_LIMIT,
-      cursor: null,
-      hasMore: false,
-      loading: false,
-    },
-    unassigned: { limit: FACE_LIMIT, cursor: null, hasMore: false, loading: false },
-    operations: { limit: OPERATION_LIMIT, cursor: null, hasMore: false, loading: false },
-    retentionPreview: null,
-    retentionAfterRevision: null,
-    mappings: {
-      hasSupport: false,
-      limit: MAPPING_LIMIT,
-      cursor: null,
-      hasMore: false,
-      loading: false,
-      state: "open",
-      lastOperation: null,
-      open: {},
-    },
-    index: {},
-    faceSelection: {},
-    mergeSelection: {},
-  };
-
-  var els = {};
-
-  // ------------------------------------------------------------------ utilities
-  function cookieValue(name) {
-    var parts = String(document.cookie || "").split(";");
-    for (var index = 0; index < parts.length; index += 1) {
-      var piece = parts[index].trim();
-      if (piece.indexOf(name + "=") === 0) {
-        return decodeURIComponent(piece.slice(name.length + 1));
+  let ui;
+  const $ = (id) => document.getElementById("pt-" + id);
+  const state = { installed: false, faceSeq: 0, faceBusy: false, person: null, faceCursor: null,
+    selected: new Map(), reviewSeq: 0, reviewBusy: false, assetId: null, reviewCursor: null,
+    historySeq: 0, historyBusy: false, historyCursor: null, summarySeq: 0,
+    retention: null, retentionAfter: null, retentionBusy: false, retentionSeq: 0 };
+  const names = { RENAME: "改名字", MERGE_BY_NAME: "同名合并", MERGE: "合并人物", BATCH_MERGE: "批量合并人物",
+    FACE_ASSIGN: "更正人脸归属", FACE_UNASSIGN: "移出人物", FACE_RESTORE_AUTO: "恢复自动判断", FACE_REGROUP: "移出并重新智能分组",
+    BATCH_FACE_EDIT: "批量更正人脸", SPLIT: "拆出新人物", FACE_MAPPING_CONFIRM: "确认识别更新",
+    FACE_MAPPING_REJECT: "拒绝识别更新", CREATE_PERSON_FROM_FACE: "从一张脸新建人物", UNDO: "撤销操作" };
+  function status(id, text) { $(id).textContent = text; }
+  function errorText(error) {
+    const reasons = { source_would_be_empty: "原人物必须保留至少一张有效人脸",
+      face_owned_by_other_person: "所选人脸已属于其他人物", assignment_revision: "人脸归属已更新",
+      review_already_decided: "这条识别更新已被处理", multiple_targets_without_single_inheritor: "人工归属最多继承给一张新脸",
+      human_affirm_deny_conflict: "人工归属与排除冲突", group_changed: "人物随后已被修改", provisional_hold: "请先处理这张脸的识别更新待确认", index_not_ready: "已有候选索引仍需恢复，请稍后重试" };
+    const reason = error.details && error.details.reason;
+    return ui.errorText(error) + (error.code ? "（" + error.code + "）" : "") +
+      (reason ? " · " + (reasons[reason] || reason) : "");
+  }
+  function show(dialog) { if (!dialog.open) dialog.showModal(); }
+  function updateSelection() {
+    status("face-count", "已选 " + state.selected.size + " 张脸");
+    $("organize").textContent = $("faces").hidden ? "整理照片" : "完成整理";
+    $("organize").disabled = ui.isWriting();
+    $("organize").setAttribute("aria-expanded", String(!$("faces").hidden));
+    ["face-clear", "face-retry"].forEach((id) => { $(id).disabled = ui.isWriting(); });
+    ["face-assign", "face-unassign", "face-regroup", "face-split", "face-restore"].forEach((id) => {
+      $(id).disabled = ui.isWriting() || !state.selected.size;
+    });
+    Array.from($("face-list").children).forEach((card) => {
+      if (card.pick) { const selected = state.selected.has(card.face.face_id);
+        card.pick.checked = selected; card.pick.disabled = ui.isWriting(); card.setAttribute("data-selected", String(selected)); }
+    });
+  }
+  function clearSelection() { state.selected.clear(); updateSelection(); }
+  function cancelSelection() { if (!ui.isWriting()) clearSelection(); }
+  async function loadFaces(more) {
+    if (!state.person || (more && state.faceBusy)) return;
+    const seq = ++state.faceSeq, personId = state.person.person_id;
+    if (!more) { state.faceCursor = null; clearSelection(); $("face-list").replaceChildren(); }
+    state.faceBusy = true; $("face-more").disabled = true; status("face-status", "正在读取人脸……");
+    const values = { person_id: personId, limit: 40 };
+    if (more && state.faceCursor) values.cursor = state.faceCursor;
+    try {
+      const page = await ui.api("/faces?" + new URLSearchParams(values));
+      if (seq !== state.faceSeq || !state.person || personId !== state.person.person_id || $("faces").hidden) return;
+      if (more && state.person.revision !== page.person_revision) {
+        clearSelection(); throw { code: "PERSON_REVISION_CONFLICT", status: 409 };
       }
-    }
-    return "";
+      state.person = { ...state.person, person_id: page.canonical_person_id, revision: page.person_revision };
+      page.faces.forEach((face) => {
+        if (Array.from($("face-list").children).some((card) => card.face.face_id === face.face_id)) return;
+        const card = ui.node("div", undefined, "pa-person-card"); card.face = face;
+        const crop = ui.node("label", undefined, "pt-avatar-select");
+        crop.append(ui.picture(face.thumbnail_url, "勾选这张人脸", "pa-avatar"));
+        card.pick = ui.node("input"); card.pick.type = "checkbox"; card.pick.className = "pt-avatar-checkbox";
+        card.pick.setAttribute("aria-label", "选择这张人脸");
+        card.pick.addEventListener("change", () => {
+          if (ui.isWriting()) { updateSelection(); return; }
+          if (card.pick.checked && !state.selected.has(face.face_id)) {
+            if (state.selected.size < 500) state.selected.set(face.face_id, { ...face });
+            else status("face-status", "一次最多选择 500 张脸。");
+          } else if (!card.pick.checked) state.selected.delete(face.face_id);
+          updateSelection();
+        });
+        crop.append(card.pick); card.append(crop, ui.node("span", face.mode === "MANUAL_ASSIGNED" ? "已人工指定" : "机器归组"));
+        if (face.suggestions_available) card.append(ui.node("span", "另有机器建议，尚未确认", "hint"));
+        card.append(ui.button("查看整张照片", () => ui.preview(face.asset_id))); $("face-list").append(card);
+      });
+      state.faceCursor = page.next_cursor; $("face-more").hidden = !page.has_more;
+      status("face-status", $("face-list").children.length ? "直接勾选头像可跨照片多选；只修改选中的脸。" : "没有可整理的成员脸。"); updateSelection();
+    } catch (error) { if (seq === state.faceSeq) status("face-status", errorText(error) + " 请点刷新重新选择。"); }
+    finally { if (seq === state.faceSeq) { state.faceBusy = false; $("face-more").disabled = false; } }
   }
-
-  function text(node, value) {
-    node.textContent = value === null || value === undefined ? "" : String(value);
-    return node;
+  function openFaces(person) {
+    if (ui.isWriting()) return;
+    if (!person) { ui.message("请先打开一个人物相册。"); return; }
+    state.person = { ...person }; $("faces").hidden = false; updateSelection(); loadFaces(false);
+    $("faces").scrollIntoView({ block: "start" });
   }
-
-  function element(tag, className, value) {
-    var node = document.createElement(tag);
-    if (className) {
-      node.className = className;
+  function hideFaces() { if (ui && ui.isWriting()) return; state.faceSeq++; state.person = null; $("faces").hidden = true; clearSelection(); }
+  async function faceAction(action) {
+    if (ui.isWriting() || !state.selected.size) return;
+    const faces = Array.from(state.selected.values());
+    if (action === "assign") { ui.editBatchFaces(faces); return; }
+    if (!window.confirm(action === "split" ? "将所选 " + faces.length + " 张脸拆成一个新的未命名人物？原人物须保留有效成员，可撤销。" :
+      action === "regroup" ? "移出所选脸并用已有向量重新智能分组？保留对此人物的排除；低质量、歧义或没有可靠匹配的脸仍需整理。每次操作独立保存，可撤销。" :
+      action === "unassign" ? "仅移出所选脸并留待整理？不会自动归组。" : "恢复所选脸的自动判断？人工排除保留，不会立即重新检测。")) return;
+    let path, body;
+    if (action === "split" || action === "regroup") {
+      path = "/persons/" + state.person.person_id + (action === "regroup" ? "/regroup" : "/split");
+      body = { contract_version: action === "regroup" ? "p4-face-regroup.v1" : "p3-person-split-contracts.v1", source_expected_revision: state.person.revision,
+        faces: faces.map((face) => ({ face_id: face.face_id, expected_control_revision: face.control_revision,
+          expected_assignment_revision: face.assignment_revision })) };
+    } else {
+      path = "/face-assignments/batch";
+      body = { contract_version: "p3-face-correction-contracts.v1", items: faces.map((face) => ({
+        face_id: face.face_id, action, target_person_id: null, expected_revision: face.control_revision })) };
     }
-    if (value !== undefined) {
-      text(node, value);
-    }
-    return node;
+    try { await ui.mutate(path, body, "POST", action === "regroup" ? "已移出并重新智能分组" : action === "split" ? "已拆成新的未命名人物" : action === "unassign" ? "已移出所选人脸，仍需整理" : "已恢复自动判断，原有排除保留"); }
+    catch (error) { status("face-status", errorText(error)); }
+    updateSelection();
   }
-
-  function clear(node) {
-    while (node.firstChild) {
-      node.removeChild(node.firstChild);
-    }
-    return node;
+  async function summary() {
+    const seq = ++state.summarySeq;
+    if (!ui.isOrganizing()) return;
+    try {
+      const body = await ui.api("/capabilities");
+      if (seq !== state.summarySeq || !ui.isOrganizing()) return;
+      const count = Number((body.faces || {}).open_face_mappings || 0);
+      $("review-entry").hidden = count === 0; $("review-entry").textContent = "识别更新待确认 · " + count;
+      $("review-summary-retry").hidden = true; status("review-summary-status", "");
+    } catch (error) { if (seq === state.summarySeq && ui.isOrganizing()) {
+      $("review-summary-retry").hidden = false; status("review-summary-status", "待确认数量未读取成功。" + errorText(error));
+    } }
   }
-
-  function formatMoment(milliseconds) {
-    var value = Number(milliseconds);
-    if (!isFinite(value) || value <= 0) {
-      return "未知";
-    }
-    var moment = new Date(value);
-    if (isNaN(moment.getTime())) {
-      return "未知";
-    }
-    return moment.toLocaleString("zh-CN", { hour12: false });
+  function reviewPath(limit) {
+    return state.assetId ? "/assets/" + state.assetId + "/face-review?limit=" + limit : "/face-mappings?state=open&limit=" + limit;
   }
-
-  function safeText(value) {
-    if (value === null || value === undefined) {
-      return "";
-    }
-    return PATH_LIKE.test(String(value)) ? PATH_NOTE : String(value);
+  function openReview(assetId) {
+    if (ui.isWriting()) return;
+    state.assetId = assetId || null; show($("review"));
+    $("review-title").textContent = assetId ? "这张照片的识别更新待确认" : "识别更新待确认";
+    loadReviews(false);
   }
-
-  function errorText(code) {
-    if (code === "PERSON_REVISION_CONFLICT") {
-      return "人物 revision 已过期，需重新加载后再提交";
-    }
-    if (code === "FACE_ASSIGNMENT_CONFLICT") {
-      return "脸的控制 revision 已过期，需重新加载后再提交";
-    }
-    if (code === "PERSON_IDEMPOTENCY_CONFLICT") {
-      return "request_id 已绑定不同的请求内容";
-    }
-    if (code === "FACE_IDEMPOTENCY_CONFLICT") {
-      return "request_id 已绑定不同的请求内容";
-    }
-    if (code === "FACE_STATE_CONFLICT") {
-      return "该脸当前的人工控制状态与请求不一致";
-    }
-    if (code === "FACE_OPERATION_NOT_UNDOABLE") {
-      return "该脸级操作已被后续人工编辑改变，不能整批撤销";
-    }
-    if (code === "PERSON_OPERATION_NOT_UNDOABLE") {
-      return "该操作已被后续编辑改变，不能整批撤销";
-    }
-    if (code === "PERSON_SPLIT_CONFLICT") {
-      return "拆分被拒绝：所选脸已变化或不满足拆分条件";
-    }
-    if (code === "PERSON_BATCH_TOO_LARGE" || code === "FACE_BATCH_TOO_LARGE") {
-      return "单批超过 500 项，请拆分";
-    }
-    if (code === "PERSON_NAME_INVALID") {
-      return "名字不能为空或过长";
-    }
-    if (code === "PERSON_NOT_FOUND" || code === "FACE_NOT_FOUND") {
-      return "人物或人脸不存在（可能已被合并或重新检测）";
-    }
-    if (code === "INVALID_CURSOR") {
-      return "分页游标无效，需重新加载";
-    }
-    return "";
-  }
-
-  function describe(failure) {
-    var base = "[" + failure.code + "] " + safeText(failure.message);
-    var hint = errorText(failure.code);
-    if (hint) {
-      base += "（" + hint + "）";
-    }
-    var reason = failure.details && failure.details.reason;
-    if (reason) {
-      base += "（reason: " + safeText(reason) + "）";
-    }
-    return failure.request_id ? base + "（请求编号 " + failure.request_id + "）" : base;
-  }
-
-  function showNotice(message) {
-    text(els.notice, message);
-    els.notice.hidden = false;
-  }
-
-  function clearNotice() {
-    els.notice.hidden = true;
-    text(els.notice, "");
-  }
-
-  function noteSessionMissing() {
-    if (state.sessionMissing) {
-      return;
-    }
-    state.sessionMissing = true;
-    showNotice(SESSION_HINT + "本页面不会自动重试；请重新打开启动器给出的链接。");
-  }
-
-  function setStatus(node, message, kind) {
-    node.className = "state-block" + (kind ? " " + kind : "");
-    text(node, message);
-    node.hidden = !message;
-  }
-
-  function setError(node, message) {
-    text(node, message);
-    node.hidden = !message;
-  }
-
-  function failureFrom(response, payload) {
-    var body = payload && typeof payload === "object" ? payload : {};
-    return {
-      status: response.status,
-      code: body.code || "HTTP_" + response.status,
-      message: body.message || "请求未成功",
-      request_id: body.request_id || "",
-      details: body.details,
-    };
-  }
-
-  function request(path, options) {
-    var settings = options || {};
-    var method = String(settings.method || "GET").toUpperCase();
-    var headers = {};
-    if (settings.body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
-    if (method !== "GET" && method !== "HEAD") {
-      var csrf = cookieValue("ps_csrf");
-      if (csrf) {
-        headers["X-CSRF-Token"] = csrf;
+  async function loadReviews(more) {
+    if (more && state.reviewBusy) return;
+    const seq = ++state.reviewSeq, assetId = state.assetId;
+    if (!more) { state.reviewCursor = null; $("review-list").replaceChildren(); }
+    state.reviewBusy = true; $("review-more").disabled = true; status("review-status", "正在读取待确认……");
+    try {
+      const page = await ui.api(reviewPath(20) + (more && state.reviewCursor ? "&cursor=" + encodeURIComponent(state.reviewCursor) : ""));
+      if (seq !== state.reviewSeq || assetId !== state.assetId || !$("review").open) return;
+      page.groups.forEach((group) => {
+        const card = ui.node("div", undefined, "pa-person-card");
+        card.append(ui.picture(group.thumbnail_url, "原来的人脸", "pa-avatar"));
+        card.append(ui.node("span", group.control_mode === "MANUAL_ASSIGNED" ? "原脸已人工指定人物" : group.control_mode === "MANUAL_UNASSIGNED" ? "原脸已人工移出人物" : "原脸允许自动判断；不复制机器归属"));
+        if (group.has_active_exclusions) card.append(ui.node("span", "原脸有人工排除记录，确认时按协议保留"));
+        card.append(ui.button("查看整张照片", () => { $("review").close(); ui.preview(group.asset_id); }));
+        const detail = ui.node("div", undefined, "pt-candidates");
+        card.append(ui.button(assetId ? "审核这张旧脸" : "审核这张照片", () => assetId ? loadCandidate(group, detail, seq) : openReview(group.asset_id)), detail);
+        $("review-list").append(card);
+      });
+      state.reviewCursor = page.next_cursor; $("review-more").hidden = !page.has_more;
+      status("review-status", page.groups.length ? "按原来的人脸分别审核，不会自动选中候选。" : "当前没有待确认的识别更新。");
+      // An asset opens the first review directly, while all other old faces remain individually reachable.
+      if (assetId && !more && page.groups.length) {
+        const card = $("review-list").children[0]; await loadCandidate(page.groups[0], card.lastElementChild, seq);
       }
-    }
-    var init = {
-      method: method,
-      headers: headers,
-      credentials: "same-origin",
-      cache: "no-store",
-    };
-    if (settings.body !== undefined) {
-      init.body = JSON.stringify(settings.body);
-    }
-    return fetch(API + path, init).then(function (response) {
-      var status = response.status;
-      var contentType = response.headers.get("Content-Type") || "";
-      if (status === 204 || contentType.indexOf("application/json") < 0) {
-        if (response.ok) {
-          return { status: status, body: null };
+    } catch (error) { if (seq === state.reviewSeq) status("review-status", errorText(error)); }
+    finally { if (seq === state.reviewSeq) { state.reviewBusy = false; $("review-more").disabled = false; } }
+  }
+  async function loadCandidate(group, detail, seq) {
+    const assetId = state.assetId;
+    const detailSeq = (detail.requestSeq || 0) + 1; detail.requestSeq = detailSeq;
+    detail.textContent = "正在读取候选……";
+    try {
+      const current = await ui.api("/face-mappings/" + group.old_face_id);
+      if (seq !== state.reviewSeq || assetId !== state.assetId || !$("review").open || detailSeq !== detail.requestSeq) return;
+      detail.replaceChildren();
+      if (current.state !== "OPEN") { detail.textContent = "这条记录已被处理，请刷新。"; return; }
+      if (current.assigned_person_id) {
+        const assignedNote = ui.node("p", "原来的人工归属：未命名的人"); detail.append(assignedNote);
+        ui.api("/persons/" + current.assigned_person_id).then((person) => {
+          if (seq === state.reviewSeq && detailSeq === detail.requestSeq && $("review").open) assignedNote.textContent = "原来的人工归属：" + (person.name || "未命名的人");
+        }).catch(() => { assignedNote.textContent = "原人物名字暂时不可用，人工归属记录仍保留"; });
+      }
+      const selected = new Map();
+      if (!current.candidates.length) detail.append(ui.node("p", "重新检测没有找到对应人脸"));
+      current.candidates.forEach((candidate) => {
+        const row = ui.node("div");
+        const check = ui.node("input"); check.type = "checkbox"; check.className = "pt-avatar-checkbox";
+        check.setAttribute("aria-label", "选择这张新脸");
+        const label = ui.node("label", undefined, "pt-avatar-select");
+        label.append(ui.picture(candidate.thumbnail_url, "新检测的人脸候选", "pa-avatar"), check);
+        row.append(label, ui.node("span", "选择对应的新脸"));
+        let inherit;
+        if (current.control_mode === "MANUAL_ASSIGNED") {
+          inherit = ui.node("input"); inherit.type = "checkbox";
+          const inheritLabel = ui.node("label", "把原来的人工归属继承给这张脸"); inheritLabel.prepend(inherit); row.append(inheritLabel);
         }
-        var plain = {
-          status: status,
-          code: "HTTP_" + status,
-          message: "请求未成功",
-          request_id: "",
+        const sync = () => {
+          if (check.checked) selected.set(candidate.new_face_id, { new_face_id: candidate.new_face_id, inherits_person: Boolean(inherit && inherit.checked) });
+          else selected.delete(candidate.new_face_id);
         };
-        if (status === 401) {
-          noteSessionMissing();
-        }
-        throw plain;
-      }
-      return response
-        .json()
-        .catch(function () {
-          return null;
-        })
-        .then(function (payload) {
-          if (response.ok) {
-            if (method !== "GET" && method !== "HEAD" && payload && payload.changed) {
-              try { window.localStorage.setItem("aisearch.persons.changed", newRequestId("people-change")); }
-              catch (_) { /* Returning to the personal page still offers an explicit refresh. */ }
-            }
-            return { status: status, body: payload };
-          }
-          var failure = failureFrom(response, payload);
-          if (status === 401) {
-            noteSessionMissing();
-          }
-          throw failure;
-        });
-    });
-  }
-
-  //: One printable-ASCII idempotency key per submitted write.
-  function newRequestId(prefix) {
-    state.requestCounter += 1;
-    var random = Math.floor(Math.random() * 0x100000000).toString(36);
-    var parts = [prefix, Date.now().toString(36), state.requestCounter.toString(36), random];
-    return parts.join("-").slice(0, 64);
-  }
-
-  function integerOrNull(value) {
-    var trimmed = String(value === undefined || value === null ? "" : value).trim();
-    if (!/^[0-9]+$/.test(trimmed)) {
-      return null;
-    }
-    var number = Number(trimmed);
-    return isFinite(number) && number > 0 ? number : null;
-  }
-
-  function handleConflict(failure, node) {
-    // The refusal is shown with the server's own code and reason; the caller always refreshes
-    // the affected lists afterwards, so a stale view is never left on screen and a failed
-    // write is never rendered as a success.
-    setError(node, describe(failure));
-  }
-
-  // ------------------------------------------------------------------ capabilities
-  function probeCapabilities() {
-    request("/capabilities")
-      .then(function (result) {
-        var body = result.body || {};
-        clearNotice();
-        var schema =
-          body.schema_version === null || body.schema_version === undefined
-            ? "尚未初始化"
-            : "v" + body.schema_version;
-        var faces = body.faces || {};
-        // ADR-0010 §8.3: the mapping review only exists when the catalog really carries the
-        // 0014 layer, which is exactly what the four additive counts say. Without them the
-        // panel stays hidden instead of offering an action the server would refuse.
-        state.mappings.hasSupport = Object.prototype.hasOwnProperty.call(
-          faces,
-          "open_face_mappings"
-        );
-        if (els.mappingsPanel) {
-          els.mappingsPanel.hidden = !state.mappings.hasSupport;
-        }
-        if (state.mappings.hasSupport) {
-          loadMappings(true);
-        }
-        text(
-          els.appMeta,
-          "版本 " +
-            body.app_version +
-            " · 图库 schema " +
-            schema +
-            "（" +
-            body.schema_status +
-            "） · 人脸事实资产 " +
-            (faces.assets_with_faces === undefined ? "未知" : faces.assets_with_faces) +
-            (state.mappings.hasSupport
-              ? " · 重检测待确认 " + faces.open_face_mappings
-              : "") +
-            " · 只读受控访问 + 本机人工整理"
-        );
-      })
-      .catch(function (failure) {
-        if (failure.code === "SCHEMA_TOO_NEW") {
-          showNotice(
-            "图库的 schema 版本高于本程序支持的版本（" +
-              failure.code +
-              "）。请升级程序或改用匹配的数据目录。（请求编号 " +
-              (failure.request_id || "无") +
-              "）"
-          );
-          return;
-        }
-        if (failure.status !== 401) {
-          text(els.appMeta, "读取程序能力失败：" + describe(failure));
-        }
+        check.addEventListener("change", sync); if (inherit) inherit.addEventListener("change", sync);
+        detail.append(row);
       });
+      if (current.candidates.length) detail.append(ui.button("是同一张脸，确认所选候选", () => {
+        if (!selected.size) { status("review-status", "请明确选择对应的新脸。"); return; }
+        if (Array.from(selected.values()).filter((item) => item.inherits_person).length > 1) { status("review-status", "原人工归属最多继承给一张新脸。"); return; }
+        decide(current, Array.from(selected.values()));
+      }));
+      detail.append(ui.button("不是同一张脸，拒绝这条映射", () => decide(current, [])),
+        ui.button("暂不处理", () => status("review-status", "未提交更改，待确认保护继续保留。")));
+      detail.append(ui.node("p", "原脸的人工排除按服务端协议转移；拒绝不指定人物，可能解除这条映射的待确认保护。", "hint"));
+    } catch (error) { if (seq === state.reviewSeq && detailSeq === detail.requestSeq) detail.textContent = errorText(error) + " 请重试审核。"; }
   }
-
-  // ------------------------------------------------------------------ person list
-  function selectView(view) {
-    state.view = view;
-    var views = ["named", "unnamed", "manual_unassigned"];
-    views.forEach(function (name) {
-      var tab = els.tabs[name];
-      tab.setAttribute("aria-selected", name === view ? "true" : "false");
-    });
-    var manual = view === "manual_unassigned";
-    els.personsList.hidden = manual;
-    els.facesList.hidden = !manual;
-    els.personsMore.disabled = true;
-    if (manual) {
-      loadUnassigned(true);
-    } else {
-      loadPersons(true);
-    }
+  async function decide(group, targets) {
+    if (ui.isWriting()) return;
+    try {
+      await ui.mutate("/face-mappings/decisions", { contract_version: "p3-face-redetection-contracts.v1", asset_id: group.asset_id,
+        decisions: [{ old_face_id: group.old_face_id, expected_review_revision: group.revision,
+          decision: targets.length ? "confirm" : "reject", targets }] }, "POST", targets.length ? "已确认识别更新" : "已拒绝映射，未指定人物");
+    } catch (error) { status("review-status", errorText(error)); }
   }
-
-  function loadPersons(reset) {
-    if (state.persons.loading) {
-      return;
-    }
-    if (reset) {
-      state.persons.cursor = null;
-      state.persons.hasMore = false;
-      state.index = {};
-    }
-    state.persons.loading = true;
-    var limit = state.persons.limit;
-    var query = "?kind=" + encodeURIComponent(state.view) + "&sort=photos_desc&limit=" + limit;
-    if (!reset && state.persons.cursor) {
-      query += "&cursor=" + encodeURIComponent(state.persons.cursor);
-    }
-    setStatus(
-      els.personsStatus,
-      reset ? "正在读取" + VIEW_TEXT[state.view] + "…" : "正在读取下一页…"
-    );
-    request("/persons/browse" + query)
-      .then(function (result) {
-        var body = result.body || {};
-        var rows = body.persons || [];
-        if (reset) {
-          clear(els.personsList);
-          els.personsList.setAttribute(
-            "aria-label",
-            VIEW_TEXT[state.view] + "（不含已合并的旧 id）"
-          );
-        }
-        rows.forEach(function (person) {
-          state.index[String(person.person_id)] = person;
-          els.personsList.appendChild(buildPersonCard(person));
-        });
-        state.persons.cursor = body.next_cursor || null;
-        state.persons.hasMore = Boolean(body.has_more);
-        els.personsMore.disabled = !body.has_more;
-        setStatus(
-          els.personsStatus,
-          rows.length === 0
-            ? reset
-              ? VIEW_TEXT[state.view] + "：没有记录（这里是空视图，不是读取失败）"
-              : "没有更多记录"
-            : "本页 " +
-                rows.length +
-                " 条 · " +
-                VIEW_TEXT[state.view] +
-                (body.has_more ? " · 还有更多" : " · 已到末尾")
-        );
-      })
-      .catch(function (failure) {
-        setStatus(els.personsStatus, "读取人物列表失败：" + describe(failure), "error");
-        if (CONFLICT_CODES[failure.code]) {
-          refreshAll();
-        }
-      })
-      .then(function () {
-        state.persons.loading = false;
+  function openHistory() { if (ui.isWriting()) return; show($("history")); loadHistory(false); }
+  async function loadHistory(more) {
+    if (more && state.historyBusy) return;
+    const seq = ++state.historySeq;
+    if (!more) { state.historyCursor = null; $("history-list").replaceChildren(); }
+    state.historyBusy = true; $("history-more").disabled = true; status("history-status", "正在读取操作历史……");
+    try {
+      const page = await ui.api("/person-operations?limit=30" + (more && state.historyCursor ? "&cursor=" + encodeURIComponent(state.historyCursor) : ""));
+      if (seq !== state.historySeq || !$("history").open) return;
+      page.operations.forEach((operation) => {
+        const row = ui.node("article", undefined, "pt-operation");
+        const nonUndoable = operation.operation_type === "CREATE_PERSON_FROM_FACE" || operation.operation_type === "UNDO";
+        const text = operation.status === "UNDONE" ? "已撤销" : operation.expired ? "已过期 / 快照已清理，不可撤销" : nonUndoable ? "已完成，不支持撤销" : "已完成，撤销时检查后续冲突";
+        row.append(ui.node("strong", names[operation.operation_type] || "人物整理"), ui.node("p", new Date(operation.committed_at).toLocaleString() + " · " + text),
+          ui.node("p", "影响 " + (operation.face_ids || []).length + " 张脸、" + (operation.person_ids || []).length + " 个人物 · " + operation.item_count + " 项记录"));
+        if (!nonUndoable && !operation.expired && operation.status === "COMMITTED") row.append(ui.button("撤销此操作", async () => {
+          if (ui.isWriting()) return;
+          try { await ui.mutate("/person-operations/" + operation.operation_id + "/undo", { expected_operation_revision: operation.operation_revision }, "POST", "已撤销操作"); }
+          catch (error) { const reason = "撤销未完成：" + errorText(error); row.append(ui.node("p", reason, "error")); status("history-status", reason); }
+        }));
+        $("history-list").append(row);
       });
+      state.historyCursor = page.next_cursor; $("history-more").hidden = !page.has_more;
+      status("history-status", page.operations.length ? "历史来自服务器，不能撤销的记录仍然保留。" : "还没有操作记录。");
+    } catch (error) { if (seq === state.historySeq) status("history-status", errorText(error)); }
+    finally { if (seq === state.historySeq) { state.historyBusy = false; $("history-more").disabled = false; } }
   }
-
-  function avatarNode(person) {
-    var holder;
-    if (!person.thumbnail_url) {
-      holder = element("div", "avatar-placeholder", "暂无头像");
-      return holder;
-    }
-    var image = element("img", "avatar");
-    image.alt = (person.name || "未命名人物") + " 的头像";
-    image.loading = "lazy";
-    image.src = person.thumbnail_url;
-    // A refused crop (offline source, bad media, a face that moved) shows a placeholder
-    // instead of a broken image, and never a path.
-    image.addEventListener("error", function () {
-      var fallback = element("div", "avatar-placeholder", "头像不可用");
-      if (image.parentNode) {
-        image.parentNode.replaceChild(fallback, image);
-      }
-    });
-    return image;
+  async function retentionPreview(preserve) {
+    if (state.retentionBusy) return;
+    if (!preserve) state.retentionAfter = null;
+    const seq = ++state.retentionSeq;
+    state.retention = null; $("retention-confirm").disabled = true;
+    try {
+      const page = await ui.api("/person-operations/retention-preview");
+      if (seq !== state.retentionSeq || !$("history").open) return;
+      state.retention = page;
+      status("retention-status", "候选 " + page.candidate_operation_count + " 条，可清理 " + page.safe_operation_count + " 条，受保护跳过 " + page.skipped_operation_count + " 条；预计净节省 " + page.estimated_net_savings_bytes + " 字节。");
+      $("retention-confirm").disabled = !(page.safe_operation_count > 0);
+    } catch (error) { if (seq === state.retentionSeq) status("retention-status", errorText(error)); }
   }
-
-  function buildPersonCard(person) {
-    var item = element("li", "person-card");
-    item.appendChild(avatarNode(person));
-    var body = element("div");
-    var head = element("p", "card-head");
-    head.appendChild(
-      element(
-        "strong",
-        null,
-        person.name === null || person.name === undefined
-          ? "未命名分组"
-          : safeText(person.name)
-      )
-    );
-    head.appendChild(element("span", "chip chip-id", "#" + person.person_id));
-    head.appendChild(element("span", "chip", "revision " + person.revision));
-    body.appendChild(head);
-    body.appendChild(
-      element(
-        "p",
-        "hint",
-        "有效成员：脸 " +
-          person.face_count +
-          " · 照片 " +
-          person.asset_count +
-          "（不含人工取消归类的脸与已排除的脸）"
-      )
-    );
-    var actions = element("p", "row-actions");
-    var choose = element("button", null, "载入此人的脸");
-    choose.type = "button";
-    choose.addEventListener("click", function () {
-      els.facesPersonId.value = String(person.person_id);
-      loadFaces(person.person_id, true);
-    });
-    var name = element("button", null, "保存名字 / 同名合并");
-    name.type = "button";
-    name.addEventListener("click", function () {
-      els.namePersonId.value = String(person.person_id);
-      els.nameRevision.value = String(person.revision);
-      els.nameValue.value = person.name === null || person.name === undefined ? "" : person.name;
-      els.nameValue.focus();
-    });
-    var merge = element("button", null, "加入批量合并选择");
-    merge.type = "button";
-    merge.addEventListener("click", function () {
-      state.mergeSelection[String(person.person_id)] = person;
-      updateMergeSummary();
-    });
-    actions.appendChild(choose);
-    actions.appendChild(name);
-    actions.appendChild(merge);
-    body.appendChild(actions);
-    item.appendChild(body);
-    return item;
+  async function retentionCleanup() {
+    if (state.retentionBusy || ui.isWriting() || !state.retention || !state.retention.safe_operation_count) return;
+    if (!window.confirm("确认清理一批过期撤销快照？清理后这些操作不能再撤销。")) return;
+    state.retentionBusy = true; $("retention-confirm").disabled = true;
+    try {
+      const result = await ui.api("/person-operations/retention-cleanup", { after_operation_revision: state.retentionAfter });
+      if (!result.failed_operations) state.retentionAfter = result.next_after_operation_revision || null;
+      state.retention = null;
+      status("retention-status", "本批清理 " + result.cleaned_operations + " 条，跳过 " + result.skipped_operations + " 条，失败 " + result.failed_operations + " 条。" + (result.has_more ? "预览后可继续确认下一批。" : "当前批次完成。"));
+      loadHistory(false);
+    } catch (error) { state.retention = null; status("retention-status", "清理结果未确认，请重新预览：" + errorText(error)); }
+    finally { state.retentionBusy = false; }
   }
-
-  // ------------------------------------------------------- manual-unassigned queue
-  function loadUnassigned(reset) {
-    if (state.unassigned.loading) {
-      return;
-    }
-    if (reset) {
-      state.unassigned.cursor = null;
-      state.unassigned.hasMore = false;
-      clear(els.facesList);
-    }
-    state.unassigned.loading = true;
-    var query = "?assignment_state=manual_unassigned&limit=" + state.unassigned.limit;
-    if (!reset && state.unassigned.cursor) {
-      query += "&cursor=" + encodeURIComponent(state.unassigned.cursor);
-    }
-    setStatus(els.personsStatus, reset ? "正在读取待手动归类…" : "正在读取下一页…");
-    request("/faces" + query)
-      .then(function (result) {
-        var body = result.body || {};
-        var rows = body.faces || [];
-        rows.forEach(function (face) {
-          els.facesList.appendChild(buildFaceCard(face, "unassigned"));
-        });
-        state.unassigned.cursor = body.next_cursor || null;
-        state.unassigned.hasMore = Boolean(body.has_more);
-        els.personsMore.disabled = !body.has_more;
-        setStatus(
-          els.personsStatus,
-          rows.length === 0
-            ? "待手动归类：没有记录（这里是空视图，不是读取失败）"
-            : "本页 " +
-                rows.length +
-                " 张待手动归类脸" +
-                (body.has_more ? " · 还有更多" : " · 已到末尾")
-        );
-      })
-      .catch(function (failure) {
-        setStatus(els.personsStatus, "读取待手动归类失败：" + describe(failure), "error");
-      })
-      .then(function () {
-        state.unassigned.loading = false;
-      });
+  function refreshVisible() {
+    state.retention = null; $("retention-confirm").disabled = true;
+    if (state.person && !$("faces").hidden) loadFaces(false);
+    if ($("review").open) loadReviews(false);
+    if ($("history").open) loadHistory(false);
+    if (ui.isOrganizing()) summary();
   }
-
-  // ------------------------------------------------------------------ face lists
-  function loadFaces(personId, reset) {
-    var id = integerOrNull(personId);
-    if (id === null) {
-      setStatus(els.facesStatus, "请输入正整数 person_id。", "error");
-      return;
-    }
-    if (state.faces.loading) {
-      return;
-    }
-    if (reset) {
-      state.faces.personId = id;
-      state.faces.cursor = null;
-      state.faces.hasMore = false;
-      state.faceSelection = {};
-      clear(els.personFaces);
-      els.facesMore.disabled = true;
-    }
-    state.faces.loading = true;
-    var query = "?person_id=" + id + "&limit=" + state.faces.limit;
-    if (!reset && state.faces.cursor) {
-      query += "&cursor=" + encodeURIComponent(state.faces.cursor);
-    }
-    setStatus(els.facesStatus, reset ? "正在读取此人的成员脸…" : "正在读取下一页…");
-    request("/faces" + query)
-      .then(function (result) {
-        var body = result.body || {};
-        var rows = body.faces || [];
-        state.faces.canonical = body.canonical_person_id;
-        state.faces.revision = body.person_revision;
-        rows.forEach(function (face) {
-          els.personFaces.appendChild(buildFaceCard(face, "person"));
-        });
-        state.faces.cursor = body.next_cursor || null;
-        state.faces.hasMore = Boolean(body.has_more);
-        els.facesMore.disabled = !body.has_more;
-        var summary =
-          "#" +
-          body.requested_person_id +
-          (body.redirected ? " 已合并到 #" + body.canonical_person_id : "") +
-          " · 本页 " +
-          rows.length +
-          " 张脸 · 人物 revision " +
-          body.person_revision +
-          (body.has_more ? " · 还有更多" : " · 已到末尾");
-        text(els.facesSummary, summary);
-        setStatus(
-          els.facesStatus,
-          rows.length === 0 ? "这个人物当前没有有效成员脸（空视图，不是读取失败）。" : summary
-        );
-        updateFaceSelectionSummary();
-      })
-      .catch(function (failure) {
-        setStatus(els.facesStatus, "读取脸列表失败：" + describe(failure), "error");
-        if (CONFLICT_CODES[failure.code]) {
-          refreshAll();
-        }
-      })
-      .then(function () {
-        state.faces.loading = false;
-      });
+  function route() {
+    const hash = window.location.hash;
+    if (hash === "#panel-operations") openHistory();
+    else if (hash === "#panel-mappings") { const id = Number(new URLSearchParams(window.location.search).get("asset_id")); openReview(id > 0 ? id : null); }
+    else if (hash === "#panel-faces") { if (ui.currentPerson()) openFaces(ui.currentPerson()); else ui.organizeView(); }
+    else if (hash === "#panel-persons" || hash === "#panel-name" || hash === "#panel-merge") ui.peopleView();
   }
-
-  function buildFaceCard(face, origin) {
-    var item = element("li", "person-card face-card");
-    item.dataset.faceId = String(face.face_id);
-    var image = element("img", "avatar");
-    image.alt = "人脸 " + String(face.face_id).slice(0, 12) + " 的缩略图";
-    image.loading = "lazy";
-    image.src = face.thumbnail_url;
-    image.addEventListener("error", function () {
-      var fallback = element("div", "avatar-placeholder", "脸图不可用");
-      if (image.parentNode) {
-        image.parentNode.replaceChild(fallback, image);
-      }
+  function install(context) {
+    if (state.installed) return; state.installed = true; ui = context;
+    $("organize").addEventListener("click", () => $("faces").hidden ? openFaces(ui.currentPerson()) : hideFaces());
+    $("face-more").addEventListener("click", () => loadFaces(true));
+    $("face-retry").addEventListener("click", () => { if (!ui.isWriting()) loadFaces(false); }); $("face-clear").addEventListener("click", cancelSelection);
+    ["assign", "unassign", "regroup", "split", "restore"].forEach((action) => $("face-" + action).addEventListener("click", () => faceAction(action === "restore" ? "restore_auto" : action)));
+    $("review-entry").addEventListener("click", () => openReview(null)); $("review-summary-retry").addEventListener("click", summary);
+    $("history-entry").addEventListener("click", openHistory);
+    $("review-retry").addEventListener("click", () => loadReviews(false)); $("review-more").addEventListener("click", () => loadReviews(true));
+    $("history-retry").addEventListener("click", () => loadHistory(false)); $("history-more").addEventListener("click", () => loadHistory(true));
+    $("retention-preview").addEventListener("click", () => retentionPreview(true)); $("retention-confirm").addEventListener("click", retentionCleanup);
+    ["review", "history"].forEach((kind) => {
+      const dialog = $(kind); $(kind + "-close").addEventListener("click", () => { if (!ui.isWriting() && !state.retentionBusy) dialog.close(); });
+      dialog.addEventListener("cancel", (event) => { if (ui.isWriting() || state.retentionBusy) event.preventDefault(); });
+      dialog.addEventListener("close", () => { state[kind + "Seq"]++; if (kind === "history") { state.retentionSeq++; state.retention = null; } });
     });
-    var photoOpen = element("button", "pa-face-photo-open");
-    photoOpen.type = "button";
-    photoOpen.setAttribute("aria-label", "查看所属照片 " + face.asset_id);
-    photoOpen.appendChild(image);
-    photoOpen.addEventListener("click", function () {
-      if (window.AIPhotoInfo) window.AIPhotoInfo.open(face.asset_id, { returnFocus: photoOpen });
+    window.addEventListener("beforeunload", (event) => {
+      if (ui.isWriting()) { event.preventDefault(); event.returnValue = ""; }
     });
-    item.appendChild(photoOpen);
-
-    var body = element("div");
-    var head = element("p", "card-head");
-    head.appendChild(
-      element("span", "chip chip-id", "face " + String(face.face_id).slice(0, 10) + "…")
-    );
-    head.appendChild(element("span", "chip chip-lock", MODE_TEXT[face.mode] || face.mode));
-    head.appendChild(element("span", "chip", "控制 revision " + face.control_revision));
-    if (face.suggestions_available) {
-      head.appendChild(element("span", "chip chip-suggest", "有机器建议待确认"));
-    }
-    body.appendChild(head);
-    body.appendChild(
-      element(
-        "p",
-        "hint",
-        "所属照片 asset #" +
-          face.asset_id +
-          " · 有效归属 " +
-          (face.assigned_person_id === null || face.assigned_person_id === undefined
-            ? "无"
-            : "#" + face.assigned_person_id) +
-          (face.assignment_revision === null || face.assignment_revision === undefined
-            ? ""
-            : " · 归属 revision " + face.assignment_revision)
-      )
-    );
-
-    var actions = element("p", "row-actions");
-    var check = element("input");
-    check.type = "checkbox";
-    check.id = "pick-" + origin + "-" + face.face_id;
-    check.checked = Boolean(state.faceSelection[face.face_id]);
-    check.addEventListener("change", function () {
-      if (check.checked) {
-        state.faceSelection[face.face_id] = face;
-      } else {
-        delete state.faceSelection[face.face_id];
-      }
-      updateFaceSelectionSummary();
-    });
-    var label = element("label", "check-line", "选择这张脸");
-    label.setAttribute("for", check.id);
-    var pick = element("p", "check-line");
-    pick.appendChild(check);
-    pick.appendChild(label);
-    actions.appendChild(pick);
-
-    var single = element("button", null, "只对这一张脸…");
-    single.type = "button";
-    single.addEventListener("click", function () {
-      state.faceSelection = {};
-      state.faceSelection[face.face_id] = face;
-      updateFaceSelectionSummary();
-      showNotice(
-        "已把选择收缩为这一张脸（face " +
-          String(face.face_id).slice(0, 10) +
-          "…）。同一张照片的其它脸不会被一起改动。"
-      );
-    });
-    actions.appendChild(single);
-    body.appendChild(actions);
-    item.appendChild(body);
-    return item;
+    window.addEventListener("hashchange", route); updateSelection(); route();
   }
-
-  function selectedFaces() {
-    var ids = Object.keys(state.faceSelection);
-    ids.sort();
-    return ids.map(function (id) {
-      return state.faceSelection[id];
-    });
-  }
-
-  function updateFaceSelectionSummary() {
-    var rows = selectedFaces();
-    var fromLoaded = 0;
-    rows.forEach(function (face) {
-      if (state.faces.personId !== null && face.assigned_person_id === state.faces.canonical) {
-        fromLoaded += 1;
-      }
-    });
-    text(
-      els.facesSummary,
-      "已选择 " + rows.length + " 张脸" + (fromLoaded ? "（其中 " + fromLoaded + " 张属于 #" + state.faces.canonical + "）" : "")
-    );
-  }
-
-  // ------------------------------------------------------------------ name form
-  function submitName(event) {
-    event.preventDefault();
-    setError(els.nameError, "");
-    text(els.nameResult, "");
-    var personId = integerOrNull(els.namePersonId.value);
-    var revision = integerOrNull(els.nameRevision.value);
-    var name = String(els.nameValue.value || "").trim();
-    if (personId === null || revision === null || !name) {
-      setError(els.nameError, "请填写 person_id、姓名和 expected_revision。");
-      return;
-    }
-    if (!els.nameSameConfirm.checked) {
-      setError(
-        els.nameError,
-        "请先确认「同名时会执行合并」；页面不会替你静默合并，也不会自己判断同名。"
-      );
-      return;
-    }
-    request("/persons/" + personId + "/name", {
-      method: "PUT",
-      body: {
-        request_id: newRequestId("p3-06-name"),
-        name: name,
-        expected_revision: revision,
-      },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        text(
-          els.nameResult,
-          "操作 " +
-            body.operation_id +
-            " 已记录（" +
-            (OPERATION_TEXT[body.operation_type] || body.operation_type) +
-            "，revision " +
-            body.operation_revision +
-            "，changed=" +
-            body.changed +
-            (body.replayed ? "，replayed=true（同一 request_id 的重放）" : "") +
-            "）。"
-        );
-        // The server owns the same-name rule: the page reads the id back and shows where it
-        // now points instead of reproducing the server's name comparison itself.
-        return request("/persons/" + personId).then(function (lookup) {
-          var person = lookup.body || {};
-          var line =
-            "#" +
-            personId +
-            (person.redirected
-              ? " 已同名合并到 #" + person.canonical_person_id + "（后续都会显示合并后的人物）"
-              : " 的姓名已保存为「" + safeText(person.name) + "」（revision " + person.revision + "）");
-          text(els.nameResult, (els.nameResult.textContent || "") + " " + line);
-        });
-      })
-      .catch(function (failure) {
-        handleConflict(failure, els.nameError);
-      })
-      .then(function () {
-        refreshAll();
-      });
-  }
-
-  // ------------------------------------------------------------------ merge form
-  function updateMergeSummary() {
-    var ids = Object.keys(state.mergeSelection);
-    ids.sort();
-    if (!ids.length) {
-      text(els.mergeSummary, "尚未选择任何人物。");
-      return;
-    }
-    var parts = ids.map(function (id) {
-      var person = state.mergeSelection[id];
-      var label = person.name === null || person.name === undefined ? "未命名" : person.name;
-      return "#" + id + "（" + label + "，revision " + person.revision + "）";
-    });
-    text(els.mergeSummary, "合并来源：" + parts.join("、"));
-  }
-
-  function submitMerge(event) {
-    event.preventDefault();
-    setError(els.mergeError, "");
-    text(els.mergeResult, "");
-    var target = integerOrNull(els.mergeTarget.value);
-    var ids = Object.keys(state.mergeSelection);
-    if (target === null) {
-      setError(els.mergeError, "请填写目标 person_id。");
-      return;
-    }
-    var sources = [];
-    ids.forEach(function (id) {
-      if (Number(id) === target) {
-        return;
-      }
-      var person = state.mergeSelection[id];
-      if (!person) {
-        return;
-      }
-      sources.push({ person_id: person.person_id, expected_revision: person.revision });
-    });
-    if (!sources.length) {
-      setError(els.mergeError, "请至少选择一个人物作为合并来源（目标不能同时是来源）。");
-      return;
-    }
-    var targetPerson = state.index[String(target)];
-    if (!targetPerson) {
-      setError(
-        els.mergeError,
-        "目标人物不在当前列表里：请先在人物列表里载入它，再重试（服务器仍会校验 revision）。"
-      );
-      return;
-    }
-    request("/persons/merge", {
-      method: "POST",
-      body: {
-        request_id: newRequestId("p3-06-merge"),
-        target_person_id: target,
-        target_expected_revision: targetPerson.revision,
-        sources: sources,
-      },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        text(
-          els.mergeResult,
-          "合并操作 " +
-            body.operation_id +
-            "（revision " +
-            body.operation_revision +
-            "，changed=" +
-            body.changed +
-            "）：" +
-            sources
-              .map(function (source) {
-                return "#" + source.person_id;
-              })
-              .join("、") +
-            " → #" +
-            target
-        );
-        state.mergeSelection = {};
-        updateMergeSummary();
-      })
-      .catch(function (failure) {
-        handleConflict(failure, els.mergeError);
-      })
-      .then(function () {
-        refreshAll();
-      });
-  }
-
-  // ------------------------------------------------------- face batch operations
-  function runFaceBatch(action) {
-    setError(els.faceBatchError, "");
-    var rows = selectedFaces();
-    if (!rows.length) {
-      setError(els.faceBatchError, "请先勾选至少一张脸。");
-      return;
-    }
-    if (rows.length > MAX_BATCH) {
-      setError(els.faceBatchError, "单批最多 " + MAX_BATCH + " 张脸，请分批提交。");
-      return;
-    }
-    var target = null;
-    if (action === "assign") {
-      target = integerOrNull(els.batchTargetPersonId.value);
-      if (target === null) {
-        setError(els.faceBatchError, "指定归属需要目标 person_id。");
-        return;
-      }
-    }
-    var items = rows.map(function (face) {
-      return {
-        face_id: face.face_id,
-        action: action,
-        target_person_id: action === "assign" ? target : null,
-        expected_revision: face.control_revision,
-      };
-    });
-    request("/face-assignments/batch", {
-      method: "POST",
-      body: {
-        contract_version: "p3-face-correction-contracts.v1",
-        request_id: newRequestId("p3-06-faces"),
-        items: items,
-      },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        setStatus(
-          els.faceBatchError,
-          "批量操作 " +
-            body.operation_id +
-            "（revision " +
-            body.operation_revision +
-            "，changed=" +
-            body.changed +
-            "，清空排除 " +
-            (body.items || [])
-              .map(function (item) {
-                return (item.exclusions && item.exclusions.deactivated
-                  ? item.exclusions.deactivated.length
-                  : 0);
-              })
-              .reduce(function (left, right) {
-                return left + right;
-              }, 0) +
-            "）"
-        );
-        state.faceSelection = {};
-      })
-      .catch(function (failure) {
-        handleConflict(failure, els.faceBatchError);
-      })
-      .then(function () {
-        refreshAll();
-      });
-  }
-
-  function submitSplit(event) {
-    event.preventDefault();
-    setError(els.splitError, "");
-    text(els.splitResult, "");
-    var rows = selectedFaces();
-    if (!rows.length) {
-      setError(els.splitError, "请先勾选要拆出的脸。");
-      return;
-    }
-    if (rows.length > MAX_BATCH) {
-      setError(els.splitError, "一次最多拆 " + MAX_BATCH + " 张脸，请分批提交。");
-      return;
-    }
-    if (state.faces.personId === null || state.faces.revision === null) {
-      setError(els.splitError, "请先载入源人物的脸列表（拆分需要该人物的 revision）。");
-      return;
-    }
-    if (!els.splitConfirm.checked) {
-      setError(els.splitError, "请先确认要把所选脸拆成一个新的未命名人物。");
-      return;
-    }
-    var faces = [];
-    for (var index = 0; index < rows.length; index += 1) {
-      var face = rows[index];
-      if (
-        face.assignment_revision === null ||
-        face.assignment_revision === undefined ||
-        face.control_revision === undefined ||
-        face.control_revision === null
-      ) {
-        setError(
-          els.splitError,
-          "选中的 face " +
-            String(face.face_id).slice(0, 10) +
-            "… 没有有效归属 revision，不能拆分；请先恢复自动或重新指定归属。"
-        );
-        return;
-      }
-      faces.push({
-        face_id: face.face_id,
-        expected_control_revision: face.control_revision,
-        expected_assignment_revision: face.assignment_revision,
-      });
-    }
-    request("/persons/" + state.faces.personId + "/split", {
-      method: "POST",
-      body: {
-        contract_version: "p3-person-split-contracts.v1",
-        request_id: newRequestId("p3-06-split"),
-        source_expected_revision: state.faces.revision,
-        faces: faces,
-      },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        text(
-          els.splitResult,
-          "拆分操作 " +
-            body.operation_id +
-            "（revision " +
-            body.operation_revision +
-            "）已把 " +
-            faces.length +
-            " 张脸从 #" +
-            body.canonical_source_person_id +
-            " 拆到新的未命名人物 #" +
-            body.new_person_id +
-            "。"
-        );
-        state.faceSelection = {};
-        if (body.new_person_id) {
-          els.facesPersonId.value = String(body.new_person_id);
-        }
-      })
-      .catch(function (failure) {
-        handleConflict(failure, els.splitError);
-      })
-      .then(function () {
-        refreshAll();
-      });
-  }
-
-  // ------------------------------------------------------------------- operations
-  function loadOperations(reset) {
-    if (state.operations.loading) {
-      return;
-    }
-    if (reset) {
-      state.operations.cursor = null;
-      state.operations.hasMore = false;
-      clear(els.operationsList);
-    }
-    state.operations.loading = true;
-    var query = "?limit=" + state.operations.limit;
-    if (!reset && state.operations.cursor) {
-      query += "&cursor=" + encodeURIComponent(state.operations.cursor);
-    }
-    setStatus(els.operationsStatus, reset ? "正在读取最近操作…" : "正在读取更早的操作…");
-    request("/person-operations" + query)
-      .then(function (result) {
-        var body = result.body || {};
-        var rows = body.operations || [];
-        rows.forEach(function (operation) {
-          els.operationsList.appendChild(buildOperationRow(operation));
-        });
-        state.operations.cursor = body.next_cursor || null;
-        state.operations.hasMore = Boolean(body.has_more);
-        els.operationsMore.disabled = !body.has_more;
-        setStatus(
-          els.operationsStatus,
-          rows.length === 0
-            ? "还没有人物操作记录（这里是空视图，不是读取失败）"
-            : "本页 " + rows.length + " 条" + (body.has_more ? " · 还有更早的" : " · 已到最早")
-        );
-      })
-      .catch(function (failure) {
-        setStatus(els.operationsStatus, "读取操作日志失败：" + describe(failure), "error");
-      })
-      .then(function () {
-        state.operations.loading = false;
-      });
-  }
-
-  function buildOperationRow(operation) {
-    var item = element("li", "place-row");
-    var head = element("p", "card-head");
-    head.appendChild(
-      element("strong", null, OPERATION_TEXT[operation.operation_type] || operation.operation_type)
-    );
-    head.appendChild(element("span", "chip", STATUS_TEXT[operation.status] || operation.status));
-    head.appendChild(element("span", "chip", "revision " + operation.operation_revision));
-    if (operation.changed) {
-      head.appendChild(element("span", "chip chip-lock", "有实际改动"));
-    }
-    item.appendChild(head);
-    item.appendChild(
-      element(
-        "p",
-        "hint",
-        "" +
-          formatMoment(operation.committed_at) +
-          " · 影响 " +
-          operation.item_count +
-          " 项" +
-          (operation.person_ids && operation.person_ids.length
-            ? " · 人物 " +
-              operation.person_ids
-                .map(function (id) {
-                  return "#" + id;
-                })
-                .join("、")
-            : "") +
-          (operation.face_ids && operation.face_ids.length
-            ? " · 人脸 " + operation.face_ids.length + " 张"
-            : "") +
-          (operation.undo_of_operation_id
-            ? " · 补偿 " + operation.undo_of_operation_id
-            : "") +
-          (operation.undone_by_operation_id
-            ? " · 已被 " + operation.undone_by_operation_id + " 补偿"
-            : "")
-      )
-    );
-    var actions = element("p", "row-actions");
-    if (operation.operation_type === "CREATE_PERSON_FROM_FACE") {
-      actions.appendChild(element("span", "chip", "不支持撤销"));
-    } else if (operation.expired) {
-      actions.appendChild(element("span", "chip", "已过期 · 不可撤销"));
-    } else {
-      var undo = element("button", null, "撤销此操作");
-      undo.type = "button";
-      undo.addEventListener("click", function () {
-        undoOperation(operation);
-      });
-      actions.appendChild(undo);
-    }
-    item.appendChild(actions);
-    return item;
-  }
-
-  function previewOperationRetention(preserveCursor, batchSummary, batchFailed) {
-    if (!preserveCursor) {
-      state.retentionAfterRevision = null;
-    }
-    els.retentionConfirm.disabled = true;
-    setStatus(els.retentionStatus, "正在预览过期快照…");
-    request("/person-operations/retention-preview")
-      .then(function (result) {
-        var body = result.body || {};
-        state.retentionPreview = body;
-        var previewSummary =
-          "候选 " + body.candidate_operation_count + " 条，可安全清理 " +
-            body.safe_operation_count + " 条，跳过 " + body.skipped_operation_count +
-            " 条" + formatRetentionSkippedReasons(body.skipped_reasons) +
-            "；待删快照 " + body.item_count + " 项，原快照 JSON " +
-            body.snapshot_json_bytes + " 字节，预计净节省 " +
-            body.estimated_net_savings_bytes + " 字节。过期后不可恢复撤销能力。";
-        setStatus(
-          els.retentionStatus,
-          (batchSummary ? batchSummary + "\n" : "") + previewSummary,
-          batchFailed ? "error" : null
-        );
-        els.retentionConfirm.disabled = !(body.safe_operation_count > 0);
-      })
-      .catch(function (failure) {
-        state.retentionPreview = null;
-        setStatus(
-          els.retentionStatus,
-          (batchSummary ? batchSummary + "\n" : "") + "预览失败：" + describe(failure),
-          "error"
-        );
-      });
-  }
-
-  function confirmOperationRetention() {
-    var preview = state.retentionPreview;
-    if (!preview || !(preview.safe_operation_count > 0)) {
-      return;
-    }
-    if (!window.confirm("确认清理一批过期撤销快照？清理后这些操作不能再撤销。")) {
-      return;
-    }
-    els.retentionConfirm.disabled = true;
-    setStatus(els.retentionStatus, "正在提交一批清理…");
-    request("/person-operations/retention-cleanup", {
-      method: "POST",
-      body: { after_operation_revision: state.retentionAfterRevision },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        if (!body.failed_operations) {
-          state.retentionAfterRevision = body.next_after_operation_revision || null;
-        }
-        var batchSummary =
-          "本批完成 " + body.cleaned_operations + " 条，跳过 " + body.skipped_operations +
-          " 条，失败 " + body.failed_operations + " 条；" +
-          (body.has_more ? "仍有后续批次，请继续确认。" : "当前没有后续批次。");
-        loadOperations(true);
-        previewOperationRetention(true, batchSummary, Boolean(body.failed_operations));
-      })
-      .catch(function (failure) {
-        setStatus(els.retentionStatus, "清理失败：" + describe(failure), "error");
-      });
-  }
-
-  function formatRetentionSkippedReasons(reasons) {
-    var entries = Object.keys(reasons || {}).sort().map(function (reason) {
-      return reason + " " + reasons[reason] + " 条";
-    });
-    return entries.length ? "（" + entries.join("、") + "）" : "";
-  }
-
-  function appendUndoLog(message, failed) {
-    var line = element("li", failed ? "error" : null, message);
-    els.undoLog.insertBefore(line, els.undoLog.firstChild);
-  }
-
-  function undoOperation(operation) {
-    request("/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo", {
-      method: "POST",
-      body: {
-        request_id: newRequestId("p3-06-undo"),
-        expected_operation_revision: operation.operation_revision,
-      },
-    })
-      .then(function (result) {
-        var body = result.body || {};
-        appendUndoLog(
-          "已撤销 " +
-            operation.operation_id +
-            "（新操作 " +
-            body.operation_id +
-            " revision " +
-            body.operation_revision +
-            "，changed=" +
-            body.changed +
-            (body.replayed ? "，replayed=true" : "") +
-            "）",
-          false
-        );
-        // The compensated operation now reads UNDONE, so the log is reloaded instead of
-        // leaving a stale "已提交" on screen.
-        loadOperations(true);
-      })
-      .catch(function (failure) {
-        appendUndoLog("撤销被拒绝：" + describe(failure), true);
-        if (CONFLICT_CODES[failure.code] || failure.status === 409) {
-          refreshAll();
-        }
-      });
-  }
-
-  // ---------------------------------------------------------------------- refresh
-  // ------------------------------------------------------- redetection review list
-  function loadMappings(reset) {
-    if (!state.mappings.hasSupport || state.mappings.loading) {
-      return;
-    }
-    if (reset) {
-      state.mappings.cursor = null;
-      clear(els.mappingsList);
-    }
-    state.mappings.loading = true;
-    var query =
-      "/face-mappings?state=" +
-      encodeURIComponent(state.mappings.state) +
-      "&limit=" +
-      encodeURIComponent(state.mappings.limit);
-    if (state.mappings.cursor) {
-      query += "&cursor=" + encodeURIComponent(state.mappings.cursor);
-    }
-    request(query)
-      .then(function (result) {
-        var body = result.body || {};
-        var groups = body.groups || [];
-        groups.forEach(function (group) {
-          state.mappings.open[group.old_face_id] = group;
-          els.mappingsList.appendChild(buildMappingCard(group));
-        });
-        state.mappings.cursor = body.next_cursor || null;
-        state.mappings.hasMore = Boolean(body.has_more);
-        els.mappingsMore.disabled = !state.mappings.hasMore;
-        var open = groups.filter(function (group) {
-          return group.state === "OPEN";
-        }).length;
-        setStatus(
-          els.mappingsStatus,
-          "本页 " +
-            groups.length +
-            " 组 · " +
-            (state.mappings.state === "open" ? "待确认" : "全部") +
-            " · 本页待确认 " +
-            open +
-            (state.mappings.hasMore ? " · 还有更多" : " · 已到末尾"),
-          null
-        );
-      })
-      .catch(function (failure) {
-        setStatus(els.mappingsStatus, "读取待确认列表失败：" + describe(failure), "error");
-        if (failure.code === "VALIDATION_ERROR" || failure.code === "INVALID_CURSOR") {
-          state.mappings.cursor = null;
-        }
-      })
-      .finally(function () {
-        state.mappings.loading = false;
-      });
-  }
-
-  function mappingAvatar(faceId) {
-    var image = element("img", "avatar");
-    image.alt = "人脸裁剪";
-    image.loading = "lazy";
-    image.src = API + "/faces/" + encodeURIComponent(faceId) + "/thumbnail";
-    image.addEventListener("error", function () {
-      var placeholder = element("div", "avatar-placeholder", "脸图不可用");
-      if (image.parentNode) {
-        image.parentNode.replaceChild(placeholder, image);
-      }
-    });
-    return image;
-  }
-
-  function buildMappingCard(group) {
-    var card = element("li", "person-card face-card");
-    card.dataset.oldFaceId = group.old_face_id;
-    card.appendChild(mappingAvatar(group.old_face_id));
-    var head = element("p", "card-head");
-    head.appendChild(element("span", "chip chip-id", "旧脸 " + group.old_face_id));
-    head.appendChild(
-      element("span", "chip", MAPPING_STATE_TEXT[group.state] || group.state)
-    );
-    head.appendChild(
-      element(
-        "span",
-        "chip",
-        CANDIDATE_STATE_TEXT[group.candidate_state] || group.candidate_state
-      )
-    );
-    head.appendChild(element("span", "chip", "revision " + group.revision));
-    card.appendChild(head);
-    card.appendChild(
-      element(
-        "p",
-        "hint",
-        "照片 #" +
-          group.asset_id +
-          " · " +
-          (MODE_TEXT[group.control_mode] || group.control_mode) +
-          " · 控制 revision " +
-          group.control_revision +
-          " · 有效归属 " +
-          (group.assigned_person_id === null || group.assigned_person_id === undefined
-            ? "无"
-            : "#" + group.assigned_person_id) +
-          " · 候选 " +
-          group.candidate_count
-      )
-    );
-    var actions = element("p", "row-actions");
-    var load = element("button", null, "载入候选");
-    load.type = "button";
-    load.addEventListener("click", function () {
-      loadMappingGroup(group.old_face_id, card, group);
-    });
-    actions.appendChild(load);
-    if (group.state === "OPEN" && group.candidate_count === 0) {
-      var rejectOnly = element("button", null, "拒绝确认（人脸消失）");
-      rejectOnly.type = "button";
-      rejectOnly.addEventListener("click", function () {
-        submitMappingDecision(group, []);
-      });
-      actions.appendChild(rejectOnly);
-    }
-    card.appendChild(actions);
-    var detail = element("ul", "log");
-    detail.dataset.role = "candidates";
-    card.appendChild(detail);
-    return card;
-  }
-
-  function loadMappingGroup(oldFaceId, card, group) {
-    var detail = card.querySelector('ul[data-role="candidates"]');
-    clear(detail);
-    request("/face-mappings/" + encodeURIComponent(oldFaceId))
-      .then(function (result) {
-        var body = result.body || {};
-        var candidates = body.candidates || [];
-        if (!candidates.length) {
-          detail.appendChild(element("li", null, "没有合格候选；只能「拒绝确认」。"));
-          return;
-        }
-        candidates.forEach(function (candidate) {
-          var row = element("li", null);
-          var line = element("span", "card-head");
-          line.appendChild(mappingAvatar(candidate.new_face_id));
-          line.appendChild(element("span", "chip chip-id", "新脸 " + candidate.new_face_id));
-          line.appendChild(
-            element("span", "chip", MATCH_TEXT[candidate.match_state] || candidate.match_state)
-          );
-          line.appendChild(element("span", "chip", "质量 " + candidate.quality_state));
-          line.appendChild(
-            element(
-              "span",
-              "chip",
-              MAPPING_ROW_STATE_TEXT[candidate.state] || candidate.state
-            )
-          );
-          line.appendChild(element("span", "chip", "revision " + candidate.revision));
-          row.appendChild(line);
-          if (group.state === "OPEN") {
-            var pick = element("span", "check-line");
-            var check = document.createElement("input");
-            check.type = "checkbox";
-            check.id = "map-pick-" + candidate.new_face_id;
-            check.dataset.newFaceId = candidate.new_face_id;
-            check.dataset.role = "pick";
-            var label = element("label", null, "本次确认命中这张新脸");
-            label.setAttribute("for", check.id);
-            pick.appendChild(check);
-            pick.appendChild(label);
-            row.appendChild(pick);
-            if (group.control_mode === "MANUAL_ASSIGNED") {
-              var inheritLine = element("span", "check-line");
-              var inherit = document.createElement("input");
-              inherit.type = "checkbox";
-              inherit.id = "map-inherit-" + candidate.new_face_id;
-              inherit.dataset.newFaceId = candidate.new_face_id;
-              inherit.dataset.role = "inherit";
-              var inheritLabel = element("label", null, "把人工人物继承给这张新脸");
-              inheritLabel.setAttribute("for", inherit.id);
-              inheritLine.appendChild(inherit);
-              inheritLine.appendChild(inheritLabel);
-              row.appendChild(inheritLine);
-            }
-          }
-          detail.appendChild(row);
-        });
-        if (group.state === "OPEN") {
-          var actions = element("li", "row-actions");
-          var confirm = element("button", null, "确认所选新脸");
-          confirm.type = "button";
-          confirm.addEventListener("click", function () {
-            var targets = [];
-            detail
-              .querySelectorAll('input[data-role="pick"]')
-              .forEach(function (pick) {
-                if (!pick.checked) {
-                  return;
-                }
-                var inherit = detail.querySelector(
-                  'input[data-role="inherit"][data-new-face-id="' + pick.dataset.newFaceId + '"]'
-                );
-                targets.push({
-                  new_face_id: pick.dataset.newFaceId,
-                  inherits_person: Boolean(inherit && inherit.checked),
-                });
-              });
-            submitMappingDecision(group, targets);
-          });
-          var reject = element("button", null, "拒绝整组");
-          reject.type = "button";
-          reject.addEventListener("click", function () {
-            submitMappingDecision(group, []);
-          });
-          actions.appendChild(confirm);
-          actions.appendChild(reject);
-          detail.appendChild(actions);
-        }
-      })
-      .catch(function (failure) {
-        setError(els.mappingsError, "读取候选失败：" + describe(failure));
-      });
-  }
-
-  function submitMappingDecision(group, targets) {
-    setError(els.mappingsError, null);
-    var requestId = newRequestId("map");
-    var body = {
-      contract_version: "p3-face-redetection-contracts.v1",
-      request_id: requestId,
-      asset_id: group.asset_id,
-      decisions: [
-        {
-          old_face_id: group.old_face_id,
-          expected_review_revision: group.revision,
-          decision: targets.length ? "confirm" : "reject",
-          targets: targets,
-        },
-      ],
-    };
-    request("/face-mappings/decisions", {
-      method: "POST",
-      body: body,
-      write: true,
-    })
-      .then(function (result) {
-        var decision = result.body || {};
-        appendMappingLog(
-          "[" +
-            (decision.operation_type || "") +
-            "] changed=" +
-            String(decision.changed) +
-            " · catalog_filter_revision=" +
-            decision.catalog_filter_revision +
-            " · operation_revision=" +
-            decision.operation_revision,
-          false
-        );
-        if (decision.changed === false) {
-          appendMappingLog("本次决策只改变了审核状态，没有改动任何人工归属或排除。", false);
-        }
-        state.mappings.lastOperation = {
-          operation_id: decision.operation_id,
-          operation_revision: decision.operation_revision,
-        };
-        els.mappingsUndo.disabled = false;
-        text(
-          els.mappingsResult,
-          "最后一次决策：" +
-            (decision.operation_type || "") +
-            " · 操作 " +
-            (decision.operation_id || "") +
-            "（可在下面撤销）"
-        );
-        loadMappings(true);
-        loadOperations(true);
-      })
-      .catch(function (failure) {
-        setError(els.mappingsError, "决策被拒绝：" + describe(failure));
-        appendMappingLog(describe(failure), true);
-        handleConflict(failure, els.mappingsError);
-        loadMappings(true);
-      });
-  }
-
-  function appendMappingLog(message, failed) {
-    var item = element("li", failed ? "error" : null, safeText(message));
-    els.mappingsLog.insertBefore(item, els.mappingsLog.firstChild);
-  }
-
-  function undoLastMapping() {
-    var last = state.mappings.lastOperation;
-    if (!last) {
-      return;
-    }
-    request("/person-operations/" + encodeURIComponent(last.operation_id) + "/undo", {
-      method: "POST",
-      body: {
-        request_id: newRequestId("map-undo"),
-        expected_operation_revision: last.operation_revision,
-      },
-      write: true,
-    })
-      .then(function (result) {
-        var undo = result.body || {};
-        appendMappingLog(
-          "撤销成功：新操作 " +
-            undo.operation_id +
-            " · changed=" +
-            String(undo.changed) +
-            "（再次确认前，该组回到「待确认」并继续保护新脸）",
-          false
-        );
-        els.mappingsUndo.disabled = true;
-        state.mappings.lastOperation = null;
-        loadMappings(true);
-        loadOperations(true);
-      })
-      .catch(function (failure) {
-        setError(els.mappingsError, "撤销被拒绝：" + describe(failure));
-        appendMappingLog(describe(failure), true);
-        handleConflict(failure, els.mappingsError);
-      });
-  }
-
-  // ---------------------------------------------------------------------- refresh
-  function refreshAll() {
-    if (state.view === "manual_unassigned") {
-      loadUnassigned(true);
-    } else {
-      loadPersons(true);
-    }
-    if (state.faces.personId !== null) {
-      loadFaces(state.faces.personId, true);
-    }
-    loadOperations(true);
-    if (state.mappings.hasSupport) {
-      loadMappings(true);
-    }
-  }
-
-  // ------------------------------------------------------------------------- boot
-  function boot() {
-    els = {
-      appMeta: document.getElementById("app-meta"),
-      notice: document.getElementById("notice"),
-      tabs: {
-        named: document.getElementById("tab-named"),
-        unnamed: document.getElementById("tab-unnamed"),
-        manual_unassigned: document.getElementById("tab-unassigned"),
-      },
-      personsLimit: document.getElementById("persons-limit"),
-      personsReload: document.getElementById("persons-reload"),
-      personsMore: document.getElementById("persons-more"),
-      personsStatus: document.getElementById("persons-status"),
-      personsList: document.getElementById("persons-list"),
-      facesList: document.getElementById("faces-list"),
-      nameForm: document.getElementById("name-form"),
-      namePersonId: document.getElementById("name-person-id"),
-      nameValue: document.getElementById("name-value"),
-      nameRevision: document.getElementById("name-revision"),
-      nameSameConfirm: document.getElementById("name-same-confirm"),
-      nameError: document.getElementById("name-error"),
-      nameResult: document.getElementById("name-result"),
-      facesForm: document.getElementById("faces-form"),
-      facesPersonId: document.getElementById("faces-person-id"),
-      facesSelectPage: document.getElementById("faces-select-page"),
-      facesClear: document.getElementById("faces-clear"),
-      facesSelectMerge: document.getElementById("faces-select-merge"),
-      facesStatus: document.getElementById("faces-status"),
-      facesMore: document.getElementById("faces-more"),
-      facesSummary: document.getElementById("faces-summary"),
-      personFaces: document.getElementById("person-faces"),
-      batchTargetPersonId: document.getElementById("batch-target-person-id"),
-      batchAssign: document.getElementById("batch-assign"),
-      batchUnassign: document.getElementById("batch-unassign"),
-      batchRestore: document.getElementById("batch-restore"),
-      faceBatchError: document.getElementById("face-batch-error"),
-      splitForm: document.getElementById("split-form"),
-      splitConfirm: document.getElementById("split-confirm"),
-      splitError: document.getElementById("split-error"),
-      splitResult: document.getElementById("split-result"),
-      mergeForm: document.getElementById("merge-form"),
-      mergeTarget: document.getElementById("merge-target"),
-      mergeClear: document.getElementById("merge-clear"),
-      mergeSummary: document.getElementById("merge-summary"),
-      mergeError: document.getElementById("merge-error"),
-      mergeResult: document.getElementById("merge-result"),
-      operationsLoad: document.getElementById("operations-load"),
-      operationsMore: document.getElementById("operations-more"),
-      retentionPreview: document.getElementById("operations-retention-preview"),
-      retentionConfirm: document.getElementById("operations-retention-confirm"),
-      retentionStatus: document.getElementById("operations-retention-status"),
-      operationsStatus: document.getElementById("operations-status"),
-      operationsList: document.getElementById("operations-list"),
-      undoLog: document.getElementById("undo-log"),
-      mappingsPanel: document.getElementById("panel-mappings"),
-      mappingsState: document.getElementById("mappings-state"),
-      mappingsLimit: document.getElementById("mappings-limit"),
-      mappingsReload: document.getElementById("mappings-reload"),
-      mappingsMore: document.getElementById("mappings-more"),
-      mappingsStatus: document.getElementById("mappings-status"),
-      mappingsList: document.getElementById("mappings-list"),
-      mappingsError: document.getElementById("mappings-error"),
-      mappingsResult: document.getElementById("mappings-result"),
-      mappingsUndo: document.getElementById("mappings-undo"),
-      mappingsLog: document.getElementById("mappings-log"),
-    };
-
-    Object.keys(els.tabs).forEach(function (name) {
-      els.tabs[name].addEventListener("click", function () {
-        selectView(name);
-      });
-    });
-    els.personsLimit.addEventListener("change", function () {
-      state.persons.limit = Number(els.personsLimit.value) || PERSON_LIMIT;
-      state.unassigned.limit = state.persons.limit;
-      if (state.view === "manual_unassigned") {
-        loadUnassigned(true);
-      } else {
-        loadPersons(true);
-      }
-    });
-    els.personsReload.addEventListener("click", function () {
-      selectView(state.view);
-    });
-    els.personsMore.addEventListener("click", function () {
-      if (state.view === "manual_unassigned") {
-        loadUnassigned(false);
-      } else {
-        loadPersons(false);
-      }
-    });
-    els.nameForm.addEventListener("submit", submitName);
-    els.facesForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      loadFaces(els.facesPersonId.value, true);
-    });
-    els.facesMore.addEventListener("click", function () {
-      loadFaces(state.faces.personId, false);
-    });
-    els.facesSelectPage.addEventListener("click", function () {
-      // "全选本页脸" applies to the list the user is currently looking at: the person's
-      // members, or the manual-unassigned queue.
-      var list = els.personsList.hidden ? els.facesList : els.personFaces;
-      var boxes = list.querySelectorAll("input[type=checkbox]");
-      Array.prototype.forEach.call(boxes, function (box) {
-        box.checked = true;
-        box.dispatchEvent(new Event("change"));
-      });
-      updateFaceSelectionSummary();
-    });
-    els.facesClear.addEventListener("click", function () {
-      state.faceSelection = {};
-      Array.prototype.forEach.call(
-        els.personFaces.querySelectorAll("input[type=checkbox]"),
-        function (box) {
-          box.checked = false;
-        }
-      );
-      Array.prototype.forEach.call(
-        els.facesList.querySelectorAll("input[type=checkbox]"),
-        function (box) {
-          box.checked = false;
-        }
-      );
-      updateFaceSelectionSummary();
-    });
-    els.facesSelectMerge.addEventListener("click", function () {
-      var id = Number(state.faces.canonical);
-      var person = state.index[String(id)];
-      if (!person) {
-        showNotice("请先在人物列表里载入这个人物，再加入合并选择。");
-        return;
-      }
-      state.mergeSelection[String(id)] = person;
-      updateMergeSummary();
-      showNotice("已把 #" + id + " 加入批量合并选择。");
-    });
-    els.batchAssign.addEventListener("click", function () {
-      runFaceBatch("assign");
-    });
-    els.batchUnassign.addEventListener("click", function () {
-      runFaceBatch("unassign");
-    });
-    els.batchRestore.addEventListener("click", function () {
-      runFaceBatch("restore_auto");
-    });
-    els.splitForm.addEventListener("submit", submitSplit);
-    els.mergeForm.addEventListener("submit", submitMerge);
-    els.mergeClear.addEventListener("click", function () {
-      state.mergeSelection = {};
-      updateMergeSummary();
-    });
-    els.operationsLoad.addEventListener("click", function () {
-      loadOperations(true);
-    });
-    els.operationsMore.addEventListener("click", function () {
-      loadOperations(false);
-    });
-    els.retentionPreview.addEventListener("click", previewOperationRetention);
-    els.retentionConfirm.addEventListener("click", confirmOperationRetention);
-    els.mappingsState.addEventListener("change", function () {
-      state.mappings.state = els.mappingsState.value === "all" ? "all" : "open";
-      loadMappings(true);
-    });
-    els.mappingsLimit.addEventListener("change", function () {
-      state.mappings.limit = Number(els.mappingsLimit.value) || MAPPING_LIMIT;
-      loadMappings(true);
-    });
-    els.mappingsReload.addEventListener("click", function () {
-      loadMappings(true);
-    });
-    els.mappingsMore.addEventListener("click", function () {
-      loadMappings(false);
-    });
-    els.mappingsUndo.addEventListener("click", undoLastMapping);
-
-    probeCapabilities();
-    selectView("named");
-    loadOperations(true);
-  }
-
-  function bootWhenOpened() {
-    var advanced = document.getElementById("advanced-tools");
-    if (!advanced || advanced.open) { boot(); return; }
-    advanced.addEventListener("toggle", function firstOpen() {
-      if (advanced.open) { advanced.removeEventListener("toggle", firstOpen); boot(); }
-    });
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootWhenOpened);
-  } else {
-    bootWhenOpened();
-  }
+  window.AIPersonTools = { install, openFaces, hideFaces, openReview, openHistory, summary, refreshVisible, route,
+    writeStateChanged: updateSelection };
 })();

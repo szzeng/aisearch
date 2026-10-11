@@ -269,6 +269,28 @@ class PersonService:
                 refresh=self.refresh,
             )
 
+    def regroup_faces(self, **payload: Any) -> dict[str, Any]:
+        from photo_search.face.service import catch_up_index
+        from photo_search.persons import regroup
+
+        # Publication resumes its own durable outbox, without associating other faces.
+        # Replays need no index work and remain available after a later index failure.
+        if self.catalog.read_one("SELECT 1 FROM person_operations WHERE request_id=?",
+                                 (payload.get("request_id"),)) is None:
+            from photo_search.face import contract, detail_policy
+            from photo_search.face.index import FaceIndexCoordinator
+
+            catch_up_index(self.catalog, limit=1000)
+            if detail_policy.compatibility_verified():
+                catch_up_index(
+                    self.catalog,
+                    coordinator=FaceIndexCoordinator(
+                        self.catalog, spec_revision=contract.FACE_DETAIL_SPEC_REVISION,
+                    ),
+                    limit=1000,
+                )
+        return regroup.apply(self.catalog, **payload)
+
     def create_person_from_face(
         self,
         *,
@@ -310,6 +332,11 @@ class PersonService:
     def mapping_group(self, old_face_id: str) -> dict[str, Any]:
         """ADR-0010 §8.1: one review group with its live candidate array."""
         return read_module.mapping_group(self.catalog, str(old_face_id))
+
+    def asset_mapping_page(
+        self, asset_id: int, *, limit: Any = None, cursor: str | None = None
+    ) -> dict[str, Any]:
+        return read_module.asset_mapping_page(self.catalog, asset_id, limit=limit, cursor=cursor)
 
     def decide_face_mappings(
         self,

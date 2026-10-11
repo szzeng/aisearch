@@ -50,6 +50,7 @@ from photo_search.api.media_generation import (
 )
 from photo_search.api.models import (
     AssetDetail,
+    AssetFaceReviewResponse,
     AssetListResponse,
     AssetLocalActionRequest,
     AssetOrder,
@@ -65,6 +66,8 @@ from photo_search.api.models import (
     FaceInboxVisibilityResponse,
     FaceListResponse,
     FaceOperationResponse,
+    FaceRegroupRequest,
+    FaceRegroupResponse,
     FaceRematchRequest,
     FeedbackListResponseModel,
     FeedbackRequestModel,
@@ -1505,6 +1508,19 @@ async def get_face_mapping(request: Request, old_face_id: str) -> dict[str, Any]
     return persons_of(request).mapping_group(str(old_face_id))
 
 
+@router.get(
+    "/assets/{asset_id}/face-review",
+    response_model=AssetFaceReviewResponse,
+    summary="Bounded OPEN face reviews of one photo",
+)
+async def asset_face_review(
+    request: Request, asset_id: int, limit: str | None = None, cursor: str | None = None
+) -> dict[str, Any]:
+    if asset_id < 1:
+        raise ApiError("VALIDATION_ERROR", "asset_id must be positive", status=422)
+    return persons_of(request).asset_mapping_page(asset_id, limit=limit, cursor=cursor)
+
+
 @router.post(
     "/face-mappings/decisions",
     response_model=MappingOperationResponse,
@@ -2064,6 +2080,14 @@ async def post_face_assignment_batch(
         ],
         contract_version=payload.contract_version,
         request_id=payload.request_id,
+    )
+
+
+@router.post("/persons/{person_id}/regroup", response_model=FaceRegroupResponse,
+             summary="Remove and safely regroup only explicitly selected faces")
+async def post_face_regroup(request: Request, person_id: int, payload: FaceRegroupRequest) -> dict[str, Any]:
+    return persons_of(request).regroup_faces(
+        source_person_id=person_id, **payload.model_dump(),
     )
 
 

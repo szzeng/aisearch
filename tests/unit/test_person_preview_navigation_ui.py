@@ -30,6 +30,9 @@ class Element {
   close() { this.open = false; if (this.events.close) this.fire("close"); }
   fire(event) { return this.events[event]({preventDefault() {}}); }
 }
+// Model browser replacement/move semantics, including avatar reuse.
+if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
+if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements = new Map();
 const get = id => { if (!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
 const person = {person_id:7,name:"爸爸",revision:1,asset_count:4,thumbnail_url:null};
@@ -43,6 +46,7 @@ const context = {
     getElementById:get,createElement:tag => new Element(tag)},
   fetch:async (url,options) => {
     requests.push({url,options});
+    if (url.includes("/face-review")) return result({groups:[],has_more:false});
     if (url.includes("/assets/")) {
       const id = Number(url.match(/assets\/(\d+)/)[1]);
       if (holdFace && id === 30) await new Promise(resolve => {releaseFace=resolve;});
@@ -68,6 +72,7 @@ const context = {
 let code = fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code = code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui = {state, boot, openAlbum, preview, loadPhotos};\n  if (document.readyState === "loading")');
+if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context); vm.runInContext(code,context);
 const ui = context.ui, flush = () => new Promise(setImmediate);
 function current(id) {

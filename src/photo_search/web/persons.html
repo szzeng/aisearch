@@ -7,12 +7,12 @@
     <title>人物相册</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-person-collection-manage-a-1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-ux-simplify-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
-    <script src="/web/photo-info.js?v=p4-photo-view-close-return-a-1" defer></script>
-    <script src="/web/persons.js?v=p4-person-small-fix-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-photo-view-close-return-a-1" defer></script>
+    <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
+    <script src="/web/persons.js?v=p4-person-regroup-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-regroup-a-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -47,6 +47,7 @@
           <select id="pa-collection-choice" hidden aria-label="加入哪个合集"><option value="">选择合集</option></select>
           <label id="pa-collection-hide-label" hidden><input id="pa-collection-hide" type="checkbox" />加入后忽略</label>
           <button type="button" id="pa-collection-add" hidden disabled>加入合集</button>
+          <button type="button" id="pa-batch-merge" hidden disabled>合并到…</button>
           <button type="button" id="pa-batch-cancel" hidden>取消选择</button>
         </div>
         <p id="pa-list-count" class="hint" role="status" aria-live="polite" hidden></p>
@@ -56,6 +57,7 @@
         <button type="button" id="pa-more" hidden>再看一些人物</button>
         <section id="pa-inbox" hidden>
           <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
+          <div class="row-actions"><button id="pt-review-entry" type="button" hidden>识别更新待确认</button><button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button><span id="pt-review-summary-status" role="status"></span><details><summary>更多</summary><button id="pt-history-entry" type="button">操作历史</button></details></div>
           <h3>还没认出是谁</h3>
           <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
           <div class="row-actions">
@@ -65,6 +67,8 @@
               <option value="quality">小脸或清晰度不足</option><option value="manual">我移出的人脸</option>
               <option value="pending">还没有可靠匹配</option>
             </select>
+          </div>
+          <details id="pa-recognition-tools"><summary>识别与补匹配工具</summary><div class="row-actions">
             <button id="pa-rematch" type="button">补匹配未归类人脸</button>
             <button id="pa-rematch-restart" type="button">从头重新检查旧照片</button>
             <label for="pa-detail-source">补识别范围</label>
@@ -74,12 +78,16 @@
             <button id="pa-detail-resume" type="button" hidden>继续补识别</button>
             <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
           </div>
+          </details>
           <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
           <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-summary-retry" type="button" hidden>重试统计</button>
           <p id="pa-inbox-load-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-retry" type="button" hidden>重试加载待整理人脸</button>
           <div class="row-actions" aria-label="待整理人脸批量管理">
             <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span>
             <button id="pa-inbox-hide-submit" type="button" hidden disabled>忽略所选人脸</button>
+            <button id="pa-inbox-assign" type="button" hidden disabled>移到已有的人物</button>
+            <button id="pa-inbox-unassign" type="button" hidden disabled>从人物移出</button>
+            <button id="pa-inbox-auto" type="button" hidden disabled>恢复自动判断（保留排除）</button>
           </div>
           <div id="pa-inbox-cards" class="pa-people-grid"></div>
           <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
@@ -102,246 +110,38 @@
         <button id="pa-back" type="button">← 所有人物</button>
         <div id="pa-collection-view-controls" class="row-actions" hidden><button id="pa-collection-photos-tab" type="button" aria-pressed="true">照片</button><button id="pa-collection-people-tab" type="button" aria-pressed="false">人物</button><button id="pa-collection-rename" type="button">改合集名称</button><button id="pa-collection-delete" type="button">删除合集</button></div>
         <div id="pa-collection-people-actions" class="row-actions" hidden><span id="pa-collection-people-selected" class="hint"></span><button id="pa-collection-remove" type="button" disabled>移出所选</button><button id="pa-collection-selection-clear" type="button">清除选择</button></div><div id="pa-collection-people" class="pa-people-grid" hidden></div><button id="pa-collection-people-more" type="button" hidden>更多人物</button>
-        <div class="pa-heading"><div class="pa-album-identity"><span id="pa-album-avatar"></span><div><h2 id="pa-title"></h2><p class="hint" id="pa-album-note"></p></div></div><div class="row-actions"><button id="pa-cover" type="button">更换封面</button><button id="pa-name" type="button">取名字</button><button id="pa-merge" type="button">这是同一个人</button></div></div>
+        <div class="pa-heading"><div class="pa-album-identity"><span id="pa-album-avatar"></span><div><h2 id="pa-title"></h2><p class="hint" id="pa-album-note"></p></div></div><div class="row-actions"><button id="pa-cover" type="button">更换封面</button><button id="pa-name" type="button">取名字</button><button id="pa-merge" type="button">这是同一个人</button><button id="pt-organize" type="button">整理照片</button></div></div>
         <form id="pa-search-photos" class="pa-search"><label class="sr-only" for="pa-photo-query">在这个人的照片中搜索</label><input id="pa-photo-query" type="search" maxlength="256" placeholder="在这个人的照片里找：海边、生日……" /><button>搜索照片</button><button id="pa-all-photos" type="button">全部照片</button></form>
+        <section id="pt-faces" hidden aria-label="逐脸整理">
+          <h3>选择需要更正的脸</h3><p class="hint">选择精确到这张脸，合照中其他人保持原来的归属；跨页选择最多 500 张脸。</p>
+          <div class="row-actions"><span id="pt-face-count" role="status"></span><button id="pt-face-assign" type="button">移到已有的人物</button><button id="pt-face-unassign" type="button">仅移出，留待整理</button><button id="pt-face-regroup" type="button">移出并重新智能分组</button><button id="pt-face-split" type="button">拆成新的未命名人物</button><button id="pt-face-clear" type="button">取消选择</button><button id="pt-face-retry" type="button">刷新 / 重试</button></div>
+          <details><summary>更多人脸操作</summary><p class="hint">恢复自动仅解除协议允许的人工控制；保留排除，不会立即重新检测。</p><button id="pt-face-restore" type="button">恢复所选脸的自动判断</button></details>
+          <p class="hint">每次归属操作独立保存。“完成整理”只退出选择模式，不需要统一提交。</p><p id="pt-face-status" role="status" aria-live="polite"></p><div id="pt-face-list" class="pa-people-grid"></div><button id="pt-face-more" type="button" hidden>更多人脸</button>
+        </section>
         <p id="pa-photo-note" class="hint" role="status"></p><div id="pa-photos" class="pa-photo-grid"></div><button id="pa-photos-more" type="button" hidden>再看一些照片</button>
       </section>
       <p id="pa-status" class="notice" role="status" aria-live="polite" hidden></p>
+      <button id="pa-write-retry" type="button" hidden>重试上次保存</button>
       <div id="pa-undo-bar" class="pa-undo" hidden><span id="pa-undo-text"></span><button id="pa-undo" type="button">撤销</button><button id="pa-undo-dismiss" type="button" aria-label="收起撤销提示">收起</button></div>
       <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><aside id="pa-preview-photo-info" class="photo-info-panel"></aside><nav id="pa-preview-nav" class="pa-preview-nav" aria-label="切换人物照片" hidden><button id="pa-preview-prev" type="button" disabled>← 上一张</button><span id="pa-preview-position" class="hint" role="status" aria-live="polite"></span><button id="pa-preview-next" type="button" disabled>下一张 →</button></nav><p id="pa-preview-note" class="hint" role="status"></p><button id="pa-face-detail" type="button" hidden>尝试原图细节识别</button><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
       <dialog id="pa-edit" class="pa-dialog"><h2 id="pa-edit-title"></h2><p id="pa-edit-note" class="hint"></p>
         <form id="pa-edit-form"><label for="pa-edit-query" id="pa-edit-label">名字</label><input id="pa-edit-query" maxlength="200" autocomplete="off" /><button id="pa-edit-find" type="button" hidden>查找人物</button><div id="pa-choices" class="pa-choices"></div><button id="pa-choice-more" type="button" hidden>更多人物</button><button id="pa-create-person" type="button" hidden>新建未命名人物（仅这张脸）</button><p id="pa-create-person-note" hidden>只用这张脸建立人物</p><p id="pa-edit-error" class="error" role="alert"></p><div class="row-actions"><button id="pa-edit-submit">保存</button><button id="pa-edit-cancel" type="button">取消</button></div></form>
       </dialog>
-      <details id="advanced-tools"><summary>更多整理（拆分、识别更新、历史操作）</summary>
-      <nav class="app-nav" aria-label="更多整理导航"><a href="#panel-persons">人物列表</a><a href="#panel-mappings">重检测待确认</a><a href="#panel-faces">脸与拆分</a><a href="#panel-operations">最近操作与撤销</a></nav>
-      <p class="hint">
-        本页只做人工整理：人物、人工锁、排除与操作日志的权威都在本机 SQLite 里，页面读到的每个字段
-        都来自会话保护的 <code>/api/v1</code>。页面不显示任何人脸坐标、向量、相似度或本机绝对路径；
-        同名是否合并、revision 是否过期、能否撤销，全部由服务器判定，页面只如实展示结果。
-      </p>
-
-      <section id="panel-persons" class="panel" aria-labelledby="persons-title">
-        <h2 id="persons-title">人物列表</h2>
-        <p class="hint">
-          三个视图都在这里：已命名人物、未命名分组、待手动归类（MANUAL_UNASSIGNED）。
-          头像来自服务端按权威人脸框裁剪的小图；同一张照片的其他脸不会被自动带入。
-        </p>
-        <div class="tabs" role="tablist" aria-label="视图">
-          <button type="button" id="tab-named" class="tab" role="tab" data-view="named">
-            已命名人物
-          </button>
-          <button type="button" id="tab-unnamed" class="tab" role="tab" data-view="unnamed">
-            未命名分组
-          </button>
-          <button
-            type="button"
-            id="tab-unassigned"
-            class="tab"
-            role="tab"
-            data-view="manual_unassigned"
-          >
-            待手动归类
-          </button>
-        </div>
-        <div class="filters">
-          <p>
-            <label for="persons-limit">每页条数</label>
-            <select id="persons-limit">
-              <option value="10">10</option>
-              <option value="25" selected>25</option>
-              <option value="50">50</option>
-              <option value="200">200</option>
-            </select>
-          </p>
-          <p class="filter-actions">
-            <button type="button" id="persons-reload">加载 / 重新加载</button>
-            <button type="button" id="persons-more" disabled>加载更多（沿用当前游标）</button>
-          </p>
-        </div>
-        <div id="persons-status" class="state-block" role="status" aria-live="polite"></div>
-        <ul id="persons-list" class="person-list" aria-label="人物列表"></ul>
-        <ul id="faces-list" class="person-list" aria-label="待手动归类的人脸" hidden></ul>
-      </section>
-
-      <section id="panel-name" class="panel" aria-labelledby="name-title">
-        <h2 id="name-title">保存名字</h2>
-        <p class="hint" id="same-name-hint">
-          服务器规则：如果这个名字已经属于另一个人物，保存名字会执行「同名合并」，两个人物会合并成
-          一个（旧 id 之后都会解析到合并后的那个人）。页面不自己判断同名，只如实展示服务器的结果。
-        </p>
-        <form id="name-form" class="card" novalidate>
-          <p>
-            <label for="name-person-id">person_id</label>
-            <input id="name-person-id" type="text" inputmode="numeric" required />
-          </p>
-          <p>
-            <label for="name-value">姓名</label>
-            <input id="name-value" type="text" maxlength="200" autocomplete="off" required />
-          </p>
-          <p>
-            <label for="name-revision">expected_revision</label>
-            <input id="name-revision" type="text" inputmode="numeric" required />
-          </p>
-          <p class="check-line">
-            <input id="name-same-confirm" type="checkbox" />
-            <label for="name-same-confirm">我知道同名时会执行合并，确认保存。</label>
-          </p>
-          <p>
-            <button type="submit">保存名字</button>
-          </p>
-          <p class="error" id="name-error" role="alert" hidden></p>
-          <p class="hint" id="name-result"></p>
-        </form>
-      </section>
-
-      <section id="panel-faces" class="panel" aria-labelledby="faces-title">
-        <h2 id="faces-title">某个人的脸 / 批量操作 / 拆分</h2>
-        <p class="hint">
-          选择精确到 face_id：勾选哪几张脸，就只有这几张脸会被改动；服务器仍按每张脸的当前
-          revision 和人工锁判定，冲突时不会静默覆盖。
-        </p>
-        <form id="faces-form" class="filters" novalidate>
-          <p>
-            <label for="faces-person-id">person_id</label>
-            <input id="faces-person-id" type="text" inputmode="numeric" required />
-          </p>
-          <p class="filter-actions">
-            <button type="submit">载入此人的脸</button>
-            <button type="button" id="faces-select-page">全选本页脸</button>
-            <button type="button" id="faces-clear">清空选择</button>
-            <button type="button" id="faces-select-merge">把此人加入「批量合并」选择</button>
-          </p>
-        </form>
-        <div id="faces-status" class="state-block" role="status" aria-live="polite"></div>
-        <p>
-          <button type="button" id="faces-more" disabled>加载更多脸</button>
-          <span class="hint" id="faces-summary"></span>
-        </p>
-        <ul id="person-faces" class="face-grid" aria-label="此人当前的成员脸"></ul>
-
-        <h3>对所选脸执行</h3>
-        <form id="face-batch-form" class="card" novalidate>
-          <p>
-            <label for="batch-target-person-id">目标 person_id（指定归属时必填）</label>
-            <input id="batch-target-person-id" type="text" inputmode="numeric" />
-          </p>
-          <p class="row-actions">
-            <button type="button" id="batch-assign">批量指定归属（assign）</button>
-            <button type="button" id="batch-unassign">批量取消归类（unassign）</button>
-            <button type="button" id="batch-restore">批量恢复自动（restore_auto）</button>
-          </p>
-          <p class="hint">
-            批量接口一次最多 500 项、一个 request_id、整批原子：任何一项的 revision 过期或被人为锁定，
-            整批都不会写入。
-          </p>
-          <p class="error" id="face-batch-error" role="alert" hidden></p>
-        </form>
-
-        <h3>拆分到新人物</h3>
-        <form id="split-form" class="card" novalidate>
-          <p class="hint">
-            从所选脸中挑 1～500 张，拆成一个新的「未命名」人物：被拆出的脸在源人物上会被记为排除，
-            不会因为同一张照片的其它脸而联动。
-          </p>
-          <p>
-            <label for="split-confirm">确认拆分所选脸</label>
-            <input id="split-confirm" type="checkbox" />
-          </p>
-          <p>
-            <button type="submit">拆分所选脸</button>
-          </p>
-          <p class="error" id="split-error" role="alert" hidden></p>
-          <p class="hint" id="split-result"></p>
-        </form>
-      </section>
-
-      <section id="panel-merge" class="panel" aria-labelledby="merge-title">
-        <h2 id="merge-title">显式批量合并</h2>
-        <p class="hint">
-          合并只在这里发生，并且需要明确的目标人物：先在人脸列表里逐个「把此人加入批量合并选择」，
-          再填目标 person_id 提交。同名合并不在这一条路径上，它只由保存名字触发。
-        </p>
-        <p class="hint" id="merge-summary">尚未选择任何人物。</p>
-        <form id="merge-form" class="card" novalidate>
-          <p>
-            <label for="merge-target">目标 person_id</label>
-            <input id="merge-target" type="text" inputmode="numeric" required />
-          </p>
-          <p class="row-actions">
-            <button type="button" id="merge-clear">清空合并选择</button>
-            <button type="submit">合并到目标人物</button>
-          </p>
-          <p class="error" id="merge-error" role="alert" hidden></p>
-          <p class="hint" id="merge-result"></p>
-        </form>
-      </section>
-
-      <section id="panel-operations" class="panel" aria-labelledby="operations-title">
-        <h2 id="operations-title">最近操作与撤销</h2>
-        <p class="hint">
-          操作身份与精简历史会保留。超过 30 天且不在最近 200 条的撤销快照可手动清理；确认后这些操作不可撤销。
-        </p>
-        <p>
-          <button type="button" id="operations-load">加载 / 刷新操作日志</button>
-          <button type="button" id="operations-more" disabled>加载更多操作</button>
-          <button type="button" id="operations-retention-preview">预览清理过期撤销历史</button>
-          <button type="button" id="operations-retention-confirm" disabled>确认清理一批</button>
-        </p>
-        <div id="operations-retention-status" class="state-block" role="status" aria-live="polite"></div>
-        <div id="operations-status" class="state-block" role="status" aria-live="polite"></div>
-        <ul id="operations-list" class="place-list" aria-label="人物操作日志"></ul>
-        <h3>撤销结果</h3>
-        <ul id="undo-log" class="log" aria-label="撤销结果"></ul>
-      </section>
-
-      <section id="panel-mappings" class="panel" aria-labelledby="mappings-title" hidden>
-        <h2 id="mappings-title">重检测待确认</h2>
-        <p class="hint">
-          模型重新检测后，旧脸会被换成新的 <code>face_id</code>。带人工知识（人工指定、人工取消、
-          排除）的旧脸在这里逐条确认：服务端永不自动确认，确认前新脸不会被自动归类；确认只转移人工
-          知识，不复制机器判断。页面只显示受控 ID、状态、revision 与头像裁剪，不显示任何坐标。
-        </p>
-        <div class="filters">
-          <p>
-            <label for="mappings-state">查看范围</label>
-            <select id="mappings-state">
-              <option value="open" selected>待确认</option>
-              <option value="all">全部（含已决定）</option>
-            </select>
-          </p>
-          <p>
-            <label for="mappings-limit">每页条数（1–200）</label>
-            <select id="mappings-limit">
-              <option value="10">10</option>
-              <option value="50" selected>50</option>
-              <option value="200">200</option>
-            </select>
-          </p>
-          <p class="filter-actions">
-            <button type="button" id="mappings-reload">加载 / 重新加载</button>
-            <button type="button" id="mappings-more" disabled>加载更多（沿用当前游标）</button>
-          </p>
-        </div>
-        <div id="mappings-status" class="state-block" role="status" aria-live="polite"></div>
-        <ul id="mappings-list" class="face-grid person-list" aria-label="重检测待确认组"></ul>
-        <p class="error" id="mappings-error" role="alert" hidden></p>
-        <h3>决策结果与撤销</h3>
-        <p class="hint" id="mappings-result"></p>
-        <p class="row-actions">
-          <button type="button" id="mappings-undo" disabled>撤销这次决策</button>
-        </p>
-        <ul id="mappings-log" class="log" aria-label="重检测决策结果"></ul>
-      </section>
-
-      <section id="panel-limits" class="panel" aria-labelledby="limits-title">
-        <h2 id="limits-title">本页不提供的动作</h2>
-        <p class="hint">
-          下方整理工具不提供人物或脸的物理删除、不提供人脸框坐标编辑、不触发任何模型推理（人脸检测/识别、
-          OCR、地点解析都不从这里启动），也不写出任何图片向量。缺少模型权重时，已有人物数据照常
-          浏览与整理。
-        </p>
-      </section>
-      </details>
+      <dialog id="pt-review" class="pa-dialog pt-dialog">
+        <div class="pa-heading"><h2 id="pt-review-title">识别更新待确认</h2><button id="pt-review-close" type="button">关闭</button></div>
+        <p class="hint">只有明确确认才转移人工知识；拒绝不会指定人物，暂不处理保留待确认保护。</p>
+        <p id="pt-review-status" role="status" aria-live="polite"></p><button id="pt-review-retry" type="button">刷新 / 重试</button>
+        <div id="pt-review-list" class="pa-people-grid"></div><button id="pt-review-more" type="button" hidden>更多待确认</button>
+      </dialog>
+      <dialog id="pt-history" class="pa-dialog pt-dialog">
+        <div class="pa-heading"><h2>操作历史</h2><button id="pt-history-close" type="button">关闭</button></div>
+        <p class="hint">撤销由服务器检查后续修改；快捷提示收起后仍可在这里找到操作。</p>
+        <p id="pt-history-status" role="status" aria-live="polite"></p><button id="pt-history-retry" type="button">刷新 / 重试</button>
+        <div id="pt-history-list"></div><button id="pt-history-more" type="button" hidden>更早的操作</button>
+        <details><summary>清理旧记录</summary><p class="hint">仅清理严格超过 30 天且不在最近 200 条内的安全撤销快照，每批最多 100 条；拆分与映射等受保护记录跳过。清理后无法恢复撤销能力。</p>
+          <button id="pt-retention-preview" type="button">预览可清理记录</button><button id="pt-retention-confirm" type="button" disabled>确认清理一批</button><p id="pt-retention-status" role="status" aria-live="polite"></p>
+        </details>
+      </dialog>
     </main>
 
     <noscript>

@@ -1204,7 +1204,7 @@ def undo_face_operation(
     """Compensate one committed face operation, or refuse the whole request with zero writes."""
     original_id = str(original["operation_id"])
     if (
-        str(original["type"]) not in contracts.FACE_OPERATION_TYPES
+        str(original["type"]) not in (contracts.FACE_OPERATION_TYPES + contracts.REGROUP_OPERATION_TYPES)
         or str(original["state"]) != "COMMITTED"
         or original["undone_by"] is not None
         or int(original["operation_revision"]) != int(expected_operation_revision)
@@ -1217,6 +1217,10 @@ def undo_face_operation(
             current_revision=int(original["operation_revision"]),
             status=str(original["state"]),
         )
+    if str(original["type"]) == "FACE_REGROUP":
+        from photo_search.persons.regroup import require_no_hold
+
+        require_no_hold(connection, [str(row["entity_key"]) for row in stored_items(connection, original_id)])
     pending: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     conflicts: list[dict[str, Any]] = []
     for row in stored_items(connection, original_id):

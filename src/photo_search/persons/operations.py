@@ -156,6 +156,10 @@ def item_projection(row: Any) -> dict[str, Any]:
 
 def operation_result(connection: sqlite3.Connection, operation: Any) -> dict[str, Any]:
     """Rebuild the documented response of an already committed operation (a replay)."""
+    if str(operation["type"]) == "FACE_REGROUP":
+        from photo_search.persons import regroup
+
+        return regroup.result(connection, operation)
     if str(operation["type"]) == "CREATE_PERSON_FROM_FACE":
         from photo_search.persons import create_from_face
 
@@ -908,7 +912,7 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
     caller was working in, instead of always falling back to the P3-03 vocabulary.
     """
     operation_type = str(operation["type"])
-    if operation_type in contracts.FACE_OPERATION_TYPES:
+    if operation_type in (contracts.FACE_OPERATION_TYPES + contracts.REGROUP_OPERATION_TYPES):
         return "face"
     if operation_type in contracts.SPLIT_OPERATION_TYPES:
         return "split"
@@ -920,7 +924,7 @@ def operation_family(connection: sqlite3.Connection, operation: Any) -> str:
         parent = operation_row(connection, str(operation["undo_of_operation_id"]))
         if parent is not None:
             parent_type = str(parent["type"])
-            if parent_type in contracts.FACE_OPERATION_TYPES:
+            if parent_type in (contracts.FACE_OPERATION_TYPES + contracts.REGROUP_OPERATION_TYPES):
                 return "face"
             if parent_type in contracts.SPLIT_OPERATION_TYPES:
                 return "split"
@@ -1148,7 +1152,7 @@ def undo_person_operation(
 
     if retention_module.is_expired(connection, original_id):
         original_type = str(original["type"]) if original is not None else ""
-        if original_type in contracts.FACE_OPERATION_TYPES:
+        if original_type in (contracts.FACE_OPERATION_TYPES + contracts.REGROUP_OPERATION_TYPES):
             expired_code = FACE_OPERATION_NOT_UNDOABLE
         elif original_type in contracts.MAPPING_OPERATION_TYPES:
             expired_code = FACE_MAPPING_OPERATION_NOT_UNDOABLE

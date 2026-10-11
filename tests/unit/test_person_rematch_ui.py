@@ -84,7 +84,7 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   assert.equal(suggestedCard.confirmButton.textContent,"✓ 已确认是妈妈");
   assert.equal(suggestedCard.confirmButton.disabled,true);
   assert.equal(get("pa-inbox-cards").children[0],groupCard,"confirmation keeps the expanded group in place");
-  assert(get("pa-inbox-note").textContent.includes("另有 1 张脸等待识别更新确认"));
+  assert(!get("pa-inbox-note").textContent.includes("#panel-mappings"));
   assert.equal(ui.organizationText({quality_reason:"SMALL"}),"脸太小，需确认");
   assert.equal(ui.organizationText({organization_reason:"BLURRY"}),"脸有些模糊，需确认");
   assert.equal(ui.organizationText({mode:"MANUAL_UNASSIGNED",organization_reason:"BORDERLINE"}),"已移出人物，等你指定");
