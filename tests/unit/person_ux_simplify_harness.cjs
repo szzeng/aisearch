@@ -28,7 +28,7 @@ const response=(data,status=200)=>({ok:status<400,status,json:async()=>data});
 const windowEvents={};
 const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(requests.length)},setTimeout:()=>1,clearTimeout(){},
  window:{location:{search:'',hash:'',href:'http://local/persons'},scrollY:0,addEventListener(k,fn){windowEvents[k]=fn;},confirm:()=>true},
- document:{readyState:'loading',cookie:'ps_csrf=synthetic',addEventListener(k,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
+ document:{readyState:'loading',cookie:'ps_csrf=synthetic',addEventListener(k,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag),querySelector(selector){return selector==='dialog[open]'?[...elements.values()].find(e=>e.tag==='dialog'&&e.open)||null:null;}},
  fetch:async(url,options={})=>{
   requests.push({url,options});
   if(options.method && options.method!=='GET'){
@@ -205,5 +205,27 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   holdReview=true;album.loadPreviewReviews(3,album.state.previewSeq);await flush();const staleReply=releaseReview;
   holdReview=false;reviewAvailable=false;await album.loadPreviewReviews(3,album.state.previewSeq);await flush();staleReply();await flush();
   assert.equal(get('pa-review').hidden,true,'older retry of the same photo cannot re-show a decided mapping');
+ }
+ if(scenario==='escape'){
+  const dispatchEscape=(extra={})=>windowEvents.keydown({key:'Escape',target:get('pa-batch-toggle'),repeat:false,defaultPrevented:false,isComposing:false,preventDefault(){this.defaultPrevented=true;},...extra});
+  get('pa-batch-toggle').fire('click');
+  const pageCards=get('pa-cards').children.slice(), pageMore=get('pa-more').hidden;
+  album.state.selectedPeople.add(1);album.state.selectedPeopleSnapshots.set(1,{...people[0]});album.state.selectAnchors.set('people:anchor',1);
+  get('pa-people-clear').fire('click');assert.equal(album.state.batchMode,true,'clearing checks stays in batch mode');
+  album.state.selectedPeople.add(1);album.state.selectedPeopleSnapshots.set(1,{...people[0]});album.state.selectAnchors.set('people:anchor',1);
+  dispatchEscape({repeat:true});assert.equal(album.state.batchMode,true,'held Escape does not repeat the exit action');
+  dispatchEscape({target:{tagName:'INPUT'}});assert.equal(album.state.batchMode,true,'Escape consumed by an input does not exit batch mode');
+  const preview=get('pa-preview');preview.tag='dialog';preview.open=true;dispatchEscape();
+  assert.equal(album.state.batchMode,true,'an open native dialog keeps Escape for its own cancel behavior');
+  preview.open=false;dispatchEscape();
+  assert.equal(album.state.batchMode,false);assert.equal(album.state.selectedPeople.size,0);assert.equal(album.state.selectedPeopleSnapshots.size,0);assert.equal(album.state.selectAnchors.size,0);
+  assert.deepEqual(get('pa-cards').children,pageCards,'exit preserves already loaded cards');assert.equal(get('pa-more').hidden,pageMore,'exit preserves pagination');assert.equal(mutations.length,0,'Escape only changes temporary selection state');
+  album.openAlbum(people[0]);await flush();get('pt-organize').fire('click');await flush();await choose(get('pt-face-list').children[0]);
+  assert.equal(tools._state.selected.size,1);dispatchEscape();
+  assert.equal(get('pt-faces').hidden,true,'Escape completes face organization');assert.equal(tools._state.selected.size,0);assert.equal(mutations.length,0,'closing organization does not undo or write');
+  get('pt-organize').fire('click');await flush();await choose(get('pt-face-list').children[0]);
+  album.state.writing=true;dispatchEscape();assert.equal(get('pt-faces').hidden,false,'busy writes block Escape exit');assert.equal(tools._state.selected.size,1);
+  album.state.writing=false;get('pa-edit').tag='dialog';get('pa-edit').open=true;album.state.batchMode=true;dispatchEscape();
+  assert.equal(get('pa-edit').open,true);assert.equal(album.state.batchMode,true,'an edit modal never lets Escape reach batch mode');
  }
 })().catch(error=>{console.error(error);process.exitCode=1;});

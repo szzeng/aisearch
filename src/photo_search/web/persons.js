@@ -107,7 +107,10 @@
     state.person = { ...person }; $("faces").hidden = false; updateSelection(); loadFaces(false);
     $("faces").scrollIntoView({ block: "start" });
   }
-  function hideFaces() { if (ui && ui.isWriting()) return; state.faceSeq++; state.person = null; $("faces").hidden = true; clearSelection(); }
+  function hideFaces() {
+    if (!ui || ui.isWriting() || $("faces").hidden) return false;
+    state.faceSeq++; state.person = null; $("faces").hidden = true; clearSelection(); return true;
+  }
   async function faceAction(action) {
     if (ui.isWriting() || !state.selected.size) return;
     const faces = Array.from(state.selected.values());

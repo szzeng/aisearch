@@ -1,8 +1,9 @@
 # Development status
 
-## P4-UI-DIALOG-ESC-A — READY / Esc 退出及照片弹窗遮罩关闭（仅任务卡）
+## P4-UI-DIALOG-ESC-A — SCOPED PASS / Esc 退出与照片弹窗关闭优化
 
-[任务卡](tasks/P4-UI-DIALOG-ESC-A.md)。复用已完成的照片查看关闭与人物批量选择实现：Esc 优先关闭最上层弹窗，无弹窗时退出批量管理/完成整理；点击照片弹窗外部关闭，内部不误关；保留忙时、编辑确认与已保存数据保护。仅前端小修，4 组最小定向合成 UI 验证、Node 语法、diff-check，真实浏览器由用户手工检查；不跑全仓、GPU 或真图库。**尚未实施/未运行测试**。推荐 **GPT-6 Luna / Medium**。
+[任务卡](tasks/P4-UI-DIALOG-ESC-A.md)、[执行报告](reports/P4-UI-DIALOG-ESC-A.md)。人物批量管理 Esc 退出只清临时选择/snapshot/锚点并保留已加载列表/分页；人物相册整理照片 Esc 等效完成整理；清空选择仍不退出；原生打开的 dialog、写入及 pending write 优先/保护有效。唯一明显退出入口为批量模式切换按钮。定向 JUnit **19/0/0/0**，Node 语法与 diff-check 通过，JUnit 位于 `test-results/P4-UI-DIALOG-ESC-A.xml`。未做真实浏览器手测，遮罩内部空白命中及原生 cancel 效果待用户检查；未访问真实图库/PhotoSearchData，未跑全仓、GPU 或性能测试。
+
 
 ## P4-LIBRARY-VIDEO-EXCLUDE-A — SCOPED PASS / 视频扫描排除与照片资格
 

@@ -298,16 +298,16 @@
     $("collection-add").disabled = state.visibilityBusy || state.selectedPeople.size === 0;
     $("collection-choice").hidden = !state.batchMode;
     $("collection-hide-label").hidden = !state.batchMode;
-    $("batch-cancel").hidden = !state.batchMode;
     ["people-all", "people-invert", "people-clear"].forEach((id) => { $(id).hidden = !state.batchMode; $(id).disabled = state.visibilityBusy || state.writing; });
-    $("batch-cancel").disabled = state.visibilityBusy;
-    $("batch-toggle").disabled = state.visibilityBusy;
+    $("batch-toggle").disabled = state.visibilityBusy || state.faceVisibilityBusy || state.writing || Boolean(state.pendingWrite);
     $("hidden-toggle").disabled = state.visibilityBusy;
     syncPeopleCards();
     renderFaceManagement();
   }
   function clearPeopleSelection() {
-    state.selectedPeople.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.batchMode = false; renderPeopleManagement();
+    state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear(); state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear();
+    state.selectAnchors.forEach((_, key) => { if (key.startsWith("people:") || key.startsWith("faces:")) state.selectAnchors.delete(key); });
+    inboxFaceSnapshots.clear(); state.batchMode = false; renderPeopleManagement();
   }
   function togglePersonSelection(personId) {
     state.selectAnchors.set("people:" + String(state.hiddenView) + ":" + JSON.stringify(peopleValues()), personId);
@@ -1577,11 +1577,11 @@
     });
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
     $("batch-toggle").addEventListener("click", () => {
+      if (state.visibilityBusy || state.faceVisibilityBusy || state.writing || state.pendingWrite) return;
       state.batchMode = !state.batchMode;
       if (!state.batchMode) clearPeopleSelection();
       else renderPeopleManagement();
     });
-    $("batch-cancel").addEventListener("click", clearPeopleSelection);
     $("people-all").addEventListener("click", () => peopleSelectionAction("all"));
     $("people-invert").addEventListener("click", () => peopleSelectionAction("invert"));
     $("people-clear").addEventListener("click", () => peopleSelectionAction("clear"));
@@ -1693,6 +1693,15 @@
       updatePreviewNavigation();
     });
     closeOnBackdrop($("preview"));
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || event.repeat || event.defaultPrevented || event.isComposing) return;
+      const target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ""))) return;
+      if (document.querySelector && document.querySelector("dialog[open]")) return;
+      if (window.AIPersonTools && window.AIPersonTools.hideFaces()) { event.preventDefault(); return; }
+      if (!state.batchMode || state.visibilityBusy || state.faceVisibilityBusy || state.writing || state.pendingWrite) return;
+      clearPeopleSelection(); event.preventDefault();
+    });
     $("edit-form").addEventListener("submit", submitEdit);
     $("edit-find").addEventListener("click", () => loadChoices(false)); $("choice-more").addEventListener("click", () => loadChoices(true));
     $("edit-query").addEventListener("input", () => { if (state.edit && state.edit.mode !== "name") { state.chosen = null; state.choiceSeq++; $("edit-submit").disabled = true; } });
