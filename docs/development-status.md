@@ -1,5 +1,9 @@
 # Development status
 
+## P4-PERSON-INBOX-COMPARE-A — TODO / 待整理人脸与候选头像并排对照（仅任务卡）
+
+[任务卡](tasks/P4-PERSON-INBOX-COMPARE-A.md)。待整理候选分组摘要与展开逐脸卡并排显示待确认脸/正确候选人物现有头像；组键 person_id 精确对齐、无头像安全退化，不改自动匹配、人工归属、分页或批量管理。原则上只改 `persons-albums.js`、`persons.css`，确有需要才追加有界只读头像投影。推荐 **GPT-6 / Medium**，最少定向 JUnit、Node 语法与 diff 检查 + 用户手测；**尚未实施或测试**，不访问真实图库。
+
 ## P4-UI-DIALOG-ESC-A — SCOPED PASS / Esc 退出与照片弹窗关闭优化
 
 [任务卡](tasks/P4-UI-DIALOG-ESC-A.md)、[执行报告](reports/P4-UI-DIALOG-ESC-A.md)。人物批量管理 Esc 退出只清临时选择/snapshot/锚点并保留已加载列表/分页；人物相册整理照片 Esc 等效完成整理；清空选择仍不退出；原生打开的 dialog、写入及 pending write 优先/保护有效。唯一明显退出入口为批量模式切换按钮。定向 JUnit **19/0/0/0**，Node 语法与 diff-check 通过，JUnit 位于 `test-results/P4-UI-DIALOG-ESC-A.xml`。未做真实浏览器手测，遮罩内部空白命中及原生 cancel 效果待用户检查；未访问真实图库/PhotoSearchData，未跑全仓、GPU 或性能测试。
