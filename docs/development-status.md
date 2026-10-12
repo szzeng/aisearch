@@ -1,5 +1,9 @@
 # Development status
 
+## P4-UI-DIALOG-ESC-A — READY / Esc 退出及照片弹窗遮罩关闭（仅任务卡）
+
+[任务卡](tasks/P4-UI-DIALOG-ESC-A.md)。复用已完成的照片查看关闭与人物批量选择实现：Esc 优先关闭最上层弹窗，无弹窗时退出批量管理/完成整理；点击照片弹窗外部关闭，内部不误关；保留忙时、编辑确认与已保存数据保护。仅前端小修，4 组最小定向合成 UI 验证、Node 语法、diff-check，真实浏览器由用户手工检查；不跑全仓、GPU 或真图库。**尚未实施/未运行测试**。推荐 **GPT-6 Luna / Medium**。
+
 ## P4-LIBRARY-VIDEO-EXCLUDE-A — SCOPED PASS / 视频扫描排除与照片资格
 
 [任务卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md)、[执行报告](reports/P4-LIBRARY-VIDEO-EXCLUDE-A.md)。视频扩展名在共享扫描枚举层过滤；历史视频成功 fast 刷新后通过原有 reconcile 转 `MISSING`，中断不误标。列表、SearchScope 权威候选、人物/合集照片计数及地点相册在分页/排名前应用统一视频路径资格，保留缺失图片、孤儿资产与跨来源共享图片语义。只读历史视频统计脚本已新增。定向 JUnit **25/0/0/0**（含任务合成用例及人物/合集/地点受影响面用例），Ruff、Python 编译、diff-check 通过。未访问真实图库/PhotoSearchData、未跑全仓/GPU/浏览器/规模或打包验收；未独立复核（按用户要求）。开工前 `geo/dataset.py` 改动保留，未提交。
