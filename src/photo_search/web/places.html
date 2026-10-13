@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>地点整理</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
     <link rel="stylesheet" href="/web/places.css?v=p4-photo-view-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
@@ -14,19 +14,31 @@
     <script src="/web/places-albums.js?v=p4-place-album-perf-a-2" defer></script>
     <script src="/web/places.js?v=p4-place-album-perf-a-2" defer></script>
   </head>
-  <body>
+  <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <aside class="app-sidebar" aria-label="应用导航">
+      <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
+      <nav class="app-nav" aria-label="主要导航">
+        <a class="nav-link" data-shell-page="photos" href="/">照片</a>
+        <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons">人物</a>
+        <a class="nav-link" data-shell-page="places" href="/places" aria-current="page">地点</a>
+      </nav>
+      <nav class="app-nav app-nav-secondary" aria-label="其他入口">
+        <a class="nav-link" data-shell-page="search" href="/search">搜索图片</a>
+        <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
+        <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
+      </nav>
+    </aside>
 
     <header class="app-header">
       <h1>地点整理</h1>
-      <nav class="app-nav" aria-label="页面导航">
-        <a class="nav-link" href="/">返回「本机图片搜索」</a>
-        <a class="nav-link" href="/search">搜索图片</a>
-        <a class="nav-link" id="nav-persons" href="/persons" hidden>人物整理</a>
+      <nav class="page-nav" aria-label="地点页面内容">
         <a class="nav-link" href="#panel-directory">目录</a>
         <a class="nav-link" href="#panel-albums">地点相册</a>
         <a class="nav-link" href="#panel-suggestions">建议与批量整理</a>
         <a class="nav-link" href="#panel-operations">操作日志与撤销</a>
+        <a class="nav-link" href="/map">地图相册</a>
       </nav>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>

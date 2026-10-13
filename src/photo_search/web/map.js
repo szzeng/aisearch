@@ -226,6 +226,15 @@
     map = null; $("notice").textContent = "地图暂不可用；照片仍可通过列表浏览。";
     bbox = null; fallbackGrid(id, null);
   }
+  function revealPersonsNav(body) {
+    var link = $("nav-persons");
+    if (!link) return;
+    var version = Number(body && body.schema_version);
+    link.hidden = !(isFinite(version) && version >= 13 && String(body && body.schema_status) === "ok");
+  }
+  function probePageCapabilities() {
+    req("/api/v1/capabilities/page").then(revealPersonsNav).catch(function () { revealPersonsNav(null); });
+  }
   function init() {
     var id = ++sequence;
     req(API + "/summary").then(function (s) {
@@ -271,6 +280,7 @@
     }).catch(function (e) { $("notice").textContent = "读取地图摘要失败：" + e.message; });
   }
   function startMap() {
+    probePageCapabilities();
     $("more").onclick = loadMore;
     if (window.maplibregl) init();
     else { sequence++; fallback(sequence); }

@@ -466,3 +466,216 @@ dl.media-list dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+/* P4-UI-SHELL-A: shared navigation frame. Page content and its existing IDs stay intact. */
+body.app-shell {
+  display: grid;
+  grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+  grid-template-areas:
+    "sidebar header"
+    "sidebar notice"
+    "sidebar page-nav"
+    "sidebar main";
+  align-content: start;
+  min-height: 100vh;
+  padding: 0;
+  column-gap: clamp(1rem, 2.5vw, 2.5rem);
+}
+
+.app-sidebar {
+  grid-area: sidebar;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  width: 100%;
+  height: 100vh;
+  min-height: 26rem;
+  padding: 1.5rem 1rem;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0 0.65rem;
+  color: var(--fg);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.app-nav {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.app-nav-secondary {
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.app-sidebar .nav-link {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  text-decoration: none;
+}
+
+.app-sidebar .nav-link:hover,
+.app-sidebar .nav-link[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  color: var(--accent);
+}
+
+.app-sidebar .nav-link[aria-current="page"] {
+  font-weight: 650;
+}
+
+.app-shell > .app-header {
+  grid-area: header;
+  min-width: 0;
+  align-items: center;
+  padding: 1.25rem clamp(1rem, 2vw, 2rem) 0.85rem 0;
+}
+
+.app-shell > .app-header h1 {
+  min-width: 0;
+}
+
+.app-shell > .app-header .app-meta {
+  margin-left: auto;
+  text-align: right;
+}
+
+.app-shell > .notice {
+  grid-area: notice;
+  margin: 0  clamp(1rem, 2vw, 2rem) 0 0;
+}
+
+.page-nav {
+  grid-area: page-nav;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.25rem clamp(1rem, 2vw, 2rem) 0.5rem 0;
+}
+
+.app-shell > main {
+  grid-area: main;
+  min-width: 0;
+  margin: 0;
+  padding: 0 clamp(1rem, 2vw, 2rem) 3rem 0;
+}
+
+.map-page.app-shell {
+  grid-template-areas:
+    "sidebar header"
+    "sidebar notice"
+    "sidebar main";
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: stretch;
+  height: 100vh;
+  min-height: 34rem;
+  overflow: hidden;
+}
+
+.map-page.app-shell > .map-page-main {
+  min-height: 0;
+  padding-bottom: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  body.app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "header"
+      "sidebar"
+      "notice"
+      "page-nav"
+      "main";
+    column-gap: 0;
+  }
+
+  .app-sidebar {
+    position: sticky;
+    z-index: 5;
+    top: 0;
+    height: auto;
+    min-height: 0;
+    gap: 0.55rem;
+    padding: 0.55rem clamp(0.75rem, 3vw, 1.25rem);
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .app-brand {
+    min-height: 1.9rem;
+    padding: 0 0.25rem;
+  }
+
+  .app-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .app-nav-secondary {
+    margin-top: 0;
+    padding-top: 0.35rem;
+    border-top: 0;
+  }
+
+  .app-sidebar .nav-link {
+    min-height: 2.25rem;
+    padding: 0.35rem 0.6rem;
+  }
+
+  .app-shell > .app-header {
+    gap: 0.5rem;
+    padding: 0.75rem clamp(0.75rem, 3vw, 1.25rem) 0.5rem;
+  }
+
+  .app-shell > .app-header .app-meta {
+    width: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .app-shell > .notice,
+  .page-nav,
+  .app-shell > main {
+    margin-left: 0;
+    padding-right: clamp(0.75rem, 3vw, 1.25rem);
+    padding-left: clamp(0.75rem, 3vw, 1.25rem);
+  }
+
+  .app-shell > main {
+    padding-bottom: 2rem;
+  }
+
+  .map-page.app-shell {
+    grid-template-areas:
+      "header"
+      "sidebar"
+      "notice"
+      "main";
+    grid-template-rows: auto auto auto minmax(20rem, 1fr);
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .map-page.app-shell > .map-page-main {
+    min-height: 0;
+  }
+}

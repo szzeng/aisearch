@@ -2,11 +2,16 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>地图相册 - 本机图片搜索</title>
 <link rel="stylesheet" href="/web/vendor/maplibre-4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="/web/map.css?v=p4-photo-view-a-1">
+<link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1">
+<link rel="stylesheet" href="/web/map.css?v=p4-ui-shell-a-1">
 <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1">
 <script src="/web/map-config.js" defer></script>
 <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
 <script src="/web/vendor/maplibre-4.7.1/dist/maplibre-gl.js" defer></script>
-<script src="/web/map.js?v=p4-photo-view-a-1" defer></script></head>
-<body><header><a href="/">返回图库</a><h1>地图相册</h1><span id="summary"></span></header>
-<p id="notice" role="status"></p><main><div id="map" aria-label="照片地图"></div><section><h2 id="grid-title">当前范围 · 0 张照片</h2><div id="grid"></div><button id="more" hidden>加载更多</button></section></main></body></html>
+<script src="/web/map.js?v=p4-ui-shell-a-1" defer></script></head>
+<body class="app-shell map-page"><a class="skip-link" href="#main">跳到主要内容</a>
+<aside class="app-sidebar" aria-label="应用导航"><a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
+<nav class="app-nav" aria-label="主要导航"><a class="nav-link" data-shell-page="photos" href="/">照片</a><a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons">人物</a><a class="nav-link" data-shell-page="places" href="/places">地点</a></nav>
+<nav class="app-nav app-nav-secondary" aria-label="其他入口"><a class="nav-link" data-shell-page="search" href="/search">搜索图片</a><a class="nav-link" data-shell-page="map" href="/map" aria-current="page">地图相册</a><a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a></nav></aside>
+<header class="app-header map-page-header"><a href="/places">返回地点相册</a><h1>地图相册</h1><span id="summary"></span></header>
+<p id="notice" class="notice" role="status"></p><main id="main" class="map-page-main" tabindex="-1"><div id="map" aria-label="照片地图"></div><section><h2 id="grid-title">当前范围 · 0 张照片</h2><div id="grid"></div><button id="more" hidden>加载更多</button></section></main></body></html>

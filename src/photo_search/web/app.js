@@ -2381,6 +2381,15 @@
     Array.prototype.forEach.call(els.navButtons, function (button) {
       button.setAttribute("aria-current", button.dataset.view === name ? "true" : "false");
     });
+    var shellLinks = document.querySelectorAll ? document.querySelectorAll("[data-shell-page]") : [];
+    Array.prototype.forEach.call(shellLinks, function (link) {
+      var activePage = name === "sources" ? "management" : "photos";
+      if (link.dataset.shellPage === activePage) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
     els.main.focus();
     if (name === "browse" && !state.browse.loaded) {
       loadBrowse(true);
@@ -2405,7 +2414,8 @@
         return;
       }
     }
-    showView("sources");
+    var params = new URLSearchParams(String(location.search || ""));
+    showView(params.get("view") === "sources" ? "sources" : "browse");
   }
 
   //: The person page is only offered when the read layer it needs really exists in this

@@ -13,7 +13,7 @@
 - 旧 SVG 中搜索双框、侧栏搜索项属于历史画法；A 只交付可工作的过渡入口，最终页头输入由 C 交付。零业务 API 边界不变。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口基线 `master` / `c19749ae011a02a8fc449832cd3533daa3840ec0`；执行时重新核对工作树。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**IMPLEMENTED / VALIDATION PENDING**。规划收口基线 `master` / `c19749ae011a02a8fc449832cd3533daa3840ec0`；执行以当前工作树为准。执行报告：[P4-UI-SHELL-A](../reports/P4-UI-SHELL-A.md)。
 
 推荐 **GPT-6 / High**。这是一张前端 A 级小改卡；独立 DS-H 展示专项复核。模型由用户手动选择。
 
@@ -70,6 +70,7 @@
 $env:UV_CACHE_DIR = '.uv-cache'
 uv run --no-sync pytest -q tests/unit/test_p4_ui_shell.py tests/unit/test_api_frontend.py tests/integration/test_api_frontend_routes.py tests/unit/test_photo_view_info_ui.py --basetemp=.pytest-tmp/P4-UI-SHELL-A --junitxml=test-results/P4-UI-SHELL-A.xml
 node --check src/photo_search/web/app.js
+node --check src/photo_search/web/map.js
 uv run --no-sync ruff check tests/unit/test_p4_ui_shell.py
 git diff --check
 ```
@@ -83,3 +84,7 @@ git diff --check
 ## 停止与交接
 
 必测未完写 IMPLEMENTED / VALIDATION PENDING。报告存 `docs/reports/P4-UI-SHELL-A.md`；status 只写实际摘要。无业务变化、工程复核及本卡必测完成才写本卡 PASS；下一候选 [C](P4-UI-SEARCH-C.md)，C 之后才交 CORE/B，不自动执行。不要提交/推送或修改原人物任务状态。
+
+## 2026-10-13 执行记录
+
+五页共用导航/响应式外壳与首页默认照片浏览已实施；旧搜索、深链/详情返回、人物能力门控与地图互链保留。地图人物入口复用既有只读能力端点，脚本缓存版本已同步。任务卡 pytest 为 101/5/0/0，5 项为开工前既有人物页面及脚本版本断言不一致；新路由/导航定向用例通过。LUNA High 独立复核 PASS（非 DS-H）。隔离合成图库浏览器已验五路由、三档宽度、导航状态、缩略图详情与返回、空图库管理入口、焦点和无横向溢出；当前浏览器无法设 200% 实际缩放或模拟暗色，截图只在会话内查看而未落盘，任务保持 PENDING。详细证据见[执行报告](../reports/P4-UI-SHELL-A.md)。

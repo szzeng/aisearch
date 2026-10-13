@@ -6,27 +6,39 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
     <link rel="stylesheet" href="/web/search.css?v=p4-photo-view-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
     <script src="/web/search.js?v=p4-photo-view-close-return-a-1" defer></script>
   </head>
-  <body>
+  <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <aside class="app-sidebar" aria-label="应用导航">
+      <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
+      <nav class="app-nav" aria-label="主要导航">
+        <a class="nav-link" data-shell-page="photos" href="/">照片</a>
+        <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons">人物</a>
+        <a class="nav-link" data-shell-page="places" href="/places">地点</a>
+      </nav>
+      <nav class="app-nav app-nav-secondary" aria-label="其他入口">
+        <a class="nav-link" data-shell-page="search" href="/search" aria-current="page">搜索图片</a>
+        <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
+        <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
+      </nav>
+    </aside>
 
     <header class="app-header">
       <h1>搜索图片</h1>
-      <nav class="app-nav" aria-label="页面导航">
-        <a class="nav-link" href="/">返回「本机图片搜索」</a>
-        <a class="nav-link" href="/places">地点整理</a>
-        <a class="nav-link" id="nav-persons" href="/persons" hidden>人物整理</a>
-        <a class="nav-link" href="#panel-upload">上传搜图</a>
-        <a class="nav-link" href="#panel-coverage">分项覆盖率</a>
-      </nav>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
+
+    <nav class="page-nav" aria-label="本页内容">
+      <a class="nav-link" href="#panel-upload">上传搜图</a>
+      <a class="nav-link" href="#panel-coverage">分项覆盖率</a>
+    </nav>
 
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 

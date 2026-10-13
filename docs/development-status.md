@@ -1,5 +1,9 @@
 # Development status
 
+## P4-UI-SHELL-A — IMPLEMENTED / VALIDATION PENDING（2026-10-13）
+
+[执行报告](reports/P4-UI-SHELL-A.md)、[任务卡](tasks/P4-UI-SHELL-A.md)。五页共用导航/外壳与首页照片默认入口已实施，旧搜索和原深链/返回流程保留；地图人物入口由既有只读能力端点门控，脚本缓存版本已同步。任务卡定向 JUnit **101/5/0/0**，5 项为开工前既有人物页面/脚本断言不一致；新路由/导航定向用例、两份 Node 语法、Ruff、diff-check 通过。LUNA High 独立复核 PASS（用户指定路线，非 DS-H）。隔离合成图库浏览器验收覆盖五路由、1440/1024/640宽、详情返回、空图库入口、焦点与无横向溢出；200%实际缩放、暗色视觉和截图落盘仍待完成，整卡不标 PASS。
+
 ## UI 2.0 最后版演示获用户确认（2026-10-13）— VISUAL BASELINE CONFIRMED / 产品仍 PLANNED
 
 [最后版可点击演示](mockups/ui2-interactive/demo.html)、[页面/任务映射](mockups/ui2-interactive/README.md)、[演示报告](reports/P4-UI-INTERACTIVE-DEMO.md)。用户明确保留此版作为整体观感参考；素材基线 `cf49a8f`，本轮演示HTML/CSS/JS原样保留。两份总规范与八卡默认视觉入口已统一，旧SVG/PNG仅留档，不再要求逐卡查看。个人定向简单测试与20万有效照片元数据性能必过项保持，八卡仍PLANNED。仅更新文档，未运行产品/性能测试、未访问真实图库；文档核对见报告。
