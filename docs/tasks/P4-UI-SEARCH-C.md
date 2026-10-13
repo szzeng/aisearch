@@ -1,5 +1,8 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [09-search](../mockups/ui2/09-search.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，推荐先完成 [B](P4-UI-PHOTOS-B.md)。
 
 推荐 GPT-6 / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。

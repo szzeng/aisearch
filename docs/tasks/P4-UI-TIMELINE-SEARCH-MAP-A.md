@@ -1,5 +1,8 @@
 # P4-UI-TIMELINE-SEARCH-MAP-A — 搜索结果与地图照片时间模式接入
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [09-search](../mockups/ui2/09-search.svg)、[08-map](../mockups/ui2/08-map.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-13。状态：**PLANNED / 未实施**。前置 [CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)、[C](P4-UI-SEARCH-C.md)；地图接入另依赖 [E](P4-UI-PLACES-E.md)。本卡仅是最后的适配，不重构检索或地图算法。
 
 推荐 **GPT-6 / High**；搜索候选与成员/游标契约受影响，按 V3.1 B 类必要定向验证、独立 DS-H 全受影响面核查；若要改变排名/TopK 或地图身份与写协议，停止并升级单独设计。

@@ -1,5 +1,8 @@
 # P4-UI-PEOPLE-D — 人物相册与整理入口层级
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [02-people](../mockups/ui2/02-people.svg)、[03-person-album](../mockups/ui2/03-person-album.svg)、[04-collection](../mockups/ui2/04-collection.svg)、[05-organize](../mockups/ui2/05-organize.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 整理工作流已完成，照片时间轴与视觉目标未实施**。规划收口 HEAD `c19749a`。依赖 [A](P4-UI-SHELL-A.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)；人物新建已有[用户指定同会话复核与修复](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，不重开旧复核。执行时重新读取最新人物卡/报告及用户试用反馈。
 
 推荐 GPT-6 / High；限定 A 级 UI 小改，独立 DS-H 覆盖全部受影响入口与原写协议的直接调用链。不是人脸数据语义改造。

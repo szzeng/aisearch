@@ -1,5 +1,8 @@
 # P4-UI-PLACES-E — 地点照片、地图与整理工具
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [06-places](../mockups/ui2/06-places.svg)、[07-place-album](../mockups/ui2/07-place-album.svg)、[08-map](../mockups/ui2/08-map.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)，现有地点工程结果只复用未改变部分。
 
 推荐 GPT-6 / High；视觉 A 级，涉及新增地点日期只读查询按 B 类受影响面复核，独立 DS-H 覆盖完整受影响展示/入口与原写请求链。
