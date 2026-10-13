@@ -739,6 +739,7 @@ class _ScanRun:
                         path_key=observation.path_key,
                         size=observation.size,
                         mtime_ns=observation.mtime_ns,
+                        now_ms=now_ms,
                     )
                     self._note_observation(observed)
                 self._write_progress(
@@ -935,6 +936,7 @@ class _ScanRun:
                     path_key=current.path_key,
                     size=current.size,
                     mtime_ns=current.mtime_ns,
+                    now_ms=now_ms,
                 ).location_id
                 self._write_progress(
                     connection, _processing_progress(self.processed, total), now_ms

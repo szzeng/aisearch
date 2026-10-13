@@ -20,6 +20,7 @@ from photo_search.catalog.errors import (
     SOURCE_OVERLAP,
     CatalogError,
 )
+from photo_search.catalog.image_policy import image_location_sql
 from photo_search.catalog.migrate import catalog_info
 from photo_search.catalog.paths import is_same_or_ancestor, normalize_root
 from photo_search.config import resolve_data_root
@@ -33,6 +34,7 @@ from photo_search.media.cache import MediaCache
 from photo_search.media.contract import KINDS, spec_for
 from photo_search.media.pipeline import MediaGenerator, select_targets
 from photo_search.media.status import media_status
+from photo_search.places import revision as filter_revision
 
 logger = logging.getLogger("photo_search.ingestion")
 
@@ -275,7 +277,26 @@ class CatalogService:
         a library refresh (a second writer over the same catalog) is running.
         """
         with self.catalog.write() as connection:
-            return store.delete_source(connection, source_id=int(source_id))
+            source_id = int(source_id)
+            image_sql = image_location_sql("l")
+            affected = [
+                int(row["asset_id"])
+                for row in connection.execute(
+                    "SELECT DISTINCT l.asset_id FROM file_locations AS l "
+                    f"WHERE l.source_id = ? AND l.asset_id IS NOT NULL AND {image_sql} "
+                    "ORDER BY l.asset_id",
+                    (source_id,),
+                ).fetchall()
+            ]
+            result = store.delete_source(connection, source_id=source_id)
+            if affected:
+                filter_revision.bump_filter_revision(
+                    connection,
+                    cause=filter_revision.CAUSE_SOURCE_PHOTOS_REMOVED,
+                    now_ms=self.catalog.now_ms(),
+                    asset_ids=affected,
+                )
+            return result
 
     def run_scan(self, source_id: int, **options: Any) -> dict[str, Any]:
         from photo_search.ingestion.scanner import execute_scan

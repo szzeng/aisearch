@@ -146,6 +146,10 @@ class PersonService:
                         "DELETE FROM person_hidden WHERE person_id = ?", (person_id,)
                     )
                 changed += max(0, int(result.rowcount))
+            if changed:
+                revision_module.bump_filter_revision(
+                    connection, cause="PERSON_CHANGED", now_ms=self.catalog.now_ms()
+                )
             return {"hidden": bool(hidden), "person_count": len(canonical_ids), "changed": changed}
 
     def undo(

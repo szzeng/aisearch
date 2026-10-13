@@ -19,6 +19,7 @@ from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.contracts import normalize_person_name
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.persons.members import MEMBER_PREDICATE
+from photo_search.places import revision as filter_revision
 from photo_search.places.revision import read_filter_revision
 
 _MISSING = "PERSON_COLLECTION_NOT_FOUND"
@@ -244,6 +245,9 @@ def delete_collection(catalog: Any, collection_id: int, *, instance_token: str) 
     with catalog.write() as connection:
         _require_collection_instance(connection, collection_id, instance_token)
         connection.execute("DELETE FROM person_collections WHERE collection_id = ?", (int(collection_id),))
+        filter_revision.bump_filter_revision(
+            connection, cause=filter_revision.CAUSE_PERSON_COLLECTION_CHANGED, now_ms=catalog.now_ms()
+        )
     return {"deleted": True, "collection_id": int(collection_id)}
 
 
@@ -314,6 +318,9 @@ def edit_members(
             connection.execute(
                 "UPDATE person_collections SET revision = revision + 1, updated_at = ? WHERE collection_id = ?",
                 (catalog.now_ms(), int(collection_id)),
+            )
+            filter_revision.bump_filter_revision(
+                connection, cause=filter_revision.CAUSE_PERSON_COLLECTION_CHANGED, now_ms=catalog.now_ms()
             )
         row = connection.execute(
             "SELECT revision FROM person_collections WHERE collection_id = ?", (int(collection_id),)

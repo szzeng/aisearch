@@ -10,6 +10,7 @@ single-writer transaction.
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -296,6 +297,7 @@ def observe_location_detailed(
     path_key: str,
     size: int,
     mtime_ns: int,
+    now_ms: int | None = None,
 ) -> LocationObservation:
     """Record a positive observation; a changed size/mtime clears the content binding.
 
@@ -355,6 +357,34 @@ def observe_location_detailed(
             "last_seen_scan_id = ?, availability = 'PRESENT' WHERE location_id = ?",
             (relative_path, size, mtime_ns, scan_id, location_id),
         )
+        if kept_asset_id is not None:
+            # The changed stat clears this source location's asset binding in the
+            # transaction that commits the changed observation. Only the last
+            # qualifying image location in this source changes its Timeline EXISTS
+            # result; duplicate locations keep the asset visible and are a no-op.
+            from photo_search.catalog.image_policy import image_location_sql, is_image_path
+
+            removes_source_visibility = is_image_path(str(row["relative_path"]))
+            if removes_source_visibility:
+                remaining_image = connection.execute(
+                    "SELECT 1 FROM file_locations AS remaining_location "
+                    "WHERE remaining_location.asset_id = ? AND remaining_location.source_id = ? "
+                    "AND remaining_location.location_id != ? "
+                    f"AND {image_location_sql('remaining_location')} LIMIT 1",
+                    (kept_asset_id, int(source_id), int(row["location_id"])),
+                ).fetchone()
+                removes_source_visibility = remaining_image is None
+            if removes_source_visibility:
+                # Source-scoped Timeline results can change before the later
+                # hash-confirmation transaction runs, so publish atomically here.
+                from photo_search.places import revision
+
+                revision.bump_filter_revision(
+                    connection,
+                    cause=revision.CAUSE_ASSET_CONTENT_DETACHED,
+                    now_ms=int(now_ms if now_ms is not None else time.time_ns() // 1_000_000),
+                    asset_ids=[kept_asset_id],
+                )
         return LocationObservation(
             location_id=location_id,
             created=False,
@@ -482,7 +512,8 @@ def bind_location_content(
 ) -> bool:
     """Bind a confirmed full hash to a location; a stale observation binds nothing."""
     row = connection.execute(
-        "SELECT size, mtime_ns FROM file_locations WHERE location_id = ?", (location_id,)
+        "SELECT source_id, size, mtime_ns, asset_id FROM file_locations WHERE location_id = ?",
+        (location_id,),
     ).fetchone()
     if row is None:
         raise CatalogError(
@@ -492,10 +523,59 @@ def bind_location_content(
         )
     if int(row["size"]) != int(observed_size) or int(row["mtime_ns"]) != int(observed_mtime_ns):
         return False
+    existing = connection.execute(
+        "SELECT asset_id FROM assets WHERE sha256 = ?", (sha256,)
+    ).fetchone()
+    previous_asset_id = None if row["asset_id"] is None else int(row["asset_id"])
+    adds_visibility = existing is None
+    if existing is not None and previous_asset_id != int(existing["asset_id"]):
+        # Timeline's global selector keeps zero-location legacy assets but excludes
+        # assets whose only registered locations are non-images. A source-scoped
+        # selector also needs its first qualifying image location. Check both before
+        # binding so duplicate content in an already-visible source remains a no-op.
+        from photo_search.catalog.image_policy import image_location_sql
+
+        asset_id_before = int(existing["asset_id"])
+        any_location = connection.execute(
+            "SELECT 1 FROM file_locations WHERE asset_id = ? LIMIT 1", (asset_id_before,)
+        ).fetchone()
+        image_predicate = image_location_sql("existing_location")
+        globally_visible = any_location is None or connection.execute(
+            "SELECT 1 FROM file_locations AS existing_location "
+            f"WHERE existing_location.asset_id = ? AND {image_predicate} LIMIT 1",
+            (asset_id_before,),
+        ).fetchone() is not None
+        source_has_image = connection.execute(
+            "SELECT 1 FROM file_locations AS existing_location "
+            f"WHERE existing_location.asset_id = ? AND existing_location.source_id = ? "
+            f"AND {image_predicate} LIMIT 1",
+            (asset_id_before, int(row["source_id"])),
+        ).fetchone() is not None
+        adds_visibility = not globally_visible or not source_has_image
     asset_id = upsert_asset(connection, sha256=sha256, byte_size=byte_size, now_ms=now_ms)
     connection.execute(
         "UPDATE file_locations SET asset_id = ? WHERE location_id = ?", (asset_id, location_id)
     )
+    if adds_visibility:
+        # The newly confirmed asset becomes visible to Timeline in this same authority
+        # transaction, or a changed binding adds it to this source's Timeline. Keep the
+        # shared cursor revision atomic with that visibility change.
+        from photo_search.places import revision
+
+        revision.bump_filter_revision(
+            connection,
+            cause=(
+                revision.CAUSE_ASSET_ADDED
+                if existing is None
+                else revision.CAUSE_ASSET_LOCATION_BOUND
+            ),
+            now_ms=int(now_ms),
+            asset_ids=(
+                [asset_id]
+                if previous_asset_id is None
+                else sorted({previous_asset_id, asset_id})
+            ),
+        )
     return True
 
 

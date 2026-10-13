@@ -105,6 +105,8 @@ commit
 
 批量操作需要避免 revision 无意义增长。
 
+**用户决策（2026-10-13）**：当前 scanner 为保留流式扫描与逐文件恢复，资产绑定按文件分别提交；每个文件绑定事务作为 revision 变更单位。因此一个扫描中每个真正新增的 asset 各增加一次 revision。若一个事务批量写入多个资产，则该事务只增加一次；no-op 或重复内容不增加。不得把 revision bump 延迟到扫描结束，否则扫描过程中的旧 cursor 仍可跨已提交图库变化。
+
 例如：
 
 一次导入 10000 张照片：
@@ -112,7 +114,7 @@ commit
 正确：
 
 ```
-import batch
+single write transaction imports 10000 assets
     |
     +- catalog_filter_revision +1
 ```
@@ -120,7 +122,7 @@ import batch
 错误：
 
 ```
-10000 assets
+10000 assets written in one transaction
     |
     +- revision +10000
 ```

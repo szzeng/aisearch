@@ -22,6 +22,11 @@ CAUSE_NAME_CHANGED = "PLACE_NAME_CHANGED"
 CAUSE_HIERARCHY_CHANGED = "PLACE_HIERARCHY_CHANGED"
 #: The independent suggestion revision moved because the visible candidate set changed.
 CAUSE_SUGGESTION_CHANGED = "PLACE_SUGGESTION_CANDIDATES_CHANGED"
+CAUSE_ASSET_ADDED = "ASSET_ADDED"
+CAUSE_ASSET_CONTENT_DETACHED = "ASSET_CONTENT_DETACHED"
+CAUSE_ASSET_LOCATION_BOUND = "ASSET_LOCATION_BOUND"
+CAUSE_SOURCE_PHOTOS_REMOVED = "SOURCE_PHOTOS_REMOVED"
+CAUSE_PERSON_COLLECTION_CHANGED = "PERSON_COLLECTION_CHANGED"
 
 #: ``refresh(connection, asset_ids=..., projection_revision=..., now_ms=...)`` - the P2-03
 #: ``IndexCoordinator.schedule_projection_refresh`` signature, injected so this module

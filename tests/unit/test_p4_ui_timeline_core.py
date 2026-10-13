@@ -11,7 +11,9 @@ from p4_time_fixtures import assets_by_basename, run_extraction, write_exif_jpeg
 
 from photo_search.api.errors import ApiError
 from photo_search.api.timeline import timeline_page, timeline_periods
-from photo_search.persons.collections import create_collection, edit_members
+from photo_search.catalog import store as catalog_store
+from photo_search.persons.collections import create_collection, delete_collection, edit_members
+from photo_search.persons.service import PersonService
 from photo_search.places import revision
 
 
@@ -108,6 +110,227 @@ def test_timeline_cursor_stales_after_real_capture_extraction_change(api_env: Ap
     assert revision.read_filter_revision(catalog.connection) == after_change
 
 
+def test_timeline_cursor_stales_after_scanned_new_photo(api_env: ApiEnv) -> None:
+    source_id, _ = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    first = timeline_page(catalog, limit=1)
+    before = revision.read_filter_revision(catalog.connection)
+
+    for index, color in enumerate(((220, 20, 180), (25, 210, 40), (40, 80, 230))):
+        write_exif_jpeg(
+            api_env.library / f"扫描新增{index}.jpg",
+            original=f"2024:05:0{index + 6} 07:08:09",
+            color=color,
+        )
+    api_env.scan(source_id)
+
+    after = revision.read_filter_revision(catalog.connection)
+    assert after == before + 3
+    events = catalog.read_all(
+        "SELECT cause, changed_count FROM catalog_filter_revision_events "
+        "WHERE revision > ? AND revision <= ? ORDER BY revision", (before, after)
+    )
+    assert [(str(row["cause"]), int(row["changed_count"])) for row in events] == [
+        (revision.CAUSE_ASSET_ADDED, 1),
+        (revision.CAUSE_ASSET_ADDED, 1),
+        (revision.CAUSE_ASSET_ADDED, 1),
+    ]
+    with pytest.raises(ApiError) as stale:
+        timeline_page(catalog, cursor=first["next_cursor"], limit=1)
+    assert stale.value.code == "CATALOG_FILTER_REVISION_STALE"
+    assert stale.value.status == 409
+
+
+def test_changed_file_detachment_bumps_revision_in_observation_transaction(api_env: ApiEnv) -> None:
+    source_id, ids = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    first = timeline_page(catalog, kind="source", source_id=source_id, limit=1)
+    location = catalog.read_one(
+        "SELECT location_id, relative_path, path_key, size, mtime_ns "
+        "FROM file_locations WHERE source_id = ? AND asset_id = ?",
+        (source_id, ids["同日A.jpg"]),
+    )
+    scan = catalog.read_one(
+        "SELECT scan_id FROM scan_runs WHERE source_id = ? ORDER BY scan_id DESC LIMIT 1",
+        (source_id,),
+    )
+    assert location is not None and scan is not None
+    before = revision.read_filter_revision(catalog.connection)
+
+    with catalog.write() as connection:
+        catalog_store.observe_location_detailed(
+            connection,
+            source_id=source_id,
+            scan_id=int(scan["scan_id"]),
+            relative_path=str(location["relative_path"]),
+            path_key=str(location["path_key"]),
+            size=int(location["size"]) + 1,
+            mtime_ns=int(location["mtime_ns"]) + 1,
+            now_ms=catalog.now_ms(),
+        )
+
+    after = revision.read_filter_revision(catalog.connection)
+    assert after == before + 1
+    event = catalog.read_one(
+        "SELECT cause FROM catalog_filter_revision_events WHERE revision = ?", (after,)
+    )
+    assert event is not None and event["cause"] == revision.CAUSE_ASSET_CONTENT_DETACHED
+    with pytest.raises(ApiError) as stale:
+        timeline_page(
+            catalog, kind="source", source_id=source_id, cursor=first["next_cursor"], limit=1
+        )
+    assert stale.value.code == "CATALOG_FILTER_REVISION_STALE"
+
+
+def test_detaching_one_of_multiple_same_source_locations_does_not_bump(api_env: ApiEnv) -> None:
+    source_id, ids = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    location = catalog.read_one(
+        "SELECT location_id, relative_path, path_key, size, mtime_ns FROM file_locations "
+        "WHERE source_id = ? AND asset_id = ?",
+        (source_id, ids["同日A.jpg"]),
+    )
+    asset = catalog.read_one(
+        "SELECT sha256, byte_size FROM assets WHERE asset_id = ?", (ids["同日A.jpg"],)
+    )
+    scan = catalog.read_one(
+        "SELECT scan_id FROM scan_runs WHERE source_id = ? ORDER BY scan_id DESC LIMIT 1",
+        (source_id,),
+    )
+    assert location is not None and asset is not None and scan is not None
+
+    with catalog.write() as connection:
+        duplicate = catalog_store.observe_location_detailed(
+            connection,
+            source_id=source_id,
+            scan_id=int(scan["scan_id"]),
+            relative_path="duplicate-detach-same-source.jpg",
+            path_key="duplicate-detach-same-source.jpg",
+            size=int(location["size"]),
+            mtime_ns=int(location["mtime_ns"]) + 1,
+            now_ms=catalog.now_ms(),
+        )
+        assert catalog_store.bind_location_content(
+            connection,
+            location_id=duplicate.location_id,
+            observed_size=int(location["size"]),
+            observed_mtime_ns=int(location["mtime_ns"]) + 1,
+            sha256=str(asset["sha256"]),
+            byte_size=int(asset["byte_size"]),
+            now_ms=catalog.now_ms(),
+        )
+
+    before_detach = revision.read_filter_revision(catalog.connection)
+    with catalog.write() as connection:
+        catalog_store.observe_location_detailed(
+            connection,
+            source_id=source_id,
+            scan_id=int(scan["scan_id"]),
+            relative_path=str(location["relative_path"]),
+            path_key=str(location["path_key"]),
+            size=int(location["size"]) + 1,
+            mtime_ns=int(location["mtime_ns"]) + 2,
+            now_ms=catalog.now_ms(),
+        )
+
+    assert revision.read_filter_revision(catalog.connection) == before_detach
+
+
+def test_existing_asset_bound_into_new_source_bumps_revision(api_env: ApiEnv) -> None:
+    source_id, _ = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    second_root = api_env.tmp_path / "library-second"
+    second_root.mkdir()
+    write_exif_jpeg(second_root / "第二源A.jpg", original="2020:01:02 03:04:05", color=(15, 25, 35))
+    write_exif_jpeg(second_root / "第二源B.jpg", original="2021:02:03 04:05:06", color=(45, 55, 65))
+    second_source_id = int(
+        api_env.register_source("second", second_root)["source_id"]
+    )
+    api_env.scan(second_source_id)
+    first = timeline_page(catalog, kind="source", source_id=second_source_id, limit=1)
+    before = revision.read_filter_revision(catalog.connection)
+
+    (second_root / "existing-sha.jpg").write_bytes(
+        (api_env.library / "同日A.jpg").read_bytes()
+    )
+    api_env.scan(second_source_id)
+
+    after = revision.read_filter_revision(catalog.connection)
+    assert after == before + 1
+    event = catalog.read_one(
+        "SELECT cause FROM catalog_filter_revision_events WHERE revision = ?", (after,)
+    )
+    assert event is not None and event["cause"] == revision.CAUSE_ASSET_LOCATION_BOUND
+    with pytest.raises(ApiError) as stale:
+        timeline_page(
+            catalog,
+            kind="source",
+            source_id=second_source_id,
+            cursor=first["next_cursor"],
+            limit=1,
+        )
+    assert stale.value.code == "CATALOG_FILTER_REVISION_STALE"
+
+
+def test_duplicate_content_in_same_source_does_not_bump_revision(api_env: ApiEnv) -> None:
+    source_id, ids = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    location = catalog.read_one(
+        "SELECT size, mtime_ns FROM file_locations WHERE source_id = ? AND asset_id = ?",
+        (source_id, ids["同日A.jpg"]),
+    )
+    asset = catalog.read_one(
+        "SELECT sha256, byte_size FROM assets WHERE asset_id = ?", (ids["同日A.jpg"],)
+    )
+    scan = catalog.read_one(
+        "SELECT scan_id FROM scan_runs WHERE source_id = ? ORDER BY scan_id DESC LIMIT 1",
+        (source_id,),
+    )
+    assert location is not None and asset is not None and scan is not None
+    before = revision.read_filter_revision(catalog.connection)
+
+    with catalog.write() as connection:
+        observed = catalog_store.observe_location_detailed(
+            connection,
+            source_id=source_id,
+            scan_id=int(scan["scan_id"]),
+            relative_path="duplicate-same-source.jpg",
+            path_key="duplicate-same-source.jpg",
+            size=int(location["size"]),
+            mtime_ns=int(location["mtime_ns"]) + 1,
+            now_ms=catalog.now_ms(),
+        )
+        assert catalog_store.bind_location_content(
+            connection,
+            location_id=observed.location_id,
+            observed_size=int(location["size"]),
+            observed_mtime_ns=int(location["mtime_ns"]) + 1,
+            sha256=str(asset["sha256"]),
+            byte_size=int(asset["byte_size"]),
+            now_ms=catalog.now_ms(),
+        )
+
+    assert revision.read_filter_revision(catalog.connection) == before
+
+
+def test_source_removal_bumps_shared_revision_in_its_write(api_env: ApiEnv) -> None:
+    source_id, _ = seed_timeline(api_env)
+    catalog = api_env.service.catalog
+    before = revision.read_filter_revision(catalog.connection)
+
+    api_env.service.delete_source(source_id)
+
+    after = revision.read_filter_revision(catalog.connection)
+    assert after == before + 1
+    event = catalog.read_one(
+        "SELECT cause, changed_count FROM catalog_filter_revision_events WHERE revision = ?",
+        (after,),
+    )
+    assert event is not None
+    assert event["cause"] == revision.CAUSE_SOURCE_PHOTOS_REMOVED
+    assert int(event["changed_count"]) == 5
+
+
 def test_timeline_scope_validation_is_explicit_and_source_is_authoritative(api_env: ApiEnv) -> None:
     source_id, ids = seed_timeline(api_env)
     catalog = api_env.service.catalog
@@ -152,10 +375,60 @@ def test_person_and_collection_scopes_use_effective_unique_photo_members(api_env
 
     edit_members(catalog, collection["collection_id"], action="remove", person_ids=[second_person],
                  instance_token=collection["instance_token"])
+    assert revision.read_filter_revision(catalog.connection) == first["catalog_filter_revision"] + 1
     with pytest.raises(ApiError) as changed:
         timeline_page(catalog, kind="collection", collection_id=collection["collection_id"],
                       cursor=first["next_cursor"], limit=1)
     assert changed.value.status == 409
+
+    before_delete = revision.read_filter_revision(catalog.connection)
+    delete_collection(catalog, collection["collection_id"], instance_token=collection["instance_token"])
+    assert revision.read_filter_revision(catalog.connection) == before_delete + 1
+
+
+def test_person_merge_bumps_shared_revision_and_stales_timeline_cursor(api_env: ApiEnv) -> None:
+    photos = seed_library(api_env, {
+        "人物甲照片.jpg": [(20, 20, 90, 90)],
+        "人物乙照片.jpg": [(30, 30, 100, 100)],
+        "人物甲照片2.jpg": [(35, 35, 105, 105)],
+    })
+    catalog = api_env.service.catalog
+    target = add_person(catalog, name="保留人物")
+    source = add_person(catalog, name="合并人物")
+    add_link(catalog, photos["人物甲照片.jpg"]["faces"][0], target)
+    add_link(catalog, photos["人物甲照片2.jpg"]["faces"][0], target)
+    add_link(catalog, photos["人物乙照片.jpg"]["faces"][0], source)
+    first = timeline_page(catalog, kind="person", person_id=target, limit=1)
+    before = revision.read_filter_revision(catalog.connection)
+
+    PersonService.open(catalog).merge(
+        target_person_id=target,
+        target_expected_revision=1,
+        sources=[{"person_id": source, "expected_revision": 1}],
+        request_id="timeline-person-merge",
+    )
+
+    assert revision.read_filter_revision(catalog.connection) == before + 1
+    with pytest.raises(ApiError) as stale:
+        timeline_page(catalog, kind="person", person_id=target, cursor=first["next_cursor"], limit=1)
+    assert stale.value.code == "CATALOG_FILTER_REVISION_STALE"
+
+    visible_page = timeline_page(catalog, kind="person", person_id=target, limit=1)
+    before_hide = revision.read_filter_revision(catalog.connection)
+    people = PersonService.open(catalog)
+    assert people.set_visibility(person_ids=[target], hidden=True)["changed"] == 1
+    assert revision.read_filter_revision(catalog.connection) == before_hide + 1
+    assert people.set_visibility(person_ids=[target], hidden=True)["changed"] == 0
+    assert revision.read_filter_revision(catalog.connection) == before_hide + 1
+    with pytest.raises(ApiError) as hidden_stale:
+        timeline_page(
+            catalog,
+            kind="person",
+            person_id=target,
+            cursor=visible_page["next_cursor"],
+            limit=1,
+        )
+    assert hidden_stale.value.code == "CATALOG_FILTER_REVISION_STALE"
 
 
 def test_timeline_http_routes_are_session_protected_and_readable(api_env: ApiEnv) -> None:
