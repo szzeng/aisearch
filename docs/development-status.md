@@ -1,5 +1,10 @@
 # Development status
 
+## P4-UI-SHELL-A-F1 — PLANNED / 公共视觉与搜索页面视觉收口（仅文档）
+
+[任务卡](tasks/P4-UI-SHELL-A-F1.md)、[公共视觉设计规范](plans/P4-UI-VISUAL-TOKENS.md)。A/C 功能已施工，最终 demo 的统一配色、字体、导航与搜索结果/筛选完整视觉仍未完成对照。本次新增 F1 卡、预设计视觉规范，并为 CORE/B/D/E/SEARCH-MAP/F 加入最小样式继承条款。**仅更改文档，没有产品代码或测试，不追认 F1/A/C PASS。** 顺序增加 F1：A→C→F1→CORE→B→D→E→SEARCH-MAP→F；个人轻验收及20万元数据性能要求不变。
+
+
 ## P4-LIBRARY-IMAGE-ONLY-A — SCOPED PASS / 图片白名单与历史非图片安全退出（2026-10-13）
 
 [执行报告](reports/P4-LIBRARY-IMAGE-ONLY-A.md)、[任务卡](tasks/P4-LIBRARY-IMAGE-ONLY-A.md)。静态图片扩展名白名单统一扫描与 SQL 照片资格；不支持解码的 HEIC/RAW/TIFF/AVIF 仍保留登记资格，`.r3d`/`.eip` 排除。本地打开动作复用该白名单。成功快扫后旧非图片自然转 MISSING，默认 any 排除非图片而保留缺失图片历史。扩展只读探针并保留视频统计。定向 JUnit **23/0/0/0**，Ruff、py_compile、diff-check 通过。仅合成库；未访问真实图库/PhotoSearchData、未跑全仓/GPU/浏览器/20万规模或打包；未执行任何永久清理。

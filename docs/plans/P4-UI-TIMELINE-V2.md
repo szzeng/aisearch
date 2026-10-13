@@ -1,5 +1,8 @@
 # P4-UI-TIMELINE-V2 — 个人相册 UI 2.0 与统一时间轴规范
 
+> **2026-10-13 施工补充（仅文档）：** A/C 已做功能，但公共外壳及搜索页仍缺最终效果视觉对照。新增 [P4-UI-SHELL-A-F1](../tasks/P4-UI-SHELL-A-F1.md) 与 [公共视觉规范](P4-UI-VISUAL-TOKENS.md)，实际继续次序 **A → C → F1 → CORE → B → D → E → SEARCH-MAP → F**。后续页面主体仍由对应卡完成，业务/性能门槛不变；未据此追认既有卡 PASS。
+
+
 > **用户确认的唯一现行视觉基线（2026-10-13）**：[最后版可点击演示](../mockups/ui2-interactive/demo.html)、[对应页面与说明](../mockups/ui2-interactive/README.md)。素材基线提交 `cf49a8f`；本轮保留演示原样，旧SVG/PNG不再作为施工主参考。原型用于整体观感，本规范仍决定真实数据/权限/日期/分页/20万性能，八卡仍PLANNED。
 
 
