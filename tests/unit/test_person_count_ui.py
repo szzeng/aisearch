@@ -38,7 +38,7 @@ const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await ne
 (async()=>{
  context.document.ready();await flush();assert.equal(get("pa-list-count").textContent,"人物 8 人");
  get("pa-organize").fire("click");await flush();assert.equal(get("pa-list-count").textContent,"未命名人物 3 人");
- get("pa-hidden-toggle").fire("click");await flush();assert.equal(get("pa-list-count").textContent,"已忽略 2 人");
+ get("pa-hidden-toggle").fire("click");await flush();assert.equal(get("pa-list-count").textContent,"暂时忽略 2 人");
  const browse=requests.filter(url=>url.includes("/persons/browse"));
  assert(browse[0].includes("kind=named")&&browse[0].includes("visibility=visible"));
  assert(browse[1].includes("kind=unnamed")&&browse[1].includes("visibility=visible"));

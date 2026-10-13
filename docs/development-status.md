@@ -1,20 +1,23 @@
 # Development status
 
-## Current user-directed task: P4-UI-PHOTOS-B — FUNCTIONAL SCOPED PASS / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
+## Current user-directed task: P4-UI-PEOPLE-D — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
 
-用户明确要求在 A/C/CORE 验收门尚未关闭时先执行本卡。照片页默认统一时间轴、保留列表/图库管理；LUNA High 受影响面复核发现的 4 项 P2 已修复并补回归，最终复核无剩余 findings。定向 JUnit **28/0/0/0**，关联 timeline integration **1/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PHOTOS-B.md) / [报告](reports/P4-UI-PHOTOS-B.md)。真实浏览器截图与 `PERF_200K` 仍 pending，不标整卡 PASS。
+用户明确要求在 A/C/CORE/B 浏览器或性能门尚未关闭时开始本卡。人物与合集照片页已接入共享时间轴，保留旧局部搜图与人物整理操作；合集实例/revision 不匹配时停止显示结果并提供刷新后的当前范围重载，查看器续页沿用有界照片 ID。定向 JUnit **31/0/0/0**；Ruff、Node、diff-check 通过。用户指定的 LUNA High 受影响面复核无剩余实现 findings，不代表 DS-H。[任务卡](tasks/P4-UI-PEOPLE-D.md) / [报告](reports/P4-UI-PEOPLE-D.md)。浏览器交互/截图及 `PERF_200K` 仍 pending，故不标整卡 PASS。
 
-## Next necessary action: 完成 PHOTOS-B 浏览器与性能验收门 — NOT STARTED
+## Next necessary action: 完成 PEOPLE-D 浏览器与性能验收门 — PENDING
 
-补完本卡真实浏览器观察/截图、复用并确认 CORE 的 20 万性能证据后停止；用户指定的 LUNA High 受影响面复核已完成。D 卡 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 已存在但尚未启动。A/C/CORE 的既有未验收状态与报告不因本卡实现而关闭。
+在可用的本地合成产品浏览器中观察人物/合集切换、选择与取消、忽略恢复、待整理单脸对话框、预览返回；保存截图，并复用 CORE 的 20 万性能证据或补齐人物/合集差异证据。此前本地文件打开被浏览器安全策略拒绝，未尝试规避。D 的实现、定向 JUnit 与用户指定 Luna High 受影响面复核已完成；用户要求本卡完成后停止。A/C/CORE/B 的既有未验收门按各自报告保留，不因 D 开始或实现而关闭。
 
+## Previous executed task: P4-UI-PHOTOS-B — FUNCTIONAL SCOPED PASS / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
+
+照片页默认统一时间轴、保留列表/图库管理；定向 JUnit **28/0/0/0**，关联 timeline integration **1/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PHOTOS-B.md) / [报告](reports/P4-UI-PHOTOS-B.md)。真实浏览器截图与 `PERF_200K` 仍 pending；用户后来明确要求先执行 D，不改变 B 或 CORE 的验收状态。
 ## Previous completed task: P4-UI-TIMELINE-REVISION-A — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE (2026-10-13)
 
 [Task card](tasks/P4-UI-TIMELINE-REVISION-A.md), [report](reports/P4-UI-TIMELINE-REVISION-A.md). Reused `catalog_filter_revision` for scanned new assets, source removal, collection membership/deletion, and changed person visibility; person operations and capture-time/place mutations retain existing hooks. User chose the existing per-file scanner transaction as the revision unit: each newly visible asset commits with one bump in that transaction; no-op/repeated content does not bump. Task-card JUnit is **14/0/0/0**; Ruff, `py_compile`, and diff-check pass. Regression covers single-location detach, duplicate-location detach no-op, first binding to a new source, and same-source duplicate content without an unnecessary bump. **LUNA High final repair review complete with no remaining findings**. No schema/API/cursor protocol change; existing uncommitted `photo-timeline.js` edits were preserved.
 
 ## Predecessor status: P4-UI-TIMELINE-CORE-A — PARTIAL / VALIDATION PENDING (2026-10-13)
 
-[Task card](tasks/P4-UI-TIMELINE-CORE-A.md), [report](reports/P4-UI-TIMELINE-CORE-A.md). Timeline API/core and shared component are implemented. Browser evidence and `PERF_200K` remain pending; the revision task does not close CORE-A. Do not start B until CORE-A blockers close.
+[Task card](tasks/P4-UI-TIMELINE-CORE-A.md), [report](reports/P4-UI-TIMELINE-CORE-A.md)。Timeline API/核心组件已实现；REVISION-A 已修复共享 catalog revision 信号。CORE-A 的浏览器证据、`PERF_200K` 和独立工程审查仍 pending。Integration-A 只接入首页，不代表 CORE-A 关闭。
 
 ## Predecessor status: P4-UI-SHELL-A-F1 — IMPLEMENTED / VISUAL VALIDATION PENDING (2026-10-13)
 

@@ -18,7 +18,7 @@
 - 已完成的 SIMPLIFY-A、Shift选取、候选头像、合照去重、Esc/遮罩、忽略/纠错/撤销不得重复开发。人物目录按有效照片数及最近入库时间，不逐卡计算日期摘要；进入相册才取本 scope 年月/未知/待就绪统计，成员与时间状态变化需令旧游标失效。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 整理工作流已完成，照片时间轴与视觉目标未实施**。规划收口 HEAD `c19749a`。依赖 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)；人物新建已有[用户指定同会话复核与修复](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，不重开旧复核。执行时重新读取最新人物卡/报告及用户试用反馈。
+日期：2026-10-10；2026-10-13 UI 2.0 修订；2026-10-14 执行。状态：**IMPLEMENTED / VALIDATION PENDING**。实现报告：[P4-UI-PEOPLE-D](../reports/P4-UI-PEOPLE-D.md)。用户明确要求在 A/C/CORE/B 的浏览器/性能门尚未全部关闭时开始 D；仅覆盖开始本卡的前置验收顺序，不把前置门记为通过。D 的浏览器交互与截图、继承的 `PERF_200K` 均仍 pending。整理工作流已完成；照片时间轴与人物/合集专属视觉已实施。规划收口 HEAD `c19749a`。依赖 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)；人物新建已有[用户指定同会话复核与修复](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，不重开旧复核。执行时重新读取最新人物卡/报告及用户试用反馈。
 
 推荐 GPT-6 / High；限定 A 级 UI 小改，独立 DS-H 覆盖全部受影响入口与原写协议的直接调用链。不是人脸数据语义改造。
 

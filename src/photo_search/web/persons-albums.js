@@ -14,7 +14,7 @@
     deepLinked: false, linkSeq: 0, peopleChangeToken: null, inboxConfirmationsPending: false,
     peoplePages: 0, peopleBinding: null, peopleLastLoadedAt: 0, peopleRefreshPending: true,
     peopleLoadPromise: null, peopleLoadBinding: null, inboxPages: 0, inboxBinding: null, inboxSummarySeq: 0,
-    collectionListLoaded: false, collectionListPromise: null, libraryPosition: null, busy: new Set() };
+    collectionListLoaded: false, collectionListPromise: null, libraryPosition: null, timeline: null, timelineScopeKey: "", busy: new Set() };
   function node(tag, value, className) {
     const item = document.createElement(tag);
     if (value !== undefined) item.textContent = value;
@@ -615,7 +615,9 @@
   function collectionHeading() {
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     document.getElementById("pt-organize").hidden = true;
+    $("person-tools-menu").hidden = true;
     $("title").textContent = state.collection.name;
+    $("album-kind").textContent = "人物合集";
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
     $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
@@ -1151,6 +1153,8 @@
   }
   function albumHeading() {
     $("collection-view-controls").hidden = true; $("search-photos").hidden = false;
+    $("person-tools-menu").hidden = false;
+    $("album-kind").textContent = "人物相册";
     document.getElementById("pt-organize").hidden = false;
     $("name").hidden = false; $("merge").hidden = false; $("cover").hidden = false;
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
@@ -1188,9 +1192,111 @@
       $("photos").append(card);
     });
   }
+  function timelineScope() {
+    return state.collection && state.collectionMode === "photos"
+      ? { kind: "collection", collection_id: Number(state.collection.collection_id) }
+      : { kind: "person", person_id: Number(state.person.person_id) };
+  }
+  function timelineKey(scope) {
+    return scope.kind === "collection"
+      ? [scope.kind, scope.collection_id, state.collection.instance_token, state.collection.revision].join(":")
+      : [scope.kind, scope.person_id].join(":");
+  }
+  function rememberTimelineAsset(id) {
+    id = Number(id);
+    if (!Number.isSafeInteger(id) || id < 1) return;
+    if (state.photoIds.includes(id)) return;
+    state.photoIds.push(id);
+    if (state.photoIds.length > 400) state.photoIds.splice(0, state.photoIds.length - 400);
+  }
+  function showTimeline(more, preferences) {
+    const scope = timelineScope();
+    $("timeline").hidden = false; $("photos").hidden = true; $("photos-more").hidden = true;
+    const key = timelineKey(scope);
+    if (more) return state.timeline ? state.timeline.append() : Promise.resolve(null);
+    if (!state.timeline) {
+      state.timeline = window.PhotoTimeline.mount({ host: $("timeline"), scope,
+        timeBasis: preferences && preferences.timeBasis, groupBy: preferences && preferences.groupBy,
+        adapter: {
+        fetchPage(values, signal) {
+          const query = new URLSearchParams(values);
+          return fetch("/api/v1/timeline/assets?" + query.toString(), { credentials: "same-origin", signal,
+            headers: { Accept: "application/json" } }).then(async response => {
+            const body = await response.json();
+            if (!response.ok) {
+              if (values.kind === "collection" && response.status === 409 && body.code === "INVALID_CURSOR") {
+                $("timeline").dataset.collectionExpired = "true";
+                $("timeline-refresh").hidden = false;
+                $("photo-note").textContent = "合集范围或成员版本已变化，旧日期游标已失效。重新加载会读取当前合集，并清除年份、月份和日期分组筛选。";
+              } else if (values.kind === "collection" && response.status === 404 && body.code === "PERSON_COLLECTION_NOT_FOUND") {
+                $("timeline").dataset.collectionGone = "true";
+                $("photo-note").textContent = "这个合集已不存在或已被重建。请返回合集列表后重新打开。";
+              }
+              const error = new Error(body.message || "时间轴请求失败"); error.code = body.code; error.status = response.status; throw error;
+            }
+            if (values.kind === "collection") {
+              const responseScope = body.scope || {};
+              if (Number(responseScope.collection_id) !== Number(state.collection.collection_id)
+                  || responseScope.collection_instance !== state.collection.instance_token
+                  || Number(responseScope.collection_revision) !== Number(state.collection.revision)) {
+                $("timeline").dataset.collectionExpired = "true";
+                $("timeline-refresh").hidden = false;
+                $("photo-note").textContent = "合集范围或成员版本已变化，当前结果未显示。重新加载会读取当前合集，并清除年份、月份和日期分组筛选。";
+                const error = new Error("合集范围已变化，请重新加载当前合集。"); error.code = "COLLECTION_SCOPE_CHANGED"; throw error;
+              }
+              delete $("timeline").dataset.collectionExpired;
+              delete $("timeline").dataset.collectionGone;
+              $("timeline-refresh").hidden = true;
+            }
+            return body;
+          });
+        },
+        renderAsset(item) {
+          const id = Number(item.asset_id);
+          const card = button("", () => preview(id), "pa-photo-card");
+          card.setAttribute("aria-label", "查看照片 " + id);
+          card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo"));
+          const sourceLabel = item.time_basis === "library" ? "加入图库时间"
+            : item.time_label === "capture" ? "可信拍摄时间"
+              : item.time_label === "file_time" ? "文件时间" : item.time_label;
+          const dateLabel = item.display_time || (item.date_state === "unknown"
+            ? "日期未知 · 按加入图库日期" : item.date_state === "pending"
+              ? "日期待就绪 · 按加入图库日期" : item.time_label || "查看照片");
+          card.append(node("span", dateLabel, "pa-photo-date"));
+          if (item.display_time && sourceLabel) card.append(node("small", sourceLabel, "pa-photo-source"));
+          return card;
+        },
+        onOpen(item) { preview(Number(item.asset_id)); },
+        onPage(body, page, values) {
+          if (!values.cursor) {
+            state.photoIds = [];
+            (body.assets || []).forEach(item => rememberTimelineAsset(item.asset_id));
+            state.photoListSeq++;
+          } else (body.assets || []).forEach(item => rememberTimelineAsset(item.asset_id));
+          state.photoCursor = body.next_cursor || null;
+          updatePreviewNavigation();
+          $("photo-note").textContent = state.collection
+            ? "按日期浏览合集照片；同一张照片只显示一次。"
+            : "按日期浏览这个人物的照片；合照中的其他人物保持各自归属。";
+        },
+        onRestoreAsset(card) { if (card) card.scrollIntoView({ block: "center" }); },
+      } });
+    } else if (key !== state.timelineScopeKey) {
+      state.photoIds = []; state.photoListSeq++; state.timeline.setScope(scope);
+      delete $("timeline").dataset.collectionExpired;
+      delete $("timeline").dataset.collectionGone;
+      $("timeline-refresh").hidden = true;
+    } else {
+      state.timeline.reset();
+    }
+    state.timelineScopeKey = key;
+    return Promise.resolve(true);
+  }
   async function loadPhotos(more) {
     if ((!state.person && !(state.collection && state.collectionMode === "photos")) || (more && state.busy.has("photos"))) return false;
+    if (!state.searching && !state.coverMode && window.PhotoTimeline) return showTimeline(more);
     const seq = ++state.photoSeq; state.busy.add("photos"); $("photos-more").disabled = true;
+    $("timeline").hidden = true; $("photos").hidden = false;
     const personId = state.person && state.person.person_id;
     const collectionId = state.collection && state.collectionMode === "photos" ? state.collection.collection_id : null;
     if (!more) {
@@ -1679,7 +1785,7 @@
     $("collections-more").addEventListener("click", () => loadCollections(true));
     $("collection-add").addEventListener("click", addSelectionToCollection);
     $("collection-photos-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; loadPhotos(false); });
-    $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
+    $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);
     $("collection-selection-clear").addEventListener("click", () => { state.collectionSelectedPeople.clear(); updateCollectionSelection(); });
@@ -1693,6 +1799,29 @@
       albumHeading(); loadPhotos(false);
     });
     $("photos-more").addEventListener("click", () => loadPhotos(true));
+    $("timeline-refresh").addEventListener("click", async () => {
+      $("timeline-refresh").hidden = true;
+      $("photo-note").textContent = "正在读取合集最新版本；年份、月份和日期分组筛选将重置……";
+      const preferences = state.timeline && state.timeline.snapshot();
+      const collectionId = state.collection && Number(state.collection.collection_id);
+      if (!(await reloadCollections()) || !(await ensureAllCollectionsLoaded())) {
+        $("photo-note").textContent = "合集列表刷新失败，请返回后重试。";
+        $("timeline-refresh").hidden = false;
+        return;
+      }
+      const current = state.collectionById.get(String(collectionId));
+      if (!current) {
+        $("timeline").dataset.collectionGone = "true";
+        $("photo-note").textContent = "这个合集已不存在。请返回合集列表。";
+        return;
+      }
+      state.collection = current; collectionHeading();
+      delete $("timeline").dataset.collectionExpired;
+      delete $("timeline").dataset.collectionGone;
+      if (state.timeline) state.timeline.dispose();
+      state.timeline = null; state.timelineScopeKey = "";
+      showTimeline(false, preferences);
+    });
     $("search-photos").addEventListener("submit", (event) => {
       event.preventDefault(); const text = $("photo-query").value.trim(); if (!text) { state.searching = false; loadPhotos(false); return; }
       state.searching = true; state.searchBody = { contract_version: "p2-contracts.v1", request_id: requestId(), text, person_ids: [state.person.person_id], person_match: "any", page_size: 60, top_k: 5000 }; loadPhotos(false);

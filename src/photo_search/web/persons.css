@@ -63,6 +63,67 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 480px) { .pa-people-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pa-photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pa-dialog { padding: 1rem; } }
 
+/* People and album hierarchy (P4-UI-PEOPLE-D). Keep the existing IDs and
+ * controls so their current selection, correction, undo and collection handlers stay bound. */
+body.app-shell main > .pa-shell { padding: clamp(1rem, 2.4vw, 2rem); }
+.pa-library-heading, .pa-album-heading { align-items: center; padding: 0.25rem 0 1.25rem; border-bottom: 1px solid var(--line); }
+.pa-library-heading h2, .pa-album-heading h2 { margin: 0.25rem 0 0.4rem; }
+.pa-library-heading .hint, .pa-album-heading .hint { margin-bottom: 0; }
+.pa-eyebrow { margin: 0; color: var(--accent); font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; }
+.pa-mode-switch { width: fit-content; padding: 0.25rem; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
+.pa-mode-switch button { border-radius: 999px; }
+.pa-mode-switch button[aria-pressed="true"] { border-color: var(--accent); background: var(--tint); color: var(--fg); outline: 0; }
+.pa-collections-section { margin: 1.25rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
+.pa-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.pa-section-heading h3 { margin: 0; }
+.pa-section-heading .hint { margin: 0.25rem 0 0; }
+.pa-directory-tools { margin-top: 1.2rem; }
+.pa-directory-tools > .pa-search { margin: 0 0 0.65rem; }
+.pa-person-card { min-height: 12rem; padding: 1rem 0.65rem; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow-soft); transition: border-color 120ms ease, background-color 120ms ease; }
+button.pa-person-card:hover, button.pa-person-card:focus-visible { border-color: var(--accent); background: var(--tint); }
+button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; background: var(--tint); }
+.pa-avatar { width: clamp(5rem, 9vw, 7rem); height: clamp(5rem, 9vw, 7rem); border: 2px solid var(--line); box-shadow: 0 0 0 0.25rem var(--bg); }
+.pa-person-card strong { max-width: 100%; font-size: 1rem; }
+.pa-person-card > .hint { margin: 0; }
+.pa-person-selection { top: 0.5rem; right: 0.5rem; }
+.pa-collection-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
+.pa-collection-card { min-height: 7rem; padding: 0.9rem; background: var(--panel); box-shadow: var(--shadow-soft); }
+.pa-collection-badge { width: 3.25rem; height: 3.25rem; border-radius: 0.85rem; background: var(--tint); }
+.pa-collection-open { font-weight: 650; }
+#pa-inbox { margin-top: 1.5rem; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
+#pa-inbox > h3 { margin-top: 1.4rem; }
+#pa-inbox > .row-actions, #pa-inbox > details { margin-top: 0.75rem; }
+#pa-inbox > details, .pa-more-actions { position: relative; }
+.pa-more-actions > summary { display: inline-flex; align-items: center; min-height: 2.5rem; padding: 0.35rem 0.8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); color: var(--fg); cursor: pointer; list-style: none; }
+.pa-more-actions > summary::-webkit-details-marker { display: none; }
+.pa-more-actions[open] > summary { border-color: var(--accent); }
+.pa-more-actions-menu { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.45rem; padding: 0.6rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); box-shadow: var(--shadow-soft); }
+.pa-album-identity { display: flex; min-width: min(100%, 18rem); align-items: center; gap: 1rem; }
+.pa-album-identity > div { min-width: 0; }
+.pa-album-actions, .pa-collection-toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
+.pa-collection-toolbar { justify-content: space-between; margin: 0.75rem 0; }
+.pa-timeline { min-width: 0; }
+.pa-timeline .photo-timeline__controls { padding: 0.75rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
+.pa-timeline .photo-timeline__page { grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 0.65rem; }
+.pa-timeline .photo-timeline__heading { grid-column: 1 / -1; }
+.pa-timeline .pa-photo-card { display: grid; grid-template-rows: minmax(0, 1fr) auto; border: 1px solid var(--line); background: var(--panel); }
+.pa-timeline .pa-photo-card .pa-photo { aspect-ratio: 4 / 3; }
+.pa-timeline .pa-photo-card .pa-photo-date { min-height: 2rem; }
+.pa-timeline .pa-photo-source { display: block; padding: 0 0.5rem 0.45rem; color: var(--fg-muted); text-align: left; }
+#pa-timeline[data-collection-expired="true"] .photo-timeline__retry,
+#pa-timeline[data-collection-gone="true"] .photo-timeline__retry { display: none; }
+.pa-undo { z-index: 3; }
+@media (max-width: 640px) {
+  .pa-library-heading, .pa-album-heading { align-items: flex-start; }
+  .pa-library-heading > div:first-child, .pa-album-identity { width: 100%; }
+  .pa-mode-switch { width: 100%; }
+  .pa-mode-switch button { flex: 1 1 auto; }
+  .pa-section-heading { align-items: flex-start; }
+  .pa-album-actions { width: 100%; justify-content: flex-start; }
+  .pa-collection-toolbar { align-items: flex-start; }
+  .pa-timeline .photo-timeline__page { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
