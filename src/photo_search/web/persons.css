@@ -21,6 +21,14 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .pa-inbox-group > summary::-webkit-details-marker { display: none; }
 .pa-inbox-group-faces { padding-inline-start: 1rem; }
 .pa-inbox-single .pa-person-card { height: 100%; }
+.pa-inbox-face-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; width: 100%; min-width: 0; }
+.pa-inbox-compare-side { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 0.25rem; }
+.pa-inbox-compare-side > .pa-picture { width: min(100%, 3.5rem); height: 3.5rem; }
+.pa-inbox-compare-side > .pt-avatar-select { display: grid; place-items: center; width: min(100%, 3.5rem); }
+.pa-inbox-compare-side > .pt-avatar-select > .pa-picture { width: 3.5rem; height: 3.5rem; }
+.pa-inbox-compare-side > .hint { width: 100%; margin: 0; font-size: 0.72rem; line-height: 1.2; }
+.pa-reference-avatar .pa-image-fallback { font-size: 0.62rem; }
+.pa-inbox-group-comparison { max-width: 8rem; margin-bottom: 0.25rem; }
 .pa-inbox-hidden { margin-top: 1.5rem; }
 .pa-collection-card { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; padding: 0.7rem; border: 1px solid var(--line); border-radius: 0.8rem; }
 .pa-collection-open { flex: 1 1 12rem; text-align: left; }

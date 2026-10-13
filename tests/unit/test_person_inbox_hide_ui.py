@@ -82,7 +82,7 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   const secondCard=group.children[1].children[1];
   secondCard.selectionButton.fire("change");
   assert.deepEqual(Array.from(ui.state.selectedInboxFaces),[faceA.face_id,faceB.face_id]);
-  assert.equal(get("pa-inbox-selection-count").textContent,"已选 2 张脸");
+  assert.equal(get("pa-inbox-selection-count").textContent,"已选 2 / 500 张脸");
   const groupCalls=()=>requests.filter(r=>r.url.startsWith("/api/v1/faces/inbox/groups?")).length;
   const inboxCalls=groupCalls();
   group.open=false;group.fire("toggle");group.open=true;group.fire("toggle");await flush();

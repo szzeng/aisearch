@@ -23,7 +23,7 @@ class Element {
 }
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 const calls=[],saved=new Set(),storage=new Map();let uuid=0,fail=null,release=null,delay=false;
-const candidate={person_id:17,name:'妈妈'},other={person_id:18,name:'爸爸'};
+const candidate={person_id:17,name:'妈妈',thumbnail_url:'/api/v1/faces/'+ '1'.repeat(64) + '/thumbnail'},other={person_id:18,name:'爸爸',thumbnail_url:'/api/v1/faces/'+ '2'.repeat(64) + '/thumbnail'};
 const face=(id,reason,person=candidate)=>({face_id:id.repeat(64),asset_id:id.charCodeAt(0),thumbnail_url:null,
  control_revision:4,organization_reason:reason,mode:'AUTO_ALLOWED',suggestions:[person]});
 const faces=[face('a','NEAR_TIE'),face('b','SAME_IMAGE_CONFLICT'),face('c','OTHER_SUGGESTION',other)];
@@ -51,10 +51,34 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,loadInbox,undo};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,renderInboxGroup,loadInbox,undo};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const writes=()=>calls.filter(c=>c.url.endsWith('/assignment'));
+const descendants=e=>[e,...e.children.flatMap(descendants)];
 (async()=>{
+ // Group reference avatars follow the candidate id in the group key, even when
+ // the representative face ranks a different person first.
+ const representative={...faces[0],suggestions:[other,candidate]};
+ let host=new Element('div');
+ let details=ui.renderInboxGroup(group(candidate,representative),'all',false);
+ let comparison=details.children[0].children[0];
+ assert(descendants(comparison.children[1]).some(e=>e.src==='/api/v1/faces/'+ '1'.repeat(64) + '/thumbnail?v=person-media2'));
+ const mismatch=ui.renderInboxGroup(group({person_id:99,name:'错位'},representative),'all',false);
+ comparison=mismatch.children[0].children[0];
+ assert.equal(comparison.children[1].children[0].children[0].textContent,'暂无参考头像');
+ const noAvatar=ui.renderInboxGroup(group(candidate,{...representative,suggestions:[{...candidate,thumbnail_url:null}]}),'all',false);
+ assert.equal(noAvatar.children[0].children[0].children[1].children[0].children[0].textContent,'暂无参考头像');
+ // Face comparison, visible label, and confirmation action share one candidate.
+ host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[candidate,other]},false);
+ let card=host.children[0];comparison=card.children[0];
+ assert.equal(comparison.children[1].children[1].textContent,'可能是妈妈');
+ assert(descendants(comparison.children[1]).some(e=>e.src===candidate.thumbnail_url+'?v=person-media2'));
+ assert.equal(card.confirmButton.textContent,'确认是妈妈');
+ host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[{...candidate,thumbnail_url:null}]},false);
+ assert.equal(host.children[0].children[0].children[1].children[0].children[0].textContent,'暂无参考头像');
+ assert.equal(host.children[0].confirmButton.textContent,'确认是妈妈','missing reference image does not disable the action');
+ host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[]},false);
+ assert.equal(host.children[0].children[0].children.length,1,'no candidate retains the single-face display');
  // The quick action depends on an actual candidate, including quality reasons and ties.
  for(const reason of ['BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION','SMALL','LOW_QUALITY','MANUAL_UNASSIGNED']){
   const host=new Element('div');ui.renderInboxFace(host,face('e',reason),false);
@@ -114,8 +138,8 @@ const writes=()=>calls.filter(c=>c.url.endsWith('/assignment'));
  assert.equal(calls.length,whileSaving);delay=false;release();await last;await flush();
  assert(calls.slice(whileSaving).some(c=>c.url.includes('/faces/inbox/groups?')),'closed group refreshes after its save resolves');
  // Flat reason filters retain the tick until an explicit refresh/view change.
- const host=new Element('div');ui.renderInboxFace(host,face('z','LOW_QUALITY'),false);
- const flat=host.children[0],flatBefore=calls.length;await flat.confirmButton.fire('click');
+ const flatHost=new Element('div');ui.renderInboxFace(flatHost,face('z','LOW_QUALITY'),false);
+ const flat=flatHost.children[0],flatBefore=calls.length;await flat.confirmButton.fire('click');
  assert(flat.confirmButton.textContent.includes('✓'));assert.equal(calls.length,flatBefore+1);
  await ui.loadInbox(false);assert.equal(ui.state.inboxConfirmationsPending,false);
 })().catch(e=>{console.error(e);process.exitCode=1;});

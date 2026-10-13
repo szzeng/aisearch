@@ -1,8 +1,8 @@
 # Development status
 
-## P4-PERSON-INBOX-COMPARE-A — TODO / 待整理人脸与候选头像并排对照（仅任务卡）
+## P4-PERSON-INBOX-COMPARE-A — SCOPED IMPLEMENTED / 定向合成验收通过，待用户页面观察
 
-[任务卡](tasks/P4-PERSON-INBOX-COMPARE-A.md)。待整理候选分组摘要与展开逐脸卡并排显示待确认脸/正确候选人物现有头像；组键 person_id 精确对齐、无头像安全退化，不改自动匹配、人工归属、分页或批量管理。原则上只改 `persons-albums.js`、`persons.css`，确有需要才追加有界只读头像投影。推荐 **GPT-6 / Medium**，最少定向 JUnit、Node 语法与 diff 检查 + 用户手测；**尚未实施或测试**，不访问真实图库。
+[任务卡](tasks/P4-PERSON-INBOX-COMPARE-A.md)、[执行报告](reports/P4-PERSON-INBOX-COMPARE-A.md)。组摘要头像按 `candidate:<person_id>` 精确对齐代表脸建议；逐脸参考头像、名称和确认对象共用首选建议；无头像安全占位，无列表渲染人物请求。定向 JUnit **3/0/0/0**、Node 语法及 diff-check 通过，JUnit：`test-results/P4-PERSON-INBOX-COMPARE-A.xml`。真实页面手测待用户；未访问真实图库/PhotoSearchData，未跑全仓/GPU/性能/打包。未提交。
 
 ## P4-UI-DIALOG-ESC-A — SCOPED PASS / Esc 退出与照片弹窗关闭优化
 

@@ -58,7 +58,7 @@
       const img = node("img"); img.alt = label; img.loading = priority ? "eager" : "lazy";
       if (priority) img.fetchPriority = "high";
       img.addEventListener("load", () => wrap.classList.add("pa-image-ready"));
-      img.addEventListener("error", () => { img.hidden = true; fallback.textContent = className && className.includes("avatar") ? "头像暂时无法加载" : "图片暂时无法加载"; }); img.src = mediaURL(url); wrap.append(img);
+      img.addEventListener("error", () => { img.hidden = true; fallback.textContent = className && className.includes("reference-avatar") ? "暂无参考头像" : className && className.includes("avatar") ? "头像暂时无法加载" : "图片暂时无法加载"; }); img.src = mediaURL(url); wrap.append(img);
     }
     return wrap;
   }
@@ -789,13 +789,24 @@
     selection.addEventListener("click", (event) => { if (event.shiftKey && selectInboxRange(card, event)) event.preventDefault(); });
     selection.addEventListener("change", () => { state.selectAnchors.set("faces:" + card.rangeScope, card.faceId); toggleInboxFace(card.faceId, card.hiddenFace); });
     selection.hidden = !state.batchMode; card.selectionButton = selection;
+    const suggestion = face.suggestions && face.suggestions[0];
+    const comparison = node("div", undefined, "pa-inbox-face-comparison");
+    const left = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-face");
     const avatar = node("label", undefined, "pt-avatar-select");
     avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
     selection.disabled = !state.batchMode || state.writing || state.faceVisibilityBusy;
     avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id); } });
-    card.append(avatar, button("查看整张照片", () => preview(face.asset_id)), node("span", organizationText(face), "hint"));
+    left.append(avatar, node("span", "待整理", "hint"));
+    comparison.append(left);
+    if (!hiddenFace && suggestion) {
+      const right = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-reference");
+      const reference = picture(suggestion.thumbnail_url, "参考头像：" + name(suggestion), "pa-avatar pa-reference-avatar");
+      if (!suggestion.thumbnail_url) reference.children[0].textContent = "暂无参考头像";
+      right.append(reference, node("span", "可能是" + name(suggestion), "hint"));
+      comparison.append(right);
+    }
+    card.append(comparison, button("查看整张照片", () => preview(face.asset_id)), node("span", organizationText(face), "hint"));
     if (!state.batchMode && !hiddenFace) {
-      const suggestion = face.suggestions && face.suggestions[0];
       if (suggestion) {
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
         confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
@@ -873,7 +884,20 @@
   function renderInboxGroup(group, kind, hiddenFace) {
     const details = node("details", undefined, "pa-inbox-group");
     const summary = node("summary", undefined, "pa-person-card");
-    summary.append(picture(group.face.thumbnail_url, "可能是" + (group.candidate_name || "未命名的人"), "pa-avatar"),
+    const faceSide = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-face");
+    faceSide.append(picture(group.face.thumbnail_url, "待整理人脸", "pa-avatar"), node("span", "待整理", "hint"));
+    const keyMatch = /^candidate:([1-9]\d*)$/.exec(String(group.group_key || ""));
+    const candidateId = keyMatch ? keyMatch[1] : null;
+    const candidate = candidateId && group.face && Array.isArray(group.face.suggestions)
+      ? group.face.suggestions.find((item) => String(item.person_id) === candidateId)
+      : null;
+    const referenceSide = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-reference");
+    const reference = picture(candidate && candidate.thumbnail_url, "参考头像：" + (candidate ? name(candidate) : group.candidate_name || "候选人物"), "pa-avatar pa-reference-avatar");
+    if (!candidate || !candidate.thumbnail_url) reference.children[0].textContent = "暂无参考头像";
+    referenceSide.append(reference, node("span", "参考头像", "hint"));
+    const comparison = node("div", undefined, "pa-inbox-face-comparison pa-inbox-group-comparison");
+    comparison.append(faceSide, referenceSide);
+    summary.append(comparison,
       node("strong", "可能是" + (group.candidate_name || "未命名的人")),
       node("span", group.photo_count + (hiddenFace ? " 张已忽略照片" : " 张待确认照片"), "hint"));
     const list = node("div", undefined, "pa-people-grid pa-inbox-group-faces");
