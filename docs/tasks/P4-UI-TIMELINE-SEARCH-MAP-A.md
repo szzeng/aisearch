@@ -1,5 +1,8 @@
 # P4-UI-TIMELINE-SEARCH-MAP-A — 搜索结果与地图照片时间模式接入
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[search](../mockups/ui2-final-7ebf/10-search.svg)、[search-advanced](../mockups/ui2-final-7ebf/25-search-advanced.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)、[search-added](../mockups/ui2-final-7ebf/11-search-added.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：分阶段上线与去除地点全量 ID 搜索（最高优先）
 
 - 新前置 A、C、CORE、B、D、E。**阶段一优先且必须闭环**：人物/合集/地点标题「搜索此…」→唯一顶部框+固定身份 chip→服务端权威 scope 内 FILTER_ONLY/FTS/向量召回→两页分页/版本失效→详情预览及返回。人、合集、地点各记录 `PERSON_SCOPE_PASS/COLLECTION_SCOPE_PASS/PLACE_SCOPE_PASS` 或 DEFERRED；仅对应范围真通过才显示其按钮。**PERSON_SCOPE_PASS 前不得移除旧 `pa-search-photos`**。固定 scope 与文本新条件作 AND，冲突明确提示，绝不暗中变全库；按钮只聚焦，空词零编码器。

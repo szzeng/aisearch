@@ -1,5 +1,8 @@
 # P4-UI-PLACES-E — 地点照片、地图与整理工具
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[places](../mockups/ui2-final-7ebf/08-places.svg)、[place](../mockups/ui2-final-7ebf/09-place.svg)、[place-unknown](../mockups/ui2-final-7ebf/18-place-unknown.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：地点 SQL 权威成员接口供搜索复用（最高优先）
 
 - 不只优化地点相册时间轴页：E 应交付**单选定地点可复用的参数化 SQL 成员谓词/有界成员页 adapter**（`place_kind+place_key`、活动包、人工赋值/排除、地点/筛选 revision），以便后续 SEARCH-MAP 的 FILTER_ONLY、FTS 和向量候选在召回前共享同一权威成员资格。非 CN 与 CN facet 必须分别保持原归属和父级身份；不得整库 Python `_album_rows → _group_rows → offset` 或将全地点成员 ID 一次性收集成巨型 `IN (...)`。

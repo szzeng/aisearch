@@ -1,5 +1,8 @@
 # P4-UI-PEOPLE-D — 人物相册与整理入口层级
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[people](../mockups/ui2-final-7ebf/05-people.svg)、[person](../mockups/ui2-final-7ebf/06-person.svg)、[collection](../mockups/ui2-final-7ebf/07-collection.svg)、[person-unknown](../mockups/ui2-final-7ebf/16-person-unknown.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：搜索过渡兼容与人物范围
 
 - 执行时 A、C、CORE、B 应已验收，但 **C 的页头单框成功不代表 scoped 搜索后端已成功**。目前 `persons.html#pa-search-photos` 和 `persons-albums.js` 的人物内搜图是可用旧流程；SEARCH-MAP 对 PERSON_SCOPE_PASS 之前，D 不得删除或改成不可用的装饰入口。旧框是过渡例外，不代表最终产品允许双自然语言输入。

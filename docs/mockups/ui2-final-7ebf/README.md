@@ -1,0 +1,42 @@
+# aisearch UI 2.0 · 搜索与相册范围最终视觉参考
+
+**基线**：`szzeng/aisearch` master 的设计提交 `7ebf1966f101f5a8d3c8940efe2d2a40999b836a`（2026-10-13）；本目录素材是依据该版规则**独立重绘的 29 张 SVG 设计图**，而非会话中浏览器导出的 PNG 二进制或逐像素转换。原高清 PNG/ZIP 可从原会话附件下载。
+
+- [可交互参考页面](./index.html)：单一全局搜索、人物/合集/地点“搜索此…”与可取消范围标签、输入后模拟搜索、可查看高级筛选；**不调用真实 API**。
+- [逐页图集](./gallery.html)：29种桌面与窄屏 SVG 状态均可浏览。
+- [产品与性能规范](../../plans/P4-UI-TIMELINE-V2.md)，实施顺序 **A → C → CORE → B → D → E → SEARCH-MAP → F**。A 期间旧搜索继续可用；C 无损迁移原输入与高级筛选；SEARCH-MAP 验证真实范围后才启用快捷按钮，并在 PERSON_SCOPE_PASS 后退场人物旧表单。
+- 拍摄日期未知/待就绪在人物、合集与地点成员范围内都保留，明确筛选年份时才限制可信拍摄日期。目录按照片数、同量最新入库排序。
+- 20万照片 SQL 有界分页/年月聚合按需/DOM资源窗口回收为**设计目标**，SVG与HTML不能作为性能测试证明。
+- **视觉优先级**：本目录在 UI2 最终原型展示规则方面优先于 `ui2-large/` 的旧 SVG（后者含重复搜索框和旧侧栏“搜索”）。原型页面截图的确切像素仍以用户上一轮会话本地 ZIP 原件为准。
+
+## 页面索引
+
+1. [全部照片 · 拍摄时间轴](./01-photos.svg)
+2. [全部照片 · 入库时间轴](./02-added.svg)
+3. [拍摄日期未知](./03-unknown.svg)
+4. [日期待就绪](./04-pending.svg)
+5. [人物目录](./05-people.svg)
+6. [张三人物相册](./06-person.svg)
+7. [家庭合集](./07-collection.svg)
+8. [地点目录](./08-places.svg)
+9. [深圳地点相册](./09-place.svg)
+10. [全局自然语言搜索](./10-search.svg)
+11. [入库时间搜索](./11-search-added.svg)
+12. [日期未知搜索](./12-search-unknown.svg)
+13. [搜索张三相册](./13-search-person.svg)
+14. [搜索家庭合集](./14-search-collection.svg)
+15. [搜索深圳地点](./15-search-place.svg)
+16. [张三 · 日期未知](./16-person-unknown.svg)
+17. [家庭合集 · 日期未知](./17-collection-unknown.svg)
+18. [深圳 · 日期未知](./18-place-unknown.svg)
+19. [张三 · 日期待就绪](./19-person-pending.svg)
+20. [深圳 · 日期待就绪](./20-place-pending.svg)
+21. [人物整理](./21-organize.svg)
+22. [地图相册](./22-map.svg)
+23. [照片查看器](./23-viewer.svg)
+24. [图库管理](./24-management.svg)
+25. [全局搜索 · 高级筛选](./25-search-advanced.svg)
+26. [张三 · 等待输入](./26-search-wait.svg)
+27. [窄屏 · 人物相册](./27-narrow-person.svg)
+28. [窄屏 · 范围搜索](./28-narrow-scoped.svg)
+29. [窄屏 · 全局搜索](./29-narrow-search.svg)

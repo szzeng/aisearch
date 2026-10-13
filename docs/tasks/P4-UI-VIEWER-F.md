@@ -1,5 +1,8 @@
 # P4-UI-VIEWER-F — 查看照片外观与必要往返收口
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[viewer](../mockups/ui2-final-7ebf/23-viewer.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：范围与日期往返的分层验收
 
 - F 收口**已启用**的 A/C/CORE/B/D/E/SEARCH-MAP 路径；预览进入时保存当前有效 scope 身份/版本、time_basis、group_by、年月过滤或定位、结果候选/分页快照、滚动锚点和原焦点；关闭/浏览器返回尽量复用有效快照，不重复跑 NLP/向量搜索。scope 或时间投影修订已过期，提示重新查询/定位，不能把旧照片插回另一个成员范围。

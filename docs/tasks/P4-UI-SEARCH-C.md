@@ -1,5 +1,8 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[search](../mockups/ui2-final-7ebf/10-search.svg)、[search-advanced](../mockups/ui2-final-7ebf/25-search-advanced.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：C 提前第二张，原表单无损迁移（最高优先）
 
 - **仅依赖 A，紧随 A 施工**；不等待 CORE/B/D/E。核对现有 `search.html` 的 `#search-form`、`#query-text` 与 `search.js`。只把原文字搜索输入及必要提交控件移到页头唯一位置；来源、人物、地点、拍摄范围等**高级筛选仍在结果区可展开**。保留原 ID、同一 form/submit 和会话监听；如输入框在表单 DOM 外，允许标准 HTML `form="search-form"` 关联，必须在浏览器验证 Enter/点击各只发一次请求。禁止新建第二套解析器、表单监听或把整套高级表单塞进页头。

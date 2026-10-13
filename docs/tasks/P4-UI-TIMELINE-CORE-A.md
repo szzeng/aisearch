@@ -1,5 +1,8 @@
 # P4-UI-TIMELINE-CORE-A — 共享照片时间轴核心与只读日期查询
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[added](../mockups/ui2-final-7ebf/02-added.svg)、[unknown](../mockups/ui2-final-7ebf/03-unknown.svg)、[pending](../mockups/ui2-final-7ebf/04-pending.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：时间抽取变化与前端有界资源（最高优先）
 
 - **新前置 A、C**；C 只提供可用全局搜索输入，不依赖时间轴。CORE 不修改 C 的搜索输入/提交。对后台 `pending→trusted/unknown`、已有日期重抽取、规则版本切换、新照片入库等**可能改变排序/桶成员**的情形核查实际修订来源，给日期页、period 计数和游标提供低开销一致性保护。不能假设每次日期抽取均递增 `catalog_filter_revision`；旧游标遇变化必须明确失效或利用已验证的一致读视图，不能因顺序改变造成漏/重复。若没有可用修订信号，写明阻断和最小后续依赖；不得悄悄改 schema/写事务，也不得每次分页全库扫描比对。

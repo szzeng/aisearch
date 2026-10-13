@@ -1,0 +1,69 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>aisearch UI 2.0 最新确认稿 · 7ebf1966</title><style>
+:root{font-family:system-ui,'Microsoft Yahei',sans-serif;color:#284b4c;background:#eff5f2}*{box-sizing:border-box}
+body{margin:0}header{padding:16px 23px;background:#fff;border-bottom:1px solid #d5e6dd}
+h1{font-size:21px;margin:0}header p{margin:6px 0 0;color:#78948c;font-size:12px}
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr);min-height:calc(100vh - 82px)}
+aside{overflow:auto;max-height:calc(100vh - 82px);padding:14px;background:#fff;border-right:1px solid #dce9e5}
+aside button{width:100%;text-align:left;display:block;border:0;border-radius:9px;background:transparent;padding:9px 11px;color:#536f6d;cursor:pointer;font:inherit;font-size:13px}
+aside button.active,aside button:hover{background:#e5f5ed;color:#167767}
+main{padding:17px 20px;min-width:0}h2{font-size:19px;margin:0 0 7px}
+.help{color:#748e8c;font-size:12px;margin:4px 0 11px}.toolbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px}
+.toolbar button{font:inherit;font-size:12px;color:#1f8070;background:#fff;border:1px solid #b9ddd1;border-radius:9px;padding:8px 11px;cursor:pointer}
+.frame{max-width:1440px;position:relative;aspect-ratio:1440/900;margin:0 auto;border-radius:12px;overflow:hidden;background:#f5f8f8;box-shadow:0 6px 20px #0b433115}
+.frame.narrow{max-width:440px;aspect-ratio:440/900}
+.frame img{width:100%;height:100%;object-fit:contain;display:block}
+.topform{position:absolute;top:5.9%;left:18.0%;width:60%;height:5.5%;background:#fff;border:1px solid #a7d9cb;border-radius:9px;display:flex;align-items:center;gap:5px;box-shadow:0 1px 4px #15463815;padding:3px 8px}
+.topform input{border:0;outline:none;flex:1;width:30px;font-size:clamp(10px,1.1vw,15px);background:transparent}
+.scope{background:#e0f4e9;color:#1b7468;border:0;border-radius:7px;white-space:nowrap;font-size:clamp(9px,.9vw,13px);cursor:pointer;padding:4px 7px}
+.topform button.submit{background:#228c79;color:#fff;border:0;border-radius:6px;padding:5px 9px;cursor:pointer;font-size:12px}
+.scope:empty{display:none}
+.albumclick{position:absolute;left:84.3%;top:14.0%;width:12%;height:4.6%;cursor:pointer;background:#228c7aeb;color:#fff;border-radius:9px;border:0;font-size:clamp(9px,1vw,14px)}
+.advancedclick{position:absolute;left:18.1%;top:50.4%;width:13%;height:5%;cursor:pointer;background:transparent;border:2px solid transparent;border-radius:8px}
+.advancedclick:hover{border-color:#208c7f}
+.status{padding:11px 0;font-size:13px;color:#517d71;min-height:36px}
+footer{padding:10px 20px;color:#829a92;font-size:12px}
+@media(max-width:850px){.layout{grid-template-columns:1fr}aside{max-height:none;display:flex;gap:4px;white-space:nowrap;overflow:auto;padding:8px}aside button{width:auto;flex:none}main{padding:12px}.topform input{font-size:12px}.topform .submit{display:none}}
+.frame.narrow .topform{left:3%;top:14.7%;width:94%;height:5.8%}.frame.narrow .albumclick{left:4.7%;top:31.4%;width:32%;height:4.5%}
+</style></head><body>
+<header><h1>aisearch UI 2.0 · 最新效果与搜索页面</h1><p>设计依据：master HEAD 7ebf1966 · 29 个仓库可预览的静态 SVG 状态 · 本页面仅模拟交互，不连接照片服务</p></header>
+<div class="layout"><aside id="nav"></aside><main><h2 id="pageTitle">页面效果预览</h2>
+<p class="help">切换左侧页面；或点击相册截图里的“搜索此相册/合集/地点”，然后在截图顶部输入关键词并按 Enter。查询不会发送到服务器。</p>
+<div class="toolbar"><button data-route="search">全局搜索</button><button data-route="search-advanced">高级筛选</button><button data-route="person">张三人物相册</button><button data-route="collection">家庭合集</button><button data-route="place">深圳地点</button><button data-route="unknown">日期未知</button><button data-route="added">入库时间轴</button></div>
+<div class="frame" id="frame"><img id="image" alt="当前效果图">
+<form class="topform" id="searchForm"><button type="button" class="scope" id="scope" title="点按清除固定相册范围"></button><input id="input" type="search" aria-label="唯一自然语言搜索框" placeholder="搜索照片、人物、地点、时间……"><button class="submit" type="submit">搜索</button></form>
+<button class="albumclick" type="button" id="albumButton" hidden>搜索此相册</button>
+<button class="advancedclick" type="button" id="advancedButton" title="查看高级筛选" hidden aria-label="查看高级筛选"></button>
+</div><div class="status" id="status">非真实图库，所有照片及统计均为界面示意。</div>
+<p class="help"><a href="gallery.html">浏览全部 SVG 页面图集</a> · <a href="README.md">设计说明</a> · 刷新 / 直接打开页面不会修改仓库产品代码。</p>
+</main></div><footer>施工顺序 A → C → CORE → B → D → E → SEARCH-MAP → F；人物旧局部搜索直至 PERSON_SCOPE_PASS 才退场。20 万以上目标尚未经测量。</footer>
+<script>
+const pages=[{"id":"photos","label":"全部照片 · 拍摄时间轴","file":"01-photos.svg"},{"id":"added","label":"全部照片 · 入库时间轴","file":"02-added.svg"},{"id":"unknown","label":"拍摄日期未知","file":"03-unknown.svg"},{"id":"pending","label":"日期待就绪","file":"04-pending.svg"},{"id":"people","label":"人物目录","file":"05-people.svg"},{"id":"person","label":"张三人物相册","file":"06-person.svg"},{"id":"collection","label":"家庭合集","file":"07-collection.svg"},{"id":"places","label":"地点目录","file":"08-places.svg"},{"id":"place","label":"深圳地点相册","file":"09-place.svg"},{"id":"search","label":"全局自然语言搜索","file":"10-search.svg"},{"id":"search-added","label":"入库时间搜索","file":"11-search-added.svg"},{"id":"search-unknown","label":"日期未知搜索","file":"12-search-unknown.svg"},{"id":"search-person","label":"搜索张三相册","file":"13-search-person.svg"},{"id":"search-collection","label":"搜索家庭合集","file":"14-search-collection.svg"},{"id":"search-place","label":"搜索深圳地点","file":"15-search-place.svg"},{"id":"person-unknown","label":"张三 · 日期未知","file":"16-person-unknown.svg"},{"id":"collection-unknown","label":"家庭合集 · 日期未知","file":"17-collection-unknown.svg"},{"id":"place-unknown","label":"深圳 · 日期未知","file":"18-place-unknown.svg"},{"id":"person-pending","label":"张三 · 日期待就绪","file":"19-person-pending.svg"},{"id":"place-pending","label":"深圳 · 日期待就绪","file":"20-place-pending.svg"},{"id":"organize","label":"人物整理","file":"21-organize.svg"},{"id":"map","label":"地图相册","file":"22-map.svg"},{"id":"viewer","label":"照片查看器","file":"23-viewer.svg"},{"id":"management","label":"图库管理","file":"24-management.svg"},{"id":"search-advanced","label":"全局搜索 · 高级筛选","file":"25-search-advanced.svg"},{"id":"search-wait","label":"张三 · 等待输入","file":"26-search-wait.svg"},{"id":"narrow-person","label":"窄屏 · 人物相册","file":"27-narrow-person.svg"},{"id":"narrow-scoped","label":"窄屏 · 范围搜索","file":"28-narrow-scoped.svg"},{"id":"narrow-search","label":"窄屏 · 全局搜索","file":"29-narrow-search.svg"}];
+const map=Object.fromEntries(pages.map(x=>[x.id,x]));
+const img=document.getElementById('image'),input=document.getElementById('input'),scope=document.getElementById('scope'),frame=document.getElementById('frame'),status=document.getElementById('status'),ab=document.getElementById('albumButton'),adv=document.getElementById('advancedButton');
+const names={person:'张三的照片',collection:'家庭合集',place:'深圳市 · 广东省'};
+let current='photos',fixed='',entered='';
+const searchIds=new Set(['search','search-added','search-unknown','search-person','search-collection','search-place','search-wait','search-advanced','narrow-scoped','narrow-search']);
+function render(id){
+ current=map[id]?id:'photos';const x=map[current];img.src=x.file;img.alt=x.label;document.getElementById('pageTitle').textContent=x.label;
+ frame.classList.toggle('narrow',current.startsWith('narrow'));ab.hidden=!['person','collection','place','narrow-person'].includes(current);adv.hidden=!searchIds.has(current)||current==='search-advanced';
+ ab.textContent=current==='collection'?'搜索此合集':current==='place'?'搜索此地点':'搜索此相册';
+ if(searchIds.has(current)){if(current==='search-person'||current==='search-wait'||current==='narrow-scoped')fixed='person';if(current==='search-collection')fixed='collection';if(current==='search-place')fixed='place';}
+ else fixed='';
+ scope.textContent=fixed?names[fixed]+' ×':'';input.placeholder=fixed?'在'+names[fixed]+'中查找，例如：海边':'搜索照片、人物、地点、时间……';
+ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b.dataset.route===current));
+ status.textContent=fixed?'当前范围：'+names[fixed]+'。取消范围标签后恢复全图库。':'默认全局搜索，当前页面仅展示设计状态。';
+ history.replaceState(null,'','#'+encodeURIComponent(current));
+}
+function goto(id){entered='';input.value='';render(id);}
+function setScoped(target){fixed=target;input.value='';entered='';render('search-wait');fixed=target;scope.textContent=names[fixed]+' ×';status.textContent='已选 '+names[fixed]+'；等待输入，不自动搜图。';input.focus();}
+document.getElementById('nav').innerHTML=pages.map(x=>'<button type="button" data-route="'+x.id+'">'+x.label+'</button>').join('');
+document.body.addEventListener('click',e=>{const b=e.target.closest('button[data-route]');if(b)goto(b.dataset.route)});
+ab.addEventListener('click',()=>setScoped(current==='collection'?'collection':current==='place'?'place':'person'));
+scope.addEventListener('click',()=>{if(!fixed)return;fixed='';scope.textContent='';input.placeholder='搜索全部照片……';status.textContent='范围已清除；后续将使用全图库并建立新查询会话。';if(input.value.trim())runSearch();else render('search');});
+adv.addEventListener('click',()=>{const q=input.value;render('search-advanced');input.value=q;});
+function runSearch(){const q=input.value.trim();if(!q){status.textContent='空查询不会自动调用语义模型。';input.focus();return;}const target=fixed==='person'?'search-person':fixed==='collection'?'search-collection':fixed==='place'?'search-place':q.includes('没有拍摄日期')?'search-unknown':/(入库|导入|加入图库)/.test(q)?'search-added':'search';const f=fixed;render(target);fixed=f;scope.textContent=f?names[f]+' ×':'';input.value=q;status.textContent='模拟结果：'+(f?'范围 '+names[f]+' · ':'全局 · ')+q+'；实际范围过滤在服务端实施后生效。';}
+document.getElementById('searchForm').addEventListener('submit',e=>{e.preventDefault();runSearch();});
+input.addEventListener('focus',()=>{if(!searchIds.has(current)&&fixed){fixed='';scope.textContent='';}});
+render(decodeURIComponent(location.hash.slice(1)||'photos'));
+</script></body></html>

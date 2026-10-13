@@ -1,5 +1,8 @@
 # P4-UI-PHOTOS-B — 照片浏览与图库管理层级
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[added](../mockups/ui2-final-7ebf/02-added.svg)、[unknown](../mockups/ui2-final-7ebf/03-unknown.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：浏览器性能与返回验证
 
 - 新前置为 A、C、CORE；页头唯一查询框由 C 交付，本卡不能复制监听或重造查询框。照片/来源只接 CORE 共用日期游标，不在前端拉取全部照片分组。

@@ -1,5 +1,8 @@
 # P4-UI-SHELL-A — 统一相册外壳与日常入口
 
+> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[narrow-person](../mockups/ui2-final-7ebf/27-narrow-person.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+
+
 ## 2026-10-13 最终施工补充：过渡期不能出现死搜索框（最高优先）
 
 - **执行顺序修改为 A → C → CORE → B → D → E → SEARCH-MAP → F。** A 仅统一导航和布局；在 C 完成前继续保留原本可工作的「搜索图片」入口和旧 `/search` 表单。不得出现能输入却无法按 Enter 提交的页头占位搜索框，不得提前删除旧搜索入口。C 验收后才要求所有页的顶部唯一全局输入框达到最终效果。
