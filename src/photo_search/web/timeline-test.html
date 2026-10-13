@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>照片时间轴组件检查</title>
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-f1-6" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui-timeline-core-a-1" />
+    <script src="/web/photo-timeline.js?v=p4-ui-timeline-core-a-1" defer></script>
+  </head>
+  <body>
+    <main>
+      <p><a href="/">返回应用</a></p>
+      <h1>照片时间轴组件检查</h1>
+      <p class="hint">使用当前隔离服务的登录会话。此页面只检验共享组件，不接入首页、人物、合集或地点布局。</p>
+      <p><button id="simulate-scroll" type="button">运行 30 页滚动资源模拟</button></p>
+      <pre id="simulation-results" class="state-block" role="status" aria-live="polite"></pre>
+      <div id="timeline"></div>
+    </main>
+    <script>
+      window.addEventListener("DOMContentLoaded", function () {
+        var mount = function (adapter) { window.timelineTest = window.PhotoTimeline.mount({
+          host: document.getElementById("timeline"),
+          scope: { kind: "all" },
+          timeBasis: "capture",
+          groupBy: "day",
+          adapter: adapter || {
+            onOpen: function (item) {
+              document.querySelector(".photo-timeline__status").textContent = "选择照片 " + item.asset_id + "（适配器回调已触发）";
+            }
+          }
+        }); };
+        mount();
+        document.getElementById("simulate-scroll").addEventListener("click", function () {
+          if (window.timelineTest) window.timelineTest.dispose();
+          var current = 0;
+          var checkpoints = [];
+          var result = document.getElementById("simulation-results");
+          mount({
+            fetchPage: function (params) {
+              current = params.cursor ? Number(params.cursor) : 0;
+              var pageNumber = current + 1;
+              var assets = [];
+              for (var i = 0; i < 50; i += 1) {
+                var id = (pageNumber - 1) * 50 + i + 1;
+                assets.push({ asset_id: id, thumbnail_url: "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=",
+                  display_time: "2022-02-28T23:59:59.000", time_label: "EXIF 原始时间", date_state: "capture",
+                  group_key: "2022-02-28", time_source: "EXIF_ORIGINAL", time_confidence: "MEDIUM",
+                  time_basis: "capture", anchor: "test-anchor-" + id });
+              }
+              return Promise.resolve({ assets: assets, next_cursor: pageNumber < 30 ? String(pageNumber) : null });
+            },
+            onPage: function (body) {
+              var snapshot = window.timelineTest.snapshot();
+              if ([1, 10, 20, 30].indexOf(snapshot.loadedPages) >= 0) {
+                checkpoints.push({ page: snapshot.loadedPages, imageNodes: document.querySelectorAll(".photo-timeline__card img").length,
+                  groupHeadings: document.querySelectorAll(".photo-timeline__heading").length,
+                  activePages: snapshot.activePages, detailPages: snapshot.detailPages,
+                  anchorPages: snapshot.anchorPages, inFlight: snapshot.inFlight,
+                  scrollTop: Math.round(window.scrollY) });
+                result.textContent = JSON.stringify(checkpoints, null, 2);
+              }
+            }
+          });
+          var tries = 0;
+          var timer = window.setInterval(function () {
+            tries += 1;
+            window.scrollTo(0, document.documentElement.scrollHeight);
+            if (window.timelineTest && window.timelineTest.snapshot().loadedPages >= 30) {
+              window.clearInterval(timer); result.textContent = JSON.stringify(checkpoints, null, 2);
+            } else if (tries > 240) {
+              window.clearInterval(timer); result.textContent = "SIMULATION_TIMEOUT\n" + JSON.stringify(checkpoints, null, 2);
+            }
+          }, 80);
+        });
+      });
+    </script>
+  </body>
+</html>

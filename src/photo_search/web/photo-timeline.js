@@ -1,0 +1,443 @@
+/* Shared, bounded photo timeline. Pages plug in fetchPage/renderAsset/onOpen adapters. */
+(function (root) {
+  "use strict";
+
+  var PAGE_SIZE = 50;
+  var ACTIVE_PAGES = 8;
+  var DETAIL_PAGES = 10;
+  var ANCHOR_PAGES = 64;
+  var API = "/api/v1";
+
+  function element(tag, className, value) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined) node.textContent = String(value);
+    return node;
+  }
+
+  function apiFetch(path, signal) {
+    var token = "";
+    String(document.cookie || "").split(";").forEach(function (part) {
+      var piece = part.trim();
+      if (piece.indexOf("ps_csrf=") === 0) token = decodeURIComponent(piece.slice(8));
+    });
+    return fetch(path, { credentials: "same-origin", signal: signal,
+      headers: token ? { "X-CSRF-Token": token } : {} }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) {
+          var error = new Error(body.message || "时间轴请求失败");
+          error.code = body.code || "REQUEST_FAILED";
+          error.status = response.status;
+          throw error;
+        }
+        return body;
+      });
+    });
+  }
+
+  function create(options) {
+    var host = options.host;
+    var adapter = options.adapter || {};
+    var state = {
+      generation: 0, periodsGeneration: 0, disposed: false, busy: false, failed: false,
+      stalePaused: false, staleAnchor: null, lastOpenParams: null, assetsRevision: null, periodsRevision: null,
+      cursor: null, hasMore: true, pageNumber: 0, pages: [],
+      active: [], detailCache: [], anchorCache: [],
+      basis: options.timeBasis || "capture", group: options.groupBy || "day",
+      bucket: "all", year: null, month: null, scope: options.scope || { kind: "all" },
+      seekYear: null, seekMonth: null,
+      observer: null, request: null, restoredAssetId: null, lastGroupToken: null,
+    };
+    host.classList.add("photo-timeline");
+    var controls = element("div", "photo-timeline__controls");
+    var basis = element("select", "photo-timeline__basis");
+    [["capture", "拍摄时间"], ["library", "加入图库时间"]].forEach(function (pair) {
+      var opt = element("option", "", pair[1]); opt.value = pair[0]; basis.append(opt);
+    });
+    basis.value = state.basis;
+    var grouping = element("select", "photo-timeline__group");
+    [["day", "按日"], ["month", "按月"], ["year", "按年"]].forEach(function (pair) {
+      var opt = element("option", "", pair[1]); opt.value = pair[0]; grouping.append(opt);
+    });
+    grouping.value = state.group;
+    var bucket = element("select", "photo-timeline__bucket");
+    [["all", "全部日期"], ["capture", "可信拍摄日期"], ["unknown", "没有可信拍摄日期"], ["pending", "日期待就绪"]].forEach(function (pair) {
+      var opt = element("option", "", pair[1]); opt.value = pair[0]; bucket.append(opt);
+    });
+    var year = element("select", "photo-timeline__year"); year.setAttribute("aria-label", "筛选年份");
+    var month = element("select", "photo-timeline__month"); month.setAttribute("aria-label", "筛选月份");
+    var filter = element("button", "", "筛选年月"); filter.type = "button";
+    var jump = element("button", "", "定位到年月"); jump.type = "button";
+    var status = element("p", "photo-timeline__status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+    var groups = element("div", "photo-timeline__groups"); groups.setAttribute("aria-live", "polite");
+    var sentinel = element("div", "photo-timeline__sentinel"); sentinel.setAttribute("aria-hidden", "true");
+    var retry = element("button", "photo-timeline__retry", "重试加载"); retry.type = "button"; retry.hidden = true;
+    var next = element("button", "photo-timeline__next", "加载更多"); next.type = "button"; next.hidden = true;
+    controls.append(basis, grouping, bucket, year, month, filter, jump);
+    host.replaceChildren(controls, status, groups, sentinel, retry, next);
+
+    function scopeParams() {
+      var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis,
+        group_by: state.group, bucket: state.bucket, limit: String(PAGE_SIZE) });
+      ["source_id", "person_id", "collection_id"].forEach(function (key) {
+        if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
+      });
+      if (state.year !== null) params.set("year", String(state.year));
+      if (state.month !== null) params.set("month", String(state.month));
+      if (state.seekYear !== null) params.set("seek_year", String(state.seekYear));
+      if (state.seekMonth !== null) params.set("seek_month", String(state.seekMonth));
+      return params;
+    }
+
+    function setMessage(message, isError) {
+      status.textContent = message || "";
+      status.classList.toggle("is-error", Boolean(isError));
+    }
+
+    function updateRevisionStatus() {
+      if (state.assetsRevision !== null && state.periodsRevision !== null &&
+          String(state.assetsRevision) !== String(state.periodsRevision)) {
+        setMessage("日期摘要与照片列表版本不一致，摘要暂不可用。", true);
+        return false;
+      }
+      return true;
+    }
+
+    function updateMonths(months) {
+      var selected = state.month === null ? "" : String(state.month);
+      month.replaceChildren();
+      var any = element("option", "", "全部月份"); any.value = ""; month.append(any);
+      (months || []).slice().sort(function (a, b) { return Number(b.month) - Number(a.month); }).forEach(function (item) {
+        var option = element("option", "", String(item.month).padStart(2, "0") + "月 · " + item.count);
+        option.value = String(item.month); month.append(option);
+      });
+      month.value = selected;
+    }
+
+    function loadPeriods(selectedYear) {
+      var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis });
+      ["source_id", "person_id", "collection_id"].forEach(function (key) {
+        if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
+      });
+      if (selectedYear) params.set("year", String(selectedYear));
+      var generation = ++state.periodsGeneration;
+      state.periodsRevision = null;
+      return apiFetch(API + "/timeline/periods?" + params.toString()).then(function (body) {
+        if (state.disposed || generation !== state.periodsGeneration) return;
+        state.periodsRevision = body.catalog_filter_revision;
+        var sameRevision = updateRevisionStatus();
+        if (!selectedYear) {
+          var keep = state.year === null ? "" : String(state.year);
+          year.replaceChildren();
+          var allYears = element("option", "", "全部年份"); allYears.value = ""; year.append(allYears);
+          (body.years || []).forEach(function (item) {
+            var option = element("option", "", String(item.year) + "年 · " + item.count);
+            option.value = String(item.year); year.append(option);
+          });
+          year.value = keep;
+          updateMonths([]);
+        } else updateMonths(body.months || []);
+        if (sameRevision && state.basis === "capture" && body.counts) {
+          setMessage("有效照片 " + body.counts.effective_total + " · 可信 " + body.counts.trusted +
+            " · 无可信日期 " + body.counts.unknown + " · 待就绪 " + body.counts.pending, false);
+        }
+      }).catch(function (error) {
+        if (!state.disposed && generation === state.periodsGeneration) setMessage("日期摘要暂不可用：" + error.message, true);
+      });
+    }
+
+    function renderAsset(item) {
+      if (typeof adapter.renderAsset === "function") return adapter.renderAsset(item);
+      var card = element("button", "photo-timeline__card"); card.type = "button";
+      var image = element("img", "", ""); image.alt = "照片 " + item.asset_id; image.loading = "lazy";
+      image.decoding = "async"; image.src = item.thumbnail_url;
+      var label = element("span", "photo-timeline__date", item.display_time || item.time_label);
+      var source = element("small", "photo-timeline__source", item.time_label || "");
+      card.append(image, label, source);
+      card.addEventListener("click", function () { if (adapter.onOpen) adapter.onOpen(item, card); });
+      return card;
+    }
+
+    function groupLabel(item) {
+      if (!item.group_key) return item.date_state === "unknown" ? "没有可信拍摄日期" : "拍摄日期待就绪";
+      if (state.group === "year") return item.group_key + "年";
+      if (state.group === "month") return item.group_key.replace("-", "年") + "月";
+      return item.group_key.slice(0, 4) + "年" + item.group_key.slice(5, 7) + "月" + item.group_key.slice(8, 10) + "日";
+    }
+
+    function releasePage(page) {
+      if (!page || page.released) return;
+      page.height = Math.max(page.section.getBoundingClientRect().height, page.height || 1);
+      var pageNodes = Array.prototype.slice.call(groups.querySelectorAll(".photo-timeline__page"));
+      var pageIndex = pageNodes.indexOf(page.section);
+      var followingPage = pageIndex >= 0 ? state.pages.find(function (candidate) {
+        return candidate.section === pageNodes[pageIndex + 1];
+      }) : null;
+      if (followingPage) {
+        Array.prototype.slice.call(page.section.querySelectorAll(".photo-timeline__heading")).forEach(function (ownedHeading) {
+          var token = ownedHeading.dataset.group;
+          if (token !== followingPage.firstGroupToken || followingPage.headingTokens.indexOf(token) >= 0) return;
+          var heading = element("h3", "photo-timeline__heading", ownedHeading.textContent);
+          heading.dataset.group = token;
+          followingPage.section.insertBefore(heading, followingPage.section.firstChild);
+          followingPage.headingTokens.push(token);
+        });
+      }
+      page.section.className = "photo-timeline__spacer";
+      page.section.setAttribute("aria-label", "照片节点已回收；选择可按日期锚点重新定位");
+      var restore = element("button", "photo-timeline__restore", "重新定位此时间段");
+      restore.type = "button";
+      restore.addEventListener("click", function () { if (page.firstAnchor) reset(page.firstAnchor); });
+      page.section.replaceChildren(restore);
+      page.section.style.height = Math.ceil(page.height) + "px";
+      page.released = true;
+      page.assets = null;
+      state.active = state.active.filter(function (value) { return value !== page; });
+      state.pages = state.pages.filter(function (value) { return value !== page; });
+      coalesceSpacers();
+    }
+
+    function coalesceSpacers() {
+      var blocks = Array.prototype.slice.call(groups.querySelectorAll(".photo-timeline__spacer"));
+      for (var index = 1; index < blocks.length; index += 1) {
+        var previous = blocks[index - 1]; var current = blocks[index];
+        if (previous.nextElementSibling !== current) continue;
+        var total = Number(previous.style.height.replace("px", "")) + Number(current.style.height.replace("px", ""));
+        previous.style.height = Math.ceil(total) + "px";
+        var second = current.querySelector("button");
+        if (second && !previous.querySelector("button")) previous.append(second);
+        current.remove();
+      }
+    }
+
+    function trimPages(focusPage) {
+      var keep = state.active.slice();
+      while (keep.length > ACTIVE_PAGES) {
+        var focused = document.activeElement;
+        var candidates = keep.filter(function (page) { return !page.section.contains(focused); });
+        candidates.sort(function (a, b) { return Math.abs(b.number - focusPage.number) - Math.abs(a.number - focusPage.number); });
+        var victim = candidates[0] || keep[0];
+        keep = keep.filter(function (page) { return page !== victim; });
+        releasePage(victim);
+      }
+      var activeNumbers = state.active.map(function (page) { return page.number; });
+      state.pages.forEach(function (page) {
+        if (page && !page.released && activeNumbers.indexOf(page.number) < 0) releasePage(page);
+      });
+      state.detailCache = state.detailCache.slice(-DETAIL_PAGES);
+      state.detailCache.forEach(function (cached) {
+        if (cached.number < focusPage.number - DETAIL_PAGES + 1) cached.cacheAssets = null;
+      });
+      state.anchorCache = state.anchorCache.slice(-ANCHOR_PAGES);
+    }
+
+    function appendPage(body, generation) {
+      if (state.disposed || generation !== state.generation) return;
+      var section = element("section", "photo-timeline__page");
+      section.dataset.page = String(state.pageNumber + 1);
+      var page = { number: state.pageNumber + 1, section: section, assets: body.assets || [], height: 0,
+        released: false, firstAnchor: body.assets && body.assets[0] ? body.assets[0].anchor : null,
+        lastAnchor: body.assets && body.assets.length ? body.assets[body.assets.length - 1].anchor : null,
+        firstGroupToken: null, headingTokens: [],
+        cacheAssets: body.assets || [] };
+      var lastGroup = state.lastGroupToken;
+      page.assets.forEach(function (item, index) {
+        var label = groupLabel(item);
+        var groupToken = item.group_key || item.date_state;
+        if (index === 0) page.firstGroupToken = groupToken;
+        if (groupToken !== lastGroup) {
+          var heading = element("h3", "photo-timeline__heading", label);
+          heading.dataset.group = groupToken;
+          section.append(heading);
+          page.headingTokens.push(groupToken);
+        }
+        lastGroup = groupToken;
+        var card = renderAsset(item);
+        card.dataset.assetId = String(item.asset_id);
+        card.dataset.anchor = String(item.anchor || "");
+        section.append(card);
+      });
+      if (state.request && state.request.replacingPage) {
+        var existing = state.request.replacingPage;
+        groups.replaceChild(section, existing.section);
+        state.pages = state.pages.filter(function (value) { return value !== existing; });
+        state.request.replacingPage = null;
+      } else groups.insertBefore(section, sentinel);
+      state.pageNumber += 1;
+      state.pages.push(page); state.active.push(page); state.detailCache.push(page);
+      state.anchorCache.push({ number: page.number, first: page.firstAnchor, last: page.lastAnchor, height: section.getBoundingClientRect().height });
+      state.cursor = body.next_cursor || null; state.hasMore = Boolean(body.next_cursor);
+      state.assetsRevision = body.catalog_filter_revision;
+      updateRevisionStatus();
+      state.seekYear = null; state.seekMonth = null;
+      state.lastGroupToken = lastGroup;
+      state.failed = false; retry.hidden = true; next.hidden = !state.hasMore;
+      trimPages(page);
+      if (typeof adapter.onPage === "function") adapter.onPage(body, page);
+      return page;
+    }
+
+    function fetchNext() {
+      if (state.disposed || state.busy || !state.hasMore) return Promise.resolve(null);
+      state.busy = true; next.disabled = true; retry.hidden = true;
+      var generation = state.generation;
+      var params = scopeParams();
+      if (state.cursor) params.set("cursor", state.cursor);
+      var controller = typeof AbortController === "function" ? new AbortController() : null;
+      state.request = { controller: controller, replacingPage: null };
+      var request = adapter.fetchPage ? adapter.fetchPage(Object.fromEntries(params.entries()), controller && controller.signal) : apiFetch(API + "/timeline/assets?" + params.toString(), controller && controller.signal);
+      return Promise.resolve(request).then(function (body) { return appendPage(body, generation); }).catch(function (error) {
+        if (state.disposed || generation !== state.generation || (error && error.name === "AbortError")) return null;
+        if (error && error.code === "CATALOG_FILTER_REVISION_STALE") {
+          state.cursor = null; state.hasMore = false; state.stalePaused = true;
+          var lastPage = state.active.slice().sort(function (a, b) { return a.number - b.number; }).pop();
+          state.staleAnchor = lastPage ? lastPage.lastAnchor : null;
+          state.failed = false; next.hidden = true; retry.hidden = false;
+          retry.textContent = "重新定位时间轴";
+          setMessage("照片日期或成员已更新。已暂停续页；点击“重新定位时间轴”重新打开当前范围。", true);
+        } else {
+          state.failed = true; retry.hidden = false; setMessage("加载失败：" + error.message, true);
+        }
+        return null;
+      }).finally(function () {
+        if (generation === state.generation) {
+          state.busy = false; next.disabled = false; state.request = null;
+        }
+      });
+    }
+
+    function reset(keepAnchor, openingParams) {
+      var oldAnchor = keepAnchor || null;
+      state.generation += 1;
+      if (state.request && state.request.controller) state.request.controller.abort();
+      state.busy = false; state.failed = false; state.stalePaused = false; state.staleAnchor = null;
+      state.cursor = null; state.hasMore = true;
+      state.pageNumber = 0; state.pages = []; state.active = []; state.detailCache = []; state.anchorCache = [];
+      state.lastGroupToken = null; state.assetsRevision = null;
+      groups.replaceChildren(); next.hidden = true; retry.hidden = true;
+      retry.textContent = "重试加载";
+      setMessage("", false);
+      state.request = { controller: null, replacingPage: null };
+      var params = openingParams ? new URLSearchParams(openingParams) : scopeParams();
+      if (oldAnchor) params.set("anchor", oldAnchor);
+      else params.delete("anchor");
+      state.lastOpenParams = params.toString();
+      var generation = state.generation;
+      var controller = typeof AbortController === "function" ? new AbortController() : null;
+      state.request.controller = controller;
+      state.busy = true;
+      var request = adapter.fetchPage ? adapter.fetchPage(Object.fromEntries(params.entries()), controller && controller.signal) : apiFetch(API + "/timeline/assets?" + params.toString(), controller && controller.signal);
+      return Promise.resolve(request).then(function (body) {
+        var page = appendPage(body, generation);
+        if (state.restoredAssetId && page) {
+          var target = page.section.querySelector('[data-asset-id="' + CSS.escape(String(state.restoredAssetId)) + '"]');
+          if (target) target.scrollIntoView({ block: "center" });
+          state.restoredAssetId = null;
+        }
+        if (!updateRevisionStatus()) return page;
+        if (!status.classList.contains("is-error")) setMessage("", false);
+        return page;
+      }).catch(function (error) {
+        if (!state.disposed && generation === state.generation) { state.failed = true; retry.hidden = false; setMessage("无法打开时间轴：" + error.message, true); }
+        return null;
+      }).finally(function () {
+        if (generation === state.generation) { state.busy = false; state.request = null; next.disabled = false; }
+      });
+    }
+
+    function selectedYear() { return year.value ? Number(year.value) : null; }
+    function selectedMonth() { return month.value ? Number(month.value) : null; }
+    function reloadForFilters() {
+      state.year = selectedYear(); state.month = selectedMonth();
+      loadPeriods(state.year).finally(function () { reset(); });
+    }
+
+    function preserveVisibleAssetOnResize() {
+      var cards = Array.prototype.slice.call(host.querySelectorAll(".photo-timeline__card"));
+      var reference = cards.map(function (card) { return { card: card, rect: card.getBoundingClientRect() }; })
+        .filter(function (entry) { return entry.rect.bottom > 0 && entry.rect.top < window.innerHeight; })
+        .sort(function (a, b) { return Math.abs(a.rect.top) - Math.abs(b.rect.top); })[0];
+      if (!reference) return;
+      var id = reference.card.dataset.assetId;
+      var oldTop = reference.rect.top;
+      window.requestAnimationFrame(function () {
+        var current = host.querySelector('.photo-timeline__card[data-asset-id="' + CSS.escape(id) + '"]');
+        if (!current || state.disposed) return;
+        var delta = current.getBoundingClientRect().top - oldTop;
+        if (Math.abs(delta) > 1) window.scrollBy(0, delta);
+      });
+    }
+
+    basis.addEventListener("change", function () {
+      state.basis = basis.value; state.bucket = "all"; bucket.value = "all";
+      state.year = null; state.month = null; state.scope = Object.assign({}, state.scope);
+      loadPeriods(null).finally(function () { reset(); });
+    });
+    grouping.addEventListener("change", function () { state.group = grouping.value; reset(); });
+    bucket.addEventListener("change", function () { state.bucket = bucket.value; state.year = null; state.month = null; reset(); });
+    year.addEventListener("change", function () { state.month = null; month.value = ""; loadPeriods(selectedYear()); });
+    month.addEventListener("change", function () {});
+    filter.addEventListener("click", reloadForFilters);
+    jump.addEventListener("click", function () {
+      var targetYear = selectedYear();
+      var targetMonth = selectedMonth();
+      if (targetYear === null) { setMessage("先选择要定位的年份。", true); return; }
+      state.year = null; state.month = null;
+      state.seekYear = targetYear; state.seekMonth = targetMonth;
+      state.bucket = state.basis === "capture" ? "capture" : "all";
+      loadPeriods(targetYear).finally(function () { reset(); });
+    });
+    retry.addEventListener("click", function () {
+      if (state.stalePaused) {
+        var periods = loadPeriods(state.year);
+        var page = reset(state.staleAnchor, state.lastOpenParams);
+        return Promise.all([periods, page]).then(function (results) { return results[1]; });
+      }
+      return fetchNext();
+    });
+    next.addEventListener("click", fetchNext);
+    sentinel.addEventListener("click", function () { if (state.hasMore && !state.busy) fetchNext(); });
+    if (typeof IntersectionObserver === "function") {
+      state.observer = new IntersectionObserver(function (entries) {
+        if (entries.some(function (entry) { return entry.isIntersecting; })) fetchNext();
+      }, { root: options.scrollRoot || null, rootMargin: "900px 0px" });
+      state.observer.observe(sentinel);
+    }
+    window.addEventListener("resize", preserveVisibleAssetOnResize, { passive: true });
+    var onHostScroll = function () {
+      if (state.disposed || state.busy || typeof adapter.onScroll !== "function") return;
+      adapter.onScroll({ host: host, state: state, reset: reset });
+    };
+    host.addEventListener("scroll", onHostScroll, { passive: true });
+    loadPeriods(null);
+    reset();
+
+    return {
+      render: reset,
+      append: fetchNext,
+      reset: reset,
+      setScope: function (scope, anchor) {
+        state.scope = Object.assign({}, scope || { kind: "all" });
+        var periods = loadPeriods(null);
+        var page = reset(anchor);
+        return Promise.all([periods, page]).then(function (results) { return results[1]; });
+      },
+      setReturnAnchor: function (assetId, anchor) { state.restoredAssetId = assetId || null; return reset(anchor); },
+      dispose: function () {
+        state.disposed = true; state.generation += 1;
+        if (state.request && state.request.controller) state.request.controller.abort();
+        if (state.observer) state.observer.disconnect();
+        window.removeEventListener("resize", preserveVisibleAssetOnResize);
+        host.removeEventListener("scroll", onHostScroll);
+        state.pages.forEach(releasePage); state.pages = []; state.active = [];
+        host.replaceChildren(); host.classList.remove("photo-timeline");
+      },
+      snapshot: function () { return { generation: state.generation, inFlight: state.busy ? 1 : 0,
+        activePages: state.active.length, detailPages: state.detailCache.length,
+        anchorPages: state.anchorCache.length, loadedPages: state.pageNumber }; },
+    };
+  }
+
+  root.PhotoTimeline = { mount: create, PAGE_SIZE: PAGE_SIZE,
+    limits: { activePages: ACTIVE_PAGES, detailPages: DETAIL_PAGES, anchorPages: ANCHOR_PAGES } };
+})(window);

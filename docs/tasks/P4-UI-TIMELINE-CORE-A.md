@@ -19,7 +19,7 @@
 - 小型 fixture 核对功能、复用一次20万元数据与30万重点 SQL 性能，浏览器/P95/规模分别记实际证据或 PENDING。不访问真图库、不重跑 GPU/OCR/模型，原 V3.1 B 类只读审核边界不降低。
 
 
-日期：2026-10-13。状态：**PLANNED / 未实施**。上游 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)；下游 [B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)、[E](P4-UI-PLACES-E.md)及后续 SEARCH-MAP。本卡是一张可独立验收的公共能力卡，不接管普通页面的最终布局。
+日期：2026-10-13。状态：**IMPLEMENTATION PARTIAL / VALIDATION PENDING**；详见 [实施报告](../reports/P4-UI-TIMELINE-CORE-A.md)。上游 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)；下游 [B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)、[E](P4-UI-PLACES-E.md)及后续 SEARCH-MAP。本卡是一张可独立验收的公共能力卡，不接管普通页面的最终布局。
 
 推荐 **GPT-6 / High**；新增有界只读查询与前端状态管理，按 V3.1 B 类受影响面及独立 DS-H 复核；若必须触及 schema/人工真值/写事务，先单独升级风险与验证，不扩大暗改。
 

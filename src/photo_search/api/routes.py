@@ -23,6 +23,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
+from photo_search.api import timeline as timeline_queries
 from photo_search.api.context import ApiContext
 from photo_search.api.errors import (
     MEDIA_NOT_READY,
@@ -903,6 +904,66 @@ async def list_assets(
         text=text,
         capture_from=capture_from,
         capture_to_exclusive=capture_to_exclusive,
+    )
+
+
+@router.get("/timeline/assets", summary="Read-only, scope-bound timeline page")
+async def list_timeline_assets(
+    request: Request,
+    kind: str = "all",
+    source_id: int | None = Query(default=None, ge=1),
+    person_id: int | None = Query(default=None, ge=1),
+    collection_id: int | None = Query(default=None, ge=1),
+    time_basis: Literal["capture", "library"] = "capture",
+    group_by: Literal["day", "month", "year"] = "day",
+    bucket: Literal["all", "capture", "unknown", "pending"] = "all",
+    year: int | None = Query(default=None, ge=1, le=9999),
+    month: int | None = Query(default=None, ge=1, le=12),
+    seek_year: int | None = Query(default=None, ge=1, le=9999),
+    seek_month: int | None = Query(default=None, ge=1, le=12),
+    cursor: str | None = Query(default=None, max_length=2048),
+    anchor: str | None = Query(default=None, max_length=2048),
+    limit: int | None = Query(default=None, ge=1, le=200),
+) -> dict[str, Any]:
+    service = service_of(request)
+    return timeline_queries.timeline_page(
+        service.catalog,
+        kind=kind,
+        source_id=source_id,
+        person_id=person_id,
+        collection_id=collection_id,
+        time_basis=time_basis,
+        group_by=group_by,
+        bucket=bucket,
+        year=year,
+        month=month,
+        seek_year=seek_year,
+        seek_month=seek_month,
+        cursor=cursor,
+        anchor=anchor,
+        limit=limit,
+    )
+
+
+@router.get("/timeline/periods", summary="Read-only, scoped timeline date summary")
+async def get_timeline_periods(
+    request: Request,
+    kind: str = "all",
+    source_id: int | None = Query(default=None, ge=1),
+    person_id: int | None = Query(default=None, ge=1),
+    collection_id: int | None = Query(default=None, ge=1),
+    time_basis: Literal["capture", "library"] = "capture",
+    year: int | None = Query(default=None, ge=1, le=9999),
+) -> dict[str, Any]:
+    service = service_of(request)
+    return timeline_queries.timeline_periods(
+        service.catalog,
+        kind=kind,
+        source_id=source_id,
+        person_id=person_id,
+        collection_id=collection_id,
+        time_basis=time_basis,
+        year=year,
     )
 
 
