@@ -1,5 +1,13 @@
 # P4-UI-TIMELINE-CORE-A — 共享照片时间轴核心与只读日期查询
 
+## 2026-10-13 最终施工补充：时间抽取变化与前端有界资源（最高优先）
+
+- **新前置 A、C**；C 只提供可用全局搜索输入，不依赖时间轴。CORE 不修改 C 的搜索输入/提交。对后台 `pending→trusted/unknown`、已有日期重抽取、规则版本切换、新照片入库等**可能改变排序/桶成员**的情形核查实际修订来源，给日期页、period 计数和游标提供低开销一致性保护。不能假设每次日期抽取均递增 `catalog_filter_revision`；旧游标遇变化必须明确失效或利用已验证的一致读视图，不能因顺序改变造成漏/重复。若没有可用修订信号，写明阻断和最小后续依赖；不得悄悄改 schema/写事务，也不得每次分页全库扫描比对。
+- 同一范围/读版本下 `effective_total = trusted + unknown + pending`，新旧抽取版本各自守恒；抽取期间跨两页、同日、未知变已知、规则版本失配及人工成员变动须做定向行为测试。旧 cursor 废弃时可提示重新定位原 anchor，不以旧结果回填。
+- 使用轻量模拟照片连续滚动30页：记录第1/10/20/30页的 DOM 图片/组头节点、保留缩略图/对象 URL、在途请求数及返回旧日期锚点的误差；证明离屏节点/解码资源进入**有限工作窗口**，不会与已浏览总页数持续线性增长，且不出现跳屏、重复加载或键盘焦点丢失。禁止通过只检测 IntersectionObserver 或仅看第一页宣称通过。
+- 小型 fixture 核对功能、复用一次20万元数据与30万重点 SQL 性能，浏览器/P95/规模分别记实际证据或 PENDING。不访问真图库、不重跑 GPU/OCR/模型，原 V3.1 B 类只读审核边界不降低。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [01-capture-timeline](../mockups/ui2-large/01-capture-timeline.svg)、[02-import-timeline](../mockups/ui2-large/02-import-timeline.svg)、[03-unknown-capture](../mockups/ui2-large/03-unknown-capture.svg)、[04-capture-pending](../mockups/ui2-large/04-capture-pending.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 

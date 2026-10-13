@@ -1,5 +1,13 @@
 # P4-UI-TIMELINE-SEARCH-MAP-A — 搜索结果与地图照片时间模式接入
 
+## 2026-10-13 最终施工补充：分阶段上线与去除地点全量 ID 搜索（最高优先）
+
+- 新前置 A、C、CORE、B、D、E。**阶段一优先且必须闭环**：人物/合集/地点标题「搜索此…」→唯一顶部框+固定身份 chip→服务端权威 scope 内 FILTER_ONLY/FTS/向量召回→两页分页/版本失效→详情预览及返回。人、合集、地点各记录 `PERSON_SCOPE_PASS/COLLECTION_SCOPE_PASS/PLACE_SCOPE_PASS` 或 DEFERRED；仅对应范围真通过才显示其按钮。**PERSON_SCOPE_PASS 前不得移除旧 `pa-search-photos`**。固定 scope 与文本新条件作 AND，冲突明确提示，绝不暗中变全库；按钮只聚焦，空词零编码器。
+- **阶段二独立验收，可 DEFERRED**：纯条件完整按时间浏览；语义结果只有**冻结且有界的完整候选快照**时才可启用“按时间查看”并标明仅当前候选；地图只有全 viewport 的权威分页/版本约束真实成立时才使用时间轴。未满足则保留原相关度/旧地图分页，不为做 UI 重写 FTS/向量/RRF 或地图聚合。阶段二未通过不得称 UI2 时间/地图全部 PASS。
+- **地点搜索规模成本硬门槛**：旧 `album_member_ids(include_ids=True) → SearchScope.album_asset_ids → session digest` 会构造完整成员 ID；采用 E 的 SQL 权威成员谓词和 scope+revision 指纹，纯条件/FTS 在候选阶段做 SQL 过滤，向量如需 ID 使用受限块迭代且保留原 TopK 正确性，不把整地点成员列表塞入一个 Python tuple、URL 或会话，也不改成全库 TopK 后过滤。20万高成员地点测试首/续页、查询计划、候选批次与最大持有量；未能证明规模行为记 PERF_PENDING。
+- **状态矩阵**：普通非结果页直接点全局框默认为全库；结果页若有固定 scope，聚焦/改词仍保持 chip；明确取消 chip 后废弃旧 cursor/session 并重新查全库；仅聚焦/空文字不搜。冻结版本需绑定身份、成员/包/合集实例 revision、过滤指纹、时间依据、排序、候选快照；时间提取 pending→trusted/unknown 的一致性直接复用 CORE，不得使用已失效页面结果假冒最新。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [12-natural-search](../mockups/ui2-large/12-natural-search.svg)、[13-import-search](../mockups/ui2-large/13-import-search.svg)、[14-unknown-search](../mockups/ui2-large/14-unknown-search.svg)、[11-map](../mockups/ui2-large/11-map.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 

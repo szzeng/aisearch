@@ -1,5 +1,12 @@
 # P4-UI-PHOTOS-B — 照片浏览与图库管理层级
 
+## 2026-10-13 最终施工补充：浏览器性能与返回验证
+
+- 新前置为 A、C、CORE；页头唯一查询框由 C 交付，本卡不能复制监听或重造查询框。照片/来源只接 CORE 共用日期游标，不在前端拉取全部照片分组。
+- 合成浏览器观察第1/10/20/30页节点与缩略图资源/请求增长趋势、直接跳旧年月、查看照片后恢复原日期与滚动、来源与拍摄/入库依据快切后的迟到响应，验证不漏页、不重复、不跳屏。**首张可见的浏览器耗时**与接口 P95 分开记录，未真实测量不能写达标。
+- 区分无来源、来源未建库、筛选无命中、请求失败；原图库管理按钮 CSRF/payload/任务状态不变。CORE 的20万元数据专项证据在未漂移时直接复用，不重复造数据或伪造P95；BROWSER_PENDING 必须明示。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [01-capture-timeline](../mockups/ui2-large/01-capture-timeline.svg)、[02-import-timeline](../mockups/ui2-large/02-import-timeline.svg)、[03-unknown-capture](../mockups/ui2-large/03-unknown-capture.svg)、[04-capture-pending](../mockups/ui2-large/04-capture-pending.svg)、[17-narrow](../mockups/ui2-large/17-narrow.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 

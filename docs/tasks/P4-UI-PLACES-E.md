@@ -1,5 +1,13 @@
 # P4-UI-PLACES-E — 地点照片、地图与整理工具
 
+## 2026-10-13 最终施工补充：地点 SQL 权威成员接口供搜索复用（最高优先）
+
+- 不只优化地点相册时间轴页：E 应交付**单选定地点可复用的参数化 SQL 成员谓词/有界成员页 adapter**（`place_kind+place_key`、活动包、人工赋值/排除、地点/筛选 revision），以便后续 SEARCH-MAP 的 FILTER_ONLY、FTS 和向量候选在召回前共享同一权威成员资格。非 CN 与 CN facet 必须分别保持原归属和父级身份；不得整库 Python `_album_rows → _group_rows → offset` 或将全地点成员 ID 一次性收集成巨型 `IN (...)`。
+- 开工前核对现存 `places/albums.py::album_member_ids(include_ids=True)`、`search/retrieval.py::SearchScope.album_asset_ids`、`api/routes.py` 的真实成本链。E 只完成可复用只读 SQL/有界查询与旧成员集**小 fixture 完全等价**；搜索路由和语义 session 接线由 SEARCH-MAP 负责。若无可靠 SQL 同义实现，记录 `SCOPED_SQL_PENDING`，不可仅凭地点 UI 通过宣称20万查询已达标。
+- 测大/小/CN三类 scope，包含无GPS人工归属、人工排除、相同地名不同父级、EXIF未知、重复资产、视频排除、地点包变更；年月直接 seek/keyset，旧 revision 失效。复用同一20万/30万元数据，输出 QUERY PLAN/P50/P95；向量块确需具体 ID 时只允许后续有界分页读取/验证，不能一次装载全量。
+- E 的「搜索此地点」仅预留 kind/key 和标题位置，范围搜索实际完整通过后才由 SEARCH-MAP 激活，不得呈现死按钮。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [09-places](../mockups/ui2-large/09-places.svg)、[10-place-album](../mockups/ui2-large/10-place-album.svg)、[11-map](../mockups/ui2-large/11-map.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 

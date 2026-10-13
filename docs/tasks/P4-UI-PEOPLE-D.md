@@ -1,5 +1,12 @@
 # P4-UI-PEOPLE-D — 人物相册与整理入口层级
 
+## 2026-10-13 最终施工补充：搜索过渡兼容与人物范围
+
+- 执行时 A、C、CORE、B 应已验收，但 **C 的页头单框成功不代表 scoped 搜索后端已成功**。目前 `persons.html#pa-search-photos` 和 `persons-albums.js` 的人物内搜图是可用旧流程；SEARCH-MAP 对 PERSON_SCOPE_PASS 之前，D 不得删除或改成不可用的装饰入口。旧框是过渡例外，不代表最终产品允许双自然语言输入。
+- D 只对「搜索此相册/搜索此合集」留清晰的标题动作位置与 canonical person / collection_id + instance/revision 身份交接；没有真实范围能力便不开放按钮。人物不能借一页已加载 asset_id 模拟全相册，合集不能借某个成员或被普通 person_ids 100 限制代替权威合集 SQL。
+- 已完成的 SIMPLIFY-A、Shift选取、候选头像、合照去重、Esc/遮罩、忽略/纠错/撤销不得重复开发。人物目录按有效照片数及最近入库时间，不逐卡计算日期摘要；进入相册才取本 scope 年月/未知/待就绪统计，成员与时间状态变化需令旧游标失效。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [05-people](../mockups/ui2-large/05-people.svg)、[06-person-album](../mockups/ui2-large/06-person-album.svg)、[07-person-collection](../mockups/ui2-large/07-person-collection.svg)、[08-organize](../mockups/ui2-large/08-organize.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 

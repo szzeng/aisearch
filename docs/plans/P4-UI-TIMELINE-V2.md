@@ -4,6 +4,14 @@
 
 > **最新视觉参考（20万＋）：** [17个新版页面及离线切换索引](../mockups/ui2-large/README.md)。其新增日期未知/待就绪、入库浏览和时间条件搜索设计；原 `ui2/` 及早期PNG仅供历史比对。仓库图片为独立重绘 SVG，非聊天生成 PNG 的原文件。
 
+## 2026-10-13 最终施工前修订（覆盖旧任务顺序）
+
+**新执行顺序：A → C → CORE → B → D → E → SEARCH-MAP → F。** A 暂留可提交的旧搜索链接和原搜索页，禁止摆不可用的假输入；C 紧接 A 把原 `#query-text` 迁到页头唯一位置，原高级筛选与同一个 `#search-form`/submit 保留，C 以后才达成最终单框。D/E 原人物搜索与相册上下文分阶段过渡，直到 SEARCH-MAP 对相应 scope 完整验收才启用按钮；人物旧 `pa-search-photos` 要等 PERSON_SCOPE_PASS 才退场。
+
+**范围状态**：在非搜索结果页直接点顶部框默认全图库；主动点「搜索此…」才附加固定人物/合集/地点身份 chip。搜索结果页已有 chip 时聚焦/编辑关键词仍保留该范围，明确清 chip 才放弃旧 cursor/session 并全库重搜；聚焦、空词不自动调用搜索。
+
+**核心与性能**：CORE 对拍摄时间抽取 pending→可信/未知、规则版本和成员变化核验有效修订/读一致性，防翻页重漏；记录30页滚动第1/10/20/30页 DOM、缩略图对象、请求/返回锚点。E 输出地点共享 SQL 权威成员谓词，SEARCH-MAP 摆脱原完整地点 ID 列表在大地点语义检索/会话里的规模成本；有界向量块仍保留原排名/TopK。SEARCH-MAP 阶段一先完成三个 scoped 搜索，阶段二再做搜索时间及地图视口时间轴，可独立 DEFERRED。个人项目维持小合成行为测试+共用20万条元数据性能夹具和30万重点 SQL 复查，不接触用户真实图库、不跑GPU/OCR/全仓；PENDING 不冒充 PASS。
+
 ## 0. 范围、目标、取舍
 
 - **相册优先**：启动默认看照片；统一照片、人物、地点、搜索入口，图库管理次级。保留现有纯 HTML/CSS/JS 多页架构和人工整理能力。
@@ -120,18 +128,18 @@
 | 图片查看器 | 返回原滚动与年月条件，打开同日；关闭/焦点/ESC 保留 | F |
 | 待整理脸/忽略人脸/批量管理 | 仍是按任务/候选分组的工作流，不接照片时间轴 | D 仅整理外观 |
 
-## 5. 任务执行顺序（一个会话一张卡，互相共享前卡证据）
+## 5. 任务执行顺序（一个会话一张卡）
 
-1. [P4-UI-SHELL-A](../tasks/P4-UI-SHELL-A.md)：保留导航外壳，先不造时间 API。
-2. [P4-UI-TIMELINE-CORE-A](../tasks/P4-UI-TIMELINE-CORE-A.md)：做可信日期、只读查询、period 摘要、分页与前端共享渲染组件；先用合成页验证。
-3. [P4-UI-PHOTOS-B](../tasks/P4-UI-PHOTOS-B.md)：首页和来源正式接入 + 来源管理排版（B 不重造后端）。
-4. [P4-UI-PEOPLE-D](../tasks/P4-UI-PEOPLE-D.md)：人物/合集复用时间轴、保留全部已实现整理能力，完成视觉层级。
-5. [P4-UI-PLACES-E](../tasks/P4-UI-PLACES-E.md)：地点相册复用，最小修补地点成员日期查询，原地图入口。
-6. [P4-UI-SEARCH-C](../tasks/P4-UI-SEARCH-C.md)：原自然语言搜索的一个输入框/标签/结果层级（与搜索地图时间轴卡串行修改 search.js）。
-7. [P4-UI-TIMELINE-SEARCH-MAP-A](../tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)：搜索结果时间模式/地图范围照片列表接入。
-8. [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md)：查看器统一视觉、年月条件返回、同日跳转及受影响面收口。
+1. [P4-UI-SHELL-A](../tasks/P4-UI-SHELL-A.md)：先保留可用旧搜索、统一导航外壳，不留假输入。
+2. [P4-UI-SEARCH-C](../tasks/P4-UI-SEARCH-C.md)：搬原输入至唯一页头，保留高级筛选、原 submit/会话。
+3. [P4-UI-TIMELINE-CORE-A](../tasks/P4-UI-TIMELINE-CORE-A.md)：可信拍摄日期、时间游标、抽取变化一致性、共享时间轴组件。
+4. [P4-UI-PHOTOS-B](../tasks/P4-UI-PHOTOS-B.md)：首页与来源照片时间轴。
+5. [P4-UI-PEOPLE-D](../tasks/P4-UI-PEOPLE-D.md)：人物/合集时间轴，过渡保留旧人物局部搜索。
+6. [P4-UI-PLACES-E](../tasks/P4-UI-PLACES-E.md)：地点时间轴与 SQL 权威成员 adapter。
+7. [P4-UI-TIMELINE-SEARCH-MAP-A](../tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)：先 scoped 搜索，后时间搜索/地图时间轴；按阶段/范围各自验收。
+8. [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md)：范围/日期预览返回。
 
-C 与 D/E 若无共享文件理论上可调整先后，但默认串行，避免多任务同时改同一文件。F 可提前做视觉子项，但不得抢先假装时间轴返回上下文已经实现。每张卡自身状态独立，本设计更新不等于产品实施。
+C 必须在 A 后紧接实施，不能让中间版本出现无效搜索控件；D/E 不得假装后端 scoped 搜索已完工，SEARCH-MAP 按成员范围分别通过后才退旧搜索/启用快捷按钮。各卡默认串行，不并行修改同一个前端模块；F 仅覆盖已经启用的真实功能。每张卡结果独立，本设计修订不是产品代码实施。
 
 ## 6. 最少验证与升级门槛
 

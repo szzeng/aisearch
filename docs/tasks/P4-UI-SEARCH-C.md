@@ -1,12 +1,20 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
+## 2026-10-13 最终施工补充：C 提前第二张，原表单无损迁移（最高优先）
+
+- **仅依赖 A，紧随 A 施工**；不等待 CORE/B/D/E。核对现有 `search.html` 的 `#search-form`、`#query-text` 与 `search.js`。只把原文字搜索输入及必要提交控件移到页头唯一位置；来源、人物、地点、拍摄范围等**高级筛选仍在结果区可展开**。保留原 ID、同一 form/submit 和会话监听；如输入框在表单 DOM 外，允许标准 HTML `form="search-form"` 关联，必须在浏览器验证 Enter/点击各只发一次请求。禁止新建第二套解析器、表单监听或把整套高级表单塞进页头。
+- **固定范围状态转移**：非结果页直接聚焦顶部框默认全库；主动点击「搜索此相册/合集/地点」才带结构化 scope chip 并聚焦，点击按钮/空词不触发检索。在搜索结果页若已有固定 chip，直接聚焦或编辑关键词应**保留已有范围**；只有明确点 chip ×/「全部照片」才取消 scope、作废原 session/cursor，有关键词时重新发全库查询；没有词则仅等待输入。任何词编辑不得重新猜测或丢掉已固定的身份。
+- 本卡只做单框、scope UI/交接与旧状态兼容；后端 scope 真值属于 SEARCH-MAP。**人物旧 `pa-search-photos` 直到 PERSON_SCOPE_PASS 都保留**，合集/地点未贯通时不显示假快捷按钮。旧 `/search?q=`、深链、取消标签、以图搜图、失败提示、窄屏焦点仍可用。
+- 简测：一次中文搜索 Enter→结果页仍一框→改词再搜一次；高级来源/时间/人物/地点筛选可展开与取消；旧快照优先级、空词零编码器、返回不重复请求、chip 取消产生新范围；不跑 CORE/E 的20万性能基准。
+
+
 > **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [12-natural-search](../mockups/ui2-large/12-natural-search.svg)、[13-import-search](../mockups/ui2-large/13-import-search.svg)、[14-unknown-search](../mockups/ui2-large/14-unknown-search.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
 
 
 > **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [09-search](../mockups/ui2/09-search.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，推荐先完成 [B](P4-UI-PHOTOS-B.md)。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，紧随 A 执行，**不依赖 CORE/B/D/E**；服务端范围真值留给 SEARCH-MAP。
 
 推荐 GPT-6 / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。
 

@@ -150,22 +150,30 @@
 - **验收**：张三→「搜索此相册」→输入“海边”仅张三照片；清掉范围恢复全库；家庭合集结果按 asset 去重；深圳地区按已确认 `kind/key` 与人工覆盖成员；“张三的2022年”默认不带人物页当前年份筛选；空输入不搜；返回保留原相册/滚动；各类缺失范围功能不可亮出假按钮。
 
 
+## 2026-10-13 最终施工前修订（覆盖旧任务顺序）
+
+**新执行顺序：A → C → CORE → B → D → E → SEARCH-MAP → F。** A 暂留可提交的旧搜索链接和原搜索页，禁止摆不可用的假输入；C 紧接 A 把原 `#query-text` 迁到页头唯一位置，原高级筛选与同一个 `#search-form`/submit 保留，C 以后才达成最终单框。D/E 原人物搜索与相册上下文分阶段过渡，直到 SEARCH-MAP 对相应 scope 完整验收才启用按钮；人物旧 `pa-search-photos` 要等 PERSON_SCOPE_PASS 才退场。
+
+**范围状态**：在非搜索结果页直接点顶部框默认全图库；主动点「搜索此…」才附加固定人物/合集/地点身份 chip。搜索结果页已有 chip 时聚焦/编辑关键词仍保留该范围，明确清 chip 才放弃旧 cursor/session 并全库重搜；聚焦、空词不自动调用搜索。
+
+**核心与性能**：CORE 对拍摄时间抽取 pending→可信/未知、规则版本和成员变化核验有效修订/读一致性，防翻页重漏；记录30页滚动第1/10/20/30页 DOM、缩略图对象、请求/返回锚点。E 输出地点共享 SQL 权威成员谓词，SEARCH-MAP 摆脱原完整地点 ID 列表在大地点语义检索/会话里的规模成本；有界向量块仍保留原排名/TopK。SEARCH-MAP 阶段一先完成三个 scoped 搜索，阶段二再做搜索时间及地图视口时间轴，可独立 DEFERRED。个人项目维持小合成行为测试+共用20万条元数据性能夹具和30万重点 SQL 复查，不接触用户真实图库、不跑GPU/OCR/全仓；PENDING 不冒充 PASS。
+
 ## 7. UI 2.0 最新执行序列（2026-10-13）
 
 原六卡 A～F 保留修订，**新增 CORE、SEARCH-MAP 两卡**；此次仅立计划不实施。一个会话只做一张卡，不要求自动连续执行。
 
 | 顺序 | 卡片 | 独立收益 | 实施边界 |
 |---|---|---|---|
-| 1 | [P4-UI-SHELL-A](../tasks/P4-UI-SHELL-A.md) | 照片优先、导航与管理外壳 | 零业务 API |
-| 2 | [P4-UI-TIMELINE-CORE-A](../tasks/P4-UI-TIMELINE-CORE-A.md)（新） | 可信日期、年月计数与直接跳转、稳定游标及共享组件 | 有界只读 API |
-| 3 | [P4-UI-PHOTOS-B](../tasks/P4-UI-PHOTOS-B.md) | 全部照片/来源接入时间轴和管理布局 | 主要前端 |
-| 4 | [P4-UI-PEOPLE-D](../tasks/P4-UI-PEOPLE-D.md) | 人物/合集照片时间轴，旧整理成果保留 | 只读适配 |
-| 5 | [P4-UI-PLACES-E](../tasks/P4-UI-PLACES-E.md) | 地点照片时间轴、地图与工具层级 | 仅必要只读地点适配 |
-| 6 | [P4-UI-SEARCH-C](../tasks/P4-UI-SEARCH-C.md) | 搜索入口、条件/结果展示 | 不改搜索协议与排序 |
-| 7 | [P4-UI-TIMELINE-SEARCH-MAP-A](../tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)（新） | 搜索纯过滤/语义候选与地图范围照片时间浏览的安全适配 | 有界只读 |
-| 8 | [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md) | 预览统一、同日跳转、原时间位置返回 | 只读导航/UI |
+| 1 | [P4-UI-SHELL-A](../tasks/P4-UI-SHELL-A.md) | 导航和外壳、过渡期保留旧可用搜索 | 零业务 API |
+| 2 | [P4-UI-SEARCH-C](../tasks/P4-UI-SEARCH-C.md) | 页头唯一可用搜索框，原表单高级筛选保留 | 零业务 API |
+| 3 | [P4-UI-TIMELINE-CORE-A](../tasks/P4-UI-TIMELINE-CORE-A.md)（新） | 时间轴查询/组件与日期状态变更一致性 | 有界只读 API |
+| 4 | [P4-UI-PHOTOS-B](../tasks/P4-UI-PHOTOS-B.md) | 全部/来源时间轴和图库管理布局 | 主要前端 |
+| 5 | [P4-UI-PEOPLE-D](../tasks/P4-UI-PEOPLE-D.md) | 人物/合集时间轴、旧人物搜索过渡 | 只读适配 |
+| 6 | [P4-UI-PLACES-E](../tasks/P4-UI-PLACES-E.md) | 地点时间轴和共享 SQL 权威成员适配 | 只读地点适配 |
+| 7 | [P4-UI-TIMELINE-SEARCH-MAP-A](../tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)（新） | scoped 搜索先贯通，时间/地图增强后验收 | 有界只读，两阶段 |
+| 8 | [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md) | 照片详情和范围/日期返回状态 | 只读/UI |
 
-C 与 D/E 在不改同一文件的条件下可调整；SEARCH-MAP 要在 C/E 完成后执行。A/B/D/E/C/F 不能并行修改同一前端模块。已经由 SIMPLIFY-A、Esc、遮罩关闭等历史任务完成的能力不再重新开发。旧九张 mockup 是视觉参考，必须以时间轴规范覆盖其不含日期标题的照片网格。
+C 必须在 A 后紧接实施；SEARCH-MAP 要在 C/CORE/B/D/E 完成后执行。各卡不得并行修改同一前端模块。已经由 SIMPLIFY-A、Esc、遮罩关闭等历史任务完成的能力不再重新开发。旧九张 mockup 是视觉参考，必须以时间轴规范覆盖其不含日期标题的照片网格。
 
 
 ## 8. 执行、验证与复核策略
