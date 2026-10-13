@@ -2,7 +2,7 @@
 
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，推荐先完成 [B](P4-UI-PHOTOS-B.md)。
 
-推荐 GPT-6.1 Sol / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。
+推荐 GPT-6 / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。
 
 ## 视觉参考（执行前必须看图）
 
