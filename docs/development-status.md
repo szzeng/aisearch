@@ -1,5 +1,12 @@
 # Development status
 
+## UI 2.0 20万～30万图库时间轴/搜索策略 — 任务卡设计已更新，产品尚未实施（2026-10-13）
+
+[权威时间轴规范（含§3.1大图库性能合同）](plans/P4-UI-TIMELINE-V2.md)、[总UI计划](plans/P4-UI-PERSONAL.md)。本轮补充 CORE/B/D/E/C/SEARCH-MAP 六卡：**拍摄日期缺失不补、不猜、不改**；已提取无可信日期与待就绪分开，均可独立分页、按入库时间降序；纯条件 SQL 全量分页、明确入库日期搜索与无拍摄日期查询、语义候选不冒充全库；20万元数据主验收、30万代表查询复核，地点成员 SQL 化、年月摘要按需、首图展示优先、DOM有界回收。首次/后续任务复用同一元数据级规模夹具，不跑20万张真实图片、全仓/GPU/模型或真实图库。历史 P4-02X 的30万语义检索表现不等于新时间轴合格。
+
+**仅调整设计/任务文档，没有执行产品代码、性能测试或用户 PhotoSearchData；各卡保留 PLANNED，性能实际值仍 PENDING。** 实施仍按 A→CORE→B→D→E→C→SEARCH-MAP→F、单卡逐一验收；如 schema/索引必要必须按 V3.1 先核查升级/恢复和授权。
+
+
 ## UI 2.0 八张任务卡与统一照片时间轴 — UPDATED / 仅文档规划（2026-10-13）
 
 [新版规范](plans/P4-UI-TIMELINE-V2.md)、[原 UI 总计划更新](plans/P4-UI-PERSONAL.md)、[效果图优先级](mockups/README.md)。原 [A](tasks/P4-UI-SHELL-A.md)、[B](tasks/P4-UI-PHOTOS-B.md)、[C](tasks/P4-UI-SEARCH-C.md)、[D](tasks/P4-UI-PEOPLE-D.md)、[E](tasks/P4-UI-PLACES-E.md)、[F](tasks/P4-UI-VIEWER-F.md) 已修订；新增 [CORE](tasks/P4-UI-TIMELINE-CORE-A.md)、[SEARCH-MAP](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)。推荐 A → CORE → B → D → E → C → SEARCH-MAP → F，默认一会话一张卡。时间轴采用可信拍摄/入库时间、按日月年分组、年月筛选与直接跳转、自动续页和预览返回，全部照片/人物/合集/地点复用，搜索/地图需守住成员完整性。已完成的 SIMPLIFY-A、Esc、遮罩关闭、人物等工作不重复实施。
