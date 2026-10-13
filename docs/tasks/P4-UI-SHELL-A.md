@@ -1,6 +1,6 @@
 # P4-UI-SHELL-A — 统一相册外壳与日常入口
 
-日期：2026-10-10。状态：**PLANNED / 未实施**。规划收口基线 `master` / `c19749ae011a02a8fc449832cd3533daa3840ec0`；执行时重新核对工作树。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口基线 `master` / `c19749ae011a02a8fc449832cd3533daa3840ec0`；执行时重新核对工作树。
 
 推荐 **GPT-6.1 Sol / High**。这是一张前端 A 级小改卡；独立 DS-H 展示专项复核。模型由用户手动选择。
 
@@ -18,6 +18,9 @@
 
 人物新建已完成用户指定的同会话工程复核与迁移修复：[复核报告](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，真实个人试用待验。用户明确启用 UI 卡后才实施；不自动重开原复核，不把其代码归入本卡。只完成本卡，不顺带实现 B～F。
 
+## UI 2.0 新版职责
+
+读取 [时间轴规范](../plans/P4-UI-TIMELINE-V2.md)。A 保留原照片优先导航、入口、搜索薄链接、来源管理和深链返回；预留日期工具栏/侧边时间导航的布局。**A 不实现年月查询、时间轴或自动分页**，该能力分别由 CORE/B 负责；不能照旧网格 mockup 认定无需日期。近期已完成的 Esc、人物整理、弹窗关闭不得重做或回退。A 仍零业务 API。
 ## 用户闭环
 
 打开应用看到照片；五页的导航位置、名称一致；可以去人物、地点、搜索和图库管理，再回照片。没有来源时知道从哪添加。清爽外壳不是整页重写。
@@ -56,4 +59,4 @@ git diff --check
 
 ## 停止与交接
 
-必测未完写 IMPLEMENTED / VALIDATION PENDING。报告存 `docs/reports/P4-UI-SHELL-A.md`；status 只写实际摘要。无业务变化、工程复核及本卡必测完成才写本卡 PASS；下一候选 [B](P4-UI-PHOTOS-B.md)，不自动执行。不要提交/推送或修改原人物任务状态。
+必测未完写 IMPLEMENTED / VALIDATION PENDING。报告存 `docs/reports/P4-UI-SHELL-A.md`；status 只写实际摘要。无业务变化、工程复核及本卡必测完成才写本卡 PASS；下一候选 [CORE](P4-UI-TIMELINE-CORE-A.md)，再交 [B](P4-UI-PHOTOS-B.md)，不自动执行。不要提交/推送或修改原人物任务状态。

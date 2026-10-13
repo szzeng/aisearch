@@ -1,6 +1,6 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
-日期：2026-10-10。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，推荐先完成 [B](P4-UI-PHOTOS-B.md)。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，推荐先完成 [B](P4-UI-PHOTOS-B.md)。
 
 推荐 GPT-6.1 Sol / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。
 
@@ -18,6 +18,9 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§3/4搜
 
 允许搜索展示及全局搜索薄入口（五页页头可加表单，必要时一份很小的无 API 公共导航脚本）；禁止搜索解析/排序/召回/会话/字段契约/后端变化，禁止重写既有 API helper。
 
+## UI 2.0 搜索分工
+
+本卡继续做**一个自然语言输入框、可取消人物/地点/时间/合集条件标签、搜索结果和返回**；纯条件完整分页、相关度默认排序、语义 TopK/截断、统一意图解析及旧会话一律不改。时间轴的服务端纯条件全量/语义候选/地图范围成员整合属于后续 [SEARCH-MAP](P4-UI-TIMELINE-SEARCH-MAP-A.md)；C **不得对已加载的一页按时间排序后冒充全部搜索结果**。最新规范：[UI 2.0](../plans/P4-UI-TIMELINE-V2.md)。
 ## 用户闭环
 
 - 固定位置输入文字，提交到已有搜索页；结果条件与照片清楚，能取消条件并返回原结果。
@@ -41,4 +44,4 @@ git diff --check
 
 项目内隔离合成浏览器做两页纯条件结果→预览→人物相册→返回，取消一枚标签，缺编码器失败仍留输入、以图搜图限制说明可找到；不要求为 UI 加载真实模型。DOM 测试不证明视觉通过；工程/浏览器/真实语义效果分别记录。
 
-独立 DS-H 审全部入口与展示 diff、既有请求构造/快照直接链路及证据；发现排序、scope、分页或协议变化即扩大主审并按 B/D 另卡。无新冻结问题 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [D](P4-UI-PEOPLE-D.md)，也可先转个人试用。
+独立 DS-H 审全部入口与展示 diff、既有请求构造/快照直接链路及证据；发现排序、scope、分页或协议变化即扩大主审并按 B/D 另卡。无新冻结问题 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [SEARCH-MAP](P4-UI-TIMELINE-SEARCH-MAP-A.md)（需已完成 E 的地图前置），也可转个人试用。

@@ -1,5 +1,12 @@
 # Development status
 
+## UI 2.0 八张任务卡与统一照片时间轴 — UPDATED / 仅文档规划（2026-10-13）
+
+[新版规范](plans/P4-UI-TIMELINE-V2.md)、[原 UI 总计划更新](plans/P4-UI-PERSONAL.md)、[效果图优先级](mockups/README.md)。原 [A](tasks/P4-UI-SHELL-A.md)、[B](tasks/P4-UI-PHOTOS-B.md)、[C](tasks/P4-UI-SEARCH-C.md)、[D](tasks/P4-UI-PEOPLE-D.md)、[E](tasks/P4-UI-PLACES-E.md)、[F](tasks/P4-UI-VIEWER-F.md) 已修订；新增 [CORE](tasks/P4-UI-TIMELINE-CORE-A.md)、[SEARCH-MAP](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)。推荐 A → CORE → B → D → E → C → SEARCH-MAP → F，默认一会话一张卡。时间轴采用可信拍摄/入库时间、按日月年分组、年月筛选与直接跳转、自动续页和预览返回，全部照片/人物/合集/地点复用，搜索/地图需守住成员完整性。已完成的 SIMPLIFY-A、Esc、遮罩关闭、人物等工作不重复实施。
+
+**此次只改任务文档；无产品代码实现、无实际测试、无真实 PhotoSearchData 访问，全部新卡仍未实施，不能宣称 PASS。** 用户如授权开工，从 A 开始；CORE/地点查询按 V3.1 风险做最小必要定向验证。
+
+
 ## P4-PERSON-INBOX-COMPARE-A — TODO / 待整理人脸与候选头像并排对照（仅任务卡）
 
 [任务卡](tasks/P4-PERSON-INBOX-COMPARE-A.md)。待整理候选分组摘要与展开逐脸卡并排显示待确认脸/正确候选人物现有头像；组键 person_id 精确对齐、无头像安全退化，不改自动匹配、人工归属、分页或批量管理。原则上只改 `persons-albums.js`、`persons.css`，确有需要才追加有界只读头像投影。推荐 **GPT-6 / Medium**，最少定向 JUnit、Node 语法与 diff 检查 + 用户手测；**尚未实施或测试**，不访问真实图库。

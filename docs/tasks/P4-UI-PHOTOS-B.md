@@ -1,8 +1,8 @@
 # P4-UI-PHOTOS-B — 照片浏览与图库管理层级
 
-日期：2026-10-10。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；实施前要求 [A](P4-UI-SHELL-A.md) 已验收，执行时检查实际 Git/报告。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；实施前要求 [A](P4-UI-SHELL-A.md) 与 [CORE](P4-UI-TIMELINE-CORE-A.md) 已验收，执行时检查实际 Git/报告。
 
-推荐 GPT-6.1 Sol / High；A 级前端展示小改，独立 DS-H 核对全部受影响 UI 与原管理动作接线。
+推荐 GPT-6 / High；A 级前端展示小改，独立 DS-H 核对全部受影响 UI 与原管理动作接线。
 
 ## 视觉参考（执行前必须看图）
 
@@ -16,20 +16,19 @@
 
 AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§4照片/§6/§8；架构§5.2、§6.1、§10.1～10.3；策略§2.2～2.4、§3.2～3.4。直接读 `web/index.html/app.js/styles.css`、来源/浏览 API 参数及原测试，不重读全仓。
 
-允许上述三个前端文件局部展示改动、必要定向 UI 测试。禁止业务 Python、API、schema、扫描/任务状态派生逻辑、依赖与模型变化。
+允许上述三个前端文件、CORE 共享组件接线与定向 UI 测试；业务只读日期接口由 CORE 交付，B 不更改扫描/模型/写协议。
 
-## 唯一闭环与要求
+## 唯一闭环（新版时间轴优先）
 
-- 照片网格为主；图库/排序/筛选一条工具栏；长技术说明进入展开区。
-- 保留 `time_desc/capture_desc/asset_id` 的准确语义及当前游标；「最近加入」不能改成拍摄时间。高级排序/日期条件折叠但仍能使用，结束时间仍准确标为不含；本卡不改日期序列化。
-- 原有缩略图点击打开、load more、来源筛选、滚动返回都保持。不做新时间轴/瀑布流，不从当前页计算全库总量。
-- 管理视图来源卡突出看照片、开始建库/刷新；改名次级、删除/完整校验扫描收进更多。保留原 ID 与处理函数，仅重排展示；准确说明移除记录不会删除照片。
-- 没有来源、未建库、无符合筛选的照片、获取失败分别显示；状态只来自真实响应。不把 `0/0` 当完成，不以布局变更重启、重算或清空任务。
-- 已保存的 filter/cursor/returnContext 不因折叠工具或进入管理而丢失；失败不清表单和选择。共享按钮样式沿用 A。
+- 全部照片与单来源照片使用 CORE 的**同一时间轴**：默认可信拍摄时间+按日、可切换入库时间和按月/年分组；年/月筛选与直接跳转是不同控件，侧边年月导航窄屏可收纳。
+- 服务端权威日期标题，跨页同日合并、稳定 cursor/时间成员修订；滚动接近底部自动续页、失败时“加载更多/重试”，切时间/来源/年月必须抛弃过期响应。跳到旧年月不能逐页遍历。
+- 无可靠拍摄时间/只有文件时间/未抽取分桶且不伪称拍摄；旧 `time_desc/capture_desc/asset_id` 的 API 合同不改，旧高级条件仍可找回；照片日期直接在分页结果中获取，避免逐图 `GET /assets/{id}`。
+- 管理 UI 延续“看照片、建库/刷新”优先，改名/移除/完整扫描次级；所有原权限/CSRF/任务状态、查看器原图能力和返回滚动位置保留。无来源/未建库/筛选空/请求失败明确区分，不虚构照片总数。
+- 旧静态 PNG 不含新时间轴，只作配色与外壳参考；不因此重造 CORE API、人工整理或第二套网格组件。
 
 ## 必须验证
 
-相关原测试：`tests/unit/test_photo_view_info_ui.py`、`tests/integration/test_api_sources_assets.py`、`tests/unit/test_api_source_rename_ui.py`；必要新增 `tests/unit/test_p4_ui_photos.py` 用行为覆盖三种空状态、来源筛选、两页返回、原管理按钮请求不变。
+相关原测试：`tests/unit/test_photo_view_info_ui.py`、`tests/integration/test_api_sources_assets.py`、`tests/unit/test_api_source_rename_ui.py`；必要新增 `tests/unit/test_p4_ui_photos.py` 用行为覆盖三种空状态、按日/月/年和年月定位、拍摄/入库切换、连续两页跨日/同日标题、过期响应、日期返回与管理按钮请求不变。
 
 ```powershell
 $env:UV_CACHE_DIR = '.uv-cache'
@@ -41,4 +40,4 @@ git diff --check
 
 隔离小型合成浏览器验来源切换、两页照片、详情/返回、空筛选、改名错误及删除提示；管理写操作只针对合成来源，核对与旧按钮相同 payload/CSRF。不能只截图替代事件验证。不运行全仓/真实图库/模型/打包；若出现业务变化按总计划§8升 B/D 另卡，不能用本 A 门槛通过。
 
-独立 DS-H 完整覆盖新增 DOM/事件到原 API 的直接链路，核对原请求/任务状态映射与授权，无新高风险未决则 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-PHOTOS-B.md`，记录未验范围；完成本卡停止，下一候选 [C](P4-UI-SEARCH-C.md)。
+独立 DS-H 完整覆盖新增 DOM/事件到原 API 的直接链路，核对原请求/任务状态映射与授权，无新高风险未决则 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-PHOTOS-B.md`，记录未验范围；完成本卡停止，下一候选 [D](P4-UI-PEOPLE-D.md)，随后 E/C/SEARCH-MAP/F。
