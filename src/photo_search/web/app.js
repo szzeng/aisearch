@@ -89,6 +89,10 @@
       returnContext: null,
       returnPending: false,
       returnTargetCount: 0,
+      mode: "list",
+      timelineMount: null,
+      timelineScope: "",
+      timelineReturnAnchor: "",
     },
     detailRouteActive: false,
     pollTimer: null,
@@ -1629,7 +1633,74 @@
     });
   }
 
+  function timelineRenderAsset(item) {
+    var card = element("button", "photo-timeline__card");
+    card.type = "button";
+    card.setAttribute("aria-label", "打开照片 " + item.asset_id + "，" + (item.display_time || item.time_label));
+    var image = element("img", null, "");
+    image.alt = "照片 " + item.asset_id;
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.src = item.thumbnail_url;
+    var date = element("span", "photo-timeline__date", item.display_time || item.time_label);
+    var label = element("small", "photo-timeline__source", item.time_label || "");
+    card.append(image, date, label);
+    return card;
+  }
+
+  function showBrowseMode(mode) {
+    var useTimeline = mode === "timeline";
+    state.browse.mode = useTimeline ? "timeline" : "list";
+    els.browseTimeline.hidden = !useTimeline;
+    els.browseListView.hidden = useTimeline;
+    els.browseShowTimeline.hidden = useTimeline;
+    els.browseShowList.hidden = !useTimeline;
+    els.browseShowTimeline.setAttribute("aria-pressed", useTimeline ? "true" : "false");
+    els.browseShowList.setAttribute("aria-pressed", useTimeline ? "true" : "false");
+    els.browseCaptureState.hidden = useTimeline;
+    els.browseListFilters.hidden = useTimeline;
+    els.browseListTimeHint.hidden = useTimeline;
+    els.browseTimelineNote.hidden = !useTimeline;
+    if (!useTimeline) {
+      if (!state.browse.loaded || state.browse.binding !== browseFingerprint()) loadBrowse(true);
+      return;
+    }
+    if (!window.PhotoTimeline) {
+      setStatus(els.browseStatus, "时间轴组件暂不可用，请刷新页面后重试。", "error");
+      showBrowseMode("list");
+      return;
+    }
+    var scope = state.browse.sourceId
+      ? { kind: "source", source_id: Number(state.browse.sourceId) }
+      : { kind: "all" };
+    if (!state.browse.timelineMount) {
+      state.browse.timelineMount = window.PhotoTimeline.mount({
+        host: els.browseTimeline,
+        timeBasis: "capture",
+        scope: scope,
+        adapter: {
+          renderAsset: timelineRenderAsset,
+          onOpen: function (item) {
+            state.browse.timelineReturnAnchor = item.anchor || "";
+            showDetail(item.asset_id);
+          },
+        },
+      });
+      state.browse.timelineScope = JSON.stringify(scope);
+      if (state.browse.returnPending && state.browse.timelineReturnAnchor) {
+        state.browse.timelineMount.setReturnAnchor(
+          state.browse.returnAssetId,
+          state.browse.timelineReturnAnchor
+        );
+      }
+    } else if (state.browse.timelineScope !== JSON.stringify(scope)) {
+      state.browse.timelineScope = JSON.stringify(scope);
+      state.browse.timelineMount.setScope(scope);
+    }
+  }
+
   function loadBrowse(reset) {
+    if (state.browse.mode === "timeline") return;
     if (reset) {
       state.browse.requestVersion += 1;
       releaseObjectUrls();
@@ -1952,6 +2023,8 @@
       returnAssetId: state.browse.returnAssetId,
       returnAssetTop: state.browse.returnAssetTop,
       count: state.browse.count,
+      mode: state.browse.mode,
+      timelineReturnAnchor: state.browse.timelineReturnAnchor,
     };
     state.browse.returnContext = snapshot;
     try { window.sessionStorage.setItem(BROWSE_RETURN_KEY, JSON.stringify(snapshot)); } catch (_error) {}
@@ -1965,6 +2038,8 @@
     state.browse.order = String(snapshot.order || "time_desc");
     state.browse.captureFrom = String(snapshot.captureFrom || "");
     state.browse.captureTo = String(snapshot.captureTo || "");
+    state.browse.mode = snapshot.mode === "timeline" ? "timeline" : "list";
+    state.browse.timelineReturnAnchor = String(snapshot.timelineReturnAnchor || "");
     state.browse.returnScrollY = Math.max(0, Number(snapshot.scrollY) || 0);
     state.browse.returnAssetId = String(snapshot.returnAssetId || assetId);
     state.browse.returnAssetTop = Number.isFinite(Number(snapshot.returnAssetTop)) ? Number(snapshot.returnAssetTop) : null;
@@ -1982,6 +2057,10 @@
 
   function restoreBrowsePosition() {
     if (!state.browse.returnPending || !state.browse.loaded) return;
+    if (state.browse.mode === "timeline") {
+      state.browse.returnPending = false;
+      return;
+    }
     if (state.browse.count < state.browse.returnTargetCount && state.browse.hasMore) {
       loadBrowse(false);
       return;
@@ -2000,7 +2079,8 @@
 
   function showDetail(assetId) {
     state.browse.returnScrollY = window.scrollY || window.pageYOffset || 0;
-    var returnTile = els.assetGrid.querySelector('[data-asset-id="' + String(assetId) + '"]');
+    var returnTile = (state.browse.mode === "timeline" ? els.browseTimeline : els.assetGrid)
+      .querySelector('[data-asset-id="' + String(assetId) + '"]');
     state.browse.returnAssetId = String(assetId);
     state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
     state.detailRouteActive = true;
@@ -2391,9 +2471,7 @@
       }
     });
     els.main.focus({ preventScroll: true });
-    if (name === "browse" && !state.browse.loaded) {
-      loadBrowse(true);
-    }
+    if (name === "browse") showBrowseMode(state.browse.mode);
   }
 
   function handleHash() {
@@ -2496,6 +2574,13 @@
       sourceName: document.getElementById("source-name"),
       sourceRoot: document.getElementById("source-root"),
       browseStatus: document.getElementById("browse-status"),
+      browseTimeline: document.getElementById("browse-timeline"),
+      browseListView: document.getElementById("browse-list-view"),
+      browseShowTimeline: document.getElementById("browse-show-timeline"),
+      browseShowList: document.getElementById("browse-show-list"),
+      browseListFilters: document.getElementById("browse-list-filters"),
+      browseListTimeHint: document.getElementById("browse-list-time-hint"),
+      browseTimelineNote: document.getElementById("browse-timeline-note"),
       browseScope: document.getElementById("browse-scope"),
       browseScopeName: document.getElementById("browse-scope-name"),
       browseSource: document.getElementById("browse-source"),
@@ -2553,14 +2638,18 @@
     document.getElementById("browse-reload").addEventListener("click", function () {
       loadBrowse(true);
     });
+    els.browseShowTimeline.addEventListener("click", function () { showBrowseMode("timeline"); });
+    els.browseShowList.addEventListener("click", function () { showBrowseMode("list"); });
     els.browseSource.addEventListener("change", function () {
       state.browse.sourceId = els.browseSource.value;
-      loadBrowse(true);
+      if (state.browse.mode === "timeline") showBrowseMode("timeline");
+      else loadBrowse(true);
     });
     document.getElementById("clear-browse-source").addEventListener("click", function () {
       state.browse.sourceId = "";
       els.browseSource.value = "";
-      loadBrowse(true);
+      if (state.browse.mode === "timeline") showBrowseMode("timeline");
+      else loadBrowse(true);
     });
     els.browseOrder.addEventListener("change", function () {
       state.browse.order = els.browseOrder.value;

@@ -262,7 +262,7 @@
         groups.replaceChild(section, existing.section);
         state.pages = state.pages.filter(function (value) { return value !== existing; });
         state.request.replacingPage = null;
-      } else groups.insertBefore(section, sentinel);
+      } else groups.append(section);
       state.pageNumber += 1;
       state.pages.push(page); state.active.push(page); state.detailCache.push(page);
       state.anchorCache.push({ number: page.number, first: page.firstAnchor, last: page.lastAnchor, height: section.getBoundingClientRect().height });

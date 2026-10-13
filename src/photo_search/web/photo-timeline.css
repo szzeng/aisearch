@@ -1,3 +1,33 @@
+.browse-mode-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 0 0 0.75rem;
+}
+
+.browse-mode-controls button {
+  min-height: 2.5rem;
+  border: 1px solid var(--line, #d9e2dd);
+  border-radius: var(--radius-control, 10px);
+  padding: 0.4rem 0.7rem;
+  color: var(--fg, #22312b);
+  background: var(--panel, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+
+.browse-mode-controls button:hover,
+.browse-mode-controls button[aria-pressed="true"] {
+  border-color: var(--accent, #2c7955);
+}
+
+.browse-controls #browse-list-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
 .photo-timeline {
   color: var(--fg, #22312b);
 }

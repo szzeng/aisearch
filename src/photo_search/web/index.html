@@ -7,10 +7,12 @@
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-f1-6" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui-timeline-integration-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
-    <script src="/web/app.js?v=p4-ui-shell-a-2" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-ui-timeline-integration-a-1" defer></script>
+    <script src="/web/app.js?v=p4-ui-timeline-integration-a-1" defer></script>
   </head>
 <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -154,6 +156,10 @@
 
       <section id="view-browse" class="view" hidden aria-labelledby="view-browse-title">
         <h2 id="view-browse-title">浏览图片</h2>
+        <div class="browse-mode-controls" role="group" aria-label="照片浏览方式">
+          <button type="button" id="browse-show-timeline" aria-pressed="false">时间轴浏览</button>
+          <button type="button" id="browse-show-list" aria-pressed="true" hidden>列表浏览</button>
+        </div>
         <p class="hint">
           “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。
           「拍摄时间」只来自文件自身声明的时间（EXIF 原始/数字化时间）；文件系统修改时间
@@ -164,6 +170,7 @@
           <select id="browse-source">
             <option value="">全部图库</option>
           </select>
+          <div id="browse-list-filters">
           <label for="browse-order">排序</label>
           <select id="browse-order">
             <option value="time_desc">按加入时间（入库时间，从新到旧）</option>
@@ -191,15 +198,18 @@
             placeholder="YYYY-MM-DD"
           />
           <button type="button" id="browse-reload">刷新</button>
+          </div>
         </div>
         <p id="browse-scope" class="state-block browse-scope" role="status" aria-live="polite" hidden>
           <span id="browse-scope-name"></span>
           <button type="button" id="clear-browse-source">查看全部图库</button>
         </p>
         <p class="hint">
+          <span id="browse-list-time-hint">
           拍摄时间范围是左闭右开：包含起始时刻，不包含结束时刻。留空表示该端不限。
           只写日期时按当天 00:00:00.000 处理；带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）
           会被服务端明确拒绝，因为拍摄时间没有唯一时区。
+          </span>
         </p>
         <div
           id="browse-capture-state"
@@ -208,12 +218,18 @@
           aria-live="polite"
           hidden
         ></div>
+        <p id="browse-timeline-note" class="hint" hidden>
+          时间轴使用独立的年月定位与时间分组；列表视图中的排序和拍摄日期范围不会沿用。图库筛选会保留。
+        </p>
+        <div id="browse-timeline" hidden aria-label="照片时间轴"></div>
+        <div id="browse-list-view">
         <div id="browse-status" class="state-block" role="status" aria-live="polite"></div>
         <ol id="asset-grid" class="grid" aria-label="按加入时间排列的图片"></ol>
         <div id="grid-sentinel" class="sentinel" hidden></div>
         <p>
           <button type="button" id="load-more" hidden>加载更多</button>
         </p>
+        </div>
       </section>
 
       <section id="view-detail" class="view" hidden aria-labelledby="view-detail-title">
