@@ -139,6 +139,37 @@ def test_live_diverse_representatives_use_old_false_flags_but_refuse_unconfirmed
         harness.close()
 
 
+def test_explicitly_excluded_person_is_not_an_automatic_face_candidate(tmp_path):
+    harness = RedetectionHarness(tmp_path)
+    try:
+        person = harness.add_person()
+        asset = harness.add_asset("excluded-person.jpg")
+        harness.write_face_document(asset, [record(1)])
+        face = harness.catalog.read_one(
+            "SELECT face_id FROM faces WHERE asset_id = ?", (asset,)
+        )["face_id"]
+        harness.add_link(face, person)
+        index = FaceIndexCoordinator(harness.catalog)
+        index.process_all(now_ms=2)
+        assert {candidate.person_id for candidate in index.candidates()} == {person}
+
+        with harness.catalog.write() as connection:
+            connection.execute(
+                "INSERT INTO person_hidden(person_id, ignore_state) VALUES (?, 'EXCLUDED')",
+                (person,),
+            )
+        assert index.candidates() == []
+
+        with harness.catalog.write() as connection:
+            connection.execute(
+                "UPDATE person_hidden SET ignore_state='TEMPORARY' WHERE person_id=?",
+                (person,),
+            )
+        assert {candidate.person_id for candidate in index.candidates()} == {person}
+    finally:
+        harness.close()
+
+
 def test_inbox_reason_summary_filters_and_cursors_are_read_only_and_private(api_env):
     photos = seed_library(api_env, {f"{i}.jpg": [(10, 10, 110, 110)] for i in range(5)})
     catalog = api_env.service.catalog

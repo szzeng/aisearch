@@ -229,7 +229,10 @@ def _confirmed_links(connection: sqlite3.Connection, face_id: str) -> list[Any]:
 
 def _suggested_exists(connection: sqlite3.Connection, face_id: str) -> bool:
     row = connection.execute(
-        "SELECT 1 FROM face_person_links WHERE face_id = ? AND decision = 'SUGGESTED' LIMIT 1",
+        "SELECT 1 FROM face_person_links AS l JOIN persons AS p ON p.person_id=l.person_id "
+        "WHERE l.face_id = ? AND l.decision = 'SUGGESTED' "
+        "AND NOT EXISTS (SELECT 1 FROM person_hidden AS h "
+        "WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') LIMIT 1",
         (str(face_id),),
     ).fetchone()
     return row is not None

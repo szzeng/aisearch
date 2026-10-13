@@ -129,8 +129,12 @@ class PersonService:
                 refresh=self.refresh,
             )
 
-    def set_visibility(self, *, person_ids: Sequence[int], hidden: bool) -> dict[str, Any]:
-        """Set album visibility for active canonical people as one atomic write."""
+    def set_visibility(
+        self, *, person_ids: Sequence[int], hidden: bool, ignore_state: str = "TEMPORARY"
+    ) -> dict[str, Any]:
+        """Ignore or restore active canonical people as one atomic write."""
+        if ignore_state not in ("TEMPORARY", "EXCLUDED"):
+            raise ValueError("ignore_state must be TEMPORARY or EXCLUDED")
         with self.catalog.write() as connection:
             canonical_ids = sorted(
                 {resolve_canonical_person_id(connection, int(person_id)) for person_id in person_ids}
@@ -139,7 +143,10 @@ class PersonService:
             for person_id in canonical_ids:
                 if hidden:
                     result = connection.execute(
-                        "INSERT OR IGNORE INTO person_hidden(person_id) VALUES (?)", (person_id,)
+                        "INSERT INTO person_hidden(person_id, ignore_state) VALUES (?, ?) "
+                        "ON CONFLICT(person_id) DO UPDATE SET ignore_state=excluded.ignore_state "
+                        "WHERE person_hidden.ignore_state != excluded.ignore_state",
+                        (person_id, ignore_state),
                     )
                 else:
                     result = connection.execute(
@@ -150,7 +157,10 @@ class PersonService:
                 revision_module.bump_filter_revision(
                     connection, cause="PERSON_CHANGED", now_ms=self.catalog.now_ms()
                 )
-            return {"hidden": bool(hidden), "person_count": len(canonical_ids), "changed": changed}
+            return {
+                "hidden": bool(hidden), "ignore_state": ignore_state,
+                "person_count": len(canonical_ids), "changed": changed,
+            }
 
     def undo(
         self,

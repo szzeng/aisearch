@@ -46,6 +46,8 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeo
      JSON.parse(options.body).person_ids.forEach(id=>hiddenRemoved.add(id));
      return {ok:true,json:async()=>({hidden:false,person_count:1,changed:1})};
    }
+   if(url.includes("/faces/inbox/groups"))return {ok:true,json:async()=>({cards:[],has_more:false,next_cursor:null,total:0})};
+   if(url.includes("/faces/inbox/summary"))return {ok:true,json:async()=>({total:0,reasons:{}})};
    return {ok:true,json:async()=>({persons:[],faces:[],has_more:false,next_cursor:null})};
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
@@ -80,7 +82,7 @@ const clickPerson=async id=>{await get("pa-cards").children[id-1].fire("click");
  await get("pa-more").fire("click");await flush();
  assert.equal(cards.children.length,160);assert.equal(cards.children[159].getAttribute("aria-pressed"),"false");
  await clickPerson(120);assert.equal(selectedCount(),1);
- await get("pa-batch-cancel").fire("click");
+ await get("pa-batch-toggle").fire("click");
  assert.equal(cards.children.length,160);assert.equal(browseCount(),4);assert.equal(selectedCount(),0);
  assert.equal(cards.children[119].getAttribute("aria-pressed"),"false");
  await get("pa-hidden-toggle").fire("click");await flush();
@@ -99,6 +101,13 @@ const clickPerson=async id=>{await get("pa-cards").children[id-1].fire("click");
  assert.equal(selectedCount(),0);assert.equal(cards.children.length,120);
  assert.equal(browseCount(),hiddenBrowseCount+3);assert.equal(context.ui.state.listCursor,"hidden-3");
  assert(!cards.children.some(card=>card.personId===101),"restored person leaves the retained hidden pages");
+ await get("pa-hidden-toggle").fire("click");await flush();
+ context.ui.state.organize=true;get("ignore-state").value="EXCLUDED";
+ await clickPerson(1);confirmResult=true;visibilityFailure=false;
+ const inboxBefore=requests.filter(request=>request.url.includes("/faces/inbox/groups")).length;
+ await get("pa-visibility-submit").fire("click");await flush();
+ assert.equal(requests.filter(request=>request.url.includes("/faces/inbox/groups")).length,inboxBefore+1,
+   "excluding a person refreshes the loaded inbox so stale recommendations disappear");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

@@ -4,7 +4,7 @@
   const $ = (id) => document.getElementById("pa-" + id);
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
-  const state = { organize: false, qualityView: "clean", hiddenView: false, batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -176,6 +176,7 @@
     const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"),
       visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_recent_desc", limit: 40,
       collection_state: $("collection-state").checked ? "none" : "all" };
+    if (state.hiddenView) values.ignore_state = state.ignoreState;
     if (state.organize && !state.hiddenView) values.quality_view = state.qualityView;
     return values;
   }
@@ -287,6 +288,11 @@
     $("batch-toggle").setAttribute("aria-pressed", String(state.batchMode));
     $("batch-toggle").textContent = state.batchMode ? "退出批量管理" : "批量管理";
     $("hidden-toggle").textContent = state.hiddenView ? "返回人物列表" : "查看已忽略";
+    $("ignore-state-filter").hidden = !state.hiddenView;
+    $("ignore-temporary").setAttribute("aria-pressed", String(state.ignoreState === "TEMPORARY"));
+    $("ignore-excluded").setAttribute("aria-pressed", String(state.ignoreState === "EXCLUDED"));
+    $("ignore-state-label").hidden = !state.batchMode || state.hiddenView;
+    $("ignore-state").disabled = state.visibilityBusy || state.writing;
     $("selection-count").hidden = !state.batchMode;
     $("selection-count").textContent = "已选 " + state.selectedPeople.size + " 个人物";
     $("batch-merge").hidden = !state.batchMode;
@@ -324,12 +330,18 @@
     if (state.visibilityBusy || !state.selectedPeople.size) return;
     if (state.selectedPeople.size > 500) { message("一次最多操作 500 人。"); return; }
     const ids = Array.from(state.selectedPeople);
-    const action = state.hiddenView ? "恢复" : "忽略";
+    const ignoreState = $("ignore-state").value;
+    const action = state.hiddenView ? "恢复" : ignoreState === "EXCLUDED" ? "明确排除" : "暂时忽略";
     if (!window.confirm("确定" + action + "所选 " + ids.length + " 个人物吗？")) return;
     state.visibilityBusy = true; renderPeopleManagement();
     try {
-      const result = await api("/persons/visibility", { person_ids: ids, hidden: !state.hiddenView });
-      state.selectedPeople.clear(); state.listCursor = null; renderPeopleManagement(); await loadPeople(false);
+      const requestBody = { person_ids: ids, hidden: !state.hiddenView };
+      if (!state.hiddenView) requestBody.ignore_state = ignoreState;
+      const result = await api("/persons/visibility", requestBody);
+      state.selectedPeople.clear(); state.listCursor = null; renderPeopleManagement();
+      const refreshes = [loadPeople(false)];
+      if (state.organize) refreshes.push(loadInbox(false));
+      await Promise.all(refreshes);
       message("已" + action + " " + result.changed + " 个人物。", true);
     } catch (error) { message(action + "没有完成：" + errorText(error)); }
     finally { state.visibilityBusy = false; renderPeopleManagement(); }
@@ -510,7 +522,7 @@
       state.peopleBinding = binding; state.peoplePages = append ? state.peoplePages + page.loadedPages : pageCount;
       state.peopleLastLoadedAt = Date.now(); state.peopleRefreshPending = false;
       if (Number.isSafeInteger(page.total) && page.total >= 0) {
-        const label = state.hiddenView ? "已忽略" : state.organize ? "未命名人物" : "人物";
+        const label = state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "明确排除" : "暂时忽略") : state.organize ? "未命名人物" : "人物";
         $("list-count").textContent = label + " " + page.total + " 人";
         $("list-count").hidden = false;
       } else {
@@ -519,7 +531,7 @@
       }
       syncPeopleCards();
       state.listCursor = page.next_cursor; $("more").hidden = !page.has_more;
-      $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? "已忽略的人物；可多选后恢复。" : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? "没有已忽略的人物。" : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
+      $("list-note").textContent = $("cards").children.length ? (state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "明确排除的人物；不会参与人物推荐，可多选后恢复。" : "暂时忽略的人物；可继续处理，也可多选恢复。") : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "没有明确排除的人物。" : "没有暂时忽略的人物。") : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
       restoreLibraryPosition(position);
     } catch (error) { if (seq === state.listSeq) { $("list-note").textContent = "人物列表加载失败：" + errorText(error); $("people-retry").hidden = false; } }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; }
@@ -1132,6 +1144,10 @@
     if (cleared) message("切换整理范围，已清除 " + cleared + " 项选择。", true);
     return Promise.all([loadPeople(false), loadInbox(false)]);
   }
+  function setIgnoreState(ignoreState) {
+    if (!state.hiddenView || !["TEMPORARY", "EXCLUDED"].includes(ignoreState) || state.ignoreState === ignoreState) return;
+    clearPeopleSelection(); state.ignoreState = ignoreState; state.listSeq++; state.listCursor = null; loadPeople(false);
+  }
   function setView(organize) {
     if (state.organize === organize && !state.hiddenView) return;
     clearPeopleSelection(); state.hiddenView = false;
@@ -1613,9 +1629,11 @@
     ["all", "invert", "clear"].forEach((action) => $("inbox-hidden-" + action).addEventListener("click", () => inboxSelectionAction(true, action)));
     $("visibility-submit").addEventListener("click", submitVisibility);
     $("hidden-toggle").addEventListener("click", () => {
-      state.hiddenView = !state.hiddenView; state.selectedPeople.clear(); renderPeopleManagement();
+      state.hiddenView = !state.hiddenView; if (state.hiddenView) state.ignoreState = "TEMPORARY"; state.selectedPeople.clear(); renderPeopleManagement();
       $("query").value = ""; loadPeople(false);
     });
+    $("ignore-temporary").addEventListener("click", () => setIgnoreState("TEMPORARY"));
+    $("ignore-excluded").addEventListener("click", () => setIgnoreState("EXCLUDED"));
     $("find").addEventListener("submit", (event) => { event.preventDefault(); loadPeople(false); });
     $("query").addEventListener("search", () => loadPeople(false));
     $("people-retry").addEventListener("click", () => loadPeople(false));

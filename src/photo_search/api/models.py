@@ -824,6 +824,7 @@ class PersonVisibilityRequest(BaseModel):
 
     person_ids: list[StrictInt] = Field(min_length=1, max_length=500)
     hidden: StrictBool
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] = "TEMPORARY"
 
     @field_validator("person_ids")
     @classmethod
@@ -837,6 +838,7 @@ class PersonVisibilityResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     hidden: bool
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"]
     person_count: int
     changed: int
 

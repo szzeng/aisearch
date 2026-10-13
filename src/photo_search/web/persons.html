@@ -12,7 +12,7 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
     <script src="/web/persons.js?v=p4-ui-dialog-esc-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-inbox-compare-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-ignore-state-a-2" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -56,8 +56,15 @@
         <div class="row-actions" aria-label="人物批量管理">
           <button type="button" id="pa-batch-toggle">批量管理</button>
           <button type="button" id="pa-hidden-toggle">查看已忽略</button>
+          <div id="pa-ignore-state-filter" class="row-actions" hidden aria-label="忽略状态">
+            <button type="button" id="pa-ignore-temporary" aria-pressed="true">暂时忽略</button>
+            <button type="button" id="pa-ignore-excluded" aria-pressed="false">明确排除</button>
+          </div>
             <span id="pa-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-people-all" type="button" hidden>全选已加载</button><button id="pa-people-invert" type="button" hidden>反选已加载</button><button id="pa-people-clear" type="button" hidden>清空选择</button>
           <button type="button" id="pa-visibility-submit" hidden disabled>忽略所选</button>
+          <label id="pa-ignore-state-label" hidden>忽略方式
+            <select id="pa-ignore-state"><option value="TEMPORARY">暂时忽略，以后可能处理</option><option value="EXCLUDED">明确排除，不再推荐</option></select>
+          </label>
           <select id="pa-collection-choice" hidden aria-label="加入哪个合集"><option value="">选择合集</option></select>
           <label id="pa-collection-hide-label" hidden><input id="pa-collection-hide" type="checkbox" />加入后忽略</label>
           <button type="button" id="pa-collection-add" hidden disabled>加入合集</button>

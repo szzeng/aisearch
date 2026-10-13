@@ -462,6 +462,10 @@ class FaceIndexCoordinator:
         eligibility += " AND NOT " + superseded_machine_sql()
         eligibility += " AND f.spec_revision=(SELECT g.spec_revision FROM face_index_generations g WHERE g.generation_id=c.generation_id)"
         eligibility += " AND c.vector_sha256=fe.vector_sha256"
+        eligibility += (
+            " AND NOT EXISTS (SELECT 1 FROM person_hidden AS ph WHERE ph.person_id=l.person_id "
+            "AND ph.ignore_state='EXCLUDED')"
+        )
         # Old publication flags only describe the size-ranked choice at that time.
         # Read a bounded pool of confirmed members so historical flags need no rebuild
         # and a smaller, different appearance can replace redundant large portraits.

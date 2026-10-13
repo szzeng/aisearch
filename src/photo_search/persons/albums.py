@@ -277,6 +277,7 @@ def people_page(
     cursor: str | None,
     sort: str = "person_id",
     visibility: str = "all",
+    ignore_state: str | None = None,
     quality_view: str = "all",
     collection_state: str = "all",
 ) -> dict[str, Any]:
@@ -284,6 +285,8 @@ def people_page(
         kind not in ("all", "named", "unnamed")
         or sort not in ("person_id", "photos_desc", "photos_recent_desc")
         or visibility not in ("all", "visible", "hidden")
+        or ignore_state not in (None, "TEMPORARY", "EXCLUDED")
+        or (ignore_state is not None and visibility != "hidden")
         or quality_view not in ("all", "clean")
         or collection_state not in ("all", "none")
         or len(q) > 200
@@ -300,6 +303,8 @@ def people_page(
     ]
     if visibility != "all":
         binding = [binding[0] + "-visibility1", visibility, *binding[1:]]
+    if ignore_state is not None:
+        binding = [binding[0] + "-ignore-state1", ignore_state, *binding]
     if quality_view != "all":
         binding = [binding[0] + "-quality1", quality_view, POLICY_REVISION, *binding[1:]]
     collection_cte = ""
@@ -320,6 +325,11 @@ def people_page(
         candidate_conditions.append(
             "EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id = p.person_id)"
         )
+    if ignore_state is not None:
+        candidate_conditions.append(
+            "EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state=?)"
+        )
+        candidate_parameters.append(ignore_state)
     if kind == "named":
         candidate_conditions.append("p.name IS NOT NULL")
     elif kind == "unnamed":
@@ -546,7 +556,7 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         (face_id,),
     )
     suggested = catalog.read_all(
-        "SELECT l.person_id FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = ? AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1) ORDER BY l.confidence DESC, l.person_id LIMIT 3",
+        "SELECT l.person_id FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = ? AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1) ORDER BY l.confidence DESC, l.person_id LIMIT 3",
         (face_id,),
     )
     suggestions = [
@@ -597,6 +607,7 @@ CASE
     THEN l.reason ELSE 'OTHER_SUGGESTION' END
    FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id
    WHERE l.face_id = f.face_id AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL
+    AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED')
     AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e
      WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1)
    ORDER BY l.confidence DESC, l.person_id LIMIT 1),
@@ -805,6 +816,7 @@ def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "al
         "JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = inbox.face_id "
         "AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL "
         "AND inbox.organization_reason IN ('BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION') "
+        "AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') "
         "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id=l.face_id "
         "AND e.person_id=l.person_id AND e.active=1) "
         "ORDER BY l.confidence DESC, p.person_id ASC LIMIT 1) AS candidate_person_id "

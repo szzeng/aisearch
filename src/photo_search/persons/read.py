@@ -300,8 +300,9 @@ def _suggested_faces(connection: sqlite3.Connection, face_ids: list[str]) -> set
         return set()
     placeholders = ", ".join("?" for _ in face_ids)
     rows = connection.execute(
-        "SELECT DISTINCT face_id FROM face_person_links "
-        f"WHERE decision = 'SUGGESTED' AND face_id IN ({placeholders})",
+        "SELECT DISTINCT l.face_id FROM face_person_links AS l JOIN persons AS p ON p.person_id=l.person_id "
+        f"WHERE l.decision = 'SUGGESTED' AND l.face_id IN ({placeholders}) "
+        "AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED')",
         tuple(str(value) for value in face_ids),
     ).fetchall()
     return {str(row["face_id"]) for row in rows}

@@ -1614,6 +1614,7 @@ async def browse_persons(
     q: str = "",
     sort: Literal["person_id", "photos_desc", "photos_recent_desc"] = "person_id",
     visibility: Literal["all", "visible", "hidden"] = "all",
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] | None = None,
     quality_view: Literal["all", "clean"] = "all",
     collection_state: Literal["all", "none"] = "all",
     limit: int | None = None,
@@ -1627,6 +1628,7 @@ async def browse_persons(
         limit=clamp_person_limit(limit),
         cursor=cursor,
         visibility=visibility,
+        ignore_state=ignore_state,
         quality_view=quality_view,
         collection_state=collection_state,
     )
@@ -1716,7 +1718,7 @@ async def post_person_visibility(
     request: Request, payload: PersonVisibilityRequest
 ) -> dict[str, Any]:
     return persons_of(request).set_visibility(
-        person_ids=payload.person_ids, hidden=bool(payload.hidden)
+        person_ids=payload.person_ids, hidden=bool(payload.hidden), ignore_state=payload.ignore_state
     )
 
 
