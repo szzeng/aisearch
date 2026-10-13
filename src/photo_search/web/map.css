@@ -40,6 +40,26 @@
   min-width: 0;
   overflow: auto;
   padding: 0.5rem;
+  scrollbar-color: var(--line) var(--bg);
+  scrollbar-width: thin;
+}
+
+.map-page-main > section::-webkit-scrollbar {
+  width: 0.65rem;
+}
+
+.map-page-main > section::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+
+.map-page-main > section::-webkit-scrollbar-thumb {
+  border: 2px solid var(--bg);
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.map-page-main > section::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--accent) 55%, var(--line));
 }
 
 #grid {

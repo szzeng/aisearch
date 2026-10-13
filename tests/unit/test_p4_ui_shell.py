@@ -31,7 +31,13 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert "#main:focus-visible {\n  outline: none;\n}" in styles
     assert ":focus-visible {\n  outline: 3px solid var(--accent);" in styles
     map_script = (WEB / "map.js").read_text(encoding="utf-8")
-    assert "map.js?v=p4-ui-shell-a-1" in (WEB / "map.html").read_text(encoding="utf-8")
+    map_page = (WEB / "map.html").read_text(encoding="utf-8")
+    assert "map.js?v=p4-ui-shell-a-1" in map_page
+    assert "map.css?v=p4-ui-shell-a-2" in map_page
+    map_styles = (WEB / "map.css").read_text(encoding="utf-8")
+    assert ".map-page-main > section::-webkit-scrollbar-track {\n  background: var(--bg);\n}" in map_styles
+    assert ".map-page-main > section::-webkit-scrollbar-thumb {" in map_styles
+    assert "scrollbar-color: var(--line) var(--bg);" in map_styles
     assert 'req("/api/v1/capabilities/page").then(revealPersonsNav)' in map_script
     assert 'version >= 13 && String(body && body.schema_status) === "ok"' in map_script
     assert 'href="/places"' in (WEB / "map.html").read_text(encoding="utf-8")
