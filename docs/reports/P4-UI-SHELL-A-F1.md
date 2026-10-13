@@ -63,3 +63,4 @@ Chrome 本机截图保存于 `.tmp/P4-UI-SHELL-A-F1/screenshots/`，并已目视
 - 五个页面的共享 `styles.css` 缓存版本同步为 `p4-ui-shell-a-f1-6`。在 shell 定向测试中加入主区域轮廓豁免与通用焦点规则仍存在的回归断言。
 - 验证：四个 F1 定向 pytest 模块 JUnit **37 passed / 0 failed / 0 errors / 0 skipped**；Ruff 和 `git diff --check` 通过。此修复未改 JS，未跑 Node。
 - 该修复处理用户报告的默认首页焦点框；F1 原定真实 200% 浏览器缩放和搜索命中态截图仍未完成，因此整卡继续为 VISUAL VALIDATION PENDING。
+- 后续用户反馈图库管理切换时仍出现焦点框且主内容上方留白。定位到 `showView()` 的 `main.focus()` 让浏览器默认滚动聚焦目标；改为 `focus({ preventScroll: true })` 保留焦点上下文并阻止视口移动，`app.js` 缓存版本更新为 `p4-ui-shell-a-2`。路由测试断言 `preventScroll`，四个 F1 定向 pytest 模块 JUnit **37 passed / 0 failed / 0 errors / 0 skipped**；Ruff、`node --check src/photo_search/web/app.js` 和 `git diff --check` 通过。首轮新断言使用跨 Node VM realm 对象做深比较而失败；改为直接检查 `preventScroll` 属性并完整复跑通过。该反馈修复未另存浏览器截图，整卡视觉状态仍按原待验项处理。

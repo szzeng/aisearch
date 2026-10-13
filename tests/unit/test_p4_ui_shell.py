@@ -58,10 +58,12 @@ code=code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui={state,handleHash,showView,revealPersonsNav,setElements(value){els=value;},stubDetail(fn){renderDetail=fn;}};\n  if (document.readyState === "loading")');
 const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:(...args)=>{requests.push(args);}};
 vm.createContext(context);vm.runInContext(code,context);
-const sections={sources:{hidden:true},browse:{hidden:true},detail:{hidden:true}},main={focus(){}};
+const focusCalls=[];
+const sections={sources:{hidden:true},browse:{hidden:true},detail:{hidden:true}},main={focus(options){focusCalls.push(options);}};
 const ui=context.ui;ui.setElements({views:sections,navButtons:[],main,assetGrid:{querySelector(){return null;}}});
 ui.state.browse.loaded=true;
 ui.handleHash();assert.equal(sections.browse.hidden,false,"plain / opens photo browsing");
+assert.equal(focusCalls[focusCalls.length-1].preventScroll,true,"route focus preserves the current scroll position");
 assert.equal(links[0].values["aria-current"],"page");
 location.search="?view=sources";ui.handleHash();assert.equal(sections.sources.hidden,false,"explicit management view opens sources");
 assert.equal(links[1].values["aria-current"],"page");

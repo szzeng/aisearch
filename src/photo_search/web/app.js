@@ -2390,7 +2390,7 @@
         link.removeAttribute("aria-current");
       }
     });
-    els.main.focus();
+    els.main.focus({ preventScroll: true });
     if (name === "browse" && !state.browse.loaded) {
       loadBrowse(true);
     }
