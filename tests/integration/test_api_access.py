@@ -68,7 +68,10 @@ def test_openapi_document_is_behind_the_session(api_env) -> None:
         response = await client.get("/api/v1/openapi.json")
         assert response.status_code == 200
         document = response.json()
-        assert document["info"]["version"] == "0.1.0"
+        assert document["info"]["version"] == "0.2.0"
+        page_capabilities = await client.get("/api/v1/capabilities/page")
+        assert page_capabilities.status_code == 200
+        assert page_capabilities.json()["app_version"] == document["info"]["version"]
         assert "/api/v1/assets/{asset_id}/original" in document["paths"]
         assert "AssetDetail" in document["components"]["schemas"]
 
