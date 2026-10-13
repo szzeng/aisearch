@@ -6,26 +6,26 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-search-c-2" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-ui-search-c-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-f1-5" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-ui-shell-a-f1-5" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
     <script src="/web/search.js?v=p4-ui-search-c-1" defer></script>
   </head>
-  <body class="app-shell">
+  <body class="app-shell search-page">
     <a class="skip-link" href="#main">跳到主要内容</a>
 
     <aside class="app-sidebar" aria-label="应用导航">
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
-        <a class="nav-link" data-shell-page="photos" href="/">照片</a>
-        <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons">人物</a>
-        <a class="nav-link" data-shell-page="places" href="/places">地点</a>
+        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
+        <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>
       <nav class="app-nav app-nav-secondary" aria-label="其他入口">
-        <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
-        <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
+        <a class="nav-link" data-shell-page="map" href="/map"><span class="nav-icon" aria-hidden="true">⌖</span>地图相册</a>
+        <a class="nav-link" data-shell-page="management" href="/?view=sources"><span class="nav-icon" aria-hidden="true">⚙</span>图库管理</a>
       </nav>
     </aside>
 
@@ -47,11 +47,12 @@
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
-      <p class="hint">
-        用一个输入框说出想找的照片，例如“2023年张三在济南拍的日落”或“去年夏天的照片”。识别到的拍摄时间、人物和地点会显示为可取消条件；剩余内容词继续进行语义与文字搜索。纯条件结果可以继续翻页到末尾，语义结果最多浏览5000条。
-        命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成
-        “准确率”或百分比。
-      </p>
+      <p class="search-intro">描述照片里的内容、人物、地点或时间；已识别的条件会列在下方，可继续调整筛选。</p>
+      <details class="search-explainer">
+        <summary>搜索条件与结果说明</summary>
+        <p>例如“2023年张三在济南拍的日落”或“去年夏天的照片”。识别到的拍摄时间、人物和地点会显示为可取消条件；剩余内容词继续进行语义与文字搜索。纯条件结果可以继续翻页到末尾，语义结果最多浏览5000条。</p>
+        <p>结果会说明命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成“准确率”或百分比。</p>
+      </details>
 
       <section id="panel-query" class="panel" aria-labelledby="query-title">
         <h2 id="query-title">查询与筛选</h2>

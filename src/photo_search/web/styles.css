@@ -1,27 +1,41 @@
 /* Offline-only stylesheet: system fonts, relative units, no external reference. */
 
 :root {
-  --fg: #1c1c1e;
-  --fg-muted: #5b5b60;
-  --bg: #f7f7f9;
+  --fg: #253a38;
+  --fg-muted: #5f7068;
+  --bg: #f6f8f7;
   --panel: #ffffff;
-  --line: #d6d6dc;
-  --accent: #1b5fb4;
+  --line: #e3eae5;
+  --accent: #247967;
+  --tint: #eaf3ed;
+  --danger: #a63232;
   --warn-bg: #fff4d6;
   --warn-fg: #6b4a00;
   --error-bg: #ffe6e6;
   --error-fg: #8a1c1c;
+  --radius-sm: 0.45rem;
   --radius: 0.6rem;
+  --radius-lg: 0.85rem;
+  --space-1: 0.5rem;
+  --space-2: 0.75rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --shadow-soft: 0 2px 6px rgb(24 45 36 / 7%);
+  --font-ui: system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+  --font-size-body: 0.875rem;
+  --font-size-meta: 0.75rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --fg: #ececf1;
-    --fg-muted: #b3b3bd;
-    --bg: #16161a;
-    --panel: #202027;
-    --line: #3a3a44;
-    --accent: #7fb3ff;
+    --fg: #e3ece4;
+    --fg-muted: #a3b3a7;
+    --bg: #182320;
+    --panel: #22312b;
+    --line: #36483b;
+    --accent: #9ac8ac;
+    --tint: #2d4436;
+    --danger: #ff9c91;
     --warn-bg: #3a2f10;
     --warn-fg: #ffdf8a;
     --error-bg: #3d1c1c;
@@ -42,12 +56,15 @@ body {
   padding: 1rem clamp(0.75rem, 3vw, 2rem) 3rem;
   background: var(--bg);
   color: var(--fg);
-  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-body);
   line-height: 1.6;
 }
 
 h1 {
-  font-size: 1.4rem;
+  font-size: clamp(1.45rem, 2vw, 1.7rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
   margin: 0;
 }
 
@@ -107,8 +124,8 @@ a {
 }
 
 .nav-link {
-  color: var(--accent);
-  text-decoration: underline;
+  color: var(--fg-muted);
+  text-decoration: none;
   padding: 0.2rem 0.4rem;
 }
 
@@ -118,6 +135,15 @@ a {
   column-gap: 1.25rem;
   row-gap: 0.45rem;
   align-items: center;
+}
+
+.nav-icon {
+  display: inline-grid;
+  width: 1.25rem;
+  margin-right: 0.55rem;
+  place-items: center;
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
 .app-header.has-global-search > h1 {
@@ -139,7 +165,7 @@ a {
   border: 1px solid var(--line);
   border-radius: calc(var(--radius) + 0.15rem);
   background: var(--panel);
-  box-shadow: 0 2px 4px color-mix(in srgb, var(--fg) 8%, transparent);
+  box-shadow: var(--shadow-soft);
 }
 
 .global-search-form:focus-within {
@@ -166,7 +192,7 @@ a {
   flex: 0 0 auto;
   min-height: 2.4rem;
   border-color: transparent;
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  background: var(--tint);
   color: var(--accent);
   white-space: nowrap;
 }
@@ -194,7 +220,7 @@ a {
 .app-meta {
   margin: 0;
   color: var(--fg-muted);
-  font-size: 0.9rem;
+  font-size: var(--font-size-meta);
 }
 
 button {
@@ -205,6 +231,10 @@ button {
   background: var(--panel);
   color: var(--fg);
   cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--tint);
 }
 
 button[aria-current="true"] {
@@ -237,6 +267,15 @@ select {
   max-width: 100%;
 }
 
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 68%, white);
+  outline-offset: 2px;
+}
+
 #source-root {
   min-width: min(100%, 32rem);
 }
@@ -267,7 +306,7 @@ main {
 
 .hint {
   color: var(--fg-muted);
-  font-size: 0.9rem;
+  font-size: var(--font-size-meta);
 }
 
 .error {
@@ -592,10 +631,25 @@ body.app-shell {
   min-height: 2.5rem;
   padding: 0 0.65rem;
   color: var(--fg);
-  font-size: 1.1rem;
+  font-size: 1.125rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-decoration: none;
+}
+
+.app-brand::before {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  margin-right: 0.65rem;
+  place-items: center;
+  border-radius: 0.65rem;
+  background: var(--accent);
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--panel);
+  content: "▧";
+  font-size: 1.2rem;
+  line-height: 1;
 }
 
 .app-nav {
@@ -621,7 +675,7 @@ body.app-shell {
 
 .app-sidebar .nav-link:hover,
 .app-sidebar .nav-link[aria-current="page"] {
-  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  background: var(--tint);
   color: var(--accent);
 }
 
@@ -634,6 +688,7 @@ body.app-shell {
   min-width: 0;
   align-items: center;
   padding: 1.25rem clamp(1rem, 2vw, 2rem) 0.85rem 0;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
 }
 
 .app-shell > .app-header h1 {
@@ -660,6 +715,8 @@ body.app-shell {
 
 .app-shell > main {
   grid-area: main;
+  width: 100%;
+  max-width: 1560px;
   min-width: 0;
   margin: 0;
   padding: 0 clamp(1rem, 2vw, 2rem) 3rem 0;
@@ -686,8 +743,8 @@ body.app-shell {
   body.app-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "header"
       "sidebar"
+      "header"
       "notice"
       "page-nav"
       "main";
@@ -711,6 +768,14 @@ body.app-shell {
     padding: 0 0.25rem;
   }
 
+  .app-brand::before {
+    width: 1.65rem;
+    height: 1.65rem;
+    margin-right: 0.5rem;
+    border-radius: 0.5rem;
+    font-size: 1rem;
+  }
+
   .app-nav {
     display: flex;
     flex-wrap: wrap;
@@ -726,6 +791,11 @@ body.app-shell {
   .app-sidebar .nav-link {
     min-height: 2.25rem;
     padding: 0.35rem 0.6rem;
+  }
+
+  .nav-icon {
+    width: 1rem;
+    margin-right: 0.35rem;
   }
 
   .app-shell > .app-header {
@@ -746,12 +816,12 @@ body.app-shell {
 
   .app-header.has-global-search > h1 {
     grid-column: 1;
-    grid-row: 1;
+    grid-row: 2;
   }
 
   .app-header.has-global-search > .global-search-form {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1;
     width: 100%;
     max-width: none;
   }
@@ -790,8 +860,8 @@ body.app-shell {
 
   .map-page.app-shell {
     grid-template-areas:
-      "header"
       "sidebar"
+      "header"
       "notice"
       "main";
     grid-template-rows: auto auto auto minmax(20rem, 1fr);

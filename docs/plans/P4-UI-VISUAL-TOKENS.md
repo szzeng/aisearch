@@ -11,12 +11,19 @@
 | `--bg` 背景 | `#f6f8f7` | `#182320` |
 | `--panel` 面板 | `#ffffff` | `#22312b` |
 | `--fg` 文字 | `#253a38` | `#e3ece4` |
-| `--fg-muted` 次文字 | `#74847e` | `#a3b3a7` |
+| `--fg-muted` 次文字 | `#5f7068`（F1 对比度修正） | `#a3b3a7` |
 | `--line` 边线 | `#e3eae5` | `#36483b` |
 | `--accent` 强调 | `#247967` | `#9ac8ac` |
 | `--tint` 浅选中 | `#eaf3ed` | `#2d4436` |
 
-保持旧 CSS 变量名与独立警告/错误/危险状态颜色，检查文字对比度；实际变量在 F1 落地后核对，不把此表当成已提交 CSS。
+保持旧 CSS 变量名与独立警告/错误/危险状态颜色，检查文字对比度；演示的 `#74847e` 在浅色背景上不足 4.5:1，F1 采用 `#5f7068`，使普通次文字在页面、面板和选中底色上均达到 4.5:1。
+
+## F1 当前落地选择（2026-10-13）
+
+- `src/photo_search/web/styles.css` 已将上述亮/暗色值接入 `:root` 与 `prefers-color-scheme: dark`；另有独立 `--danger`、`--radius-sm`/`--radius-lg`、`--space-*`、`--shadow-soft` 与 `--font-ui`。根字号保持浏览器默认，正文未全局缩小。
+- 公共外壳仍由 `body.app-shell` 管理；品牌符号由 `.app-brand::before` 构成，导航图标是显式 `<span class="nav-icon" aria-hidden="true">`，不混入链接可访问名称。`--tint` 提供选中/悬停底色，warning/error 保持独立语义色。
+- `src/photo_search/web/search.css` 的所有规则均限定在 `body.search-page`；结果卡为 4:3 图片优先布局，chips/提示/空状态沿用真实结果字段。长篇条件说明进入原生 `details/summary`，表单、结果 ID 和加载更多节点保持原样。上传和覆盖率面板采用次级底色，不自动读取覆盖率。
+- 当前只在内置浏览器约 374 CSS px 窄视口实看导航、空/有结果与筛选展开；和 demo 的 30 条假结果仅作观感参考，未复制演示数据。1440/640 指定视口、暗色、真实 200% 缩放、截图文件与完整对照仍 pending。
 
 ## 字体、间距、控件
 

@@ -18,8 +18,9 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
         assert 'class="app-sidebar"' in document
         assert 'data-shell-page="photos" href="/"' in document
         assert 'data-shell-page="places" href="/places"' in document
-        assert 'data-shell-page="search" href="/search"' in document
         assert 'data-shell-page="management" href="/?view=sources"' in document
+        assert 'class="global-search-form' in document
+        assert 'data-shell-page="search" href="/search"' not in document
         assert 'id="main"' in document
 
     assert 'id="nav-persons" href="/persons" hidden' in (WEB / "index.html").read_text(encoding="utf-8")
