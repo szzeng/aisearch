@@ -1,5 +1,8 @@
 # P4-UI-VIEWER-F — 查看照片外观与必要往返收口
 
+> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [15-viewer](../mockups/ui2-large/15-viewer.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
+
+
 > **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [10-viewer](../mockups/ui2/10-viewer.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
 
 
