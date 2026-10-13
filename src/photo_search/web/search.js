@@ -1429,6 +1429,60 @@
     }
   }
 
+  function consumeEntryQuery() {
+    var params = new URLSearchParams(window.location.search || "");
+    if (!params.has("q")) {
+      return null;
+    }
+    var query = String(params.get("q") || "").slice(0, 256);
+    params.delete("q");
+    var remaining = params.toString();
+    var path = window.location.pathname || "/search";
+    var hash = window.location.hash || "";
+    if (window.history && typeof window.history.replaceState === "function") {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        path + (remaining ? "?" + remaining : "") + hash
+      );
+    }
+    return query;
+  }
+
+  function restoreOrStartSearch() {
+    var query = consumeEntryQuery();
+    if (query === null) {
+      restoreSearchSnapshot();
+      return;
+    }
+    clearSearchSnapshot();
+    els.queryText.value = query;
+    if (query.trim()) {
+      submitSearch();
+    } else {
+      els.queryText.focus();
+    }
+  }
+
+  function bindQuerySubmission() {
+    var composingQuery = false;
+    els.queryText.addEventListener("compositionstart", function () {
+      composingQuery = true;
+    });
+    els.queryText.addEventListener("compositionend", function () {
+      composingQuery = false;
+    });
+    els.queryText.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" && (composingQuery || event.isComposing || event.keyCode === 229)) {
+        event.preventDefault();
+      }
+    });
+    els.searchForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      submitSearch();
+    });
+  }
+
   function searchFormSnapshot() {
     return {
       queryText: els.queryText.value,
@@ -2214,27 +2268,9 @@
   }
 
   function resetFilters() {
-    clearSearchSnapshot();
-    invalidateSearchPreview();
-    state.search.sessionId = null;
-    state.search.cursor = null;
-    state.search.count = 0;
-    state.search.total = null;
-    state.search.hits = [];
-    state.search.lastBody = null;
-    state.search.binding = null;
-    state.search.placeAware = null;
-    state.search.intentPlan = null;
-    releaseObjectUrls();
-    clear(els.resultGrid);
-    clear(els.resultPlaceScope);
-    els.resultPlaceScope.hidden = true;
-    clear(els.resultIntentScope);
-    els.resultIntentScope.hidden = true;
-    renderNotices(els.resultNotices, []);
-    els.loadMore.hidden = true;
-    els.queryActions.hidden = true;
-    els.queryText.value = "";
+    var query = els.queryText.value;
+    var plan = state.search.intentPlan;
+    var placeAware = state.search.placeAware;
     els.querySource.value = "";
     els.queryAvailability.value = "any";
     els.queryPlaceState.value = "any";
@@ -2242,12 +2278,59 @@
     els.queryDescendants.value = "true";
     els.queryCaptureFrom.value = "";
     els.queryCaptureTo.value = "";
-    setStatus(els.captureState, "");
-    text(els.captureEcho, "");
     els.queryPageSize.value = String(DEFAULT_PAGE_SIZE);
     clearPersonSelection();
-    setStatus(els.queryStatus, "");
+    setStatus(els.captureState, "");
+    text(els.captureEcho, "");
+
+    if (state.search.mode === "image") {
+      setStatus(els.queryStatus, "高级筛选已清除；以图搜图不使用这些条件。重新提交文字查询后生效。");
+      return;
+    }
+    if (!query.trim() && !plan && !placeAware) {
+      state.search.requestGeneration += 1;
+      state.search.loading = false;
+      clearSearchSnapshot();
+      state.search.hits = [];
+      state.search.lastBody = null;
+      state.search.sessionId = null;
+      state.search.cursor = null;
+      state.search.binding = null;
+      clear(els.resultGrid);
+      clear(els.resultPlaceScope);
+      els.resultPlaceScope.hidden = true;
+      clear(els.resultIntentScope);
+      els.resultIntentScope.hidden = true;
+      els.loadMore.hidden = true;
+      els.queryActions.hidden = true;
+      renderNotices(els.resultNotices, []);
+      setStatus(els.queryStatus, "高级筛选已清除；输入内容后搜索。");
+      return;
+    }
+
+    var committedIntent = (plan && plan.original_query === query) ||
+      (placeAware && (placeAware.original_query === query || placeAware.content_query === query));
+    if (query.trim() && !committedIntent) {
+      submitSearch();
+      return;
+    }
+    clearSearchSnapshot();
+    invalidateSearchPreview();
+    state.search.requestGeneration += 1;
+    state.search.loading = false;
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.count = 0;
+    state.search.total = null;
+    state.search.hits = [];
+    state.search.lastBody = null;
+    state.search.binding = null;
+    releaseObjectUrls();
+    clear(els.resultGrid);
     renderNotices(els.resultNotices, []);
+    els.loadMore.hidden = true;
+    els.queryActions.hidden = true;
+    sendSearch(false);
   }
 
   function clearCaptureRange() {
@@ -2307,10 +2390,7 @@
       searchPreviewNote: document.getElementById("search-preview-note"),
     };
 
-    els.searchForm.addEventListener("submit", function (event) {
-      event.preventDefault();
-      submitSearch();
-    });
+    bindQuerySubmission();
     document.getElementById("query-reset").addEventListener("click", resetFilters);
     document.getElementById("capture-clear").addEventListener("click", clearCaptureRange);
     document.getElementById("query-retry").addEventListener("click", function () {
@@ -2349,7 +2429,7 @@
     updatePersonSelection();
     syncPersonControls();
     var capabilitiesPromise = loadCapabilities();
-    Promise.all([capabilitiesPromise, loadSources()]).then(restoreSearchSnapshot);
+    Promise.all([capabilitiesPromise, loadSources()]).then(restoreOrStartSearch);
   }
 
   if (document.readyState === "loading") {

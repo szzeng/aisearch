@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-search-c-2" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
@@ -23,14 +23,18 @@
         <a class="nav-link" data-shell-page="places" href="/places">地点</a>
       </nav>
       <nav class="app-nav app-nav-secondary" aria-label="其他入口">
-        <a class="nav-link" data-shell-page="search" href="/search">搜索图片</a>
         <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
         <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
       </nav>
     </aside>
 
-    <header class="app-header">
+    <header class="app-header has-global-search">
       <h1>本机图片搜索</h1>
+      <form class="global-search-form" action="/search" method="get" role="search">
+        <label class="sr-only" for="global-search-query">搜索照片</label>
+        <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
+        <button type="submit">搜索</button>
+      </form>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
 
@@ -42,7 +46,6 @@
         <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
         <p class="home-actions">
           <button type="button" id="view-all-galleries">查看全部图库照片</button>
-          <a class="nav-link" href="/search">搜索图片</a>
         </p>
         <ul id="sources-list" class="sources"></ul>
         <details class="management-panel">

@@ -69,6 +69,15 @@ a {
   outline-offset: 2px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .skip-link {
   position: absolute;
   left: -100vw;
@@ -101,6 +110,85 @@ a {
   color: var(--accent);
   text-decoration: underline;
   padding: 0.2rem 0.4rem;
+}
+
+.app-shell > .app-header.has-global-search {
+  display: grid;
+  grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr);
+  column-gap: 1.25rem;
+  row-gap: 0.45rem;
+  align-items: center;
+}
+
+.app-header.has-global-search > h1 {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+}
+
+.global-search-form {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(100%, 46rem);
+  min-width: 0;
+  margin: 0;
+  padding: 0.3rem 0.45rem 0.3rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 0.15rem);
+  background: var(--panel);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.global-search-form:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.global-search-form input[type="search"] {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.55rem;
+  padding: 0.45rem 0.25rem;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.global-search-form input[type="search"]:focus-visible {
+  outline: 0;
+}
+
+.global-search-form button {
+  flex: 0 0 auto;
+  min-height: 2.4rem;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.app-header.has-global-search > .app-meta {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  margin: 0;
+  text-align: right;
+}
+
+.map-page-header > a {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.map-page-header #summary {
+  grid-column: 2;
+  grid-row: 2;
+  margin-left: auto;
+  color: var(--fg-muted);
 }
 
 .app-meta {
@@ -649,6 +737,43 @@ body.app-shell {
     width: 100%;
     margin-left: 0;
     text-align: left;
+  }
+
+  .app-shell > .app-header.has-global-search {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.5rem;
+  }
+
+  .app-header.has-global-search > h1 {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .app-header.has-global-search > .global-search-form {
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    max-width: none;
+  }
+
+  .app-header.has-global-search > .app-meta,
+  .map-page-header #summary {
+    grid-column: 1;
+    grid-row: 3;
+    text-align: left;
+    margin-left: 0;
+  }
+
+  .map-page-header > a {
+    grid-column: 1;
+    grid-row: 4;
+  }
+
+  .global-search-form {
+    flex: 1 1 100%;
+    order: 3;
+    width: 100%;
+    max-width: none;
   }
 
   .app-shell > .notice,

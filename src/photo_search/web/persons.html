@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>人物相册</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-search-c-2" />
     <link rel="stylesheet" href="/web/persons.css?v=p4-person-inbox-compare-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
@@ -26,14 +26,18 @@
         <a class="nav-link" data-shell-page="places" href="/places">地点</a>
       </nav>
       <nav class="app-nav app-nav-secondary" aria-label="其他入口">
-        <a class="nav-link" data-shell-page="search" href="/search">搜索图片</a>
         <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
         <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
       </nav>
     </aside>
 
-    <header class="app-header">
+    <header class="app-header has-global-search">
       <h1>人物相册</h1>
+      <form class="global-search-form" action="/search" method="get" role="search">
+        <label class="sr-only" for="global-search-query">搜索照片</label>
+        <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
+        <button type="submit">搜索</button>
+      </form>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
 
@@ -46,7 +50,7 @@
         </div>
         <div class="row-actions" aria-label="人物合集"><button type="button" id="pa-collections-toggle">人物合集</button><button type="button" id="pa-collection-create">新建合集</button></div>
         <section id="pa-collections-panel" hidden><p class="hint">合集只是放在一起看照片。</p><p id="pa-collections-note" class="hint" role="status" aria-live="polite"></p><button id="pa-collections-retry" type="button" hidden>重试加载合集</button><div id="pa-collections" class="pa-people-grid"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
-        <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">搜索人物名字</label><input id="pa-query" type="search" maxlength="200" placeholder="输入名字，例如：妈妈" autocomplete="off" /><button>找人</button></form>
+        <form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">筛选人物</label><input id="pa-query" type="search" maxlength="200" placeholder="筛选人物，例如：妈妈" autocomplete="off" /><button>筛选</button></form>
         <label class="pa-collection-filter"><input id="pa-collection-state" type="checkbox" />只看未加入合集</label>
         <p class="hint">人物按照片数量从多到少排列。</p>
         <div class="row-actions" aria-label="人物批量管理">

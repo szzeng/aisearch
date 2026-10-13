@@ -1,5 +1,9 @@
 # Development status
 
+## P4-UI-SEARCH-C — IMPLEMENTED / 定向工程验证与 LUNA High 复核通过，完整视觉验收待完成（2026-10-13）
+
+[执行报告](reports/P4-UI-SEARCH-C.md)、[任务卡](tasks/P4-UI-SEARCH-C.md)。按用户明确许可，C 在 P4-UI-SHELL-A 仍 **VALIDATION PENDING** 时先执行，A 状态保持待验。五页统一页头单一搜索入口，搜索页复用原表单/输入 ID；q 深链优先旧快照、消费一次、空词只聚焦；保留高级筛选、IME Enter 防误提交及人物局部照片搜索。定向 JUnit **44/44/0/0**，Node 两项语法、Ruff、diff-check 通过。隔离合成浏览器观察五页入口及单次中文提交；仅 1280×720，200%/窄屏、暗色、截图落盘尚未完成。用户手动切换 GPT-6 Luna / High 后完成当前会话受影响面复核，2 项发现已修复并通过完整定向复验；不是 DS-H PASS。未访问真实图库/照片，未运行全仓/真实模型/GPU/20万性能或打包验收。A 与 C 各自验收前不启动 CORE。
+
 ## P4-UI-SHELL-A — IMPLEMENTED / VALIDATION PENDING（2026-10-13）
 
 [执行报告](reports/P4-UI-SHELL-A.md)、[任务卡](tasks/P4-UI-SHELL-A.md)。五页共用导航/外壳与首页照片默认入口已实施，旧搜索和原深链/返回流程保留；地图人物入口由既有只读能力端点门控，脚本缓存版本已同步。任务卡定向 JUnit **101/5/0/0**，5 项为开工前既有人物页面/脚本断言不一致；新路由/导航定向用例、两份 Node 语法、Ruff、diff-check 通过。LUNA High 独立复核 PASS（用户指定路线，非 DS-H）。隔离合成图库浏览器验收覆盖五路由、1440/1024/640宽、详情返回、空图库入口、焦点与无横向溢出；200%实际缩放、暗色视觉和截图落盘仍待完成，整卡不标 PASS。
@@ -114,3 +118,6 @@
 ## 下一步
 
 P4-LIBRARY-RETENTION-C 的 C1 已按用户指定的 LUNA / High 路由例外完成复核并定向验收。C2 删除业务/向量数据未授权；待用户查看只读预览并单独确认清理范围/策略后再规划 C2 卡。[P4-PERSON-UX-SIMPLIFY-A](tasks/P4-PERSON-UX-SIMPLIFY-A.md) 本卡闭环已完成，下一步由用户少量试用人物多图勾选、更正/拆分及照片待确认入口并反馈；无新增算法或安全缺口，不强行新建优化卡。[P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 余下纯视觉目标与 [P4-PLACE-ALBUM-PERF-A](tasks/P4-PLACE-ALBUM-PERF-A.md) 真实冷首屏验证仍保留；OCR 下一步安排不变。全仓、真实图库和 30 万性能未验证。
+
+
+\n

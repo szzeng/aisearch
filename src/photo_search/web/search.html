@@ -6,12 +6,12 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-search-c-2" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-ui-search-c-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
-    <script src="/web/search.js?v=p4-photo-view-close-return-a-1" defer></script>
+    <script src="/web/search.js?v=p4-ui-search-c-1" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -24,14 +24,18 @@
         <a class="nav-link" data-shell-page="places" href="/places">地点</a>
       </nav>
       <nav class="app-nav app-nav-secondary" aria-label="其他入口">
-        <a class="nav-link" data-shell-page="search" href="/search" aria-current="page">搜索图片</a>
         <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
         <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
       </nav>
     </aside>
 
-    <header class="app-header">
+    <header class="app-header has-global-search">
       <h1>搜索图片</h1>
+      <form id="search-form" class="global-search-form search-entry-form" action="/search" method="get" role="search" novalidate>
+        <label class="sr-only" for="query-text">搜索照片</label>
+        <input id="query-text" name="q" type="search" maxlength="256" autocomplete="off" placeholder="例如：2023年张三在济南拍的日落" />
+        <button type="submit">搜索</button>
+      </form>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
 
@@ -51,18 +55,7 @@
 
       <section id="panel-query" class="panel" aria-labelledby="query-title">
         <h2 id="query-title">查询与筛选</h2>
-        <form id="search-form" class="filters" novalidate>
-          <p class="wide">
-            <label for="query-text">查询文本</label>
-            <input
-              id="query-text"
-              name="text"
-              type="search"
-              maxlength="256"
-              autocomplete="off"
-              placeholder="例如：2023年张三在济南拍的日落"
-            />
-          </p>
+        <div id="search-filter-controls" class="filters">
           <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <div id="result-intent-scope" class="wide" hidden aria-live="polite"></div>
           <details class="advanced-search-filter wide">
@@ -195,10 +188,10 @@
             <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />
           </p>
           <p class="filter-actions">
-            <button type="submit">搜索</button>
-            <button type="button" id="query-reset">清空筛选</button>
+            <button id="query-apply-filters" type="submit" form="search-form">应用高级筛选</button>
+            <button type="button" id="query-reset">清除高级筛选</button>
           </p>
-        </form>
+        </div>
         <p class="hint" id="binding-hint"></p>
         <p class="hint">
           高级地点筛选按 P2-03A/B 的语义：<code>place_state=suggested</code> 只列出「待确认建议」，

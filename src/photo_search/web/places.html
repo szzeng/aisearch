@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>地点整理</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-search-c-3" />
     <link rel="stylesheet" href="/web/places.css?v=p4-photo-view-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
@@ -25,14 +25,21 @@
         <a class="nav-link" data-shell-page="places" href="/places" aria-current="page">地点</a>
       </nav>
       <nav class="app-nav app-nav-secondary" aria-label="其他入口">
-        <a class="nav-link" data-shell-page="search" href="/search">搜索图片</a>
         <a class="nav-link" data-shell-page="map" href="/map">地图相册</a>
         <a class="nav-link" data-shell-page="management" href="/?view=sources">图库管理</a>
       </nav>
     </aside>
 
-    <header class="app-header">
+    <header class="app-header has-global-search">
       <h1>地点整理</h1>
+      <form class="global-search-form" action="/search" method="get" role="search">
+        <label class="sr-only" for="global-search-query">搜索照片</label>
+        <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
+        <button type="submit">搜索</button>
+      </form>
+      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
+    </header>
+
       <nav class="page-nav" aria-label="地点页面内容">
         <a class="nav-link" href="#panel-directory">目录</a>
         <a class="nav-link" href="#panel-albums">地点相册</a>
@@ -40,9 +47,6 @@
         <a class="nav-link" href="#panel-operations">操作日志与撤销</a>
         <a class="nav-link" href="/map">地图相册</a>
       </nav>
-      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
-    </header>
-
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
@@ -58,8 +62,8 @@
         <div class="album-controls">
           <label for="album-kind">查看</label>
           <select id="album-kind"><option value="city">城市</option><option value="province">省份</option><option value="district">区县</option><option value="country">国家</option></select>
-          <label for="album-name">搜索地名</label>
-          <input id="album-name" type="search" maxlength="200" autocomplete="off" placeholder="城市、省份或国家" />
+          <label for="album-name">筛选地名</label>
+          <input id="album-name" type="search" maxlength="200" autocomplete="off" placeholder="筛选地名：城市、省份或国家" />
           <button type="button" id="album-backfill">补齐照片地点</button>
           <button type="button" id="cn-update" hidden>更新中国地点</button>
           <button type="button" id="cn-pause" hidden>暂停更新</button>

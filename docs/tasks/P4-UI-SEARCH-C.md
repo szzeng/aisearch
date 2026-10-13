@@ -1,6 +1,6 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
-**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A 已验收；不等待 CORE/B/D/E。下一卡 [CORE](P4-UI-TIMELINE-CORE-A.md)，完成本卡后停止，不自动执行下一卡。验收：A 类，卡内定向验证；新增后端或写语义时依实际风险升 B/D；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置原要求：A 已验收；本轮按用户明确许可例外，A 保持待验。不等待 CORE/B/D/E。下一卡 [CORE](P4-UI-TIMELINE-CORE-A.md)，完成本卡后停止，不自动执行下一卡。验收：A 类，卡内定向验证；新增后端或写语义时依实际风险升 B/D；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
 
 
 > **用户确认的最终视觉基线（2026-10-13）**：[最后版可点击演示](../mockups/ui2-interactive/demo.html)与[页面映射/说明](../mockups/ui2-interactive/README.md)。本卡重点：[搜索](../mockups/ui2-interactive/demo.html#search)、[张三相册→搜索此相册](../mockups/ui2-interactive/demo.html#person/zhang)。整体外观与基本点击沿用此版；旧SVG/PNG仅作历史对照，不再作为施工默认参考。模拟逻辑不覆盖真实数据合同与20万性能门槛。
@@ -14,11 +14,13 @@
 - 简测：一次中文搜索 Enter→结果页仍一框→改词再搜一次；高级来源/时间/人物/地点筛选可展开与取消；旧快照优先级、空词零编码器、返回不重复请求、chip 取消产生新范围；不跑 CORE/E 的20万性能基准。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，紧随 A 执行，**不依赖 CORE/B/D/E**；服务端范围真值留给 SEARCH-MAP。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**IMPLEMENTED / 定向工程验证与 LUNA High 复核通过 / 完整视觉验收待完成**。实现 HEAD 基线 `dc0f641`；按用户明确许可，在 [A](P4-UI-SHELL-A.md) 仍 VALIDATION PENDING 时先做 C，A 状态保持待验；不依赖 CORE/B/D/E，服务端范围真值留给 SEARCH-MAP。详见[执行报告](../reports/P4-UI-SEARCH-C.md)。
 
-推荐 GPT-6 / High；A 级前端小改，独立 DS-H 展示专项。纯文案/CSS子项可手动选 Luna Medium，不为同一闭环轮换模型。
+原推荐 GPT-6 / High；本轮用户指定 LUNA High 复核（用户路由例外，不是 DS-H）。用户于 2026-10-13 手动切换后，本会话受影响面复核已完成，详见执行报告。
 
 ## 视觉参考（执行前必须看图）
+
+本轮已查阅 README 与实际产品页；Codex 浏览器安全策略阻止打开本地 demo.html 参考页，未采用其他浏览器/本地服务绕过方式。该视觉参考核对留待后续补验。
 
 直接打开 [最后版可点击演示](../mockups/ui2-interactive/demo.html)，按卡首页面路径体验本卡画面；[说明与任务映射](../mockups/ui2-interactive/README.md)用于接手。用户已选此版作为整体观感参考，不再要求逐卡打开旧SVG/PNG或旧截图切换器。实施时保存相应合成产品截图，核对导航、留白、照片占比、控件层级和基本返回；不要求像素复制或插画/示例计数一致。
 
@@ -73,13 +75,18 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§3/4搜
 
 固定范围存在时，以图搜图入口不可提交，并显示“以图搜图暂不支持当前相册范围，请先取消范围”；取消范围后恢复原上传流程与原支持的字段，不扩图片搜索后端。中文输入法 composition 期间 Enter 只确认候选字，composition 结束后的 Enter/点击提交各只请求一次。必须覆盖高级筛选清除、范围取消、空词、失败保留范围、图片模式限制和中文输入法；C 中尚未开放的 scoped 端到端项由 SEARCH-MAP 补验，不假记 C PASS。
 
+## 本轮执行状态（2026-10-13）
+
+定向 JUnit **44/44/0/0**、两份 Node 语法、相关 Ruff 与 git diff --check 已通过；隔离合成浏览器核对五页入口与中文搜索单次提交。LUNA High 当前会话受影响面复核 PASS，2 项发现已修复并重跑全套定向测试；不记录 DS-H PASS。200%缩放、窄屏视觉、暗色、参考演示对照与截图落盘仍未完成，本卡总体验收保持待定。CORE须等待 A 与 C 各自验收。详细证据见[执行报告](../reports/P4-UI-SEARCH-C.md)。
+
 ## 验证与复核
 
 ```powershell
 $env:UV_CACHE_DIR = '.uv-cache'
-uv run --no-sync pytest -q tests/unit/test_p4_search_nl_ui.py tests/unit/test_search_place_nl_ui.py tests/unit/test_search_person_album_link_ui.py tests/unit/test_photo_view_info_ui.py --basetemp=.pytest-tmp/P4-UI-SEARCH-C --junitxml=test-results/P4-UI-SEARCH-C.xml
+uv run --no-sync pytest -q tests/unit/test_p4_search_nl_ui.py tests/unit/test_search_place_nl_ui.py tests/unit/test_search_person_album_link_ui.py tests/unit/test_photo_view_info_ui.py tests/unit/test_p4_ui_search_entry.py --basetemp=.pytest-tmp/P4-UI-SEARCH-C --junitxml=test-results/P4-UI-SEARCH-C.xml
 node --check src/photo_search/web/search.js
 node --check src/photo_search/web/search-place-entry.js
+uv run --no-sync ruff check tests/unit/test_p4_ui_search_entry.py tests/unit/test_photo_view_info_ui.py
 git diff --check
 ```
 
@@ -87,4 +94,7 @@ git diff --check
 
 项目内隔离合成浏览器做两页纯条件结果→预览→人物相册→返回，取消一枚标签，缺编码器失败仍留输入、以图搜图限制说明可找到；不要求为 UI 加载真实模型。DOM 测试不证明视觉通过；工程/浏览器/真实语义效果分别记录。
 
-独立 DS-H 审全部入口与展示 diff、既有请求构造/快照直接链路及证据；发现排序、scope、分页或协议变化即扩大主审并按 B/D 另卡。无新冻结问题 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [CORE](P4-UI-TIMELINE-CORE-A.md)，随后 B/D/E，再交 SEARCH-MAP。
+本轮依用户指定进行 LUNA High 受影响面复核（当前会话模型由用户手动切换），检查全部入口/展示改动、既有请求构造与快照直接链路及证据；发现排序、scope、分页或协议变化时扩大审查并按 B/D 另卡。不自动升级为 DS-H。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [CORE](P4-UI-TIMELINE-CORE-A.md)，随后 B/D/E，再交 SEARCH-MAP。
+
+
+\n
