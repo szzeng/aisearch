@@ -1,5 +1,9 @@
 # Development status
 
+## P4-LIBRARY-IMAGE-ONLY-A — READY / 仅图片入库与历史非图片安全退出（任务卡）
+
+[任务卡](tasks/P4-LIBRARY-IMAGE-ONLY-A.md)。以已完成的 [视频排除卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md) 为基础，改为静态图片扩展名白名单：混合目录仅图片进入扫描、file_locations/hash/处理链；旧文档、音频、压缩包、sidecar、其他文件经来源成功 fast 刷新进入 MISSING，并在普通图库、搜索及人物/地点/合集的 SQL 权威资格中退出。图片格式判定独立于媒体解码器，保护 HEIC/RAW/TIFF/AVIF 等暂不支持处理的真实照片；注意原本本机打开图片列表含 `.r3d`（视频），不可直接当白名单。保留真实缺失图片历史查询、图片/非图片共享 asset、来源范围、零位置资产和视频旧统计；不修改原文件/Schema/人工归属，不永久删除历史业务数据、向量或缓存。仅需 3～4 组合成定向测试、只读历史文件分类诊断，不跑全仓/GPU/真实图库。推荐 GPT-6 Luna / Medium。**本次仅新增任务卡，尚未实施或测试。**
+
 ## P4-UI-SEARCH-C — IMPLEMENTED / 定向工程验证与 LUNA High 复核通过，完整视觉验收待完成（2026-10-13）
 
 [执行报告](reports/P4-UI-SEARCH-C.md)、[任务卡](tasks/P4-UI-SEARCH-C.md)。按用户明确许可，C 在 P4-UI-SHELL-A 仍 **VALIDATION PENDING** 时先执行，A 状态保持待验。五页统一页头单一搜索入口，搜索页复用原表单/输入 ID；q 深链优先旧快照、消费一次、空词只聚焦；保留高级筛选、IME Enter 防误提交及人物局部照片搜索。定向 JUnit **44/44/0/0**，Node 两项语法、Ruff、diff-check 通过。隔离合成浏览器观察五页入口及单次中文提交；仅 1280×720，200%/窄屏、暗色、截图落盘尚未完成。用户手动切换 GPT-6 Luna / High 后完成当前会话受影响面复核，2 项发现已修复并通过完整定向复验；不是 DS-H PASS。未访问真实图库/照片，未运行全仓/真实模型/GPU/20万性能或打包验收。A 与 C 各自验收前不启动 CORE。
