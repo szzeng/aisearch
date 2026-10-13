@@ -1,5 +1,9 @@
 # Development status
 
+## P4-LIBRARY-IMAGE-ONLY-A — READY / 仅图片入库与历史非图片安全退出（任务卡）
+
+[任务卡](tasks/P4-LIBRARY-IMAGE-ONLY-A.md)。以已完成的 [视频排除卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md) 为基础，改为静态图片扩展名白名单：混合目录仅图片进入扫描、file_locations/hash/处理链；旧文档、音频、压缩包、sidecar、其他文件经来源成功 fast 刷新进入 MISSING，并在普通图库、搜索及人物/地点/合集的 SQL 权威资格中退出。图片格式判定独立于媒体解码器，保护 HEIC/RAW/TIFF/AVIF 等暂不支持处理的真实照片；注意原本本机打开图片列表含 `.r3d`（视频），不可直接当白名单。保留真实缺失图片历史查询、图片/非图片共享 asset、来源范围、零位置资产和视频旧统计；不修改原文件/Schema/人工归属，不永久删除历史业务数据、向量或缓存。仅需 3～4 组合成定向测试、只读历史文件分类诊断，不跑全仓/GPU/真实图库。推荐 GPT-6 Luna / Medium。**本次仅新增任务卡，尚未实施或测试。**
+
 ## P4-UI-SHELL-A — IMPLEMENTED / VALIDATION PENDING（2026-10-13）
 
 [执行报告](reports/P4-UI-SHELL-A.md)、[任务卡](tasks/P4-UI-SHELL-A.md)。五页共用导航/外壳与首页照片默认入口已实施，旧搜索和原深链/返回流程保留；地图人物入口由既有只读能力端点门控，脚本缓存版本已同步。任务卡定向 JUnit **101/5/0/0**，5 项为开工前既有人物页面/脚本断言不一致；新路由/导航定向用例、两份 Node 语法、Ruff、diff-check 通过。LUNA High 独立复核 PASS（用户指定路线，非 DS-H）。隔离合成图库浏览器验收覆盖五路由、1440/1024/640宽、详情返回、空图库入口、焦点与无横向溢出；200%实际缩放、暗色视觉和截图落盘仍待完成，整卡不标 PASS。
