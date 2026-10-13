@@ -47,8 +47,8 @@ from photo_search.catalog.errors import (
     STALE_LEASE,
     CatalogError,
 )
+from photo_search.catalog.image_policy import is_image_path
 from photo_search.catalog.paths import path_key
-from photo_search.catalog.video import is_video_path
 from photo_search.jobs import queue as jobs
 
 HASH_CHUNK_BYTES = 1024 * 1024
@@ -340,11 +340,11 @@ def iter_observations(root: Path) -> Iterator[FileObservation]:
                 if entry.is_dir(follow_symlinks=False):
                     subdirectories.append((relative, Path(entry.path)))
                     continue
-                # Video paths are excluded before file stat/hash observation. We still
-                # enumerate the parent directory, but never register or process these files.
-                if is_video_path(relative):
-                    continue
                 if not entry.is_file(follow_symlinks=False):
+                    continue
+                # Non-image paths are excluded before file stat/hash observation. The
+                # extension policy is independent of media decoder support.
+                if not is_image_path(relative):
                     continue
                 yield observe_file(relative, Path(entry.path))
             except CatalogError:

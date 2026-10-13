@@ -1,6 +1,6 @@
 # P4-LIBRARY-IMAGE-ONLY-A — 只允许图片入库；历史非图片文件安全退出
 
-**状态**：READY / 仅任务卡，未实施。**日期**：2026-10-13。**核对基线**：`szzeng/aisearch master @ dc0f641`；实施时再次读取 HEAD、开发状态和工作区。**前置**：已完成的 [P4-LIBRARY-VIDEO-EXCLUDE-A](P4-LIBRARY-VIDEO-EXCLUDE-A.md)（SCOPED PASS，25 项定向通过）。**推荐**：GPT-6 Luna / Medium，涉及查询 SQL 的部分可选择 Luna / High 定向审查。**测试**：个人项目，仅必要的小规模合成用例。
+**状态**：SCOPED PASS / 定向合成简单测试通过。**日期**：2026-10-13。**报告**：[执行报告](../reports/P4-LIBRARY-IMAGE-ONLY-A.md)。**核对基线**：`szzeng/aisearch master @ dc0f641`；实施时再次读取 HEAD、开发状态和工作区。**前置**：已完成的 [P4-LIBRARY-VIDEO-EXCLUDE-A](P4-LIBRARY-VIDEO-EXCLUDE-A.md)（SCOPED PASS，25 项定向通过）。**推荐**：GPT-6 Luna / Medium，涉及查询 SQL 的部分可选择 Luna / High 定向审查。**测试**：个人项目，仅必要的小规模合成用例。
 
 ## 一、目标与设计决定
 

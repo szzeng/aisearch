@@ -1,8 +1,9 @@
 # Development status
 
-## P4-LIBRARY-IMAGE-ONLY-A — READY / 仅图片入库与历史非图片安全退出（任务卡）
+## P4-LIBRARY-IMAGE-ONLY-A — SCOPED PASS / 图片白名单与历史非图片安全退出（2026-10-13）
 
-[任务卡](tasks/P4-LIBRARY-IMAGE-ONLY-A.md)。以已完成的 [视频排除卡](tasks/P4-LIBRARY-VIDEO-EXCLUDE-A.md) 为基础，改为静态图片扩展名白名单：混合目录仅图片进入扫描、file_locations/hash/处理链；旧文档、音频、压缩包、sidecar、其他文件经来源成功 fast 刷新进入 MISSING，并在普通图库、搜索及人物/地点/合集的 SQL 权威资格中退出。图片格式判定独立于媒体解码器，保护 HEIC/RAW/TIFF/AVIF 等暂不支持处理的真实照片；注意原本本机打开图片列表含 `.r3d`（视频），不可直接当白名单。保留真实缺失图片历史查询、图片/非图片共享 asset、来源范围、零位置资产和视频旧统计；不修改原文件/Schema/人工归属，不永久删除历史业务数据、向量或缓存。仅需 3～4 组合成定向测试、只读历史文件分类诊断，不跑全仓/GPU/真实图库。推荐 GPT-6 Luna / Medium。**本次仅新增任务卡，尚未实施或测试。**
+[执行报告](reports/P4-LIBRARY-IMAGE-ONLY-A.md)、[任务卡](tasks/P4-LIBRARY-IMAGE-ONLY-A.md)。静态图片扩展名白名单统一扫描与 SQL 照片资格；不支持解码的 HEIC/RAW/TIFF/AVIF 仍保留登记资格，`.r3d`/`.eip` 排除。本地打开动作复用该白名单。成功快扫后旧非图片自然转 MISSING，默认 any 排除非图片而保留缺失图片历史。扩展只读探针并保留视频统计。定向 JUnit **23/0/0/0**，Ruff、py_compile、diff-check 通过。仅合成库；未访问真实图库/PhotoSearchData、未跑全仓/GPU/浏览器/20万规模或打包；未执行任何永久清理。
+
 
 ## P4-UI-SEARCH-C — IMPLEMENTED / 定向工程验证与 LUNA High 复核通过，完整视觉验收待完成（2026-10-13）
 

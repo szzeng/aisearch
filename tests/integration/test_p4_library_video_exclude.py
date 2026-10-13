@@ -6,6 +6,7 @@ from pathlib import Path
 from p2_search_fixtures import build_library, write_jpeg
 
 from photo_search.api.queries import _asset_chunk
+from photo_search.catalog.image_policy import IMAGE_EXTENSIONS, is_image_path, photo_asset_sql
 from photo_search.catalog.video import is_video_path
 from photo_search.ingestion.scanner import (
     SCAN_MODE_FAST,
@@ -71,6 +72,81 @@ def test_video_extensions_are_skipped_by_fast_scan_and_old_video_reconciles(tmp_
         assert source["locations"] == 1
         assert source["missing"] == 1
         assert source["video_only_assets"] == 1
+        assert source["non_image_locations"] == 1
+        assert source["non_image_missing"] == 1
+        assert source["non_image_only_assets"] == 1
+        assert source["non_image_extensions_top"] == [{"extension": ".mp4", "locations": 1}]
+    finally:
+        library.close()
+
+
+def test_static_image_allowlist_filters_mixed_extensions(tmp_path: Path) -> None:
+    library = build_library(tmp_path, ("seed.jpg",))
+    try:
+        names = (
+            "photo.JPG", "i.heic", "raw.DNG", "scan.TIFF", "image.avif",
+            "clip.MOV", "audio.mp3", "doc.pdf", "metadata.XMP", "file.zip", "README",
+            "still.r3d", "design.svg", "unknown.eip",
+        )
+        for index, name in enumerate(names, start=10):
+            write_jpeg(library.root / name, index=index)
+        observed = {item.relative_path for item in iter_observations(library.root)}
+        expected = {"seed.jpg", "photo.JPG", "i.heic", "raw.DNG", "scan.TIFF", "image.avif", "design.svg"}
+        assert observed == expected
+        assert is_image_path("nested/PHOTO.JPEG")
+        assert is_image_path("still.HEIC")  # decoder availability does not affect registration policy
+        assert not is_image_path("still.r3d")
+        assert not is_image_path("unknown.eip")
+        assert ".r3d" not in IMAGE_EXTENSIONS
+        assert ".eip" not in IMAGE_EXTENSIONS
+
+        outcome = execute_scan(library.service, library.source_id, mode=SCAN_MODE_FAST)
+        assert outcome.state == "SUCCEEDED"
+        rows = library.catalog.read_all("SELECT relative_path FROM file_locations WHERE source_id=?", (library.source_id,))
+        assert {str(row["relative_path"]) for row in rows} == expected
+        assert library.catalog.read_one("SELECT COUNT(*) AS n FROM assets")["n"] == len(expected)
+        predicate, parameters = photo_asset_sql()
+        eligible = library.catalog.read_all(
+            f"SELECT a.asset_id FROM assets a WHERE {predicate}", parameters
+        )
+        assert len(eligible) == len(expected)
+    finally:
+        library.close()
+
+
+def test_historical_non_image_reconciles_but_missing_image_stays_searchable(tmp_path: Path) -> None:
+    library = build_library(tmp_path, ("photo.jpg", "legacy.jpg"))
+    try:
+        legacy_id = library.assets["legacy.jpg"]
+        old_file = library.root / "legacy.jpg"
+        before = (old_file.read_bytes(), old_file.stat().st_size, old_file.stat().st_mtime_ns)
+        with library.catalog.write() as connection:
+            connection.execute(
+                "UPDATE file_locations SET relative_path='legacy.pdf', path_key='legacy.pdf' "
+                "WHERE asset_id=?", (legacy_id,)
+            )
+        old_file.rename(library.root / "legacy.pdf")
+        execute_scan(library.service, library.source_id, mode=SCAN_MODE_FAST)
+        assert library.catalog.read_one(
+            "SELECT availability FROM file_locations WHERE asset_id=?", (legacy_id,)
+        )["availability"] == "MISSING"
+        assert (old_file.parent / "legacy.pdf").read_bytes() == before[0]
+        assert ((old_file.parent / "legacy.pdf").stat().st_size,
+                (old_file.parent / "legacy.pdf").stat().st_mtime_ns) == before[1:]
+
+        with library.catalog.write() as connection:
+            connection.execute(
+                "UPDATE file_locations SET relative_path='missing-photo.jpg', "
+                "path_key='missing-photo.jpg', availability='MISSING' WHERE asset_id=?",
+                (library.assets["photo.jpg"],),
+            )
+        page = _asset_chunk(library.catalog, after=None, size=10, source_id=None, availability="any")
+        assert {int(row["asset_id"]) for row in page} == {library.assets["photo.jpg"]}
+        missing = SearchScope.build(availability="missing")
+        where, parameters = scope_condition(library.catalog.connection, missing)
+        assert [int(row["asset_id"]) for row in library.catalog.read_all(
+            f"SELECT a.asset_id FROM assets a WHERE {where}", parameters
+        )] == [library.assets["photo.jpg"]]
     finally:
         library.close()
 

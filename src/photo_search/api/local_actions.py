@@ -8,18 +8,7 @@ from pathlib import Path
 
 from photo_search.api.errors import ACCESS_DENIED, ApiError
 from photo_search.api.files import ControlledLocation
-
-IMAGE_EXTENSIONS = frozenset(
-    {
-        ".jpg", ".jpeg", ".jpe", ".png", ".webp", ".bmp", ".gif", ".heic",
-        ".heif", ".tif", ".tiff", ".avif", ".mpo", ".3fr", ".ari", ".arw",
-        ".bay", ".cap", ".cr2", ".cr3", ".dcs", ".dcr", ".dng", ".drf",
-        ".eip", ".erf", ".fff", ".gpr", ".iiq", ".k25", ".kdc", ".mdc",
-        ".mef", ".mos", ".mrw", ".nef", ".nrw", ".obm", ".orf", ".pef",
-        ".ptx", ".pxn", ".r3d", ".raf", ".raw", ".rwl", ".rw2", ".rwz",
-        ".sr2", ".srf", ".srw", ".x3f",
-    }
-)
+from photo_search.catalog.image_policy import IMAGE_EXTENSIONS
 
 
 def _system_open(path: Path) -> None:
