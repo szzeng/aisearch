@@ -810,7 +810,7 @@
     avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id); } });
     left.append(avatar, node("span", "待整理", "hint"));
     comparison.append(left);
-    if (!hiddenFace && suggestion) {
+    if (suggestion) {
       const right = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-reference");
       const reference = picture(suggestion.thumbnail_url, "参考头像：" + name(suggestion), "pa-avatar pa-reference-avatar");
       if (!suggestion.thumbnail_url) reference.children[0].textContent = "暂无参考头像";
@@ -818,13 +818,13 @@
       comparison.append(right);
     }
     card.append(comparison, button("查看整张照片", () => preview(face.asset_id)), node("span", organizationText(face), "hint"));
-    if (!state.batchMode && !hiddenFace) {
+    if (!state.batchMode) {
       if (suggestion) {
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
         confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
         card.otherPersonButton = button("选其他人", () => editFace(face, { allowCreatePerson: true }));
         card.append(confirm, card.otherPersonButton);
-      } else card.append(button("这是谁？", () => editFace(face, { allowCreatePerson: true })));
+      } else card.append(button(hiddenFace ? "选择人物" : "这是谁？", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
   }
@@ -848,15 +848,17 @@
       }, "PUT");
       card.confirmed = true; confirm.textContent = "✓ 已确认是" + name(person); confirm.setAttribute("aria-pressed", "true");
       rememberOperation(result, "已确认是“" + name(person) + "”"); notifyPeopleChanged();
-      state.inboxConfirmationsPending = true;
-      $("inbox-more").disabled = true;
-      // Every group cursor shares the catalog revision changed by this confirmation.
-      Array.from($("inbox-cards").children).filter((item) => item.groupKey).forEach((item) => {
-        item.confirmationVersion = (item.confirmationVersion || 0) + 1;
-        item.querySelector(".pa-inbox-group-more").dataset.cursor = "";
-      });
-      if (groupDetails) {
-        groupDetails.confirmationDirty = true;
+      if (card.hiddenFace) {
+        refreshPeopleViews();
+      } else {
+        state.inboxConfirmationsPending = true;
+        $("inbox-more").disabled = true;
+        // Every group cursor shares the catalog revision changed by this confirmation.
+        Array.from($("inbox-cards").children).filter((item) => item.groupKey).forEach((item) => {
+          item.confirmationVersion = (item.confirmationVersion || 0) + 1;
+          item.querySelector(".pa-inbox-group-more").dataset.cursor = "";
+        });
+        if (groupDetails) groupDetails.confirmationDirty = true;
       }
     } catch (error) {
       if (error.status && error.status < 500) card.confirmRequestId = null;
@@ -865,7 +867,7 @@
     finally {
       state.writing = false; confirm.disabled = Boolean(card.confirmed); card.otherPersonButton.disabled = Boolean(card.confirmed);
       // Closing while the request is in flight also waits for the saved result.
-      if (groupDetails && !groupDetails.open) flushInboxConfirmations();
+      if (!card.hiddenFace && groupDetails && !groupDetails.open) flushInboxConfirmations();
     }
   }
   async function loadInboxGroup(details, groupKey, kind, cursor, hiddenFace) {

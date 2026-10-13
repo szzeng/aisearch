@@ -46,12 +46,12 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
   }
   if(url.includes('/faces/inbox/groups?'))return ok({cards:[group(candidate,faces[0]),group(other,faces[2])],has_more:false});
   if(url.includes('/faces/inbox/summary?'))return ok({total:3-saved.size,reasons:{},held:0});
-  if(url.includes('/persons/browse?'))return ok({persons:[],has_more:false,total:0});
+  if(url.includes('/persons/browse?'))return ok({persons:[other],has_more:false,total:1});
   if(url.includes('/persons/collections?'))return ok({collections:[],has_more:false});
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,renderInboxGroup,loadInbox,undo};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,renderInboxGroup,loadInbox,undo,submitEdit};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const writes=()=>calls.filter(c=>c.url.endsWith('/assignment'));
 const descendants=e=>[e,...e.children.flatMap(descendants)];
@@ -79,6 +79,19 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  assert.equal(host.children[0].confirmButton.textContent,'确认是妈妈','missing reference image does not disable the action');
  host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[]},false);
  assert.equal(host.children[0].children[0].children.length,1,'no candidate retains the single-face display');
+ host=new Element('div');ui.renderInboxFace(host,faces[0],true);
+ card=host.children[0];comparison=card.children[0];
+ assert.equal(comparison.children.length,2,'ignored faces show the existing candidate comparison');
+ assert.equal(comparison.children[1].children[1].textContent,'可能是妈妈');
+ assert.equal(card.confirmButton.textContent,'确认是妈妈','ignored candidate can use the existing confirmation flow');
+ assert.equal(card.otherPersonButton.textContent,'选其他人','ignored candidate can open the existing person picker');
+ await card.otherPersonButton.fire('click');await flush();
+ assert.equal(get('edit').open,true,'other-person action opens the existing assignment dialog');
+ assert.equal(get('edit-label').textContent,'搜索并选择人物');
+ assert(calls.some(c=>c.url.includes('/persons/browse?kind=all')),'the existing dialog loads searchable people');
+ get('edit').close();
+ host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[]},true);
+ assert.equal(host.children[0].children[3].textContent,'选择人物','ignored face without a suggestion still has a manual assignment entry');
  // The quick action depends on an actual candidate, including quality reasons and ties.
  for(const reason of ['BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION','SMALL','LOW_QUALITY','MANUAL_UNASSIGNED']){
   const host=new Element('div');ui.renderInboxFace(host,face('e',reason),false);
@@ -88,10 +101,8 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
                  {...face('f','NO_MATCH'),suggestions:[]}]){
   const host=new Element('div');ui.renderInboxFace(host,f,false);assert(!host.children[0].confirmButton);
  }
- for(const hidden of [false,true]){
-  ui.state.batchMode=!hidden;const host=new Element('div');ui.renderInboxFace(host,faces[0],hidden);
-  assert(!host.children[0].confirmButton,'hidden/batch faces keep their dedicated controls');
- }
+ ui.state.batchMode=true;host=new Element('div');ui.renderInboxFace(host,faces[0],true);
+ assert(!host.children[0].confirmButton,'batch selection keeps its dedicated controls');
  ui.state.batchMode=false;ui.state.organize=true;get('inbox-kind').value='all';await ui.loadInbox(false);
  const groups=get('inbox-cards').children.slice();
  for(const g of groups){g.open=true;g.fire('toggle');}await flush();
@@ -142,6 +153,18 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  const flat=flatHost.children[0],flatBefore=calls.length;await flat.confirmButton.fire('click');
  assert(flat.confirmButton.textContent.includes('✓'));assert.equal(calls.length,flatBefore+1);
  await ui.loadInbox(false);assert.equal(ui.state.inboxConfirmationsPending,false);
+ ui.state.inboxHiddenVisible=true;
+ const hiddenHost=new Element('div');ui.renderInboxFace(hiddenHost,faces[0],true);
+ const hidden=hiddenHost.children[0],hiddenBefore=calls.length;await hidden.confirmButton.fire('click');await flush();await flush();
+ assert(hidden.confirmButton.textContent.includes('✓'));
+ assert(calls.slice(hiddenBefore).some(c=>c.url.includes('/faces/inbox/hidden/groups?')),'ignored confirmation refreshes its candidate list');
+ assert.equal(ui.state.inboxConfirmationsPending,false,'ignored confirmation does not block the visible inbox cursor');
+ const manualHost=new Element('div');ui.renderInboxFace(manualHost,{...faces[0],face_id:'d'.repeat(64),suggestions:[]},true);
+ await manualHost.children[0].children[3].fire('click');await flush();
+ const choice=get('choices').children.find(e=>String(e.className||'').includes('pa-choice'));
+ assert(choice,'manual assignment offers an existing person with its avatar');choice.fire('click');
+ assert.equal(get('edit-submit').disabled,false);ui.submitEdit({preventDefault(){}});await flush();
+ assert.equal(JSON.parse(writes().at(-1).options.body).target_person_id,18,'manual ignored-face assignment uses the selected person');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(

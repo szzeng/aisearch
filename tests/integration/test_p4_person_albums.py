@@ -1094,6 +1094,7 @@ def test_inbox_face_visibility_is_atomic_persistent_and_scoped_to_selected_faces
         candidate_group = first_cards["cards"][0]
         assert candidate_group["type"] == "candidate_group"
         assert candidate_group["photo_count"] == 2
+        assert candidate_group["face"]["suggestions"][0]["person_id"] == candidate
         second_cards = (await client.get(
             "/api/v1/faces/inbox/hidden/groups",
             params={"limit": 1, "cursor": first_cards["next_cursor"]},

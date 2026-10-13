@@ -1,8 +1,8 @@
 # Development status
 
-## Current user-directed task: P4-PERSON-IGNORE-STATE-A — SCOPED PASS / LUNA HIGH REVIEW COMPLETE (NOT DS-H) (2026-10-13)
+## Current user-directed task: P4-PERSON-IGNORED-CANDIDATE-A — SCOPED PASS (2026-10-13)
 
-[Task card](tasks/P4-PERSON-IGNORE-STATE-A.md), [report](reports/P4-PERSON-IGNORE-STATE-A.md), [LUNA High review](reports/P4-PERSON-IGNORE-STATE-REVIEW-A.md). Legacy hidden rows migrate to TEMPORARY; EXCLUDED filters suggestion projections and automatic face candidates without deleting person/face data. Focused JUnit is **34/0/0/0**; Ruff, `node --check`, `py_compile`, and diff-check pass. LUNA High found one stale-inbox P2; refreshing inbox after visibility writes closed it, and repair re-review found no remaining findings. JUnit remains **34/0/0/0**. User-selected LUNA High route; not DS-H.
+[Task card](tasks/P4-PERSON-IGNORED-CANDIDATE-A.md), [report](reports/P4-PERSON-IGNORED-CANDIDATE-A.md). Ignored faces show existing candidate avatars and support confirmation or manual selection. Focused JUnit 2/0/0/0; Node, Ruff, and diff check passed. Validation is limited to task-card API and synthetic DOM coverage.
 
 ## Previous completed task: P4-UI-TIMELINE-REVISION-A — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE (2026-10-13)
 
