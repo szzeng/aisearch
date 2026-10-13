@@ -251,7 +251,7 @@ def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
     assert "source.root_path" not in script
     assert 'loadSources().then(probeCapabilities)' in script
     assert "全部图库" in shell + script
-    assert "查看此图库照片" in script
+    assert 'element("button", "view-source source-primary", "看照片")' in script
     assert "current_location.source_id" in script
     assert "图库管理与分析明细" in shell
     assert "requestVersion !== state.browse.requestVersion" in script

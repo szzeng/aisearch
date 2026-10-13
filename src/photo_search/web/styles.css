@@ -335,10 +335,30 @@ main {
 }
 
 .source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 0.35rem;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  padding: 1.1rem 1.2rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.source-card h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.source-card > p {
+  margin: 0.1rem 0;
+}
+
+.page-intro {
+  margin: 0.25rem 0 1.25rem;
+  color: var(--fg-muted);
 }
 
 .home-actions {
@@ -354,6 +374,36 @@ main {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+}
+
+.source-primary-actions {
+  width: 100%;
+  margin: 0.45rem 0 0;
+}
+
+.source-primary {
+  min-height: 2.55rem;
+}
+
+.source-card .view-source,
+.source-card [data-primary-build] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--tint);
+  font-weight: 650;
+}
+
+.source-card .view-source {
+  order: 1;
+}
+
+.source-card .source-primary-actions {
+  order: 2;
+}
+
+.source-card > .source-rename,
+.source-card > .source-detail {
+  order: 3;
 }
 
 .source-rename {
@@ -407,6 +457,49 @@ main {
   flex-wrap: wrap;
   gap: 0.5rem 0.75rem;
   align-items: center;
+}
+
+.gallery-management-page > h2,
+.photos-page > h2 {
+  margin-bottom: 0.3rem;
+}
+
+.gallery-management-page .home-actions {
+  margin: 0 0 1rem;
+}
+
+.gallery-management-page .sources {
+  margin-top: 0.75rem;
+}
+
+.gallery-management-page .source-detail {
+  width: 100%;
+}
+
+.photos-page .browse-mode-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 0.4rem;
+}
+
+.photos-page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.65rem;
+}
+
+.photos-page-heading h2 {
+  margin: 0;
+}
+
+.photos-page #browse-timeline {
+  margin-top: 1rem;
+}
+
+.photos-page #browse-timeline[hidden] {
+  display: none;
 }
 
 .grid {
@@ -552,6 +645,20 @@ main {
 @media (max-width: 640px) {
   .detail-preview-frame {
     height: max(12rem, calc(100svh - 21rem));
+  }
+}
+
+@media (max-width: 760px) {
+  .source-card .source-primary-actions {
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .photos-page-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 }
 

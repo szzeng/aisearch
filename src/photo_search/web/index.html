@@ -6,13 +6,13 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-f1-6" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui-timeline-integration-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui-photos-b-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui-photos-b-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
-    <script src="/web/photo-timeline.js?v=p4-ui-timeline-integration-a-1" defer></script>
-    <script src="/web/app.js?v=p4-ui-timeline-integration-a-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-ui-photos-b-1" defer></script>
+    <script src="/web/app.js?v=p4-ui-photos-b-1" defer></script>
   </head>
 <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -43,8 +43,9 @@
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
-      <section id="view-sources" class="view" hidden aria-labelledby="view-sources-title">
+      <section id="view-sources" class="view gallery-management-page" hidden aria-labelledby="view-sources-title">
         <h2 id="view-sources-title">我的图库</h2>
+        <p class="page-intro">先打开照片或继续建库、同步变化；完整扫描与来源管理按需展开。</p>
         <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
         <p class="home-actions">
           <button type="button" id="view-all-galleries">查看全部图库照片</button>
@@ -154,11 +155,13 @@
         </details>
       </section>
 
-      <section id="view-browse" class="view" hidden aria-labelledby="view-browse-title">
-        <h2 id="view-browse-title">浏览图片</h2>
-        <div class="browse-mode-controls" role="group" aria-label="照片浏览方式">
-          <button type="button" id="browse-show-timeline" aria-pressed="false">时间轴浏览</button>
-          <button type="button" id="browse-show-list" aria-pressed="true" hidden>列表浏览</button>
+      <section id="view-browse" class="view photos-page" hidden aria-labelledby="view-browse-title">
+        <div class="photos-page-heading">
+          <h2 id="view-browse-title">全部照片</h2>
+          <div class="browse-mode-controls" role="group" aria-label="照片浏览方式">
+            <button type="button" id="browse-show-timeline" aria-pressed="true" hidden>时间轴</button>
+            <button type="button" id="browse-show-list" aria-pressed="false">列表与高级日期条件</button>
+          </div>
         </div>
         <p class="hint">
           “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。

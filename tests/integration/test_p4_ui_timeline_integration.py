@@ -26,8 +26,9 @@ def test_homepage_timeline_assets_and_basic_browse(api_env: ApiEnv) -> None:
             assert page.status_code == 200
             assert 'id="browse-show-timeline"' in page.text
             assert 'id="browse-timeline"' in page.text
-            assert "/web/photo-timeline.js?v=p4-ui-timeline-integration-a-1" in page.text
-            assert "/web/photo-timeline.css?v=p4-ui-timeline-integration-a-1" in page.text
+            assert 'id="browse-show-list" aria-pressed="false"' in page.text
+            assert "/web/photo-timeline.js?v=p4-ui-photos-b-1" in page.text
+            assert "/web/photo-timeline.css?v=p4-ui-photos-b-1" in page.text
 
             script = await client.get("/web/photo-timeline.js")
             stylesheet = await client.get("/web/photo-timeline.css")

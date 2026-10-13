@@ -1,8 +1,12 @@
 # Development status
 
-## Current user-directed task: P4-PERSON-IGNORED-CANDIDATE-A — SCOPED PASS (2026-10-13)
+## Current user-directed task: P4-UI-PHOTOS-B — FUNCTIONAL SCOPED PASS / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
 
-[Task card](tasks/P4-PERSON-IGNORED-CANDIDATE-A.md), [report](reports/P4-PERSON-IGNORED-CANDIDATE-A.md). Ignored faces show existing candidate avatars and support confirmation or manual selection. Focused JUnit 2/0/0/0; Node, Ruff, and diff check passed. Validation is limited to task-card API and synthetic DOM coverage.
+用户明确要求在 A/C/CORE 验收门尚未关闭时先执行本卡。照片页默认统一时间轴、保留列表/图库管理；LUNA High 受影响面复核发现的 4 项 P2 已修复并补回归，最终复核无剩余 findings。定向 JUnit **28/0/0/0**，关联 timeline integration **1/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PHOTOS-B.md) / [报告](reports/P4-UI-PHOTOS-B.md)。真实浏览器截图与 `PERF_200K` 仍 pending，不标整卡 PASS。
+
+## Next necessary action: 完成 PHOTOS-B 浏览器与性能验收门 — NOT STARTED
+
+补完本卡真实浏览器观察/截图、复用并确认 CORE 的 20 万性能证据后停止；用户指定的 LUNA High 受影响面复核已完成。D 卡 [P4-UI-PEOPLE-D](tasks/P4-UI-PEOPLE-D.md) 已存在但尚未启动。A/C/CORE 的既有未验收状态与报告不因本卡实现而关闭。
 
 ## Previous completed task: P4-UI-TIMELINE-REVISION-A — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE (2026-10-13)
 

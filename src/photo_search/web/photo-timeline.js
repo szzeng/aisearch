@@ -7,6 +7,25 @@
   var DETAIL_PAGES = 10;
   var ANCHOR_PAGES = 64;
   var API = "/api/v1";
+  var PREFERENCE_KEY = "photo-timeline.preferences.v1";
+
+  function readPreferences() {
+    try {
+      var value = JSON.parse(root.localStorage.getItem(PREFERENCE_KEY) || "null");
+      return {
+        timeBasis: value && (value.timeBasis === "capture" || value.timeBasis === "library") ? value.timeBasis : "capture",
+        groupBy: value && (value.groupBy === "day" || value.groupBy === "month" || value.groupBy === "year") ? value.groupBy : "day",
+      };
+    } catch (_) {
+      return { timeBasis: "capture", groupBy: "day" };
+    }
+  }
+
+  function writePreferences(state) {
+    try {
+      root.localStorage.setItem(PREFERENCE_KEY, JSON.stringify({ timeBasis: state.basis, groupBy: state.group }));
+    } catch (_) { /* Storage may be unavailable; this page can continue without persistence. */ }
+  }
 
   function element(tag, className, value) {
     var node = document.createElement(tag);
@@ -38,15 +57,18 @@
   function create(options) {
     var host = options.host;
     var adapter = options.adapter || {};
+    var preferences = readPreferences();
     var state = {
       generation: 0, periodsGeneration: 0, disposed: false, busy: false, failed: false,
       stalePaused: false, staleAnchor: null, lastOpenParams: null, assetsRevision: null, periodsRevision: null,
+      revisionMismatch: false,
       cursor: null, hasMore: true, pageNumber: 0, pages: [],
       active: [], detailCache: [], anchorCache: [],
-      basis: options.timeBasis || "capture", group: options.groupBy || "day",
+      basis: options.timeBasis || preferences.timeBasis, group: options.groupBy || preferences.groupBy,
       bucket: "all", year: null, month: null, scope: options.scope || { kind: "all" },
+      scopeViews: {},
       seekYear: null, seekMonth: null,
-      observer: null, request: null, restoredAssetId: null, lastGroupToken: null,
+      observer: null, request: null, restoredAssetId: options.returnAssetId || null, lastGroupToken: null,
     };
     host.classList.add("photo-timeline");
     var controls = element("div", "photo-timeline__controls");
@@ -60,21 +82,33 @@
       var opt = element("option", "", pair[1]); opt.value = pair[0]; grouping.append(opt);
     });
     grouping.value = state.group;
-    var bucket = element("select", "photo-timeline__bucket");
-    [["all", "全部日期"], ["capture", "可信拍摄日期"], ["unknown", "没有可信拍摄日期"], ["pending", "日期待就绪"]].forEach(function (pair) {
-      var opt = element("option", "", pair[1]); opt.value = pair[0]; bucket.append(opt);
+    var bucketGroup = element("div", "photo-timeline__buckets");
+    bucketGroup.setAttribute("role", "group");
+    bucketGroup.setAttribute("aria-label", "日期范围快捷入口");
+    var bucketButtons = {};
+    [["all", "全部照片"], ["capture", "可信拍摄日期"], ["unknown", "日期未知"], ["pending", "日期待就绪"], ["library", "按加入图库时间浏览"]].forEach(function (pair) {
+      var button = element("button", "photo-timeline__bucket", pair[1]);
+      button.type = "button";
+      button.dataset.bucket = pair[0];
+      button.setAttribute("aria-pressed", "false");
+      bucketButtons[pair[0]] = button;
+      bucketGroup.append(button);
     });
     var year = element("select", "photo-timeline__year"); year.setAttribute("aria-label", "筛选年份");
     var month = element("select", "photo-timeline__month"); month.setAttribute("aria-label", "筛选月份");
     var filter = element("button", "", "筛选年月"); filter.type = "button";
     var jump = element("button", "", "定位到年月"); jump.type = "button";
+    var summaryRetry = element("button", "photo-timeline__summary-retry", "重试日期摘要");
+    summaryRetry.type = "button"; summaryRetry.hidden = true;
+    var summaryStatus = element("p", "photo-timeline__summary-status");
+    summaryStatus.setAttribute("role", "status"); summaryStatus.setAttribute("aria-live", "polite");
     var status = element("p", "photo-timeline__status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
     var groups = element("div", "photo-timeline__groups"); groups.setAttribute("aria-live", "polite");
     var sentinel = element("div", "photo-timeline__sentinel"); sentinel.setAttribute("aria-hidden", "true");
     var retry = element("button", "photo-timeline__retry", "重试加载"); retry.type = "button"; retry.hidden = true;
     var next = element("button", "photo-timeline__next", "加载更多"); next.type = "button"; next.hidden = true;
-    controls.append(basis, grouping, bucket, year, month, filter, jump);
-    host.replaceChildren(controls, status, groups, sentinel, retry, next);
+    controls.append(basis, grouping, year, month, filter, jump, summaryRetry);
+    host.replaceChildren(controls, bucketGroup, summaryStatus, status, groups, sentinel, retry, next);
 
     function scopeParams() {
       var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis,
@@ -94,12 +128,75 @@
       status.classList.toggle("is-error", Boolean(isError));
     }
 
+    function scopeKey(scope) {
+      var value = scope || {};
+      return [value.kind || "all", value.source_id || "", value.person_id || "", value.collection_id || ""].join(":");
+    }
+
+    function visibleAnchor() {
+      var cards = Array.prototype.slice.call(host.querySelectorAll(".photo-timeline__card"));
+      var visible = cards.map(function (card) {
+        return { card: card, rect: card.getBoundingClientRect() };
+      }).filter(function (item) { return item.rect.bottom > 0 && item.rect.top < window.innerHeight; })
+        .sort(function (a, b) { return a.rect.top - b.rect.top; })[0];
+      return visible ? { anchor: visible.card.dataset.anchor || "", assetId: visible.card.dataset.assetId || "" } : null;
+    }
+
+    function saveScopeView() {
+      var visible = visibleAnchor();
+      state.scopeViews[scopeKey(state.scope)] = {
+        basis: state.basis, bucket: state.bucket, year: state.year, month: state.month,
+        seekYear: state.seekYear, seekMonth: state.seekMonth,
+        anchor: visible && visible.anchor, assetId: visible && visible.assetId,
+      };
+    }
+
+    function updateBucketButtons(counts) {
+      var values = counts || {};
+      var total = values.effective_total;
+      var labels = {
+        all: "全部照片" + (total === undefined ? "" : " · " + total),
+        capture: "可信拍摄日期" + (values.trusted === undefined ? "" : " · " + values.trusted),
+        unknown: "日期未知 · 加入图库日期" + (values.unknown === undefined ? "" : " · " + values.unknown),
+        pending: "日期待就绪 · 加入图库日期" + (values.pending === undefined ? "" : " · " + values.pending),
+        library: "按加入图库时间浏览" + (total === undefined ? "" : " · " + total),
+      };
+      Object.keys(bucketButtons).forEach(function (key) {
+        var button = bucketButtons[key];
+        button.textContent = labels[key];
+        var active = key === "library" ? state.basis === "library" : state.basis === "capture" && state.bucket === key;
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    }
+
+    function activateBucket(value) {
+      state.year = null; state.month = null; state.seekYear = null; state.seekMonth = null;
+      if (value === "library") { state.basis = "library"; state.bucket = "all"; }
+      else { state.basis = "capture"; state.bucket = value; }
+      basis.value = state.basis;
+      year.value = "";
+      month.replaceChildren();
+      writePreferences(state);
+      updateBucketButtons();
+      reset();
+      loadPeriods(null);
+    }
+
+    Object.keys(bucketButtons).forEach(function (key) {
+      bucketButtons[key].addEventListener("click", function () { activateBucket(key); });
+    });
+    updateBucketButtons();
+
     function updateRevisionStatus() {
       if (state.assetsRevision !== null && state.periodsRevision !== null &&
           String(state.assetsRevision) !== String(state.periodsRevision)) {
-        setMessage("日期摘要与照片列表版本不一致，摘要暂不可用。", true);
+        state.revisionMismatch = true;
+        updateBucketButtons({});
+        summaryStatus.textContent = "日期摘要与照片列表版本不一致，摘要暂不可用。";
+        summaryRetry.hidden = false;
         return false;
       }
+      state.revisionMismatch = false;
       return true;
     }
 
@@ -122,6 +219,8 @@
       if (selectedYear) params.set("year", String(selectedYear));
       var generation = ++state.periodsGeneration;
       state.periodsRevision = null;
+      summaryRetry.hidden = true;
+      summaryStatus.textContent = "正在读取日期摘要…";
       return apiFetch(API + "/timeline/periods?" + params.toString()).then(function (body) {
         if (state.disposed || generation !== state.periodsGeneration) return;
         state.periodsRevision = body.catalog_filter_revision;
@@ -137,12 +236,21 @@
           year.value = keep;
           updateMonths([]);
         } else updateMonths(body.months || []);
-        if (sameRevision && state.basis === "capture" && body.counts) {
-          setMessage("有效照片 " + body.counts.effective_total + " · 可信 " + body.counts.trusted +
-            " · 无可信日期 " + body.counts.unknown + " · 待就绪 " + body.counts.pending, false);
+        updateBucketButtons(sameRevision ? body.counts || {} : {});
+        if (sameRevision && body.counts) {
+          if (state.basis === "capture") {
+            summaryStatus.textContent = "当前范围 " + body.counts.effective_total + " 张 · 可信拍摄日期 " + body.counts.trusted +
+              " · 日期未知 " + body.counts.unknown + " · 日期待就绪 " + body.counts.pending;
+          } else {
+            summaryStatus.textContent = "当前范围 " + body.counts.effective_total + " 张，按加入图库时间浏览。";
+          }
         }
+        if (typeof adapter.onPeriods === "function") adapter.onPeriods(body, state.scope);
       }).catch(function (error) {
-        if (!state.disposed && generation === state.periodsGeneration) setMessage("日期摘要暂不可用：" + error.message, true);
+        if (!state.disposed && generation === state.periodsGeneration) {
+          summaryRetry.hidden = false;
+          summaryStatus.textContent = "日期摘要暂不可用：" + error.message;
+        }
       });
     }
 
@@ -159,7 +267,7 @@
     }
 
     function groupLabel(item) {
-      if (!item.group_key) return item.date_state === "unknown" ? "没有可信拍摄日期" : "拍摄日期待就绪";
+      if (!item.group_key) return item.date_state === "unknown" ? "日期未知 · 按加入图库日期" : "日期待就绪 · 按加入图库日期";
       if (state.group === "year") return item.group_key + "年";
       if (state.group === "month") return item.group_key.replace("-", "年") + "月";
       return item.group_key.slice(0, 4) + "年" + item.group_key.slice(5, 7) + "月" + item.group_key.slice(8, 10) + "日";
@@ -273,7 +381,6 @@
       state.lastGroupToken = lastGroup;
       state.failed = false; retry.hidden = true; next.hidden = !state.hasMore;
       trimPages(page);
-      if (typeof adapter.onPage === "function") adapter.onPage(body, page);
       return page;
     }
 
@@ -285,8 +392,13 @@
       if (state.cursor) params.set("cursor", state.cursor);
       var controller = typeof AbortController === "function" ? new AbortController() : null;
       state.request = { controller: controller, replacingPage: null };
+      if (typeof adapter.onRequest === "function") adapter.onRequest(Object.fromEntries(params.entries()));
       var request = adapter.fetchPage ? adapter.fetchPage(Object.fromEntries(params.entries()), controller && controller.signal) : apiFetch(API + "/timeline/assets?" + params.toString(), controller && controller.signal);
-      return Promise.resolve(request).then(function (body) { return appendPage(body, generation); }).catch(function (error) {
+      return Promise.resolve(request).then(function (body) {
+        var page = appendPage(body, generation);
+        if (page && typeof adapter.onPage === "function") adapter.onPage(body, page, Object.fromEntries(params.entries()));
+        return page;
+      }).catch(function (error) {
         if (state.disposed || generation !== state.generation || (error && error.name === "AbortError")) return null;
         if (error && error.code === "CATALOG_FILTER_REVISION_STALE") {
           state.cursor = null; state.hasMore = false; state.stalePaused = true;
@@ -311,6 +423,7 @@
       state.generation += 1;
       if (state.request && state.request.controller) state.request.controller.abort();
       state.busy = false; state.failed = false; state.stalePaused = false; state.staleAnchor = null;
+      state.revisionMismatch = false;
       state.cursor = null; state.hasMore = true;
       state.pageNumber = 0; state.pages = []; state.active = []; state.detailCache = []; state.anchorCache = [];
       state.lastGroupToken = null; state.assetsRevision = null;
@@ -326,16 +439,19 @@
       var controller = typeof AbortController === "function" ? new AbortController() : null;
       state.request.controller = controller;
       state.busy = true;
+      if (typeof adapter.onRequest === "function") adapter.onRequest(Object.fromEntries(params.entries()));
       var request = adapter.fetchPage ? adapter.fetchPage(Object.fromEntries(params.entries()), controller && controller.signal) : apiFetch(API + "/timeline/assets?" + params.toString(), controller && controller.signal);
       return Promise.resolve(request).then(function (body) {
         var page = appendPage(body, generation);
         if (state.restoredAssetId && page) {
           var target = page.section.querySelector('[data-asset-id="' + CSS.escape(String(state.restoredAssetId)) + '"]');
-          if (target) target.scrollIntoView({ block: "center" });
+          if (typeof adapter.onRestoreAsset === "function") adapter.onRestoreAsset(target || null, state.restoredAssetId);
+          else if (target) target.scrollIntoView({ block: "center" });
           state.restoredAssetId = null;
         }
-        if (!updateRevisionStatus()) return page;
+        updateRevisionStatus();
         if (!status.classList.contains("is-error")) setMessage("", false);
+        if (page && typeof adapter.onPage === "function") adapter.onPage(body, page, Object.fromEntries(params.entries()));
         return page;
       }).catch(function (error) {
         if (!state.disposed && generation === state.generation) { state.failed = true; retry.hidden = false; setMessage("无法打开时间轴：" + error.message, true); }
@@ -349,7 +465,9 @@
     function selectedMonth() { return month.value ? Number(month.value) : null; }
     function reloadForFilters() {
       state.year = selectedYear(); state.month = selectedMonth();
-      loadPeriods(state.year).finally(function () { reset(); });
+      saveScopeView();
+      reset();
+      loadPeriods(state.year);
     }
 
     function preserveVisibleAssetOnResize() {
@@ -369,13 +487,15 @@
     }
 
     basis.addEventListener("change", function () {
-      state.basis = basis.value; state.bucket = "all"; bucket.value = "all";
-      state.year = null; state.month = null; state.scope = Object.assign({}, state.scope);
-      loadPeriods(null).finally(function () { reset(); });
+      state.basis = basis.value; state.bucket = "all";
+      state.year = null; state.month = null; state.seekYear = null; state.seekMonth = null;
+      writePreferences(state);
+      updateBucketButtons();
+      reset();
+      loadPeriods(null);
     });
-    grouping.addEventListener("change", function () { state.group = grouping.value; reset(); });
-    bucket.addEventListener("change", function () { state.bucket = bucket.value; state.year = null; state.month = null; reset(); });
-    year.addEventListener("change", function () { state.month = null; month.value = ""; loadPeriods(selectedYear()); });
+    grouping.addEventListener("change", function () { state.group = grouping.value; writePreferences(state); reset(); });
+    year.addEventListener("change", function () { state.month = null; month.value = ""; saveScopeView(); loadPeriods(selectedYear()); });
     month.addEventListener("change", function () {});
     filter.addEventListener("click", reloadForFilters);
     jump.addEventListener("click", function () {
@@ -385,11 +505,24 @@
       state.year = null; state.month = null;
       state.seekYear = targetYear; state.seekMonth = targetMonth;
       state.bucket = state.basis === "capture" ? "capture" : "all";
-      loadPeriods(targetYear).finally(function () { reset(); });
+      updateBucketButtons();
+      reset();
+      loadPeriods(targetYear);
+    });
+    summaryRetry.addEventListener("click", function () {
+      if (!state.revisionMismatch) return loadPeriods(state.year);
+      var anchor = visibleAnchor();
+      var page = reset(anchor && anchor.anchor);
+      var periods = loadPeriods(null).then(function () {
+        return state.year === null ? null : loadPeriods(state.year);
+      });
+      return Promise.all([periods, page]).then(function (results) { return results[1]; });
     });
     retry.addEventListener("click", function () {
       if (state.stalePaused) {
-        var periods = loadPeriods(state.year);
+        var periods = loadPeriods(null).then(function () {
+          return state.year === null ? null : loadPeriods(state.year);
+        });
         var page = reset(state.staleAnchor, state.lastOpenParams);
         return Promise.all([periods, page]).then(function (results) { return results[1]; });
       }
@@ -409,17 +542,32 @@
       adapter.onScroll({ host: host, state: state, reset: reset });
     };
     host.addEventListener("scroll", onHostScroll, { passive: true });
+    reset(options.returnAnchor || null);
     loadPeriods(null);
-    reset();
 
     return {
       render: reset,
       append: fetchNext,
       reset: reset,
-      setScope: function (scope, anchor) {
+      setScope: function (scope, anchor, assetId) {
+        saveScopeView();
         state.scope = Object.assign({}, scope || { kind: "all" });
-        var periods = loadPeriods(null);
-        var page = reset(anchor);
+        var saved = state.scopeViews[scopeKey(state.scope)];
+        var sameBasis = Boolean(saved && saved.basis === state.basis);
+        state.bucket = state.basis === "capture" && sameBasis && ["all", "capture", "unknown", "pending"].indexOf(saved.bucket) >= 0
+          ? saved.bucket : "all";
+        state.year = sameBasis ? saved.year : null;
+        state.month = sameBasis ? saved.month : null;
+        state.seekYear = sameBasis ? saved.seekYear : null;
+        state.seekMonth = sameBasis ? saved.seekMonth : null;
+        year.value = state.year === null ? "" : String(state.year);
+        month.value = state.month === null ? "" : String(state.month);
+        state.restoredAssetId = assetId || (sameBasis && saved.assetId ? saved.assetId : null);
+        updateBucketButtons();
+        var page = reset(anchor || (sameBasis ? saved.anchor : null));
+        var periods = loadPeriods(null).then(function () {
+          return state.year === null ? null : loadPeriods(state.year);
+        });
         return Promise.all([periods, page]).then(function (results) { return results[1]; });
       },
       setReturnAnchor: function (assetId, anchor) { state.restoredAssetId = assetId || null; return reset(anchor); },
@@ -433,6 +581,8 @@
         host.replaceChildren(); host.classList.remove("photo-timeline");
       },
       snapshot: function () { return { generation: state.generation, inFlight: state.busy ? 1 : 0,
+        timeBasis: state.basis, groupBy: state.group, bucket: state.bucket, year: state.year, month: state.month,
+        scope: Object.assign({}, state.scope),
         activePages: state.active.length, detailPages: state.detailCache.length,
         anchorPages: state.anchorCache.length, loadedPages: state.pageNumber }; },
     };

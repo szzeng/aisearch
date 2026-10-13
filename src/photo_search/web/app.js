@@ -57,6 +57,8 @@
   var state = {
     sessionMissing: false,
     sources: [],
+    sourcesLoaded: false,
+    sourcesLoadFailed: false,
     sourceDetails: {},
     sourceDetailOpen: {},
     sourcesRequestVersion: 0,
@@ -89,7 +91,8 @@
       returnContext: null,
       returnPending: false,
       returnTargetCount: 0,
-      mode: "list",
+      // The shared date timeline is primary; keep list mode as a recovery path.
+      mode: "timeline",
       timelineMount: null,
       timelineScope: "",
       timelineReturnAnchor: "",
@@ -427,6 +430,8 @@
           return;
         }
         state.sources = (result.body && result.body.sources) || [];
+        state.sourcesLoaded = true;
+        state.sourcesLoadFailed = false;
         updateGlobalRefreshActions();
         if (
           state.browse.sourceId &&
@@ -442,6 +447,7 @@
         }
         renderSources();
         renderSourceOptions();
+        if (state.browse.timelineEmptyParams) showTimelineEmptyMessage(state.browse.timelineEmptyParams);
         els.browseSource.value = state.browse.sourceId;
         els.browseOrder.value = state.browse.order;
         els.browseCaptureFrom.value = state.browse.captureFrom;
@@ -453,6 +459,9 @@
           return;
         }
         setStatus(els.sourcesStatus, "读取来源失败：" + describe(failure), "error");
+        state.sourcesLoaded = true;
+        state.sourcesLoadFailed = true;
+        if (state.browse.timelineEmptyParams) showTimelineEmptyMessage(state.browse.timelineEmptyParams);
         updateGlobalRefreshActions();
       });
   }
@@ -722,7 +731,7 @@
             " · 未实时检查磁盘"
         )
       );
-      var open = element("button", "view-source", "查看此图库照片");
+      var open = element("button", "view-source source-primary", "看照片");
       open.type = "button";
       open.addEventListener("click", function () {
         state.browse.sourceId = String(source.source_id);
@@ -731,10 +740,10 @@
         showView("browse");
       });
       card.appendChild(open);
-      var summaryActions = element("p", "source-actions");
+      var summaryActions = element("p", "source-actions source-primary-actions");
       var sourceProgress = state.sourceDetails[String(source.source_id)];
       var actionMode = sourceProgress ? sourceActionMode(sourceProgress.progress) : "unknown";
-      var buildAction = element("button", null, actionMode === "build"
+      var buildAction = element("button", "source-primary", actionMode === "build"
         ? "开始建库" : (actionMode === "continue" ? "继续建库" : "建库/补齐"));
       buildAction.type = "button";
       buildAction.setAttribute("data-build", String(source.source_id));
@@ -1648,6 +1657,35 @@
     return card;
   }
 
+  function showTimelineEmptyMessage(params) {
+    if (!params || !state.browse.timelineMount || !state.sourcesLoaded) return;
+    var status = els.browseTimeline.querySelector(".photo-timeline__status");
+    if (!status || status.classList.contains("is-error")) return;
+    var sourceId = params.source_id;
+    var source = sourceId ? state.sources.find(function (item) {
+      return String(item.source_id) === String(sourceId);
+    }) : null;
+    var message;
+    if (state.sourcesLoadFailed) {
+      message = "图库状态读取失败，请在图库管理中重试；当前无法判断照片是否已建库。";
+    } else if (!state.sources.length) {
+      message = "还没有登记图库。请到“图库管理”添加来源并开始建库。";
+    } else if (source && source.last_successful_scan == null) {
+      message = "这个图库尚未建库。请到“图库管理”点击“开始建库”；现在还没有可浏览的扫描结果。";
+    } else if (params.year || params.month || params.seek_year || params.seek_month) {
+      message = "这个年月在当前图库范围内没有匹配照片。可以清除年月筛选或直接定位其他年月。";
+    } else if (params.bucket === "unknown") {
+      message = "当前图库范围没有“日期未知”的照片。";
+    } else if (params.bucket === "pending") {
+      message = "当前图库范围没有“日期待就绪”的照片。";
+    } else if (params.time_basis === "capture" && params.bucket !== "all") {
+      message = "当前没有可信拍摄日期的照片。可打开“日期未知”“日期待就绪”或切换到加入图库时间浏览。";
+    } else {
+      message = "当前图库范围还没有可浏览的照片。若来源尚未完成扫描，请先在图库管理中建库或同步变化。";
+    }
+    status.textContent = message;
+  }
+
   function showBrowseMode(mode) {
     var useTimeline = mode === "timeline";
     state.browse.mode = useTimeline ? "timeline" : "list";
@@ -1676,26 +1714,46 @@
     if (!state.browse.timelineMount) {
       state.browse.timelineMount = window.PhotoTimeline.mount({
         host: els.browseTimeline,
-        timeBasis: "capture",
         scope: scope,
+        returnAnchor: state.browse.returnPending ? state.browse.timelineReturnAnchor : null,
+        returnAssetId: state.browse.returnPending ? state.browse.returnAssetId : null,
         adapter: {
           renderAsset: timelineRenderAsset,
+          onRequest: function () {
+            state.browse.timelineEmptyParams = null;
+          },
+          onPage: function (body, _page, params) {
+            if (body.assets && body.assets.length) {
+              state.browse.timelineEmptyParams = null;
+              return;
+            }
+            state.browse.timelineEmptyParams = params;
+            showTimelineEmptyMessage(params);
+          },
           onOpen: function (item) {
             state.browse.timelineReturnAnchor = item.anchor || "";
             showDetail(item.asset_id);
           },
+          onRestoreAsset: function (tile) {
+            window.requestAnimationFrame(function () {
+              var scrollY = state.browse.returnScrollY;
+              if (tile && state.browse.returnAssetTop !== null) {
+                scrollY = (window.scrollY || window.pageYOffset || 0) +
+                  tile.getBoundingClientRect().top - state.browse.returnAssetTop;
+              }
+              window.scrollTo(0, Math.max(0, scrollY));
+            });
+          },
         },
       });
       state.browse.timelineScope = JSON.stringify(scope);
-      if (state.browse.returnPending && state.browse.timelineReturnAnchor) {
-        state.browse.timelineMount.setReturnAnchor(
-          state.browse.returnAssetId,
-          state.browse.timelineReturnAnchor
-        );
-      }
     } else if (state.browse.timelineScope !== JSON.stringify(scope)) {
       state.browse.timelineScope = JSON.stringify(scope);
-      state.browse.timelineMount.setScope(scope);
+      var restoreAnchor = state.browse.returnPending ? state.browse.timelineReturnAnchor : null;
+      var restoreAssetId = state.browse.returnPending ? state.browse.returnAssetId : null;
+      state.browse.timelineMount.setScope(scope, restoreAnchor, restoreAssetId);
+    } else if (state.browse.returnPending && state.browse.timelineReturnAnchor) {
+      state.browse.timelineMount.setReturnAnchor(state.browse.returnAssetId, state.browse.timelineReturnAnchor);
     }
   }
 
@@ -2056,11 +2114,13 @@
   }
 
   function restoreBrowsePosition() {
-    if (!state.browse.returnPending || !state.browse.loaded) return;
+    if (!state.browse.returnPending) return;
     if (state.browse.mode === "timeline") {
+      state.browse.returnTargetCount = 0;
       state.browse.returnPending = false;
       return;
     }
+    if (!state.browse.loaded) return;
     if (state.browse.count < state.browse.returnTargetCount && state.browse.hasMore) {
       loadBrowse(false);
       return;

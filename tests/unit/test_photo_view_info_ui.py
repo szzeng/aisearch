@@ -191,26 +191,36 @@ def test_home_detail_back_restores_browse_and_source_filter() -> None:
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict"),values=new Map();
 const location={hash:"",pathname:"/",search:""},sections={sources:{hidden:false},browse:{hidden:true},detail:{hidden:true}};
-const window={location,sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
+const timelineMounts=[];
+const window={location,scrollY:0,PhotoTimeline:{mount:options=>{timelineMounts.push(options);options.adapter.onRestoreAsset({getBoundingClientRect:()=>({top:620})});return{setReturnAnchor(){},setScope(){}};}},sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
   requestAnimationFrame:fn=>fn(),scrollTo:(_x,y)=>{window.restoredScroll=y;}};
 const document={readyState:"loading",addEventListener(){}};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui={state,handleHash,restoreBrowseReturn,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+  '  globalThis.ui={state,handleHash,restoreBrowseReturn,browseFingerprint,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console};
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui,main={focus(){}},assetGrid={querySelector(){return null;}};
-ui.setElements({views:sections,navButtons:[],main,assetGrid});
+const stub={hidden:false,setAttribute(){},querySelector(){return null;}};
+ui.setElements({views:sections,navButtons:[],main,assetGrid,browseTimeline:stub,browseListView:stub,
+  browseShowTimeline:stub,browseShowList:stub,browseCaptureState:stub,browseListFilters:stub,
+  browseListTimeHint:stub,browseTimelineNote:stub});
 const saved={assetId:"42",sourceId:"12",order:"time_asc",captureFrom:"2025-01-01",captureTo:"2025-02-01",scrollY:420,returnAssetId:"42",returnAssetTop:20,count:125};
 window.sessionStorage.setItem("aisearch.home-browse-return.v1",JSON.stringify(saved));
 assert.equal(ui.restoreBrowseReturn("42"),true);
 assert.equal(ui.state.browse.sourceId,"12");assert.equal(ui.state.browse.order,"time_asc");
 assert.equal(ui.state.browse.captureFrom,"2025-01-01");assert.equal(ui.state.browse.captureTo,"2025-02-01");
 assert.equal(ui.state.browse.returnTargetCount,125,"the snapshot records how many browse results to reload");
-ui.state.browse.loaded=true;ui.state.browse.count=125;ui.state.detailRouteActive=true;location.hash="";ui.handleHash();
+ui.state.browse.loaded=true;ui.state.browse.count=125;ui.state.browse.binding=ui.browseFingerprint();ui.state.detailRouteActive=true;location.hash="";ui.handleHash();
 assert.equal(sections.browse.hidden,false,"Back from an asset detail returns to the browse grid");
 assert.equal(sections.sources.hidden,true);assert.equal(window.restoredScroll,420);
 assert.equal(window.sessionStorage.getItem("aisearch.home-browse-return.v1"),null,"the return snapshot is consumed once");
+const timelineReturn={assetId:"99",sourceId:"12",order:"time_desc",scrollY:500,returnAssetId:"99",returnAssetTop:20,count:30,mode:"timeline",timelineReturnAnchor:"time-anchor-99"};
+window.sessionStorage.setItem("aisearch.home-browse-return.v1",JSON.stringify(timelineReturn));
+assert.equal(ui.restoreBrowseReturn("99"),true);ui.state.detailRouteActive=true;location.hash="";ui.handleHash();
+assert.equal(timelineMounts.length,1);assert.equal(timelineMounts[0].returnAnchor,"time-anchor-99");
+assert.equal(timelineMounts[0].returnAssetId,"99");assert.equal(window.restoredScroll,600,"timeline return restores the asset's prior viewport position after detail reset the page scroll");
+assert.equal(ui.state.browse.returnPending,false);
 """
     result = subprocess.run(
         [node, "-e", script],
