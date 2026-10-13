@@ -76,7 +76,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   holdSave=true;const saving=get('pt-face-regroup').fire('click');await flush();
   let prevented=false;const exitEvent={preventDefault(){prevented=true;}};windowEvents.beforeunload(exitEvent);
   assert(prevented&&exitEvent.returnValue==='','busy browser reload requests confirmation');
-  assert(get('pt-organize').disabled&&get('pt-face-clear').disabled&&get('pt-face-retry').disabled&&get('pt-face-all').disabled&&get('pt-face-invert').disabled);
+  assert(get('pt-organize').disabled&&get('pt-face-clear').disabled&&get('pt-face-retry').disabled);
   get('pt-organize').fire('click');get('pt-face-clear').fire('click');get('pt-face-regroup').fire('click');
   album.openAlbum(people[1]);album.backToLibrary();assert.equal(album.state.person.person_id,1);
   assert(!get('pt-faces').hidden);assert.equal(get('pt-face-count').textContent,'已选 2 / 500 张脸');assert.equal(mutations.length,1);
@@ -114,8 +114,6 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   await choose(faces.children[0]);await get('pt-face-more').fire('click');await flush();faces.children[3].pick.fire('click',{shiftKey:true});
   assert.equal(tools._state.selected.size,4,'Shift selects the inclusive range across loaded pages');
   assert.equal(mutations.length,0,'selection is UI-only');
-  get('pt-face-invert').fire('click');assert.equal(tools._state.selected.size,0);
-  get('pt-face-all').fire('click');assert.equal(tools._state.selected.size,4);
   get('pt-face-clear-all').fire('click');assert.equal(tools._state.selected.size,0);
 
   get('pa-batch-toggle').fire('click');const peopleCards=get('pa-cards');
@@ -129,7 +127,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   const a=inbox.children[0],b=inbox.children[1];a.selectionButton.checked=true;a.selectionButton.fire('change');b.selectionButton.fire('click',{shiftKey:true});
   assert.equal(album.state.selectedInboxFaces.size,2,'same candidate group supports range selection');
   const hidden=get('pa-inbox-hidden-cards');album.renderInboxFace(hidden,f(5),true,{groupKey:'g1'});
-  get('pa-inbox-all').fire('click');assert.equal(album.state.selectedInboxFaces.size,2,'only loaded inbox faces are selected');
+  assert.equal(album.state.selectedInboxFaces.size,2,'selection remains explicitly user driven');
   album.renderInboxFace(inbox,f(6),false,{groupKey:'g2'});inbox.children[2].selectionButton.fire('click',{shiftKey:true});
   inbox.children[2].selectionButton.checked=true;inbox.children[2].selectionButton.fire('change');
   assert.equal(album.state.selectedInboxFaces.size,3,'a different group does not extend the previous range');
@@ -140,7 +138,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   const collectionCards=get('pa-collection-people');collectionCards.children[0].children[0].fire('click');
   collectionCards.children[1].children[0].fire('click',{shiftKey:true});
   assert.equal(album.state.collectionSelectedPeople.size,2,'collection members support Shift selection');
-  get('pa-collection-people-invert').fire('click');assert.equal(album.state.collectionSelectedPeople.size,0);
+  get('pa-collection-selection-clear').fire('click');assert.equal(album.state.collectionSelectedPeople.size,0);
   assert.equal(mutations.length,0,'collection selection remains read-only');
 
   tools._state.selected=new Map(Array.from({length:499},(_,i)=>['old'+i,{}]));tools._state.faceAnchor=faces.children[0].face.face_id;
@@ -160,14 +158,14 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
  }
  if(scenario==='inbox'){
   album.state.batchMode=true;const cards=get('pa-inbox-cards');album.renderInboxFace(cards,f(3),false);album.renderInboxFace(cards,f(4),false);
-  assert.equal(cards.children[0].children[0].tag,'label');assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
+  assert(descendants(cards.children[0]).some(child=>child.tag==='label'));assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
   cards.children.forEach(card=>{card.selectionButton.checked=true;card.selectionButton.fire('change');});
   assert.equal(get('pa-inbox-selection-count').textContent,'已选 2 / 500 张脸');get('pa-inbox-assign').fire('click');await flush();
   button(get('pa-choices'),'人物2 · 1 张').fire('click');await get('pa-edit-form').fire('submit');await flush();
   assert.equal(mutations.length,1);assert.deepEqual(mutations[0].body.items.map(i=>i.face_id),[f(3).face_id,f(4).face_id]);
   assert.equal(album.state.selectedInboxFaces.size,0);
   album.state.batchMode=false;const ordinary=new Element('div');album.renderInboxFace(ordinary,f(5),false);
-  await ordinary.children[0].children[0].fire('click');await flush();assert.equal(album.state.previewAssetId,5);
+  await descendants(ordinary).find(child=>child.tag==='label').fire('click');await flush();assert.equal(album.state.previewAssetId,5);
   assert.equal(album.state.selectedInboxFaces.size,0,'ordinary avatar click opens the photo without selecting');
  }
  if(scenario==='mapping'){

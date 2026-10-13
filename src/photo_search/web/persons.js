@@ -27,7 +27,7 @@
     $("organize").textContent = $("faces").hidden ? "整理照片" : "完成整理";
     $("organize").disabled = ui.isWriting();
     $("organize").setAttribute("aria-expanded", String(!$("faces").hidden));
-    ["face-clear", "face-clear-all", "face-all", "face-invert", "face-retry"].forEach((id) => { $(id).disabled = ui.isWriting(); });
+    ["face-clear", "face-clear-all", "face-retry"].forEach((id) => { $(id).disabled = ui.isWriting(); });
     ["face-assign", "face-unassign", "face-regroup", "face-split", "face-restore"].forEach((id) => {
       $(id).disabled = ui.isWriting() || !state.selected.size;
     });
@@ -48,17 +48,6 @@
     }
     range.forEach((item) => state.selected.set(item.face.face_id, { ...item.face }));
     state.faceAnchor = card.face.face_id; updateSelection(); return true;
-  }
-  function loadedFaceAction(action) {
-    if (ui.isWriting()) return;
-    const next = new Map(state.selected);
-    Array.from($("face-list").children).filter((item) => item.face && item.pick).forEach((card) => {
-      const id = card.face.face_id;
-      if (action === "clear" || (action === "invert" && next.has(id))) next.delete(id);
-      else if (action === "all" || action === "invert") next.set(id, { ...card.face });
-    });
-    if (next.size > 500) { status("face-status", "已加载选择会超过 500 张脸，未更改已有选择。"); return; }
-    state.selected = next; if (action === "clear") state.faceAnchor = null; updateSelection();
   }
   function cancelSelection() { if (!ui.isWriting()) clearSelection(); }
   async function loadFaces(more) {
@@ -308,8 +297,7 @@
     $("organize").addEventListener("click", () => $("faces").hidden ? openFaces(ui.currentPerson()) : hideFaces());
     $("face-more").addEventListener("click", () => loadFaces(true));
     $("face-retry").addEventListener("click", () => { if (!ui.isWriting()) loadFaces(false); }); $("face-clear").addEventListener("click", cancelSelection);
-    ["all", "invert"].forEach((action) => $("face-" + action).addEventListener("click", () => loadedFaceAction(action)));
-    $("face-clear-all").addEventListener("click", () => loadedFaceAction("clear"));
+    $("face-clear-all").addEventListener("click", cancelSelection);
     ["assign", "unassign", "regroup", "split", "restore"].forEach((action) => $("face-" + action).addEventListener("click", () => faceAction(action === "restore" ? "restore_auto" : action)));
     $("review-entry").addEventListener("click", () => openReview(null)); $("review-summary-retry").addEventListener("click", summary);
     $("history-entry").addEventListener("click", openHistory);

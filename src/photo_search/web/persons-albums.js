@@ -229,16 +229,6 @@
     range.forEach((card) => { state.selectedPeople.add(card.personId); state.selectedPeopleSnapshots.set(card.personId, { ...card.latestPerson }); });
     state.selectAnchors.set(key, target.personId); renderPeopleManagement(); return true;
   }
-  function peopleSelectionAction(action) {
-    if (state.visibilityBusy || state.writing) return;
-    const cards = Array.from($("cards").children).filter((item) => Number.isSafeInteger(item.personId));
-    const next = new Set(state.selectedPeople);
-    cards.forEach((card) => { if (action === "clear" || (action === "invert" && next.has(card.personId))) next.delete(card.personId); else if (action !== "clear") next.add(card.personId); });
-    if (next.size > 500) { message("已加载选择会超过 500 个人物，未更改已有选择。"); return; }
-    state.selectedPeople = next;
-    cards.forEach((card) => { if (next.has(card.personId)) state.selectedPeopleSnapshots.set(card.personId, { ...card.latestPerson }); });
-    renderPeopleManagement();
-  }
   function createPersonCard(person, index) {
     const card = node("div", undefined, "pa-person-card"); card.tabIndex = 0; card.setAttribute("role", "button");
     const activate = (event) => { if (state.visibilityBusy || state.writing) return; if (state.batchMode) { if (!choosePersonRange(card, event)) togglePersonSelection(card.personId); } else openAlbum(card.latestPerson); };
@@ -304,7 +294,7 @@
     $("collection-add").disabled = state.visibilityBusy || state.selectedPeople.size === 0;
     $("collection-choice").hidden = !state.batchMode;
     $("collection-hide-label").hidden = !state.batchMode;
-    ["people-all", "people-invert", "people-clear"].forEach((id) => { $(id).hidden = !state.batchMode; $(id).disabled = state.visibilityBusy || state.writing; });
+    $("people-clear").hidden = !state.batchMode; $("people-clear").disabled = state.visibilityBusy || state.writing;
     $("batch-toggle").disabled = state.visibilityBusy || state.faceVisibilityBusy || state.writing || Boolean(state.pendingWrite);
     $("hidden-toggle").disabled = state.visibilityBusy;
     syncPeopleCards();
@@ -315,6 +305,7 @@
     state.selectAnchors.forEach((_, key) => { if (key.startsWith("people:") || key.startsWith("faces:")) state.selectAnchors.delete(key); });
     inboxFaceSnapshots.clear(); state.batchMode = false; renderPeopleManagement();
   }
+  function clearSelectedPeople() { if (state.visibilityBusy || state.writing) return; state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear(); renderPeopleManagement(); }
   function togglePersonSelection(personId) {
     state.selectAnchors.set("people:" + String(state.hiddenView) + ":" + JSON.stringify(peopleValues()), personId);
     if (state.selectedPeople.has(personId)) state.selectedPeople.delete(personId);
@@ -369,8 +360,8 @@
     $("inbox-restore-submit").disabled = state.faceVisibilityBusy || state.selectedHiddenFaces.size === 0 || state.selectedHiddenFaces.size > 500;
     $("inbox-hidden-selection-count").hidden = !state.batchMode || !state.inboxHiddenVisible;
     $("inbox-hidden-selection-count").textContent = "已选 " + state.selectedHiddenFaces.size + " 张已忽略人脸";
-    ["inbox-all", "inbox-invert", "inbox-clear"].forEach((id) => { $(id).hidden = !state.batchMode; $(id).disabled = state.writing || state.faceVisibilityBusy; });
-    ["inbox-hidden-all", "inbox-hidden-invert", "inbox-hidden-clear"].forEach((id) => { $(id).hidden = !state.batchMode || !state.inboxHiddenVisible; $(id).disabled = state.writing || state.faceVisibilityBusy; });
+    $("inbox-clear").hidden = !state.batchMode; $("inbox-clear").disabled = state.writing || state.faceVisibilityBusy;
+    $("inbox-hidden-clear").hidden = !state.batchMode || !state.inboxHiddenVisible; $("inbox-hidden-clear").disabled = state.writing || state.faceVisibilityBusy;
     $("inbox-hidden-toggle").setAttribute("aria-expanded", String(state.inboxHiddenVisible));
     $("inbox-hidden-toggle").textContent = state.inboxHiddenVisible ? "收起已忽略人脸" : "查看已忽略人脸";
     $("inbox-hidden-content").hidden = !state.inboxHiddenVisible;
@@ -406,17 +397,9 @@
     if (total + range.filter((item) => !set.has(item.faceId)).length > 500) { message("这次连选会超过 500 张脸，未更改已有选择。"); return true; }
     range.forEach((item) => set.add(item.faceId)); state.selectAnchors.set(key, card.faceId); renderFaceManagement(); return true;
   }
-  function inboxSelectionAction(hidden, action) {
+  function clearInboxSelection() {
     if (!state.batchMode || state.writing || state.faceVisibilityBusy) return;
-    if (action === "clear") {
-      state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.selectAnchors.clear(); inboxFaceSnapshots.clear(); renderFaceManagement(); return;
-    }
-    const set = hidden ? state.selectedHiddenFaces : state.selectedInboxFaces, next = new Set(set);
-    loadedInboxCards(hidden).forEach((card) => { if (action === "invert" && next.has(card.faceId)) next.delete(card.faceId); else next.add(card.faceId); });
-    if (state.selectedInboxFaces.size + state.selectedHiddenFaces.size - set.size + next.size > 500) { message("已加载选择会超过 500 张脸，未更改已有选择。"); return; }
-    loadedInboxCards(hidden).forEach((card) => { if (next.has(card.faceId)) inboxFaceSnapshots.set(card.faceId, { ...card.face }); });
-    if (hidden) state.selectedHiddenFaces = next; else state.selectedInboxFaces = next;
-    renderFaceManagement();
+    state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.selectAnchors.clear(); inboxFaceSnapshots.clear(); renderFaceManagement();
   }
   async function editSelectedInbox(action) {
     if (state.writing || state.faceVisibilityBusy) return;
@@ -697,16 +680,7 @@
     Array.from($("collection-people").children).forEach((card) => { if (card.chooseButton) card.chooseButton.textContent = state.collectionSelectedPeople.has(card.personId) ? "取消移出选择" : "选择移出"; });
     $("collection-remove").disabled = state.collectionSelectedPeople.size === 0;
     const busy = state.writing || Boolean(state.pendingWrite);
-    ["collection-people-all", "collection-people-invert", "collection-selection-clear", "collection-remove"].forEach((id) => { $(id).disabled = busy || (id === "collection-remove" && state.collectionSelectedPeople.size === 0); });
-  }
-  function collectionSelectionAction(action) {
-    if (state.writing || state.pendingWrite) return;
-    const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
-    const next = new Set(state.collectionSelectedPeople);
-    cards.forEach((card) => { if (action === "clear" || (action === "invert" && next.has(card.personId))) next.delete(card.personId); else if (action !== "clear") next.add(card.personId); });
-    if (next.size > 500) { message("已加载选择会超过 500 个人物，未更改已有选择。"); return; }
-    state.collectionSelectedPeople = next;
-    updateCollectionSelection();
+    ["collection-selection-clear", "collection-remove"].forEach((id) => { $(id).disabled = busy || (id === "collection-remove" && state.collectionSelectedPeople.size === 0); });
   }
   async function removeCollectionSelection() {
     if (state.writing || state.pendingWrite || !state.collection || !state.collectionSelectedPeople.size) return;
@@ -823,7 +797,8 @@
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
         confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
         card.otherPersonButton = button("选其他人", () => editFace(face, { allowCreatePerson: true }));
-        card.append(confirm, card.otherPersonButton);
+        card.excludeSuggestionButton = button("明确排除当前候选", () => excludeSuggestion(face, suggestion, card, groupDetails));
+        card.append(confirm, card.otherPersonButton, card.excludeSuggestionButton);
       } else card.append(button(hiddenFace ? "选择人物" : "这是谁？", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
@@ -868,6 +843,37 @@
       state.writing = false; confirm.disabled = Boolean(card.confirmed); card.otherPersonButton.disabled = Boolean(card.confirmed);
       // Closing while the request is in flight also waits for the saved result.
       if (!card.hiddenFace && groupDetails && !groupDetails.open) flushInboxConfirmations();
+    }
+  }
+  async function excludeSuggestion(face, person, card, groupDetails) {
+    if (state.pendingWrite) { message(errorText({code:"PENDING_WRITE"})); return; }
+    if (state.writing || !person || !person.person_id) return;
+    state.writing = true;
+    const control = card.excludeSuggestionButton;
+    control.disabled = true;
+    control.textContent = "正在排除……";
+    const expanded = Array.from($("inbox-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
+    try {
+      const result = await api("/face-assignments/batch", {
+        contract_version: "p3-face-correction-contracts.v1",
+        request_id: requestId(),
+        items: [{
+          face_id: String(face.face_id), action: "exclude_suggestion",
+          target_person_id: Number(person.person_id), expected_revision: Number(face.control_revision || 0),
+        }],
+      });
+      rememberOperation(result, "已排除这张脸的“" + name(person) + "”候选");
+      notifyPeopleChanged();
+      state.inboxConfirmationsPending = false;
+      await loadInbox(false, expanded);
+    } catch (error) {
+      control.textContent = "明确排除当前候选";
+      message(errorText(error));
+    } finally {
+      state.writing = false;
+      if (control.textContent === "正在排除……") control.textContent = "明确排除当前候选";
+      control.disabled = false;
+      if (groupDetails && !groupDetails.open) flushInboxConfirmations();
     }
   }
   async function loadInboxGroup(details, groupKey, kind, cursor, hiddenFace) {
@@ -1624,11 +1630,9 @@
       if (!state.batchMode) clearPeopleSelection();
       else renderPeopleManagement();
     });
-    $("people-all").addEventListener("click", () => peopleSelectionAction("all"));
-    $("people-invert").addEventListener("click", () => peopleSelectionAction("invert"));
-    $("people-clear").addEventListener("click", () => peopleSelectionAction("clear"));
-    ["all", "invert", "clear"].forEach((action) => $("inbox-" + action).addEventListener("click", () => inboxSelectionAction(false, action)));
-    ["all", "invert", "clear"].forEach((action) => $("inbox-hidden-" + action).addEventListener("click", () => inboxSelectionAction(true, action)));
+    $("people-clear").addEventListener("click", clearSelectedPeople);
+    $("inbox-clear").addEventListener("click", clearInboxSelection);
+    $("inbox-hidden-clear").addEventListener("click", clearInboxSelection);
     $("visibility-submit").addEventListener("click", submitVisibility);
     $("hidden-toggle").addEventListener("click", () => {
       state.hiddenView = !state.hiddenView; if (state.hiddenView) state.ignoreState = "TEMPORARY"; state.selectedPeople.clear(); renderPeopleManagement();
@@ -1704,9 +1708,7 @@
     $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);
-    $("collection-selection-clear").addEventListener("click", () => collectionSelectionAction("clear"));
-    $("collection-people-all").addEventListener("click", () => collectionSelectionAction("all"));
-    $("collection-people-invert").addEventListener("click", () => collectionSelectionAction("invert"));
+    $("collection-selection-clear").addEventListener("click", () => { state.collectionSelectedPeople.clear(); updateCollectionSelection(); });
     $("collection-rename").addEventListener("click", () => renameCollection(state.collection));
     $("collection-delete").addEventListener("click", () => deleteCollection(state.collection));
     $("name").addEventListener("click", () => editBase({ mode: "name", person: { ...state.person } }, "给这个人取名字", "可用家人的称呼或你习惯的名字。"));
