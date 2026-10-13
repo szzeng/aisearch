@@ -1,5 +1,9 @@
 # Development status
 
+## P4-MEDIA-CR2-A — READY / 佳能 CR2 预览优先、统一画幅与历史补建（2026-10-13）
+
+[任务卡](tasks/P4-MEDIA-CR2-A.md)。基于已完成的图片白名单，本卡只规划 Canon CR2 解码（内置预览够清晰/画幅可信时优先，其他受限 RAW 兜底）、同一文件统一方向/画幅/人脸坐标、语义与 OCR 接入，以及旧 CR2 格式失败定向补建，不开放 TIFF/其他 RAW、不重建全库。建议 GPT-6 Luna High，少量定向测试和 3～5 张授权真实 CR2 样片。**仅任务书，尚未实施，未运行产品测试，不标 PASS。**
+
 ## P4-UI-SHELL-A-F1 — PLANNED / 公共视觉与搜索页面视觉收口（仅文档）
 
 [任务卡](tasks/P4-UI-SHELL-A-F1.md)、[公共视觉设计规范](plans/P4-UI-VISUAL-TOKENS.md)。A/C 功能已施工，最终 demo 的统一配色、字体、导航与搜索结果/筛选完整视觉仍未完成对照。本次新增 F1 卡、预设计视觉规范，并为 CORE/B/D/E/SEARCH-MAP/F 加入最小样式继承条款。**仅更改文档，没有产品代码或测试，不追认 F1/A/C PASS。** 顺序增加 F1：A→C→F1→CORE→B→D→E→SEARCH-MAP→F；个人轻验收及20万元数据性能要求不变。
