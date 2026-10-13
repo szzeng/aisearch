@@ -86,6 +86,12 @@ a {
   outline-offset: 2px;
 }
 
+/* The route handler focuses main for screen-reader context; a ring around the
+   entire page is distracting and is not useful as a keyboard control cue. */
+#main:focus-visible {
+  outline: none;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

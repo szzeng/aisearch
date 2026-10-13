@@ -56,3 +56,10 @@ Chrome 本机截图保存于 `.tmp/P4-UI-SHELL-A-F1/screenshots/`，并已目视
 - 原 LUNA High 复核者已确认对比度问题关闭、图标语义正确、缓存版本一致且无新问题。此路由不构成 DS-H。
 
 - 修正后定向 JUnit：37 passed / 0 failed / 0 errors / 0 skipped；Ruff 通过。
+
+## 首页焦点边框修复（2026-10-13）
+
+- 用户截图中的首页列表外框来自路由切换时程序聚焦 `#main`，命中全局 `:focus-visible` 后给整页主内容画出的轮廓。为 `#main:focus-visible` 单独取消轮廓；按钮、链接、输入框和下拉框的全局焦点轮廓保留。
+- 五个页面的共享 `styles.css` 缓存版本同步为 `p4-ui-shell-a-f1-6`。在 shell 定向测试中加入主区域轮廓豁免与通用焦点规则仍存在的回归断言。
+- 验证：四个 F1 定向 pytest 模块 JUnit **37 passed / 0 failed / 0 errors / 0 skipped**；Ruff 和 `git diff --check` 通过。此修复未改 JS，未跑 Node。
+- 该修复处理用户报告的默认首页焦点框；F1 原定真实 200% 浏览器缩放和搜索命中态截图仍未完成，因此整卡继续为 VISUAL VALIDATION PENDING。

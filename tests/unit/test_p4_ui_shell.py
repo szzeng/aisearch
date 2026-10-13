@@ -27,6 +27,9 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert 'id="nav-persons" href="/persons" hidden' in (WEB / "search.html").read_text(encoding="utf-8")
     assert 'id="nav-persons" href="/persons" hidden' in (WEB / "places.html").read_text(encoding="utf-8")
     assert 'id="nav-persons" href="/persons" hidden' in (WEB / "map.html").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "#main:focus-visible {\n  outline: none;\n}" in styles
+    assert ":focus-visible {\n  outline: 3px solid var(--accent);" in styles
     map_script = (WEB / "map.js").read_text(encoding="utf-8")
     assert "map.js?v=p4-ui-shell-a-1" in (WEB / "map.html").read_text(encoding="utf-8")
     assert 'req("/api/v1/capabilities/page").then(revealPersonsNav)' in map_script

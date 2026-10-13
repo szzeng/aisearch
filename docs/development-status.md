@@ -4,6 +4,8 @@
 
 [Task card](tasks/P4-UI-SHELL-A-F1.md), [report](reports/P4-UI-SHELL-A-F1.md), [visual tokens](plans/P4-UI-VISUAL-TOKENS.md). Shared theme/navigation and the search page visual scope are implemented. Focused JUnit is **37/0/0/0** after fixing the Luna High P2 contrast and decorative-icon findings; Ruff and `git diff --check` pass. Synthetic browser observations covered the six-result filter view, advanced filters, Chinese query error, and shared navigation across `/`, `/search`, `/persons`, `/places`, `/map`, and `/?view=sources`.
 
+Follow-up fix: suppress the decorative focus outline on the programmatically focused home `<main>` (the green frame reported in the screenshot); interactive control focus-visible styling remains. Regression assertion and F1 focused JUnit **37/0/0/0**, Ruff, and `git diff --check` pass. Five shared stylesheet cache references are synchronized at `p4-ui-shell-a-f1-6`.
+
 Chrome screenshots now cover `/` at 1440×1200 light with six synthetic cards, `/search` at exact 1440 and 640 CSS viewports in light mode, dark theme at 1440, and expanded advanced filters at exact 1440×1200. Visual gates remain pending for real browser 200% zoom and a saved search-hit state; the in-app browser observed six FILTER_ONLY hits but its screenshot was not saved. Chrome zoom API/shortcut attempts did not change the effective zoom, and those diagnostic images are not acceptance evidence. Luna High review passed after the contrast and decorative-icon fixes; this is not DS-H. Do not mark this task PASS or start CORE until required evidence is complete.
 
 ## Related UI status
