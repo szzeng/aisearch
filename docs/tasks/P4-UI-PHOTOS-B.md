@@ -1,5 +1,8 @@
 # P4-UI-PHOTOS-B — 照片浏览与图库管理层级
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [01-photos](../mockups/ui2/01-photos.svg)、[11-management](../mockups/ui2/11-management.svg)、[12-narrow](../mockups/ui2/12-narrow.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；实施前要求 [A](P4-UI-SHELL-A.md) 与 [CORE](P4-UI-TIMELINE-CORE-A.md) 已验收，执行时检查实际 Git/报告。
 
 推荐 GPT-6 / High；A 级前端展示小改，独立 DS-H 核对全部受影响 UI 与原管理动作接线。

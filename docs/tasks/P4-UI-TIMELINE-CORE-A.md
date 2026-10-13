@@ -1,5 +1,8 @@
 # P4-UI-TIMELINE-CORE-A — 共享照片时间轴核心与只读日期查询
 
+> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [01-photos](../mockups/ui2/01-photos.svg)、[03-person-album](../mockups/ui2/03-person-album.svg)、[07-place-album](../mockups/ui2/07-place-album.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
+
+
 日期：2026-10-13。状态：**PLANNED / 未实施**。上游 [A](P4-UI-SHELL-A.md)；下游 [B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)、[E](P4-UI-PLACES-E.md)及后续 SEARCH-MAP。本卡是一张可独立验收的公共能力卡，不接管普通页面的最终布局。
 
 推荐 **GPT-6 / High**；新增有界只读查询与前端状态管理，按 V3.1 B 类受影响面及独立 DS-H 复核；若必须触及 schema/人工真值/写事务，先单独升级风险与验证，不扩大暗改。
