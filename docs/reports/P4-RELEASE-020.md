@@ -1,6 +1,6 @@
 # P4-RELEASE-020 — 执行报告
 
-日期：2026-10-13。状态：**SCOPED PASS / PUBLICATION PENDING**。
+日期：2026-10-13。状态：**SCOPED PASS / PERSONAL PRE-RELEASE PUBLISHED**。
 
 ## 冻结内容
 
@@ -33,4 +33,4 @@ JUnit 文件：`test-results/P4-RELEASE-020.xml`。
 
 ## 发布状态
 
-本地与远端均未发现 `v0.2.0` Tag；`gh release view v0.2.0` 返回 Not Found。没有推送代码、创建 Tag 或创建 GitHub Pre-release。版本代码提交为 `8027b0c37de56ae30539b3d87546a9a8262a5b02`；包含本报告和状态记录的当前 HEAD 是完整本地候选，后续 Tag 应指向该完整记录提交。所有远端发布操作待用户另行确认。
+annotated Tag **`v0.2.0`** 已推送，剥离后的目标为包含版本代码、CHANGELOG 和验收报告的提交 `c241b80ec405d205df14ac59cafce519a9889226`。GitHub [Pre-release](https://github.com/szzeng/aisearch/releases/tag/v0.2.0) 已创建，标记为 prerelease，说明取自 `CHANGELOG.md`。`git push origin master` 返回 `Everything up-to-date`；远端 `master` 为 `f96744881e87b0157ecec9ef4855955b82983f33`，包含候选提交及后续仅 UI 规划文档的合并。`git push origin refs/tags/v0.2.0` 成功；发布页与远端 Tag 已核对。未附 Windows 安装包；该版本仍是个人预览版，不是正式发行。
