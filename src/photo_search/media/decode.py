@@ -25,7 +25,7 @@ from photo_search.catalog.errors import (
     SOURCE_FILE_MISSING,
     CatalogError,
 )
-from photo_search.media import heif
+from photo_search.media import heif, raw_cr2
 from photo_search.media.contract import (
     refused_input_formats,
     supported_input_formats,
@@ -122,6 +122,16 @@ def load_normalized(
     The returned image is fully loaded and owned by the caller, so the source file can be
     closed immediately and the image can be resized in place.
     """
+    if raw_cr2.is_cr2(path):
+        image, _, _ = raw_cr2.decode(path, max_pixels=max_pixels)
+        return DecodedImage(
+            image=image,
+            width=int(image.width),
+            height=int(image.height),
+            source_format="CR2",
+            orientation=1,
+            source_mode="RAW",
+        )
     # Pillow has no HEIF decoder; the single registration point is
     # :mod:`photo_search.media.heif` and it fails closed when the plugin is unavailable.
     heif.ensure_heif_support()
@@ -192,6 +202,8 @@ def load_normalized(
 
 def read_normalized_dimensions(path: Path) -> tuple[int, int] | None:
     """Read an image's upright pixel dimensions from its header without decoding pixels."""
+    if raw_cr2.is_cr2(path):
+        return raw_cr2.read_normalized_dimensions(path)
     heif.ensure_heif_support()
     try:
         with Image.open(path) as source:
@@ -248,6 +260,8 @@ def probe_capabilities() -> dict[str, object]:
         "exif_writer": hasattr(Image, "Exif"),
         "max_image_pixels": Image.MAX_IMAGE_PIXELS,
         "jpeg_draft_reduce": True,
+        "cr2_runtime_available": raw_cr2.runtime_available(),
+        "cr2_decode_metrics": raw_cr2.metrics(),
         "supported_input_formats": sorted(supported_input_formats()),
         "refused_input_formats": sorted(refused_input_formats()),
         "heif_support": heif.runtime_fact(),

@@ -333,7 +333,8 @@ def test_broken_and_unsupported_inputs_are_isolated_with_reasons(harness: Harnes
     summary = harness.service.generate_thumbnail()
 
     assert summary["generated"] == 1
-    assert summary["failed"] == 3
+    # The image-only scanner does not register notes.txt, so only the two broken images fail.
+    assert summary["failed"] == 2
     assert summary["unsupported"] == 1
     assert summary["already_published"] == 0
     codes = sorted(
@@ -342,14 +343,13 @@ def test_broken_and_unsupported_inputs_are_isolated_with_reasons(harness: Harnes
     assert codes == [
         ("FAILED", DECODE_FAILED),
         ("FAILED", DECODE_FAILED),
-        ("FAILED", DECODE_FAILED),
         ("UNSUPPORTED", FORMAT_UNSUPPORTED),
     ]
     assert len(published_artifacts(harness)) == 1
 
     report = harness.service.media_report(include_failures=True)
     assert report["kinds"]["thumbnail"]["failure_codes"] == {
-        DECODE_FAILED: 3,
+        DECODE_FAILED: 2,
         FORMAT_UNSUPPORTED: 1,
     }
     assert report["kinds"]["thumbnail"]["published"] == 1
@@ -363,9 +363,9 @@ def test_broken_and_unsupported_inputs_are_isolated_with_reasons(harness: Harnes
     again = harness.service.generate_thumbnail()
     assert again["generated"] == 0
     assert again["already_published"] == 1
-    assert again["skipped_cached_failures"] == 4
+    assert again["skipped_cached_failures"] == 3
     retried = harness.service.generate_thumbnail(retry_failed=True)
-    assert retried["failed"] == 3
+    assert retried["failed"] == 2
     assert retried["unsupported"] == 1
 
 

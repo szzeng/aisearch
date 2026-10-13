@@ -56,6 +56,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.catalog.migrate import inspect_database
 from photo_search.indexing.store import IndexCoordinator
+from photo_search.media import raw_cr2
 from photo_search.scheduler.projection import index_summary
 
 logger = logging.getLogger("photo_search.indexing.maintenance")
@@ -280,11 +281,17 @@ class ImageEncoder(Protocol):
 
 
 def _validated_image_vector(
-    encoder: ImageEncoder, *, path: Path, dimension: int, artifact_id: str
+    encoder: ImageEncoder,
+    *,
+    path: Path,
+    dimension: int,
+    artifact_id: str,
+    temp_root: str | Path,
 ) -> list[float]:
     """One re-executed vector, validated exactly like a query vector (no padding, no trimming)."""
     try:
-        raw = encoder.encode_image(str(path))
+        with raw_cr2.encoder_input(path, temp_root=temp_root) as encoder_path:
+            raw = encoder.encode_image(str(encoder_path))
     except CatalogError:
         raise
     except Exception as error:  # a broken adapter is a structured refusal, not a crash
@@ -462,6 +469,7 @@ def _reexecute_one(
             path=path,
             dimension=int(row["dimension"]),
             artifact_id=str(row["artifact_id"]),
+            temp_root=catalog.data_root,
         )
         artifacts.republish_reclaimed(
             catalog,

@@ -1,6 +1,6 @@
 # P4-MEDIA-CR2-A — 佳能 CR2 预览优先、统一画幅与历史补建
 
-**状态**：READY / 仅任务卡，未实施。**日期**：2026-10-13。**核对基线**：`szzeng/aisearch master @ 2312d710`（开工时重新读取 HEAD、`docs/development-status.md` 及工作区）。**推荐执行**：GPT-6 Luna / High。**验证**：个人相册，少量定向测试 + 3～5 张有授权的真实 CR2 人工试用；不跑全仓。**依赖**：`P4-LIBRARY-IMAGE-ONLY-A` 已 SCOPED PASS。
+**状态**：IMPLEMENTATION PARTIAL / VALIDATION PENDING。**执行日期**：2026-10-13。**核对基线**：`szzeng/aisearch master @ 0f34c0b`（开工时重新读取 HEAD、`docs/development-status.md` 及工作区）。**推荐执行**：GPT-6 Luna / High。**验证**：个人相册，少量定向测试 + 3～5 张有授权的真实 CR2 人工试用；不跑全仓。**依赖**：`P4-LIBRARY-IMAGE-ONLY-A` 已 SCOPED PASS。
 
 ## 一、目标和边界
 
@@ -95,3 +95,13 @@
 - 发现必须迁移 Schema、替换全局向量空间、整体改写搜索或人脸系统才能完成时，**停止扩大范围并报告阻塞**，不要在本卡自行实施。
 
 **推荐：GPT-6 Luna High 独立完成，按当前仓库最小实现，不单独要求 DSH/全套回归。**
+
+## 2026-10-13 执行记录
+
+已落地 RAW 解码、共享规范画幅接入、语义规范临时输入、PyInstaller rawpy 收集以及历史媒体 `FORMAT_UNSUPPORTED` 定向重试。定向组 A **37 passed**、定向组 B **90 passed**，Ruff、py_compile、`uv lock --check`、`git diff --check` 通过。详见[执行报告](../reports/P4-MEDIA-CR2-A.md)。
+
+本次没有收到已授权样片目录路径；内嵌预览暂未启用，实际只验证合成输入和假 encoder。真实 CR2 画幅/方向、人脸/OCR/时间/GPS、活动模型搜图、真实历史续建与完整打包仍待验证；人脸/OCR 旧终态任务的 CR2 定向恢复也未完成。**不可记 SCOPED PASS**。收到样片路径后继续本卡，不新开后续任务卡。
+
+### 样片续验（2026-10-13）
+
+用户已授权 `D:\SZ\天空\100CANON`。只读抽取 5 个分位 CR2 样片：全部为 6000×4000 JPEG 内嵌预览与 6024×4020 RAW 有效画幅，LibRaw `flip=0`。SIFT/RANSAC 几何诊断未能对全部样片证明稳定裁切映射，故继续统一使用 RAW，`cr2_preview_used=0`、`cr2_raw_fallback=5`、`cr2_decode_failed=0`；单张解码均值 1.130 秒，原文件 SHA/大小/mtime 未变化。共享人脸/OCR解码入口均返回 RAW 规范画幅；真实模型推理未运行。时间与子秒可读，但样片不含有效 GPS 坐标，未覆盖竖拍/有效 GPS。定向测试 **127 passed**（JUnit `test-results/junit-p4-media-cr2-a-validation.xml`），Ruff、`py_compile`、`uv lock --check`、`git diff --check`、PyInstaller rawpy collector smoke 均通过。活动模型文字搜索、实际续建幂等、旧人脸/OCR终态任务定向恢复及完整打包仍待验证；详见[执行报告](../reports/P4-MEDIA-CR2-A.md)。本卡保持 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**，不标 SCOPED PASS。

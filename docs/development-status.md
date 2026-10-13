@@ -18,4 +18,8 @@ Chrome screenshots now cover `/` at 1440×1200 light with six synthetic cards, `
 
 Finish P4-UI-SHELL-A-F1 visual gates. Only then continue to [P4-UI-TIMELINE-CORE-A](tasks/P4-UI-TIMELINE-CORE-A.md). Do not start subsequent UI cards automatically. The 20万有效照片元数据 performance requirement remains unchanged.
 
+## Additional requested task: P4-MEDIA-CR2-A
+
+[Task card](tasks/P4-MEDIA-CR2-A.md), [report](reports/P4-MEDIA-CR2-A.md): implementation partial / validation pending. The user authorized `D:\SZ\天空\100CANON`; five read-only CR2 samples decode through the shared RAW frame at 1.101–1.183 s each, with unchanged SHA/size/mtime. Their 6000×4000 embedded JPEG versus 6024×4020 RAW geometry did not establish a reliable crop mapping, so preview remains unused. The specified focused regression set is **127/0/0/0**; Ruff, `py_compile`, `uv lock --check`, `git diff --check`, and rawpy collector smoke pass. Real face/OCR inference, active-model text search, valid-GPS/portrait coverage, actual continuation idempotence, full frozen-package execution, and old face/OCR terminal-job recovery remain pending. Do not claim SCOPED PASS. The primary UI handoff above remains unchanged.
+
 Historical status snapshot: [development-status-archive-2026-10-13.md](development-status-archive-2026-10-13.md).

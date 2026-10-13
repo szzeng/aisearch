@@ -27,7 +27,11 @@ from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+from photo_search.catalog.errors import (
+    FORMAT_UNSUPPORTED,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
+    CatalogError,
+)
 from photo_search.ingestion.scanner import (
     DEFAULT_OBSERVATION_BATCH,
     DELTA_LIMIT,
@@ -1120,7 +1124,9 @@ def _enrichment_stages(
             "thumbnail": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
-                runner=lambda page: _thumbnail_stage(service, page, cancel_check),
+                runner=lambda page: _thumbnail_stage(
+                    service, page, cancel_check, retry_cr2_failures=True
+                ),
                 cancel_check=cancel_check,
             ),
             "taken_time": lambda: _drain_scope(
@@ -1283,12 +1289,38 @@ def _stage(
 
 
 def _thumbnail_stage(
-    service: Any, assets: set[int], cancel_check: Callable[[], bool] | None
+    service: Any,
+    assets: set[int],
+    cancel_check: Callable[[], bool] | None,
+    *,
+    retry_cr2_failures: bool = False,
 ) -> dict[str, Any]:
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "assets": 0, "generated": 0}
     targets = sorted(assets)[:ENRICH_LIMIT]
     summary = service.generate_media("thumbnail", asset_ids=targets, cancel_check=cancel_check)
+    cr2_retried = 0
+    cr2_previews = 0
+    if retry_cr2_failures:
+        retry_assets = _registered_cr2_format_failures(service, targets)
+        thumbnail_assets = retry_assets["thumbnail"]
+        preview_assets = retry_assets["preview"]
+        if thumbnail_assets:
+            retried = service.generate_media(
+                "thumbnail",
+                asset_ids=thumbnail_assets,
+                retry_failed=True,
+                cancel_check=cancel_check,
+            )
+            cr2_retried = int(retried["assets_considered"])
+        if preview_assets:
+            preview = service.generate_media(
+                "preview",
+                asset_ids=preview_assets,
+                retry_failed=True,
+                cancel_check=cancel_check,
+            )
+            cr2_previews = int(preview["generated"])
     return {
         "state": STAGE_OK,
         "assets": int(summary["assets_considered"]),
@@ -1297,8 +1329,46 @@ def _thumbnail_stage(
         "failed": int(summary["failed"]),
         "unsupported": int(summary["unsupported"]),
         "source_missing": int(summary["source_missing"]),
+        "cr2_retry_assets": cr2_retried,
+        "cr2_previews_generated": cr2_previews,
         "truncated": len(assets) > len(targets),
     }
+
+
+def _registered_cr2_format_failures(
+    service: Any, asset_ids: Sequence[int]
+) -> dict[str, list[int]]:
+    """Select only header-verified CR2s with a FORMAT_UNSUPPORTED cache record."""
+    from photo_search.media.contract import spec_for
+    from photo_search.media.raw_cr2 import is_cr2
+
+    result = {"thumbnail": [], "preview": []}
+    if not asset_ids:
+        return result
+    catalog = service.catalog
+    placeholders = ",".join("?" for _ in asset_ids)
+    rows = catalog.read_all(
+        "SELECT DISTINCT l.asset_id, l.relative_path, s.root_path "
+        "FROM file_locations AS l JOIN source_roots AS s ON s.source_id = l.source_id "
+        f"WHERE l.availability = 'PRESENT' AND l.asset_id IN ({placeholders}) "
+        "AND lower(l.relative_path) LIKE '%.cr2' ORDER BY l.asset_id, l.location_id",
+        tuple(int(value) for value in asset_ids),
+    )
+    verified: dict[int, str] = {}
+    for row in rows:
+        asset_id = int(row["asset_id"])
+        if asset_id not in verified and is_cr2(Path(str(row["root_path"])) / str(row["relative_path"])):
+            asset = catalog.read_one("SELECT sha256 FROM assets WHERE asset_id = ?", (asset_id,))
+            if asset is not None:
+                verified[asset_id] = str(asset["sha256"])
+    cache = service.media_cache()
+    for kind in result:
+        spec = spec_for(kind)
+        for asset_id, sha256 in verified.items():
+            failure = cache.read_failure(spec=spec, sha256=sha256)
+            if failure is not None and failure.get("code") == FORMAT_UNSUPPORTED:
+                result[kind].append(asset_id)
+    return result
 
 
 def _taken_time_stage(catalog: Any, assets: set[int]) -> dict[str, Any]:

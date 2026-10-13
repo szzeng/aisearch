@@ -38,10 +38,11 @@ from photo_search.catalog.errors import (
     DECODE_FAILED,
     FACE_STATE_CONFLICT,
     FILE_READ_ERROR,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     SOURCE_FILE_MISSING,
     CatalogError,
 )
-from photo_search.media import heif
+from photo_search.media import heif, raw_cr2
 from photo_search.media.contract import (
     FACE_CROP_JPEG_QUALITY,
     FACE_CROP_LONG_EDGE,
@@ -224,6 +225,21 @@ def probe_original_frame(path: str | Path) -> tuple[int, int]:
     decoding pixels, so a 100-megapixel original costs the same as a small one here.
     """
     candidate = Path(path)
+    if raw_cr2.is_cr2(candidate):
+        if not raw_cr2.runtime_available():
+            raise CatalogError(
+                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "Canon CR2 frame measurement is unavailable in this runtime",
+                details={"location": "original", "format": "CR2"},
+            )
+        size = raw_cr2.read_normalized_dimensions(candidate)
+        if size is None or size[0] <= 0 or size[1] <= 0:
+            raise CatalogError(
+                DECODE_FAILED,
+                "the CR2 source frame cannot be measured safely",
+                details={"location": "original", "format": "CR2"},
+            )
+        return size
     # A HEIC original is only measurable once the one pillow-heif registration point has
     # run; the orientation rule itself is the shared one in ``media.decode`` (P4-00C-A).
     heif.ensure_heif_support()

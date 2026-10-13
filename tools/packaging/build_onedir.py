@@ -57,6 +57,9 @@ def main() -> int:
         # a sibling libheif DLL.  Collecting the package as a unit keeps the frozen build
         # capability-identical to the locked development environment (P4-00C-B).
         "--collect-all", "pillow_heif",
+        # LibRaw is loaded at the CR2 adapter boundary rather than as a top-level import;
+        # collect its extension and sibling runtime binaries explicitly.
+        "--collect-all", "rawpy",
         "--exclude-module", "torch", "--exclude-module", "torchvision",
         # The catalog migrations are ``.sql`` data files inside the package: without them a
         # frozen build would start with no schema at all (P1-04 report §6.1).

@@ -48,6 +48,7 @@ from photo_search.indexing.maintenance import drain_semantic_outbox
 from photo_search.jobs import queue as jobs
 from photo_search.media import decode as media_decode
 from photo_search.media import heif as media_heif
+from photo_search.media import raw_cr2
 from photo_search.runtime.device import CPU_PROVIDER, CUDA_PROVIDER
 from photo_search.scheduler import engine as scheduler_engine
 from photo_search.scheduler.contracts import RuntimeCapabilities, canonical_json
@@ -140,6 +141,8 @@ def image_eligibility(path: str | Path) -> tuple[bool, str]:
     audio, documents and archives therefore come back as ``ISO-BMFF``/``UNIDENTIFIED`` and are
     out of scope for an image-text index - not failures.
     """
+    if raw_cr2.is_cr2(path):
+        return raw_cr2.runtime_available(), "CR2"
     media_heif.ensure_heif_support()
     try:
         with Image.open(Path(path)) as source:
@@ -533,7 +536,12 @@ def semantic_executor(
                     "the source file of this asset is gone",
                     details={"asset_id": asset_id},
                 )
-            vector = _validated_image_vector(encoder, path=path, dimension=int(dimension))
+            vector = _validated_image_vector(
+                encoder,
+                path=path,
+                dimension=int(dimension),
+                temp_root=catalog.data_root,
+            )
             result["artifacts"] = [
                 embedding_artifact(
                     artifact_id_for(str(processor_id), str(request["input_revision"])),
@@ -569,9 +577,12 @@ def semantic_executor(
     return run
 
 
-def _validated_image_vector(encoder: Any, *, path: Path, dimension: int) -> list[float]:
+def _validated_image_vector(
+    encoder: Any, *, path: Path, dimension: int, temp_root: str | Path
+) -> list[float]:
     """One image vector, validated exactly like a query vector (no padding, no trimming)."""
-    raw = encoder.encode_image(str(path))
+    with raw_cr2.encoder_input(path, temp_root=temp_root) as encoder_path:
+        raw = encoder.encode_image(str(encoder_path))
     if not isinstance(raw, (list, tuple)) or len(raw) != int(dimension):
         raise CatalogError(
             RUNTIME_RESOLUTION_MISMATCH,

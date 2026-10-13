@@ -169,10 +169,11 @@ def test_a_non_image_asset_is_out_of_scope_not_a_failure(tmp_path: Path) -> None
         report = semantic.build_index(
             library.catalog, encoder=adapter, manifest_path=MANIFEST, limit=10, device="auto"
         )
-        assert report["checked"] == len(PHOTOS) + 1
+        # The current image-only scanner excludes the movie before semantic selection.
+        assert report["checked"] == len(PHOTOS)
         assert report["targets"] == len(PHOTOS)
-        assert report["out_of_scope"]["count"] == 1
-        assert report["out_of_scope"]["labels"] == {"ISO-BMFF": 1}
+        assert report["out_of_scope"]["count"] == 0
+        assert report["out_of_scope"]["labels"] == {}
         assert report["run"]["jobs"] == {"SUCCEEDED": len(PHOTOS)}
         assert "movie.mp4" not in " ".join(adapter.paths)
     finally:
