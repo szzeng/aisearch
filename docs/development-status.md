@@ -1,5 +1,12 @@
 # Development status
 
+## UI 2.0 八张任务卡与统一照片时间轴 — UPDATED / 仅文档规划（2026-10-13）
+
+[新版规范](plans/P4-UI-TIMELINE-V2.md)、[原 UI 总计划更新](plans/P4-UI-PERSONAL.md)、[效果图优先级](mockups/README.md)。原 [A](tasks/P4-UI-SHELL-A.md)、[B](tasks/P4-UI-PHOTOS-B.md)、[C](tasks/P4-UI-SEARCH-C.md)、[D](tasks/P4-UI-PEOPLE-D.md)、[E](tasks/P4-UI-PLACES-E.md)、[F](tasks/P4-UI-VIEWER-F.md) 已修订；新增 [CORE](tasks/P4-UI-TIMELINE-CORE-A.md)、[SEARCH-MAP](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)。推荐 A → CORE → B → D → E → C → SEARCH-MAP → F，默认一会话一张卡。时间轴采用可信拍摄/入库时间、按日月年分组、年月筛选与直接跳转、自动续页和预览返回，全部照片/人物/合集/地点复用，搜索/地图需守住成员完整性。已完成的 SIMPLIFY-A、Esc、遮罩关闭、人物等工作不重复实施。
+
+**此次只改任务文档；无产品代码实现、无实际测试、无真实 PhotoSearchData 访问，全部新卡仍未实施，不能宣称 PASS。** 用户如授权开工，从 A 开始；CORE/地点查询按 V3.1 风险做最小必要定向验证。
+
+
 ## P4-PERSON-INBOX-COMPARE-A — SCOPED IMPLEMENTED / 定向合成验收通过，待用户页面观察
 
 [任务卡](tasks/P4-PERSON-INBOX-COMPARE-A.md)、[执行报告](reports/P4-PERSON-INBOX-COMPARE-A.md)。组摘要头像按 `candidate:<person_id>` 精确对齐代表脸建议；逐脸参考头像、名称和确认对象共用首选建议；无头像安全占位，无列表渲染人物请求。定向 JUnit **3/0/0/0**、Node 语法及 diff-check 通过，JUnit：`test-results/P4-PERSON-INBOX-COMPARE-A.xml`。真实页面手测待用户；未访问真实图库/PhotoSearchData，未跑全仓/GPU/性能/打包。未提交。
@@ -17,9 +24,9 @@
 
 [任务卡](tasks/P4-PERSON-EMPTY-VISIBILITY-A.md)、[执行报告](reports/P4-PERSON-EMPTY-VISIBILITY-A.md)、[LUNA High 审查报告](reports/P4-PERSON-EMPTY-VISIBILITY-REVIEW-A.md)。列表资格应用活动资产、`MEMBER_PREDICATE` 与 `photo_asset_sql`；视频专属人物隐藏，同资产具备图片和视频路径仍展示。定向 JUnit **70/0/0/0**，Ruff、diff-check 通过。用户指定 LUNA / High 子代理审查（路由例外，不是 DS-H）；首轮 P2 已修并由修复轮确认 CLOSED，无新增 finding。真实浏览器、图库、全仓、GPU/模型、容量和打包未验。
 
-## P4-RELEASE-020 — READY / v0.2.0 个人预览版任务卡（未实施）
+## P4-RELEASE-020 — READY / R2（2026-10-13），v0.2.0 个人预览版任务卡，未实施
 
-[任务卡](tasks/P4-RELEASE-020.md)。按用户要求只立简化版本冻结卡：0.1.0→0.2.0、更新日志、版本一致性定向测试/最小启动搜索检查；不改 Schema 29、原图、模型、识别/搜索逻辑，不做全量 pytest、GPU/30 万/Windows 打包验收。推荐 **GPT-6 Luna / Medium**，发布代码推送/Tag/GitHub Pre-release 须另经用户确认。当前仅文档提交，**没有升级程序或运行测试**；本卡不取代现有其他任务的后续安排。
+[任务卡 R2](tasks/P4-RELEASE-020.md)。已按最新 `master` 参考 HEAD `bc07f25f` 修订：冻结**实际已验候选提交**、区分视频排除/空人物隐藏/Esc 已实现但真实手测未全验、明确 UI 2.0/统一时间轴仅为未实施规划；继续按个人版最少版本定向测试、启动与搜索及用户简短手测，不做全量 pytest、GPU、30 万、Windows 包验收，不改 Schema 29、图库和识别逻辑。推荐 **GPT-6 Luna / Medium**。最终 Tag 只可指向通过验收的 `0.2.0` 提交；远端推送、Tag/Pre-release 须用户另行确认。**只更新任务文档，尚未升级程序、运行测试或创建 Tag**；其他任务安排不变。
 
 ## P4-PERSON-SELECT-RANGE-A — SCOPED PASS / 人物整理范围与已加载快捷选择
 
