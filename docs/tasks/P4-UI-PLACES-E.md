@@ -3,7 +3,7 @@
 **施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C、CORE、B、D 已验收。下一卡 [SEARCH-MAP](P4-UI-TIMELINE-SEARCH-MAP-A.md)，完成本卡后停止，不自动执行下一卡。验收：B 类风险面，按用户指定个人验收：定向行为/JUnit + 受影响浏览器 + 20万元数据有效性能验证，不要求全仓回归；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
 
 
-> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[places](../mockups/ui2-final-7ebf/08-places.svg)、[place](../mockups/ui2-final-7ebf/09-place.svg)、[place-unknown](../mockups/ui2-final-7ebf/18-place-unknown.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+> **用户确认的最终视觉基线（2026-10-13）**：[最后版可点击演示](../mockups/ui2-interactive/demo.html)与[页面映射/说明](../mockups/ui2-interactive/README.md)。本卡重点：[地点](../mockups/ui2-interactive/demo.html#places)、[深圳相册](../mockups/ui2-interactive/demo.html#place/shenzhen)、[地图示意](../mockups/ui2-interactive/demo.html#map)。整体外观与基本点击沿用此版；旧SVG/PNG仅作历史对照，不再作为施工默认参考。模拟逻辑不覆盖真实数据合同与20万性能门槛。
 
 
 ## 2026-10-13 最终施工补充：地点 SQL 权威成员接口供搜索复用
@@ -20,7 +20,9 @@
 
 ## 视觉参考（执行前必须看图）
 
-使用 [29种状态的最新参考稿](../mockups/ui2-final-7ebf/README.md)及其中的施工校准清单；本卡重点为 `08-places.svg、09-place.svg、22-map.svg`。旧 `ui2-large/`、`ui2/` 和早期 PNG 仅供历史配色/布局对照，不作为当前施工必读。执行产品卡时实际看对应画面并保存合成产品截图；示例数字、条件和缺失控件不能覆盖 [统一规范](../plans/P4-UI-TIMELINE-V2.md)。设计素材不是功能或性能证据。
+直接打开 [最后版可点击演示](../mockups/ui2-interactive/demo.html)，按卡首页面路径体验本卡画面；[说明与任务映射](../mockups/ui2-interactive/README.md)用于接手。用户已选此版作为整体观感参考，不再要求逐卡打开旧SVG/PNG或旧截图切换器。实施时保存相应合成产品截图，核对导航、留白、照片占比、控件层级和基本返回；不要求像素复制或插画/示例计数一致。
+
+数据资格、日期语义、权限、人工整理/撤销和范围分页仍按 [统一规范](../plans/P4-UI-TIMELINE-V2.md)与本卡验收。原型180条记录、24张演示批次、浏览器标签匹配、地图示意和本地操作仅为看效果，不作为产品实现方法、容量或性能PASS。
 
 ## 现状盘点（备份参考）
 

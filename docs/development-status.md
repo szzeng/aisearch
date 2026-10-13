@@ -1,8 +1,8 @@
 # Development status
 
-## UI 2.0 简单可点击演示（2026-10-13）— DEMO READY / 产品仍 PLANNED
+## UI 2.0 最后版演示获用户确认（2026-10-13）— VISUAL BASELINE CONFIRMED / 产品仍 PLANNED
 
-[离线单文件演示](mockups/ui2-interactive/demo.html)、[说明](mockups/ui2-interactive/README.md)、[演示报告](reports/P4-UI-INTERACTIVE-DEMO.md)。按用户“简单、主要看整体观感”要求交付照片/人物/地点/相册搜索/预览的合成点击页面；JS语法及上述浏览器基本点击观察通过。仅180条合成记录与SVG插画，不连接真实图库/API/模型，未做20万性能或产品验收；原八卡PLANNED与下方任务书性能必过项不变。本轮任务书与演示按用户要求纳入本地提交，提交号以Git记录为准，不推送。
+[最后版可点击演示](mockups/ui2-interactive/demo.html)、[页面/任务映射](mockups/ui2-interactive/README.md)、[演示报告](reports/P4-UI-INTERACTIVE-DEMO.md)。用户明确保留此版作为整体观感参考；素材基线 `cf49a8f`，本轮演示HTML/CSS/JS原样保留。两份总规范与八卡默认视觉入口已统一，旧SVG/PNG仅留档，不再要求逐卡查看。个人定向简单测试与20万有效照片元数据性能必过项保持，八卡仍PLANNED。仅更新文档，未运行产品/性能测试、未访问真实图库；文档核对见报告。
 
 ## UI 2.0 任务书施工收口（2026-10-13）— DOCUMENTATION UPDATED / 八卡 PLANNED
 
@@ -10,7 +10,7 @@
 
 用户明确本批以**个人相册定向简单测试**为主，不要求全仓回归；**20万照片元数据的真实查询链性能是基础必过项**，含首/深页、年月seek、范围成员/摘要、API与SQL计时及浏览器首图/30页资源窗口；30万只做少量重点元数据复查。未测/失败不能写整卡PASS。新迁移/写状态/依赖等另立卡，不自动沿用轻验收。
 
-[最新29状态SVG/交互HTML及施工校准](mockups/ui2-final-7ebf/README.md)为参考；本轮未重绘图片、未实施产品代码或运行产品/性能/浏览器验收，未访问真实图库/PhotoSearchData。文档静态核对结果见报告；八卡仍PLANNED，下一候选[A](tasks/P4-UI-SHELL-A.md)，须用户明确开工，不自动连续执行。
+[用户确认的最后版演示](mockups/ui2-interactive/demo.html)为现行视觉参考，29状态SVG仅留档；本轮未重绘图片、未实施产品代码或运行产品/性能/浏览器验收，未访问真实图库/PhotoSearchData。文档静态核对结果见报告；八卡仍PLANNED，下一候选[A](tasks/P4-UI-SHELL-A.md)，须用户明确开工，不自动连续执行。
 
 ## P4-PERSON-INBOX-COMPARE-A — SCOPED IMPLEMENTED / 定向合成验收通过，待用户页面观察
 

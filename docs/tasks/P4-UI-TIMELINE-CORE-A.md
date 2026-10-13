@@ -3,7 +3,7 @@
 **施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C 已验收。下一卡 [B](P4-UI-PHOTOS-B.md)，完成本卡后停止，不自动执行下一卡。验收：B 类风险面，按用户指定个人验收：定向行为/JUnit + 受影响浏览器 + 20万元数据有效性能验证，不要求全仓回归；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
 
 
-> **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[added](../mockups/ui2-final-7ebf/02-added.svg)、[unknown](../mockups/ui2-final-7ebf/03-unknown.svg)、[pending](../mockups/ui2-final-7ebf/04-pending.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
+> **用户确认的最终视觉基线（2026-10-13）**：[最后版可点击演示](../mockups/ui2-interactive/demo.html)与[页面映射/说明](../mockups/ui2-interactive/README.md)。本卡重点：[照片→拍摄/入库、分组、筛选及跳转](../mockups/ui2-interactive/demo.html#photos)。整体外观与基本点击沿用此版；旧SVG/PNG仅作历史对照，不再作为施工默认参考。模拟逻辑不覆盖真实数据合同与20万性能门槛。
 
 
 ## 2026-10-13 最终施工补充：时间抽取变化与前端有界资源
