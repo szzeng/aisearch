@@ -9,7 +9,6 @@ from conftest import ApiEnv
 from p3_persons_page_fixtures import add_link, add_person, seed_library
 
 from integration.test_p3_face_correction_migration import (
-    REAL_MIGRATIONS_DIR,
     build_v11,
     data_root,
     migrations_upto,
@@ -82,7 +81,7 @@ def test_schema_29_upgrade_preserves_hidden_rows_and_rolls_back_failure(tmp_path
 
     with monkeypatch.context() as current:
         current.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 30)
-        current.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+        current.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 30))
         result = migrate_database(path, data_root=data_root(tmp_path))
     assert result.applied == (30,)
     connection = open_readonly(path)

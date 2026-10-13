@@ -1000,6 +1000,15 @@ def _reconcile_asset(
         # denial tables are the authority, and the candidate set above was only a snapshot.
         late = _control_revision_gate(connection, observed, face_ids)
         protected = _manually_locked_face_ids(connection, asset_id=asset_id)
+        protected.update(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT h.face_id FROM face_inbox_hidden AS h "
+                "JOIN faces AS f ON f.face_id=h.face_id WHERE f.asset_id=? "
+                "AND h.ignore_state='EXCLUDED'",
+                (int(asset_id),),
+            ).fetchall()
+        )
         if str(spec_revision) == contract.FACE_DETAIL_SPEC_REVISION:
             from photo_search.persons.mapping import generate_candidates_for_asset
             generate_candidates_for_asset(

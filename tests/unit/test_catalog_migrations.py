@@ -247,6 +247,26 @@ def test_repeated_migration_is_idempotent(tmp_path: Path) -> None:
     assert _file_digest(db_path) == before
 
 
+def test_face_inbox_ignore_state_migration_preserves_legacy_rows_as_temporary() -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE face_inbox_hidden(face_id TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO face_inbox_hidden(face_id) VALUES ('legacy-face')")
+        connection.executescript(
+            (schema.MIGRATIONS_DIR / "0031_face_inbox_ignore_state.sql").read_text(encoding="utf-8")
+        )
+        row = connection.execute(
+            "SELECT face_id, ignore_state FROM face_inbox_hidden"
+        ).fetchone()
+        assert row == ("legacy-face", "TEMPORARY")
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE face_inbox_hidden SET ignore_state='INVALID' WHERE face_id='legacy-face'"
+            )
+    finally:
+        connection.close()
+
+
 def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     migrate_database(db_path, data_root=_data_root(tmp_path))
@@ -292,6 +312,14 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
         connection.execute("DROP TABLE person_collection_members")
         connection.execute("DROP TABLE person_collections")
         connection.execute("DROP TABLE person_operation_retention")
+        connection.execute("DROP TABLE person_hidden")
+        connection.execute("DROP TABLE face_inbox_hidden")
+        connection.executescript(
+            (schema.MIGRATIONS_DIR / "0022_person_hidden.sql").read_text(encoding="utf-8")
+        )
+        connection.executescript(
+            (schema.MIGRATIONS_DIR / "0023_face_inbox_hidden.sql").read_text(encoding="utf-8")
+        )
         _restore_schema_27_operation_checks(connection)
         connection.executescript(
             (schema.MIGRATIONS_DIR / "0024_person_collections.sql").read_text(encoding="utf-8")

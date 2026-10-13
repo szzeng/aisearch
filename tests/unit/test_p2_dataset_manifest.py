@@ -78,6 +78,14 @@ def test_the_builder_is_deterministic(tmp_path: Path) -> None:
         assert (first / name).read_bytes() == (second / name).read_bytes()
 
 
+def test_schema_30_place_package_remains_compatible_with_schema_31_catalog() -> None:
+    assert dataset_module._legacy_place_schema_compatible(
+        compatible_minimum=16,
+        compatible_maximum=30,
+        supported_schema_version=31,
+    )
+
+
 def test_the_builder_rejects_an_unknown_place_field(tmp_path: Path) -> None:
     spec = mini_spec()
     spec["places"][1]["elevation_m"] = 12.0

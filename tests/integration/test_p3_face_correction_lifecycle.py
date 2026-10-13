@@ -47,6 +47,68 @@ def test_a_face_without_a_control_row_reads_as_auto_allowed_revision_zero(
     assert env.control(seeded["face"]) is None
 
 
+def test_late_exclusion_before_reconcile_commit_keeps_existing_links(
+    env: FaceCorrectionHarness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+    import struct
+
+    seeded = env.seeded_pair()
+    before_links = env.face_links(seeded["face"])
+    from photo_search.face.contract import FACE_DIMENSION, FACE_PROCESSOR_ID
+    from photo_search.face.index import FaceIndexCoordinator
+
+    generation_id = env.seed_candidate_index([seeded["face"]])
+    vector_blob = struct.pack("<f", 1.0) + bytes(4 * (int(FACE_DIMENSION) - 1))
+    vector_sha256 = hashlib.sha256(vector_blob).hexdigest()
+    with env.catalog.write() as connection:
+        connection.execute(
+            "UPDATE assets SET sha256=(SELECT input_revision FROM faces WHERE face_id=?) "
+            "WHERE asset_id=?",
+            (seeded["face"], seeded["asset_id"]),
+        )
+        connection.execute(
+            "UPDATE face_embeddings SET vector_blob=?,vector_sha256=? WHERE face_id=? AND processor_id=?",
+            (vector_blob, vector_sha256, seeded["face"], str(FACE_PROCESSOR_ID)),
+        )
+        connection.execute(
+            "INSERT INTO face_candidates(generation_id,face_id,is_representative,quality_state,"
+            "vector_blob,vector_sha256,published_at) VALUES (?, ?, 1, 'OK', ?, ?, 1)",
+            (generation_id, seeded["face"], vector_blob, vector_sha256),
+        )
+
+    original_candidates = FaceIndexCoordinator.candidates
+
+    def candidates_then_exclude(index):
+        result = original_candidates(index)
+        with env.catalog.write() as connection:
+            connection.execute(
+                "INSERT INTO face_inbox_hidden(face_id,ignore_state) VALUES (?, 'EXCLUDED')",
+                (seeded["face"],),
+            )
+        return result
+
+    monkeypatch.setattr(FaceIndexCoordinator, "candidates", candidates_then_exclude)
+
+    decisions = env.reconcile_asset(seeded["asset_id"])
+
+    excluded_decision = next(item for item in decisions if item["face_id"] == seeded["face"])
+    assert excluded_decision["action"] == "HUMAN_CONTROLLED"
+    assert env.face_links(seeded["face"]) == before_links
+    assert env.catalog.read_one(
+        "SELECT ignore_state FROM face_inbox_hidden WHERE face_id = ?", (seeded["face"],)
+    )["ignore_state"] == "EXCLUDED"
+    assert seeded["face"] in {
+        candidate.face_id for candidate in original_candidates(FaceIndexCoordinator(env.catalog))
+    }
+    assert env.assignment(seeded["face"])["suggestions_available"] is False
+    from photo_search.persons.read import face_page
+    person_faces = face_page(env.catalog, limit=10, person_id=seeded["dad"])["faces"]
+    assert next(face for face in person_faces if face["face_id"] == seeded["face"])[
+        "suggestions_available"
+    ] is False
+
+
 def test_unknown_face_and_unknown_target_are_reported_by_their_own_codes(
     env: FaceCorrectionHarness,
 ) -> None:

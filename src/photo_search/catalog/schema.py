@@ -72,8 +72,9 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0026 adds a persistent collection-instance token for requests surviving v24 ID reuse.
 # 0027 preserves compact replay/history receipts while pruning expired person snapshots.
 # 0028 adds a non-undoable create-person-from-face operation type.
-# 0029 adds selected-face atomic regroup; 0030 classifies person ignores.
-SUPPORTED_SCHEMA_VERSION = 30
+# 0029 adds selected-face atomic regroup; 0030 classifies person ignores; 0031
+# classifies per-face inbox ignores while preserving existing hidden rows as TEMPORARY.
+SUPPORTED_SCHEMA_VERSION = 31
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

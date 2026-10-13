@@ -12,7 +12,7 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
     <script src="/web/persons.js?v=p4-ui-dialog-esc-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-ignored-candidate-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-inbox-ignore-state-a-1" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -106,6 +106,9 @@
           <p class="hint">批量整理时按住 Shift 连选，仅限已加载人脸；候选组需先展开。</p>
           <div class="row-actions" aria-label="待整理人脸批量管理">
             <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-clear" type="button" hidden>清空选择</button>
+            <label id="pa-inbox-ignore-state-label" hidden>忽略方式
+              <select id="pa-inbox-ignore-state"><option value="TEMPORARY">暂时忽略，以后可能处理</option><option value="EXCLUDED">明确排除，这些脸不再参与人物推荐</option></select>
+            </label>
             <button id="pa-inbox-hide-submit" type="button" hidden disabled>忽略所选人脸</button>
             <button id="pa-inbox-assign" type="button" hidden disabled>移到已有的人物</button>
             <button id="pa-inbox-unassign" type="button" hidden disabled>从人物移出</button>
@@ -115,7 +118,7 @@
           <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
           <section class="pa-inbox-hidden" aria-label="已忽略人脸">
             <h3>已忽略的人脸</h3>
-            <p class="hint">这里只隐藏待整理列表中的单张人脸；恢复后仍符合待整理条件的人脸会重新出现。</p>
+            <p class="hint">暂时忽略会保留人物建议；明确排除会让这张脸不再参与人物推荐。两种状态都保留原照片和人脸，可在这里恢复。</p>
             <button id="pa-inbox-hidden-toggle" type="button" aria-expanded="false">查看已忽略人脸</button>
             <div id="pa-inbox-hidden-content" hidden>
               <div class="row-actions">

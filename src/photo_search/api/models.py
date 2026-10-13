@@ -974,6 +974,7 @@ class FaceSummary(BaseModel):
     control_revision: int
     assigned_person_id: int | None = None
     assignment_revision: int | None = None
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] | None = None
     suggestions_available: bool
     thumbnail_url: str
 
@@ -1159,6 +1160,7 @@ class FaceInboxVisibilityRequest(BaseModel):
 
     face_ids: list[StrictStr] = Field(min_length=1, max_length=500)
     hidden: StrictBool
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] = "TEMPORARY"
 
     @field_validator("face_ids")
     @classmethod
@@ -1175,6 +1177,7 @@ class FaceInboxVisibilityResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     hidden: bool
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] = "TEMPORARY"
     face_count: int
     changed: int
 

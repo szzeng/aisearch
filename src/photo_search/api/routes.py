@@ -1806,7 +1806,8 @@ async def post_face_inbox_visibility(
     request: Request, payload: FaceInboxVisibilityRequest
 ) -> dict[str, Any]:
     return person_albums.set_inbox_visibility(
-        service_of(request).catalog, face_ids=payload.face_ids, hidden=bool(payload.hidden)
+        service_of(request).catalog, face_ids=payload.face_ids, hidden=bool(payload.hidden),
+        ignore_state=payload.ignore_state,
     )
 
 

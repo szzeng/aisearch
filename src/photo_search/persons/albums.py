@@ -550,12 +550,16 @@ def photo_page(
 def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
     face_id = str(row["face_id"])
     mode = row["mode"] or "AUTO_ALLOWED"
+    ignore = catalog.read_one(
+        "SELECT ignore_state FROM face_inbox_hidden WHERE face_id = ?", (face_id,)
+    )
+    ignore_state = None if ignore is None else str(ignore["ignore_state"])
     effective = catalog.read_one(
         "SELECT l.person_id FROM face_person_links AS l WHERE l.face_id = ? AND "
         + MEMBER_PREDICATE,
         (face_id,),
     )
-    suggested = catalog.read_all(
+    suggested = [] if ignore_state == "EXCLUDED" else catalog.read_all(
         "SELECT l.person_id FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = ? AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1) ORDER BY l.confidence DESC, l.person_id LIMIT 3",
         (face_id,),
     )
@@ -586,6 +590,7 @@ def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
         ) is not None,
         "mode": mode,
         "control_revision": int(row["control_revision"] or 0),
+        "ignore_state": ignore_state,
         "assigned_person_id": assigned_id,
         "assigned_person_name": None if assigned is None else assigned["name"],
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
@@ -764,10 +769,14 @@ def inbox_hidden_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[s
     }
 
 
-def set_inbox_visibility(catalog: Any, *, face_ids: list[str], hidden: bool) -> dict[str, Any]:
+def set_inbox_visibility(
+    catalog: Any, *, face_ids: list[str], hidden: bool, ignore_state: str = "TEMPORARY"
+) -> dict[str, Any]:
     """Hide or restore explicit face detections atomically without changing their ownership."""
     if not 1 <= len(face_ids) <= 500 or len(set(face_ids)) != len(face_ids):
         raise ApiError(VALIDATION_ERROR, "face_ids must contain 1 to 500 distinct faces", status=422)
+    if ignore_state not in ("TEMPORARY", "EXCLUDED"):
+        raise ApiError(VALIDATION_ERROR, "ignore_state must be TEMPORARY or EXCLUDED", status=422)
     with catalog.write() as connection:
         for face_id in face_ids:
             exists = connection.execute("SELECT 1 FROM faces WHERE face_id=?", (face_id,)).fetchone()
@@ -792,14 +801,20 @@ def set_inbox_visibility(catalog: Any, *, face_ids: list[str], hidden: bool) -> 
         for face_id in face_ids:
             if hidden:
                 result = connection.execute(
-                    "INSERT OR IGNORE INTO face_inbox_hidden(face_id) VALUES (?)", (face_id,)
+                    "INSERT INTO face_inbox_hidden(face_id,ignore_state) VALUES (?,?) "
+                    "ON CONFLICT(face_id) DO UPDATE SET ignore_state=excluded.ignore_state "
+                    "WHERE face_inbox_hidden.ignore_state<>excluded.ignore_state",
+                    (face_id, ignore_state),
                 )
             else:
                 result = connection.execute(
                     "DELETE FROM face_inbox_hidden WHERE face_id=?", (face_id,)
                 )
             changed += max(0, int(result.rowcount))
-    return {"hidden": bool(hidden), "face_count": len(face_ids), "changed": changed}
+    return {
+        "hidden": bool(hidden), "ignore_state": ignore_state,
+        "face_count": len(face_ids), "changed": changed,
+    }
 
 
 def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "all") -> tuple[str, tuple[Any, ...]]:
@@ -816,6 +831,7 @@ def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "al
         "JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = inbox.face_id "
         "AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL "
         "AND inbox.organization_reason IN ('BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION') "
+        "AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS x WHERE x.face_id=inbox.face_id AND x.ignore_state='EXCLUDED') "
         "AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') "
         "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id=l.face_id "
         "AND e.person_id=l.person_id AND e.active=1) "

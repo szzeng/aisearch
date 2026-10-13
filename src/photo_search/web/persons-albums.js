@@ -356,6 +356,8 @@
     $("inbox-selection-count").textContent = "已选 " + selected + " / 500 张脸";
     $("inbox-hide-submit").hidden = !state.batchMode;
     $("inbox-hide-submit").disabled = state.faceVisibilityBusy || state.selectedInboxFaces.size === 0 || state.selectedInboxFaces.size > 500;
+    $("inbox-ignore-state-label").hidden = !state.batchMode;
+    $("inbox-ignore-state").disabled = state.faceVisibilityBusy || state.writing;
     $("inbox-restore-submit").hidden = !state.batchMode || !state.inboxHiddenVisible;
     $("inbox-restore-submit").disabled = state.faceVisibilityBusy || state.selectedHiddenFaces.size === 0 || state.selectedHiddenFaces.size > 500;
     $("inbox-hidden-selection-count").hidden = !state.batchMode || !state.inboxHiddenVisible;
@@ -416,13 +418,15 @@
     const selected = hidden ? state.selectedInboxFaces : state.selectedHiddenFaces;
     if (!selected.size) return;
     if (selected.size > 500) { message("一次最多操作 500 张脸。"); return; }
-    const ids = Array.from(selected), action = hidden ? "忽略" : "恢复";
-    if (!window.confirm("确定" + action + "所选 " + ids.length + " 张人脸吗？")) return;
+    const ids = Array.from(selected), ignoreState = hidden ? $("inbox-ignore-state").value : "TEMPORARY";
+    const action = !hidden ? "恢复" : ignoreState === "EXCLUDED" ? "明确排除" : "暂时忽略";
+    const consequence = ignoreState === "EXCLUDED" && hidden ? "；这些脸将不再参与任何人物推荐" : "";
+    if (!window.confirm("确定" + action + "所选 " + ids.length + " 张人脸吗" + consequence + "？")) return;
     const expanded = Array.from($("inbox-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
     const expandedHidden = Array.from($("inbox-hidden-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
     state.faceVisibilityBusy = true; renderFaceManagement();
     try {
-      const result = await api("/faces/inbox/visibility", { face_ids: ids, hidden });
+      const result = await api("/faces/inbox/visibility", { face_ids: ids, hidden, ignore_state: ignoreState });
       selected.clear();
       await loadInbox(false, expanded);
       if (state.inboxHiddenVisible) await loadHiddenFaces(false, expandedHidden);
@@ -782,7 +786,9 @@
     avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
     selection.disabled = !state.batchMode || state.writing || state.faceVisibilityBusy;
     avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id); } });
-    left.append(avatar, node("span", "待整理", "hint"));
+    left.append(avatar, node("span", hiddenFace
+      ? (face.ignore_state === "EXCLUDED" ? "明确排除" : "暂时忽略")
+      : "待整理", "hint"));
     comparison.append(left);
     if (suggestion) {
       const right = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-reference");
@@ -797,8 +803,7 @@
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
         confirm.setAttribute("aria-pressed", "false"); card.confirmButton = confirm;
         card.otherPersonButton = button("选其他人", () => editFace(face, { allowCreatePerson: true }));
-        card.excludeSuggestionButton = button("明确排除当前候选", () => excludeSuggestion(face, suggestion, card, groupDetails));
-        card.append(confirm, card.otherPersonButton, card.excludeSuggestionButton);
+        card.append(confirm, card.otherPersonButton);
       } else card.append(button(hiddenFace ? "选择人物" : "这是谁？", () => editFace(face, { allowCreatePerson: true })));
     }
     container.append(card);
@@ -843,37 +848,6 @@
       state.writing = false; confirm.disabled = Boolean(card.confirmed); card.otherPersonButton.disabled = Boolean(card.confirmed);
       // Closing while the request is in flight also waits for the saved result.
       if (!card.hiddenFace && groupDetails && !groupDetails.open) flushInboxConfirmations();
-    }
-  }
-  async function excludeSuggestion(face, person, card, groupDetails) {
-    if (state.pendingWrite) { message(errorText({code:"PENDING_WRITE"})); return; }
-    if (state.writing || !person || !person.person_id) return;
-    state.writing = true;
-    const control = card.excludeSuggestionButton;
-    control.disabled = true;
-    control.textContent = "正在排除……";
-    const expanded = Array.from($("inbox-cards").children || []).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
-    try {
-      const result = await api("/face-assignments/batch", {
-        contract_version: "p3-face-correction-contracts.v1",
-        request_id: requestId(),
-        items: [{
-          face_id: String(face.face_id), action: "exclude_suggestion",
-          target_person_id: Number(person.person_id), expected_revision: Number(face.control_revision || 0),
-        }],
-      });
-      rememberOperation(result, "已排除这张脸的“" + name(person) + "”候选");
-      notifyPeopleChanged();
-      state.inboxConfirmationsPending = false;
-      await loadInbox(false, expanded);
-    } catch (error) {
-      control.textContent = "明确排除当前候选";
-      message(errorText(error));
-    } finally {
-      state.writing = false;
-      if (control.textContent === "正在排除……") control.textContent = "明确排除当前候选";
-      control.disabled = false;
-      if (groupDetails && !groupDetails.open) flushInboxConfirmations();
     }
   }
   async function loadInboxGroup(details, groupKey, kind, cursor, hiddenFace) {

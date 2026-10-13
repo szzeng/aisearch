@@ -904,6 +904,16 @@ def human_controlled_face_ids(connection: sqlite3.Connection, *, asset_id: int) 
                 (int(asset_id),),
             )
         )
+    if "face_inbox_hidden" in tables:
+        controlled.update(
+            str(row[0])
+            for row in connection.execute(
+                "SELECT h.face_id FROM face_inbox_hidden AS h "
+                "JOIN faces AS f ON f.face_id=h.face_id WHERE f.asset_id=? "
+                "AND h.ignore_state='EXCLUDED'",
+                (int(asset_id),),
+            )
+        )
     return controlled
 
 

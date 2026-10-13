@@ -1051,6 +1051,37 @@ def test_inbox_face_visibility_is_atomic_persistent_and_scoped_to_selected_faces
         )).json()
         assert {face["face_id"] for face in ignored_page["faces"] + ignored_next["faces"]} == set(ids_to_hide)
 
+        excluded = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": [hidden_a], "hidden": True, "ignore_state": "EXCLUDED"},
+        )
+        assert excluded.status_code == 200 and excluded.json()["changed"] == 1
+        assert excluded.json()["ignore_state"] == "EXCLUDED"
+        hidden_faces = (await client.get("/api/v1/faces/inbox/hidden")).json()["faces"]
+        excluded_face = next(face for face in hidden_faces if face["face_id"] == hidden_a)
+        temporary_face = next(face for face in hidden_faces if face["face_id"] == hidden_b)
+        assert excluded_face["ignore_state"] == "EXCLUDED"
+        assert excluded_face["suggestions"] == []
+        assert temporary_face["ignore_state"] == "TEMPORARY"
+        assert temporary_face["suggestions"][0]["person_id"] == candidate
+        restored_exclusion = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": [hidden_a], "hidden": False},
+        )
+        assert restored_exclusion.status_code == 200 and restored_exclusion.json()["changed"] == 1
+        restored_page = (await client.get("/api/v1/faces/inbox/groups")).json()
+        restored_group = next(card for card in restored_page["cards"] if card["type"] == "candidate_group")
+        restored_faces = (await client.get(
+            f"/api/v1/faces/inbox/groups/{restored_group['group_key']}",
+            params={"kind": "suggested", "limit": 30},
+        )).json()["faces"]
+        assert next(face for face in restored_faces if face["face_id"] == hidden_a)["suggestions"][0]["person_id"] == candidate
+        hidden_temporary_again = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": [hidden_a], "hidden": True, "ignore_state": "TEMPORARY"},
+        )
+        assert hidden_temporary_again.status_code == 200
+
         reopened = Catalog.open(catalog.db_path)
         try:
             assert reopened.read_one("SELECT COUNT(*) AS n FROM face_inbox_hidden")["n"] == 2
