@@ -1,23 +1,20 @@
 # P4-UI-TIMELINE-CORE-A — 共享照片时间轴核心与只读日期查询
 
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C 已验收。下一卡 [B](P4-UI-PHOTOS-B.md)，完成本卡后停止，不自动执行下一卡。验收：B 类风险面，按用户指定个人验收：定向行为/JUnit + 受影响浏览器 + 20万元数据有效性能验证，不要求全仓回归；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+
+
 > **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[added](../mockups/ui2-final-7ebf/02-added.svg)、[unknown](../mockups/ui2-final-7ebf/03-unknown.svg)、[pending](../mockups/ui2-final-7ebf/04-pending.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
 
 
-## 2026-10-13 最终施工补充：时间抽取变化与前端有界资源（最高优先）
+## 2026-10-13 最终施工补充：时间抽取变化与前端有界资源
 
-- **新前置 A、C**；C 只提供可用全局搜索输入，不依赖时间轴。CORE 不修改 C 的搜索输入/提交。对后台 `pending→trusted/unknown`、已有日期重抽取、规则版本切换、新照片入库等**可能改变排序/桶成员**的情形核查实际修订来源，给日期页、period 计数和游标提供低开销一致性保护。不能假设每次日期抽取均递增 `catalog_filter_revision`；旧游标遇变化必须明确失效或利用已验证的一致读视图，不能因顺序改变造成漏/重复。若没有可用修订信号，写明阻断和最小后续依赖；不得悄悄改 schema/写事务，也不得每次分页全库扫描比对。
+- **新前置 A、C**；C 只提供可用全局搜索输入，不依赖时间轴。CORE 不修改 C 的搜索输入/提交。对后台 `pending→trusted/unknown`、已有日期重抽取、规则版本切换、新照片入库等**可能改变排序/桶成员**的情形核查实际修订来源，给日期页、period 计数和游标提供低开销一致性保护。复用 `taken_time/extract.py` 已有同事务日期变化递增 `catalog_filter_revision` 的路径及 ADR-0011 §6.6；相同事实幂等重放不递增。补验规则版本/新资产/成员变化的信号覆盖，旧游标遇变化必须明确失效或利用已验证的一致读视图，不能因顺序改变造成漏/重复。若没有可用修订信号，写明阻断和最小后续依赖；不得悄悄改 schema/写事务，也不得每次分页全库扫描比对。
 - 同一范围/读版本下 `effective_total = trusted + unknown + pending`，新旧抽取版本各自守恒；抽取期间跨两页、同日、未知变已知、规则版本失配及人工成员变动须做定向行为测试。旧 cursor 废弃时可提示重新定位原 anchor，不以旧结果回填。
 - 使用轻量模拟照片连续滚动30页：记录第1/10/20/30页的 DOM 图片/组头节点、保留缩略图/对象 URL、在途请求数及返回旧日期锚点的误差；证明离屏节点/解码资源进入**有限工作窗口**，不会与已浏览总页数持续线性增长，且不出现跳屏、重复加载或键盘焦点丢失。禁止通过只检测 IntersectionObserver 或仅看第一页宣称通过。
 - 小型 fixture 核对功能、复用一次20万元数据与30万重点 SQL 性能，浏览器/P95/规模分别记实际证据或 PENDING。不访问真图库、不重跑 GPU/OCR/模型，原 V3.1 B 类只读审核边界不降低。
 
 
-> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [01-capture-timeline](../mockups/ui2-large/01-capture-timeline.svg)、[02-import-timeline](../mockups/ui2-large/02-import-timeline.svg)、[03-unknown-capture](../mockups/ui2-large/03-unknown-capture.svg)、[04-capture-pending](../mockups/ui2-large/04-capture-pending.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
-
-
-> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [01-photos](../mockups/ui2/01-photos.svg)、[03-person-album](../mockups/ui2/03-person-album.svg)、[07-place-album](../mockups/ui2/07-place-album.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
-
-
-日期：2026-10-13。状态：**PLANNED / 未实施**。上游 [A](P4-UI-SHELL-A.md)；下游 [B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)、[E](P4-UI-PLACES-E.md)及后续 SEARCH-MAP。本卡是一张可独立验收的公共能力卡，不接管普通页面的最终布局。
+日期：2026-10-13。状态：**PLANNED / 未实施**。上游 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)；下游 [B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)、[E](P4-UI-PLACES-E.md)及后续 SEARCH-MAP。本卡是一张可独立验收的公共能力卡，不接管普通页面的最终布局。
 
 推荐 **GPT-6 / High**；新增有界只读查询与前端状态管理，按 V3.1 B 类受影响面及独立 DS-H 复核；若必须触及 schema/人工真值/写事务，先单独升级风险与验证，不扩大暗改。
 
@@ -31,7 +28,7 @@
 
 ### A. 明确时间语义（不能仅给旧排序加日期标题）
 
-- `拍摄时间` 的正常年月/日桶限当前规则版本可信、`EXIF_ORIGINAL/EXIF_DIGITIZED`，使用 civil `taken_at_sort`；`EXIF_ROOT/FILE_MTIME` 等**已完成提取但不可信**为“日期未知”，无行/规则版本失配为“日期待就绪”；两者可通过快捷入口独立打开，不能混算或在版本失配时判为永久缺失。**每桶按 `a.created_at DESC,a.asset_id DESC`**，不允许只按 asset_id 排序，也不伪造拍摄时间。
+- `拍摄时间` 的正常年月/日桶限当前规则版本可信、`EXIF_ORIGINAL/EXIF_DIGITIZED`，使用 civil `taken_at_sort`；`EXIF_ROOT/FILE_MTIME` 等**已完成提取但不可信**为“日期未知”，无行/规则版本失配为“日期待就绪”；两者可通过快捷入口独立打开，不能混算或在版本失配时判为永久缺失。**可信拍摄照片按 `m.taken_at_sort DESC,a.asset_id DESC`；未知/待就绪桶按 `a.created_at DESC,a.asset_id DESC`**，不允许只按 asset_id 排序，也不伪造拍摄时间。
 - `加入图库时间` 用 `assets.created_at` 的已定义本地日历语义；不能把目录复制/迁移时间推断成拍摄时间；时间依据 UI 切换只控制查询，不改旧字段/旧 API 的 `time_desc/capture_desc`。
 - 日/月/年仅控制展示粒度；年月筛选是真过滤，年月跳转仅定位；正常拍摄年月不含未知/待就绪。旧 `capture_from/capture_to_exclusive` 上下界及排序契约不变。**不做手动改时间/文件名推断/AI猜年份/新时间覆盖写入**。
 
@@ -42,7 +39,7 @@
 - 校验 `time_basis`、`group_by`、`year/month`、成员条件；页长约 48～60，有界稳定 keyset（日期排序键、asset_id，以及无日期桶显式排序），有版本/筛选签名绑定的不可复用游标。成员变化/旧游标产生明确冲突或可重启信号；旧请求不能静默混进当前视图。
 - 每页同一响应给 `asset_id`、`thumbnail_url`、展示时间/来源与可信标签、日期分组键、`next_cursor`、必要版本。禁止前端对每张图多发 GET /assets/{id} 获取日期；不要为本卡发原图。
 - Period endpoint 回答**当前成员集合**里存在的年份与所选年份月份及可信统计；日期未知与待就绪另有准确计数，入库时间包含全部照片。先返回首屏，period 异步/按需、按 scope+time_basis+revision 短期缓存，滚动不重查；不可首50张外推。指定年月从 SQL 直接 seek，不穿越中间年份。
-- **20万性能必须验证索引**：现有 `idx_asset_metadata_capture(time_source,taken_at_sort,asset_id)` 对两个可信 EXIF 来源的合并倒序可能临时排序，`assets.created_at` 降序也需查询计划；实际 `EXPLAIN QUERY PLAN` + P95 指明热点后才提出最小可信日期部分索引/入库复合索引。若须 schema/migration，按 V3.1 先单独授权并验证升级/恢复，不能暗改；性能未达标或无法提供索引，不得报性能 PASS。
+- **20万性能必须验证索引**：现有 `idx_asset_metadata_capture(time_source,taken_at_sort,asset_id)` 对两个可信 EXIF 来源的合并倒序可能临时排序，`assets.created_at` 降序也需查询计划；实际 `EXPLAIN QUERY PLAN` + P95 指明热点后才提出最小可信日期部分索引/入库复合索引。若须 schema/migration，按 V3.1 先单独授权并验证升级/恢复，不能暗改；性能未测记 PERF_PENDING、实测未达门槛记 PERF_FAIL；优化需新增索引但尚未验收也不得报性能 PASS。
 
 ### C. 轻量共享前端组件（仅一套，保留多页结构）
 
@@ -59,13 +56,23 @@
 
 ## 20万主规模的专项验收（区别于小 fixture 功能测试）
 
-- **统一可复用基准**：仅构造或复用 20万**元数据**级 catalog SQLite 夹具，图片内容无需真的存在20万份；索引与成员/来源/无日期分布要有代表性。对首页拍摄和入库、可信 EXIF 跨来源排序、未知/待就绪入口、年/月直接跳转、全库年份统计、人物/合集过滤至少采样 ≥20 次暖机请求，记录 P50/P95/max 与 `EXPLAIN QUERY PLAN`、扫描/排序现象、返回行数。一个少量现有/合成缩略图库验证真实浏览器资源和滚动语义。
+- **统一可复用基准**：仅构造或复用 20万**元数据**级 catalog SQLite 夹具，图片内容无需真的存在20万份；索引与成员/来源/无日期分布要有代表性。对首页拍摄和入库、可信 EXIF 跨来源排序、未知/待就绪入口、年/月直接跳转、全库年份统计、人物/合集过滤至少采样 ≥30 次暖机请求，记录 P50/P95/max 与 `EXPLAIN QUERY PLAN`、扫描/排序现象、返回行数。一个少量现有/合成缩略图库验证真实浏览器资源和滚动语义。
 - **定量目标**：整库50～60张 API P95≤400ms，年/月直接定位≤500ms，年份摘要≤800ms，人物/合集页≤600ms；地点页≤1000ms 的数据库部分由 E 卡承接。30万仅复核最坏排序/年月 seek/分页的退化并记瓶颈；不重跑历史向量/模型基准。性能失败只定位最小 SQL/索引问题，禁止把业务语义改掉换速度。
 - 可没有真实浏览器自动化时由 B 卡记录页面 `BROWSER_PENDING`，但不能用 API 成绩代替“首张可见”。若无法获得20万规模夹具，明确 `PERF_PENDING`；任务报告把功能状态与性能状态分开，不写总体规模 PASS。
 
 ## 与其他任务的文件归属
 
 本卡主要负责只读服务/API/时间投影与新共享组件；B 负责 `app.js/index.html` 接入，D 负责 `persons-albums.js` 接入，E 负责 `places-albums.js` 与必要地点只读 adapter。**先核对并顺序施工，禁止两卡并行修改同一文件。**
+
+## 日期更新期间的浏览与资源预算
+
+落实 [统一规范 §3.2](../plans/P4-UI-TIMELINE-V2.md#32-更新期间的浏览与资源预算)：首屏无可信日期时保留未知/待就绪/入库入口；摘要无数据、失败与零计数分开。日期事实或规则变化同样使摘要缓存失效。旧版本续页拒绝后保留已显示照片，仅提示“照片日期已更新，重新定位”，暂停自动续页；用户重定位一次只发一次重开请求，不自动循环重查或隐式扫描全库。首次页/统计各自绑定一致读版本，版本不一致不组合为守恒总数。
+
+默认资源上限：照片 DOM/活动图片资源最多 8 页（含焦点保留页，每页最多60条），明细记录缓存最多10页，分页锚点描述最多64页；选择 ID 单独保持既有≤500上限。每范围最多1条续页和1条摘要请求。回收页不保留整批图片节点、解码引用或 object URL；旧页可按合法排序锚点重新 seek。同窗口/布局返回原 asset 的位置误差目标≤16px；窗口尺寸变化时至少将原 asset 恢复到可见区域。实施如需改变预算，先以30页证据在报告和规范中同步具体上限，不能只写“有界”。
+
+日期分组和排序分离；可信轴游标存完整 `(taken_at_sort, asset_id)`，其余轴/桶存 `(created_at, asset_id)`，并绑定身份/过滤/规则及修订。CORE 实施前明确入库日历的服务端分组与浏览器显示时区约定，跨午夜/月/年用同一边界，不能 SQL 按 UTC 分桶而浏览器按本地显示另一日期；不改变旧 API/ADR 的时间含义。
+
+必补测试：全部未知、全部待就绪、抽取连续变化引发两次续页失效且无重试风暴、摘要版本不一致、入库本地跨午夜、不同拍摄时刻但同入库时间，以及30页工作窗口/旧锚点恢复。小 fixture 可用测试 adapter 的 page_size=10（不新增生产测试后门）覆盖至少两页；正式48～60条/页另用≥121条元数据并复用少量合成缩略图验证，不需要制作121张真实照片。
 
 ## 最小验收
 
@@ -76,6 +83,15 @@
 4. person/collection/source 有效成员、相册更新、视频资格前置；日期随分页返回、无逐图 N+1；
 5. observer 自动下一页、失败重试、dispose/返回位置、旧响应不回填新范围。
 
-`uv` 使用 `.uv-cache`，pytest `--basetemp=.pytest-tmp/P4-UI-TIMELINE-CORE-A --junitxml=test-results/P4-UI-TIMELINE-CORE-A.xml`，针对实际测试文件 `pytest -q`，新增/修改 JS 做 `node --check`，Python `ruff check` / `py_compile`，`git diff --check`。可用项目内 `.tmp/P4-UI-TIMELINE-CORE-A` 做 20～40 张合成图库功能复测，**另外按上节跑20万元数据定向基准、30万关键查询复核**。不跑全仓、AI 模型、GPU、真实图库或打包；若触及 schema/写语义依策略提高门槛。
+`uv` 使用 `.uv-cache`，pytest `--basetemp=.pytest-tmp/P4-UI-TIMELINE-CORE-A --junitxml=test-results/P4-UI-TIMELINE-CORE-A.xml`，针对实际测试文件 `pytest -q`，新增/修改 JS 做 `node --check`，Python `ruff check` / `py_compile`，`git diff --check`。可用项目内 `.tmp/P4-UI-TIMELINE-CORE-A` 做 20～40 张合成图库功能复测，**另外按上节跑20万元数据定向基准、30万关键查询复核**。按下述个人定向门槛收口，不追加全仓回归。不跑 AI 模型、GPU、真实图库或打包；若触及 schema/写语义依策略提高门槛。
 
 独立 DS-H 完整覆盖只读资格与成员/版本/游标/日期语义、接口/前端事件和证据。无法正确处理地点分支就明确标 E 依赖，不假称本卡已覆盖地点。报告 `docs/reports/P4-UI-TIMELINE-CORE-A.md`，更新 status；本卡通过后停，不自动执行 B。
+
+
+## 个人相册定向验收（用户指定，实施时执行）
+
+2026-10-13 用户明确：“个人相册简单测试为主，注意有效的性能验证，20 万张照片是基础需求”。本卡按 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)收口：必要成员/日期/分页/失效行为定向 pytest（JUnit）、相关 Ruff/编译/Node/diff-check、受影响的合成浏览器闭环，**以及真实查询链上的20万元数据性能验证**。不追加全仓 unit/integration、GPU/模型、真实图库或打包，也不套用 §9.4 的旧待审名单。这是本批用户明确指定的验收范围，不降低查询正确性、独立受影响面复核或20万性能门槛，不宣称全仓 PASS。
+
+实现者在本卡报告列出真实选取的测试文件、完整命令、JUnit计数与证据代码版本；新增成员 SQL/请求模型/游标分支必须有直接行为测试，不能只跑旧 UI 测试。复用 CORE/E 未漂移的规模夹具与证据，后续只补本卡新增/变化查询。20万必测没跑记 PERF_PENDING、跑了不达门槛记 PERF_FAIL，均不能标本卡完整 PASS。30万仅做少量重点元数据查询复查，单列结果。
+
+若实施需要新迁移/写事务/人工状态/恢复/依赖，停止扩大本卡并另立对应风险卡；该新增范围不自动继承当前轻验收。历史全量失败原样保留，不通过跳过/xfail掩盖相关失败。

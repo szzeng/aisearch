@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>我的相册 · UI 2.0 交互演示</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">跳到照片内容</a>
+  <aside class="sidebar" aria-label="主导航">
+    <a class="brand" href="#photos"><span class="brand-mark">▧</span><span>我的相册<small>把日子，慢慢收藏</small></span></a>
+    <nav>
+      <button data-nav="photos"><span aria-hidden="true">▧</span>照片</button>
+      <button data-nav="people"><span aria-hidden="true">♧</span>人物</button>
+      <button data-nav="places"><span aria-hidden="true">⌖</span>地点</button>
+    </nav>
+    <div class="sidebar-bottom"><button data-nav="management"><span aria-hidden="true">▤</span>图库管理</button><div class="local-note"><span class="status-dot"></span> 本地演示 · 合成素材<small>无需账户，无外部资源</small></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <form id="search-form" class="global-search" role="search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <button id="scope-chip" class="scope-chip" type="button" hidden aria-label="取消固定相册范围"></button>
+        <input id="query" type="search" autocomplete="off" aria-label="搜索照片" placeholder="搜索照片、人物、地点、时间……">
+        <button class="search-submit" type="submit">搜索 <span aria-hidden="true">↵</span></button>
+      </form>
+      <span class="demo-badge">交互演示</span>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <footer class="footer">UI 2.0 · 180 张合成记录 · 点击与检索均为本地模拟 · 20 万照片性能尚未验证</footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="viewer" class="viewer" aria-label="查看照片"></dialog>
+  <dialog id="edit-dialog" class="edit-dialog" aria-label="演示操作"></dialog>
+  <script src="model.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

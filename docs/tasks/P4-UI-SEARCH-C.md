@@ -1,20 +1,17 @@
 # P4-UI-SEARCH-C — 搜索入口、条件与结果展示
 
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A 已验收；不等待 CORE/B/D/E。下一卡 [CORE](P4-UI-TIMELINE-CORE-A.md)，完成本卡后停止，不自动执行下一卡。验收：A 类，卡内定向验证；新增后端或写语义时依实际风险升 B/D；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+
+
 > **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[search](../mockups/ui2-final-7ebf/10-search.svg)、[search-advanced](../mockups/ui2-final-7ebf/25-search-advanced.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
 
 
-## 2026-10-13 最终施工补充：C 提前第二张，原表单无损迁移（最高优先）
+## 2026-10-13 最终施工补充：C 提前第二张，原表单无损迁移
 
 - **仅依赖 A，紧随 A 施工**；不等待 CORE/B/D/E。核对现有 `search.html` 的 `#search-form`、`#query-text` 与 `search.js`。只把原文字搜索输入及必要提交控件移到页头唯一位置；来源、人物、地点、拍摄范围等**高级筛选仍在结果区可展开**。保留原 ID、同一 form/submit 和会话监听；如输入框在表单 DOM 外，允许标准 HTML `form="search-form"` 关联，必须在浏览器验证 Enter/点击各只发一次请求。禁止新建第二套解析器、表单监听或把整套高级表单塞进页头。
 - **固定范围状态转移**：非结果页直接聚焦顶部框默认全库；主动点击「搜索此相册/合集/地点」才带结构化 scope chip 并聚焦，点击按钮/空词不触发检索。在搜索结果页若已有固定 chip，直接聚焦或编辑关键词应**保留已有范围**；只有明确点 chip ×/「全部照片」才取消 scope、作废原 session/cursor，有关键词时重新发全库查询；没有词则仅等待输入。任何词编辑不得重新猜测或丢掉已固定的身份。
 - 本卡只做单框、scope UI/交接与旧状态兼容；后端 scope 真值属于 SEARCH-MAP。**人物旧 `pa-search-photos` 直到 PERSON_SCOPE_PASS 都保留**，合集/地点未贯通时不显示假快捷按钮。旧 `/search?q=`、深链、取消标签、以图搜图、失败提示、窄屏焦点仍可用。
 - 简测：一次中文搜索 Enter→结果页仍一框→改词再搜一次；高级来源/时间/人物/地点筛选可展开与取消；旧快照优先级、空词零编码器、返回不重复请求、chip 取消产生新范围；不跑 CORE/E 的20万性能基准。
-
-
-> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [12-natural-search](../mockups/ui2-large/12-natural-search.svg)、[13-import-search](../mockups/ui2-large/13-import-search.svg)、[14-unknown-search](../mockups/ui2-large/14-unknown-search.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
-
-
-> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [09-search](../mockups/ui2/09-search.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
 
 
 日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)，紧随 A 执行，**不依赖 CORE/B/D/E**；服务端范围真值留给 SEARCH-MAP。
@@ -23,7 +20,7 @@
 
 ## 视觉参考（执行前必须看图）
 
-查看 [UI 2.0 最新规范](../plans/P4-UI-TIMELINE-V2.md) §1.1 和 [大图库参考图](../mockups/ui2-large/README.md)（其中搜索画了两框是**已知过期画法**）；实施**唯一页头搜索输入**、条件标签与结果层级，不在搜索页重复渲染内容区输入表单。报告保存产品合成截图并对照；示例结果不定义新的统计、过滤或排序契约。
+使用 [29种状态的最新参考稿](../mockups/ui2-final-7ebf/README.md)及其中的施工校准清单；本卡重点为 `10-search.svg、13-search-person.svg、25-search-advanced.svg、26-search-wait.svg、28-narrow-scoped.svg`。旧 `ui2-large/`、`ui2/` 和早期 PNG 仅供历史配色/布局对照，不作为当前施工必读。执行产品卡时实际看对应画面并保存合成产品截图；示例数字、条件和缺失控件不能覆盖 [统一规范](../plans/P4-UI-TIMELINE-V2.md)。设计素材不是功能或性能证据。
 
 ## 现状盘点（备份参考）
 
@@ -37,7 +34,7 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§3/4搜
 
 ## 2026-10-13 搜索入口去重：唯一全局输入框（本卡优先于效果图）
 
-用户确认 **顶部全局搜索框就是自然语言搜索的唯一输入入口**。当前 [新版搜索 SVG](../mockups/ui2-large/12-natural-search.svg) 同时画了顶部搜索框和内容区二次表单，是**待改的旧视觉缺陷**，不得逐像素照搬；产品规范见 [UI 2.0 §1.1](../plans/P4-UI-TIMELINE-V2.md)。
+用户确认 **顶部全局搜索框就是自然语言搜索的唯一输入入口**。最新 [确认稿](../mockups/ui2-final-7ebf/README.md) 已采用单框；`ui2-large/` 的双框图仅作历史参考；产品规范见 [UI 2.0 §1.1](../plans/P4-UI-TIMELINE-V2.md)。
 
 - 每个页面页头一个全局输入框，桌面固定一致、窄屏显式可用；在 `/search` 结果页页头继续沿用**相同位置与外观的唯一输入**，内容区仅显示条件 chips、当前排序、结果及错误/空状态，**不得另建 `<input type=search>` 与主提交按钮**。不同文档 HTML 各有一个 DOM 实例是允许的；交互和体验视为同一搜索框。兼容已有 `#search-form`、`#search-query` 或实际现有 ID 和 `search.js` 绑定，选择**迁移/复用**而非另造一个监听和 duplicate submit。
 - **左侧不再列“搜索”一级导航**；不删除 `/search` 路由、旧 URL、书签与浏览器前后历史。空输入可进入结果页聚焦但**不得自动跑语义搜索**；提交查询文字前往结果页只触发一次已有解析与搜索，不能既由全局监听又由页面 form 自动提交两次。当前页已经在结果页时，在原框直接修改/Enter 重新提交，保留编辑输入和失败状态。已明确提交新 q 优先于旧快照；初始化只消费一次深链 `q`，现有 request generation/session/取消标签/回退机制不变。
@@ -46,8 +43,8 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§3/4搜
 
 ## 「搜索此相册」一键带入固定范围的交互卡（2026-10-13）
 
-- **唯一输入**：本卡负责在页头单一 `/search` 文本输入框上渲染明显的**可取消 scope chip**：`张三的照片 ×`、`家庭合集 ×`、`深圳市 · 广东省 ×`；按钮由人物 D、地点 E 的相册标题交接。点击「搜索此相册／合集／地点」后带入结构化身份并聚焦该框；不要把“张三”“深圳”等文字拼进 query，也不在相册中新增常驻文字框；结果页不叠加第二表单。直接点击全局输入框默认全库，不能暗继承所在人物、地点、年份或时间偏好。
-- **一次性交接**：可沿用现有搜索启动参数 / 恢复 snapshot 的最薄同源机制，但须验证绑定固定的 `scope_type + canonical_id`（人物）、`collection_id + instance/revision`（合集）、`place_kind + place_key`（地点）的可信身份；仅传必要小字段并严格校验类型/编码/长度，**不序列化资产 ID 集合、目录路径、token**。新 q 的明确提交优先旧 snapshot；进入结果页**只触发一次**原搜索提交，原框重新编辑保留 chip；点击 chip × 明确改为全库并重开查询，不能继续旧 session/cursor。
+- **唯一输入**：本卡负责在页头单一 `/search` 文本输入框上渲染明显的**可取消 scope chip**：`张三的照片 ×`、`家庭合集 ×`、`深圳市 · 广东省 ×`；按钮由人物 D、地点 E 的相册标题交接。点击「搜索此相册／合集／地点」后带入结构化身份并聚焦该框；不要把“张三”“深圳”等文字拼进 query，也不在相册中新增常驻文字框；结果页不叠加第二表单。非结果页普通聚焦默认全库；结果页已有固定范围时聚焦/编辑保留范围，明确取消 chip 才解除相册限制。不得暗继承来源相册的年份或时间偏好。
+- **一次性交接**：可沿用现有搜索启动参数 / 恢复 snapshot 的最薄同源机制，但须验证绑定固定的 `scope_type + canonical_id`（人物）、`collection_id + instance/revision`（合集）、`place_kind + place_key`（地点）的可信身份；仅传必要小字段并严格校验类型/编码/长度；不序列化资产 ID 集合、目录路径或认证/CSRF token。合集 instance_token 属于既有身份校验字段，不是认证凭据，仅按原合同使用。新 q 的明确提交优先旧 snapshot；进入结果页**只触发一次**原搜索提交，原框重新编辑保留 chip；点击 chip × 明确改为全库并重开查询，不能继续旧 session/cursor。
 - **阶段性可用性**：人物旧局部 `pa-search-photos` 在 scoped 全局流程可用前**不可移除**；合集/地点若后端尚未验证完整成员资格，不显示半成品快捷按钮或虚构结果。C 的 UI 可以预留 chip 容器，只有 SEARCH-MAP/现有后端证明该 scope 支持完整过滤后才启用对应 CTA。保留人物目录“筛选人物”、地点目录“筛选地名”的明确局部用途。
 - **用户范围预期**：相册按钮默认查询该相册**全部有效照片**；进入相册时曾选的年份/月、当前滚动到的日期、拍摄/入库偏好均不带入搜索过滤，除非用户在文本或 chips 明确加日期。拼入另一个冲突人物/地点时不得 silently 改成 OR 或丢掉原 scope：显示“搜索范围和条件不一致，取消范围或修改查询”；清掉搜索词（而非范围）仍保留 chip 等待新输入，空文字不调用编码器。
 - **简验**：张三→搜索此相册→输入“海边”→结果只一框 + 固定范围标签；改“2020年入库照片”仍限张三；清范围变全库且丢弃旧 session；家庭合集去重；深圳地点匹配 `kind/key`；同名地点标签带父级；旧人物局部流程正常至新流程开启；返回原相册滚动；按 Enter 仅发一次查询；中文特殊字符安全；手机窄屏 chip 不挡输入。C 不修改服务端排名/向量召回，缺后端合同的用例记录待 SEARCH-MAP，不能假 PASS。
@@ -68,6 +65,12 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§3/4搜
 - coverage 继续按点击读取；不能把覆盖率/距离/高度匹配数量称准确率。保留上限、截断和过期提示。
 - 缺模型、无匹配、网络失败、条件冲突分开；失败保留新输入，不复活旧条件。缩略图可打开，返回恢复原条件、结果页与滚动。
 
+## 搜索状态与输入边界验收
+
+逐项落实 [统一规范 §1.4](../plans/P4-UI-TIMELINE-V2.md#14-搜索状态矩阵与操作边界)：聚焦/改词/清词保持固定范围；“清除高级筛选”只清手动高级字段；范围 chip × 才解除相册限制并废弃旧 session/cursor。仍明确存在的文字条件和其他筛选继续生效，不能把解除固定相册范围解释成删除全部条件。
+
+固定范围存在时，以图搜图入口不可提交，并显示“以图搜图暂不支持当前相册范围，请先取消范围”；取消范围后恢复原上传流程与原支持的字段，不扩图片搜索后端。中文输入法 composition 期间 Enter 只确认候选字，composition 结束后的 Enter/点击提交各只请求一次。必须覆盖高级筛选清除、范围取消、空词、失败保留范围、图片模式限制和中文输入法；C 中尚未开放的 scoped 端到端项由 SEARCH-MAP 补验，不假记 C PASS。
+
 ## 验证与复核
 
 ```powershell
@@ -82,4 +85,4 @@ git diff --check
 
 项目内隔离合成浏览器做两页纯条件结果→预览→人物相册→返回，取消一枚标签，缺编码器失败仍留输入、以图搜图限制说明可找到；不要求为 UI 加载真实模型。DOM 测试不证明视觉通过；工程/浏览器/真实语义效果分别记录。
 
-独立 DS-H 审全部入口与展示 diff、既有请求构造/快照直接链路及证据；发现排序、scope、分页或协议变化即扩大主审并按 B/D 另卡。无新冻结问题 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [SEARCH-MAP](P4-UI-TIMELINE-SEARCH-MAP-A.md)（需已完成 E 的地图前置），也可转个人试用。
+独立 DS-H 审全部入口与展示 diff、既有请求构造/快照直接链路及证据；发现排序、scope、分页或协议变化即扩大主审并按 B/D 另卡。无新冻结问题 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-SEARCH-C.md`，更新简短 status；完成停止，下一候选 [CORE](P4-UI-TIMELINE-CORE-A.md)，随后 B/D/E，再交 SEARCH-MAP。

@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>我的相册 · UI 2.0 交互演示</title>
+  <style>
+:root{--bg:#f6f8f7;--panel:#fff;--ink:#253a38;--muted:#74847e;--line:#e3eae5;--accent:#247967;--tint:#eaf3ed;--shadow:0 16px 56px #183d3020;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg);font-size:14px;color-scheme:light}*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,a,input,select{ -webkit-tap-highlight-color:transparent }button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.5}button,input,select{border:1px solid var(--line);border-radius:9px;color:var(--ink);background:var(--panel)}button{padding:9px 14px}button:hover:not(:disabled){background:var(--tint)}button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #7fae9a;outline-offset:3px}a{color:var(--accent);text-decoration:none}[hidden]{display:none!important}.skip{position:fixed;top:-80px;left:20px;background:var(--panel);padding:15px;z-index:99}.skip:focus{top:15px}.sidebar{position:fixed;inset:0 auto 0 0;width:210px;background:var(--panel);border-right:1px solid var(--line);padding:31px 22px;display:flex;flex-direction:column;z-index:10}.brand{display:flex;align-items:center;gap:12px;color:var(--ink);font-size:18px;font-weight:650;letter-spacing:.04em}.brand-mark{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;background:var(--accent);color:white;font-size:25px;box-shadow:0 5px 11px #2479671c}.brand small{display:block;margin-top:6px;font-size:10px;font-weight:400;color:var(--muted);letter-spacing:.1em}.sidebar nav{display:grid;gap:7px;margin-top:44px}.sidebar button{display:flex;align-items:center;gap:14px;text-align:left;border:0;background:none;padding:13px 15px;font-weight:550;width:100%}.sidebar button span{width:18px;font-size:21px;font-weight:400}.sidebar button.active{background:var(--tint);color:var(--accent)}.sidebar-bottom{margin-top:auto}.local-note{padding:27px 14px 0;color:var(--muted);font-size:11px;line-height:1.7}.local-note small{display:block;margin-left:13px;font-size:10px}.status-dot{display:inline-block;background:#73a48b;width:6px;height:6px;border-radius:50%;margin-right:4px}.workspace{margin-left:210px}.topbar{position:sticky;top:0;z-index:8;background:color-mix(in srgb,var(--bg) 93%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line);padding:22px 35px 19px;display:flex;align-items:center;gap:25px}.global-search{display:flex;align-items:center;gap:10px;padding:5px 8px 5px 15px;background:var(--panel);border:1px solid var(--line);border-radius:12px;width:min(760px,100%);height:47px;box-shadow:0 2px 4px #182d2410;min-width:0}.global-search:focus-within{border-color:#89b29c;box-shadow:0 0 0 3px #2479670e}.search-icon{font-size:25px;color:var(--muted)}.global-search input{flex:1;min-width:60px;padding:9px 0;background:none;outline:none;border:0}.global-search input:focus-visible{outline:none}.search-submit{background:var(--tint);border:0;padding:8px 13px;white-space:nowrap;color:var(--accent);font-size:12px}.search-submit span{margin-left:7px;opacity:.65}.scope-chip{max-width:210px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:0;background:var(--tint);color:var(--accent);padding:7px 10px;font-size:12px}.demo-badge{white-space:nowrap;color:var(--muted);font-size:11px;border:1px solid var(--line);border-radius:20px;padding:5px 10px}main{max-width:1560px;margin:auto;padding:31px 35px 40px;min-height:calc(100vh - 146px)}.page-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:25px}.eyebrow{text-transform:uppercase;letter-spacing:.17em;color:var(--accent);font-size:10px;margin:0 0 9px}h1{font-size:27px;font-weight:650;letter-spacing:-.025em;margin:0 0 8px}h2{font-size:18px;font-weight:620;margin:0 0 16px}p{line-height:1.7}.subtitle{color:var(--muted);margin:0;font-size:12px}.heading-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}.primary{background:var(--accent);border-color:var(--accent);color:#fff}.primary:hover:not(:disabled){background:#1f6759}.text-button{background:none;border-color:transparent;color:var(--accent);padding:5px 0}.back{font-size:12px;display:inline-block;margin-bottom:17px}.toolbar{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:15px}.toolbar select,.toolbar button{padding:8px 11px;font-size:12px}.toolbar label{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted)}.separator{height:20px;width:1px;background:var(--line);margin:0 3px}.pill{border-radius:8px;background:var(--panel);font-size:12px}.pill.active{border-color:#a5c7b4;background:var(--tint);color:var(--accent)}.date-links{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:27px}.date-links button{font-size:11px;padding:7px 10px;color:var(--muted);border-color:transparent;background:var(--panel)}.date-links button.active{color:var(--accent);background:var(--tint);border-color:#a5c7b4}.date-links .number{font-variant-numeric:tabular-nums;opacity:.8;margin-left:4px}.timeline-layout{display:grid;grid-template-columns:minmax(0,1fr) 63px;gap:22px}.year-rail{position:sticky;top:116px;align-self:start;display:grid;gap:10px;padding-left:14px;border-left:1px solid var(--line)}.year-rail small{font-size:10px;color:var(--muted);line-height:1.5}.year-rail button{font-size:11px;color:var(--muted);padding:5px 7px;border:0;background:none}.year-rail button.active{color:var(--accent);background:var(--tint)}.group{margin-bottom:25px;scroll-margin-top:110px}.group-heading{display:flex;align-items:baseline;gap:12px;margin:0 0 12px}.group-heading h2{font-size:15px;margin:0;font-weight:600}.group-heading small{color:var(--muted);font-size:10px}.photo-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.photo-card{position:relative;min-width:0;aspect-ratio:1.23;overflow:hidden;border-radius:7px;background:#d3dfd4}.photo-open{width:100%;height:100%;padding:0;border:0;border-radius:7px;display:block;position:relative;background:transparent;overflow:hidden}.photo-open img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .22s ease}.photo-open:hover img{transform:scale(1.035)}.photo-open:after{content:"";position:absolute;inset:60% 0 0;background:linear-gradient(transparent,#132a2630);pointer-events:none}.photo-hint{position:absolute;bottom:9px;left:10px;color:#fff;font-size:10px;opacity:0;z-index:1}.photo-open:hover .photo-hint,.photo-open:focus-visible .photo-hint{opacity:1}.face-check{position:absolute;top:8px;left:8px;border:2px solid white;background:#fff9;color:#345e4f;width:25px;height:25px;border-radius:50%;padding:0;z-index:2;box-shadow:0 1px 6px #0002;font-size:12px}.face-check.selected{background:var(--accent);color:white}.photo-card.selected{outline:3px solid var(--accent);outline-offset:-3px}.more{text-align:center;margin:19px 0;color:var(--muted);font-size:11px}.more button{display:block;margin:0 auto 12px;min-width:145px}.end-line{display:flex;align-items:center;gap:14px;justify-content:center;margin:25px 0 0;font-size:11px;color:var(--muted)}.end-line:before,.end-line:after{content:"";height:1px;background:var(--line);width:45px}.empty{padding:60px 25px;text-align:center;background:var(--panel);border:1px dashed var(--line);border-radius:14px}.empty-icon{font-size:40px;color:#87a28f;margin-bottom:15px}.empty h2{margin-bottom:8px}.empty p{color:var(--muted);font-size:12px}.empty .heading-actions{justify-content:center}.folder-card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}.album-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;text-align:left;overflow:hidden;transition:transform .18s,box-shadow .18s}.album-card:hover{transform:translateY(-3px);box-shadow:0 7px 22px #315a3c10}.album-cover{height:150px;position:relative;overflow:hidden;background:var(--tint)}.album-cover img{width:100%;height:100%;object-fit:cover}.album-card-body{padding:15px 16px}.album-card-body strong{font-size:15px;font-weight:600}.album-card-body small{display:block;color:var(--muted);margin-top:7px;font-size:11px}.person-cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px 20px}.person-card{background:none;border:0;padding:15px 8px;text-align:center}.avatar{border-radius:50%;height:105px;width:105px;margin:0 auto 15px;overflow:hidden;display:grid;place-items:center;color:#345446;font-family:Georgia,serif;font-size:31px;box-shadow:inset 0 0 0 5px #ffffff40}.avatar.small{height:33px;width:33px;display:inline-grid;margin:0;font-size:14px;vertical-align:middle}.person-card strong{display:block;font-size:14px;font-weight:550}.person-card small{display:block;margin-top:6px;font-size:11px;color:var(--muted)}.local-filter{display:flex;align-items:center;gap:9px;max-width:350px;margin-bottom:27px;color:var(--muted);font-size:12px}.local-filter input{padding:10px 13px;width:100%;min-width:0}.section-title{display:flex;align-items:center;justify-content:space-between;margin:35px 0 17px}.section-title h2{margin:0;font-size:15px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 24px}.chip{background:var(--tint);border-color:transparent;color:var(--accent);font-size:12px;padding:7px 11px}.chip .cross{margin-left:7px;opacity:.6}.search-note{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin:0 0 20px}.search-note strong{font-weight:500;color:var(--accent)}.advanced{margin-bottom:23px;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:17px 19px}.advanced-heading{display:flex;gap:15px;align-items:center;flex-wrap:wrap}.advanced-heading button{font-size:12px;padding:5px 0;border:0;background:none}.advanced-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin:18px 0 13px}.advanced-grid label{display:grid;gap:7px;font-size:11px;color:var(--muted)}.advanced-grid select{padding:9px;min-width:0;width:100%}.advanced-actions{display:flex;gap:9px}.advanced-actions button{font-size:12px}.inline-note{font-size:11px;margin:12px 0 0;color:var(--muted)}.examples{display:flex;gap:10px;flex-wrap:wrap;margin:20px 0 30px}.examples button{font-size:12px;color:var(--accent);background:var(--panel)}.error{background:#fff1e7;color:#8e5d34;padding:14px 17px;border-radius:10px;margin-bottom:20px;font-size:12px}.selection-bar{background:var(--tint);padding:12px 15px;margin-bottom:20px;border-radius:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.selection-bar span{font-size:12px;margin-right:auto}.selection-bar button{font-size:11px;padding:6px 9px}.footer{padding:15px 35px;color:var(--muted);font-size:10px;border-top:1px solid var(--line);text-align:center}.toast{position:fixed;bottom:26px;left:calc(50% + 90px);transform:translateX(-50%);z-index:60;background:#24483e;color:#fff;padding:13px 20px;border-radius:10px;box-shadow:var(--shadow);max-width:90vw;font-size:12px}.viewer{padding:0;width:min(1240px,94vw);height:min(800px,91vh);max-width:none;max-height:none;border:0;border-radius:15px;background:#162421;color:#fff;box-shadow:0 20px 100px #0007;overflow:hidden}.viewer::backdrop,.edit-dialog::backdrop{background:#142b24a8;backdrop-filter:blur(6px)}.viewer-layout{display:grid;grid-template-columns:minmax(0,1fr) 275px;height:100%}.viewer-stage{min-width:0;display:flex;align-items:center;justify-content:center;position:relative;padding:48px 25px 48px}.viewer-stage img{height:100%;width:100%;object-fit:contain}.viewer-close{position:absolute;right:15px;top:15px;z-index:3;background:#fff1;color:#fff;border-color:#fff2;border-radius:50%;width:32px;height:32px;padding:0;font-size:21px}.viewer-side{background:#f8faf8;color:var(--ink);padding:58px 23px 20px;overflow:auto}.viewer-side h2{font-size:19px;line-height:1.5}.viewer-side .subtitle{margin-bottom:20px}.info-label{font-size:10px;color:var(--muted);margin:21px 0 7px}.info-value{font-size:12px;margin:0;line-height:1.7}.viewer-side button{font-size:11px;margin-bottom:5px}.viewer-people{display:flex;flex-wrap:wrap;gap:6px}.viewer-people button{display:flex;align-items:center;gap:7px}.viewer-side .info-message{font-size:10px;color:var(--muted);line-height:1.7;margin-top:25px}.viewer-arrow{position:absolute;top:50%;transform:translateY(-50%);background:#0002;color:#fff;border:1px solid #ffffff3a;border-radius:50%;width:35px;height:35px;padding:0;font-size:25px}.viewer-arrow.prev{left:12px}.viewer-arrow.next{right:12px}.viewer-caption{position:absolute;bottom:15px;left:25px;right:25px;display:flex;justify-content:space-between;font-size:11px;color:#b7cfc1}.edit-dialog{border:1px solid var(--line);border-radius:14px;padding:27px;max-width:440px;width:90vw;background:var(--panel);box-shadow:var(--shadow)}.edit-dialog p{font-size:12px;color:var(--muted)}.edit-dialog label{display:grid;gap:9px;font-size:12px;margin:20px 0}.edit-dialog input{padding:11px}.edit-actions{display:flex;justify-content:flex-end;gap:9px}.map-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:20px}.map-surface{min-height:410px;position:relative;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#e6eee3;background-image:linear-gradient(35deg,transparent 40%,#e0d8c44d 41%,#e0d8c44d 46%,transparent 47%),linear-gradient(110deg,transparent 62%,#c0d8cf 63%,#c0d8cf 69%,transparent 70%)}.map-surface svg{width:100%;height:100%;position:absolute;inset:0}.map-pin{position:absolute;background:var(--accent);color:#fff;border:3px solid white;border-radius:22px;padding:8px 13px;box-shadow:0 3px 15px #28534825;font-size:12px}.map-pin.active{background:#a16d43;transform:scale(1.08)}.map-label{position:absolute;color:#78927f;font-size:13px}.map-water{position:absolute;bottom:20px;right:35px;color:#598c98;font-size:14px;letter-spacing:.4em}.map-controls{position:absolute;top:16px;left:16px;display:flex;gap:7px}.map-controls button{padding:8px 11px;background:var(--panel);font-size:12px}.map-caption{position:absolute;bottom:15px;left:15px;right:15px;color:#557063;font-size:10px;background:#ffffffbb;border-radius:7px;padding:6px}.map-sidebar{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}.map-sidebar .photo-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin:17px 0}.source-list{display:grid;gap:15px}.source-card{padding:23px;background:var(--panel);border:1px solid var(--line);border-radius:13px;display:flex;align-items:center;gap:18px}.source-icon{font-size:29px;color:var(--accent);width:48px;height:48px;display:grid;place-items:center;background:var(--tint);border-radius:12px}.source-body{flex:1}.source-body h2{font-size:15px;margin-bottom:6px}.source-actions{display:flex;gap:8px;flex-wrap:wrap}.source-actions button{font-size:12px}.organize-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.face-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:23px 16px;text-align:center}.face-card .avatar{height:76px;width:76px}.face-card p{color:var(--muted);font-size:11px;min-height:32px}.face-card button{font-size:11px;margin:3px;padding:7px 10px}.face-actions{display:flex;justify-content:center;flex-wrap:wrap}.narrow-help{display:none}
+@media(min-width:1600px){.photo-grid{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media(max-width:1180px){.sidebar{width:185px;padding:28px 17px}.workspace{margin-left:185px}.topbar{padding:19px 25px}main{padding:28px 25px}.photo-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.folder-card-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.demo-badge{display:none}.person-cards{grid-template-columns:repeat(4,minmax(0,1fr))}.scope-chip{max-width:180px}.organize-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.sidebar{position:sticky;top:0;width:100%;height:auto;padding:12px 18px 0;border-right:0;border-bottom:1px solid var(--line);flex-direction:column}.brand{font-size:15px;gap:8px}.brand-mark{width:28px;height:28px;font-size:20px}.brand small{display:none}.sidebar nav{display:flex;margin:12px 0 0;gap:12px}.sidebar nav button{padding:10px 12px;width:auto;font-size:12px;border-radius:8px 8px 0 0;gap:7px}.sidebar nav button span{font-size:17px;width:15px}.sidebar-bottom{position:absolute;right:17px;top:12px}.sidebar-bottom button{font-size:11px;padding:6px;gap:5px}.sidebar-bottom button span{font-size:17px}.local-note{display:none}.workspace{margin-left:0}.topbar{position:sticky;top:98px;padding:13px 18px;background:var(--bg)}.global-search{height:auto;min-height:43px;flex-wrap:wrap;gap:6px;padding:5px 7px 5px 11px}.search-icon{font-size:23px}.scope-chip{max-width:145px;font-size:11px;padding:6px 8px}.global-search input{font-size:12px;min-width:70px}.search-submit{padding:7px 9px;font-size:11px}.search-submit span{display:none}main{padding:24px 18px 30px}h1{font-size:24px}.page-heading{gap:13px;margin-bottom:22px;flex-wrap:wrap}.heading-actions{margin-top:0}.heading-actions button{padding:8px 11px;font-size:12px}.timeline-layout{grid-template-columns:minmax(0,1fr);gap:0}.year-rail{display:none}.photo-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.group-heading h2{font-size:14px}.date-links{margin-bottom:22px;gap:5px}.date-links button{font-size:10px;padding:7px 8px}.toolbar{gap:7px}.toolbar .separator{display:none}.toolbar select,.toolbar button{font-size:11px}.toolbar label{font-size:10px}.folder-card-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.album-cover{height:135px}.album-card-body{padding:13px}.person-cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 8px}.avatar{height:83px;width:83px;font-size:27px}.advanced-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.viewer{width:95vw;height:91vh;overflow:auto}.viewer-layout{grid-template-columns:1fr;grid-template-rows:minmax(250px,50vh) auto;height:auto;min-height:100%}.viewer-stage{height:50vh;padding:40px 15px 35px}.viewer-side{padding:22px}.viewer-close{position:fixed;right:calc(2.5vw + 14px);top:calc(4.5vh + 12px)}.viewer-side .info-label{margin-top:16px}.map-layout{grid-template-columns:1fr}.map-surface{min-height:360px}.map-sidebar .photo-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.source-card{flex-wrap:wrap;padding:19px}.source-actions{width:100%;padding-left:65px}.organize-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.toast{left:50%;width:max-content;max-width:90vw}.footer{padding:15px 18px;line-height:1.7}.group{scroll-margin-top:177px}}
+@media(max-width:420px){.photo-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.global-search .scope-chip{flex-basis:auto;max-width:125px}.global-search input{min-width:65px}.toolbar{gap:5px}.toolbar label{flex-wrap:wrap}.person-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.source-actions{padding-left:0}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+@media(prefers-color-scheme:dark){:root{--bg:#182320;--panel:#22312b;--ink:#e3ece4;--muted:#a3b3a7;--line:#36483b;--accent:#9ac8ac;--tint:#2d4436;color-scheme:dark}.primary{background:#47775a;border-color:#47775a;color:#fff}.primary:hover:not(:disabled){background:#548266}.viewer-side{background:var(--panel)}.error{background:#443328;color:#e7c1a0}.map-sidebar,.map-caption{color:var(--ink)}.map-caption{background:#22312bea}.map-pin{background:#47775a}.brand-mark{background:#47775a}.toast{background:#476950}}
+
+</style>
+</head>
+<body>
+  <a class="skip" href="#main">跳到照片内容</a>
+  <aside class="sidebar" aria-label="主导航">
+    <a class="brand" href="#photos"><span class="brand-mark">▧</span><span>我的相册<small>把日子，慢慢收藏</small></span></a>
+    <nav>
+      <button data-nav="photos"><span aria-hidden="true">▧</span>照片</button>
+      <button data-nav="people"><span aria-hidden="true">♧</span>人物</button>
+      <button data-nav="places"><span aria-hidden="true">⌖</span>地点</button>
+    </nav>
+    <div class="sidebar-bottom"><button data-nav="management"><span aria-hidden="true">▤</span>图库管理</button><div class="local-note"><span class="status-dot"></span> 本地演示 · 合成素材<small>无需账户，无外部资源</small></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar">
+      <form id="search-form" class="global-search" role="search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <button id="scope-chip" class="scope-chip" type="button" hidden aria-label="取消固定相册范围"></button>
+        <input id="query" type="search" autocomplete="off" aria-label="搜索照片" placeholder="搜索照片、人物、地点、时间……">
+        <button class="search-submit" type="submit">搜索 <span aria-hidden="true">↵</span></button>
+      </form>
+      <span class="demo-badge">交互演示</span>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <footer class="footer">UI 2.0 · 180 张合成记录 · 点击与检索均为本地模拟 · 20 万照片性能尚未验证</footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="viewer" class="viewer" aria-label="查看照片"></dialog>
+  <dialog id="edit-dialog" class="edit-dialog" aria-label="演示操作"></dialog>
+  <script>
+/* Deterministic synthetic UI data; no filesystem, application API, model or network. */
+(function (root) {
+  "use strict";
+  const people = [{ id: "zhang", name: "张三", color: "#b9d4c6", initials: "张" }, { id: "li", name: "李四", color: "#edcfad", initials: "李" }, { id: "lin", name: "小林", color: "#b6c9da", initials: "林" }, { id: "an", name: "小安", color: "#dfbed0", initials: "安" }];
+  const places = [{ id: "shenzhen", name: "深圳市", parent: "广东省", scene: "city" }, { id: "guangzhou", name: "广州市", parent: "广东省", scene: "street" }, { id: "hangzhou", name: "杭州市", parent: "浙江省", scene: "lake" }, { id: "beijing", name: "北京市", parent: "中国", scene: "mountain" }];
+  const collections = [{ id: "family", name: "家庭合集", people: ["zhang", "li", "an"] }, { id: "friends", name: "和朋友的日子", people: ["lin", "an"] }];
+  const scenes = ["beach", "mountain", "city", "lake", "garden", "street"];
+  const tags = { beach: ["海边", "旅行", "日落", "蓝色"], mountain: ["山", "旅行", "徒步", "绿色"], city: ["城市", "夜景", "旅行", "建筑"], lake: ["湖", "旅行", "水", "春天"], garden: ["花", "公园", "春天", "绿色"], street: ["街道", "旅行", "建筑", "散步"] };
+  const records = Array.from({ length: 180 }, (_, i) => {
+    const scene = scenes[i % scenes.length];
+    const members = [people[i % 4].id];
+    if (i % 3 === 0) members.push(people[(i + 1) % 4].id);
+    const year = [2026, 2025, 2024, 2023, 2022, 2020][Math.floor(i / 30)];
+    const month = [10, 9][Math.floor((i % 30) / 15)];
+    const day = 12 - Math.floor((i % 30) / 15);
+    const captured = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const added = `2026-${String(10 - Math.floor(i / 36)).padStart(2, "0")}-${String(26 - Math.floor((i % 36) / 6)).padStart(2, "0")}`;
+    return { id: i + 1, scene, tags: tags[scene], people: members, place: places[i % 4].id, capture: captured, added, status: i % 10 === 7 || i % 10 === 8 ? "unknown" : i % 10 === 9 ? "pending" : "trusted", sources: i % 7 === 0 ? ["demo", "travel"] : [i % 2 === 0 ? "demo" : "travel"], hour: 9 + i % 12, title: ["海风里的午后", "山间的慢时光", "城市微光", "湖畔散步", "春日花园", "街角的光"][i % 6] };
+  });
+  function members(scope, data = records) {
+    if (!scope || scope.type === "all") return data.slice();
+    if (scope.type === "person") return data.filter(a => a.people.includes(scope.id));
+    if (scope.type === "collection") { const c = collections.find(x => x.id === scope.id); return c ? data.filter(a => a.people.some(p => c.people.includes(p))) : []; }
+    if (scope.type === "place") return data.filter(a => a.place === scope.id);
+    if (scope.type === "source") return data.filter(a => a.sources.includes(scope.id));
+    return [];
+  }
+  function counts(scope) { const data = members(scope); return { total: data.length, trusted: data.filter(a => a.status === "trusted").length, unknown: data.filter(a => a.status === "unknown").length, pending: data.filter(a => a.status === "pending").length }; }
+  function dateOf(a, basis, bucket) { return basis === "added" || bucket !== "trusted" ? a.added : a.capture; }
+  function timeline(scope, settings) {
+    const bucket = settings.bucket || "trusted";
+    let data = members(scope).filter(a => settings.basis === "added" || a.status === bucket);
+    if (settings.year) data = data.filter(a => dateOf(a, settings.basis, bucket).startsWith(settings.year));
+    if (settings.month) data = data.filter(a => dateOf(a, settings.basis, bucket).slice(5, 7) === settings.month);
+    return data.sort((a, b) => dateOf(b, settings.basis, bucket).localeCompare(dateOf(a, settings.basis, bucket)) || (settings.basis === "capture" && bucket === "trusted" ? b.hour - a.hour : 0) || b.id - a.id);
+  }
+  function period(a, basis, bucket, group) { const date = dateOf(a, basis, bucket); return date.slice(0, group === "year" ? 4 : group === "month" ? 7 : 10); }
+  function parse(query, excluded = []) {
+    const text = String(query || "").trim();
+    if (/拍摄.*(?:入库|导入)|(?:入库|导入).*拍摄.*年/.test(text) && /年/.test(text)) return { error: "这个演示暂不支持同一句话同时指定拍摄和入库年份，请分别查询。" };
+    const terms = [];
+    if (!excluded.includes("date")) { const year = text.match(/(20\d{2})\s*年?/); if (year) terms.push({ key: "date", basis: /入库|导入|加入图库/.test(text) ? "added" : "capture", value: year[1], label: `${/入库|导入|加入图库/.test(text) ? "入库" : "拍摄"}时间：${year[1]}年` }); }
+    if (!excluded.includes("status") && /没有拍摄日期|日期未知|无拍摄日期/.test(text)) terms.push({ key: "status", value: "unknown", label: "拍摄日期未知" });
+    if (!excluded.includes("status") && /待就绪|待处理|未提取/.test(text)) terms.push({ key: "status", value: "pending", label: "日期待就绪" });
+    people.forEach(p => { if (!excluded.includes(p.id) && text.includes(p.name)) terms.push({ key: p.id, kind: "person", value: p.id, label: `人物：${p.name}` }); });
+    places.forEach(p => { if (!excluded.includes(p.id) && text.includes(p.name.replace("市", ""))) terms.push({ key: p.id, kind: "place", value: p.id, label: `地点：${p.name}` }); });
+    collections.forEach(c => { if (!excluded.includes(c.id) && text.includes(c.name)) terms.push({ key: c.id, kind: "collection", value: c.id, label: c.name }); });
+    const keywords = ["海边", "旅行", "日落", "蓝色", "徒步", "绿色", "城市", "夜景", "建筑", "春天", "公园", "散步", "山", "湖", "花"].filter(x => text.includes(x));
+    let remainder = text.replace(/20\d{2}\s*年?/g, "");
+    people.forEach(p => { remainder = remainder.split(p.name).join(""); });
+    places.forEach(p => { remainder = remainder.split(p.name.replace("市", "")).join(""); });
+    collections.forEach(c => { remainder = remainder.split(c.name).join(""); });
+    remainder = remainder.replace(/没有拍摄日期|无拍摄日期|拍摄日期|日期未知|日期待就绪|日期待处理|待就绪|待处理|未提取|加入图库|入库|导入|照片|图片|拍摄|的|在|市|找|一下|所有|全部|我|想看|看看|玩耍|\s/g, "");
+    return { terms, keywords, unmatched: keywords.length === 0 && remainder.length > 0 ? remainder : "", kind: keywords.length || remainder.length ? "content" : "filter" };
+  }
+  function search(query, scope, advanced = {}, excluded = []) {
+    const plan = parse(query, excluded);
+    if (plan.error) return { ...plan, data: [] };
+    let data = members(scope);
+    for (const t of plan.terms) {
+      if (t.key === "date") data = data.filter(a => (t.basis === "added" || a.status === "trusted") && (t.basis === "added" ? a.added : a.capture).startsWith(t.value));
+      else if (t.key === "status") data = data.filter(a => a.status === t.value);
+      else if (t.kind === "person") data = data.filter(a => a.people.includes(t.value));
+      else if (t.kind === "place") data = data.filter(a => a.place === t.value);
+      else if (t.kind === "collection") data = members({ type: "collection", id: t.value }, data);
+    }
+    if (advanced.source) data = data.filter(a => a.sources.includes(advanced.source));
+    if (advanced.person) data = data.filter(a => a.people.includes(advanced.person));
+    if (advanced.place) data = data.filter(a => a.place === advanced.place);
+    if (advanced.year) data = data.filter(a => a.status === "trusted" && a.capture.startsWith(advanced.year));
+    if (plan.unmatched) data = [];
+    if (plan.keywords.length) data = data.filter(a => plan.keywords.every(word => a.tags.includes(word)));
+    data.sort((a, b) => b.id - a.id);
+    return { ...plan, data };
+  }
+  function artwork(scene, seed = 0) {
+    const shift = seed % 5;
+    const sky = ["#b9d9e2", "#f4c2a0", "#d6dec7", "#bec8e2", "#c4ded0"][shift];
+    const variants = {
+      beach: `<path d="M0 235Q200 195 420 238T900 210V520H0Z" fill="#60a9b1"/><path d="M0 300Q200 270 410 320T900 305V520H0Z" fill="#468c94"/><path d="M0 390Q180 320 430 410T900 350V600H0Z" fill="#e4c7a2"/><path d="M0 380Q180 315 430 397T900 339" fill="none" stroke="#d7e9dc" stroke-width="12"/><path d="M700 440Q670 280 719 180" fill="none" stroke="#535e42" stroke-width="17"/><path d="M712 189Q665 132 580 156Q668 163 712 201Q766 129 840 164Q764 169 716 201Q724 102 671 101Q702 133 712 189Z" fill="#446b58"/>`,
+      mountain: `<path d="M0 390L150 140 290 320 465 85 700 340 820 165 900 265V600H0Z" fill="#789998"/><path d="M350 220L465 85 583 214 513 190 472 150 420 205Z" fill="#edf0df"/><path d="M0 450L220 250 400 430 620 243 900 420V600H0Z" fill="#456f64"/><path d="M0 540L360 400 660 515 900 452V600H0Z" fill="#234c40"/><path d="M430 600Q530 470 420 450" fill="none" stroke="#d7c59c" stroke-width="20"/>`,
+      city: `<path d="M0 390V245H98V195H192V288H240V150H342V260H420V102H480V87H505V310H572V228H640V285H700V179H825V325H900V600H0Z" fill="#526c77"/><path d="M0 457V335H133V293H231V399H360V316H494V420H587V280H750V399H900V600H0Z" fill="#344f61"/><path d="M0 530Q330 410 900 510V600H0Z" fill="#b4c8c0"/><path d="M0 535Q390 430 900 520" fill="none" stroke="#efc696" stroke-width="9"/>${Array.from({ length: 20 }, (_, i) => `<rect x="${24 + i * 43}" y="${330 + (i % 3) * 28}" width="9" height="18" fill="#e4bc84" opacity=".8"/>`).join("")}`,
+      lake: `<path d="M0 250Q180 155 350 220T900 180V430H0Z" fill="#709887"/><path d="M0 320Q330 260 900 320V600H0Z" fill="#71adb0"/><path d="M0 427Q200 365 320 454T900 400" fill="none" stroke="#aed0bf" stroke-width="6"/><path d="M0 600V520L230 400 390 535 550 510 900 565V600Z" fill="#456e58"/><path d="M615 345L650 370 730 370 755 345Z" fill="#925f49"/><path d="M690 335V242L750 335Z" fill="#f1ebd8"/><path d="M110 405Q65 250 127 130" fill="none" stroke="#695d45" stroke-width="20"/><path d="M126 139Q212 153 183 240M121 157Q47 196 52 275M129 161Q229 200 227 308" fill="none" stroke="#537d58" stroke-width="17"/>`,
+      garden: `<path d="M0 270Q230 210 450 290T900 220V600H0Z" fill="#7da282"/><path d="M0 450Q240 310 510 420T900 335V600H0Z" fill="#507752"/><path d="M460 600Q700 450 550 360" stroke="#cbbf95" stroke-width="55" fill="none"/>${Array.from({ length: 17 }, (_, i) => `<g transform="translate(${40 + i * 48},${390 + i % 4 * 47})"><path d="M0 80V0" stroke="#2e6243" stroke-width="5"/><circle r="18" fill="${["#efd2bb", "#e6b2aa", "#e9dba1"][i % 3]}"/><circle r="5" fill="#a0784d"/></g>`).join("")}`,
+      street: `<path d="M350 600L438 250 520 250 650 600Z" fill="#c9bbae"/><path d="M0 0H220L385 245V600H0Z" fill="#cead92"/><path d="M900 0H720L541 245V600H900Z" fill="#87938d"/><path d="M18 88L154 150V405L18 475Z" fill="#5a746f"/><path d="M222 224L295 266V375L222 398Z" fill="#688277"/><path d="M650 207L724 145V416L650 380Z" fill="#d2c3a5"/><path d="M774 78L870 20V484L774 440Z" fill="#4d6769"/><path d="M450 540L480 420 500 540" fill="none" stroke="#e6d9bd" stroke-width="6"/>`
+    };
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600"><defs><linearGradient id="s" x2="0" y2="1"><stop stop-color="${sky}"/><stop offset="1" stop-color="#efe4ce"/></linearGradient><filter id="grain"><feTurbulence baseFrequency=".55" numOctaves="2" seed="${seed % 13}"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".065"/></feComponentTransfer></filter></defs><rect width="900" height="600" fill="url(#s)"/><circle cx="${600 + shift * 32}" cy="${104 + shift * 10}" r="49" fill="#ffecbc" opacity=".9"/><path d="M75 133Q160 110 248 141M280 82Q340 62 410 82" stroke="#fff6e9" stroke-width="17" stroke-linecap="round" opacity=".5" fill="none"/>${variants[scene] || variants.beach}<rect width="900" height="600" filter="url(#grain)" opacity=".7"/></svg>`;
+  }
+  const api = { people, places, collections, records, members, counts, dateOf, timeline, period, parse, search, artwork };
+  root.DemoModel = api;
+  if (typeof module !== "undefined") module.exports = api;
+})(typeof window !== "undefined" ? window : globalThis);
+
+</script>
+  <script>
+(function () {
+  "use strict";
+  const M = window.DemoModel;
+  const main = document.getElementById("main");
+  const query = document.getElementById("query");
+  const scopeChip = document.getElementById("scope-chip");
+  const viewer = document.getElementById("viewer");
+  const editor = document.getElementById("edit-dialog");
+  const pageSize = 24;
+  const assets = new Map(M.records.map(a => [a.id, a]));
+  let composing = false, toastTimer, observer, renameTarget, lastFocused, visibleIds = [];
+  let peopleFilter = "", placesFilter = "", ignored = new Set(), confirmed = new Set(), lastFaceAction = null;
+  const sourceNames = { demo: "我的演示相册", travel: "旅行备份" };
+  const sourceUpdates = {};
+  const selections = {};
+  const pageCache = new Map();
+  const blank = () => ({ page: "photos", id: "", basis: "capture", group: "day", bucket: "trusted", year: "", month: "", limit: pageSize, query: "", draft: null, scope: null, advanced: {}, excluded: [], advancedOpen: false, resultMode: "relevance", searched: false, organizing: false, scroll: 0, modal: null, mapPlace: "shenzhen", fromPhoto: false, organizeTab: "pending" });
+  let state = blank();
+  const esc = text => String(text == null ? "" : text).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const art = a => "data:image/svg+xml;charset=utf-8," + encodeURIComponent(M.artwork(a.scene, a.id));
+  const findPerson = id => M.people.find(p => p.id === id);
+  const findPlace = id => M.places.find(p => p.id === id);
+  const findCollection = id => M.collections.find(p => p.id === id);
+  function scopeName(scope) {
+    if (!scope) return "全部照片";
+    if (scope.type === "person") return `${findPerson(scope.id).name}的照片`;
+    if (scope.type === "collection") return findCollection(scope.id).name;
+    if (scope.type === "place") { const p = findPlace(scope.id); return `${p.name} · ${p.parent}`; }
+    return sourceNames[scope.id] || "演示图库";
+  }
+  function albumScope() { return ["person", "collection", "place", "source"].includes(state.page) ? { type: state.page, id: state.id } : null; }
+  function cacheKey(s = state) { return `${s.page}:${s.id || ""}`; }
+  function clone(value) { return JSON.parse(JSON.stringify(value)); }
+  function storeCurrent() {
+    state.scroll = window.scrollY;
+    pageCache.set(cacheKey(), clone(state));
+    history.replaceState(clone(state), "", location.hash || "#photos");
+  }
+  function route(page, id = "", extra = {}) {
+    storeCurrent();
+    if (viewer.open) viewer.close();
+    const cached = pageCache.get(`${page}:${id}`);
+    state = Object.assign(cached ? clone(cached) : blank(), { page, id, modal: null, fromPhoto: false }, extra);
+    history.pushState(clone(state), "", `#${page}${id ? "/" + encodeURIComponent(id) : ""}`);
+    render(true);
+  }
+  function persist() { history.replaceState(clone(state), "", location.hash); }
+  function resetList() { state.limit = pageSize; state.scroll = 0; persist(); render(false); }
+  function notify(message) { const box = document.getElementById("toast"); box.textContent = message; box.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { box.hidden = true; }, 3800); }
+  function avatar(p, small = false) { return `<span class="avatar${small ? " small" : ""}" style="background:${p.color}">${esc(p.initials)}</span>`; }
+  function heading(title, subtitle, actions = "", back = "") { return `${back}<div class="page-heading"><div><p class="eyebrow">YOUR MOMENTS, COLLECTED</p><h1>${esc(title)}</h1><p class="subtitle">${esc(subtitle)}</p></div><div class="heading-actions">${actions}</div></div>`; }
+  function photoCard(a) {
+    const selection = state.page === "person" && state.organizing;
+    const set = selections[state.id] || new Set();
+    const selected = selection && set.has(`face:${a.id}:${state.id}`);
+    return `<div class="photo-card${selected ? " selected" : ""}" data-card="${a.id}"><button class="photo-open" data-photo="${a.id}" aria-label="查看 ${esc(a.title)}，演示照片 ${a.id}"><img src="${art(a)}" alt="${esc(a.title)} · 合成插画" loading="lazy" decoding="async" width="900" height="600"><span class="photo-hint">${esc(a.title)}</span></button>${selection ? `<button class="face-check${selected ? " selected" : ""}" data-select-face="${a.id}" aria-pressed="${selected}" aria-label="选择演示照片 ${a.id} 中${esc(findPerson(state.id).name)}的这张脸">${selected ? "✓" : findPerson(state.id).initials}</button>` : ""}</div>`;
+  }
+  function options(items, value, first = "全部") { return `<option value="">${first}</option>${items.map(x => `<option value="${esc(x.id)}"${String(value || "") === String(x.id) ? " selected" : ""}>${esc(x.name)}</option>`).join("")}`; }
+  function tools(scope) {
+    const count = M.counts(scope);
+    const added = state.basis === "added" || state.bucket !== "trusted";
+    const years = [...new Set(M.timeline(scope, { basis: state.basis, bucket: state.bucket }).map(a => M.dateOf(a, state.basis, state.bucket).slice(0, 4)))].sort().reverse();
+    const selected = selections[state.id] || new Set();
+    return `<div class="toolbar"><label>时间依据 <select id="time-basis" aria-label="时间依据"><option value="capture"${state.basis === "capture" ? " selected" : ""}>拍摄时间</option><option value="added"${state.basis === "added" ? " selected" : ""}>加入图库时间</option></select></label><label>分组 <select id="group-by" aria-label="分组粒度"><option value="day"${state.group === "day" ? " selected" : ""}>按日</option><option value="month"${state.group === "month" ? " selected" : ""}>按月</option><option value="year"${state.group === "year" ? " selected" : ""}>按年</option></select></label><span class="separator"></span><label>筛选 <select id="year-filter" aria-label="筛选年份">${options(years.map(y => ({ id: y, name: `${y} 年` })), state.year, "全部年份")}</select></label>${state.year ? `<select id="month-filter" aria-label="筛选月份">${options(Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1).padStart(2, "0"), name: `${i + 1} 月` })), state.month, "全部月份")}</select>` : ""}<button data-action="jump-dialog" title="定位到日期，不改变当前筛选">跳到年月 ↓</button>${state.year ? '<button class="text-button" data-action="clear-date">清除年月筛选</button>' : ""}${state.page === "photos" ? `<label>图库 <select id="source-filter" aria-label="选择演示图库">${options(Object.entries(sourceNames).map(([id, name]) => ({ id, name })), "", "全部图库")}</select></label>` : ""}</div><div class="date-links"><button data-bucket="trusted" class="${state.basis === "capture" && state.bucket === "trusted" ? "active" : ""}">可信拍摄日期 <span class="number">${count.trusted}</span></button><button data-bucket="unknown" class="${state.basis === "capture" && state.bucket === "unknown" ? "active" : ""}">日期未知 <span class="number">${count.unknown}</span></button><button data-bucket="pending" class="${state.basis === "capture" && state.bucket === "pending" ? "active" : ""}">日期待就绪 <span class="number">${count.pending}</span></button><button data-action="added" class="${state.basis === "added" ? "active" : ""}">按加入图库时间浏览 · ${count.total} 张</button></div>${state.organizing ? `<div class="selection-bar"><span>已选 ${selected.size} / 500 张脸 · 仅此人物的演示脸</span><button data-action="select-loaded">全选已加载</button><button data-action="invert-loaded">反选已加载</button><button data-action="clear-selection">清空选择</button><button data-action="organize-toggle">完成整理</button></div>` : ""}${state.bucket !== "trusted" && state.basis === "capture" ? `<p class="search-note">${state.bucket === "unknown" ? "已提取，但没有可信拍摄日期。" : "时间数据尚未就绪。"}以下按<strong>加入图库日期</strong>分组；仍属于当前相册。</p>` : ""}`;
+  }
+  function prettyPeriod(key) { const parts = key.split("-"); return `${parts[0]} 年${parts[1] ? ` ${Number(parts[1])} 月` : ""}${parts[2] ? ` ${Number(parts[2])} 日` : ""}`; }
+  function grouped(data, scope) {
+    const shown = data.slice(0, state.limit);
+    visibleIds = shown.map(a => a.id);
+    const groups = new Map();
+    shown.forEach(a => { const key = M.period(a, state.basis, state.bucket, state.group); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(a); });
+    const scopeYears = [...new Set(data.map(a => M.dateOf(a, state.basis, state.bucket).slice(0, 4)))];
+    return `<div class="timeline-layout"><div>${[...groups].map(([key, rows]) => `<section class="group" data-period="${key}"><div class="group-heading"><h2>${prettyPeriod(key)}</h2><small>${state.basis === "added" || state.bucket !== "trusted" ? "加入图库日期" : "可信拍摄日期"} · 已载入 ${rows.length} 张</small></div><div class="photo-grid">${rows.map(photoCard).join("")}</div></section>`).join("")}${more(data.length)}</div><aside class="year-rail" aria-label="年份定位"><small>跳到年份<br>不改变筛选</small>${scopeYears.map(year => `<button data-jump-year="${year}">${year}</button>`).join("")}</aside></div>`;
+  }
+  function more(total) { return state.limit < total ? `<div class="more"><button data-action="more">加载更多</button><span>已载入 ${Math.min(state.limit, total)} / ${total} 张 · 演示每批 24 张</span><div id="load-sentinel" aria-hidden="true"></div></div>` : `<div class="end-line">已显示全部 ${total} 张演示记录</div>`; }
+  function album() {
+    const scope = albumScope();
+    const count = M.counts(scope);
+    let title = "全部照片", actions = "", back = "";
+    if (state.page === "person") { title = findPerson(state.id).name; actions = `<button class="primary" data-action="scoped-search">搜索此相册</button><button data-action="organize-toggle">${state.organizing ? "完成整理" : "整理照片"}</button><button data-action="rename">改名</button>`; back = `<button class="text-button back" data-route="people">← 所有人物</button>`; }
+    if (state.page === "collection") { title = findCollection(state.id).name; actions = '<button class="primary" data-action="scoped-search">搜索此合集</button><button data-action="collection-members">查看成员</button>'; back = '<button class="text-button back" data-route="people">← 人物与合集</button>'; }
+    if (state.page === "place") { const p = findPlace(state.id); title = `${p.name} · ${p.parent}`; actions = '<button class="primary" data-action="scoped-search">搜索此地点</button><button data-action="place-map">在地图中看</button>'; back = '<button class="text-button back" data-route="places">← 所有地点</button>'; }
+    if (state.page === "source") { title = sourceNames[state.id]; back = '<button class="text-button back" data-route="photos">← 全部照片</button>'; }
+    if (state.fromPhoto) back = '<button class="text-button back" data-action="back">← 返回查看照片</button>';
+    let html = heading(title, `${count.total} 张有效演示照片 · 可信 ${count.trusted} / 日期未知 ${count.unknown} / 待就绪 ${count.pending}`, actions, back) + tools(scope);
+    const data = M.timeline(scope, state);
+    if (!data.length) html += `<div class="empty"><div class="empty-icon">▧</div><h2>${state.year ? "这个年月暂无匹配照片" : "当前没有可信拍摄日期的照片"}</h2><p>相册成员仍在。可以清除筛选，或切换日期分区继续浏览。</p><div class="heading-actions"><button data-action="clear-date">清除年月筛选</button><button data-bucket="unknown">日期未知</button><button data-action="added">按加入图库时间浏览</button></div></div>`;
+    else html += grouped(data, scope);
+    return html;
+  }
+  function peoplePage() {
+    const sorted = M.people.slice().sort((a, b) => M.counts({ type: "person", id: b.id }).total - M.counts({ type: "person", id: a.id }).total);
+    const filtered = sorted.filter(p => p.name.includes(peopleFilter));
+    const cards = filtered.map(p => `<button class="person-card" data-route="person" data-id="${p.id}">${avatar(p)}<strong>${esc(p.name)}</strong><small>${M.counts({ type: "person", id: p.id }).total} 张照片</small></button>`).join("");
+    return heading("人物", "那些出现在生活里的人。按有效照片数排序，缺少拍摄日期也不会漏掉。", '<button data-route="organize">整理一下 <span class="number">12</span></button>') + `<label class="local-filter">筛选人物 <input id="people-filter" type="search" value="${esc(peopleFilter)}" placeholder="输入人物名字" aria-label="筛选人物目录"></label><div class="person-cards" id="people-cards">${cards || '<p class="subtitle">没有这个名字的人物。</p>'}</div><div class="section-title"><h2>人物合集</h2><span class="subtitle">按唯一照片计算，合照只出现一次</span></div><div class="folder-card-grid">${M.collections.map(c => { const cover = M.members({ type: "collection", id: c.id })[4]; return `<button class="album-card" data-route="collection" data-id="${c.id}"><div class="album-cover"><img src="${art(cover)}" alt="${esc(c.name)}演示封面"></div><div class="album-card-body"><strong>${esc(c.name)}</strong><small>${c.people.length} 个人物 · ${M.counts({ type: "collection", id: c.id }).total} 张唯一照片</small></div></button>`; }).join("")}</div>`;
+  }
+  function placesPage() {
+    return heading("地点", "走过的地方，都留在照片里。", '<button data-route="map">⌖ 地图</button>') + `<label class="local-filter">筛选地名 <input id="places-filter" type="search" value="${esc(placesFilter)}" placeholder="输入城市或省份" aria-label="筛选地点目录"></label><div class="folder-card-grid" id="place-cards">${M.places.filter(p => (p.name + p.parent).includes(placesFilter)).map(p => `<button class="album-card" data-route="place" data-id="${p.id}"><div class="album-cover"><img src="${art({ scene: p.scene, id: M.places.indexOf(p) + 2 })}" alt="${esc(p.name)}演示封面"></div><div class="album-card-body"><strong>${esc(p.name)}</strong><small>${esc(p.parent)} · ${M.counts({ type: "place", id: p.id }).total} 张照片</small></div></button>`).join("")}</div><p class="inline-note">地点卡使用演示成员关联，不从照片图案推断真实地理位置。</p>`;
+  }
+  function advanced() {
+    const adv = state.advanced;
+    return `<section class="advanced"><div class="advanced-heading"><button data-action="advanced">高级筛选 ${state.advancedOpen ? "⌃" : "⌄"}</button><button data-action="image-mode"${state.scope ? " disabled" : ""}>以图搜图</button></div>${state.scope ? '<p class="inline-note">以图搜图暂不支持当前相册范围，请先取消范围。</p>' : ""}${state.advancedOpen ? `<form id="advanced-form"><div class="advanced-grid"><label>来源图库<select name="source">${options(Object.entries(sourceNames).map(([id, name]) => ({ id, name })), adv.source)}</select></label><label>人物条件<select name="person">${options(M.people, adv.person)}</select></label><label>地点条件<select name="place">${options(M.places, adv.place)}</select></label><label>拍摄年份<select name="year">${options([2026, 2025, 2024, 2023, 2022, 2020].map(y => ({ id: String(y), name: `${y} 年` })), adv.year)}</select></label></div><div class="advanced-actions"><button class="primary" type="submit">应用高级筛选</button><button type="button" data-action="clear-advanced">清除高级筛选</button></div><p class="inline-note">只清除这里的手动条件，保留上方固定相册范围与输入的查询条件。</p></form>` : ""}</section>`;
+  }
+  function searchPage() {
+    let html = heading(state.scope ? `搜索${scopeName(state.scope)}` : "搜索照片", state.scope ? "已固定相册范围，输入内容后只在这些演示成员中查找。" : "用一句话，找回某个瞬间。") + advanced();
+    if (!state.searched) return html + `<div class="empty"><div class="empty-icon">⌕</div><h2>${state.scope ? "范围已选好，等待输入" : "从人物、地点或一个瞬间开始"}</h2><p>${state.scope ? `当前范围：${esc(scopeName(state.scope))}。照片日期未知或待就绪，也在此范围内。` : "在页头输入并按 Enter。仅聚焦不会触发搜索。"}</p><div class="examples"><button data-example="海边">海边</button><button data-example="2022年张三的照片">2022年张三的照片</button><button data-example="没有拍摄日期的照片">没有拍摄日期的照片</button></div></div>`;
+    const result = M.search(state.query, state.scope, state.advanced, state.excluded);
+    if (result.error) return html + `<div class="error" role="alert">${esc(result.error)} 范围和输入已保留。</div>`;
+    const chips = result.terms.filter(t => !(state.scope && t.kind === state.scope.type && t.value === state.scope.id));
+    html += `<div class="chips">${chips.map(t => `<button class="chip" data-remove-term="${t.key}" aria-label="取消${esc(t.label)}">${esc(t.label)}<span class="cross">×</span></button>`).join("")}${result.keywords.length ? `<span class="chip">内容：${esc(result.keywords.join("、"))}</span>` : ""}${Object.entries(state.advanced).filter(([, value]) => value).map(([key, value]) => `<button class="chip" data-remove-advanced="${key}">手动条件：${esc(key === "year" ? value + "年" : key === "source" ? sourceNames[value] : key === "person" ? findPerson(value).name : findPlace(value).name)} ×</button>`).join("")}</div><div class="search-note"><strong>${result.data.length} 张演示结果</strong><span>${result.kind === "filter" ? "纯条件 · 完整演示成员" : "内容词 · 标签匹配模拟，非真实 AI 相关度"}</span><label>显示 <select id="result-mode"><option value="relevance"${state.resultMode === "relevance" ? " selected" : ""}>${result.kind === "filter" ? "默认顺序" : "演示相关度"}</option><option value="time"${state.resultMode === "time" ? " selected" : ""}>按时间查看${result.kind === "content" ? "当前演示候选" : "完整演示结果"}</option></select></label></div>`;
+    if (!result.data.length) return html + '<div class="empty"><div class="empty-icon">⌕</div><h2>没有匹配的演示照片</h2><p>试试“海边”“旅行”“2022年照片”，或者取消一项条件。固定范围不会自动扩大。</p></div>';
+    let data = result.data;
+    if (state.resultMode === "time") {
+      const timePlan = result.terms.find(t => t.key === "date");
+      const basis = timePlan ? timePlan.basis : "added";
+      data = data.slice().sort((a, b) => (basis === "capture" ? b.capture.localeCompare(a.capture) : b.added.localeCompare(a.added)) || b.id - a.id);
+      const oldBasis = state.basis, oldBucket = state.bucket;
+      state.basis = basis; state.bucket = basis === "capture" ? "trusted" : "all";
+      html += `<p class="search-note">${result.kind === "content" ? "仅当前演示候选；不代表真实全图库匹配。" : "完整纯条件演示结果。"}按${basis === "added" ? "加入图库日期" : "可信拍摄日期"}浏览。</p>` + grouped(data, state.scope);
+      state.basis = oldBasis; state.bucket = oldBucket;
+    } else { visibleIds = data.slice(0, state.limit).map(a => a.id); html += `<div class="photo-grid">${data.slice(0, state.limit).map(photoCard).join("")}</div>` + more(data.length); }
+    return html;
+  }
+  function mapPage() {
+    const place = findPlace(state.mapPlace);
+    const data = M.members({ type: "place", id: place.id }).slice(0, 8);
+    visibleIds = data.map(a => a.id);
+    return heading("地图相册", "选择一个地点，查看它的演示照片。地图是离线示意图。", '<button data-route="places">地点相册</button>') + `<div class="map-layout"><div class="map-surface"><svg viewBox="0 0 900 600" preserveAspectRatio="none" aria-hidden="true"><path d="M0 390Q260 280 510 380T900 285" stroke="#b8d1c1" stroke-width="84" fill="none"/><path d="M120 0L280 250 600 365 700 600M0 155L360 250 900 155M580 0L435 260 80 600" stroke="#f5f3e5" stroke-width="14" fill="none"/><path d="M0 430Q300 140 900 410" stroke="#d8c8a6" stroke-width="4" fill="none"/></svg><span class="map-label" style="top:24%;left:19%">山地公园</span><span class="map-label" style="top:61%;left:62%">城市绿地</span><span class="map-water">海湾</span>${M.places.map((p, i) => `<button class="map-pin${p.id === place.id ? " active" : ""}" data-map-place="${p.id}" style="left:${[58, 31, 65, 25][i]}%;top:${[65, 49, 28, 18][i]}%">${esc(p.name)} · ${M.counts({ type: "place", id: p.id }).total}</button>`).join("")}<div class="map-controls"><button data-action="map-next" aria-label="切换示意地图范围">切换范围</button><button data-action="map-reset">重置</button></div><div class="map-caption">示意地图 · 不代表真实坐标、行政区或地图视口检索</div></div><aside class="map-sidebar"><h2>${esc(place.name)}</h2><p class="subtitle">${esc(place.parent)} · 8 张演示预览</p><div class="photo-grid">${data.map(photoCard).join("")}</div><button class="primary" data-route="place" data-id="${place.id}">进入地点相册</button><p class="inline-note">切换地点后照片同步改变。真实地图范围成员与时间分页仍待产品实现。</p></aside></div>`;
+  }
+  function managementPage() {
+    return heading("图库管理", "日常看照片在前面，来源和维护留在这里。", '<button class="primary" data-action="add-source">＋ 添加演示来源</button>') + `<div class="source-list">${Object.entries(sourceNames).map(([id, name]) => `<section class="source-card"><span class="source-icon">▤</span><div class="source-body"><h2>${esc(name)}</h2><p class="subtitle">${M.counts({ type: "source", id }).total} 张唯一演示照片 · ${esc(sourceUpdates[id] || "示意数据已就绪")}</p><p class="inline-note">仅当前页面的合成来源，不读取任何真实文件夹</p></div><div class="source-actions"><button class="primary" data-route="source" data-id="${id}">看照片</button><button data-refresh-source="${id}">模拟刷新</button></div></section>`).join("")}</div><section class="advanced" style="margin-top:26px"><button class="text-button" data-action="maintenance">存储与维护说明 ⌄</button><div id="maintenance-info" hidden><p class="inline-note">演示不执行备份、扫描、建库、移动、删除或存储维护。真实产品仍使用已有独立授权与预览流程。</p></div></section>`;
+  }
+  function organizePage() {
+    const hidden = state.organizeTab === "ignored";
+    const faces = Array.from({ length: 12 }, (_, i) => i).filter(i => hidden ? ignored.has(i) : !ignored.has(i) && !confirmed.has(i));
+    return heading("整理一下", "演示逐脸建议与人工选择。这里的操作只改变页面内的合成状态。", '<button data-route="people">返回人物</button>') + `<div class="toolbar"><button data-organize-tab="pending" class="pill ${!hidden ? "active" : ""}">待整理 · ${12 - ignored.size - confirmed.size}</button><button data-organize-tab="ignored" class="pill ${hidden ? "active" : ""}">已忽略 · ${ignored.size}</button>${lastFaceAction ? '<button data-action="undo-face">撤销上一步演示操作</button>' : ""}</div>${faces.length ? `<div class="organize-grid">${faces.map(i => { const p = M.people[i % 4]; return `<article class="face-card">${avatar(p)}<h2>演示脸 ${i + 1}</h2><p>${hidden ? "已忽略，仍可恢复到待整理" : `建议归入 ${esc(p.name)}，等待你确认`}</p><div class="face-actions">${hidden ? `<button data-restore-face="${i}">恢复</button>` : `<button class="primary" data-confirm-face="${i}">归入${esc(p.name)}</button><button data-ignore-face="${i}">忽略</button>`}</div></article>`; }).join("")}</div>` : '<div class="empty"><h2>这一组已经整理完了</h2><p>可以切换到另一组，或撤销最近一次演示操作。</p></div>'}`;
+  }
+  function render(restore = false) {
+    if (observer) observer.disconnect();
+    visibleIds = [];
+    const isSearch = state.page === "search";
+    scopeChip.hidden = !isSearch || !state.scope;
+    scopeChip.textContent = state.scope ? `${scopeName(state.scope)} ×` : "";
+    query.value = isSearch ? (state.draft ?? state.query) : "";
+    query.placeholder = isSearch && state.scope ? `在${scopeName(state.scope)}中查找，例如：海边` : "搜索照片、人物、地点、时间……";
+    document.querySelectorAll("[data-nav]").forEach(b => { const section = ["person", "collection", "organize"].includes(state.page) ? "people" : ["place", "map"].includes(state.page) ? "places" : state.page === "source" ? "photos" : state.page; b.classList.toggle("active", b.dataset.nav === section); if (b.dataset.nav === section) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
+    if (["photos", "person", "collection", "place", "source"].includes(state.page)) main.innerHTML = album();
+    else if (state.page === "people") main.innerHTML = peoplePage();
+    else if (state.page === "places") main.innerHTML = placesPage();
+    else if (state.page === "search") main.innerHTML = searchPage();
+    else if (state.page === "map") main.innerHTML = mapPage();
+    else if (state.page === "management") main.innerHTML = managementPage();
+    else if (state.page === "organize") main.innerHTML = organizePage();
+    if (restore) requestAnimationFrame(() => window.scrollTo(0, state.scroll || 0));
+    const sentinel = document.getElementById("load-sentinel");
+    if (sentinel && "IntersectionObserver" in window && state.page !== "search") {
+      observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) { observer.disconnect(); loadMore(); } }, { rootMargin: "30px" });
+      observer.observe(sentinel);
+    }
+    if (state.modal) showViewer(state.modal);
+    else if (viewer.open) viewer.close();
+  }
+  function loadMore() { const scroll = window.scrollY; state.limit += pageSize; state.scroll = scroll; persist(); render(false); window.scrollTo(0, scroll); }
+  function executeSearch(text, { resetExcluded = true } = {}) {
+    if (composing) return;
+    const q = String(text).trim();
+    if (!q) { notify("输入关键词或日期条件后再搜索；空输入只保留当前范围。"); query.focus(); return; }
+    if (state.page !== "search") route("search", "", { query: q, draft: q, scope: null, searched: true, scroll: 0 });
+    else { storeCurrent(); state.query = q; state.draft = q; state.searched = true; state.limit = pageSize; if (resetExcluded) state.excluded = []; state.scroll = 0; history.pushState(clone(state), "", "#search"); render(true); }
+  }
+  function openPhoto(id) { lastFocused = document.activeElement; storeCurrent(); state.modal = { id, ids: visibleIds.slice(), origin: cacheKey(), scope: albumScope() || state.scope }; history.pushState(clone(state), "", `${location.hash.split("?")[0]}?photo=${id}`); showViewer(state.modal); }
+  function showViewer(modal) {
+    const a = assets.get(modal.id); if (!a) return;
+    const index = modal.ids.indexOf(a.id), place = findPlace(a.place);
+    viewer.innerHTML = `<button class="viewer-close" data-action="close-viewer" aria-label="关闭照片">×</button><div class="viewer-layout"><div class="viewer-stage"><img src="${art(a)}" alt="${esc(a.title)}，合成演示插画"><button class="viewer-arrow prev" data-viewer-step="-1" aria-label="上一张"${index <= 0 ? " disabled" : ""}>‹</button><button class="viewer-arrow next" data-viewer-step="1" aria-label="下一张"${index >= modal.ids.length - 1 ? " disabled" : ""}>›</button><div class="viewer-caption"><span>${index + 1} / ${modal.ids.length} 张已载入演示照片</span><span>Esc 关闭</span></div></div><aside class="viewer-side"><h2>${esc(a.title)}</h2><p class="subtitle">演示照片 ${a.id} · 合成插画</p><p class="info-label">拍摄日期</p><p class="info-value">${a.status === "trusted" ? prettyPeriod(a.capture) + ` ${a.hour}:00<br>来源：模拟 EXIF Original` : a.status === "unknown" ? "未知 · 已提取但无可信日期" : "待就绪 · 时间尚未提取"}</p><p class="info-label">加入图库日期</p><p class="info-value">${prettyPeriod(a.added)}</p>${a.status === "trusted" && !/^(search|map):/.test(modal.origin) ? '<button data-action="same-day">查看拍摄同一天</button>' : ""}<p class="info-label">照片中的人物</p><div class="viewer-people">${a.people.map(id => { const p = findPerson(id); return `<button data-route="person" data-id="${id}" data-from-photo="true">${avatar(p, true)}${esc(p.name)}</button>`; }).join("")}</div><p class="info-label">地点</p><button data-route="place" data-id="${place.id}" data-from-photo="true">⌖ ${esc(place.name)} · ${esc(place.parent)}</button><p class="info-label">文件与来源</p><p class="info-value">合成插画 · 900 × 600<br>${a.sources.map(id => esc(sourceNames[id])).join(" / ")}</p><p class="info-message">没有读取真实原图或EXIF。关闭后恢复原筛选与位置；左右切换仅限当前已载入集合。</p></aside></div>`;
+    if (!viewer.open) viewer.showModal();
+  }
+  function closeViewer() { if (!viewer.open) return; history.back(); }
+  function stepViewer(direction) { const modal = state.modal; if (!modal) return; const index = modal.ids.indexOf(modal.id) + direction; if (index < 0 || index >= modal.ids.length) return; modal.id = modal.ids[index]; persist(); showViewer(modal); }
+  function openEditor(title, content, action = "") { editor.innerHTML = `<h2>${esc(title)}</h2>${content}${action || '<div class="edit-actions"><button data-action="close-editor">关闭</button></div>'}`; editor.showModal(); }
+  function jumpTo(year, month = "") {
+    const scope = state.page === "search" ? state.scope : albumScope();
+    const data = state.page === "search" ? M.search(state.query, scope, state.advanced, state.excluded).data : M.timeline(scope, state);
+    const index = data.findIndex(a => M.dateOf(a, state.basis, state.bucket).startsWith(year + (month ? "-" + month : "")));
+    if (index < 0) { notify("当前筛选范围没有这个年月，跳转不会自动清除筛选。"); return; }
+    state.limit = Math.max(state.limit, Math.ceil((index + 1) / pageSize) * pageSize); persist(); render(false);
+    requestAnimationFrame(() => { const id = data[index].id; const card = main.querySelector(`[data-card="${id}"]`); if (card) card.closest(".group")?.scrollIntoView({ behavior: "smooth", block: "start" }); });
+    notify(`已定位 ${year} 年${month ? " " + Number(month) + " 月" : ""}，当前筛选范围未改变。`);
+  }
+  function selectFace(id, force) { const set = selections[state.id] || (selections[state.id] = new Set()); const key = `face:${id}:${state.id}`; const wanted = force === undefined ? !set.has(key) : force; if (wanted && set.size >= 500) { notify("超过500张脸，选择没有改变。"); return; } if (wanted) set.add(key); else set.delete(key); const scroll = window.scrollY; render(false); window.scrollTo(0, scroll); }
+  document.getElementById("search-form").addEventListener("submit", e => { e.preventDefault(); executeSearch(query.value); });
+  query.addEventListener("compositionstart", () => { composing = true; });
+  query.addEventListener("compositionend", () => { composing = false; });
+  query.addEventListener("keydown", e => { if (e.key === "Enter" && (composing || e.isComposing || e.keyCode === 229)) e.preventDefault(); });
+  scopeChip.addEventListener("click", () => { const draft = query.value; state.scope = null; state.query = draft; state.draft = draft; state.limit = pageSize; state.searched = Boolean(draft.trim()); persist(); render(false); notify("已解除固定相册范围，其它明确条件仍保留。"); query.focus(); });
+  document.addEventListener("click", e => {
+    const button = e.target.closest("button"); if (!button || button.disabled) return;
+    if (button.dataset.nav) { route(button.dataset.nav); return; }
+    if (button.dataset.route) { route(button.dataset.route, button.dataset.id || "", { fromPhoto: button.dataset.fromPhoto === "true" }); return; }
+    if (button.dataset.photo) { openPhoto(Number(button.dataset.photo)); return; }
+    if (button.dataset.example) { executeSearch(button.dataset.example); return; }
+    if (button.dataset.bucket) { state.basis = "capture"; state.bucket = button.dataset.bucket; state.year = ""; state.month = ""; resetList(); return; }
+    if (button.dataset.jumpYear) { jumpTo(button.dataset.jumpYear); return; }
+    if (button.dataset.removeTerm) { state.excluded.push(button.dataset.removeTerm); state.limit = pageSize; persist(); render(false); return; }
+    if (button.dataset.removeAdvanced) { delete state.advanced[button.dataset.removeAdvanced]; resetList(); return; }
+    if (button.dataset.mapPlace) { state.mapPlace = button.dataset.mapPlace; persist(); render(false); return; }
+    if (button.dataset.viewerStep) { stepViewer(Number(button.dataset.viewerStep)); return; }
+    if (button.dataset.selectFace) { selectFace(Number(button.dataset.selectFace)); return; }
+    if (button.dataset.refreshSource) { sourceUpdates[button.dataset.refreshSource] = "刚刚模拟刷新完成 · 未读取文件"; render(false); notify("演示刷新完成，没有扫描真实文件夹。"); return; }
+    const faceOperation = ["confirmFace", "ignoreFace", "restoreFace"].find(key => button.dataset[key] !== undefined);
+    if (faceOperation) { const id = Number(button.dataset[faceOperation]); lastFaceAction = { id, ignored: ignored.has(id), confirmed: confirmed.has(id) }; if (faceOperation === "confirmFace") confirmed.add(id); if (faceOperation === "ignoreFace") ignored.add(id); if (faceOperation === "restoreFace") ignored.delete(id); render(false); notify("演示状态已更新，可撤销；未修改真实人物归属。"); return; }
+    if (button.dataset.organizeTab) { state.organizeTab = button.dataset.organizeTab; persist(); render(false); return; }
+    switch (button.dataset.action) {
+      case "more": loadMore(); break;
+      case "back": history.back(); break;
+      case "scoped-search": { const scope = albumScope(); route("search", "", { scope, query: "", draft: null, searched: false, advanced: {}, excluded: [], limit: pageSize, scroll: 0 }); query.focus(); break; }
+      case "advanced": state.advancedOpen = !state.advancedOpen; persist(); render(false); break;
+      case "clear-advanced": state.advanced = {}; resetList(); notify("高级手动条件已清除，固定范围和文字条件保留。"); break;
+      case "added": state.basis = "added"; state.bucket = "trusted"; state.year = ""; state.month = ""; resetList(); break;
+      case "clear-date": state.year = ""; state.month = ""; resetList(); break;
+      case "place-map": route("map", "", { mapPlace: state.id }); break;
+      case "map-next": state.mapPlace = M.places[(M.places.findIndex(p => p.id === state.mapPlace) + 1) % 4].id; persist(); render(false); break;
+      case "map-reset": state.mapPlace = "shenzhen"; persist(); render(false); break;
+      case "close-viewer": closeViewer(); break;
+      case "close-editor": editor.close(); break;
+      case "rename": renameTarget = state.id; openEditor("修改人物名称", `<p>只改变当前演示中的人物名称，不写入真实图库。</p><form id="rename-form"><label>人物名称<input name="name" maxlength="20" required value="${esc(findPerson(state.id).name)}"></label><div class="edit-actions"><button type="button" data-action="close-editor">取消</button><button class="primary" type="submit">保存演示名称</button></div></form>`); break;
+      case "collection-members": openEditor("合集成员", `<p>有效唯一照片来自以下演示人物，重叠照片按资产去重。</p><div class="viewer-people">${findCollection(state.id).people.map(id => { const p = findPerson(id); return `<span>${avatar(p, true)} ${esc(p.name)}</span>`; }).join("")}</div>`); break;
+      case "jump-dialog": { const years = [2026, 2025, 2024, 2023, 2022, 2020]; openEditor("跳到年月", `<p>只定位当前范围，不改变年份筛选或相册成员。</p><form id="jump-form"><label>年份<select name="year">${years.map(y => `<option>${y}</option>`).join("")}</select></label><label>月份<select name="month">${options(Array.from({ length: 12 }, (_, i) => ({ id: String(i + 1).padStart(2, "0"), name: `${i + 1} 月` })), "", "该年第一张照片")}</select></label><div class="edit-actions"><button type="button" data-action="close-editor">取消</button><button class="primary">跳转</button></div></form>`); break; }
+      case "image-mode": if (state.scope) return; openEditor("以图搜图 · 演示入口", '<p>这个原型不读取上传图片、不调用模型。真实产品将保留已有本地上传流程与限制说明。</p><p>本页面可以直接体验文字示例与范围过滤。</p>'); break;
+      case "add-source": openEditor("添加演示来源", '<p>这里仅添加一个空的合成来源，不打开或扫描真实文件夹。</p><form id="source-form"><label>演示来源名称<input name="name" maxlength="30" required placeholder="例如：新的旅行相册"></label><div class="edit-actions"><button type="button" data-action="close-editor">取消</button><button class="primary">添加</button></div></form>'); break;
+      case "maintenance": { const info = document.getElementById("maintenance-info"); info.hidden = !info.hidden; break; }
+      case "organize-toggle": state.organizing = !state.organizing; persist(); render(false); break;
+      case "clear-selection": selections[state.id] = new Set(); render(false); break;
+      case "select-loaded": { const set = selections[state.id] || (selections[state.id] = new Set()); visibleIds.forEach(id => set.add(`face:${id}:${state.id}`)); render(false); break; }
+      case "invert-loaded": { const set = selections[state.id] || (selections[state.id] = new Set()); visibleIds.forEach(id => { const key = `face:${id}:${state.id}`; if (set.has(key)) set.delete(key); else set.add(key); }); render(false); break; }
+      case "undo-face": if (lastFaceAction) { const a = lastFaceAction; a.ignored ? ignored.add(a.id) : ignored.delete(a.id); a.confirmed ? confirmed.add(a.id) : confirmed.delete(a.id); lastFaceAction = null; render(false); notify("已撤销上一步演示操作。"); } break;
+      case "same-day": { const a = assets.get(state.modal.id); const scope = state.modal.scope; route(scope ? scope.type : "photos", scope ? scope.id : "", { basis: "capture", bucket: "trusted", year: a.capture.slice(0, 4), month: a.capture.slice(5, 7), scroll: 0, limit: 180, organizing: false }); requestAnimationFrame(() => main.querySelector(`[data-period="${a.capture}"]`)?.scrollIntoView({ block: "start" })); break; }
+    }
+  });
+  document.addEventListener("change", e => {
+    switch (e.target.id) {
+      case "time-basis": state.basis = e.target.value; state.bucket = "trusted"; state.year = ""; state.month = ""; resetList(); break;
+      case "group-by": state.group = e.target.value; persist(); render(false); break;
+      case "year-filter": state.year = e.target.value; state.month = ""; resetList(); break;
+      case "month-filter": state.month = e.target.value; resetList(); break;
+      case "source-filter": if (e.target.value) route("source", e.target.value); break;
+      case "result-mode": state.resultMode = e.target.value; resetList(); break;
+    }
+  });
+  document.addEventListener("input", e => {
+    if (e.target.id === "people-filter") { const pos = e.target.selectionStart; peopleFilter = e.target.value; main.innerHTML = peoplePage(); const input = document.getElementById("people-filter"); input.focus(); input.setSelectionRange(pos, pos); }
+    if (e.target.id === "places-filter") { const pos = e.target.selectionStart; placesFilter = e.target.value; main.innerHTML = placesPage(); const input = document.getElementById("places-filter"); input.focus(); input.setSelectionRange(pos, pos); }
+    if (e.target.id === "query" && state.page === "search") { state.draft = e.target.value; if (!e.target.value) { state.query = ""; state.searched = false; state.excluded = []; persist(); render(false); query.focus(); } }
+  });
+  document.addEventListener("submit", e => {
+    if (e.target.id === "advanced-form") { e.preventDefault(); state.advanced = Object.fromEntries(new FormData(e.target)); state.query = query.value.trim(); state.draft = state.query; state.searched = Boolean(state.query || Object.values(state.advanced).some(Boolean)); resetList(); }
+    if (e.target.id === "rename-form") { e.preventDefault(); const name = String(new FormData(e.target).get("name")).trim(); if (!name) return; findPerson(renameTarget).name = name; findPerson(renameTarget).initials = name.slice(0, 1); editor.close(); render(false); notify("演示人物名称已保存。"); }
+    if (e.target.id === "jump-form") { e.preventDefault(); const values = new FormData(e.target); editor.close(); jumpTo(values.get("year"), values.get("month")); }
+    if (e.target.id === "source-form") { e.preventDefault(); const name = String(new FormData(e.target).get("name")).trim(); if (!name) return; sourceNames[`added-${Object.keys(sourceNames).length}`] = name; editor.close(); render(false); notify("已添加空的演示来源，没有读取文件夹。"); }
+  });
+  viewer.addEventListener("cancel", e => { e.preventDefault(); closeViewer(); });
+  viewer.addEventListener("click", e => { if (e.target === viewer) { const r = viewer.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) closeViewer(); } });
+  editor.addEventListener("click", e => { if (e.target === editor) { const r = editor.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) editor.close(); } });
+  document.addEventListener("keydown", e => { if (viewer.open && e.key === "ArrowRight") { e.preventDefault(); stepViewer(1); } if (viewer.open && e.key === "ArrowLeft") { e.preventDefault(); stepViewer(-1); } if (e.key === "Escape" && !viewer.open && !editor.open && state.organizing) { state.organizing = false; render(false); notify("已退出演示整理模式，选择仍保留。"); } });
+  window.addEventListener("popstate", e => { const closingId = state.modal?.id; if (editor.open) editor.close(); state = Object.assign(blank(), e.state || {}); render(true); if (!state.modal) requestAnimationFrame(() => { const button = closingId && main.querySelector(`[data-photo="${closingId}"]`); if (button) button.focus({ preventScroll: true }); else if (lastFocused?.isConnected) lastFocused.focus({ preventScroll: true }); }); });
+  const initial = location.hash.slice(1).split("?")[0].split("/");
+  if (["photos", "people", "places", "search", "map", "management", "organize"].includes(initial[0])) state.page = initial[0];
+  else if (["person", "collection", "place", "source"].includes(initial[0]) && initial[1] && M.members({ type: initial[0], id: initial[1] }).length) { state.page = initial[0]; state.id = initial[1]; }
+  history.replaceState(clone(state), "", `#${state.page}${state.id ? "/" + state.id : ""}`);
+  render(true);
+})();
+
+</script>
+</body>
+</html>

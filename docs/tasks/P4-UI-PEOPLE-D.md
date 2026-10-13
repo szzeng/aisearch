@@ -1,5 +1,8 @@
 # P4-UI-PEOPLE-D — 人物相册与整理入口层级
 
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C、CORE、B 已验收。下一卡 [E](P4-UI-PLACES-E.md)，完成本卡后停止，不自动执行下一卡。验收：A 类，卡内定向验证；新增后端或写语义时依实际风险升 B/D；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+
+
 > **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[people](../mockups/ui2-final-7ebf/05-people.svg)、[person](../mockups/ui2-final-7ebf/06-person.svg)、[collection](../mockups/ui2-final-7ebf/07-collection.svg)、[person-unknown](../mockups/ui2-final-7ebf/16-person-unknown.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
 
 
@@ -10,13 +13,7 @@
 - 已完成的 SIMPLIFY-A、Shift选取、候选头像、合照去重、Esc/遮罩、忽略/纠错/撤销不得重复开发。人物目录按有效照片数及最近入库时间，不逐卡计算日期摘要；进入相册才取本 scope 年月/未知/待就绪统计，成员与时间状态变化需令旧游标失效。
 
 
-> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [05-people](../mockups/ui2-large/05-people.svg)、[06-person-album](../mockups/ui2-large/06-person-album.svg)、[07-person-collection](../mockups/ui2-large/07-person-collection.svg)、[08-organize](../mockups/ui2-large/08-organize.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
-
-
-> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [02-people](../mockups/ui2/02-people.svg)、[03-person-album](../mockups/ui2/03-person-album.svg)、[04-collection](../mockups/ui2/04-collection.svg)、[05-organize](../mockups/ui2/05-organize.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
-
-
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 整理工作流已完成，照片时间轴与视觉目标未实施**。规划收口 HEAD `c19749a`。依赖 [A](P4-UI-SHELL-A.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)；人物新建已有[用户指定同会话复核与修复](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，不重开旧复核。执行时重新读取最新人物卡/报告及用户试用反馈。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 整理工作流已完成，照片时间轴与视觉目标未实施**。规划收口 HEAD `c19749a`。依赖 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)；人物新建已有[用户指定同会话复核与修复](../reports/P4-PERSON-INBOX-CREATE-A-review-current-session.md)，不重开旧复核。执行时重新读取最新人物卡/报告及用户试用反馈。
 
 推荐 GPT-6 / High；限定 A 级 UI 小改，独立 DS-H 覆盖全部受影响入口与原写协议的直接调用链。不是人脸数据语义改造。
 
@@ -28,7 +25,7 @@
 
 ## 视觉参考（执行前必须看图）
 
-打开[人物页模拟图](../mockups/P4-UI-PERSONAL-people.png)、[HTML草图人物区域](../mockups/P4-UI-PERSONAL.html#people)与[参考规则](../mockups/README.md)。实际看图后实施头像/名字/照片数层级、浏览与整理分区、合集和更多工具入口。示意头像换真实裁剪，人数/照片数用原服务事实。报告保存产品合成截图对照；单脸身份、选择、人工状态、原撤销优先，不为了画面精简关键反馈。
+使用 [29种状态的最新参考稿](../mockups/ui2-final-7ebf/README.md)及其中的施工校准清单；本卡重点为 `05-people.svg、06-person.svg、07-collection.svg、21-organize.svg、27-narrow-person.svg`。旧 `ui2-large/`、`ui2/` 和早期 PNG 仅供历史配色/布局对照，不作为当前施工必读。执行产品卡时实际看对应画面并保存合成产品截图；示例数字、条件和缺失控件不能覆盖 [统一规范](../plans/P4-UI-TIMELINE-V2.md)。设计素材不是功能或性能证据。
 
 ## 现状盘点（备份参考）
 
@@ -43,9 +40,9 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§4人�
 仅**人物相册/人物合集的照片页**接入 CORE 的统一日/月/年照片时间轴，拍摄/入库依据切换、年月筛选和直接定位、自动续页、同日跨页合并、查看器返回原位置。人物列表、未命名/待整理/已忽略脸组及批量管理依旧使用各自工作流，不改为时间轴。人物目录默认数量+最新入库排序，不按拍摄日期排序，时间未知不影响目录总张数。保留 canonical 身份、合集有效成员按 asset 去重、同照片多脸提示、封面/纠错/合并/拆分/撤销/跨页勾选及原选择上限（该上限**不约束相册照片总数**）。成员改变必须使日期游标过期。SIMPLIFY-A、SELECT-RANGE、ESC 已做的功能不重复实现，也不复活其已退场的高级重复 DOM。规范见 [UI 2.0](../plans/P4-UI-TIMELINE-V2.md)。
 ## 20万图库适配限制
 
-人物相册/合集**只使用 CORE 的服务端有界日期游标、年月摘要和前端回收组件**，不可为当前人物/合集加载全部 ID 到 JS 后分组、逐图读取日期或为所有人物预计算月度快照；同人合照只按唯一照片计算。人物/合集局部成员数量大时同样应符合 CORE 的单页/直接年月 seek/未知日期状态与短期缓存修订失效规则。性能页 API 目标 P95≤600ms（20万元数据场景），复用 CORE 基准/仅补人物与合集差异，不重建大夹具或重测旧人物工作流。
+人物相册/合集**只使用 CORE 的服务端有界日期游标、年月摘要和前端回收组件**，不可为当前人物/合集加载全部 ID 到 JS 后分组、逐图读取日期或为所有人物预计算月度快照；同人合照只按唯一照片计算。人物/合集局部成员数量大时同样应符合 CORE 的单页/直接年月 seek/未知日期状态与短期缓存修订失效规则。性能页 API 的20万基础门槛 P95≤600ms（20万元数据场景），复用 CORE 基准/仅补人物与合集差异，不重建大夹具或重测旧人物工作流。
 
-## 2026-10-13 人物目录和相册两层规则（本次最高优先）
+## 2026-10-13 人物目录和相册两层规则
 
 - **人物目录**：默认**有效唯一照片数降序**，相同数量按该人物照片的**最新入库时间降序**、再 person_id 稳定排序；优先复用现有 `persons/albums.py` 的 `photos_recent_desc` 读取模式和分页、头像与合集标识，别把“最近加入照片时间”叫成“最后手动整理时间”或“最新拍摄时间”。同人无可靠 EXIF 的照片仍计入数量，并可作为人工封面候选；未命名、待整理、已忽略工作流继续独立。
 - **进入人物相册/合集照片页**后才开启 CORE 共享时间轴：总数来自有效唯一 asset 集，正常拍摄日历仅可信 EXIF；**已提取无可信日期**、**未就绪/规则不兼容**在该人物/合集内有各自直接入口，按该相册资产 `created_at DESC,asset_id DESC` 分页；所有三类相加等于相册总数（同版本、去重）。切入库时间则全部进入真实入库年月。合照中同一照片的多张脸不重复统计、不过滤没有拍摄日期的图。
@@ -56,7 +53,7 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§4人�
 
 **目标外观**：在当前人物标题右侧的常用操作区放「搜索此相册」，人物合集标题右侧放「搜索此合集」。激活后沿用顶部唯一自然语言输入框，显示不可省略的 `张三的照片 ×` 或 `家庭合集 ×` 范围标签；用户输入“海边”只查该相册的全部**有效照片**（含日期未知与待就绪），不默认携带当前时间轴已筛的某年某月。空查询只聚焦不请求搜索；取消范围后重新变为全图库。相册照片数/封面与原有整理/合并、合集成员操作完全不变。
 
-**不可破坏的现实基线**：当前 `persons.html` 有 `#pa-search-photos / #pa-photo-query` 局部搜索，`persons-albums.js` 用 `/search` + `person_ids=[state.person.person_id]` 限制人物，并可恢复「全部照片」。**D 在 C/SEARCH-MAP 之前执行，不得先删除这套可用流程**：本卡只规划/预留标题动作的位置、可无 DOM 假按钮；在受控新路径通过端到端查询和 scope 资格测试后再显示真实快捷按钮，由后续 C/SEARCH-MAP 统一切换并删除旧表单。若要在 D 直接实现入口，必须已能端到端绑定唯一全局输入、验证范围和返回，且不增加新 API/错误状态；否则仍保留旧搜索入口。新旧表单不能最终并存成第二个自然语言主搜索。
+**不可破坏的现实基线**：当前 `persons.html` 有 `#pa-search-photos / #pa-photo-query` 局部搜索，`persons-albums.js` 用 `/search` + `person_ids=[state.person.person_id]` 限制人物，并可恢复「全部照片」。**C 已作为前置完成，但 D 仍早于 SEARCH-MAP，不得先删除这套可用流程**：本卡只规划/预留标题动作的位置、可无 DOM 假按钮；在受控新路径通过端到端查询和 scope 资格测试后再显示真实快捷按钮，由后续 SEARCH-MAP 复用 C 的单框交接并在 PERSON_SCOPE_PASS 后删除旧表单。若要在 D 直接实现入口，必须已能端到端绑定唯一全局输入、验证范围和返回，且不增加新 API/错误状态；否则仍保留旧搜索入口。新旧表单不能最终并存成第二个自然语言主搜索。
 
 **人物与合集不同**：人物使用 canonical person_id 及既有合法成员；合集必须使用 collection_id/instance/revision 和有效成员按唯一 asset 去重，不能伪造 `person_ids` 代表整个合集、不能拿卡片加载的60张假装全集。集合版本失效提示刷新而非静默扩大 scope。页面局部“筛选人物”不变，也不自动限定全局搜索。
 
@@ -70,6 +67,12 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§4人�
 - 多页人物/人脸选择、候选组分页、clean/all质量入口与准确分类计数保持；展开/收起不能刷新首屏清掉选择。
 - 无名字不要求先命名才能看图；新建仍仅一张脸且永久不可撤销，原操作快捷撤销仍按既有类型提供。
 - 只保留仍有真实独立功能的高级工具；SIMPLIFY-A 已替代并退场的重复 DOM 不可恢复；有效锚点展开后仍须可准确定位。
+
+## DOM 回收与原选择语义
+
+照片浏览回收不接管普通人物/人脸工作流列表。原已选 canonical person_id/face_id 与临时选择状态独立于照片 DOM 保留，回收再渲染不能丢选择或把合照的所有脸一起选中；沿用≤500及原写入/snapshot保护。全选/反选仍只作用当前操作区已呈现且可直接选择的卡片，不包括纯缓存、占位、未加载页，不为选择发自动续页请求。Shift 仅连选同一可操作、已加载且顺序稳定列表；锚点已回收或上下文变化时沿原合同退化为普通单项选择。焦点所在卡片可暂保留，但计入 CORE 的8页资源预算；进入写入/对话框期间禁止回收所需操作上下文。
+
+定向补验：跨页勾选→回收→滚回后选中与已选计数不变；合照 face_id 不扩大；回收锚点后的 Shift、全选/反选边界、500整体拒绝；全部未知/待就绪人物与合集仍能浏览，日历更新提示不会清掉选择。复用 SELECT-RANGE/SIMPLIFY-A 未变证据，新增耦合面单独验证。
 
 ## 验证
 

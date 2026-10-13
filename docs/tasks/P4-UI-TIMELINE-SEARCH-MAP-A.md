@@ -1,9 +1,12 @@
 # P4-UI-TIMELINE-SEARCH-MAP-A — 搜索结果与地图照片时间模式接入
 
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C、CORE、B、D、E 已验收；各后端适配报告可核对。下一卡 [F](P4-UI-VIEWER-F.md)，完成本卡后停止，不自动执行下一卡。验收：B 类风险面，按用户指定个人验收：定向行为/JUnit + 受影响浏览器 + 20万元数据有效性能验证，不要求全仓回归；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+
+
 > **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[search](../mockups/ui2-final-7ebf/10-search.svg)、[search-advanced](../mockups/ui2-final-7ebf/25-search-advanced.svg)、[search-person](../mockups/ui2-final-7ebf/13-search-person.svg)、[search-collection](../mockups/ui2-final-7ebf/14-search-collection.svg)、[search-place](../mockups/ui2-final-7ebf/15-search-place.svg)、[search-added](../mockups/ui2-final-7ebf/11-search-added.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
 
 
-## 2026-10-13 最终施工补充：分阶段上线与去除地点全量 ID 搜索（最高优先）
+## 2026-10-13 最终施工补充：分阶段上线与去除地点全量 ID 搜索
 
 - 新前置 A、C、CORE、B、D、E。**阶段一优先且必须闭环**：人物/合集/地点标题「搜索此…」→唯一顶部框+固定身份 chip→服务端权威 scope 内 FILTER_ONLY/FTS/向量召回→两页分页/版本失效→详情预览及返回。人、合集、地点各记录 `PERSON_SCOPE_PASS/COLLECTION_SCOPE_PASS/PLACE_SCOPE_PASS` 或 DEFERRED；仅对应范围真通过才显示其按钮。**PERSON_SCOPE_PASS 前不得移除旧 `pa-search-photos`**。固定 scope 与文本新条件作 AND，冲突明确提示，绝不暗中变全库；按钮只聚焦，空词零编码器。
 - **阶段二独立验收，可 DEFERRED**：纯条件完整按时间浏览；语义结果只有**冻结且有界的完整候选快照**时才可启用“按时间查看”并标明仅当前候选；地图只有全 viewport 的权威分页/版本约束真实成立时才使用时间轴。未满足则保留原相关度/旧地图分页，不为做 UI 重写 FTS/向量/RRF 或地图聚合。阶段二未通过不得称 UI2 时间/地图全部 PASS。
@@ -11,15 +14,9 @@
 - **状态矩阵**：普通非结果页直接点全局框默认为全库；结果页若有固定 scope，聚焦/改词仍保持 chip；明确取消 chip 后废弃旧 cursor/session 并重新查全库；仅聚焦/空文字不搜。冻结版本需绑定身份、成员/包/合集实例 revision、过滤指纹、时间依据、排序、候选快照；时间提取 pending→trusted/unknown 的一致性直接复用 CORE，不得使用已失效页面结果假冒最新。
 
 
-> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [12-natural-search](../mockups/ui2-large/12-natural-search.svg)、[13-import-search](../mockups/ui2-large/13-import-search.svg)、[14-unknown-search](../mockups/ui2-large/14-unknown-search.svg)、[11-map](../mockups/ui2-large/11-map.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
+日期：2026-10-13。状态：**PLANNED / 未实施**。前置 A、C、CORE、B、D、E；核对对应已完成报告，地图阶段依赖 E 的实际 adapter。本卡仅是最后的适配，不重构检索或地图算法。
 
-
-> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [09-search](../mockups/ui2/09-search.svg)、[08-map](../mockups/ui2/08-map.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
-
-
-日期：2026-10-13。状态：**PLANNED / 未实施**。前置 [CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)、[C](P4-UI-SEARCH-C.md)；地图接入另依赖 [E](P4-UI-PLACES-E.md)。本卡仅是最后的适配，不重构检索或地图算法。
-
-推荐 **GPT-6 / High**；搜索候选与成员/游标契约受影响，按 V3.1 B 类必要定向验证、独立 DS-H 全受影响面核查；若要改变排名/TopK 或地图身份与写协议，停止并升级单独设计。
+推荐 **GPT-6 / High**；搜索候选与成员/游标契约受影响，按 B 类风险面复核、用户指定的个人定向验收与20万元数据性能必测、独立 DS-H 全受影响面核查；若要改变排名/TopK 或地图身份与写协议，停止并升级单独设计。
 
 ## 前置核对
 
@@ -57,7 +54,7 @@
 - **完整性**：纯条件不受语义 5000 上限，并可跨页取完权威匹配；语义查询保留原 TopK/截断/相关度与 `search_session_id`。若实现当前语义候选时间模式，必须使用服务端冻结候选全集与版本/游标并明确“仅当前候选”，不能浏览器排序已加载一页就冒充全库；缺安全候选快照则只保留相关度模式，报告 DEFERRED。
 - **冲突与续页**：若一句话同时明确拍摄和导入年份、要求不连续 OR 等而尚无正确交集合同，返回明确 `unsupported` 说明而非吞掉任一条件；续页冻结首次解析的相对日期、时间依据、状态与 scope，人员/地点/包/修订变化返回现有冲突语义。时间范围继续左闭右开。用户取消任一标签需重算计划并抛弃旧 cursor/session 的相应范围，不能将状态词落到 FTS 搜图。
 - **边界**：这属于 SEARCH-MAP 卡明确授权的**最小加性解析/只读合同**，允许核对必要 API request model/intent plan；不改旧 `capture_from/to_exclusive` API 含义、不重写全部解析器、不改向量/FTS/RRF、人工归属/自动地点确认、不建设新索引数据库。现有 source/person/collection/place 身份沿用权威资格。
-- **性能**：在 CORE/E 共享的20万元数据夹具上验证拍摄年份、入库年份、可信未知、张三+年份、地点+年份等纯条件的实际 SQL/query plan、首50～60条 API 与直接下一页；至少≥20次暖机测量，结果与 SQL 全集/COUNT 在小fixture及规模集合抽样一致。纯条件**零编码器调用**可计数证明；语义路径仅做少量假向量/现有已验证搜索语义回归，不重跑30万 GPU/AI 基准。逐页不自动计算全部年月分布。不能达到 CORE/E 对应页目标，报告 PERF_PENDING/FAIL 而非借历史向量测速宣布达标。
+- **性能**：在 CORE/E 共享的20万元数据夹具上验证拍摄年份、入库年份、可信未知、张三+年份、地点+年份等纯条件的实际 SQL/query plan、首50～60条 API 与直接下一页；至少≥30次暖机测量，结果与 SQL 全集/COUNT 在小fixture及规模集合抽样一致。纯条件**零编码器调用**可计数证明；语义路径仅做少量假向量/现有已验证搜索语义回归，不重跑30万 GPU/AI 基准。逐页不自动计算全部年月分布。不能达到 CORE/E 对应页目标，未测报告 PERF_PENDING、实测超标报告 PERF_FAIL 而非借历史向量测速宣布达标。
 
 ### 地图范围照片
 - 原地图聚合/瓦片/点位、bbox/zoom/member_version/点击点的相片、GPS 与当前范围统计完全不变。仅“当前范围照片列表”可适配时间轴组件；范围变动时必须按当前 map 的权威 bbox/member_version 获取成员并重置游标。
@@ -68,10 +65,25 @@
 
 可做上述**最小加性确定性时间依据/未知状态的 intent plan、请求模型和只读 SQL 适配**，不更改旧搜索 API 字段的语义；其余只读查询/前端 adapter、既有统一意图解析的其他类别、FTS/vector/RRF、语义 TopK、snapshot/revision、防过期与地图协议全部保留。绝不根据前端几张图片推断总数/完整年月分布；模型缺失的搜索不可伪造结果。禁止真实 PhotoSearchData、模型或地图大数据重建。
 
+## 固定范围交互与阶段结果
+
+复用 [规范 §1.4](../plans/P4-UI-TIMELINE-V2.md#14-搜索状态矩阵与操作边界)；补齐 C 留待后端贯通的高级条件清除/范围取消/图片模式限制/失败/中文输入法等端到端证据。固定人物内查询另一人物，只在旧合同支持时按共现 AND，不因名字不同直接报冲突；交集合法但无成员返回空结果。身份歧义、不可表达交集或不支持的条件才明确拒绝，保持固定 scope。不得把新增人物塞进 person_match=any 而变成 OR。
+
+阶段一为必交闭环；三类 scope 分别 PASS/DEFERRED，任一必交范围 DEFERRED 时整卡为 PARTIAL，不能写完整 PASS。阶段二可独立 DEFERRED；纯条件完整时间浏览、语义有限候选时间浏览、地图 viewport 时间浏览分别记状态。阶段一通过而阶段二未做，写“阶段一 SCOPED PASS / 阶段二 DEFERRED”，不追认 UI2 全部完成。本卡必要定向验收失败/未跑、浏览器或规模必测未完成，按规范 §6.1 保持对应 PENDING/FAIL。
+
 ## 最小验证与停止
 
 合成 fixture：一个完整纯条件搜索跨两页按时间浏览；一个有上限的语义检索仍默认相关度、有提示且不能错误冒充全量；一组 intent 标签取消/再查询; 一个地图 bbox 缩放后照片集合变化；一组 409/过期 cursor；一个详情关闭/跨页面返回。若部分后端语义无法保证，则记录为**DEFERRED**，不要为赶进度降低正确性。
 
-针对受影响测试文件执行 `pytest -q ... --basetemp=.pytest-tmp/P4-UI-TIMELINE-SEARCH-MAP-A --junitxml=test-results/P4-UI-TIMELINE-SEARCH-MAP-A.xml`，改动的 JS 全部 `node --check`、相关 Python Ruff/编译、`git diff --check`；小型隔离浏览器验证，杜绝无真实运行冒称现场 PASS。不默认全仓/GPU/大模型/用户照片库；**须复用CORE/E的20万元数据查询定向基准、30万有代表性组合查询复核，不能只做20张合成测试就宣布大图库性能通过**。
+针对受影响测试文件执行 `pytest -q ... --basetemp=.pytest-tmp/P4-UI-TIMELINE-SEARCH-MAP-A --junitxml=test-results/P4-UI-TIMELINE-SEARCH-MAP-A.xml`，改动的 JS 全部 `node --check`、相关 Python Ruff/编译、`git diff --check`；小型隔离浏览器验证，杜绝无真实运行冒称现场 PASS。完成下述个人定向验收与20万元数据性能必测；不默认 GPU/大模型/用户照片库；**须复用CORE/E的20万元数据查询定向基准、30万有代表性组合查询复核，不能只做20张合成测试就宣布大图库性能通过**。
 
 独立 DS-H 复核查询资格、候选冻结、排名未改、分页以及地图 bbox/member_version 与 UI 返回。报告 `docs/reports/P4-UI-TIMELINE-SEARCH-MAP-A.md` 与 status 只标实际完成范围；完成即停，下一建议 F。
+
+
+## 个人相册定向验收（用户指定，实施时执行）
+
+2026-10-13 用户明确：“个人相册简单测试为主，注意有效的性能验证，20 万张照片是基础需求”。本卡按 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)收口：必要成员/日期/分页/失效行为定向 pytest（JUnit）、相关 Ruff/编译/Node/diff-check、受影响的合成浏览器闭环，**以及真实查询链上的20万元数据性能验证**。不追加全仓 unit/integration、GPU/模型、真实图库或打包，也不套用 §9.4 的旧待审名单。这是本批用户明确指定的验收范围，不降低查询正确性、独立受影响面复核或20万性能门槛，不宣称全仓 PASS。
+
+实现者在本卡报告列出真实选取的测试文件、完整命令、JUnit计数与证据代码版本；新增成员 SQL/请求模型/游标分支必须有直接行为测试，不能只跑旧 UI 测试。复用 CORE/E 未漂移的规模夹具与证据，后续只补本卡新增/变化查询。20万必测没跑记 PERF_PENDING、跑了不达门槛记 PERF_FAIL，均不能标本卡完整 PASS。30万仅做少量重点元数据查询复查，单列结果。
+
+若实施需要新迁移/写事务/人工状态/恢复/依赖，停止扩大本卡并另立对应风险卡；该新增范围不自动继承当前轻验收。历史全量失败原样保留，不通过跳过/xfail掩盖相关失败。

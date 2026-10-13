@@ -1,5 +1,8 @@
 # P4-UI-PHOTOS-B — 照片浏览与图库管理层级
 
+**施工顺序（2026-10-13 收口）**：A → C → CORE → B → D → E → SEARCH-MAP → F。前置：A、C、CORE 已验收。下一卡 [D](P4-UI-PEOPLE-D.md)，完成本卡后停止，不自动执行下一卡。验收：A 类，卡内定向验证；新增后端或写语义时依实际风险升 B/D；统一门槛见 [规范 §6.1](../plans/P4-UI-TIMELINE-V2.md#61-个人相册验收与结果记录)。
+
+
 > **最新施工视觉参考（基于7ebf1966，2026-10-13）：** [29页SVG/交互HTML](../mockups/ui2-final-7ebf/README.md)，本卡重点：[photos](../mockups/ui2-final-7ebf/01-photos.svg)、[added](../mockups/ui2-final-7ebf/02-added.svg)、[unknown](../mockups/ui2-final-7ebf/03-unknown.svg)。这些是按最新业务规范重绘的矢量效果，不是聊天截图原PNG，也不是功能或性能实测。旧 ui2-large 的双搜索框/旧按钮画法不得覆盖该规范。
 
 
@@ -10,19 +13,13 @@
 - 区分无来源、来源未建库、筛选无命中、请求失败；原图库管理按钮 CSRF/payload/任务状态不变。CORE 的20万元数据专项证据在未漂移时直接复用，不重复造数据或伪造P95；BROWSER_PENDING 必须明示。
 
 
-> **2026-10-13 最新视觉验收入口（20万＋大图库）**：[17页图集/离线HTML](../mockups/ui2-large/README.md)；本卡参考 [01-capture-timeline](../mockups/ui2-large/01-capture-timeline.svg)、[02-import-timeline](../mockups/ui2-large/02-import-timeline.svg)、[03-unknown-capture](../mockups/ui2-large/03-unknown-capture.svg)、[04-capture-pending](../mockups/ui2-large/04-capture-pending.svg)、[17-narrow](../mockups/ui2-large/17-narrow.svg)。本目录 SVG 为按最新方案重制的仓库可预览矢量设计稿，并非聊天高清 PNG 原件；原 `ui2/` 参考降为历史视觉对照。视觉稿不替代业务和性能证据。
-
-
-> **2026-10-13 新视觉参照：** [UI 2.0 全页面索引](../mockups/ui2/README.md)；本卡对应 [01-photos](../mockups/ui2/01-photos.svg)、[11-management](../mockups/ui2/11-management.svg)、[12-narrow](../mockups/ui2/12-narrow.svg)。最新 SVG 是仓库内的轻量静态效果稿；旧版 PNG 仅作导航/色彩对照，不得据旧图删掉时间轴能力。产品数据契约、布局取舍及真实功能以 [UI 2.0 规范](../plans/P4-UI-TIMELINE-V2.md) 与本卡正文为准。此处并非实施截图。
-
-
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；实施前要求 [A](P4-UI-SHELL-A.md) 与 [CORE](P4-UI-TIMELINE-CORE-A.md) 已验收，执行时检查实际 Git/报告。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；实施前要求 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md) 已验收，执行时检查实际 Git/报告。
 
 推荐 GPT-6 / High；A 级前端展示小改，独立 DS-H 核对全部受影响 UI 与原管理动作接线。
 
 ## 视觉参考（执行前必须看图）
 
-打开[照片页模拟图](../mockups/P4-UI-PERSONAL-photos.png)与[图库管理模拟图](../mockups/P4-UI-PERSONAL-management.png)，再查看[HTML草图](../mockups/P4-UI-PERSONAL.html#photos)的照片/管理区域及[参考规则](../mockups/README.md)。实际看图后实施网格和主次操作；示例数字/图形不照搬。报告保存对应产品合成截图，说明重要偏离；不为靠近画面改变任务状态/业务接口。
+使用 [29种状态的最新参考稿](../mockups/ui2-final-7ebf/README.md)及其中的施工校准清单；本卡重点为 `01-photos.svg、02-added.svg、03-unknown.svg、04-pending.svg、24-management.svg`。旧 `ui2-large/`、`ui2/` 和早期 PNG 仅供历史配色/布局对照，不作为当前施工必读。执行产品卡时实际看对应画面并保存合成产品截图；示例数字、条件和缺失控件不能覆盖 [统一规范](../plans/P4-UI-TIMELINE-V2.md)。设计素材不是功能或性能证据。
 
 ## 现状盘点（备份参考）
 
@@ -53,6 +50,12 @@ AGENTS → status → 本卡 → [总计划](../plans/P4-UI-PERSONAL.md)§4照�
 
 用户全局偏好只记 `time_basis=capture|added` 与 `group_by=day|month|year`（沿用现有或最小本地 UI 偏好载体）；默认可信拍摄+按日。来源库选择、筛选到某年/月、滚动/日期跳转锚点绑定**当前 source scope**，返回仍可恢复；打开另一个人物/地点相册不得突然带入首页某一年的筛选。所有照片总数与可信/未知/待就绪均按相同资产资格，不能因为无 EXIF 时间漏照片。
 
+## 补充空状态与回收验收
+
+首页/来源存在有效照片但可信拍摄页为空时，显示“当前没有可信拍摄日期的照片”，保留本范围“日期未知”“日期待就绪”“按加入图库时间浏览”；不得误显示无来源/未建库。未知与待就绪桶的标题明确为“加入图库日期”，年份筛选/跳转也使用此依据。摘要加载或失败时入口仍可用，数量使用待加载/重试状态，不伪造0。
+
+按 [规范 §3.2](../plans/P4-UI-TIMELINE-V2.md#32-更新期间的浏览与资源预算)记录30页节点、缓存、资源、请求和返回误差；分别检查从页30返回已回收的页1、连续日期修订、摘要迟到与窗口缩放。两页 fixture 可以测试小页长；正式页长需≥121条元数据验证，复用少量合成素材即可。
+
 ## 必须验证
 
 相关原测试：`tests/unit/test_photo_view_info_ui.py`、`tests/integration/test_api_sources_assets.py`、`tests/unit/test_api_source_rename_ui.py`；必要新增 `tests/unit/test_p4_ui_photos.py` 用行为覆盖三种空状态、按日/月/年和年月定位、拍摄/入库切换、连续两页跨日/同日标题、过期响应、日期返回与管理按钮请求不变。
@@ -67,4 +70,4 @@ git diff --check
 
 隔离小型合成浏览器验来源切换、两页照片、未知/待就绪快捷入口与返回、年月跳转、详情/返回、空筛选、改名错误及删除提示；管理写操作只针对合成来源，核对与旧按钮相同 payload/CSRF。不能只截图替代事件验证。不运行全仓/真实图库/模型/打包；**20万元数据大图库性能复用 CORE 证据，浏览器滚动与首图可见未测标 BROWSER_PENDING**；若出现业务变化按总计划§8升 B/D 另卡，不能用本 A 门槛通过。
 
-独立 DS-H 完整覆盖新增 DOM/事件到原 API 的直接链路，核对原请求/任务状态映射与授权，无新高风险未决则 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-PHOTOS-B.md`，记录未验范围；完成本卡停止，下一候选 [D](P4-UI-PEOPLE-D.md)，随后 E/C/SEARCH-MAP/F。
+独立 DS-H 完整覆盖新增 DOM/事件到原 API 的直接链路，核对原请求/任务状态映射与授权，无新高风险未决则 SOL_NOT_REQUIRED。报告 `docs/reports/P4-UI-PHOTOS-B.md`，记录未验范围；完成本卡停止，下一候选 [D](P4-UI-PEOPLE-D.md)，随后 E/SEARCH-MAP/F；C 已作为前置完成。
