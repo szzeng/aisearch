@@ -24,9 +24,9 @@
 
 [任务卡](tasks/P4-PERSON-EMPTY-VISIBILITY-A.md)、[执行报告](reports/P4-PERSON-EMPTY-VISIBILITY-A.md)、[LUNA High 审查报告](reports/P4-PERSON-EMPTY-VISIBILITY-REVIEW-A.md)。列表资格应用活动资产、`MEMBER_PREDICATE` 与 `photo_asset_sql`；视频专属人物隐藏，同资产具备图片和视频路径仍展示。定向 JUnit **70/0/0/0**，Ruff、diff-check 通过。用户指定 LUNA / High 子代理审查（路由例外，不是 DS-H）；首轮 P2 已修并由修复轮确认 CLOSED，无新增 finding。真实浏览器、图库、全仓、GPU/模型、容量和打包未验。
 
-## P4-RELEASE-020 — READY / v0.2.0 个人预览版任务卡（未实施）
+## P4-RELEASE-020 — READY / R2（2026-10-13），v0.2.0 个人预览版任务卡，未实施
 
-[任务卡](tasks/P4-RELEASE-020.md)。按用户要求只立简化版本冻结卡：0.1.0→0.2.0、更新日志、版本一致性定向测试/最小启动搜索检查；不改 Schema 29、原图、模型、识别/搜索逻辑，不做全量 pytest、GPU/30 万/Windows 打包验收。推荐 **GPT-6 Luna / Medium**，发布代码推送/Tag/GitHub Pre-release 须另经用户确认。当前仅文档提交，**没有升级程序或运行测试**；本卡不取代现有其他任务的后续安排。
+[任务卡 R2](tasks/P4-RELEASE-020.md)。已按最新 `master` 参考 HEAD `bc07f25f` 修订：冻结**实际已验候选提交**、区分视频排除/空人物隐藏/Esc 已实现但真实手测未全验、明确 UI 2.0/统一时间轴仅为未实施规划；继续按个人版最少版本定向测试、启动与搜索及用户简短手测，不做全量 pytest、GPU、30 万、Windows 包验收，不改 Schema 29、图库和识别逻辑。推荐 **GPT-6 Luna / Medium**。最终 Tag 只可指向通过验收的 `0.2.0` 提交；远端推送、Tag/Pre-release 须用户另行确认。**只更新任务文档，尚未升级程序、运行测试或创建 Tag**；其他任务安排不变。
 
 ## P4-PERSON-SELECT-RANGE-A — SCOPED PASS / 人物整理范围与已加载快捷选择
 
