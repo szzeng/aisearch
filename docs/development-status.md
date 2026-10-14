@@ -1,5 +1,10 @@
 # Development status
 
+## Additional user-directed task: P4-UI-TIMELINE-CLICK-PATH-FIX-A — TASK-CARD MINIMUM ACCEPTANCE PASS (2026-10-14)
+
+时间轴首页自定义卡片现沿用既有详情路由；当前页 API 元数据提供真实文件名/目录并按 PRESENT 优先、location_id 稳定次序选择实例，支持缺路径回退、两行省略与完整路径 tooltip。详情关闭按钮及 Escape 返回已通过本机 6 张合成照片浏览器验证。定向 JUnit **33/0/0/0**，Node、Python 编译及 diff-check 通过。[任务卡](tasks/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md) / [报告](reports/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md)。有限复查未专项浏览人物/地点产品点击或暗色主题；未做性能测试。未访问真实相册、模型、GPU；本次提交仅含本任务文件，其他工作树改动不纳入。
+
+
 ## Current user-directed task: P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
 
 阶段一人物/合集/地点固定范围搜索的 API 合同、服务端 scope/revision/keyset 与时间条件已实现。定向 JUnit **72/0/0/0**；Ruff、Python 编译、`search.js`/`persons-albums.js`/`places-albums.js` Node 语法及 staged/unstaged diff-check 通过。Luna High 子代理指出两处 pending/time-choice 计划问题，已修复并复核无剩余 actionable findings；不是 DS-H。[任务卡](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md) / [报告](reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。人物/合集/地点 API 行为有定向覆盖，端到端浏览器门仍 pending；Computer Use 因当前 Chrome URL 无法足够确认而停止，未形成浏览器证据。`PERF_200K=PENDING`、`CHECK_300K=PENDING`；可时间排序的语义候选与 map viewport 时间浏览为阶段二 DEFERRED。前置 A/C/CORE/B/D/E 的验收状态均未改变；本轮无 commit、无真实图库/模型/GPU访问。

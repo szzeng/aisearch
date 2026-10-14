@@ -28,6 +28,9 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
     assert 'method: "PATCH"' in app and 'body: { display_name: name }' in app
     assert 'request("/library/refresh"' in app
     assert 'request("/sources/" + encodeURIComponent(sourceId) + "/scan", { method: "POST" })' in app
+    assert 'item.filename || "文件信息不可用"' in app
+    assert 'card.title = directory + filename' in app
+    assert ".photo-timeline__filename" in timeline_styles and "text-overflow: ellipsis" in timeline_styles
     assert ".photos-page .browse-mode-controls" in styles
     assert ".gallery-management-page" in styles
     assert ".photo-timeline__buckets" in timeline_styles
@@ -68,6 +71,7 @@ class Element {
 }
 const storage=new Map([["photo-timeline.preferences.v1",JSON.stringify({timeBasis:"library",groupBy:"month"})]]);
 const requests=[];
+const opened=[];
 const window={innerHeight:900,localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
   addEventListener(){},removeEventListener(){},scrollBy(){},requestAnimationFrame:fn=>fn()};
 const document={cookie:"",createElement:tag=>new Element(tag)};
@@ -84,11 +88,16 @@ const fetch=async path=>{
 };
 const context={window,document,fetch,URLSearchParams,AbortController,URL,Promise,console,CSS:{escape:String},setTimeout,clearTimeout};
 vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-timeline.js","utf8"),context);
-const host=new Element("div"),mount=context.window.PhotoTimeline.mount({host,scope:{kind:"all"}});
+const host=new Element("div"),mount=context.window.PhotoTimeline.mount({host,scope:{kind:"all"},adapter:{
+  renderAsset:item=>{const card=new Element("button");card.className="photo-timeline__card";card.dataset.assetId=String(item.asset_id);return card;},
+  onOpen:item=>opened.push(item.asset_id)
+}});
 const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();await new Promise(resolve=>setTimeout(resolve,0));};
 const find=(selector)=>host.querySelector(selector);
 (async()=>{
   await settle();
+  host.querySelectorAll(".photo-timeline__card")[0].fire("click");
+  assert.deepEqual(opened,[1],"custom timeline cards forward exactly one open event");
   assert.equal(mount.snapshot().timeBasis,"library");
   assert.equal(mount.snapshot().groupBy,"month");
   assert.match(requests[0],/time_basis=library/);

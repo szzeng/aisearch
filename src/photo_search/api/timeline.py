@@ -11,6 +11,7 @@ import base64
 import binascii
 import hashlib
 import json
+import ntpath
 from datetime import date, datetime
 from typing import Any
 
@@ -349,7 +350,14 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
                      f"({timeline_sort} {comparison} ? OR ({timeline_sort} = ? AND a.asset_id {id_comparison} ?))))")
             params.extend([after_rank, after_rank, after_key, after_key, after_id])
         rows = connection.execute(
-            f"SELECT a.asset_id, a.sha256, a.created_at, {selection} FROM assets AS a{metadata_join} "
+            f"SELECT a.asset_id, a.sha256, a.created_at, {selection}, "
+            "location.relative_path AS relative_path, source.root_path AS root_path "
+            f"FROM assets AS a{metadata_join} "
+            "LEFT JOIN file_locations AS location ON location.location_id = ("
+            "SELECT candidate.location_id FROM file_locations AS candidate "
+            "WHERE candidate.asset_id = a.asset_id "
+            "ORDER BY CASE candidate.availability WHEN 'PRESENT' THEN 0 ELSE 1 END, candidate.location_id LIMIT 1) "
+            "LEFT JOIN source_roots AS source ON source.source_id = location.source_id "
             f"WHERE {where} ORDER BY {order} LIMIT ?", (*params, page_limit + 1)
         ).fetchall()
         page = list(rows[:page_limit])
@@ -379,10 +387,17 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
                 display_time = None
                 sort_value = int(row["created_at"])
             group_key = None if day_key is None else {"day": day_key, "month": day_key[:7], "year": day_key[:4]}[group_by]
+            relative_path = str(row["relative_path"] or "")
+            filename = ntpath.basename(relative_path.replace("/", "\\")) if relative_path else ""
+            root_path = str(row["root_path"] or "")
+            full_path = ntpath.normpath(ntpath.join(root_path, relative_path)) if root_path and relative_path else ""
+            directory_path = ntpath.dirname(full_path) + "\\" if full_path else ""
             item_position = [int(row["timeline_rank"]), int(row["timeline_sort"]), asset_id]
             assets.append({
                 "asset_id": asset_id,
                 "thumbnail_url": f"/api/v1/assets/{asset_id}/thumbnail",
+                "filename": filename,
+                "directory_path": directory_path,
                 "display_time": display_time,
                 "time_basis": time_basis,
                 "time_source": source if time_basis == "capture" else "LIBRARY_ADDED",

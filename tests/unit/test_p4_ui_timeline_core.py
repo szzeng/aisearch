@@ -59,6 +59,43 @@ def test_timeline_buckets_keyset_periods_and_direct_year_seek(api_env: ApiEnv) -
     assert {item["date_state"] for item in timeline_page(catalog, bucket="pending")["assets"]} == {"pending"}
 
 
+def test_timeline_uses_present_registered_path_and_preserves_pagination(api_env: ApiEnv) -> None:
+    source_id, ids = seed_timeline(api_env)
+    asset_id = ids["同日A.jpg"]
+    other_root = api_env.tmp_path / "旅行图库"
+    other_root.mkdir()
+    other_source = api_env.register_source("other", other_root)
+    catalog = api_env.service.catalog
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET availability='MISSING' WHERE asset_id=? AND source_id=?",
+            (asset_id, source_id),
+        )
+        connection.execute(
+            "INSERT INTO file_locations(source_id, relative_path, path_key, asset_id, size, mtime_ns, availability) "
+            "VALUES (?, ?, ?, ?, 0, 0, 'PRESENT')",
+            (other_source["source_id"], "深圳/IMG_20261014_102530.CR2", "深圳\\img_20261014_102530.cr2", asset_id),
+        )
+        missing_path_id = int(connection.execute(
+            "INSERT INTO assets(sha256, byte_size, created_at) VALUES (?, 0, ?) RETURNING asset_id",
+            ("f" * 64, api_env.clock()),
+        ).fetchone()[0])
+
+    first = timeline_page(catalog, limit=1)
+    second = timeline_page(catalog, cursor=first["next_cursor"], limit=1)
+    item = next(value for page in (first, second) for value in page["assets"] if value["asset_id"] == asset_id)
+    expected_root = str(other_root).replace("/", "\\")
+    assert item["filename"] == "IMG_20261014_102530.CR2"
+    assert item["directory_path"] == expected_root + "\\深圳\\"
+    assert item["directory_path"] + item["filename"] == expected_root + "\\深圳\\IMG_20261014_102530.CR2"
+    assert first["next_cursor"] and len(first["assets"]) == len(second["assets"]) == 1
+    without_location = next(
+        value for value in timeline_page(catalog, time_basis="library", limit=20)["assets"]
+        if value["asset_id"] == missing_path_id
+    )
+    assert without_location["filename"] == without_location["directory_path"] == ""
+
+
 def test_place_timeline_matches_legacy_members_and_invalidates_changed_cursor(api_env: ApiEnv) -> None:
     for number in range(4):
         write_exif_jpeg(
@@ -519,6 +556,7 @@ def test_timeline_http_routes_are_session_protected_and_readable(api_env: ApiEnv
         body = first.json()
         assert len(body["assets"]) == 2 and body["next_cursor"]
         assert all("display_time" in item and "thumbnail_url" in item for item in body["assets"])
+        assert all("filename" in item and "directory_path" in item for item in body["assets"])
         next_page = await client.get("/api/v1/timeline/assets", params={"limit": 2, "cursor": body["next_cursor"]})
         assert next_page.status_code == 200, next_page.text
         return periods.json()

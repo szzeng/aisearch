@@ -175,14 +175,27 @@
   background: var(--panel-muted, #eaf3ed);
 }
 
+.photo-timeline__filename,
+.photo-timeline__directory,
 .photo-timeline__date,
 .photo-timeline__source {
   display: block;
+  min-width: 0;
+  overflow: hidden;
   padding: 0.45rem 0.6rem 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+.photo-timeline__filename,
 .photo-timeline__date {
   font-weight: 600;
+}
+
+.photo-timeline__directory {
+  padding-top: 0.2rem;
+  padding-bottom: 0.55rem;
+  color: var(--fg-muted, #5f7068);
 }
 
 .photo-timeline__source {

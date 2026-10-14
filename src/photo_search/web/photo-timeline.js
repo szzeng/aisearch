@@ -262,14 +262,25 @@
     }
 
     function renderAsset(item) {
-      if (typeof adapter.renderAsset === "function") return adapter.renderAsset(item);
-      var card = element("button", "photo-timeline__card"); card.type = "button";
-      var image = element("img", "", ""); image.alt = "照片 " + item.asset_id; image.loading = "lazy";
-      image.decoding = "async"; image.src = item.thumbnail_url;
-      var label = element("span", "photo-timeline__date", item.display_time || item.time_label);
-      var source = element("small", "photo-timeline__source", item.time_label || "");
-      card.append(image, label, source);
-      card.addEventListener("click", function () { if (adapter.onOpen) adapter.onOpen(item, card); });
+      var card;
+      if (typeof adapter.renderAsset === "function") {
+        card = adapter.renderAsset(item);
+      } else {
+        card = element("button", "photo-timeline__card"); card.type = "button";
+        var image = element("img", "", ""); image.alt = "照片 " + item.asset_id; image.loading = "lazy";
+        image.decoding = "async"; image.src = item.thumbnail_url;
+        var label = element("span", "photo-timeline__date", item.display_time || item.time_label);
+        var source = element("small", "photo-timeline__source", item.time_label || "");
+        card.append(image, label, source);
+      }
+      if (typeof adapter.onOpen === "function") {
+        card.addEventListener("click", function (event) {
+          var control = event.target !== card && event.target.closest
+            ? event.target.closest("button, a, input, select, textarea, summary, details") : null;
+          if (control && control !== card) return;
+          adapter.onOpen(item, card);
+        });
+      }
       return card;
     }
 

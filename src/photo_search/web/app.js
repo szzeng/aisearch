@@ -1651,9 +1651,12 @@
     image.loading = "lazy";
     image.decoding = "async";
     image.src = item.thumbnail_url;
-    var date = element("span", "photo-timeline__date", item.display_time || item.time_label);
-    var label = element("small", "photo-timeline__source", item.time_label || "");
-    card.append(image, date, label);
+    var filename = item.filename || "文件信息不可用";
+    var directory = item.directory_path || "";
+    var name = element("span", "photo-timeline__filename", filename);
+    card.append(image, name);
+    if (directory) card.append(element("small", "photo-timeline__directory", directory));
+    if (directory && item.filename) card.title = directory + filename;
     return card;
   }
 
@@ -2668,7 +2671,7 @@
         showView(button.dataset.view);
       });
     });
-    document.getElementById("detail-back").addEventListener("click", function () {
+    function returnFromDetail() {
       var fromSearch = false;
       try {
         fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search";
@@ -2688,6 +2691,13 @@
       state.browse.returnPending = true;
       restoreBrowsePosition();
       clearBrowseReturn();
+    }
+    document.getElementById("detail-back").addEventListener("click", returnFromDetail);
+    document.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape" || !state.detailRouteActive || event.defaultPrevented) return;
+      if (event.target && event.target.closest && event.target.closest("dialog[open]")) return;
+      event.preventDefault();
+      returnFromDetail();
     });
     document.getElementById("view-all-galleries").addEventListener("click", function () {
       state.browse.sourceId = "";

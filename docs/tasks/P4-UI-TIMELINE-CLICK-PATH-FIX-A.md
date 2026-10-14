@@ -2,7 +2,7 @@
 
 - 类型：小型 Bug 修复 / UI 优化
 - 优先级：P1
-- 状态：PLANNED
+- 状态：IMPLEMENTED / TASK-CARD MINIMUM ACCEPTANCE PASS (2026-10-14)
 - 建议模型：GPT-6 Medium；出现跨组件事件冲突时用 High
 - 测试：个人使用，最小定向测试
 - 范围：浏览照片 → 时间轴模式
