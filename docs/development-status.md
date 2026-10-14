@@ -1,8 +1,15 @@
-## Current user-directed task: P4-UI2-SCROLL-LOAD-B — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+## Current user-directed task: P4-PLACE-MAP-TIANDITU-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+天地图 `_w` 矢量/影像底图、图层切换、本机 Key 设置/API、详情小地图复用及无 Key/瓦片失败照片回退已实现。定向 JUnit **26/0/0/1 skipped**（Windows 符号链接权限不可用），Ruff、Node、compileall、diff-check 通过；Codex 内置浏览器 A/B 假 Key 和 2 张隔离合成 GPS 照片通过。Luna High repair-only 复核完成：runtime 恢复 finding 已修复并复看关闭，无剩余代码 finding。[任务卡](tasks/P4-PLACE-MAP-TIANDITU-A.md) / [报告](reports/P4-PLACE-MAP-TIANDITU-A.md)。真实天地图大陆网络与影像对齐 `PENDING / USER_MANUAL_CHECK`；Windows Key 文件继承 data-root ACL，用户拒绝 ACL 更改，故访问控制未验证且整卡不得 PASS。浏览器截图未能由 CUA 导出。未访问真实图库/Key，未跑全仓、压测、模型/GPU、打包/发布；按用户要求仅做本地提交，不推送。
+
+## Next necessary action: P4-PLACE-MAP-TIANDITU-A manual acceptance gates
+
+用户在本机设置页录入自己的 Key 后，实测天地图标准与卫星图层的深圳等已知坐标覆盖和照片点对齐。Windows ACL 若需收紧，须重新取得明确授权；在此之前保持当前继承权限且记录 pending。
+## Previous user-directed task: P4-UI2-SCROLL-LOAD-B — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 人物、合集目录、合集成员与现存普通照片网格已接独立游标自动续页；成员首屏失败提供重试；人物深页刷新最多恢复三页。定向 JUnit **24/0/0/0**、`node --check`、`git diff --check` 通过。[任务卡](P4-UI2-SCROLL-LOAD-B.md) / [报告](reports/P4-UI2-SCROLL-LOAD-B.md)。隔离合成浏览器实走人物两批及 Shift、95 个合集和 85 个成员分页；截图 pending。Luna High 关闭首屏重试 finding，仍有 P1 未解决：目录 DOM 随加载页增长无界，故 `PERF_10K` 与整卡验收 partial。未访问真实图库/模型/GPU、未跑全仓/打包/发布。
 
-## Next necessary action: P4-UI2-SCROLL-LOAD-B bounded DOM and remaining browser gates
+## Pending prior acceptance: P4-UI2-SCROLL-LOAD-B bounded DOM and remaining browser gates
 
 先定义兼容已加载范围选择的目录回收/虚拟化策略并补行为证据；再按报告补未命名/隐藏目录、折叠/切换停载、续页失败及普通网格第二页浏览器路线，若可导出则保存截图。不得把当前 125/95/85 合成规模外推为 10K 性能通过。
 

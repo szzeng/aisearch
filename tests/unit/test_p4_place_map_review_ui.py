@@ -24,6 +24,12 @@ def test_missing_map_component_still_fetches_grid(observed):
     assert observed["missing"]["more_requests"] > 0, observed["missing"]
 
 
+def test_runtime_unavailable_retries_saved_key_when_settings_open(observed):
+    assert observed["runtimeRecovery"]["runtimeCalls"] == 1, observed["runtimeRecovery"]
+    assert observed["runtimeRecovery"]["status"] == "CONFIGURED", observed["runtimeRecovery"]
+    assert observed["runtimeRecovery"]["key"] == "saved-runtime-key", observed["runtimeRecovery"]
+
+
 def test_identical_cluster_opens_members_before_cluster_disappears(observed):
     # The source's clusterMaxZoom=16; at expansion zoom 17 the two points overlap unclustered.
     assert observed["identical"]["leaves_calls"] > 0, observed["identical"]

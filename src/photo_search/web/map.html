@@ -19,5 +19,17 @@
         <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
         <button type="submit">搜索</button>
       </form>
-<span id="summary"></span></header>
-<p id="notice" class="notice" role="status"></p><main id="main" class="map-page-main" tabindex="-1"><div id="map" aria-label="照片地图"></div><section><h2 id="grid-title">当前范围 · 0 张照片</h2><div class="map-order-controls" role="group" aria-label="照片列表排序"><button id="map-order-default" type="button" aria-pressed="true">默认列表</button><button id="map-order-capture" type="button" aria-pressed="false">按拍摄时间浏览</button></div><div id="grid"></div><button id="more" hidden>加载更多</button></section></main></body></html>
+<span id="summary"></span><button id="map-settings-open" type="button">地图设置</button></header>
+<p id="notice" class="notice" role="status"></p><main id="main" class="map-page-main" tabindex="-1"><div class="map-canvas-wrap"><div id="map" aria-label="照片地图"></div><div id="map-layer-controls" role="group" aria-label="地图底图"><button type="button" data-layer="vector" aria-pressed="true">标准地图</button><button type="button" data-layer="imagery" aria-pressed="false">卫星影像</button></div><span class="map-attribution"><a href="https://www.tianditu.gov.cn/" rel="noreferrer">天地图</a> · GS（2025）1508号</span></div><section><h2 id="grid-title">当前范围 · 0 张照片</h2><div class="map-order-controls" role="group" aria-label="照片列表排序"><button id="map-order-default" type="button" aria-pressed="true">默认列表</button><button id="map-order-capture" type="button" aria-pressed="false">按拍摄时间浏览</button></div><div id="grid"></div><button id="more" hidden>加载更多</button></section></main>
+<dialog id="map-settings" aria-labelledby="map-settings-title"><form method="dialog" class="map-settings-panel">
+<div class="map-settings-heading"><h2 id="map-settings-title">地图设置</h2><button type="submit" aria-label="关闭地图设置">关闭</button></div>
+<label>地图服务<input type="text" value="天地图（固定）" readonly></label>
+<p id="map-settings-status" class="hint" role="status">读取设置中…</p>
+<label for="map-key">天地图浏览器端 Key</label><input id="map-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="输入或替换 Key">
+<p class="hint">地图服务会收到 Key 和当前瓦片坐标的 HTTPS 请求。请勿在聊天中发送 Key；建议在天地图控制台限制本机来源。</p>
+<div class="map-settings-actions"><button id="map-key-save" type="button">保存</button><button id="map-key-test" type="button">测试连接</button><button id="map-key-clear" type="button">清除 Key</button></div>
+<label for="map-default-layer">默认底图</label><select id="map-default-layer"><option value="vector">标准地图</option><option value="imagery">卫星影像</option></select>
+<p><a href="https://console.tianditu.gov.cn/api/key" target="_blank" rel="noreferrer">天地图官方 Key 申请入口</a></p>
+<p id="map-connection-status" class="hint" role="status"></p>
+</form></dialog>
+</body></html>

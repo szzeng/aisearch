@@ -1,6 +1,6 @@
 # P4-PLACE-MAP-TIANDITU-A — 天地图替换、免费底图切换与本机 Key 配置
 
-> **日期**：2026-10-14。**状态**：READY / 任务卡；未实施、未验收。
+> **日期**：2026-10-14。**状态**：IMPLEMENTED / ACCEPTANCE_PARTIAL（2026-10-14；定向验证与浏览器 A/B 完成；Windows ACL 和真实天地图联网待验）。
 > **优先级**：P1（中国大陆无 VPN 的地图可用性）。
 > **执行建议**：GPT-6 Medium/High，同一会话完成代码、修复、定向验证；模型由用户手动选择。个人使用、最小必要测试。
 > **建卡时参考 master HEAD**：`de4497c2e5eda362528b0f1eefb109960b6ab975`。实施时必须先重新核对最新 HEAD，不用本卡旧快照覆盖后续提交。
@@ -118,3 +118,9 @@
 - [天地图地图服务](https://lbs.tianditu.gov.cn/server/MapService.html)；
 - [MapLibre raster source API](https://maplibre.org/maplibre-style-spec/sources/#raster)；
 - 原任务 [P4-PLACE-MAP-A](P4-PLACE-MAP-A.md) 要求保留 WGS84、地图成员 API 与回退网格。
+
+## 10. 本轮实施状态
+
+- 状态：IMPLEMENTED / ACCEPTANCE_PARTIAL；定向结果、浏览器 A/B、Luna High repair-only 复核与待验边界见[实施报告](../reports/P4-PLACE-MAP-TIANDITU-A.md)。
+- Windows ACL 未检查/未修改：用户明确拒绝授权更改；不声称本机 Key 文件访问控制已收紧。
+- 真实天地图 Key/大陆网络与影像坐标对齐：PENDING / USER_MANUAL_CHECK。

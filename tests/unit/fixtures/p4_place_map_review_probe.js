@@ -15,7 +15,7 @@ function setup(withMapLibre = true, fetchImpl = null) {
   vm.createContext(context);
   let src=fs.readFileSync('src/photo_search/web/map.js','utf8');
   const end=src.lastIndexOf('})();');
-  src=src.slice(0,end)+';globalThis.review={refresh,startMap,labels,schedule,setMap(m){map=m;},state(){return {version,gridAssets};}};'+src.slice(end);
+  src=src.slice(0,end)+';globalThis.review={refresh,startMap,labels,schedule,loadSettingsUi,setMap(m){map=m;},setRuntimeConfig(value){runtimeConfig=value;},state(){return {version,gridAssets,runtimeConfig};}};'+src.slice(end);
   vm.runInContext(src,context);
   context.review.setMap(map);
   return {context,calls,elements,nodes,map,setWest(value){west=value;}};
@@ -28,6 +28,15 @@ async function flush(){for(let i=0;i<10;i++)await Promise.resolve();}
   const missing=setup(false);missing.context.review.startMap();await flush();
   const beforeMore=missing.calls.length;missing.elements.get('more').onclick();await flush();
   result.missing={requests:beforeMore,more_requests:missing.calls.length-beforeMore,notice:missing.elements.get('notice').textContent};
+  let runtimeCalls=0;
+  const recover=setup(true,url=>{
+    if(url.endsWith('/provider-settings'))return Promise.resolve({ok:true,json:()=>Promise.resolve({status:'CONFIGURED',configured:true,default_layer:'vector'})});
+    if(url.endsWith('/provider-runtime')){runtimeCalls++;return Promise.resolve({ok:true,json:()=>Promise.resolve({status:'CONFIGURED',configured:true,key:'saved-runtime-key',default_layer:'vector'})});}
+    return Promise.resolve({ok:true,json:()=>Promise.resolve({})});
+  });
+  recover.context.review.setMap(null);recover.context.review.setRuntimeConfig({status:'RUNTIME_UNAVAILABLE',default_layer:'vector'});
+  await recover.context.review.loadSettingsUi();
+  result.runtimeRecovery={runtimeCalls,status:recover.context.review.state().runtimeConfig.status,key:recover.context.review.state().runtimeConfig.key};
   const identical=setup();identical.context.review.labels({mode:'photos'});identical.nodes[0].click({stopPropagation(){}});await flush();
   const memberButtons=identical.elements.get('grid').children;const memberCount=memberButtons.length;const detailHrefs=[];for(const tile of memberButtons){tile.onclick();detailHrefs.push(identical.context.location.href)}
   result.identical={leaves_calls:identical.calls.filter(x=>x==='leaves').length,members:memberCount,detailHrefs};

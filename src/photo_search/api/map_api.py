@@ -8,6 +8,7 @@ import math
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from photo_search.api.routes import service_of
 from photo_search.taken_time import read as time_read
@@ -15,6 +16,79 @@ from photo_search.taken_time import read as time_read
 router = APIRouter(prefix="/api/v1/map", tags=["map"])
 MAX_PHOTO_POINTS = 5000
 MAX_GRID_CELLS = 1000
+
+
+def _provider_config(request: Request):
+    from photo_search.map_provider_config import MapProviderConfigError, read
+
+    try:
+        return read(request.app.state.api.settings.data_root), None
+    except MapProviderConfigError:
+        return None, "CONFIG_UNREADABLE"
+
+
+def _private_response(body: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(body, headers={"Cache-Control": "no-store, private"})
+
+
+@router.get("/provider-settings")
+async def provider_settings(request: Request) -> JSONResponse:
+    config, error = _provider_config(request)
+    if error:
+        return _private_response({"configured": False, "provider": "tianditu", "default_layer": "vector", "status": error})
+    return _private_response({"configured": bool(config["key"]), "provider": "tianditu",
+                              "default_layer": config["default_layer"],
+                              "status": "CONFIGURED" if config["key"] else "NOT_CONFIGURED"})
+
+
+@router.get("/provider-runtime")
+async def provider_runtime(request: Request) -> JSONResponse:
+    config, error = _provider_config(request)
+    if error:
+        return _private_response({"status": error})
+    if not config["key"]:
+        return _private_response({"status": "NOT_CONFIGURED", "provider": "tianditu",
+                                  "default_layer": config["default_layer"]})
+    return _private_response({"status": "CONFIGURED", "provider": "tianditu", "key": config["key"],
+                              "default_layer": config["default_layer"]})
+
+
+@router.put("/provider-settings")
+async def update_provider_settings(request: Request) -> JSONResponse:
+    from photo_search.map_provider_config import MapProviderConfigError, write
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) - {"key", "default_layer"} or not body:
+            raise MapProviderConfigError("invalid settings fields")
+        key = body.get("key")
+        if "key" in body and (not isinstance(key, str) or not key):
+            raise MapProviderConfigError("empty Key cannot replace a saved Key")
+        layer = body.get("default_layer")
+        config = write(request.app.state.api.settings.data_root, key=key,
+                       default_layer=layer if layer is not None else None)
+    except MapProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        # Do not echo request values or filesystem details; the Key is sensitive.
+        raise HTTPException(status_code=500, detail="map settings could not be saved") from exc
+    return _private_response({"configured": bool(config["key"]), "provider": "tianditu",
+                              "default_layer": config["default_layer"],
+                              "status": "CONFIGURED" if config["key"] else "NOT_CONFIGURED"})
+
+
+@router.delete("/provider-settings/key")
+async def clear_provider_key(request: Request) -> JSONResponse:
+    from photo_search.map_provider_config import MapProviderConfigError, write
+
+    try:
+        config = write(request.app.state.api.settings.data_root, clear_key=True)
+    except MapProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="map settings could not be saved") from exc
+    return _private_response({"configured": False, "provider": "tianditu",
+                              "default_layer": config["default_layer"], "status": "NOT_CONFIGURED"})
 
 
 def _revision(db: Any) -> int:

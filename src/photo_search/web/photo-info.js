@@ -106,19 +106,33 @@
     }
     function draw() {
       if (!state.active || !canvas.isConnected || !window.maplibregl) return;
-      try {
-        var config = window.AISEARCH_MAP_CONFIG || {};
+      fetch("/api/v1/map/provider-runtime", { credentials: "same-origin", cache: "no-store" }).then(function (response) {
+        return response.json().then(function (runtime) { if (!response.ok) throw new Error("runtime unavailable"); return runtime; });
+      }).then(function (runtime) {
+        if (!state.active || !canvas.isConnected) return;
+        if (runtime.status !== "CONFIGURED" || !runtime.key) {
+          var unavailableMessage = runtime.status === "NOT_CONFIGURED"
+            ? "未配置天地图；已知坐标："
+            : runtime.status === "CONFIG_UNREADABLE"
+              ? "地图配置无法读取；已知坐标："
+              : "地图服务暂不可用；已知坐标：";
+          canvas.textContent = unavailableMessage + asset.latitude + ", " + asset.longitude;
+          return;
+        }
+        var config = window.AISEARCH_MAP_CONFIG, layerType = runtime.default_layer === "imagery" ? "imagery" : "vector";
+        var allSources = config.sourceTemplates(runtime.key), ids = config.layerIds(layerType);
+        var sourceNames = layerType === "imagery" ? ["td-img", "td-cia"] : ["td-vec", "td-cva"];
         state.map = new window.maplibregl.Map({ container: canvas, center: [asset.longitude, asset.latitude], zoom: 12,
-          interactive: false, attributionControl: true,
-          style: { version: 8, sources: { osm: { type: "raster", tiles: [config.tile_url || "https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256, attribution: config.attribution || "© OpenStreetMap contributors" } }, layers: [{ id: "osm", type: "raster", source: "osm" }] } });
+          interactive: false, attributionControl: true, style: { version: 8, sources: {}, layers: [] } });
         state.map.on("load", function () {
           if (!state.active || !state.map) return;
+          sourceNames.forEach(function (name) { state.map.addSource(name, allSources[name]); });
+          ids.forEach(function (id, index) { state.map.addLayer({ id: id, type: "raster", source: sourceNames[index], minzoom: 0, maxzoom: 18 }); });
           state.map.addSource("photo-location", { type: "geojson", data: { type: "Feature", geometry: { type: "Point", coordinates: [asset.longitude, asset.latitude] }, properties: {} } });
           state.map.addLayer({ id: "photo-location", type: "circle", source: "photo-location", paint: { "circle-radius": 7, "circle-color": "#dc3545", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
         });
         state.map.on("error", unavailable);
-      } catch (_) { unavailable(); }
+      }).catch(unavailable);
     }
     if (window.maplibregl) draw();
     else {

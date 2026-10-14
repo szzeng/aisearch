@@ -35,7 +35,7 @@ const document={cookie:"ps_csrf=synthetic-token",createElement:t=>new Element(t)
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
-const window={location:{href:"/"},maplibregl:{Map:FakeMap}};
+const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
 const fetches=[]; let releaseDetail;
 const ok=body=>({ok:true,status:200,json:async()=>body});
 const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height:800,format:"jpeg",availability:"present",taken_time:{label:"file_time",taken_at:"2020-01-02T03:04:05.000",camera:"Camera X"},locations:[
@@ -68,6 +68,7 @@ const context={document,window,navigator:{clipboard:{writeText:()=>Promise.rejec
   if(url.endsWith("/persons/8")) return ok({person_id:8,canonical_person_id:7,name:"爸爸",avatar_face_id:"a".repeat(64)});
   if(url.includes("/map/assets")) return ok({total:url.includes("asset_id=301")||url.includes("asset_id=302")?0:1});
   if(url.endsWith("/geo")) return ok({status:"VALID",input_revision:"sha-101",datum_status:"WGS84",normalized_wgs84:{latitude:0,longitude:0}});
+  if(url==="/api/v1/map/provider-runtime") return ok({status:"CONFIGURED",key:"fake-map-key",default_layer:"vector"});
   throw new Error("unexpected request: "+url);
 }};
 vm.createContext(context); vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
