@@ -50,6 +50,7 @@
 - Check only the affected pages and essential click, selection, navigation, and return flows. Distinguish product failures from browser-tool restrictions and missing fixture states; record a blocker instead of repeatedly attempting a prohibited action.
 - Save genuine browser screenshots to `docs/reports/artifacts/` when export is supported. Report routes, actions, observations, and separately tracked browser interaction, screenshot, visual, and performance states. Untested/tool-limited items remain PENDING; narrow viewports are not proof of native 200% zoom.
 - Follow the task card's test scope. API/static tests and mockups do not replace real browser evidence, and pending required checks cannot be marked PASS.
+- Minimize browser tool/token use: reuse fixtures and verified setup; for a small UI fix usually check 1 key flow, for a routine UI task 2–3, with only essential screenshots (typically 0–1 or 1–2 respectively). Avoid step-by-step screenshots, rechecking unaffected paths, repetitive blocked attempts, and dumping full logs into the conversation; use short summaries and inspect details only on failure. These are defaults, not caps: expand for real defects, affected regressions, or any required task-card acceptance.
 
 ### Testing Rules
 
