@@ -76,7 +76,7 @@ def test_place_page_defers_management_requests_and_supports_anchor_loading():
     page = (root / "src/photo_search/web/places.html").read_text(encoding="utf-8")
     script = (root / "src/photo_search/web/places.js").read_text(encoding="utf-8")
     assert page.index("places-albums.js") < page.index("places.js")
-    assert "places.js?v=p4-place-album-perf-a-2" in page
+    assert "places.js?v=p4-ui2-batch-select-unify-a-1" in page
     boot = script[script.index("function boot()") : script.index('if (document.readyState')]
     assert "setupDeferredPanels();" in boot
     assert "probeCapabilities();\n    loadDatasets();" not in boot

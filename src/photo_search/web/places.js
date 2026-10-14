@@ -75,6 +75,7 @@
       frozen: null,
     },
     selection: {},
+    selectionAnchor: null,
     operations: { cursor: null, hasMore: false, loading: false },
     requestCounter: 0,
   };
@@ -890,6 +891,7 @@
       state.suggested.revision = null;
       state.suggested.frozen = null;
       state.selection = {};
+      state.selectionAnchor = null;
       clear(els.suggestedList);
     }
     setStatus(els.suggestedStatus, reset ? "正在读取待确认建议…" : "正在读取下一页建议…");
@@ -919,6 +921,12 @@
       .catch(function (failure) {
         state.suggested.loading = false;
         els.suggestedMore.disabled = true;
+        if (failure.code === "PLACE_SUGGESTION_REVISION_STALE") {
+          state.selection = {};
+          state.selectionAnchor = null;
+          state.suggested.frozen = null;
+          syncSuggestionSelection();
+        }
         var prefix =
           failure.code === "PLACE_SUGGESTION_REVISION_STALE"
             ? "建议集合已变化，需重新加载："
@@ -931,14 +939,26 @@
     var assetId = String(asset.asset_id);
     var item = element("li", "card place-row");
     item.setAttribute("data-asset-id", assetId);
+    item.setAttribute("data-selected", String(Boolean(state.selection[assetId])));
     var head = element("p", "place-head");
     var label = element("label", "check-line");
     var box = document.createElement("input");
     box.type = "checkbox";
     box.setAttribute("data-asset-id", assetId);
+    box.setAttribute("aria-label", "选择资产 #" + assetId);
     box.checked = Boolean(state.selection[assetId]);
+    box.addEventListener("click", function (event) {
+      if (event.shiftKey) {
+        event.preventDefault();
+        selectSuggestionRange(assetId);
+      } else {
+        state.selectionAnchor = assetId;
+      }
+    });
     box.addEventListener("change", function () {
       state.selection[assetId] = box.checked;
+      item.setAttribute("data-selected", String(box.checked));
+      state.suggested.frozen = null;
       updateSelectionSummary();
     });
     label.appendChild(box);
@@ -1206,6 +1226,39 @@
     text(els.selectionSummary, line);
   }
 
+  function syncSuggestionSelection() {
+    Array.prototype.forEach.call(
+      els.suggestedList.querySelectorAll("input[type=checkbox]"),
+      function (box) {
+        var selected = Boolean(state.selection[String(box.getAttribute("data-asset-id"))]);
+        box.checked = selected;
+        var row = box.parentNode;
+        while (row && row !== els.suggestedList && row.getAttribute("data-asset-id") === null) row = row.parentNode;
+        if (row && row !== els.suggestedList) row.setAttribute("data-selected", String(selected));
+      }
+    );
+    updateSelectionSummary();
+  }
+
+  function selectSuggestionRange(assetId) {
+    var rows = Array.prototype.slice.call(els.suggestedList.children || []);
+    var from = rows.findIndex(function (row) { return row.getAttribute("data-asset-id") === state.selectionAnchor; });
+    var to = rows.findIndex(function (row) { return row.getAttribute("data-asset-id") === assetId; });
+    if (from < 0 || to < 0) {
+      state.selectionAnchor = assetId;
+      state.selection[assetId] = true;
+      state.suggested.frozen = null;
+      syncSuggestionSelection();
+      return;
+    }
+    rows.slice(Math.min(from, to), Math.max(from, to) + 1).forEach(function (row) {
+      state.selection[String(row.getAttribute("data-asset-id"))] = true;
+    });
+    state.selectionAnchor = assetId;
+    state.suggested.frozen = null;
+    syncSuggestionSelection();
+  }
+
   function selectedIds() {
     return Object.keys(state.selection)
       .filter(function (key) {
@@ -1230,7 +1283,27 @@
         }
       }
     );
-    updateSelectionSummary();
+    state.suggested.frozen = null;
+    syncSuggestionSelection();
+  }
+
+  function invertLoadedSuggestions() {
+    Array.prototype.forEach.call(
+      els.suggestedList.querySelectorAll("input[type=checkbox]"),
+      function (box) {
+        var id = String(box.getAttribute("data-asset-id"));
+        state.selection[id] = !Boolean(state.selection[id]);
+      }
+    );
+    state.suggested.frozen = null;
+    syncSuggestionSelection();
+  }
+
+  function clearSuggestionSelection() {
+    state.selection = {};
+    state.selectionAnchor = null;
+    state.suggested.frozen = null;
+    syncSuggestionSelection();
   }
 
   //: ``全选结果`` must freeze an asset_id snapshot instead of re-running the query later.
@@ -1265,6 +1338,7 @@
       .then(function (frozen) {
         state.suggested.frozen = frozen;
         state.selection = {};
+        state.selectionAnchor = null;
         frozen.forEach(function (assetId) {
           state.selection[String(assetId)] = true;
         });
@@ -1294,7 +1368,7 @@
     setError(els.batchError, "");
     var ids = selectedIds();
     if (!ids.length) {
-      setError(els.batchError, "请先勾选资产（或用「全选本页」/「冻结全部结果快照」）。");
+      setError(els.batchError, "请先勾选资产（或用「全选已加载」/「冻结全部结果快照」）。");
       return;
     }
     var target = null;
@@ -1638,6 +1712,7 @@
       suggestedStatus: document.getElementById("suggested-status"),
       suggestedList: document.getElementById("suggested-list"),
       suggestedSelectPage: document.getElementById("suggested-select-page"),
+      suggestedInvertLoaded: document.getElementById("suggested-invert-loaded"),
       suggestedClear: document.getElementById("suggested-clear"),
       selectionSummary: document.getElementById("selection-summary"),
       targetPlaceId: document.getElementById("target-place-id"),
@@ -1697,17 +1772,8 @@
     });
     els.suggestedFreeze.addEventListener("click", freezeAll);
     els.suggestedSelectPage.addEventListener("click", selectPage);
-    els.suggestedClear.addEventListener("click", function () {
-      state.selection = {};
-      state.suggested.frozen = null;
-      Array.prototype.forEach.call(
-        els.suggestedList.querySelectorAll("input[type=checkbox]"),
-        function (box) {
-          box.checked = false;
-        }
-      );
-      updateSelectionSummary();
-    });
+    els.suggestedClear.addEventListener("click", clearSuggestionSelection);
+    els.suggestedInvertLoaded.addEventListener("click", invertLoadedSuggestions);
     els.pickerSearch.addEventListener("click", searchPlacesForPicker);
     els.batchAssign.addEventListener("click", function () {
       runBatch("assign");

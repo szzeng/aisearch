@@ -19,14 +19,18 @@ def test_person_organization_workflows(scenario: str) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_loaded_select_all_and_invert_shortcuts_are_absent_from_pages() -> None:
+def test_loaded_select_all_and_invert_shortcuts_are_scoped_to_collection_members() -> None:
     root = Path(__file__).resolve().parents[2]
     pages = [
         root / "src/photo_search/web/persons.html",
         root / "docs/mockups/ui2-interactive/demo.html",
         root / "docs/mockups/ui2-interactive/app.js",
     ]
-    for page in pages:
+    persons = pages[0].read_text(encoding="utf-8")
+    collection_actions = persons.split('id="pa-collection-people-actions"', 1)[1].split("</div>", 1)[0]
+    assert 'id="pa-collection-people-select-loaded"' in collection_actions
+    assert 'id="pa-collection-people-invert-loaded"' in collection_actions
+    for page in pages[1:]:
         content = page.read_text(encoding="utf-8")
         assert "全选已加载" not in content, page
         assert "反选已加载" not in content, page

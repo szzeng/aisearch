@@ -657,7 +657,13 @@
         const card = node("article", undefined, "pa-collection-card");
         const id = Number(person.person_id), selected = state.collectionSelectedPeople.has(id);
         card.personId = id;
-        const choose = button(selected ? "取消移出选择" : "选择移出", (event) => {
+        const choose = node("input"); choose.type = "checkbox"; choose.className = "pa-collection-checkbox";
+        choose.setAttribute("aria-label", "选择人物“" + name(person) + "”移出合集");
+        choose.checked = selected;
+        choose.disabled = state.writing || Boolean(state.pendingWrite);
+        choose.addEventListener("click", (event) => {
+          event.preventDefault(); event.stopPropagation();
+          if (state.writing || state.pendingWrite) return;
           const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
           const key = "collection:" + collection.collection_id + ":" + collection.instance_token;
           if (event && event.shiftKey) {
@@ -676,7 +682,10 @@
           else state.collectionSelectedPeople.add(id);
           state.selectAnchors.set(key, id); updateCollectionSelection();
         });
-        card.chooseButton = choose;
+        choose.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") { event.preventDefault(); choose.click(); }
+        });
+        card.selectionBox = choose;
         const open = button("", () => { state.returnCollection = collection; openAlbum(person); }, "pa-person-card");
         open.append(picture(person.thumbnail_url, name(person), "pa-avatar"), node("strong", name(person)), node("span", person.asset_count + " 张照片"));
         card.append(choose, open); $("collection-people").append(card);
@@ -692,10 +701,36 @@
   }
   function updateCollectionSelection() {
     $("collection-people-selected").textContent = "已选 " + state.collectionSelectedPeople.size + " 人";
-    Array.from($("collection-people").children).forEach((card) => { if (card.chooseButton) card.chooseButton.textContent = state.collectionSelectedPeople.has(card.personId) ? "取消移出选择" : "选择移出"; });
-    $("collection-remove").disabled = state.collectionSelectedPeople.size === 0;
     const busy = state.writing || Boolean(state.pendingWrite);
+    Array.from($("collection-people").children).forEach((card) => {
+      if (card.selectionBox) {
+        const selected = state.collectionSelectedPeople.has(card.personId);
+        card.selectionBox.checked = selected; card.selectionBox.disabled = busy;
+        card.setAttribute("data-selected", String(selected));
+      }
+    });
+    $("collection-remove").disabled = busy || state.collectionSelectedPeople.size === 0;
+    $("collection-people-select-loaded").disabled = busy;
+    $("collection-people-invert-loaded").disabled = busy;
     ["collection-selection-clear", "collection-remove"].forEach((id) => { $(id).disabled = busy || (id === "collection-remove" && state.collectionSelectedPeople.size === 0); });
+  }
+  function selectLoadedCollectionPeople(invert) {
+    if (state.writing || state.pendingWrite) return;
+    const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
+    const additions = cards.filter((card) => invert ? state.collectionSelectedPeople.has(card.personId) : !state.collectionSelectedPeople.has(card.personId));
+    const removals = invert ? additions.length : 0;
+    if (state.collectionSelectedPeople.size - removals + (invert ? 0 : additions.length) > 500) {
+      message("全选已加载会超过 500 个人物，未更改已有选择。"); return;
+    }
+    cards.forEach((card) => {
+      if (invert && state.collectionSelectedPeople.has(card.personId)) state.collectionSelectedPeople.delete(card.personId);
+      else if (!invert) state.collectionSelectedPeople.add(card.personId);
+    });
+    updateCollectionSelection();
+  }
+  function clearCollectionSelection() {
+    if (state.writing || state.pendingWrite) return;
+    state.collectionSelectedPeople.clear(); updateCollectionSelection();
   }
   async function removeCollectionSelection() {
     if (state.writing || state.pendingWrite || !state.collection || !state.collectionSelectedPeople.size) return;
@@ -1808,7 +1843,9 @@
     $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("search-scope").hidden = true; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);
-    $("collection-selection-clear").addEventListener("click", () => { state.collectionSelectedPeople.clear(); updateCollectionSelection(); });
+    $("collection-selection-clear").addEventListener("click", clearCollectionSelection);
+    $("collection-people-select-loaded").addEventListener("click", () => selectLoadedCollectionPeople(false));
+    $("collection-people-invert-loaded").addEventListener("click", () => selectLoadedCollectionPeople(true));
     $("collection-rename").addEventListener("click", () => renameCollection(state.collection));
     $("collection-delete").addEventListener("click", () => deleteCollection(state.collection));
     $("name").addEventListener("click", () => editBase({ mode: "name", person: { ...state.person } }, "给这个人取名字", "可用家人的称呼或你习惯的名字。"));

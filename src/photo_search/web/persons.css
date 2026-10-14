@@ -88,6 +88,8 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 .pa-person-selection { top: 0.5rem; right: 0.5rem; }
 .pa-collection-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
 .pa-collection-card { min-height: 7rem; padding: 0.9rem; background: var(--panel); box-shadow: var(--shadow-soft); }
+.pa-collection-card[data-selected="true"] { border-color: var(--accent); outline: 2px solid var(--accent); background: var(--tint); }
+.pa-collection-checkbox { flex: 0 0 1.5rem; width: 1.5rem; height: 1.5rem; margin: 0 0.25rem 0 0; accent-color: var(--accent); cursor: pointer; }
 .pa-collection-badge { width: 3.25rem; height: 3.25rem; border-radius: 0.85rem; background: var(--tint); }
 #pa-album-avatar .pa-collection-badge { min-height: 3.75rem; height: auto; padding: 0.35rem; font-size: 0.78rem; line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
 .pa-collection-open { font-weight: 650; }

@@ -1,6 +1,6 @@
 # P4-UI2-BATCH-SELECT-UNIFY-A — UI 2.0 批量勾选与 Shift 连选统一
 
-- **状态**：READY / 待实施；仅定义待执行工作，不代表已经修复
+- **状态**：SCOPED PASS / 已按任务卡实施和定向验收（2026-10-14）
 - **优先级**：P1（已有批量入口缺少 Shift、选择错位或误写按 P0 修复）
 - **核对基准**：`szzeng/aisearch`，`master` HEAD `79db38ac1396de74bac6b7848b799a6d0516858a`，2026-10-14；执行前重读最新 HEAD、工作树和本卡所列报告，不覆盖后来提交
 - **推荐执行**：GPT-6 High / LUNA High；以一次实现、一次针对性自检为主，按仓库风险规则检查受影响写入边界，不要求另外组织全站审查。单一会话/串行修改共享文件
@@ -87,6 +87,8 @@
 **最低代码检查**：对改过的 JS 运行 `node --check`；对工作区运行 `git diff --check`；运行上述实际相关的 **1～2 个定向测试文件**（必要时第三个）；按照 `AGENTS.md` 输出一份 `test-results/P4-UI2-BATCH-SELECT-UNIFY-A.xml` 的 JUnit。没有修改 Python 生产代码就不跑 Ruff/编译。执行报告记录实际命令和通过/失败数，不虚写预期数字。
 
 **浏览器为尽力验收，不阻断简单交付**：如果已有可用的 Codex 内置浏览器 + 隔离合成产品会话，优先实点 **地点 Shift 和合集 Shift** 各一次，顺手确认复选框没有遮住卡片，Esc/弹窗不冲突；只有在能真实操作和保存时才截图至 `docs/reports/artifacts/`。若缺少夹具/一次性会话、不能传递 Shift 或浏览器能力不足，直接记 `BROWSER_PENDING` / `SHIFT_BROWSER_PENDING_TOOL_LIMIT`，以定向 DOM 测试为本卡的行为完成依据；**不要求专门修浏览器环境，不要求截图，也不把 DOM 模拟称为浏览器 PASS**。实际使用中的视觉问题由用户后续日常抽查补充即可。
+
+执行记录：地点建议新增 Shift/全选已加载/反选已加载/清空；人物合集成员改为 checkbox 并保留人物详情按钮，补齐已加载全选/反选。按用户要求没有运行浏览器，记录 `BROWSER_NOT_RUN_USER_REQUEST`；23 个定向测试、两份 JS `node --check` 与 `git diff --check` 通过。细节见[执行报告](../reports/P4-UI2-BATCH-SELECT-UNIFY-A.md)。
 
 ## 7. 交付、判定与停止
 

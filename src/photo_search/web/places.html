@@ -7,14 +7,14 @@
     <title>地点整理</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
-    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-visual-final-a-1" />
+    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-batch-select-unify-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-visual-final-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-visual-final-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-ui-viewer-f-1" defer></script>
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/places-albums.js?v=p4-ui-places-e-1" defer></script>
-    <script src="/web/places.js?v=p4-place-album-perf-a-2" defer></script>
+    <script src="/web/places.js?v=p4-ui2-batch-select-unify-a-1" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -253,10 +253,12 @@
         </div>
         <div id="suggested-status" class="state-block" role="status" aria-live="polite"></div>
         <p>
-          <button type="button" id="suggested-select-page">全选本页</button>
+          <button type="button" id="suggested-select-page">全选已加载</button>
+          <button type="button" id="suggested-invert-loaded">反选已加载</button>
           <button type="button" id="suggested-clear">清空选择</button>
           <span class="hint" id="selection-summary"></span>
         </p>
+        <p class="hint">按住 Shift 连选，仅限已加载的建议；冻结全部结果快照会单独固定当时的 asset_id 集合。</p>
         <ul id="suggested-list" class="place-list" aria-label="待确认建议"></ul>
 
         <h3>批量动作</h3>

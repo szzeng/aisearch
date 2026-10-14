@@ -1,4 +1,8 @@
-## Current user-directed task: P4-UI2-TIMELINE-CONTROLS-FIX-A — IMPLEMENTED / BROWSER PENDING (2026-10-14)
+## Current user-directed task: P4-UI2-BATCH-SELECT-UNIFY-A — SCOPED PASS / BROWSER NOT RUN BY REQUEST (2026-10-14)
+
+地点建议按已加载顺序支持 `asset_id` Shift 连选、全选/反选/清空；人物合集成员改用原生 checkbox，维持独立人物详情按钮和按 `person_id` 原子移出。既有人物列表、人脸、待整理/已忽略候选组选择回归通过；选择不触发写 API。定向 JUnit **23/0/0/0**，两份 JS `node --check` 与 `git diff --check` 通过。[任务卡](tasks/P4-UI2-BATCH-SELECT-UNIFY-A.md) / [报告](reports/P4-UI2-BATCH-SELECT-UNIFY-A.md)。用户要求跳过浏览器，状态 `BROWSER_NOT_RUN_USER_REQUEST`；不声明浏览器/目视 PASS。未跑全仓、真实图库、模型/GPU、性能或打包检查；无后端协议改动。
+
+## Previous user-directed task: P4-UI2-TIMELINE-CONTROLS-FIX-A — IMPLEMENTED / BROWSER PENDING (2026-10-14)
 
 修复时间轴下列表专属控件被 `display:flex` 覆盖 `hidden` 的问题，并将日期说明整体隐藏以消除空白；列表切回仍沿用现有模式逻辑。定向 JUnit **8/0/0/0**、`git diff --check` 通过。[任务卡](tasks/P4-UI2-TIMELINE-CONTROLS-FIX-A.md) / [报告](reports/P4-UI2-TIMELINE-CONTROLS-FIX-A.md)。按用户要求跳过浏览器验证，故首次显示无闪现、列表往返恢复及桌面/窄屏交互仍 `BROWSER_PENDING`，整卡不标 PASS。未访问真实图库、模型/GPU；未做全仓或性能验证。
 ## Current user-directed task: P4-UI2-VISUAL-FINAL-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
