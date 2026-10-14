@@ -74,4 +74,9 @@ CUA 返回了可供当场观察的地点页、地图页截图，但没有项目�
 - 前置 A/C/CORE/B/D 的未验收门仍按各自报告保留。本报告不追认这些门通过。
 - 下一候选 SEARCH-MAP 卡已存在；E 的性能和截图验收门关闭前不自动开始它。
 
+
+## 2026-10-14 后续浏览器复核尝试
+
+复用已有隔离 Places-E 数据启动本机产品服务，并在浏览器打开 `/places`。未认证页面正常呈现，但地点端点提示需要本机 session；CUA 浏览器拦截启动器生成的一次性 session 链接（`ERR_BLOCKED_BY_CLIENT`），因此本轮未进入认证态、未执行新的交互闭环，也未捕获有效截图。测试服务已停止，隔离 fixture 未被修改。先前记录的真实产品浏览器交互证据继续有效；本轮不改变 `BROWSER_SCREENSHOT_PENDING`、`PERF_200K=PENDING` 或 `CHECK_300K=PENDING` 状态。
+
 本地提交只收录本任务文件及对应状态摘要；初始工作树中原已有未提交的 `docs/development-status.md`、`docs/reports/P4-UI-TIMELINE-CORE-A.md`、`tests/integration/test_p3_face_correction_lifecycle.py` 差异；保留这些内容，未把 CORE 报告或 face lifecycle 测试改动归因于 E。
