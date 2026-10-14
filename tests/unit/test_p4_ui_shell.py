@@ -32,9 +32,10 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert ":focus-visible {\n  outline: 3px solid var(--accent);" in styles
     map_script = (WEB / "map.js").read_text(encoding="utf-8")
     map_page = (WEB / "map.html").read_text(encoding="utf-8")
-    assert "map.js?v=p4-ui-shell-a-1" in map_page
-    assert "map.css?v=p4-ui-places-e-1" in map_page
+    assert "map.js?v=p4-ui-timeline-search-map-stage2-a-1" in map_page
+    assert "map.css?v=p4-ui2-visual-final-a-1" in map_page
     map_styles = (WEB / "map.css").read_text(encoding="utf-8")
+    assert "height: auto;\n  min-height: 0;" in map_styles
     assert ".map-page-main > section::-webkit-scrollbar-track {\n  background: var(--bg);\n}" in map_styles
     assert ".map-page-main > section::-webkit-scrollbar-thumb {" in map_styles
     assert "scrollbar-color: var(--line) var(--bg);" in map_styles
@@ -44,6 +45,12 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert 'href="/map"' in (WEB / "places.html").read_text(encoding="utf-8")
     assert 'id="search-form"' in (WEB / "search.html").read_text(encoding="utf-8")
     assert 'id="pa-search-photos"' in (WEB / "persons.html").read_text(encoding="utf-8")
+
+    timeline = (WEB / "photo-timeline.css").read_text(encoding="utf-8")
+    assert "minmax(min(100%, 10rem), 1fr)" in timeline
+    assert "border-radius: var(--radius-lg);" in timeline
+    assert "--radius-card" not in timeline
+    assert "--radius-control" not in timeline
 
 
 def test_shell_keeps_left_navigation_at_common_200_percent_effective_width() -> None:

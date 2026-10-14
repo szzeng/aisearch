@@ -710,7 +710,7 @@ dl.media-list dd {
 /* P4-UI-SHELL-A: shared navigation frame. Page content and its existing IDs stay intact. */
 body.app-shell {
   display: grid;
-  grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+  grid-template-columns: minmax(12rem, 13rem) minmax(0, 1fr);
   /* Keep the full-height sidebar from stretching empty notice/nav rows above main. */
   grid-template-rows: max-content max-content max-content minmax(0, 1fr);
   grid-template-areas:
@@ -722,7 +722,7 @@ body.app-shell {
   height: 100vh;
   min-height: 100vh;
   padding: 0;
-  column-gap: clamp(1rem, 2.5vw, 2.5rem);
+  column-gap: clamp(1rem, 2vw, 2rem);
 }
 
 .app-sidebar {

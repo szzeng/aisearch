@@ -2,7 +2,7 @@
 
 - **类型**：UI 2.0 最终视觉收口；现有功能上的样式与可用性修正，非二次 UI 重构
 - **优先级**：P1（其中遮挡、不可点击、不可读、溢出等视觉可用性缺陷按 P0 处理）
-- **状态**：PLANNED / 尚未实施；本卡仅为任务设计
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-14）；重试时主要路由 session 正常、地图与 viewer 交互已观察、4 张浏览器截图已落盘；search profile、真实 Zoom 200% 与主题切换对照仍待验；LUNA High 修复复核已完成
 - **设计基线**：`szzeng/aisearch`，编卡时 `master` HEAD `83daa6cb`，2026-10-14；施工前先读取最新 HEAD、现有报告，避免覆盖 FLOW-A 或性能卡的同期修改
 - **唯一用户确认的视觉参考**：[`docs/mockups/ui2-interactive/demo.html`](../mockups/ui2-interactive/demo.html)，配合 [`README.md`](../mockups/ui2-interactive/README.md) 的页面映射；旧 SVG/PNG 不再是验收标准
 - **现行规范**：[`docs/plans/P4-UI-VISUAL-TOKENS.md`](../plans/P4-UI-VISUAL-TOKENS.md)

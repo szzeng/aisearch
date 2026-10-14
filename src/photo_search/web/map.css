@@ -22,8 +22,8 @@
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(18rem, 1fr);
   gap: 1rem;
-  height: calc(100vh - 5rem);
-  min-height: 28rem;
+  height: auto;
+  min-height: 0;
   align-items: stretch;
 }
 

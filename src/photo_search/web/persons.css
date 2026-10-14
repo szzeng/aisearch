@@ -41,7 +41,7 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .pa-image-ready .pa-image-fallback { visibility: hidden; }
 .pa-avatar { width: 6.5rem; height: 6.5rem; border-radius: 50%; }
 .pa-face-button { border: none; background: transparent; padding: 0; border-radius: 50%; }
-.pa-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 0.6rem; margin: 1rem 0; }
+.pa-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.6rem; margin: 1rem 0; }
 .pa-photo-card { min-width: 0; padding: 0; border: none; border-radius: 0.7rem; overflow: hidden; }
 .pa-photo { width: 100%; aspect-ratio: 4 / 3; border: none; }
 .pa-photo-date { display: block; padding: 0.3rem 0.5rem; font-size: 0.75rem; color: var(--fg-muted); text-align: left; }
@@ -104,7 +104,7 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 .pa-collection-toolbar { justify-content: space-between; margin: 0.75rem 0; }
 .pa-timeline { min-width: 0; }
 .pa-timeline .photo-timeline__controls { padding: 0.75rem; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
-.pa-timeline .photo-timeline__page { grid-template-columns: repeat(auto-fill, minmax(min(100%, 12rem), 1fr)); gap: 0.65rem; }
+.pa-timeline .photo-timeline__page { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.65rem; }
 .pa-timeline .photo-timeline__heading { grid-column: 1 / -1; }
 .pa-timeline .pa-photo-card { display: grid; grid-template-rows: minmax(0, 1fr) auto; border: 1px solid var(--line); background: var(--panel); }
 .pa-timeline .pa-photo-card .pa-photo { aspect-ratio: 4 / 3; }

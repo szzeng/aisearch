@@ -8,7 +8,7 @@
 .browse-mode-controls button {
   min-height: 2.5rem;
   border: 1px solid var(--line, #d9e2dd);
-  border-radius: var(--radius-control, 10px);
+  border-radius: var(--radius);
   padding: 0.4rem 0.7rem;
   color: var(--fg, #22312b);
   background: var(--panel, #fff);
@@ -40,7 +40,7 @@
   margin: 0 0 1rem;
   padding: 0.75rem;
   border: 1px solid var(--line, #d9e2dd);
-  border-radius: var(--radius-card, 14px);
+  border-radius: var(--radius-lg);
   background: var(--panel, #fff);
 }
 
@@ -58,7 +58,7 @@
 .photo-timeline__next {
   min-height: 2.5rem;
   border: 1px solid var(--line, #d9e2dd);
-  border-radius: var(--radius-control, 10px);
+  border-radius: var(--radius);
   padding: 0.4rem 0.7rem;
   color: inherit;
   background: var(--panel, #fff);
@@ -125,7 +125,7 @@
 
 .photo-timeline__page {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr));
   align-items: start;
   gap: 0.85rem;
   margin: 0 0 1.5rem;
@@ -147,14 +147,14 @@
 .photo-timeline__card {
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--line, #d9e2dd);
-  border-radius: var(--radius-card, 14px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
   padding: 0;
   color: inherit;
   text-align: left;
-  background: var(--panel, #fff);
+  background: var(--panel);
   cursor: pointer;
-  box-shadow: var(--shadow-soft, 0 2px 6px rgb(24 45 36 / 7%));
+  box-shadow: var(--shadow-soft);
   transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
@@ -215,7 +215,7 @@
 
 .photo-timeline__restore {
   border: 1px solid var(--line, #d9e2dd);
-  border-radius: var(--radius-lg, 14px);
+  border-radius: var(--radius-lg);
   padding: 0.3rem 0.65rem;
   color: var(--fg-muted, #5f7068);
   background: var(--panel, #fff);

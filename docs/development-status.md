@@ -1,3 +1,11 @@
+## Current user-directed task: P4-UI2-VISUAL-FINAL-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+视觉代码统一已完成：公共侧栏/照片网格密度、共享卡片 token、查看器信息面板、地点面板和地图高度规则小幅调整；受影响 CSS 页面同步 cache-bust。定向 JUnit **9/0/0/0**、diff-check 通过。[任务卡](tasks/P4-UI2-VISUAL-FINAL-A.md) / [报告](reports/P4-UI2-VISUAL-FINAL-A.md)。本次按用户要求重试了本机浏览器验收：一次性会话在首页、地点、地图、人物、搜索、管理各页均有效，相关页面 API 未复现 401。首页 10 张合成照片、地图瓦片与 pan 后 1 张范围照片、合成 viewer 及 Escape/地图详情返回均观察通过。搜索查询因 fixture 无 active search profile 返回 422；人物 0 人、地点包未安装为有效空状态。内置浏览器真实截图 4 张已存 `reports/artifacts/P4-UI2-VISUAL-FINAL-A-*.png`。CSS viewport 470×764 且未见横向溢出；当前 system dark=true，但未切换 light；Ctrl+plus 未改变 viewport，真实 Zoom 200% 仍 pending。LUNA High 修复复核无剩余 finding（不是 DS-H）；`PERF_200K/CHECK_300K` 未按本卡运行，真实图库/模型/GPU未访问；整卡 ACCEPTANCE PARTIAL，无 commit。
+
+## Next necessary action: P4-UI2-VISUAL-FINAL-A remaining visual gates
+
+LUNA High 修复复核、核心页面浏览器走查及截图保存已完成。若以后需要进一步关闭整卡，仍需可用 search profile 下的搜索结果、地点成员 fixture、真实 Zoom 200% 和主题切换对照；按本卡边界继续将 `PERF_200K/CHECK_300K` 保持继承状态，不以窄视口代替 Zoom。
+
 ## Previous user-directed task: P4-UI2-CLOSEOUT-FLOW-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 FILTER_ONLY/有效地点 scope 返回时按原条件重新请求权威首屏；零结果也保存导航快照，错误时保留条件并清理不可信结果。定向 JUnit **26/0/0/0**，Node、Ruff、Python 编译、diff-check 通过；LUNA High 无可执行 finding（不是 DS-H）。本轮按 P4-UI-PLACES-E 本机流程，用应用生成的一次性会话链接在 Codex 内置浏览器复验东京 4 张地点 scope、明确全局重搜、合集成员变化后拒绝旧快照、首页 Escape 与第二页返回、GPS bbox 变化/详情往返。浏览器截图在 `reports/artifacts/`，具体观察和 F01–F10 子项见[报告](reports/P4-UI2-CLOSEOUT-FLOW-A.md)。F04–F09 仍有子路线待验，特别是 F07 race、session 不可验证返回、人物 scope 取消、地点包/时间规则变化和日期轴跨桶；整卡保持 ACCEPTANCE PARTIAL。`SEMANTIC_BROWSER=PENDING`、`PERF_200K=PENDING`；视觉、真实图库、模型/GPU、打包和全仓测试未执行。本轮临时服务已关闭，18821–18825 无监听；无 commit。
