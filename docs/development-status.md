@@ -139,3 +139,10 @@ P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REV
 ## Additional user-directed task: P4-UI2-PERSON-BATCH-UX-FIX-A — IMPLEMENTED / SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
 
 人脸待整理/已忽略选择分区、跨展开组 Shift、合集先浏览后管理、真实反选和直达改名/删除均已按任务卡实施。返工修复了真实 DOM 中 `HTMLCollection.forEach` 异常及 checkbox 取消激活回滚；定向 JUnit **17/0/0/0**，Node `--check` 与 `git diff --check` 通过。LUNA High repair-only 回看关闭两项 finding。内置浏览器已验证待整理区独立入口、首项至第三项 Shift 连选、取消中间项后 checkbox/计数同步；当前合成库无合集成员，浏览器不支持创建合集所需的 `prompt()`，合集成员浏览器验收仍 `COLLECTION_BROWSER_FIXTURE_MISSING`，整卡保持 **ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-UI2-PERSON-BATCH-UX-FIX-A.md) / [报告](reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md)。未访问真实图库；未跑全仓、性能、模型/GPU、打包或发布检查。
+## Previous user-directed task: P4-UI2-VIEWER-SIZE-STABLE-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+共享照片查看器外框改为显式视口公式 `min(94vw,1500px,calc(100vw - 16px)) × min(92dvh,calc(100dvh - 16px))`，内部 grid/stage/panel/扩展区增加尺寸约束与内部滚动；同步五页 CSS cache-bust。定向 JUnit **4/0/0/0**、`git diff --check` 通过，报告见[任务报告](reports/P4-UI2-VIEWER-SIZE-STABLE-A.md)。按用户要求未运行浏览器，修复前/后真实 rect、S01–S06 及截图均 pending，整卡 **ACCEPTANCE PARTIAL**。未访问真实图库/模型/GPU，未跑全仓、性能、打包或发布验证。
+
+## Next necessary action: P4-UI2-VIEWER-SIZE-STABLE-A browser geometry gates
+
+若继续关闭整卡，使用隔离合成图库和 Codex 内置浏览器测 S01 实际 dialog/stage 几何及缩放不变量，再按需要测 S05/S06；本轮没有真实浏览器或像素几何证据。
