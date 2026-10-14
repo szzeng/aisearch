@@ -30,7 +30,7 @@
 
 ## Related UI status
 
-- [P4-UI-SHELL-A](tasks/P4-UI-SHELL-A.md): IMPLEMENTED / VALIDATION PENDING; real 200%, dark and persistent screenshots remain pending.
+- [P4-UI-SHELL-A](tasks/P4-UI-SHELL-A.md): IMPLEMENTED / VALIDATION PENDING; 200% feedback moved the compact-nav breakpoint to 680px and the synthetic in-app browser confirmed visible navigation on a narrow viewport; exact 200%, dark mode and persistent screenshots remain pending. [Report](reports/P4-UI-SHELL-A.md).
 - [P4-UI-SEARCH-C](tasks/P4-UI-SEARCH-C.md): implementation and focused engineering validation passed; full visual checks remain pending.
 - [P4-UI-INTERACTIVE-DEMO](reports/P4-UI-INTERACTIVE-DEMO.md): user-confirmed visual reference only; synthetic, not product acceptance.
 

@@ -33,7 +33,7 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     map_script = (WEB / "map.js").read_text(encoding="utf-8")
     map_page = (WEB / "map.html").read_text(encoding="utf-8")
     assert "map.js?v=p4-ui-shell-a-1" in map_page
-    assert "map.css?v=p4-ui-shell-a-2" in map_page
+    assert "map.css?v=p4-ui-places-e-1" in map_page
     map_styles = (WEB / "map.css").read_text(encoding="utf-8")
     assert ".map-page-main > section::-webkit-scrollbar-track {\n  background: var(--bg);\n}" in map_styles
     assert ".map-page-main > section::-webkit-scrollbar-thumb {" in map_styles
@@ -44,6 +44,11 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert 'href="/map"' in (WEB / "places.html").read_text(encoding="utf-8")
     assert 'id="search-form"' in (WEB / "search.html").read_text(encoding="utf-8")
     assert 'id="pa-search-photos"' in (WEB / "persons.html").read_text(encoding="utf-8")
+
+
+def test_shell_keeps_left_navigation_at_common_200_percent_effective_width() -> None:
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "/* Preserve the left rail at the common 1440px / 200% effective width. */\n@media (max-width: 680px) {\n  body.app-shell {" in styles
 
 
 def test_home_route_selection_and_detail_return_preserve_priority_without_requests() -> None:
@@ -61,12 +66,13 @@ const window={location,sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k
 const document={readyState:"loading",addEventListener(){},querySelectorAll:()=>links,getElementById:id=>id==="nav-persons"?personsLink:null};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui={state,handleHash,showView,revealPersonsNav,setElements(value){els=value;},stubDetail(fn){renderDetail=fn;}};\n  if (document.readyState === "loading")');
+  '  globalThis.ui={state,handleHash,showView,revealPersonsNav,setElements(value){els=value;},stubDetail(fn){renderDetail=fn;},stubBrowseMode(fn){showBrowseMode=fn;}};\n  if (document.readyState === "loading")');
 const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:(...args)=>{requests.push(args);}};
 vm.createContext(context);vm.runInContext(code,context);
 const focusCalls=[];
 const sections={sources:{hidden:true},browse:{hidden:true},detail:{hidden:true}},main={focus(options){focusCalls.push(options);}};
 const ui=context.ui;ui.setElements({views:sections,navButtons:[],main,assetGrid:{querySelector(){return null;}}});
+ui.stubBrowseMode(()=>{});
 ui.state.browse.loaded=true;
 ui.handleHash();assert.equal(sections.browse.hidden,false,"plain / opens photo browsing");
 assert.equal(focusCalls[focusCalls.length-1].preventScroll,true,"route focus preserves the current scroll position");

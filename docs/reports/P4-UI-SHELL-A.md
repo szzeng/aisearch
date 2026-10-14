@@ -41,3 +41,9 @@ git diff --check
 ## 结论与交接
 
 代码改动已实施；LUNA High 独立复核 PASS，浏览器五路由与隔离合成流程已完成。但任务卡 pytest 命令仍有 5 项与本卡无关的既有失败，真实 200% 缩放、暗色视觉和截图落盘也未完成。因此本卡保持 **IMPLEMENTED / VALIDATION PENDING**，不标 PASS。下一候选仍为 [P4-UI-SEARCH-C](../tasks/P4-UI-SEARCH-C.md)；须等本卡验收闭环后再开始。
+
+## 2026-10-14 200%导航反馈复测
+
+- 用户报告 200% 缩放时左侧导航栏消失。原 `max-width: 760px` 将约 720 CSS px 的有效视口改成顶部横向导航；收紧到 `680px` 后，常见 1440px/200% 等效宽度保留左侧竖栏，640px 以下仍使用顶部紧凑导航。五页共享 `styles.css` 缓存参数升至 `p4-ui-shell-a-f1-7`。
+- 使用 Codex 内置浏览器访问隔离服务 `127.0.0.1:8003`，数据根为 `.tmp/P4-UI-SHELL-A/browser-retest-data`，仅复制既有合成夹具；人物、地点、地图、图库管理和首页均显示共享导航。窄视口截图仍显示顶部“照片/人物/地点/地图相册/图库管理”入口。页面会话中途过期后重启了合成服务，没有接触真实图库。
+- 调整旧测试断言以匹配当前地图 CSS 缓存版本，并为路由单测 stub 掉不属于该测试目标的 browse-mode UI；最终壳测试 **3/0/0/0**，Ruff 和 `git diff --check` 通过，JUnit 为 `test-results/P4-UI-SHELL-A-200P-final.xml`。实际 200% 浏览器缩放、准确 720px 视口截图、暗色及持久化截图仍 pending；本报告不据此标视觉验收通过。

@@ -852,7 +852,8 @@ body.app-shell {
   padding-bottom: 0.75rem;
 }
 
-@media (max-width: 760px) {
+/* Preserve the left rail at the common 1440px / 200% effective width. */
+@media (max-width: 680px) {
   body.app-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
