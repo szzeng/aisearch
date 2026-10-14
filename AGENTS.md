@@ -43,6 +43,14 @@
 - Avoid using `uv run` for simple single-file syntax validation.
   Prefer direct interpreter checks when no project environment execution is required.
 
+### UI Browser Acceptance (default for UI tasks)
+
+- Use the Codex built-in browser on the real app bound to `127.0.0.1`, with project-local isolated synthetic data; reuse existing fixtures. Do not access the user's real photo library or require external browsers/drivers.
+- Start without `--open-browser`. Open the launcher's fresh, single-use session link once in that same browser and confirm authenticated API access before testing. Never reuse the link, expose its credential in reports, or bypass browser/session/CSRF protections.
+- Check only the affected pages and essential click, selection, navigation, and return flows. Distinguish product failures from browser-tool restrictions and missing fixture states; record a blocker instead of repeatedly attempting a prohibited action.
+- Save genuine browser screenshots to `docs/reports/artifacts/` when export is supported. Report routes, actions, observations, and separately tracked browser interaction, screenshot, visual, and performance states. Untested/tool-limited items remain PENDING; narrow viewports are not proof of native 200% zoom.
+- Follow the task card's test scope. API/static tests and mockups do not replace real browser evidence, and pending required checks cannot be marked PASS.
+
 ### Testing Rules
 
 - Test reports must be generated using JUnit XML format.
