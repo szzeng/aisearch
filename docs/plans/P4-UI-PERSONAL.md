@@ -182,7 +182,7 @@
 | 5 | [P4-UI-PEOPLE-D](../tasks/P4-UI-PEOPLE-D.md) | 人物/合集时间轴、旧人物搜索过渡 | 只读适配 |
 | 6 | [P4-UI-PLACES-E](../tasks/P4-UI-PLACES-E.md) | 地点时间轴和共享 SQL 权威成员适配 | 只读地点适配 |
 | 7 | [P4-UI-TIMELINE-SEARCH-MAP-A](../tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md)（新） | scoped 搜索先贯通，时间/地图增强后验收 | 有界只读，两阶段 |
-| 8 | [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md) | 照片详情和范围/日期返回状态 | 只读/UI |
+| 8 | [P4-UI-VIEWER-F](../tasks/P4-UI-VIEWER-F.md) | 照片详情和范围/日期返回状态 | 只读/UI；实现完成，浏览器交互部分验证，整卡待验，见[报告](../reports/P4-UI-VIEWER-F.md) |
 
 C 必须在 A 后紧接实施；SEARCH-MAP 要在 C/CORE/B/D/E 完成后执行。各卡不得并行修改同一前端模块。已经由 SIMPLIFY-A、Esc、遮罩关闭等历史任务完成的能力不再重新开发。各卡统一参照最后版演示；旧mockup仅留档，演示未实现的数据能力按时间轴规范和卡片补齐。
 

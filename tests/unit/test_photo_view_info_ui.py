@@ -76,6 +76,8 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   let first=context.window.AIPhotoInfo.render(host,101,{onPerson:id=>{chosen=id;}});
   await flush(); await flush();
   assert.match(host.textContent,/分辨率1200 × 800 像素/,"photo facts show source pixel resolution");
+  assert.equal(all(host,n=>n.tagName==="details"&&n.className==="photo-info-details").length,1,"the information panel can be folded without removing its contents");
+  assert.equal(all(host,n=>n.tagName==="summary"&&n.textContent==="照片信息").length,1);
   assert.match(host.textContent,/D:\\相册\\旅行\\照片\\海边\.jpg/);
   assert.match(host.textContent,/\\\\server\\share\\archive\\2020\\海边\.jpg/);
   assert.match(host.textContent,/D:\\根目录照片\.jpg/,"a drive root keeps its root separator when joined");
@@ -138,13 +140,23 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(window.location.href,"/persons?person_id=7&from_photo=photo","shared photo viewers mark their person-navigation return context");
   photoReturn.dispose();
 
-  const viewer=context.window.AIPhotoInfo.open(101,{returnFocus:null});
+  const trigger=new Element("button"); document.body.append(trigger);
+  const viewer=context.window.AIPhotoInfo.open(101,{returnFocus:trigger});
   await flush(); await flush();
   const dialog=document.body.children.find(n=>n.className==="photo-viewer-dialog");
+  assert.ok(dialog.attributes["aria-labelledby"],"the shared viewer has an accessible title");
+  const closeButton=all(dialog,n=>n.className==="photo-viewer-close")[0];
+  assert.equal(closeButton.focused,true,"opening the viewer places keyboard focus on its visible close button");
+  const viewerImage=all(dialog,n=>n.tagName==="img")[0];
+  viewerImage.onerror();
+  assert.match(viewerImage.src,/assets\/101\/thumbnail$/,"a missing preview falls back to the available thumbnail");
+  viewerImage.onload();
+  assert.match(all(dialog,n=>n.className==="photo-viewer-image-note")[0].textContent,/当前显示缩略图/);
   dialog.fire("click",{target:dialog.children[0]});
   assert.equal(dialog.open,true,"clicks inside the photo viewer do not dismiss it");
   dialog.fire("click",{target:dialog});
   assert.equal(dialog.open,false,"clicking the backdrop dismisses the shared viewer");
+  assert.equal(trigger.focused,true,"closing the viewer restores focus to its opener");
   await flush();
   assert.equal(maps.at(-1).removed,true,"closing the viewer removes its map instance");
 
@@ -171,9 +183,9 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-person-ux-simplify-a-1" in document
-        assert "/web/photo-info.css?v=p4-photo-local-open-a-1" in document
-    assert "search.js?v=p4-ui-search-c-1" in (web / "search.html").read_text(encoding="utf-8")
+        assert "/web/photo-info.js?v=p4-ui-viewer-f-1" in document
+        assert "/web/photo-info.css?v=p4-ui-viewer-f-1" in document
+    assert "search.js?v=p4-ui-timeline-search-map-stage2-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui-dialog-esc-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "persons-albums.js?v=p4-ui-people-d-3" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui-places-e-1" in (web / "places.html").read_text(encoding="utf-8")
@@ -183,6 +195,18 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     assert 'className = "map-photo-open"' in (web / "map.js").read_text(encoding="utf-8")
     assert 'el("button", "album-photo-open")' in (web / "places-albums.js").read_text(encoding="utf-8")
     assert 'ui.button("查看整张照片"' in (web / "persons.js").read_text(encoding="utf-8")
+
+
+def test_return_snapshots_validate_map_bbox_and_search_revisions() -> None:
+    web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
+    map_source = (web / "map.js").read_text(encoding="utf-8")
+    search_source = (web / "search.js").read_text(encoding="utf-8")
+    assert "restoreState.version === version && sameBounds(restoreState.bbox, b)" in map_source
+    assert "sameCaptureAssets(restoreState.assets, assets.assets)" in map_source
+    assert '"&order=capture_time_desc&cursor=" + encodeURIComponent(restoreState.cursor)' in map_source
+    assert '"/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1"' in search_source
+    assert "currentRulesVersion !== saved.timeBrowseRulesVersion" in search_source
+    assert "返回时无法验证旧结果的范围或时间修订" in search_source
 
 
 def test_home_detail_back_restores_browse_and_source_filter() -> None:

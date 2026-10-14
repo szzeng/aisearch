@@ -5,7 +5,16 @@
 时间轴首页自定义卡片现沿用既有详情路由；当前页 API 元数据提供真实文件名/目录并按 PRESENT 优先、location_id 稳定次序选择实例，支持缺路径回退、两行省略与完整路径 tooltip。详情关闭按钮及 Escape 返回已通过本机 6 张合成照片浏览器验证。定向 JUnit **33/0/0/0**，Node、Python 编译及 diff-check 通过。[任务卡](tasks/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md) / [报告](reports/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md)。有限复查未专项浏览人物/地点产品点击或暗色主题；未做性能测试。未访问真实相册、模型、GPU；本次提交仅含本任务文件，其他工作树改动不纳入。
 
 
-## Current user-directed task: P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
+
+## Current user-directed task: P4-UI-VIEWER-F — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+共享照片信息面板、查看器关闭/焦点/缩略图回退、地图 bbox/time-rules 快照边界与搜索会话范围/时间修订验证已实现。定向 JUnit **21/0/0/0**；相关 Node、Ruff、diff-check 通过。[任务卡](tasks/P4-UI-VIEWER-F.md) / [报告](reports/P4-UI-VIEWER-F.md)。用户指定的 Luna High 受影响面复核及修复复核无剩余实现 finding；不是 DS-H。`BROWSER_INTERACTION=PARTIALLY_VERIFIED`：本机合成浏览器已检查查看器、人物范围搜索和地图/地点部分路径并保存截图；浏览器返回未恢复旧搜索候选，地点搜索返回 `CATALOG_FILTER_REVISION_STALE`，首页30页、bbox成员失效及长竖图/窄屏/离线原图仍待验。语义编码器不可用，搜索证据仅为 FILTER_ONLY。真实图库、性能、全仓和打包未做，整卡保持 partial。
+
+## Next necessary action: P4-UI-VIEWER-F remains acceptance partial
+
+报告已记录本机产品浏览器部分观察与截图；整卡还缺首页30页往返、有效搜索结果返回恢复、地点范围搜索、bbox成员失效、长竖图/窄屏/离线原图、遮罩关闭与快切资源释放。按实际证据继续保持 ACCEPTANCE PARTIAL；真实图库现场体验由用户日常试用反馈另行记录。
+
+## Existing SEARCH-MAP acceptance status (unchanged)
 
 阶段一人物/合集/地点固定范围搜索的 API 合同、服务端 scope/revision/keyset 与时间条件已实现。定向 JUnit **72/0/0/0**；Ruff、Python 编译、`search.js`/`persons-albums.js`/`places-albums.js` Node 语法及 staged/unstaged diff-check 通过。Luna High 子代理指出两处 pending/time-choice 计划问题，已修复并复核无剩余 actionable findings；不是 DS-H。[任务卡](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md) / [报告](reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。人物/合集/地点 API 行为有定向覆盖，端到端浏览器门仍 pending；Computer Use 因当前 Chrome URL 无法足够确认而停止，未形成浏览器证据。`PERF_200K=PENDING`、`CHECK_300K=PENDING`；可时间排序的语义候选与 map viewport 时间浏览为阶段二 DEFERRED。前置 A/C/CORE/B/D/E 的验收状态均未改变；本轮无 commit、无真实图库/模型/GPU访问。
 

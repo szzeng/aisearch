@@ -182,12 +182,19 @@
     if (prior) prior.dispose();
     var state = { active: true, map: null, seq: ++serial, onPerson: options && options.onPerson };
     var seq = state.seq;
-    host.replaceChildren(node("p", "正在读取照片信息…", "hint"));
+    var disclosure = node("details", undefined, "photo-info-details");
+    disclosure.open = true;
+    var summary = node("summary", "照片信息");
+    summary.className = "photo-info-summary";
+    var content = node("div", undefined, "photo-info-content");
+    disclosure.append(summary, content);
+    host.replaceChildren(disclosure);
+    content.append(node("p", "正在读取照片信息…", "hint"));
     function current() { return state.active && seq === state.seq && host.isConnected; }
     request("/assets/" + encodeURIComponent(assetId)).then(function (detail) {
       if (!current()) return;
-      host.replaceChildren();
-      var title = node("h3", fileName((detail.locations || []).filter(function (x) { return x.availability === "PRESENT"; })[0] || (detail.locations || [])[0], assetId)); host.append(title);
+      content.replaceChildren();
+      var title = node("h3", fileName((detail.locations || []).filter(function (x) { return x.availability === "PRESENT"; })[0] || (detail.locations || [])[0], assetId)); content.append(title);
       var list = node("dl", undefined, "photo-info-facts");
       addField(list, "分辨率", detail.width && detail.height ? detail.width + " × " + detail.height + " 像素" : null);
       addField(list, "格式", detail.format ? String(detail.format).toUpperCase() : null);
@@ -195,7 +202,7 @@
       var taken = detail.taken_time || null;
       addField(list, "时间", taken && taken.taken_at ? (taken.label === "capture" ? "拍摄时间 " : "文件时间 ") + taken.taken_at.replace("T", " ") : null);
       addField(list, "相机", taken && taken.camera);
-      host.append(list);
+      content.append(list);
       var pathSection = node("section", undefined, "photo-info-paths"); pathSection.append(node("h3", "文件位置"));
       var locations = (detail.locations || []).slice().sort(function (a, b) { return (a.availability === "PRESENT" ? 0 : 1) - (b.availability === "PRESENT" ? 0 : 1); });
       if (!locations.length) pathSection.append(node("p", "没有登记文件位置。", "hint"));
@@ -224,10 +231,10 @@
         }).catch(function () { if (current()) row.append(node("p", "完整路径暂不可用；以上为相对路径。", "hint")); });
         pathSection.append(row);
       });
-      pathSection.append(status); host.append(pathSection);
+      pathSection.append(status); content.append(pathSection);
       if (!(options && options.people === false)) {
         var people = node("section", undefined, "photo-info-people"); people.append(node("h3", "照片中的人物"));
-        var peopleRows = node("div", undefined, "photo-info-people-list"); people.append(peopleRows); host.append(people);
+        var peopleRows = node("div", undefined, "photo-info-people-list"); people.append(peopleRows); content.append(people);
         var correctPeople = node("a", "更正这张照片中的人脸");
         correctPeople.href = "/persons?asset_id=" + encodeURIComponent(assetId); people.append(correctPeople);
         var reviewNote = node("div"); people.append(reviewNote);
@@ -258,10 +265,10 @@
           if (geo.status !== "VALID" || geo.input_revision !== detail.sha256 || !["WGS84", "ASSUMED_WGS84"].includes(geo.datum_status) || !point) return;
           var lat = Number(point.latitude), lon = Number(point.longitude);
           if (!isFinite(lat) || !isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
-          showMap(host, { latitude: lat, longitude: lon }, assetId, state);
+          showMap(content, { latitude: lat, longitude: lon }, assetId, state);
         });
-      }).catch(function () { if (current()) host.append(node("p", "GPS 信息暂时无法读取。", "hint")); });
-    }).catch(function (error) { if (current()) host.replaceChildren(node("p", "照片信息暂时无法读取。" + (error.status === 401 ? "请重新打开本机应用。" : ""), "error")); });
+      }).catch(function () { if (current()) content.append(node("p", "GPS 信息暂时无法读取。", "hint")); });
+    }).catch(function (error) { if (current()) content.replaceChildren(node("p", "照片信息暂时无法读取。" + (error.status === 401 ? "请重新打开本机应用。" : ""), "error")); });
     var mount = { dispose: function () {
       state.active = false; state.seq++; disposeMap(state);
       if (mounts.get(host) === mount) mounts.delete(host);
@@ -273,11 +280,31 @@
     options = options || {};
     var dialog = node("dialog", undefined, "photo-viewer-dialog");
     var heading = node("header", undefined, "photo-viewer-heading");
-    heading.append(node("h2", options.title || "查看照片"));
-    var close = node("button", "关闭"); close.type = "button"; heading.append(close);
+    var title = node("h2", options.title || "查看照片"); title.id = "photo-viewer-title-" + (++serial);
+    heading.append(title);
+    var close = node("button", "关闭", "photo-viewer-close"); close.type = "button";
+    close.setAttribute("aria-label", "关闭照片预览"); heading.append(close);
     var layout = node("div", undefined, "photo-viewer-layout");
-    var image = node("img"); image.alt = options.alt || "照片大图"; image.src = options.imageUrl || API + "/assets/" + encodeURIComponent(assetId) + "/preview"; layout.append(image);
+    var figure = node("figure", undefined, "photo-viewer-figure");
+    var image = node("img"); image.alt = options.alt || "照片大图";
+    var imageNote = node("figcaption", "", "photo-viewer-image-note"); imageNote.setAttribute("role", "status");
+    var previewUrl = options.imageUrl || API + "/assets/" + encodeURIComponent(assetId) + "/preview";
+    var thumbnailUrl = API + "/assets/" + encodeURIComponent(assetId) + "/thumbnail";
+    var thumbnailTried = false;
+    image.onerror = function () {
+      if (!thumbnailTried && image.src !== thumbnailUrl) {
+        thumbnailTried = true;
+        imageNote.textContent = "大图暂不可用，正在尝试缩略图……";
+        image.src = thumbnailUrl;
+        return;
+      }
+      imageNote.textContent = "照片预览和缩略图暂不可用。";
+      image.alt = "照片暂不可用";
+    };
+    image.onload = function () { imageNote.textContent = thumbnailTried ? "原图暂不可用，当前显示缩略图。" : ""; };
+    image.src = previewUrl; figure.append(image, imageNote); layout.append(figure);
     var panel = node("aside", undefined, "photo-info-panel"); layout.append(panel);
+    dialog.setAttribute("aria-labelledby", title.id);
     dialog.append(heading, layout); document.body.append(dialog);
     var mounted = render(panel, assetId, options);
     function dismiss() { if (dialog.open) dialog.close(); }
@@ -286,6 +313,7 @@
     dialog.addEventListener("click", function (event) { if (event.target === dialog) dismiss(); });
     dialog.addEventListener("keydown", function (event) { if (event.key === "Escape" && dialog.open) dismiss(); });
     dialog.showModal();
+    close.focus();
     return { close: dismiss };
   }
   window.AIPhotoInfo = { render: render, open: open };

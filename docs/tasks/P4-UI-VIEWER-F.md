@@ -18,7 +18,7 @@
 - 上游若范围或地图时间模式 DEFERRED，F 只验真实启用部分并逐项标记，不以截图/DOM 桩把浏览器行为写 PASS。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`。按最终序列依赖前七卡已启用范围及报告；SEARCH-MAP 明确 DEFERRED 的阶段二不强制补做。
+日期：2026-10-10；2026-10-13 UI 2.0 修订；2026-10-14 执行。状态：**IMPLEMENTED / ACCEPTANCE PARTIAL — BROWSER_INTERACTION=PARTIALLY_VERIFIED**。执行报告：[P4-UI-VIEWER-F](../reports/P4-UI-VIEWER-F.md)。定向 JUnit 21/0/0/0，Ruff、相关 Node 语法与 diff-check 通过；合成产品浏览器已检查查看器、人物范围搜索和部分地图/地点路径并保存截图，但人物搜索返回未恢复候选，地点范围搜索失败关闭，首页30页、长竖图/窄屏/离线原图、遮罩关闭、快切与 bbox 成员失效未验。用户指定的 Luna High 受影响面复核及修复复核无剩余实现 finding；该范围不等同 DS-H。整卡不标 PASS，性能和真实图库门均保持未验。规划收口 HEAD `c19749a`。SEARCH-MAP 阶段二已启用范围照实际验收，不以 DEFERRED 自动追认。
 
 推荐 GPT-6 / High；A 级展示小改，独立 DS-H 展示专项。纯样式子项可用 Luna Medium；不默认合并查看器状态机。
 

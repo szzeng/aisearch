@@ -1728,6 +1728,7 @@
     if (!saved || !saved.form || !Array.isArray(saved.hits) || !saved.lastBody) {
       return;
     }
+    var restoreGeneration = state.search.requestGeneration;
     var form = saved.form;
     els.queryText.value = form.queryText || "";
     els.querySource.value = form.source || "";
@@ -1748,7 +1749,7 @@
     });
     updatePersonSelection();
     state.search.mode = "text";
-    state.search.hits = saved.hits;
+    state.search.hits = [];
     state.search.sessionId = saved.search_session_id || null;
     state.search.cursor = saved.next_cursor || null;
     state.search.count = 0;
@@ -1757,7 +1758,43 @@
     state.search.intentPlan = saved.intentPlan || null;
     state.search.selectedScope = saved.selectedScope || null;
     state.search.binding = saved.binding || null;
-    state.search.lastBody = saved.lastBody;
+    state.search.lastBody = null;
+    state.search.timeBrowse.active = Boolean(saved.timeBrowseActive);
+    state.search.timeBrowse.cursor = saved.timeBrowseCursor || null;
+    state.search.timeBrowse.previous = saved.timeBrowsePrevious || null;
+    state.search.timeBrowse.rulesVersion = saved.timeBrowseRulesVersion;
+    var canValidate = saved.search_session_id && saved.lastBody.query &&
+      saved.search_session_id !== "filter-only" &&
+      String(saved.search_session_id).indexOf("place-album:") !== 0;
+    var validation = canValidate
+      ? request("/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1")
+      : Promise.reject({ code: "SNAPSHOT_UNVERIFIABLE" });
+    validation.then(function (result) {
+      if (restoreGeneration !== state.search.requestGeneration) return;
+      var currentRulesVersion = result && result.body && result.body.taken_time_rules_version;
+      if (saved.timeBrowseActive && currentRulesVersion !== saved.timeBrowseRulesVersion) {
+        throw { code: "TIME_RULES_VERSION_STALE" };
+      }
+      restoreValidatedSearchSnapshot(saved);
+    }).catch(function () {
+      if (restoreGeneration !== state.search.requestGeneration) return;
+      clearSearchSnapshot();
+      state.search.sessionId = null;
+      state.search.cursor = null;
+      state.search.lastBody = null;
+      state.search.hits = [];
+      state.search.timeBrowse.active = false;
+      state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.rulesVersion = null;
+      clear(els.resultGrid);
+      els.loadMore.hidden = true;
+      els.queryActions.hidden = false;
+      renderIntentChips(state.search.intentPlan);
+      setStatus(els.queryStatus, "返回时无法验证旧结果的范围或时间修订。查询条件已恢复，请重新搜索。", "error");
+    });
+  }
+
+  function restoreValidatedSearchSnapshot(saved) {
     var body = Object.assign({}, saved.lastBody, {
       hits: saved.hits,
       search_session_id: saved.search_session_id,

@@ -21,6 +21,19 @@
     function wrap(x) { return ((x + 180) % 360 + 360) % 360 - 180; }
     return { west: wrap(w), south: Math.max(-90, b.getSouth()), east: wrap(e), north: Math.min(90, b.getNorth()) };
   }
+  function sameBounds(left, right) {
+    return Boolean(left && right && ["west", "south", "east", "north"].every(function (key) {
+      return Number.isFinite(Number(left[key])) && Number(left[key]) === Number(right[key]);
+    }));
+  }
+  function sameCaptureAssets(left, right) {
+    function signature(rows) {
+      return JSON.stringify((rows || []).map(function (asset) {
+        return { asset_id: asset.asset_id, capture_time: asset.capture_time || null };
+      }));
+    }
+    return signature(left) === signature(right);
+  }
   function params(b) {
     var q = new URLSearchParams();
     if (b) Object.keys(b).forEach(function (k) { q.set(k, String(b[k])); });
@@ -128,9 +141,17 @@
   function fetchSnapshot(id, b, attempt) {
     var assetUrl = endpoint("/assets", b) + (b ? "&" : "?") + "limit=" + PAGE;
     if (orderMode === "capture_time_desc") assetUrl += "&order=" + encodeURIComponent(orderMode);
-    return Promise.all([req(endpoint("/points", b)), req(assetUrl)]).then(function (result) {
+    var canCheckSavedCursor = restoreState && restoreState.order === "capture_time_desc" &&
+      restoreState.cursor && sameBounds(restoreState.bbox, b);
+    var cursorCheck = Promise.resolve(true);
+    if (canCheckSavedCursor) {
+      var checkUrl = endpoint("/assets", b) + (b ? "&" : "?") + "limit=" + PAGE +
+        "&order=capture_time_desc&cursor=" + encodeURIComponent(restoreState.cursor);
+      cursorCheck = req(checkUrl).then(function () { return true; }, function () { return false; });
+    }
+    return Promise.all([req(endpoint("/points", b)), req(assetUrl), cursorCheck]).then(function (result) {
       if (id !== sequence) return;
-      var points = result[0], assets = result[1];
+      var points = result[0], assets = result[1], cursorIsCurrent = result[2];
       if (points.member_version !== assets.member_version) {
         if (attempt < 3) return fetchSnapshot(id, b, attempt + 1);
         $("notice").textContent = "照片列表正在更新，请稍后重试。";
@@ -139,10 +160,17 @@
       }
       version = points.member_version; assetMode = points.mode === "photos";
       features = points.features || []; cursor = assets.next_cursor;
-      if (restoreState && restoreState.version === version) {
+      var canRestore = restoreState && restoreState.version === version && sameBounds(restoreState.bbox, b);
+      if (canRestore && restoreState.order === "capture_time_desc") {
+        canRestore = cursorIsCurrent && (restoreState.cursor || sameCaptureAssets(restoreState.assets, assets.assets));
+      }
+      if (canRestore) {
         drawGrid({ assets: restoreState.assets || [], next_cursor: restoreState.cursor }, true);
         window.scrollTo(0, restoreState.scroll || 0); restoreState = null;
-      } else drawGrid(assets, true);
+      } else {
+        restoreState = null;
+        drawGrid(assets, true);
+      }
       if (map) {
         var source = map.getSource("photos");
         if (source && sourceMode !== assetMode) {
