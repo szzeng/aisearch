@@ -1144,6 +1144,9 @@
             content_query: body.content_query || "",
             place_kind: body.place_scope.kind,
             place_key: body.place_scope.key,
+            place_name: body.place_scope.name,
+            parent: body.place_scope.parent,
+            source: body.place_scope.source,
           };
         }
         renderPage(body, continuation);
@@ -1335,9 +1338,30 @@
   function renderIntentChips(plan) {
     clear(els.resultIntentScope);
     renderScopeControls();
+    var fixedPlace = state.search.selectedScope && state.search.selectedScope.kind === "place"
+      ? state.search.selectedScope : null;
+    var plannedPlace = plan && plan.place_kind && plan.place_key ? {
+      kind: plan.place_kind, key: plan.place_key, name: plan.place_name,
+      source: plan.place_selection && plan.place_selection.source,
+      parent: plan.place_parent,
+      original_query: plan.original_query,
+      content_query: plan.content_query,
+    } : null;
+    var echoedPlace = state.search.placeAware && state.search.placeAware.place_kind &&
+      state.search.placeAware.place_key ? state.search.placeAware : null;
+    var samePlace = function (left, right) {
+      var identityKind = function (place) {
+        var kind = String(place.kind || place.place_kind || "");
+        return kind === "place" ? String(place.place_kind || "") : kind;
+      };
+      return left && right && identityKind(left) === identityKind(right) &&
+        String(left.key || left.place_key || "") === String(right.key || right.place_key || "");
+    };
+    var activePlace = fixedPlace && plannedPlace && !samePlace(fixedPlace, plannedPlace)
+      ? plannedPlace : fixedPlace || plannedPlace || echoedPlace;
     var hasPlan = Boolean(plan && (plan.collection_scope || plan.capture_from ||
       plan.capture_status || plan.library_from || plan.library_to_exclusive ||
-      (plan.person_ids || []).length || plan.place_kind || plan.source_id != null));
+      (plan.person_ids || []).length || plan.source_id != null)) || Boolean(activePlace);
     if (!hasPlan && !state.search.selectedScope) {
       els.resultIntentScope.hidden = true;
       return;
@@ -1350,6 +1374,16 @@
       button.addEventListener("click", remove);
       els.resultIntentScope.appendChild(button);
     }
+    function addActivePlaceChip() {
+      if (!activePlace || samePlace(activePlace, fixedPlace)) return;
+      var placeSource = activePlace.source === "OSM" ? "（OpenStreetMap）"
+        : activePlace.source === "GEONAMES" ? "（GeoNames）" : "";
+      var placeParent = activePlace.parent ? " · " + String(activePlace.parent) : "";
+      add("地点：" + String(activePlace.name || activePlace.place_name || activePlace.key) +
+        placeParent + placeSource, function () {
+        cancelAutomaticPlace(activePlace, plan);
+      });
+    }
     if (state.search.selectedScope) {
       var selected = state.search.selectedScope;
       var scopeLabel = selected.kind === "person" ? "固定相册：" + String(selected.name || "人物")
@@ -1358,21 +1392,34 @@
             : "固定地点：" + String(selected.name || selected.place_key || "地点") +
               (selected.parent ? " · " + String(selected.parent) : "");
       add(scopeLabel, function () {
+        if (selected.kind === "place" && state.search.intentPlan &&
+            state.search.intentPlan.place_kind && state.search.intentPlan.place_key &&
+            !samePlace(selected, {
+              kind: state.search.intentPlan.place_kind,
+              key: state.search.intentPlan.place_key,
+            })) {
+          setStatus(els.queryStatus, "固定地点与另一地点条件不一致；请先取消其中一个地点条件。", "error");
+          return;
+        }
         state.search.selectedScope = null;
-        if (selected.kind === "place" && state.search.placeAware &&
-            String(state.search.placeAware.place_kind || "") === String(selected.place_kind || "") &&
-            String(state.search.placeAware.place_key || "") === String(selected.place_key || "")) {
-          // The server echoes a place scope as a place-aware condition for display.
-          // Remove that duplicate identity when the user cancels the fixed scope.
-          state.search.placeAware = null;
+        if (selected.kind === "place") {
+          var priorPlace = state.search.placeAware || {};
+          var priorPlan = state.search.intentPlan || {};
+          var place = {
+            original_query: priorPlace.original_query || priorPlan.original_query || els.queryText.value.trim(),
+            content_query: priorPlace.content_query || priorPlan.content_query || "",
+            place_name: priorPlace.place_name || priorPlan.place_name || selected.name,
+          };
+          var content = ordinaryContentAfterPlaceCancel(place);
+          state.search.placeAware = {
+            original_query: place.original_query, content_query: content, place_cancelled: true,
+          };
+          els.queryText.value = content;
         }
         if (selected.kind === "place" && state.search.intentPlan &&
             String(state.search.intentPlan.place_kind || "") === String(selected.place_kind || "") &&
             String(state.search.intentPlan.place_key || "") === String(selected.place_key || "")) {
-          state.search.intentPlan.place_kind = null;
-          state.search.intentPlan.place_key = null;
-          state.search.intentPlan.place_name = null;
-          state.search.intentPlan.place_selection = null;
+          clearPlacePlan(state.search.intentPlan, state.search.placeAware.content_query);
         }
         if (selected.kind === "person" && state.search.intentPlan) {
           var plan = state.search.intentPlan;
@@ -1440,6 +1487,7 @@
         setStatus(els.queryStatus, "已取消范围，点击全库搜索重新查询。", "success");
       });
     }
+    if (!plan) { addActivePlaceChip(); return; }
     if (!hasPlan) return;
     if (plan.collection_scope && !(state.search.selectedScope && state.search.selectedScope.kind === "collection")) {
       add("人物合集：" + String(plan.collection_scope.name || "合集"), function () {
@@ -1501,19 +1549,7 @@
         sendSearch(false);
       });
     }
-    if (plan.place_kind && plan.place_key && !(state.search.selectedScope && state.search.selectedScope.kind === "place")) {
-      add("地点：" + String(plan.place_name || plan.place_key), function () {
-        plan.place_kind = null;
-        plan.place_key = null;
-        plan.place_name = null;
-        plan.place_selection = null;
-        state.search.intentPlan = plan;
-        els.queryText.value = plan.content_query || "";
-        state.search.sessionId = null;
-        state.search.cursor = null;
-        sendSearch(false);
-      });
-    }
+    addActivePlaceChip();
     if (plan.source_id != null && !(state.search.selectedScope && state.search.selectedScope.kind === "source")) {
       add("图库来源：" + String(plan.source_name || ("#" + plan.source_id)), function () {
         plan.source_id = null;
@@ -1524,6 +1560,66 @@
         sendSearch(false);
       });
     }
+  }
+
+  function ordinaryContentAfterPlaceCancel(place) {
+    var content = String(place.content_query || "").trim();
+    if (content) return content;
+    var original = String(place.original_query || "").trim();
+    if (!original || /(?:在.+?(?:拍摄的|拍的|拍摄))/.test(original)) return "";
+    var name = String(place.place_name || place.name || "").trim();
+    if (name && (original === name || original === name + "的照片" || original === name + "的图片")) {
+      return name;
+    }
+    return "";
+  }
+
+  function clearPlacePlan(plan, content) {
+    if (!plan) return;
+    plan.place_kind = null;
+    plan.place_key = null;
+    plan.place_name = null;
+    plan.place_selection = null;
+    plan.content_query = content;
+  }
+
+  function cancelAutomaticPlace(place, plan) {
+    var content = ordinaryContentAfterPlaceCancel(place);
+    clearPlacePlan(plan, content);
+    var hasOtherCondition = Boolean(plan && (plan.collection_scope || plan.capture_from ||
+      plan.capture_status || plan.library_from || plan.library_to_exclusive ||
+      (plan.person_ids || []).length || plan.source_id != null));
+    state.search.intentPlan = hasOtherCondition ? plan : null;
+    state.search.placeAware = {
+      original_query: String(place.original_query || els.queryText.value.trim()),
+      content_query: content,
+      place_cancelled: true,
+    };
+    els.queryText.value = content;
+    state.search.requestGeneration += 1;
+    state.search.loading = false;
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.binding = null;
+    state.search.hits = [];
+    state.search.count = 0;
+    state.search.total = null;
+    state.search.lastBody = null;
+    state.search.lastRequestBody = null;
+    clearSearchSnapshot();
+    invalidateSearchPreview();
+    releaseObjectUrls();
+    clear(els.resultGrid);
+    clear(els.resultPlaceScope);
+    els.resultPlaceScope.hidden = true;
+    els.loadMore.hidden = true;
+    els.queryActions.hidden = true;
+    renderIntentChips(state.search.intentPlan);
+    if (!content && !hasOtherCondition) {
+      setStatus(els.queryStatus, "地点条件已取消，请输入内容后搜索。", "success");
+      return;
+    }
+    sendSearch(false);
   }
 
   function sendImageSearch(continuation, filters) {
@@ -1592,47 +1688,11 @@
     saveSearchSnapshot();
   }
 
-  function cancelPlaceScope(body) {
-    state.search.placeAware = {
-      original_query: body.original_query || els.queryText.value.trim(),
-      content_query: body.content_query || "",
-      place_cancelled: true,
-    };
-    if (state.search.intentPlan) {
-      state.search.intentPlan.place_kind = null;
-      state.search.intentPlan.place_key = null;
-      state.search.intentPlan.content_query = state.search.placeAware.content_query;
-    }
-    els.queryText.value = state.search.placeAware.content_query;
-    state.search.sessionId = null;
-    state.search.cursor = null;
-    state.search.binding = null;
-    clear(els.resultGrid);
-  }
-
   function renderPage(body, continuation, windowRestore) {
     clear(els.resultPlaceScope);
-    if (body.place_scope) {
-      var scopeSource = body.place_scope.source === "OSM" ? "（OpenStreetMap）"
-        : body.place_scope.source === "GEONAMES" ? "（GeoNames）"
-        : body.place_scope.origin === "GPS_NEARBY_CITY"
-        ? "（GPS附近城市）"
-        : String(body.place_scope.key || "").indexOf("cn:") === 0
-          ? "（中国行政区）"
-          : body.place_scope.kind === "province" ? "（省级地名资料）" : "";
-      var chip = element("span", "", "地点：" + body.place_scope.name + scopeSource);
-      var cancel = element("button", "", "取消地点条件");
-      cancel.type = "button";
-      cancel.addEventListener("click", function () {
-        cancelPlaceScope(body);
-        sendSearch(false);
-      });
-      els.resultPlaceScope.appendChild(chip);
-      els.resultPlaceScope.appendChild(cancel);
-      els.resultPlaceScope.hidden = false;
-    } else {
-      els.resultPlaceScope.hidden = true;
-    }
+    // Confirmed place identity and result echo share one cancelable chip in the
+    // intent row. This container remains available only for disambiguation choices.
+    els.resultPlaceScope.hidden = true;
     var hits = body.hits || [];
     // Filter-only and place-album cursors keep every loaded page visible as users continue.
     var filterOnly = body.search_session_id === "filter-only" || String(body.search_session_id || "").indexOf("place-album:") === 0;

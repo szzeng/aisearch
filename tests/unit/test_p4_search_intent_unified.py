@@ -136,6 +136,20 @@ def test_five_grounded_intents_and_content_are_resolved_from_original_query() ->
     assert source["person_ids"] == [1]
 
 
+def test_visual_word_collision_stays_content_but_explicit_place_clause_is_available() -> None:
+    solar = [{"kind": "city", "key": "gn:sun", "name": "太阳", "parent": "",
+              "aliases": [], "source": "GEONAMES"}]
+    for query in ("太阳", "太阳的照片", "照片里的太阳"):
+        plan = parse_unified_intent(query, connection=coverage_catalog(), place_choices=solar)
+        assert plan["place_kind"] is None
+        assert plan["place_key"] is None
+        assert "太阳" in (plan["content_query"] or "")
+
+    explicit = parse_unified_intent("在太阳拍的照片", connection=coverage_catalog(), place_choices=solar)
+    assert explicit["place_kind"] == "city"
+    assert explicit["place_key"] == "gn:sun"
+
+
 def test_conflicts_relations_and_unsupported_phrases_do_not_guess() -> None:
     assert parse("同事团的裙子")["collection_scope"]["collection_id"] == 11
     assert parse("小张和小李的合照")["person_match"] == "all"

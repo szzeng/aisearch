@@ -64,6 +64,33 @@ def test_non_location_mentions_are_not_promoted_to_place_filters(query: str) -> 
     assert result["notice"] is None
 
 
+@pytest.mark.parametrize("query", ["太阳", "太阳的照片", "照片里的太阳"])
+def test_common_visual_collision_word_is_not_promoted_to_a_place(query: str) -> None:
+    choices = [{"kind": "city", "key": "gn:sun", "name": "太阳", "parent": "", "aliases": [], "source": "GEONAMES"}]
+    result = parse_place_query(query, choices)
+    assert result["state"] is None
+    assert result["content_query"] is None
+    assert result["notice"] is None
+
+
+def test_explicit_shooting_clause_can_still_select_a_visual_collision_place() -> None:
+    choices = [{"kind": "city", "key": "gn:sun", "name": "太阳", "parent": "", "aliases": [], "source": "GEONAMES"}]
+    result = parse_place_query("在太阳拍的照片", choices)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == "gn:sun"
+
+
+def test_visual_collision_in_content_does_not_hide_another_explicit_place_clause() -> None:
+    choices = [
+        {"kind": "city", "key": "gn:sun", "name": "太阳", "parent": "", "aliases": [], "source": "GEONAMES"},
+        {"kind": "city", "key": "osm:shenzhen", "name": "深圳市", "parent": "广东省", "aliases": ["深圳"], "source": "OSM"},
+    ]
+    result = parse_place_query("太阳的照片，在深圳拍的", choices)
+    assert result["state"] == "recognized"
+    assert result["choices"][0]["key"] == "osm:shenzhen"
+    assert result["content_query"] == "太阳"
+
+
 @pytest.mark.parametrize("query", ["不是在济南拍的照片", "济南或青岛的照片"])
 def test_negative_and_multiple_locations_are_preserved_without_a_hard_filter(query: str) -> None:
     result = parse_place_query(query, CHOICES)
@@ -182,13 +209,14 @@ class Element {
   fire(name) { if(this.events[name]) this.events[name]({preventDefault(){}}); }
 }
 const elements=new Map(), get=id=>{ if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+const sent=[];
 const context={URLSearchParams,encodeURIComponent,isFinite,console,
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-  window:{location:{href:"/search",search:""}},
-  fetch:async()=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({})})};
+  window:{location:{href:"/search",search:""},sessionStorage:{removeItem(){},setItem(){},getItem(){return null;}}},
+  fetch:async(_url,options)=>{if(options&&options.body) sent.push(JSON.parse(options.body)); return {ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({unsupported_intent:true,notice:"test"})};}};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
- '  globalThis.ui={state,showPlaceChoices,cancelPlaceScope,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+ '  globalThis.ui={state,showPlaceChoices,renderIntentChips,cancelAutomaticPlace,ordinaryContentAfterPlaceCancel,sendSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 vm.createContext(context); vm.runInContext(code,context);
 const ui=context.ui, query=get("query-text"), grid=get("grid");
   ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid,
@@ -209,12 +237,54 @@ assert.equal(get("scope").children.length,3);
 get("scope").children[1].fire("click");
 assert.equal(ui.state.search.placeAware.content_query,"日落");
 assert.equal(ui.state.search.placeAware.place_key,"local:1");
-query.value="在济南拍的日落照片";
+query.value="在济南拍的照片";
 ui.state.search.sessionId="old-session"; ui.state.search.cursor="old-cursor"; ui.state.search.binding="old-binding";
-ui.cancelPlaceScope({original_query:"在济南拍的日落照片",content_query:"日落"});
-assert.equal(query.value,"日落");
+ui.state.search.intentPlan={original_query:query.value,content_query:"",place_kind:"city",place_key:"jn",place_name:"济南",place_selection:{kind:"city",key:"jn",source:"OSM"},person_ids:[]};
+ui.state.search.placeAware={original_query:query.value,content_query:"",place_kind:"city",place_key:"jn",place_name:"济南"};
+get("scope").textContent="";
+ui.renderIntentChips(ui.state.search.intentPlan);
+assert.equal(get("intent").children.length,2,"plan and place echo render as one cancelable chip");
+assert.equal(get("scope").children.length,0,"confirmed place echo is not rendered in a second container");
+get("intent").children[1].fire("click");
+assert.equal(query.value,"");
 assert.equal(ui.state.search.placeAware.place_cancelled,true);
 assert.equal(ui.state.search.sessionId,null); assert.equal(ui.state.search.cursor,null); assert.equal(ui.state.search.binding,null);
+assert.equal(ui.state.search.intentPlan,null,"a pure place plan is not retained after cancellation");
+assert.equal(get("status").textContent,"地点条件已取消，请输入内容后搜索。");
+assert.equal(ui.ordinaryContentAfterPlaceCancel({original_query:"太阳的照片",place_name:"太阳"}),"太阳");
+assert.equal(ui.ordinaryContentAfterPlaceCancel({original_query:"在深圳拍的照片",place_name:"深圳"}),"");
+query.value="太阳";
+ui.state.search.placeAware={original_query:"太阳的照片",content_query:"",place_kind:"city",place_key:"gn:sun",place_name:"太阳"};
+ui.state.search.sessionId="stale-session";ui.state.search.cursor="stale-cursor";ui.state.search.binding="stale-binding";
+ui.cancelAutomaticPlace(ui.state.search.placeAware,null);
+assert.equal(query.value,"太阳","cancelling a colliding place keeps the name as ordinary content");
+assert.equal(ui.state.search.placeAware.place_cancelled,true);
+assert.equal(ui.state.search.sessionId,null);assert.equal(ui.state.search.cursor,null);assert.notEqual(ui.state.search.binding,"stale-binding");
+const cancelled=sent.find(body=>body.place_cancelled);
+assert.ok(cancelled,"the retry payload carries the place-cancelled tombstone");
+assert.equal(cancelled.content_query,"太阳");assert.equal(cancelled.text,"太阳");
+;(async()=>{
+  let resolveFetch;
+  context.fetch=(_url,options)=>{
+    if(options&&options.body) sent.push(JSON.parse(options.body));
+    return new Promise(resolve=>{resolveFetch=resolve;});
+  };
+  query.value="在济南拍的照片";
+  ui.state.search.placeAware={original_query:query.value,content_query:"",place_kind:"city",place_key:"jn",place_name:"济南"};
+  ui.state.search.intentPlan={original_query:query.value,content_query:"",place_kind:"city",place_key:"jn",place_name:"济南",person_ids:[]};
+  const oldResponse=ui.sendSearch(false);
+  assert.equal(typeof resolveFetch,"function","the old request is held in flight");
+  ui.cancelAutomaticPlace(ui.state.search.placeAware,ui.state.search.intentPlan);
+  const cancelStatus=get("status").textContent;
+  resolveFetch({ok:true,status:200,headers:{get:()=>"application/json"},
+    json:async()=>({unsupported_intent:true,notice:"stale response must not replace cancellation state"})});
+  await oldResponse;
+  assert.equal(ui.state.search.placeAware.place_cancelled,true,"late response cannot restore the cancelled place");
+  assert.equal(ui.state.search.intentPlan,null,"late response cannot restore the old intent plan");
+  assert.equal(get("status").textContent,cancelStatus,"late success cannot replace the cancellation notice");
+  assert.equal(ui.state.search.sessionId,null);assert.equal(ui.state.search.cursor,null);
+  assert.equal(ui.state.search.hits.length,0);assert.equal(get("grid").children.length,0);
+})().catch(error=>{console.error(error);process.exitCode=1;});
 """
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(

@@ -166,9 +166,10 @@ const search=ui.getState().search;search.selectedScope={kind:"place",place_kind:
 search.placeAware={place_kind:"city",place_key:"geo:tokyo",content_query:""};
 search.intentPlan={place_kind:"city",place_key:"geo:tokyo",original_query:"",content_query:""};
 search.hits=[{asset_id:1}];search.requestGeneration=10;search.loading=false;search.sessionId="old";search.cursor="old";
-ui.renderIntentChips(null);assert.equal(cancelEls.resultIntentScope.children.length,2);
+ui.renderIntentChips(search.intentPlan);assert.equal(cancelEls.resultIntentScope.children.length,2,"matching place plan and fixed scope render one chip");
 cancelEls.resultIntentScope.children[1].fire("click");
-assert.equal(search.selectedScope,null);assert.equal(search.placeAware,null,"cancel removes the echoed duplicate place condition");
+assert.equal(search.selectedScope,null);assert.equal(search.placeAware.place_cancelled,true,"cancel keeps a tombstone so the original query cannot re-add this place");
+assert.equal(search.placeAware.place_kind,undefined);assert.equal(search.placeAware.place_key,undefined);
 assert.equal(search.intentPlan.place_kind,null,"cancel removes the same place echoed in the intent plan");
 assert.equal(cancelEls.resultIntentScope.hidden,true,"no place chip remains after cancelling its matching fixed scope");
 assert.equal(cancelEls.searchSubmit.textContent,"全库搜索");assert.equal(search.hits.length,0);assert.equal(search.sessionId,null);
@@ -193,6 +194,16 @@ search.selectedScope={kind:"source",source_id:5,name:"SSD"};search.intentPlan={s
 ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
 assert.equal(search.intentPlan.source_id,null,"cancelling source scope removes its echoed source filter");
 assert.equal(cancelEls.querySource.value,"");
+
+search.selectedScope={kind:"place",place_kind:"city",place_key:"geo:tokyo",name:"东京"};
+search.placeAware={place_kind:"city",place_key:"geo:tokyo",content_query:""};
+search.intentPlan={place_kind:"city",place_key:"osm:shenzhen",place_name:"深圳市",original_query:"深圳的夜景",content_query:"夜景"};
+ui.renderIntentChips(search.intentPlan);
+assert.equal(cancelEls.resultIntentScope.children.length,4,"different place identities stay distinct");
+cancelEls.resultIntentScope.children[1].fire("click");
+assert.equal(search.selectedScope.place_key,"geo:tokyo","conflicting place cancellation asks the user to resolve the two scopes");
+assert.equal(search.intentPlan.place_key,"osm:shenzhen","cancelling one identity never clears the other");
+assert.match(cancelEls.queryStatus.textContent,/另一地点条件不一致/);
 """
     result = subprocess.run(
         [node, "-e", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=10

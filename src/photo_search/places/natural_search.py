@@ -28,6 +28,10 @@ _LEADING_REQUESTS = (
 _PLACE_MARKERS = ("拍摄的", "拍的", "拍摄")
 _PHOTO_TAILS = ("所有照片", "所有图片", "全部照片", "全部图片", "照片", "图片")
 _CONTENT_PROTECTED = ("老照片", "照片里的", "照片中的", "照片中")
+# Keep this deliberately small and evidence-backed. A directory hit alone cannot
+# distinguish the common visual subject "太阳" from a place with the same name.
+# Explicit shooting clauses and direct place selection still use the normal path.
+_VISUAL_CONTENT_COLLISIONS = {"太阳"}
 _NEGATIVE = ("不是在", "不在", "没有在", "并非在")
 _JOINERS = ("或者", "以及", "或", "和")
 _PUNCTUATION = "，,。；;、:：.!?！？"
@@ -79,6 +83,8 @@ def _trim_content(value: str) -> str:
             folded = _norm(tail)
             if normalized.endswith(folded):
                 result = result[: -len(tail)].rstrip(" \t\r\n，,。；;、:：")
+                if _norm(result).endswith("的"):
+                    result = result[:-1].rstrip(" \t\r\n，,。；;、:：")
                 normalized = _norm(result)
                 break
     if normalized in {"所有", "全部"}:
@@ -249,6 +255,21 @@ def parse_place_query(
             if next_original > end_original and raw[end_original:next_original].isspace():
                 content_start = offsets[hit.end]
                 parsed.append((hit, _trim_content(raw[content_start:])))
+
+    # A common visual word is not a place intent just because an active directory
+    # happens to contain the same spelling. Keep the explicit shooting grammar
+    # available, and leave direct user place selections to the structured API path.
+    if parsed:
+        def is_visual_collision(hit: _Hit) -> bool:
+            return (_norm(str(hit.choice.get("name", ""))) in _VISUAL_CONTENT_COLLISIONS
+                    or any(_norm(str(alias)) in _VISUAL_CONTENT_COLLISIONS
+                           for alias in hit.choice.get("aliases", [])))
+
+        parsed = [
+            item for item in parsed
+            if not is_visual_collision(item[0])
+            or any(normalized[item[0].end :].startswith(_norm(marker)) for marker in _PLACE_MARKERS)
+        ]
 
     # A hierarchy written as adjacent known names is resolved only by the selected child's
     # declared parent. Overlapping same-name sources remain separate choices.

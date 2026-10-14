@@ -1,3 +1,7 @@
+## Additional user-directed task: P4-SEARCH-PLACE-INTENT-CHIP-FIX-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+地点词“太阳”仅在明确拍摄地点语境形成地点筛选；相同地点身份只显示一个条件 chip；取消会使旧状态失效且不自动全库重搜。任务卡定向 JUnit **98/0/0/0**，Ruff、Node、Python 编译及 diff-check 通过。[任务卡](tasks/P4-SEARCH-PLACE-INTENT-CHIP-FIX-A.md) / [报告](reports/P4-SEARCH-PLACE-INTENT-CHIP-FIX-A.md)。隔离合成浏览器验证东京固定地点显示单 chip、取消后无自动请求；`太阳` 浏览器查询因 fixture 缺少 active search profile 返回 VALIDATION_ERROR，故 `BROWSER_SOLAR_QUERY=PENDING`。Luna High 独立复核发现的旧请求迟到断言缺口已补充，复看关闭，无新 finding。未触碰真实图库；未跑全仓、性能、模型/GPU、打包或发布检查。
+
 ## Current user-directed task: P4-UI2-SCROLL-LOAD-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 搜索和普通照片列表已接入互斥自动续页与 500 卡 DOM 回收。定向 JUnit **38/0/0/0**，Node `--check`、`git diff --check` 通过；最终版本隔离合成浏览器观察搜索 20→40、普通列表 50→87 并到底。用户指定的 LUNA High 复核已完成，所有 findings 修复并复看关闭（不是 DS-H）。A03/A04/A08、session/revision stale、长滚动锚点与 20–30 页浏览器证据仍未全覆盖，故整卡 **ACCEPTANCE PARTIAL**。未使用模型/真实图库，`PERF_200K` 与 `CHECK_300K` pending。详见[任务卡](tasks/P4-UI2-SCROLL-LOAD-A.md) / [报告](reports/P4-UI2-SCROLL-LOAD-A.md)。

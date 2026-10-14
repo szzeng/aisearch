@@ -1,7 +1,7 @@
 # P4-SEARCH-PLACE-INTENT-CHIP-FIX-A — 地点误识别、重复条件与取消逻辑统一修复
 
 **日期：** 2026-10-14  
-**状态：** READY / 待实施 / 任务卡已提交  
+**状态：** IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
 **仓库：** `szzeng/aisearch`，`master`；开工重新确认 HEAD 与工作区，不以本卡生成时的快照覆盖新提交。  
 **优先级：** P1（取消后条件仍存在、错误扩大搜索范围或旧请求污染新结果时按 P0 处理）。  
 **建议执行：** GPT-6 / High；个人项目，小型定向测试。同一会话完成复现、修复、复测和必要复核。  
