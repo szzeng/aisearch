@@ -1,3 +1,6 @@
+## Current user-directed task: P4-UI2-TIMELINE-CONTROLS-FIX-A — IMPLEMENTED / BROWSER PENDING (2026-10-14)
+
+修复时间轴下列表专属控件被 `display:flex` 覆盖 `hidden` 的问题，并将日期说明整体隐藏以消除空白；列表切回仍沿用现有模式逻辑。定向 JUnit **8/0/0/0**、`git diff --check` 通过。[任务卡](tasks/P4-UI2-TIMELINE-CONTROLS-FIX-A.md) / [报告](reports/P4-UI2-TIMELINE-CONTROLS-FIX-A.md)。按用户要求跳过浏览器验证，故首次显示无闪现、列表往返恢复及桌面/窄屏交互仍 `BROWSER_PENDING`，整卡不标 PASS。未访问真实图库、模型/GPU；未做全仓或性能验证。
 ## Current user-directed task: P4-UI2-VISUAL-FINAL-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 视觉代码统一已完成：公共侧栏/照片网格密度、共享卡片 token、查看器信息面板、地点面板和地图高度规则小幅调整；受影响 CSS 页面同步 cache-bust。定向 JUnit **9/0/0/0**、diff-check 通过。[任务卡](tasks/P4-UI2-VISUAL-FINAL-A.md) / [报告](reports/P4-UI2-VISUAL-FINAL-A.md)。本次按用户要求重试了本机浏览器验收：一次性会话在首页、地点、地图、人物、搜索、管理各页均有效，相关页面 API 未复现 401。首页 10 张合成照片、地图瓦片与 pan 后 1 张范围照片、合成 viewer 及 Escape/地图详情返回均观察通过。搜索查询因 fixture 无 active search profile 返回 422；人物 0 人、地点包未安装为有效空状态。内置浏览器真实截图 4 张已存 `reports/artifacts/P4-UI2-VISUAL-FINAL-A-*.png`。CSS viewport 470×764 且未见横向溢出；当前 system dark=true，但未切换 light；Ctrl+plus 未改变 viewport，真实 Zoom 200% 仍 pending。LUNA High 修复复核无剩余 finding（不是 DS-H）；`PERF_200K/CHECK_300K` 未按本卡运行，真实图库/模型/GPU未访问；整卡 ACCEPTANCE PARTIAL，无 commit。

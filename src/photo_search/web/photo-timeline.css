@@ -28,6 +28,10 @@
   gap: 0.5rem 0.75rem;
 }
 
+.browse-controls #browse-list-filters[hidden] {
+  display: none;
+}
+
 .photo-timeline {
   color: var(--fg, #22312b);
 }

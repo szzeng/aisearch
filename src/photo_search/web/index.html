@@ -7,7 +7,7 @@
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-visual-final-a-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-timeline-controls-fix-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-visual-final-a-1" />
     <script src="/web/photo-info.js?v=p4-ui-viewer-f-1" defer></script>
@@ -173,7 +173,7 @@
           <select id="browse-source">
             <option value="">全部图库</option>
           </select>
-          <div id="browse-list-filters">
+          <div id="browse-list-filters" hidden>
           <label for="browse-order">排序</label>
           <select id="browse-order">
             <option value="time_desc">按加入时间（入库时间，从新到旧）</option>
@@ -207,12 +207,10 @@
           <span id="browse-scope-name"></span>
           <button type="button" id="clear-browse-source">查看全部图库</button>
         </p>
-        <p class="hint">
-          <span id="browse-list-time-hint">
+        <p id="browse-list-time-hint" class="hint" hidden>
           拍摄时间范围是左闭右开：包含起始时刻，不包含结束时刻。留空表示该端不限。
           只写日期时按当天 00:00:00.000 处理；带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）
           会被服务端明确拒绝，因为拍摄时间没有唯一时区。
-          </span>
         </p>
         <div
           id="browse-capture-state"
