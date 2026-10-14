@@ -2,9 +2,7 @@
 
 ## Additional user-directed task: P4-UI-TIMELINE-CLICK-PATH-FIX-A — TASK-CARD MINIMUM ACCEPTANCE PASS (2026-10-14)
 
-时间轴首页自定义卡片现沿用既有详情路由；当前页 API 元数据提供真实文件名/目录并按 PRESENT 优先、location_id 稳定次序选择实例，支持缺路径回退、两行省略与完整路径 tooltip。详情关闭按钮及 Escape 返回已通过本机 6 张合成照片浏览器验证。定向 JUnit **33/0/0/0**，Node、Python 编译及 diff-check 通过。[任务卡](tasks/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md) / [报告](reports/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md)。有限复查未专项浏览人物/地点产品点击或暗色主题；未做性能测试。未访问真实相册、模型、GPU；本次提交仅含本任务文件，其他工作树改动不纳入。
-
-
+时间轴首页自定义卡片现沿用既有详情路由；当前页 API 元数据提供真实文件名/目录并按 PRESENT 优先、location_id 稳定次序选择实例，支持缺路径回退、两行省略与完整路径 tooltip。详情关闭按钮及 Escape 返回已通过本机 6 张合成照片浏览器验证。定向 JUnit **33/0/0/0**，Node、Python 编译及 diff-check 通过。[任务卡](tasks/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md) / [报告](reports/P4-UI-TIMELINE-CLICK-PATH-FIX-A.md)。有限复查未专项浏览人物/地点产品点击或暗色主题；未做性能测试。未访问真实相册、模型、GPU；提交 `38ebbae`。VIEWER-F 后续状态见当前任务记录。
 
 ## Current user-directed task: P4-UI-VIEWER-F — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
@@ -16,7 +14,9 @@
 
 ## Existing SEARCH-MAP acceptance status (unchanged)
 
-阶段一人物/合集/地点固定范围搜索的 API 合同、服务端 scope/revision/keyset 与时间条件已实现。定向 JUnit **72/0/0/0**；Ruff、Python 编译、`search.js`/`persons-albums.js`/`places-albums.js` Node 语法及 staged/unstaged diff-check 通过。Luna High 子代理指出两处 pending/time-choice 计划问题，已修复并复核无剩余 actionable findings；不是 DS-H。[任务卡](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md) / [报告](reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。人物/合集/地点 API 行为有定向覆盖，端到端浏览器门仍 pending；Computer Use 因当前 Chrome URL 无法足够确认而停止，未形成浏览器证据。`PERF_200K=PENDING`、`CHECK_300K=PENDING`；可时间排序的语义候选与 map viewport 时间浏览为阶段二 DEFERRED。前置 A/C/CORE/B/D/E 的验收状态均未改变；本轮无 commit、无真实图库/模型/GPU访问。
+P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
+
+阶段一人物/合集/地点固定范围搜索的 API 合同、服务端 scope/revision/keyset 与时间条件已实现。定向 JUnit **72/0/0/0**；Ruff、Python 编译、`search.js`/`persons-albums.js`/`places-albums.js` Node 语法及 staged/unstaged diff-check 通过。Luna High 子代理指出两处 pending/time-choice 计划问题，已修复并复核无剩余 actionable findings；不是 DS-H。[任务卡](tasks/P4-UI-TIMELINE-SEARCH-MAP-A.md) / [报告](reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。人物/合集/地点 API 行为有定向覆盖，端到端浏览器门仍 pending；Computer Use 因当前 Chrome URL 无法足够确认而停止，未形成浏览器证据。`PERF_200K=PENDING`、`CHECK_300K=PENDING`；阶段二语义候选时间浏览与 map viewport 时间浏览已实现并通过定向 API/UI 回归（82/0/0/0）；LUNA High 阶段二复核的三项 finding 已修复并确认关闭（不是 DS-H）。浏览器交互、`PERF_200K`、`CHECK_300K` 仍 pending，不宣称验收通过。前置 A/C/CORE/B/D/E 的验收状态均未改变；本轮无 commit、无真实图库/模型/GPU访问。
 
 ## Next necessary action: P4-UI-TIMELINE-SEARCH-MAP-A browser and scale acceptance gates remain PENDING
 
@@ -35,9 +35,18 @@
 ## Previous user-directed task: P4-UI-PEOPLE-D — IMPLEMENTED / BROWSER INTERACTION VERIFIED / PERF_200K PENDING (2026-10-14)
 
 人物与合集照片页已接入共享时间轴，保留旧局部搜图与人物整理操作；合集实例/revision 不匹配时停止显示结果并提供刷新后的当前范围重载，查看器续页沿用有界照片 ID。定向 JUnit **31/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PEOPLE-D.md) / [报告](reports/P4-UI-PEOPLE-D.md)。用户指定的 LUNA High 受影响面复核无剩余实现 findings，不代表 DS-H。2026-10-14 以隔离合成库和本机产品浏览器验证跨页人物选择/取消、忽略恢复、单脸对话框取消、人物/合集时间轴和详情返回；截图保存在 `reports/artifacts/P4-UI-PEOPLE-D-browser.jpg`。`PERF_200K` 仍 pending；用户要求先执行 E 不变更更早任务的验收状态。
+
 ## Previous executed task: P4-UI-PHOTOS-B — FUNCTIONAL SCOPED PASS / LUNA HIGH REVIEW COMPLETE / BROWSER INTERACTION PARTIAL / PERF_200K PENDING (2026-10-14)
 
 照片页默认统一时间轴、保留列表/图库管理；定向 JUnit **28/0/0/0**，关联 timeline integration **1/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PHOTOS-B.md) / [报告](reports/P4-UI-PHOTOS-B.md)。2026-10-14 本机浏览器观察来源切换、日期桶空/待就绪、管理校验与 31 页合成滚动；详情可通过路由打开并返回锚点，但照片卡片点击未进入详情，截图未落盘，首图时延未测，故 BROWSER 门仍 pending；`PERF_200K` 仍 pending。
+
+## Previous completed task: P4-PERSON-IGNORED-CANDIDATE-A — SCOPED PASS (2026-10-13)
+
+[Task card](tasks/P4-PERSON-IGNORED-CANDIDATE-A.md), [report](reports/P4-PERSON-IGNORED-CANDIDATE-A.md). 忽略人脸显示已有候选头像并可确认/手动选择；候选确认后刷新忽略视图，不改识别、相似度或后端归属协议。定向 JUnit **2/0/0/0**；Node、Ruff、diff-check 通过。验证仅覆盖任务卡 API/合成 DOM 范围。
+
+## Previous completed task: P4-PERSON-IGNORE-STATE-A — SCOPED PASS / LUNA HIGH REVIEW COMPLETE (NOT DS-H) (2026-10-13)
+
+[Task card](tasks/P4-PERSON-IGNORE-STATE-A.md), [report](reports/P4-PERSON-IGNORE-STATE-A.md), [LUNA High review](reports/P4-PERSON-IGNORE-STATE-REVIEW-A.md). Legacy hidden rows migrate to TEMPORARY; EXCLUDED filters suggestion projections and automatic face candidates without deleting person/face data. Focused JUnit is **34/0/0/0**; Ruff, `node --check`, `py_compile`, and diff-check pass. LUNA High's stale-inbox finding was fixed and re-reviewed; not DS-H.
 
 ## Previous completed task: P4-UI-TIMELINE-REVISION-A — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE (2026-10-13)
 
@@ -45,7 +54,7 @@
 
 ## Predecessor status: P4-UI-TIMELINE-CORE-A — PARTIAL / VALIDATION PENDING (2026-10-13)
 
-[Task card](tasks/P4-UI-TIMELINE-CORE-A.md), [report](reports/P4-UI-TIMELINE-CORE-A.md)。Timeline API/核心组件已实现；REVISION-A 已修复共享 catalog revision 信号。CORE-A 的浏览器证据、`PERF_200K` 和独立工程审查仍 pending。Integration-A 只接入首页，不代表 CORE-A 关闭。
+[Task card](tasks/P4-UI-TIMELINE-CORE-A.md), [report](reports/P4-UI-TIMELINE-CORE-A.md)。Timeline API/核心组件已实现；REVISION-A 已修复共享 catalog revision 信号。CORE-A 的浏览器证据、`PERF_200K` 和独立工程审查仍 pending。Integration-A 只接入首页，不代表 CORE-A 关闭。CORE-A 阻断关闭前不要开始 B.
 
 ## Predecessor status: P4-UI-SHELL-A-F1 — IMPLEMENTED / VISUAL VALIDATION PENDING (2026-10-13)
 
@@ -60,5 +69,3 @@
 ## Additional requested task: P4-MEDIA-CR2-A
 
 [Task card](tasks/P4-MEDIA-CR2-A.md), [report](reports/P4-MEDIA-CR2-A.md): implementation partial / validation pending. The user authorized `D:\SZ\天空\100CANON`; five read-only CR2 samples decode through the shared RAW frame at 1.101–1.183 s each, with unchanged SHA/size/mtime. Embedded JPEG and RAW geometry did not establish reliable crop mapping. Focused regression and static checks pass; real face/OCR inference, active-model text search, valid-GPS/portrait coverage, actual continuation idempotence, frozen-package execution, and old face/OCR terminal-job recovery remain pending. Do not claim SCOPED PASS.
-
-\n

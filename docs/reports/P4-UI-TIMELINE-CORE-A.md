@@ -1,7 +1,7 @@
 # P4-UI-TIMELINE-CORE-A 实施与验证报告
 
 日期：2026-10-13
-结论：**IMPLEMENTATION PARTIAL / VALIDATION PENDING**。核心读查询、路由与共享前端组件已落地；本轮用户要求取消新建的 20 万夹具并复用既有 30 万夹具。30 万检查发现明显排序/聚合退化，且旧夹具缺少拍摄时间与人物/合集样本。LUNA High 首轮复核发现的问题已修并重跑定向验证；修复复核、真实浏览器证据及新资产修订信号阻断仍未关闭。不得标记整卡 PASS，也不得开始 B。
+结论：**IMPLEMENTATION PARTIAL / VALIDATION PENDING**。核心读查询、路由与共享前端组件已落地；本轮用户要求取消新建的 20 万夹具并复用既有 30 万夹具。30 万检查发现明显排序/聚合退化，且旧夹具缺少拍摄时间与人物/合集样本。LUNA High 对 CORE-A 与后续 Revision-A 的复核均已完成；Revision-A 已关闭“新资产入库未推进共享 revision”阻断。真实浏览器证据及 20 万规模验证仍未完成，不得标记整卡 PASS，也不得开始 B。
 
 ## 用户测试范围调整
 
@@ -54,18 +54,19 @@ EXPLAIN 显示资产全表扫描、每项照片资格相关子查询，以及 `U
 
 用户指定由子代理 LUNA High 复核。首轮只读复核发现 3 项 P1（摘要 generation 竞态、新资产插入未递增共享 revision、stale cursor 前端仍重试）及 2 项 P2（页/摘要 revision 未比对、跨页组头重复）；另发现 dispose 未移除 scroll listener。首轮复核确认服务端资格/排序/游标大部分契约以及 30 万证据口径正确，没有修改文件或另跑测试。
 
-本轮已修复摘要竞态、stale 暂停与显式 anchor 重定位、跨 revision anchor 语义、摘要/页版本不一致提示、跨页组头、scroll listener 清理。LUNA 修复复核又指出虚拟化可能回收唯一组头，以及重定位未刷新摘要；现已在释放标题页时向紧邻同分组保留页转移其实际持有的组头，且显式重定位同时刷新 periods 和 assets。对多分组跨页的最后补丁也已重跑 7 项定向 JUnit、Ruff、py_compile、Node 语法和 diff-check，结果通过。LUNA High 最终只读复核未发现剩余实现缺陷；复核覆盖了修改面和证据，但按用户路由不称为 DS-H。它确认新资产 revision 阻断仍存在，浏览器交互也未验证。
+本轮已修复摘要竞态、stale 暂停与显式 anchor 重定位、跨 revision anchor 语义、摘要/页版本不一致提示、跨页组头、scroll listener 清理。LUNA 修复复核又指出虚拟化可能回收唯一组头，以及重定位未刷新摘要；现已在释放标题页时向紧邻同分组保留页转移其实际持有的组头，且显式重定位同时刷新 periods 和 assets。对多分组跨页的最后补丁也已重跑 7 项定向 JUnit、Ruff、py_compile、Node 语法和 diff-check，结果通过。LUNA High 最终只读复核未发现剩余实现缺陷；复核覆盖了修改面和证据，但按用户路由不称为 DS-H。新资产 revision 阻断随后由 Revision-A 修复并独立复核；真实浏览器交互仍未验证。
 
-新资产 insertion 未递增 `catalog_filter_revision` 仍是 P1 阻断，不能在本卡改写既有入库事务；见下项最小后续依赖。
+## 后续修订：P4-UI-TIMELINE-REVISION-A
+
+**CORE-A 的新资产 revision 阻断已关闭。** Revision-A 在 `bind_location_content` 确认新内容并绑定位置的同一写事务内推进现有 `catalog_filter_revision`（cause=`ASSET_ADDED`）；scanner 保留用户选择的每文件提交粒度，因此扫描 3 张新照片对应 revision +3。旧 Timeline cursor 随后返回 `CATALOG_FILTER_REVISION_STALE`。证据为提交 `fc8f399`、[Revision-A 报告](P4-UI-TIMELINE-REVISION-A.md)及 [JUnit XML](../../test-results/P4-UI-TIMELINE-REVISION-A.xml)：14 passed / 0 failed / 0 skipped / 0 errors。Revision-A 的 LUNA High 最终修复复核无剩余发现。实现沿用既有 revision 表和 cursor 协议，没有新增 schema/API。
 
 ## 未通过 / 未验证项
 
-- **新资产修订信号阻断（LUNA High P1）**：行为探测在有效游标后扫描新增照片，旧游标没有返回 `CATALOG_FILTER_REVISION_STALE`。当前 ingestion 创建资产路径没有复用 `catalog_filter_revision`；若本卡自行改写 scan 写事务违反卡片“无现成信号时写明阻断、不得暗改 schema/写事务”的边界。最小后续依赖是单独授权后，在资产成员变更既有写事务中复用已验证的共享修订触发，或提供经验证的等价一致性视图，然后补入库前后游标测试。
 - **BROWSER_PENDING**：隔离测试页和 30 页模拟器已准备，但 Computer Use 因无法确认当前 Chrome 标签 URL 而安全停止；未把模拟器或 API 成绩冒充浏览器证据，也未记录第 1/10/20/30 页 DOM/资源窗口。
-- **LUNA HIGH REVIEW COMPLETE**：首轮指出的问题及两轮修复复核发现的 P2 均已修复；最终复核未发现剩余实现缺陷。新资产 revision 阻断、浏览器交互和 20 万性能仍是独立未关闭项；该用户指定复核不称为 DS-H。
+- **LUNA HIGH REVIEW COMPLETE**：首轮指出的问题及两轮修复复核发现的 P2 均已修复；最终复核未发现剩余实现缺陷。新资产 revision 阻断已由 Revision-A 关闭；浏览器交互和 20 万性能仍未验证。两次用户指定复核均不称为 DS-H。
 - `CHECK_300K` 已运行，但只覆盖旧夹具可代表的入库日期数据；无可信拍摄元数据、人物或合集样本。
 - 本轮没有连线首页/人物/地点正式布局；这是 CORE 公共组件卡的范围，B/D/E 负责页面接入。
 
 ## 后续
 
-先处理新资产修订触发的授权/协议边界并补真实浏览器证据，再决定是否另立索引性能任务。CORE 关闭前不要开始 B。F1 原有 200% 和已保存搜索命中截图仍 pending，本轮按用户明确要求启动 CORE，不代表 F1 已完成。
+新资产 revision 阻断已关闭。CORE 后续需补真实浏览器证据，并按用户认可的规模范围决定性能验收/记录；再决定是否另立索引性能任务。CORE 关闭前不要开始 B。F1 原有 200% 和已保存搜索命中截图仍 pending，本轮按用户明确要求启动 CORE，不代表 F1 已完成。
