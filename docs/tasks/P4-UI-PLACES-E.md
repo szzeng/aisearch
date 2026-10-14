@@ -23,7 +23,7 @@
 
 ## 2026-10-14 执行交接
 
-用户明确要求在此前 UI 浏览器/性能门仍 pending 时先执行本卡，并指定受影响面复核由 LUNA High 子代理完成；用户要求复用原 30 万夹具、不新建规模夹具。当前结论：**IMPLEMENTED / ACCEPTANCE PARTIAL**。定向 JUnit 32/0/0/0、Ruff、Python/Node 语法、diff-check 通过；LUNA High 复核完成、修复后无阻断 finding（不是 DS-H）。地点合成浏览器流程已观察，项目内截图工件仍 pending。原 30 万夹具无地点成员，空 scope probe 不构成地点性能验收；`PERF_200K=PENDING`、`CHECK_300K=PENDING`。详见 [报告](../reports/P4-UI-PLACES-E.md)。该执行指示不改变 A/C/CORE/B/D 各自已有验收状态，也不授权自动开始 SEARCH-MAP。
+用户明确要求在此前 UI 浏览器/性能门仍 pending 时先执行本卡，并指定受影响面复核由 LUNA High 子代理完成；用户要求复用原 30 万夹具、不新建规模夹具。当前结论：**IMPLEMENTED / ACCEPTANCE PARTIAL**。定向 JUnit 32/0/0/0、Ruff、Python/Node 语法、diff-check 通过；LUNA High 复核完成、修复后无阻断 finding（不是 DS-H）。真实产品浏览器已用 Places-E 样本验证地点时间轴和详情返回，并复用既有 GPS 合成数据验证地图 viewport 照片→详情→返回及范围恢复；项目内截图工件仍 pending。原 30 万夹具无地点成员，空 scope probe 不构成地点性能验收；`PERF_200K=PENDING`、`CHECK_300K=PENDING`。详见 [报告](../reports/P4-UI-PLACES-E.md)。该执行指示不改变 A/C/CORE/B/D 各自已有验收状态，也不授权自动开始 SEARCH-MAP。
 
 推荐 GPT-6 / High；视觉 A 级，涉及新增地点日期只读查询按 B 类受影响面复核，独立 DS-H 覆盖完整受影响展示/入口与原写请求链。
 

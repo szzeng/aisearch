@@ -1,7 +1,7 @@
 # P4-UI-PLACES-E 实施与验证报告
 
 日期：2026-10-14
-结论：**IMPLEMENTED / ACCEPTANCE PARTIAL**。地点目录相册接入共享时间轴；新增地点成员 SQL scope，保留地点人工整理入口和地图查询协议。定向 JUnit **32/0/0/0**，Ruff、Python 编译、四个相关 JS 的 `node --check`、`git diff --check` 通过。用户指定的 LUNA High 受影响面复核完成，无剩余阻断代码 finding；该复核不是 DS-H。有效地点成员规模性能与可落盘的浏览器截图仍未完成，因此不标整卡 PASS。
+结论：**IMPLEMENTED / ACCEPTANCE PARTIAL**。地点目录相册接入共享时间轴；新增地点成员 SQL scope，保留地点人工整理入口和地图查询协议。定向 JUnit **32/0/0/0**，Ruff、Python 编译、四个相关 JS 的 `node --check`、`git diff --check` 通过。用户指定的 LUNA High 受影响面复核完成，无剩余阻断代码 finding；该复核不是 DS-H。地点和地图交互已在真实产品浏览器中用隔离合成数据验证；可落盘的截图工件和有效地点成员规模性能仍未完成，因此不标整卡 PASS。
 
 用户直接要求开始 E，因此按该指示实施；这不关闭 A/C/CORE/B/D 已记录的浏览器或性能门。用户要求复用原 30 万夹具且不建新夹具，本轮遵循此范围。
 
@@ -36,17 +36,19 @@ git diff --check
 
 本地产品浏览器截图已通过 CUA 捕获观察，但 CUA 输出未提供写入项目目录的截图文件路径，故任务卡要求的可复查截图工件记为 **BROWSER_SCREENSHOT_PENDING**；浏览器闭环是已观察，不将其提升成截图/完整视觉 PASS。浏览器初次请求使用的本地一次性 session token 已由应用访问日志过滤，不把凭证写入报告。
 
-### 2026-10-14 浏览器复测
+### 2026-10-14 真实产品浏览器复测
 
 复用上述 `.tmp/P4-UI-PLACES-E/browser/PhotoSearchData` 和 4 张合成照片，通过 Codex in-app browser 在本机 loopback 页面重新走查；启动服务未使用 `--open-browser`，一次性 session 凭证未写入报告。实际观察结果：
 
 - `/places` 显示东京 / 日本 / 4 张照片。进入后显示 **4 张有效照片**，其中可信拍摄日期 0、日期未知 0、日期待就绪 4；点击「日期待就绪」筛选后仍显示 4 张。
 - 打开首张照片显示详情，关闭后回到东京时间轴，4 张范围和待就绪桶仍可见；随后重新进入并单独选择「日期待就绪」筛选，结果仍为 4 张。
 - 展开「地点工具」后「补齐照片地点」入口可见。
-- `/map` 显示 **0 张带位置照片**和“当前图库没有带位置的照片”空状态；截图观察到地图画布及缩放控件正常呈现。样本没有 GPS，未覆盖有成员时的 viewport 照片详情往返。
+- `/map` 在本 Places-E 夹具上显示 **0 张带位置照片**和“当前图库没有带位置的照片”空状态；地图画布及缩放控件正常呈现。
 - 本次访问日志中过滤凭证后，session、Places、静态资源、timeline periods、第一页、pending bucket、缩略图和 map 请求均为 HTTP 200 或缩略图缓存 304；未检查浏览器 console。
 
-CUA 返回了可供当场观察的截图，但没有项目内可链接的持久文件路径；仍记 **BROWSER_SCREENSHOT_PENDING**。本次复测补实浏览器交互证据，不替代持久截图工件、真实 GPS 地图成员或规模性能门。
+为覆盖地图有成员时的详情返回，本次又复用已有 `.tmp/p4-photo-view-browser/geo-env/PhotoSearchData`（既有 10 张测试资产及 GPS 数据；未修改数据库或照片）。真实浏览器的 `/map` 显示 2 张带位置照片及地图标记，viewport 照片列表为 2；打开其中一张进入产品详情，可见“在地图相册中查看”和位置地图，再返回后 `/map` 恢复为 2 张范围照片且截图中的地图中心/范围一致。对应 `map/summary`、`map/points`、viewport `map/assets`、asset detail、geo detail 与返回后的 viewport 请求均为 HTTP 200；瓦片实际成功显示，本次未模拟瓦片不可用降级，未检查浏览器 console。
+
+CUA 返回了可供当场观察的地点页、地图页截图，但没有项目内可链接的持久文件路径；因此交互验证记为 **BROWSER_INTERACTION=VERIFIED**，可复查截图工件仍为 **BROWSER_SCREENSHOT_PENDING**。浏览器验证使用隔离合成数据，不代表真实照片库或地点规模性能。
 
 ## 原 30 万夹具复用与性能边界
 
