@@ -11,19 +11,24 @@ def test_cn_album_races_and_update_pause_resume():
     script = r"""
 const fs=require('fs'), vm=require('vm'), assert=require('assert/strict');
 class Element {
-  constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.value=''; this.hidden=false; this.disabled=false; }
+  constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.value=''; this.hidden=false; this.disabled=false; this.className=''; this.dataset={}; }
   set textContent(value) { this.text=value; this.children=[]; } get textContent() { return this.text || ''; }
   appendChild(item) { this.children.push(item); } append(...items) { this.children.push(...items); }
-  replaceChildren(...items) { this.children=items; } setAttribute() {} scrollIntoView() {}
+  replaceChildren(...items) { this.children=items; } setAttribute() {} scrollIntoView() {} focus(){}
+  querySelectorAll(selector){const wanted=selector.slice(1);let found=[];function walk(n){n.children.forEach(c=>{if(c.className.split(/\s+/).includes(wanted))found.push(c);walk(c);});}walk(this);return found;}
+  querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
   addEventListener(event,fn) { this.events[event]=fn; } fire(event) { return this.events[event](); }
 }
 const elements=new Map(), get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 get('album-kind').value='city';
 const pending=[], posts=[];
 const response=body=>({ok:true,json:async()=>body});
-const context={URLSearchParams,Date,Math,document:{cookie:'ps_csrf=synthetic',getElementById:get,createElement:tag=>new Element(tag)},
-    window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){},PhotoTimeline:{mount(){
-      let dispose;const instance={dispose(){if(dispose)dispose();}};
+const events={};let url='http://127.0.0.1/places';const stack=[{url,state:null}];
+const location={get href(){return url;},get pathname(){return new URL(url).pathname;},get search(){return new URL(url).search;},get hash(){return new URL(url).hash;}};
+const history={index:0,state:null,pushState(state,_t,next){stack.splice(this.index+1);url=new URL(next,url).href;this.state=state;stack.push({url,state});this.index++;},replaceState(state,_t,next){url=new URL(next,url).href;this.state=state;stack[this.index]={url,state};},back(){if(this.index){this.index--;const item=stack[this.index];url=item.url;this.state=item.state;(events.popstate||[]).forEach(fn=>fn({state:item.state}));}}};
+const context={URLSearchParams,URL,Date,Math,document:{cookie:'ps_csrf=synthetic',getElementById:get,createElement:tag=>new Element(tag),body:Object.assign(new Element('body'),{dataset:{}})},
+    window:{location,history,addEventListener(name,fn){(events[name]||(events[name]=[])).push(fn);},scrollY:0,scrollTo(){},setTimeout:fn=>setImmediate(fn),clearTimeout(){},PhotoTimeline:{mount(){
+        let dispose;const instance={snapshot(){return {timeBasis:'capture',groupBy:'day',bucket:'all',year:null,month:null,scope:{place_key:'cn:3'}};},dispose(){if(dispose)dispose();}};
       const item={url:'/api/v1/timeline/assets?kind=place',options:{},resolve(){}};pending.push(item);
       instance.dispose=()=>{item.disposed=true;};return instance;
     }}},
@@ -46,9 +51,9 @@ const album=(kind,name)=>({kind,name,key:'cn:3',parent:'浙江省 · 杭州市',
   old.resolve({albums:[album('city','杭州市')]});await settle();
   assert.equal(get('album-cards').children[0].children[1].textContent,'西湖区');
   get('album-cards').children[0].fire('click');
-  const photo=pending.at(-1);get('album-kind').value='province';get('album-kind').fire('change');
-  photo.resolve({assets:[{asset_id:1}],next_cursor:'old'});await settle();
-  assert.equal(get('album-photos').children.length,0);assert.equal(get('album-photos').hidden,true);
+  const photo=pending.at(-1);get('album-current-title').children[0].fire('click');await settle();
+  assert.equal(photo.disposed,true);get('album-kind').value='province';get('album-kind').fire('change');
+  assert.equal(get('album-detail-view').hidden,true);assert.equal(get('album-photos').children.length,0);
   get('cn-update').fire('click');assert.equal(posts.length,1);assert.equal(get('cn-pause').hidden,false);
   get('cn-pause').fire('click');posts[0].resolve({complete:false,total_scanned:100,total_processed:100});await settle();
   assert.equal(posts.length,1);assert.match(get('cn-update-status').textContent,/已暂停/);
@@ -76,7 +81,7 @@ def test_place_page_defers_management_requests_and_supports_anchor_loading():
     page = (root / "src/photo_search/web/places.html").read_text(encoding="utf-8")
     script = (root / "src/photo_search/web/places.js").read_text(encoding="utf-8")
     assert page.index("places-albums.js") < page.index("places.js")
-    assert "places.js?v=p4-ui2-batch-select-unify-a-1" in page
+    assert "places.js?v=p4-ui2-place-album-nav-a-1" in page
     boot = script[script.index("function boot()") : script.index('if (document.readyState')]
     assert "setupDeferredPanels();" in boot
     assert "probeCapabilities();\n    loadDatasets();" not in boot
@@ -93,7 +98,7 @@ const end=source.indexOf('\n\n  if (document.readyState',start);
 const extracted=source.slice(start,end);
 const calls=[],observed=[];let hashHandler=null;
 const panelLoaded={datasets:false,directory:false,operations:false};
-const document={getElementById:id=>({id})};
+const nodes=new Map(),document={body:{dataset:{placeAlbumView:'detail'}},getElementById:id=>{if(!nodes.has(id))nodes.set(id,{id,hidden:false});return nodes.get(id);}};
 const window={location:{hash:''},addEventListener:(name,handler)=>{if(name==='hashchange')hashHandler=handler;},
   IntersectionObserver:function(callback){this.callback=callback;this.observe=node=>observed.push(node);}};
 const context={document,window,panelLoaded,
@@ -109,9 +114,11 @@ assert.deepEqual(calls,[]);assert.deepEqual(observed.map(node=>node.id),['panel-
         "IntersectionObserver:function(callback){this.callback=callback;window.__callback=callback;this.observe=node=>observed.push(node);}",
     )
     harness += r"""
-window.__callback([{isIntersecting:true,target:{id:'panel-datasets'}}]);
-window.__callback([{isIntersecting:true,target:{id:'panel-datasets'}}]);
-assert.deepEqual(calls,['datasets']);
+window.__callback([{isIntersecting:true,target:nodes.get('panel-datasets')}]);assert.deepEqual(calls,[]);
+document.body.dataset.placeAlbumView='list';nodes.get('panel-datasets').hidden=true;
+window.__callback([{isIntersecting:true,target:nodes.get('panel-datasets')}]);assert.deepEqual(calls,[]);
+nodes.get('panel-datasets').hidden=false;window.__callback([{isIntersecting:true,target:nodes.get('panel-datasets')}]);
+window.__callback([{isIntersecting:true,target:nodes.get('panel-datasets')}]);assert.deepEqual(calls,['datasets']);
 window.location.hash='#panel-directory';hashHandler();assert.deepEqual(calls,['datasets','directory']);
 window.location.hash='#panel-operations';hashHandler();assert.deepEqual(calls,['datasets','directory','operations']);
 const fallback={document,window:{location:{hash:''},addEventListener(){}},panelLoaded:{datasets:false,directory:false,operations:false},

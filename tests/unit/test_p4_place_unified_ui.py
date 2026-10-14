@@ -13,17 +13,20 @@ def test_album_correction_shows_full_source_choice_and_posts_controlled_ref() ->
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class Element {
-  constructor(tag){this.tag=tag;this.children=[];this.events={};this.value='';this.hidden=false;this.disabled=false;this.text='';}
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.dataset={};this.value='';this.hidden=false;this.disabled=false;this.text='';this.className='';this.parent=null;this.classList={contains:n=>this.className.split(/\s+/).includes(n)};}
   set textContent(value){this.text=String(value);this.children=[];}
   get textContent(){return this.text+this.children.map(item=>item.textContent).join('');}
-  appendChild(item){this.children.push(item);return item;}
-  append(...items){this.children.push(...items);}
-  replaceChildren(...items){this.children=items;}
+  appendChild(item){item.parent=this;this.children.push(item);return item;}
+  append(...items){items.forEach(item=>this.appendChild(item));}
+  replaceChildren(...items){this.children=[];this.children=items;items.forEach(item=>item.parent=this);}
   addEventListener(name,fn){this.events[name]=fn;}
   fire(name){return this.events[name]({preventDefault(){}});}
   setAttribute(){}
   scrollIntoView(){}
-  querySelectorAll(selector){return selector==='.place-choice-list'?this.children.filter(item=>item.className===selector.slice(1)):[];}
+  querySelectorAll(selector){const wanted=selector.slice(1);let found=[];function walk(n){n.children.forEach(c=>{if(c.className.split(/\s+/).includes(wanted))found.push(c);walk(c);});}walk(this);return found;}
+  querySelector(selector){return this.querySelectorAll(selector)[0]||null;}
+  focus(){}
+  scrollIntoView(){}
   remove(){if(this.parent)this.parent.children.splice(this.parent.children.indexOf(this),1);}
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
@@ -33,8 +36,8 @@ let timelineOptions=null;
 const album={kind:'city',key:'77',name:'东京',parent:'日本',total:1,origin:'MANUAL',cover_asset_id:42};
 const choice={kind:'district',key:'cn:3',name:'历下区',parent:'山东省 · 济南市',source:'OSM',selection_ref:'osm|fixture-dataset|relation/3',aliases:[]};
 const response=body=>({ok:true,status:200,json:async()=>body});
-const context={URLSearchParams,Date,Math,console,document:{cookie:'ps_csrf=fixture-csrf',getElementById:get,createElement:tag=>new Element(tag),body:new Element('body')},
-  window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){},alert(message){throw Error(message);},
+const context={URLSearchParams,URL,Date,Math,console,document:{cookie:'ps_csrf=fixture-csrf',getElementById:get,createElement:tag=>new Element(tag),body:Object.assign(new Element('body'),{dataset:{}})},
+  window:{location:{search:'',pathname:'/places',hash:'',href:'http://127.0.0.1/places'},history:{state:null,pushState(state,_title,url){this.state=state;this.url=url;},replaceState(state,_title,url){this.state=state;this.url=url;},back(){}},addEventListener(){},scrollY:0,scrollTo(){},setTimeout:fn=>setImmediate(fn),clearTimeout(){},alert(message){throw Error(message);},
     PhotoTimeline:{mount(options){timelineOptions=options;return {dispose(){}};}}},
   fetch:async(url,options={})=>{
     if(String(url).includes('/places/admin/capabilities'))return response({available:false});

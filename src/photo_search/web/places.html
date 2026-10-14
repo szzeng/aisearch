@@ -7,15 +7,15 @@
     <title>地点整理</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
-    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-batch-select-unify-a-1" />
+    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-place-album-nav-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-visual-final-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-unify-a-3" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-unify-a-3" defer></script>
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/places-albums.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/places.js?v=p4-ui2-batch-select-unify-a-1" defer></script>
+    <script src="/web/places-albums.js?v=p4-ui2-place-album-nav-a-1" defer></script>
+    <script src="/web/places.js?v=p4-ui2-place-album-nav-a-1" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -44,7 +44,7 @@
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
 
-      <nav class="page-nav" aria-label="地点页面内容">
+      <nav class="page-nav" id="place-page-nav" aria-label="地点页面内容">
         <a class="nav-link" href="#panel-directory">目录</a>
         <a class="nav-link" href="#panel-albums">地点相册</a>
         <a class="nav-link" href="#panel-suggestions">建议与批量整理</a>
@@ -54,13 +54,14 @@
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
-      <p class="hint">
+      <p class="hint" id="place-intro">
         本页只做人工整理：机器候选永远是「待确认建议」（SUGGESTION_ONLY），确认后才是有效人工归属。
         仅在点击更新时处理地点，不显示本机绝对路径；坐标在会话保护的
         <code>/api/v1/assets/{asset_id}/geo</code> 提供。
       </p>
 
       <section id="panel-albums" class="panel" aria-labelledby="albums-title">
+        <div id="album-list-view">
         <h2 id="albums-title">地点相册</h2>
         <p class="hint">中国省、市、区县按已安装的行政边界解析，标为机器地点；缺边界时只显示可靠上级。其他地区保留GPS附近城市提示（最多50km）。人工指定和取消优先。</p>
         <div class="album-controls">
@@ -81,8 +82,12 @@
           <p class="hint">这些操作只在点击后读取或更新地点；相册日期和照片列表由当前地点成员查询提供。</p>
         </details>
         <div id="album-cards" class="album-cards" aria-live="polite"></div>
-        <div id="album-current-title" class="album-current-title" hidden></div>
-        <div id="album-photos" class="album-photos" hidden></div>
+        </div>
+        <div id="album-detail-view" class="album-detail-view" hidden>
+          <div id="album-current-title" class="album-current-title"></div>
+          <div id="album-detail-status" role="status" aria-live="polite"></div>
+          <div id="album-photos" class="album-photos"></div>
+        </div>
       </section>
 
       <section id="panel-datasets" class="panel" aria-labelledby="datasets-title">

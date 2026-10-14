@@ -76,6 +76,7 @@ class Element {
 const storage=new Map([["photo-timeline.preferences.v1",JSON.stringify({timeBasis:"library",groupBy:"month"})]]);
 const requests=[];
 const opened=[];
+let catalogRevision=1;
 const window={innerHeight:900,localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},
   addEventListener(){},removeEventListener(){},scrollBy(){},requestAnimationFrame:fn=>fn()};
 const document={cookie:"",createElement:tag=>new Element(tag)};
@@ -84,11 +85,11 @@ const pageItem=(id,anchor,key,state="trusted")=>({asset_id:id,anchor,group_key:k
 const fetch=async path=>{
   requests.push(String(path));
   const url=new URL(String(path),"http://local");
-  if(url.pathname.endsWith("/timeline/periods"))return{ok:true,json:async()=>({years:[{year:2022,count:2}],months:[{month:2,count:2}],counts:{effective_total:2,trusted:2,unknown:0,pending:0},catalog_filter_revision:1})};
+  if(url.pathname.endsWith("/timeline/periods"))return{ok:true,json:async()=>({years:[{year:2022,count:2}],months:[{month:2,count:2}],counts:{effective_total:2,trusted:2,unknown:0,pending:0},catalog_filter_revision:catalogRevision})};
   const kind=url.searchParams.get("kind"),source=url.searchParams.get("source_id"),bucket=url.searchParams.get("bucket");
   const anchor=source?"source-asset":"all-asset";
   const row=bucket==="unknown"?pageItem(2,"unknown-asset",null,"unknown"):pageItem(source?3:1,anchor,"2022-02-28");
-  return{ok:true,json:async()=>({assets:[row],next_cursor:null,catalog_filter_revision:1})};
+  return{ok:true,json:async()=>({assets:[row],next_cursor:null,catalog_filter_revision:catalogRevision})};
 };
 const context={window,document,fetch,URLSearchParams,AbortController,URL,Promise,console,CSS:{escape:String},setTimeout,clearTimeout};
 vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-timeline.js","utf8"),context);
@@ -139,6 +140,41 @@ const find=(selector)=>host.querySelector(selector);
   assert.match(seek,/seek_year=2022/);assert.match(seek,/seek_month=2/);assert.doesNotMatch(seek,/\b(?:year|month)=2022/);
   find(".photo-timeline__bucket").parent.children.find(b=>b.dataset.bucket==="library").fire("click");await settle();
   assert.equal(mount.snapshot().timeBasis,"library");assert.equal(mount.snapshot().bucket,"all");
+  const restoredHost=new Element("div");
+  const restoredTimeline=context.window.PhotoTimeline.mount({host:restoredHost,scope:{kind:"place",place_kind:"city",place_key:"cn:3"},
+    restoreView:{catalogFilterRevision:1,timeBasis:"capture",groupBy:"month",bucket:"unknown",year:2022,month:2,anchor:"unknown-asset",assetId:2}});
+  await settle();
+  assert.equal(restoredTimeline.snapshot().timeBasis,"capture");assert.equal(restoredTimeline.snapshot().groupBy,"month");
+  assert.equal(restoredTimeline.snapshot().bucket,"unknown");assert.equal(restoredTimeline.snapshot().year,2022);assert.equal(restoredTimeline.snapshot().month,2);
+  assert.equal(restoredTimeline.snapshot().anchor,"unknown-asset");assert.equal(restoredTimeline.snapshot().assetId,"2");
+  const restoreRequest=requests.filter(path=>path.includes("/timeline/assets")&&path.includes("place_key=cn%3A3")).at(-1);
+  assert.match(restoreRequest,/time_basis=capture/);assert.match(restoreRequest,/group_by=month/);assert.match(restoreRequest,/bucket=unknown/);
+  assert.match(restoreRequest,/year=2022/);assert.match(restoreRequest,/month=2/);assert.match(restoreRequest,/anchor=unknown-asset/);
+  catalogRevision=2;
+  const restoredYear=restoredHost.querySelectorAll(".photo-timeline__year")[0];
+  const restoredMonth=restoredHost.querySelectorAll(".photo-timeline__month")[0];
+  restoredYear.value="2022";restoredYear.fire("change");await settle();restoredMonth.value="2";
+  restoredHost.querySelectorAll(".photo-timeline__controls")[0].children.find(b=>b.textContent==="筛选年月").fire("click");await settle();
+  assert.equal(restoredTimeline.snapshot().year,2022,"a later catalog revision does not discard the user's selected year");
+  assert.equal(restoredTimeline.snapshot().month,2);
+  const userFilterRequest=requests.filter(path=>path.includes("/timeline/assets")&&path.includes("place_key=cn%3A3")).at(-1);
+  assert.match(userFilterRequest,/year=2022/);assert.match(userFilterRequest,/month=2/);assert.match(userFilterRequest,/bucket=unknown/);
+  const staleRequestStart=requests.length;
+  const staleHost=new Element("div");
+  const restoredAssets=[];
+  const staleTimeline=context.window.PhotoTimeline.mount({host:staleHost,scope:{kind:"place",place_kind:"city",place_key:"cn:3"},
+    restoreView:{catalogFilterRevision:0,timeBasis:"capture",groupBy:"month",bucket:"unknown",year:2022,month:2,anchor:"unknown-asset",assetId:2},
+    adapter:{onRestoreAsset:(_target,id)=>restoredAssets.push(id)}});
+  await settle();
+  assert.equal(staleTimeline.snapshot().bucket,"all","stale cross-mount filters are discarded");
+  assert.equal(staleTimeline.snapshot().year,null);assert.equal(staleTimeline.snapshot().month,null);
+  assert.deepEqual(restoredAssets,[],"stale selected asset is not restored");
+  assert.equal(staleTimeline.snapshot().anchor,"all-asset","authoritative first page becomes the new anchor");
+  const staleRequests=requests.slice(staleRequestStart).filter(path=>path.includes("/timeline/assets")&&path.includes("place_key=cn%3A3"));
+  assert.equal(staleRequests.length,2,"revision mismatch reopens exactly one authoritative first page");
+  assert.match(staleRequests[0],/bucket=unknown/);assert.match(staleRequests[0],/year=2022/);assert.match(staleRequests[0],/month=2/);assert.match(staleRequests[0],/anchor=unknown-asset/);
+  assert.match(staleRequests[1],/bucket=all/);assert.doesNotMatch(staleRequests[1],/year=2022|month=2|anchor=unknown-asset/);
+  assert.match(staleHost.querySelectorAll(".photo-timeline__status")[0].textContent,/已更新/,"degraded restore is visible");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

@@ -181,6 +181,9 @@ textarea {
 .album-current-title .album-parent,.album-current-title .album-total { padding:0; }
 .album-back { flex:none; }
 .album-photos { min-width:0; }
+.album-detail-view { min-width:0; }
+#album-list-view[hidden],#album-detail-view[hidden],#album-cards[hidden],#album-current-title[hidden],#album-photos[hidden] { display:none !important; }
+#panel-datasets[hidden],#panel-directory[hidden],#panel-create[hidden],#panel-edit[hidden],#panel-suggestions[hidden],#panel-operations[hidden],#panel-limits[hidden],#place-page-nav[hidden],#place-intro[hidden] { display:none !important; }
 .album-photo { display:flex; flex-direction:column; gap:.35rem; min-width:0; padding:.4rem; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--panel); }
 .album-photo__date { min-height:1.25em; color:var(--fg-muted); font-size:.78rem; }
 .album-correction { display:grid; gap:.35rem; padding-top:.25rem; }

@@ -58,17 +58,26 @@
     var host = options.host;
     var adapter = options.adapter || {};
     var preferences = readPreferences();
+    var restore = options.restoreView || {};
+    var restoreBucket = ["all", "capture", "unknown", "pending"].indexOf(restore.bucket) >= 0 ? restore.bucket : "all";
     var state = {
       generation: 0, periodsGeneration: 0, disposed: false, busy: false, failed: false,
       stalePaused: false, staleAnchor: null, lastOpenParams: null, assetsRevision: null, periodsRevision: null,
       revisionMismatch: false,
+      expectedRestoreRevision: restore.catalogFilterRevision === null || restore.catalogFilterRevision === undefined
+        ? null : String(restore.catalogFilterRevision),
+      restoreMessage: "",
       cursor: null, hasMore: true, pageNumber: 0, pages: [],
       active: [], detailCache: [], anchorCache: [],
-      basis: options.timeBasis || preferences.timeBasis, group: options.groupBy || preferences.groupBy,
-      bucket: "all", year: null, month: null, scope: options.scope || { kind: "all" },
+      basis: options.timeBasis || restore.timeBasis || preferences.timeBasis,
+      group: options.groupBy || restore.groupBy || preferences.groupBy,
+      bucket: restore.timeBasis && restore.timeBasis !== (options.timeBasis || restore.timeBasis || preferences.timeBasis) ? "all" : restoreBucket,
+      year: restore.year === null || restore.year === undefined ? null : Number(restore.year),
+      month: restore.month === null || restore.month === undefined ? null : Number(restore.month),
+      scope: options.scope || { kind: "all" },
       scopeViews: {},
       seekYear: null, seekMonth: null,
-      observer: null, request: null, restoredAssetId: options.returnAssetId || null, lastGroupToken: null,
+      observer: null, request: null, restoredAssetId: options.returnAssetId || restore.assetId || null, lastGroupToken: null,
     };
     host.classList.add("photo-timeline");
     var controls = element("div", "photo-timeline__controls");
@@ -460,6 +469,24 @@
       if (typeof adapter.onRequest === "function") adapter.onRequest(Object.fromEntries(params.entries()));
       var request = adapter.fetchPage ? adapter.fetchPage(Object.fromEntries(params.entries()), controller && controller.signal) : apiFetch(API + "/timeline/assets?" + params.toString(), controller && controller.signal);
       return Promise.resolve(request).then(function (body) {
+        if (state.expectedRestoreRevision !== null &&
+            String(responseRevision(body)) !== state.expectedRestoreRevision) {
+          // A cross-mount snapshot is only a hint. If its catalog revision is
+          // stale, discard its filters and anchor and reopen the authoritative
+          // first page for this scope instead of silently replaying old state.
+          state.expectedRestoreRevision = null;
+          state.bucket = "all"; state.year = null; state.month = null;
+          state.seekYear = null; state.seekMonth = null; state.restoredAssetId = null;
+          year.value = ""; month.value = "";
+          updateBucketButtons();
+          state.restoreMessage = "当前地点相册已更新，已重新读取最新照片范围。";
+          loadPeriods(null);
+          return reset(null);
+        }
+        // The snapshot revision only guards the initial cross-mount restore.
+        // Later resets belong to the user's current view and must not be
+        // mistaken for another attempt to replay the old snapshot.
+        state.expectedRestoreRevision = null;
         var page = appendPage(body, generation);
         if (state.restoredAssetId && page) {
           var target = page.section.querySelector('[data-asset-id="' + CSS.escape(String(state.restoredAssetId)) + '"]');
@@ -468,7 +495,7 @@
           state.restoredAssetId = null;
         }
         updateRevisionStatus();
-        if (!status.classList.contains("is-error")) setMessage("", false);
+        if (!status.classList.contains("is-error")) setMessage(state.restoreMessage, false);
         if (page && typeof adapter.onPage === "function") adapter.onPage(body, page, Object.fromEntries(params.entries()));
         return page;
       }).catch(function (error) {
@@ -560,8 +587,11 @@
       adapter.onScroll({ host: host, state: state, reset: reset });
     };
     host.addEventListener("scroll", onHostScroll, { passive: true });
-    reset(options.returnAnchor || null);
-    loadPeriods(null);
+    reset(options.returnAnchor || restore.anchor || null);
+    loadPeriods(null).then(function () {
+      if (state.year !== null) return loadPeriods(state.year);
+      return null;
+    });
 
     return {
       render: reset,
@@ -598,9 +628,11 @@
         state.pages.forEach(releasePage); state.pages = []; state.active = [];
         host.replaceChildren(); host.classList.remove("photo-timeline");
       },
-      snapshot: function () { return { generation: state.generation, inFlight: state.busy ? 1 : 0,
+      snapshot: function () { var visible = visibleAnchor(); return { generation: state.generation, inFlight: state.busy ? 1 : 0,
         timeBasis: state.basis, groupBy: state.group, bucket: state.bucket, year: state.year, month: state.month,
+        catalogFilterRevision: state.assetsRevision,
         scope: Object.assign({}, state.scope),
+        anchor: visible && visible.anchor || null, assetId: visible && visible.assetId || null,
         activePages: state.active.length, detailPages: state.detailCache.length,
         anchorPages: state.anchorCache.length, loadedPages: state.pageNumber }; },
     };
