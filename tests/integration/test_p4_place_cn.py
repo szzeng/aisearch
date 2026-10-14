@@ -8,6 +8,7 @@ from p2_search_api_fixtures import build_search_env
 from p4_cn_fixtures import geo, install, resolve_batch
 
 from photo_search.api.errors import ApiError
+from photo_search.api.timeline import timeline_page
 from photo_search.catalog.errors import CatalogError
 from photo_search.geo import dataset, resolver
 from photo_search.places import albums, cn_facets, datasets
@@ -50,6 +51,18 @@ def test_cn_current_members_manual_exclusion_and_cursor(api_env):
         cursor=first["next_cursor"],
     )
     assert [a["asset_id"] for a in first["assets"] + second["assets"]] == ids
+    timeline_first = timeline_page(
+        catalog, kind="place", place_kind="district", place_key=selected["key"],
+        data_root=api_env.service.data_root, time_basis="library", limit=2,
+    )
+    timeline_second = timeline_page(
+        catalog, kind="place", place_kind="district", place_key=selected["key"],
+        data_root=api_env.service.data_root, time_basis="library",
+        cursor=timeline_first["next_cursor"], limit=2,
+    )
+    timeline_ids = [a["asset_id"] for a in timeline_first["assets"] + timeline_second["assets"]]
+    assert sorted(timeline_ids) == sorted(ids)
+    assert len(timeline_ids) == len(set(timeline_ids)) == len(ids)
 
     async def scenario(client):
         csrf = await api_env.authenticate(client)
@@ -69,6 +82,13 @@ def test_cn_current_members_manual_exclusion_and_cursor(api_env):
             )
             assert response.status_code == 200, response.text
         assert albums.albums(catalog, api_env.data_root, kind="district")["albums"][0]["total"] == 2
+        with pytest.raises(ApiError) as stale_timeline:
+            timeline_page(
+                catalog, kind="place", place_kind="district", place_key=selected["key"],
+                data_root=api_env.service.data_root, time_basis="library",
+                cursor=timeline_first["next_cursor"], limit=2,
+            )
+        assert stale_timeline.value.code == "CATALOG_FILTER_REVISION_STALE"
         with pytest.raises(ApiError):
             albums.album_assets(
                 catalog,

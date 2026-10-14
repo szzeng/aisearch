@@ -113,7 +113,7 @@
     function scopeParams() {
       var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis,
         group_by: state.group, bucket: state.bucket, limit: String(PAGE_SIZE) });
-      ["source_id", "person_id", "collection_id"].forEach(function (key) {
+      ["source_id", "person_id", "collection_id", "place_kind", "place_key"].forEach(function (key) {
         if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
       });
       if (state.year !== null) params.set("year", String(state.year));
@@ -130,7 +130,8 @@
 
     function scopeKey(scope) {
       var value = scope || {};
-      return [value.kind || "all", value.source_id || "", value.person_id || "", value.collection_id || ""].join(":");
+      return [value.kind || "all", value.source_id || "", value.person_id || "", value.collection_id || "",
+        value.place_kind || "", value.place_key || ""].join(":");
     }
 
     function visibleAnchor() {
@@ -200,6 +201,12 @@
       return true;
     }
 
+    function responseRevision(body) {
+      var place = body && body.place_revisions;
+      return place ? JSON.stringify([body.catalog_filter_revision, place.suggestion_revision, place.package_revision])
+        : String(body && body.catalog_filter_revision);
+    }
+
     function updateMonths(months) {
       var selected = state.month === null ? "" : String(state.month);
       month.replaceChildren();
@@ -213,7 +220,7 @@
 
     function loadPeriods(selectedYear) {
       var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis });
-      ["source_id", "person_id", "collection_id"].forEach(function (key) {
+      ["source_id", "person_id", "collection_id", "place_kind", "place_key"].forEach(function (key) {
         if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
       });
       if (selectedYear) params.set("year", String(selectedYear));
@@ -223,7 +230,7 @@
       summaryStatus.textContent = "正在读取日期摘要…";
       return apiFetch(API + "/timeline/periods?" + params.toString()).then(function (body) {
         if (state.disposed || generation !== state.periodsGeneration) return;
-        state.periodsRevision = body.catalog_filter_revision;
+        state.periodsRevision = responseRevision(body);
         var sameRevision = updateRevisionStatus();
         if (!selectedYear) {
           var keep = state.year === null ? "" : String(state.year);
@@ -375,7 +382,7 @@
       state.pages.push(page); state.active.push(page); state.detailCache.push(page);
       state.anchorCache.push({ number: page.number, first: page.firstAnchor, last: page.lastAnchor, height: section.getBoundingClientRect().height });
       state.cursor = body.next_cursor || null; state.hasMore = Boolean(body.next_cursor);
-      state.assetsRevision = body.catalog_filter_revision;
+      state.assetsRevision = responseRevision(body);
       updateRevisionStatus();
       state.seekYear = null; state.seekMonth = null;
       state.lastGroupToken = lastGroup;

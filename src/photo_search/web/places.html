@@ -7,11 +7,13 @@
     <title>地点整理</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui-shell-a-f1-6" />
-    <link rel="stylesheet" href="/web/places.css?v=p4-photo-view-a-1" />
+    <link rel="stylesheet" href="/web/places.css?v=p4-ui-places-e-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui-places-e-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
-    <script src="/web/places-albums.js?v=p4-place-album-perf-a-2" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-ui-places-e-1" defer></script>
+    <script src="/web/places-albums.js?v=p4-ui-places-e-1" defer></script>
     <script src="/web/places.js?v=p4-place-album-perf-a-2" defer></script>
   </head>
   <body class="app-shell">
@@ -64,15 +66,21 @@
           <select id="album-kind"><option value="city">城市</option><option value="province">省份</option><option value="district">区县</option><option value="country">国家</option></select>
           <label for="album-name">筛选地名</label>
           <input id="album-name" type="search" maxlength="200" autocomplete="off" placeholder="筛选地名：城市、省份或国家" />
-          <button type="button" id="album-backfill">补齐照片地点</button>
-          <button type="button" id="cn-update" hidden>更新中国地点</button>
-          <button type="button" id="cn-pause" hidden>暂停更新</button>
         </div>
-        <p id="album-backfill-status" role="status" aria-live="polite"></p>
-        <p id="cn-update-status" role="status" aria-live="polite"></p>
+        <details class="place-tools">
+          <summary>地点工具</summary>
+          <div class="place-tools__body">
+            <button type="button" id="album-backfill">补齐照片地点</button>
+            <button type="button" id="cn-update" hidden>更新中国地点</button>
+            <button type="button" id="cn-pause" hidden>暂停更新</button>
+          </div>
+          <p id="album-backfill-status" role="status" aria-live="polite"></p>
+          <p id="cn-update-status" role="status" aria-live="polite"></p>
+          <p class="hint">这些操作只在点击后读取或更新地点；相册日期和照片列表由当前地点成员查询提供。</p>
+        </details>
         <div id="album-cards" class="album-cards" aria-live="polite"></div>
+        <div id="album-current-title" class="album-current-title" hidden></div>
         <div id="album-photos" class="album-photos" hidden></div>
-        <p><button type="button" id="album-more" hidden>加载更多照片</button></p>
       </section>
 
       <section id="panel-datasets" class="panel" aria-labelledby="datasets-title">

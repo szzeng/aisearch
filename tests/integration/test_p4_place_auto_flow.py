@@ -11,6 +11,7 @@ from typing import Any
 from httpx import AsyncClient
 from p2_dataset_fixtures import build_package, mini_spec, write_gps_jpeg
 
+from photo_search.api.timeline import timeline_page
 from photo_search.geo import extract as geo_extract
 from photo_search.geo import resolver
 from photo_search.places import albums, datasets, revision
@@ -141,6 +142,13 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
         assert len(city["albums"]) == 1
         assert city["albums"][0]["total"] == 20
         city_members = (await client.get(f"/api/v1/places/albums/city/{city_id}/assets", params={"limit": 100})).json()
+        city_timeline = timeline_page(
+            catalog, kind="place", place_kind="city", place_key=str(city_id),
+            data_root=api_env.data_root, time_basis="library", limit=60,
+        )
+        assert sorted(item["asset_id"] for item in city_timeline["assets"]) == sorted(
+            item["asset_id"] for item in city_members["assets"]
+        )
         place_search = await client.post(
             "/api/v1/search/place-aware",
             json={"request_id": "gps-place-natural-search", "original_query": "在杭州拍的照片", "page_size": 48},
@@ -160,6 +168,15 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
         assert len({item["asset_id"] for item in first["assets"] + second["assets"] + third["assets"]}) == 20
         province = (await client.get("/api/v1/places/albums", params={"kind": "province", "name": "Zhejiang"})).json()
         assert province["albums"][0]["total"] == 20
+        province_key = str(province["albums"][0]["key"])
+        old_province_ids, _ = albums.album_member_ids(
+            catalog, api_env.data_root, kind="province", key=province_key
+        )
+        province_timeline = timeline_page(
+            catalog, kind="place", place_kind="province", place_key=province_key,
+            data_root=api_env.data_root, time_basis="library", limit=60,
+        )
+        assert sorted(item["asset_id"] for item in province_timeline["assets"]) == sorted(old_province_ids)
         country = (await client.get("/api/v1/places/albums", params={"kind": "country", "name": "中国"})).json()
         assert country["albums"][0]["total"] == 20
 
@@ -179,6 +196,17 @@ def test_place_album_flow_groups_deduplicates_pages_and_respects_manual_control(
         assert unassigned.status_code == 200, unassigned.text
         city_after = (await client.get("/api/v1/places/albums", params={"kind": "city", "name": "杭州"})).json()
         assert city_after["albums"][0]["total"] == 19
+        city_after_key = str(city_after["albums"][0]["key"])
+        old_after_exclusion, _ = albums.album_member_ids(
+            catalog, api_env.data_root, kind="city", key=city_after_key
+        )
+        timeline_after_exclusion = timeline_page(
+            catalog, kind="place", place_kind="city", place_key=city_after_key,
+            data_root=api_env.data_root, time_basis="library", limit=60,
+        )
+        assert sorted(item["asset_id"] for item in timeline_after_exclusion["assets"]) == sorted(
+            old_after_exclusion
+        )
         state = (await client.get(f"/api/v1/assets/{asset_id}/place")).json()
         restored = await client.put(
             f"/api/v1/assets/{asset_id}/place-assignment",

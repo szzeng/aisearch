@@ -20,6 +20,7 @@ from photo_search.catalog.video import photo_asset_sql
 from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.places import revision
+from photo_search.places import timeline as place_timeline
 from photo_search.search.retrieval import SearchScope, person_condition
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
@@ -32,7 +33,7 @@ UNKNOWN_SOURCES = ("EXIF_ROOT", "FILE_MTIME")
 BUCKETS = ("all", "capture", "unknown", "pending")
 BASES = ("capture", "library")
 GROUPS = ("day", "month", "year")
-SCOPES = ("all", "source", "person", "collection")
+SCOPES = ("all", "source", "person", "collection", "place")
 
 
 def _fail(message: str, *, field: str | None = None) -> ApiError:
@@ -49,7 +50,9 @@ def _limit(value: int | None) -> int:
 
 
 def _scope(catalog: Any, kind: str, source_id: int | None,
-           person_id: int | None, collection_id: int | None) -> tuple[str, list[Any], dict[str, Any]]:
+           person_id: int | None, collection_id: int | None,
+           place_kind: str | None = None, place_key: str | None = None,
+           data_root: Any = None) -> tuple[str, list[Any], dict[str, Any]]:
     if kind not in SCOPES:
         if kind == "place":
             raise ApiError("TIMELINE_SCOPE_DEFERRED", "地点时间轴由 P4-UI-PLACES-E 提供", status=501)
@@ -64,6 +67,10 @@ def _scope(catalog: Any, kind: str, source_id: int | None,
         raise _fail("person_id is only valid for person scope", field="person_id")
     if kind != "collection" and collection_id is not None:
         raise _fail("collection_id is only valid for collection scope", field="collection_id")
+    if kind == "place" and (not place_kind or not place_key):
+        raise _fail("place_kind and place_key are required for place scope", field="place_key")
+    if kind != "place" and (place_kind is not None or place_key is not None):
+        raise _fail("place_kind and place_key are only valid for place scope", field="place_key")
 
     photo_sql, photo_params = photo_asset_sql(
         source_id=int(source_id) if kind == "source" else None
@@ -99,13 +106,25 @@ def _scope(catalog: Any, kind: str, source_id: int | None,
         binding.update({"collection_id": int(collection_id),
                         "collection_instance": str(row["instance_token"]),
                         "collection_revision": int(row["revision"])})
+    elif kind == "place":
+        place_sql, values, place_revisions = place_timeline.selected_members_sql(
+            catalog, data_root, kind=str(place_kind), key=str(place_key)
+        )
+        clauses.append(place_sql)
+        params.extend(values)
+        binding.update({"place_kind": str(place_kind), "place_key": str(place_key)})
+        binding["place_revisions"] = place_revisions
     return " AND ".join(f"({item})" for item in clauses), params, binding
+
+
+def _cursor_scope(scope: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in scope.items() if key != "place_revisions"}
 
 
 def _params(*, kind: str, scope: dict[str, Any], time_basis: str, group_by: str,
             bucket: str, year: int | None, month: int | None,
             rules_version: int | None) -> dict[str, Any]:
-    return {"kind": kind, **scope, "time_basis": time_basis, "group_by": group_by,
+    return {"kind": kind, **_cursor_scope(scope), "time_basis": time_basis, "group_by": group_by,
             "bucket": bucket, "year": year, "month": month,
             "rules_version": rules_version,
             "calendar_timezone": "system-local"}
@@ -257,6 +276,8 @@ def _seek_position(time_basis: str, year: int | None, month: int | None) -> list
 
 def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = None,
                   person_id: int | None = None, collection_id: int | None = None,
+                  place_kind: str | None = None, place_key: str | None = None,
+                  data_root: Any = None,
                   time_basis: str = "capture", group_by: str = "day", bucket: str = "all",
                   year: int | None = None, month: int | None = None,
                   seek_year: int | None = None, seek_month: int | None = None,
@@ -268,8 +289,11 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
         bucket = "capture"
     page_limit = _limit(limit)
     with catalog.read_snapshot() as connection:
-        where, params, scope = _scope(catalog, kind, source_id, person_id, collection_id)
+        where, params, scope = _scope(catalog, kind, source_id, person_id, collection_id,
+                                      place_kind, place_key, data_root)
         revision_value = revision.read_filter_revision(connection)
+        cursor_revision = (place_timeline.cursor_revision(revision_value, scope["place_revisions"])
+                           if kind == "place" else revision_value)
         rules = time_read.rules_version(connection)
         rules_match = rules == time_contract.RULES_VERSION
         binding_parameters = _params(kind=kind, scope=scope, time_basis=time_basis,
@@ -280,7 +304,7 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
             raise _fail("cursor and anchor cannot both be supplied", field="cursor")
         if (cursor is not None or anchor is not None) and seek_year is not None:
             raise _fail("seek parameters only apply when opening a timeline", field="seek_year")
-        after = _decode_cursor(cursor or anchor, fingerprint, revision_value,
+        after = _decode_cursor(cursor or anchor, fingerprint, cursor_revision,
                                allow_stale=anchor is not None)
         if after is None:
             after = _seek_position(time_basis, seek_year, seek_month)
@@ -367,23 +391,26 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
                 "date_state": state,
                 "group_key": group_key,
                 "created_at": int(row["created_at"]),
-                "anchor": _encode_cursor(fingerprint, revision_value, item_position),
+                "anchor": _encode_cursor(fingerprint, cursor_revision, item_position),
             })
         next_cursor = None
         if has_more and page:
             last = page[-1]
-            next_cursor = _encode_cursor(fingerprint, revision_value, [int(last["timeline_rank"]), int(last["timeline_sort"]), int(last["asset_id"])])
+            next_cursor = _encode_cursor(fingerprint, cursor_revision, [int(last["timeline_rank"]), int(last["timeline_sort"]), int(last["asset_id"])])
         return {
             "assets": assets, "limit": page_limit, "next_cursor": next_cursor,
             "has_more": has_more, "scope": binding_parameters,
             "catalog_filter_revision": revision_value, "rules_version": rules,
             "rules_version_matches": rules_match, "read_version": fingerprint,
             "calendar_timezone": "system-local",
+            **({"place_revisions": scope["place_revisions"]} if kind == "place" else {}),
         }
 
 
 def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None = None,
                      person_id: int | None = None, collection_id: int | None = None,
+                     place_kind: str | None = None, place_key: str | None = None,
+                     data_root: Any = None,
                      time_basis: str = "capture", year: int | None = None) -> dict[str, Any]:
     """Exact scoped date facets and mutually exclusive capture-time readiness counts."""
     if time_basis not in BASES:
@@ -391,7 +418,8 @@ def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None =
     if year is not None and not 1 <= int(year) <= 9999:
         raise _fail("year is outside 0001..9999", field="year")
     with catalog.read_snapshot() as connection:
-        base, params, scope = _scope(catalog, kind, source_id, person_id, collection_id)
+        base, params, scope = _scope(catalog, kind, source_id, person_id, collection_id,
+                                     place_kind, place_key, data_root)
         revision_value = revision.read_filter_revision(connection)
         rules = time_read.rules_version(connection)
         rules_match = rules == time_contract.RULES_VERSION
@@ -457,6 +485,7 @@ def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None =
             "counts_conserve": base_count == trusted + unknown + pending,
             "catalog_filter_revision": revision_value, "rules_version": rules,
             "rules_version_matches": rules_match,
+            **({"place_revisions": scope["place_revisions"]} if kind == "place" else {}),
         }
 
 

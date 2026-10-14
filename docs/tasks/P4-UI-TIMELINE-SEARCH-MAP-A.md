@@ -21,6 +21,11 @@
 
 日期：2026-10-13。状态：**PLANNED / 未实施**。前置 A、C、CORE、B、D、E；核对对应已完成报告，地图阶段依赖 E 的实际 adapter。本卡仅是最后的适配，不重构检索或地图算法。
 
+## 2026-10-14 依赖状态交接
+
+原计划的 A/C/CORE/B/D/E 验收前置目前并未全部关闭。用户明确要求先执行 E；E 报告结论为 IMPLEMENTED / ACCEPTANCE PARTIAL，LUNA High 受影响面复核完成，但 `BROWSER_SCREENSHOT_PENDING`、`PERF_200K=PENDING` 和 `CHECK_300K=PENDING`。原 30 万 fixture 没有地点成员，因此空 scope 检查不满足有效地点性能验证。见 [E 报告](../reports/P4-UI-PLACES-E.md) 与 [开发状态](../development-status.md)。本卡继续保持 PLANNED；不要从旧版“前置已验收”计划文字推断当前门槛已通过。只有后续明确用户指示才可在未关闭门时继续启动。
+
+
 推荐 **GPT-6 / High**；搜索候选与成员/游标契约受影响，按 B 类风险面复核、用户指定的个人定向验收与20万元数据性能必测、独立 DS-H 全受影响面核查；若要改变排名/TopK 或地图身份与写协议，停止并升级单独设计。
 
 ## 前置核对

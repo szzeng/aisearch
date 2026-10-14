@@ -5,11 +5,11 @@
   var name = document.getElementById("album-name");
   var cards = document.getElementById("album-cards");
   var photos = document.getElementById("album-photos");
-  var more = document.getElementById("album-more");
+  var currentTitle = document.getElementById("album-current-title");
   var backfill = document.getElementById("album-backfill");
   var backfillStatus = document.getElementById("album-backfill-status");
   var current = null;
-  var cursor = null;
+  var timeline = null;
   var albumRequest = 0;
   var photoVersion = 0;
   var initialKind = null;
@@ -29,7 +29,9 @@
   function loadAlbums() {
     var request = ++albumRequest;
     if (current && current.kind !== kind.value) {
-      current = null; photoVersion++; photos.hidden = true; photos.replaceChildren(); more.hidden = true;
+      current = null; photoVersion++;
+      if (timeline) { timeline.dispose(); timeline = null; }
+      photos.hidden = true; currentTitle.hidden = true; cards.hidden = false;
     }
     cards.replaceChildren(el("p", "hint", "正在整理地点相册…"));
     var params = new URLSearchParams({ kind: kind.value });
@@ -69,31 +71,45 @@
     });
   }
   function openAlbum(album) {
-    photoVersion++; current = album; cursor = null; photos.replaceChildren(); photos.hidden = false; more.hidden = true;
-    photos.appendChild(el("h3", null, album.name + " · " + album.total + " 张"));
-    loadPhotos();
-    photos.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-  function loadPhotos() {
-    if (!current) return;
-    var version = photoVersion;
-    var query = new URLSearchParams({ limit: "48" }); if (cursor) query.set("cursor", cursor);
-    get("/places/albums/" + encodeURIComponent(current.kind) + "/" + encodeURIComponent(current.key) + "/assets?" + query.toString()).then(function (body) {
-      if (version !== photoVersion) return;
-      body.assets.forEach(function (asset) {
-        var card = el("article", "album-photo");
-        var view = el("button", "album-photo-open"); view.type = "button"; view.setAttribute("aria-label", "查看照片 " + asset.asset_id);
-        var image = el("img"); image.loading = "lazy"; image.alt = ""; image.src = api + "/assets/" + encodeURIComponent(asset.asset_id) + "/thumbnail";
-        view.appendChild(image); view.addEventListener("click", function () { showPreview(asset.asset_id, view); }); card.appendChild(view);
-        card.appendChild(el("small", null, "照片 #" + asset.asset_id));
-        var correction = el("div", "album-correction");
-        correction.appendChild(el("label", null, "更正地点"));
-        var input = el("input"); input.type = "text"; input.maxLength = 200; input.placeholder = "地点名；留空取消归类；* 恢复自动"; input.setAttribute("aria-label", "更正地点名称"); correction.appendChild(input);
-        var fix = el("button", null, "查找可选地点"); fix.type = "button"; fix.addEventListener("click", function () { correct(asset.asset_id, input.value.trim(), correction); }); correction.appendChild(fix); card.appendChild(correction);
-        photos.appendChild(card);
-      });
-      cursor = body.next_cursor; more.hidden = !cursor;
-    }).catch(function (error) { if (version === photoVersion) photos.appendChild(el("p", "error", error.message)); });
+    photoVersion++; current = album;
+    if (timeline) timeline.dispose();
+    currentTitle.replaceChildren(); currentTitle.hidden = false; cards.hidden = true; photos.hidden = false;
+    var back = el("button", "album-back", "返回地点目录"); back.type = "button";
+    back.addEventListener("click", function () { if (timeline) { timeline.dispose(); timeline = null; } current = null; photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; });
+    var heading = el("div", "album-current-title__heading");
+    heading.appendChild(el("h3", null, album.name));
+    heading.appendChild(el("span", "album-parent", album.parent || ""));
+    heading.appendChild(el("span", "album-total", album.total + " 张有效照片"));
+    currentTitle.append(back, heading);
+    timeline = window.PhotoTimeline.mount({
+      host: photos,
+      scope: { kind: "place", place_kind: album.kind, place_key: String(album.key) },
+      adapter: {
+        renderAsset: function (item) {
+          var card = el("article", "album-photo");
+          var view = el("button", "album-photo-open"); view.type = "button";
+          view.setAttribute("aria-label", "查看照片 " + item.asset_id);
+          var image = el("img"); image.loading = "lazy"; image.decoding = "async"; image.alt = "";
+          image.src = api + "/assets/" + encodeURIComponent(item.asset_id) + "/thumbnail";
+          view.appendChild(image); view.addEventListener("click", function () { showPreview(item.asset_id, view); });
+          card.appendChild(view);
+          var dateLabel = item.display_time || (item.date_state === "unknown"
+            ? "日期未知 · 按加入图库日期" : item.date_state === "pending"
+              ? "日期待就绪 · 按加入图库日期" : item.time_label || "查看照片");
+          card.appendChild(el("small", "album-photo__date", dateLabel));
+          var tools = document.createElement("details"); tools.className = "album-correction";
+          tools.appendChild(el("summary", null, "更正地点"));
+          var input = el("input"); input.type = "text"; input.maxLength = 200;
+          input.placeholder = "地点名；留空取消归类；* 恢复自动";
+          input.setAttribute("aria-label", "更正地点名称"); tools.appendChild(input);
+          var fix = el("button", null, "查找可选地点"); fix.type = "button";
+          fix.addEventListener("click", function () { correct(item.asset_id, input.value.trim(), tools); });
+          tools.appendChild(fix); card.appendChild(tools);
+          return card;
+        }
+      }
+    });
+    currentTitle.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   function showPreview(assetId, returnFocus) {
     if (window.AIPhotoInfo) { window.AIPhotoInfo.open(assetId, { returnFocus: returnFocus }); return; }
@@ -130,7 +146,7 @@
     if (!current) return;
     get("/places/albums?" + new URLSearchParams({ kind: current.kind })).then(function (body) {
       var updated = (body.albums || []).find(function (item) { return String(item.key) === String(current.key); });
-      if (updated) openAlbum(updated); else { photos.hidden = true; photos.replaceChildren(); more.hidden = true; }
+      if (updated) openAlbum(updated); else { if (timeline) { timeline.dispose(); timeline = null; } photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; }
     }).catch(function () {});
   }
   function correct(assetId, choice, holder) {
@@ -187,7 +203,6 @@
     });
   }
   var timer = null; name.addEventListener("input", function () { window.clearTimeout(timer); timer = window.setTimeout(loadAlbums, 220); });
-  more.addEventListener("click", loadPhotos);
   var params = new URLSearchParams(window.location.search);
   initialKind = params.get("album_kind");
   initialKey = params.get("album_key");

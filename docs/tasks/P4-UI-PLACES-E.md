@@ -19,7 +19,11 @@
 - E 的「搜索此地点」仅预留 kind/key 和标题位置，范围搜索实际完整通过后才由 SEARCH-MAP 激活，不得呈现死按钮。
 
 
-日期：2026-10-10；2026-10-13 UI 2.0 修订。状态：**PLANNED / 未实施**。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)，现有地点工程结果只复用未改变部分。
+日期：2026-10-10；2026-10-13 UI 2.0 修订。规划收口 HEAD `c19749a`；依赖 [A](P4-UI-SHELL-A.md)、[C](P4-UI-SEARCH-C.md)、[CORE](P4-UI-TIMELINE-CORE-A.md)、[B](P4-UI-PHOTOS-B.md)、[D](P4-UI-PEOPLE-D.md)，现有地点工程结果只复用未改变部分。
+
+## 2026-10-14 执行交接
+
+用户明确要求在此前 UI 浏览器/性能门仍 pending 时先执行本卡，并指定受影响面复核由 LUNA High 子代理完成；用户要求复用原 30 万夹具、不新建规模夹具。当前结论：**IMPLEMENTED / ACCEPTANCE PARTIAL**。定向 JUnit 32/0/0/0、Ruff、Python/Node 语法、diff-check 通过；LUNA High 复核完成、修复后无阻断 finding（不是 DS-H）。地点合成浏览器流程已观察，项目内截图工件仍 pending。原 30 万夹具无地点成员，空 scope probe 不构成地点性能验收；`PERF_200K=PENDING`、`CHECK_300K=PENDING`。详见 [报告](../reports/P4-UI-PLACES-E.md)。该执行指示不改变 A/C/CORE/B/D 各自已有验收状态，也不授权自动开始 SEARCH-MAP。
 
 推荐 GPT-6 / High；视觉 A 级，涉及新增地点日期只读查询按 B 类受影响面复核，独立 DS-H 覆盖完整受影响展示/入口与原写请求链。
 

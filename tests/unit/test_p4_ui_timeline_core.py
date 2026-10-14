@@ -6,6 +6,7 @@ from datetime import datetime
 
 import pytest
 from conftest import ApiEnv
+from p2_search_fixtures import assign_place, install_source_places
 from p3_persons_page_fixtures import add_link, add_person, seed_library
 from p4_time_fixtures import assets_by_basename, run_extraction, write_exif_jpeg, write_plain_jpeg
 
@@ -15,6 +16,8 @@ from photo_search.catalog import store as catalog_store
 from photo_search.persons.collections import create_collection, delete_collection, edit_members
 from photo_search.persons.service import PersonService
 from photo_search.places import revision
+from photo_search.places.albums import album_member_ids
+from photo_search.places.timeline import _in_ids
 
 
 def seed_timeline(env: ApiEnv) -> tuple[int, dict[str, int]]:
@@ -54,6 +57,77 @@ def test_timeline_buckets_keyset_periods_and_direct_year_seek(api_env: ApiEnv) -
     assert [item["asset_id"] for item in timeline_page(catalog, year=2022, month=2)["assets"]] == [ids["同日B.jpg"], ids["同日A.jpg"]]
     assert {item["date_state"] for item in timeline_page(catalog, bucket="unknown")["assets"]} == {"unknown"}
     assert {item["date_state"] for item in timeline_page(catalog, bucket="pending")["assets"]} == {"pending"}
+
+
+def test_place_timeline_matches_legacy_members_and_invalidates_changed_cursor(api_env: ApiEnv) -> None:
+    for number in range(4):
+        write_exif_jpeg(
+            api_env.library / f"place-timeline-{number}.jpg",
+            original=f"2021:0{number + 1}:10 12:00:00",
+            color=(20 + number * 20, 60, 90),
+        )
+    source = api_env.register_source()
+    api_env.scan(int(source["source_id"]))
+    ids = assets_by_basename(api_env.service.catalog)
+    places = install_source_places(api_env.service.catalog)
+    city_id = places["tokyo"]
+    for number in range(3):
+        assign_place(
+            api_env.service.catalog,
+            asset_id=ids[f"place-timeline-{number}.jpg"],
+            place_id=city_id,
+            request_id=f"place-timeline-assign-{number}",
+        )
+
+    catalog = api_env.service.catalog
+    old_ids, old_scope = album_member_ids(
+        catalog, api_env.service.data_root, kind="city", key=str(city_id)
+    )
+    expected = sorted(ids[f"place-timeline-{number}.jpg"] for number in range(3))
+    assert old_ids == expected
+
+    first = timeline_page(
+        catalog, kind="place", place_kind="city", place_key=str(city_id),
+        data_root=api_env.service.data_root, time_basis="library", limit=2,
+    )
+    second = timeline_page(
+        catalog, kind="place", place_kind="city", place_key=str(city_id),
+        data_root=api_env.service.data_root, time_basis="library",
+        cursor=first["next_cursor"], limit=2,
+    )
+    actual = [item["asset_id"] for page in (first, second) for item in page["assets"]]
+    assert set(actual) == set(old_ids)
+    assert len(actual) == len(set(actual)) == len(old_ids) == 3
+    assert first["place_revisions"]["catalog_filter_revision"] == old_scope["catalog_filter_revision"]
+
+    periods = timeline_periods(
+        catalog, kind="place", place_kind="city", place_key=str(city_id),
+        data_root=api_env.service.data_root, time_basis="library",
+    )
+    assert periods["counts"]["effective_total"] == len(old_ids)
+    assert periods["counts_conserve"] is True
+
+    assign_place(
+        catalog, asset_id=ids["place-timeline-3.jpg"], place_id=city_id,
+        request_id="place-timeline-assign-revision",
+    )
+    with pytest.raises(ApiError) as stale:
+        timeline_page(
+            catalog, kind="place", place_kind="city", place_key=str(city_id),
+            data_root=api_env.service.data_root, time_basis="library",
+            cursor=first["next_cursor"], limit=2,
+        )
+    assert stale.value.code == "CATALOG_FILTER_REVISION_STALE"
+
+
+def test_province_place_id_predicate_does_not_consume_sqlite_bind_slots(api_env: ApiEnv) -> None:
+    sql, params = _in_ids("p.place_id", list(range(1, 1201)))
+    assert params == []
+    assert len(sql) > 4500
+    matched = api_env.service.catalog.read_all(
+        f"WITH p(place_id) AS (SELECT 1) SELECT p.place_id FROM p WHERE {sql}"
+    )
+    assert [int(row["place_id"]) for row in matched] == [1]
 
 
 def test_library_timeline_cursor_and_direct_year_month_seek(api_env: ApiEnv) -> None:
@@ -342,9 +416,9 @@ def test_timeline_scope_validation_is_explicit_and_source_is_authoritative(api_e
     with pytest.raises(ApiError) as no_collection:
         timeline_page(catalog, kind="collection", collection_id=999999)
     assert no_collection.value.code == "PERSON_COLLECTION_NOT_FOUND"
-    with pytest.raises(ApiError) as deferred_place:
+    with pytest.raises(ApiError) as missing_place_scope:
         timeline_page(catalog, kind="place")
-    assert deferred_place.value.code == "TIMELINE_SCOPE_DEFERRED"
+    assert missing_place_scope.value.code == "VALIDATION_ERROR"
 
 
 def test_person_and_collection_scopes_use_effective_unique_photo_members(api_env: ApiEnv) -> None:

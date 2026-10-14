@@ -1,13 +1,18 @@
 # Development status
 
-## Current user-directed task: P4-UI-PEOPLE-D — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
+## Current user-directed task: P4-UI-PLACES-E — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
 
-用户明确要求在 A/C/CORE/B 浏览器或性能门尚未关闭时开始本卡。人物与合集照片页已接入共享时间轴，保留旧局部搜图与人物整理操作；合集实例/revision 不匹配时停止显示结果并提供刷新后的当前范围重载，查看器续页沿用有界照片 ID。定向 JUnit **31/0/0/0**；Ruff、Node、diff-check 通过。用户指定的 LUNA High 受影响面复核无剩余实现 findings，不代表 DS-H。[任务卡](tasks/P4-UI-PEOPLE-D.md) / [报告](reports/P4-UI-PEOPLE-D.md)。浏览器交互/截图及 `PERF_200K` 仍 pending，故不标整卡 PASS。
+地点相册接入共享时间轴并增加可复用地点成员 SQL scope；保留原地点整理和地图查询行为。定向 JUnit **32/0/0/0**，Ruff、Python 编译、places/timeline/map 相关四个 JS 语法检查及 diff-check 通过。用户指定的 LUNA High 受影响面复核完成、修复已回看，无剩余阻断 finding；不是 DS-H。[任务卡](tasks/P4-UI-PLACES-E.md) / [报告](reports/P4-UI-PLACES-E.md)。合成浏览器流程已观察，但项目内截图工件仍 pending；`PERF_200K` 与有代表性的 `CHECK_300K` 仍 pending，不能标整卡 PASS。
 
-## Next necessary action: 完成 PEOPLE-D 浏览器与性能验收门 — PENDING
+用户要求复用原 30 万夹具、不建新夹具。既有 30 万 catalog 没有地点表、成员或 EXIF metadata；空地点 scope 查询仅为诊断，不代表有效成员性能。E 的未完门关闭前不自动开始 SEARCH-MAP。A/C/CORE/B/D 的既有未验收状态按各自报告保留。
 
-在可用的本地合成产品浏览器中观察人物/合集切换、选择与取消、忽略恢复、待整理单脸对话框、预览返回；保存截图，并复用 CORE 的 20 万性能证据或补齐人物/合集差异证据。此前本地文件打开被浏览器安全策略拒绝，未尝试规避。D 的实现、定向 JUnit 与用户指定 Luna High 受影响面复核已完成；用户要求本卡完成后停止。A/C/CORE/B 的既有未验收门按各自报告保留，不因 D 开始或实现而关闭。
+## Next necessary action: P4-UI-PLACES-E acceptance gates — screenshot artifact and place-scope performance remain PENDING
 
+按任务卡保存合成浏览器截图，并在不新建规模夹具的约束下取得有效的高成员地点规模证据；现有 30 万 fixture 不包含地点成员，不能用空 scope 查询替代。此处状态不改变用户要求先执行 E，也不追认前置 A/C/CORE/B/D 的验收。
+
+## Previous user-directed task: P4-UI-PEOPLE-D — IMPLEMENTED / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
+
+人物与合集照片页已接入共享时间轴，保留旧局部搜图与人物整理操作；合集实例/revision 不匹配时停止显示结果并提供刷新后的当前范围重载，查看器续页沿用有界照片 ID。定向 JUnit **31/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PEOPLE-D.md) / [报告](reports/P4-UI-PEOPLE-D.md)。用户指定的 LUNA High 受影响面复核无剩余实现 findings，不代表 DS-H。浏览器交互/截图及 `PERF_200K` 仍 pending；用户明确要求先执行 E，不改变 D 或更早任务的验收状态。
 ## Previous executed task: P4-UI-PHOTOS-B — FUNCTIONAL SCOPED PASS / LUNA HIGH REVIEW COMPLETE / BROWSER AND PERF_200K PENDING (2026-10-14)
 
 照片页默认统一时间轴、保留列表/图库管理；定向 JUnit **28/0/0/0**，关联 timeline integration **1/0/0/0**；Ruff、Node、diff-check 通过。[任务卡](tasks/P4-UI-PHOTOS-B.md) / [报告](reports/P4-UI-PHOTOS-B.md)。真实浏览器截图与 `PERF_200K` 仍 pending；用户后来明确要求先执行 D，不改变 B 或 CORE 的验收状态。

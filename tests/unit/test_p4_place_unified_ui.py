@@ -29,17 +29,18 @@ class Element {
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 get('album-kind').value='city';
 let assignmentBody=null;
+let timelineOptions=null;
 const album={kind:'city',key:'77',name:'东京',parent:'日本',total:1,origin:'MANUAL',cover_asset_id:42};
 const choice={kind:'district',key:'cn:3',name:'历下区',parent:'山东省 · 济南市',source:'OSM',selection_ref:'osm|fixture-dataset|relation/3',aliases:[]};
 const response=body=>({ok:true,status:200,json:async()=>body});
 const context={URLSearchParams,Date,Math,console,document:{cookie:'ps_csrf=fixture-csrf',getElementById:get,createElement:tag=>new Element(tag),body:new Element('body')},
-  window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){},alert(message){throw Error(message);}},
+  window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){},alert(message){throw Error(message);},
+    PhotoTimeline:{mount(options){timelineOptions=options;return {dispose(){}};}}},
   fetch:async(url,options={})=>{
     if(String(url).includes('/places/admin/capabilities'))return response({available:false});
     if(String(url).includes('/places/choices'))return response({choices:[choice]});
     if(String(url).includes('/assets/42/place')&&options.method!=='PUT')return response({assignment:{revision:0}});
     if(String(url).includes('/place-assignment')){assignmentBody=JSON.parse(options.body);return response({changed:true});}
-    if(String(url).includes('/places/albums/city/77/assets'))return response({assets:[{asset_id:42}],next_cursor:null});
     if(String(url).includes('/places/albums'))return response({albums:[album]});
     throw Error('unexpected request '+url);
   }};
@@ -49,7 +50,11 @@ const settle=async()=>{for(let i=0;i<5;i++)await new Promise(setImmediate);};
   await settle();
   const card=get('album-cards').children[0];assert.match(card.textContent,/东京/);
   card.fire('click');await settle();
-  const photo=get('album-photos').children.find(item=>item.className==='album-photo');
+  assert.equal(timelineOptions.scope.kind,'place');
+  assert.equal(timelineOptions.scope.place_kind,'city');
+  assert.equal(timelineOptions.scope.place_key,'77');
+  const photo=timelineOptions.adapter.renderAsset({asset_id:42,date_state:'unknown',time_label:'日期未知'});
+  get('album-photos').appendChild(photo);
   const correction=photo.children.find(item=>item.className==='album-correction');
   const input=correction.children.find(item=>item.tag==='input');input.value='历下区';
   correction.children.find(item=>item.textContent==='查找可选地点').fire('click');await settle();

@@ -22,7 +22,11 @@ get('album-kind').value='city';
 const pending=[], posts=[];
 const response=body=>({ok:true,json:async()=>body});
 const context={URLSearchParams,Date,Math,document:{cookie:'ps_csrf=synthetic',getElementById:get,createElement:tag=>new Element(tag)},
-window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){}},
+    window:{location:{search:''},setTimeout:fn=>setImmediate(fn),clearTimeout(){},PhotoTimeline:{mount(){
+      let dispose;const instance={dispose(){if(dispose)dispose();}};
+      const item={url:'/api/v1/timeline/assets?kind=place',options:{},resolve(){}};pending.push(item);
+      instance.dispose=()=>{item.disposed=true;};return instance;
+    }}},
 fetch:(url,options)=>{
   if(url.endsWith('/admin/capabilities'))return Promise.resolve(response({available:true,dataset_id:'fixture'}));
   return new Promise(resolve=>{const item={url,options,resolve:body=>resolve(response(body))};pending.push(item);if(options.method==='POST')posts.push(item);});
