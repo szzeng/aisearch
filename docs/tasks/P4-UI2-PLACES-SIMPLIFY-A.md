@@ -1,6 +1,6 @@
 # P4-UI2-PLACES-SIMPLIFY-A — 地点页面去管理化与三级视图精简
 
-> **状态**：READY / 待执行（本提交仅新增任务卡，不代表功能已经实现）
+> **状态**：IMPLEMENTED / BROWSER_PENDING（2026-10-14；按用户要求跳过产品浏览器路线，见[执行报告](../reports/P4-UI2-PLACES-SIMPLIFY-A.md)）
 > **优先级**：P1，个人日常使用体验
 > **建议执行模型**：GPT-6 High（用户在 Codex 手动选择），原生 HTML/CSS/JS 局部 UI 与状态治理
 > **测试原则**：简单定向测试 + Codex 内置浏览器 2 条核心路线；不用真实照片库、全仓测试、模型/GPU 或 20万/30万数据夹具。

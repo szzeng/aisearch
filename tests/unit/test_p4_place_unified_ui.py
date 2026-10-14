@@ -36,7 +36,7 @@ let timelineOptions=null;
 const album={kind:'city',key:'77',name:'东京',parent:'日本',total:1,origin:'MANUAL',cover_asset_id:42};
 const choice={kind:'district',key:'cn:3',name:'历下区',parent:'山东省 · 济南市',source:'OSM',selection_ref:'osm|fixture-dataset|relation/3',aliases:[]};
 const response=body=>({ok:true,status:200,json:async()=>body});
-const context={URLSearchParams,URL,Date,Math,console,document:{cookie:'ps_csrf=fixture-csrf',getElementById:get,createElement:tag=>new Element(tag),body:Object.assign(new Element('body'),{dataset:{}})},
+const context={URLSearchParams,URL,Date,Math,console,document:{cookie:'ps_csrf=fixture-csrf',getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],body:Object.assign(new Element('body'),{dataset:{}})},
   window:{location:{search:'',pathname:'/places',hash:'',href:'http://127.0.0.1/places'},history:{state:null,pushState(state,_title,url){this.state=state;this.url=url;},replaceState(state,_title,url){this.state=state;this.url=url;},back(){}},addEventListener(){},scrollY:0,scrollTo(){},setTimeout:fn=>setImmediate(fn),clearTimeout(){},alert(message){throw Error(message);},
     PhotoTimeline:{mount(options){timelineOptions=options;return {dispose(){}};}}},
   fetch:async(url,options={})=>{
@@ -58,12 +58,14 @@ const settle=async()=>{for(let i=0;i<5;i++)await new Promise(setImmediate);};
   assert.equal(timelineOptions.scope.place_key,'77');
   const photo=timelineOptions.adapter.renderAsset({asset_id:42,date_state:'unknown',time_label:'日期未知'});
   get('album-photos').appendChild(photo);
-  const correction=photo.children.find(item=>item.className==='album-correction');
-  const input=correction.children.find(item=>item.tag==='input');input.value='历下区';
-  correction.children.find(item=>item.textContent==='查找可选地点').fire('click');await settle();
-  const options=correction.children.find(item=>item.className==='place-choice-list');
-  assert.match(options.textContent,/历下区 · 山东省 · 济南市/);
-  assert.match(options.textContent,/district · OSM/);
+  const correction=photo.children.find(item=>item.className==='album-correction');assert.equal(correction.children[0].textContent,'更多操作');
+  const body=correction.children.find(item=>item.className==='album-correction__body');
+  const assign=body.children.find(item=>item.className==='album-correction__assign');
+  const input=assign.children.find(item=>item.tag==='input');input.value='历下区';
+  assign.children.find(item=>item.tag==='button').fire('click');await settle();
+  const options=body.children.find(item=>item.className==='place-choice-list');
+  assert.match(options.textContent,/历下区 · 上级 山东省 · 济南市/);
+  assert.match(options.textContent,/来源：OSM/);
   options.children[1].fire('click');await settle();
   assert.equal(assignmentBody.action,'assign');
   assert.equal(assignmentBody.target_place_ref,choice.selection_ref);

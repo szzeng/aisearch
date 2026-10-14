@@ -7,15 +7,15 @@
     <title>地点整理</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
-    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-place-album-nav-a-1" />
+    <link rel="stylesheet" href="/web/places.css?v=p4-ui2-places-simplify-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-visual-final-a-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-size-stable-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-unify-a-3" defer></script>
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/places-albums.js?v=p4-ui2-place-album-nav-a-1" defer></script>
-    <script src="/web/places.js?v=p4-ui2-place-album-nav-a-1" defer></script>
+    <script src="/web/places-albums.js?v=p4-ui2-places-simplify-a-1" defer></script>
+    <script src="/web/places.js?v=p4-ui2-places-simplify-a-1" defer></script>
   </head>
   <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -34,7 +34,7 @@
     </aside>
 
     <header class="app-header has-global-search">
-      <h1>地点整理</h1>
+      <h1>地点相册</h1>
       <form class="global-search-form" action="/search" method="get" role="search">
         <label class="sr-only" for="global-search-query">搜索照片</label>
         <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
@@ -44,44 +44,20 @@
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
 
-      <nav class="page-nav" id="place-page-nav" aria-label="地点页面内容">
-        <a class="nav-link" href="#panel-directory">目录</a>
-        <a class="nav-link" href="#panel-albums">地点相册</a>
-        <a class="nav-link" href="#panel-suggestions">建议与批量整理</a>
-        <a class="nav-link" href="#panel-operations">操作日志与撤销</a>
-        <a class="nav-link" href="/map"><span class="nav-icon" aria-hidden="true">⌖</span>地图相册</a>
-      </nav>
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
     <main id="main" tabindex="-1">
-      <p class="hint" id="place-intro">
-        本页只做人工整理：机器候选永远是「待确认建议」（SUGGESTION_ONLY），确认后才是有效人工归属。
-        仅在点击更新时处理地点，不显示本机绝对路径；坐标在会话保护的
-        <code>/api/v1/assets/{asset_id}/geo</code> 提供。
-      </p>
-
       <section id="panel-albums" class="panel" aria-labelledby="albums-title">
         <div id="album-list-view">
         <h2 id="albums-title">地点相册</h2>
-        <p class="hint">中国省、市、区县按已安装的行政边界解析，标为机器地点；缺边界时只显示可靠上级。其他地区保留GPS附近城市提示（最多50km）。人工指定和取消优先。</p>
         <div class="album-controls">
           <label for="album-kind">查看</label>
           <select id="album-kind"><option value="city">城市</option><option value="province">省份</option><option value="district">区县</option><option value="country">国家</option></select>
           <label for="album-name">筛选地名</label>
           <input id="album-name" type="search" maxlength="200" autocomplete="off" placeholder="筛选地名：城市、省份或国家" />
         </div>
-        <details class="place-tools">
-          <summary>地点工具</summary>
-          <div class="place-tools__body">
-            <button type="button" id="album-backfill">补齐照片地点</button>
-            <button type="button" id="cn-update" hidden>更新中国地点</button>
-            <button type="button" id="cn-pause" hidden>暂停更新</button>
-          </div>
-          <p id="album-backfill-status" role="status" aria-live="polite"></p>
-          <p id="cn-update-status" role="status" aria-live="polite"></p>
-          <p class="hint">这些操作只在点击后读取或更新地点；相册日期和照片列表由当前地点成员查询提供。</p>
-        </details>
         <div id="album-cards" class="album-cards" aria-live="polite"></div>
+        <p class="album-manage-entry"><button type="button" id="open-place-management">整理地点</button></p>
         </div>
         <div id="album-detail-view" class="album-detail-view" hidden>
           <div id="album-current-title" class="album-current-title"></div>
@@ -90,6 +66,30 @@
         </div>
       </section>
 
+      <section id="place-management" class="panel place-management" hidden aria-labelledby="place-management-title">
+        <div class="place-management__header">
+          <button type="button" id="back-to-place-albums">返回地点相册</button>
+          <h2 id="place-management-title">整理地点</h2>
+        </div>
+        <nav class="place-management__nav" aria-label="地点整理工具">
+          <button type="button" data-place-panel="panel-suggestions">整理识别建议</button>
+          <button type="button" data-place-panel="panel-directory">管理地名</button>
+          <button type="button" data-place-panel="panel-create">新建地点</button>
+          <button type="button" data-place-panel="panel-datasets">高级维护</button>
+          <button type="button" data-place-panel="panel-operations">历史与撤销</button>
+        </nav>
+        <p class="hint" id="place-intro">
+          机器识别结果需要在建议中确认后才会成为人工归属。整理操作由你主动提交；地点更正会检查当前 revision，并显示冲突或失败原因。
+        </p>
+        <div id="place-advanced-tools" class="place-advanced-tools" hidden>
+          <h3>高级维护</h3>
+          <button type="button" id="album-backfill">补齐照片地点</button>
+          <button type="button" id="cn-update" hidden>更新中国地点</button>
+          <button type="button" id="cn-pause" hidden>暂停更新</button>
+          <p id="album-backfill-status" role="status" aria-live="polite"></p>
+          <p id="cn-update-status" role="status" aria-live="polite"></p>
+          <p class="hint">仅在点击操作按钮后处理或更新地点。</p>
+        </div>
       <section id="panel-datasets" class="panel" aria-labelledby="datasets-title">
         <h2 id="datasets-title">地名包状态</h2>
         <div id="dataset-body" class="state-block" role="status" aria-live="polite">
@@ -313,12 +313,6 @@
         <ul id="undo-log" class="log" aria-label="撤销结果"></ul>
       </section>
 
-      <section id="panel-limits" class="panel" aria-labelledby="limits-title">
-        <h2 id="limits-title">本页不提供的动作</h2>
-        <p class="hint">
-          本版本不提供改父级（reparent）、地点合并与物理删除入口。服务端对 reparent 请求会返回
-          结构化校验错误（VALIDATION_ERROR），页面会如实显示该错误，而不是假装动作不存在。
-        </p>
       </section>
     </main>
 

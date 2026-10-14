@@ -774,6 +774,9 @@
       els.editForm.hidden = true;
       return;
     }
+    if (typeof window.CustomEvent === "function") {
+      window.dispatchEvent(new window.CustomEvent("place-management-panel-requested", { detail: { id: "panel-edit" } }));
+    }
     els.editPlaceId.value = String(target);
     setError(els.editError, "");
     fetchPlaceById(target).then(function (place) {
@@ -1805,21 +1808,29 @@
       { id: "panel-operations", key: "operations", observe: true, load: function () { if (!panelLoaded.operations) loadOperations(true); } },
     ];
     function loadForHash() {
-      if (document.body && document.body.dataset.placeAlbumView === "detail") return;
+      if (!document.body || (document.body.dataset.placeAlbumView !== "list" && document.body.dataset.placeAlbumView !== "manage")) return;
       var hash = String(window.location.hash || "").slice(1);
       panels.forEach(function (panel) { if (panel.id === hash) panel.load(); });
     }
+    function loadForManagementPanel(event) {
+      if (!document.body || document.body.dataset.placeAlbumView !== "manage") return;
+      var id = event && event.detail && event.detail.id;
+      var panel = panels.find(function (item) { return item.id === id; });
+      if (panel && !document.getElementById(panel.id).hidden) panel.load();
+    }
     function loadFallbackVisiblePanels() {
       if (typeof window.IntersectionObserver === "function" ||
-          (document.body && document.body.dataset.placeAlbumView === "detail")) return;
-      panels.forEach(function (panel) { if (panel.observe) panel.load(); });
+          (!document.body || document.body.dataset.placeAlbumView !== "manage")) return;
+      var activeId = String(window.location.hash || "").slice(1);
+      var panel = panels.find(function (item) { return item.id === activeId && item.observe; });
+      if (panel && !document.getElementById(panel.id).hidden) panel.load();
     }
     window.addEventListener("place-album-list-visible", loadFallbackVisiblePanels);
     if (typeof window.IntersectionObserver === "function") {
       var observer = new window.IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           if (!entry.isIntersecting) return;
-          if (document.body && document.body.dataset.placeAlbumView === "detail") return;
+          if (!document.body || (document.body.dataset.placeAlbumView !== "list" && document.body.dataset.placeAlbumView !== "manage")) return;
           if (entry.target.hidden) return;
           var panel = panels.find(function (item) { return item.id === entry.target.id; });
           if (panel) panel.load();
@@ -1830,11 +1841,9 @@
         var node = document.getElementById(panel.id);
         if (node) observer.observe(node);
       });
-    } else {
-      // Older browsers still load visible status/history panels instead of leaving them blank.
-      panels.forEach(function (panel) { if (panel.observe && (!document.body || document.body.dataset.placeAlbumView !== "detail")) panel.load(); });
     }
     window.addEventListener("hashchange", loadForHash);
+    window.addEventListener("place-management-panel-visible", loadForManagementPanel);
     loadForHash();
   }
 

@@ -1,8 +1,16 @@
-## Current user-directed task: P4-PLACE-MAP-TIANDITU-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+## Current user-directed task: P4-UI2-PLACES-SIMPLIFY-A — IMPLEMENTED / BROWSER_PENDING (2026-10-14)
+
+地点页默认仅浏览相册；主动进入整理工作区后可访问建议、地名目录/新建/编辑、高级维护及历史撤销；纠错操作已语义化且沿用原 CSRF/revision 写协议。定向 JUnit **15/0/0/0**、两份 JS `node --check`、`git diff --check` 通过。LUNA High 首轮两项 finding 已修复，repair-only 复核关闭，无新 finding（不是 DS-H）。按用户指示未运行浏览器验收，故不标整卡 PASS；未访问真实图库或执行性能/模型/GPU/打包检查。[任务卡](tasks/P4-UI2-PLACES-SIMPLIFY-A.md) / [报告](reports/P4-UI2-PLACES-SIMPLIFY-A.md)。
+
+## Next task: P4-UI2-PLACES-SIMPLIFY-B — product browser acceptance
+
+等用户发起后，按[任务卡](tasks/P4-UI2-PLACES-SIMPLIFY-B.md)在隔离合成数据和 Codex 内置浏览器执行两条路线，补地点浏览→整理→返回与浏览→详情→预览→返回的真实交互证据。当前明确 `BROWSER_PENDING`。
+
+## Previous user-directed task: P4-PLACE-MAP-TIANDITU-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 天地图 `_w` 矢量/影像底图、图层切换、本机 Key 设置/API、详情小地图复用及无 Key/瓦片失败照片回退已实现。定向 JUnit **26/0/0/1 skipped**（Windows 符号链接权限不可用），Ruff、Node、compileall、diff-check 通过；Codex 内置浏览器 A/B 假 Key 和 2 张隔离合成 GPS 照片通过。Luna High repair-only 复核完成：runtime 恢复 finding 已修复并复看关闭，无剩余代码 finding。[任务卡](tasks/P4-PLACE-MAP-TIANDITU-A.md) / [报告](reports/P4-PLACE-MAP-TIANDITU-A.md)。真实天地图大陆网络与影像对齐 `PENDING / USER_MANUAL_CHECK`；Windows Key 文件继承 data-root ACL，用户拒绝 ACL 更改，故访问控制未验证且整卡不得 PASS。浏览器截图未能由 CUA 导出。未访问真实图库/Key，未跑全仓、压测、模型/GPU、打包/发布；按用户要求仅做本地提交，不推送。
 
-## Next necessary action: P4-PLACE-MAP-TIANDITU-A manual acceptance gates
+## Unresolved prior acceptance: P4-PLACE-MAP-TIANDITU-A manual gates
 
 用户在本机设置页录入自己的 Key 后，实测天地图标准与卫星图层的深圳等已知坐标覆盖和照片点对齐。Windows ACL 若需收紧，须重新取得明确授权；在此之前保持当前继承权限且记录 pending。
 ## Previous user-directed task: P4-UI2-SCROLL-LOAD-B — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)

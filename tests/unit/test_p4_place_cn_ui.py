@@ -26,7 +26,7 @@ const response=body=>({ok:true,json:async()=>body});
 const events={};let url='http://127.0.0.1/places';const stack=[{url,state:null}];
 const location={get href(){return url;},get pathname(){return new URL(url).pathname;},get search(){return new URL(url).search;},get hash(){return new URL(url).hash;}};
 const history={index:0,state:null,pushState(state,_t,next){stack.splice(this.index+1);url=new URL(next,url).href;this.state=state;stack.push({url,state});this.index++;},replaceState(state,_t,next){url=new URL(next,url).href;this.state=state;stack[this.index]={url,state};},back(){if(this.index){this.index--;const item=stack[this.index];url=item.url;this.state=item.state;(events.popstate||[]).forEach(fn=>fn({state:item.state}));}}};
-const context={URLSearchParams,URL,Date,Math,document:{cookie:'ps_csrf=synthetic',getElementById:get,createElement:tag=>new Element(tag),body:Object.assign(new Element('body'),{dataset:{}})},
+const context={URLSearchParams,URL,Date,Math,document:{cookie:'ps_csrf=synthetic',getElementById:get,createElement:tag=>new Element(tag),querySelectorAll:()=>[],body:Object.assign(new Element('body'),{dataset:{}})},
     window:{location,history,addEventListener(name,fn){(events[name]||(events[name]=[])).push(fn);},scrollY:0,scrollTo(){},setTimeout:fn=>setImmediate(fn),clearTimeout(){},PhotoTimeline:{mount(){
         let dispose;const instance={snapshot(){return {timeBasis:'capture',groupBy:'day',bucket:'all',year:null,month:null,scope:{place_key:'cn:3'}};},dispose(){if(dispose)dispose();}};
       const item={url:'/api/v1/timeline/assets?kind=place',options:{},resolve(){}};pending.push(item);
@@ -81,7 +81,7 @@ def test_place_page_defers_management_requests_and_supports_anchor_loading():
     page = (root / "src/photo_search/web/places.html").read_text(encoding="utf-8")
     script = (root / "src/photo_search/web/places.js").read_text(encoding="utf-8")
     assert page.index("places-albums.js") < page.index("places.js")
-    assert "places.js?v=p4-ui2-place-album-nav-a-1" in page
+    assert "places.js?v=p4-ui2-places-simplify-a-1" in page
     boot = script[script.index("function boot()") : script.index('if (document.readyState')]
     assert "setupDeferredPanels();" in boot
     assert "probeCapabilities();\n    loadDatasets();" not in boot
@@ -124,7 +124,10 @@ window.location.hash='#panel-operations';hashHandler();assert.deepEqual(calls,['
 const fallback={document,window:{location:{hash:''},addEventListener(){}},panelLoaded:{datasets:false,directory:false,operations:false},
   loadDatasets(){calls.push('fallback-datasets');},loadDirectory(){calls.push('fallback-directory');},loadOperations(){calls.push('fallback-operations');}};
 vm.runInNewContext(extracted+'\nsetupDeferredPanels();',fallback);
-assert.deepEqual(calls.slice(-2),['fallback-datasets','fallback-operations']);
+assert.deepEqual(calls,['datasets','directory','operations']);
+document.body.dataset.placeAlbumView='manage';fallback.window.location.hash='#panel-datasets';
+vm.runInNewContext(extracted+'\nsetupDeferredPanels();',fallback);
+assert.deepEqual(calls,['datasets','directory','operations','fallback-datasets']);
 """
     result = subprocess.run(
         [node, "-e", harness],
