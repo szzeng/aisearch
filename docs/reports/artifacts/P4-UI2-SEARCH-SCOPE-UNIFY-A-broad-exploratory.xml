@@ -1,0 +1,411 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="12" skipped="0" tests="138" time="1.658" timestamp="2026-10-14T19:45:08.602522+08:00" hostname="TCC_SZ"><testcase classname="tests.unit.test_p4_ui_search_entry" name="test_all_pages_have_one_header_search_and_no_duplicate_sidebar_entry" time="0.007" /><testcase classname="tests.unit.test_p4_ui_search_entry" name="test_startup_query_precedence_empty_focus_and_ime_submit_guard" time="0.070" /><testcase classname="tests.unit.test_p4_ui_search_entry" name="test_scope_entry_carries_query_and_executes_once_without_fallback" time="0.072" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_accepts_plain_local_paths[/]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_accepts_plain_local_paths[/sources]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_accepts_plain_local_paths[/web/app.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_accepts_plain_local_paths[/assets?order=time_desc]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[http://evil.example]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[https://evil.example/]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[//evil.example]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[/\\evil.example]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[\\evil.example]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[relative/path]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[/a\r\nb]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[/a\nb]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[/x\x00y]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_redirect_target_refuses_everything_else[javascript:alert(1)]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_time_cursor_round_trip" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_two_cursor_spaces_never_mix" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[!!!!]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[dDE6MQ]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[dDE6MToyOjM]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[dDE6LTE6Mg]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[dDE6YTpi]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[dDE6]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_malformed_time_cursors_are_rejected[djE6MQ]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_packaged_assets_are_readable[index.html]" time="0.003" /><testcase classname="tests.unit.test_api_frontend" name="test_packaged_assets_are_readable[app.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_packaged_assets_are_readable[styles.css]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[/]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[..]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[../app.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[..\\app.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[app.js/../../index.html]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[/etc/passwd]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[%2e%2e/app.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_read_static_refuses_anything_outside_the_package[index.html\x00.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_web_media_types[index.html-text/html]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_web_media_types[app.js-text/javascript]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_web_media_types[styles.css-text/css]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_web_media_types[logo.svg-image/svg+xml]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_web_media_types[mystery.bin-application/octet-stream]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_shipped_shell_has_no_external_reference_or_credential" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_frontend_reaches_data_only_through_the_protected_api" time="0.002" /><testcase classname="tests.unit.test_api_frontend" name="test_frontend_never_puts_a_credential_in_a_url_or_in_storage" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_frontend_only_renders_a_root_path_after_source_detail_is_expanded" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_frontend_copy_stays_honest_about_time_and_offline_media" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_home_loads_rootless_summaries_and_source_scoped_browse" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_page_startup_avoids_model_probes_and_automatic_coverage" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_assets_are_packaged[places.html]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_assets_are_packaged[places.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_assets_are_packaged[places.css]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_route_never_shadows_the_place_api" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_has_no_external_reference_credential_or_html_sink" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_carries_the_redetection_review_view" time="0.001"><failure message="assert 'id=&quot;panel-mappings&quot;' in '&lt;!DOCTYPE html&gt;\n&lt;html lang=&quot;zh-CN&quot;&gt;\n  &lt;head&gt;\n    &lt;meta charset=&quot;utf-8&quot; /&gt;\n    &lt;meta name=&quot;viewport&quot; content=&quot;widt...    &lt;noscript&gt;\n      &lt;p class=&quot;error&quot;&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'">def test_the_persons_page_carries_the_redetection_review_view() -&gt; None:
+        """P3-08B: the review view exists, is capability-gated, and keeps the privacy promise."""
+        shell, script, style = _persons_documents()
+&gt;       assert 'id="panel-mappings"' in shell
+E       assert 'id="panel-mappings"' in '&lt;!DOCTYPE html&gt;\n&lt;html lang="zh-CN"&gt;\n  &lt;head&gt;\n    &lt;meta charset="utf-8" /&gt;\n    &lt;meta name="viewport" content="widt...    &lt;noscript&gt;\n      &lt;p class="error"&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'
+
+tests\unit\test_api_frontend.py:341: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_reaches_data_only_through_the_protected_api" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_never_asks_for_coordinates_or_a_stored_root_path" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_places_page_keeps_the_frozen_place_vocabulary" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_assets_are_packaged[search.html]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_assets_are_packaged[search.js]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_assets_are_packaged[search.css]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_route_never_shadows_the_search_api" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_has_no_external_reference_or_credential" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_search_page_restores_results_without_searching_again" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_reaches_data_only_through_the_protected_api" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_keeps_the_frozen_hit_reason_vocabulary" time="0.004"><failure message="AssertionError: assert '.score' not in '/* Search p...  }\n})();\n'&#10;  &#10;  '.score' is contained here:&#10;    ore: asset.score,&#10;  ?           ++++++&#10;            matched_by: asset.matched_by, hit_reason: asset.hit_reason,&#10;            matched_text: asset.matched_text, semantic_ready: asset.semantic_ready,&#10;            capture_time: asset.capture_time,...&#10;  &#10;  ...Full output truncated (1784 lines hidden), use '-vv' to show">def test_the_search_page_keeps_the_frozen_hit_reason_vocabulary() -&gt; None:
+        shell, script, _ = _search_documents()
+
+        # The four frozen reasons are shown verbatim, never re-worded into a score.
+        for reason in ("TEXT:", "SEMANTIC:", '"TEXT+SEMANTIC"', "FILTER_ONLY"):
+            assert reason in script
+        assert "命中原因" in shell + script
+        assert "matched_text" in script
+        assert "semantic_ready" in script
+        assert "hit_reason" in script
+        # The page never reads a raw score, so it cannot turn one into an accuracy.
+&gt;       assert ".score" not in script
+E       AssertionError: assert '.score' not in '/* Search p...  }\n})();\n'
+E
+E         '.score' is contained here:
+E           ore: asset.score,
+E         ?           ++++++
+E                   matched_by: asset.matched_by, hit_reason: asset.hit_reason,
+E                   matched_text: asset.matched_text, semantic_ready: asset.semantic_ready,
+E                   capture_time: asset.capture_time,...
+E
+E         ...Full output truncated (1784 lines hidden), use '-vv' to show
+
+tests\unit\test_api_frontend.py:534: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_states_every_non_success_state_instead_of_downgrading_it" time="0.004"><failure message="assert 'candidates_truncated' not in '/* Search p...  }\n})();\n'&#10;  &#10;  'candidates_truncated' is contained here:&#10;    te = body.candidates_truncated&#10;            ? &quot;检索候选已截断，最多浏览冻结快照中的5000条&quot;&#10;            : &quot;仅对当前冻结的语义候选排序，不代表完整图库时间轴&quot;;&#10;          setStatus(els.queryStatus, &quot;按拍摄时间整理当前语义候选 · 已显示 &quot; +&#10;            number(state.search.count) + &quot; / &quot; + number(body.total_candidates) + &quot; · &quot; + note);...&#10;  &#10;  ...Full output truncated (1768 lines hidden), use '-vv' to show">def test_the_search_page_states_every_non_success_state_instead_of_downgrading_it() -&gt; None:
+        _, script, _ = _search_documents()
+
+        # A missing encoder must be said out loud, in both of its two spellings.
+        assert "语义通道未运行" in script
+        assert "QUERY_ENCODER_UNAVAILABLE" in script
+        assert "IMAGE_ENCODER_UNAVAILABLE" in script
+        assert "RUNTIME_CAPABILITY_UNAVAILABLE" in script
+        assert "没有用文本通道或「零命中」冒充结果" in script
+        # Session/cursor/revision refusals keep the query and offer a re-run.
+        for code in (
+            "SEARCH_SESSION_EXPIRED",
+            "INVALID_CURSOR",
+            "PROFILE_GENERATION_MISMATCH",
+            "CATALOG_FILTER_REVISION_STALE",
+            "PLACE_SUGGESTION_REVISION_STALE",
+        ):
+            assert code in script
+        assert "重新搜索" in script
+        assert "query-retry" in script
+        # Lagging projection and truncation are reported with their counts.
+        assert "语义索引仍在追赶" in script
+        assert "pending_semantic" in script
+        assert "search_projection" in script
+        assert "文本投影仍在追赶" in script
+&gt;       assert "candidates_truncated" not in script
+E       assert 'candidates_truncated' not in '/* Search p...  }\n})();\n'
+E
+E         'candidates_truncated' is contained here:
+E           te = body.candidates_truncated
+E                   ? "检索候选已截断，最多浏览冻结快照中的5000条"
+E                   : "仅对当前冻结的语义候选排序，不代表完整图库时间轴";
+E                 setStatus(els.queryStatus, "按拍摄时间整理当前语义候选 · 已显示 " +
+E                   number(state.search.count) + " / " + number(body.total_candidates) + " · " + note);...
+E
+E         ...Full output truncated (1768 lines hidden), use '-vv' to show
+
+tests\unit\test_api_frontend.py:566: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_keeps_the_p2_03_place_filter_semantics" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_uploads_without_adding_anything_to_the_catalog" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_three_documents_navigate_to_each_other" time="0.001"><failure message="assert 'href=&quot;/search&quot;' in '&lt;!DOCTYPE html&gt;\n&lt;html lang=&quot;zh-CN&quot;&gt;\n  &lt;head&gt;\n    &lt;meta charset=&quot;utf-8&quot; /&gt;\n    &lt;meta name=&quot;viewport&quot; content=&quot;widt...    &lt;noscript&gt;\n      &lt;p class=&quot;error&quot;&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'">def test_the_three_documents_navigate_to_each_other() -&gt; None:
+        shell, _, _ = _web_documents()
+        places_shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
+        search_shell, _, _ = _search_documents()
+
+&gt;       assert 'href="/search"' in shell
+E       assert 'href="/search"' in '&lt;!DOCTYPE html&gt;\n&lt;html lang="zh-CN"&gt;\n  &lt;head&gt;\n    &lt;meta charset="utf-8" /&gt;\n    &lt;meta name="viewport" content="widt...    &lt;noscript&gt;\n      &lt;p class="error"&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'
+
+tests\unit\test_api_frontend.py:628: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_assets_are_packaged[persons.html]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_assets_are_packaged[persons.js]" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_assets_are_packaged[persons.css]" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_route_never_shadows_the_person_api" time="0.000" /><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_has_no_external_reference_credential_or_html_sink" time="0.001"><failure message="assert 'ps_csrf' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  &quot;use strict&quot;...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'">def test_the_persons_page_has_no_external_reference_credential_or_html_sink() -&gt; None:
+        shell, script, style = _persons_documents()
+
+        for document in (shell, script, style):
+            assert "http://" not in document
+            assert "https://" not in document
+        assert 'lang="zh-CN"' in shell
+        assert "/web/persons.js" in shell
+        assert "/web/styles.css" in shell
+        assert "/web/persons.css" in shell
+        assert 'href="/"' in shell
+&gt;       assert "ps_csrf" in script
+E       assert 'ps_csrf' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  "use strict"...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'
+
+tests\unit\test_api_frontend.py:682: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_reaches_data_only_through_the_protected_api" time="0.001"><failure message="assert 'var API = &quot;/api/v1&quot;;' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  &quot;use strict&quot;...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'">def test_the_persons_page_reaches_data_only_through_the_protected_api() -&gt; None:
+        _, script, _ = _persons_documents()
+
+&gt;       assert 'var API = "/api/v1";' in script
+E       assert 'var API = "/api/v1";' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  "use strict"...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'
+
+tests\unit\test_api_frontend.py:705: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_persons_page_keeps_the_frozen_person_vocabulary" time="0.001"><failure message="AssertionError: PERSON_IDEMPOTENCY_CONFLICT&#10;assert 'PERSON_IDEMPOTENCY_CONFLICT' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  &quot;use strict&quot;...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'">def test_the_persons_page_keeps_the_frozen_person_vocabulary() -&gt; None:
+        shell, script, _ = _persons_documents()
+
+        # Every refusal the page can meet is shown with the server's own code.
+        for code in (
+            "PERSON_REVISION_CONFLICT",
+            "PERSON_IDEMPOTENCY_CONFLICT",
+            "PERSON_NOT_FOUND",
+            "PERSON_REDIRECT_CYCLE",
+            "PERSON_SPLIT_CONFLICT",
+            "FACE_ASSIGNMENT_CONFLICT",
+            "FACE_IDEMPOTENCY_CONFLICT",
+            "FACE_STATE_CONFLICT",
+            "FACE_NOT_FOUND",
+            "FACE_OPERATION_NOT_UNDOABLE",
+            "PERSON_OPERATION_NOT_UNDOABLE",
+            "INVALID_CURSOR",
+        ):
+&gt;           assert code in script, code
+E           AssertionError: PERSON_IDEMPOTENCY_CONFLICT
+E           assert 'PERSON_IDEMPOTENCY_CONFLICT' in '/* On-demand person organization. All writes use the existing protected protocols. */\n(function () {\n  "use strict"...ideFaces, openReview, openHistory, summary, refreshVisible, route,\n    writeStateChanged: updateSelection };\n})();\n'
+
+tests\unit\test_api_frontend.py:758: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists" time="0.002"><failure message="assert 'href=&quot;/search&quot;' in '&lt;!DOCTYPE html&gt;\n&lt;html lang=&quot;zh-CN&quot;&gt;\n  &lt;head&gt;\n    &lt;meta charset=&quot;utf-8&quot; /&gt;\n    &lt;meta name=&quot;viewport&quot; content=&quot;widt...    &lt;noscript&gt;\n      &lt;p class=&quot;error&quot;&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'">def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists() -&gt; None:
+        """The entry is hidden by default and revealed from ``/capabilities``."""
+        shell, script, _ = _web_documents()
+        places_shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
+        search_shell = (read_static(SEARCH_NAME) or b"").decode("utf-8")
+        places_script = (read_static("places.js") or b"").decode("utf-8")
+        search_script = (read_static("search.js") or b"").decode("utf-8")
+        persons_shell = (read_static(PERSONS_NAME) or b"").decode("utf-8")
+
+        for document in (shell, places_shell, search_shell):
+            assert 'id="nav-persons" href="/persons" hidden' in document
+        for code in (script, places_script, search_script):
+            assert "function revealPersonsNav(body)" in code
+            assert 'link.hidden = !usable;' in code
+            # The gate is the schema the person read layer needs, not the presence of a model.
+            assert "version &gt;= 13" in code
+            assert 'schema_status' in code
+        # The page itself navigates back to the other three documents.
+        assert 'href="/"' in persons_shell
+&gt;       assert 'href="/search"' in persons_shell
+E       assert 'href="/search"' in '&lt;!DOCTYPE html&gt;\n&lt;html lang="zh-CN"&gt;\n  &lt;head&gt;\n    &lt;meta charset="utf-8" /&gt;\n    &lt;meta name="viewport" content="widt...    &lt;noscript&gt;\n      &lt;p class="error"&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'
+
+tests\unit\test_api_frontend.py:802: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_reads_the_person_choice_from_the_paged_person_api" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_keeps_the_selection_by_id_and_never_merges_same_names" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_sends_the_person_condition_only_for_a_real_selection" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_keeps_the_upload_request_free_of_person_fields" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_echoes_the_canonical_person_filter_from_the_server" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_shows_every_person_refusal_instead_of_an_empty_grid" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_never_continues_a_cursor_after_the_condition_changed" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_disables_the_person_filter_without_the_person_read_layer" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_person_picker_is_labelled_keyboard_reachable_and_narrow_safe" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_keeps_the_person_choice_out_of_the_url_and_the_html_sink" time="0.004"><failure message="AssertionError: URLSearchParams&#10;assert 'URLSearchParams' not in '/* Search p...  }\n})();\n'&#10;  &#10;  'URLSearchParams' is contained here:&#10;    ery = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, pageSize))) });&#10;  ?           +++++++++++++++&#10;        if (continuation) query.set(&quot;cursor&quot;, browse.cursor);&#10;        var generation = state.search.requestGeneration;&#10;        els.loadMore.disabled = true;...&#10;  &#10;  ...Full output truncated (1795 lines hidden), use '-vv' to show">def test_the_search_page_keeps_the_person_choice_out_of_the_url_and_the_html_sink() -&gt; None:
+        _, script, _ = _search_documents()
+
+        for fragment in (
+            "innerHTML",
+            "insertAdjacentHTML",
+            "URLSearchParams",
+            "location.search",
+            "location.hash",
+            "history.pushState",
+        ):
+&gt;           assert fragment not in script, fragment
+E           AssertionError: URLSearchParams
+E           assert 'URLSearchParams' not in '/* Search p...  }\n})();\n'
+E
+E             'URLSearchParams' is contained here:
+E               ery = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, pageSize))) });
+E             ?           +++++++++++++++
+E                   if (continuation) query.set("cursor", browse.cursor);
+E                   var generation = state.search.requestGeneration;
+E                   els.loadMore.disabled = true;...
+E
+E             ...Full output truncated (1795 lines hidden), use '-vv' to show
+
+tests\unit\test_api_frontend.py:960: AssertionError</failure></testcase><testcase classname="tests.unit.test_api_frontend" name="test_the_browse_page_binds_the_capture_order_and_the_two_bounds" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_browse_page_labels_file_time_and_never_invents_a_timezone" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_browse_page_states_the_honest_capture_state_and_refusals" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_asset_detail_view_shows_the_capture_truth_without_the_raw_text" time="0.002" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_sends_the_capture_bounds_only_for_the_text_search" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_echoes_the_normalized_capture_condition" time="0.001" /><testcase classname="tests.unit.test_api_frontend" name="test_the_search_page_distinguishes_an_empty_page_from_an_unextracted_library" time="0.001" /><testcase classname="tests.unit.test_p4_search_nl_ui" name="test_filter_pages_append_and_saved_snapshot_keeps_loaded_results" time="0.087" /><testcase classname="tests.unit.test_p4_search_nl_ui" name="test_intent_cancel_keeps_content_and_new_search_drops_stale_chips" time="0.073" /><testcase classname="tests.unit.test_p4_search_nl_ui" name="test_new_search_generation_ignores_stale_success_choice_and_error" time="0.088" /><testcase classname="tests.unit.test_p4_search_nl_ui" name="test_same_name_person_scope_choices_have_person_heading_and_distinct_labels" time="0.066" /><testcase classname="tests.unit.test_p4_ui2_closeout_flow" name="test_filter_only_return_requeries_authoritative_first_page" time="0.001" /><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_search_preview_people[avatars]" time="0.070" /><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_search_preview_people[count_order]" time="0.074" /><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_search_preview_people[no_assigned_people]" time="0.075" /><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_search_preview_people[no_assigned_people_more]" time="0.070" /><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_person_page_opens_requested_album_and_contextual_back[False]" time="0.079"><failure message="AssertionError: TypeError: setSearchScopeAction is not a function&#10;      at refreshSearchScopeAction (evalmachine.&lt;anonymous&gt;:44:12)&#10;      at Object.boot (evalmachine.&lt;anonymous&gt;:1757:5)&#10;      at [eval]:40:6&#10;      at [eval]:55:3&#10;      at [eval]:56:4&#10;      at runScriptInThisContext (node:internal/vm:219:10)&#10;      at node:internal/process/execution:451:12&#10;      at [eval]-wrapper:6:24&#10;      at runScriptInContext (node:internal/process/execution:449:60)&#10;      at evalFunction (node:internal/process/execution:283:30)&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require(&quot;fs&quot;), vm = require(&quot;vm&quot;), a...iptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n').returncode">from_photo = False
+
+    @pytest.mark.parametrize("from_photo", [False, True])
+    def test_person_page_opens_requested_album_and_contextual_back(from_photo: bool) -&gt; None:
+        node = shutil.which("node")
+        assert node is not None, "Node is required for the people-album route check"
+        script = r"""
+    const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+    class Element {
+      constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.hidden=false; this.value=""; this.classList={add(){}}; }
+      set textContent(value) { this.text=String(value); this.children=[]; }
+      get textContent() { return this.text || this.children.map(c =&gt; c.textContent).join(""); }
+      append(...items) { this.children.push(...items); }
+      replaceChildren(...items) { this.children=items; }
+      setAttribute() {} removeAttribute(key) { delete this[key]; } focus() {}
+      addEventListener(event, callback) { this.events[event]=callback; }
+      showModal() { this.open=true; } close() { this.open=false; }
+      fire(event,extra={}) { if(this.events[event]) this.events[event](Object.assign({target:this,preventDefault(){}},extra)); }
+    }
+    const fromPhoto=process.argv[1]==="from_photo", elements=new Map(), get=id =&gt; { if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+    const avatar="f".repeat(64), search="?person_id=7"+(fromPhoto?"&amp;from_photo=photo":""), location={search,href:"http://localhost/persons"+search,pathname:"/persons",hash:""};
+    let backCalls=0;
+    const calls=[];
+    const response=body=&gt;({ok:true,status:200,headers:{get:()=&gt;"application/json"},json:async()=&gt;body});
+    const context={
+      URLSearchParams, URL, encodeURIComponent, crypto:{randomUUID:()=&gt;"synthetic"}, setTimeout:()=&gt;1, clearTimeout(){},
+      document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=&gt;new Element(tag)},
+          window:{addEventListener(){},location,history:{length:2,back(){backCalls++;},replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
+      fetch:async url=&gt;{
+        calls.push(url);
+        if(url==="/api/v1/persons/7") return response({person_id:7,canonical_person_id:7,name:"\u7238\u7238",revision:2,asset_count:3,face_count:4,avatar_face_id:avatar});
+        if(url.startsWith("/api/v1/persons/7/photos")) return response({person:{person_id:7,name:"\u7238\u7238",asset_count:3,thumbnail_url:"/api/v1/faces/"+avatar+"/thumbnail"},assets:[{asset_id:31}],has_more:false,next_cursor:null});
+        if(url.startsWith("/api/v1/persons/browse")) return response({persons:[],has_more:false,next_cursor:null});
+        throw new Error("unexpected URL "+url);
+      },
+    };
+    let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
+    code=code.replace('  if (document.readyState === "loading")',
+      '  globalThis.ui = {state, boot, requestedPersonId, photoReturnRequested, closeOnBackdrop};\n  if (document.readyState === "loading")');
+    vm.createContext(context); vm.runInContext(code,context);
+    const ui=context.ui, flush=()=&gt;new Promise(setImmediate);
+    (async()=&gt;{
+      assert.equal(ui.requestedPersonId(),7);
+      assert.equal(ui.photoReturnRequested(),fromPhoto);
+      get("pa-back").textContent="\u2190 \u6240\u6709\u4eba\u7269";
+      ui.boot(); await flush(); await flush();
+      assert.equal(ui.state.person.person_id,7);
+      assert.equal(get("pa-library").hidden,true); assert.equal(get("pa-album").hidden,false);
+      assert.equal(get("pa-title").textContent,"\u7238\u7238");
+      assert.equal(get("pa-photos").children.length,1);
+      assert.equal(get("pa-back").textContent,fromPhoto?"\u2190 \u8fd4\u56de\u67e5\u770b\u7167\u7247":"\u2190 \u6240\u6709\u4eba\u7269");
+      const preview=get("pa-preview"); preview.open=true;
+      preview.fire("click",{target:get("pa-preview-image")}); assert.equal(preview.open,true,"clicks inside the person viewer do not dismiss it");
+      preview.fire("click",{target:preview}); assert.equal(preview.open,false,"clicking the person viewer backdrop dismisses it");
+      assert.ok(calls.includes("/api/v1/persons/7"));
+      assert.ok(calls.some(url=&gt;url.startsWith("/api/v1/persons/7/photos")));
+      get("pa-back").fire("click"); await flush();
+      if(fromPhoto) { assert.equal(backCalls,1,"photo-origin people routes return through browser history"); return; }
+      assert.equal(get("pa-library").hidden,false); assert.equal(get("pa-album").hidden,true);
+      assert.equal(location.search,"");
+    })().catch(error=&gt;{console.error(error);process.exitCode=1;});
+    """
+        result = subprocess.run(
+            [node, "-e", script, "from_photo" if from_photo else "direct"],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: TypeError: setSearchScopeAction is not a function
+E             at refreshSearchScopeAction (evalmachine.&lt;anonymous&gt;:44:12)
+E             at Object.boot (evalmachine.&lt;anonymous&gt;:1757:5)
+E             at [eval]:40:6
+E             at [eval]:55:3
+E             at [eval]:56:4
+E             at runScriptInThisContext (node:internal/vm:219:10)
+E             at node:internal/process/execution:451:12
+E             at [eval]-wrapper:6:24
+E             at runScriptInContext (node:internal/process/execution:449:60)
+E             at evalFunction (node:internal/process/execution:283:30)
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require("fs"), vm = require("vm"), a...iptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n').returncode
+
+tests\unit\test_search_person_album_link_ui.py:199: AssertionError</failure></testcase><testcase classname="tests.unit.test_search_person_album_link_ui" name="test_person_page_opens_requested_album_and_contextual_back[True]" time="0.072"><failure message="AssertionError: TypeError: setSearchScopeAction is not a function&#10;      at refreshSearchScopeAction (evalmachine.&lt;anonymous&gt;:44:12)&#10;      at Object.boot (evalmachine.&lt;anonymous&gt;:1757:5)&#10;      at [eval]:40:6&#10;      at [eval]:55:3&#10;      at [eval]:56:4&#10;      at runScriptInThisContext (node:internal/vm:219:10)&#10;      at node:internal/process/execution:451:12&#10;      at [eval]-wrapper:6:24&#10;      at runScriptInContext (node:internal/process/execution:449:60)&#10;      at evalFunction (node:internal/process/execution:283:30)&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require(&quot;fs&quot;), vm = require(&quot;vm&quot;), a...iptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n').returncode">from_photo = True
+
+    @pytest.mark.parametrize("from_photo", [False, True])
+    def test_person_page_opens_requested_album_and_contextual_back(from_photo: bool) -&gt; None:
+        node = shutil.which("node")
+        assert node is not None, "Node is required for the people-album route check"
+        script = r"""
+    const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+    class Element {
+      constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.hidden=false; this.value=""; this.classList={add(){}}; }
+      set textContent(value) { this.text=String(value); this.children=[]; }
+      get textContent() { return this.text || this.children.map(c =&gt; c.textContent).join(""); }
+      append(...items) { this.children.push(...items); }
+      replaceChildren(...items) { this.children=items; }
+      setAttribute() {} removeAttribute(key) { delete this[key]; } focus() {}
+      addEventListener(event, callback) { this.events[event]=callback; }
+      showModal() { this.open=true; } close() { this.open=false; }
+      fire(event,extra={}) { if(this.events[event]) this.events[event](Object.assign({target:this,preventDefault(){}},extra)); }
+    }
+    const fromPhoto=process.argv[1]==="from_photo", elements=new Map(), get=id =&gt; { if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+    const avatar="f".repeat(64), search="?person_id=7"+(fromPhoto?"&amp;from_photo=photo":""), location={search,href:"http://localhost/persons"+search,pathname:"/persons",hash:""};
+    let backCalls=0;
+    const calls=[];
+    const response=body=&gt;({ok:true,status:200,headers:{get:()=&gt;"application/json"},json:async()=&gt;body});
+    const context={
+      URLSearchParams, URL, encodeURIComponent, crypto:{randomUUID:()=&gt;"synthetic"}, setTimeout:()=&gt;1, clearTimeout(){},
+      document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=&gt;new Element(tag)},
+          window:{addEventListener(){},location,history:{length:2,back(){backCalls++;},replaceState(_state,_title,url){const parsed=new URL(url,"http://localhost"); location.href=parsed.href; location.search=parsed.search;}}},
+      fetch:async url=&gt;{
+        calls.push(url);
+        if(url==="/api/v1/persons/7") return response({person_id:7,canonical_person_id:7,name:"\u7238\u7238",revision:2,asset_count:3,face_count:4,avatar_face_id:avatar});
+        if(url.startsWith("/api/v1/persons/7/photos")) return response({person:{person_id:7,name:"\u7238\u7238",asset_count:3,thumbnail_url:"/api/v1/faces/"+avatar+"/thumbnail"},assets:[{asset_id:31}],has_more:false,next_cursor:null});
+        if(url.startsWith("/api/v1/persons/browse")) return response({persons:[],has_more:false,next_cursor:null});
+        throw new Error("unexpected URL "+url);
+      },
+    };
+    let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
+    code=code.replace('  if (document.readyState === "loading")',
+      '  globalThis.ui = {state, boot, requestedPersonId, photoReturnRequested, closeOnBackdrop};\n  if (document.readyState === "loading")');
+    vm.createContext(context); vm.runInContext(code,context);
+    const ui=context.ui, flush=()=&gt;new Promise(setImmediate);
+    (async()=&gt;{
+      assert.equal(ui.requestedPersonId(),7);
+      assert.equal(ui.photoReturnRequested(),fromPhoto);
+      get("pa-back").textContent="\u2190 \u6240\u6709\u4eba\u7269";
+      ui.boot(); await flush(); await flush();
+      assert.equal(ui.state.person.person_id,7);
+      assert.equal(get("pa-library").hidden,true); assert.equal(get("pa-album").hidden,false);
+      assert.equal(get("pa-title").textContent,"\u7238\u7238");
+      assert.equal(get("pa-photos").children.length,1);
+      assert.equal(get("pa-back").textContent,fromPhoto?"\u2190 \u8fd4\u56de\u67e5\u770b\u7167\u7247":"\u2190 \u6240\u6709\u4eba\u7269");
+      const preview=get("pa-preview"); preview.open=true;
+      preview.fire("click",{target:get("pa-preview-image")}); assert.equal(preview.open,true,"clicks inside the person viewer do not dismiss it");
+      preview.fire("click",{target:preview}); assert.equal(preview.open,false,"clicking the person viewer backdrop dismisses it");
+      assert.ok(calls.includes("/api/v1/persons/7"));
+      assert.ok(calls.some(url=&gt;url.startsWith("/api/v1/persons/7/photos")));
+      get("pa-back").fire("click"); await flush();
+      if(fromPhoto) { assert.equal(backCalls,1,"photo-origin people routes return through browser history"); return; }
+      assert.equal(get("pa-library").hidden,false); assert.equal(get("pa-album").hidden,true);
+      assert.equal(location.search,"");
+    })().catch(error=&gt;{console.error(error);process.exitCode=1;});
+    """
+        result = subprocess.run(
+            [node, "-e", script, "from_photo" if from_photo else "direct"],
+            cwd=Path(__file__).resolve().parents[2],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: TypeError: setSearchScopeAction is not a function
+E             at refreshSearchScopeAction (evalmachine.&lt;anonymous&gt;:44:12)
+E             at Object.boot (evalmachine.&lt;anonymous&gt;:1757:5)
+E             at [eval]:40:6
+E             at [eval]:55:3
+E             at [eval]:56:4
+E             at runScriptInThisContext (node:internal/vm:219:10)
+E             at node:internal/process/execution:451:12
+E             at [eval]-wrapper:6:24
+E             at runScriptInContext (node:internal/process/execution:449:60)
+E             at evalFunction (node:internal/process/execution:283:30)
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require("fs"), vm = require("vm"), a...iptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n').returncode
+
+tests\unit\test_search_person_album_link_ui.py:199: AssertionError</failure></testcase><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357-jn-]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357\u3002-jn-]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357\uff0c\u591c\u666f-jn-\u591c\u666f]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357\u7684\u7167\u7247-jn-]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5728\u6d4e\u5357\u62cd\u7684\u7167\u7247-jn-]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u627e\u4e00\u4e0b\u5728\u6d4e\u5357\u62cd\u6444\u7684\u6240\u6709\u7167\u7247-jn-]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357\u7684\u65e5\u843d-jn-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5728\u6d4e\u5357\u62cd\u7684\u65e5\u843d\u7167\u7247-jn-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5e2e\u6211\u627e\u6d4e\u5357\u62cd\u7684\u591c\u666f-jn-\u591c\u666f]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u6d4e\u5357 \u591c\u666f-jn-\u591c\u666f]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u65e5\u843d\u7167\u7247\uff0c\u5728\u6d4e\u5357\u62cd\u7684-jn-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5c71\u4e1c\u7701\u6d4e\u5357\u5e02\u62cd\u7684\u7167\u7247-jn-]" time="0.001" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5728\u676d\u5dde\u897f\u6e56\u533a\u62cd\u7684\u65e5\u843d-cn:west-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[\u5728 \u6d4e\u5357 \u62cd\u7684 \u65e5\u843d-jn-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_natural_place_queries_preserve_content_and_map_original_offsets[Jinan \u7684 \u65e5\u843d-jn-\u65e5\u843d]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_non_location_mentions_are_not_promoted_to_place_filters[\u8001\u7167\u7247]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_non_location_mentions_are_not_promoted_to_place_filters[\u7167\u7247\u91cc\u7684\u6587\u5b57]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_non_location_mentions_are_not_promoted_to_place_filters[\u6d4e\u5357\u8def\u4e0a\u7684\u591c\u666f]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_non_location_mentions_are_not_promoted_to_place_filters[\u5df4\u9ece\u98ce\u683c\u7684\u623f\u95f4]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_negative_and_multiple_locations_are_preserved_without_a_hard_filter[\u4e0d\u662f\u5728\u6d4e\u5357\u62cd\u7684\u7167\u7247]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_negative_and_multiple_locations_are_preserved_without_a_hard_filter[\u6d4e\u5357\u6216\u9752\u5c9b\u7684\u7167\u7247]" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_real_same_name_choices_keep_their_own_content_and_parent_context" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_osm_is_default_for_unqualified_same_name_place" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_explicit_parent_selects_only_verified_child" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_osm_fallback_and_distinct_osm_duplicates" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_same_named_verified_parent_and_child_prefers_the_broader_parent" time="0.001" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_unavailable_parent_data_does_not_invent_a_hierarchy" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_missing_place_directory_keeps_an_explicit_place_phrase_as_unresolved" time="0.000" /><testcase classname="tests.unit.test_search_place_nl_ui" name="test_place_cancel_and_ambiguous_choice_use_the_current_content" time="0.068"><failure message="AssertionError: evalmachine.&lt;anonymous&gt;:1016&#10;        els.candidateTimeToggle.hidden = true;&#10;                                       ^&#10;  &#10;  TypeError: Cannot set properties of undefined (setting 'hidden')&#10;      at sendSearch (evalmachine.&lt;anonymous&gt;:1016:38)&#10;      at Object.click (evalmachine.&lt;anonymous&gt;:1201:9)&#10;      at Element.fire ([eval]:11:55)&#10;      at [eval]:38:26&#10;      at runScriptInThisContext (node:internal/vm:219:10)&#10;      at node:internal/process/execution:451:12&#10;      at [eval]-wrapper:6:24&#10;      at runScriptInContext (node:internal/process/execution:449:60)&#10;      at evalFunction (node:internal/process/execution:283:30)&#10;      at evalTypeScript (node:internal/process/execution:295:3)&#10;  &#10;  Node.js v24.21.0&#10;  &#10;assert 1 == 0&#10; +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require(&quot;fs&quot;), vm = require(&quot;vm&quot;), a...ternal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n\nNode.js v24.21.0\n&quot;).returncode">def test_place_cancel_and_ambiguous_choice_use_the_current_content() -&gt; None:
+        node = shutil.which("node")
+        assert node is not None, "Node is required for the search-page interaction check"
+        script = r"""
+    const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+    class Element {
+      constructor(tag) { this.tag=tag; this.children=[]; this.events={}; this.hidden=false; this.value=""; this.className=""; }
+      set textContent(value) { this.text=String(value); this.children=[]; }
+      get textContent() { return this.text || this.children.map(child=&gt;child.textContent).join(""); }
+      get firstChild() { return this.children[0] || null; }
+      appendChild(child) { this.children.push(child); return child; }
+      removeChild(child) { this.children.splice(this.children.indexOf(child),1); }
+      addEventListener(name, callback) { this.events[name]=callback; }
+      fire(name) { if(this.events[name]) this.events[name]({preventDefault(){}}); }
+    }
+    const elements=new Map(), get=id=&gt;{ if(!elements.has(id)) elements.set(id,new Element("div")); return elements.get(id); };
+    const context={URLSearchParams,encodeURIComponent,isFinite,console,
+      document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=&gt;new Element(tag)},
+      window:{location:{href:"/search",search:""}},
+      fetch:async()=&gt;({ok:true,status:200,headers:{get:()=&gt;"application/json"},json:async()=&gt;({})})};
+    let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
+    code=code.replace('  if (document.readyState === "loading")',
+     '  globalThis.ui={state,showPlaceChoices,cancelPlaceScope,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+    vm.createContext(context); vm.runInContext(code,context);
+    const ui=context.ui, query=get("query-text"), grid=get("grid");
+      ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid,
+        resultIntentScope:get("intent"),resultNotices:get("notices"),loadMore:get("more"),queryActions:get("actions"),
+        querySource:get("source"),queryAvailability:get("availability"),queryPlaceState:get("place-state"),
+        queryPlaceIds:get("place-ids"),queryDescendants:get("descendants"),queryCaptureFrom:get("capture-from"),
+        queryCaptureTo:get("capture-to"),queryPageSize:get("page-size"),queryPersonMatch:get("person-match"),
+        personEcho:get("person-echo"),captureEcho:get("capture-echo"),captureState:get("capture-state"),
+        searchPreviewNav:get("preview-nav"),searchPreviewPosition:get("preview-position"),
+        searchPreviewPrev:get("preview-prev"),searchPreviewNext:get("preview-next")});
+      get("page-size").value="20";get("availability").value="any";get("place-state").value="any";
+      get("descendants").value="true";get("person-match").value="any";
+    ui.state.search.loading=true;
+    ui.showPlaceChoices({original_query:"西湖的日落",content_query:"日落",place_choices:[
+     {kind:"city",key:"local:1",name:"西湖",parent:"杭州",content_query:"日落"},
+     {kind:"district",key:"cn:2",name:"西湖",parent:"浙江省 · 杭州市",content_query:"日落"}]});
+    assert.equal(get("scope").children.length,3);
+    get("scope").children[1].fire("click");
+    assert.equal(ui.state.search.placeAware.content_query,"日落");
+    assert.equal(ui.state.search.placeAware.place_key,"local:1");
+    query.value="在济南拍的日落照片";
+    ui.state.search.sessionId="old-session"; ui.state.search.cursor="old-cursor"; ui.state.search.binding="old-binding";
+    ui.cancelPlaceScope({original_query:"在济南拍的日落照片",content_query:"日落"});
+    assert.equal(query.value,"日落");
+    assert.equal(ui.state.search.placeAware.place_cancelled,true);
+    assert.equal(ui.state.search.sessionId,null); assert.equal(ui.state.search.cursor,null); assert.equal(ui.state.search.binding,null);
+    """
+        root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [node, "-e", script], cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=10
+        )
+&gt;       assert result.returncode == 0, result.stderr
+E       AssertionError: evalmachine.&lt;anonymous&gt;:1016
+E               els.candidateTimeToggle.hidden = true;
+E                                              ^
+E
+E         TypeError: Cannot set properties of undefined (setting 'hidden')
+E             at sendSearch (evalmachine.&lt;anonymous&gt;:1016:38)
+E             at Object.click (evalmachine.&lt;anonymous&gt;:1201:9)
+E             at Element.fire ([eval]:11:55)
+E             at [eval]:38:26
+E             at runScriptInThisContext (node:internal/vm:219:10)
+E             at node:internal/process/execution:451:12
+E             at [eval]-wrapper:6:24
+E             at runScriptInContext (node:internal/process/execution:449:60)
+E             at evalFunction (node:internal/process/execution:283:30)
+E             at evalTypeScript (node:internal/process/execution:295:3)
+E
+E         Node.js v24.21.0
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['D:\\Program Files\\nodejs\\node.EXE', '-e', '\nconst fs = require("fs"), vm = require("vm"), a...ternal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n\nNode.js v24.21.0\n").returncode
+
+tests\unit\test_search_place_nl_ui.py:223: AssertionError</failure></testcase></testsuite></testsuites>

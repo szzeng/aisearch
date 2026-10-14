@@ -422,7 +422,7 @@ def test_the_places_page_keeps_the_frozen_place_vocabulary() -> None:
 # P2-07: the search page. Same package-data rules as the two documents above, plus one
 # assertion per promise the page makes about *how* it shows a search result.
 # ---------------------------------------------------------------------------------------
-SEARCH_DOCUMENTS = ("search.html", "search.js", "search.css")
+SEARCH_DOCUMENTS = ("search.html", "search.js", "search.css", "search-scope-entry.js")
 
 
 def _search_documents() -> tuple[str, str, str]:

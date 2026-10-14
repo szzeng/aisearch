@@ -113,3 +113,88 @@ assert.equal(ui.getState().search.loading,false);
         [node, "-e", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=10
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_scope_entry_carries_query_and_executes_once_without_fallback() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the search-scope handoff check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Element { constructor(){this.value="";this.textContent="";this.hidden=false;this.children=[];this.handlers={};this.disabled=false;}
+  addEventListener(name,fn){this.handlers[name]=fn;} appendChild(child){this.children.push(child);return child;}
+  removeChild(child){this.children.splice(this.children.indexOf(child),1);return child;} get firstChild(){return this.children[0]||null;}
+  focus(){this.focused=true;} fire(name){if(this.handlers[name])this.handlers[name]({preventDefault(){}});}
+}
+const stored=new Map(),els=new Map(),get=id=>{if(!els.has(id))els.set(id,new Element());return els.get(id);};
+const location={href:"",search:"",pathname:"/search",hash:""};
+const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
+ document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:()=>new Element()},
+ window:{crypto:{randomUUID:()=>"12345678-1234-1234-1234-123456789012"},location,
+  history:{state:null,replaceState(_state,_title,url){location.search=url.includes("?")?url.slice(url.indexOf("?"),url.indexOf("#")<0?undefined:url.indexOf("#")):"";}},
+  sessionStorage:{setItem(k,v){stored.set(k,String(v));},getItem(k){return stored.get(k)||null;},removeItem(k){stored.delete(k);}},
+  SearchScopeEntry:{validScope(scope){return Boolean(scope&&scope.kind==="person"&&Number(scope.person_id)>0);}}}};
+let helper=fs.readFileSync("src/photo_search/web/search-scope-entry.js","utf8");
+vm.createContext(context);vm.runInContext(helper,context);
+const button=new Element(),input=new Element();input.value="  海边  ";let current={kind:"person",person_id:8,name:"阿姨"};
+context.window.SearchScopeEntry.configure({button,input,getScope:()=>current})(current,"相册");button.fire("click");
+assert.equal(location.href,"/search?scope_entry=12345678-1234-1234-1234-123456789012");
+const key="aisearch.search-scope.v1:12345678-1234-1234-1234-123456789012";
+assert.deepEqual(JSON.parse(stored.get(key)),{version:2,scope:current,query:"海边",execute:true});
+current=null;button.fire("click");assert.equal(button.hidden,true,"a stale scope is hidden when its click-time identity is no longer valid");
+
+const code=fs.readFileSync("src/photo_search/web/search.js","utf8").replace(
+ '  if (document.readyState === "loading")',
+ '  globalThis.ui={restoreOrStartSearch,renderIntentChips,setEls(value){els=value;},setSubmit(fn){submitSearch=fn;},getState(){return state;}};\n  if (document.readyState === "loading")');
+vm.runInContext(code,context);const ui=context.ui;
+const searchEls={queryText:new Element(),querySource:new Element(),searchSubmit:new Element(),resultIntentScope:new Element(),queryStatus:new Element()};
+ui.setEls(searchEls);let calls=0;ui.setSubmit(()=>{calls++;});
+stored.set(key,JSON.stringify({version:2,scope:{kind:"person",person_id:8,name:"阿姨"},query:"海边",execute:true}));
+location.search="?scope_entry=12345678-1234-1234-1234-123456789012";ui.restoreOrStartSearch();
+assert.equal(calls,1,"a nonempty scope handoff executes exactly once");assert.equal(searchEls.queryText.value,"海边");
+stored.set(key,JSON.stringify({version:2,scope:{kind:"person",person_id:8,name:"阿姨"},query:"",execute:true}));
+location.search="?scope_entry=12345678-1234-1234-1234-123456789012";ui.restoreOrStartSearch();
+assert.equal(calls,2,"an explicit empty-query handoff still executes exactly once");assert.equal(searchEls.queryText.value,"");
+location.search="?scope_entry=12345678-1234-1234-1234-123456789012&q=海边";ui.restoreOrStartSearch();
+assert.equal(calls,2,"a missing token never falls back to the query as a full-library search");
+assert.match(searchEls.queryStatus.textContent,/未执行全库搜索/);
+
+const cancelEls={queryText:new Element(),querySource:new Element(),searchSubmit:new Element(),queryStatus:new Element(),
+ resultIntentScope:new Element(),resultPlaceScope:new Element(),resultGrid:new Element(),loadMore:new Element(),
+ queryActions:new Element(),candidateTimeToggle:new Element(),resultNotices:new Element()};
+ui.setEls(cancelEls);let cancelSearches=0;ui.setSubmit(()=>cancelSearches++);
+const search=ui.getState().search;search.selectedScope={kind:"place",place_kind:"city",place_key:"geo:tokyo",name:"东京"};
+search.placeAware={place_kind:"city",place_key:"geo:tokyo",content_query:""};
+search.intentPlan={place_kind:"city",place_key:"geo:tokyo",original_query:"",content_query:""};
+search.hits=[{asset_id:1}];search.requestGeneration=10;search.loading=false;search.sessionId="old";search.cursor="old";
+ui.renderIntentChips(null);assert.equal(cancelEls.resultIntentScope.children.length,2);
+cancelEls.resultIntentScope.children[1].fire("click");
+assert.equal(search.selectedScope,null);assert.equal(search.placeAware,null,"cancel removes the echoed duplicate place condition");
+assert.equal(search.intentPlan.place_kind,null,"cancel removes the same place echoed in the intent plan");
+assert.equal(cancelEls.resultIntentScope.hidden,true,"no place chip remains after cancelling its matching fixed scope");
+assert.equal(cancelEls.searchSubmit.textContent,"全库搜索");assert.equal(search.hits.length,0);assert.equal(search.sessionId,null);
+assert.equal(search.requestGeneration,11);assert.equal(cancelSearches,0,"cancelling scope does not trigger an unscoped search");
+assert.match(cancelEls.queryStatus.textContent,/点击全库搜索重新查询/);
+
+search.selectedScope={kind:"person",person_id:8,name:"阿姨"};
+search.intentPlan={person_ids:[4,8,9],person_names:["叔叔","阿姨","表姐"],person_match:"all",
+ person_match_before_fixed_scope:"any",content_query:"海边"};
+ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
+assert.deepEqual(search.intentPlan.person_ids,[4,9],"cancelling person scope preserves other explicit person IDs");
+assert.deepEqual(search.intentPlan.person_names,["叔叔","表姐"]);
+assert.equal(search.intentPlan.person_match,"any","cancelling scope restores the parser's original match mode");
+assert.equal(search.intentPlan.person_match_before_fixed_scope,undefined);
+
+search.selectedScope={kind:"collection",collection_id:3,instance_token:"a".repeat(32),revision:2,name:"旅行"};
+search.intentPlan={collection_scope:{collection_id:3,instance_token:"a".repeat(32),revision:2,name:"旅行"},content_query:""};
+ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
+assert.equal(search.intentPlan.collection_scope,null,"cancelling only clears the matching collection instance revision");
+
+search.selectedScope={kind:"source",source_id:5,name:"SSD"};search.intentPlan={source_id:5,source_name:"SSD",content_query:""};
+ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
+assert.equal(search.intentPlan.source_id,null,"cancelling source scope removes its echoed source filter");
+assert.equal(cancelEls.querySource.value,"");
+"""
+    result = subprocess.run(
+        [node, "-e", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=10
+    )
+    assert result.returncode == 0, result.stderr

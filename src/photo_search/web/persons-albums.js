@@ -4,6 +4,7 @@
   const $ = (id) => document.getElementById("pa-" + id);
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
+  let setSearchScopeAction = function () {};
   const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
@@ -25,20 +26,23 @@
     const item = node("button", label, className); item.type = "button";
     item.addEventListener("click", action); return item;
   }
-  function searchThisAlbum(scope) {
-    const token = window.crypto && window.crypto.randomUUID
-      ? window.crypto.randomUUID()
-      : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
-    try { window.sessionStorage.setItem("aisearch.search-scope.v1:" + token, JSON.stringify(scope)); }
-    catch (_error) { message("无法暂存搜索范围，请检查浏览器会话存储。"); return; }
-    window.location.href = "/search?scope_entry=" + encodeURIComponent(token);
-  }
   function closeOnBackdrop(dialog) {
     if (!dialog || backdropBoundDialogs.has(dialog)) return;
     backdropBoundDialogs.add(dialog);
     dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
   }
   function name(person) { return person.name || "未命名的人"; }
+  function refreshSearchScopeAction() {
+    if ($("album").hidden) { setSearchScopeAction(null, ""); return; }
+    if (state.collection) {
+      setSearchScopeAction({ kind: "collection", collection_id: Number(state.collection.collection_id),
+        instance_token: String(state.collection.instance_token), revision: Number(state.collection.revision),
+        name: String(state.collection.name || "人物合集") }, "合集");
+    } else if (state.person) {
+      setSearchScopeAction({ kind: "person", person_id: Number(state.person.person_id),
+        name: String(name(state.person)) }, "相册");
+    } else setSearchScopeAction(null, "");
+  }
   function photoId(item) { return Number(item.asset_id); }
   function emptySearchNote(page) {
     const channels = page && page.channels || {};
@@ -630,7 +634,7 @@
     $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
-    $("search-scope").hidden = state.collectionMode !== "photos";
+    refreshSearchScopeAction();
   }
   function openCollection(collection) {
     if (state.writing || state.pendingWrite) return;
@@ -781,6 +785,7 @@
     }
     state.person = null; state.collection = null; state.collectionSeq++; state.photoSeq++; state.busy.delete("photos");
     $("library").hidden = false; $("album").hidden = true; $("collection-view-controls").hidden = true;
+    refreshSearchScopeAction();
     $("name").hidden = false; $("merge").hidden = false; $("cover").hidden = false; $("search-photos").hidden = false;
     restoreLibraryPosition(state.libraryPosition);
     if (!peopleListIsFresh() && !(state.busy.has("people") && state.peopleLoadBinding === JSON.stringify(peopleValues()))) {
@@ -1204,7 +1209,7 @@
     $("album-avatar").replaceChildren(picture(state.person.thumbnail_url, "当前相册的人", "pa-avatar"));
     $("title").textContent = name(state.person); $("name").textContent = state.person.name ? "改名字" : "取名字";
     $("cover").textContent = state.coverMode ? "取消选择封面" : "更换封面";
-    $("search-scope").hidden = Boolean(state.coverMode);
+    refreshSearchScopeAction();
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
   function openAlbum(person) {
@@ -1737,16 +1742,19 @@
     finally { $("undo").disabled = false; }
   }
   function boot() {
-    $("search-scope").addEventListener("click", () => {
-      if (state.collection) {
-        searchThisAlbum({ kind: "collection", collection_id: Number(state.collection.collection_id),
+    setSearchScopeAction = window.SearchScopeEntry ? window.SearchScopeEntry.configure({
+      button: document.getElementById("global-search-scope"),
+      input: document.getElementById("global-search-query"),
+      getScope: function () {
+        if ($("album").hidden) return null;
+        if (state.collection) return { kind: "collection", collection_id: Number(state.collection.collection_id),
           instance_token: String(state.collection.instance_token), revision: Number(state.collection.revision),
-          name: String(state.collection.name || "人物合集") });
-      } else if (state.person) {
-        searchThisAlbum({ kind: "person", person_id: Number(state.person.person_id),
-          name: String(name(state.person)) });
-      }
-    });
+          name: String(state.collection.name || "人物合集") };
+        if (state.person) return { kind: "person", person_id: Number(state.person.person_id), name: String(name(state.person)) };
+        return null;
+      },
+    }) : function () {};
+    refreshSearchScopeAction();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.install({ api, node, button, picture, errorText, message, mutate, preview, editBatchFaces,
       isWriting: () => state.writing || Boolean(state.pendingWrite), isOrganizing: () => state.organize, currentPerson: () => state.person,
       organizeView: () => setView(true), peopleView: () => { backToLibrary(); setView(false); } });
@@ -1840,7 +1848,7 @@
     $("collections-more").addEventListener("click", () => loadCollections(true));
     $("collection-add").addEventListener("click", addSelectionToCollection);
     $("collection-photos-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; loadPhotos(false); });
-    $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; $("search-scope").hidden = true; $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
+    $("collection-people-tab").addEventListener("click", () => { if (!state.collection) return; state.collectionMode = "people"; refreshSearchScopeAction(); $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; loadCollectionPeople(false); });
     $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-remove").addEventListener("click", removeCollectionSelection);
     $("collection-selection-clear").addEventListener("click", clearCollectionSelection);

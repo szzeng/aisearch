@@ -2741,8 +2741,13 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
         raise ApiError(INVALID_CURSOR, "搜索计划版本已过期，请重新搜索", status=409)
     if intent_plan is not None:
         try:
+            plan_for_validation = intent_plan
+            if (selected_scope is not None and selected_scope.get("kind") == "person"
+                    and intent_plan.get("person_match_before_fixed_scope") in {"any", "all"}):
+                plan_for_validation = dict(intent_plan)
+                plan_for_validation["person_match"] = intent_plan["person_match_before_fixed_scope"]
             intent_plan = coordinator.validate(
-                intent_plan, original_query=original, parsed=unified,
+                plan_for_validation, original_query=original, parsed=unified,
                 continuation=payload.cursor is not None,
             )
         except ValueError as error:
@@ -2949,6 +2954,12 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
             if intent_plan is None:
                 intent_plan = {"original_query": original, "content_query": query_text,
                                "person_ids": [], "person_match": "any"}
+            base_person_match = intent_plan.get(
+                "person_match_before_fixed_scope", intent_plan.get("person_match", "any")
+            )
+            if base_person_match not in {"any", "all"}:
+                base_person_match = "any"
+            intent_plan["person_match_before_fixed_scope"] = base_person_match
             people = list(dict.fromkeys([int(value) for value in intent_plan.get("person_ids", [])]
                                         + [selected_person_id]))
             intent_plan["person_ids"] = people

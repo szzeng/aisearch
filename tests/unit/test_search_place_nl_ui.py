@@ -192,7 +192,7 @@ code=code.replace('  if (document.readyState === "loading")',
 vm.createContext(context); vm.runInContext(code,context);
 const ui=context.ui, query=get("query-text"), grid=get("grid");
   ui.setElements({resultPlaceScope:get("scope"),queryStatus:get("status"),queryText:query,resultGrid:grid,
-    resultIntentScope:get("intent"),resultNotices:get("notices"),loadMore:get("more"),queryActions:get("actions"),
+    resultIntentScope:get("intent"),resultNotices:get("notices"),loadMore:get("more"),candidateTimeToggle:get("candidate-time"),queryActions:get("actions"),
     querySource:get("source"),queryAvailability:get("availability"),queryPlaceState:get("place-state"),
     queryPlaceIds:get("place-ids"),queryDescendants:get("descendants"),queryCaptureFrom:get("capture-from"),
     queryCaptureTo:get("capture-to"),queryPageSize:get("page-size"),queryPersonMatch:get("person-match"),

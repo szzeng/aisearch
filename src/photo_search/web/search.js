@@ -842,6 +842,7 @@
     return JSON.stringify({
       text: els.queryText.value.trim(),
       source: filters.sourceId,
+      fixedScope: state.search.selectedScope ? JSON.stringify(state.search.selectedScope) : null,
       availability: filters.availability,
       places: filters.placeIds,
       descendants: filters.includeDescendants,
@@ -906,6 +907,7 @@
     releaseObjectUrls();
     clear(els.resultGrid);
     renderIntentChips(null);
+    renderScopeControls();
     renderNotices(els.resultNotices, []);
     text(els.captureEcho, "");
     setStatus(els.captureState, "");
@@ -1011,8 +1013,10 @@
       state.search.timeBrowse.active = false;
       state.search.timeBrowse.cursor = null;
       state.search.timeBrowse.previous = null;
-      els.candidateTimeToggle.hidden = true;
-      els.candidateTimeToggle.disabled = true;
+      if (els.candidateTimeToggle) {
+        els.candidateTimeToggle.hidden = true;
+        els.candidateTimeToggle.disabled = true;
+      }
     }
     var requestGeneration = state.search.requestGeneration;
     var filters = collectFilters();
@@ -1139,13 +1143,15 @@
       body.original_query = state.search.intentPlan.original_query || body.original_query;
       body.content_query = state.search.intentPlan.content_query || "";
     }
-    if (state.search.selectedScope) {
+    if (state.search.selectedScope && state.search.selectedScope.kind !== "source") {
       body.search_scope = state.search.selectedScope;
     }
     if (queryText) {
       body.text = queryText;
     }
-    if (filters.sourceId !== null) {
+    if (state.search.selectedScope && state.search.selectedScope.kind === "source") {
+      body.source_id = Number(state.search.selectedScope.source_id);
+    } else if (filters.sourceId !== null) {
       body.source_id = filters.sourceId;
     }
     if (filters.placeIds.length) {
@@ -1283,6 +1289,7 @@
 
   function renderIntentChips(plan) {
     clear(els.resultIntentScope);
+    renderScopeControls();
     var hasPlan = Boolean(plan && (plan.collection_scope || plan.capture_from ||
       plan.capture_status || plan.library_from || plan.library_to_exclusive ||
       (plan.person_ids || []).length || plan.place_kind || plan.source_id != null));
@@ -1302,25 +1309,90 @@
       var selected = state.search.selectedScope;
       var scopeLabel = selected.kind === "person" ? "固定相册：" + String(selected.name || "人物")
         : selected.kind === "collection" ? "固定合集：" + String(selected.name || "合集")
-          : "固定地点：" + String(selected.name || selected.place_key || "地点") +
-            (selected.parent ? " · " + String(selected.parent) : "");
+          : selected.kind === "source" ? "固定图库：" + String(selected.name || ("#" + selected.source_id))
+            : "固定地点：" + String(selected.name || selected.place_key || "地点") +
+              (selected.parent ? " · " + String(selected.parent) : "");
       add(scopeLabel, function () {
         state.search.selectedScope = null;
-        state.search.intentPlan = null;
-        state.search.placeAware = null;
+        if (selected.kind === "place" && state.search.placeAware &&
+            String(state.search.placeAware.place_kind || "") === String(selected.place_kind || "") &&
+            String(state.search.placeAware.place_key || "") === String(selected.place_key || "")) {
+          // The server echoes a place scope as a place-aware condition for display.
+          // Remove that duplicate identity when the user cancels the fixed scope.
+          state.search.placeAware = null;
+        }
+        if (selected.kind === "place" && state.search.intentPlan &&
+            String(state.search.intentPlan.place_kind || "") === String(selected.place_kind || "") &&
+            String(state.search.intentPlan.place_key || "") === String(selected.place_key || "")) {
+          state.search.intentPlan.place_kind = null;
+          state.search.intentPlan.place_key = null;
+          state.search.intentPlan.place_name = null;
+          state.search.intentPlan.place_selection = null;
+        }
+        if (selected.kind === "person" && state.search.intentPlan) {
+          var plan = state.search.intentPlan;
+          var retainedIndexes = [];
+          plan.person_ids = (plan.person_ids || []).filter(function (id, index) {
+            if (Number(id) === Number(selected.person_id)) return false;
+            retainedIndexes.push(index);
+            return true;
+          });
+          if (Array.isArray(plan.person_names)) {
+            plan.person_names = plan.person_names.filter(function (_name, index) {
+              return retainedIndexes.indexOf(index) >= 0;
+            });
+          }
+          if (plan.person_match_before_fixed_scope === "any" || plan.person_match_before_fixed_scope === "all") {
+            plan.person_match = plan.person_match_before_fixed_scope;
+          } else if (plan.person_ids.length) {
+            // Older saved responses predate the marker. Avoid retaining the stricter
+            // conjunction that was introduced only by adding the fixed person.
+            plan.person_match = "any";
+          } else {
+            plan.person_match = "any";
+          }
+          delete plan.person_match_before_fixed_scope;
+        }
+        if (selected.kind === "collection" && state.search.intentPlan &&
+            state.search.intentPlan.collection_scope &&
+            Number(state.search.intentPlan.collection_scope.collection_id) === Number(selected.collection_id) &&
+            String(state.search.intentPlan.collection_scope.instance_token || "") === String(selected.instance_token || "") &&
+            Number(state.search.intentPlan.collection_scope.revision) === Number(selected.revision)) {
+          state.search.intentPlan.collection_scope = null;
+        }
+        if (selected.kind === "source" && state.search.intentPlan &&
+            Number(state.search.intentPlan.source_id) === Number(selected.source_id)) {
+          state.search.intentPlan.source_id = null;
+          state.search.intentPlan.source_name = null;
+        }
+        if (selected.kind === "source") els.querySource.value = "";
         state.search.sessionId = null;
         state.search.cursor = null;
         state.search.binding = null;
+        state.search.requestGeneration += 1;
+        state.search.loading = false;
+        state.search.hits = [];
+        state.search.lastBody = null;
+        state.search.lastRequestBody = null;
+        state.search.count = 0;
+        state.search.total = null;
+        state.search.timeBrowse.active = false;
+        state.search.timeBrowse.cursor = null;
+        state.search.timeBrowse.previous = null;
         clearSearchSnapshot();
+        invalidateSearchPreview();
+        releaseObjectUrls();
         clear(els.resultGrid);
-        if (els.queryText.value.trim()) sendSearch(false);
-        else {
-          state.search.hits = []; state.search.lastBody = null; state.search.count = 0;
-          state.search.total = null;
-          els.loadMore.hidden = true;
-          renderIntentChips(null);
-          setStatus(els.queryStatus, "已清除相册范围；输入条件后搜索全部照片。");
-        }
+        clear(els.resultPlaceScope);
+        els.resultPlaceScope.hidden = true;
+        els.loadMore.hidden = true;
+        els.queryActions.hidden = true;
+        els.candidateTimeToggle.hidden = true;
+        els.candidateTimeToggle.disabled = true;
+        renderNotices(els.resultNotices, []);
+        renderIntentChips(state.search.intentPlan);
+        renderScopeControls();
+        setStatus(els.queryStatus, "已取消范围，点击全库搜索重新查询。", "success");
       });
     }
     if (!hasPlan) return;
@@ -1397,7 +1469,7 @@
         sendSearch(false);
       });
     }
-    if (plan.source_id != null) {
+    if (plan.source_id != null && !(state.search.selectedScope && state.search.selectedScope.kind === "source")) {
       add("图库来源：" + String(plan.source_name || ("#" + plan.source_id)), function () {
         plan.source_id = null;
         state.search.intentPlan = plan;
@@ -1410,6 +1482,9 @@
   }
 
   function sendImageSearch(continuation, filters) {
+    if (state.search.selectedScope) {
+      return Promise.reject({ code: "VALIDATION_ERROR", message: "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", request_id: "" });
+    }
     var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
     if (!file) {
       return Promise.reject({
@@ -1610,33 +1685,55 @@
 
   function consumeEntryScope() {
     var params = new URLSearchParams(window.location.search || "");
+    var hasEntry = params.has("scope_entry");
     var token = params.get("scope_entry");
     params.delete("scope_entry");
     var path = window.location.pathname || "/search";
     var hash = window.location.hash || "";
-    if (token && window.history && typeof window.history.replaceState === "function") {
+    if (hasEntry && window.history && typeof window.history.replaceState === "function") {
       var remaining = params.toString();
       window.history.replaceState(window.history.state, "",
         path + (remaining ? "?" + remaining : "") + hash);
     }
-    if (!token || !/^[a-zA-Z0-9_-]{20,80}$/.test(token)) return null;
+    if (!hasEntry) return { present: false };
+    if (!token) return { present: true, valid: false };
+    if (!/^[a-zA-Z0-9_-]{20,80}$/.test(token)) return { present: true, valid: false };
     try {
       var key = "aisearch.search-scope.v1:" + token;
       var value = JSON.parse(window.sessionStorage.getItem(key) || "null");
       window.sessionStorage.removeItem(key);
-      return value && typeof value === "object" ? value : null;
-    } catch (_error) { return null; }
+      if (!value || typeof value !== "object") return { present: true, valid: false };
+      if (value.version === 2) {
+        var valid = window.SearchScopeEntry && window.SearchScopeEntry.validScope(value.scope) && value.execute === true &&
+          typeof value.query === "string" && value.query.length <= 256;
+        return { present: true, valid: Boolean(valid), scope: value.scope, query: value.query, execute: value.execute === true };
+      }
+      return window.SearchScopeEntry && window.SearchScopeEntry.validScope(value)
+        ? { present: true, valid: true, scope: value, query: null, execute: false }
+        : { present: true, valid: false };
+    } catch (_error) { return { present: true, valid: false }; }
   }
 
   function restoreOrStartSearch() {
-    var entryScope = consumeEntryScope();
+    var entry = consumeEntryScope();
     var query = consumeEntryQuery();
-    if (entryScope) {
+    if (entry.present) {
+      if (!entry.valid) {
+        state.search.selectedScope = null;
+        renderIntentChips(null);
+        renderScopeControls();
+        setStatus(els.queryStatus, "搜索范围交接已失效或找不到；未执行全库搜索。请回到有效相册重新点击范围搜索。", "error");
+        return;
+      }
       clearSearchSnapshot();
-      state.search.selectedScope = entryScope;
-      els.queryText.value = query || "";
+      state.search.selectedScope = entry.scope;
+      var entryQuery = entry.query === null ? (query || "") : entry.query;
+      els.queryText.value = entryQuery;
+      if (entry.scope.kind === "source") els.querySource.value = String(entry.scope.source_id);
       renderIntentChips(null);
-      if (query && query.trim()) submitSearch();
+      renderScopeControls();
+      if (entry.execute) submitSearch();
+      else if (entryQuery.trim()) submitSearch();
       else els.queryText.focus();
       return;
     }
@@ -1651,6 +1748,13 @@
     } else {
       els.queryText.focus();
     }
+  }
+
+  function renderScopeControls() {
+    if (!els.searchSubmit) return;
+    var selected = state.search.selectedScope;
+    els.searchSubmit.textContent = selected ? "搜索当前范围" : "全库搜索";
+    if (els.querySource) els.querySource.disabled = Boolean(selected && selected.kind === "source");
   }
 
   function bindQuerySubmission() {
@@ -2506,6 +2610,10 @@
     if (event) {
       event.preventDefault();
     }
+    if (state.search.selectedScope) {
+      setStatus(els.uploadStatus, "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", "error");
+      return;
+    }
     state.search.mode = "image";
     clearSearchSnapshot();
     state.search.hits = [];
@@ -2536,7 +2644,7 @@
     var query = els.queryText.value;
     var plan = state.search.intentPlan;
     var placeAware = state.search.placeAware;
-    els.querySource.value = "";
+    if (!(state.search.selectedScope && state.search.selectedScope.kind === "source")) els.querySource.value = "";
     els.queryAvailability.value = "any";
     els.queryPlaceState.value = "any";
     els.queryPlaceIds.value = "";
@@ -2614,6 +2722,7 @@
       queryStatus: document.getElementById("query-status"),
       queryActions: document.getElementById("query-actions"),
       searchForm: document.getElementById("search-form"),
+      searchSubmit: document.getElementById("search-submit"),
       queryText: document.getElementById("query-text"),
       resultPlaceScope: document.getElementById("result-place-scope"),
       resultIntentScope: document.getElementById("result-intent-scope"),

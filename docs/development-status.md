@@ -1,4 +1,12 @@
-## Current user-directed task: P4-UI2-BATCH-SELECT-UNIFY-A — SCOPED PASS / BROWSER NOT RUN BY REQUEST (2026-10-14)
+## Current user-directed task: P4-UI2-SEARCH-SCOPE-UNIFY-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+统一页头范围搜索入口、关键词一次性交接和取消范围状态；人物固定范围取消会恢复原 `person_match`，地点回显条件取消时清理重复过滤。定向 JUnit **28/0/0/0**、Node `--check`、`py_compile` 与 `git diff --check` 通过；LUNA High 最终修复复核无剩余可执行 finding（不是 DS-H）。按用户追加要求完成一次本机 Codex 内置浏览器地点范围冒烟：隔离合成图库 4 张照片，地点 CTA 直接执行 FILTER_ONLY，取消后不自动全库重搜。仅这一条路线已浏览器验证；人物/合集/图库、非空词、取消竞态和预览返回等保持待验，截图未保存，整卡保持 ACCEPTANCE PARTIAL。[任务卡](tasks/P4-UI2-SEARCH-SCOPE-UNIFY-A.md) / [报告](reports/P4-UI2-SEARCH-SCOPE-UNIFY-A.md)。未访问真实图库、模型/GPU，未跑全仓、性能、真实 200% 缩放、打包或发布验证；无 commit。
+
+## Next necessary action: P4-UI2-SEARCH-SCOPE-UNIFY-A remaining browser gates
+
+如继续关闭整卡，按任务卡补齐人物 CTA/Enter、合集照片与成员 tab、图库来源 CTA、非空词、范围分页/预览返回、图片搜索屏蔽、失效 token 和必要的窄屏/主题路线；继续使用隔离合成数据，不能用本次地点 FILTER_ONLY 冒烟替代这些验收。
+
+## Previous user-directed task: P4-UI2-BATCH-SELECT-UNIFY-A — SCOPED PASS / BROWSER NOT RUN BY REQUEST (2026-10-14)
 
 地点建议按已加载顺序支持 `asset_id` Shift 连选、全选/反选/清空；人物合集成员改用原生 checkbox，维持独立人物详情按钮和按 `person_id` 原子移出。既有人物列表、人脸、待整理/已忽略候选组选择回归通过；选择不触发写 API。定向 JUnit **23/0/0/0**，两份 JS `node --check` 与 `git diff --check` 通过。[任务卡](tasks/P4-UI2-BATCH-SELECT-UNIFY-A.md) / [报告](reports/P4-UI2-BATCH-SELECT-UNIFY-A.md)。用户要求跳过浏览器，状态 `BROWSER_NOT_RUN_USER_REQUEST`；不声明浏览器/目视 PASS。未跑全仓、真实图库、模型/GPU、性能或打包检查；无后端协议改动。
 

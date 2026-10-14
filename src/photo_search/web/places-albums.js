@@ -15,19 +15,23 @@
   var initialKind = null;
   var initialKey = null;
   var cnCapabilityStarted = false;
+  var setSearchScopeAction = window.SearchScopeEntry ? window.SearchScopeEntry.configure({
+    button: document.getElementById("global-search-scope"),
+    input: document.getElementById("global-search-query"),
+    getScope: function () {
+      return current ? { kind: "place", place_kind: current.kind, place_key: String(current.key),
+        name: String(current.name || "地点"), parent: String(current.parent || "") } : null;
+    },
+  }) : function () {};
   function el(tag, cls, value) {
     var node = document.createElement(tag);
     if (cls) node.className = cls;
     if (value !== undefined) node.textContent = String(value);
     return node;
   }
-  function searchThisAlbum(scope) {
-    var token = window.crypto && window.crypto.randomUUID
-      ? window.crypto.randomUUID()
-      : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
-    try { window.sessionStorage.setItem("aisearch.search-scope.v1:" + token, JSON.stringify(scope)); }
-    catch (_error) { return; }
-    window.location.href = "/search?scope_entry=" + encodeURIComponent(token);
+  function refreshSearchScopeAction() {
+    setSearchScopeAction(current ? { kind: "place", place_kind: current.kind, place_key: String(current.key),
+      name: String(current.name || "地点"), parent: String(current.parent || "") } : null, "地点");
   }
   function get(url) {
     return fetch(api + url, { credentials: "same-origin", headers: { Accept: "application/json" } }).then(function (r) {
@@ -40,6 +44,7 @@
       current = null; photoVersion++;
       if (timeline) { timeline.dispose(); timeline = null; }
       photos.hidden = true; currentTitle.hidden = true; cards.hidden = false;
+      refreshSearchScopeAction();
     }
     cards.replaceChildren(el("p", "hint", "正在整理地点相册…"));
     var params = new URLSearchParams({ kind: kind.value });
@@ -80,20 +85,16 @@
   }
   function openAlbum(album) {
     photoVersion++; current = album;
+    refreshSearchScopeAction();
     if (timeline) timeline.dispose();
     currentTitle.replaceChildren(); currentTitle.hidden = false; cards.hidden = true; photos.hidden = false;
     var back = el("button", "album-back", "返回地点目录"); back.type = "button";
-    back.addEventListener("click", function () { if (timeline) { timeline.dispose(); timeline = null; } current = null; photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; });
+    back.addEventListener("click", function () { if (timeline) { timeline.dispose(); timeline = null; } current = null; refreshSearchScopeAction(); photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; });
     var heading = el("div", "album-current-title__heading");
     heading.appendChild(el("h3", null, album.name));
     heading.appendChild(el("span", "album-parent", album.parent || ""));
     heading.appendChild(el("span", "album-total", album.total + " 张有效照片"));
-    var search = el("button", "album-search", "搜索此地点"); search.type = "button";
-    search.addEventListener("click", function () {
-      searchThisAlbum({ kind: "place", place_kind: album.kind, place_key: String(album.key),
-        name: String(album.name || "地点"), parent: String(album.parent || "") });
-    });
-    currentTitle.append(back, heading, search);
+    currentTitle.append(back, heading);
     timeline = window.PhotoTimeline.mount({
       host: photos,
       scope: { kind: "place", place_kind: album.kind, place_key: String(album.key) },
@@ -159,7 +160,7 @@
     if (!current) return;
     get("/places/albums?" + new URLSearchParams({ kind: current.kind })).then(function (body) {
       var updated = (body.albums || []).find(function (item) { return String(item.key) === String(current.key); });
-      if (updated) openAlbum(updated); else { if (timeline) { timeline.dispose(); timeline = null; } photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; }
+      if (updated) openAlbum(updated); else { if (timeline) { timeline.dispose(); timeline = null; } current = null; refreshSearchScopeAction(); photos.hidden = true; currentTitle.hidden = true; cards.hidden = false; }
     }).catch(function () {});
   }
   function correct(assetId, choice, holder) {

@@ -447,6 +447,7 @@
         }
         renderSources();
         renderSourceOptions();
+        updateSearchScopeAction();
         if (state.browse.timelineEmptyParams) showTimelineEmptyMessage(state.browse.timelineEmptyParams);
         els.browseSource.value = state.browse.sourceId;
         els.browseOrder.value = state.browse.order;
@@ -1177,6 +1178,17 @@
     });
     els.browseSource.value = current;
     updateBrowseScope();
+  }
+
+  function updateSearchScopeAction() {
+    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive) {
+      if (els.setSearchScopeAction) els.setSearchScopeAction(null, "");
+      return;
+    }
+    var source = state.sources.find(function (item) {
+      return String(item.source_id) === String(state.browse.sourceId);
+    });
+    els.setSearchScopeAction(source ? { kind: "source", source_id: Number(source.source_id), name: String(source.display_name || "图库") } : null, "图库");
   }
 
   function updateBrowseScope() {
@@ -2535,6 +2547,7 @@
     });
     els.main.focus({ preventScroll: true });
     if (name === "browse") showBrowseMode(state.browse.mode);
+    updateSearchScopeAction();
   }
 
   function handleHash() {
@@ -2618,6 +2631,7 @@
   function boot() {
     els = {
       appMeta: document.getElementById("app-meta"),
+      searchScopeAction: document.getElementById("global-search-scope"),
       notice: document.getElementById("notice"),
       main: document.getElementById("main"),
       sourcesList: document.getElementById("sources-list"),
@@ -2662,6 +2676,18 @@
         detail: document.getElementById("view-detail"),
       },
     };
+
+    els.setSearchScopeAction = window.SearchScopeEntry && window.SearchScopeEntry.configure({
+      button: els.searchScopeAction,
+      input: document.getElementById("global-search-query"),
+      getScope: function () {
+        if (els.views.browse.hidden || state.detailRouteActive || !state.sourcesLoaded) return null;
+        var source = state.sources.find(function (item) {
+          return String(item.source_id) === String(state.browse.sourceId);
+        });
+        return source ? { kind: "source", source_id: Number(source.source_id), name: String(source.display_name || "图库") } : null;
+      },
+    });
 
     els.navButtons.forEach(function (button) {
       button.addEventListener("click", function () {
@@ -2712,12 +2738,14 @@
     els.browseShowList.addEventListener("click", function () { showBrowseMode("list"); });
     els.browseSource.addEventListener("change", function () {
       state.browse.sourceId = els.browseSource.value;
+      updateSearchScopeAction();
       if (state.browse.mode === "timeline") showBrowseMode("timeline");
       else loadBrowse(true);
     });
     document.getElementById("clear-browse-source").addEventListener("click", function () {
       state.browse.sourceId = "";
       els.browseSource.value = "";
+      updateSearchScopeAction();
       if (state.browse.mode === "timeline") showBrowseMode("timeline");
       else loadBrowse(true);
     });

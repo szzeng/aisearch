@@ -34,6 +34,7 @@
         <button id="scope-chip" class="scope-chip" type="button" hidden aria-label="取消固定相册范围"></button>
         <input id="query" type="search" autocomplete="off" aria-label="搜索照片" placeholder="搜索照片、人物、地点、时间……">
         <button class="search-submit" type="submit">搜索 <span aria-hidden="true">↵</span></button>
+        <button id="scope-action" class="search-submit" type="button" hidden>搜索此相册</button>
       </form>
       <span class="demo-badge">交互演示</span>
     </header>
@@ -137,14 +138,14 @@
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);
 
-</script>
-  <script>
 (function () {
   "use strict";
   const M = window.DemoModel;
   const main = document.getElementById("main");
   const query = document.getElementById("query");
   const scopeChip = document.getElementById("scope-chip");
+  const scopeAction = document.getElementById("scope-action");
+  const searchSubmit = document.querySelector(".search-submit[type='submit']");
   const viewer = document.getElementById("viewer");
   const editor = document.getElementById("edit-dialog");
   const pageSize = 24;
@@ -218,9 +219,9 @@
     const scope = albumScope();
     const count = M.counts(scope);
     let title = "全部照片", actions = "", back = "";
-    if (state.page === "person") { title = findPerson(state.id).name; actions = `<button class="primary" data-action="scoped-search">搜索此相册</button><button data-action="organize-toggle">${state.organizing ? "完成整理" : "整理照片"}</button><button data-action="rename">改名</button>`; back = `<button class="text-button back" data-route="people">← 所有人物</button>`; }
-    if (state.page === "collection") { title = findCollection(state.id).name; actions = '<button class="primary" data-action="scoped-search">搜索此合集</button><button data-action="collection-members">查看成员</button>'; back = '<button class="text-button back" data-route="people">← 人物与合集</button>'; }
-    if (state.page === "place") { const p = findPlace(state.id); title = `${p.name} · ${p.parent}`; actions = '<button class="primary" data-action="scoped-search">搜索此地点</button><button data-action="place-map">在地图中看</button>'; back = '<button class="text-button back" data-route="places">← 所有地点</button>'; }
+    if (state.page === "person") { title = findPerson(state.id).name; actions = `<button data-action="organize-toggle">${state.organizing ? "完成整理" : "整理照片"}</button><button data-action="rename">改名</button>`; back = `<button class="text-button back" data-route="people">← 所有人物</button>`; }
+    if (state.page === "collection") { title = findCollection(state.id).name; actions = '<button data-action="collection-members">查看成员</button>'; back = '<button class="text-button back" data-route="people">← 人物与合集</button>'; }
+    if (state.page === "place") { const p = findPlace(state.id); title = `${p.name} · ${p.parent}`; actions = '<button data-action="place-map">在地图中看</button>'; back = '<button class="text-button back" data-route="places">← 所有地点</button>'; }
     if (state.page === "source") { title = sourceNames[state.id]; back = '<button class="text-button back" data-route="photos">← 全部照片</button>'; }
     if (state.fromPhoto) back = '<button class="text-button back" data-action="back">← 返回查看照片</button>';
     let html = heading(title, `${count.total} 张有效演示照片 · 可信 ${count.trusted} / 日期未知 ${count.unknown} / 待就绪 ${count.pending}`, actions, back) + tools(scope);
@@ -282,6 +283,10 @@
     const isSearch = state.page === "search";
     scopeChip.hidden = !isSearch || !state.scope;
     scopeChip.textContent = state.scope ? `${scopeName(state.scope)} ×` : "";
+    const currentScope = albumScope();
+    scopeAction.hidden = !currentScope;
+    scopeAction.textContent = currentScope ? `搜索此${currentScope.type === "person" ? "相册" : currentScope.type === "collection" ? "合集" : currentScope.type === "place" ? "地点" : "图库"}` : "";
+    searchSubmit.innerHTML = isSearch && state.scope ? '搜索当前范围 <span aria-hidden="true">↵</span>' : '全库搜索 <span aria-hidden="true">↵</span>';
     query.value = isSearch ? (state.draft ?? state.query) : "";
     query.placeholder = isSearch && state.scope ? `在${scopeName(state.scope)}中查找，例如：海边` : "搜索照片、人物、地点、时间……";
     document.querySelectorAll("[data-nav]").forEach(b => { const section = ["person", "collection", "organize"].includes(state.page) ? "people" : ["place", "map"].includes(state.page) ? "places" : state.page === "source" ? "photos" : state.page; b.classList.toggle("active", b.dataset.nav === section); if (b.dataset.nav === section) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
@@ -302,12 +307,13 @@
     else if (viewer.open) viewer.close();
   }
   function loadMore() { const scroll = window.scrollY; state.limit += pageSize; state.scroll = scroll; persist(); render(false); window.scrollTo(0, scroll); }
-  function executeSearch(text, { resetExcluded = true } = {}) {
+  function executeSearch(text, { resetExcluded = true, scope = undefined } = {}) {
     if (composing) return;
     const q = String(text).trim();
-    if (!q) { notify("输入关键词或日期条件后再搜索；空输入只保留当前范围。"); query.focus(); return; }
-    if (state.page !== "search") route("search", "", { query: q, draft: q, scope: null, searched: true, scroll: 0 });
-    else { storeCurrent(); state.query = q; state.draft = q; state.searched = true; state.limit = pageSize; if (resetExcluded) state.excluded = []; state.scroll = 0; history.pushState(clone(state), "", "#search"); render(true); }
+    const selectedScope = scope === undefined ? state.scope : scope;
+    if (!q && !selectedScope) { notify("输入关键词或日期条件后再搜索。"); query.focus(); return; }
+    if (state.page !== "search") route("search", "", { query: q, draft: q, scope: selectedScope, searched: true, scroll: 0 });
+    else { storeCurrent(); state.scope = selectedScope; state.query = q; state.draft = q; state.searched = true; state.limit = pageSize; if (resetExcluded) state.excluded = []; state.scroll = 0; history.pushState(clone(state), "", "#search"); render(true); }
   }
   function openPhoto(id) { lastFocused = document.activeElement; storeCurrent(); state.modal = { id, ids: visibleIds.slice(), origin: cacheKey(), scope: albumScope() || state.scope }; history.pushState(clone(state), "", `${location.hash.split("?")[0]}?photo=${id}`); showViewer(state.modal); }
   function showViewer(modal) {
@@ -330,10 +336,11 @@
   }
   function selectFace(id, force) { const set = selections[state.id] || (selections[state.id] = new Set()); const key = `face:${id}:${state.id}`; const wanted = force === undefined ? !set.has(key) : force; if (wanted && set.size >= 500) { notify("超过500张脸，选择没有改变。"); return; } if (wanted) set.add(key); else set.delete(key); const scroll = window.scrollY; render(false); window.scrollTo(0, scroll); }
   document.getElementById("search-form").addEventListener("submit", e => { e.preventDefault(); executeSearch(query.value); });
+  scopeAction.addEventListener("click", () => { const scope = albumScope(); if (scope) executeSearch(query.value, { scope }); });
   query.addEventListener("compositionstart", () => { composing = true; });
   query.addEventListener("compositionend", () => { composing = false; });
   query.addEventListener("keydown", e => { if (e.key === "Enter" && (composing || e.isComposing || e.keyCode === 229)) e.preventDefault(); });
-  scopeChip.addEventListener("click", () => { const draft = query.value; state.scope = null; state.query = draft; state.draft = draft; state.limit = pageSize; state.searched = Boolean(draft.trim()); persist(); render(false); notify("已解除固定相册范围，其它明确条件仍保留。"); query.focus(); });
+  scopeChip.addEventListener("click", () => { const draft = query.value; state.scope = null; state.query = ""; state.draft = draft; state.limit = pageSize; state.searched = false; state.excluded = []; persist(); render(false); notify("已取消范围；点击全库搜索重新查询。"); query.focus(); });
   document.addEventListener("click", e => {
     const button = e.target.closest("button"); if (!button || button.disabled) return;
     if (button.dataset.nav) { route(button.dataset.nav); return; }
@@ -354,7 +361,6 @@
     switch (button.dataset.action) {
       case "more": loadMore(); break;
       case "back": history.back(); break;
-      case "scoped-search": { const scope = albumScope(); route("search", "", { scope, query: "", draft: null, searched: false, advanced: {}, excluded: [], limit: pageSize, scroll: 0 }); query.focus(); break; }
       case "advanced": state.advancedOpen = !state.advancedOpen; persist(); render(false); break;
       case "clear-advanced": state.advanced = {}; resetList(); notify("高级手动条件已清除，固定范围和文字条件保留。"); break;
       case "added": state.basis = "added"; state.bucket = "trusted"; state.year = ""; state.month = ""; resetList(); break;
@@ -412,5 +418,6 @@
 })();
 
 </script>
+
 </body>
 </html>

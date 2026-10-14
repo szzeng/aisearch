@@ -59,7 +59,9 @@ def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or
         "outside.jpg": [(40, 40, 110, 110)],
     })
     catalog = api_env.service.catalog
-    first, second, outside = add_person(catalog), add_person(catalog), add_person(catalog)
+    first = add_person(catalog, name="张三")
+    second = add_person(catalog, name="李四")
+    outside = add_person(catalog, name="王五")
     add_link(catalog, seeded["shared.jpg"]["faces"][0], first)
     add_link(catalog, seeded["shared.jpg"]["faces"][1], second)
     add_link(catalog, seeded["ai-only.jpg"]["faces"][0], first)
@@ -87,6 +89,27 @@ def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or
         assert person_scope.json()["total_candidates"] == 2
         assert {hit["asset_id"] for hit in person_scope.json()["hits"]} <= {
             seeded["shared.jpg"]["asset_id"], seeded["ai-only.jpg"]["asset_id"]}
+
+        # Fixed-person scoping temporarily changes a multi-person OR relation to an
+        # intersection; preserve the pre-scope mode so cancelling that identity restores it.
+        person_scope_payload = {
+            "request_id": "fixed-person-match-mode", "original_query": "张三或李四的照片",
+            "search_scope": {"kind": "person", "person_id": first}, "page_size": 10,
+        }
+        person_match = await client.post(
+            "/api/v1/search/place-aware", headers=headers, json=person_scope_payload,
+        )
+        assert person_match.status_code == 200, person_match.text
+        returned_plan = person_match.json()["intent_plan"]
+        assert returned_plan["person_match"] == "all"
+        assert returned_plan["person_match_before_fixed_scope"] == "any"
+
+        person_match_next = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            **person_scope_payload, "request_id": "fixed-person-match-mode-next",
+            "intent_plan": returned_plan,
+        })
+        assert person_match_next.status_code == 200, person_match_next.text
+        assert person_match_next.json()["intent_plan"]["person_match_before_fixed_scope"] == "any"
 
         ai_scope_state = catalog.read_one(
             "SELECT instance_token, revision, name FROM person_collections WHERE collection_id=?",
