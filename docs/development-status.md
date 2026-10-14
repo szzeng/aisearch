@@ -130,4 +130,4 @@ P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REV
 
 ## Additional user-directed task: P4-UI2-PERSON-BATCH-UX-FIX-A — IMPLEMENTED / SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
 
-人脸待整理/已忽略选择分区、跨展开组 Shift、合集先浏览后管理、真实反选和直达改名/删除均已按任务卡实施。定向 JUnit **14/0/0/0**，三项 Node `--check` 与 `git diff --check` 通过；独立 LUNA High 最终修复复核无新 finding。内置浏览器已观察模式按钮和 checkbox 显示，但 Shift 键无法由工具传递（`SHIFT_BROWSER_PENDING_TOOL_LIMIT`），合成库缺合集成员（`COLLECTION_BROWSER_FIXTURE_MISSING`），所以整卡仍为 **ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-UI2-PERSON-BATCH-UX-FIX-A.md) / [报告](reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md)。未访问真实图库；未跑全仓、性能、模型/GPU、打包或发布检查。
+人脸待整理/已忽略选择分区、跨展开组 Shift、合集先浏览后管理、真实反选和直达改名/删除均已按任务卡实施。返工修复了真实 DOM 中 `HTMLCollection.forEach` 异常及 checkbox 取消激活回滚；定向 JUnit **17/0/0/0**，Node `--check` 与 `git diff --check` 通过。LUNA High repair-only 回看关闭两项 finding。内置浏览器已验证待整理区独立入口、首项至第三项 Shift 连选、取消中间项后 checkbox/计数同步；当前合成库无合集成员，浏览器不支持创建合集所需的 `prompt()`，合集成员浏览器验收仍 `COLLECTION_BROWSER_FIXTURE_MISSING`，整卡保持 **ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-UI2-PERSON-BATCH-UX-FIX-A.md) / [报告](reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md)。未访问真实图库；未跑全仓、性能、模型/GPU、打包或发布检查。

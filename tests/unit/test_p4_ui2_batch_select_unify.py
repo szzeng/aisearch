@@ -29,7 +29,7 @@ class Element {
  setAttribute(k,v){this.attributes[k]=String(v);} getAttribute(k){return this.attributes[k]??null;}
  addEventListener(k,fn){this.events[k]=fn;}
  querySelectorAll(selector){const out=[];const walk=e=>{for(const x of e.children){if(selector==='input[type=checkbox]'&&x.tag==='input'&&x.type==='checkbox')out.push(x);walk(x);}};walk(this);return out;}
- fire(name,event={}){let prevented=false;return this.events[name]({...event,preventDefault(){prevented=true;},get defaultPrevented(){return prevented;},stopPropagation(){}});}
+ fire(name,event={}){let prevented=false;const dispatched={...event,preventDefault(){prevented=true;},get defaultPrevented(){return prevented;},stopPropagation(){}};this.events[name](dispatched);return dispatched;}
 }
 const context={URLSearchParams,Date,document:{readyState:'loading',addEventListener(){},createElement:t=>new Element(t)},fetch:async()=>{throw Error('selection must not call an API');}};
 let source=fs.readFileSync('src/photo_search/web/places.js','utf8');
@@ -68,14 +68,16 @@ class Element {
  appendChild(item){item.parentNode=this;this.children.push(item);return item;} append(...items){items.forEach(x=>this.appendChild(x));}
  replaceChildren(...items){this.children.forEach(x=>x.parentNode=null);this.text='';this.children=[];this.append(...items);}
  setAttribute(k,v){this.attributes[k]=String(v);} addEventListener(k,fn){this.events[k]=fn;}
- fire(name,event={}){return this.events[name]({...event,preventDefault(){this.prevented=true;},stopPropagation(){}});} click(){return this.fire('click');}
+ fire(name,event={}){let prevented=false;const dispatched={...event,preventDefault(){prevented=true;},get defaultPrevented(){return prevented;},stopPropagation(){}};this.events[name](dispatched);return dispatched;} click(){return this.fire('click');}
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);},requests=[];
-const context={crypto:{randomUUID:()=> 'req'},URLSearchParams,Date,Map,Set,WeakSet,document:{readyState:'loading',cookie:'ps_csrf=csrf',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},window:{crypto:{randomUUID:()=> 'req'},location:{search:'',href:'http://local/persons'},addEventListener(){},confirm:()=>true},fetch:async(url,options={})=>{requests.push({url,options});return {ok:true,status:200,json:async()=>({collection:{collection_id:7,instance_token:'a'.repeat(32),revision:1},people:Array.from({length:8},(_,i)=>({person_id:11+i,name:'人'+(11+i),asset_count:1,thumbnail_url:null})),has_more:false,next_cursor:null})};},setTimeout:()=>1,clearTimeout(){}};
+const context={crypto:{randomUUID:()=> 'req'},URLSearchParams,Date,Map,Set,WeakSet,document:{readyState:'loading',cookie:'ps_csrf=csrf',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},window:{crypto:{randomUUID:()=> 'req'},location:{search:'',href:'http://local/persons'},addEventListener(){},confirm:()=>true},fetch:async(url,options={})=>{requests.push({url,options});return {ok:true,status:200,json:async()=>({collection:{collection_id:7,instance_token:'a'.repeat(32),revision:1},people:Array.from({length:8},(_,i)=>({person_id:11+i,name:'人'+(11+i),asset_count:1,thumbnail_url:null})),cards:[],faces:[],has_more:false,next_cursor:null})};},setTimeout:()=>1,clearTimeout(){}};
 let source=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 source=source.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();','  globalThis.__probe={state,loadCollectionPeople,updateCollectionSelection,selectLoadedCollectionPeople,clearCollectionSelection,removeCollectionSelection,init(collection){state.collection=collection;state.collectionMode="people";}};\n  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();');
 vm.createContext(context);vm.runInContext(source,context);
 const ui=context.__probe,collection={collection_id:7,instance_token:'a'.repeat(32),revision:1};ui.init(collection);
+const deferred=[];context.setTimeout=fn=>{deferred.push(fn);return deferred.length;};
+const clickBox=(box,event={})=>{const before=box.checked;box.checked=!before;const dispatched=box.fire('click',event);if(dispatched.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return dispatched;};
 (async()=>{
  await ui.loadCollectionPeople(false);
  const cards=get('pa-collection-people').children;assert.equal(cards.length,8);
@@ -84,9 +86,13 @@ const ui=context.__probe,collection={collection_id:7,instance_token:'a'.repeat(3
  assert.equal(checkbox(0).type,'checkbox');assert.match(checkbox(0).attributes['aria-label'],/移出合集/);
  assert.equal(checkbox(0).hidden,true,'collection checkboxes are hidden during normal browsing');
  assert.equal(get('pa-collection-remove').hidden,true,'remove controls are hidden before entering management');
- assert.equal(typeof cards[0].children[1].events.click,'function','person album remains a separate click target');
+ assert.equal(cards[0].className,'pa-person-card','collection member uses the normal people-card root');
+ assert.equal(cards[0].attributes.role,'button');assert.equal(cards[0].tabIndex,0);
+ assert.equal(cards[0].children[0].className,'pa-picture pa-avatar');
+ assert.equal(cards[0].children[3].className,'pa-person-collections','collection member matches the normal people-card structure');
+ assert.equal(checkbox(0).className,'pt-person-checkbox');
  ui.state.collectionPeopleManage=true;ui.updateCollectionSelection();
- checkbox(1).fire('click');checkbox(1).checked=true;checkbox(1).fire('change');checkbox(4).fire('click',{shiftKey:true});
+ clickBox(checkbox(1));clickBox(checkbox(4),{shiftKey:true});
  assert.deepEqual(Array.from(ui.state.collectionSelectedPeople),[12,13,14,15]);
  assert.equal(cards[2].attributes['data-selected'],'true');assert.match(get('pa-collection-people-selected').textContent,/已选 4 人/);
  ui.state.collectionSelectedPeople=new Set([11,12,13,14]);ui.selectLoadedCollectionPeople(true);
@@ -96,10 +102,10 @@ const ui=context.__probe,collection={collection_id:7,instance_token:'a'.repeat(3
  ui.selectLoadedCollectionPeople(false);assert.equal(ui.state.collectionSelectedPeople.size,9);
  ui.selectLoadedCollectionPeople(true);assert.deepEqual(Array.from(ui.state.collectionSelectedPeople),[99]);
  ui.clearCollectionSelection();assert.equal(ui.state.collectionSelectedPeople.size,0);
- checkbox(0).checked=true;checkbox(0).fire('change');assert.deepEqual(Array.from(ui.state.collectionSelectedPeople),[11]);
+ clickBox(checkbox(0));assert.deepEqual(Array.from(ui.state.collectionSelectedPeople),[11]);assert.equal(checkbox(0).checked,true,'normal checkbox activation stays synchronized with selection');
  ui.clearCollectionSelection();
  ui.state.writing=true;ui.updateCollectionSelection();assert.equal(checkbox(0).disabled,true);
- checkbox(0).fire('click');assert.equal(ui.state.collectionSelectedPeople.size,0,'busy state blocks edits');
+ clickBox(checkbox(0));assert.equal(ui.state.collectionSelectedPeople.size,0,'busy state blocks edits');
  ui.state.writing=false;
  assert.equal(requests.length,beforeSelection,'selection operations do not issue API requests');
 })().catch(error=>{console.error(error);process.exitCode=1;});
@@ -116,18 +122,23 @@ class Element {
  appendChild(item){item.parentNode=this;this.children.push(item);return item;} append(...items){items.forEach(x=>this.appendChild(x));}
  replaceChildren(...items){this.children.forEach(x=>x.parentNode=null);this.text='';this.children=[];this.append(...items);}
  setAttribute(k,v){this.attributes[k]=String(v);} addEventListener(k,fn){this.events[k]=fn;}
- fire(name,event={}){let prevented=false;return this.events[name]({...event,preventDefault(){prevented=true;},get defaultPrevented(){return prevented;},stopPropagation(){}});}
+ fire(name,event={}){let prevented=false;const dispatched={...event,preventDefault(){prevented=true;},get defaultPrevented(){return prevented;},stopPropagation(){}};this.events[name](dispatched);return dispatched;}
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);},writes=[];
-const context={URLSearchParams,Date,Map,Set,WeakSet,document:{readyState:'loading',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},window:{location:{search:'',href:'http://local/persons'},addEventListener(){},confirm:()=>true},fetch:async(url,options={})=>{if(options.method&&options.method!=='GET'){writes.push({url,body:JSON.parse(options.body)});return {ok:true,status:200,json:async()=>({changed:writes.at(-1).body.face_ids.length})};}return {ok:true,status:200,json:async()=>({cards:[],faces:[],has_more:false,next_cursor:null})};},setTimeout:()=>1,clearTimeout(){}};
+const context={URLSearchParams,Date,Map,Set,WeakSet,document:{readyState:'loading',cookie:'ps_csrf=csrf',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},window:{location:{search:'',href:'http://local/persons'},addEventListener(){},confirm:()=>true},fetch:async(url,options={})=>{if(options.method&&options.method!=='GET'){writes.push({url,body:JSON.parse(options.body)});return {ok:true,status:200,json:async()=>({changed:writes.at(-1).body.face_ids.length})};}return {ok:true,status:200,json:async()=>({cards:[],faces:[],has_more:false,next_cursor:null})};},setTimeout:()=>1,clearTimeout(){}};
 let source=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-source=source.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();','  globalThis.__probe={state,renderInboxFace,renderInboxGroup,renderFaceManagement,selectInboxRange,clearInboxSelection,submitInboxVisibility};\n  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();');
+source=source.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();','  globalThis.__probe={state,renderInboxFace,renderInboxGroup,renderFaceManagement,loadedInboxCards,selectInboxRange,clearInboxSelection,submitInboxVisibility};\n  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();');
 vm.createContext(context);vm.runInContext(source,context);
 const ui=context.__probe,face=id=>({face_id:id,asset_id:id,thumbnail_url:null,suggestions:[{person_id:1,name:'参考人物',thumbnail_url:null}],control_revision:1});
+const deferred=[];context.setTimeout=fn=>{deferred.push(fn);return deferred.length;};
+const clickBox=(box,event={})=>{const before=box.checked;box.checked=!before;const dispatched=box.fire('click',event);if(dispatched.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return dispatched;};
 (async()=>{
  ui.state.inboxBatchMode=true;ui.renderFaceManagement();
  const inbox=get('pa-inbox-cards'),g1=new Element('details'),g2=new Element('details');g1.open=true;g2.open=true;g1.groupKey='candidate:a';g2.groupKey='candidate:b';inbox.append(g1,g2);
  ui.renderInboxFace(g1,face(101),false,g1);ui.renderInboxFace(g1,face(102),false,g1);ui.renderInboxFace(g2,face(103),false,g2);
+ const htmlCollection=items=>Object.assign({length:items.length,[Symbol.iterator]:function*(){yield* items;}},items);
+ g1.children=htmlCollection(g1.children);g2.children=htmlCollection(g2.children);
+ assert.equal(ui.loadedInboxCards(false).length,3,'visible face traversal supports DOM HTMLCollection children');
  const boxes=[g1.children[0].selectionButton,g1.children[1].selectionButton,g2.children[0].selectionButton];
  assert.equal(boxes[0].hidden,false,'the inbox-specific management mode reveals checkboxes');
  const faceCard=g1.children[0],avatar=faceCard.children[0].children[0].children[0];
@@ -135,11 +146,11 @@ const ui=context.__probe,face=id=>({face_id:id,asset_id:id,thumbnail_url:null,su
  assert.equal(stopped,true,'face-image selection stops bubbling so the card cannot toggle it a second time');
  assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101'],'face-image click selects exactly once');
  ui.state.selectedInboxFaces.clear();ui.state.selectAnchors.clear();
- boxes[0].fire('click');boxes[0].checked=true;boxes[0].fire('change');
- const shift=boxes[2].fire('click',{shiftKey:true});assert.equal(shift,undefined);
+ const firstClick=clickBox(boxes[0]);assert.equal(firstClick.defaultPrevented,false,'ordinary selection uses native checkbox change');
+ const shift=clickBox(boxes[2],{shiftKey:true});assert.equal(shift.defaultPrevented,true,'range selection suppresses the native endpoint toggle');
  assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101','102','103'],'Shift spans expanded candidate groups in visible order');
  assert.equal(boxes[1].checked,true);assert.equal(boxes[2].checked,true);
- boxes[1].checked=false;boxes[1].fire('change');assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101','103'],'unchecking one face preserves the other selected faces');
+ clickBox(boxes[1]);assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101','103'],'unchecking one face preserves the other selected faces');assert.equal(boxes[1].checked,false);
  ui.state.selectAnchors.set('faces:inbox:list','102');
  const collapsed=ui.renderInboxGroup({group_key:'candidate:77',face:face(301),candidate_name:'候选',photo_count:2},'candidate',false);
  collapsed.open=false;collapsed.fire('toggle');
@@ -148,11 +159,15 @@ const ui=context.__probe,face=id=>({face_id:id,asset_id:id,thumbnail_url:null,su
  ui.renderInboxFace(anchorGroup,face(102),false,anchorGroup);anchorGroup.open=false;anchorGroup.fire('toggle');
  assert.equal(ui.state.selectAnchors.has('faces:inbox:list'),false,'collapsing the group containing the shared inbox anchor clears it');
  ui.state.hiddenBatchMode=true;ui.renderFaceManagement();
- const hidden=get('pa-inbox-hidden-cards');ui.renderInboxFace(hidden,face(201),true);hidden.children[0].selectionButton.checked=true;hidden.children[0].selectionButton.fire('change');
+ const hidden=get('pa-inbox-hidden-cards');ui.renderInboxFace(hidden,face(201),true);clickBox(hidden.children[0].selectionButton);
  assert.equal(writes.length,0,'selection alone does not issue a business request');
  assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101','103']);assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),['201'],'pending and ignored faces retain independent selection domains');
  ui.clearInboxSelection(false);assert.deepEqual(Array.from(ui.state.selectedInboxFaces),[]);assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),['201'],'pending clear does not clear the ignored-face selection');
  ui.clearInboxSelection(true);assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),[]);
  assert.equal(ui.state.batchMode,false,'face management does not depend on the people-list batch mode');
+ ui.state.selectedInboxFaces=new Set(['101','103']);ui.state.inboxBatchMode=true;get('pa-inbox-ignore-state').value='TEMPORARY';
+ await ui.submitInboxVisibility(true);
+ assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/v1/faces/inbox/visibility');
+ assert.deepEqual(writes[0].body,{face_ids:['101','103'],hidden:true,ignore_state:'TEMPORARY'},'ignore request submits only the selected face IDs and selected ignore mode');
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """)

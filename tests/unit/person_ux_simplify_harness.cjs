@@ -20,13 +20,13 @@ class Element {
 const descendants=e=>e.children.flatMap(c=>[c,...descendants(c)]);
 const elements=new Map(), get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 get("pt-faces").hidden=true;
-const requests=[], mutations=[];let holdSave=false, releaseSave;let personRevision=7, failSave=false, holdReview=false, releaseReview, noCandidates=false, conflict=false, reviewAvailable=true;
+const requests=[], mutations=[], deferred=[];let holdSave=false, releaseSave;let personRevision=7, failSave=false, holdReview=false, releaseReview, noCandidates=false, conflict=false, reviewAvailable=true;
 const f=id=>({face_id:String(id).padStart(64,'0'),asset_id:id,control_revision:3,assignment_revision:4,mode:'AUTO',thumbnail_url:null});
 const people=Array.from({length:45},(_,i)=>({person_id:i+1,name:'人物'+(i+1),revision:7,asset_count:1,thumbnail_url:null}));
 const old='a'.repeat(64), group={old_face_id:old,asset_id:3,control_mode:'MANUAL_ASSIGNED',revision:6,has_active_exclusions:true};
 const response=(data,status=200)=>({ok:status<400,status,json:async()=>data});
 const windowEvents={};
-const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(requests.length)},setTimeout:()=>1,clearTimeout(){},
+const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(requests.length)},setTimeout:fn=>{deferred.push(fn);return deferred.length;},clearTimeout(){},
  window:{location:{search:'',hash:'',href:'http://local/persons'},scrollY:0,addEventListener(k,fn){windowEvents[k]=fn;},confirm:()=>true},
  document:{readyState:'loading',cookie:'ps_csrf=synthetic',addEventListener(k,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag),querySelector(selector){return selector==='dialog[open]'?[...elements.values()].find(e=>e.tag==='dialog'&&e.open)||null:null;}},
  fetch:async(url,options={})=>{
@@ -58,6 +58,7 @@ let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
+const clickBox=(box,extra={})=>{const before=box.checked;box.checked=!before;const event=box.fire('click',extra);if(event?.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return event;};
 const choose=async(card)=>{card.pick.checked=true;card.pick.fire('change');await flush();};
 const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button'&&e.textContent.endsWith(text));assert(found,text);return found;};
 (async()=>{
@@ -124,19 +125,18 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
 
   album.state.inboxBatchMode=true;album.renderFaceManagement();const inbox=get('pa-inbox-cards'), group={groupKey:'g1',open:true};
   album.renderInboxFace(inbox,f(3),false,group);album.renderInboxFace(inbox,f(4),false,group);
-  const a=inbox.children[0],b=inbox.children[1];a.selectionButton.checked=true;a.selectionButton.fire('change');b.selectionButton.fire('click',{shiftKey:true});
+  const a=inbox.children[0],b=inbox.children[1];clickBox(a.selectionButton);clickBox(b.selectionButton,{shiftKey:true});
   assert.equal(album.state.selectedInboxFaces.size,2,'same candidate group supports range selection');
   const hidden=get('pa-inbox-hidden-cards');album.renderInboxFace(hidden,f(5),true,{groupKey:'g1'});
   assert.equal(album.state.selectedInboxFaces.size,2,'selection remains explicitly user driven');
-  album.renderInboxFace(inbox,f(6),false,{groupKey:'g2'});inbox.children[2].selectionButton.fire('click',{shiftKey:true});
-  inbox.children[2].selectionButton.checked=true;inbox.children[2].selectionButton.fire('change');
+  album.renderInboxFace(inbox,f(6),false,{groupKey:'g2'});clickBox(inbox.children[2].selectionButton,{shiftKey:true});
   assert.equal(album.state.selectedInboxFaces.size,3,'an expanded different group extends the visible range');
   get('pa-inbox-clear').fire('click');assert.equal(album.state.selectedInboxFaces.size+album.state.selectedHiddenFaces.size,0,'pending clear removes only pending face selections');
   assert.equal(mutations.length,0,'all selection actions avoid write requests');
 
   album.state.collection={collection_id:1,instance_token:'tok',revision:1};album.state.collectionPeopleManage=true;await album.loadCollectionPeople(false);await flush();
-  const collectionCards=get('pa-collection-people');collectionCards.children[0].children[0].fire('click');collectionCards.children[0].children[0].checked=true;collectionCards.children[0].children[0].fire('change');
-  collectionCards.children[1].children[0].fire('click',{shiftKey:true});
+  const collectionCards=get('pa-collection-people');clickBox(collectionCards.children[0].selectionBox);
+  clickBox(collectionCards.children[1].selectionBox,{shiftKey:true});
   assert.equal(album.state.collectionSelectedPeople.size,2,'collection members support Shift selection');
   get('pa-collection-selection-clear').fire('click');assert.equal(album.state.collectionSelectedPeople.size,0);
   assert.equal(mutations.length,0,'collection selection remains read-only');
@@ -159,7 +159,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
  if(scenario==='inbox'){
   album.state.inboxBatchMode=true;album.renderFaceManagement();const cards=get('pa-inbox-cards');album.renderInboxFace(cards,f(3),false);album.renderInboxFace(cards,f(4),false);
   assert(descendants(cards.children[0]).some(child=>child.className==='pt-avatar-select'));assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
-  cards.children.forEach(card=>{card.selectionButton.checked=true;card.selectionButton.fire('change');});
+  cards.children.forEach(card=>clickBox(card.selectionButton));
   assert.equal(get('pa-inbox-selection-count').textContent,'已选 2 / 500 张脸');get('pa-inbox-assign').fire('click');await flush();
   button(get('pa-choices'),'人物2 · 1 张').fire('click');await get('pa-edit-form').fire('submit');await flush();
   assert.equal(mutations.length,1);assert.deepEqual(mutations[0].body.items.map(i=>i.face_id),[f(3).face_id,f(4).face_id]);

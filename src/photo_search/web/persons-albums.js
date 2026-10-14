@@ -420,7 +420,7 @@
     const root = hidden ? $("inbox-hidden-cards") : $("inbox-cards");
     const found = [];
     const isVisible = (item) => { let parent = item.parentNode; while (parent && parent !== root) { if ((parent.tagName === "DETAILS" || parent.tag === "details") && !parent.open) return false; parent = parent.parentNode; } return parent === root; };
-    const walk = (item) => { if (item.faceId && item.selectionButton && item.hiddenFace === hidden && isVisible(item)) found.push(item); (item.children || []).forEach(walk); };
+    const walk = (item) => { if (item.faceId && item.selectionButton && item.hiddenFace === hidden && isVisible(item)) found.push(item); Array.from(item.children || []).forEach(walk); };
     Array.from(root.children || []).forEach(walk); return found;
   }
   function selectInboxRange(card, event) {
@@ -683,6 +683,30 @@
     $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false");
     collectionHeading(); loadPhotos(false); $("back").focus();
   }
+  function selectCollectionPersonRange(card) {
+    if (!state.collection || state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionActionBusy || state.collectionRemoveUnknown || state.collectionPeopleStale) return true;
+    const collection = state.collection;
+    const key = "collection:" + collection.collection_id + ":" + collection.instance_token;
+    const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
+    const from = cards.findIndex((item) => item.personId === state.selectAnchors.get(key)), to = cards.indexOf(card);
+    if (to < 0) return true;
+    const range = from < 0 ? [card] : cards.slice(Math.min(from, to), Math.max(from, to) + 1);
+    if (state.collectionSelectedPeople.size + range.filter((item) => !state.collectionSelectedPeople.has(item.personId)).length > 500) {
+      updateCollectionSelection(); message("这次连选会超过 500 个人物，未更改已有选择。"); return true;
+    }
+    range.forEach((item) => state.collectionSelectedPeople.add(item.personId));
+    state.selectAnchors.set(key, card.personId); updateCollectionSelection(); return true;
+  }
+  function activateCollectionPerson(card, collection, event) {
+    if (state.collectionPeopleBusy || state.collectionActionBusy || state.collectionRemoveUnknown || state.collectionPeopleStale || state.writing || state.pendingWrite) return;
+    if (!state.collectionPeopleManage) { state.returnCollection = collection; openAlbum(card.latestPerson); return; }
+    if (event && event.shiftKey) { selectCollectionPersonRange(card); return; }
+    if (state.collectionSelectedPeople.has(card.personId)) state.collectionSelectedPeople.delete(card.personId);
+    else if (state.collectionSelectedPeople.size >= 500) { message("一次最多选择 500 个人物。"); return; }
+    else state.collectionSelectedPeople.add(card.personId);
+    state.selectAnchors.set("collection:" + collection.collection_id + ":" + collection.instance_token, card.personId);
+    updateCollectionSelection();
+  }
   async function loadCollectionPeople(more, parentCollection) {
     const collection = parentCollection || state.collection;
     if (!collection || (more && !state.collectionPeopleCursor)) return;
@@ -714,65 +738,43 @@
       }
       state.collectionPeopleStale = false;
       (page.people || []).forEach((person) => {
-        const card = node("article", undefined, "pa-collection-card");
+        const card = node("div", undefined, "pa-person-card"); card.tabIndex = 0; card.setAttribute("role", "button");
         const id = Number(person.person_id), selected = state.collectionSelectedPeople.has(id);
-        card.personId = id;
-        const choose = node("input"); choose.type = "checkbox"; choose.className = "pa-collection-checkbox";
+        card.personId = id; card.latestPerson = person;
+        const choose = node("input"); choose.type = "checkbox"; choose.className = "pt-person-checkbox";
         choose.setAttribute("aria-label", "选择人物“" + name(person) + "”移出合集");
         choose.checked = selected; choose.hidden = !state.collectionPeopleManage;
-        choose.disabled = !state.collectionPeopleManage || state.writing || Boolean(state.pendingWrite) || state.collectionPeopleBusy || state.collectionRemoveUnknown;
+        choose.disabled = !state.collectionPeopleManage || state.writing || Boolean(state.pendingWrite) || state.collectionPeopleBusy || state.collectionActionBusy || state.collectionRemoveUnknown || state.collectionPeopleStale;
         choose.addEventListener("click", (event) => {
           event.stopPropagation();
-          if (state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionRemoveUnknown) { event.preventDefault(); return; }
-          const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
-          const key = "collection:" + collection.collection_id + ":" + collection.instance_token;
-      if (event && event.shiftKey) {
-        card.rangeChangePending = true;
-        setTimeout(() => { card.rangeChangePending = false; updateCollectionSelection(); }, 0);
-            const from = cards.findIndex((item) => item.personId === state.selectAnchors.get(key)), to = cards.indexOf(card);
-            if (from >= 0 && to >= 0) {
-              const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
-          if (state.collectionSelectedPeople.size + range.filter((item) => !state.collectionSelectedPeople.has(item.personId)).length > 500) { updateCollectionSelection(); message("这次连选会超过 500 个人物，未更改已有选择。"); return; }
-              range.forEach((item) => state.collectionSelectedPeople.add(item.personId));
-            }
-            else if (!state.collectionSelectedPeople.has(id)) {
-          if (state.collectionSelectedPeople.size >= 500) { updateCollectionSelection(); message("一次最多选择 500 个人物。"); return; }
-              state.collectionSelectedPeople.add(id);
-            }
-            state.selectAnchors.set(key, id); updateCollectionSelection();
+          if (state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionActionBusy || state.collectionRemoveUnknown || state.collectionPeopleStale) {
+            event.preventDefault(); setTimeout(updateCollectionSelection, 0); return;
+          }
+          if (event.shiftKey) {
+            event.preventDefault(); selectCollectionPersonRange(card); setTimeout(updateCollectionSelection, 0);
           }
         });
         choose.addEventListener("change", () => {
-          if (!state.collectionPeopleManage || state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionRemoveUnknown) { updateCollectionSelection(); return; }
-          if (card.rangeChangePending) { card.rangeChangePending = false; updateCollectionSelection(); return; }
+          if (!state.collectionPeopleManage || state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionActionBusy || state.collectionRemoveUnknown || state.collectionPeopleStale) { updateCollectionSelection(); return; }
           if (choose.checked) {
             if (!state.collectionSelectedPeople.has(id) && state.collectionSelectedPeople.size >= 500) { message("一次最多选择 500 个人物。"); updateCollectionSelection(); return; }
             state.collectionSelectedPeople.add(id);
           } else state.collectionSelectedPeople.delete(id);
           state.selectAnchors.set("collection:" + collection.collection_id + ":" + collection.instance_token, id); updateCollectionSelection();
         });
-        choose.addEventListener("keydown", (event) => {
-          if (event.key === "Enter") { event.preventDefault(); choose.click(); }
-        });
         card.selectionBox = choose;
-        const open = button("", (event) => { event.stopPropagation(); if (state.collectionPeopleBusy) return; state.returnCollection = collection; openAlbum(person); }, "pa-person-card");
-        open.addEventListener("click", event => event.stopPropagation());
-        open.append(picture(person.thumbnail_url, name(person), "pa-avatar"), node("strong", name(person)), node("span", person.asset_count + " 张照片"));
-        card.append(choose, open);
-        card.addEventListener("click", event => {
-          if (!state.collectionPeopleManage || event.target === choose || event.target === open || state.collectionPeopleBusy || state.collectionRemoveUnknown) return;
-          const key = "collection:" + collection.collection_id + ":" + collection.instance_token;
-          const cards = Array.from($("collection-people").children).filter((item) => Number.isSafeInteger(item.personId));
-          if (event.shiftKey) {
-            const from = cards.findIndex((item) => item.personId === state.selectAnchors.get(key)), to = cards.indexOf(card);
-            const range = from < 0 ? [card] : cards.slice(Math.min(from, to), Math.max(from, to) + 1);
-            if (state.collectionSelectedPeople.size + range.filter((item) => !state.collectionSelectedPeople.has(item.personId)).length > 500) { message("这次连选会超过 500 个人物，未更改已有选择。"); return; }
-            range.forEach((item) => state.collectionSelectedPeople.add(item.personId));
-          } else if (state.collectionSelectedPeople.has(id)) state.collectionSelectedPeople.delete(id);
-          else if (state.collectionSelectedPeople.size >= 500) { message("一次最多选择 500 个人物。"); return; }
-          else state.collectionSelectedPeople.add(id);
-          state.selectAnchors.set(key, id); updateCollectionSelection();
+        card.addEventListener("click", (event) => { if (event.target !== choose) activateCollectionPerson(card, collection, event); });
+        card.addEventListener("keydown", (event) => {
+          if (event.target === card && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activateCollectionPerson(card, collection, event); }
         });
+        card.avatarPicture = picture(person.thumbnail_url, name(person), "pa-avatar");
+        card.personName = node("strong", name(person)); card.personCount = node("span", person.asset_count + " 张照片", "hint");
+        card.collectionLabels = node("span", undefined, "pa-person-collections");
+        card.selectionHint = node("span", state.collectionPeopleManage ? (selected ? "已选择" : "点按选择") : "", "hint pa-person-selection");
+        card.selectionHint.hidden = !state.collectionPeopleManage;
+        card.append(card.avatarPicture, card.personName, card.personCount, card.collectionLabels, card.selectionHint, choose);
+        card.setAttribute("aria-pressed", String(state.collectionPeopleManage && selected));
+        card.setAttribute("data-selected", String(selected));
         $("collection-people").append(card);
       });
       const showingPeople = Boolean(state.collection && state.collectionMode === "people");
@@ -804,6 +806,8 @@
         const selected = state.collectionSelectedPeople.has(card.personId);
         card.selectionBox.checked = selected; card.selectionBox.hidden = !managing; card.selectionBox.disabled = !managing || busy;
         card.setAttribute("data-selected", String(selected));
+        card.setAttribute("aria-pressed", String(managing && selected));
+        if (card.selectionHint) { card.selectionHint.hidden = !managing; card.selectionHint.textContent = selected ? "已选择" : "点按选择"; }
       }
     });
     $("collection-remove").disabled = busy || state.collectionSelectedPeople.size === 0;
@@ -948,19 +952,19 @@
     selection.checked = selected; selection.setAttribute("aria-label", hiddenFace ? "选择这张已忽略人脸" : "选择这张待整理人脸");
     selection.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (state.writing || state.pendingWrite || state.faceVisibilityBusy) { event.preventDefault(); return; }
+      if (state.writing || state.pendingWrite || state.faceVisibilityBusy) {
+        event.preventDefault(); setTimeout(renderFaceManagement, 0); return;
+      }
       if (event.shiftKey && selectInboxRange(card, event)) {
-        card.rangeChangePending = true;
-        setTimeout(() => { card.rangeChangePending = false; renderFaceManagement(); }, 0);
+        event.preventDefault(); setTimeout(renderFaceManagement, 0);
       }
     });
     selection.addEventListener("change", () => {
-      if (!(card.hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode)) { renderFaceManagement(); return; }
-      if (card.rangeChangePending) { card.rangeChangePending = false; renderFaceManagement(); return; }
+      if (!(card.hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode) || state.writing || state.pendingWrite || state.faceVisibilityBusy) { renderFaceManagement(); return; }
       const set = card.hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces;
       if (selection.checked) {
-        if (!set.has(card.faceId) && set.size >= 500) message("一次最多选择 500 张脸，请先提交当前选择。");
-        else set.add(card.faceId);
+        if (!set.has(card.faceId) && set.size >= 500) { message("一次最多选择 500 张脸，请先提交当前选择。"); renderFaceManagement(); return; }
+        set.add(card.faceId);
       } else set.delete(card.faceId);
       state.selectAnchors.set("faces:" + (card.hiddenFace ? "hidden:list" : "inbox:list"), card.faceId);
       renderFaceManagement();
