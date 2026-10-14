@@ -1,3 +1,10 @@
+## Current user-directed task: P4-UI2-VIEWER-UNIFY-A — FUNCTIONAL SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
+
+UI 2.0 首页、搜索、人物/合集、地图复用单一共享照片查看器；实现预览缩放/平移、受限页面扩展、上下张导航和安全返回，并保留旧 `/#/asset/{id}` 深链。定向 JUnit **21/0/0/0**；六份相关 JS `node --check` 与 `git diff --check` 通过。[任务卡](tasks/P4-UI2-VIEWER-UNIFY-A.md) / [报告](reports/P4-UI2-VIEWER-UNIFY-A.md)。LUNA High 独立复核的 3 个 finding 已修复并复看无剩余项（不是 DS-H）。内置浏览器用 10 张隔离合成图库观察首页缩放/Back、人物查看、FILTER_ONLY 搜索返回、GPS 地图返回及旧深链关闭；截图见报告。`FUNCTIONAL=SCOPED PASS`，但整卡 **ACCEPTANCE PARTIAL**：有效语义搜索、地图/地点全路由、写入实际提交、长图/失败资源/异步快切、真实 200%/主题及 `PERF_200K` 未完整验证。未访问真实图库或模型/GPU；按后续用户指令本地提交；未 push。
+
+## Next necessary action: P4-UI2-VIEWER-UNIFY-A remaining acceptance gates
+
+按报告补验地点相册独立返回、搜索连续翻页/有效语义结果、人物写操作及拦截、资源失败/长图/异步快切、多层返回与实际 200%/主题；`PERF_200K` 按需要由独立性能卡承担。不要用本轮的合成/窄视口证据替代这些门禁，也不改变前置卡状态。
 ## Current user-directed task: P4-UI2-SEARCH-SCOPE-UNIFY-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 统一页头范围搜索入口、关键词一次性交接和取消范围状态；人物固定范围取消会恢复原 `person_match`，地点回显条件取消时清理重复过滤。定向 JUnit **28/0/0/0**、Node `--check`、`py_compile` 与 `git diff --check` 通过；LUNA High 最终修复复核无剩余可执行 finding（不是 DS-H）。按用户追加要求完成一次本机 Codex 内置浏览器地点范围冒烟：隔离合成图库 4 张照片，地点 CTA 直接执行 FILTER_ONLY，取消后不自动全库重搜。仅这一条路线已浏览器验证；人物/合集/图库、非空词、取消竞态和预览返回等保持待验，截图未保存，整卡保持 ACCEPTANCE PARTIAL。[任务卡](tasks/P4-UI2-SEARCH-SCOPE-UNIFY-A.md) / [报告](reports/P4-UI2-SEARCH-SCOPE-UNIFY-A.md)。未访问真实图库、模型/GPU，未跑全仓、性能、真实 200% 缩放、打包或发布验证；无 commit。

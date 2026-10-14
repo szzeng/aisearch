@@ -6,7 +6,7 @@
   const backdropBoundDialogs = new WeakSet();
   let setSearchScopeAction = function () {};
   const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
-    photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0,
+    photoCursor: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0, previewHandle: null, previewUI: null,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
     detailBusyAssets: new Set(),
@@ -836,7 +836,7 @@
     const avatar = node("label", undefined, "pt-avatar-select");
     avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
     selection.disabled = !state.batchMode || state.writing || state.faceVisibilityBusy;
-    avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id); } });
+    avatar.addEventListener("click", event => { if (!state.batchMode) { event.preventDefault(); preview(face.asset_id, event.currentTarget); } });
     left.append(avatar, node("span", hiddenFace
       ? (face.ignore_state === "EXCLUDED" ? "明确排除" : "暂时忽略")
       : "待整理", "hint"));
@@ -848,7 +848,7 @@
       right.append(reference, node("span", "可能是" + name(suggestion), "hint"));
       comparison.append(right);
     }
-    card.append(comparison, button("查看整张照片", () => preview(face.asset_id)), node("span", organizationText(face), "hint"));
+    card.append(comparison, button("查看整张照片", event => preview(face.asset_id, event.currentTarget)), node("span", organizationText(face), "hint"));
     if (!state.batchMode) {
       if (suggestion) {
         const confirm = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
@@ -1227,7 +1227,7 @@
     items.forEach((item) => {
       const id = photoId(item); if (state.photoIds.includes(id)) return;
       state.photoIds.push(id);
-      const card = button("", () => preview(id), "pa-photo-card");
+      const card = button("", event => preview(id, event.currentTarget), "pa-photo-card");
       card.setAttribute("aria-label", "查看照片 " + id);
       card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo", state.photoIds.length < 3));
       if (item.person_faces && item.person_faces.length) {
@@ -1303,7 +1303,7 @@
         },
         renderAsset(item) {
           const id = Number(item.asset_id);
-          const card = button("", () => preview(id), "pa-photo-card");
+          const card = button("", event => preview(id, event.currentTarget), "pa-photo-card");
           card.setAttribute("aria-label", "查看照片 " + id);
           card.append(picture(photoURL(id, "thumbnail"), "照片 " + id, "pa-photo"));
           const sourceLabel = item.time_basis === "library" ? "加入图库时间"
@@ -1316,7 +1316,7 @@
           if (item.display_time && sourceLabel) card.append(node("small", sourceLabel, "pa-photo-source"));
           return card;
         },
-        onOpen(item) { preview(Number(item.asset_id)); },
+        onOpen(item, card) { preview(Number(item.asset_id), card); },
         onPage(body, page, values) {
           if (!values.cursor) {
             state.photoIds = [];
@@ -1381,16 +1381,58 @@
     if ((!state.person && !state.collection) || state.previewListSeq !== state.photoListSeq) return -1;
     return state.photoIds.indexOf(state.previewAssetId);
   }
+  function previewNode(name) { return state.previewUI && state.previewUI[name]; }
+  function createPreviewUI(assetId, returnFocus) {
+    if (!window.AIPhotoInfo) {
+      const dialog = $("preview"), image = $("preview-image");
+      state.previewUI = { dialog, image, note: $("preview-note"), faces: $("preview-faces"),
+        faceDetail: $("face-detail"), review: $("review"), nav: $("preview-nav"),
+        position: $("preview-position"), previous: $("preview-prev"), next: $("preview-next") };
+      state.previewHandle = { dialog, image, close: () => dialog.close(),
+        setAsset(id) { image.hidden = false; image.src = mediaURL(photoURL(id, "preview")); },
+        setPosition(value) { state.previewUI.position.textContent = value; state.previewUI.nav.hidden = !value; },
+        setNavigationEnabled(previous, next) { state.previewUI.previous.disabled = !previous; state.previewUI.next.disabled = !next; } };
+      image.src = mediaURL(photoURL(assetId, "preview"));
+      if (typeof window.AIPhotoInfo === "undefined") state.previewInfoMount = null;
+      dialog.showModal(); closeOnBackdrop(dialog);
+      $("preview-close").addEventListener("click", () => dialog.close());
+      state.previewUI.faceDetail.addEventListener("click", sourceDetail);
+      state.previewUI.previous.addEventListener("click", () => movePreview(-1));
+      state.previewUI.next.addEventListener("click", () => movePreview(1));
+      dialog.addEventListener("close", () => { state.previewSeq++; state.previewAssetId = null; image.removeAttribute("src"); state.previewUI.nav.hidden = true; state.previewHandle = null; state.previewUI = null; updatePreviewNavigation(); });
+      return;
+    }
+    const extension = node("section", undefined, "pa-preview-extension");
+    const note = node("p", "正在读取这张照片的人脸……", "hint"); note.setAttribute("role", "status");
+    const faces = node("div", undefined, "pa-face-row");
+    const faceDetail = button("尝试原图细节识别", sourceDetail); faceDetail.hidden = true;
+    const review = button("查看识别更新待确认", () => {
+      const id = state.previewAssetId;
+      if (state.previewReviewFailed) { loadPreviewReviews(id, state.previewSeq); return; }
+      state.previewHandle.close(); if (window.AIPersonTools) window.AIPersonTools.openReview(id);
+    }); review.hidden = true;
+    extension.append(note, faces, faceDetail, review);
+    state.previewUI = { note, faces, faceDetail, review };
+    state.previewHandle = window.AIPhotoInfo.open(assetId, {
+      title: "人物照片", alt: "人物相册照片", extension: extension, returnFocus: returnFocus, people: false,
+      beforeClose: () => !state.writing && !state.pendingWrite,
+      navigation: { previous: () => movePreview(-1), next: () => movePreview(1) },
+      onClose: () => {
+        state.previewSeq++; state.previewAssetId = null; state.previewHandle = null; state.previewUI = null;
+        updatePreviewNavigation();
+      }
+    });
+    state.previewUI.dialog = state.previewHandle.dialog;
+  }
   function updatePreviewNavigation() {
-    const index = previewPosition(); const enabled = index >= 0 && $("preview").open;
-    $("preview-nav").hidden = !enabled;
-    $("preview-position").textContent = enabled ? "第 " + (index + 1) + " 张" : "";
-    $("preview-prev").disabled = !enabled || index === 0 || state.previewMoving || state.writing;
-    $("preview-next").disabled = !enabled || state.previewMoving || state.writing ||
-      (index === state.photoIds.length - 1 && !state.photoCursor);
+    if (!state.previewHandle) return;
+    const index = previewPosition(); const enabled = index >= 0 && state.previewHandle.dialog.open;
+    state.previewHandle.setPosition(enabled ? "第 " + (index + 1) + " 张" : "");
+    state.previewHandle.setNavigationEnabled(enabled && index > 0 && !state.previewMoving && !state.writing,
+      enabled && !state.previewMoving && !state.writing && (index < state.photoIds.length - 1 || Boolean(state.photoCursor)));
   }
   async function movePreview(step) {
-    if (state.previewMoving || state.writing || !$("preview").open) return;
+    if (state.previewMoving || state.writing || !state.previewHandle || !state.previewHandle.dialog.open) return;
     const index = previewPosition(); if (index < 0 || index + step < 0) return;
     const listSeq = state.photoListSeq; const previewSeq = state.previewSeq;
     state.previewMoving = true; updatePreviewNavigation();
@@ -1398,32 +1440,29 @@
       if (index + step >= state.photoIds.length) {
         if (!state.photoCursor) return;
         const loaded = await loadPhotos(true);
-        if (previewSeq !== state.previewSeq || listSeq !== state.photoListSeq || !$("preview").open) return;
-        if (!loaded) { $("preview-note").textContent = "下一批照片没有加载成功，请再点“下一张”重试。"; return; }
+        if (previewSeq !== state.previewSeq || listSeq !== state.photoListSeq || !state.previewHandle || !state.previewHandle.dialog.open) return;
+        if (!loaded) { previewNode("note").textContent = "下一批照片没有加载成功，请再点“下一张”重试。"; return; }
       }
-      if (listSeq !== state.photoListSeq || !$("preview").open) return;
+      if (listSeq !== state.photoListSeq || !state.previewHandle || !state.previewHandle.dialog.open) return;
       const next = state.photoIds[index + step];
       if (next !== undefined) await preview(next);
     } finally { state.previewMoving = false; updatePreviewNavigation(); }
   }
-  async function preview(id) {
-    const seq = ++state.previewSeq; $("preview-faces").replaceChildren();
-    if (state.previewInfoMount) state.previewInfoMount.dispose();
+  async function preview(id, returnFocus) {
+    const seq = ++state.previewSeq;
     state.previewAssetId = id; state.previewListSeq = state.photoListSeq;
-    $("review").hidden = true;
-    $("preview-note").textContent = "正在读取这张照片的人脸……";
-    const image = $("preview-image"); image.hidden = false;
-    image.onerror = () => { if (seq === state.previewSeq) { image.hidden = true; $("preview-note").textContent = "大图暂时不可用；照片来源可能已离线。"; } };
-    image.src = mediaURL(photoURL(id, "preview"));
-    if (!$("preview").open) $("preview").showModal();
-    if (typeof window !== "undefined" && window.AIPhotoInfo) state.previewInfoMount = window.AIPhotoInfo.render($("preview-photo-info"), id);
+    if (!state.previewHandle) createPreviewUI(id, returnFocus);
+    else state.previewHandle.setAsset(id);
+    previewNode("faces").replaceChildren();
+    previewNode("review").hidden = true;
+    previewNode("note").textContent = "正在读取这张照片的人脸……";
     updatePreviewNavigation();
     loadPreviewReviews(id, seq);
     try {
-      const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !$("preview").open) return;
+      const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !state.previewHandle || !state.previewHandle.dialog.open) return;
       if (state.collection) {
-        $("preview-faces").replaceChildren(); $("face-detail").hidden = true; $("review").hidden = true;
-        $("preview-note").textContent = "人物合集只用于集中浏览照片。";
+        previewNode("faces").replaceChildren(); previewNode("faceDetail").hidden = true; previewNode("review").hidden = true;
+        previewNode("note").textContent = "人物合集只用于集中浏览照片。";
         return;
       }
       const selectedId = state.person && state.person.person_id;
@@ -1441,42 +1480,42 @@
           const cover = button("设为封面", () => saveCover(face.face_id, cover));
           card.append(cover);
         }
-        if (!state.coverMode) card.append(button("更正这张脸", () => { $("preview").close(); editFace(face); }));
-        $("preview-faces").append(card);
+        if (!state.coverMode) card.append(button("更正这张脸", () => { state.previewHandle.close(); editFace(face); }));
+        previewNode("faces").append(card);
       });
       const hasDetail = page.faces.some((face) => face.source_detail);
-      $("face-detail").hidden = state.coverMode || hasDetail;
-      $("face-detail").disabled = state.detailBusyAssets.has(Number(id));
-      $("preview-note").textContent = state.coverMode ? ($("preview-faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
+      previewNode("faceDetail").hidden = state.coverMode || hasDetail;
+      previewNode("faceDetail").disabled = state.detailBusyAssets.has(Number(id));
+      previewNode("note").textContent = state.coverMode ? (previewNode("faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
 
-    } catch (error) { if (seq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+    } catch (error) { if (seq === state.previewSeq) previewNode("note").textContent = errorText(error); }
   }
   async function loadPreviewReviews(id, seq) {
     const reviewSeq = (state.previewReviewSeq || 0) + 1; state.previewReviewSeq = reviewSeq;
     state.previewReviewFailed = false;
     try {
       const page = await api("/assets/" + id + "/face-review?limit=1");
-      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !$("preview").open || state.collection) return;
-      $("review").hidden = !page.groups.length; $("review").textContent = "查看这张照片的识别更新待确认";
+      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !state.previewHandle || !state.previewHandle.dialog.open || state.collection) return;
+      previewNode("review").hidden = !page.groups.length; previewNode("review").textContent = "查看这张照片的识别更新待确认";
     } catch (error) {
-      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !$("preview").open || state.collection) return;
-      state.previewReviewFailed = true; $("review").hidden = false; $("review").textContent = "重试读取识别更新提示";
+      if (reviewSeq !== state.previewReviewSeq || seq !== state.previewSeq || id !== state.previewAssetId || !state.previewHandle || !state.previewHandle.dialog.open || state.collection) return;
+      state.previewReviewFailed = true; previewNode("review").hidden = false; previewNode("review").textContent = "重试读取识别更新提示";
     }
   }
   async function sourceDetail() {
     const assetId = state.previewAssetId;
     const previewSeq = state.previewSeq;
-    if (!assetId || state.detailBusyAssets.has(Number(assetId)) || !$("preview").open) return;
+    if (!assetId || state.detailBusyAssets.has(Number(assetId)) || !state.previewHandle || !state.previewHandle.dialog.open) return;
     state.detailBusyAssets.add(Number(assetId));
-    const control = $("face-detail"); control.disabled = true;
+    const control = previewNode("faceDetail"); control.disabled = true;
     control.textContent = "已排队，等待原图处理……";
-    $("preview-note").textContent = "正在排队处理这张照片。原图细节结果会单独显示，需你手动指定人物。";
-    const stillCurrent = () => previewSeq === state.previewSeq && assetId === state.previewAssetId && $("preview").open;
+    previewNode("note").textContent = "正在排队处理这张照片。原图细节结果会单独显示，需你手动指定人物。";
+    const stillCurrent = () => previewSeq === state.previewSeq && assetId === state.previewAssetId && state.previewHandle && state.previewHandle.dialog.open;
     try {
       const queued = await api("/assets/" + assetId + "/face-detail", {}, "POST");
       if (queued.already_available) {
         control.hidden = true;
-        $("preview-note").textContent = "这张照片已有原图细节识别结果；结果仅用于人工检查与指定人物。";
+        previewNode("note").textContent = "这张照片已有原图细节识别结果；结果仅用于人工检查与指定人物。";
         if (queued.job_id && stillCurrent()) await preview(assetId);
         return;
       }
@@ -1487,27 +1526,27 @@
         const job = await api("/jobs/" + encodeURIComponent(queued.job_id));
         if (job.state === "SUCCEEDED") {
           control.hidden = true;
-          $("preview-note").textContent = "原图细节识别完成。新结果需你手动指定人物，不会自动归组。";
+          previewNode("note").textContent = "原图细节识别完成。新结果需你手动指定人物，不会自动归组。";
           await preview(assetId);
           return;
         }
         if (["FAILED", "BLOCKED", "CANCELLED"].includes(job.state)) {
           control.disabled = false; control.textContent = "重试原图细节识别";
-          $("preview-note").textContent = "原图细节识别没有完成（" + job.state + "），可重试；已有结果和人物归属未改动。";
+          previewNode("note").textContent = "原图细节识别没有完成（" + job.state + "），可重试；已有结果和人物归属未改动。";
           return;
         }
-        $("preview-note").textContent = job.state === "RUNNING"
+        previewNode("note").textContent = job.state === "RUNNING"
           ? "正在用原图细节处理这张照片……请稍候。"
           : "这张照片已排队等待原图细节处理……";
       }
       if (stillCurrent()) {
         control.disabled = false; control.textContent = "查看原图细节任务";
-        $("preview-note").textContent = "任务仍在队列中；关闭照片不会取消它，稍后可重新查看状态。";
+        previewNode("note").textContent = "任务仍在队列中；关闭照片不会取消它，稍后可重新查看状态。";
       }
     } catch (error) {
       if (stillCurrent()) {
         control.disabled = false; control.textContent = "重试原图细节识别";
-        $("preview-note").textContent = "原图细节识别没有排入队列：" + errorText(error);
+        previewNode("note").textContent = "原图细节识别没有排入队列：" + errorText(error);
       }
     } finally {
       state.detailBusyAssets.delete(Number(assetId));
@@ -1524,10 +1563,15 @@
       loadPeople(false);
       if (state.person && state.person.person_id === person.person_id) {
         state.person = result.person; state.coverMode = false; albumHeading(); loadPhotos(false);
-        if (previewSeq === state.previewSeq) $("preview").close();
+        if (previewSeq === state.previewSeq) {
+          state.writing = false;
+          control.disabled = false;
+          updatePreviewNavigation();
+          state.previewHandle.close();
+        }
         message("已更换人物封面。", true);
       }
-    } catch (error) { if (previewSeq === state.previewSeq) $("preview-note").textContent = errorText(error); }
+    } catch (error) { if (previewSeq === state.previewSeq) previewNode("note").textContent = errorText(error); }
     finally { state.writing = false; control.disabled = false; updatePreviewNavigation(); }
   }
   function editBase(edit, title, note) {
@@ -1892,20 +1936,6 @@
       state.searching = true; state.searchBody = { contract_version: "p2-contracts.v1", request_id: requestId(), text, person_ids: [state.person.person_id], person_match: "any", page_size: 60, top_k: 5000 }; loadPhotos(false);
     });
     $("all-photos").addEventListener("click", () => { state.searching = false; $("photo-query").value = ""; loadPhotos(false); });
-    $("preview-close").addEventListener("click", () => $("preview").close());
-    $("face-detail").addEventListener("click", sourceDetail);
-    $("preview-prev").addEventListener("click", () => movePreview(-1));
-    $("preview-next").addEventListener("click", () => movePreview(1));
-    $("review").addEventListener("click", () => {
-      const id = state.previewAssetId;
-      if (state.previewReviewFailed) { loadPreviewReviews(id, state.previewSeq); return; }
-      $("preview").close(); if (window.AIPersonTools) window.AIPersonTools.openReview(id);
-    });
-    $("preview").addEventListener("close", () => {
-      state.previewSeq++; state.previewAssetId = null; $("preview-image").removeAttribute("src");
-      if (state.previewInfoMount) state.previewInfoMount.dispose(); state.previewInfoMount = null;
-      updatePreviewNavigation();
-    });
     closeOnBackdrop($("preview"));
     window.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || event.repeat || event.defaultPrevented || event.isComposing) return;

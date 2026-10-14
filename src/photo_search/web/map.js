@@ -210,9 +210,10 @@
     });
   }
   function openAsset(id) {
-    var center = map ? map.getCenter().toArray() : null, zoom = map ? map.getZoom() : null;
-    sessionStorage.setItem("aisearch.map-return.v1", JSON.stringify({ center: center, zoom: zoom, bbox: bbox,
-      version: version, scroll: window.scrollY, assets: gridAssets, cursor: cursor, order: orderMode }));
+    if (window.AIPhotoInfo) {
+      window.AIPhotoInfo.open(id, { title: "查看地图照片", alt: "地图照片 #" + id, returnFocus: document.activeElement });
+      return;
+    }
     location.href = "/#/asset/" + encodeURIComponent(id);
   }
   function openCell(cell, z) {

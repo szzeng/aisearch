@@ -24,13 +24,14 @@ class Element {
   removeAttribute(key) { delete this[key]; }
   addEventListener(event,callback) { (this.events[event] ||= []).push(callback); }
   fire(event,extra={}) { (this.events[event]||[]).forEach(fn=>fn(Object.assign({target:this,key:""},extra))); }
+  getBoundingClientRect() { return {left:0,top:0,width:this.clientWidth||800,height:this.clientHeight||600}; }
   focus() { this.focused=true; } select() { this.selected=true; }
   remove() { if(this.parentNode){const a=this.parentNode.children;a.splice(a.indexOf(this),1);this.parentNode=null;} }
   get isConnected() { let n=this; while(n.parentNode)n=n.parentNode; return n===document.body || n===document.head; }
   showModal() { this.open=true; }
   close() { this.open=false; this.fire("close"); }
 }
-const document={cookie:"ps_csrf=synthetic-token",createElement:t=>new Element(t),querySelector:()=>null};
+const document={cookie:"ps_csrf=synthetic-token",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
@@ -141,17 +142,41 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   photoReturn.dispose();
 
   const trigger=new Element("button"); document.body.append(trigger);
-  const viewer=context.window.AIPhotoInfo.open(101,{returnFocus:trigger});
+  let previous=0,next=0;
+  const viewer=context.window.AIPhotoInfo.open(101,{returnFocus:trigger,navigation:{previous:()=>previous++,next:()=>next++}});
   await flush(); await flush();
   const dialog=document.body.children.find(n=>n.className==="photo-viewer-dialog");
   assert.ok(dialog.attributes["aria-labelledby"],"the shared viewer has an accessible title");
   const closeButton=all(dialog,n=>n.className==="photo-viewer-close")[0];
   assert.equal(closeButton.focused,true,"opening the viewer places keyboard focus on its visible close button");
   const viewerImage=all(dialog,n=>n.tagName==="img")[0];
+  const stage=all(dialog,n=>n.className==="photo-viewer-stage")[0]; stage.clientWidth=800; stage.clientHeight=600;
+  viewerImage.naturalWidth=1600; viewerImage.naturalHeight=1200;
   viewerImage.onerror();
   assert.match(viewerImage.src,/assets\/101\/thumbnail$/,"a missing preview falls back to the available thumbnail");
   viewerImage.onload();
   assert.match(all(dialog,n=>n.className==="photo-viewer-image-note")[0].textContent,/当前显示缩略图/);
+  const zoom=all(dialog,n=>n.className==="photo-viewer-zoom-label")[0];
+  assert.equal(zoom.textContent,"50%","opening a 1600x1200 preview fits the 800x600 stage without cropping");
+  all(dialog,n=>n.tagName==="button"&&n.textContent==="+")[0].fire("click");
+  assert.equal(zoom.textContent,"63%","zoom buttons use the 1.25 step and report the actual scale");
+  all(dialog,n=>n.tagName==="button"&&n.textContent==="适合窗口")[0].fire("click");
+  stage.fire("dblclick",{target:viewerImage}); assert.equal(zoom.textContent,"100%","double click switches from fit to preview-pixel scale");
+  stage.fire("dblclick",{target:viewerImage}); assert.equal(zoom.textContent,"50%","double click switches back to fit");
+  stage.fire("dblclick",{target:viewerImage});
+  stage.fire("wheel",{target:viewerImage,ctrlKey:true,deltaY:-100,clientX:600,clientY:300,preventDefault(){this.prevented=true;}});
+  assert.equal(zoom.textContent,"125%","Ctrl-wheel zooms while the pointer is on the image stage");
+  stage.fire("pointerdown",{target:viewerImage,pointerId:1,clientX:100,clientY:100});
+  stage.fire("pointermove",{target:viewerImage,pointerId:1,clientX:1200,clientY:100});
+  assert.match(viewerImage.style.transform,/translate\(600px,0px\)/,"drag pan is clamped at the image boundary");
+  viewer.setNavigationEnabled(true,true);
+  viewer.setPosition("第 2 张");
+  assert.equal(viewer.controls.children[5].textContent,"← 上一张","setting position does not overwrite the previous button label");
+  assert.equal(viewer.controls.children[6].textContent,"第 2 张","the position status is rendered in its own navigation slot");
+  dialog.fire("keydown",{target:closeButton,key:"ArrowRight",preventDefault(){this.prevented=true;}});
+  assert.equal(next,1,"right arrow advances the viewer sequence");
+  const input=new Element("INPUT"); dialog.fire("keydown",{target:input,key:"ArrowRight",preventDefault(){}});
+  assert.equal(next,1,"arrow keys in text inputs do not hijack their editing behavior");
   dialog.fire("click",{target:dialog.children[0]});
   assert.equal(dialog.open,true,"clicks inside the photo viewer do not dismiss it");
   dialog.fire("click",{target:dialog});
@@ -183,12 +208,12 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-ui-viewer-f-1" in document
-        assert "/web/photo-info.css?v=p4-ui2-visual-final-a-1" in document
-    assert "search.js?v=p4-ui2-closeout-flow-a-1" in (web / "search.html").read_text(encoding="utf-8")
+        assert "/web/photo-info.js?v=p4-ui2-viewer-unify-a-3" in document
+        assert "/web/photo-info.css?v=p4-ui2-viewer-unify-a-3" in document
+    assert "search.js?v=p4-ui2-viewer-unify-a-3" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui-dialog-esc-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-ui2-batch-select-unify-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "places-albums.js?v=p4-ui-places-e-1" in (web / "places.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-ui2-viewer-unify-a-3" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "places-albums.js?v=p4-ui2-search-scope-unify-a-1" in (web / "places.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")

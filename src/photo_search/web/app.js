@@ -2153,20 +2153,15 @@
   }
 
   function showDetail(assetId) {
-    state.browse.returnScrollY = window.scrollY || window.pageYOffset || 0;
     var returnTile = (state.browse.mode === "timeline" ? els.browseTimeline : els.assetGrid)
       .querySelector('[data-asset-id="' + String(assetId) + '"]');
-    state.browse.returnAssetId = String(assetId);
-    state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
-    state.detailRouteActive = true;
-    saveBrowseReturn(assetId);
-    var target = "#/asset/" + assetId;
-    if (location.hash === target) {
-      renderDetail(assetId);
-      return;
-    }
-    // Changing the hash fires ``hashchange``, which renders the detail view once.
-    location.hash = target;
+    if (!window.AIPhotoInfo) { location.hash = "#/asset/" + encodeURIComponent(assetId); return; }
+    if (state.detailViewer && state.detailViewer.dialog.open) state.detailViewer.close();
+    state.detailViewer = window.AIPhotoInfo.open(assetId, {
+      title: "查看照片", alt: "照片 #" + assetId,
+      returnFocus: returnTile && returnTile.querySelector("button"),
+      onClose: function () { state.detailViewer = null; }
+    });
   }
 
   function renderDetail(assetId) {
@@ -2555,11 +2550,31 @@
     if (match) {
       state.detailRouteActive = true;
       if (!state.browse.returnContext) restoreBrowseReturn(match[1]);
-      renderDetail(match[1]);
+      if (!window.AIPhotoInfo) { renderDetail(match[1]); return; }
+      showView("browse");
+      if (!state.detailViewer || !state.detailViewer.dialog.open) {
+        state.detailViewer = window.AIPhotoInfo.open(match[1], {
+          title: "查看照片", alt: "照片 #" + match[1],
+          history: false,
+          onClose: function () {
+            state.detailViewer = null;
+            if (!state.detailRouteActive) return;
+            state.detailRouteActive = false;
+            var fromSearch = false;
+            try { fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search"; if (fromSearch) window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY); } catch (_error) {}
+            if (fromSearch) { window.location.href = "/search"; return; }
+            if (!state.browse.returnContext && window.location.replace) { window.location.replace("/"); return; }
+            clearHash();
+            if (state.browse.returnContext) { state.browse.returnPending = true; restoreBrowsePosition(); clearBrowseReturn(); }
+            showView("browse");
+          }
+        });
+      }
       return;
     }
     if (state.detailRouteActive) {
       state.detailRouteActive = false;
+      if (state.detailViewer && state.detailViewer.dialog.open) { state.detailViewer.close(); return; }
       if (state.browse.returnContext) {
         state.browse.returnPending = true;
         showView("browse");
