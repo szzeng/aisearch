@@ -1,6 +1,6 @@
 # P4-UI2-SCROLL-LOAD-A — 搜索结果与普通照片网格自动续页（UI 2.0）
 
-- **状态**：READY / 待实施（2026-10-14）；任务卡已提交，代码未实现。
+- **状态**：IMPLEMENTED / LUNA HIGH REVIEW COMPLETE / ACCEPTANCE PARTIAL（2026-10-14）；详见 [实施与验证报告](../reports/P4-UI2-SCROLL-LOAD-A.md)。
 - **优先级**：P0 用户体验；数据一致性、越权范围或跨查询串页视为阻断问题。
 - **核对基准**：`szzeng/aisearch`，`master` HEAD `e3c42d75a665f01f4f4517533f98757baf9934db`，2026-10-14；实施前必须重新读取最新 HEAD、`AGENTS.md`、`docs/development-status.md` 和相关报告，合并之后可能完成的任务。
 - **建议执行**：GPT-6 High / LUNA High；由用户在 Codex 中手动选择。任务主要是原生 JavaScript 状态与滚动性能，原则上不动后端；确需修改搜索分页/版本协议时停止扩大范围，提出独立高风险改动与审查方案。

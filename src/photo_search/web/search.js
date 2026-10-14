@@ -99,9 +99,12 @@
       selectedScope: null,
       requestGeneration: 0,
       hits: [],
+      windowOffset: 0,
+      recycledCount: 0,
+      pager: null,
       lastBody: null,
       lastRequestBody: null,
-      timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null },
+      timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null, requestSeq: 0 },
       preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false, handle: null },
     },
     requestCounter: 0,
@@ -894,6 +897,8 @@
   function submitSearch() {
     clearSearchSnapshot();
     state.search.hits = [];
+    state.search.windowOffset = 0;
+    state.search.recycledCount = 0;
     state.search.lastBody = null;
     state.search.lastRequestBody = null;
     state.search.placeAware = null;
@@ -912,6 +917,8 @@
     text(els.captureEcho, "");
     setStatus(els.captureState, "");
     els.loadMore.hidden = true;
+    if (els.gridSentinel) els.gridSentinel.hidden = true;
+    if (state.search.pager) state.search.pager.reset();
     els.queryActions.hidden = true;
     sendSearch(false);
   }
@@ -928,29 +935,47 @@
     if (browse.active) {
       browse.active = false;
       browse.cursor = null;
+      browse.requestSeq += 1;
+      state.search.loading = false;
+      els.loadMore.disabled = false;
       if (browse.previous) {
         state.search.hits = browse.previous.hits;
         state.search.cursor = browse.previous.cursor;
         state.search.count = browse.previous.count;
         state.search.total = browse.previous.total;
+        state.search.windowOffset = browse.previous.windowOffset || 0;
+        state.search.recycledCount = browse.previous.recycledCount || 0;
         clear(els.resultGrid);
         state.search.hits.forEach(function (hit) { els.resultGrid.appendChild(buildHit(hit)); });
+        if (window.PhotoScrollPager) {
+          window.PhotoScrollPager.setSpacerHeight(els.resultGrid, browse.previous.spacerHeight);
+        }
         els.loadMore.hidden = !state.search.cursor;
+        if (els.gridSentinel) els.gridSentinel.hidden = !state.search.cursor;
         updateSearchPreviewNavigation();
       }
       browse.previous = null;
       els.candidateTimeToggle.textContent = "按时间查看当前语义候选";
+      if (state.search.pager) {
+        state.search.pager.reset();
+        state.search.pager.update();
+      }
       return;
     }
     if (!state.search.sessionId || !state.search.lastBody || !state.search.lastBody.query) return;
     browse.previous = { hits: state.search.hits.slice(), cursor: state.search.cursor,
-      count: state.search.count, total: state.search.total };
+      count: state.search.count, total: state.search.total, windowOffset: state.search.windowOffset,
+      recycledCount: state.search.recycledCount,
+      spacerHeight: window.PhotoScrollPager ? window.PhotoScrollPager.getSpacerHeight(els.resultGrid) : 0 };
     browse.active = true;
     browse.cursor = null;
     browse.rulesVersion = null;
     state.search.count = 0;
     state.search.hits = [];
     state.search.cursor = null;
+    state.search.windowOffset = 0;
+    state.search.recycledCount = 0;
+    if (state.search.pager) state.search.pager.reset();
     clear(els.resultGrid);
     invalidateSearchPreview();
     els.candidateTimeToggle.textContent = "返回相关度排序";
@@ -959,17 +984,19 @@
 
   function loadCandidateTimeBrowse(continuation) {
     var browse = state.search.timeBrowse;
-    if (!state.search.sessionId || (continuation && !browse.cursor)) return Promise.resolve(false);
+    if (state.search.loading || !state.search.sessionId || (continuation && !browse.cursor)) return Promise.resolve(false);
+    state.search.loading = true;
     var sessionId = state.search.sessionId;
     var pageSize = Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE;
     var query = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, pageSize))) });
     if (continuation) query.set("cursor", browse.cursor);
     var generation = state.search.requestGeneration;
+    var requestSeq = ++browse.requestSeq;
     els.loadMore.disabled = true;
     return request("/search/sessions/" + encodeURIComponent(sessionId) +
       "/time?" + query.toString()).then(function (result) {
-      if (!browse.active || generation !== state.search.requestGeneration ||
-          sessionId !== state.search.sessionId) return false;
+      if (!browse.active || requestSeq !== browse.requestSeq ||
+          generation !== state.search.requestGeneration || sessionId !== state.search.sessionId) return true;
       var body = result.body || {}, assets = body.assets || [];
       if (!continuation) clear(els.resultGrid);
       var hits = assets.map(function (asset) { return {
@@ -979,24 +1006,40 @@
         capture_time: asset.capture_time,
       }; });
       hits.forEach(function (hit) { els.resultGrid.appendChild(buildHit(hit)); });
+      if (!continuation) {
+        state.search.windowOffset = 0;
+        state.search.recycledCount = 0;
+        state.search.count = 0;
+      }
       state.search.hits = continuation ? state.search.hits.concat(hits) : hits;
-      state.search.count = state.search.hits.length;
+      state.search.count += hits.length;
+      var removed = window.PhotoScrollPager ? window.PhotoScrollPager.trimGrid(els.resultGrid, 500) : 0;
+      if (removed) {
+        state.search.hits.splice(0, removed);
+        state.search.windowOffset += removed;
+        state.search.recycledCount += removed;
+      }
       state.search.total = body.total_candidates;
       browse.cursor = body.next_cursor || null;
       browse.rulesVersion = body.taken_time_rules_version;
       state.search.cursor = browse.cursor;
       els.loadMore.hidden = !browse.cursor;
+      if (els.gridSentinel) els.gridSentinel.hidden = !browse.cursor;
       els.loadMore.disabled = false;
+      state.search.loading = false;
+      if (state.search.pager) state.search.pager.update();
       updateSearchPreviewNavigation();
       var note = body.candidates_truncated
         ? "检索候选已截断，最多浏览冻结快照中的5000条"
         : "仅对当前冻结的语义候选排序，不代表完整图库时间轴";
+      if (state.search.recycledCount) note += "；已回收较早的 " + state.search.recycledCount + " 张候选";
       setStatus(els.queryStatus, "按拍摄时间整理当前语义候选 · 已显示 " +
         number(state.search.count) + " / " + number(body.total_candidates) + " · " + note);
       return true;
     }).catch(function (failure) {
-      if (!browse.active || generation !== state.search.requestGeneration ||
-          sessionId !== state.search.sessionId) return false;
+      if (!browse.active || requestSeq !== browse.requestSeq ||
+          generation !== state.search.requestGeneration || sessionId !== state.search.sessionId) return true;
+      state.search.loading = false;
       els.loadMore.disabled = false;
       onSearchFailure(failure);
       return false;
@@ -1005,11 +1048,13 @@
 
   function sendSearch(continuation) {
     if (state.search.loading && continuation) {
-      return;
+      return Promise.resolve(false);
     }
     if (!continuation) {
       state.search.requestGeneration += 1;
       state.search.loading = false;
+      els.loadMore.disabled = false;
+      if (state.search.pager) state.search.pager.reset();
       state.search.timeBrowse.active = false;
       state.search.timeBrowse.cursor = null;
       state.search.timeBrowse.previous = null;
@@ -1055,7 +1100,7 @@
     return promise.then(
       function (body) {
         if (requestGeneration !== state.search.requestGeneration) {
-          return false;
+          return true;
         }
         state.search.loading = false;
         if (body && body.needs_place_choice) {
@@ -1106,7 +1151,7 @@
       },
       function (failure) {
         if (requestGeneration !== state.search.requestGeneration) {
-          return false;
+          return true;
         }
         state.search.loading = false;
         onSearchFailure(failure);
@@ -1519,15 +1564,21 @@
     if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR") {
       state.search.sessionId = null;
       state.search.cursor = null;
+      state.search.timeBrowse.cursor = null;
       els.loadMore.hidden = true;
     }
     if (failure.code === "CATALOG_FILTER_REVISION_STALE") {
       state.search.sessionId = null;
       state.search.cursor = null;
+      state.search.timeBrowse.cursor = null;
       clear(els.resultGrid);
       state.search.hits = [];
       state.search.count = 0;
       els.loadMore.hidden = true;
+    }
+    if (els.gridSentinel) {
+      var nextCursor = state.search.timeBrowse.active ? state.search.timeBrowse.cursor : state.search.cursor;
+      els.gridSentinel.hidden = !nextCursor;
     }
     setStatus(els.queryStatus, "本次查询没有成功：" + describe(failure), "error");
     renderNotices(els.resultNotices, failureLines(failure));
@@ -1559,7 +1610,7 @@
     clear(els.resultGrid);
   }
 
-  function renderPage(body, continuation) {
+  function renderPage(body, continuation, windowRestore) {
     clear(els.resultPlaceScope);
     if (body.place_scope) {
       var scopeSource = body.place_scope.source === "OSM" ? "（OpenStreetMap）"
@@ -1588,19 +1639,32 @@
     if (!continuation) {
       releaseObjectUrls();
       clear(els.resultGrid);
-      state.search.count = 0;
+      state.search.count = windowRestore ? Math.max(0, number(windowRestore.count) - hits.length) : 0;
+      state.search.windowOffset = windowRestore ? Math.max(0, number(windowRestore.windowOffset)) : 0;
+      state.search.recycledCount = windowRestore ? Math.max(0, number(windowRestore.recycledCount)) : 0;
     }
     hits.forEach(function (hit) {
       els.resultGrid.appendChild(buildHit(hit));
     });
     state.search.count += hits.length;
     state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
+    var removedHits = window.PhotoScrollPager ? window.PhotoScrollPager.trimGrid(els.resultGrid, 500) : 0;
+    if (removedHits) {
+      state.search.hits.splice(0, removedHits);
+      state.search.windowOffset += removedHits;
+      state.search.recycledCount += removedHits;
+    }
+    if (windowRestore && window.PhotoScrollPager && windowRestore.spacerHeight !== undefined &&
+        windowRestore.spacerHeight !== null && Number.isFinite(Number(windowRestore.spacerHeight))) {
+      window.PhotoScrollPager.setSpacerHeight(els.resultGrid, windowRestore.spacerHeight);
+    }
     state.search.lastBody = body;
     state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
     updateSearchPreviewNavigation();
     state.search.total = body.total_candidates;
     els.loadMore.hidden = !body.has_more;
+    if (els.gridSentinel) els.gridSentinel.hidden = !body.has_more;
     els.candidateTimeToggle.hidden = !(
       body.query && body.search_session_id && hits.length && state.search.mode === "text"
     );
@@ -1651,6 +1715,11 @@
       }
     }
     setStatus(els.queryStatus, parts.join(" · "));
+    if (state.search.recycledCount) {
+      setStatus(els.queryStatus, parts.join(" · ") + " · 当前保留最近 " + state.search.hits.length +
+        " 张；前 " + state.search.recycledCount + " 张已回收，回到列表顶部可按当前条件重新搜索。");
+    }
+    if (state.search.pager) state.search.pager.update();
     saveSearchSnapshot();
   }
 
@@ -1802,6 +1871,9 @@
         JSON.stringify({
           form: searchFormSnapshot(),
           hits: state.search.hits,
+          windowOffset: state.search.windowOffset,
+          recycledCount: state.search.recycledCount,
+          spacerHeight: window.PhotoScrollPager ? window.PhotoScrollPager.getSpacerHeight(els.resultGrid) : 0,
           search_session_id: state.search.sessionId,
           next_cursor: state.search.cursor,
           count: state.search.count,
@@ -1939,7 +2011,12 @@
       total_candidates: saved.total_candidates,
       has_more: Boolean(saved.search_session_id && saved.next_cursor),
     });
-    renderPage(body, false);
+    renderPage(body, false, {
+      count: saved.count,
+      windowOffset: saved.windowOffset,
+      recycledCount: saved.recycledCount,
+      spacerHeight: saved.spacerHeight,
+    });
     window.requestAnimationFrame(function () {
       window.scrollTo(0, Number(saved.scrollY) || 0);
       if (saved.previewAssetId) openSearchPreview(saved.previewAssetId, findSearchPreviewTrigger(saved.previewAssetId));
@@ -2029,7 +2106,7 @@
     if (!viewer) return;
     var index = searchPreviewPosition();
     var active = index >= 0 && viewer.dialog.open;
-    viewer.setPosition(active ? "第 " + (index + 1) + " 张" : "");
+    viewer.setPosition(active ? "第 " + (state.search.windowOffset + index + 1) + " 张" : "");
     viewer.setNavigationEnabled(active && index > 0 && !state.search.preview.moving,
       active && !state.search.preview.moving && (index < state.search.hits.length - 1 || Boolean(state.search.cursor)));
   }
@@ -2231,14 +2308,17 @@
     var previewSeq = preview.seq;
     preview.moving = true;
     updateSearchPreviewNavigation();
-    var load = index + step >= state.search.hits.length ? sendSearch(true) : Promise.resolve(true);
+    var load = index + step >= state.search.hits.length ? continueSearch() : Promise.resolve(true);
     Promise.resolve(load).then(function (succeeded) {
       if (previewSeq !== preview.seq || listVersion !== preview.listVersion || !preview.handle || !preview.handle.dialog.open) return;
       if (!succeeded) {
         text(els.searchPreviewNote, "下一页结果没有加载成功，请再点“下一张”重试。");
         return;
       }
-      var next = state.search.hits[index + step];
+      var currentIndex = state.search.hits.findIndex(function (hit) {
+        return String(hit.asset_id) === String(preview.assetId);
+      });
+      var next = currentIndex >= 0 ? state.search.hits[currentIndex + step] : null;
       if (next) openSearchPreview(next.asset_id);
     }).finally(function () {
       preview.moving = false;
@@ -2775,6 +2855,7 @@
       personStatus: document.getElementById("person-status"),
       resultNotices: document.getElementById("result-notices"),
       resultGrid: document.getElementById("result-grid"),
+      gridSentinel: document.getElementById("search-grid-sentinel"),
       loadMore: document.getElementById("load-more"),
       candidateTimeToggle: document.getElementById("candidate-time-toggle"),
       uploadForm: document.getElementById("upload-form"),
@@ -2800,7 +2881,19 @@
     document.getElementById("query-retry").addEventListener("click", function () {
       sendSearch(false);
     });
-    els.loadMore.addEventListener("click", continueSearch);
+    state.search.pager = window.PhotoScrollPager ? window.PhotoScrollPager.create({
+      sentinel: els.gridSentinel,
+      button: els.loadMore,
+      loadLabel: "加载下一页",
+      retryLabel: "重试加载",
+      canLoad: function () {
+        var cursor = state.search.timeBrowse.active ? state.search.timeBrowse.cursor : state.search.cursor;
+        var previewOpen = state.search.preview.handle && state.search.preview.handle.dialog.open;
+        return document.visibilityState !== "hidden" && !state.search.loading && !previewOpen &&
+          Boolean(state.search.sessionId && cursor);
+      },
+      load: continueSearch,
+    }) : null;
     els.candidateTimeToggle.addEventListener("click", toggleCandidateTimeBrowse);
     els.personMore.addEventListener("click", function () {
       loadPersons(false);

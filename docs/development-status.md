@@ -1,4 +1,11 @@
-## Current user-directed task: P4-UI2-VIEWER-UNIFY-A — FUNCTIONAL SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
+## Current user-directed task: P4-UI2-SCROLL-LOAD-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+搜索和普通照片列表已接入互斥自动续页与 500 卡 DOM 回收。定向 JUnit **38/0/0/0**，Node `--check`、`git diff --check` 通过；最终版本隔离合成浏览器观察搜索 20→40、普通列表 50→87 并到底。用户指定的 LUNA High 复核已完成，所有 findings 修复并复看关闭（不是 DS-H）。A03/A04/A08、session/revision stale、长滚动锚点与 20–30 页浏览器证据仍未全覆盖，故整卡 **ACCEPTANCE PARTIAL**。未使用模型/真实图库，`PERF_200K` 与 `CHECK_300K` pending。详见[任务卡](tasks/P4-UI2-SCROLL-LOAD-A.md) / [报告](reports/P4-UI2-SCROLL-LOAD-A.md)。
+
+## Next necessary action: P4-UI2-SCROLL-LOAD-A remaining acceptance gates
+
+按报告逐项补足 A01–A08 缺口，优先补查询代际/乱序与 stale 保护、候选时间/语义路径、20–30 页浏览器回收/返回，以及页大小/键盘边界；继续使用隔离合成库，不升级为 `PERF_200K/CHECK_300K` 通过。
+## Previous executed task: P4-UI2-VIEWER-UNIFY-A — FUNCTIONAL SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
 
 UI 2.0 首页、搜索、人物/合集、地图复用单一共享照片查看器；实现预览缩放/平移、受限页面扩展、上下张导航和安全返回，并保留旧 `/#/asset/{id}` 深链。定向 JUnit **21/0/0/0**；六份相关 JS `node --check` 与 `git diff --check` 通过。[任务卡](tasks/P4-UI2-VIEWER-UNIFY-A.md) / [报告](reports/P4-UI2-VIEWER-UNIFY-A.md)。LUNA High 独立复核的 3 个 finding 已修复并复看无剩余项（不是 DS-H）。内置浏览器用 10 张隔离合成图库观察首页缩放/Back、人物查看、FILTER_ONLY 搜索返回、GPS 地图返回及旧深链关闭；截图见报告。`FUNCTIONAL=SCOPED PASS`，但整卡 **ACCEPTANCE PARTIAL**：有效语义搜索、地图/地点全路由、写入实际提交、长图/失败资源/异步快切、真实 200%/主题及 `PERF_200K` 未完整验证。未访问真实图库或模型/GPU；按后续用户指令本地提交；未 push。
 

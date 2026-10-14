@@ -12,7 +12,8 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-unify-a-3" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/search.js?v=p4-ui2-viewer-unify-a-3" defer></script>
+    <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
+    <script src="/web/search.js?v=p4-ui2-scroll-load-a-4" defer></script>
   </head>
   <body class="app-shell search-page">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -210,6 +211,7 @@
         <div id="result-notices" class="notices" role="status" aria-live="polite"></div>
         <p><button type="button" id="candidate-time-toggle" hidden>按时间查看当前语义候选</button></p>
         <ol id="result-grid" class="grid" aria-label="搜索结果"></ol>
+        <div id="search-grid-sentinel" class="sentinel" hidden></div>
         <p>
           <button type="button" id="load-more" hidden>加载下一页</button>
         </p>

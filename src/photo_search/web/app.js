@@ -76,6 +76,8 @@
       loading: false,
       loaded: false,
       count: 0,
+      recycledCount: 0,
+      pager: null,
       //: A control can change while a page is still in flight; the reload it owes is served
       //: as soon as that request settles, so the grid never keeps an older condition.
       owed: false,
@@ -91,6 +93,7 @@
       returnContext: null,
       returnPending: false,
       returnTargetCount: 0,
+      returnTruncated: false,
       // The shared date timeline is primary; keep list mode as a recovery path.
       mode: "timeline",
       timelineMount: null,
@@ -366,7 +369,7 @@
           image.src = result.url;
           frame.appendChild(image);
           availabilityBadge(frame, result.originalAvailable);
-          return;
+          return false;
         }
         addBadge(frame, "badge badge-code", result.code);
         noteInFrame(
@@ -1715,9 +1718,11 @@
     els.browseListTimeHint.hidden = useTimeline;
     els.browseTimelineNote.hidden = !useTimeline;
     if (!useTimeline) {
+      if (state.browse.pager) state.browse.pager.setEnabled(true);
       if (!state.browse.loaded || state.browse.binding !== browseFingerprint()) loadBrowse(true);
       return;
     }
+    if (state.browse.pager) state.browse.pager.setEnabled(false);
     if (!window.PhotoTimeline) {
       setStatus(els.browseStatus, "时间轴组件暂不可用，请刷新页面后重试。", "error");
       showBrowseMode("list");
@@ -1780,18 +1785,20 @@
       state.browse.cursor = null;
       state.browse.hasMore = false;
       state.browse.count = 0;
+      state.browse.recycledCount = 0;
       state.browse.timeCache = {};
+      if (state.browse.pager) state.browse.pager.reset();
       setStatus(els.browseCaptureState, "");
       els.assetGrid.textContent = "";
       els.loadMore.hidden = true;
       els.gridSentinel.hidden = true;
     }
     if (state.browse.loading) {
-      state.browse.owed = true;
-      return;
+      if (reset) state.browse.owed = true;
+      return Promise.resolve(false);
     }
     if (continuationRefused(reset)) {
-      return;
+      return Promise.resolve(false);
     }
     updateBrowseScope();
     state.browse.loading = true;
@@ -1812,7 +1819,7 @@
     if (state.browse.cursor) {
       params.set("cursor", state.browse.cursor);
     }
-    request("/assets?" + params.toString())
+    return request("/assets?" + params.toString())
       .then(function (result) {
         if (requestVersion !== state.browse.requestVersion) {
           state.browse.loading = false;
@@ -1827,6 +1834,9 @@
         assets.forEach(function (asset) {
           els.assetGrid.appendChild(buildTile(asset));
         });
+        if (window.PhotoScrollPager) {
+          state.browse.recycledCount += window.PhotoScrollPager.trimGrid(els.assetGrid, 500);
+        }
         state.browse.count += assets.length;
         state.browse.cursor = body.next_cursor || null;
         state.browse.hasMore = Boolean(body.has_more);
@@ -1837,10 +1847,12 @@
         setStatus(els.browseStatus, browseSummary());
         els.loadMore.hidden = !state.browse.hasMore;
         els.gridSentinel.hidden = !state.browse.hasMore;
+        if (state.browse.pager) state.browse.pager.update();
         if (state.browse.owed) {
           state.browse.owed = false;
           loadBrowse(true);
         }
+        return true;
       })
       .catch(function (failure) {
         state.browse.loading = false;
@@ -1849,10 +1861,10 @@
             state.browse.owed = false;
             loadBrowse(true);
           }
-          return;
+          return true;
         }
-        els.loadMore.hidden = true;
-        els.gridSentinel.hidden = true;
+        els.loadMore.hidden = false;
+        els.gridSentinel.hidden = !state.browse.hasMore;
         var hint = "";
         if (failure.code === "INVALID_TIME_RANGE") {
           hint =
@@ -1868,10 +1880,12 @@
           "加载图片失败：" + describe(failure) + (hint ? "\n" + hint : ""),
           "error"
         );
+        if (state.browse.pager) state.browse.pager.update();
         if (state.browse.owed) {
           state.browse.owed = false;
           loadBrowse(true);
         }
+        return false;
       });
   }
 
@@ -1964,7 +1978,8 @@
       " 张（" +
       orderText +
       "）" +
-      (state.browse.hasMore ? "，还有更多。" : "，已经到底。")
+      (state.browse.hasMore ? "，还有更多。" : "，已经到底。") +
+      (state.browse.recycledCount ? " 更早的 " + state.browse.recycledCount + " 张已回收；回到列表顶部可刷新重新定位。" : "")
     );
   }
 
@@ -2116,7 +2131,9 @@
     state.browse.returnScrollY = Math.max(0, Number(snapshot.scrollY) || 0);
     state.browse.returnAssetId = String(snapshot.returnAssetId || assetId);
     state.browse.returnAssetTop = Number.isFinite(Number(snapshot.returnAssetTop)) ? Number(snapshot.returnAssetTop) : null;
-    state.browse.returnTargetCount = Math.max(0, Number(snapshot.count) || 0);
+    var targetCount = Math.max(0, Number(snapshot.count) || 0);
+    state.browse.returnTruncated = targetCount > PAGE_SIZE * 5;
+    state.browse.returnTargetCount = Math.min(targetCount, PAGE_SIZE * 5);
     state.browse.returnContext = snapshot;
     state.browse.returnPending = true;
     state.browse.loaded = false;
@@ -2136,6 +2153,14 @@
       return;
     }
     if (!state.browse.loaded) return;
+    if (state.browse.returnTruncated) {
+      state.browse.returnTargetCount = 0;
+      state.browse.returnPending = false;
+      state.browse.returnTruncated = false;
+      setStatus(els.browseStatus, browseSummary() + " 先返回首屏：原位置过深，已按预算限制恢复页数。", "error");
+      window.requestAnimationFrame(function () { window.scrollTo(0, 0); });
+      return;
+    }
     if (state.browse.count < state.browse.returnTargetCount && state.browse.hasMore) {
       loadBrowse(false);
       return;
@@ -2776,9 +2801,21 @@
       state.browse.captureTo = els.browseCaptureTo.value.trim();
       loadBrowse(true);
     });
-    els.loadMore.addEventListener("click", function () {
-      loadBrowse(false);
-    });
+    state.browse.pager = window.PhotoScrollPager ? window.PhotoScrollPager.create({
+      sentinel: els.gridSentinel,
+      button: els.loadMore,
+      loadLabel: "加载更多",
+      retryLabel: "重试加载",
+      canLoad: function () {
+        return !els.views.browse.hidden && !els.browseListView.hidden &&
+          state.browse.mode === "list" && !state.detailRouteActive &&
+          !(state.detailViewer && state.detailViewer.dialog && state.detailViewer.dialog.open) &&
+          document.visibilityState !== "hidden" && !state.browse.loading &&
+          state.browse.hasMore && Boolean(state.browse.cursor);
+      },
+      load: function () { return loadBrowse(false); },
+    }) : null;
+    if (state.browse.pager) state.browse.pager.setEnabled(false);
     els.sourceForm.addEventListener("submit", submitSource);
     els.refreshLibrary.addEventListener("click", function () {
       refreshLibrary(null, "refresh");
