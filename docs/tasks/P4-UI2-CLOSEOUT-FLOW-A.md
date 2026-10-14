@@ -1,6 +1,6 @@
 # P4-UI2-CLOSEOUT-FLOW-A — UI 2.0 跨页面操作闭环收口
 
-- **状态**：PLANNED（任务卡；尚未实施）
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-14；浏览器闭环仍有 P0 待验）
 - **优先级**：P0，UI 2.0 第一张收口卡
 - **基线**：`szzeng/aisearch` / `master`，编卡时 HEAD `d0251135`（2026-10-14）；执行前核对最新 HEAD，不覆盖后续修复
 - **建议模型**：GPT-6 High / LUNA High；复核按 `AGENTS.md` 与 V3.1 §2.4 的实际风险分级，模型手动选择

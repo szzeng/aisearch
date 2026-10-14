@@ -100,6 +100,7 @@
       requestGeneration: 0,
       hits: [],
       lastBody: null,
+      lastRequestBody: null,
       timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null },
       preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false },
     },
@@ -893,6 +894,7 @@
     clearSearchSnapshot();
     state.search.hits = [];
     state.search.lastBody = null;
+    state.search.lastRequestBody = null;
     state.search.placeAware = null;
     state.search.intentPlan = null;
     state.search.mode = "text";
@@ -1164,6 +1166,8 @@
     if (continuation) {
       body.search_session_id = state.search.sessionId;
       body.cursor = state.search.cursor;
+    } else {
+      state.search.lastRequestBody = JSON.parse(JSON.stringify(body));
     }
     return request("/search/place-aware", { method: "POST", body: body }).then(function (result) {
       return result.body || {};
@@ -1685,7 +1689,7 @@
   }
 
   function saveSearchSnapshot() {
-    if (!state.search.hits.length || !state.search.lastBody || state.search.mode !== "text") {
+    if (!state.search.lastBody || state.search.mode !== "text") {
       return;
     }
     try {
@@ -1703,6 +1707,8 @@
           selectedScope: state.search.selectedScope,
           binding: state.search.binding,
           lastBody: state.search.lastBody,
+          lastRequestBody: state.search.lastRequestBody,
+          placeAware: state.search.placeAware,
           previewAssetId: state.search.preview.assetId,
           timeBrowseActive: state.search.timeBrowse.active,
           timeBrowseCursor: state.search.timeBrowse.cursor,
@@ -1759,29 +1765,55 @@
     state.search.selectedScope = saved.selectedScope || null;
     state.search.binding = saved.binding || null;
     state.search.lastBody = null;
+    state.search.lastRequestBody = saved.lastRequestBody || null;
     state.search.timeBrowse.active = Boolean(saved.timeBrowseActive);
     state.search.timeBrowse.cursor = saved.timeBrowseCursor || null;
     state.search.timeBrowse.previous = saved.timeBrowsePrevious || null;
     state.search.timeBrowse.rulesVersion = saved.timeBrowseRulesVersion;
-    var canValidate = saved.search_session_id && saved.lastBody.query &&
-      saved.search_session_id !== "filter-only" &&
-      String(saved.search_session_id).indexOf("place-album:") !== 0;
-    var validation = canValidate
-      ? request("/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1")
-      : Promise.reject({ code: "SNAPSHOT_UNVERIFIABLE" });
+    var filterOnlySnapshot = saved.search_session_id === "filter-only" ||
+      String(saved.search_session_id || "").indexOf("place-album:") === 0;
+    var canRefreshFilterOnly = filterOnlySnapshot && saved.lastRequestBody &&
+      typeof saved.lastRequestBody === "object";
+    var canValidate = !filterOnlySnapshot && saved.search_session_id && saved.lastBody.query;
+    var validation;
+    if (canRefreshFilterOnly) {
+      var refreshBody = JSON.parse(JSON.stringify(saved.lastRequestBody));
+      refreshBody.request_id = newRequestId("return");
+      delete refreshBody.search_session_id;
+      delete refreshBody.cursor;
+      validation = request("/search/place-aware", { method: "POST", body: refreshBody }).then(function (result) {
+        return { refreshed: true, body: result.body || {}, requestBody: refreshBody };
+      });
+    } else if (canValidate) {
+      validation = request("/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1")
+        .then(function (result) { return { refreshed: false, body: result.body || {} }; });
+    } else {
+      validation = Promise.reject({ code: "SNAPSHOT_UNVERIFIABLE" });
+    }
     validation.then(function (result) {
       if (restoreGeneration !== state.search.requestGeneration) return;
       var currentRulesVersion = result && result.body && result.body.taken_time_rules_version;
-      if (saved.timeBrowseActive && currentRulesVersion !== saved.timeBrowseRulesVersion) {
+      if (!result.refreshed && saved.timeBrowseActive && currentRulesVersion !== saved.timeBrowseRulesVersion) {
         throw { code: "TIME_RULES_VERSION_STALE" };
       }
-      restoreValidatedSearchSnapshot(saved);
-    }).catch(function () {
+      if (result.refreshed) {
+        state.search.lastRequestBody = result.requestBody;
+        state.search.timeBrowse.active = false;
+        state.search.timeBrowse.cursor = null;
+        state.search.timeBrowse.previous = null;
+        state.search.timeBrowse.rulesVersion = null;
+        renderPage(result.body, false);
+        window.requestAnimationFrame(function () { window.scrollTo(0, 0); });
+      } else {
+        restoreValidatedSearchSnapshot(saved);
+      }
+    }).catch(function (failure) {
       if (restoreGeneration !== state.search.requestGeneration) return;
       clearSearchSnapshot();
       state.search.sessionId = null;
       state.search.cursor = null;
       state.search.lastBody = null;
+      state.search.lastRequestBody = null;
       state.search.hits = [];
       state.search.timeBrowse.active = false;
       state.search.timeBrowse.cursor = null;
@@ -1790,7 +1822,8 @@
       els.loadMore.hidden = true;
       els.queryActions.hidden = false;
       renderIntentChips(state.search.intentPlan);
-      setStatus(els.queryStatus, "返回时无法验证旧结果的范围或时间修订。查询条件已恢复，请重新搜索。", "error");
+      var reason = failure && failure.code ? "（" + describe(failure) + "）" : "";
+      setStatus(els.queryStatus, "返回时未恢复旧结果" + reason + "。查询条件和范围已恢复，请重新搜索。", "error");
     });
   }
 

@@ -1,3 +1,10 @@
+## Previous user-directed task: P4-UI2-CLOSEOUT-FLOW-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+FILTER_ONLY/有效地点 scope 返回时按原条件重新请求权威首屏；零结果也保存导航快照，错误时保留条件并清理不可信结果。定向 JUnit **26/0/0/0**，Node、Ruff、Python 编译、diff-check 通过；LUNA High 无可执行 finding（不是 DS-H）。本轮按 P4-UI-PLACES-E 本机流程，用应用生成的一次性会话链接在 Codex 内置浏览器复验东京 4 张地点 scope、明确全局重搜、合集成员变化后拒绝旧快照、首页 Escape 与第二页返回、GPS bbox 变化/详情往返。浏览器截图在 `reports/artifacts/`，具体观察和 F01–F10 子项见[报告](reports/P4-UI2-CLOSEOUT-FLOW-A.md)。F04–F09 仍有子路线待验，特别是 F07 race、session 不可验证返回、人物 scope 取消、地点包/时间规则变化和日期轴跨桶；整卡保持 ACCEPTANCE PARTIAL。`SEMANTIC_BROWSER=PENDING`、`PERF_200K=PENDING`；视觉、真实图库、模型/GPU、打包和全仓测试未执行。本轮临时服务已关闭，18821–18825 无监听；无 commit。
+
+## Next necessary action: P4-UI2-CLOSEOUT-FLOW-A remains acceptance partial
+
+如继续，先完成 F07 浏览器竞态与剩余 scope/session/stale/时间轴路线，再按实际证据判断 P0 关闭；无需重跑已通过定向 JUnit，也不启动性能或视觉专项。
 # Development status
 
 ## Additional user-directed task: P4-UI-TIMELINE-CLICK-PATH-FIX-A — TASK-CARD MINIMUM ACCEPTANCE PASS (2026-10-14)

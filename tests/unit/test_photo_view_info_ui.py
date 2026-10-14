@@ -185,7 +185,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
         document = (web / page).read_text(encoding="utf-8")
         assert "/web/photo-info.js?v=p4-ui-viewer-f-1" in document
         assert "/web/photo-info.css?v=p4-ui-viewer-f-1" in document
-    assert "search.js?v=p4-ui-timeline-search-map-stage2-a-1" in (web / "search.html").read_text(encoding="utf-8")
+    assert "search.js?v=p4-ui2-closeout-flow-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui-dialog-esc-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "persons-albums.js?v=p4-ui-people-d-3" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui-places-e-1" in (web / "places.html").read_text(encoding="utf-8")
@@ -206,7 +206,7 @@ def test_return_snapshots_validate_map_bbox_and_search_revisions() -> None:
     assert '"&order=capture_time_desc&cursor=" + encodeURIComponent(restoreState.cursor)' in map_source
     assert '"/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1"' in search_source
     assert "currentRulesVersion !== saved.timeBrowseRulesVersion" in search_source
-    assert "返回时无法验证旧结果的范围或时间修订" in search_source
+    assert "返回时未恢复旧结果" in search_source
 
 
 def test_home_detail_back_restores_browse_and_source_filter() -> None:
