@@ -77,6 +77,32 @@ def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or
         await client.post(_url(catalog, ai_id) + "/members", headers=headers,
                           json={"action": "add", "person_ids": [first, second]})
 
+        person_scope = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "fixed-person-empty", "original_query": "",
+            "search_scope": {"kind": "person", "person_id": first, "name": "ignored-client-label"},
+            "page_size": 1,
+        })
+        assert person_scope.status_code == 200, person_scope.text
+        assert person_scope.json()["search_scope"]["person_id"] == first
+        assert person_scope.json()["total_candidates"] == 2
+        assert {hit["asset_id"] for hit in person_scope.json()["hits"]} <= {
+            seeded["shared.jpg"]["asset_id"], seeded["ai-only.jpg"]["asset_id"]}
+
+        ai_scope_state = catalog.read_one(
+            "SELECT instance_token, revision, name FROM person_collections WHERE collection_id=?",
+            (ai_id,),
+        )
+        collection_scope = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "fixed-collection-empty", "original_query": "",
+            "search_scope": {"kind": "collection", "collection_id": ai_id,
+                             "instance_token": str(ai_scope_state["instance_token"]),
+                             "revision": int(ai_scope_state["revision"]), "name": str(ai_scope_state["name"])},
+            "page_size": 1,
+        })
+        assert collection_scope.status_code == 200, collection_scope.text
+        assert collection_scope.json()["search_scope"]["collection_id"] == ai_id
+        assert collection_scope.json()["total_candidates"] == 2
+
         captured: dict[str, Any] = {}
 
         def capture_semantic(_catalog: Any, envelope: Any, **kwargs: Any) -> dict[str, Any]:
@@ -325,11 +351,22 @@ def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: 
         suggestion_revision = place_revision.read_suggestion_revision(catalog.connection)
         package_revision = routes.place_albums._index(catalog, api_env.data_root)[1]
         monkeypatch.setattr(routes.place_albums, "album_member_ids", lambda *args, **kwargs: (
-            [seeded["shared.jpg"]["asset_id"], seeded["outside.jpg"]["asset_id"]],
+            [],
             {"albums": [{"key": "42", "name": "杭州", "parent": "浙江省", "origin": None}],
              "catalog_filter_revision": filter_revision,
              "suggestion_revision": suggestion_revision, "package_revision": package_revision},
         ))
+        member_ids = (seeded["shared.jpg"]["asset_id"], seeded["outside.jpg"]["asset_id"])
+        monkeypatch.setattr(
+            __import__("photo_search.places.timeline", fromlist=["selected_members_sql"]),
+            "selected_members_sql",
+            lambda *_args, **_kwargs: (
+                "a.asset_id IN (?,?)", member_ids,
+                {"catalog_filter_revision": filter_revision,
+                 "suggestion_revision": suggestion_revision,
+                 "package_revision": package_revision},
+            ),
+        )
         place_page = await client.post("/api/v1/search/place-aware", headers=headers, json={
             "request_id": "collection-place-intersection",
             "original_query": "同事在杭州的照片", "page_size": 10,
@@ -395,8 +432,9 @@ def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: 
         from photo_search.persons import collections as collection_service
         regular_filter_page = routes._filter_only_search_page
 
-        def race_after_page(service, request, *, collection_scope=None):
-            result = regular_filter_page(service, request, collection_scope=collection_scope)
+        def race_after_page(service, request, **kwargs):
+            collection_scope = kwargs.get("collection_scope")
+            result = regular_filter_page(service, request, **kwargs)
             if collection_scope and collection_scope["collection_id"] == race_id:
                 collection_service.edit_members(catalog, race_id, action="add",
                                                 person_ids=[outside], instance_token=race_token)

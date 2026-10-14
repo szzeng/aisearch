@@ -52,6 +52,9 @@ def test_place_membership_restricts_both_fts_and_vector_before_ranking(tmp_path:
             env.catalog, env.data_root, kind="city", key=choice["key"]
         )
         assert member_ids == [selected_asset]
+        membership_sql, membership_params, _ = __import__(
+            "photo_search.places.timeline", fromlist=["selected_members_sql"]
+        ).selected_members_sql(env.catalog, env.data_root, kind="city", key=choice["key"])
         result = search_assets(
             env.catalog,
             text="sunset",
@@ -60,7 +63,8 @@ def test_place_membership_restricts_both_fts_and_vector_before_ranking(tmp_path:
             generation_id=env.generation,
             dimension=int(env.spec.envelope["dimension"]),
             top_k=10,
-            album_asset_ids=member_ids,
+            album_membership_sql=membership_sql,
+            album_membership_parameters=membership_params,
         )
         assert [int(row["asset_id"]) for row in result["channels"]["fts"]] == [selected_asset]
         seen: list[int] = []
@@ -81,7 +85,8 @@ def test_place_membership_restricts_both_fts_and_vector_before_ranking(tmp_path:
             index=RecordingIndex(),
             binding=binding,
             query_vector=[1.0, 0.0, 0.0],
-            scope=SearchScope.build(album_asset_ids=member_ids),
+            scope=SearchScope.build(album_membership_sql=membership_sql,
+                                    album_membership_parameters=membership_params),
             top_k=10,
         )
         assert seen == member_ids
@@ -129,6 +134,30 @@ def test_pure_place_search_and_explicit_place_cancellation(api_env: Any) -> None
             headers=api_env.post_headers(csrf),
         )
         assert selected.status_code == 200, selected.text
+        selected_body = selected.json()
+        fixed_scope = {"kind": "place", "place_kind": selected_body["place_scope"]["kind"],
+                       "place_key": selected_body["place_scope"]["key"],
+                       "name": selected_body["place_scope"]["name"],
+                       "parent": selected_body["place_scope"]["parent"]}
+        fixed_first = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "place-fixed-scope-first", "original_query": "",
+                  "search_scope": fixed_scope, "page_size": 1},
+            headers=api_env.post_headers(csrf),
+        )
+        assert fixed_first.status_code == 200, fixed_first.text
+        fixed_next = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "place-fixed-scope-next", "original_query": "",
+                  "search_scope": fixed_scope, "page_size": 1,
+                  "search_session_id": fixed_first.json()["search_session_id"],
+                  "cursor": fixed_first.json()["next_cursor"]},
+            headers=api_env.post_headers(csrf),
+        )
+        assert fixed_next.status_code == 200, fixed_next.text
+        assert [hit["asset_id"] for hit in fixed_first.json()["hits"]] == [assets[0]]
+        assert [hit["asset_id"] for hit in fixed_next.json()["hits"]] == [assets[1]]
+        assert fixed_next.json()["search_scope"]["place_key"] == fixed_scope["place_key"]
         next_page = await client.post(
             "/api/v1/search/place-aware",
             json={
@@ -205,10 +234,26 @@ def test_place_aware_api_parses_daily_phrasing_and_keeps_unsafe_queries_unfilter
         )
         assert ambiguous.status_code == 200, ambiguous.text
         replies.append(ambiguous.json())
+        ambiguous_status = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "phrasing-ambiguous-status",
+                  "original_query": "西湖区的日落没有拍摄日期"},
+            headers=env.post_headers(csrf),
+        )
+        assert ambiguous_status.status_code == 200, ambiguous_status.text
+        replies.append(ambiguous_status.json())
+        ambiguous_library_time = await client.post(
+            "/api/v1/search/place-aware",
+            json={"request_id": "phrasing-ambiguous-library-time",
+                  "original_query": "2020年入库的日落在西湖区拍摄"},
+            headers=env.post_headers(csrf),
+        )
+        assert ambiguous_library_time.status_code == 200, ambiguous_library_time.text
+        replies.append(ambiguous_library_time.json())
         return replies
 
     try:
-        pure, prefix, suffix, spaced, negative, ambiguous = env.scenario(scenario)
+        pure, prefix, suffix, spaced, negative, ambiguous, ambiguous_status, ambiguous_library_time = env.scenario(scenario)
         assert pure["original_query"] == "在杭州拍的照片"
         assert pure["content_query"] is None
         assert pure["place_scope"]["source"] == "OSM"
@@ -221,6 +266,15 @@ def test_place_aware_api_parses_daily_phrasing_and_keeps_unsafe_queries_unfilter
         assert ambiguous["content_query"] == "日落"
         assert len(ambiguous["scope_choices"]) == 2
         assert {choice["intent_plan"]["content_query"] for choice in ambiguous["scope_choices"]} == {"日落"}
+        assert ambiguous_status["needs_scope_choice"] is True
+        assert all(choice["intent_plan"]["capture_status"] == "unknown"
+                   for choice in ambiguous_status["scope_choices"])
+        assert ambiguous_library_time["needs_scope_choice"] is True
+        library_plans = [choice["intent_plan"] for choice in ambiguous_library_time["scope_choices"]]
+        assert all(plan["time_basis"] == "library" for plan in library_plans)
+        assert all(plan["capture_from"] is None and plan["capture_to_exclusive"] is None
+                   for plan in library_plans)
+        assert all(plan["library_from"] == "2020-01-01" for plan in library_plans)
     finally:
         env.context.close()
         env.library.close()

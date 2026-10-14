@@ -79,6 +79,12 @@ def coverage_catalog() -> sqlite3.Connection:
         ("2024年12月到10月的照片", {"state": "unsupported", "capture_from": None}),
         ("2024年10月到2025年12月的照片", {"state": "unsupported", "capture_from": None}),
         ("2024年或2025年的照片", {"state": "unsupported", "capture_from": None}),
+        ("2020年入库照片", {"time_basis": "library", "library_from": "2020-01-01",
+                            "library_to_exclusive": "2021-01-01", "capture_from": None, "content": None}),
+        ("2020年导入的照片", {"time_basis": "library", "library_from": "2020-01-01",
+                             "library_to_exclusive": "2021-01-01", "content": None}),
+        ("没有拍摄日期的照片", {"capture_status": "unknown", "content": None}),
+        ("拍摄日期待处理", {"capture_status": "pending", "content": None}),
         ("照片上写着2024年", {"capture_from": None, "content": "照片上写着2024年"}),
         ("手机备份图库里的照片", {"source_id": 20, "content": None}),
         ("手机备份图库的照片", {"source_id": 20, "content": None}),
@@ -100,7 +106,8 @@ def test_natural_language_coverage_contract(query: str, expected: dict[str, Any]
     if "source_id" in expected:
         sources = [item["source_id"] for item in plan["candidates"] if item["type"] == "source"]
         assert sources == ([] if expected["source_id"] is None else [expected["source_id"]])
-    for field in ("capture_from", "capture_to_exclusive", "place_key", "person_match"):
+    for field in ("capture_from", "capture_to_exclusive", "place_key", "person_match",
+                  "time_basis", "capture_status", "library_from", "library_to_exclusive"):
         if field in expected:
             assert plan.get(field) == expected[field]
     if "person_ids" in expected:
@@ -243,3 +250,12 @@ def test_source_candidate_spans_map_nfc_matches_back_to_decomposed_original() ->
     source = next(candidate for candidate in plan["candidates"] if candidate["type"] == "source")
     assert decomposed[source["start"]:source["end"]] == "cafe\u0301图库里的"
     assert plan["content_query"] == "日落"
+
+
+def test_person_match_choice_keeps_capture_status_filter() -> None:
+    plan = parse("张三和李四的照片没有拍摄日期")
+    assert plan["state"] == "needs_choice"
+    assert plan["choice_kind"] == "person_match"
+    assert plan["capture_status"] == "unknown"
+    assert plan["capture_from"] is None
+    assert plan["capture_to_exclusive"] is None

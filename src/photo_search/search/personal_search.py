@@ -120,8 +120,22 @@ class PersonalSearchCoordinator:
             date_pair = (value.get("capture_from"), value.get("capture_to_exclusive"))
             if any(date_pair) and date_pair not in {
                 (item["value"][0], item["value"][1]) for item in by_type.get("time", [])
+                if item.get("value") is not None and item.get("time_basis", "capture") == "capture"
             }:
                 raise ValueError("搜索计划时间不属于原查询候选，请重新搜索")
+            planned_time = (str(value.get("time_basis", "capture")),
+                            value.get("capture_status"), value.get("library_from"),
+                            value.get("library_to_exclusive"))
+            parsed_times = [
+                (str(item.get("time_basis", "capture")), item.get("capture_status"),
+                 item.get("value", [None, None])[0] if item.get("time_basis") == "library" and item.get("value") else None,
+                 item.get("value", [None, None])[1] if item.get("time_basis") == "library" and item.get("value") else None)
+                for item in by_type.get("time", [])
+            ]
+            if (any(date_pair) or value.get("capture_status") is not None
+                    or value.get("library_from") is not None or value.get("library_to_exclusive") is not None):
+                if planned_time not in parsed_times:
+                    raise ValueError("搜索计划时间依据或日期状态不属于原查询候选，请重新搜索")
 
             source_id = value.get("source_id")
             if source_id is not None and source_id not in {

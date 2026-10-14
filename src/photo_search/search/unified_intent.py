@@ -82,7 +82,7 @@ def _erase(raw: str, items: list[dict[str, Any]]) -> str | None:
             if marker:
                 end += len(marker)
                 suffix = raw[end:]
-            if kind == "collection" and re.match(r"(?:照片|图片|合照|合影)$", suffix.strip(" \t\r\n，,。；;、")):
+            if kind == "collection" and re.match(r"(?:照片|图片|合照|合影)$", suffix.strip(" \t\n，,。；;、")):
                 tail = re.match(r"\s*(?:照片|图片|合照|合影)", suffix)
                 if tail:
                     end += tail.end()
@@ -92,6 +92,12 @@ def _erase(raw: str, items: list[dict[str, Any]]) -> str | None:
             marker = re.match(r"(?:里面的|里面|里的|里|中的|中|的)?", suffix)
             if marker:
                 end += marker.end()
+        elif kind == "time" and item.get("time_basis") == "library":
+            marker = re.match(r"(?:入库|导入|加入图库)(?:时间)?", suffix)
+            if marker:
+                end += marker.end()
+            if prefix.endswith(("入库的", "导入的", "加入图库的")):
+                start -= len("加入图库的") if prefix.endswith("加入图库的") else 3
         elif kind in {"person", "time"} and suffix.startswith("的"):
             end += 1
         ranges.append((start, end))
@@ -104,9 +110,11 @@ def _erase(raw: str, items: list[dict[str, Any]]) -> str | None:
     for start, end in sorted(set(ranges), reverse=True):
         result = result[:start] + " " + result[end:]
     result = re.sub(r"(?:请帮我找一下|请帮我找|帮我找一下|帮我找|找一下|搜索一下|查找一下)", " ", result)
-    result = result.strip(" \t\r\n，,。；;、")
+    result = result.strip(" \t\n，,。；;、")
     result = re.sub(r"(?:同框|一起拍(?:摄)?)(?:的)?(?=(?:照片|图片|合照|合影))", " ", result)
     result = re.sub(r"(?:人物)?合集|(?:的)?(?:照片|图片|合照|合影)$", " ", result)
+    if any(item.get("time_basis") == "library" for item in items if item.get("type") == "time"):
+        result = re.sub(r"(?:入库|导入|加入图库)(?:时间)?", " ", result)
     return re.sub(r"[，,。；;、\s]+", " ", result).strip() or None
 
 
@@ -210,7 +218,24 @@ def parse_unified_intent(
     if hit and not re.search(r"(?:写着|写有|标着|编号|文字)[^，,。；;]*$", raw[:raw.find(hit[0])]):
         span = _span(raw, hit[0])
         if span and (not re.fullmatch(r"20\d{2}年?", hit[0]) or re.search(r"(?:照片|图片|拍|的|年)$", raw[span[1]:]) or span[0] == 0):
-            candidates.append({"type": "time", "value": [hit[1], hit[2]], "start": span[0], "end": span[1], "status": "confirmed"})
+            suffix = raw[span[1]:span[1] + 12]
+            prefix = raw[max(0, span[0] - 12):span[0]]
+            library_time = bool(re.match(r"\s*(?:入库|导入|加入图库)(?:时间)?", suffix)
+                                or re.search(r"(?:入库|导入|加入图库)(?:时间)?的\s*$", prefix))
+            candidates.append({"type": "time", "value": [hit[1], hit[2]],
+                               "time_basis": "library" if library_time else "capture",
+                               "capture_status": None, "start": span[0], "end": span[1],
+                               "status": "confirmed"})
+
+    for spelling, capture_status in (("没有拍摄日期", "unknown"), ("无拍摄日期", "unknown"),
+                                     ("拍摄日期未知", "unknown"), ("拍摄日期待处理", "pending"),
+                                     ("日期待处理", "pending")):
+        span = _span(raw, spelling)
+        if span:
+            candidates.append({"type": "time", "value": None, "time_basis": "capture",
+                               "capture_status": capture_status, "start": span[0],
+                               "end": span[1], "status": "confirmed"})
+            break
 
     context_spans = [(int(item["start"]), int(item["end"])) for item in candidates
                      if item["type"] in {"person", "time"}]
@@ -234,7 +259,7 @@ def parse_unified_intent(
         "person": ("person_id",),
         "place": ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version"),
         "source": ("source_id",),
-        "time": ("value",),
+        "time": ("value", "time_basis", "capture_status"),
     }
     unique_candidates: dict[tuple[Any, ...], dict[str, Any]] = {}
     for candidate in candidates:
@@ -290,8 +315,18 @@ def parse_unified_intent(
                 ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version")},
             "source_id": None if chosen_source is None else int(chosen_source["source_id"]),
             "source_name": None if chosen_source is None else str(chosen_source.get("name", "")),
-            "capture_from": None if chosen_time is None else chosen_time["value"][0],
-            "capture_to_exclusive": None if chosen_time is None else chosen_time["value"][1],
+            "capture_from": (None if chosen_time is None or chosen_time.get("time_basis") == "library"
+                             or chosen_time.get("value") is None
+                             else chosen_time["value"][0]),
+            "capture_to_exclusive": (None if chosen_time is None or chosen_time.get("time_basis") == "library"
+                                     or chosen_time.get("value") is None
+                                     else chosen_time["value"][1]),
+            "time_basis": "capture" if chosen_time is None else chosen_time.get("time_basis", "capture"),
+            "capture_status": None if chosen_time is None else chosen_time.get("capture_status"),
+            "library_from": (None if chosen_time is None or chosen_time.get("time_basis") != "library"
+                             or chosen_time.get("value") is None else chosen_time["value"][0]),
+            "library_to_exclusive": (None if chosen_time is None or chosen_time.get("time_basis") != "library"
+                                     or chosen_time.get("value") is None else chosen_time["value"][1]),
             "content_query": _erase(raw, candidates),
         }
     if conflicts:
@@ -360,6 +395,10 @@ def parse_unified_intent(
                     "source_id": pending_fields()["source_id"],
                     "capture_from": pending_fields()["capture_from"],
                     "capture_to_exclusive": pending_fields()["capture_to_exclusive"],
+                    "time_basis": pending_fields()["time_basis"],
+                    "capture_status": pending_fields()["capture_status"],
+                    "library_from": pending_fields()["library_from"],
+                    "library_to_exclusive": pending_fields()["library_to_exclusive"],
                     "content_query": pending_fields()["content_query"], "candidates": candidates,
                     "notice": "请确认按任一人物还是同框匹配。"}
 
@@ -386,6 +425,14 @@ def parse_unified_intent(
                 ("kind", "key", "source", "source_id", "selection_ref", "dataset_id", "dataset_version")},
             "source_id": None if chosen_source is None else int(chosen_source["source_id"]),
             "source_name": None if chosen_source is None else str(chosen_source.get("name", "")),
-            "capture_from": None if chosen_time is None else chosen_time["value"][0],
-            "capture_to_exclusive": None if chosen_time is None else chosen_time["value"][1],
+            "capture_from": (None if chosen_time is None or chosen_time.get("time_basis") == "library"
+                             or chosen_time.get("value") is None else chosen_time["value"][0]),
+            "capture_to_exclusive": (None if chosen_time is None or chosen_time.get("time_basis") == "library"
+                                     or chosen_time.get("value") is None else chosen_time["value"][1]),
+            "time_basis": "capture" if chosen_time is None else chosen_time.get("time_basis", "capture"),
+            "capture_status": None if chosen_time is None else chosen_time.get("capture_status"),
+            "library_from": (None if chosen_time is None or chosen_time.get("time_basis") != "library"
+                             or chosen_time.get("value") is None else chosen_time["value"][0]),
+            "library_to_exclusive": (None if chosen_time is None or chosen_time.get("time_basis") != "library"
+                                     or chosen_time.get("value") is None else chosen_time["value"][1]),
             "candidates": candidates, "notice": place.get("notice") if unsupported else None}

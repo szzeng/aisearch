@@ -21,6 +21,14 @@
     if (value !== undefined) node.textContent = String(value);
     return node;
   }
+  function searchThisAlbum(scope) {
+    var token = window.crypto && window.crypto.randomUUID
+      ? window.crypto.randomUUID()
+      : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2);
+    try { window.sessionStorage.setItem("aisearch.search-scope.v1:" + token, JSON.stringify(scope)); }
+    catch (_error) { return; }
+    window.location.href = "/search?scope_entry=" + encodeURIComponent(token);
+  }
   function get(url) {
     return fetch(api + url, { credentials: "same-origin", headers: { Accept: "application/json" } }).then(function (r) {
       return r.json().then(function (body) { if (!r.ok) throw new Error(body.message || body.code || "读取失败"); return body; });
@@ -80,7 +88,12 @@
     heading.appendChild(el("h3", null, album.name));
     heading.appendChild(el("span", "album-parent", album.parent || ""));
     heading.appendChild(el("span", "album-total", album.total + " 张有效照片"));
-    currentTitle.append(back, heading);
+    var search = el("button", "album-search", "搜索此地点"); search.type = "button";
+    search.addEventListener("click", function () {
+      searchThisAlbum({ kind: "place", place_kind: album.kind, place_key: String(album.key),
+        name: String(album.name || "地点"), parent: String(album.parent || "") });
+    });
+    currentTitle.append(back, heading, search);
     timeline = window.PhotoTimeline.mount({
       host: photos,
       scope: { kind: "place", place_kind: album.kind, place_key: String(album.key) },

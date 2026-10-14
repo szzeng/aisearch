@@ -1410,6 +1410,9 @@ class PlaceAwareSearchRequestModel(SearchRequestModel):
     place_key: str | None = Field(default=None, max_length=128)
     place_cancelled: bool = False
     intent_plan: dict[str, Any] | None = None
+    #: Identity-only handoff from a selected album title. The API resolves the current
+    #: members and revisions; clients never send asset IDs as the authority.
+    search_scope: dict[str, Any] | None = None
 
 
 class SearchHitModel(BaseModel):

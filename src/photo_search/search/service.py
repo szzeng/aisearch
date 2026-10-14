@@ -231,6 +231,10 @@ def search_assets(
     query_vector: Sequence[float] | None = None,
     album_asset_ids: Sequence[int] | None = None,
     collection_id: int | None = None,
+    album_membership_sql: str | None = None,
+    album_membership_parameters: Sequence[Any] = (),
+    additional_condition_sql: str | None = None,
+    additional_condition_parameters: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -266,6 +270,10 @@ def search_assets(
         capture=capture,
         album_asset_ids=album_asset_ids,
         collection_id=collection_id,
+        album_membership_sql=album_membership_sql,
+        album_membership_parameters=album_membership_parameters,
+        additional_condition_sql=additional_condition_sql,
+        additional_condition_parameters=additional_condition_parameters,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -980,6 +988,10 @@ def search_request(
     album_asset_ids: Sequence[int] | None = None,
     album_scope_revision: Sequence[Any] | None = None,
     collection_id: int | None = None,
+    album_membership_sql: str | None = None,
+    album_membership_parameters: Sequence[Any] = (),
+    additional_condition_sql: str | None = None,
+    additional_condition_parameters: Sequence[Any] = (),
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1014,6 +1026,10 @@ def search_request(
             capture=capture,
             album_asset_ids=album_asset_ids,
             collection_id=collection_id,
+            album_membership_sql=album_membership_sql,
+            album_membership_parameters=album_membership_parameters,
+            additional_condition_sql=additional_condition_sql,
+            additional_condition_parameters=additional_condition_parameters,
         )
 
     scope = build_scope(base.canonical_person_ids)
@@ -1118,6 +1134,10 @@ def search_request(
             ),
             album_asset_ids=scope.album_asset_ids,
             collection_id=scope.collection_id,
+            album_membership_sql=scope.album_membership_sql,
+            album_membership_parameters=scope.album_membership_parameters,
+            additional_condition_sql=scope.additional_condition_sql,
+            additional_condition_parameters=scope.additional_condition_parameters,
         )
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a

@@ -73,6 +73,19 @@ def validate_plan_shape(value: Any, *, original_query: str) -> dict[str, Any]:
         bound = value.get(field)
         if bound is not None and (not isinstance(bound, str) or len(bound) > 32):
             raise ValueError("搜索计划中的拍摄时间条件无效")
+    if value.get("time_basis", "capture") not in {"capture", "library"}:
+        raise ValueError("搜索计划中的时间依据无效")
+    if value.get("capture_status") not in {None, "unknown", "pending"}:
+        raise ValueError("搜索计划中的拍摄日期状态无效")
+    for field in ("library_from", "library_to_exclusive"):
+        bound = value.get(field)
+        if bound is not None and (not isinstance(bound, str) or len(bound) > 32):
+            raise ValueError("搜索计划中的入库时间条件无效")
+    if value.get("time_basis", "capture") == "library":
+        if value.get("capture_status") is not None or value.get("capture_from") is not None or value.get("capture_to_exclusive") is not None:
+            raise ValueError("入库时间与拍摄时间状态不能混用")
+    elif value.get("library_from") is not None or value.get("library_to_exclusive") is not None:
+        raise ValueError("拍摄时间条件不能带入库时间范围")
     place_kind, place_key = value.get("place_kind"), value.get("place_key")
     if (place_kind is None) != (place_key is None) or (place_kind is not None and (
         place_kind not in {"city", "province", "country", "district"}

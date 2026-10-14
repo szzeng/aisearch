@@ -96,6 +96,7 @@
       binding: null,
       placeAware: null,
       intentPlan: null,
+      selectedScope: null,
       requestGeneration: 0,
       hits: [],
       lastBody: null,
@@ -994,6 +995,9 @@
         if (body && body.intent_plan) {
           state.search.intentPlan = body.intent_plan;
         }
+        if (body && body.search_scope) {
+          state.search.selectedScope = body.search_scope;
+        }
         if (body && body.place_scope) {
           state.search.placeAware = {
             original_query: body.original_query || els.queryText.value.trim(),
@@ -1043,6 +1047,9 @@
       body.intent_plan = state.search.intentPlan;
       body.original_query = state.search.intentPlan.original_query || body.original_query;
       body.content_query = state.search.intentPlan.content_query || "";
+    }
+    if (state.search.selectedScope) {
+      body.search_scope = state.search.selectedScope;
     }
     if (queryText) {
       body.text = queryText;
@@ -1183,8 +1190,10 @@
 
   function renderIntentChips(plan) {
     clear(els.resultIntentScope);
-    if (!plan || (!plan.collection_scope && !plan.capture_from && !(plan.person_ids || []).length
-        && !plan.place_kind && plan.source_id == null)) {
+    var hasPlan = Boolean(plan && (plan.collection_scope || plan.capture_from ||
+      plan.capture_status || plan.library_from || plan.library_to_exclusive ||
+      (plan.person_ids || []).length || plan.place_kind || plan.source_id != null));
+    if (!hasPlan && !state.search.selectedScope) {
       els.resultIntentScope.hidden = true;
       return;
     }
@@ -1196,7 +1205,33 @@
       button.addEventListener("click", remove);
       els.resultIntentScope.appendChild(button);
     }
-    if (plan.collection_scope) {
+    if (state.search.selectedScope) {
+      var selected = state.search.selectedScope;
+      var scopeLabel = selected.kind === "person" ? "固定相册：" + String(selected.name || "人物")
+        : selected.kind === "collection" ? "固定合集：" + String(selected.name || "合集")
+          : "固定地点：" + String(selected.name || selected.place_key || "地点") +
+            (selected.parent ? " · " + String(selected.parent) : "");
+      add(scopeLabel, function () {
+        state.search.selectedScope = null;
+        state.search.intentPlan = null;
+        state.search.placeAware = null;
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        state.search.binding = null;
+        clearSearchSnapshot();
+        clear(els.resultGrid);
+        if (els.queryText.value.trim()) sendSearch(false);
+        else {
+          state.search.hits = []; state.search.lastBody = null; state.search.count = 0;
+          state.search.total = null;
+          els.loadMore.hidden = true;
+          renderIntentChips(null);
+          setStatus(els.queryStatus, "已清除相册范围；输入条件后搜索全部照片。");
+        }
+      });
+    }
+    if (!hasPlan) return;
+    if (plan.collection_scope && !(state.search.selectedScope && state.search.selectedScope.kind === "collection")) {
       add("人物合集：" + String(plan.collection_scope.name || "合集"), function () {
         plan.collection_scope = null;
         state.search.intentPlan = plan;
@@ -1217,9 +1252,29 @@
         sendSearch(false);
       });
     }
-    if ((plan.person_ids || []).length) {
+    if (plan.time_basis === "library" && (plan.library_from || plan.library_to_exclusive)) {
+      add("入库时间：" + String(plan.library_from || "起始") + " 至 " +
+        String(plan.library_to_exclusive || "当前") + "（不含）", function () {
+        plan.time_basis = "capture"; plan.library_from = null; plan.library_to_exclusive = null;
+        state.search.intentPlan = plan; state.search.sessionId = null; state.search.cursor = null;
+        state.search.binding = null; sendSearch(false);
+      });
+    }
+    if (plan.capture_status) {
+      add(plan.capture_status === "unknown" ? "拍摄日期：未知" : "拍摄日期：待处理", function () {
+        plan.capture_status = null; state.search.intentPlan = plan;
+        state.search.sessionId = null; state.search.cursor = null; state.search.binding = null;
+        sendSearch(false);
+      });
+    }
+    var visiblePersonIds = (plan.person_ids || []).filter(function (id) {
+      return !(state.search.selectedScope && state.search.selectedScope.kind === "person" &&
+        Number(state.search.selectedScope.person_id) === Number(id));
+    });
+    if (visiblePersonIds.length) {
       var suppliedNames = Array.isArray(plan.person_names) ? plan.person_names : [];
-      var names = plan.person_ids.map(function (id, index) {
+      var names = visiblePersonIds.map(function (id) {
+        var index = plan.person_ids.indexOf(id);
         var supplied = suppliedNames[index];
         if (supplied != null && String(supplied).trim()) {
           return String(supplied);
@@ -1236,7 +1291,7 @@
         sendSearch(false);
       });
     }
-    if (plan.place_kind && plan.place_key) {
+    if (plan.place_kind && plan.place_key && !(state.search.selectedScope && state.search.selectedScope.kind === "place")) {
       add("地点：" + String(plan.place_name || plan.place_key), function () {
         plan.place_kind = null;
         plan.place_key = null;
@@ -1449,8 +1504,38 @@
     return query;
   }
 
+  function consumeEntryScope() {
+    var params = new URLSearchParams(window.location.search || "");
+    var token = params.get("scope_entry");
+    params.delete("scope_entry");
+    var path = window.location.pathname || "/search";
+    var hash = window.location.hash || "";
+    if (token && window.history && typeof window.history.replaceState === "function") {
+      var remaining = params.toString();
+      window.history.replaceState(window.history.state, "",
+        path + (remaining ? "?" + remaining : "") + hash);
+    }
+    if (!token || !/^[a-zA-Z0-9_-]{20,80}$/.test(token)) return null;
+    try {
+      var key = "aisearch.search-scope.v1:" + token;
+      var value = JSON.parse(window.sessionStorage.getItem(key) || "null");
+      window.sessionStorage.removeItem(key);
+      return value && typeof value === "object" ? value : null;
+    } catch (_error) { return null; }
+  }
+
   function restoreOrStartSearch() {
+    var entryScope = consumeEntryScope();
     var query = consumeEntryQuery();
+    if (entryScope) {
+      clearSearchSnapshot();
+      state.search.selectedScope = entryScope;
+      els.queryText.value = query || "";
+      renderIntentChips(null);
+      if (query && query.trim()) submitSearch();
+      else els.queryText.focus();
+      return;
+    }
     if (query === null) {
       restoreSearchSnapshot();
       return;
@@ -1515,6 +1600,7 @@
           total_candidates: state.search.total,
           placeAware: state.search.placeAware,
           intentPlan: state.search.intentPlan,
+          selectedScope: state.search.selectedScope,
           binding: state.search.binding,
           lastBody: state.search.lastBody,
           previewAssetId: state.search.preview.assetId,
@@ -1565,6 +1651,7 @@
     state.search.total = saved.total_candidates;
     state.search.placeAware = saved.placeAware || null;
     state.search.intentPlan = saved.intentPlan || null;
+    state.search.selectedScope = saved.selectedScope || null;
     state.search.binding = saved.binding || null;
     state.search.lastBody = saved.lastBody;
     var body = Object.assign({}, saved.lastBody, {

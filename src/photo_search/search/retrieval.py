@@ -116,6 +116,12 @@ class SearchScope:
     album_asset_ids: tuple[int, ...] | None = None
     #: A single parameterized person-collection scope. None means unrestricted.
     collection_id: int | None = None
+    #: Internal, catalog-generated authoritative membership predicate for a selected
+    #: place. Unlike ``album_asset_ids`` this keeps large albums out of Python memory.
+    album_membership_sql: str | None = None
+    album_membership_parameters: tuple[Any, ...] = ()
+    additional_condition_sql: str | None = None
+    additional_condition_parameters: tuple[Any, ...] = ()
 
     @classmethod
     def build(
@@ -131,6 +137,10 @@ class SearchScope:
         capture: time_contract.CaptureRange | None = None,
         album_asset_ids: Sequence[int] | None = None,
         collection_id: int | None = None,
+        album_membership_sql: str | None = None,
+        album_membership_parameters: Sequence[Any] = (),
+        additional_condition_sql: str | None = None,
+        additional_condition_parameters: Sequence[Any] = (),
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -177,6 +187,10 @@ class SearchScope:
                 None if album_asset_ids is None else tuple(sorted({int(v) for v in album_asset_ids}))
             ),
             collection_id=None if collection_id is None else int(collection_id),
+            album_membership_sql=None if album_membership_sql is None else str(album_membership_sql),
+            album_membership_parameters=tuple(album_membership_parameters),
+            additional_condition_sql=None if additional_condition_sql is None else str(additional_condition_sql),
+            additional_condition_parameters=tuple(additional_condition_parameters),
         )
 
 
@@ -279,6 +293,12 @@ def scope_condition(
             placeholders = ", ".join("?" for _ in scope.album_asset_ids)
             conditions.append(f"{alias}.asset_id IN ({placeholders})")
             parameters.extend(scope.album_asset_ids)
+    if scope.album_membership_sql is not None:
+        conditions.append(f"({scope.album_membership_sql})")
+        parameters.extend(scope.album_membership_parameters)
+    if scope.additional_condition_sql is not None:
+        conditions.append(f"({scope.additional_condition_sql})")
+        parameters.extend(scope.additional_condition_parameters)
     if scope.collection_id is not None:
         collection_sql, collection_parameters = collection_condition(
             scope.collection_id, alias=alias
