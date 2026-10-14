@@ -2,7 +2,7 @@
 
 ## Current user-directed task: P4-UI-PLACES-E — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REVIEW COMPLETE (2026-10-14)
 
-地点相册接入共享时间轴并增加可复用地点成员 SQL scope；保留原地点整理和地图查询行为。定向 JUnit **32/0/0/0**，Ruff、Python 编译、places/timeline/map 相关四个 JS 语法检查及 diff-check 通过。用户指定的 LUNA High 受影响面复核完成、修复已回看，无剩余阻断 finding；不是 DS-H。[任务卡](tasks/P4-UI-PLACES-E.md) / [报告](reports/P4-UI-PLACES-E.md)。合成浏览器流程已观察，但项目内截图工件仍 pending；`PERF_200K` 与有代表性的 `CHECK_300K` 仍 pending，不能标整卡 PASS。
+地点相册接入共享时间轴并增加可复用地点成员 SQL scope；保留原地点整理和地图查询行为。定向 JUnit **32/0/0/0**，Ruff、Python 编译、places/timeline/map 相关四个 JS 语法检查及 diff-check 通过。用户指定的 LUNA High 受影响面复核完成、修复已回看，无剩余阻断 finding；不是 DS-H。[任务卡](tasks/P4-UI-PLACES-E.md) / [报告](reports/P4-UI-PLACES-E.md)。2026-10-14 已在复用的隔离 4 照片夹具上重新走查东京时间轴、待就绪筛选、照片详情返回、地点工具及地图空状态；请求日志为 200/304。项目内截图工件仍 pending；`PERF_200K` 与有代表性的 `CHECK_300K` 仍 pending，不能标整卡 PASS。
 
 用户要求复用原 30 万夹具、不建新夹具。既有 30 万 catalog 没有地点表、成员或 EXIF metadata；空地点 scope 查询仅为诊断，不代表有效成员性能。E 的未完门关闭前不自动开始 SEARCH-MAP。A/C/CORE/B/D 的既有未验收状态按各自报告保留。
 

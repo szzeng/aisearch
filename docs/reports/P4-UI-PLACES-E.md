@@ -36,6 +36,18 @@ git diff --check
 
 本地产品浏览器截图已通过 CUA 捕获观察，但 CUA 输出未提供写入项目目录的截图文件路径，故任务卡要求的可复查截图工件记为 **BROWSER_SCREENSHOT_PENDING**；浏览器闭环是已观察，不将其提升成截图/完整视觉 PASS。浏览器初次请求使用的本地一次性 session token 已由应用访问日志过滤，不把凭证写入报告。
 
+### 2026-10-14 浏览器复测
+
+复用上述 `.tmp/P4-UI-PLACES-E/browser/PhotoSearchData` 和 4 张合成照片，通过 Codex in-app browser 在本机 loopback 页面重新走查；启动服务未使用 `--open-browser`，一次性 session 凭证未写入报告。实际观察结果：
+
+- `/places` 显示东京 / 日本 / 4 张照片。进入后显示 **4 张有效照片**，其中可信拍摄日期 0、日期未知 0、日期待就绪 4；点击「日期待就绪」筛选后仍显示 4 张。
+- 打开首张照片显示详情，关闭后回到东京时间轴，4 张范围和待就绪桶仍可见；随后重新进入并单独选择「日期待就绪」筛选，结果仍为 4 张。
+- 展开「地点工具」后「补齐照片地点」入口可见。
+- `/map` 显示 **0 张带位置照片**和“当前图库没有带位置的照片”空状态；截图观察到地图画布及缩放控件正常呈现。样本没有 GPS，未覆盖有成员时的 viewport 照片详情往返。
+- 本次访问日志中过滤凭证后，session、Places、静态资源、timeline periods、第一页、pending bucket、缩略图和 map 请求均为 HTTP 200 或缩略图缓存 304；未检查浏览器 console。
+
+CUA 返回了可供当场观察的截图，但没有项目内可链接的持久文件路径；仍记 **BROWSER_SCREENSHOT_PENDING**。本次复测补实浏览器交互证据，不替代持久截图工件、真实 GPS 地图成员或规模性能门。
+
 ## 原 30 万夹具复用与性能边界
 
 复用既有 CORE 隔离副本 `.tmp/P4-UI-TIMELINE-CORE-A/scale-300k/catalog/catalog.db`，没有创建新的规模夹具或修改源 fixture。其 catalog 有 300,000 个 assets 和 300,000 个 PRESENT locations，但 `asset_metadata=0`、`places=0`、`asset_place_assignments=0`。因此只对空的 city scope 执行了诊断查询，5 次样本返回均为 0：耗时 **2985.45、1927.77、1957.59、1959.21、1927.69 ms**，P50 **1957.59 ms**、max **2985.45 ms**。EXPLAIN 包含 assets 扫描、关联资格查询及临时排序 B-tree。它只能说明这个空 scope 查询的成本，不能代表高成员地点页、人工归属或 CN scope 性能。
