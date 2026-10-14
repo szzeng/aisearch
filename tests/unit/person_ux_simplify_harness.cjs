@@ -40,7 +40,7 @@ const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(reques
     return response({operation_id:'op1',operation_revision:8,operation_type:'BATCH_FACE_EDIT',changed:1});
   }
   if(url.includes('/persons/browse')){const q=new URLSearchParams(url.split('?')[1]);const second=q.has('cursor');return response({persons:q.get('limit')==='20'?people.slice(0,20):people.slice(second?40:0,second?45:40),has_more:!second,next_cursor:second?null:'next'});}
-  if(url.includes('/persons/collections/1/tok/people'))return response({people:people.slice(0,2),has_more:false,next_cursor:null});
+  if(url.includes('/persons/collections/1/tok/people'))return response({collection:{collection_id:1,instance_token:'tok',revision:1},people:people.slice(0,2),has_more:false,next_cursor:null});
   if(url==='/api/v1/persons/1')return response({...people[0],revision:personRevision});
   if(url.includes('/photos'))return response({person:people[0],assets:[],has_more:false});
   if(url.includes('/faces?')){const q=new URLSearchParams(url.split('?')[1]);return response({faces:q.has('cursor')?[f(41),f(42)]:[f(1),f(2)],canonical_person_id:1,person_revision:personRevision,has_more:!q.has('cursor'),next_cursor:'faces2'});}
@@ -55,7 +55,7 @@ vm.createContext(context);
 let personCode=fs.readFileSync('src/photo_search/web/persons.js','utf8').replace('window.AIPersonTools = { install,','window.AIPersonTools = { _state: state, install,');
 vm.runInContext(personCode,context);
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,loadCollectionPeople,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 const choose=async(card)=>{card.pick.checked=true;card.pick.fire('change');await flush();};
@@ -122,7 +122,7 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(album.state.selectedPeopleSnapshots.get(3).revision,7,'range selection keeps snapshots');
   get('pa-people-clear').fire('click');assert.equal(album.state.selectedPeople.size,0);
 
-  album.state.batchMode=true;const inbox=get('pa-inbox-cards'), group={groupKey:'g1'};
+  album.state.inboxBatchMode=true;album.renderFaceManagement();const inbox=get('pa-inbox-cards'), group={groupKey:'g1',open:true};
   album.renderInboxFace(inbox,f(3),false,group);album.renderInboxFace(inbox,f(4),false,group);
   const a=inbox.children[0],b=inbox.children[1];a.selectionButton.checked=true;a.selectionButton.fire('change');b.selectionButton.fire('click',{shiftKey:true});
   assert.equal(album.state.selectedInboxFaces.size,2,'same candidate group supports range selection');
@@ -130,12 +130,12 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(album.state.selectedInboxFaces.size,2,'selection remains explicitly user driven');
   album.renderInboxFace(inbox,f(6),false,{groupKey:'g2'});inbox.children[2].selectionButton.fire('click',{shiftKey:true});
   inbox.children[2].selectionButton.checked=true;inbox.children[2].selectionButton.fire('change');
-  assert.equal(album.state.selectedInboxFaces.size,3,'a different group does not extend the previous range');
-  get('pa-inbox-clear').fire('click');assert.equal(album.state.selectedInboxFaces.size+album.state.selectedHiddenFaces.size,0,'clear removes hidden cross-area selections');
+  assert.equal(album.state.selectedInboxFaces.size,3,'an expanded different group extends the visible range');
+  get('pa-inbox-clear').fire('click');assert.equal(album.state.selectedInboxFaces.size+album.state.selectedHiddenFaces.size,0,'pending clear removes only pending face selections');
   assert.equal(mutations.length,0,'all selection actions avoid write requests');
 
-  album.state.collection={collection_id:1,instance_token:'tok'};await album.loadCollectionPeople(false);await flush();
-  const collectionCards=get('pa-collection-people');collectionCards.children[0].children[0].fire('click');
+  album.state.collection={collection_id:1,instance_token:'tok',revision:1};album.state.collectionPeopleManage=true;await album.loadCollectionPeople(false);await flush();
+  const collectionCards=get('pa-collection-people');collectionCards.children[0].children[0].fire('click');collectionCards.children[0].children[0].checked=true;collectionCards.children[0].children[0].fire('change');
   collectionCards.children[1].children[0].fire('click',{shiftKey:true});
   assert.equal(album.state.collectionSelectedPeople.size,2,'collection members support Shift selection');
   get('pa-collection-selection-clear').fire('click');assert.equal(album.state.collectionSelectedPeople.size,0);
@@ -157,15 +157,15 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(mutations[0].body.target_expected_revision,7);assert.equal(album.state.selectedPeople.size,0);
  }
  if(scenario==='inbox'){
-  album.state.batchMode=true;const cards=get('pa-inbox-cards');album.renderInboxFace(cards,f(3),false);album.renderInboxFace(cards,f(4),false);
-  assert(descendants(cards.children[0]).some(child=>child.tag==='label'));assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
+  album.state.inboxBatchMode=true;album.renderFaceManagement();const cards=get('pa-inbox-cards');album.renderInboxFace(cards,f(3),false);album.renderInboxFace(cards,f(4),false);
+  assert(descendants(cards.children[0]).some(child=>child.className==='pt-avatar-select'));assert.equal(cards.children[0].selectionButton.className,'pt-avatar-checkbox');
   cards.children.forEach(card=>{card.selectionButton.checked=true;card.selectionButton.fire('change');});
   assert.equal(get('pa-inbox-selection-count').textContent,'已选 2 / 500 张脸');get('pa-inbox-assign').fire('click');await flush();
   button(get('pa-choices'),'人物2 · 1 张').fire('click');await get('pa-edit-form').fire('submit');await flush();
   assert.equal(mutations.length,1);assert.deepEqual(mutations[0].body.items.map(i=>i.face_id),[f(3).face_id,f(4).face_id]);
   assert.equal(album.state.selectedInboxFaces.size,0);
-  album.state.batchMode=false;const ordinary=new Element('div');album.renderInboxFace(ordinary,f(5),false);
-  await descendants(ordinary).find(child=>child.tag==='label').fire('click');await flush();assert.equal(album.state.previewAssetId,5);
+  album.state.inboxBatchMode=false;const ordinary=new Element('div');album.renderInboxFace(ordinary,f(5),false);
+  await descendants(ordinary).find(child=>child.className==='pt-avatar-select').fire('click');await flush();assert.equal(album.state.previewAssetId,5);
   assert.equal(album.state.selectedInboxFaces.size,0,'ordinary avatar click opens the photo without selecting');
  }
  if(scenario==='mapping'){
@@ -213,6 +213,8 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   album.state.selectedPeople.add(1);album.state.selectedPeopleSnapshots.set(1,{...people[0]});album.state.selectAnchors.set('people:anchor',1);
   dispatchEscape({repeat:true});assert.equal(album.state.batchMode,true,'held Escape does not repeat the exit action');
   dispatchEscape({target:{tagName:'INPUT'}});assert.equal(album.state.batchMode,true,'Escape consumed by an input does not exit batch mode');
+  dispatchEscape({target:{tagName:'INPUT',type:'checkbox'}});assert.equal(album.state.batchMode,false,'a focused checkbox can exit batch mode');
+  get('pa-batch-toggle').fire('click');album.state.selectedPeople.add(1);album.state.selectedPeopleSnapshots.set(1,{...people[0]});
   const preview=get('pa-preview');preview.tag='dialog';preview.open=true;dispatchEscape();
   assert.equal(album.state.batchMode,true,'an open native dialog keeps Escape for its own cancel behavior');
   preview.open=false;dispatchEscape();

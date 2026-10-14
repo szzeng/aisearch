@@ -127,3 +127,7 @@ P4-UI-TIMELINE-SEARCH-MAP-A — IMPLEMENTED / ACCEPTANCE PARTIAL / LUNA HIGH REV
 ## Additional requested task: P4-MEDIA-CR2-A
 
 [Task card](tasks/P4-MEDIA-CR2-A.md), [report](reports/P4-MEDIA-CR2-A.md): implementation partial / validation pending. The user authorized `D:\SZ\天空\100CANON`; five read-only CR2 samples decode through the shared RAW frame at 1.101–1.183 s each, with unchanged SHA/size/mtime. Embedded JPEG and RAW geometry did not establish reliable crop mapping. Focused regression and static checks pass; real face/OCR inference, active-model text search, valid-GPS/portrait coverage, actual continuation idempotence, frozen-package execution, and old face/OCR terminal-job recovery remain pending. Do not claim SCOPED PASS.
+
+## Additional user-directed task: P4-UI2-PERSON-BATCH-UX-FIX-A — IMPLEMENTED / SCOPED PASS / ACCEPTANCE PARTIAL (2026-10-14)
+
+人脸待整理/已忽略选择分区、跨展开组 Shift、合集先浏览后管理、真实反选和直达改名/删除均已按任务卡实施。定向 JUnit **14/0/0/0**，三项 Node `--check` 与 `git diff --check` 通过；独立 LUNA High 最终修复复核无新 finding。内置浏览器已观察模式按钮和 checkbox 显示，但 Shift 键无法由工具传递（`SHIFT_BROWSER_PENDING_TOOL_LIMIT`），合成库缺合集成员（`COLLECTION_BROWSER_FIXTURE_MISSING`），所以整卡仍为 **ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-UI2-PERSON-BATCH-UX-FIX-A.md) / [报告](reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md)。未访问真实图库；未跑全仓、性能、模型/GPU、打包或发布检查。

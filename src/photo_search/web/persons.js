@@ -44,7 +44,7 @@
     if (from < 0 || to < 0) { state.faceAnchor = card.face.face_id; return false; }
     const range = cards.slice(Math.min(from, to), Math.max(from, to) + 1);
     if (state.selected.size + range.filter((item) => !state.selected.has(item.face.face_id)).length > 500) {
-      status("face-status", "这次连选会超过 500 张脸，未更改已有选择。"); return true;
+      status("face-status", "这次连选会超过 500 张脸，未更改已有选择。"); updateSelection(); return true;
     }
     range.forEach((item) => state.selected.set(item.face.face_id, { ...item.face }));
     state.faceAnchor = card.face.face_id; updateSelection(); return true;
@@ -71,9 +71,15 @@
         crop.append(ui.picture(face.thumbnail_url, "勾选这张人脸", "pa-avatar"));
         card.pick = ui.node("input"); card.pick.type = "checkbox"; card.pick.className = "pt-avatar-checkbox";
         card.pick.setAttribute("aria-label", "选择这张人脸");
-        card.pick.addEventListener("click", (event) => { if (event.shiftKey && selectFaceRange(card, event)) event.preventDefault(); });
+        card.pick.addEventListener("click", (event) => {
+          if (event.shiftKey && selectFaceRange(card, event)) {
+            card.rangeChangePending = true;
+            setTimeout(() => { card.rangeChangePending = false; updateSelection(); }, 0);
+          }
+        });
         card.pick.addEventListener("change", () => {
           if (ui.isWriting()) { updateSelection(); return; }
+          if (card.rangeChangePending) { card.rangeChangePending = false; updateSelection(); return; }
           if (card.pick.checked && !state.selected.has(face.face_id)) {
             if (state.selected.size < 500) state.selected.set(face.face_id, { ...face });
             else status("face-status", "一次最多选择 500 张脸。");

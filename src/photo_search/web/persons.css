@@ -406,3 +406,8 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 .pa-person-card[data-selected="true"] { outline: 3px solid #238477; background: #eaf5f1; }
 #pt-face-list .pa-person-card[data-selected="true"], #pa-cards .pa-person-card[aria-pressed="true"] { outline: 3px solid #238477; background: #eaf5f1; }
 #pa-cards .pa-person-card:focus-visible, .pt-avatar-select:focus-within { outline: 3px solid #238477; outline-offset: 3px; }
+.pa-collection-card { position: relative; }
+.pa-collection-checkbox { position: absolute; top: 0.8rem; left: 0.8rem; z-index: 2; width: 1.35rem; height: 1.35rem; accent-color: var(--accent); }
+.pa-collection-card[data-selected="true"] { outline: 3px solid var(--accent); outline-offset: 1px; background: var(--tint); }
+.pa-person-card[data-selected="true"] { outline-color: var(--accent); background: var(--tint); }
+.danger-action { color: var(--danger, #9f2d2d); border-color: currentColor; }

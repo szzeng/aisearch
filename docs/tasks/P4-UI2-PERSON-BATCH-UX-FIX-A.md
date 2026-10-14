@@ -1,6 +1,6 @@
 # P4-UI2-PERSON-BATCH-UX-FIX-A — 人物批量选择模式、Shift 连选与合集操作收口
 
-- **状态**：READY / 待实施；本卡只规划修复，未实施业务代码
+- **状态**：IMPLEMENTED / SCOPED PASS / BROWSER ACCEPTANCE PARTIAL（2026-10-14）；定向代码检查通过，LUNA High 最终修复复核无新 finding；真实 Shift 浏览器交互和合集 fixture 留待验收；详见 [`docs/reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md`](../reports/P4-UI2-PERSON-BATCH-UX-FIX-A.md)
 - **优先级**：P0（未识别人脸无法正常连选/忽略、勾选与真实状态不一致）；其余 P1（合集模式及操作精简、反选/退出回归）
 - **编卡基线**：`szzeng/aisearch`，2026-10-14，`master` HEAD `2bd3285b653afb5251e4541651aa7f0546c15ed6`；施工必须重新查看最新 HEAD 与同文件改动
 - **推荐模型**：GPT-6 High / LUNA High。重点是前端事件与有限状态机，不要求重写服务端；若修改人工归属、持久化合同或撤销协议，按仓库 V3.1 §2.4 升级受影响面审查
