@@ -2,6 +2,7 @@
   "use strict";
   var API = "/api/v1/map", PAGE = 48, version = null, cursor = null;
   var bbox = null, features = [], map = null, sequence = 0, timer = null;
+  var orderMode = "asset_id_desc";
   var assetMode = true, sourceMode = null, summaryTotal = 0, gridAssets = [];
   var restoreState = null, clusterPaging = null, cellPaging = null, focusIntent = null;
   function $(id) { return document.getElementById(id); }
@@ -32,6 +33,12 @@
   }
   function extent() { bbox = bounds(); return bbox; }
   function title(total) { $("grid-title").textContent = "当前范围 · " + total + " 张照片"; }
+  function setOrderMode(value) {
+    orderMode = value === "capture_time_desc" ? value : "asset_id_desc";
+    $("map-order-default").setAttribute("aria-pressed", String(orderMode === "asset_id_desc"));
+    $("map-order-capture").setAttribute("aria-pressed", String(orderMode === "capture_time_desc"));
+    refresh();
+  }
   function drawGrid(data, reset) {
     var box = $("grid");
     if (reset) { box.textContent = ""; gridAssets = []; }
@@ -42,6 +49,11 @@
       button.textContent = "查看照片"; button.onclick = function () { openAsset(a.asset_id); };
       imageButton.type = "button"; imageButton.className = "map-photo-open"; imageButton.setAttribute("aria-label", "查看照片 " + a.asset_id); imageButton.onclick = button.onclick; imageButton.appendChild(img);
       tile.appendChild(imageButton); tile.appendChild(button); box.appendChild(tile);
+      if (a.capture_time && a.capture_time.taken_at) {
+        var date = document.createElement("small");
+        date.textContent = String(a.capture_time.taken_at).replace("T", " ");
+        tile.appendChild(date);
+      }
     });
     cursor = data.next_cursor;
     $("more").hidden = !cursor && !clusterPaging;
@@ -52,7 +64,9 @@
   }
   function fallbackGrid(id, b) {
     var target = b || null;
-    req(endpoint("/assets", target) + (target ? "&" : "?") + "limit=" + PAGE).then(function (x) {
+    var url = endpoint("/assets", target) + (target ? "&" : "?") + "limit=" + PAGE;
+    if (orderMode === "capture_time_desc") url += "&order=" + encodeURIComponent(orderMode);
+    req(url).then(function (x) {
       if (id !== sequence) return;
       if (version !== null && x.member_version !== version) { refresh(); return; }
       version = x.member_version;
@@ -112,7 +126,9 @@
     }).catch(function () { if (clusterPaging === state) $("more").disabled = false; });
   }
   function fetchSnapshot(id, b, attempt) {
-    return Promise.all([req(endpoint("/points", b)), req(endpoint("/assets", b) + (b ? "&" : "?") + "limit=" + PAGE)]).then(function (result) {
+    var assetUrl = endpoint("/assets", b) + (b ? "&" : "?") + "limit=" + PAGE;
+    if (orderMode === "capture_time_desc") assetUrl += "&order=" + encodeURIComponent(orderMode);
+    return Promise.all([req(endpoint("/points", b)), req(assetUrl)]).then(function (result) {
       if (id !== sequence) return;
       var points = result[0], assets = result[1];
       if (points.member_version !== assets.member_version) {
@@ -147,6 +163,9 @@
         map.once("idle", function () { if (current(id, version)) labels(points); });
       }
       title(points.total);
+      if (orderMode === "capture_time_desc") {
+        $("grid-title").textContent = "当前地图视口 · 按可信拍摄时间排序 · " + points.total + " 张照片";
+      }
       $("notice").textContent = points.total ? "" : "当前图库没有带位置的照片。";
       applyFocusIntent();
     });
@@ -165,12 +184,17 @@
   function openAsset(id) {
     var center = map ? map.getCenter().toArray() : null, zoom = map ? map.getZoom() : null;
     sessionStorage.setItem("aisearch.map-return.v1", JSON.stringify({ center: center, zoom: zoom, bbox: bbox,
-      version: version, scroll: window.scrollY, assets: gridAssets, cursor: cursor }));
+      version: version, scroll: window.scrollY, assets: gridAssets, cursor: cursor, order: orderMode }));
     location.href = "/#/asset/" + encodeURIComponent(id);
   }
   function openCell(cell, z) {
     var id = sequence, b = bbox, expected = version;
     if (!b || !current(id, expected)) return;
+    if (orderMode === "capture_time_desc") {
+      orderMode = "asset_id_desc";
+      $("map-order-default").setAttribute("aria-pressed", "true");
+      $("map-order-capture").setAttribute("aria-pressed", "false");
+    }
     clusterPaging = null; var selection = cellPaging = { id: cell, zoom: z, bbox: b, seq: id, version: expected };
     var q = params(b); q.set("limit", PAGE); q.set("cell_id", cell); q.set("grid_zoom", z);
     req(API + "/assets?" + q.toString()).then(function (x) {
@@ -213,6 +237,7 @@
     $("more").disabled = true;
     var q = params(b); q.set("limit", PAGE); q.set("cursor", next);
     if (cellPaging) { q.set("cell_id", cellPaging.id); q.set("grid_zoom", cellPaging.zoom); }
+    else if (orderMode === "capture_time_desc") q.set("order", orderMode);
     req(API + "/assets?" + q.toString()).then(function (x) {
       if (!current(id, expected) || bbox !== b || cursor !== next) return;
       if (x.member_version !== expected) { refresh(); return; }
@@ -250,6 +275,11 @@
       var saved = null;
       try { saved = JSON.parse(sessionStorage.getItem("aisearch.map-return.v1") || "null"); } catch (_) {}
       if (saved && saved.version === s.member_version && saved.center) { center = saved.center; zoom = saved.zoom; restoreState = saved; }
+      if (saved && saved.version === s.member_version && saved.order) {
+        orderMode = saved.order === "capture_time_desc" ? saved.order : "asset_id_desc";
+        $("map-order-default").setAttribute("aria-pressed", String(orderMode === "asset_id_desc"));
+        $("map-order-capture").setAttribute("aria-pressed", String(orderMode === "capture_time_desc"));
+      }
       if (!window.maplibregl || !window.maplibregl.Map) { fallback(id); return; }
       try {
         map = new maplibregl.Map({ container: "map", center: center, zoom: zoom, maxZoom: 19,
@@ -282,6 +312,8 @@
   function startMap() {
     probePageCapabilities();
     $("more").onclick = loadMore;
+    $("map-order-default").onclick = function () { setOrderMode("asset_id_desc"); };
+    $("map-order-capture").onclick = function () { setOrderMode("capture_time_desc"); };
     if (window.maplibregl) init();
     else { sequence++; fallback(sequence); }
   }

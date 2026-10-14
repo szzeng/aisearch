@@ -1195,10 +1195,14 @@ def search_request(
             ),
             state=str(candidate["state"]),
             candidates_truncated=len(entries) > MAX_SESSION_IDS,
-            extra=(
-                {} if album_scope_revision is None
-                else {"album_scope_revision": list(album_scope_revision)}
-            ),
+            extra={
+                "search_scope": scope,
+                "requested_profile_id": request.profile_id,
+                **(
+                    {} if album_scope_revision is None
+                    else {"album_scope_revision": list(album_scope_revision)}
+                ),
+            },
         )
         hits, next_offset, has_more, token = _render_page(
             catalog,

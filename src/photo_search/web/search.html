@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-local-open-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/photo-info.js?v=p4-person-ux-simplify-a-1" defer></script>
-    <script src="/web/search.js?v=p4-ui-search-c-1" defer></script>
+    <script src="/web/search.js?v=p4-ui-timeline-search-map-stage2-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -207,6 +207,7 @@
       <section id="panel-results" class="panel" aria-labelledby="results-title">
         <h2 id="results-title">结果</h2>
         <div id="result-notices" class="notices" role="status" aria-live="polite"></div>
+        <p><button type="button" id="candidate-time-toggle" hidden>按时间查看当前语义候选</button></p>
         <ol id="result-grid" class="grid" aria-label="搜索结果"></ol>
         <p>
           <button type="button" id="load-more" hidden>加载下一页</button>

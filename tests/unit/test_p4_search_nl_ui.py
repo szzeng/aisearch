@@ -30,10 +30,10 @@ const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeOb
  window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
  fetch:async()=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({})})};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderPage,renderIntentChips,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderPage,renderIntentChips,submitSearch,loadCandidateTimeBrowse,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui;
-const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
+const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","candidateTimeToggle","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryPageSize.value="100";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);ui.state.search.mode="text";ui.state.observer={observe(){}};
@@ -53,7 +53,23 @@ for(const session of ["filter-only","place-album:test"]){
  assert.equal(ui.state.search.count,205);assert.equal(ui.state.search.cursor,null);
  assert.match(els.queryStatus.textContent,/符合条件共 205 张/);assert.match(els.queryStatus.textContent,/已加载 205 张/);
 }
-assert.match(els.queryStatus.textContent,/已到末尾/);
+const semantic=makePage(0,true,"semantic-session");semantic.query={text:"coast"};
+ui.renderPage(semantic,false);
+assert.equal(els.candidateTimeToggle.hidden,false,"semantic sessions expose the bounded time-order view");
+let resolveTimeRequest;
+context.fetch=()=>new Promise(resolve=>{resolveTimeRequest=resolve;});
+ui.state.search.timeBrowse.active=true;
+ui.state.search.requestGeneration=4;
+const staleTimeRequest=ui.loadCandidateTimeBrowse(false);
+assert.equal(typeof resolveTimeRequest,"function");
+ui.state.search.requestGeneration=5;
+ui.state.search.sessionId="new-search-session";
+ui.state.search.timeBrowse.active=false;
+ui.state.search.hits=[{asset_id:999}];
+resolveTimeRequest({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({assets:[{asset_id:1,semantic_rank:1}],total_candidates:1})});
+staleTimeRequest.then(()=>{
+ assert.equal(ui.state.search.hits[0].asset_id,999,"a late time-page response cannot replace a newer search");
+}).catch(error=>{console.error(error);process.exitCode=1;});
 """
     root = Path(__file__).resolve().parents[2]
     result = subprocess.run(
@@ -89,7 +105,7 @@ let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderIntentChips,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui;
-const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
+const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","candidateTimeToggle","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryText.value="2026年爸爸日落照片";els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);
@@ -149,7 +165,7 @@ code=code.replace('        onSearchFailure(failure);','        globalThis.failur
 context.rendered=rendered;context.failures=failures;
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui;
-const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
+const ids=["resultPlaceScope","resultIntentScope","resultGrid","resultNotices","loadMore","candidateTimeToggle","queryActions","queryStatus","queryText","querySource","queryAvailability","queryPlaceState","queryPlaceIds","queryDescendants","queryCaptureFrom","queryCaptureTo","queryPageSize","queryPersonMatch","personEcho","captureEcho","captureState","searchPreviewNav","searchPreviewPosition","searchPreviewPrev","searchPreviewNext"];
 const els={};ids.forEach(id=>els[id]=get(id));
 els.queryPageSize.value="20";els.queryAvailability.value="any";els.queryPlaceState.value="any";els.queryDescendants.value="true";els.queryPersonMatch.value="any";
 ui.setElements(els);

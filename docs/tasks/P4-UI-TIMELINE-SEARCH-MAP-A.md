@@ -101,3 +101,8 @@
 ## 2026-10-14 用户执行指示与本轮边界
 
 用户明确要求在前置验收仍有 pending 时执行本卡，并指定受影响面复核子代理使用 Luna High。该指示满足上方依赖交接所写的“后续明确用户指示”条件；仅授权启动本卡，不改变 A/C/CORE/B/D/E 的既有验收状态。本轮遵用户指定完成 Luna High 复核，不称为 DS-H。实现/聚焦 API JUnit 已通过，实际浏览器、有效 20 万规模性能和有代表性 30 万成员/元数据检查仍 pending；阶段二的语义候选时间浏览与地图 viewport 时间浏览可独立 DEFERRED。详见 [执行报告](../reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。
+
+
+## 2026-10-14 阶段二实现补充
+
+用户后续明确要求修复阶段二语义候选时间浏览和地图范围时间浏览被标为 DEFERRED 的状态。现已完成两个入口与加性只读分页 API：语义时间模式只重排已有冻结且有界的 search session 候选，并保留语义 rank 与截断提示；地图时间模式只针对当前完整 viewport 权威成员分页，游标绑定 bbox、map member_version、catalog_filter_revision、taken-time rules version 和 page size。相关测试见 [执行报告](../reports/P4-UI-TIMELINE-SEARCH-MAP-A.md)。此更新将两项从 DEFERRED 更正为 IMPLEMENTED；LUNA High 阶段二复核发现的三项问题（profile/generation 绑定、当前 scope 资格复验、搜索竞态）均已修复并通过复核；不是 DS-H。最终定向 JUnit 82/0/0/0。浏览器交互验收、PERF_200K 与有代表性的 CHECK_300K 仍为 PENDING，整体验收状态不得据此升级为 PASS。

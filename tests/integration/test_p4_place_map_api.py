@@ -121,3 +121,49 @@ def test_map_membership_bbox_cursor_and_revision(api_env) -> None:
         assert invalid.status_code == 422
 
     api_env.scenario(scenario)
+
+
+def test_map_capture_time_order_pages_the_complete_viewport_and_binds_revisions(api_env) -> None:
+    _seed_map(api_env)
+    catalog = api_env.service.catalog
+    ids = [int(row[0]) for row in catalog.read_all(
+        "SELECT a.asset_id FROM assets a JOIN asset_geo_facts g USING(asset_id) "
+        "WHERE g.status='VALID' AND g.datum_status IN ('WGS84','ASSUMED_WGS84') "
+        "AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL AND g.input_revision=a.sha256 "
+        "AND a.state='ACTIVE' AND EXISTS (SELECT 1 FROM file_locations l "
+        "WHERE l.asset_id=a.asset_id AND l.availability='PRESENT') "
+        "ORDER BY a.asset_id DESC LIMIT 3"
+    )]
+    with catalog.write() as conn:
+        for asset_id, sort_key in zip(ids, (100, 300, 200), strict=True):
+            conn.execute(
+                "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) "
+                "VALUES(?,?,'EXIF_ORIGINAL','MEDIUM')",
+                (asset_id, sort_key),
+            )
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        first = await client.get("/api/v1/map/assets", params={
+            "limit": 2, "order": "capture_time_desc",
+        })
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assert body["candidate_scope"] == "complete_current_viewport"
+        assert [row["asset_id"] for row in body["assets"]] == [ids[1], ids[2]]
+        assert [row["capture_time"]["taken_at_sort"] for row in body["assets"]] == [300, 200]
+        assert body["next_cursor"]
+        second = await client.get("/api/v1/map/assets", params={
+            "limit": 2, "order": "capture_time_desc", "cursor": body["next_cursor"],
+        })
+        assert second.status_code == 200, second.text
+        assert second.json()["assets"][0]["asset_id"] == ids[0]
+        assert second.json()["assets"][1]["capture_time"] is None
+        with catalog.write() as conn:
+            conn.execute("UPDATE catalog_filter_revision SET revision=revision+1 WHERE revision_id=1")
+        stale = await client.get("/api/v1/map/assets", params={
+            "limit": 2, "order": "capture_time_desc", "cursor": body["next_cursor"],
+        })
+        assert stale.status_code == 422
+
+    api_env.scenario(scenario)

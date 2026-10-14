@@ -10,6 +10,7 @@ Reading published media bytes also stays in a worker thread.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import ipaddress
 import json
@@ -148,7 +149,9 @@ from photo_search.catalog.errors import (
     FACE_NOT_FOUND,
     INVALID_CURSOR,
     INVALID_STATE_TRANSITION,
+    PROFILE_GENERATION_MISMATCH,
     RUNTIME_CAPABILITY_UNAVAILABLE,
+    SEARCH_SESSION_EXPIRED,
     UPLOAD_TOO_LARGE,
     CatalogError,
 )
@@ -218,6 +221,7 @@ from photo_search.search.retrieval import SearchScope, scope_condition
 from photo_search.search.service import (
     _person_authority_base,
     _projection_block,
+    _resolve_profile,
     feedback_limit,
     list_feedback,
     resolve_request_binding,
@@ -234,6 +238,7 @@ from photo_search.search.upload import (
     stage_upload,
 )
 from photo_search.storage import quick_storage_summary
+from photo_search.taken_time import read as taken_time_read
 
 APP_VERSION = "0.2.0"
 
@@ -2319,6 +2324,228 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
         encoder=context.query_encoder(),
         reranker=context.reranker(),
     )
+
+
+@router.get("/search/sessions/{session_id}/time")
+async def search_session_time_page(
+    request: Request,
+    session_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """Page by trusted capture time within one frozen, bounded semantic candidate set."""
+    context = context_of(request)
+    session = context.search_sessions.get(session_id)
+    if session is None:
+        raise CatalogError(
+            SEARCH_SESSION_EXPIRED,
+            "the search session is unknown or expired; run the query again",
+            details={"reason": "SESSION_NOT_LIVE"},
+        )
+    if session.query is None or not session.entries:
+        raise CatalogError(
+            INVALID_CURSOR,
+            "capture-time browsing is available only for a semantic candidate snapshot",
+            details={"reason": "SEMANTIC_CANDIDATE_SNAPSHOT_REQUIRED"},
+        )
+    service = context.service()
+    catalog = service.catalog
+    requested_profile_id = session.extra.get("requested_profile_id", session.profile_id)
+    binding_request = SearchRequest(
+        request_id="semantic-time-browse",
+        profile_id=requested_profile_id,
+        space_id=session.space_id,
+        image_generation_id=session.image_generation_id,
+        dimension=session.dimension,
+    )
+    current_profile = _resolve_profile(catalog, binding_request)
+    current_binding = resolve_request_binding(catalog, binding_request)
+    current_session_binding = (
+        None if current_profile is None else current_profile.profile_id,
+        None if current_binding is None else current_binding.generation_id,
+        None if current_binding is None else current_binding.space_id,
+        None if current_binding is None else int(current_binding.dimension),
+    )
+    if session.binding != current_session_binding:
+        raise CatalogError(
+            PROFILE_GENERATION_MISMATCH,
+            "this page belongs to a different search profile or index generation",
+            details={"reason": "SESSION_BINDING_CHANGED", "search_session_id": session.session_id},
+        )
+    search_scope = session.extra.get("search_scope")
+    if not isinstance(search_scope, SearchScope):
+        raise CatalogError(
+            INVALID_CURSOR,
+            "the semantic candidate session has no authoritative scope binding",
+            details={"reason": "SESSION_SCOPE_UNAVAILABLE"},
+        )
+    album_scope_revision = tuple(session.extra.get("album_scope_revision", ()))
+    revision_offset = 0
+    if search_scope.album_membership_sql is not None:
+        if len(album_scope_revision) < 5:
+            raise CatalogError(
+                INVALID_CURSOR,
+                "the selected place session has no complete revision binding",
+                details={"reason": "SESSION_SCOPE_REVISION_UNAVAILABLE"},
+            )
+        from photo_search.places.timeline import selected_members_sql
+
+        _, _, place_revisions = selected_members_sql(
+            catalog, service.data_root,
+            kind=str(album_scope_revision[3]), key=str(album_scope_revision[4]),
+        )
+        current_place_revision = (
+            place_revisions["catalog_filter_revision"],
+            place_revisions["suggestion_revision"],
+            place_revisions["package_revision"],
+            str(album_scope_revision[3]),
+            str(album_scope_revision[4]),
+        )
+        if current_place_revision != album_scope_revision[:5]:
+            raise CatalogError(
+                CATALOG_FILTER_REVISION_STALE,
+                "the selected place changed after this search started",
+                details={"reason": "PLACE_ALBUM_REVISION_CHANGED"},
+            )
+        revision_offset = 5
+    if search_scope.collection_id is not None:
+        try:
+            marker = album_scope_revision.index("person_collection", revision_offset)
+            expected_collection = album_scope_revision[marker + 1 : marker + 4]
+        except (ValueError, IndexError) as exc:
+            raise CatalogError(
+                INVALID_CURSOR,
+                "the selected collection session has no complete revision binding",
+                details={"reason": "SESSION_SCOPE_REVISION_UNAVAILABLE"},
+            ) from exc
+        current_collection = catalog.read_one(
+            "SELECT instance_token,revision FROM person_collections WHERE collection_id=?",
+            (int(search_scope.collection_id),),
+        )
+        if (
+            current_collection is None
+            or int(expected_collection[0]) != int(search_scope.collection_id)
+            or str(current_collection["instance_token"]) != str(expected_collection[1])
+            or int(current_collection["revision"]) != int(expected_collection[2])
+        ):
+            raise CatalogError(
+                CATALOG_FILTER_REVISION_STALE,
+                "the selected collection changed after this search started",
+                details={"reason": "COLLECTION_REVISION_CHANGED"},
+            )
+    with catalog.read_snapshot() as conn:
+        revision_row = conn.execute(
+            "SELECT revision FROM catalog_filter_revision WHERE revision_id=1"
+        ).fetchone()
+        revision = int(revision_row[0]) if revision_row else 0
+        time_rules_version = taken_time_read.rules_version(conn)
+        if revision != int(session.catalog_filter_revision):
+            raise CatalogError(
+                CATALOG_FILTER_REVISION_STALE,
+                "the search candidate snapshot is stale; run the query again",
+                details={"reason": "CATALOG_FILTER_REVISION_CHANGED"},
+            )
+        token_offset = 0
+        if cursor:
+            try:
+                raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+                token = json.loads(raw.decode("utf-8"))
+                if (
+                    token.get("v") != 1
+                    or token.get("s") != session.session_id
+                    or token.get("q") != session.query_hash
+                    or int(token.get("r")) != revision
+                    or token.get("tr") != time_rules_version
+                ):
+                    raise ValueError("cursor binding mismatch")
+                token_offset = int(token["o"])
+                if token_offset < 0 or token_offset >= len(session.entries):
+                    raise ValueError("cursor offset out of range")
+            except Exception as exc:
+                raise CatalogError(
+                    INVALID_CURSOR,
+                    "the time-order cursor is invalid or belongs to another search snapshot",
+                    details={"field": "cursor"},
+                ) from exc
+        ids = [entry.asset_id for entry in session.entries]
+        where, scope_parameters = scope_condition(conn, search_scope)
+        placeholders = ",".join("?" for _ in ids)
+        qualified_ids = {
+            int(row[0])
+            for row in conn.execute(
+                f"SELECT a.asset_id FROM assets AS a WHERE ({where}) "
+                f"AND a.asset_id IN ({placeholders})",
+                [*scope_parameters, *ids],
+            ).fetchall()
+        }
+        metadata = {
+            int(row[0]): (str(row[1]), None if row[2] is None else int(row[2]))
+            for row in conn.execute(
+                f"SELECT asset_id,time_source,taken_at_sort FROM asset_metadata WHERE asset_id IN ({placeholders})",
+                ids,
+            ).fetchall()
+        }
+        trusted = taken_time_read.rules_version_matches(conn)
+        ranked = list(enumerate(session.entries, start=1))
+        ranked.sort(
+            key=lambda pair: (
+                0
+                if trusted
+                and metadata.get(pair[1].asset_id, ("", None))[0]
+                in {"EXIF_ORIGINAL", "EXIF_DIGITIZED"}
+                and metadata.get(pair[1].asset_id, ("", None))[1] is not None
+                else 1,
+                -int(metadata[pair[1].asset_id][1])
+                if trusted
+                and pair[1].asset_id in metadata
+                and metadata[pair[1].asset_id][0] in {"EXIF_ORIGINAL", "EXIF_DIGITIZED"}
+                and metadata[pair[1].asset_id][1] is not None
+                else 0,
+                -int(pair[1].asset_id),
+            )
+        )
+        page = ranked[token_offset : token_offset + int(limit)]
+        has_more = token_offset + len(page) < len(ranked)
+        assets = []
+        for relevance_rank, entry in page:
+            if entry.asset_id not in qualified_ids:
+                continue
+            assets.append(
+                {
+                    "asset_id": int(entry.asset_id),
+                    "semantic_rank": int(relevance_rank),
+                    "score": entry.score,
+                    "matched_by": dict(entry.matched_by),
+                    "hit_reason": entry.hit_reason,
+                    "matched_text": list(entry.matched_text),
+                    "semantic_ready": bool(entry.semantic_ready),
+                    "capture_time": taken_time_read.asset_view(conn, entry.asset_id),
+                    "thumbnail": f"/api/v1/assets/{int(entry.asset_id)}/thumbnail",
+                    "detail": f"/#/asset/{int(entry.asset_id)}",
+                }
+            )
+        next_cursor = None
+        if has_more:
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps(
+                    {"v": 1, "s": session.session_id, "q": session.query_hash,
+                     "r": revision, "tr": time_rules_version,
+                     "o": token_offset + len(page)},
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).decode("ascii").rstrip("=")
+        return {
+            "search_session_id": session.session_id,
+            "order": "capture_time_desc",
+            "candidate_scope": "current_semantic_candidate_snapshot",
+            "total_candidates": len(session.entries),
+            "candidates_truncated": bool(session.candidates_truncated),
+            "candidate_limit": 5000,
+            "catalog_filter_revision": revision,
+            "taken_time_rules_version": time_rules_version,
+            "assets": assets,
+            "next_cursor": next_cursor,
+        }
 
 
 def _place_aware_choices(service: Any) -> list[dict[str, Any]]:

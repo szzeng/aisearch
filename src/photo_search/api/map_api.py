@@ -136,7 +136,15 @@ async def map_assets(
     asset_id: int | None = None,
     cell_id: str | None = None,
     grid_zoom: int | None = None,
+    order: str = "asset_id_desc",
 ) -> dict[str, Any]:
+    if order not in {"asset_id_desc", "capture_time_desc"}:
+        raise HTTPException(status_code=422, detail="unsupported map asset order")
+    if order == "capture_time_desc" and (asset_id is not None or cell_id is not None):
+        raise HTTPException(
+            status_code=422,
+            detail="capture-time browsing is available for the complete viewport only",
+        )
     bbox = _valid_bbox(west, south, east, north)
     size = max(1, min(100, int(limit)))
     db = _read(request)
@@ -161,16 +169,35 @@ async def map_assets(
             where += f" AND ({xexpr})=? AND ({yexpr})=?"
             args.extend([*xargs, gx, *yargs, gy])
         version = _revision(conn)
+        catalog_revision_row = conn.execute(
+            "SELECT revision FROM catalog_filter_revision WHERE revision_id=1"
+        ).fetchone()
+        catalog_revision = int(catalog_revision_row[0]) if catalog_revision_row else 0
+        time_rules_version = time_read.rules_version(conn)
         fingerprint = json.dumps(
-            [bbox, asset_id, cell_id, grid_zoom, size, version], separators=(",", ":")
+            [bbox, asset_id, cell_id, grid_zoom, size, version]
+            if order == "asset_id_desc"
+            else [bbox, asset_id, cell_id, grid_zoom, size, version, order,
+                  catalog_revision, time_rules_version],
+            separators=(",", ":"),
         )
         after = 0
+        after_bucket = 1
+        after_time: int | None = None
         if cursor:
             try:
                 token = json.loads(base64.urlsafe_b64decode(cursor + "=="))
                 if token["q"] != fingerprint or int(token["v"]) != version:
                     raise ValueError("stale cursor")
-                after = int(token["a"])
+                if order == "capture_time_desc":
+                    if (int(token["cv"]) != catalog_revision
+                            or token.get("tr") != time_rules_version):
+                        raise ValueError("stale capture-time cursor")
+                    after_bucket = int(token["b"])
+                    after_time = None if token["t"] is None else int(token["t"])
+                    after = int(token["a"])
+                else:
+                    after = int(token["a"])
             except Exception as exc:
                 raise HTTPException(
                     status_code=422, detail="invalid or expired map cursor"
@@ -179,40 +206,76 @@ async def map_assets(
             f"SELECT COUNT(*) FROM {source} WHERE {where}",
             args,
         ).fetchone()[0]
-        rows = conn.execute(
-            f"SELECT a.asset_id,a.created_at,g.latitude,g.longitude FROM {source} WHERE {where} AND a.asset_id<? ORDER BY a.asset_id DESC LIMIT ?",
-            [*args, after or 9223372036854775807, size + 1],
-        ).fetchall()
+        if order == "capture_time_desc":
+            trusted_time = time_read.rules_version_matches(conn)
+            source_with_time = source + " LEFT JOIN asset_metadata AS m USING(asset_id)"
+            bucket_sql = (
+                "CASE WHEN m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') "
+                "AND m.taken_at_sort IS NOT NULL THEN 0 ELSE 1 END"
+                if trusted_time else "1"
+            )
+            sort_key_sql = "m.taken_at_sort" if trusted_time else "NULL"
+            time_where = where
+            time_args = list(args)
+            if cursor:
+                if after_bucket == 0 and after_time is not None:
+                    time_where += (
+                        f" AND ({bucket_sql}>0 OR ({bucket_sql}=0 AND "
+                        f"({sort_key_sql}<? OR ({sort_key_sql}=? AND a.asset_id<?))))"
+                    )
+                    time_args.extend([after_time, after_time, after])
+                else:
+                    time_where += f" AND {bucket_sql}=1 AND a.asset_id<?"
+                    time_args.append(after)
+            rows = conn.execute(
+                f"SELECT a.asset_id,a.created_at,g.latitude,g.longitude,{bucket_sql} AS time_bucket,{sort_key_sql} AS time_sort FROM {source_with_time} WHERE {time_where} ORDER BY time_bucket ASC,time_sort DESC,a.asset_id DESC LIMIT ?",
+                [*time_args, size + 1],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"SELECT a.asset_id,a.created_at,g.latitude,g.longitude FROM {source} WHERE {where} AND a.asset_id<? ORDER BY a.asset_id DESC LIMIT ?",
+                [*args, after or 9223372036854775807, size + 1],
+            ).fetchall()
         has_more = len(rows) > size
         rows = rows[:size]
         assets = [
             {
                 "asset_id": int(r[0]),
-                "capture_time": time_read.asset_view(conn, int(r[0])),
                 "thumbnail": f"/api/v1/assets/{int(r[0])}/thumbnail",
                 "detail": f"/#/asset/{int(r[0])}",
                 "latitude": float(r[2]),
                 "longitude": float(r[3]),
+                **(
+                    {"time_order": "capture_time_desc",
+                     "capture_time": time_read.asset_view(conn, int(r[0]))}
+                    if order == "capture_time_desc" else {}
+                ),
             }
             for r in rows
         ]
         next_cursor = None
         if has_more and rows:
-            next_cursor = (
-                base64.urlsafe_b64encode(
-                    json.dumps(
-                        {"q": fingerprint, "v": version, "a": int(rows[-1][0])},
-                        separators=(",", ":"),
-                    ).encode()
-                )
-                .decode()
-                .rstrip("=")
-            )
+            token_body = {"q": fingerprint, "v": version, "a": int(rows[-1][0])}
+            if order == "capture_time_desc":
+                token_body.update({
+                    "cv": catalog_revision,
+                    "tr": time_rules_version,
+                    "b": int(rows[-1][4]),
+                    "t": None if rows[-1][5] is None else int(rows[-1][5]),
+                })
+            next_cursor = base64.urlsafe_b64encode(
+                json.dumps(token_body, separators=(",", ":")).encode()
+            ).decode().rstrip("=")
         return {
             "assets": assets,
             "total": int(total),
             "next_cursor": next_cursor,
             "member_version": version,
+            **(
+                {"order": order, "catalog_filter_revision": catalog_revision,
+                 "candidate_scope": "complete_current_viewport"}
+                if order == "capture_time_desc" else {}
+            ),
         }
 
 

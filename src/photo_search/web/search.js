@@ -100,6 +100,7 @@
       requestGeneration: 0,
       hits: [],
       lastBody: null,
+      timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null },
       preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false },
     },
     requestCounter: 0,
@@ -912,7 +913,90 @@
   }
 
   function continueSearch() {
+    if (state.search.timeBrowse.active) {
+      return loadCandidateTimeBrowse(true);
+    }
     sendSearch(true);
+  }
+
+  function toggleCandidateTimeBrowse() {
+    var browse = state.search.timeBrowse;
+    if (browse.active) {
+      browse.active = false;
+      browse.cursor = null;
+      if (browse.previous) {
+        state.search.hits = browse.previous.hits;
+        state.search.cursor = browse.previous.cursor;
+        state.search.count = browse.previous.count;
+        state.search.total = browse.previous.total;
+        clear(els.resultGrid);
+        state.search.hits.forEach(function (hit) { els.resultGrid.appendChild(buildHit(hit)); });
+        els.loadMore.hidden = !state.search.cursor;
+        updateSearchPreviewNavigation();
+      }
+      browse.previous = null;
+      els.candidateTimeToggle.textContent = "按时间查看当前语义候选";
+      return;
+    }
+    if (!state.search.sessionId || !state.search.lastBody || !state.search.lastBody.query) return;
+    browse.previous = { hits: state.search.hits.slice(), cursor: state.search.cursor,
+      count: state.search.count, total: state.search.total };
+    browse.active = true;
+    browse.cursor = null;
+    browse.rulesVersion = null;
+    state.search.count = 0;
+    state.search.hits = [];
+    state.search.cursor = null;
+    clear(els.resultGrid);
+    invalidateSearchPreview();
+    els.candidateTimeToggle.textContent = "返回相关度排序";
+    loadCandidateTimeBrowse(false);
+  }
+
+  function loadCandidateTimeBrowse(continuation) {
+    var browse = state.search.timeBrowse;
+    if (!state.search.sessionId || (continuation && !browse.cursor)) return Promise.resolve(false);
+    var sessionId = state.search.sessionId;
+    var pageSize = Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE;
+    var query = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, pageSize))) });
+    if (continuation) query.set("cursor", browse.cursor);
+    var generation = state.search.requestGeneration;
+    els.loadMore.disabled = true;
+    return request("/search/sessions/" + encodeURIComponent(sessionId) +
+      "/time?" + query.toString()).then(function (result) {
+      if (!browse.active || generation !== state.search.requestGeneration ||
+          sessionId !== state.search.sessionId) return false;
+      var body = result.body || {}, assets = body.assets || [];
+      if (!continuation) clear(els.resultGrid);
+      var hits = assets.map(function (asset) { return {
+        asset_id: asset.asset_id, rank: asset.semantic_rank, score: asset.score,
+        matched_by: asset.matched_by, hit_reason: asset.hit_reason,
+        matched_text: asset.matched_text, semantic_ready: asset.semantic_ready,
+        capture_time: asset.capture_time,
+      }; });
+      hits.forEach(function (hit) { els.resultGrid.appendChild(buildHit(hit)); });
+      state.search.hits = continuation ? state.search.hits.concat(hits) : hits;
+      state.search.count = state.search.hits.length;
+      state.search.total = body.total_candidates;
+      browse.cursor = body.next_cursor || null;
+      browse.rulesVersion = body.taken_time_rules_version;
+      state.search.cursor = browse.cursor;
+      els.loadMore.hidden = !browse.cursor;
+      els.loadMore.disabled = false;
+      updateSearchPreviewNavigation();
+      var note = body.candidates_truncated
+        ? "检索候选已截断，最多浏览冻结快照中的5000条"
+        : "仅对当前冻结的语义候选排序，不代表完整图库时间轴";
+      setStatus(els.queryStatus, "按拍摄时间整理当前语义候选 · 已显示 " +
+        number(state.search.count) + " / " + number(body.total_candidates) + " · " + note);
+      return true;
+    }).catch(function (failure) {
+      if (!browse.active || generation !== state.search.requestGeneration ||
+          sessionId !== state.search.sessionId) return false;
+      els.loadMore.disabled = false;
+      onSearchFailure(failure);
+      return false;
+    });
   }
 
   function sendSearch(continuation) {
@@ -922,6 +1006,11 @@
     if (!continuation) {
       state.search.requestGeneration += 1;
       state.search.loading = false;
+      state.search.timeBrowse.active = false;
+      state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.previous = null;
+      els.candidateTimeToggle.hidden = true;
+      els.candidateTimeToggle.disabled = true;
     }
     var requestGeneration = state.search.requestGeneration;
     var filters = collectFilters();
@@ -1433,6 +1522,17 @@
     updateSearchPreviewNavigation();
     state.search.total = body.total_candidates;
     els.loadMore.hidden = !body.has_more;
+    els.candidateTimeToggle.hidden = !(
+      body.query && body.search_session_id && hits.length && state.search.mode === "text"
+    );
+    els.candidateTimeToggle.disabled = false;
+    if (!state.search.timeBrowse.active) {
+      state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.previous = null;
+      els.candidateTimeToggle.textContent = "按时间查看当前语义候选";
+    } else {
+      els.candidateTimeToggle.textContent = "返回相关度排序";
+    }
     els.queryActions.hidden = true;
     var notices = successNotices(body);
     if (body.place_parse_notice) {
@@ -1604,6 +1704,10 @@
           binding: state.search.binding,
           lastBody: state.search.lastBody,
           previewAssetId: state.search.preview.assetId,
+          timeBrowseActive: state.search.timeBrowse.active,
+          timeBrowseCursor: state.search.timeBrowse.cursor,
+          timeBrowsePrevious: state.search.timeBrowse.previous,
+          timeBrowseRulesVersion: state.search.timeBrowse.rulesVersion,
           scrollY: window.scrollY || 0,
         })
       );
@@ -1704,6 +1808,10 @@
           (hit.semantic_ready ? "是（该世代有已确认的向量条目）" : "否（本次没有已确认的向量条目）")
       )
     );
+    if (hit.capture_time && hit.capture_time.taken_at) {
+      caption.appendChild(element("span", "hit-evidence",
+        "拍摄时间：" + String(hit.capture_time.taken_at).replace("T", " ")));
+    }
     var channels = hit.matched_by || {};
     var names = Object.keys(channels);
     if (names.length) {
@@ -2460,6 +2568,7 @@
       resultNotices: document.getElementById("result-notices"),
       resultGrid: document.getElementById("result-grid"),
       loadMore: document.getElementById("load-more"),
+      candidateTimeToggle: document.getElementById("candidate-time-toggle"),
       uploadForm: document.getElementById("upload-form"),
       uploadFile: document.getElementById("upload-file"),
       uploadStatus: document.getElementById("upload-status"),
@@ -2484,6 +2593,7 @@
       sendSearch(false);
     });
     els.loadMore.addEventListener("click", continueSearch);
+    els.candidateTimeToggle.addEventListener("click", toggleCandidateTimeBrowse);
     document.getElementById("search-preview-close").addEventListener("click", function () {
       els.searchPreview.close();
     });
