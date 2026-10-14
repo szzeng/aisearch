@@ -1,6 +1,6 @@
 # P4-UI2-SCROLL-LOAD-B — 人物与合集目录滚动续页统一（UI 2.0）
 
-- **状态**：READY / 待实施（2026-10-14）；任务卡已提交，代码未实现。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-14）；目录 DOM 无界增长仍为 P1，`PERF_10K` 及若干浏览器路线 pending。详见 [`P4-UI2-SCROLL-LOAD-B.md` 报告](../reports/P4-UI2-SCROLL-LOAD-B.md)。
 - **优先级**：P1；重点保障人物选择/整理正确性和 1 万人规模下的请求效率。
 - **核对基准**：`szzeng/aisearch`，`master` HEAD `e3c42d75a665f01f4f4517533f98757baf9934db`，2026-10-14；实施前重新核对最新代码。
 - **建议执行**：GPT-6 High / LUNA High；用户在 Codex 手动选择。以最小前端行为改动为主，保持既有数据库与 `person_id`、`collection_id`、`face_id`、`asset_id` 合同。

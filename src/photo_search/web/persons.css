@@ -12,6 +12,7 @@
 .pa-search button, .pa-heading button { border-radius: 999px; }
 .pa-heading button[aria-pressed="true"], .pa-choice[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--bg); outline: 2px solid var(--accent); }
 .pa-people-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr)); gap: 1rem; margin: 1.4rem 0; }
+.pa-scroll-sentinel { min-height: 1px; grid-column: 1 / -1; pointer-events: none; }
 .pa-person-card { min-width: 0; position: relative; display: flex; align-items: center; flex-direction: column; gap: 0.4rem; border: 0; border-radius: 1rem; background: transparent; padding: 0.6rem; text-align: center; overflow-wrap: anywhere; }
 button.pa-person-card:hover { background: var(--bg); }
 button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); background: var(--bg); }

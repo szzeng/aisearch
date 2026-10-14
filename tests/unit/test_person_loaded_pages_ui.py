@@ -11,7 +11,7 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-ui2-person-batch-ux-fix-a-5' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-ui2-scroll-load-b-3' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
@@ -24,7 +24,7 @@ class Element {
  replaceChild(next,old){const index=this.children.indexOf(old);if(index<0)throw Error('missing child');old.parent=null;if(next.parent)next.parent.children=next.parent.children.filter(x=>x!==next);next.parent=this;this.children[index]=next;return old;}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);this.parent=null;}
  setAttribute(k,v){this.attributes[k]=v;}removeAttribute(k){delete this.attributes[k];}
- addEventListener(n,fn){this.events[n]=fn;}fire(n){return this.events[n]?.();}
+ addEventListener(n,fn){this.events[n]=fn;}removeEventListener(n){delete this.events[n];}fire(n,...args){return this.events[n]?.(...args);}
  querySelector(s){return Array.from(this.children).find(c=>String(c.className||'').split(' ').includes(s.slice(1)));}
  querySelectorAll(){return [];}focus(options){this.focusOptions=options;}
  showModal(){this.open=true;}close(){this.open=false;}
@@ -35,9 +35,11 @@ class Element {
 if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
 if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
-const calls=[];let revision=1,uuid=0,failSecond=false,delayed=null,summaryGate=null,releaseSummary=null;
+const calls=[];let revision=1,memberRevision=1,memberGate=null,memberActive=0,maxMemberActive=0,memberInitialFail=false,uuid=0,failSecond=false,delayed=null,summaryGate=null,releaseSummary=null,photoFixture=false;
+const photos=Array.from({length:125},(_,i)=>({asset_id:5000+i,taken_time:null}));
 const collections=Array.from({length:45},(_,i)=>({collection_id:i+1,name:'合集'+i,member_count:1,photo_count:2,instance_token:'token'+i}));
 let people=[1,2,3,4].map(id=>{const face=(id).toString(16).padStart(64,'0');return {person_id:id,name:null,revision:1,asset_count:5,avatar_face_id:face,thumbnail_url:`/api/v1/faces/${face}/thumbnail`};});
+const collectionMembers=Array.from({length:85},(_,i)=>({person_id:1000+i,name:'成员'+i,revision:1,asset_count:2,thumbnail_url:null}));
 let groups=[11,22,33,44];const groupFaces=new Map(groups.map(id=>[id,Array.from({length:5},(_,i)=>({
  face_id:(id*10+i).toString(16).padStart(64,'0'),asset_id:id*10+i,control_revision:0,thumbnail_url:null,
  organization_reason:'NEAR_TIE',suggestions:[{person_id:id,name:'候选'+id}]}))]));
@@ -47,7 +49,7 @@ function page(items,params,key,cap=1){let index=0;
  const has_more=index+cap<items.length;return {[key]:items.slice(index,index+cap),total:items.length,has_more,
   next_cursor:has_more?revision+':'+(index+cap):null};}
 const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTimeout:()=>1,clearTimeout(){},
- window:{scrollY:0,scrollBy(x,y){this.scrollY+=y;},scrollTo(x,y){this.scrollY=y;},addEventListener(){},confirm:()=>true,
+ window:{scrollY:0,scrollBy(x,y){this.scrollY+=y;},scrollTo(x,y){this.scrollY=y;},addEventListener(){},removeEventListener(){},confirm:()=>true,
   location:{href:'http://local/persons',search:''},localStorage:{getItem:()=>null,setItem(){}}},
  document:{readyState:'loading',cookie:'ps_csrf=test',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},
  fetch:async(url,options={})=>{calls.push({url,options});const u=new URL(url,'http://local');
@@ -68,14 +70,16 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
   if(url.includes('/persons/collections/')&&url.endsWith('/members'))return ok({changed:1});
   if(url.includes('/faces/inbox?'))return ok(page(groupFaces.get(22),u.searchParams,'faces',2));
   if(url.includes('/persons/collections?')){const index=Number(u.searchParams.get('cursor')||0),items=collections.slice(index,index+40),next=index+40<collections.length?String(index+40):null;return ok({collections:items,has_more:!!next,next_cursor:next});}
+  if(url.includes('/persons/collections/7/')&&url.includes('/people?')){if(memberInitialFail&&!u.searchParams.has('cursor')){memberInitialFail=false;return {ok:false,status:503,json:async()=>({code:'TEMPORARY'})};}const index=Number(u.searchParams.get('cursor')||0),items=collectionMembers.slice(index,index+40),next=index+40<collectionMembers.length?String(index+40):null;const response=ok({collection:{collection_id:7,instance_token:'a'.repeat(32),revision:memberRevision},people:items,has_more:!!next,next_cursor:next});if(memberGate){memberActive++;maxMemberActive=Math.max(maxMemberActive,memberActive);return memberGate.then(value=>{memberActive--;return value||response;});}return response;}
   if(url==='/api/v1/persons/3')return ok({...people[0],person_id:3,name:'已命名'});
-  if(url.includes('/persons/3/photos?'))return ok({assets:[],has_more:false});
+  if(url.includes('/persons/3/photos?')){if(!photoFixture)return ok({assets:[],has_more:false});const start=Number(u.searchParams.get('cursor')||0),limit=Number(u.searchParams.get('limit')||60),items=photos.slice(start,start+limit),next=start+limit<photos.length?String(start+limit):null;return ok({assets:items,has_more:!!next,next_cursor:next});}
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,boot};\n  if (document.readyState === "loading")');
+vm.createContext(context);vm.runInContext(fs.readFileSync('src/photo_search/web/scroll-pager.js','utf8'),context);
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,loadCollectionPeople,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,openCollection,loadPhotos,boot};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
-vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
+vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
 (async()=>{
  ui.boot();await flush();
@@ -123,6 +127,11 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  const browseBeforeExpiry=calls.filter(c=>c.url.includes('/persons/browse?')).length;
  ui.state.peopleLastLoadedAt-=61000;ui.refreshChangedPeople();await flush();await flush();await flush();
  assert(calls.filter(c=>c.url.includes('/persons/browse?')).length>browseBeforeExpiry,'stale list is checked on focus without a token change');
+ photoFixture=true;ui.state.person={person_id:3,name:'照片分页人物'};ui.state.collection=null;get('album').hidden=false;
+ assert(await ui.loadPhotos(false));assert.equal(get('photos').children.length,60);assert.equal(ui.state.photoHasMore,true);
+ assert(await ui.state.photoPager.retry());assert.equal(get('photos').children.length,120,'ordinary photo grid loads the next server page through its pager');
+ assert(await ui.state.photoPager.retry());assert.equal(get('photos').children.length,125);assert.equal(ui.state.photoHasMore,false);
+ assert.equal(new Set(ui.state.photoIds).size,125,'repeated pages do not duplicate loaded assets');
  const beforeAvatarChange=get('cards').children[1].avatarImage,changedFace='f'.repeat(64);
  people=people.map(p=>p.person_id===1?{...p,avatar_face_id:changedFace,thumbnail_url:`/api/v1/faces/${changedFace}/thumbnail`}:p);
  await ui.loadPeople(false);assert.notEqual(get('cards').children[1].avatarImage,beforeAvatarChange,'a changed avatar identity replaces the image');
@@ -149,7 +158,9 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  assert.equal(get('library').hidden,false);assert.equal(context.window.scrollY,1850);
  assert.equal(get('people').focusOptions.preventScroll,true);assert.deepEqual(ids(),[1,2,4]);
   people.push({person_id:3,name:null,revision:3,asset_count:5,thumbnail_url:null});revision++;
-  await ui.refreshPeopleViews();assert.equal(ids().length,4,'undo can refill the previously loaded extent after temporary exhaustion');
+  const beforeBoundedRefresh=calls.filter(c=>c.url.includes('/persons/browse?')).length;
+  await ui.refreshPeopleViews();assert.equal(ids().length,3,'deep refresh restores only the bounded three-page window');
+  assert.equal(calls.filter(c=>c.url.includes('/persons/browse?')).length-beforeBoundedRefresh,3,'deep refresh never replays an unbounded page history');
  // Search/quality/kind changes intentionally start a new first page.
  get('query').value='new';const queryStart=calls.length;await ui.loadPeople(false);
  assert.equal(ui.state.peoplePages,1);assert.equal(ids().length,1);
@@ -169,6 +180,37 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  get('query').value='fast';await ui.loadPeople(false);context.window.scrollY=321;
  resolve(ok({persons:[{person_id:999,name:'stale',asset_count:1}],has_more:false}));await pending;
  assert(!ids().includes(999));assert.equal(context.window.scrollY,321);
+ // Collection directory paging stays lazy, deduplicates stable IDs, and does not replace the selected collection.
+ await ui.loadCollections(false);get('collection-choice').value='7';await ui.loadCollections(true);
+ assert.equal(get('collections').children.length,45);assert.equal(get('collection-choice').children.length,46);
+ assert.equal(get('collection-choice').value,'7');assert.equal(new Set(get('collections').children.map(c=>c.dataset.collectionId)).size,45);
+ // Member paging is independent; new members are not selected, and Shift only spans loaded person IDs.
+ ui.state.collection={collection_id:7,instance_token:'a'.repeat(32),revision:1,name:'合集7',photo_count:2};
+ ui.state.collectionMode='people';ui.state.collectionPeopleCursor=null;ui.state.collectionPeopleHasMore=false;
+ get('album').hidden=false;get('library').hidden=true;get('collection-people').hidden=false;
+ memberInitialFail=true;await ui.loadCollectionPeople(false);assert.equal(get('collection-people').children.length,0);
+ assert.equal(get('collection-people-retry').hidden,false,'initial member failure exposes a retry action');
+ await get('collection-people-retry').fire('click');assert.equal(get('collection-people').children.length,40);
+ assert.equal(get('collection-people-retry').hidden,true,'successful retry hides its action');
+ get('collection-manage-toggle').fire('click');
+ await ui.loadCollectionPeople(true);assert.equal(get('collection-people').children.length,80);
+ assert.equal(get('collection-people').children[40].selectionBox.checked,false,'auto-loaded members start unselected');
+ const members=get('collection-people').children,first=members[0],shiftTarget=members[40];
+ first.selectionBox.checked=true;first.selectionBox.events.change();
+ shiftTarget.selectionBox.checked=true;shiftTarget.selectionBox.events.click({stopPropagation(){},preventDefault(){},shiftKey:true});
+ assert.equal(ui.state.collectionSelectedPeople.size,41,'Shift range is scoped to currently loaded members');
+ assert(ui.state.collectionSelectedPeople.has(1000)&&ui.state.collectionSelectedPeople.has(1040));
+ let releaseMembers;memberGate=new Promise(resolve=>{releaseMembers=resolve;});
+ const concurrentBefore=calls.filter(c=>c.url.includes('/people?')).length,pendingMemberPage=ui.loadCollectionPeople(true);
+ const duplicateMemberPage=ui.loadCollectionPeople(true);await duplicateMemberPage;
+ assert.equal(maxMemberActive,1,'the member cursor has at most one request in flight');
+ assert.equal(calls.filter(c=>c.url.includes('/people?')).length-concurrentBefore,1,'duplicate near-bottom calls do not duplicate a page request');
+ releaseMembers(ok({collection:{collection_id:7,instance_token:'a'.repeat(32),revision:1},people:collectionMembers.slice(80),has_more:false,next_cursor:null}));
+ await pendingMemberPage;memberGate=null;
+ memberRevision=2;ui.state.collectionPeopleCursor='80';ui.state.collectionPeopleHasMore=true;ui.state.collectionSelectedPeople.add(1000);
+ await ui.loadCollectionPeople(true);
+ assert.equal(ui.state.collectionPeopleStale,true,'a changed collection revision blocks old member results');
+ assert.equal(get('collection-people').children.length,0);assert.equal(ui.state.collectionSelectedPeople.size,0);
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(

@@ -1,3 +1,11 @@
+## Current user-directed task: P4-UI2-SCROLL-LOAD-B — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
+
+人物、合集目录、合集成员与现存普通照片网格已接独立游标自动续页；成员首屏失败提供重试；人物深页刷新最多恢复三页。定向 JUnit **24/0/0/0**、`node --check`、`git diff --check` 通过。[任务卡](P4-UI2-SCROLL-LOAD-B.md) / [报告](reports/P4-UI2-SCROLL-LOAD-B.md)。隔离合成浏览器实走人物两批及 Shift、95 个合集和 85 个成员分页；截图 pending。Luna High 关闭首屏重试 finding，仍有 P1 未解决：目录 DOM 随加载页增长无界，故 `PERF_10K` 与整卡验收 partial。未访问真实图库/模型/GPU、未跑全仓/打包/发布。
+
+## Next necessary action: P4-UI2-SCROLL-LOAD-B bounded DOM and remaining browser gates
+
+先定义兼容已加载范围选择的目录回收/虚拟化策略并补行为证据；再按报告补未命名/隐藏目录、折叠/切换停载、续页失败及普通网格第二页浏览器路线，若可导出则保存截图。不得把当前 125/95/85 合成规模外推为 10K 性能通过。
+
 ## Current user-directed task: P4-UI2-PLACE-ALBUM-NAV-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-14)
 
 地点相册列表/详情分离，接入精确深链与 Back/Forward，保留轻量列表/时间轴恢复，并避免更正刷新重建导航。revision 过期时回查当前 scope 权威第一页并提示。定向 JUnit **34/0/0/0**；三份 JS `node --check` 和 `git diff --check` 通过。[任务卡](tasks/P4-UI2-PLACE-ALBUM-NAV-A.md) / [报告](reports/P4-UI2-PLACE-ALBUM-NAV-A.md)。Luna High 全面限域复核发现的快照 revision 问题已修复；两轮 repair-only 复核关闭 finding，无剩余项（不是 DS-H）。用户要求不做浏览器测试，`BROWSER_NOT_RUN_USER_REQUEST`，所以整卡保持 **ACCEPTANCE PARTIAL**，没有真实浏览器交互、截图或视觉 PASS。未访问真实图库；未跑全仓、`PERF_200K/CHECK_300K`、模型/GPU、打包或发布检查。

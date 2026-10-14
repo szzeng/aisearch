@@ -13,7 +13,7 @@ def test_120_selected_people_submit_as_one_collection_write_without_selection_re
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
-  constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.value="";this.checked=false;this.hidden=false;this.disabled=false;this.classList={add(){},remove(){}};}
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.dataset={};this.value="";this.checked=false;this.hidden=false;this.disabled=false;this.classList={add(){},remove(){}};}
   set textContent(value){this.text=String(value);this.children=[];}
   get textContent(){return this.text||"";}
   append(...items){items.forEach(item=>{if(item&&typeof item==="object"){if(item.parentNode){const old=item.parentNode.children.indexOf(item);if(old>=0)item.parentNode.children.splice(old,1);}item.parentNode=this;}this.children.push(item);});}
