@@ -89,6 +89,7 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 .pa-collection-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); }
 .pa-collection-card { min-height: 7rem; padding: 0.9rem; background: var(--panel); box-shadow: var(--shadow-soft); }
 .pa-collection-badge { width: 3.25rem; height: 3.25rem; border-radius: 0.85rem; background: var(--tint); }
+#pa-album-avatar .pa-collection-badge { min-height: 3.75rem; height: auto; padding: 0.35rem; font-size: 0.78rem; line-height: 1.2; text-align: center; overflow-wrap: anywhere; }
 .pa-collection-open { font-weight: 650; }
 #pa-inbox { margin-top: 1.5rem; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg); }
 #pa-inbox > h3 { margin-top: 1.4rem; }
