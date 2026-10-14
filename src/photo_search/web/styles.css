@@ -711,12 +711,15 @@ dl.media-list dd {
 body.app-shell {
   display: grid;
   grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr);
+  /* Keep the full-height sidebar from stretching empty notice/nav rows above main. */
+  grid-template-rows: max-content max-content max-content minmax(0, 1fr);
   grid-template-areas:
     "sidebar header"
     "sidebar notice"
     "sidebar page-nav"
     "sidebar main";
   align-content: start;
+  height: 100vh;
   min-height: 100vh;
   padding: 0;
   column-gap: clamp(1rem, 2.5vw, 2.5rem);
@@ -856,12 +859,14 @@ body.app-shell {
 @media (max-width: 680px) {
   body.app-shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
     grid-template-areas:
       "sidebar"
       "header"
       "notice"
       "page-nav"
       "main";
+    height: auto;
     column-gap: 0;
   }
 
