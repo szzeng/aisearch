@@ -155,7 +155,9 @@
     if (!$("collections-panel").hidden || state.collectionListLoaded) loads.push(reloadCollections());
     const openGroups = (host) => Array.from(host.children).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
     if (state.organize) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
-    if (state.inboxHiddenVisible) loads.push(loadHiddenFaces(false, openGroups($("inbox-hidden-cards"))));
+    const hiddenLoad = state.inboxHiddenVisible
+      ? loadHiddenFaces(false, openGroups($("inbox-hidden-cards"))) : Promise.resolve(true);
+    if (state.inboxHiddenVisible) loads.push(hiddenLoad);
     // Entering a member album suspends the parent collection rather than closing it.
     const collection = state.collection || state.returnCollection;
     state.collectionSelectedPeople.clear(); updateCollectionSelection();
@@ -165,6 +167,7 @@
     const listSeq = state.listSeq, inboxSeq = state.inboxSeq;
     await Promise.all(loads);
     if (listSeq === state.listSeq && inboxSeq === state.inboxSeq) restoreLibraryPosition(position);
+    return { hiddenRefreshed: await hiddenLoad };
   }
   function notifyPeopleChanged() {
     state.peopleChangeToken = requestId();
@@ -1099,7 +1102,10 @@
       card.confirmed = true; confirm.textContent = "✓ 已确认是" + name(person); confirm.setAttribute("aria-pressed", "true");
       rememberOperation(result, "已确认是“" + name(person) + "”"); notifyPeopleChanged();
       if (card.hiddenFace) {
-        refreshPeopleViews();
+        const refreshed = await refreshPeopleViews().catch(() => ({ hiddenRefreshed: false }));
+        if (refreshed.hiddenRefreshed === false) {
+          message("归属已保存，但已忽略列表刷新失败。请点“刷新”重试查看，不要重复确认。");
+        }
       } else {
         state.inboxConfirmationsPending = true;
         $("inbox-more").disabled = true;
@@ -1134,7 +1140,7 @@
       const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
       const page = await readLoadedPages(route + encodeURIComponent(groupKey), values, "faces",
         cursor ? 1 : Math.max(1, details.loadedPages || 0), current);
-      if (!page) return;
+      if (!page) return true;
       const shown = new Set(Array.from(list.children).map((card) => card.faceId));
       page.faces.forEach((face) => {
         if (!shown.has(String(face.face_id))) { renderInboxFace(list, face, Boolean(hiddenFace), details); shown.add(String(face.face_id)); }
@@ -1142,7 +1148,8 @@
       more.hidden = !page.has_more;
       details.loadedPages = cursor ? (details.loadedPages || 0) + page.loadedPages : Math.max(details.loadedPages || 0, page.loadedPages);
       more.dataset.cursor = confirmationVersion === (details.confirmationVersion || 0) ? page.next_cursor || "" : "";
-    } catch (error) { message(errorText(error)); }
+      return true;
+    } catch (error) { message(errorText(error)); return false; }
     finally { more.disabled = false; }
   }
   function renderInboxGroup(group, kind, hiddenFace) {
@@ -1170,7 +1177,13 @@
     more.className += " pa-inbox-group-more"; more.hidden = true;
     let loaded = false; details.groupKey = group.group_key;
     details.openGroup = () => {
-      if (!loaded) { loaded = true; return loadInboxGroup(details, group.group_key, kind, null, hiddenFace); }
+      if (!loaded) {
+        loaded = true;
+        return loadInboxGroup(details, group.group_key, kind, null, hiddenFace).then((ok) => {
+          if (!ok) loaded = false;
+          return ok;
+        });
+      }
     };
     details.addEventListener("toggle", () => {
       if (details.open) details.openGroup();
@@ -1253,18 +1266,26 @@
     if (!more) { state.selectAnchors.forEach((_, key) => { if (key.startsWith("faces:hidden:")) state.selectAnchors.delete(key); }); $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
     try {
       const page = await api("/faces/inbox/hidden/groups" + params(values));
-      if (seq !== state.hiddenFaceSeq) return;
+      if (seq !== state.hiddenFaceSeq) return true;
       page.cards.forEach((card) => $("inbox-hidden-cards").append(
         card.type === "candidate_group" ? renderInboxGroup(card, "all", true) : (() => {
           const wrapper = node("div", undefined, "pa-inbox-single");
           renderInboxFace(wrapper, card.face, true); return wrapper;
         })()));
+      const groupLoads = [];
       if (reopenGroups && reopenGroups.length) Array.from($("inbox-hidden-cards").children).forEach((item) => {
-        if (item.groupKey && reopenGroups.includes(item.groupKey)) { item.open = true; item.openGroup(); }
+        if (item.groupKey && reopenGroups.includes(item.groupKey)) {
+          item.open = true; groupLoads.push(item.openGroup());
+        }
       });
+      if (!(await Promise.all(groupLoads)).every(Boolean)) return false;
       state.inboxHiddenCursor = page.next_cursor; $("inbox-hidden-more").hidden = !page.has_more;
       if (!$("inbox-hidden-cards").children.length) $("inbox-hidden-cards").append(node("p", "暂时没有已忽略的人脸。", "hint"));
-    } catch (error) { if (seq === state.hiddenFaceSeq) message(errorText(error)); }
+      return true;
+    } catch (error) {
+      if (seq === state.hiddenFaceSeq) { message(errorText(error)); return false; }
+      return true;
+    }
     finally { if (seq === state.hiddenFaceSeq) { state.busy.delete("hidden-faces"); $("inbox-hidden-more").disabled = false; } }
   }
   async function rematchFaces(restart) {
@@ -1925,7 +1946,11 @@
     }
     rememberOperation(result, label); message(label, result.operation_type !== "FACE_REGROUP");
     if ($("edit").open) $("edit").close(); state.editSeq++; state.choiceSeq++;
-    notifyPeopleChanged(); refreshPeopleViews();
+    notifyPeopleChanged();
+    const refreshed = await refreshPeopleViews().catch(() => ({ hiddenRefreshed: false }));
+    if (refreshed.hiddenRefreshed === false) {
+      message(label + "；已忽略列表刷新失败。请点“刷新”重试查看，不要重复提交归属。");
+    }
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.refreshVisible();
     if (state.person) {
       const id = state.person.person_id;

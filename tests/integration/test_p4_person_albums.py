@@ -885,6 +885,125 @@ def test_single_face_correction_leaves_neighbour_alone_and_undo_restores(api_env
     api_env.scenario(scenario)
 
 
+def test_ignored_assignment_visibility_group_cursor_and_undo(api_env: ApiEnv) -> None:
+    photos = seed_library(api_env, {
+        "ignored-shared.jpg": [(20, 20, 90, 90), (130, 20, 200, 90)],
+        "ignored-second.jpg": [(30, 30, 100, 100)],
+        "ignored-loose.jpg": [(40, 40, 110, 110)],
+    })
+    catalog = api_env.service.catalog
+    candidate = add_person(catalog, name="候选甲")
+    other_candidate = add_person(catalog, name="候选乙")
+    target = add_person(catalog, name="目标人物")
+    first, coface = photos["ignored-shared.jpg"]["faces"]
+    second = photos["ignored-second.jpg"]["faces"][0]
+    loose = photos["ignored-loose.jpg"]["faces"][0]
+    add_link(catalog, first, candidate, decision="SUGGESTED", confidence=.9)
+    add_link(catalog, second, candidate, decision="SUGGESTED", confidence=.8)
+    add_link(catalog, coface, other_candidate, decision="SUGGESTED", confidence=.7)
+    ignored_ids = [first, second, coface, loose]
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        hidden = await client.post(
+            "/api/v1/faces/inbox/visibility", headers=headers,
+            json={"face_ids": ignored_ids, "hidden": True, "ignore_state": "TEMPORARY"},
+        )
+        assert hidden.status_code == 200
+
+        flat = (await client.get("/api/v1/faces/inbox/hidden", params={"limit": 1})).json()
+        assert flat["has_more"]
+        initial = (await client.get("/api/v1/faces/inbox/hidden/groups", params={"limit": 1})).json()
+        assert initial["has_more"] and initial["cards"][0]["type"] == "candidate_group"
+        candidate_card = initial["cards"][0]
+        assert candidate_card["photo_count"] == 2
+        assert candidate_card["face"]["face_id"] in {first, second}
+        original_group_page = (await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{candidate_card['group_key']}",
+            params={"limit": 1},
+        )).json()
+        assert original_group_page["has_more"] and len(original_group_page["faces"]) == 1
+
+        body = {
+            "contract_version": "p3-face-correction-contracts.v1",
+            "request_id": "ignored-assignment",
+            "action": "assign",
+            "expected_revision": 0,
+            "target_person_id": target,
+        }
+        changed = await client.put(
+            f"/api/v1/faces/{first}/assignment", headers=headers, json=body,
+        )
+        assert changed.status_code == 200
+        assert catalog.read_one(
+            "SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (first,)
+        )["ignore_state"] == "TEMPORARY"
+        target_album = (await client.get(f"/api/v1/persons/{target}/photos")).json()
+        assert any(
+            face["face_id"] == first
+            for photo in target_album["assets"]
+            for face in photo["person_faces"]
+        )
+
+        assert first not in {face["face_id"] for face in (await client.get(
+            "/api/v1/faces/inbox/hidden"
+        )).json()["faces"]}
+        assert first not in {
+            card["face"]["face_id"] for card in (await client.get(
+                "/api/v1/faces/inbox/hidden/groups"
+            )).json()["cards"]
+        }
+        remaining_group = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{candidate_card['group_key']}"
+        )
+        assert remaining_group.status_code == 200
+        assert remaining_group.json()["faces"] == []
+        downgraded = (await client.get("/api/v1/faces/inbox/hidden/groups")).json()
+        candidate_single = next(
+            card for card in downgraded["cards"] if card["face"]["face_id"] == second
+        )
+        assert candidate_single["type"] == "single_face" and candidate_single["photo_count"] == 1
+        assert coface in {card["face"]["face_id"] for card in downgraded["cards"]}
+        assert loose in {face["face_id"] for face in (await client.get(
+            "/api/v1/faces/inbox/hidden"
+        )).json()["faces"]}
+        stale_group_cursor = await client.get(
+            "/api/v1/faces/inbox/hidden/groups",
+            params={"limit": 1, "cursor": initial["next_cursor"]},
+        )
+        assert stale_group_cursor.status_code == 409
+        # The legacy flat cursor remains an ordinary face-id keyset cursor.
+        flat_next = await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "cursor": flat["next_cursor"],
+        })
+        assert flat_next.status_code == 200
+
+        operation = changed.json()
+        undone = await client.post(
+            f"/api/v1/person-operations/{operation['operation_id']}/undo",
+            headers=headers,
+            json={"request_id": "undo-ignored-assignment", "expected_operation_revision": operation["operation_revision"]},
+        )
+        assert undone.status_code == 200
+        restored = (await client.get("/api/v1/faces/inbox/hidden")).json()
+        assert first in {face["face_id"] for face in restored["faces"]}
+        restored_groups = (await client.get("/api/v1/faces/inbox/hidden/groups")).json()
+        restored_candidate = next(
+            card for card in restored_groups["cards"]
+            if card["type"] == "candidate_group" and card["group_key"] == candidate_card["group_key"]
+        )
+        assert restored_candidate["photo_count"] == 2
+        assert catalog.read_one(
+            "SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (first,)
+        )["ignore_state"] == "TEMPORARY"
+        assert coface in {face["face_id"] for face in (await client.get(
+            "/api/v1/faces/inbox/hidden"
+        )).json()["faces"]}
+
+    api_env.scenario(scenario)
+
+
 def test_inbox_candidate_groups_sort_distinct_photos_and_page_consistently(api_env: ApiEnv) -> None:
     photos = {f"a-{i}.jpg": [(20, 20, 90, 90)] for i in range(10)}
     photos["a-0.jpg"] = [(20, 20, 90, 90), (130, 20, 200, 90)]

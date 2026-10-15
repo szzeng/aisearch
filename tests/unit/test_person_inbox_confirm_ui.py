@@ -22,7 +22,7 @@ class Element {
  querySelectorAll(){return [];}focus(){}showModal(){this.open=true;}close(){this.open=false;}
 }
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
-const calls=[],saved=new Set(),storage=new Map();let uuid=0,fail=null,release=null,delay=false;
+const calls=[],saved=new Set(),storage=new Map();let uuid=0,fail=null,release=null,delay=false,hiddenGroupRefreshFail=false;
 const candidate={person_id:17,name:'妈妈',thumbnail_url:'/api/v1/faces/'+ '1'.repeat(64) + '/thumbnail'},other={person_id:18,name:'爸爸',thumbnail_url:'/api/v1/faces/'+ '2'.repeat(64) + '/thumbnail'};
 const face=(id,reason,person=candidate)=>({face_id:id.repeat(64),asset_id:id.charCodeAt(0),thumbnail_url:null,
  control_revision:4,organization_reason:reason,mode:'AUTO_ALLOWED',suggestions:[person]});
@@ -40,18 +40,20 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
    saved.add(url.split('/')[4]);return ok({changed:true,operation_id:'op-'+uuid,operation_revision:1});
   }
   if(url.includes('/person-operations/')){saved.clear();return ok({changed:true});}
+  if(hiddenGroupRefreshFail&&url.includes('/faces/inbox/hidden/groups/candidate%3A'))return {ok:false,status:503,json:async()=>({code:'TEMPORARY'})};
   if(url.includes('/faces/inbox/groups/candidate%3A')){
    const id=url.includes('candidate%3A17')?17:18;
    return ok({faces:faces.filter(f=>f.suggestions[0].person_id===id&&!saved.has(f.face_id)),has_more:id===17,next_cursor:'next'});
   }
   if(url.includes('/faces/inbox/groups?'))return ok({cards:[group(candidate,faces[0]),group(other,faces[2])],has_more:false});
+  if(url.includes('/faces/inbox/hidden/groups?'))return ok({cards:[group(candidate,faces[0])],has_more:false});
   if(url.includes('/faces/inbox/summary?'))return ok({total:3-saved.size,reasons:{},held:0});
   if(url.includes('/persons/browse?'))return ok({persons:[other],has_more:false,total:1});
   if(url.includes('/persons/collections?'))return ok({collections:[],has_more:false});
   return ok({faces:[],cards:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,renderInboxGroup,loadInbox,undo,submitEdit};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderInboxFace,renderInboxGroup,renderFaceManagement,loadInbox,undo,submitEdit};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui;
 const writes=()=>calls.filter(c=>c.url.endsWith('/assignment'));
 const descendants=e=>[e,...e.children.flatMap(descendants)];
@@ -101,9 +103,10 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
                  {...face('f','NO_MATCH'),suggestions:[]}]){
   const host=new Element('div');ui.renderInboxFace(host,f,false);assert(!host.children[0].confirmButton);
  }
- ui.state.batchMode=true;host=new Element('div');ui.renderInboxFace(host,faces[0],true);
- assert(!host.children[0].confirmButton,'batch selection keeps its dedicated controls');
- ui.state.batchMode=false;ui.state.organize=true;get('inbox-kind').value='all';await ui.loadInbox(false);
+ ui.state.hiddenBatchMode=true;host=new Element('div');ui.renderInboxFace(host,faces[0],true);
+ get('inbox-hidden-cards').append(host.children[0]);ui.renderFaceManagement();
+ assert(host.children[0].confirmButton.hidden,'batch selection hides its dedicated controls');
+ ui.state.hiddenBatchMode=false;ui.state.organize=true;get('inbox-kind').value='all';await ui.loadInbox(false);
  const groups=get('inbox-cards').children.slice();
  for(const g of groups){g.open=true;g.fire('toggle');}await flush();
  const first=groups[0].children[1].children[0],second=groups[0].children[1].children[1];
@@ -153,12 +156,20 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  const flat=flatHost.children[0],flatBefore=calls.length;await flat.confirmButton.fire('click');
  assert(flat.confirmButton.textContent.includes('✓'));assert.equal(calls.length,flatBefore+1);
  await ui.loadInbox(false);assert.equal(ui.state.inboxConfirmationsPending,false);
- ui.state.inboxHiddenVisible=true;
- const hiddenHost=new Element('div');ui.renderInboxFace(hiddenHost,faces[0],true);
+ ui.state.inboxHiddenVisible=true;hiddenGroupRefreshFail=true;
+ const expanded=ui.renderInboxGroup(group(candidate,faces[0]),'all',true);expanded.open=true;
+ get('inbox-hidden-cards').replaceChildren(expanded);
+ const hiddenHost=new Element('div');ui.renderInboxFace(hiddenHost,faces[1],true);
  const hidden=hiddenHost.children[0],hiddenBefore=calls.length;await hidden.confirmButton.fire('click');await flush();await flush();
  assert(hidden.confirmButton.textContent.includes('✓'));
+ assert(get('status').textContent.includes('归属已保存')&&get('status').textContent.includes('不要重复确认'),'refresh failure is distinct from the successful assignment');
  assert(calls.slice(hiddenBefore).some(c=>c.url.includes('/faces/inbox/hidden/groups?')),'ignored confirmation refreshes its candidate list');
+ assert(calls.slice(hiddenBefore).some(c=>c.url.includes('/faces/inbox/hidden/groups/candidate%3A')),'refresh waits for expanded ignored group details');
  assert.equal(ui.state.inboxConfirmationsPending,false,'ignored confirmation does not block the visible inbox cursor');
+ const refreshedGroup=get('inbox-hidden-cards').children[0];
+ const groupReadsBefore=calls.filter(c=>c.url.includes('/faces/inbox/hidden/groups/candidate%3A')).length;
+ refreshedGroup.open=false;refreshedGroup.fire('toggle');refreshedGroup.open=true;refreshedGroup.fire('toggle');await flush();
+ assert(calls.filter(c=>c.url.includes('/faces/inbox/hidden/groups/candidate%3A')).length>groupReadsBefore,'failed expanded group can retry on reopen');
  const manualHost=new Element('div');ui.renderInboxFace(manualHost,{...faces[0],face_id:'d'.repeat(64),suggestions:[]},true);
  await manualHost.children[0].children[3].fire('click');await flush();
  const choice=get('choices').children.find(e=>String(e.className||'').includes('pa-choice'));

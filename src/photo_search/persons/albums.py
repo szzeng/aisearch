@@ -649,6 +649,7 @@ _NO_MEMBER = (
     + MEMBER_PREDICATE
     + ")"
 )
+_HIDDEN_INBOX_WHERE = _NO_MEMBER
 _INBOX_ELIGIBLE_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
 _INBOX_WHERE = _INBOX_ELIGIBLE_WHERE + " AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id = f.face_id)"
 
@@ -756,7 +757,8 @@ def inbox_hidden_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[s
         raise ApiError(INVALID_CURSOR, "invalid face position", status=422)
     rows = catalog.read_all(
         _SELECT_FACES
-        + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id>? "
+        + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id>? AND "
+        + _HIDDEN_INBOX_WHERE + " "
         + "ORDER BY f.face_id LIMIT ?",
         (after, limit + 1),
     )
@@ -821,7 +823,10 @@ def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "al
     if kind not in _INBOX_KINDS:
         raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
     if hidden:
-        eligible_source = _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id "
+        eligible_source = (
+            _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE "
+            + _HIDDEN_INBOX_WHERE
+        )
         parameters: tuple[Any, ...] = ()
     else:
         eligible_source = _SELECT_FACES + "WHERE " + _inbox_where(quality_view, kind)
@@ -959,8 +964,8 @@ def inbox_hidden_group_page(catalog: Any, *, limit: int, cursor: str | None) -> 
     for row in rows:
         face_id = str(row["representative_face_id"] if row["card_type"] == "candidate_group" else row["face_id"])
         face = catalog.read_one(
-            _SELECT_FACES
-            + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id=?",
+            _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id "
+            + "WHERE f.face_id=? AND " + _HIDDEN_INBOX_WHERE,
             (face_id,),
         )
         if row["card_type"] == "candidate_group":

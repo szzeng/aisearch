@@ -1,6 +1,6 @@
 # P4-PERSON-IGNORED-ASSIGN-VISIBILITY-FIX-A — 已忽略人脸确认归属后仍留在列表
 
-- **状态**：TODO / 待实施；本卡只记录修复范围，不代表代码已修复
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-15）；按用户要求未做浏览器验证，不代表整卡 PASS。详见[实施报告](../reports/P4-PERSON-IGNORED-ASSIGN-VISIBILITY-FIX-A.md)
 - **优先级**：P2，个人使用可见的状态一致性问题
 - **编卡基线**：2026-10-15，`szzeng/aisearch` 默认分支；实施时先检查最新 HEAD / 当前工作区，保留并行改动
 - **推荐模型**：GPT-6 High / 同等中高推理代码模型；仅查询和前端小改时使用聚焦复核，若触及身份权威写入、人工锁、撤销协议，再按 V3.1 §2.4 升级受影响面审查

@@ -1,8 +1,8 @@
 # Development status
 
-## Current user-directed task: P4-UI2-SHELL-STICKY-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-15)
+## Current user-directed task: P4-PERSON-IGNORED-ASSIGN-VISIBILITY-FIX-A — IMPLEMENTED / ACCEPTANCE PARTIAL (2026-10-15)
 
-五页公共页头与桌面导航按窗口滚动结构吸顶，窄屏导航随文滚动，地图视口布局保留；搜索页 wrapper 样式及各 CSS cache-bust 已同步。时间轴日期标题按实际页头高度偏移。定向 JUnit **4/0/0/0**、`node --check`、`git diff --check` 通过。Luna High 独立限域复核两项 finding 均修复并复看关闭，无剩余 finding（不是 DS-H）。按用户要求跳过浏览器，记 `BROWSER_NOT_RUN_USER_REQUEST`，整卡不标 PASS。[任务卡](tasks/P4-UI2-SHELL-STICKY-A.md) / [报告](reports/P4-UI2-SHELL-STICKY-A.md)。
+已忽略待读列表在三个 API 查询源头排除 `MEMBER_PREDICATE` 命中的有效成员；确认/手选成功后等待人物与忽略列表刷新，展开组详情失败可重试。定向 JUnit **2/0/0/0**、Ruff、`node --check`、`git diff --check` 通过。GPT-6 Luna / high 聚焦复核关闭首轮 finding，无新增 finding。按用户要求跳过浏览器，记 `BROWSER_NOT_RUN_USER_REQUEST`，整卡不标 PASS。[任务卡](tasks/P4-PERSON-IGNORED-ASSIGN-VISIBILITY-FIX-A.md) / [报告](reports/P4-PERSON-IGNORED-ASSIGN-VISIBILITY-FIX-A.md)。
 
 ## Next task: P4-UI2-SHELL-STICKY-BROWSER-A
 
