@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -100,6 +101,7 @@ CORE_TABLES = {
     # P4-PERSON-COLLECTION-A: stable person anchors and collection metadata.
     "person_collections",
     "person_collection_members",
+    "person_collection_face_members",
     "person_operation_items",
     "person_operations",
     "person_operation_retention",
@@ -267,12 +269,103 @@ def test_face_inbox_ignore_state_migration_preserves_legacy_rows_as_temporary() 
         connection.close()
 
 
+def test_schema_31_upgrade_adds_empty_face_members_without_changing_existing_facts(tmp_path: Path, monkeypatch) -> None:
+    source_migrations = schema.MIGRATIONS_DIR
+    old_migrations = tmp_path / "migrations-v31"
+    old_migrations.mkdir()
+    for migration in source_migrations.glob("[0-9][0-9][0-9][0-9]_*.sql"):
+        if int(migration.name[:4]) <= 31:
+            shutil.copy2(migration, old_migrations / migration.name)
+    db_path = _db_path(tmp_path)
+    with monkeypatch.context() as old:
+        old.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 31)
+        old.setattr(schema, "MIGRATIONS_DIR", old_migrations)
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+        connection = connect_rw(db_path)
+        try:
+            person = int(connection.execute(
+                "INSERT INTO persons(name,name_key,avatar_face_id,merged_into,revision,created_at,updated_at) "
+                "VALUES ('保留人物','保留人物',NULL,NULL,1,1,1)"
+            ).lastrowid)
+            collection = int(connection.execute(
+                "INSERT INTO person_collections(name,name_key,revision,created_at,updated_at,instance_token) "
+                "VALUES ('既有合集','nfc1:既有合集',7,10,20,?)",
+                ("a" * 32,),
+            ).lastrowid)
+            connection.execute(
+                "INSERT INTO person_collection_members(collection_id,person_id) VALUES (?,?)", (collection, person)
+            )
+            connection.execute("INSERT INTO person_hidden(person_id,ignore_state) VALUES (?,'EXCLUDED')", (person,))
+            connection.commit()
+            person_rows = [tuple(row) for row in connection.execute("SELECT * FROM persons")]
+            person_members = [tuple(row) for row in connection.execute("SELECT * FROM person_collection_members")]
+            person_hidden = [tuple(row) for row in connection.execute("SELECT * FROM person_hidden")]
+        finally:
+            connection.close()
+
+    with monkeypatch.context() as current:
+        current.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 32)
+        current.setattr(schema, "MIGRATIONS_DIR", source_migrations)
+        broken_migrations = tmp_path / "migrations-v32-broken"
+        shutil.copytree(source_migrations, broken_migrations)
+        face_migration = broken_migrations / "0032_person_collection_face_members.sql"
+        face_migration.write_text(face_migration.read_text(encoding="utf-8") + "\nSELECT missing_fault_column;\n", encoding="utf-8")
+        current.setattr(schema, "MIGRATIONS_DIR", broken_migrations)
+        with pytest.raises(CatalogError) as failed:
+            migrate_database(db_path, data_root=_data_root(tmp_path))
+        assert failed.value.code == MIGRATION_FAILED
+        assert inspect_database(db_path) == 31
+        after_rollback = open_readonly(db_path)
+        try:
+            assert after_rollback.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='person_collection_face_members'"
+            ).fetchone() is None
+        finally:
+            after_rollback.close()
+
+        current.setattr(schema, "MIGRATIONS_DIR", source_migrations)
+        result = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert result.previous_version == 31
+    assert result.applied == (32,)
+    assert result.backup_path is not None
+    repeated = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert repeated.schema_version == 32
+    assert repeated.applied == ()
+    connection = open_readonly(db_path)
+    try:
+        schema.verify_schema(connection, 32)
+        assert [tuple(row) for row in connection.execute("SELECT * FROM persons")] == person_rows
+        assert [tuple(row) for row in connection.execute("SELECT * FROM person_collection_members")] == person_members
+        assert [tuple(row) for row in connection.execute("SELECT * FROM person_hidden")] == person_hidden
+        assert connection.execute("SELECT COUNT(*) FROM person_collection_face_members").fetchone()[0] == 0
+        foreign_keys = [tuple(row) for row in connection.execute("PRAGMA foreign_key_list(person_collection_face_members)")]
+        assert len(foreign_keys) == 1
+        assert foreign_keys[0][2] == "person_collections"
+        assert list(connection.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        connection.close()
+    restore_root = tmp_path / "isolated-restore"
+    restore_root.mkdir()
+    restored_path = restore_root / "catalog.sqlite3"
+    shutil.copy2(result.backup_path, restored_path)
+    restored = open_readonly(restored_path)
+    try:
+        assert schema.read_schema_version(restored) == 31
+        assert [tuple(row) for row in restored.execute("SELECT * FROM persons")] == person_rows
+        assert [tuple(row) for row in restored.execute("SELECT * FROM person_collection_members")] == person_members
+        assert [tuple(row) for row in restored.execute("SELECT * FROM person_hidden")] == person_hidden
+        assert "person_collection_face_members" not in schema.business_tables(restored)
+    finally:
+        restored.close()
+
+
 def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     migrate_database(db_path, data_root=_data_root(tmp_path))
     connection = connect_rw(db_path)
     try:
         connection.execute("DROP TABLE person_collection_members")
+        connection.execute("DROP TABLE person_collection_face_members")
         connection.execute("DROP TABLE person_collections")
         connection.execute("DROP TABLE face_inbox_hidden")
         connection.execute("DROP TABLE person_hidden")
@@ -310,6 +403,7 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
     connection = connect_rw(db_path)
     try:
         connection.execute("DROP TABLE person_collection_members")
+        connection.execute("DROP TABLE person_collection_face_members")
         connection.execute("DROP TABLE person_collections")
         connection.execute("DROP TABLE person_operation_retention")
         connection.execute("DROP TABLE person_hidden")

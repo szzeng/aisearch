@@ -1,7 +1,7 @@
 # P4-PERSON-FAST-ORGANIZE-A — 人物快捷整理与待归类人脸直接收录合集（优化版）
 
-- 日期：2026-10-15；状态：**设计完成 / 待实施**。
-- 核对基线：`szzeng/aisearch` 默认分支 HEAD `b6cc2cff89b2049c5c2789a256e42540a4927109`；当前 `SUPPORTED_SCHEMA_VERSION=31`。**开工重查 HEAD、实际 Schema 和工作区，不照抄迁移编号。**
+- 日期：2026-10-15；状态：**M1 实施完成 / M2 实施完成，验收部分完成（BROWSER_PENDING、SOURCE_CROP_PENDING）**。
+- 设计时基线：`szzeng/aisearch` 默认分支 HEAD `b6cc2cff89b2049c5c2789a256e42540a4927109`；实施时重新核对 HEAD `6c7c681`、开工 Schema v31 和干净工作区，现迁移至 v32。
 - 推荐：GPT-6 High；一次功能卡、分两个实施里程碑。只做相关合成测试和聚焦审查，用户自行用本机浏览器少量试用。不扫描真实图库、不运行全量识别。
 
 ## 1. 目标、现状与不变原则
@@ -151,3 +151,10 @@
 
 - **「仅加入合集」**：只收藏本次选择的照片/人脸；不代表确认同一个人，也不会因此自动收进今后出现的相似脸。
 - **「确认人物并继续识别」**：明确指定/建立未命名人物后，符合现有识别条件的新照片才可能自动归到此人物；需将**人物**加入合集，合集才会随之自动增加照片。
+
+## 9. 本次实施记录
+
+- 详细文件、JUnit、Ruff/Node/diff、Luna High 复核结论及未验证项见[实施报告](../reports/P4-PERSON-FAST-ORGANIZE-A.md)。
+- 最终相关定向测试为 31/31 通过。浏览器选择流程已观察，但最终提交确认触发 CUA/CDP 超时，服务端无写入；因此浏览器写入/回显仍 PENDING。
+- 合成来源 A→B 使用实际 persist_face_document()、FaceIndexCoordinator 与 reconcile_asset()，但没有执行真实 source-crop 解码/检测 worker；该验收仍 PENDING。
+- 下一闭环：[P4-PERSON-FAST-ORGANIZE-B](P4-PERSON-FAST-ORGANIZE-B.md)。不访问真实图库，不下载模型，不跑全仓/性能/打包。

@@ -74,7 +74,8 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0028 adds a non-undoable create-person-from-face operation type.
 # 0029 adds selected-face atomic regroup; 0030 classifies person ignores; 0031
 # classifies per-face inbox ignores while preserving existing hidden rows as TEMPORARY.
-SUPPORTED_SCHEMA_VERSION = 31
+# 0032 adds soft-anchored face-level person collection membership.
+SUPPORTED_SCHEMA_VERSION = 32
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

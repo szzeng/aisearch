@@ -5,7 +5,7 @@
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
   let setSearchScopeAction = function () {};
-  const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoHasMore: false, photoPager: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0, previewHandle: null, previewUI: null,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -415,6 +415,7 @@
   function renderFaceManagement() {
     const busy = state.faceVisibilityBusy || state.writing || Boolean(state.pendingWrite);
     const selected = state.selectedInboxFaces.size;
+    const selectedForCollection = new Set([...state.selectedInboxFaces, ...state.selectedHiddenFaces]).size;
     $("inbox-batch-toggle").setAttribute("aria-pressed", String(state.inboxBatchMode));
     $("inbox-batch-toggle").textContent = state.inboxBatchMode ? "完成整理" : "批量整理";
     $("inbox-batch-toggle").disabled = busy;
@@ -425,9 +426,17 @@
     $("inbox-selection-count").hidden = !state.inboxBatchMode;
     $("inbox-selection-count").textContent = "已选 " + selected + " / 500 张脸";
     $("inbox-hide-submit").hidden = !state.inboxBatchMode;
+    $("inbox-hide-submit").textContent = $("inbox-ignore-state").value === "EXCLUDED" ? "明确排除所选人脸" : "暂时忽略所选人脸";
     $("inbox-hide-submit").disabled = busy || selected === 0 || selected > 500;
     $("inbox-ignore-state-label").hidden = !state.inboxBatchMode;
     $("inbox-ignore-state").disabled = busy;
+    $("inbox-collection-choice").hidden = !state.inboxBatchMode && !state.hiddenBatchMode;
+    $("inbox-collection-choice").disabled = busy;
+    $("inbox-collection-hide-label").hidden = !state.inboxBatchMode && !state.hiddenBatchMode;
+    $("inbox-collection-hide").disabled = busy;
+    $("inbox-collection-add").hidden = !state.inboxBatchMode && !state.hiddenBatchMode;
+    $("inbox-collection-add").disabled = busy || selectedForCollection === 0 || selectedForCollection > 500;
+    $("inbox-collection-add").textContent = "加入所选人脸到合集 (" + selectedForCollection + ")";
     $("inbox-restore-submit").hidden = !state.hiddenBatchMode || !state.inboxHiddenVisible;
     $("inbox-restore-submit").disabled = busy || state.selectedHiddenFaces.size === 0 || state.selectedHiddenFaces.size > 500;
     $("inbox-hidden-selection-count").hidden = !state.hiddenBatchMode || !state.inboxHiddenVisible;
@@ -619,10 +628,11 @@
     const loading = (async () => {
       try {
         const page = await api("/persons/collections" + params(values)); if (seq !== state.collectionListSeq) return false;
-        const select = $("collection-choice"), old = select.value;
+        const select = $("collection-choice"), faceSelect = $("inbox-collection-choice"), old = select.value || faceSelect.value;
         if (!more) {
           $("collections").replaceChildren();
           select.replaceChildren(Object.assign(node("option", "选择合集"), { value: "" }));
+          faceSelect.replaceChildren(Object.assign(node("option", "选择合集"), { value: "" }));
           state.collectionById.clear();
         }
         const existing = new Set(Array.from($("collections").children).map((card) => String(card.dataset.collectionId || "")));
@@ -631,15 +641,16 @@
           state.collectionById.set(String(collection.collection_id), collection);
           if (existing.has(id)) return;
           existing.add(id);
-          const option = node("option", collection.name + "（" + collection.member_count + " 人 · " + collection.photo_count + " 张照片）"); option.value = String(collection.collection_id); select.append(option);
+          const option = node("option", collection.name + "（" + collection.member_count + " 个人物 · " + Number(collection.face_member_count || 0) + " 张脸 · " + collection.photo_count + " 张照片）"); option.value = String(collection.collection_id); select.append(option);
+          const faceOption = node("option", option.textContent); faceOption.value = option.value; faceSelect.append(faceOption);
           const card = node("article", undefined, "pa-collection-card");
           card.dataset.collectionId = id;
-          card.append(button(collection.name + " · " + collection.member_count + " 人 · " + collection.photo_count + " 张照片", () => openCollection(collection), "pa-collection-open"));
+          card.append(button(collection.name + " · " + collection.member_count + " 个人物 · " + Number(collection.face_member_count || 0) + " 张脸 · " + collection.photo_count + " 张照片", () => openCollection(collection), "pa-collection-open"));
           card.append(button("改名", () => renameCollection(collection), "pa-collection-action"));
           card.append(button("删除", () => deleteCollection(collection), "pa-collection-action"));
           $("collections").append(card);
         });
-        if (old) select.value = old;
+        if (old) { select.value = old; faceSelect.value = old; }
         state.collectionListCursor = page.next_cursor; state.collectionsHasMore = Boolean(page.has_more && page.next_cursor);
         state.collectionListLoaded = true;
         $("collections-more").hidden = !state.collectionsHasMore;
@@ -714,7 +725,7 @@
     $("title").textContent = state.collection.name;
     $("album-kind").textContent = "人物合集";
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
-    $("album-note").textContent = Number(state.collection.photo_count || 0) + " 张照片 · 合集只是放在一起看照片；照片按拍摄时间排序，同一张照片只显示一次。";
+    $("album-note").textContent = Number(state.collection.member_count || 0) + " 个人物 · " + Number(state.collection.face_member_count || 0) + " 张单独收录的人脸 · " + Number(state.collection.photo_count || 0) + " 张去重照片。按脸收录只保存这张脸所在的照片。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
     refreshSearchScopeAction();
@@ -726,10 +737,10 @@
   }
   function openCollection(collection) {
     if (state.writing || state.pendingWrite || state.collectionActionBusy || state.collectionPeopleBusy) return;
-    state.returnCollection = null; state.collectionSeq++;
+    state.returnCollection = null; state.collectionSeq++; state.selectedCollectionFaces.clear(); state.collectionFaceLoadedIds = []; state.collectionFaceCursor = null; state.collectionFacesManage = false; state.collectionFacesStale = false;
     state.collection = collection; state.person = null; state.collectionMode = "photos"; state.collectionPeopleCursor = null; state.collectionSelectedPeople.clear(); state.collectionPeopleManage = false; state.collectionRemoveUnknown = false; state.collectionPeopleStale = false;
     state.coverMode = false; state.searching = false; $("library").hidden = true; $("album").hidden = false;
-    $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
+    $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("collection-face-section").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
     $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false");
     collectionHeading(); loadPhotos(false); syncDirectoryPagers(); $("back").focus();
   }
@@ -756,6 +767,144 @@
     else state.collectionSelectedPeople.add(card.personId);
     state.selectAnchors.set("collection:" + collection.collection_id + ":" + collection.instance_token, card.personId);
     updateCollectionSelection();
+  }
+  function collectionFaceCard(face) {
+    const card = node("article", undefined, "pa-person-card pa-collection-face-card");
+    card.faceId = String(face.face_id); card.dataset.faceId = card.faceId; card.dataset.collectionFace = "true";
+    const image = face.thumbnail_url || null;
+    card.append(picture(image, face.status === "CURRENT" ? "单独收录的人脸" : "原照片，等待人脸重新关联", "pa-avatar"));
+    const title = face.assigned_person
+      ? "已归属 " + face.assigned_person.name + " · 仅收此照片"
+      : face.candidate ? "建议归入 " + face.candidate.name + " · 仅当前收录脸" : "单独收录的人脸";
+    card.append(node("strong", title));
+    card.append(node("span", face.status === "CURRENT" ? "只包含这张脸所在的照片" : face.status === "NEEDS_REASSOCIATION" ? "待重新关联；已保留照片，不会指向其他人脸" : face.status === "SOURCE_MISSING" ? "来源不可用；收录锚点仍保留" : "照片内容已变化；收录暂不显示", "hint"));
+    if (face.ignore_state) card.append(node("span", face.ignore_state === "EXCLUDED" ? "明确排除" : "暂时忽略", "hint"));
+    const choose = node("input"); choose.type = "checkbox"; choose.className = "pt-person-checkbox";
+    choose.hidden = !state.collectionFacesManage; choose.checked = state.selectedCollectionFaces.has(card.faceId);
+    choose.setAttribute("aria-label", "选择单独收录的人脸");
+    choose.disabled = !state.collectionFacesManage || state.collectionPeopleBusy || state.collectionFacesStale || state.writing || Boolean(state.pendingWrite);
+    choose.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (event.shiftKey) { event.preventDefault(); selectCollectionFaceRange(card.faceId); }
+    });
+    choose.addEventListener("change", () => {
+      if (!state.collectionFacesManage || state.collectionPeopleBusy || state.collectionFacesStale) return;
+      if (choose.checked) {
+        if (!state.selectedCollectionFaces.has(card.faceId) && state.selectedCollectionFaces.size >= 500) {
+          message("一次最多选择 500 张脸。"); choose.checked = false; return;
+        }
+        state.selectedCollectionFaces.add(card.faceId);
+      } else state.selectedCollectionFaces.delete(card.faceId);
+      state.collectionFaceAnchor = card.faceId; updateCollectionFaceSelection();
+    });
+    card.selectionBox = choose; card.append(choose);
+    card.addEventListener("click", (event) => {
+      if (event.target === choose) return;
+      if (state.collectionFacesManage) selectCollectionFaceRange(card.faceId);
+      else preview(Number(face.asset_id), event.currentTarget, face);
+    });
+    return card;
+  }
+  function selectCollectionFaceRange(faceId) {
+    if (!state.collectionFacesManage || state.collectionFacesStale || state.collectionPeopleBusy || state.writing || state.pendingWrite) return;
+    const ids = state.collectionFaceLoadedIds, to = ids.indexOf(String(faceId));
+    if (to < 0) return;
+    const from = ids.indexOf(String(state.collectionFaceAnchor || ""));
+    const range = from < 0 ? [String(faceId)] : ids.slice(Math.min(from, to), Math.max(from, to) + 1);
+    if (state.selectedCollectionFaces.size + range.filter((id) => !state.selectedCollectionFaces.has(id)).length > 500) {
+      message("Shift 连选会超过 500 张脸，未更改已有选择。"); return;
+    }
+    range.forEach((id) => state.selectedCollectionFaces.add(id)); state.collectionFaceAnchor = String(faceId);
+    updateCollectionFaceSelection();
+  }
+  async function loadCollectionFaces(more, parentCollection) {
+    const collection = parentCollection || state.collection;
+    if (!collection || state.busy.has("collectionFacesLoad") || (more && (!state.collectionFaceCursor || !state.collectionFaceHasMore || state.collectionFacesStale))) return false;
+    const seq = (state.collectionFaceSeq || 0) + 1; state.collectionFaceSeq = seq;
+    if (!more) {
+      state.collectionFaceCursor = null; state.collectionFaceHasMore = false; state.collectionFaceLoadedIds = [];
+      state.collectionFaceGroups = new Map(); state.collectionFaceCards = new Map(); state.selectedCollectionFaces.clear(); state.collectionFaceAnchor = null;
+      $("collection-faces").replaceChildren(); $("collection-faces-retry").hidden = true;
+    }
+    const values = { limit: 40 }; if (more) values.cursor = state.collectionFaceCursor;
+    state.busy.add("collectionFacesLoad"); $("collection-faces-note").textContent = "正在加载单独收录的人脸……";
+    try {
+      const page = await api(collectionPath(collection, "/faces") + params(values));
+      if (seq !== state.collectionFaceSeq || !state.collection || state.collection.instance_token !== collection.instance_token) return false;
+      if (!page.collection || page.collection.instance_token !== collection.instance_token || Number(page.collection.revision) !== Number(collection.revision)) {
+        state.collectionFacesStale = true; state.collectionFacesManage = false; state.selectedCollectionFaces.clear();
+        $("collection-faces").replaceChildren(); $("collection-faces-note").textContent = "合集版本已变化，请刷新后重新选择。";
+        updateCollectionFaceSelection(); return false;
+      }
+      for (const face of page.faces || []) {
+        const id = String(face.face_id); if (state.collectionFaceLoadedIds.includes(id)) continue;
+        state.collectionFaceLoadedIds.push(id);
+        const card = collectionFaceCard(face);
+        state.collectionFaceCards.set(id, card);
+        if (face.candidate) {
+          const key = String(face.candidate.person_id);
+          let group = state.collectionFaceGroups.get(key);
+          if (!group) {
+            group = node("details", undefined, "pa-collection-face-group");
+            group.dataset.candidateId = key;
+            const summary = node("summary", "建议归入 " + face.candidate.name + "（只显示本合集已收录的人脸）", "hint");
+            const members = node("div", undefined, "pa-people-grid"); group.append(summary, members);
+            state.collectionFaceGroups.set(key, { group, members }); $("collection-faces").append(group);
+          }
+          group.members.append(card);
+        } else $("collection-faces").append(card);
+      }
+      state.collectionFaceCursor = page.next_cursor; state.collectionFaceHasMore = Boolean(page.has_more && page.next_cursor);
+      state.collectionFacesStale = false;
+      $("collection-faces-more").hidden = !state.collectionFaceHasMore;
+      $("collection-faces-note").textContent = Number(collection.face_member_count || 0) + " 张脸 · 候选分组只展示当前合集已收录的人脸；分组不会更改归属。";
+      updateCollectionFaceSelection(); return true;
+    } catch (error) {
+      if (seq === state.collectionFaceSeq) {
+        if (error.status === 409) { state.collectionFacesStale = true; state.collectionFacesManage = false; state.selectedCollectionFaces.clear(); }
+        $("collection-faces-note").textContent = "已收录人脸加载失败：" + errorText(error);
+        if (!more) $("collection-faces-retry").hidden = false;
+      }
+      return false;
+    } finally { state.busy.delete("collectionFacesLoad"); updateCollectionFaceSelection(); }
+  }
+  function updateCollectionFaceSelection() {
+    const managing = state.collectionFacesManage;
+    const busy = state.writing || Boolean(state.pendingWrite) || state.collectionPeopleBusy || state.collectionFacesStale;
+    $("collection-faces-manage").textContent = managing ? "完成管理人脸" : "管理已收录人脸";
+    $("collection-faces-manage").setAttribute("aria-pressed", String(managing));
+    $("collection-faces-manage").disabled = busy;
+    $("collection-faces-selected").hidden = !managing;
+    $("collection-faces-selected").textContent = "已选 " + state.selectedCollectionFaces.size + " 张脸";
+    ["collection-faces-select-loaded", "collection-faces-clear", "collection-faces-remove"].forEach((id) => { $(id).hidden = !managing; });
+    $("collection-faces-reload").hidden = !state.collectionFacesStale;
+    $("collection-faces-remove").disabled = busy || !state.selectedCollectionFaces.size;
+    $("collection-faces-select-loaded").disabled = busy;
+    $("collection-faces-clear").disabled = busy;
+    Array.from((state.collectionFaceCards || new Map()).values()).forEach((card) => {
+      const selected = state.selectedCollectionFaces.has(String(card.faceId));
+      card.selectionBox.hidden = !managing; card.selectionBox.checked = selected; card.selectionBox.disabled = !managing || busy;
+      card.setAttribute("data-selected", String(selected));
+    });
+  }
+  function selectLoadedCollectionFaces() {
+    if (!state.collectionFacesManage || state.collectionFacesStale || state.collectionPeopleBusy || state.writing || state.pendingWrite) return;
+    const unselected = state.collectionFaceLoadedIds.filter((id) => !state.selectedCollectionFaces.has(id));
+    if (state.selectedCollectionFaces.size + unselected.length > 500) { message("全选已加载的人脸会超过 500 张，未更改已有选择。"); return; }
+    unselected.forEach((id) => state.selectedCollectionFaces.add(id)); updateCollectionFaceSelection();
+  }
+  async function removeCollectionFaceSelection() {
+    if (!state.collection || !state.selectedCollectionFaces.size || state.collectionFacesStale || state.collectionPeopleBusy) return;
+    const ids = Array.from(state.selectedCollectionFaces); if (ids.length > 500) { message("一次最多移出 500 张脸。"); return; }
+    if (!window.confirm("只从这个合集移出所选 " + ids.length + " 张脸？人脸归属和忽略状态保持不变。")) return;
+    const collection = state.collection; state.collectionPeopleBusy = true; updateCollectionFaceSelection();
+    try {
+      const result = await api(collectionPath(collection, "/faces"), { action: "remove", face_ids: ids, expected_revision: Number(collection.revision) });
+      state.collection = { ...collection, revision: result.revision, face_member_count: Math.max(0, Number(collection.face_member_count || 0) - result.changed) };
+      state.selectedCollectionFaces.clear(); await refreshCollectionsIfUsed(); await loadCollectionFaces(false); await loadPhotos(false);
+      message("已移出所选人脸收录；人物归属和忽略状态未改变。", true);
+    } catch (error) { state.collectionFacesStale = error.status === 409; message("移出人脸失败：" + errorText(error)); }
+    finally { state.collectionPeopleBusy = false; updateCollectionFaceSelection(); }
   }
   async function loadCollectionPeople(more, parentCollection) {
     const collection = parentCollection || state.collection;
@@ -900,7 +1049,7 @@
     if (state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionRemoveUnknown || state.collectionPeopleStale || !state.collection || !state.collectionPeopleManage || !state.collectionSelectedPeople.size) return;
     if (state.collectionSelectedPeople.size > 500) { message("一次最多移出 500 个人物。"); return; }
     const ids = Array.from(state.collectionSelectedPeople);
-    if (!window.confirm("从这个合集中移出所选 " + ids.length + " 人，并恢复到人物或未命名列表？")) return;
+    if (!window.confirm("从这个合集中移出所选 " + ids.length + " 人？人物的暂时忽略和明确排除状态会保留。")) return;
     const collection = state.collection;
     state.collectionPeopleBusy = true; updateCollectionSelection();
     try {
@@ -909,7 +1058,7 @@
       state.collectionSelectedPeople.clear(); state.collectionPeopleManage = false; state.selectAnchors.delete("collection:" + collection.collection_id + ":" + collection.instance_token);
       state.collectionPeopleCursor = null; await loadCollectionPeople(false); await refreshCollectionsIfUsed();
       await loadPeople(false); notifyPeopleChanged();
-      message("已从合集移出，可在人物或未命名列表找到。", true);
+      message("已从合集中移出；人物忽略状态保持不变。", true);
     } catch (error) {
       if (error.status === 409 || error.code === "INVALID_CURSOR") {
         state.collectionPeopleStale = true; state.collectionPeopleManage = false; state.collectionSelectedPeople.clear();
@@ -933,29 +1082,53 @@
     } catch (error) { message("刷新合集人物失败：" + errorText(error)); }
     finally { state.collectionPeopleBusy = false; updateCollectionSelection(); }
   }
-  async function addSelectionToCollection() {
-    if (!state.selectedPeople.size || state.visibilityBusy) return;
+  async function addSelectionToCollection(fromFaces) {
+    const personIds = Array.from(state.selectedPeople);
+    const faceIds = Array.from(new Set([...state.selectedInboxFaces, ...state.selectedHiddenFaces]));
+    if ((!personIds.length && !faceIds.length) || state.visibilityBusy || state.faceVisibilityBusy) return;
+    if (personIds.length > 500 || faceIds.length > 500) { message("人物和人脸分别最多提交 500 项，请分批处理。"); return; }
     if (!(await ensureAllCollectionsLoaded())) {
       $("list-note").textContent = "合集选项暂不可用，请先重试合集列表。";
       return;
     }
-    const selected = $("collection-choice").value;
+    const selected = fromFaces ? $("inbox-collection-choice").value : $("collection-choice").value;
     let collection = selected ? state.collectionById.get(selected) : null;
     if (!selected) {
       collection = await createCollection(); if (!collection) return;
       state.collectionById.set(String(collection.collection_id), collection);
     }
     if (!collection) { message("合集已变化，请刷新后重试。"); return; }
-    const ids = Array.from(state.selectedPeople);
-    if (!window.confirm("将所选 " + ids.length + " 人加入合集？" + ($("collection-hide").checked ? "并同时忽略人物列表中的这些人。" : ""))) return;
-    state.visibilityBusy = true; renderPeopleManagement();
+    const hideAfterAdd = fromFaces ? $("inbox-collection-hide").checked : $("collection-hide").checked;
+    const detail = (personIds.length ? personIds.length + " 个人物" : "") + (personIds.length && faceIds.length ? " + " : "") + (faceIds.length ? faceIds.length + " 张脸" : "");
+    if (!window.confirm("将所选 " + detail + " 加入“" + collection.name + "”？" + (hideAfterAdd ? "并将本次收录的对象暂时忽略。" : "") + "加入合集不会确认人物身份。")) return;
+    state.visibilityBusy = true; state.faceVisibilityBusy = true; renderPeopleManagement(); renderFaceManagement();
+    let personAdded = 0, faceAdded = 0; const failures = [];
     try {
-      await api(collectionPath(collection, "/members"), { action: "add", person_ids: ids, hide_after_add: $("collection-hide").checked });
-      state.selectedPeople.clear(); state.listCursor = null; await loadPeople(false); await refreshCollectionsIfUsed();
-      notifyPeopleChanged();
-      message("已加入合集。", true);
-    } catch (error) { message("加入合集失败：" + errorText(error)); }
-    finally { state.visibilityBusy = false; renderPeopleManagement(); }
+      if (personIds.length) {
+        try {
+          const result = await api(collectionPath(collection, "/members"), { action: "add", person_ids: personIds, hide_after_add: hideAfterAdd });
+          personAdded = Number(result.changed || 0); collection = { ...collection, revision: Number(result.revision) };
+          state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear(); state.listCursor = null;
+        } catch (error) { failures.push("人物：" + errorText(error)); }
+      }
+      if (faceIds.length) {
+        try {
+          const result = await api(collectionPath(collection, "/faces"), { action: "add", face_ids: faceIds,
+            expected_revision: Number(collection.revision), hide_after_add: hideAfterAdd });
+          faceAdded = Number(result.changed || 0); collection = { ...collection, revision: Number(result.revision), face_member_count: Number(collection.face_member_count || 0) + faceAdded };
+          state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); state.inboxCursor = null; state.inboxHiddenCursor = null;
+        } catch (error) { failures.push("人脸：" + errorText(error)); }
+      }
+      state.collectionById.set(String(collection.collection_id), collection);
+      if (personAdded || faceAdded) {
+        await Promise.all([personIds.length ? loadPeople(false) : Promise.resolve(true), faceIds.length ? loadInbox(false) : Promise.resolve(true), faceIds.length && state.inboxHiddenVisible ? loadHiddenFaces(false) : Promise.resolve(true), refreshCollectionsIfUsed()]);
+        notifyPeopleChanged();
+      }
+      const success = [];
+      if (personIds.length && !failures.some((item) => item.startsWith("人物："))) success.push("人物 " + personAdded + "/" + personIds.length);
+      if (faceIds.length && !failures.some((item) => item.startsWith("人脸："))) success.push("人脸 " + faceAdded + "/" + faceIds.length);
+      message((success.length ? "加入完成：" + success.join("，") + "。" : "没有加入任何对象。") + (failures.length ? " 部分提交失败：" + failures.join("；") : ""), !failures.length);
+    } finally { state.visibilityBusy = false; state.faceVisibilityBusy = false; renderPeopleManagement(); renderFaceManagement(); }
   }
   function backToLibrary() {
     if (state.writing || state.pendingWrite || state.collectionPeopleBusy) return;
@@ -1152,6 +1325,33 @@
     } catch (error) { message(errorText(error)); return false; }
     finally { more.disabled = false; }
   }
+  async function selectInboxCandidateGroup(groupKey, kind, hiddenFace) {
+    const match = /^candidate:[1-9]\d*$/.test(String(groupKey || ""));
+    if (!match || state.faceVisibilityBusy || state.writing || state.pendingWrite) return;
+    const selected = hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces;
+    const seq = hiddenFace ? state.hiddenFaceSeq : state.inboxSeq;
+    const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
+    const values = hiddenFace ? { limit: 30 } : { limit: 30, kind, quality_view: state.qualityView };
+    const faces = []; let cursor = null;
+    try {
+      do {
+        const pageValues = cursor ? { ...values, cursor } : values;
+        const page = await api(route + encodeURIComponent(groupKey) + params(pageValues));
+        if ((hiddenFace ? seq !== state.hiddenFaceSeq : seq !== state.inboxSeq)) throw new Error("待整理列表已变化，请刷新后重新选择。");
+        (page.faces || []).forEach((face) => { const id = String(face.face_id || ""); if (id && !faces.includes(id)) faces.push(id); });
+        if (faces.length > 500) throw new Error("本组超过 500 张脸，请在组内分页逐批选择。");
+        cursor = page.has_more ? page.next_cursor : null;
+        if (page.has_more && !cursor) throw new Error("候选组分页已失效，请刷新后重试。");
+      } while (cursor);
+      const additions = faces.filter((id) => !selected.has(id));
+      if (selected.size + additions.length > 500) { message("加入本组会超过 500 张脸，未更改已有选择。"); return; }
+      if (!faces.length || !window.confirm("明确选择本组当前的 " + faces.length + " 张脸？提交时只发送这些 face_id，不会确认人物身份。")) return;
+      additions.forEach((id) => selected.add(id));
+      if (hiddenFace) state.hiddenBatchMode = true; else state.inboxBatchMode = true;
+      renderFaceManagement();
+      message("已选择本组 " + faces.length + " 张脸；可加入合集或继续逐脸整理。", true);
+    } catch (error) { message("选择候选组失败：" + errorText(error)); }
+  }
   function renderInboxGroup(group, kind, hiddenFace) {
     const details = node("details", undefined, "pa-inbox-group");
     const summary = node("summary", undefined, "pa-person-card");
@@ -1171,6 +1371,8 @@
     summary.append(comparison,
       node("strong", "可能是" + (group.candidate_name || "未命名的人")),
       node("span", group.photo_count + (hiddenFace ? " 张已忽略照片" : " 张待确认照片"), "hint"));
+    const selectGroup = button("明确选择本组人脸", () => selectInboxCandidateGroup(group.group_key, kind, hiddenFace), "pa-inbox-group-select");
+    selectGroup.hidden = !/^candidate:[1-9]\d*$/.test(String(group.group_key || ""));
     const list = node("div", undefined, "pa-people-grid pa-inbox-group-faces");
     const more = button(hiddenFace ? "再看一些已忽略人脸" : "再看一些", () =>
       loadInboxGroup(details, group.group_key, kind, more.dataset.cursor || null, hiddenFace));
@@ -1196,7 +1398,7 @@
         if (details.confirmationDirty) flushInboxConfirmations();
       }
     });
-    details.append(summary, list, more);
+    details.append(summary, selectGroup, list, more);
     return details;
   }
   async function loadInboxSummary() {
@@ -1481,6 +1683,16 @@
         if (item.person_faces_has_more) faces.append(node("span", "更多人脸请点开查看"));
         card.append(faces);
       }
+      if (state.collection && item.archived_faces && item.archived_faces.length) {
+        const faces = node("span", undefined, "pa-photo-person pa-archived-photo-faces");
+        faces.append(node("span", "单独收录的人脸"));
+        item.archived_faces.forEach((face) => {
+          if (face.thumbnail_url) faces.append(picture(face.thumbnail_url, "本合集单独收录的人脸", "pa-choice-avatar"));
+          else faces.append(node("span", "待重新关联", "hint"));
+        });
+        if (item.archived_faces_has_more) faces.append(node("span", "另有更多单独收录的人脸，请在人物页查看"));
+        card.append(faces);
+      }
       const time = item.taken_time;
       if (time && time.taken_at) card.append(node("span", time.taken_at.slice(0, 10) + (time.label === "capture" ? "" : " · 文件时间"), "pa-photo-date"));
       $("photos").append(card);
@@ -1696,7 +1908,7 @@
       if (next !== undefined) await preview(next);
     } finally { state.previewMoving = false; updatePreviewNavigation(); }
   }
-  async function preview(id, returnFocus) {
+  async function preview(id, returnFocus, focusFace) {
     const seq = ++state.previewSeq;
     state.previewAssetId = id; state.previewListSeq = state.photoListSeq;
     if (!state.previewHandle) createPreviewUI(id, returnFocus);
@@ -1710,7 +1922,14 @@
       const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !state.previewHandle || !state.previewHandle.dialog.open) return;
       if (state.collection) {
         previewNode("faces").replaceChildren(); previewNode("faceDetail").hidden = true; previewNode("review").hidden = true;
-        previewNode("note").textContent = "人物合集只用于集中浏览照片。";
+        if (focusFace) {
+          const focused = node("div", undefined, "pa-person-card pa-collection-face-focus");
+          if (focusFace.thumbnail_url) focused.append(picture(focusFace.thumbnail_url, "本次单独收录的人脸", "pa-avatar"));
+          focused.append(node("strong", "本合集单独收录的人脸"));
+          focused.append(node("span", focusFace.status === "CURRENT" ? "照片已打开，旁边显示本次收录的对应人脸。" : "照片已打开；原人脸暂不可用，收录锚点仍保留。", "hint"));
+          previewNode("faces").append(focused);
+        }
+        previewNode("note").textContent = focusFace ? "已打开原照片，并标出本次单独收录的人脸。" : "人物合集只用于集中浏览照片。";
         return;
       }
       const selectedId = state.person && state.person.person_id;
@@ -2097,6 +2316,10 @@
     $("inbox-summary-retry").addEventListener("click", loadInboxSummary);
     $("collections-retry").addEventListener("click", reloadCollections);
     $("collection-choice").addEventListener("focus", ensureAllCollectionsLoaded);
+    $("inbox-collection-choice").addEventListener("focus", ensureAllCollectionsLoaded);
+    const syncCollectionChoices = (source, target) => { const value = source.value; if (value && Array.from(target.options).some((option) => option.value === value)) target.value = value; };
+    $("collection-choice").addEventListener("change", () => syncCollectionChoices($("collection-choice"), $("inbox-collection-choice")));
+    $("inbox-collection-choice").addEventListener("change", () => syncCollectionChoices($("inbox-collection-choice"), $("collection-choice")));
     $("collection-state").addEventListener("change", () => {
       const cleared = state.selectedPeople.size;
       state.selectedPeople.clear();
@@ -2125,6 +2348,8 @@
       setQualityView($("quality-toggle").checked ? "all" : "clean");
     });
     $("inbox-hide-submit").addEventListener("click", () => submitInboxVisibility(true));
+    $("inbox-ignore-state").addEventListener("change", renderFaceManagement);
+    $("inbox-collection-add").addEventListener("click", () => addSelectionToCollection(true));
     $("inbox-assign").addEventListener("click", () => editSelectedInbox("assign"));
     $("inbox-unassign").addEventListener("click", () => editSelectedInbox("unassign"));
     $("inbox-auto").addEventListener("click", () => editSelectedInbox("restore_auto"));
@@ -2154,9 +2379,17 @@
     $("collections-toggle").addEventListener("click", () => { $("collections-panel").hidden = !$("collections-panel").hidden; syncDirectoryPagers(); if (!$("collections-panel").hidden) loadCollections(false); });
     $("collection-create").addEventListener("click", async () => { const collection = await createCollection(); if (collection) { $("collections-panel").hidden = false; syncDirectoryPagers(); message("已新建人物合集。", true); } });
     if (!state.collectionPager) $("collections-more").addEventListener("click", () => loadCollections(true));
-    $("collection-add").addEventListener("click", addSelectionToCollection);
-    $("collection-photos-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionPeopleManage) finishCollectionPeopleManagement(); state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("collection-people-retry").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; syncDirectoryPagers(); loadPhotos(false); });
-    $("collection-people-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionMode !== "people") { state.collectionPeopleManage = false; state.collectionSelectedPeople.clear(); } state.collectionMode = "people"; refreshSearchScopeAction(); $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; updateCollectionSelection(); syncDirectoryPagers(); loadCollectionPeople(false); });
+    $("collection-add").addEventListener("click", () => addSelectionToCollection(false));
+    $("collection-photos-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionPeopleManage) finishCollectionPeopleManagement(); state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("collection-people-retry").hidden = true; $("collection-face-section").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; syncDirectoryPagers(); loadPhotos(false); });
+    $("collection-people-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionMode !== "people") { state.collectionPeopleManage = false; state.collectionSelectedPeople.clear(); } state.collectionMode = "people"; refreshSearchScopeAction(); $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; $("collection-face-section").hidden = false; updateCollectionSelection(); updateCollectionFaceSelection(); syncDirectoryPagers(); loadCollectionPeople(false); });
+    $("collection-face-section").addEventListener("toggle", () => { if ($("collection-face-section").open && state.collection && state.collectionMode === "people" && !state.collectionFaceLoadedIds.length) loadCollectionFaces(false); });
+    $("collection-faces-manage").addEventListener("click", () => { if (state.collectionPeopleBusy || state.collectionFacesStale) return; state.collectionFacesManage = !state.collectionFacesManage; if (!state.collectionFacesManage) { state.selectedCollectionFaces.clear(); state.collectionFaceAnchor = null; } updateCollectionFaceSelection(); });
+    $("collection-faces-select-loaded").addEventListener("click", selectLoadedCollectionFaces);
+    $("collection-faces-clear").addEventListener("click", () => { state.selectedCollectionFaces.clear(); updateCollectionFaceSelection(); });
+    $("collection-faces-remove").addEventListener("click", removeCollectionFaceSelection);
+    $("collection-faces-retry").addEventListener("click", () => loadCollectionFaces(false));
+    $("collection-faces-reload").addEventListener("click", () => { state.collectionFacesStale = false; loadCollectionFaces(false); });
+    $("collection-faces-more").addEventListener("click", () => loadCollectionFaces(true));
     $("collection-people-retry").addEventListener("click", () => loadCollectionPeople(false));
     if (!state.collectionPeoplePager) $("collection-people-more").addEventListener("click", () => loadCollectionPeople(true));
     $("collection-manage-toggle").addEventListener("click", () => {

@@ -170,6 +170,97 @@ def test_explicitly_excluded_person_is_not_an_automatic_face_candidate(tmp_path)
         harness.close()
 
 
+def test_collection_person_match_extends_across_synthetic_sources_but_static_face_does_not(
+    tmp_path,
+) -> None:
+    from photo_search.persons import collections
+
+    def run_case(root, *, ignore_state=None, dynamic_member, static_face):
+        harness = RedetectionHarness(root)
+        try:
+            source_a = harness.add_asset("source-A-anchor.jpg")
+            harness.write_face_document(source_a, [record(1)])
+            anchor = harness.catalog.read_one(
+                "SELECT face_id FROM faces WHERE asset_id = ?", (source_a,)
+            )["face_id"]
+            person = harness.add_person()
+            add_link(harness.catalog, anchor, person, assignment_kind="MANUAL")
+            collection = collections.create_collection(harness.catalog, "来源延续") ["collection"]
+            collection_id, token = int(collection["collection_id"]), str(collection["instance_token"])
+            if dynamic_member:
+                collections.edit_members(
+                    harness.catalog, collection_id, action="add", person_ids=[person], instance_token=token
+                )
+            if static_face:
+                collections.edit_face_members(
+                    harness.catalog, collection_id, action="add", face_ids=[anchor],
+                    instance_token=token, expected_revision=int(collection["revision"]),
+                )
+                collection = collections.collection_detail(
+                    harness.catalog, collection_id, instance_token=token
+                )["collection"]
+            if ignore_state:
+                with harness.catalog.write() as connection:
+                    connection.execute(
+                        "INSERT INTO person_hidden(person_id, ignore_state) VALUES (?, ?)",
+                        (person, ignore_state),
+                    )
+            index = FaceIndexCoordinator(harness.catalog)
+            index.process_all(now_ms=2)
+            source_b = harness.add_asset("source-B-synthetic.jpg")
+            harness.write_face_document(source_b, [record(1)])
+            index.process_all(now_ms=3)
+            target = harness.catalog.read_one(
+                "SELECT face_id FROM faces WHERE asset_id = ?", (source_b,)
+            )["face_id"]
+            decisions = reconcile_asset(harness.catalog, asset_id=source_b, coordinator=index)
+            assigned = harness.effective_link(target)
+            summary = next(
+                row for row in collections.list_collections(harness.catalog)["collections"]
+                if row["collection_id"] == collection_id
+            )
+            return assigned, decisions, summary["photo_count"], person, harness
+        except Exception:
+            harness.close()
+            raise
+
+    assigned, decisions, photo_count, person, harness = run_case(
+        tmp_path / "normal", dynamic_member=True, static_face=False
+    )
+    try:
+        assert assigned is not None and int(assigned["person_id"]) == person
+        assert photo_count == 2
+    finally:
+        harness.close()
+
+    assigned, decisions, photo_count, person, harness = run_case(
+        tmp_path / "temporary", ignore_state="TEMPORARY", dynamic_member=True, static_face=False
+    )
+    try:
+        assert assigned is not None and int(assigned["person_id"]) == person
+        assert photo_count == 2
+    finally:
+        harness.close()
+
+    assigned, decisions, photo_count, person, harness = run_case(
+        tmp_path / "excluded", ignore_state="EXCLUDED", dynamic_member=True, static_face=False
+    )
+    try:
+        assert assigned is not None and int(assigned["person_id"]) != person
+        assert photo_count == 1
+    finally:
+        harness.close()
+
+    assigned, decisions, photo_count, person, harness = run_case(
+        tmp_path / "static", dynamic_member=False, static_face=True
+    )
+    try:
+        assert assigned is not None and int(assigned["person_id"]) == person
+        assert photo_count == 1
+    finally:
+        harness.close()
+
+
 def test_inbox_reason_summary_filters_and_cursors_are_read_only_and_private(api_env):
     photos = seed_library(api_env, {f"{i}.jpg": [(10, 10, 110, 110)] for i in range(5)})
     catalog = api_env.service.catalog

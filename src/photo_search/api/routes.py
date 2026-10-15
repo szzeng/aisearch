@@ -84,6 +84,7 @@ from photo_search.api.models import (
     MappingListResponse,
     MappingOperationResponse,
     PageCapabilitiesResponse,
+    PersonCollectionFaceMembersRequest,
     PersonCollectionMembersRequest,
     PersonCollectionNameRequest,
     PersonCoverRequest,
@@ -1700,6 +1701,26 @@ async def edit_person_collection_members(
         instance_token=instance_token,
         action=payload.action,
         person_ids=payload.person_ids,
+        hide_after_add=payload.hide_after_add,
+    )
+
+
+@router.get("/persons/collections/{collection_id}/{instance_token}/faces", summary="Page saved faces in a collection")
+async def person_collection_faces(
+    request: Request, collection_id: int, instance_token: str, limit: int = 40, cursor: str | None = None
+) -> dict[str, Any]:
+    return person_collections.face_members_page(
+        service_of(request).catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor
+    )
+
+
+@router.post("/persons/collections/{collection_id}/{instance_token}/faces", summary="Add or remove saved face members")
+async def edit_person_collection_faces(
+    request: Request, collection_id: int, instance_token: str, payload: PersonCollectionFaceMembersRequest
+) -> dict[str, Any]:
+    return person_collections.edit_face_members(
+        service_of(request).catalog, collection_id, instance_token=instance_token,
+        action=payload.action, face_ids=payload.face_ids, expected_revision=payload.expected_revision,
         hide_after_add=payload.hide_after_add,
     )
 

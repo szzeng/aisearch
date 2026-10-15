@@ -417,3 +417,230 @@ def test_repeated_collection_remove_is_noop_without_revision_change(api_env: Api
     repeated = collections.edit_members(catalog, collection_id, action="remove", person_ids=[person_id], instance_token=token)
     assert repeated["changed"] == 0
     assert repeated["revision"] == revision
+
+
+def test_face_members_are_static_soft_anchors_and_ignore_state_is_independent(api_env: ApiEnv) -> None:
+    seeded = seed_library(api_env, {
+        "合照.jpg": [(20, 20, 90, 90), (120, 20, 190, 90)],
+        "另一张.jpg": [(30, 30, 100, 100)],
+    })
+    catalog = api_env.service.catalog
+    first, second, third = (
+        seeded["合照.jpg"]["faces"][0], seeded["合照.jpg"]["faces"][1], seeded["另一张.jpg"]["faces"][0]
+    )
+    person = add_person(catalog, name="动态人物")
+    add_link(catalog, first, person)
+    from photo_search.persons.albums import set_inbox_visibility
+    set_inbox_visibility(catalog, face_ids=[second], hidden=True, ignore_state="EXCLUDED")
+    before = {
+        table: int(catalog.read_one(f"SELECT COUNT(*) AS n FROM {table}")["n"])
+        for table in ("persons", "face_person_links", "face_embeddings")
+    }
+    from photo_search.persons import collections
+
+    record = collections.create_collection(catalog, "只收选中的脸")["collection"]
+    cid, token = int(record["collection_id"]), str(record["instance_token"])
+    collections.edit_members(catalog, cid, action="add", person_ids=[person], instance_token=token)
+    revision = int(catalog.read_one("SELECT revision FROM person_collections WHERE collection_id=?", (cid,))["revision"])
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        path = _collection_url(catalog, cid)
+        payload = {"action": "add", "face_ids": [first, second, third], "expected_revision": revision, "hide_after_add": True}
+        saved = await client.post(path + "/faces", headers=headers, json=payload)
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["changed"] == 3
+        assert saved.json()["revision"] == revision + 1
+        duplicate = await client.post(path + "/faces", headers=headers, json={**payload, "expected_revision": revision + 1})
+        assert duplicate.status_code == 200
+        assert duplicate.json()["changed"] == 0
+        stale = await client.post(path + "/faces", headers=headers, json=payload)
+        assert stale.status_code == 409
+
+        listed = await client.get("/api/v1/persons/collections")
+        collection = next(item for item in listed.json()["collections"] if item["collection_id"] == cid)
+        assert collection["member_count"] == 1
+        assert collection["face_member_count"] == 3
+        assert collection["photo_count"] == 2
+        page = await client.get(path + "/faces", params={"limit": 2})
+        assert page.status_code == 200
+        assert len(page.json()["faces"]) == 2
+        next_page = await client.get(path + "/faces", params={"limit": 2, "cursor": page.json()["next_cursor"]})
+        assert next_page.status_code == 200
+        all_faces = page.json()["faces"] + next_page.json()["faces"]
+        assert {item["face_id"] for item in all_faces} == {first, second, third}
+
+        photos = await client.get(path + "/photos", params={"limit": 10})
+        assert photos.status_code == 200
+        assert {item["asset_id"] for item in photos.json()["assets"]} == {
+            seeded["合照.jpg"]["asset_id"], seeded["另一张.jpg"]["asset_id"]
+        }
+        shared = next(item for item in photos.json()["assets"] if item["asset_id"] == seeded["合照.jpg"]["asset_id"])
+        assert {item["face_id"] for item in shared["archived_faces"]} == {second}
+        assert [item["face_id"] for item in shared["person_faces"]] == [first]
+
+        hidden = {row["face_id"]: row["ignore_state"] for row in catalog.read_all("SELECT face_id,ignore_state FROM face_inbox_hidden")}
+        assert hidden[first] == "TEMPORARY"
+        assert hidden[second] == "EXCLUDED"
+        assert {table: int(catalog.read_one(f"SELECT COUNT(*) AS n FROM {table}")["n"]) for table in before} == before
+        removed = await client.post(path + "/faces", headers=headers, json={
+            "action": "remove", "face_ids": [second], "expected_revision": revision + 1,
+        })
+        assert removed.status_code == 200
+        assert catalog.read_one("SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (second,))["ignore_state"] == "EXCLUDED"
+        assert catalog.read_one("SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (first,))["ignore_state"] == "TEMPORARY"
+
+    api_env.scenario(scenario)
+
+
+def test_face_archive_uses_only_confirmed_unique_high_redetection_mapping(api_env: ApiEnv) -> None:
+    from photo_search.persons import collections
+
+    seeded = seed_library(
+        api_env,
+        {"redetected.jpg": [(20, 20, 80, 80), (100, 20, 160, 80), (180, 20, 240, 80)]},
+    )["redetected.jpg"]
+    catalog = api_env.service.catalog
+    anchor, mapped, alternate = seeded["faces"]
+    suggested_person = add_person(catalog)
+    add_link(catalog, mapped, suggested_person, decision="SUGGESTED")
+    record = collections.create_collection(catalog, "重检测软锚点")["collection"]
+    cid, token = int(record["collection_id"]), str(record["instance_token"])
+    collections.edit_face_members(
+        catalog, cid, action="add", face_ids=[anchor], instance_token=token,
+        expected_revision=int(record["revision"]),
+    )
+    face_rows = catalog.read_all(
+        "SELECT face_id, asset_id, input_revision, spec_revision FROM faces WHERE asset_id=?",
+        (seeded["asset_id"],),
+    )
+    by_id = {str(row["face_id"]): row for row in face_rows}
+    old_spec = str(by_id[anchor]["spec_revision"])
+    with catalog.write() as connection:
+        connection.execute("UPDATE faces SET spec_revision='synthetic-new-spec' WHERE face_id IN (?, ?)", (mapped, alternate))
+        connection.execute(
+            "INSERT INTO face_redetection_groups(old_face_id, asset_id, old_spec_revision, candidate_state, state, revision, last_operation_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'UNIQUE_HIGH', 'CONFIRMED', 1, NULL, 1, 1)",
+            (anchor, seeded["asset_id"], old_spec),
+        )
+        connection.execute(
+            "INSERT INTO face_redetection_mappings(mapping_id, old_face_id, new_face_id, asset_id, old_spec_revision, new_spec_revision, match_state, state, inherits_person, revision, last_operation_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'synthetic-new-spec', 'HIGH', 'CONFIRMED', 0, 1, NULL, 1, 1)",
+            ("a" * 64, anchor, mapped, seeded["asset_id"], old_spec),
+        )
+        connection.execute(
+            "INSERT INTO face_redetection_mappings(mapping_id, old_face_id, new_face_id, asset_id, old_spec_revision, new_spec_revision, match_state, state, inherits_person, revision, last_operation_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'synthetic-new-spec', 'HIGH', 'CONFIRMED', 0, 1, NULL, 1, 1)",
+            ("c" * 64, anchor, alternate, seeded["asset_id"], old_spec),
+        )
+
+    ambiguous_unique_label = collections.face_members_page(catalog, cid, instance_token=token)
+    assert ambiguous_unique_label["faces"][0]["display_face_id"] == anchor
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_redetection_mappings SET state='REJECTED' WHERE mapping_id=?",
+            ("c" * 64,),
+        )
+
+    page = collections.face_members_page(catalog, cid, instance_token=token)
+    assert page["faces"][0]["face_id"] == anchor
+    assert page["faces"][0]["display_face_id"] == mapped
+    assert page["faces"][0]["status"] == "CURRENT"
+    assert page["faces"][0]["thumbnail_url"] == f"/api/v1/faces/{mapped}/thumbnail"
+    assert page["faces"][0]["candidate"]["person_id"] == suggested_person
+    photo_faces = collections._collection_photo_faces(catalog.connection, cid, [int(seeded["asset_id"])])
+    assert photo_faces[int(seeded["asset_id"])]["archived_faces"][0]["display_face_id"] == mapped
+
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_redetection_groups SET candidate_state='AMBIGUOUS' WHERE old_face_id=?",
+            (anchor,),
+        )
+        connection.execute(
+            "UPDATE face_redetection_mappings SET match_state='WEAK', state='SUGGESTED' WHERE mapping_id=?",
+            ("c" * 64,),
+        )
+    ambiguous = collections.face_members_page(catalog, cid, instance_token=token)
+    assert ambiguous["faces"][0]["display_face_id"] == anchor
+    assert collections._collection_photo_faces(catalog.connection, cid, [int(seeded["asset_id"])])[
+        int(seeded["asset_id"])
+    ]["archived_faces"][0]["display_face_id"] == anchor
+
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE face_redetection_groups SET candidate_state='UNIQUE_HIGH', state='OPEN' WHERE old_face_id=?",
+            (anchor,),
+        )
+        connection.execute(
+            "UPDATE face_redetection_mappings SET state='SUGGESTED' WHERE old_face_id=?",
+            (anchor,),
+        )
+    opened = collections.face_members_page(catalog, cid, instance_token=token)
+    assert opened["faces"][0]["display_face_id"] == anchor
+
+
+def test_removing_collection_people_does_not_restore_ignored_state(api_env: ApiEnv) -> None:
+    from photo_search.persons import collections
+    from photo_search.persons.service import PersonService
+
+    catalog = api_env.service.catalog
+    service = PersonService.open(catalog)
+    for ignore_state in ("TEMPORARY", "EXCLUDED"):
+        person = add_person(catalog)
+        service.set_visibility(person_ids=[person], hidden=True, ignore_state=ignore_state)
+        record = collections.create_collection(catalog, "保留忽略" + ignore_state)["collection"]
+        cid, token = int(record["collection_id"]), str(record["instance_token"])
+        collections.edit_members(catalog, cid, action="add", person_ids=[person], instance_token=token)
+        collections.edit_members(catalog, cid, action="remove", person_ids=[person], instance_token=token)
+        row = catalog.read_one("SELECT ignore_state FROM person_hidden WHERE person_id=?", (person,))
+        assert row["ignore_state"] == ignore_state
+
+
+def test_static_face_soft_anchor_hides_missing_source_and_changed_content(api_env: ApiEnv) -> None:
+    from photo_search.persons import collections
+
+    seeded = seed_library(api_env, {"source-anchor.jpg": [(20, 20, 90, 90)]})["source-anchor.jpg"]
+    catalog = api_env.service.catalog
+    face_id = seeded["faces"][0]
+    record = collections.create_collection(catalog, "来源变化") ["collection"]
+    collection_id, token = int(record["collection_id"]), str(record["instance_token"])
+    collections.edit_face_members(
+        catalog, collection_id, action="add", face_ids=[face_id], instance_token=token,
+        expected_revision=int(record["revision"]),
+    )
+
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET availability='MISSING' WHERE asset_id=?",
+            (seeded["asset_id"],),
+        )
+    missing = collections.face_members_page(catalog, collection_id, instance_token=token)
+    assert missing["faces"][0]["status"] == "SOURCE_MISSING"
+    assert missing["faces"][0]["thumbnail_url"] is None
+    missing_photos = collections.photo_page(
+        catalog, api_env.service.media_cache(), collection_id, instance_token=token
+    )
+    assert missing_photos["assets"] == []
+    assert missing_photos["collection"]["photo_count"] == 0
+
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET availability='PRESENT' WHERE asset_id=?",
+            (seeded["asset_id"],),
+        )
+        connection.execute(
+            "UPDATE assets SET sha256=? WHERE asset_id=?",
+            ("f" * 64, seeded["asset_id"]),
+        )
+    changed = collections.face_members_page(catalog, collection_id, instance_token=token)
+    assert changed["faces"][0]["status"] == "CONTENT_CHANGED"
+    assert changed["faces"][0]["thumbnail_url"] is None
+    changed_photos = collections.photo_page(
+        catalog, api_env.service.media_cache(), collection_id, instance_token=token
+    )
+    assert changed_photos["assets"] == []
+    assert changed_photos["collection"]["photo_count"] == 0
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM person_collection_face_members WHERE collection_id=?", (collection_id,)
+    )[0] == 1

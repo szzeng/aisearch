@@ -864,6 +864,24 @@ class PersonCollectionMembersRequest(BaseModel):
         return value
 
 
+class PersonCollectionFaceMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["add", "remove"]
+    face_ids: list[StrictStr] = Field(min_length=1, max_length=500)
+    expected_revision: StrictInt = Field(ge=1)
+    hide_after_add: StrictBool = False
+
+    @field_validator("face_ids")
+    @classmethod
+    def valid_collection_face_ids(cls, value: list[str]) -> list[str]:
+        if any(len(face_id) != 64 or any(char not in "0123456789abcdef" for char in face_id) for face_id in value):
+            raise ValueError("face_ids must be 64-character lowercase hexadecimal strings")
+        if len(set(value)) != len(value):
+            raise ValueError("face_ids must be distinct")
+        return value
+
+
 class PersonUndoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
