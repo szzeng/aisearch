@@ -135,7 +135,7 @@ a {
   padding: 0.2rem 0.4rem;
 }
 
-.app-shell > .app-header.has-global-search {
+.app-header.has-global-search {
   display: grid;
   grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr);
   column-gap: 1.25rem;
@@ -707,22 +707,17 @@ dl.media-list dd {
   overflow-wrap: anywhere;
 }
 
-/* P4-UI-SHELL-A: shared navigation frame. Page content and its existing IDs stay intact. */
+/* P4-UI2-SHELL-STICKY-A: keep the document as the scroll root. */
 body.app-shell {
   display: grid;
   grid-template-columns: minmax(12rem, 13rem) minmax(0, 1fr);
-  /* Keep the full-height sidebar from stretching empty notice/nav rows above main. */
-  grid-template-rows: max-content max-content max-content minmax(0, 1fr);
-  grid-template-areas:
-    "sidebar header"
-    "sidebar notice"
-    "sidebar page-nav"
-    "sidebar main";
-  align-content: start;
-  height: 100vh;
+  grid-template-rows: minmax(100vh, auto);
+  grid-template-areas: "sidebar workspace";
+  align-items: stretch;
   min-height: 100vh;
   padding: 0;
   column-gap: clamp(1rem, 2vw, 2rem);
+  scroll-padding-top: var(--app-sticky-header-height, 0px);
 }
 
 .app-sidebar {
@@ -735,10 +730,19 @@ body.app-shell {
   gap: 1.5rem;
   width: 100%;
   height: 100vh;
-  min-height: 26rem;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 1.5rem 1rem;
   border-right: 1px solid var(--line);
   background: var(--panel);
+}
+
+.app-workspace {
+  grid-area: workspace;
+  min-width: 0;
 }
 
 .app-brand {
@@ -795,201 +799,98 @@ body.app-shell {
   color: var(--accent);
 }
 
-.app-sidebar .nav-link[aria-current="page"] {
-  font-weight: 650;
-}
+.app-sidebar .nav-link[aria-current="page"] { font-weight: 650; }
 
-.app-shell > .app-header {
+.app-workspace > .app-header {
+  position: sticky;
+  z-index: 20;
+  top: 0;
   grid-area: header;
   min-width: 0;
   align-items: center;
   padding: 1.25rem clamp(1rem, 2vw, 2rem) 0.85rem 0;
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  border-bottom-color: color-mix(in srgb, var(--line) 75%, transparent);
+  background: var(--bg);
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
-.app-shell > .app-header h1 {
-  min-width: 0;
-}
-
-.app-shell > .app-header .app-meta {
-  margin-left: auto;
-  text-align: right;
-}
-
-.app-shell > .notice {
-  grid-area: notice;
-  margin: 0  clamp(1rem, 2vw, 2rem) 0 0;
-}
-
-.page-nav {
+.app-workspace > .app-header h1 { min-width: 0; }
+.app-workspace > .app-header .app-meta { margin-left: auto; text-align: right; }
+.app-workspace > .notice { grid-area: notice; margin: 0 clamp(1rem, 2vw, 2rem) 0 0; }
+.app-workspace > .page-nav {
   grid-area: page-nav;
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
   padding: 0.25rem clamp(1rem, 2vw, 2rem) 0.5rem 0;
 }
-
-.app-shell > main {
+.app-workspace > main {
   grid-area: main;
   width: 100%;
   max-width: 1560px;
   min-width: 0;
   margin: 0;
   padding: 0 clamp(1rem, 2vw, 2rem) 3rem 0;
+  scroll-margin-top: var(--app-sticky-header-height, 0px);
 }
 
 .map-page.app-shell {
-  grid-template-areas:
-    "sidebar header"
-    "sidebar notice"
-    "sidebar main";
-  grid-template-rows: auto auto minmax(0, 1fr);
-  align-content: stretch;
   height: 100vh;
   min-height: 34rem;
   overflow: hidden;
 }
 
-.map-page.app-shell > .map-page-main {
+.map-page.app-shell > .app-workspace {
+  display: grid;
+  grid-template-rows: max-content max-content minmax(0, 1fr);
+  grid-template-areas: "header" "notice" "main";
   min-height: 0;
-  padding-bottom: 0.75rem;
+  height: 100%;
 }
+
+.map-page .app-workspace > .map-page-main { min-height: 0; padding-bottom: 0.75rem; }
 
 /* Preserve the left rail at the common 1440px / 200% effective width. */
 @media (max-width: 680px) {
   body.app-shell {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: none;
-    grid-template-areas:
-      "sidebar"
-      "header"
-      "notice"
-      "page-nav"
-      "main";
-    height: auto;
+    grid-template-rows: max-content minmax(100vh, auto);
+    grid-template-areas: "sidebar" "workspace";
     column-gap: 0;
   }
 
   .app-sidebar {
-    position: sticky;
-    z-index: 5;
-    top: 0;
+    position: relative;
+    z-index: auto;
+    top: auto;
     height: auto;
-    min-height: 0;
+    max-height: none;
+    overflow: visible;
     gap: 0.55rem;
     padding: 0.55rem clamp(0.75rem, 3vw, 1.25rem);
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
+  .app-brand { min-height: 1.9rem; padding: 0 0.25rem; }
+  .app-brand::before { width: 1.65rem; height: 1.65rem; margin-right: 0.5rem; border-radius: 0.5rem; font-size: 1rem; }
+  .app-nav { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+  .app-nav-secondary { margin-top: 0; padding-top: 0.35rem; border-top: 0; }
+  .app-sidebar .nav-link { min-height: 2.25rem; padding: 0.35rem 0.6rem; }
+  .nav-icon { width: 1rem; margin-right: 0.35rem; }
 
-  .app-brand {
-    min-height: 1.9rem;
-    padding: 0 0.25rem;
-  }
-
-  .app-brand::before {
-    width: 1.65rem;
-    height: 1.65rem;
-    margin-right: 0.5rem;
-    border-radius: 0.5rem;
-    font-size: 1rem;
-  }
-
-  .app-nav {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-  }
-
-  .app-nav-secondary {
-    margin-top: 0;
-    padding-top: 0.35rem;
-    border-top: 0;
-  }
-
-  .app-sidebar .nav-link {
-    min-height: 2.25rem;
-    padding: 0.35rem 0.6rem;
-  }
-
-  .nav-icon {
-    width: 1rem;
-    margin-right: 0.35rem;
-  }
-
-  .app-shell > .app-header {
-    gap: 0.5rem;
-    padding: 0.75rem clamp(0.75rem, 3vw, 1.25rem) 0.5rem;
-  }
-
-  .app-shell > .app-header .app-meta {
-    width: 100%;
-    margin-left: 0;
-    text-align: left;
-  }
-
-  .app-shell > .app-header.has-global-search {
-    grid-template-columns: minmax(0, 1fr);
-    row-gap: 0.5rem;
-  }
-
-  .app-header.has-global-search > h1 {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .app-header.has-global-search > .global-search-form {
-    grid-column: 1;
-    grid-row: 1;
-    width: 100%;
-    max-width: none;
-  }
-
+  .app-workspace > .app-header { gap: 0.5rem; padding: 0.65rem clamp(0.75rem, 3vw, 1.25rem) 0.5rem; }
+  .app-workspace > .app-header .app-meta { width: 100%; margin-left: 0; text-align: left; }
+  .app-workspace > .app-header.has-global-search { grid-template-columns: minmax(0, 1fr); row-gap: 0.5rem; }
+  .app-header.has-global-search > h1 { grid-column: 1; grid-row: 2; }
+  .app-header.has-global-search > .global-search-form { grid-column: 1; grid-row: 1; width: 100%; max-width: none; }
   .app-header.has-global-search > .app-meta,
-  .map-page-header #summary {
-    grid-column: 1;
-    grid-row: 3;
-    text-align: left;
-    margin-left: 0;
-  }
-
-  .map-page-header > a {
-    grid-column: 1;
-    grid-row: 4;
-  }
-
-  .global-search-form {
-    flex: 1 1 100%;
-    order: 3;
-    width: 100%;
-    max-width: none;
-  }
-
-  .app-shell > .notice,
-  .page-nav,
-  .app-shell > main {
-    margin-left: 0;
-    padding-right: clamp(0.75rem, 3vw, 1.25rem);
-    padding-left: clamp(0.75rem, 3vw, 1.25rem);
-  }
-
-  .app-shell > main {
-    padding-bottom: 2rem;
-  }
-
-  .map-page.app-shell {
-    grid-template-areas:
-      "sidebar"
-      "header"
-      "notice"
-      "main";
-    grid-template-rows: auto auto auto minmax(20rem, 1fr);
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .map-page.app-shell > .map-page-main {
-    min-height: 0;
-  }
+  .map-page-header #summary { grid-column: 1; grid-row: 3; text-align: left; margin-left: 0; }
+  .map-page-header > a { grid-column: 1; grid-row: 4; }
+  .global-search-form { flex: 1 1 100%; order: 3; width: 100%; max-width: none; }
+  .app-workspace > .notice,
+  .app-workspace > .page-nav,
+  .app-workspace > main { margin-left: 0; padding-right: clamp(0.75rem, 3vw, 1.25rem); padding-left: clamp(0.75rem, 3vw, 1.25rem); }
+  .app-workspace > main { padding-bottom: 2rem; }
+  .map-page.app-shell { overflow: visible; min-height: 100vh; height: auto; }
+  .map-page.app-shell > .app-workspace { height: auto; min-height: calc(100vh - 5rem); grid-template-rows: max-content max-content minmax(20rem, 1fr); }
 }

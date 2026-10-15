@@ -1,5 +1,5 @@
 /* Search-only presentation. Keep every rule under the page root. */
-body.search-page > main {
+body.search-page .app-workspace > main {
   max-width: 1320px;
   padding-top: 1rem;
 }
@@ -333,7 +333,7 @@ body.search-page .search-preview-person { display: flex; align-items: center; ga
 body.search-page .search-preview-person img { width: 3rem; height: 3rem; border-radius: 50%; object-fit: cover; }
 
 @media (max-width: 760px) {
-  body.search-page > main { padding-top: 0.65rem; }
+  body.search-page .app-workspace > main { padding-top: 0.65rem; }
   body.search-page .panel { padding: 0.8rem; }
   body.search-page #result-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.6rem; }
   body.search-page .thumb-frame { min-height: 7rem; }

@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-timeline-controls-fix-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" />
     <script src="/web/photo-info.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
@@ -15,6 +15,7 @@
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
     <script src="/web/app.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
+      <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -32,7 +33,8 @@
       </nav>
     </aside>
 
-    <header class="app-header has-global-search">
+    <div class="app-workspace">
+<header class="app-header has-global-search">
       <h1>本机图片搜索</h1>
       <form class="global-search-form" action="/search" method="get" role="search">
         <label class="sr-only" for="global-search-query">搜索照片</label>
@@ -244,6 +246,7 @@
         <div id="detail-body"></div>
       </section>
     </main>
+</div><!-- .app-workspace -->
 
     <noscript>
       <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>

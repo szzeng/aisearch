@@ -32,8 +32,8 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     assert ":focus-visible {\n  outline: 3px solid var(--accent);" in styles
     map_script = (WEB / "map.js").read_text(encoding="utf-8")
     map_page = (WEB / "map.html").read_text(encoding="utf-8")
-    assert "map.js?v=p4-ui-timeline-search-map-stage2-a-1" in map_page
-    assert "map.css?v=p4-ui2-visual-final-a-1" in map_page
+    assert "map.js?v=p4-ui2-map-photo-hover-a-1" in map_page
+    assert "map.css?v=p4-ui2-shell-sticky-a-1" in map_page
     map_styles = (WEB / "map.css").read_text(encoding="utf-8")
     assert "height: auto;\n  min-height: 0;" in map_styles
     assert ".map-page-main > section::-webkit-scrollbar-track {\n  background: var(--bg);\n}" in map_styles
@@ -104,3 +104,34 @@ assert.deepEqual(requests,[],"route selection and navigation do not start API or
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_sticky_shell_keeps_window_scroll_and_map_layout() -> None:
+    pages = ("index.html", "search.html", "persons.html", "places.html", "map.html")
+    for page in pages:
+        document = (WEB / page).read_text(encoding="utf-8")
+        assert document.count('class="app-workspace"') == 1
+        assert 'src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1"' in document
+        assert document.index('<div class="app-workspace">') < document.index('<header class="app-header')
+        assert document.index('<div class="app-workspace">') < document.index('<main id="main"')
+        assert document.index('</main>') < document.index('</div><!-- .app-workspace -->')
+
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert 'grid-template-areas: "sidebar workspace";' in styles
+    assert "min-height: 100vh;" in styles
+    assert "height: 100vh;\n  height: 100dvh;" in styles
+    assert ".app-workspace > .app-header {\n  position: sticky;" in styles
+    assert "height: 100vh;\n  min-height: 34rem;\n  overflow: hidden;" in styles
+    assert "grid-template-rows: max-content max-content minmax(0, 1fr);" in styles
+    assert "@media (max-width: 680px)" in styles
+    search_styles = (WEB / "search.css").read_text(encoding="utf-8")
+    assert "body.search-page .app-workspace > main" in search_styles
+    assert "body.search-page > main" not in search_styles
+    assert "position: relative;\n    z-index: auto;" in styles
+
+    timeline = (WEB / "photo-timeline.css").read_text(encoding="utf-8")
+    assert "top: var(--app-sticky-header-height, 0px);" in timeline
+    helper = (WEB / "shell-sticky.js").read_text(encoding="utf-8")
+    assert "ResizeObserver" in helper
+    assert "getBoundingClientRect().height" in helper
+    assert "addEventListener(\"scroll\"" not in helper

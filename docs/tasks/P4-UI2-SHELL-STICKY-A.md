@@ -1,7 +1,7 @@
 # P4-UI2-SHELL-STICKY-A — UI 2.0 导航与顶部搜索栏固定修复
 
-> **状态**：READY / 待实施（本次仅提交任务卡，不实施代码）。**优先级**：P1 高频体验缺陷，建议在后续零散视觉优化之前单独完成。  
-> **核对基准**：`szzeng/aisearch`，`master` HEAD `b9f1bfd5b25b37bdb05649e6cfcf9909517b6e25`（2026-10-15）。开始实施前须重新核对 HEAD、工作树与同文件任务；基准不是锁定提交。  
+> **状态**：IMPLEMENTED / FUNCTIONAL SCOPED PASS / ACCEPTANCE PARTIAL（2026-10-15；用户要求跳过浏览器）。**优先级**：P1 高频体验缺陷。详见[实施报告](../reports/P4-UI2-SHELL-STICKY-A.md)。
+> **核对基准**：`szzeng/aisearch`，`master` 任务卡记录基线 `b9f1bfd5b25b37bdb05649e6cfcf9909517b6e25`；实际实施基线 `b2a6d0e95835270dda7d83fc6053dab38cc817be`（2026-10-15），实施时工作树干净。
 > **建议执行**：GPT-6 High，用户在 Codex 中自行选择；单会话完成实现、修复、定向验证和报告。低风险前端展示按 V3.1 规定进行有边界独立复核；若碰到分页协议、状态持久化或写入语义，不在本卡扩围。  
 > **验证预算**：个人相册，小范围 JS/DOM/静态检查及 Codex 内置产品浏览器验收；使用合成数据和 JUnit XML。不运行全仓测试、真实图库、GPU/模型、30 万图库压测。
 
@@ -110,4 +110,4 @@ git diff --check
 
 - 完成**代码实施**时新建 `docs/reports/P4-UI2-SHELL-STICKY-A.md`，写明观察到的具体根因、最终滚动根选择、实际改动文件、最小测试/JUnit 路径、浏览器观察结果、截图/缩放限制及遗留项；`docs/development-status.md` 只保留简短摘要和报告链接。
 - 测试区分 `IMPLEMENTED / VALIDATION PENDING`、`ACCEPTANCE PARTIAL` 与 `PASS`；未真实验证的必需滚动场景不写 PASS，也不借本任务把其他 UI2 部分验收卡改成 PASS。
-- 完成这一张任务后停止，**不自动实施下一张**。本次提交仅为任务 Markdown，不修改应用代码、图库数据、依赖或历史任务报告。
+- 完成本卡后停止实施；浏览器证据缺口由独立后续卡处理。实施未修改图库数据、依赖或业务状态机。

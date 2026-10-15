@@ -139,7 +139,8 @@
   grid-column: 1 / -1;
   position: sticky;
   z-index: 1;
-  top: 0;
+  top: var(--app-sticky-header-height, 0px);
+  scroll-margin-top: calc(var(--app-sticky-header-height, 0px) + 0.5rem);
   margin: 0;
   padding: 0.65rem 0.2rem;
   color: var(--fg, #22312b);

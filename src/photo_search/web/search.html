@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-visual-final-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
     <link rel="stylesheet" href="/web/search.css?v=p4-ui-shell-a-f1-5" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" />
     <script src="/web/map-config.js" defer></script>
@@ -14,6 +14,7 @@
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
     <script src="/web/search.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
+      <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
     <a class="skip-link" href="#main">跳到主要内容</a>
@@ -31,7 +32,8 @@
       </nav>
     </aside>
 
-    <header class="app-header has-global-search">
+    <div class="app-workspace">
+<header class="app-header has-global-search">
       <h1>搜索图片</h1>
       <form id="search-form" class="global-search-form search-entry-form" action="/search" method="get" role="search" novalidate>
         <label class="sr-only" for="query-text">搜索照片</label>
@@ -278,6 +280,7 @@
         </p>
       </section>
     </main>
+</div><!-- .app-workspace -->
 
     <noscript>
       <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>
