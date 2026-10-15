@@ -1,7 +1,7 @@
 # P4-PERSON-FAST-ORGANIZE-A — 实施报告
 
 - 日期：2026-10-15
-- 状态：**M1 实施完成；M2 实施完成 / 验收部分完成（BROWSER_PENDING、SOURCE_CROP_PENDING）**
+- 状态：**M1 实施完成；M2 实施完成 / 验收部分完成（BROWSER_PENDING）**。B 已补 source-crop 和搜索/时间轴合成证据，浏览器写入仍待完成。
 - 实际基线：6c7c681，开工时工作区干净；Schema v31。当前工作区实现迁移至 Schema v32，未提交。
 - 任务卡：[P4-PERSON-FAST-ORGANIZE-A](../tasks/P4-PERSON-FAST-ORGANIZE-A.md)
 
@@ -60,3 +60,7 @@ Ruff 检查命令：
 在隔离图库的 People 页选择“整理一下”，展开候选组并使用“明确选择本组待整理脸”，确认选中数量及“不会确认人物身份”提示，加入现有合集。然后展开该合集的“单独收录的人脸”，核对对应人脸与原照片、移出该脸，再验证忽略状态不变。最后分别确认加入 person member 后动态扩展与仅加入 face member 时不扩展。
 
 下一闭环为 [P4-PERSON-FAST-ORGANIZE-B](../tasks/P4-PERSON-FAST-ORGANIZE-B.md)，只补浏览器写入/查看路径、搜索/时间轴受影响证据及真实 source-crop worker 的合成验收；不得接触真实图库或下载新模型。
+
+## B 闭环进展（2026-10-16）
+
+新版 source-crop worker 的合成验收以及合集限定搜索/时间轴证据已在 [B 验收报告](P4-PERSON-FAST-ORGANIZE-B.md) 通过。浏览器使用新隔离 fixture 重新认证并完成候选组明确选择，但最终写入确认处重现 `Emulation.setFocusEmulationEnabled` 超时；数据库核对为零写入，按卡停止重试。因此 A 的 source-crop 缺口已关闭，BROWSER_PENDING 仍保留，A/B 整体不标 PASS。

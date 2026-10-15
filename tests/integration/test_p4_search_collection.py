@@ -490,10 +490,11 @@ def test_collection_scope_is_applied_by_fts_and_vector_candidate_walk(tmp_path: 
     try:
         target_asset = int(env.assets["beach sunset.jpg"])
         outside_asset = int(env.assets["IMG_0001.JPG"])
+        static_asset = int(env.assets["杭州西湖 照片.jpg"])
         rows = {int(row["asset_id"]): row for row in catalog.read_all(
             "SELECT a.asset_id, a.sha256, l.location_id FROM assets a "
-            "JOIN file_locations l ON l.asset_id=a.asset_id WHERE a.asset_id IN (?,?)",
-            (target_asset, outside_asset),
+            "JOIN file_locations l ON l.asset_id=a.asset_id WHERE a.asset_id IN (?,?,?)",
+            (target_asset, outside_asset, static_asset),
         )}
         target_face = insert_face(catalog, asset_id=target_asset,
                                   sha256=str(rows[target_asset]["sha256"]),
@@ -503,6 +504,10 @@ def test_collection_scope_is_applied_by_fts_and_vector_candidate_walk(tmp_path: 
                                    sha256=str(rows[outside_asset]["sha256"]),
                                    bbox=(30, 30, 100, 100), ordinal=0,
                                    location_id=int(rows[outside_asset]["location_id"]))
+        static_face = insert_face(catalog, asset_id=static_asset,
+                                  sha256=str(rows[static_asset]["sha256"]),
+                                  bbox=(40, 35, 110, 105), ordinal=0,
+                                  location_id=int(rows[static_asset]["location_id"]))
         member, other = add_person(catalog), add_person(catalog)
         add_link(catalog, target_face, member)
         add_link(catalog, outside_face, other)
@@ -515,6 +520,14 @@ def test_collection_scope_is_applied_by_fts_and_vector_candidate_walk(tmp_path: 
         collection_id = int(created["collection"]["collection_id"])
         collections.edit_members(catalog, collection_id, action="add", person_ids=[member],
                                  instance_token=created["collection"]["instance_token"])
+        collection = collections.collection_detail(
+            catalog, collection_id, instance_token=created["collection"]["instance_token"]
+        )["collection"]
+        collections.edit_face_members(
+            catalog, collection_id, action="add", face_ids=[static_face],
+            instance_token=created["collection"]["instance_token"],
+            expected_revision=int(collection["revision"]),
+        )
         membership = catalog.read_one(
             "SELECT revision FROM person_collections WHERE collection_id=?", (collection_id,)
         )
@@ -535,9 +548,9 @@ def test_collection_scope_is_applied_by_fts_and_vector_candidate_walk(tmp_path: 
                                   dimension=int(env.spec.envelope["dimension"]))
         vector_page = vector_channel(catalog, index=RecordingIndex(), binding=binding,
                                      query_vector=[1.0, 0.0, 0.0], scope=scope, top_k=20)
-        expected = [target_asset]
+        expected = sorted([target_asset, static_asset])
         assert seen == expected
-        assert [int(hit["asset_id"]) for hit in vector_page["hits"]] == expected
+        assert sorted(int(hit["asset_id"]) for hit in vector_page["hits"]) == expected
 
         # Exercise the full semantic service path used by /search/place-aware. The
         # collection stays in the retrieval scope while its revision binds the cursor digest.
@@ -562,8 +575,15 @@ def test_collection_scope_is_applied_by_fts_and_vector_candidate_walk(tmp_path: 
                                   created["collection"]["instance_token"],
                                   int(membership["revision"])),
         )
-        assert service_vector_ids == expected
-        assert [int(hit["asset_id"]) for hit in semantic["hits"]] == expected
+        assert sorted(service_vector_ids) == expected
+        assert sorted(int(hit["asset_id"]) for hit in semantic["hits"]) == expected
+
+        from photo_search.api.timeline import timeline_page
+
+        timeline = timeline_page(catalog, kind="collection", collection_id=collection_id)
+        timeline_ids = [int(item["asset_id"]) for item in timeline["assets"]]
+        assert sorted(timeline_ids) == expected
+        assert len(timeline_ids) == len(set(timeline_ids))
     finally:
         env.library.close()
 

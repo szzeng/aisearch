@@ -9,11 +9,19 @@ import pytest
 from p3_persons_page_fixtures import add_link, add_person, seed_library, set_control
 from p3_redetection_fixtures import RedetectionHarness, make_record, shifted_bbox, shifted_landmarks
 
-from photo_search.face.engine import FaceDocument
+from photo_search.artifacts.store import ArtifactStore
+from photo_search.face import contract
+from photo_search.face.engine import DetectedFace, FaceDocument
 from photo_search.face.index import FaceIndexCoordinator, _InjectedCrash, reconcile_asset
-from photo_search.face.processor import artifact_id_for, build_payload, persist_face_document
+from photo_search.face.processor import (
+    artifact_id_for,
+    build_payload,
+    face_executor,
+    persist_face_document,
+)
 from photo_search.persons.albums import inbox_summary
 from photo_search.persons.operations import _repair_candidates
+from photo_search.scheduler.contracts import ArtifactRef
 
 
 def record(score=1, *, ordinal=0, pixels=120):
@@ -259,6 +267,163 @@ def test_collection_person_match_extends_across_synthetic_sources_but_static_fac
         assert photo_count == 1
     finally:
         harness.close()
+
+
+def test_source_crop_worker_publishes_indexes_and_reconciles_into_dynamic_collection(
+    api_env, monkeypatch
+):
+    from photo_search.face.service import enqueue_targets
+    from photo_search.persons import collections
+
+    photos = seed_library(
+        api_env,
+        {"source-a-confirmed.jpg": [(20, 20, 140, 140)], "source-b-new.jpg": [(30, 25, 150, 145)]},
+    )
+    catalog = api_env.service.catalog
+    source_a = int(photos["source-a-confirmed.jpg"]["asset_id"])
+    source_b = int(photos["source-b-new.jpg"]["asset_id"])
+    anchor = seed_document(catalog, source_a, [record(1)])[0]
+    person = add_person(catalog, name="source detail person")
+    add_link(catalog, anchor, person, assignment_kind="MANUAL")
+    set_control(catalog, anchor, "MANUAL_ASSIGNED")
+
+    dynamic = collections.create_collection(catalog, "source detail dynamic")["collection"]
+    collections.edit_members(
+        catalog, int(dynamic["collection_id"]), action="add", person_ids=[person],
+        instance_token=str(dynamic["instance_token"]),
+    )
+    static_only = collections.create_collection(catalog, "source detail static only")["collection"]
+    collections.edit_face_members(
+        catalog, int(static_only["collection_id"]), action="add", face_ids=[anchor],
+        instance_token=str(static_only["instance_token"]),
+        expected_revision=int(static_only["revision"]),
+    )
+
+    seed_document(catalog, source_b, [record(1)])
+    revision = str(catalog.read_one(
+        "SELECT sha256 FROM assets WHERE asset_id=?", (source_b,)
+    )["sha256"])
+    coarse_index = FaceIndexCoordinator(catalog)
+    coarse_index.process_all(now_ms=2)
+    queued = enqueue_targets(
+        catalog,
+        [{"asset_id": source_b, "input_revision": revision}],
+        now_ms=3,
+        device="cpu",
+        task_type=contract.FACE_DETAIL_AUTO_TASK_TYPE,
+    )
+    assert queued["queued"] == 1
+
+    from photo_search.face import engine as face_engine
+    from photo_search.face import processor as face_processor
+
+    class SyntheticEngine:
+        def detect(self, _blob):
+            return []
+
+        def recognize(self, _aligned):
+            return (1.0,) + (0.0,) * 511
+
+    class SyntheticCache:
+        def engine(self, *_args, **_kwargs):
+            return SyntheticEngine()
+
+    source_face = DetectedFace(
+        ordinal=0,
+        bbox=(24.0, 18.0, 142.0, 136.0),
+        landmarks=((53.0, 62.0), (111.0, 62.0), (82.0, 89.0), (58.0, 111.0), (106.0, 111.0)),
+        det_score=0.99,
+    )
+    decode_calls = []
+    real_decode = face_processor._decode
+
+    def observe_decode(path, *, preserve_source_detail=False):
+        decode_calls.append(bool(preserve_source_detail))
+        return real_decode(path, preserve_source_detail=preserve_source_detail)
+
+    crop_calls = []
+    real_source_crop = face_engine.warp_aligned_source_crop
+
+    def observe_source_crop(image, *, bbox, landmarks):
+        crop_calls.append(tuple(image.size))
+        return real_source_crop(image, bbox=bbox, landmarks=landmarks)
+
+    monkeypatch.setattr(face_processor, "_decode", observe_decode)
+    monkeypatch.setattr(face_engine, "warp_aligned_source_crop", observe_source_crop)
+    monkeypatch.setattr(
+        face_engine,
+        "decode_detections",
+        lambda *_args, **_kwargs: [source_face],
+    )
+    result = face_executor(
+        catalog,
+        data_root=api_env.settings.data_root,
+        engine_cache=SyntheticCache(),
+        preserve_source_detail=True,
+    )(
+        {
+            "job_id": 1,
+            "lease_token": "synthetic-source-crop",
+            "input_revision": revision,
+            "task_type": contract.FACE_DETAIL_AUTO_TASK_TYPE,
+            "processor_id": contract.FACE_PROCESSOR_ID,
+            "subject_id": str(source_b),
+            "resolved_device": "cpu",
+            "runtime_provider": "CPUExecutionProvider",
+            "precision": "FP32",
+        }
+    )
+    assert result["state"] == "SUCCEEDED", result
+    assert decode_calls == [True]
+    assert crop_calls == [(320, 240)]
+    reference = ArtifactRef.from_envelope(result["artifacts"][0])
+    store = ArtifactStore.open(api_env.settings.data_root)
+    prepared = store.prepare(reference)
+    store._publish_file(prepared)
+    with catalog.write() as connection:
+        assert persist_face_document(
+            connection,
+            job=SimpleNamespace(
+                subject_id=str(source_b), task_type=contract.FACE_DETAIL_AUTO_TASK_TYPE
+            ),
+            result=SimpleNamespace(input_revision=revision),
+            prepared=[prepared],
+            now_ms=4,
+        )
+
+    detail_face = catalog.read_one(
+        "SELECT face_id FROM faces WHERE asset_id=? AND spec_revision=?",
+        (source_b, contract.FACE_DETAIL_SPEC_REVISION),
+    )["face_id"]
+    detail_index = FaceIndexCoordinator(
+        catalog, spec_revision=contract.FACE_DETAIL_SPEC_REVISION
+    )
+    assert detail_index.process_all(now_ms=5) >= 1
+    decisions = reconcile_asset(
+        catalog,
+        asset_id=source_b,
+        coordinator=detail_index,
+        spec_revision=contract.FACE_DETAIL_SPEC_REVISION,
+    )
+    assert decisions
+    assigned = catalog.read_one(
+        "SELECT person_id FROM face_person_links WHERE face_id=? AND decision='CONFIRMED'",
+        (detail_face,),
+    )
+    assert assigned is not None and int(assigned["person_id"]) == person
+    summaries = {
+        int(item["collection_id"]): item
+        for item in collections.list_collections(catalog)["collections"]
+    }
+    dynamic_summary = summaries[int(dynamic["collection_id"])]
+    static_summary = summaries[int(static_only["collection_id"])]
+    assert int(dynamic_summary["photo_count"]) == 2
+    assert int(static_summary["photo_count"]) == 1
+    assert prepared.target.exists()
+    assert catalog.read_one(
+        "SELECT state FROM face_index_generations WHERE generation_id=?",
+        (detail_index.generation_id,),
+    )["state"] == "READY"
 
 
 def test_inbox_reason_summary_filters_and_cursors_are_read_only_and_private(api_env):

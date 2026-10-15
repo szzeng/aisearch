@@ -1,7 +1,7 @@
 # P4-PERSON-FAST-ORGANIZE-B — 人物快捷整理验收闭环
 
-- 日期：2026-10-15；状态：**待执行**。
-- 前置：P4-PERSON-FAST-ORGANIZE-A 的实现仍在工作区，尚未提交。开工先核对 Git 状态、A 报告、Schema v32 和相关测试；不要假设其他会话已保留这些改动。
+- 日期：2026-10-15；状态：**部分验收完成（SOURCE_CROP_PASS、SEARCH_TIMELINE_PASS、BROWSER_PENDING；2026-10-16）**。
+- 前置核对结果：开工时工作区干净，A 的实现已包含在 `b389f8d`，Schema v32；未假设未提交改动仍存在。浏览器使用隔离合成库；最终写入确认处复现 CUA/CDP 超时，按下方规则停止重试。[验收报告](../reports/P4-PERSON-FAST-ORGANIZE-B.md)
 - 推荐：GPT-6 High；任务卡执行期间保持同一模型。需要独立复核时按当前用户指定由子代理使用 Luna High；不得把 LUNA 复核称作 DS-H PASS。
 - 目的：关闭 A 的浏览器和新版 source-crop 验收缺口，并补齐共享合集过滤在搜索/时间轴上的定向证据。不重做 A 已通过的迁移和合集 API 套件。
 
@@ -49,3 +49,11 @@
 - 不迁移真实 catalog；不提交或推送，除非用户在后续明确授权。
 - 不新增依赖、模型、向量后端或后台聚类。
 - 失败时先定位环境或产品原因，不通过 ACL 修改或浏览器鉴权绕过来继续。
+
+## 5. 本轮结果与未完成项
+
+- 定向 JUnit 为 4 passed、0 failed、0 errors、0 skipped；Ruff 与 `git diff --check` 通过。结果及命令见 [B 验收报告](../reports/P4-PERSON-FAST-ORGANIZE-B.md)。
+- Source-crop 新版解码/裁脸、FaceDocument 持久化、候选索引、reconcile 及动态/静态合集边界已用合成夹具通过；模型检测和 embedding 使用确定性替身。
+- 合集限定搜索与时间轴已验证动态 person member 和静态 face member 的统一、去重资产范围。
+- 浏览器认证和明确选择两张当前组 face_id 已观察；最终加入时触发 CUA/CDP 超时。数据库确认无写入。浏览器成功回显、单脸区域展开/再折叠、原图/crop、移出计数与忽略状态仍 **PENDING**；未重试。
+- 本卡不标 PASS；Fast Organize 整体也不标 PASS。关闭本卡仍需在允许的后续浏览器会话中完成上述浏览器验收。
