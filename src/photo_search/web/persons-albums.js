@@ -1641,6 +1641,7 @@
     state.previewUI = { note, faces, faceDetail, review };
     state.previewHandle = window.AIPhotoInfo.open(assetId, {
       title: "人物照片", alt: "人物相册照片", extension: extension, returnFocus: returnFocus, people: false,
+      onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "persons"); },
       beforeClose: () => !state.writing && !state.pendingWrite,
       navigation: { previous: () => movePreview(-1), next: () => movePreview(1) },
       onClose: () => {

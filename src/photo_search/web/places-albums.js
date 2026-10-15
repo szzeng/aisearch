@@ -354,7 +354,7 @@
     if (!route.hasAlbumParam && isManagementHash(hash)) { showManagement(hash, "replace"); return; }
   }
   function showPreview(assetId, returnFocus) {
-    if (window.AIPhotoInfo) { window.AIPhotoInfo.open(assetId, { returnFocus: returnFocus }); return; }
+    if (window.AIPhotoInfo) { window.AIPhotoInfo.open(assetId, { returnFocus: returnFocus, onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "places"); } }); return; }
     var dialog = document.createElement("dialog"); dialog.className = "album-preview";
     var close = el("button", null, "关闭"); close.type = "button"; close.addEventListener("click", function () { dialog.close(); dialog.remove(); });
     var image = el("img"); image.alt = "照片预览"; image.src = api + "/assets/" + encodeURIComponent(assetId) + "/preview";

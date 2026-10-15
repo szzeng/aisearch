@@ -101,6 +101,9 @@
       timelineReturnAnchor: "",
     },
     detailRouteActive: false,
+    detailAssetId: null,
+    detailReturnIntent: null,
+    detailReturnWarning: false,
     pollTimer: null,
     //: P4-02Y: the polling timer of the one-click library refresh (one at a time).
     refreshTimer: null,
@@ -2185,6 +2188,13 @@
     state.detailViewer = window.AIPhotoInfo.open(assetId, {
       title: "查看照片", alt: "照片 #" + assetId,
       returnFocus: returnTile && returnTile.querySelector("button"),
+      onOpenFullDetails: function (id) {
+        state.browse.returnScrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+        state.browse.returnAssetId = String(id);
+        state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
+        saveBrowseReturn(id);
+        window.AIPhotoInfo.navigateToDetails(id, "home");
+      },
       onClose: function () { state.detailViewer = null; }
     });
   }
@@ -2571,6 +2581,27 @@
   }
 
   function handleHash() {
+    var detailsMatch = /^#\/asset\/(\d+)\/details$/.exec(String(location.hash || ""));
+    if (detailsMatch) {
+      var sameDetailsRoute = state.detailRouteActive && state.detailAssetId === detailsMatch[1];
+      state.detailRouteActive = true;
+      state.detailAssetId = detailsMatch[1];
+      if (!sameDetailsRoute) {
+        var detailIntent = window.AIPhotoInfo && window.AIPhotoInfo.consumeDetailReturn
+          ? window.AIPhotoInfo.consumeDetailReturn(detailsMatch[1]) : null;
+        state.detailReturnIntent = detailIntent && !detailIntent.invalid ? detailIntent : null;
+        state.detailReturnWarning = Boolean(detailIntent && detailIntent.invalid);
+        if (state.detailReturnWarning) showNotice("原来源状态已失效或不可用；仍可查看当前照片，关闭后会安全返回照片页。");
+      }
+      if ((!state.detailReturnIntent || state.detailReturnIntent.requiresBackstop)
+          && window.history && window.history.replaceState && window.history.pushState
+          && !(window.history.state && window.history.state.photoDetailsRoute)) {
+        window.history.replaceState({ photoDetailsSafeHome: true }, "", "/");
+        window.history.pushState({ photoDetailsRoute: true }, "", "/#/asset/" + encodeURIComponent(detailsMatch[1]) + "/details");
+      }
+      renderDetail(detailsMatch[1]);
+      return;
+    }
     var match = /^#\/asset\/(\d+)$/.exec(String(location.hash || ""));
     if (match) {
       state.detailRouteActive = true;
@@ -2581,10 +2612,22 @@
         state.detailViewer = window.AIPhotoInfo.open(match[1], {
           title: "查看照片", alt: "照片 #" + match[1],
           history: false,
+          onOpenFullDetails: function (id) {
+            state.detailRouteActive = false;
+            window.AIPhotoInfo.navigateToDetails(id, "home", "/", true);
+          },
           onClose: function () {
             state.detailViewer = null;
             if (!state.detailRouteActive) return;
             state.detailRouteActive = false;
+            var showedDetailReturnWarning = state.detailReturnWarning;
+            state.detailReturnWarning = false;
+            var detailReturn = window.AIPhotoInfo && window.AIPhotoInfo.consumeDetailReturn(match[1]);
+            if (detailReturn && detailReturn.invalid) {
+              showNotice("原来源状态已失效或不可用；已安全返回照片页。");
+            }
+            else if (showedDetailReturnWarning) showNotice("原来源状态已失效或不可用；已安全返回照片页。");
+            if (detailReturn && !detailReturn.invalid && detailReturn.source !== "home") { window.location.replace(detailReturn.path); return; }
             var fromSearch = false;
             try { fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search"; if (fromSearch) window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY); } catch (_error) {}
             if (fromSearch) { window.location.href = "/search"; return; }
@@ -2599,6 +2642,8 @@
     }
     if (state.detailRouteActive) {
       state.detailRouteActive = false;
+      state.detailReturnIntent = null;
+      state.detailReturnWarning = false;
       if (state.detailViewer && state.detailViewer.dialog.open) { state.detailViewer.close(); return; }
       if (state.browse.returnContext) {
         state.browse.returnPending = true;
@@ -2633,7 +2678,8 @@
     request("/capabilities/page")
       .then(function (result) {
         var body = result.body || {};
-        clearNotice();
+        if (state.detailReturnWarning) showNotice("原来源状态已失效或不可用；仍可查看当前照片，关闭后会安全返回照片页。");
+        else clearNotice();
         revealPersonsNav(body);
         var schema =
           body.schema_version === null || body.schema_version === undefined
@@ -2738,25 +2784,11 @@
       });
     });
     function returnFromDetail() {
-      var fromSearch = false;
-      try {
-        fromSearch = window.sessionStorage.getItem(SEARCH_RETURN_SOURCE_KEY) === "search";
-        if (fromSearch) {
-          window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
-        }
-      } catch (_error) {
-        // If storage is blocked, retain the existing in-page return to gallery behavior.
+      if (!state.detailRouteActive || !state.detailAssetId) return;
+      if (state.detailReturnIntent && window.AIPhotoInfo && window.AIPhotoInfo.restoreDetailReturn) {
+        window.AIPhotoInfo.restoreDetailReturn(state.detailAssetId, state.detailReturnIntent);
       }
-      if (fromSearch) {
-        window.location.href = "/search";
-        return;
-      }
-      clearHash();
-      state.detailRouteActive = false;
-      showView("browse");
-      state.browse.returnPending = true;
-      restoreBrowsePosition();
-      clearBrowseReturn();
+      window.location.replace("/#/asset/" + encodeURIComponent(state.detailAssetId));
     }
     document.getElementById("detail-back").addEventListener("click", returnFromDetail);
     document.addEventListener("keydown", function (event) {

@@ -2198,6 +2198,7 @@
     var preview = state.search.preview;
     preview.handle = window.AIPhotoInfo.open(assetId, {
       title: "搜索结果照片", alt: "搜索结果照片", extension: extension, people: false, returnFocus: returnFocus,
+      onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "search"); },
       navigation: { previous: function () { moveSearchPreview(-1); }, next: function () { moveSearchPreview(1); } },
       onClose: function () {
         preview.seq += 1; preview.peopleSeq += 1; preview.assetId = null; preview.handle = null;

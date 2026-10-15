@@ -1,3 +1,7 @@
+## Current user-directed task: P4-UI2-PHOTO-DETAIL-ENTRY-A — FUNCTIONAL SCOPED PASS / BROWSER_PENDING (2026-10-15)
+
+共享照片查看器支持「完整详情」，统一显式详情路由和一次性、受校验来源意图；旧深链与直接详情 Back 安全项、弹窗释放、忙碌拦截和失效来源提示生命周期均有定向合成覆盖。JUnit **4/0/0/0**、受影响 JS `node --check`、Ruff、`git diff --check` 通过。用户要求不做浏览器验证，故整卡保持 **ACCEPTANCE PARTIAL / BROWSER_NOT_RUN_USER_REQUEST**；来源上下文及视觉/Back-Forward 实际行为待浏览器验收。Luna High repair-only 复核发现的两项 history/warning finding 已修复，最终未发现新 finding（不是 DS-H），详见[报告](reports/P4-UI2-PHOTO-DETAIL-ENTRY-A.md)。[任务卡](tasks/P4-UI2-PHOTO-DETAIL-ENTRY-A.md) / [报告](reports/P4-UI2-PHOTO-DETAIL-ENTRY-A.md)。未访问真实图库，未跑全仓/性能/模型/GPU/打包验证。
+
 ## Current user-directed task: P4-UI2-MAP-PHOTO-HOVER-A — IMPLEMENTED / BROWSER NOT RUN BY REQUEST (2026-10-15)
 
 地图照片卡与 cluster leaf 现在共用单一 MapLibre hover Marker，按真实照片 GPS 定位；鼠标/键盘焦点优先级、触屏清理、无效坐标、视野/列表/查看器/地图错误清理均有定向 probe。JUnit **10/0/0/0**，两份 JS `node --check` 和 `git diff --check` 通过。LUNA High 独立限域复核的两项清理 finding 已修复并复看关闭，无新 finding（不是 DS-H）。按用户要求未运行浏览器，故整卡保持浏览器验收待验、不标 PASS。[任务卡](tasks/P4-UI2-MAP-PHOTO-HOVER-A.md) / [报告](reports/P4-UI2-MAP-PHOTO-HOVER-A.md)。

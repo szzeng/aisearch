@@ -31,7 +31,7 @@ class Element {
   showModal() { this.open=true; }
   close() { this.open=false; this.fire("close"); }
 }
-const document={cookie:"ps_csrf=synthetic-token",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
+const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
@@ -46,7 +46,7 @@ const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height
   {location_id:15,source_id:4,source_display_name:"绝对位置",relative_path:"\\rooted.jpg",availability:"PRESENT"},
   {location_id:16,source_id:4,source_display_name:"盘符相对位置",relative_path:"E:drive-relative.jpg",availability:"PRESENT"}]});
 const postCalls=[]; let deferLocal=false,releaseLocal;
-const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},fetch:async (url,options)=>{
+const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},URL,fetch:async (url,options)=>{
   if(url.includes("/local-action")) { postCalls.push({url,options}); const body={status:"accepted",action:JSON.parse(options.body).action}; return deferLocal?new Promise(resolve=>{releaseLocal=()=>resolve(ok(body));}):ok(body); }
   fetches.push(url);
   if(url==="/api/v1/assets/201") { await new Promise(r=>{releaseDetail=r;}); return ok(detail(201)); }
@@ -192,6 +192,40 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   all(staleActionHost,n=>n.className==="photo-info-local-action"&&n.textContent==="定位文件位置")[0].fire("click");
   await flush(); pendingAction.dispose(); staleActionHost.replaceChildren(new Element("p")); releaseLocal(); await flush();
   assert.ok(!staleActionHost.textContent.includes("已请求资源管理器定位"),"a response after dispose cannot update the replacement panel");
+
+  const savedValues=new Map(); let historyPushes=0, historyBacks=0; const replacements=[];
+  window.location={href:"http://localhost/search?q=lake",origin:"http://localhost",replace:path=>replacements.push(path)};
+  window.sessionStorage={getItem:key=>savedValues.get(key)||null,setItem:(key,value)=>savedValues.set(key,value),removeItem:key=>savedValues.delete(key)};
+  window.history={pushState(){historyPushes++;},back(){historyBacks++;}};
+  window.addEventListener=()=>{}; window.removeEventListener=()=>{};
+  const blocked=context.window.AIPhotoInfo.open(101,{beforeClose:()=>false,onOpenFullDetails:()=>assert.fail("busy viewer must not navigate")});
+  const blockedDetails=all(blocked.dialog,n=>n.className==="photo-viewer-details")[0];
+  blockedDetails.fire("click"); assert.equal(replacements.length,0,"beforeClose blocks full-details navigation");
+  blocked.close(); assert.equal(historyBacks,0,"a rejected close preserves its owned history entry");
+  blocked.dialog.close(); await flush();
+  assert.equal(historyBacks,1,"ordinary close keeps the viewer's existing history behavior");
+  const navigated=[];
+  const changing=context.window.AIPhotoInfo.open(101,{onOpenFullDetails:id=>{navigated.push(id);context.window.AIPhotoInfo.navigateToDetails(id,"search");}});
+  changing.setAsset(202);
+  const detailsButton=all(changing.dialog,n=>n.className==="photo-viewer-details")[0];
+  detailsButton.fire("click"); detailsButton.fire("click");
+  assert.deepEqual(navigated,["202"],"the details entry uses the live setAsset identity and rejects a second trigger");
+  assert.equal(changing.dialog.open,false,"successful details navigation releases the current modal");
+  assert.equal(historyPushes,2,"each viewer owns one modal history entry");
+  assert.deepEqual(replacements,["/#/asset/202/details"],"navigation replaces the modal entry with the explicit details route");
+  const returnIntent=context.window.AIPhotoInfo.consumeDetailReturn("202");
+  assert.equal(returnIntent.source,"search"); assert.equal(returnIntent.path,"/search?q=lake","a one-time same-origin source path is available for safe return");
+  assert.equal(returnIntent.requiresBackstop,false,"a viewer-owned history transition already has an in-app predecessor");
+  assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202"),null,"the source return intent is consumed once");
+  assert.equal(context.window.AIPhotoInfo.restoreDetailReturn("202",returnIntent),true,"return-to-viewer can re-arm the validated source intent");
+  assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202").path,"/search?q=lake");
+  window.__aiPhotoDetailHandoff=null; document.referrer="http://localhost/elsewhere";
+  savedValues.set("aisearch.photo-detail-return.v1",JSON.stringify({assetId:"202",source:"search",path:"/search?q=lake",requiresBackstop:false,handoffKey:"stale",savedAt:Date.now()}));
+  assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202").invalid,true,"a stale same-asset session intent without the current transition or matching referrer is rejected");
+  assert.equal(savedValues.has("aisearch.photo-detail-return.v1"),false,"rejected stale intents are cleared once");
+  window.sessionStorage={getItem(){throw new Error("storage unavailable");},removeItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}};
+  assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202").invalid,true,"storage denial is distinguishable from a direct route with no source intent");
+  changing.dialog.close(); assert.equal(historyBacks,1,"details navigation does not leave a modal history callback behind");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
@@ -209,12 +243,13 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-ui2-viewer-unify-a-3" in document
-        assert "/web/photo-info.css?v=p4-ui2-viewer-size-stable-a-1" in document
-    assert "search.js?v=p4-search-place-intent-chip-fix-a-4" in (web / "search.html").read_text(encoding="utf-8")
+        assert "/web/photo-info.js?v=p4-ui2-photo-detail-entry-a-1" in document
+        assert "/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" in document
+    assert "search.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-ui2-scroll-load-b-3" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "places-albums.js?v=p4-ui2-place-album-nav-a-1" in (web / "places.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
+    assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
     assert 'element("button", "thumb-frame")' in (web / "search.js").read_text(encoding="utf-8")
@@ -240,21 +275,44 @@ def test_home_detail_back_restores_browse_and_source_filter() -> None:
     assert node is not None, "Node is required for the synthetic home-history check"
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict"),values=new Map();
-const location={hash:"",pathname:"/",search:""},sections={sources:{hidden:false},browse:{hidden:true},detail:{hidden:true}};
-const timelineMounts=[];
-const window={location,scrollY:0,PhotoTimeline:{mount:options=>{timelineMounts.push(options);options.adapter.onRestoreAsset({getBoundingClientRect:()=>({top:620})});return{setReturnAnchor(){},setScope(){}};}},sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
+const location={hash:"",pathname:"/",search:"",replace(){}},sections={sources:{hidden:false},browse:{hidden:true},detail:{hidden:true}};
+const timelineMounts=[];let pendingIntent=null,consumedIntents=0;
+const window={location,scrollY:0,history:{replaceState:(state,title,url)=>timelineMounts.push({historyReplace:url}),pushState:(state,title,url)=>timelineMounts.push({historyPush:url})},PhotoTimeline:{mount:options=>{timelineMounts.push(options);options.adapter.onRestoreAsset({getBoundingClientRect:()=>({top:620})});return{setReturnAnchor(){},setScope(){}};}},sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
   requestAnimationFrame:fn=>fn(),scrollTo:(_x,y)=>{window.restoredScroll=y;}};
 const document={readyState:"loading",addEventListener(){}};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui={state,handleHash,restoreBrowseReturn,browseFingerprint,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
-const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console};
+  '  globalThis.ui={state,handleHash,restoreBrowseReturn,browseFingerprint,probeCapabilities,setElements(value){els=value;},setRenderDetail(fn){renderDetail=fn;}};\n  if (document.readyState === "loading")');
+document.getElementById=()=>null;
+const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:async()=>({status:200,headers:{get:()=>"application/json"},ok:true,json:async()=>({app_version:"test",schema_version:13,schema_status:"ok"})})};
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui,main={focus(){}},assetGrid={querySelector(){return null;}};
-const stub={hidden:false,setAttribute(){},querySelector(){return null;}};
+const stub={hidden:false,textContent:"",setAttribute(){},querySelector(){return null;}};
+const appMetaStub={textContent:""};
 ui.setElements({views:sections,navButtons:[],main,assetGrid,browseTimeline:stub,browseListView:stub,
   browseShowTimeline:stub,browseShowList:stub,browseCaptureState:stub,browseListFilters:stub,
-  browseListTimeHint:stub,browseTimelineNote:stub});
+  browseListTimeHint:stub,browseTimelineNote:stub,notice:stub,appMeta:appMetaStub});
+let routedDetail="";ui.setRenderDetail(id=>{routedDetail=String(id);});window.AIPhotoInfo={consumeDetailReturn:()=>null};location.hash="#/asset/123/details";ui.handleHash();
+assert.equal(routedDetail,"123","the explicit details suffix routes to the independent details renderer");
+assert.equal(ui.state.detailRouteActive,true);assert.equal(ui.state.detailAssetId,"123");
+assert.equal(timelineMounts.find(item=>item.historyReplace).historyReplace,"/","direct details creates an in-app Back fallback");
+assert.equal(timelineMounts.find(item=>item.historyPush).historyPush,"/#/asset/123/details","the fallback keeps the explicit details URL current");
+window.AIPhotoInfo={consumeDetailReturn:id=>{consumedIntents++;const intent=pendingIntent&&pendingIntent.assetId===id?pendingIntent.value:null;pendingIntent=null;return intent;}};
+timelineMounts.length=0;ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;
+pendingIntent={assetId:"123",value:{source:"home",path:"/",requiresBackstop:true}};location.hash="#/asset/123/details";ui.handleHash();
+assert.equal(consumedIntents,1,"a matching one-time intent is consumed when the explicit route is entered");
+assert.equal(timelineMounts.find(item=>item.historyReplace).historyReplace,"/","the history:false legacy viewer intent still creates a safe in-app Back predecessor");
+assert.equal(timelineMounts.find(item=>item.historyPush).historyPush,"/#/asset/123/details");
+timelineMounts.length=0;ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;
+pendingIntent={assetId:"123",value:{source:"search",path:"/search?q=old",requiresBackstop:false}};location.hash="#/asset/123/details";ui.handleHash();
+assert.equal(consumedIntents,2,"same-asset stale intent cannot remain available for a later direct route");
+assert.equal(timelineMounts.some(item=>item.historyReplace),false,"a validated viewer-owned transition keeps its legitimate predecessor");
+assert.equal(timelineMounts.some(item=>item.historyPush),false);
+timelineMounts.length=0;ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;location.hash="#/asset/123/details";ui.handleHash();
+assert.equal(consumedIntents,3,"the prior same-asset intent is no longer replayable");
+assert.equal(timelineMounts.find(item=>item.historyReplace).historyReplace,"/","a later direct route after the stale intent is consumed gets a safe Back predecessor");
+timelineMounts.length=0;
+ui.state.detailRouteActive=false;ui.state.detailAssetId=null;location.hash="";
 const saved={assetId:"42",sourceId:"12",order:"time_asc",captureFrom:"2025-01-01",captureTo:"2025-02-01",scrollY:420,returnAssetId:"42",returnAssetTop:20,count:125};
 window.sessionStorage.setItem("aisearch.home-browse-return.v1",JSON.stringify(saved));
 assert.equal(ui.restoreBrowseReturn("42"),true);
@@ -271,6 +329,16 @@ assert.equal(ui.restoreBrowseReturn("99"),true);ui.state.detailRouteActive=true;
 assert.equal(timelineMounts.length,1);assert.equal(timelineMounts[0].returnAnchor,"time-anchor-99");
 assert.equal(timelineMounts[0].returnAssetId,"99");assert.equal(window.restoredScroll,600,"timeline return restores the asset's prior viewport position after detail reset the page scroll");
 assert.equal(ui.state.browse.returnPending,false);
+ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;window.AIPhotoInfo={consumeDetailReturn:()=>({invalid:true})};location.hash="#/asset/123/details";ui.handleHash();
+assert.match(stub.textContent,/原来源状态已失效或不可用/,"an invalid or unavailable origin is explained while preserving the current asset details");
+assert.equal(ui.state.detailReturnWarning,true);
+ui.probeCapabilities();setTimeout(()=>{
+  assert.match(stub.textContent,/原来源状态已失效或不可用/,"a successful startup capability probe does not clear the source warning");
+  let legacyClose=null;window.AIPhotoInfo={consumeDetailReturn:()=>null,open:(_id,options)=>{legacyClose=options.onClose;return{dialog:{open:true},close(){}};}};
+  location.hash="#/asset/123";ui.handleHash();assert.equal(typeof legacyClose,"function");legacyClose();
+  assert.equal(ui.state.detailReturnWarning,false,"closing the legacy viewer clears the details-only warning state");
+  ui.probeCapabilities();setTimeout(()=>{assert.doesNotMatch(stub.textContent,/仍可查看当前照片，关闭后会安全返回照片页/,"a later capability response does not revive the details-only warning after returning to the photo page");},0);
+},0);
 """
     result = subprocess.run(
         [node, "-e", script],

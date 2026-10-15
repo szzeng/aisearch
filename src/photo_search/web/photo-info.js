@@ -5,6 +5,58 @@
   var sourceRoots = new Map();
   var serial = 0;
   var mounts = new WeakMap();
+  var DETAIL_RETURN_KEY = "aisearch.photo-detail-return.v1";
+  var DETAIL_RETURN_PATHS = { home: "/", search: "/search", persons: "/persons", places: "/places", map: "/map" };
+
+  function detailReturnPath(value, source) {
+    try {
+      var url = new URL(String(value || ""), window.location.origin);
+      if (url.origin !== window.location.origin || !DETAIL_RETURN_PATHS[source] || url.pathname !== DETAIL_RETURN_PATHS[source]) return null;
+      return url.pathname + url.search + url.hash;
+    } catch (_) { return null; }
+  }
+  function saveDetailReturn(assetId, source, returnPath, requiresBackstop) {
+    var path = detailReturnPath(returnPath || window.location.href, source);
+    if (path) {
+      var handoffKey = String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+      try { window.sessionStorage.setItem(DETAIL_RETURN_KEY, JSON.stringify({ assetId: String(assetId), source: source, path: path, requiresBackstop: Boolean(requiresBackstop), handoffKey: handoffKey, savedAt: Date.now() })); }
+      catch (_) { /* The detail route remains usable without a return snapshot. */ }
+      window.__aiPhotoDetailHandoff = { assetId: String(assetId), handoffKey: handoffKey };
+    }
+    try { window.location.replace("/#/asset/" + encodeURIComponent(assetId) + "/details"); }
+    catch (error) { try { window.sessionStorage.removeItem(DETAIL_RETURN_KEY); } catch (_) {} throw error; }
+  }
+  function consumeDetailReturn(assetId) {
+    try {
+      var handoff = window.__aiPhotoDetailHandoff;
+      window.__aiPhotoDetailHandoff = null;
+      var raw = window.sessionStorage.getItem(DETAIL_RETURN_KEY);
+      window.sessionStorage.removeItem(DETAIL_RETURN_KEY);
+      if (!raw) return null;
+      var value = raw && JSON.parse(raw), path = value && detailReturnPath(value.path, value.source), savedAt = Number(value && value.savedAt);
+      if (!value || String(value.assetId) !== String(assetId) || !path || !isFinite(savedAt) || savedAt > Date.now() + 60000 || Date.now() - savedAt > 30 * 60 * 1000) return { invalid: true };
+      var sameDocumentHandoff = Boolean(handoff && handoff.assetId === String(assetId) && handoff.handoffKey === value.handoffKey);
+      var referrerMatches = false;
+      try {
+        var referrer = new URL(document.referrer);
+        var intendedSource = new URL(path, window.location.origin);
+        referrerMatches = referrer.origin === window.location.origin && referrer.pathname === intendedSource.pathname && referrer.search === intendedSource.search;
+      } catch (_) { /* Direct navigation has no trusted originating document. */ }
+      if (!sameDocumentHandoff && !referrerMatches) return { invalid: true };
+      return { source: value.source, path: path, requiresBackstop: Boolean(value.requiresBackstop) };
+    } catch (_) { return { invalid: true }; }
+  }
+  function restoreDetailReturn(assetId, intent) {
+    if (!intent || !DETAIL_RETURN_PATHS[intent.source]) return false;
+    var path = detailReturnPath(intent.path, intent.source);
+    if (!path) return false;
+    try {
+      var handoffKey = String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+      window.sessionStorage.setItem(DETAIL_RETURN_KEY, JSON.stringify({ assetId: String(assetId), source: intent.source, path: path, requiresBackstop: Boolean(intent.requiresBackstop), handoffKey: handoffKey, savedAt: Date.now() }));
+      window.__aiPhotoDetailHandoff = { assetId: String(assetId), handoffKey: handoffKey };
+      return true;
+    } catch (_) { return false; }
+  }
 
   function node(tag, text, className) {
     var item = document.createElement(tag);
@@ -297,8 +349,12 @@
     var heading = node("header", undefined, "photo-viewer-heading");
     var title = node("h2", options.title || "查看照片"); title.id = "photo-viewer-title-" + (++serial);
     heading.append(title);
+    var headingActions = node("div", undefined, "photo-viewer-heading-actions");
+    var fullDetails = node("button", "完整详情", "photo-viewer-details"); fullDetails.type = "button";
+    fullDetails.setAttribute("aria-label", "打开当前照片的完整详情");
+    headingActions.append(fullDetails);
     var close = node("button", "关闭", "photo-viewer-close"); close.type = "button";
-    close.setAttribute("aria-label", "关闭照片预览"); heading.append(close);
+    close.setAttribute("aria-label", "关闭照片预览"); headingActions.append(close); heading.append(headingActions);
     var layout = node("div", undefined, "photo-viewer-layout");
     var figure = node("figure", undefined, "photo-viewer-figure");
     var stage = node("div", undefined, "photo-viewer-stage");
@@ -324,7 +380,7 @@
     if (options.extension) extension.append(options.extension);
     dialog.setAttribute("aria-labelledby", title.id);
     dialog.append(heading, layout, extension); document.body.append(dialog);
-    var mounted = null, generation = 0, currentAssetId = null, historyOwned = false, closingFromHistory = false;
+    var mounted = null, generation = 0, currentAssetId = null, historyOwned = false, closingFromHistory = false, navigatingToDetails = false;
     var historyKey = "photo-viewer-" + serial;
     var preview = { image: image, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit", x: 0, y: 0 };
     function applyScale(value, anchorX, anchorY) {
@@ -409,6 +465,24 @@
     }
     function canClose() { return typeof options.beforeClose !== "function" || options.beforeClose(currentAssetId, handle) !== false; }
     function dismiss() { if (dialog.open && canClose()) dialog.close(); }
+    fullDetails.disabled = typeof options.onOpenFullDetails !== "function";
+    fullDetails.addEventListener("click", function () {
+      if (navigatingToDetails || !dialog.open || !canClose() || typeof options.onOpenFullDetails !== "function") return;
+      navigatingToDetails = true;
+      fullDetails.disabled = true;
+      if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
+      try {
+        options.onOpenFullDetails(currentAssetId, handle);
+        if (dialog.open) dialog.close();
+      }
+      catch (error) {
+        navigatingToDetails = false; fullDetails.disabled = false;
+        if (options.history !== false && window.history && window.history.pushState && window.addEventListener) {
+          historyOwned = true; window.addEventListener("popstate", onPopState);
+        }
+        if (typeof options.onDetailNavigationError === "function") options.onDetailNavigationError(error);
+      }
+    });
     var onPopState = function (event) {
       if (!historyOwned || !dialog.open) return;
       if (!canClose()) { window.history.pushState({ photoViewerKey: historyKey }, "", window.location.href); return; }
@@ -450,5 +524,5 @@
     setAsset(assetId);
     return handle;
   }
-  window.AIPhotoInfo = { render: render, open: open };
+  window.AIPhotoInfo = { render: render, open: open, navigateToDetails: saveDetailReturn, consumeDetailReturn: consumeDetailReturn, restoreDetailReturn: restoreDetailReturn };
 })();

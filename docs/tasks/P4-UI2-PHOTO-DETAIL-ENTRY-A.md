@@ -1,11 +1,11 @@
 # P4-UI2-PHOTO-DETAIL-ENTRY-A — 恢复完整照片详情入口与安全返回
 
-- **状态**：PLANNED / READY，仅设计任务卡；产品代码尚未修改。
+- **状态**：IMPLEMENTED / 定向验证通过 / BROWSER_NOT_RUN_USER_REQUEST；整卡 ACCEPTANCE PARTIAL（2026-10-15）。
 - **优先级**：P1（导航错误、详情展示错照片、搜索或相册状态丢失按 P0）。
 - **核对基线**：`szzeng/aisearch` / `master`，规划时 HEAD `6b024115cc30e7c74575e241cfcf38300a920256`（2026-10-14）；执行前检查最新 HEAD、工作树及其它已实施 UI 卡，不能覆盖后来提交。
 - **推荐执行**：**GPT-6 High**。主体改动虽小，但涉及统一弹窗、旧 hash 路由、多个页面返回上下文和浏览器历史；按 `AGENTS.md` / V3.1 §2.4 做相应受影响面复核。不需要全站重构。
 - **验收**：个人使用的最少定向 JUnit + 2 条内置产品浏览器合成数据闭环；不跑全仓、真实图库、模型/GPU、20 万/30 万容量测试。
-- **注意**：截至 2026-10-15 此卡已在 master 存在，继续在同一文件迭代，不新增重名卡；本次只提交任务定义。
+- **注意**：截至 2026-10-15 此卡已在 master 存在，继续在同一文件迭代，不新增重名卡。用户明确授权执行实现并要求完成后简单提交；本轮按任务卡做定向验证，不做浏览器验证，不 push。
 - **前置**：`P4-UI2-VIEWER-UNIFY-A` 已建立共享弹窗；`P4-UI2-VIEWER-SIZE-STABLE-A` 已在最新 `photo-info.css` 落实固定尺寸规则（执行时以实际 HEAD/报告状态为准）。本卡不得回退已落地的缩放/几何修复。
 
 ## 1. 唯一目标及产品决策
@@ -140,4 +140,4 @@
 
 分列 `DETAIL_ROUTE`、`VIEWER_ENTRY`、`RETURN_AND_HISTORY`、`SCOPED_CONTEXT`、`BROWSER`、`REGRESSION`、`REVIEW` 状态。功能实现且定向测试通过但必要浏览器链路未能验证时可报告 `FUNCTIONAL SCOPED PASS / BROWSER_PENDING`，整卡仍保持合理的 `ACCEPTANCE PARTIAL`；若实际出现丢搜索条件、Back 死循环、选错资产或绕过人物 busy 状态，视为**阻断**，必须修复并复验。
 
-该卡仅补“完整详情入口 + 安全返回”，完成即停。不追认其它 viewer/搜索/地点/视觉/性能卡历史 PENDING。本轮**仅提交本任务卡到 GitHub，不授权执行产品代码**。
+该卡仅补“完整详情入口 + 安全返回”，完成即停。不追认其它 viewer/搜索/地点/视觉/性能卡历史 PENDING。本轮产品实现与本地提交由用户明确授权；浏览器验收仍待后续执行。

@@ -413,7 +413,8 @@
   function openAsset(id) {
     clearPhotoHover();
     if (window.AIPhotoInfo) {
-      window.AIPhotoInfo.open(id, { title: "查看地图照片", alt: "地图照片 #" + id, returnFocus: document.activeElement });
+      window.AIPhotoInfo.open(id, { title: "查看地图照片", alt: "地图照片 #" + id, returnFocus: document.activeElement,
+        onOpenFullDetails: function (assetId) { window.AIPhotoInfo.navigateToDetails(assetId, "map"); } });
       return;
     }
     location.href = "/#/asset/" + encodeURIComponent(id);
