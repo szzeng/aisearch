@@ -1,6 +1,6 @@
 # P4-UI2-MAP-PHOTO-HOVER-A — 地图相册照片悬停与位置点联动
 
-- **状态**：READY / 待实施。本卡仅定义后续实现，不代表功能已经完成。
+- **状态**：IMPLEMENTED / 定向验证通过 / BROWSER_NOT_RUN_USER_REQUEST；整卡验收待浏览器路线。
 - **优先级**：P2；小范围 UI 体验增强。
 - **推荐模型**：GPT-6 Medium（用户在 Codex 中手动选择）；仅前端/只读行为，按仓库策略进行限域复核。若触及地图成员协议、数据修订或数据库则停止扩范围，另立任务。
 - **代码基线**：`szzeng/aisearch` / `master`，以执行当天最新 HEAD 为准。优先阅读 `AGENTS.md` → `docs/development-status.md` → 本卡 → 本卡列出的直接相关代码/测试；不得覆盖并行任务的修改。

@@ -1,3 +1,11 @@
+## Current user-directed task: P4-UI2-MAP-PHOTO-HOVER-A — IMPLEMENTED / BROWSER NOT RUN BY REQUEST (2026-10-15)
+
+地图照片卡与 cluster leaf 现在共用单一 MapLibre hover Marker，按真实照片 GPS 定位；鼠标/键盘焦点优先级、触屏清理、无效坐标、视野/列表/查看器/地图错误清理均有定向 probe。JUnit **10/0/0/0**，两份 JS `node --check` 和 `git diff --check` 通过。LUNA High 独立限域复核的两项清理 finding 已修复并复看关闭，无新 finding（不是 DS-H）。按用户要求未运行浏览器，故整卡保持浏览器验收待验、不标 PASS。[任务卡](tasks/P4-UI2-MAP-PHOTO-HOVER-A.md) / [报告](reports/P4-UI2-MAP-PHOTO-HOVER-A.md)。
+
+## Next task: P4-UI2-MAP-PHOTO-HOVER-BROWSER-A — product browser acceptance
+
+等待用户发起后，使用隔离合成 GPS 数据和 Codex 内置浏览器观察 2–3 张照片 hover→精确点位→离开清理→查看器打开/关闭，并确认地图点击/拖动与分页仍可用。[任务卡](tasks/P4-UI2-MAP-PHOTO-HOVER-BROWSER-A.md)。本轮未访问真实图库或真实 Key，未跑全仓、性能、模型/GPU、打包或发布验证。
+
 ## Current user-directed task: P4-UI2-PLACES-SIMPLIFY-A — IMPLEMENTED / BROWSER_PENDING (2026-10-14)
 
 地点页默认仅浏览相册；主动进入整理工作区后可访问建议、地名目录/新建/编辑、高级维护及历史撤销；纠错操作已语义化且沿用原 CSRF/revision 写协议。定向 JUnit **15/0/0/0**、两份 JS `node --check`、`git diff --check` 通过。LUNA High 首轮两项 finding 已修复，repair-only 复核关闭，无新 finding（不是 DS-H）。按用户指示未运行浏览器验收，故不标整卡 PASS；未访问真实图库或执行性能/模型/GPU/打包检查。[任务卡](tasks/P4-UI2-PLACES-SIMPLIFY-A.md) / [报告](reports/P4-UI2-PLACES-SIMPLIFY-A.md)。

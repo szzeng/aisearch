@@ -179,6 +179,38 @@
   cursor: pointer;
 }
 
+.map-photo-hover-marker {
+  position: relative;
+  display: block;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #f43f5e;
+  box-shadow: 0 1px 5px rgb(0 0 0 / 55%);
+  pointer-events: none;
+}
+
+.map-photo-hover-marker::after {
+  position: absolute;
+  inset: -7px;
+  border: 2px solid rgb(244 63 94 / 72%);
+  border-radius: 50%;
+  content: "";
+  pointer-events: none;
+}
+
+.tile.map-photo-hover-active,
+.map-cluster-member.map-photo-hover-active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .map-photo-hover-marker { transition: opacity 100ms ease-out; }
+}
+
 @media (max-width: 850px) {
   .map-page-main {
     display: flex;

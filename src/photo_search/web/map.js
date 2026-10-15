@@ -6,6 +6,8 @@
   var assetMode = true, sourceMode = null, summaryTotal = 0, gridAssets = [];
   var restoreState = null, clusterPaging = null, cellPaging = null, focusIntent = null;
   var runtimeConfig = null, basemapLayer = "vector", settingsDialog = null, clearArmed = false;
+  var hoverMarker = null, hoverMarkerElement = null, mouseHoverOwner = null, focusHoverOwner = null;
+  var keyboardFocusMode = false, hoverEventsBound = false;
   function $(id) { return document.getElementById(id); }
   function req(url) {
     return fetch(url, { credentials: "same-origin" }).then(function (r) {
@@ -160,6 +162,85 @@
   }
   function extent() { bbox = bounds(); return bbox; }
   function title(total) { $("grid-title").textContent = "当前范围 · " + total + " 张照片"; }
+  function validPhotoCoordinates(coordinates) {
+    if (!Array.isArray(coordinates) || coordinates.length < 2 || coordinates[0] === null || coordinates[0] === undefined || coordinates[1] === null || coordinates[1] === undefined || coordinates[0] === "" || coordinates[1] === "") return false;
+    var longitude = Number(coordinates[0]), latitude = Number(coordinates[1]);
+    return Number.isFinite(longitude) && Number.isFinite(latitude) && longitude >= -180 && longitude <= 180 && latitude >= -90 && latitude <= 90;
+  }
+  function hoverOwner(node) {
+    var box = $("grid");
+    while (node && node !== box) {
+      if (node.__mapPhotoHover) return node;
+      node = node.parentNode;
+    }
+    return null;
+  }
+  function setHoverMarker(owner) {
+    var data = owner && owner.__mapPhotoHover, coordinates = data && data.coordinates;
+    if (!data || !validPhotoCoordinates(coordinates) || !map || !window.maplibregl || !window.maplibregl.Marker) {
+      if (hoverMarkerElement) hoverMarkerElement.style.display = "none";
+      return;
+    }
+    if (!hoverMarker) {
+      hoverMarkerElement = document.createElement("span");
+      hoverMarkerElement.className = "map-photo-hover-marker";
+      hoverMarkerElement.setAttribute("aria-hidden", "true");
+      hoverMarkerElement.style.pointerEvents = "none";
+      hoverMarkerElement.style.display = "none";
+      hoverMarker = new window.maplibregl.Marker({ element: hoverMarkerElement, anchor: "center" });
+      hoverMarker.setLngLat(coordinates).addTo(map);
+    } else hoverMarker.setLngLat(coordinates);
+    hoverMarkerElement.style.display = "block";
+  }
+  function updateHoverMarker() {
+    var owner = mouseHoverOwner || focusHoverOwner;
+    setHoverMarker(owner);
+    var box = $("grid");
+    if (box && box.querySelectorAll) box.querySelectorAll(".tile, .map-cluster-member").forEach(function (node) {
+      if (node.classList) node.classList.toggle("map-photo-hover-active", node === owner);
+    });
+  }
+  function clearPhotoHover() {
+    mouseHoverOwner = null; focusHoverOwner = null;
+    updateHoverMarker();
+  }
+  function bindPhotoHover() {
+    if (hoverEventsBound) return;
+    var box = $("grid");
+    if (!box) return;
+    hoverEventsBound = true;
+    box.addEventListener("pointerover", function (event) {
+      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+      var owner = hoverOwner(event.target), previous = hoverOwner(event.relatedTarget);
+      if (owner && owner !== previous) { mouseHoverOwner = owner; updateHoverMarker(); }
+    });
+    box.addEventListener("pointerout", function (event) {
+      if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+      var owner = hoverOwner(event.target), next = hoverOwner(event.relatedTarget);
+      if (owner && owner !== next && mouseHoverOwner === owner) { mouseHoverOwner = null; updateHoverMarker(); }
+    });
+    box.addEventListener("focusin", function (event) {
+      if (!keyboardFocusMode) return;
+      var owner = hoverOwner(event.target);
+      if (owner) { focusHoverOwner = owner; updateHoverMarker(); }
+    });
+    box.addEventListener("focusout", function (event) {
+      var owner = hoverOwner(event.target), next = hoverOwner(event.relatedTarget);
+      if (owner && owner !== next && focusHoverOwner === owner) { focusHoverOwner = null; updateHoverMarker(); }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Tab") keyboardFocusMode = true;
+    });
+    document.addEventListener("pointerdown", function (event) {
+      keyboardFocusMode = false;
+      focusHoverOwner = null;
+      if (event.pointerType === "touch") mouseHoverOwner = null;
+      updateHoverMarker();
+    });
+  }
+  function addPhotoHoverData(node, assetId, longitude, latitude) {
+    node.__mapPhotoHover = { asset_id: assetId, coordinates: [longitude, latitude] };
+  }
   function setOrderMode(value) {
     orderMode = value === "capture_time_desc" ? value : "asset_id_desc";
     $("map-order-default").setAttribute("aria-pressed", String(orderMode === "asset_id_desc"));
@@ -168,10 +249,11 @@
   }
   function drawGrid(data, reset) {
     var box = $("grid");
-    if (reset) { box.textContent = ""; gridAssets = []; }
+    if (reset) { clearPhotoHover(); box.textContent = ""; gridAssets = []; }
     (data.assets || []).forEach(function (a) {
       gridAssets.push(a);
       var tile = document.createElement("article"), img = document.createElement("img"), button = document.createElement("button"), imageButton = document.createElement("button");
+      addPhotoHoverData(tile, a.asset_id, a.longitude, a.latitude);
       tile.className = "tile"; img.loading = "lazy"; img.src = a.thumbnail || ("/api/v1/assets/" + encodeURIComponent(a.asset_id) + "/thumbnail"); img.alt = "照片 " + a.asset_id;
       button.textContent = "查看照片"; button.onclick = function () { openAsset(a.asset_id); };
       imageButton.type = "button"; imageButton.className = "map-photo-open"; imageButton.setAttribute("aria-label", "查看照片 " + a.asset_id); imageButton.onclick = button.onclick; imageButton.appendChild(img);
@@ -222,6 +304,7 @@
   }
   function expandCluster(clusterId, coordinates) {
     if (!map) return;
+    clearPhotoHover();
     var source = map.getSource("photos");
     source.getClusterExpansionZoom(clusterId).then(function (z) {
       if (z > 16 || z <= map.getZoom() + 0.01) {
@@ -239,9 +322,12 @@
     map.getSource("photos").getClusterLeaves(state.id, PAGE, state.offset).then(function (leaves) {
       if (clusterPaging !== state || !current(state.seq, state.version)) return;
       var box = $("grid");
-      if (state.offset === 0) { box.textContent = ""; gridAssets = []; }
+      if (state.offset === 0) { clearPhotoHover(); box.textContent = ""; gridAssets = []; }
       (leaves || []).forEach(function (f) {
         var p = f.properties || {}, button = document.createElement("button");
+        button.className = "map-cluster-member";
+        var coordinates = f.geometry && f.geometry.coordinates;
+        if (validPhotoCoordinates(coordinates)) addPhotoHoverData(button, p.asset_id, coordinates[0], coordinates[1]);
         button.textContent = "查看照片 " + p.asset_id;
         button.onclick = function () { openAsset(p.asset_id); };
         box.appendChild(button); gridAssets.push({ asset_id: p.asset_id });
@@ -313,6 +399,7 @@
     });
   }
   function refresh() {
+    clearPhotoHover();
     cellPaging = null; clusterPaging = null;
     var id = ++sequence, b = extent();
     $("grid-title").textContent = "正在同步照片列表…";
@@ -324,6 +411,7 @@
     });
   }
   function openAsset(id) {
+    clearPhotoHover();
     if (window.AIPhotoInfo) {
       window.AIPhotoInfo.open(id, { title: "查看地图照片", alt: "地图照片 #" + id, returnFocus: document.activeElement });
       return;
@@ -331,6 +419,7 @@
     location.href = "/#/asset/" + encodeURIComponent(id);
   }
   function openCell(cell, z) {
+    clearPhotoHover();
     var id = sequence, b = bbox, expected = version;
     if (!b || !current(id, expected)) return;
     if (orderMode === "capture_time_desc") {
@@ -347,6 +436,7 @@
     }).catch(function () { if (cellPaging === selection && selection.seq === sequence) refresh(); });
   }
   function schedule() {
+    clearPhotoHover();
     sequence++; clearTimeout(timer); clusterPaging = null; cellPaging = null; cursor = null;
     $("more").hidden = true; $("more").disabled = false;
     timer = setTimeout(refresh, 250);
@@ -391,6 +481,7 @@
     });
   }
   function fallback(id) {
+    clearPhotoHover();
     map = null; $("notice").textContent = "地图暂不可用；照片仍可通过列表浏览。";
     bbox = null; fallbackGrid(id, null);
   }
@@ -402,6 +493,16 @@
   }
   function probePageCapabilities() {
     req("/api/v1/capabilities/page").then(revealPersonsNav).catch(function () { revealPersonsNav(null); });
+  }
+  function handleMapError(event) {
+    var sourceId = event && event.sourceId;
+    if (sourceId && sourceId.indexOf("td-") === 0) {
+      $("map-connection-status").textContent = "底图瓦片不可用；可能是 Key、来源限制、网络或配额，请检查。";
+      $("notice").textContent = "底图暂不可用；照片仍可浏览。";
+    } else if (map && !map.isStyleLoaded()) {
+      clearPhotoHover();
+      var failedId = sequence; $("notice").textContent = "地图暂不可用；照片列表仍可分页浏览。"; fallbackGrid(failedId, bbox);
+    }
   }
   function init() {
     var id = ++sequence;
@@ -449,16 +550,9 @@
           else $("notice").textContent = runtimeConfig.status === "CONFIG_UNREADABLE" ? "地图配置无法读取；照片列表仍可用。" : runtimeConfig.status === "RUNTIME_UNAVAILABLE" ? "地图服务暂不可用；照片列表仍可用。" : "未配置天地图；照片列表仍可用。";
           refresh();
         });
+        map.on("movestart", clearPhotoHover);
         map.on("moveend", schedule);
-        map.on("error", function (event) {
-          var sourceId = event && event.sourceId;
-          if (sourceId && sourceId.indexOf("td-") === 0) {
-            $("map-connection-status").textContent = "底图瓦片不可用；可能是 Key、来源限制、网络或配额，请检查。";
-            $("notice").textContent = "底图暂不可用；照片仍可浏览。";
-          } else if (map && !map.isStyleLoaded()) {
-            var failedId = sequence; $("notice").textContent = "地图暂不可用；照片列表仍可分页浏览。"; fallbackGrid(failedId, bbox);
-          }
-        });
+        map.on("error", handleMapError);
         var focused = new URLSearchParams(location.search).get("asset_id");
         if (focused) { focusIntent = { assetId: focused, asset: null, version: null, attempts: 0 }; requestFocusAsset(focusIntent); }
         if (saved && saved.version === s.member_version) window.scrollTo(0, saved.scroll || 0);
@@ -466,6 +560,7 @@
     }).catch(function (e) { $("notice").textContent = "读取地图摘要失败：" + e.message; });
   }
   function startMap() {
+    bindPhotoHover();
     probePageCapabilities();
     connectSettingsUi();
     $("more").onclick = loadMore;
