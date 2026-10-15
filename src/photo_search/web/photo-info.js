@@ -175,13 +175,16 @@
         var allSources = config.sourceTemplates(runtime.key), ids = config.layerIds(layerType);
         var sourceNames = layerType === "imagery" ? ["td-img", "td-cia"] : ["td-vec", "td-cva"];
         state.map = new window.maplibregl.Map({ container: canvas, center: [asset.longitude, asset.latitude], zoom: 12,
-          interactive: false, attributionControl: true, style: { version: 8, sources: {}, layers: [] } });
+          interactive: false, attributionControl: { compact: true }, style: { version: 8, sources: {}, layers: [] } });
         state.map.on("load", function () {
           if (!state.active || !state.map) return;
           sourceNames.forEach(function (name) { state.map.addSource(name, allSources[name]); });
           ids.forEach(function (id, index) { state.map.addLayer({ id: id, type: "raster", source: sourceNames[index], minzoom: 0, maxzoom: 18 }); });
           state.map.addSource("photo-location", { type: "geojson", data: { type: "Feature", geometry: { type: "Point", coordinates: [asset.longitude, asset.latitude] }, properties: {} } });
           state.map.addLayer({ id: "photo-location", type: "circle", source: "photo-location", paint: { "circle-radius": 7, "circle-color": "#dc3545", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+          // Compact attribution starts expanded and normally collapses after a drag.
+          // The detail map is intentionally non-interactive, so fire that public event once.
+          state.map.fire("drag");
         });
         state.map.on("error", unavailable);
       }).catch(unavailable);

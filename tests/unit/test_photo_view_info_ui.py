@@ -34,7 +34,7 @@ class Element {
 const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
-class FakeMap { constructor(options){this.options=options;this.events={};this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
+class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
 const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
 const fetches=[]; let releaseDetail;
 const ok=body=>({ok:true,status:200,json:async()=>body});
@@ -88,7 +88,10 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.ok(!host.textContent.includes("D:\\library\\E:drive-relative.jpg"),"drive-relative paths are rejected");
   assert.match(host.textContent,/文件时间 2020-01-02 03:04:05\.000/);
   assert.equal(maps[0].options.center[0],0); assert.equal(maps[0].options.center[1],0);
-  maps[0].events.load(); assert.equal(JSON.stringify(maps[0].source.source.data.geometry.coordinates),"[0,0]");
+  assert.equal(maps[0].options.attributionControl.compact,true,"detail map uses compact attribution mode");
+  maps[0].events.load();
+  assert.ok(maps[0].fired.includes("drag"),"the non-interactive detail map collapses attribution on initial load");
+  assert.equal(JSON.stringify(maps[0].source.source.data.geometry.coordinates),"[0,0]");
   assert.equal(all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径").length,3);
   const localButtons=all(host,n=>n.className==="photo-info-local-action");
   assert.equal(localButtons.length,10,"each PRESENT location has both local actions; missing locations do not");
