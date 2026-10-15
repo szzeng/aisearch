@@ -30,7 +30,7 @@ tmp/
 temp/
 
 # AI models and generated assets
-models/
+# models/
 embeddings/
 indexes/
 *.bin
