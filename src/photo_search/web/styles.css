@@ -429,6 +429,333 @@ main {
   color: var(--accent);
 }
 
+.management-panel > summary {
+  padding: 0.25rem 0 0.45rem;
+  font-weight: 650;
+}
+
+.management-panel[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.storage-management {
+  margin-top: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+  overflow: clip;
+}
+
+.storage-tools-heading {
+  margin: 0.9rem 0 0.35rem;
+}
+
+.storage-tools-heading h3 {
+  margin: 0;
+}
+
+.storage-tools-heading p {
+  margin: 0.15rem 0 0;
+}
+
+.storage-workspace {
+  padding: 0 1rem 1rem;
+}
+
+.storage-tabs {
+  display: flex;
+  gap: 0.35rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 1rem;
+}
+
+.storage-tabs [role="tab"] {
+  position: relative;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fg-muted);
+  padding: 0.7rem 0.8rem;
+}
+
+.storage-tabs [role="tab"][aria-selected="true"] {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.storage-tabs [role="tab"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 0.7rem;
+  bottom: -1px;
+  left: 0.7rem;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.storage-tabs [role="tab"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--tint) 70%, transparent);
+}
+
+.storage-tab-panel[hidden] {
+  display: none;
+}
+
+.storage-panel-heading,
+.storage-operation-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.storage-panel-heading {
+  margin: 0.25rem 0 0.8rem;
+}
+
+.storage-panel-heading h3,
+.storage-operation-group-heading h4 {
+  margin: 0;
+}
+
+.storage-panel-heading p,
+.storage-operation-group-heading p {
+  margin: 0.15rem 0 0;
+}
+
+.storage-inline-actions,
+.storage-backup-form,
+.storage-maintenance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.storage-operation-groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(15rem, 0.9fr);
+  gap: 0.8rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.storage-operation-groups > legend {
+  grid-column: 1 / -1;
+  margin-bottom: -0.35rem;
+  padding: 0;
+  font-weight: 650;
+}
+
+.storage-operation-group {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+
+.storage-operation-group-heading {
+  justify-content: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.storage-operation-icon {
+  display: grid;
+  width: 2.1rem;
+  height: 2.1rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.7rem;
+  background: var(--tint);
+  color: var(--accent);
+  font-size: 1.05rem;
+}
+
+.storage-operation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.storage-operation-grid-compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.storage-operation-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.storage-operation-card:has(input:checked) {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--line));
+  background: color-mix(in srgb, var(--tint) 60%, var(--panel));
+}
+
+.storage-operation-card input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0.12rem 0 0;
+  accent-color: var(--accent);
+}
+
+.storage-operation-card strong,
+.storage-operation-card small {
+  display: block;
+}
+
+.storage-operation-card strong {
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.storage-operation-card small {
+  margin-top: 0.2rem;
+  color: var(--fg-muted);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.storage-operation-badge {
+  align-self: center;
+  padding: 0.1rem 0.4rem;
+  border-radius: 99px;
+  background: var(--tint);
+  color: var(--accent);
+  font-size: 0.62rem;
+  white-space: nowrap;
+}
+
+.storage-maintenance-actionbar {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.85rem -1rem 0;
+  padding: 0.7rem 1rem;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  box-shadow: 0 -4px 14px color-mix(in srgb, var(--fg) 5%, transparent);
+}
+
+.storage-selection-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.storage-selection-count {
+  display: grid;
+  width: 1.8rem;
+  height: 1.8rem;
+  place-items: center;
+  border-radius: 0.6rem;
+  background: var(--tint);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.storage-selection-summary strong,
+.storage-selection-summary small {
+  display: block;
+}
+
+.storage-selection-summary strong {
+  font-size: 0.75rem;
+}
+
+.storage-selection-summary small {
+  color: var(--fg-muted);
+  font-size: 0.66rem;
+}
+
+.storage-maintenance-actions #storage-maintenance-confirm {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 650;
+}
+
+.storage-maintenance-actions #storage-maintenance-confirm:disabled {
+  border-color: var(--line);
+  background: var(--line);
+  color: var(--fg-muted);
+}
+
+.storage-maintenance-gate {
+  margin: 0.55rem 0 0;
+}
+
+.storage-backup-form {
+  margin: 0.75rem 0;
+}
+
+.storage-backup-form input {
+  min-width: min(100%, 20rem);
+  flex: 1 1 18rem;
+}
+
+@media (max-width: 760px) {
+  .storage-operation-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .storage-operation-groups > legend {
+    grid-column: 1;
+  }
+}
+
+@media (max-width: 560px) {
+  .storage-workspace {
+    padding: 0 0.65rem 0.75rem;
+  }
+
+  .storage-tabs [role="tab"] {
+    padding: 0.65rem 0.6rem;
+    font-size: 0.75rem;
+  }
+
+  .storage-panel-heading,
+  .storage-maintenance-actionbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .storage-inline-actions > button,
+  .storage-maintenance-actions > button {
+    flex: 1 1 auto;
+  }
+
+  .storage-operation-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .storage-maintenance-actionbar {
+    margin-right: -0.65rem;
+    margin-left: -0.65rem;
+    padding-right: 0.65rem;
+    padding-left: 0.65rem;
+  }
+}
+
 .source-detail {
   margin-top: 0.75rem;
   padding-top: 0.5rem;

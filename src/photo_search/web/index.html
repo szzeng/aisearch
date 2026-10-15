@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-maintenance-layout-a-2" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" />
@@ -14,7 +14,7 @@
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
+    <script src="/web/app.js?v=p4-ui2-maintenance-layout-a-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -58,48 +58,63 @@
         <ul id="sources-list" class="sources"></ul>
         <details class="management-panel">
           <summary>图库管理与分析明细</summary>
-          <details id="storage-management-details">
-            <summary>存储与维护</summary>
-            <section aria-labelledby="storage-health-title">
-              <h3 id="storage-health-title">空间与健康</h3>
-              <p><button type="button" id="storage-summary-refresh">快速查看空间</button> <button type="button" id="storage-deep-check">检查空间（有界深扫）</button></p>
-              <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
-            </section>
-            <details id="library-retention-details">
-              <summary>失效照片与数据占用</summary>
-              <p class="hint">只读预览，不加载原图或启动模型。此处不会删除原图、索引、机器识别或人工记录。30 天是未来可验证观察期，不是当前自动删除阈值。</p>
-              <p><button type="button" id="library-retention-refresh">读取失效照片统计</button></p>
-              <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
-              <button type="button" id="library-retention-more" hidden>继续读取</button>
-            </details>
-            <section aria-labelledby="storage-maintenance-title">
-              <h3 id="storage-maintenance-title">可选维护</h3>
-              <p class="hint">先检查预览，再勾选一项或多项并确认。所选项目会在下次启动时按顺序串行维护，只需重启一次。建议先手动备份人工整理数据。没有备份不会阻止维护，也不会自动创建备份。</p>
-              <p><button type="button" id="storage-maintenance-refresh">检查维护项目</button></p>
-              <pre id="storage-maintenance-preview" class="state-block" role="status" aria-live="polite"></pre>
-              <fieldset id="storage-maintenance-operations">
-                <legend>维护项目（可多选）</legend>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:artifacts">清理符合条件的孤立产物</label>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:media-cache">清理旧媒体缓存</label>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:previews">清理可重建的预览缓存</label>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="clean:face-crops">清理可重建的人脸裁剪缓存</label>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="optimize-vectors">优化向量索引</label>
-                <label><input type="checkbox" name="storage-maintenance-operation" value="vacuum">整理 SQLite 数据库</label>
-              </fieldset>
-              <button type="button" id="storage-maintenance-confirm" disabled>确认并安排下次启动维护</button>
-              <p id="storage-maintenance-review-gate" class="hint" role="status">自动维护入口须经独立窄审后开放；当前只提供预览。</p>
-              <button type="button" id="storage-maintenance-cancel">取消待执行维护</button>
-            </section>
-            <section aria-labelledby="storage-backup-title">
-              <h3 id="storage-backup-title">手动备份人工整理数据</h3>
-              <label for="storage-backup-directory">备份文件夹</label>
-              <input id="storage-backup-directory" type="text" autocomplete="off" />
-              <button type="button" id="storage-backup-save">保存并检查</button>
-              <button type="button" id="storage-backup-create">备份人工整理数据</button>
-              <pre id="storage-backup-status" class="state-block" role="status" aria-live="polite"></pre>
-              <p class="hint">仅在点击备份后创建 SQLite catalog 一致性快照；不含原图、LanceDB/人脸外部产物或模型。快照不能直接覆盖任意重建图库并保证归属可恢复。软件不会轮换或删除这些备份。</p>
-            </section>
-          </details>
+          <section id="storage-management-details" class="storage-management" aria-labelledby="storage-tools-title">
+            <div class="storage-workspace">
+              <div class="storage-tools-heading"><div><h3 id="storage-tools-title">图库工具</h3><p class="hint">按功能分区查看维护状态、空间占用和数据保护工具。</p></div></div>
+              <nav class="storage-tabs" role="tablist" aria-label="存储与维护功能">
+                <button type="button" id="storage-tab-maintenance" role="tab" aria-selected="true" aria-controls="storage-panel-maintenance" data-storage-tab="maintenance">高级维护</button>
+                <button type="button" id="storage-tab-health" role="tab" aria-selected="false" aria-controls="storage-panel-health" data-storage-tab="health" tabindex="-1">空间与健康</button>
+                <button type="button" id="storage-tab-retention" role="tab" aria-selected="false" aria-controls="storage-panel-retention" data-storage-tab="retention" tabindex="-1">失效照片</button>
+                <button type="button" id="storage-tab-backup" role="tab" aria-selected="false" aria-controls="storage-panel-backup" data-storage-tab="backup" tabindex="-1">数据备份</button>
+              </nav>
+              <section id="storage-panel-maintenance" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-maintenance">
+                <div class="storage-panel-heading">
+                  <div><h3 id="storage-maintenance-title">高级维护</h3><p class="hint">先检查候选范围，再安排所选项目在下次启动时串行执行。维护不会自动备份。</p></div>
+                  <button type="button" id="storage-maintenance-refresh">检查维护预览</button>
+                </div>
+                <pre id="storage-maintenance-preview" class="state-block" role="status" aria-live="polite"></pre>
+                <fieldset id="storage-maintenance-operations" class="storage-operation-groups">
+                  <legend>选择维护项目</legend>
+                  <section class="storage-operation-group" aria-labelledby="storage-cache-title">
+                    <div class="storage-operation-group-heading"><span class="storage-operation-icon" aria-hidden="true">⌁</span><div><h4 id="storage-cache-title">缓存清理与孤立产物</h4><p class="hint">仅处理预览列出的候选；不处理原始照片。</p></div></div>
+                    <div class="storage-operation-grid">
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="clean:artifacts"><span><strong>清理孤立产物</strong><small>只处理已确认无关联记录的文件。</small></span></label>
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="clean:media-cache"><span><strong>清理旧媒体缓存</strong><small>清理可重新生成的媒体转换缓存。</small></span></label>
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="clean:previews"><span><strong>清理预览缓存</strong><small>缩略图等可由照片重新生成。</small></span><span class="storage-operation-badge">可重建</span></label>
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="clean:face-crops"><span><strong>清理人脸裁剪缓存</strong><small>保留识别记录，可按需重新生成。</small></span><span class="storage-operation-badge">可重建</span></label>
+                    </div>
+                  </section>
+                  <section class="storage-operation-group" aria-labelledby="storage-index-title">
+                    <div class="storage-operation-group-heading"><span class="storage-operation-icon" aria-hidden="true">⌘</span><div><h4 id="storage-index-title">索引与数据库</h4><p class="hint">整理本地搜索索引和数据库文件。</p></div></div>
+                    <div class="storage-operation-grid storage-operation-grid-compact">
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="optimize-vectors"><span><strong>优化向量索引</strong><small>按维护预览列出的范围整理索引。</small></span></label>
+                      <label class="storage-operation-card"><input type="checkbox" name="storage-maintenance-operation" value="vacuum"><span><strong>整理 SQLite 数据库</strong><small>整理数据库文件中的可回收空间。</small></span><span class="storage-operation-badge">需重启</span></label>
+                    </div>
+                  </section>
+                </fieldset>
+                <div class="storage-maintenance-actionbar">
+                  <div class="storage-selection-summary"><span id="storage-maintenance-selected-count" class="storage-selection-count">0</span><span><strong id="storage-maintenance-selected-label">尚未选择项目</strong><small>安排前请核对上方维护预览。</small></span></div>
+                  <div class="storage-maintenance-actions"><button type="button" id="storage-maintenance-cancel">取消待执行维护</button><button type="button" id="storage-maintenance-confirm" disabled>安排下次启动维护</button></div>
+                </div>
+                <p id="storage-maintenance-review-gate" class="hint storage-maintenance-gate" role="status">自动维护入口须经独立窄审后开放；当前只提供预览。</p>
+              </section>
+              <section id="storage-panel-health" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-health" hidden>
+                <div class="storage-panel-heading"><div><h3 id="storage-health-title">空间与健康</h3><p class="hint">快速读取目录概览；需要时再执行有界深度检查。</p></div><div class="storage-inline-actions"><button type="button" id="storage-summary-refresh">快速查看空间</button><button type="button" id="storage-deep-check">检查空间（有界深扫）</button></div></div>
+                <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
+              </section>
+              <section id="storage-panel-retention" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-retention" hidden>
+                <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">只读预览；不会删除原图、索引、机器识别或人工记录。30 天是未来可验证观察期，不是当前自动删除阈值。</p></div><button type="button" id="library-retention-refresh">读取失效照片统计</button></div>
+                <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
+                <button type="button" id="library-retention-more" hidden>继续读取</button>
+              </section>
+              <section id="storage-panel-backup" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-backup" hidden>
+                <div class="storage-panel-heading"><div><h3 id="storage-backup-title">手动备份人工整理数据</h3><p class="hint">仅创建 SQLite catalog 一致性快照；不含原图、LanceDB/人脸外部产物或模型。</p></div></div>
+                <div class="storage-backup-form"><label for="storage-backup-directory">备份文件夹</label><input id="storage-backup-directory" type="text" autocomplete="off" /><button type="button" id="storage-backup-save">保存并检查</button><button type="button" id="storage-backup-create">备份人工整理数据</button></div>
+                <pre id="storage-backup-status" class="state-block" role="status" aria-live="polite"></pre>
+                <p class="hint">快照不能直接覆盖任意重建图库并保证归属可恢复。软件不会轮换或删除这些备份。</p>
+              </section>
+            </div>
+          </section>
           <div class="library-actions">
           <button type="button" id="build-all-library" disabled>继续全部建库</button>
           <button type="button" id="refresh-library" disabled>同步全部变化</button>

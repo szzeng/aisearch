@@ -568,7 +568,28 @@
   function updateStorageMaintenanceConfirm() {
     var button = document.getElementById("storage-maintenance-confirm");
     if (!button) return;
-    button.disabled = button.dataset.executionEnabled !== "true" || button.dataset.requestPending === "true" || selectedStorageMaintenanceOperations().length === 0;
+    var count = selectedStorageMaintenanceOperations().length;
+    var countElement = document.getElementById("storage-maintenance-selected-count");
+    var label = document.getElementById("storage-maintenance-selected-label");
+    if (countElement) countElement.textContent = String(count);
+    if (label) label.textContent = count ? "已选择 " + count + " 项维护" : "尚未选择项目";
+    button.disabled = button.dataset.executionEnabled !== "true" || button.dataset.requestPending === "true" || count === 0;
+  }
+
+  function activateStorageTab(name) {
+    Array.prototype.slice.call(document.querySelectorAll("[data-storage-tab]")).forEach(function (button) {
+      var active = button.dataset.storageTab === name;
+      button.setAttribute("aria-selected", active ? "true" : "false");
+      button.tabIndex = active ? 0 : -1;
+    });
+    Array.prototype.slice.call(document.querySelectorAll(".storage-tab-panel")).forEach(function (panel) {
+      panel.hidden = panel.id !== "storage-panel-" + name;
+    });
+    if (name === "retention" && !state.libraryRetention.overview) loadLibraryRetention(true);
+    if (name === "backup" && !state.storageBackupLoaded) {
+      state.storageBackupLoaded = true;
+      loadStorageBackup();
+    }
   }
 
   function renderMaintenance(payload) {
@@ -2865,14 +2886,17 @@
     document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);
     document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
     els.libraryRetentionMore.addEventListener("click", function () { loadLibraryRetention(false); });
-    document.getElementById("library-retention-details").addEventListener("toggle", function (event) {
-      if (event.currentTarget.open && !state.libraryRetention.overview) loadLibraryRetention(true);
-    });
-    document.getElementById("storage-management-details").addEventListener("toggle", function (event) {
-      if (event.currentTarget.open && !state.storageBackupLoaded) {
-        state.storageBackupLoaded = true;
-        loadStorageBackup();
-      }
+    document.querySelectorAll("[data-storage-tab]").forEach(function (button) {
+      button.addEventListener("click", function () { activateStorageTab(button.dataset.storageTab); });
+      button.addEventListener("keydown", function (event) {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        var tabs = Array.prototype.slice.call(document.querySelectorAll("[data-storage-tab]"));
+        var index = tabs.indexOf(button);
+        var nextIndex = (index + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+        tabs[nextIndex].focus();
+        activateStorageTab(tabs[nextIndex].dataset.storageTab);
+        event.preventDefault();
+      });
     });
     window.addEventListener("hashchange", handleHash);
 
