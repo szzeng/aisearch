@@ -105,7 +105,7 @@
       lastBody: null,
       lastRequestBody: null,
       timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null, requestSeq: 0 },
-      preview: { assetId: null, listVersion: 0, seq: 0, peopleSeq: 0, moving: false, handle: null },
+      preview: { assetId: null, listVersion: 0, seq: 0, moving: false, handle: null },
     },
     requestCounter: 0,
     objectUrls: [],
@@ -2189,19 +2189,19 @@
     }
     var extension = element("section", "search-preview-extension");
     var info = element("p", "search-preview-info", "正在读取照片信息…"); info.setAttribute("role", "status");
-    var people = element("section", "search-preview-people"); people.setAttribute("aria-label", "照片中的人物");
-    var peopleNote = element("p", "hint", "正在读取已归属人物…"); peopleNote.setAttribute("role", "status");
-    var peopleList = element("div", "search-preview-people-list"); people.append(peopleNote, peopleList);
-    var note = element("p", "hint", ""); note.setAttribute("role", "status"); extension.append(info, people, note);
-    els.searchPreviewInfo = info; els.searchPreviewPeople = people; els.searchPreviewPeopleNote = peopleNote;
-    els.searchPreviewPeopleList = peopleList; els.searchPreviewNote = note;
+    var note = element("p", "hint", ""); note.setAttribute("role", "status"); extension.append(info, note);
+    els.searchPreviewInfo = info; els.searchPreviewNote = note;
     var preview = state.search.preview;
     preview.handle = window.AIPhotoInfo.open(assetId, {
       title: "搜索结果照片", alt: "搜索结果照片", extension: extension, people: false, returnFocus: returnFocus,
       onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "search"); },
+      onPerson: function (id) {
+        prepareSearchDetailReturn();
+        window.location.href = "/persons?person_id=" + encodeURIComponent(id) + "&from_photo=photo";
+      },
       navigation: { previous: function () { moveSearchPreview(-1); }, next: function () { moveSearchPreview(1); } },
       onClose: function () {
-        preview.seq += 1; preview.peopleSeq += 1; preview.assetId = null; preview.handle = null;
+        preview.seq += 1; preview.assetId = null; preview.handle = null;
         updateSearchPreviewNavigation();
       }
     });
@@ -2231,7 +2231,6 @@
         : "正在读取照片信息…"
     );
     updateSearchPreviewNavigation();
-    loadPreviewPeople(assetId, seq);
     request("/assets/" + encodeURIComponent(assetId)).then(function (result) {
       if (seq !== preview.seq || !preview.handle || !preview.handle.dialog.open) return;
       text(els.searchPreviewInfo, photoInfoText(hit, result.body || {}, assetId));
@@ -2276,88 +2275,6 @@
       unit += 1;
     }
     return amount.toFixed(amount >= 100 ? 0 : amount >= 10 ? 1 : 2) + " " + units[unit];
-  }
-
-  function loadPreviewPeople(assetId, previewSeq) {
-    var preview = state.search.preview;
-    var peopleSeq = ++preview.peopleSeq;
-    els.searchPreviewPeople.hidden = false;
-    clear(els.searchPreviewPeopleList);
-    text(els.searchPreviewPeopleNote, "正在读取已归属人物…");
-    request("/assets/" + encodeURIComponent(assetId) + "/faces").then(function (result) {
-      if (previewSeq !== preview.seq || peopleSeq !== preview.peopleSeq || !preview.handle || !preview.handle.dialog.open) return null;
-      var faces = (result.body && result.body.faces) || [];
-      var unique = {};
-      faces.forEach(function (face) {
-        if (face.assigned_person_id !== null && face.assigned_person_id !== undefined) {
-          var key = String(face.assigned_person_id);
-          if (!unique[key]) unique[key] = face;
-        }
-      });
-      var entries = Object.keys(unique).map(function (id) {
-        var face = unique[id];
-        return request("/persons/" + encodeURIComponent(id)).then(function (personResult) {
-          return { face: face, person: personResult.body || {} };
-        }).catch(function () { return { face: face, person: null }; });
-      });
-      return Promise.all(entries).then(function (people) {
-        return { people: people, hasMoreFaces: Boolean(result.body && result.body.has_more) };
-      });
-    }).then(function (loaded) {
-      if (!loaded || previewSeq !== preview.seq || peopleSeq !== preview.peopleSeq || !preview.handle || !preview.handle.dialog.open) return;
-      if (!loaded.people.length) {
-        text(
-          els.searchPreviewPeopleNote,
-          loaded.hasMoreFaces
-            ? "前 200 张人脸中还没有已归属人物；还有更多人脸待检查。"
-            : "这张照片里还没有已归属的人物。"
-        );
-        return;
-      }
-      var canonicalIds = {};
-      loaded.people.sort(function (a, b) {
-        return Number((b.person || {}).asset_count || 0) - Number((a.person || {}).asset_count || 0)
-          || Number((a.person || {}).canonical_person_id || (a.person || {}).person_id || a.face.assigned_person_id)
-           - Number((b.person || {}).canonical_person_id || (b.person || {}).person_id || b.face.assigned_person_id);
-      }).forEach(function (entry) {
-        var face = entry.face;
-        var person = entry.person || {};
-        var personId = Number(person.canonical_person_id || person.person_id || face.assigned_person_id);
-        if (!isFinite(personId) || personId < 1) return;
-        var canonicalKey = String(personId);
-        if (canonicalIds[canonicalKey]) return;
-        canonicalIds[canonicalKey] = true;
-        var avatarId = /^[a-f0-9]{64}$/.test(String(person.avatar_face_id || ""))
-          ? person.avatar_face_id
-          : null;
-        var avatarUrl = avatarId
-          ? "/api/v1/faces/" + avatarId + "/thumbnail"
-          : face.thumbnail_url;
-        var card = element("button", "search-preview-person");
-        card.type = "button";
-        card.setAttribute("aria-label", "查看" + (person.name || face.assigned_person_name || "未命名的人") + "的照片");
-        var image = document.createElement("img");
-        image.alt = "";
-        image.loading = "lazy";
-        image.src = avatarUrl ? avatarUrl + "?v=p4-search-person-link-a-1" : "";
-        var label = person.name || face.assigned_person_name || "未命名的人";
-        card.appendChild(image);
-        card.appendChild(element("span", "", avatarId ? label : label + "（暂用这张照片的人脸）"));
-        card.addEventListener("click", function () {
-          prepareSearchDetailReturn();
-          window.location.href = "/persons?person_id=" + encodeURIComponent(personId) + "&from_photo=photo";
-        });
-        els.searchPreviewPeopleList.appendChild(card);
-      });
-      text(
-        els.searchPreviewPeopleNote,
-        loaded.hasMoreFaces ? "已按人物去重；当前只检查前 200 张人脸。" : "点人物头像查看这个人的照片。"
-      );
-    }).catch(function () {
-      if (previewSeq === preview.seq && peopleSeq === preview.peopleSeq && preview.handle && preview.handle.dialog.open) {
-        text(els.searchPreviewPeopleNote, "人物信息暂时无法读取。");
-      }
-    });
   }
 
   function moveSearchPreview(step) {
@@ -2930,9 +2847,6 @@
       searchPreviewNext: document.getElementById("search-preview-next"),
       searchPreviewPosition: document.getElementById("search-preview-position"),
       searchPreviewInfo: document.getElementById("search-preview-info"),
-      searchPreviewPeople: document.getElementById("search-preview-people"),
-      searchPreviewPeopleNote: document.getElementById("search-preview-people-note"),
-      searchPreviewPeopleList: document.getElementById("search-preview-people-list"),
       searchPreviewNote: document.getElementById("search-preview-note"),
     };
 

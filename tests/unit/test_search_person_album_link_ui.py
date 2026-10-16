@@ -1,4 +1,4 @@
-"""Synthetic UI checks for people shown in search-photo preview and album deep links."""
+"""Synthetic checks that search previews reuse the shared photo people surface."""
 
 from __future__ import annotations
 
@@ -36,12 +36,14 @@ const get = id => { if (!elements.has(id)) elements.set(id, new Element("div"));
 const avatar = "a".repeat(64), fallbackFace = "b".repeat(64);
 const location = {href:"/search",search:""};
 const response = body => ({ok:true,status:200,headers:{get:() => "application/json"},json:async () => body});
+const calls=[];
 const context = {
   URLSearchParams, encodeURIComponent, isFinite,
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener() {},getElementById:get,
     createElement:tag => new Element(tag)},
   window:{location},
   fetch:async url => {
+    calls.push(url);
     if (url === "/api/v1/assets/15/faces") return response({has_more:process.argv[1] === "no_assigned_people_more",faces:
       process.argv[1].startsWith("no_assigned_people") ? [{face_id:fallbackFace,assigned_person_id:null}] : [
         {face_id:"c".repeat(64),assigned_person_id:7,assigned_person_name:"\u5988\u5988",thumbnail_url:"/api/v1/faces/"+"c".repeat(64)+"/thumbnail"},
@@ -85,34 +87,9 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   await flush(); await flush(); await flush();
   assert.match(get("preview-image").src, /assets\/15\/preview/);
   assert.match(get("preview-info").textContent, /400 × 300.*JPEG.*1\.50 KB.*2025-01-02 03:04:05/);
-  if (process.argv[1].startsWith("no_assigned_people")) {
-    assert.equal(get("people").hidden, false);
-    assert.ok(get("note").textContent.length > 0);
-    assert.equal(get("list").children.length, 0);
-    if (process.argv[1] === "no_assigned_people_more") {
-      assert.match(get("note").textContent, /前 200 张人脸/);
-      assert.match(get("note").textContent, /更多人脸待检查/);
-    } else {
-      assert.match(get("note").textContent, /还没有已归属的人物/);
-    }
-    return;
-  }
-  const cards = get("list").children.slice();
-  if(process.argv[1]==="count_order") {
-    assert.match(cards[0].attributes["aria-label"],/爸爸/);
-    assert.match(cards[1].attributes["aria-label"],/妈妈/);
-    cards.reverse(); // Reuse the avatar/navigation assertions after verifying count order.
-  }
-  assert.equal(cards.length, 2); // Duplicate faces and merged IDs become one canonical avatar.
-  assert.equal(cards[0].children[1].textContent, "\u5988\u5988");
-  assert.equal(cards[0].children[0].src, "/api/v1/faces/"+avatar+"/thumbnail?v=p4-search-person-link-a-1");
-  assert.equal(cards[1].children[1].textContent, "\u7238\u7238\uff08\u6682\u7528\u8fd9\u5f20\u7167\u7247\u7684\u4eba\u8138\uff09");
-  assert.equal(cards[1].children[0].src, "/api/v1/faces/"+fallbackFace+"/thumbnail?v=p4-search-person-link-a-1");
-  cards[0].fire("click");
-  assert.equal(modal.open, true, "keep the source photo open for browser-back restoration");
-  assert.equal(location.href, "/persons?person_id=7&from_photo=photo");
-  modal.fire("click",{target:get("preview-image")});
-  assert.equal(modal.open,true,"clicks inside the search viewer do not dismiss it");
+  assert.equal(calls.filter(url=>/\/assets\/15\/faces$/.test(url)).length, 0, "search preview does not issue a duplicate face-list request");
+  assert.equal(calls.filter(url=>/\/persons\/\d+$/.test(url)).length, 0, "search preview does not fetch person details one at a time");
+  assert.equal(get("list").children.length, 0, "search preview leaves the people summary to the shared photo viewer");
   modal.fire("click",{target:modal});
   assert.equal(modal.open,false,"clicking the search viewer backdrop dismisses it");
 })().catch(error => { console.error(error); process.exitCode=1; });

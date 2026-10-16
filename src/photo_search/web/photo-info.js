@@ -73,6 +73,17 @@
         });
       });
   }
+  function writeRequest(path, method, body) {
+    var csrf = document.cookie.split(";").map(function (part) { return part.trim(); })
+      .find(function (part) { return part.indexOf("ps_csrf=") === 0; });
+    var headers = { Accept: "application/json", "Content-Type": "application/json" };
+    if (csrf) headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice(8));
+    return fetch(API + path, { method: method, credentials: "same-origin", cache: "no-store", headers: headers, body: JSON.stringify(body) })
+      .then(function (response) { return response.json().catch(function () { return {}; }).then(function (value) {
+        if (!response.ok) { var error = new Error(value.message || value.code || "操作未完成"); error.status = response.status; error.code = value.code; throw error; }
+        return value;
+      }); });
+  }
   function localAction(assetId, locationId, action, button, status, current) {
     if (button.disabled) return;
     var csrf = document.cookie.split(";").map(function (part) { return part.trim(); })
@@ -221,9 +232,161 @@
       script.addEventListener("load", draw, { once: true }); script.addEventListener("error", unavailable, { once: true });
     }
   }
+  function faceRequestId() { return "photo-face-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2); }
+  function renderFaceManager(section, assetId, state, body, reload) {
+    var toggle = node("button", "管理人脸", "photo-face-manager-toggle"); toggle.type = "button";
+    toggle.setAttribute("aria-expanded", "false");
+    var panel = node("div", undefined, "photo-face-manager"); panel.hidden = true;
+    var status = node("p", "", "hint"); status.setAttribute("role", "status");
+    var refresh = node("button", "刷新当前照片人脸"); refresh.type = "button";
+    var stale = false;
+    function setStale(message) {
+      stale = true; panel.dataset.stale = "true"; status.textContent = message;
+      panel.querySelectorAll("button, input").forEach(function (control) { control.disabled = true; });
+      refresh.disabled = false;
+    }
+    refresh.addEventListener("click", function () { refresh.disabled = true; reload().catch(function () { refresh.disabled = false; status.textContent = "刷新失败，请稍后重试。"; }); });
+    toggle.addEventListener("click", function () {
+      panel.hidden = !panel.hidden; toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      if (panel.hidden || panel.dataset.rendered === "true") return;
+      panel.dataset.rendered = "true";
+      var faces = (body.faces || []).slice();
+      var assigned = faces.filter(function (face) { return face.assigned_person_id !== null && face.assigned_person_id !== undefined; });
+      var pending = faces.filter(function (face) { return face.assigned_person_id === null || face.assigned_person_id === undefined; }).filter(function (face) { return !face.ignore_state; });
+      var ignored = faces.filter(function (face) {
+        return (face.assigned_person_id === null || face.assigned_person_id === undefined)
+          && (face.ignore_state === "TEMPORARY" || face.ignore_state === "EXCLUDED");
+      });
+      var counts = node("p", "已检测 " + faces.length + " 张脸 · 已归属 " + assigned.length + " · 待整理 " + pending.length + " · 已忽略 " + ignored.length, "photo-face-counts");
+      if (body.has_more) counts.append(node("span", "（当前已返回前 200 张脸）", "hint"));
+      panel.append(counts, refresh);
+      var selected = new Set();
+      var batch = node("div", undefined, "photo-face-batch");
+      var batchToggle = node("button", "批量整理", "photo-face-batch-toggle"); batchToggle.type = "button";
+      batch.append(batchToggle);
+      var batchActions = node("div", undefined, "photo-face-batch-actions"); batchActions.hidden = true;
+      var temporary = node("button", "暂时忽略所选"); temporary.type = "button";
+      var excluded = node("button", "明确排除所选"); excluded.type = "button";
+      var clear = node("button", "清空"); clear.type = "button";
+      batchActions.append(temporary, excluded, clear); batch.append(batchActions); panel.append(batch);
+      var batchMode = false;
+      batchToggle.setAttribute("aria-expanded", "false");
+      batchToggle.addEventListener("click", function () {
+        batchMode = !batchMode;
+        batchActions.hidden = !batchMode;
+        batchToggle.setAttribute("aria-expanded", String(batchMode));
+        batchToggle.textContent = batchMode ? "取消批量整理" : "批量整理";
+        if (!batchMode) selected.clear();
+        panel.querySelectorAll(".photo-face-select").forEach(function (box) { box.hidden = !batchMode; box.checked = batchMode && selected.has(box.dataset.faceId); });
+      });
+      function applyVisibility(ids, hidden, ignoreState) {
+        if (!ids.length || !state.active || stale) return;
+        temporary.disabled = excluded.disabled = true; status.textContent = "正在保存人脸状态……";
+        writeRequest("/faces/inbox/visibility", "POST", { face_ids: ids, hidden: hidden, ignore_state: ignoreState })
+          .then(function () { if (!state.active) return; status.textContent = "状态已保存。"; return reload(); })
+          .catch(function (error) { if (state.active) {
+            if (error.status >= 500 || !error.status) setStale("保存结果暂时无法确认。请先刷新当前照片状态，再决定是否重试。");
+            else status.textContent = error.status === 409 ? "人脸状态已变化，请刷新后重试。" : error.status === 422 ? "此人脸当前不符合该操作条件。" : error.message || "操作未完成。";
+          } })
+          .then(function () { temporary.disabled = excluded.disabled = false; });
+      }
+      temporary.addEventListener("click", function () { applyVisibility(Array.from(selected), true, "TEMPORARY"); });
+      excluded.addEventListener("click", function () { applyVisibility(Array.from(selected), true, "EXCLUDED"); });
+      clear.addEventListener("click", function () { selected.clear(); panel.querySelectorAll(".photo-face-select").forEach(function (box) { box.checked = false; }); });
+      function group(title, items, canSelect, open) {
+        var details = node("details", undefined, "photo-face-group"); details.open = Boolean(open);
+        var summary = node("summary", title + " · " + items.length); details.append(summary);
+        details.addEventListener("toggle", function () {
+          if (details.dataset.loaded === "true" || !details.open) return;
+          details.dataset.loaded = "true";
+        items.forEach(function (face) {
+            var card = node("article", undefined, "photo-face-card");
+            card.dataset.faceId = face.face_id;
+            var canWrite = face.source_detail !== false && face.write_eligible !== false;
+            var image = node("img"); image.alt = "人脸裁剪"; image.loading = "lazy"; image.src = API + "/faces/" + encodeURIComponent(face.face_id) + "/thumbnail";
+            card.append(image);
+            var personName = face.assigned_person_name || (face.assigned_person_id ? "未命名的人" : "待整理");
+            card.append(node("strong", personName));
+            if (face.display_quality_reason) card.append(node("span", face.display_quality_reason, "hint"));
+            if (canSelect && canWrite) {
+              var box = node("input"); box.type = "checkbox"; box.className = "photo-face-select"; box.setAttribute("aria-label", "选择此待整理人脸");
+              box.dataset.faceId = face.face_id; box.hidden = !batchMode;
+              box.addEventListener("change", function () { if (box.checked) selected.add(face.face_id); else selected.delete(face.face_id); });
+              card.append(box);
+            }
+            if (!canWrite) card.append(node("span", face.source_detail === false ? "识别更新待确认 · 只读" : "映射待确认 · 只读", "hint"));
+            else if (face.assigned_person_id !== null && face.assigned_person_id !== undefined) {
+              var remove = node("button", "移出人物"); remove.type = "button";
+              remove.addEventListener("click", function () {
+                remove.disabled = true;
+                writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", {
+                  contract_version: "p3-face-correction-contracts.v1", request_id: remove.dataset.requestId || (remove.dataset.requestId = faceRequestId()), action: "remove",
+                  expected_revision: Number(face.control_revision || 0)
+                }).then(reload).catch(function (error) { status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "移出失败。"; }).then(function () { remove.disabled = false; });
+              }); card.append(remove);
+              var personAlbum = node("a", "查看该人物相册"); personAlbum.href = "/persons?person_id=" + encodeURIComponent(face.assigned_person_id) + "&from_photo=photo"; card.append(personAlbum);
+              var change = node("button", "更换人物"); change.type = "button";
+              change.addEventListener("click", function () {
+                var query = node("input"); query.type = "search"; query.placeholder = "搜索人物"; query.setAttribute("aria-label", "搜索更换目标人物");
+                var find = node("button", "查找人物"); find.type = "button"; var choices = node("div", undefined, "photo-face-choices");
+                find.addEventListener("click", function () { find.disabled = true; choices.replaceChildren();
+                  request("/persons/browse?kind=all&sort=photos_desc&limit=20&q=" + encodeURIComponent(query.value.trim())).then(function (page) {
+                    (page.persons || []).filter(function (person) { return Number(person.person_id) !== Number(face.assigned_person_id); }).forEach(function (person) {
+                      var option = node("button", person.name || "未命名的人"); option.type = "button"; option.addEventListener("click", function () {
+                        option.disabled = true; writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("更换结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "更换人物失败。"; });
+                      }); choices.append(option);
+                    });
+                  }).catch(function (error) { status.textContent = error.message || "人物暂时无法读取。"; }).then(function () { find.disabled = false; });
+                });
+                card.append(query, find, choices);
+              }); card.append(change);
+            } else if (face.ignore_state) {
+              var restore = node("button", "恢复"); restore.type = "button";
+              restore.addEventListener("click", function () { restore.disabled = true; applyVisibility([face.face_id], false, face.ignore_state); }); card.append(restore);
+            } else if (face.source_detail) {
+              var query = node("input"); query.type = "search"; query.placeholder = "搜索人物"; query.setAttribute("aria-label", "搜索人物");
+              var choices = node("div", undefined, "photo-face-choices"); var choose = node("button", "查找人物"); choose.type = "button";
+              choose.addEventListener("click", function () {
+                choose.disabled = true; choices.replaceChildren();
+                request("/persons/browse?kind=all&sort=photos_desc&limit=20&q=" + encodeURIComponent(query.value.trim()))
+                  .then(function (page) { (page.persons || []).forEach(function (person) { var option = node("button", person.name || "未命名的人"); option.type = "button"; option.addEventListener("click", function () {
+                    option.disabled = true;
+                    writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("指定结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "指定人物失败。"; });
+                  }); choices.append(option); }); if (!(page.persons || []).length) choices.append(node("span", "没有找到人物。", "hint")); })
+                  .catch(function (error) { status.textContent = error.message || "人物暂时无法读取。"; }).then(function () { choose.disabled = false; });
+              });
+              card.append(query, choose, choices);
+              var create = node("button", "新建未命名人物"); create.type = "button";
+              create.addEventListener("click", function () { create.disabled = true; writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/create-person", "POST", { contract_version: "p4-person-create-from-face.v1", request_id: create.dataset.requestId || (create.dataset.requestId = faceRequestId()), expected_control_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("新建结果暂时无法确认。请刷新照片状态，不要使用新请求重复创建。"); else status.textContent = error.status === 409 ? "人脸状态已变化，请刷新后重试。" : error.message || "创建人物失败。"; }).then(function () { create.disabled = false; }); }); card.append(create);
+              ["TEMPORARY", "EXCLUDED"].forEach(function (ignoreState) { var ignore = node("button", ignoreState === "TEMPORARY" ? "暂时忽略" : "明确排除"); ignore.type = "button"; ignore.addEventListener("click", function () { applyVisibility([face.face_id], true, ignoreState); }); card.append(ignore); });
+            }
+            details.append(card);
+          });
+        });
+        return details;
+      }
+      panel.append(group("已归属", assigned, false, false), group("待整理", pending, true, false));
+      var ignoredDetails = node("details", undefined, "photo-face-group");
+      ignoredDetails.append(node("summary", "已忽略 · " + ignored.length));
+      ignoredDetails.addEventListener("toggle", function () {
+        if (!ignoredDetails.open || ignoredDetails.dataset.loaded === "true") return;
+        ignoredDetails.dataset.loaded = "true";
+        ignoredDetails.append(group("暂时忽略", ignored.filter(function (face) { return face.ignore_state === "TEMPORARY"; }), false, false));
+        ignoredDetails.append(group("明确排除", ignored.filter(function (face) { return face.ignore_state === "EXCLUDED"; }), false, false));
+      });
+      panel.append(ignoredDetails, status);
+    });
+    section.append(toggle, panel);
+  }
   function renderPeople(host, assetId, state) {
-    return request("/assets/" + encodeURIComponent(assetId) + "/faces").then(function (body) {
+    var section = host.parentElement || host.parentNode;
+    function paint(body) {
       if (!state.active) return;
+      host.replaceChildren();
+      Array.prototype.slice.call(section.children).filter(function (item) { return item.className === "photo-face-manager-toggle" || item.className === "photo-face-manager"; }).forEach(function (item) { item.remove(); });
+      function reload() { return request("/assets/" + encodeURIComponent(assetId) + "/faces").then(paint); }
+      renderFaceManager(section, assetId, state, body, reload);
+      if (typeof state.onFaces === "function") state.onFaces(Number(assetId), body);
       var byPerson = new Map();
       (body.faces || []).forEach(function (face) {
         if (face.assigned_person_id !== null && face.assigned_person_id !== undefined && !byPerson.has(String(face.assigned_person_id))) byPerson.set(String(face.assigned_person_id), face);
@@ -234,11 +397,11 @@
           : "这张照片里还没有已归属的人物。";
         return;
       }
-      return Promise.all(Array.from(byPerson.entries()).map(function (entry) {
-        return request("/persons/" + encodeURIComponent(entry[0])).then(function (person) {
-          return { face: entry[1], person: person };
-        }).catch(function () { return { face: entry[1], person: null }; });
-      })).then(function (entries) {
+      var entries = Array.from(byPerson.entries()).map(function (entry) {
+        return { face: entry[1], person: { person_id: entry[0], canonical_person_id: entry[0], name: entry[1].assigned_person_name,
+          avatar_face_id: entry[1].assigned_person_avatar_face_id, asset_count: entry[1].assigned_person_asset_count } };
+      });
+      return Promise.resolve().then(function () {
         if (!state.active) return;
         var canonicalIds = new Set();
         entries.sort(function (a, b) {
@@ -267,12 +430,14 @@
         });
         if (body.has_more) host.append(node("p", "只检查了接口返回的人脸范围，人物按有效归属去重。", "hint"));
       });
-    });
+    }
+    return request("/assets/" + encodeURIComponent(assetId) + "/faces").then(paint);
   }
   function render(host, assetId, options) {
     var prior = mounts.get(host);
     if (prior) prior.dispose();
-    var state = { active: true, map: null, seq: ++serial, onPerson: options && options.onPerson };
+    var state = { active: true, map: null, seq: ++serial, onPerson: options && options.onPerson,
+      onFaces: options && options.onFaces, onFacesError: options && options.onFacesError };
     var seq = state.seq;
     var disclosure = node("details", undefined, "photo-info-details");
     disclosure.open = true;
@@ -325,9 +490,10 @@
         pathSection.append(row);
       });
       pathSection.append(status); content.append(pathSection);
-      if (!(options && options.people === false)) {
+      {
         var people = node("section", undefined, "photo-info-people"); people.append(node("h3", "照片中的人物"));
         var peopleRows = node("div", undefined, "photo-info-people-list"); people.append(peopleRows); content.append(people);
+        if (!(options && options.people === false)) {
         var correctPeople = node("a", "更正这张照片中的人脸");
         correctPeople.href = "/persons?asset_id=" + encodeURIComponent(assetId); people.append(correctPeople);
         var reviewNote = node("div"); people.append(reviewNote);
@@ -348,7 +514,12 @@
           });
         }
         loadReviewNote();
-        renderPeople(peopleRows, assetId, state).catch(function () { if (current()) peopleRows.replaceChildren(node("p", "人物信息暂时无法读取。", "hint")); });
+        }
+        renderPeople(peopleRows, assetId, state).catch(function (error) {
+          if (!current()) return;
+          peopleRows.replaceChildren(node("p", "人物信息暂时无法读取。", "hint"));
+          if (typeof state.onFacesError === "function") state.onFacesError(Number(assetId), error);
+        });
       }
       request("/map/assets?asset_id=" + encodeURIComponent(assetId) + "&limit=1").then(function (members) {
         if (!current() || !members || members.total !== 1) return;
