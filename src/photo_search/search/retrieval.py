@@ -39,6 +39,7 @@ from photo_search.persons.collection_sql import collection_condition
 from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places.filter import place_condition, place_filter_summary
 from photo_search.search import query as search_query
+from photo_search.search.documents import TEXT_COLUMNS
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
@@ -495,22 +496,27 @@ def fts_channel(
 def text_column_matches(
     catalog: Any, match: MatchQuery, asset_ids: Sequence[int]
 ) -> dict[int, list[str]]:
-    """Which derived column produced each text hit (``filename_text``/``place_text``).
+    """Report every column contributing to an actual full-query match.
 
-    P2-04 stores file names and the *effective* place in separate columns, so a column
-    scoped MATCH answers "the file name says so" versus "the effective place says so"
-    without inventing a second matching rule.
+    A query may match its terms across columns (for example a file name and OCR).
+    Require the full query globally, then look for any of its operands in each column;
+    quoted phrases remain indivisible operands. SQLite evaluates both using the same
+    FTS index as retrieval, without re-tokenising large OCR documents in Python.
     """
     ids = sorted({int(value) for value in asset_ids})
     if not ids:
         return {}
     placeholders = ", ".join("?" for _ in ids)
     hits: dict[int, list[str]] = {}
-    for column in ("filename_text", "place_text"):
-        expression = f"{{{column}}} : ({match.expression})"
+    operands = " OR ".join(term.render() for term in match.terms)
+    for column in TEXT_COLUMNS:
+        expression = f"({match.expression}) AND ({{{column}}} : ({operands}))"
         rows = catalog.read_all(
             "SELECT rowid AS asset_id FROM search_documents_fts "
-            f"WHERE search_documents_fts MATCH ? AND rowid IN ({placeholders})",
+            # Unary + preserves integer rowid membership but disqualifies an FTS
+            # rowid lookup plan: otherwise SQLite may restart MATCH for every ID.
+            # Scan the matching posting list once, then restrict to the requested IDs.
+            f"WHERE search_documents_fts MATCH ? AND +rowid IN ({placeholders})",
             (expression, *ids),
         )
         for row in rows:

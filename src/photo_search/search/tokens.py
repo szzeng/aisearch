@@ -2,8 +2,8 @@
 
 Architecture §4.3/§9.4 fix the shape: the FTS copy holds the *normalised search text*
 ("统一分词后的检索文本"), every token is quoted and escaped before it reaches MATCH, and
-the AND/prefix/phrase policy is fixed and testable. This module is that policy, version
-``TOKENIZER_VERSION``. It uses only the standard library - no ``jieba`` and no other new
+the AND/prefix/phrase policy is fixed and testable. ``TOKENIZER_VERSION`` identifies the
+stored token stream. This module uses only the standard library - no ``jieba`` or other new
 dependency - and it never lets user input become FTS5 syntax.
 
 Policy of version 1
@@ -17,13 +17,16 @@ Policy of version 1
 * CJK ideographs and kana are indexed **one character per token**, so a Chinese query can
   be a sub-string match even though ``unicode61`` would otherwise keep a whole CJK run as
   one token. Other scripts stay whole words (``cafe`` is not split into letters).
-* An unquoted query is split on whitespace; runs of CJK characters become one *phrase*
+* An unquoted query is split on whitespace and punctuation; runs of CJK characters become one *phrase*
   (adjacent characters in that order), and Latin/digit tokens become quoted *prefix*
   terms. All resulting parts are ANDed.
 * A double-quoted segment is an explicit phrase and is kept verbatim (its own tokens in
   their own order, no prefix rewriting).
-* CJK stopword characters end a run and are dropped; Latin stopword tokens are dropped as
-  long as at least one real term remains. A query that has no term at all (empty, only
+* Only a complete, separately delimited CJK or Latin stopword is dropped. Characters
+  inside a CJK run are preserved: ``和田`` must not become ``田`` and ``我的世界`` must
+  not become ``世界``. ``杭州的照片`` is a literal phrase; ``杭州 的 照片`` explicitly
+  separates the words and drops ``的``. Natural-language meaning remains the independent
+  semantic channel's responsibility. A query that has no term at all (empty, only
   separators/special characters, or only stopwords) is a structured ``VALIDATION_ERROR``
   instead of a silently empty result.
 """
@@ -32,13 +35,14 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from itertools import groupby
 
 from photo_search.catalog.errors import CatalogError
 
-#: Frozen generation of the tokenisation policy. A change to any rule above requires a new
-#: number *and* a new :data:`FTS_GENERATION_ID`, because the stored ``search_documents``
-#: rows are then stale and must be re-derived (architecture §4.3: rebuilding the FTS does
-#: not re-run OCR or any model).
+#: Frozen generation of the stored token stream. Changes to normalisation or scan_tokens
+#: require a new number *and* FTS_GENERATION_ID, because stored search_documents become
+#: stale (architecture §4.3). Query-only stopword handling does not change that stream or
+#: require rebuilding FTS, OCR or image embeddings.
 TOKENIZER_VERSION = 1
 FTS_GENERATION_ID = "fts-v1"
 
@@ -49,8 +53,8 @@ VALIDATION_ERROR = "VALIDATION_ERROR"
 MAX_QUERY_CHARS = 256
 MAX_QUERY_TERMS = 32
 
-#: Grammar words only. Dropping them keeps a natural-language query from degenerating into
-#: "every word must be present"; content words such as 照片/photo are never listed.
+#: Drop grammar words only when they form a complete query token. Never remove their
+#: characters from within names or phrases; content words such as 照片/photo are not listed.
 LATIN_STOPWORDS = frozenset(
     {
         "a",
@@ -210,29 +214,23 @@ def _phrase_terms(piece: str) -> list[Term]:
 
 
 def _plain_terms(piece: str) -> list[Term]:
-    tokens = scan_tokens(piece)
-    if not tokens:
-        return []
+    """Preserve whole CJK runs and only remove separately delimited grammar words."""
     terms: list[Term] = []
-    run: list[str] = []
-
-    def flush() -> None:
-        if run:
-            terms.append(Term(tuple(run), True))
-            run.clear()
-
-    for token in tokens:
-        if len(token) == 1 and _is_cjk(token):
-            if token in CJK_STOPWORDS:
-                flush()
-                continue
-            run.append(token)
+    # Keep punctuation boundaries here: scan_tokens intentionally drops them from the
+    # stored stream, but an unquoted query must not turn 深圳，海边 into one phrase.
+    for is_word, characters in groupby(normalize_text(piece), key=_is_token_char):
+        if not is_word:
             continue
-        flush()
-        if token in LATIN_STOPWORDS:
-            continue
-        terms.append(Term((token,), False))
-    flush()
+        tokens = scan_tokens("".join(characters))
+        for is_cjk, grouped in groupby(
+            tokens, key=lambda token: len(token) == 1 and _is_cjk(token)
+        ):
+            run = tuple(grouped)
+            if is_cjk:
+                if len(run) != 1 or run[0] not in CJK_STOPWORDS:
+                    terms.append(Term(run, True))
+            else:
+                terms.extend(Term((token,), False) for token in run if token not in LATIN_STOPWORDS)
     return terms
 
 
