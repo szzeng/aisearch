@@ -88,6 +88,8 @@ body.app-shell main > .pa-shell { padding: clamp(1rem, 2.4vw, 2rem); }
 button.pa-person-card:hover, button.pa-person-card:focus-visible { border-color: var(--accent); background: var(--tint); }
 button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; background: var(--tint); }
 .pa-avatar { width: clamp(5rem, 9vw, 7rem); height: clamp(5rem, 9vw, 7rem); border: 2px solid var(--line); box-shadow: 0 0 0 0.25rem var(--bg); }
+.pa-shell :is(.pa-avatar, .pa-choice-avatar, .avatar, .avatar-placeholder) { transition: border-color 140ms ease, box-shadow 140ms ease; }
+.pa-shell :is(.pa-avatar, .pa-choice-avatar, .avatar, .avatar-placeholder):hover { border-color: var(--accent); box-shadow: 0 0 0 0.2rem var(--tint); }
 .pa-person-card strong { max-width: 100%; font-size: 1rem; }
 .pa-person-card > .hint { margin: 0; }
 .pa-person-selection { top: 0.5rem; right: 0.5rem; }
@@ -129,6 +131,9 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
   .pa-album-actions { width: 100%; justify-content: flex-start; }
   .pa-collection-toolbar { align-items: flex-start; }
   .pa-timeline .photo-timeline__page { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pa-shell :is(.pa-avatar, .pa-choice-avatar, .avatar, .avatar-placeholder) { transition: none; }
 }
 
 .panel {

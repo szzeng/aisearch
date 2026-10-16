@@ -1,8 +1,12 @@
 # Development status
 
-## Current user-directed task: P4-PERSON-NAV-IMPLEMENT-A — IMPLEMENTED / BASIC VALIDATED (2026-10-16)
+## Current user-directed task: P4-PERSON-AVATAR-HOVER-A — IMPLEMENTED / BROWSER ACCEPTANCE PENDING (2026-10-16)
 
-已接入生产分类：人物／合集／待整理，待整理下未命名人物／未识别人脸分别显示和加载，保留原功能；分类切换清选择并恢复各自筛选。追加修复图片关闭误退列表：同 URL 图片历史不触发分类切换。最终定向 JUnit **28/0/0/0**、Node、Ruff、diff-check 通过；隔离合成库内置浏览器完成分类、筛选/选择、合集返回、前进/后退及人物／未命名／合集图片关闭（关闭按钮、Esc、浏览器返回）。Luna High 实现与 JS 限定复核不代替完整独立工程审查；长列表、200% 缩放、完整写入/撤销和性能未验收，不标整体 PASS。本轮仅本地范围提交，不推送。[任务卡](tasks/P4-PERSON-NAV-IMPLEMENT-A.md) / [报告与截图](reports/P4-PERSON-NAV-IMPLEMENT-A.md) / [后续审查卡](tasks/P4-PERSON-NAV-IMPLEMENT-A-review.md)。
+人物页头像（主头像、小头像及旧版人物工具头像/占位图）统一增加轻微悬停边框强调与柔和光圈，尊重减少动态效果设置。CSS 资源版本与断言已同步；未运行测试。用户要求跳过后续浏览器验证，单头像 DOM 探查不作为视觉验收通过。[任务卡](tasks/P4-PERSON-AVATAR-HOVER-A.md) / [报告](reports/P4-PERSON-AVATAR-HOVER-A.md)。
+
+## Previous task: P4-PERSON-NAV-IMPLEMENT-A — IMPLEMENTED / BASIC VALIDATED (2026-10-16)
+
+已接入生产分类：人物／合集／待整理，待整理下未命名人物／未识别人脸分别显示和加载，保留原功能；分类切换清选择并恢复各自筛选。追加修复图片关闭误退列表：同 URL 图片历史不触发分类切换。定向 JUnit **28/0/0/0**、Node、Ruff、diff-check 通过；隔离合成库内置浏览器完成分类、筛选/选择、合集返回、前进/后退及人物／未命名／合集图片关闭（关闭按钮、Esc、浏览器返回）。Luna High 实现与 JS 限定复核不代替完整独立工程审查；长列表、200% 缩放、完整写入/撤销和性能未验收，不标整体 PASS。本轮仅本地范围提交，不推送。[任务卡](tasks/P4-PERSON-NAV-IMPLEMENT-A.md) / [报告与截图](reports/P4-PERSON-NAV-IMPLEMENT-A.md) / [后续审查卡](tasks/P4-PERSON-NAV-IMPLEMENT-A-review.md)。
 
 ## Product context: P4-PERSON-FAST-ORGANIZE-B — ACCEPTANCE PARTIAL (2026-10-16)
 

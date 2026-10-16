@@ -8,7 +8,7 @@ from pathlib import Path
 def test_collection_list_and_photo_page_show_total_distinct_photo_count() -> None:
     html = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
     assert "persons-albums.js?v=p4-person-nav-implement-a-4" in html.read_text(encoding="utf-8")
-    assert "persons.css?v=p4-person-nav-implement-a-4" in html.read_text(encoding="utf-8")
+    assert "persons.css?v=p4-person-avatar-hover-a-1" in html.read_text(encoding="utf-8")
     script_source = html.with_name("persons-albums.js").read_text(encoding="utf-8")
     assert "人物成员显示在“人物”页；这里仅显示单独选中的人脸" in script_source
     assert '$("collection-face-section").open = true' in script_source
