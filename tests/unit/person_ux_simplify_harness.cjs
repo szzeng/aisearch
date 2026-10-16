@@ -44,6 +44,7 @@ const context={URL,URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(re
     const start=Number(new URL(url,'http://local').searchParams.get('cursor')||0);
     return response({collections:Array.from({length:start?1:40},(_,i)=>({collection_id:start+i+1,instance_token:'tok'+(start+i),revision:1,name:'合集'+(start+i+1),member_count:1,photo_count:2})),has_more:!start,next_cursor:start?null:'40'});
   }
+  if(url.startsWith('/api/v1/faces/inbox/hidden/groups?'))return response({cards:[],has_more:false,next_cursor:null});
   if(scenario==='collection_choices' && url.includes('/faces/inbox/groups/candidate%3A'))return response({faces:[f(3),f(4)],has_more:false});
   if(url.includes('/persons/browse')){const q=new URLSearchParams(url.split('?')[1]);const second=q.has('cursor');return response({persons:q.get('limit')==='20'?people.slice(0,20):people.slice(second?40:0,second?45:40),has_more:!second,next_cursor:second?null:'next'});}
   if(url.includes('/persons/collections/1/tok/people'))return response({collection:{collection_id:1,instance_token:'tok',revision:1},people:people.slice(0,2),has_more:false,next_cursor:null});
@@ -65,7 +66,7 @@ vm.createContext(context);
 let personCode=fs.readFileSync('src/photo_search/web/persons.js','utf8').replace('window.AIPersonTools = { install,','window.AIPersonTools = { _state: state, install,');
 vm.runInContext(personCode,context);
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary,setLibraryView,notifyPeopleChanged,selectInboxCandidateGroup};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,submitVisibility,createPersonFromFace,addSelectionToCollection,renderInboxFace,renderFaceManagement,loadHiddenFaces,loadCollectionPeople,openAlbum,backToLibrary,setLibraryView,refreshPeopleViews,notifyPeopleChanged,selectInboxCandidateGroup};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 const clickBox=(box,extra={})=>{const before=box.checked;box.checked=!before;const event=box.fire('click',extra);if(event?.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return event;};
@@ -138,6 +139,31 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
     'returning to collections reloads counts and member state changed in another category');
 
  }
+ if(scenario==='ignored_refresh'){
+  album.state.ignoredObject='faces';album.state.ignoreState='TEMPORARY';
+  assert(album.setLibraryView('ignored'));await flush();
+  assert(!requests.some(r=>r.url==='/api/v1/capabilities'),'entering ignored faces does not load recognition-tool capabilities');
+  let start=requests.length;await album.refreshPeopleViews();await flush();
+  const refreshed=requests.slice(start).map(r=>r.url);
+  assert(refreshed.some(url=>url.includes('/faces/inbox/hidden/groups?')&&url.includes('ignore_state=TEMPORARY')),
+    'ignored refresh reloads its active state-filtered list');
+  assert(!refreshed.some(url=>url.startsWith('/api/v1/faces/inbox/groups')),
+    'ignored refresh does not load unrecognized inbox groups');
+  assert(!refreshed.some(url=>url.startsWith('/api/v1/faces/inbox?')),
+    'ignored refresh does not load unrecognized inbox summary');
+  album.state.ignoredObject='people';assert(album.setLibraryView('ignored',{force:true,resetIgnoredState:true}));await flush();
+  album.state.selectedPeople.add(1);start=requests.length;await album.submitVisibility();await flush();
+  assert(!requests.slice(start).some(r=>r.url.startsWith('/api/v1/faces/inbox/groups')),
+    'restoring an ignored person does not load unrecognized inbox groups');
+  album.state.ignoredObject='faces';assert(album.setLibraryView('ignored',{force:true,resetIgnoredState:true}));await flush();
+  album.state.edit={mode:'face',face:f(99)};start=requests.length;
+  await album.createPersonFromFace();await flush();await flush();
+  const createRequests=requests.slice(start).map(r=>r.url);
+  assert(!createRequests.some(url=>url.startsWith('/api/v1/faces/inbox/groups')),
+    'creating a person from an ignored face does not load unrecognized inbox groups');
+  assert(createRequests.some(url=>url.includes('/faces/inbox/hidden/groups?')),
+    'creating a person from an ignored face refreshes the active hidden list');
+ }
  if(scenario==='collection_choices'){
   const reads=()=>requests.filter(r=>r.url.includes('/persons/collections?')).length;
   const change=async view=>{assert(album.setLibraryView(view));await flush();};
@@ -151,7 +177,8 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(reads(),2,'selection redraws reuse the directory');
   get('pa-inbox-batch-toggle').fire('click');
   album.notifyPeopleChanged();collectionChoiceFailures=1;
-  get('pa-inbox-hidden-toggle').fire('click');get('pa-inbox-hidden-batch-toggle').fire('click');await flush();await flush();
+  album.state.ignoredObject='faces';album.state.ignoreState='TEMPORARY';assert(album.setLibraryView('ignored'));await flush();
+  get('pa-inbox-hidden-batch-toggle').fire('click');await flush();await flush();
   assert.match(get('pa-status').textContent,/合集选项加载失败/,'a failed hidden-face chooser load reports an error on the visible page');
   const failedReads=reads();album.renderFaceManagement();await flush();assert.equal(reads(),failedReads,'a redraw does not endlessly retry a failed choice load');
   await get('pa-inbox-collection-choice').fire('focus');await flush();
@@ -166,6 +193,14 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(reads(),beforePeople+2,'person batch entry refreshes dirty collection options');
   assert.equal(get('pa-collection-choice').children.length,42);
   assert.equal(mutations.length,0,'opening or retrying choosers never writes data');
+  album.state.ignoredObject='faces';album.state.ignoreState='TEMPORARY';assert(album.setLibraryView('ignored'));await flush();
+  album.state.selectedHiddenFaces.add('synthetic-hidden-face');get('pa-inbox-collection-choice').value='1';
+  const beforeHiddenAdd=requests.length;await album.addSelectionToCollection(true);await flush();await flush();
+  const hiddenAddRequests=requests.slice(beforeHiddenAdd).map(r=>r.url);
+  assert(!hiddenAddRequests.some(url=>url.startsWith('/api/v1/faces/inbox/groups')),
+    'adding an ignored face to a collection does not load unrecognized inbox groups');
+  assert(hiddenAddRequests.some(url=>url.includes('/faces/inbox/hidden/groups?')),
+    'adding an ignored face refreshes its active hidden list');
  }
  if(scenario==='mode'){
   album.openAlbum(people[0]);await flush();assert.equal(get('pt-organize').textContent,'整理照片');

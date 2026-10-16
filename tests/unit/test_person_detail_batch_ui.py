@@ -47,7 +47,7 @@ const context={URL,URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
  return response({persons:[],faces:[],has_more:false});
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch,renderPhotos};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch,renderPhotos,detailBatchNote};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 const navigate=(_state,_title,path)=>{const url=new URL(path,context.window.location.href);Object.assign(context.window.location,{href:url.href,search:url.search,hash:url.hash});};
 context.window.history={pushState:navigate,replaceState:navigate};
@@ -56,6 +56,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t.ran=true;await t.fn();await flush();};
 (async()=>{
  context.ui.boot();await flush();
+ assert.equal(context.ui.detailBatchNote(null),"");
  const imageOf=card=>card.children[0].children.find(item=>item.tag==="img");
  assert.equal(imageOf(get("pa-cards").children[0]).loading,"eager");
  assert.equal(imageOf(get("pa-cards").children[3]).loading,"eager");

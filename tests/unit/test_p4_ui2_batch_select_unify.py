@@ -172,7 +172,7 @@ const clickBox=(box,event={})=>{const before=box.checked;box.checked=!before;con
  ui.clearInboxSelection(false);assert.deepEqual(Array.from(ui.state.selectedInboxFaces),[]);assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),['201'],'pending clear does not clear the ignored-face selection');
  ui.clearInboxSelection(true);assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),[]);
  assert.equal(ui.state.batchMode,false,'face management does not depend on the people-list batch mode');
- ui.state.selectedInboxFaces=new Set(['101','103']);ui.state.inboxBatchMode=true;get('pa-inbox-ignore-state').value='TEMPORARY';
+ ui.state.selectedInboxFaces=new Set(['101','103']);ui.state.inboxBatchMode=true;
  await ui.submitInboxVisibility(true);
  assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/v1/faces/inbox/visibility');
  assert.deepEqual(writes[0].body,{face_ids:['101','103'],hidden:true,ignore_state:'TEMPORARY'},'ignore request submits only the selected face IDs and selected ignore mode');

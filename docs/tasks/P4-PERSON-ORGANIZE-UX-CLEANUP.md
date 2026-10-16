@@ -1,7 +1,7 @@
 # P4-PERSON-ORGANIZE-UX-CLEANUP — 人物待整理页面精简与已忽略管理统一
 
-- **状态**：DRAFT / 待实施；本次仅更新任务定义，不代表功能完成
-- **日期**：2026-10-16；最新复核基线：`master` HEAD `808c4f56e3be7096f1301d50c869a50cdc2614bb`（合入 PR #5）
+- **状态**：IMPLEMENTED / 代码与定向验证完成；浏览器写入/恢复流程 PENDING
+- **日期**：2026-10-16；实现基线：`b619252b7fe885844015f36ebe3b260fbee519db`（PR #5 合流源代码）
 - **优先级**：P1；**推荐执行模型**：GPT-6 High；模型由用户在 Codex 中手动选择
 - **交付**：**一张卡完成，不预设 B/C**；小范围界面精简 + 人脸隐藏列表只读筛选 + 现有导航接入
 - **验收**：按实际受影响面做聚焦测试及必要失败/恢复验证；隔离合成图库简短浏览器试用，若未运行明确记录；不要求 30 万照片压测
@@ -145,3 +145,5 @@
 - 输出单份 `docs/reports/P4-PERSON-ORGANIZE-UX-CLEANUP.md`，更新本卡状态与 `docs/development-status.md`，记录实际测试/未验项；必要结果在原报告修订，不为每轮修复开新报告/卡。
 
 **文档修订不等于实施。一个完整交付单元，不预设 B/C。**
+
+执行结果（2026-10-16）：定向 JUnit `test-results/p4-person-organize-ux-cleanup-20261016-final-r3.xml` 52 passed、0 failed、0 skipped，exit 0；Node syntax、受影响 Python Ruff 与 `git diff --check` 均通过。Luna High 最终独立复核通过，无剩余 finding。内置浏览器在隔离合成图库上确认默认整理页、已忽略导航及状态切换；批量隐藏操作触发浏览器自动化工具超时，写入/恢复 UI 流程仍 PENDING，不标浏览器 PASS。整体状态为 IMPLEMENTED / 定向代码验收通过，浏览器完整验收未完成。

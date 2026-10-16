@@ -40,8 +40,8 @@ const hiddenA={face_id:"c".repeat(64),asset_id:3,organization_reason:"BLURRY",su
 const hiddenB={face_id:"d".repeat(64),asset_id:4,organization_reason:"SMALL",suggestions:[]};
 let groupPage=0, hiddenPage=0, confirmResult=true, failVisibility=false, restored=false;
 const context={
-  URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout:testSetTimeout, clearTimeout:testClearTimeout,
-  window:{confirm:()=>confirmResult,addEventListener(){},location:{search:"",href:"http://local/persons"},AIPhotoInfo:{open(id){return {dialog:{open:true},setAsset(){},setPosition(){},setNavigationEnabled(){},close(){}};}}},
+  URL, URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout:testSetTimeout, clearTimeout:testClearTimeout,
+  window:{confirm:()=>confirmResult,addEventListener(){},history:{pushState(){},replaceState(){}},location:{search:"",href:"http://local/persons"},AIPhotoInfo:{open(id){return {dialog:{open:true},setAsset(){},setPosition(){},setNavigationEnabled(){},close(){}};}}},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic-csrf",addEventListener(){},
     getElementById:get,createElement:tag=>new Element(tag)},
   fetch:async(url,options)=>{
@@ -63,6 +63,7 @@ const context={
     } else if(url.startsWith("/api/v1/faces/inbox/hidden/groups?")) value={cards:restored?[]:[
       {type:"candidate_group",group_key:"candidate:17",candidate_name:"候选甲",photo_count:2,face:hiddenA},
     ],has_more:false,next_cursor:null};
+    else if(url.startsWith("/api/v1/faces/inbox/hidden?")) value={faces:[{...hiddenA,ignore_state:"EXCLUDED"}],has_more:false,next_cursor:null};
     else if(url==="/api/v1/faces/inbox/visibility" && failVisibility) {
       return {ok:false,status:503,json:async()=>({code:"TEMPORARY"})};
     } else if(url==="/api/v1/faces/inbox/visibility") {
@@ -75,8 +76,8 @@ const context={
   },
 };
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
-code=code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui={state,loadInbox,loadHiddenFaces,renderPeopleManagement,renderFaceManagement,submitInboxVisibility};\n  if (document.readyState === "loading")');
+  code=code.replace('  if (document.readyState === "loading")',
+  '  globalThis.ui={state,directoryNavigationBusy,loadInbox,loadHiddenFaces,renderPeopleManagement,renderFaceManagement,submitInboxVisibility,setIgnoreState,setIgnoredObject,setLibraryView,enterIgnored};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
@@ -117,22 +118,28 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   confirmResult=false;await ui.submitInboxVisibility(true);
   assert.equal(requests.filter(r=>r.url==="/api/v1/faces/inbox/visibility").length,0);
   assert.equal(ui.state.selectedInboxFaces.size,2);
-  get("pa-inbox-ignore-state").value="EXCLUDED";
-  confirmResult=true;failVisibility=true;await ui.submitInboxVisibility(true);
+  confirmResult=true;failVisibility=true;await ui.submitInboxVisibility(true,"EXCLUDED");
   assert.equal(ui.state.selectedInboxFaces.size,2);
-  failVisibility=false;await ui.submitInboxVisibility(true);
+  failVisibility=false;await ui.submitInboxVisibility(true,"EXCLUDED");
   const hideRequest=requests.filter(r=>r.url==="/api/v1/faces/inbox/visibility").at(-1);
   assert.deepEqual(JSON.parse(hideRequest.options.body),{face_ids:[faceA.face_id,faceB.face_id],hidden:true,ignore_state:"EXCLUDED"});
   assert.equal(hideRequest.options.headers["X-CSRF-Token"],"synthetic-csrf");
   assert.equal(ui.state.selectedInboxFaces.size,0);
   assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/groups?limit=30&kind=all&quality_view=clean")));
 
+  ui.state.libraryNavigationReady=true;ui.state.libraryView="ignored";ui.state.ignoredObject="faces";ui.state.ignoreState="TEMPORARY";
   ui.state.inboxHiddenVisible=true;ui.state.hiddenBatchMode=true;ui.renderFaceManagement();await ui.loadHiddenFaces(false);
+  assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/hidden/groups?limit=30&ignore_state=TEMPORARY")));
   const hiddenCards=get("pa-inbox-hidden-cards");
   const hiddenGroup=hiddenCards.children[0];
   assert.equal(hiddenGroup.groupKey,"candidate:17");
   hiddenGroup.children[0].fire("click"); // The group heading never selects every face.
   assert.equal(ui.state.selectedHiddenFaces.size,0);
+  hiddenGroup.children[1].fire("click"); await flush();
+  const hiddenGroupSelection=requests.filter(r=>r.url.startsWith("/api/v1/faces/inbox/hidden/groups/candidate%3A"));
+  assert(hiddenGroupSelection.length>=2&&hiddenGroupSelection.every(r=>r.url.includes("ignore_state=TEMPORARY")),"bulk-selecting a hidden candidate group is scoped to the visible ignore state on every page");
+  assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),[hiddenA.face_id,hiddenB.face_id]);
+  ui.state.selectedHiddenFaces.clear();
   hiddenGroup.open=true;hiddenGroup.fire("toggle");await flush();
   hiddenGroup.querySelector(".pa-inbox-group-faces").children[0].selectionButton.checked=true;hiddenGroup.querySelector(".pa-inbox-group-faces").children[0].selectionButton.fire("change");
   const hiddenMore=hiddenGroup.querySelector(".pa-inbox-group-more");assert.equal(hiddenMore.hidden,false);await hiddenMore.fire("click");
@@ -160,6 +167,32 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(JSON.parse(restoreRequest.options.body),{face_ids:[hiddenA.face_id,hiddenB.face_id],hidden:false,ignore_state:"TEMPORARY"});
   assert.equal(ui.state.selectedHiddenFaces.size,0);
   assert(hiddenPage>=2);
+  ui.state.ignoreState="EXCLUDED";await ui.loadHiddenFaces(false);
+  assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/hidden?limit=30&ignore_state=EXCLUDED")),"excluded mode uses the flat, explicitly filtered endpoint");
+  assert(!requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/hidden/groups?limit=30&ignore_state=EXCLUDED")),"excluded mode never requests grouped candidates");
+  assert.equal(get("pa-inbox-hidden-cards").children[0].groupKey,undefined,"excluded faces render as flat cards");
+  assert(!code.includes("查看整张照片"),"inbox face cards do not render a duplicate full-photo button");
+  ui.enterIgnored("faces");await flush();
+  assert.equal(ui.state.libraryView,"ignored");assert.equal(ui.state.ignoreState,"TEMPORARY","opening ignored resets to temporary");
+  ui.setIgnoredObject("people");await flush();
+  const peopleRequest=requests.filter(r=>r.url.startsWith("/api/v1/persons/browse?")).at(-1);
+  assert(peopleRequest.url.includes("visibility=hidden")&&peopleRequest.url.includes("ignore_state=TEMPORARY"),"ignored people includes named and unnamed hidden persons with explicit state");
+  ui.setIgnoredObject("faces");await flush();
+  assert.equal(ui.state.selectedPeople.size,0,"switching ignored object clears the other object selection");
+  ui.state.libraryView="ignored";ui.state.ignoredObject="people";ui.state.hiddenView=true;ui.state.ignoreState="TEMPORARY";
+  ui.state.writing=false;ui.state.pendingWrite=null;ui.state.visibilityBusy=false;ui.state.faceVisibilityBusy=false;ui.state.collectionActionBusy=false;ui.state.collectionPeopleBusy=false;
+  assert.equal(ui.directoryNavigationBusy(),false,"fixture has no in-flight directory mutation");
+  assert.equal(ui.state.libraryView,"ignored");assert.equal(ui.state.ignoreState,"TEMPORARY");
+  get("pa-cards").append(new Element("div"));
+  const switchPeopleState=ui.setIgnoreState("EXCLUDED");
+  assert.equal(ui.state.ignoreState,"EXCLUDED","ignored status updates synchronously");
+  assert.equal(get("pa-cards").children.length,0,"changing ignored-person status clears the old filtered cards immediately");
+  await switchPeopleState;await flush();
+  ui.setIgnoredObject("faces");await flush();
+  ui.setIgnoreState("EXCLUDED");await flush();
+  const excludedRequest=requests.filter(r=>r.url.startsWith("/api/v1/faces/inbox/hidden?")).at(-1);
+  assert(excludedRequest.url.includes("ignore_state=EXCLUDED"),"status switch reloads the flat excluded page");
+  assert.equal(get("pa-ignored-excluded").attributes["aria-pressed"],"true","selected status stays in sync with the filtered page");
 })().finally(disposeTimers).catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

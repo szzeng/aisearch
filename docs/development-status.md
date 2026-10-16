@@ -1,11 +1,11 @@
 # Development status
 
-## Current: upstream b895a5c — 合流与自动回归完成，浏览器余项1
+## Current: P4-PERSON-ORGANIZE-UX-CLEANUP — 定向验收通过，浏览器部分 PENDING
 
-2026-10-16已合入远端最新8个提交，以新人物/合集/待整理导航、头像预览和0.3.0为准，保留本地查询、OCR、模型与恢复优化；另修复来源路径过期响应、合集切换/版本/返回位置和批量合集选项加载。交付分支为 `codex/latest-performance`，用户已授权提交并创建PR。
+本卡以 `b619252b7fe885844015f36ebe3b260fbee519db` 为源代码基线实施；`origin/master` 当前 `200c8911c999ec9c80b82e75a5f1409522303e99` 仅比该基线新增本任务卡更新。修改包含忽略列表筛选/游标、安全刷新 scope、待整理页精简和直接受影响测试。
 
-本轮完整回归原2954通过/3失败/49跳过（exit1）；修复及增量复验后，逐节点与源码身份核对的**组合证据为2958通过、49条件跳过，0未闭合失败**，覆盖当前3007节点。不是一次最终全量通过。静态检查及独立受影响面复核通过。
+最终受影响面定向套件 **52 passed，exit 0**；JUnit `test-results/p4-person-organize-ux-cleanup-20261016-final-r3.xml`。Node syntax、受影响 Ruff 与 `git diff --check` 均通过。Luna High 对本任务 diff 独立复核并反馈的范围问题已逐项修复；最终复核结论见[任务报告](reports/P4-PERSON-ORGANIZE-UX-CLEANUP.md)。
 
-内置浏览器已验导航、头像预览/返回、来源路径与首开选项；用户协助确认后，移出合集的数量刷新及返回一致性已验。真实双页面版本冲突恢复仍受原生弹窗工具限制PENDING，不标整项验收/正式发布PASS。当前任务及后续仅余此项见[合流与回归卡](tasks/P4-UPSTREAM-REVIEW-REMAINDER.md)，变更与测量边界见[最终报告](reports/P4-UPSTREAM-MERGE-20261016.md)。上游新精简任务卡保持DRAFT。
+内置浏览器使用隔离合成数据确认默认整理页、已忽略导航与状态切换；批量隐藏输入派发超时，写入/恢复浏览器流程仍 PENDING，故整体浏览器验收不标 PASS。前次合流遗留的双页面版本冲突恢复仍按[合流与回归卡](tasks/P4-UPSTREAM-REVIEW-REMAINDER.md)独立跟踪，本任务未关闭。
 
-原始JUnit/日志/指纹和审查证据在忽略的 `test-results/upstream-sync-20261016/`；合并前备份与恢复点保留。本轮测试服务已关闭，未访问真实图库。
+复现命令、测试范围和未验项见[本任务最终报告](reports/P4-PERSON-ORGANIZE-UX-CLEANUP.md)。浏览器隔离服务已关闭；未访问真实图库。

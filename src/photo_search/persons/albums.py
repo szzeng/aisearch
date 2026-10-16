@@ -790,8 +790,14 @@ def inbox_page(
     }
 
 
-def inbox_hidden_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[str, Any]:
+def inbox_hidden_page(
+    catalog: Any, *, limit: int, cursor: str | None, ignore_state: str | None = None
+) -> dict[str, Any]:
+    if ignore_state not in (None, "TEMPORARY", "EXCLUDED"):
+        raise ApiError(VALIDATION_ERROR, "ignore_state must be TEMPORARY or EXCLUDED", status=422)
     binding = ["faceinboxhidden1"]
+    if ignore_state is not None:
+        binding.extend([read_filter_revision(catalog.connection), "ignore-state1", ignore_state])
     after = _position(cursor, binding, "")
     if not isinstance(after, str) or (
         after and (len(after) != 64 or any(c not in "0123456789abcdef" for c in after))
@@ -800,9 +806,9 @@ def inbox_hidden_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[s
     rows = catalog.read_all(
         _SELECT_FACES
         + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE f.face_id>? AND "
-        + _HIDDEN_INBOX_WHERE + " "
+        + _HIDDEN_INBOX_WHERE + (" AND h.ignore_state=?" if ignore_state is not None else "") + " "
         + "ORDER BY f.face_id LIMIT ?",
-        (after, limit + 1),
+        ((after, ignore_state, limit + 1) if ignore_state is not None else (after, limit + 1)),
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
@@ -861,15 +867,18 @@ def set_inbox_visibility(
     }
 
 
-def _inbox_group_cte(kind: str, *, hidden: bool = False, quality_view: str = "all") -> tuple[str, tuple[Any, ...]]:
+def _inbox_group_cte(
+    kind: str, *, hidden: bool = False, quality_view: str = "all", ignore_state: str | None = None
+) -> tuple[str, tuple[Any, ...]]:
     if kind not in _INBOX_KINDS:
         raise ApiError(VALIDATION_ERROR, "invalid face organization filter", status=422)
     if hidden:
         eligible_source = (
             _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id WHERE "
             + _HIDDEN_INBOX_WHERE
+            + (" AND h.ignore_state=?" if ignore_state is not None else "")
         )
-        parameters: tuple[Any, ...] = ()
+        parameters: tuple[Any, ...] = (ignore_state,) if ignore_state is not None else ()
     else:
         eligible_source = _SELECT_FACES + "WHERE " + _inbox_where(quality_view, kind)
         parameters = _VISIBILITY_PARAMETERS
@@ -984,9 +993,17 @@ def inbox_group_faces(
     }
 
 
-def inbox_hidden_group_page(catalog: Any, *, limit: int, cursor: str | None) -> dict[str, Any]:
-    cte, parameters = _inbox_group_cte("all", hidden=True)
+def inbox_hidden_group_page(
+    catalog: Any, *, limit: int, cursor: str | None, ignore_state: str | None = None
+) -> dict[str, Any]:
+    if ignore_state not in (None, "TEMPORARY", "EXCLUDED"):
+        raise ApiError(VALIDATION_ERROR, "ignore_state must be TEMPORARY or EXCLUDED", status=422)
+    if ignore_state == "EXCLUDED":
+        raise ApiError(VALIDATION_ERROR, "EXCLUDED faces use the flat hidden-face endpoint", status=422)
+    cte, parameters = _inbox_group_cte("all", hidden=True, ignore_state=ignore_state)
     binding = ["faceinboxhiddengroups1", read_filter_revision(catalog.connection)]
+    if ignore_state is not None:
+        binding.extend(["ignore-state1", ignore_state])
     after = _position(cursor, binding, None)
     if after is not None and (
         not isinstance(after, list) or len(after) != 2
@@ -1002,14 +1019,23 @@ def inbox_hidden_group_page(catalog: Any, *, limit: int, cursor: str | None) -> 
     )
     has_more = len(rows) > limit
     rows = rows[:limit]
-    cards: list[dict[str, Any]] = []
-    for row in rows:
-        face_id = str(row["representative_face_id"] if row["card_type"] == "candidate_group" else row["face_id"])
-        face = catalog.read_one(
+    representative_ids = [
+        str(row["representative_face_id"] if row["card_type"] == "candidate_group" else row["face_id"])
+        for row in rows
+    ]
+    faces_by_id: dict[str, Any] = {}
+    if representative_ids:
+        placeholders = ", ".join("?" for _ in representative_ids)
+        face_rows = catalog.read_all(
             _SELECT_FACES + "JOIN face_inbox_hidden AS h ON h.face_id=f.face_id "
-            + "WHERE f.face_id=? AND " + _HIDDEN_INBOX_WHERE,
-            (face_id,),
+            + "WHERE f.face_id IN (" + placeholders + ") AND " + _HIDDEN_INBOX_WHERE
+            + (" AND h.ignore_state=?" if ignore_state is not None else ""),
+            (*representative_ids, *((ignore_state,) if ignore_state is not None else ())),
         )
+        faces_by_id = {str(face["face_id"]): face for face in face_rows}
+    cards: list[dict[str, Any]] = []
+    for row, face_id in zip(rows, representative_ids, strict=True):
+        face = faces_by_id.get(face_id)
         if row["card_type"] == "candidate_group":
             cards.append({
                 "type": "candidate_group",
@@ -1029,15 +1055,21 @@ def inbox_hidden_group_page(catalog: Any, *, limit: int, cursor: str | None) -> 
 
 
 def inbox_hidden_group_faces(
-    catalog: Any, *, group_key: str, limit: int, cursor: str | None
+    catalog: Any, *, group_key: str, limit: int, cursor: str | None, ignore_state: str | None = None
 ) -> dict[str, Any]:
+    if ignore_state not in (None, "TEMPORARY", "EXCLUDED"):
+        raise ApiError(VALIDATION_ERROR, "ignore_state must be TEMPORARY or EXCLUDED", status=422)
+    if ignore_state == "EXCLUDED":
+        raise ApiError(VALIDATION_ERROR, "EXCLUDED faces use the flat hidden-face endpoint", status=422)
     if not group_key.startswith("candidate:") or not group_key[10:].isdigit():
         raise ApiError(VALIDATION_ERROR, "invalid candidate group", status=422)
     person_id = int(group_key[10:])
-    cte, parameters = _inbox_group_cte("all", hidden=True)
+    cte, parameters = _inbox_group_cte("all", hidden=True, ignore_state=ignore_state)
     binding = [
         "faceinboxhiddengroupfaces1", read_filter_revision(catalog.connection), person_id
     ]
+    if ignore_state is not None:
+        binding.extend(["ignore-state1", ignore_state])
     after = _position(cursor, binding, "")
     if not isinstance(after, str) or (
         after and (len(after) != 64 or any(char not in "0123456789abcdef" for char in after))
