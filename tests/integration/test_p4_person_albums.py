@@ -18,9 +18,40 @@ from p3_persons_page_fixtures import (
 )
 
 from photo_search.catalog.db import Catalog
-from photo_search.persons.albums import _inbox_group_cte, people_page
+from photo_search.persons.albums import _inbox_group_cte, asset_faces, people_page
 from photo_search.persons.service import PersonService
 from photo_search.places.revision import read_filter_revision
+
+
+def test_asset_faces_query_count_is_bounded_for_1_20_and_50_faces(api_env: ApiEnv) -> None:
+    photos = {
+        f"faces-{count}.jpg": [(10, 10, 90, 90) for _ in range(count)]
+        for count in (1, 20, 50)
+    }
+    seeded = seed_library(api_env, photos)
+    catalog = api_env.service.catalog
+    person_id = add_person(catalog, name="合照人物")
+    for item in seeded.values():
+        add_link(catalog, item["faces"][0], person_id)
+
+    query_counts: dict[int, int] = {}
+    for count, name in zip((1, 20, 50), photos, strict=True):
+        statements: list[str] = []
+        catalog.connection.set_trace_callback(statements.append)
+        try:
+            page = asset_faces(catalog, seeded[name]["asset_id"])
+        finally:
+            catalog.connection.set_trace_callback(None)
+        query_counts[count] = sum(
+            statement.lstrip().upper().startswith(("SELECT", "WITH")) for statement in statements
+        )
+        assert len(page["faces"]) == count and not page["has_more"]
+        assigned = [face for face in page["faces"] if face["assigned_person_id"] == person_id]
+        assert len(assigned) == 1
+        assert assigned[0]["assigned_person_name"] == "合照人物"
+        assert assigned[0]["assigned_person_avatar_face_id"]
+
+    assert query_counts[1] == query_counts[20] == query_counts[50], query_counts
 
 
 def seed(env: ApiEnv) -> dict:

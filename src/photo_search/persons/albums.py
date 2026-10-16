@@ -589,52 +589,61 @@ def _photo_page(
     return page
 
 
-def _face_view(catalog: Any, row: Any) -> dict[str, Any]:
+def _face_view(catalog: Any, row: Any, prefetched: dict[str, Any] | None = None) -> dict[str, Any]:
     face_id = str(row["face_id"])
     mode = row["mode"] or "AUTO_ALLOWED"
-    ignore = catalog.read_one(
+    ignore = (None if prefetched is None else prefetched["ignore"].get(face_id)) if prefetched is not None else catalog.read_one(
         "SELECT ignore_state FROM face_inbox_hidden WHERE face_id = ?", (face_id,)
     )
     ignore_state = None if ignore is None else str(ignore["ignore_state"])
-    effective = catalog.read_one(
+    effective = (None if prefetched is None else prefetched["effective"].get(face_id)) if prefetched is not None else catalog.read_one(
         "SELECT l.person_id FROM face_person_links AS l WHERE l.face_id = ? AND "
         + MEMBER_PREDICATE,
         (face_id,),
     )
-    suggested = [] if ignore_state == "EXCLUDED" else catalog.read_all(
+    suggested = ([]) if prefetched is not None and ignore_state == "EXCLUDED" else (prefetched["suggested"].get(face_id, []) if prefetched is not None else []) if ignore_state != "EXCLUDED" else []
+    if prefetched is None and ignore_state != "EXCLUDED":
+        suggested = catalog.read_all(
         "SELECT l.person_id FROM face_person_links AS l JOIN persons AS p ON p.person_id = l.person_id WHERE l.face_id = ? AND l.decision = 'SUGGESTED' AND p.merged_into IS NULL AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id = l.face_id AND e.person_id = l.person_id AND e.active = 1) ORDER BY l.confidence DESC, l.person_id LIMIT 3",
         (face_id,),
-    )
-    suggestions = [
-        _album_summary(
-            catalog.connection,
-            catalog.read_one("SELECT * FROM persons WHERE person_id = ?", (int(r["person_id"]),)),
         )
-        for r in suggested
-    ]
+    suggestions = (
+        list(suggested)
+        if prefetched is not None
+        else [
+            _album_summary(
+                catalog.connection,
+                catalog.read_one("SELECT * FROM persons WHERE person_id = ?", (int(r["person_id"]),)),
+            )
+            for r in suggested
+        ]
+    )
     assigned_id = (
         None
         if effective is None
-        else resolve_canonical_person_id(catalog.connection, int(effective["person_id"]))
+        else int(effective["person_id"]) if prefetched is not None else resolve_canonical_person_id(catalog.connection, int(effective["person_id"]))
     )
     assigned = (
         None
         if assigned_id is None
-        else catalog.read_one("SELECT name FROM persons WHERE person_id = ?", (assigned_id,))
+        else (prefetched["persons"].get(assigned_id) if prefetched is not None else catalog.read_one("SELECT name FROM persons WHERE person_id = ?", (assigned_id,)))
     )
     return {
         "face_id": face_id,
         "asset_id": int(row["asset_id"]),
         "source_detail": str(row["spec_revision"]) == FACE_DETAIL_SPEC_REVISION,
-        "automatic_detail": str(row["spec_revision"]) == FACE_DETAIL_SPEC_REVISION and catalog.read_one(
+        "write_eligible": None if prefetched is None else face_id in prefetched["write_eligible"],
+        "automatic_detail": (face_id in prefetched["automatic_detail"] if prefetched is not None else str(row["spec_revision"]) == FACE_DETAIL_SPEC_REVISION and catalog.read_one(
             "SELECT 1 FROM face_detail_auto_assets WHERE asset_id=? AND input_revision=? AND artifact_id=?",
             (int(row["asset_id"]), row["input_revision"], row["artifact_id"]),
-        ) is not None,
+        ) is not None),
         "mode": mode,
         "control_revision": int(row["control_revision"] or 0),
         "ignore_state": ignore_state,
         "assigned_person_id": assigned_id,
         "assigned_person_name": None if assigned is None else assigned["name"],
+        "assigned_person_avatar_face_id": None if assigned is None or "avatar_face_id" not in assigned.keys() else assigned["avatar_face_id"],
+        "assigned_person_asset_count": 0 if assigned is None or "asset_count" not in assigned.keys() else int(assigned["asset_count"]),
         "thumbnail_url": f"/api/v1/faces/{face_id}/thumbnail",
         "quality_reason": row["quality_reason"],
         "organization_reason": row["organization_reason"],
@@ -691,6 +700,111 @@ _NO_MEMBER = (
     + MEMBER_PREDICATE
     + ")"
 )
+
+
+def _prefetch_asset_face_views(catalog: Any, rows: list[Any]) -> dict[str, Any]:
+    """Load the per-face projection for one bounded photo page with a fixed query count."""
+    face_ids = [str(row["face_id"]) for row in rows]
+    if not face_ids:
+        return {"ignore": {}, "effective": {}, "suggested": {}, "persons": {}, "automatic_detail": set()}
+    slots = ",".join("?" for _ in face_ids)
+    connection = catalog.connection
+    ignore = {
+        str(row["face_id"]): row
+        for row in catalog.read_all(
+            f"SELECT face_id, ignore_state FROM face_inbox_hidden WHERE face_id IN ({slots})", tuple(face_ids)
+        )
+    }
+    effective = {
+        str(row["face_id"]): row
+        for row in catalog.read_all(
+            f"SELECT l.face_id, l.person_id FROM face_person_links AS l WHERE l.face_id IN ({slots}) AND "
+            + MEMBER_PREDICATE,
+            tuple(face_ids),
+        )
+    }
+    suggested: dict[str, list[Any]] = {}
+    suggestion_rows = catalog.read_all(
+        "WITH ranked AS (SELECT l.face_id, l.person_id, ROW_NUMBER() OVER (PARTITION BY l.face_id "
+        "ORDER BY l.confidence DESC, l.person_id) AS position FROM face_person_links AS l "
+        "JOIN persons AS p ON p.person_id=l.person_id WHERE l.face_id IN (" + slots + ") "
+        "AND l.decision='SUGGESTED' AND p.merged_into IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM person_hidden AS h WHERE h.person_id=p.person_id AND h.ignore_state='EXCLUDED') "
+        "AND NOT EXISTS (SELECT 1 FROM face_exclusions AS e WHERE e.face_id=l.face_id AND e.person_id=l.person_id AND e.active=1)) "
+        "SELECT face_id, person_id FROM ranked WHERE position<=3",
+        tuple(face_ids),
+    )
+    for row in suggestion_rows:
+        suggested.setdefault(str(row["face_id"]), []).append(row)
+    automatic_detail = {
+        str(row["face_id"])
+        for row in catalog.read_all(
+            f"SELECT f.face_id FROM faces AS f JOIN face_detail_auto_assets AS a ON a.asset_id=f.asset_id "
+            f"AND a.input_revision=f.input_revision AND a.artifact_id=f.artifact_id WHERE f.face_id IN ({slots}) "
+            "AND f.spec_revision=?",
+            (*face_ids, FACE_DETAIL_SPEC_REVISION),
+        )
+    }
+    write_eligible = {
+        str(row["face_id"])
+        for row in catalog.read_all(
+            f"SELECT f.face_id FROM faces AS f WHERE f.face_id IN ({slots}) AND {_NOT_HELD}",
+            tuple(face_ids),
+        )
+    }
+    referenced = {int(row["person_id"]) for row in effective.values()}
+    referenced.update(int(row["person_id"]) for values in suggested.values() for row in values)
+    canonical_rows: dict[int, Any] = {}
+    canonical_for: dict[int, int] = {}
+    if referenced:
+        person_slots = ",".join("?" for _ in referenced)
+        redirects = catalog.read_all(
+            "WITH RECURSIVE walk(source_id,current_id,next_id,depth,path) AS ("
+            f"SELECT person_id,person_id,merged_into,0,printf('/%d/',person_id) FROM persons WHERE person_id IN ({person_slots}) "
+            "UNION ALL SELECT w.source_id,p.person_id,p.merged_into,w.depth+1,w.path||printf('%d/',p.person_id) "
+            "FROM walk AS w JOIN persons AS p ON p.person_id=w.next_id WHERE w.next_id IS NOT NULL "
+            "AND instr(w.path,printf('/%d/',p.person_id))=0) "
+            "SELECT source_id,current_id FROM walk WHERE next_id IS NULL",
+            tuple(referenced),
+        )
+        canonical_for = {int(row["source_id"]): int(row["current_id"]) for row in redirects}
+        # Preserve the canonical resolver's explicit failure for corrupt redirect
+        # chains; valid chains terminate in the CTE regardless of their length.
+        for source_id in sorted(referenced - canonical_for.keys()):
+            resolve_canonical_person_id(connection, source_id)
+        canonical_ids = sorted(set(canonical_for.values()))
+        if canonical_ids:
+            person_slots = ",".join("?" for _ in canonical_ids)
+            canonical_rows = {
+                int(row["person_id"]): row
+                for row in catalog.read_all(f"SELECT * FROM persons WHERE person_id IN ({person_slots})", tuple(canonical_ids))
+            }
+        for source_id, canonical_id in list(canonical_for.items()):
+            canonical_for[source_id] = canonical_id
+        summaries = _album_summaries(connection, list(canonical_rows.values())) if canonical_rows else []
+        summary_by_id = {int(summary["person_id"]): summary for summary in summaries}
+    else:
+        summary_by_id = {}
+    projected_effective = {
+        face_id: {"person_id": canonical_for.get(int(row["person_id"]), int(row["person_id"]))}
+        for face_id, row in effective.items()
+    }
+    projected_suggestions = {
+        face_id: [
+            summary_by_id[canonical_for.get(int(row["person_id"]), int(row["person_id"]))]
+            for row in values
+            if canonical_for.get(int(row["person_id"]), int(row["person_id"])) in summary_by_id
+        ]
+        for face_id, values in suggested.items()
+    }
+    return {
+        "ignore": ignore,
+        "effective": projected_effective,
+        "suggested": projected_suggestions,
+        "persons": {**canonical_rows, **summary_by_id},
+        "automatic_detail": automatic_detail,
+        "write_eligible": write_eligible,
+    }
 _HIDDEN_INBOX_WHERE = _NO_MEMBER
 _INBOX_ELIGIBLE_WHERE = _VISIBLE + " AND " + _NO_MEMBER + " AND " + _NOT_HELD
 _INBOX_WHERE = _INBOX_ELIGIBLE_WHERE + " AND NOT EXISTS (SELECT 1 FROM face_inbox_hidden AS h WHERE h.face_id = f.face_id)"
@@ -1104,4 +1218,6 @@ def asset_faces(catalog: Any, asset_id: int) -> dict[str, Any]:
         + " ORDER BY f.face_id LIMIT 201",
         (asset_id, *_VISIBILITY_PARAMETERS),
     )
-    return {"faces": [_face_view(catalog, row) for row in rows[:200]], "has_more": len(rows) > 200}
+    selected = rows[:200]
+    prefetched = _prefetch_asset_face_views(catalog, selected)
+    return {"faces": [_face_view(catalog, row, prefetched) for row in selected], "has_more": len(rows) > 200}

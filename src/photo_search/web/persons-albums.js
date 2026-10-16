@@ -2173,6 +2173,13 @@
     state.previewHandle = window.AIPhotoInfo.open(assetId, {
       title: "人物照片", alt: "人物相册照片", extension: extension, returnFocus: returnFocus, people: false,
       onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "persons"); },
+      onFaces: function (id, page) {
+        if (Number(id) !== Number(state.previewAssetId) || !state.previewHandle || !state.previewHandle.dialog.open) return;
+        renderPreviewFaces(page, Number(id), state.previewSeq, state.previewFocusFace);
+      },
+      onFacesError: function (id) {
+        if (Number(id) === Number(state.previewAssetId) && state.previewHandle && state.previewHandle.dialog.open) previewNode("note").textContent = "人脸信息暂时无法读取。";
+      },
       beforeClose: () => !state.writing && !state.pendingWrite,
       navigation: { previous: () => movePreview(-1), next: () => movePreview(1) },
       onClose: () => {
@@ -2206,9 +2213,48 @@
       if (next !== undefined) await preview(next);
     } finally { state.previewMoving = false; updatePreviewNavigation(); }
   }
+  function renderPreviewFaces(page, id, seq, focusFace) {
+    if (seq !== state.previewSeq || id !== Number(state.previewAssetId) || !state.previewHandle || !state.previewHandle.dialog.open) return;
+    previewNode("faces").replaceChildren();
+    if (state.collection) {
+      previewNode("faceDetail").hidden = true; previewNode("review").hidden = true;
+      if (focusFace) {
+        const focused = node("div", undefined, "pa-person-card pa-collection-face-focus");
+        if (focusFace.thumbnail_url) focused.append(picture(focusFace.thumbnail_url, "本次单独收录的人脸", "pa-avatar"));
+        focused.append(node("strong", "本合集单独收录的人脸"));
+        focused.append(node("span", focusFace.status === "CURRENT" ? "照片已打开，旁边显示本次收录的对应人脸。" : "照片已打开；原人脸暂不可用，收录锚点仍保留。", "hint"));
+        previewNode("faces").append(focused);
+      }
+      previewNode("note").textContent = focusFace ? "已打开原照片，并标出本次单独收录的人脸。" : "人物合集只用于集中浏览照片。";
+      return;
+    }
+    const faces = (page.faces || []).slice();
+    const selectedId = state.person && state.person.person_id;
+    faces.sort((a, b) => Number(b.assigned_person_id === selectedId) - Number(a.assigned_person_id === selectedId));
+    // Ordinary face actions live in the shared manager. This extension only
+    // renders matching faces while the person-specific cover picker is active.
+    if (state.coverMode) faces.forEach((face) => {
+      if (face.assigned_person_id !== selectedId) return;
+      const card = node("div", undefined, "pa-person-card pa-selected-person");
+      card.append(node("strong", "本相册的人"));
+      card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : "当前：未命名的人"));
+      const cover = button("设为封面", () => saveCover(face.face_id, cover));
+      card.append(cover);
+      previewNode("faces").append(card);
+    });
+    const hasDetail = faces.some((face) => face.source_detail);
+    previewNode("faceDetail").hidden = state.coverMode || hasDetail;
+    previewNode("faceDetail").disabled = state.detailBusyAssets.has(Number(id));
+    previewNode("note").textContent = state.coverMode
+      ? (previewNode("faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。")
+      : faces.some((face) => face.automatic_detail) ? "已按原图完成识别；请使用照片信息栏中的“管理人脸”整理单张人脸。"
+        : hasDetail ? "原图细节结果只供人工检查；请使用照片信息栏中的“管理人脸”整理单张人脸。"
+          : faces.length ? "请使用照片信息栏中的“管理人脸”整理单张人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "")
+            : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
+  }
   async function preview(id, returnFocus, focusFace) {
     const seq = ++state.previewSeq;
-    state.previewAssetId = id; state.previewListSeq = state.photoListSeq;
+    state.previewAssetId = id; state.previewListSeq = state.photoListSeq; state.previewFocusFace = focusFace || null;
     if (!state.previewHandle) createPreviewUI(id, returnFocus);
     else state.previewHandle.setAsset(id);
     previewNode("faces").replaceChildren();
@@ -2216,44 +2262,6 @@
     previewNode("note").textContent = "正在读取这张照片的人脸……";
     updatePreviewNavigation();
     loadPreviewReviews(id, seq);
-    try {
-      const page = await api("/assets/" + id + "/faces"); if (seq !== state.previewSeq || !state.previewHandle || !state.previewHandle.dialog.open) return;
-      if (state.collection) {
-        previewNode("faces").replaceChildren(); previewNode("faceDetail").hidden = true; previewNode("review").hidden = true;
-        if (focusFace) {
-          const focused = node("div", undefined, "pa-person-card pa-collection-face-focus");
-          if (focusFace.thumbnail_url) focused.append(picture(focusFace.thumbnail_url, "本次单独收录的人脸", "pa-avatar"));
-          focused.append(node("strong", "本合集单独收录的人脸"));
-          focused.append(node("span", focusFace.status === "CURRENT" ? "照片已打开，旁边显示本次收录的对应人脸。" : "照片已打开；原人脸暂不可用，收录锚点仍保留。", "hint"));
-          previewNode("faces").append(focused);
-        }
-        previewNode("note").textContent = focusFace ? "已打开原照片，并标出本次单独收录的人脸。" : "人物合集只用于集中浏览照片。";
-        return;
-      }
-      const selectedId = state.person && state.person.person_id;
-      page.faces.sort((a, b) => Number(b.assigned_person_id === selectedId) - Number(a.assigned_person_id === selectedId));
-      page.faces.forEach((face) => {
-        if (state.coverMode && face.assigned_person_id !== selectedId) return;
-        const card = node("div", undefined, "pa-person-card");
-        if (face.assigned_person_id === selectedId) {
-          card.classList.add("pa-selected-person"); card.append(node("strong", "本相册的人"));
-        }
-        card.append(picture(face.thumbnail_url, "选择这张脸", "pa-avatar"), node("span", face.assigned_person_name ? "当前：" + face.assigned_person_name : face.assigned_person_id ? "当前：未命名的人" : "还没确定是谁"));
-        if (face.source_detail) card.append(node("span", "原图细节结果 · "
-          + (face.assigned_person_id ? "已归入人物" : face.automatic_detail ? "待可靠匹配" : "待人工确认"), "hint"));
-        if (state.person && face.assigned_person_id === selectedId) {
-          const cover = button("设为封面", () => saveCover(face.face_id, cover));
-          card.append(cover);
-        }
-        if (!state.coverMode) card.append(button("更正这张脸", () => { state.previewHandle.close(); editFace(face); }));
-        previewNode("faces").append(card);
-      });
-      const hasDetail = page.faces.some((face) => face.source_detail);
-      previewNode("faceDetail").hidden = state.coverMode || hasDetail;
-      previewNode("faceDetail").disabled = state.detailBusyAssets.has(Number(id));
-      previewNode("note").textContent = state.coverMode ? (previewNode("faces").children.length ? "选择喜欢的人脸，设为这个人物的封面。" : "这里没有当前人物的可用人脸，请换一张照片。") : page.faces.some(face => face.automatic_detail) ? "已按原图完成识别；未可靠归类的人脸可继续更正。" : hasDetail ? "原图细节结果只供人工检查；请用“更正这张脸”手动指定人物，不会自动归组。" : page.faces.length ? "可为本相册的人设置封面；认错了也可更正对应人脸。" + (page.has_more ? "此处仅展示前 200 张脸。" : "") : "没有可整理的人脸；尚未分析、没有检测到或识别更新待确认时会出现这种情况。";
-
-    } catch (error) { if (seq === state.previewSeq) previewNode("note").textContent = errorText(error); }
   }
   async function loadPreviewReviews(id, seq) {
     const reviewSeq = (state.previewReviewSeq || 0) + 1; state.previewReviewSeq = reviewSeq;
