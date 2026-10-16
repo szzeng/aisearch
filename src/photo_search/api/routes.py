@@ -125,6 +125,7 @@ from photo_search.api.models import (
     SourceDeleteResponse,
     SourceDetail,
     SourceListResponse,
+    SourcePathsResponse,
     SourceRenameRequest,
     SourceSummary,
     SourceSummaryResponse,
@@ -653,6 +654,21 @@ async def list_source_summaries(request: Request) -> dict[str, Any]:
                 key: row[key]
                 for key in ("source_id", "display_name", "volume_hint", "status", "last_successful_scan")
             }
+            for row in service_of(request).list_sources()
+        ]
+    }
+
+
+@router.get(
+    "/sources/paths",
+    response_model=SourcePathsResponse,
+    summary="Registered source paths for gallery management",
+)
+async def list_source_paths(request: Request) -> dict[str, Any]:
+    """Return registered roots only when the gallery-management view requests them."""
+    return {
+        "sources": [
+            {"source_id": row["source_id"], "root_path": row["root_path"]}
             for row in service_of(request).list_sources()
         ]
     }

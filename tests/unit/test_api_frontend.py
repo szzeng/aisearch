@@ -214,17 +214,18 @@ def test_frontend_never_puts_a_credential_in_a_url_or_in_storage() -> None:
     assert "console." not in script
 
 
-def test_frontend_only_renders_a_root_path_after_source_detail_is_expanded() -> None:
-    """The home summary stays rootless; a deliberate source-detail expansion shows its root."""
+def test_gallery_management_loads_source_paths_separately_from_details() -> None:
+    """The path list stays separate from the lightweight summary and lazy detail payload."""
     _, script, _ = _web_documents()
 
-    # The user's typed root path is sent to the API as a request field. The lightweight source
-    # list stays rootless; only the separately loaded, explicitly expanded source detail may
-    # display the already-authenticated SourceDetail.root_path.
+    # The management view requests only registered paths; the general source summary remains
+    # rootless and task/statistics details remain lazy.
     assert "root_path: root" in script
+    assert 'request("/sources/paths")' in script
+    assert 'state.sourcePathsById[String(source.source_id)]' in script
     assert "source.root_path" not in script
-    assert 'detail.root_path' in script
-    assert "完整根路径" in script
+    assert 'detail.root_path' not in script
+    assert "任务与统计明细（按需读取）" in script
     # Server-supplied text is scrubbed before it is shown (P1-05 report §8.1).
     assert "PATH_LIKE" in script
     assert "错误详情包含本机路径" in script

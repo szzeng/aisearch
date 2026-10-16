@@ -150,6 +150,17 @@ class SourceSummaryResponse(BaseModel):
     sources: list[SourceSummary]
 
 
+class SourcePath(BaseModel):
+    """A registered source path for the authenticated gallery-management screen."""
+
+    source_id: int
+    root_path: str
+
+
+class SourcePathsResponse(BaseModel):
+    sources: list[SourcePath]
+
+
 class SourceRecord(BaseModel):
     source_id: int
     display_name: str

@@ -331,15 +331,15 @@ main {
   padding: 0;
   display: grid;
   gap: 0.75rem;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
 }
 
 .source-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   min-width: 0;
-  gap: 0.35rem;
+  gap: 0.55rem;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
@@ -352,8 +352,54 @@ main {
   font-size: 1.1rem;
 }
 
-.source-card > p {
-  margin: 0.1rem 0;
+.source-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.source-identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  min-width: 0;
+}
+
+.source-id,
+.source-meta {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+
+.source-record-status {
+  flex: 0 0 auto;
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+
+.source-path {
+  display: block;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--tint) 45%, var(--panel));
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+}
+
+.source-meta {
+  margin: 0;
+}
+
+.source-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .page-intro {
@@ -377,8 +423,8 @@ main {
 }
 
 .source-primary-actions {
-  width: 100%;
-  margin: 0.45rem 0 0;
+  width: auto;
+  margin: 0;
 }
 
 .source-primary {
@@ -393,21 +439,9 @@ main {
   font-weight: 650;
 }
 
-.source-card .view-source {
-  order: 1;
-}
-
-.source-card .source-primary-actions {
-  order: 2;
-}
-
-.source-card > .source-rename,
-.source-card > .source-detail {
-  order: 3;
-}
-
 .source-rename {
-  margin-top: 0.5rem;
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .source-rename label {
@@ -757,6 +791,7 @@ main {
 }
 
 .source-detail {
+  grid-column: 1 / -1;
   margin-top: 0.75rem;
   padding-top: 0.5rem;
   border-top: 1px solid var(--line);
@@ -976,8 +1011,13 @@ main {
 }
 
 @media (max-width: 760px) {
-  .source-card .source-primary-actions {
-    padding-left: 0;
+  .source-card-actions {
+    gap: 0.4rem;
+  }
+
+  .source-card-actions > button,
+  .source-card-actions .source-actions > button {
+    flex: 1 1 auto;
   }
 }
 

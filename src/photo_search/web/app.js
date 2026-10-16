@@ -60,6 +60,10 @@
     sourcesLoaded: false,
     sourcesLoadFailed: false,
     sourceDetails: {},
+    sourcePathsById: {},
+    sourcePathsLoaded: false,
+    sourcePathsError: false,
+    sourcePathsPromise: null,
     sourceDetailOpen: {},
     sourcesRequestVersion: 0,
     detailPreviewFit: null,
@@ -454,6 +458,7 @@
         renderSources();
         renderSourceOptions();
         updateSearchScopeAction();
+        if (!els.views.sources.hidden && !sourcePathsCoverSources()) loadSourcePaths(true);
         if (state.browse.timelineEmptyParams) showTimelineEmptyMessage(state.browse.timelineEmptyParams);
         els.browseSource.value = state.browse.sourceId;
         els.browseOrder.value = state.browse.order;
@@ -471,6 +476,39 @@
         if (state.browse.timelineEmptyParams) showTimelineEmptyMessage(state.browse.timelineEmptyParams);
         updateGlobalRefreshActions();
       });
+  }
+
+  function sourcePathsCoverSources() {
+    return state.sourcePathsLoaded && state.sources.every(function (source) {
+      return Object.prototype.hasOwnProperty.call(state.sourcePathsById, String(source.source_id));
+    });
+  }
+
+  function loadSourcePaths(force) {
+    if (!force && sourcePathsCoverSources()) return Promise.resolve();
+    if (state.sourcePathsPromise) return state.sourcePathsPromise;
+    state.sourcePathsError = false;
+    state.sourcePathsPromise = request("/sources/paths")
+      .then(function (result) {
+        var paths = (result.body && result.body.sources) || [];
+        state.sourcePathsById = paths.reduce(function (byId, source) {
+          byId[String(source.source_id)] = String(source.root_path || "");
+          return byId;
+        }, {});
+        state.sourcePathsLoaded = true;
+        if (state.sourcesLoaded) renderSources();
+      })
+      .catch(function (failure) {
+        state.sourcePathsError = true;
+        if (state.sourcesLoaded) renderSources();
+        if (!els.views.sources.hidden) {
+          setStatus(els.sourcesStatus, "读取图库路径失败：" + describe(failure), "error");
+        }
+      })
+      .then(function () {
+        state.sourcePathsPromise = null;
+      });
+    return state.sourcePathsPromise;
   }
 
   function loadStorageSummary() {
@@ -743,22 +781,21 @@
     }
     state.sources.forEach(function (source) {
       var card = element("li", "source-card");
+      var heading = element("div", "source-card-heading");
+      var identityBlock = element("div", "source-identity");
       var title = element("h3", null, source.display_name);
       title.setAttribute("data-source-title", String(source.source_id));
-      card.appendChild(title);
-      var identity = "图库 #" + source.source_id;
-      if (source.volume_hint) {
-        identity += " · " + safeText(source.volume_hint);
-      }
-      card.appendChild(element("p", "hint", identity));
-      card.appendChild(
-        element(
-          "p",
-          "hint",
-          "记录状态 " + (SOURCE_STATUS_TEXT[source.status] || source.status || "已登记") +
-            " · 未实时检查磁盘"
-        )
-      );
+      identityBlock.appendChild(title);
+      identityBlock.appendChild(element("span", "source-id", "图库 #" + source.source_id));
+      heading.appendChild(identityBlock);
+      heading.appendChild(element("span", "source-record-status", SOURCE_STATUS_TEXT[source.status] || source.status || "已登记"));
+      card.appendChild(heading);
+      var rootPath = state.sourcePathsById[String(source.source_id)];
+      card.appendChild(element("code", "source-path", rootPath || (state.sourcePathsError || state.sourcePathsLoaded ? "图库路径暂不可用" : "正在读取图库路径…")));
+      var sourceMeta = "磁盘状态未实时检查";
+      if (source.volume_hint) sourceMeta += " · " + safeText(source.volume_hint);
+      card.appendChild(element("p", "source-meta", sourceMeta));
+      var actions = element("div", "source-card-actions");
       var open = element("button", "view-source source-primary", "看照片");
       open.type = "button";
       open.addEventListener("click", function () {
@@ -767,7 +804,6 @@
         state.browse.loaded = false;
         showView("browse");
       });
-      card.appendChild(open);
       var summaryActions = element("p", "source-actions source-primary-actions");
       var sourceProgress = state.sourceDetails[String(source.source_id)];
       var actionMode = sourceProgress ? sourceActionMode(sourceProgress.progress) : "unknown";
@@ -790,12 +826,14 @@
         refreshLibrary([Number(source.source_id)], "refresh");
       });
       summaryActions.appendChild(refreshAction);
-      card.appendChild(summaryActions);
-      addSourceRename(card, source, title);
+      actions.appendChild(open);
+      actions.appendChild(summaryActions);
+      card.appendChild(actions);
+      addSourceRename(card, source, title, actions);
 
       var detail = element("details", "source-detail");
       detail.open = Boolean(state.sourceDetailOpen[source.source_id]);
-      var summary = element("summary", null, "完整路径、状态与管理明细（按需读取）");
+      var summary = element("summary", null, "任务与统计明细（按需读取）");
       detail.appendChild(summary);
       var detailContent = element("div", "source-detail-content", "展开后读取统计与任务状态。");
       detail.appendChild(detailContent);
@@ -813,7 +851,7 @@
     });
   }
 
-  function addSourceRename(card, source, title) {
+  function addSourceRename(card, source, title, actionContainer) {
     var edit = element("button", null, "修改名称");
     edit.type = "button";
     var form = element("form", "source-rename");
@@ -900,7 +938,7 @@
           input.disabled = false;
         });
     });
-    card.appendChild(edit);
+    (actionContainer || card).appendChild(edit);
     card.appendChild(form);
   }
 
@@ -934,13 +972,7 @@
     source = Object.assign({}, source, detail);
     container.textContent = "";
       var list = element("dl");
-      var rows = [
-        ["来源编号", "#" + source.source_id],
-        ["图库记录状态", SOURCE_STATUS_TEXT[source.status] || source.status],
-      ];
-      if (detail.root_path) {
-        rows.push(["完整根路径", detail.root_path]);
-      }
+      var rows = [];
       if (progress && progress.scan) {
         rows.push(["扫描", String(progress.scan.files) + " 个文件（可显示 " + String(progress.scan.present) + "）"]);
       }
@@ -2598,6 +2630,7 @@
     });
     els.main.focus({ preventScroll: true });
     if (name === "browse") showBrowseMode(state.browse.mode);
+    if (name === "sources") loadSourcePaths(false);
     updateSearchScopeAction();
   }
 
