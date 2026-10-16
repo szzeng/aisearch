@@ -138,7 +138,9 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
     payload = json.loads(store.read(artifact).decode("utf-8"))
     assert payload["input_revision"] == revision
     assert payload["model_fingerprint"] == contract.MODEL_FINGERPRINT
-    assert payload["config_hash"] == contract.CONFIG_HASH
+    assert payload["config_hash"] == contract.OCR_GPU_CONFIG_HASH
+    assert payload["processor_id"] == artifact["processor_id"] == job["processor_id"]
+    assert payload["engine_config"] == contract.execution_config("gpu")["recognition_and_preprocess"]
     assert payload["engine_config"]["text_score"] == contract.MIN_TEXT_SCORE
     assert payload["original_text"]
     assert "1280" in payload["original_text"]
@@ -211,6 +213,14 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
     # confidence can appear, and no recognised text can reach the response.
     assert set(ocr) == {
         "processor_id",
+        "processor_profiles",
+        "config_hashes",
+        "current_results_by_processor",
+        "legacy_pending_jobs",
+        "retired_pending_jobs",
+        "retired_live_leases",
+        "retired_lease_anomalies",
+        "cpu_fallbacks",
         "task_type",
         "model_fingerprint",
         "config_hash",
@@ -223,9 +233,24 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
         "jobs",
         "pending_jobs",
         "blocked_jobs",
+        "failed_jobs",
         "projection_queued",
         "state",
     }
+    assert ocr["processor_profiles"] == {
+        "legacy": contract.OCR_LEGACY_PROCESSOR_ID,
+        "cpu": contract.OCR_CPU_PROCESSOR_ID,
+        "gpu": contract.OCR_GPU_PROCESSOR_ID,
+    }
+    assert ocr["config_hashes"] == {
+        "legacy": contract.CONFIG_HASH,
+        "cpu": contract.OCR_CPU_CONFIG_HASH,
+        "gpu": contract.OCR_GPU_CONFIG_HASH,
+    }
+    assert ocr["current_results_by_processor"] == {contract.OCR_GPU_PROCESSOR_ID: 1}
+    assert ocr["retired_pending_jobs"] == ocr["retired_live_leases"] == ocr["retired_lease_anomalies"] == 0
+    assert ocr["failed_jobs"] == ocr["blocked_jobs"] == 0
+    assert ocr["cpu_fallbacks"] == {"current_results": 0, "reasons": {}}
     assert "polygon" not in raw_body and '"box":' not in raw_body
 
     jobs_status, jobs_body, jobs_raw = api_json(harness, "/jobs")

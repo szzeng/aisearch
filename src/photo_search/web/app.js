@@ -432,6 +432,7 @@
   function loadSources() {
     state.sourcesRequestVersion += 1;
     var requestVersion = state.sourcesRequestVersion;
+    state.sourcePathsLoaded = false;
     setStatus(els.sourcesStatus, "正在读取图库入口…");
     state.sourceDetails = {};
     return request("/sources/summary")
@@ -487,9 +488,12 @@
   function loadSourcePaths(force) {
     if (!force && sourcePathsCoverSources()) return Promise.resolve();
     if (state.sourcePathsPromise) return state.sourcePathsPromise;
+    var requestVersion = state.sourcesRequestVersion;
+    state.sourcePathsLoaded = false;
     state.sourcePathsError = false;
     state.sourcePathsPromise = request("/sources/paths")
       .then(function (result) {
+        if (requestVersion !== state.sourcesRequestVersion) return;
         var paths = (result.body && result.body.sources) || [];
         state.sourcePathsById = paths.reduce(function (byId, source) {
           byId[String(source.source_id)] = String(source.root_path || "");
@@ -499,6 +503,7 @@
         if (state.sourcesLoaded) renderSources();
       })
       .catch(function (failure) {
+        if (requestVersion !== state.sourcesRequestVersion) return;
         state.sourcePathsError = true;
         if (state.sourcesLoaded) renderSources();
         if (!els.views.sources.hidden) {
@@ -507,6 +512,11 @@
       })
       .then(function () {
         state.sourcePathsPromise = null;
+        // A source may have been added while this request was in flight. Its
+        // summary refresh coalesced with us, so fetch the current paths now.
+        if (requestVersion !== state.sourcesRequestVersion && !els.views.sources.hidden) {
+          return loadSourcePaths(false);
+        }
       });
     return state.sourcePathsPromise;
   }
@@ -2193,6 +2203,12 @@
     state.browse.returnContext = snapshot;
     state.browse.returnPending = true;
     state.browse.loaded = false;
+    // Sources may have finished loading while the full details page was open.
+    // Restore visible filters now; loadSources repeats this if options arrive later.
+    els.browseSource.value = state.browse.sourceId;
+    els.browseOrder.value = state.browse.order;
+    els.browseCaptureFrom.value = state.browse.captureFrom;
+    els.browseCaptureTo.value = state.browse.captureTo;
     return true;
   }
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
+import threading
 import time
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -28,6 +31,24 @@ from photo_search.config import backups_dir, catalog_db_path, resolve_data_root
 
 #: Minimum free space a migration needs beyond the current logical database size.
 MIN_MIGRATION_HEADROOM_BYTES = 64 * 1024 * 1024
+
+
+# Service workers open independent connections, but a preflight and all migrations for
+# one database must be serialized. Weak values keep temporary/test roots from accumulating;
+# every caller holds the returned lock strongly for its complete operation.
+# This process-local guard does not replace the managed-process data-root ownership lease.
+_DATABASE_LOCKS: weakref.WeakValueDictionary[str, threading.RLock] = weakref.WeakValueDictionary()
+_DATABASE_LOCKS_GUARD = threading.Lock()
+
+
+def _database_lock(path: Path) -> threading.RLock:
+    key = os.path.normcase(str(path.resolve()))
+    with _DATABASE_LOCKS_GUARD:
+        lock = _DATABASE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _DATABASE_LOCKS[key] = lock
+        return lock
 
 
 @dataclass(frozen=True)
@@ -55,32 +76,36 @@ def _supported_version() -> int:
 def inspect_database(db_path: str | Path) -> int:
     """Return the on-disk schema version using a read-only, side-effect-free connection."""
     path = Path(db_path)
-    if not path.exists():
-        return 0
-    connection = open_readonly(path)
-    try:
-        tables = schema.business_tables(connection)
-        if not tables:
+    with _database_lock(path):
+        if not path.exists():
             return 0
-        version = schema.read_schema_version(connection)
-        if version is None:
-            raise CatalogError(
-                SCHEMA_INCONSISTENT,
-                "catalog database has tables but no usable metadata.schema_version",
-                details={"db_path": str(path), "tables": tables},
-            )
-        supported = _supported_version()
-        if version > supported:
-            raise CatalogError(
-                SCHEMA_TOO_NEW,
-                f"catalog schema_version {version} is newer than this build supports "
-                f"({supported}); refusing to write",
-                details={"schema_version": version, "supported_schema_version": supported},
-            )
-        schema.verify_schema(connection, version)
-        return version
-    finally:
-        connection.close()
+        connection = open_readonly(path)
+        try:
+            # Schema discovery uses multiple SELECTs. Keep the version and all objects on
+            # the same WAL snapshot even if another connection commits between the reads.
+            connection.execute("BEGIN DEFERRED")
+            tables = schema.business_tables(connection)
+            if not tables:
+                return 0
+            version = schema.read_schema_version(connection)
+            if version is None:
+                raise CatalogError(
+                    SCHEMA_INCONSISTENT,
+                    "catalog database has tables but no usable metadata.schema_version",
+                    details={"db_path": str(path), "tables": tables},
+                )
+            supported = _supported_version()
+            if version > supported:
+                raise CatalogError(
+                    SCHEMA_TOO_NEW,
+                    f"catalog schema_version {version} is newer than this build supports "
+                    f"({supported}); refusing to write",
+                    details={"schema_version": version, "supported_schema_version": supported},
+                )
+            schema.verify_schema(connection, version)
+            return version
+        finally:
+            connection.close()
 
 
 def catalog_info(
@@ -185,27 +210,31 @@ def migrate_database(
     root = resolve_data_root(data_root)
     path = Path(db_path) if db_path is not None else catalog_db_path(root)
     usage = disk_usage or shutil.disk_usage
-    previous = inspect_database(path)
-    supported = _supported_version()
-    if previous == supported and path.exists():
-        return MigrationResult(path, previous, supported, (), None)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _check_disk_space(path, root, usage)
-    backup_path = None
-    if previous > 0 and path.exists():
-        backup_path = _backup_database(path, root, now_ms=time.time_ns() // 1_000_000)
-    connection = connect_rw(path)
-    try:
-        ensure_wal(connection)
-        applied: list[int] = []
-        for version, migration_path in schema.migration_files():
-            if version <= previous:
-                continue
-            _apply_migration(connection, version, migration_path)
-            applied.append(version)
-        schema.verify_schema(connection, supported)
-        if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
-            raise CatalogError(MIGRATION_FAILED, "catalog database is not in WAL mode after migration")
-    finally:
-        connection.close()
-    return MigrationResult(path, previous, supported, tuple(applied), backup_path)
+    # Include the read-only preflight, backup and WAL choice in the same critical
+    # section. Otherwise a second opener can inspect an intermediate schema or replay
+    # migrations based on a stale previous version. Nested inspection uses this RLock.
+    with _database_lock(path):
+        previous = inspect_database(path)
+        supported = _supported_version()
+        if previous == supported and path.exists():
+            return MigrationResult(path, previous, supported, (), None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _check_disk_space(path, root, usage)
+        backup_path = None
+        if previous > 0 and path.exists():
+            backup_path = _backup_database(path, root, now_ms=time.time_ns() // 1_000_000)
+        connection = connect_rw(path)
+        try:
+            ensure_wal(connection)
+            applied: list[int] = []
+            for version, migration_path in schema.migration_files():
+                if version <= previous:
+                    continue
+                _apply_migration(connection, version, migration_path)
+                applied.append(version)
+            schema.verify_schema(connection, supported)
+            if str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+                raise CatalogError(MIGRATION_FAILED, "catalog database is not in WAL mode after migration")
+        finally:
+            connection.close()
+        return MigrationResult(path, previous, supported, tuple(applied), backup_path)

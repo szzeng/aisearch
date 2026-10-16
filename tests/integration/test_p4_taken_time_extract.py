@@ -114,7 +114,9 @@ def test_the_source_chain_is_exactly_the_frozen_priority(api_env) -> None:
     assert fourth.time_confidence == "LOW"
     assert fourth.taken_at_raw.endswith("+00:00") and "T" in fourth.taken_at_raw
 
-    assert filter_causes(api_env.service.catalog) == ["CAPTURE_TIME_CHANGED"] * 5
+    assert filter_causes(api_env.service.catalog) == (
+        ["ASSET_ADDED"] * 5 + ["CAPTURE_TIME_CHANGED"] * 5
+    )
     block = time_read.state_block(api_env.service.catalog.connection)
     assert block == {
         "state": "READY",
@@ -161,7 +163,10 @@ def test_a_position_that_changes_while_reading_is_not_adopted(api_env, monkeypat
     again = row_for(api_env.service.catalog, asset_id)
     assert again is not None and again.time_source == "EXIF_ORIGINAL"
     assert again.timezone_offset == 480
-    assert filter_causes(api_env.service.catalog) == ["CAPTURE_TIME_CHANGED"] * 2
+    assert filter_causes(api_env.service.catalog) == [
+        "ASSET_ADDED", "CAPTURE_TIME_CHANGED", "ASSET_CONTENT_DETACHED",
+        "ASSET_LOCATION_BOUND", "CAPTURE_TIME_CHANGED",
+    ]
 
 
 def test_a_missing_position_never_fails_the_asset_and_uses_the_minimum_mtime(api_env) -> None:

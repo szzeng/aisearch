@@ -40,6 +40,7 @@ class Catalog:
         self._in_write = False
         self._in_read_snapshot = False
         self._closed = False
+        self._close_callbacks: list[Callable[[], None]] = []
 
     @classmethod
     def open(
@@ -172,11 +173,28 @@ class Catalog:
         except sqlite3.Error:
             pass
 
+    def add_close_callback(self, callback: Callable[[], None]) -> None:
+        """Register an owned resource to drain before this connection is closed.
+
+        Callbacks must not use the owner's connection or lock from another thread.
+        Registration and close share the owner lock, so resources cannot attach
+        after shutdown has started.
+        """
+        with self._lock:
+            if self._closed:
+                raise CatalogError(CATALOG_UNREADABLE, "catalog connection is closed")
+            self._close_callbacks.append(callback)
+
     def close(self) -> None:
         with self._lock:
             if not self._closed:
-                self.connection.close()
                 self._closed = True
+                callbacks, self._close_callbacks = self._close_callbacks, []
+                try:
+                    for callback in reversed(callbacks):
+                        callback()
+                finally:
+                    self.connection.close()
 
     def __enter__(self) -> Catalog:
         return self

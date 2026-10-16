@@ -226,8 +226,8 @@ def test_the_search_page_is_public_while_its_api_stays_protected(api_env) -> Non
     assert result["style"].headers["Content-Type"].startswith("text/css")
 
     # The three documents link to each other.
-    assert 'href="/search"' in result["shell"].text
-    assert 'href="/search"' in result["places"].text
+    assert 'action="/search"' in result["shell"].text
+    assert 'action="/search"' in result["places"].text
     assert 'href="/places"' in page.text
 
     # The document is public; both search endpoints are not.

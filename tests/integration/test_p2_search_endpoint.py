@@ -23,7 +23,7 @@ from p2_search_api_fixtures import (
     controllable_sessions,
     fresh_app,
 )
-from p2_search_fixtures import SPACE, assign_place, create_place
+from p2_search_fixtures import SPACE, assign_place, confirm_pending, install_source_places
 
 from photo_search.catalog.errors import (
     CATALOG_FILTER_REVISION_STALE,
@@ -443,12 +443,14 @@ def test_a_restart_has_no_sessions_and_the_old_cursor_is_identified(
 def test_a_place_edit_between_pages_is_stale_and_a_research_finds_the_new_hit(
     search_env: SearchEnv,
 ) -> None:
+    place_id = install_source_places(search_env.catalog)["hangzhou"]
+    confirm_pending(search_env.catalog)
+
     async def scenario(client: Any) -> dict[str, Any]:
         csrf = await search_env.authenticate(client)
         page = (
             await post_search(client, search_body(search_env, text="jpg", page_size=1), csrf)
         ).json()
-        place_id = create_place(search_env.catalog, "杭州", aliases=[{"text": "Hangzhou", "language": "en"}])
         assign_place(
             search_env.catalog,
             asset_id=search_env.assets["beach sunset.jpg"],

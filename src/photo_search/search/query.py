@@ -36,13 +36,16 @@ def search_summary(
     catch_up: dict[str, Any],
 ) -> dict[str, Any]:
     """The echo of one text query: what was searched, and how fresh the projection is."""
+    projection = document_module.projection_summary(connection)
     summary: dict[str, Any] = {
-        **document_module.projection_summary(connection),
+        **projection,
         "query": match.raw,
         "normalized_query": match.normalized,
         "terms": match.term_texts(),
         "match_expression": match.expression,
-        "state": str(catch_up["state"]),
+        # Catch-up precedes the read snapshot. A writer may have queued more work
+        # (or another worker drained it) since then; publish this snapshot's lag.
+        "state": "LAGGING" if projection["queued_assets"] or projection["stale_documents"] else "SYNCED",
         "processed_assets": int(catch_up["processed"]),
     }
     return summary

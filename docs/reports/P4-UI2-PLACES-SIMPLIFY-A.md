@@ -1,5 +1,7 @@
 # P4-UI2-PLACES-SIMPLIFY-A 执行报告
 
+> 2026-10-15 后续更新：B 卡已在真实应用和隔离合成库观察两条核心交互路线，非零滚动与持久截图/完整视觉仍待验。状态见 [B 卡](../tasks/P4-UI2-PLACES-SIMPLIFY-B.md)；详细历史报告已归档至本机 `.tmp/evidence-archive-20261016/docs/reports/P4-UI2-PLACES-SIMPLIFY-B.md`，不随 Git 分发。下文保留 A 实施阶段的历史结果。
+
 日期：2026-10-14
 基线：`6b024115cc30e7c74575e241cfcf38300a920256`
 结论：**IMPLEMENTED / BROWSER_PENDING**。本轮按用户指示未运行浏览器测试；不代表整卡或视觉验收通过。

@@ -264,9 +264,13 @@ def _member_fixture() -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.executescript(
         "CREATE TABLE assets (asset_id INTEGER PRIMARY KEY);"
-        "CREATE TABLE file_locations (asset_id INTEGER, source_id INTEGER, availability TEXT);"
-        "CREATE TABLE faces (face_id TEXT PRIMARY KEY, asset_id INTEGER NOT NULL);"
-        "CREATE TABLE face_person_links (face_id TEXT, person_id INTEGER, decision TEXT);"
+        "CREATE TABLE file_locations (asset_id INTEGER, source_id INTEGER, availability TEXT, relative_path TEXT);"
+        "CREATE TABLE faces (face_id TEXT PRIMARY KEY, asset_id INTEGER NOT NULL, "
+        "spec_revision TEXT DEFAULT 'ordinary', input_revision TEXT DEFAULT 'fixture');"
+        "CREATE TABLE face_person_links (face_id TEXT, person_id INTEGER, decision TEXT, "
+        "assignment_kind TEXT DEFAULT 'AUTO');"
+        "CREATE TABLE face_detail_auto_assets(asset_id INTEGER, input_revision TEXT, ready INTEGER, policy_revision TEXT);"
+        "CREATE TABLE face_redetection_groups(old_face_id TEXT, state TEXT);"
         "CREATE TABLE face_assignment_controls (face_id TEXT PRIMARY KEY, mode TEXT);"
         "CREATE TABLE face_exclusions (face_id TEXT, person_id INTEGER, active INTEGER);"
         "CREATE TABLE catalog_filter_revision (revision_id INTEGER PRIMARY KEY, revision INTEGER);"

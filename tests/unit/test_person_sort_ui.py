@@ -21,11 +21,13 @@ class Element {
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const requests=[]; let page=0;
-const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
- window:{addEventListener(){},location:{search:""}},
+const context={URL,URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
+ window:{addEventListener(){},location:{search:"",hash:"",href:"http://local/persons"}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url)=>{requests.push(url);if(url.includes("/persons/browse")){page++;return {ok:true,json:async()=>({persons:[{person_id:page,name:"person"+page,revision:1,asset_count:page,thumbnail_url:null}],has_more:true,next_cursor:"cursor-"+page})};}return {ok:true,json:async()=>({persons:[],faces:[],has_more:false,next_cursor:null})};}};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
+const navigate=(_state,_title,path)=>{const url=new URL(path,context.window.location.href);Object.assign(context.window.location,{href:url.href,search:url.search,hash:url.hash});};
+context.window.history={pushState:navigate,replaceState:navigate};
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{

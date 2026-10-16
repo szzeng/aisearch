@@ -218,7 +218,42 @@ def _published(cache: MediaCache, spec: Any, sha256: str) -> bool:
     return cache.is_published(cache.artifact_path(spec=spec, sha256=sha256))
 
 
-def asset_page(
+def prepare_asset_page(catalog: Any, **parameters: Any) -> dict[str, Any] | None:
+    """Validate the entire request before bounded FTS catch-up on a writable owner.
+
+    The HTTP path runs this on a separately owned projection connection, then reads
+    a fresh RO snapshot. Cursor/revision validation is repeated in that snapshot.
+    """
+    return _asset_page(catalog, None, _prepare_only=True, **parameters)
+
+
+def read_asset_page(catalog: Any, cache: MediaCache, *,
+                    projection: dict[str, Any] | None = None, **parameters: Any) -> dict[str, Any]:
+    """Publish rows, counts and cursor from one snapshot; never writes FTS."""
+    with catalog.read_snapshot():
+        return read_asset_page_in_snapshot(catalog, cache, projection=projection, **parameters)
+
+
+def read_asset_page_in_snapshot(catalog: Any, cache: MediaCache, *,
+                                projection: dict[str, Any] | None = None,
+                                **parameters: Any) -> dict[str, Any]:
+    """Extend a caller's read snapshot through album identity, rows and face facts.
+
+    This entry never opens a transaction or prepares FTS. Its caller must already
+    own a Catalog.read_snapshot; a write transaction is deliberately insufficient.
+    """
+    if not getattr(catalog, "_in_read_snapshot", False):
+        raise RuntimeError("asset reads require an existing catalog read snapshot")
+    return _asset_page(catalog, cache, _projection=projection, **parameters)
+
+
+def asset_page(catalog: Any, cache: MediaCache, **parameters: Any) -> dict[str, Any]:
+    """Synchronous service entry; projection transactions precede the page snapshot."""
+    projection = prepare_asset_page(catalog, **parameters) if parameters.get("text") is not None else None
+    return read_asset_page(catalog, cache, projection=projection, **parameters)
+
+
+def _asset_page(
     catalog: Any,
     cache: MediaCache,
     *,
@@ -237,7 +272,9 @@ def asset_page(
     capture_to_exclusive: str | None = None,
     person_ids: tuple[int, ...] = (),
     collection_id: int | None = None,
-) -> dict[str, Any]:
+    _prepare_only: bool = False,
+    _projection: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """One bounded page of assets in a stable, caller-selected order.
 
     ``order=asset_id`` is the frozen P1-04 behaviour (same SQL, same cursor, same rows).
@@ -329,15 +366,6 @@ def asset_page(
                 "current_revision": int(current_suggestion_revision),
             },
         )
-    if text_match is not None:
-        # Architecture §9.3/§4.5.3: a lagging projection is caught up (bounded, in short
-        # transactions) before the query runs, and whatever lag remains is reported
-        # instead of being silently ignored.
-        catch_up = search_documents.catch_up(catalog)
-        text_sql, text_parameters = search_query.text_condition(text_match)
-        search_block = search_query.search_summary(
-            catalog.connection, text_match, catch_up=catch_up
-        )
     start: int | tuple[int, int] | None
     if order == ORDER_CAPTURE_DESC:
         start = decode_capture_cursor(cursor)
@@ -355,6 +383,16 @@ def asset_page(
         start = decode_time_cursor(cursor)
     else:
         start = decode_cursor(cursor)
+    if _prepare_only:
+        # All filter/cursor validation happens before the first projection write.
+        return None if text_match is None else search_documents.catch_up(catalog)
+    if text_match is not None:
+        if _projection is None:
+            raise RuntimeError("text projection must be prepared before a read-only page")
+        text_sql, text_parameters = search_query.text_condition(text_match)
+        search_block = search_query.search_summary(
+            catalog.connection, text_match, catch_up=_projection
+        )
     page_limit = int(limit)
     chunk_size = max(ASSET_CHUNK_SIZE, page_limit)
     matched: list[dict[str, Any]] = []
@@ -374,6 +412,7 @@ def asset_page(
             text_parameters=text_parameters,
             capture_sql=None if capture_sql == "1" else capture_sql,
             capture_parameters=capture_parameters,
+            prefer_member_scan=bool(person_ids) or collection_id is not None,
         )
         if not rows:
             exhausted = True
@@ -468,20 +507,21 @@ def _asset_chunk(
     text_parameters: list[Any] | None = None,
     capture_sql: str | None = None,
     capture_parameters: list[Any] | None = None,
+    prefer_member_scan: bool = False,
 ) -> list[Any]:
     conditions: list[str] = []
     parameters: list[Any] = []
     join = ""
     selection = "a.asset_id, a.sha256, a.byte_size, a.created_at"
-    if order == ORDER_CAPTURE_DESC:
-        # ADR-0011 §5.1: the capture ordering reads the derived fact table. A missing row is
-        # equivalent to ``taken_at_sort IS NULL`` (it belongs to the tail bucket).
+    if order == ORDER_CAPTURE_DESC and prefer_member_scan:
+        # Sparse person/collection membership is an indexed candidate set. Let
+        # SQLite visit those assets before sorting; scanning the global time
+        # index can otherwise inspect the whole library for a tiny album.
         join = " LEFT JOIN asset_metadata AS m ON m.asset_id = a.asset_id"
         selection += ", m.taken_at_sort AS capture_sort"
         if after is not None:
             known, sort_key, asset_id, _bound_revision = after
             if int(known) == 1:
-                # The rest of the ordered bucket, then the whole tail bucket.
                 conditions.append(
                     "((m.taken_at_sort IS NOT NULL AND (m.taken_at_sort < ? OR "
                     "(m.taken_at_sort = ? AND a.asset_id < ?))) OR m.taken_at_sort IS NULL)"
@@ -491,6 +531,10 @@ def _asset_chunk(
                 conditions.append("(m.taken_at_sort IS NULL AND a.asset_id < ?)")
                 parameters.append(int(asset_id))
         ordering = "(m.taken_at_sort IS NULL), m.taken_at_sort DESC, a.asset_id DESC"
+    elif order == ORDER_CAPTURE_DESC:
+        # Ordered reads are split per time_source below to use the existing
+        # (time_source, taken_at_sort, asset_id) index without a global sort.
+        ordering = ""
     elif order == ORDER_TIME_DESC:
         if after is not None:
             created_at, asset_id = after
@@ -503,12 +547,6 @@ def _asset_chunk(
         conditions.append("a.asset_id > ?")
         parameters.append(0 if after is None else int(after))
         ordering = "a.asset_id"
-    if source_id is not None:
-        conditions.append(
-            "EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = a.asset_id "
-            "AND l.source_id = ?)"
-        )
-        parameters.append(int(source_id))
     photo_sql, photo_parameters = photo_asset_sql(source_id=source_id)
     conditions.append(photo_sql)
     parameters.extend(photo_parameters)
@@ -531,6 +569,8 @@ def _asset_chunk(
     if capture_sql:
         conditions.append(capture_sql)
         parameters.extend(capture_parameters or [])
+    if order == ORDER_CAPTURE_DESC and not prefer_member_scan:
+        return _capture_chunk(catalog, conditions, parameters, after=after, size=size)
     parameters.append(int(size))
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     return list(
@@ -540,6 +580,68 @@ def _asset_chunk(
             tuple(parameters),
         )
     )
+
+
+def _capture_chunk(catalog: Any, conditions: list[str], parameters: list[Any], *,
+                   after: Any, size: int) -> list[Any]:
+    """Exact c1 ordering with at most three bounded source pages plus a tail.
+
+    EXIF_ROOT is ordered too (unlike the timeline's capture-only bucket).
+    Missing metadata and FILE_MTIME remain one asset-id-ordered NULL tail.
+    """
+    selection = "a.asset_id,a.sha256,a.byte_size,a.created_at,m.taken_at_sort AS capture_sort"
+    candidates: list[Any] = []
+    if after is None or int(after[0]) == 1:
+        for source in ("EXIF_ORIGINAL", "EXIF_DIGITIZED", "EXIF_ROOT"):
+            pieces = [*conditions, "m.time_source=?", "m.taken_at_sort IS NOT NULL"]
+            values = [*parameters, source]
+            if after is not None:
+                pieces.append("(m.taken_at_sort,m.asset_id) < (?,?)")
+                values.extend((int(after[1]), int(after[2])))
+            candidates.extend(catalog.read_all(
+                f"SELECT {selection} FROM asset_metadata AS m "
+                "INDEXED BY idx_asset_metadata_capture "
+                "CROSS JOIN assets AS a ON a.asset_id=m.asset_id "
+                f"WHERE {' AND '.join(f'({p})' for p in pieces)} "
+                "ORDER BY m.taken_at_sort DESC,m.asset_id DESC LIMIT ?",
+                (*values, int(size)),
+            ))
+        candidates.sort(key=lambda row: (row["capture_sort"], row["asset_id"]), reverse=True)
+        candidates = candidates[:size]
+    remaining = size - len(candidates)
+    if remaining:
+        pieces = [*conditions, "m.taken_at_sort IS NULL"]
+        values = list(parameters)
+        if after is not None and int(after[0]) == 0:
+            pieces.append("a.asset_id < ?")
+            values.append(int(after[2]))
+        candidates.extend(catalog.read_all(
+            f"SELECT {selection} FROM assets AS a "
+            "LEFT JOIN asset_metadata AS m ON m.asset_id=a.asset_id "
+            f"WHERE {' AND '.join(f'({p})' for p in pieces)} "
+            "ORDER BY a.asset_id DESC LIMIT ?", (*values, remaining),
+        ))
+    return candidates
+
+
+def source_list(catalog: Any, *, manifest_path: str | None, device_policy: str,
+                data_root: Any) -> dict[str, Any]:
+    """Source counts and progress from one worker-owned read snapshot."""
+    from photo_search.refresh import progress
+
+    with catalog.read_snapshot():
+        binding = progress.served_binding(catalog, manifest_path=manifest_path,
+                                          device_policy=device_policy)
+        available = progress.enrichment_availability(catalog, data_root=data_root)
+        sources = []
+        for row in store.list_source_rows(catalog.connection):
+            source_id = int(row["source_id"])
+            item = store.row_dict(row, store.SOURCE_FIELDS)
+            item["counts"] = store.catalog_counts(catalog.connection, source_id=source_id)
+            item["progress"] = progress.source_progress(catalog, source_id=source_id,
+                                                        binding=binding, available=available)
+            sources.append(item)
+        return {"sources": sources}
 
 
 def asset_detail(

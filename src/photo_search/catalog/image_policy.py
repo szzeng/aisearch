@@ -25,11 +25,17 @@ def is_image_path(relative_path: str) -> bool:
 
 def image_location_sql(alias: str = "l") -> str:
     """SQL predicate for a registered path whose extension is an allowed image type."""
-    patterns = " OR ".join(
-        f"LOWER({alias}.relative_path) GLOB '*{extension}'"
-        for extension in sorted(IMAGE_EXTENSIONS)
-    )
-    return f"({patterns})"
+    # All allowed suffixes are ASCII literals, grouped by length. Lower only the
+    # short suffix twice, instead of lowering/scanning the whole path for each of
+    # the 60+ formats. This keeps the same extension-only policy for every path.
+    groups: dict[int, list[str]] = {}
+    for extension in sorted(IMAGE_EXTENSIONS):
+        groups.setdefault(len(extension), []).append(f"'{extension}'")
+    predicates = [
+        f"LOWER(SUBSTR({alias}.relative_path,-{length})) IN ({','.join(values)})"
+        for length, values in sorted(groups.items())
+    ]
+    return "(" + " OR ".join(predicates) + ")"
 
 
 def photo_asset_sql(
@@ -40,7 +46,8 @@ def photo_asset_sql(
     predicate = image_location_sql(alias)
     if source_id is not None:
         return (
-            f"EXISTS (SELECT 1 FROM file_locations AS {alias} WHERE {alias}.asset_id = "
+            f"EXISTS (SELECT 1 FROM file_locations AS {alias} "
+            f"INDEXED BY idx_file_locations_asset WHERE {alias}.asset_id = "
             f"{asset_alias}.asset_id AND {alias}.source_id = ? AND {predicate})",
             [int(source_id)],
         )

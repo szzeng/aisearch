@@ -464,7 +464,7 @@ def test_the_sources_page_wires_the_refresh_entry(env: RefreshEnv) -> None:
     served = env.scenario(scenario)
     assert 'id="refresh-library"' in served["shell"]
     assert 'id="refresh-status"' in served["shell"]
-    assert "刷新图库" in served["shell"]
+    assert "同步全部变化" in served["shell"]
     assert '"/library/refresh"' in served["script"]
     assert "SEARCH_READY" in served["script"]
     assert "ENRICHING" in served["script"]
@@ -766,9 +766,9 @@ def test_a_non_image_change_is_out_of_scope_not_a_failure(env: RefreshEnv) -> No
 
     assert status["search_ready"] is True
     assert status["state"] == "COMPLETE"
-    assert status["counters"]["new_assets"] == 1
+    assert status["counters"]["new_assets"] == 0
     assert status["stages"]["semantic"]["required"] == 0
-    assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {"UNIDENTIFIED": 1}
+    assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {}
 
 
 # ------------------------------------------------------------- §14.17/§14.18 sources

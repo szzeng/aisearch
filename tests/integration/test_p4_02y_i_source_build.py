@@ -203,10 +203,10 @@ def test_the_source_card_counts_only_images_in_the_semantic_denominator(tmp_path
 
         assert status["search_ready"] is True
         assert status["stages"]["semantic"]["classified"] == 2
-        assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {"UNIDENTIFIED": 1}
+        assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {}
         card = source_payload(env, 1)["progress"]
-        # The scan denominator counts every file; the semantic one counts the two images only.
-        assert card["scan"]["files"] == 3
+        # The image allowlist excludes documents before scan/hash/classification.
+        assert card["scan"]["files"] == 2
         assert card["stages"]["semantic"]["total"] == 2
         assert card["stages"]["semantic"]["confirmed"] == 2
         assert card["stages"]["semantic"]["pending"] == 0
@@ -374,6 +374,25 @@ def test_face_progress_includes_auto_detail_jobs_without_double_counting_assets(
 
 
 # ------------------------------------------------------------- §2 bounded build / backlog
+def test_building_only_the_later_source_indexes_its_shared_content(tmp_path: Path) -> None:
+    env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        second = tmp_path / "later-source"
+        second.mkdir()
+        for index in range(2):
+            path = second / f"copy-{index}.jpg"
+            path.write_bytes((env.library / f"photo-{index:03d}.jpg").read_bytes())
+            os.utime(path, ns=((1_700_000_000_000 - 3_600_000) * 1_000_000,) * 2)
+        source_id = register_source(env, "later source", second)
+        status = run(env, mode="build", source_ids=[source_id])
+        assert status["state"] == "COMPLETE" and status["search_ready"] is True
+        assert status["stages"]["semantic"]["encoded"] == 2
+        assert status["stages"]["semantic"]["backlog_confirmed"] == 2
+        assert len(env.adapter.image_calls) == 2
+    finally:
+        env.close()
+
+
 def test_a_build_drains_the_backlog_beyond_the_batch_and_delta_ceilings(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -790,7 +809,7 @@ def test_a_documents_only_source_builds_once_and_says_what_it_saw(tmp_path: Path
         assert status["stages"]["semantic"]["state"] == "SKIPPED_NO_TARGETS"
         assert status["stages"]["semantic"]["reason"] == "NO_INDEXABLE_CONTENT"
         assert status["stages"]["semantic"]["classified"] == 0
-        assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {"UNIDENTIFIED": 1}
+        assert status["stages"]["semantic"]["out_of_scope"]["labels"] == {}
         # Nothing was ever published into this space, so there is no generation and no profile.
         assert env.service().catalog.read_all("SELECT generation_id FROM index_generations") == []
         assert env.service().catalog.read_all("SELECT profile_id FROM search_profiles") == []
@@ -800,7 +819,7 @@ def test_a_documents_only_source_builds_once_and_says_what_it_saw(tmp_path: Path
         assert card["stages"]["semantic"]["total"] == 0
         assert card["built"] is True
         assert card["search_ready"] is True
-        assert card["scan"] == {"files": 1, "present": 1, "missing": 0}
+        assert card["scan"] == {"files": 0, "present": 0, "missing": 0}
         # Durable, not process-local: the marker is what tells "never looked at" from "looked
         # at, nothing to index" after a restart.
         marker = env.service().catalog.read_one(

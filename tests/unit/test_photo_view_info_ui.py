@@ -6,6 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def test_photo_info_renders_paths_people_gps_and_releases_stale_maps() -> None:
     node = shutil.which("node")
@@ -259,8 +261,9 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
         assert "/web/photo-info.css?v=p4-photo-detail-attribution-collapse-b-1" in document
     assert "search.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-person-avatar-click-a-3" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-upstream-sync-20261016-2" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
+    assert "/web/app.js?v=p4-upstream-sync-20261016-2" in (web / "index.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
@@ -303,7 +306,8 @@ const stub={hidden:false,textContent:"",setAttribute(){},querySelector(){return 
 const appMetaStub={textContent:""};
 ui.setElements({views:sections,navButtons:[],main,assetGrid,browseTimeline:stub,browseListView:stub,
   browseShowTimeline:stub,browseShowList:stub,browseCaptureState:stub,browseListFilters:stub,
-  browseListTimeHint:stub,browseTimelineNote:stub,notice:stub,appMeta:appMetaStub});
+  browseListTimeHint:stub,browseTimelineNote:stub,notice:stub,appMeta:appMetaStub,
+  browseSource:{value:""},browseOrder:{value:""},browseCaptureFrom:{value:""},browseCaptureTo:{value:""}});
 let routedDetail="";ui.setRenderDetail(id=>{routedDetail=String(id);});window.AIPhotoInfo={consumeDetailReturn:()=>null};location.hash="#/asset/123/details";ui.handleHash();
 assert.equal(routedDetail,"123","the explicit details suffix routes to the independent details renderer");
 assert.equal(ui.state.detailRouteActive,true);assert.equal(ui.state.detailAssetId,"123");
@@ -354,6 +358,91 @@ ui.probeCapabilities();setTimeout(()=>{
 """
     result = subprocess.run(
         [node, "-e", script],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("sources_first", [True, False])
+def test_full_detail_return_synchronizes_loaded_browse_controls(sources_first: bool) -> None:
+    """A fresh details document can finish loading sources before the return route."""
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the browse-return interaction check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+const values=new Map(), sourcesFirst=process.argv[1]==="true";
+class Element {
+  constructor(tag="div"){this.tagName=tag;this.children=[];this.dataset={};this.hidden=false;this._value="";}
+  set textContent(v){this._text=String(v);this.children=[];if(this.tagName==="select")this._value="";}
+  get textContent(){return this._text||"";}
+  set value(v){v=String(v);this._value=this.tagName==="select"&&!this.children.some(n=>n.value===v)?"":v;}
+  get value(){return this._value;}
+  appendChild(n){this.children.push(n);return n;}
+  setAttribute(){} removeAttribute(){} focus(){} querySelector(){return null;}
+}
+function page(url,referrer=""){
+  const location={origin:"http://localhost",replace(next){const u=new URL(next,this.origin);Object.assign(this,{href:u.href,pathname:u.pathname,search:u.search,hash:u.hash});}};
+  location.replace(url);
+  const sections={sources:new Element(),browse:new Element(),detail:new Element()};sections.browse.hidden=true;
+  const controls={browseSource:new Element("select"),browseOrder:new Element("select"),browseCaptureFrom:new Element("input"),browseCaptureTo:new Element("input")};
+  for(const value of ["time_desc","capture_desc","asset_id"]){const option=new Element("option");option.value=value;controls.browseOrder.appendChild(option);}
+  const els={...controls,views:sections,navButtons:[],main:new Element(),assetGrid:new Element(),sourcesStatus:new Element(),notice:new Element()};
+  for(const name of ["browseTimeline","browseListView","browseShowTimeline","browseShowList","browseCaptureState","browseListFilters","browseListTimeHint","browseTimelineNote"])els[name]=new Element();
+  let viewerOptions=null;
+  const window={location,scrollY:420,sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
+    requestAnimationFrame:fn=>fn(),scrollTo(){},history:{replaceState(_s,_t,u){location.replace(u);},pushState(_s,_t,u){location.replace(u);}},
+    PhotoTimeline:{mount:()=>({setReturnAnchor(){},setScope(){}})}};
+  const document={readyState:"loading",referrer,addEventListener(){},createElement:tag=>new Element(tag),querySelectorAll:()=>[]};
+  const context={window,document,location,history:window.history,URL,URLSearchParams,console,
+    fetch:async url=>{assert.equal(url,"/api/v1/sources/summary");return{status:200,ok:true,headers:{get:()=>"application/json"},json:async()=>({sources:[{source_id:1,display_name:"synthetic"}]})};}};
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
+  // Keep the real navigation handoff, but avoid unrelated image/metadata rendering.
+  window.AIPhotoInfo.open=(_id,options)=>{viewerOptions=options;return{dialog:{open:true},close(){options.onClose();}};};
+  let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
+  code=code.replace('  if (document.readyState === "loading")',
+    '  globalThis.ui={state,showDetail,handleHash,loadSources,setElements(value){els=value;renderSources=function(){};renderDetail=function(id){state.renderedDetail=id;};}};\n  if (document.readyState === "loading")');
+  vm.runInContext(code,context);context.ui.setElements(els);
+  return{ui:context.ui,window,location,controls,options:()=>viewerOptions};
+}
+(async()=>{
+  const original=page("/?view=sources");
+  Object.assign(original.ui.state.browse,{sourceId:"1",order:"capture_desc",captureFrom:"2025-01-01",captureTo:"2025-02-01",mode:"timeline",timelineReturnAnchor:"anchor-14"});
+  await original.ui.loadSources();
+  original.ui.showDetail(14);
+  original.options().onOpenFullDetails("14");
+  assert.equal(original.location.hash,"#/asset/14/details");
+  // Dropping ?view=sources creates a new document with initially empty controls.
+  const returned=page(original.location.href,"http://localhost/?view=sources");
+  returned.ui.handleHash();
+  assert.equal(returned.ui.state.renderedDetail,"14");
+  assert.equal(returned.ui.state.detailReturnIntent.source,"home");
+  if(sourcesFirst)await returned.ui.loadSources();
+  // The explicit return action re-arms the validated handoff and opens the legacy viewer route.
+  returned.window.AIPhotoInfo.restoreDetailReturn("14",returned.ui.state.detailReturnIntent);
+  returned.location.replace("/#/asset/14");returned.ui.handleHash();
+  assert.equal(returned.ui.state.browse.sourceId,"1");
+  assert.equal(returned.ui.state.browse.timelineReturnAnchor,"anchor-14");
+  if(!sourcesFirst){
+    assert.equal(returned.controls.browseSource.value,"","a select cannot choose a source option that has not arrived");
+    await returned.ui.loadSources();
+  }
+  const restored={browseSource:"1",browseOrder:"capture_desc",browseCaptureFrom:"2025-01-01",browseCaptureTo:"2025-02-01"};
+  for(const [key,value] of Object.entries(restored))assert.equal(returned.controls[key].value,value,key+" must match the active browse scope");
+  returned.options().onClose();
+  assert.equal(returned.location.hash,"");
+  assert.equal(returned.ui.state.browse.sourceId,"1");
+  assert.equal(returned.controls.browseSource.value,"1");
+  assert.equal(values.has("aisearch.home-browse-return.v1"),false);
+  assert.equal(values.has("aisearch.photo-detail-return.v1"),false);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(sources_first).lower()],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         text=True,

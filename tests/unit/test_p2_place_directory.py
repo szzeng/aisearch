@@ -1,7 +1,7 @@
 """P2-03A: place directory, manual control, idempotency, batch/undo and the revisions.
 
-Every database is a pytest ``%TEMP%`` directory. No real photo library, no EXIF file and no
-name package is touched; the GPS half of the protocol is covered by the geo suites.
+Every database and tiny synthetic source package lives in pytest's ``%TEMP%`` directory.
+No real library or dataset is touched; the GPS protocol is covered by the geo suites.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from p2_search_fixtures import install_source_places
 
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
@@ -242,11 +243,8 @@ def test_rename_and_alias_edit_keep_the_id_and_bump_once(catalog: Catalog, servi
 
 def test_retiring_a_referenced_place_is_refused(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 1)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
-        lake = directory.create_place(
-            connection, kind="attraction", canonical_name="西湖", parent_place_id=city, now_ms=2
-        )
+    places = install_source_places(catalog)
+    city, lake = places["hangzhou"], places["west_lake"]
     with pytest.raises(CatalogError) as child:
         service.retire_place(place_id=city)
     assert child.value.code == PLACE_REFERENCED
@@ -311,8 +309,6 @@ def test_the_database_refuses_a_non_manual_control_row(catalog: Catalog) -> None
 def test_assign_unassign_restore_auto_and_late_automatic_results(
     catalog: Catalog, service: PlaceService
 ) -> None:
-    from p2_search_fixtures import install_source_places
-
     assets = seed_assets(catalog, 1)
     asset_id = assets[0]
     places = install_source_places(catalog)
@@ -399,8 +395,7 @@ def test_assign_unassign_restore_auto_and_late_automatic_results(
 
 def test_idempotent_replay_and_payload_conflict(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 1)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
     revision_after_first = None
     first = service.write_assignment(
         asset_id=assets[0],
@@ -435,8 +430,6 @@ def test_idempotent_replay_and_payload_conflict(catalog: Catalog, service: Place
 
 
 def test_batch_is_atomic_with_a_500_bound(catalog: Catalog, service: PlaceService) -> None:
-    from p2_search_fixtures import install_source_places
-
     assets = seed_assets(catalog, 4)
     city = install_source_places(catalog)["hangzhou"]
 
@@ -493,8 +486,7 @@ def test_batch_is_atomic_with_a_500_bound(catalog: Catalog, service: PlaceServic
 
 def test_undo_compensates_or_refuses_the_whole_operation(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 2)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
     applied = service.write_batch(
         items=[
             {"asset_id": asset_id, "action": "ASSIGN", "target_place_id": city,
@@ -574,8 +566,7 @@ def test_undo_compensates_or_refuses_the_whole_operation(catalog: Catalog, servi
 
 def test_operation_log_is_append_only_and_listed(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 1)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
     service.write_assignment(
         asset_id=assets[0],
         action="ASSIGN",
@@ -599,9 +590,8 @@ def test_operation_log_is_append_only_and_listed(catalog: Catalog, service: Plac
 def test_filter_revision_matrix_and_same_transaction_projection_refresh(catalog: Catalog) -> None:
     assets = seed_assets(catalog, 2)
     service = PlaceService(catalog)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
-    assert revision_module.read_filter_revision(catalog.connection) == 0
+    city = install_source_places(catalog)["hangzhou"]
+    baseline = revision_module.read_filter_revision(catalog.connection)
 
     # Seed one CONFIRMED vector for the first asset, exactly the P2-03 shape.
     with catalog.write() as connection:
@@ -639,18 +629,19 @@ def test_filter_revision_matrix_and_same_transaction_projection_refresh(catalog:
         request_id="matrix-1",
         expected_revision=0,
     )
-    assert applied["catalog_filter_revision"] == 1
+    assert applied["catalog_filter_revision"] == baseline + 1
     events = list(
         catalog.read_all(
-            "SELECT revision, cause, changed_count, all_assets FROM catalog_filter_revision_events"
+            "SELECT revision, cause, changed_count, all_assets FROM catalog_filter_revision_events "
+            "WHERE revision > ?", (baseline,)
         )
     )
-    assert [int(row["revision"]) for row in events] == [1]
+    assert [int(row["revision"]) for row in events] == [baseline + 1]
     assert events[0]["cause"] == revision_module.CAUSE_EFFECTIVE_ASSIGNMENT_CHANGED
     # The affected asset's confirmed vector was queued in the same transaction.
     outbox = list(catalog.read_all("SELECT asset_id, projection_revision, state FROM index_outbox"))
     assert [(int(row["asset_id"]), int(row["projection_revision"])) for row in outbox] == [
-        (assets[0], 1)
+        (assets[0], baseline + 1)
     ]
 
     # An idempotent no-op never moves the revision again.
@@ -661,8 +652,10 @@ def test_filter_revision_matrix_and_same_transaction_projection_refresh(catalog:
         request_id="matrix-2",
         expected_revision=1,
     )
-    assert revision_module.read_filter_revision(catalog.connection) == 1
-    assert catalog.read_one("SELECT COUNT(*) FROM catalog_filter_revision_events")[0] == 1
+    assert revision_module.read_filter_revision(catalog.connection) == baseline + 1
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM catalog_filter_revision_events WHERE revision > ?", (baseline,)
+    )[0] == 1
 
     # The second asset has no confirmed vector, so it needs no outbox event.
     service.write_assignment(
@@ -672,7 +665,7 @@ def test_filter_revision_matrix_and_same_transaction_projection_refresh(catalog:
         request_id="matrix-3",
         expected_revision=0,
     )
-    assert revision_module.read_filter_revision(catalog.connection) == 2
+    assert revision_module.read_filter_revision(catalog.connection) == baseline + 2
     assert catalog.read_one("SELECT COUNT(*) FROM index_outbox")[0] == 1
 
 
@@ -680,14 +673,17 @@ def test_a_failed_commit_leaves_no_partial_place_state(
     catalog: Catalog, service: PlaceService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assets = seed_assets(catalog, 1)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
+    baseline = revision_module.read_filter_revision(catalog.connection)
+    events_before = [tuple(row) for row in catalog.read_all(
+        "SELECT * FROM catalog_filter_revision_events ORDER BY revision"
+    )]
 
     def boom(*_: Any, **__: Any) -> int:
         raise CatalogError("MIGRATION_FAILED", "injected failure after the authority write")
 
     monkeypatch.setattr(assignment_module.revision_module, "bump_filter_revision", boom)
-    with pytest.raises(CatalogError):
+    with pytest.raises(CatalogError) as failed:
         service.write_assignment(
             asset_id=assets[0],
             action="ASSIGN",
@@ -695,35 +691,29 @@ def test_a_failed_commit_leaves_no_partial_place_state(
             request_id="rollback-1",
             expected_revision=0,
         )
+    assert failed.value.code == "MIGRATION_FAILED"
     for table in (
         "asset_place_assignments",
         "asset_place_assignment_history",
         "place_operations",
         "place_operation_items",
-        "catalog_filter_revision_events",
         "index_outbox",
     ):
         assert catalog.read_one(f"SELECT COUNT(*) FROM {table}")[0] == 0, table
-    assert revision_module.read_filter_revision(catalog.connection) == 0
+    assert revision_module.read_filter_revision(catalog.connection) == baseline
+    assert [tuple(row) for row in catalog.read_all(
+        "SELECT * FROM catalog_filter_revision_events ORDER BY revision"
+    )] == events_before
 
 
 # ------------------------------------------------------------------------- the filtering
 def test_place_filters_are_authoritative_and_deduplicated(catalog: Catalog) -> None:
     assets = seed_assets(catalog, 5)
     service = PlaceService(catalog)
+    places = install_source_places(catalog)
+    china, hangzhou = places["china"], places["hangzhou"]
+    lake, other_city = places["west_lake"], places["beijing"]
     with catalog.write() as connection:
-        china = directory.create_place(
-            connection, kind="country", canonical_name="中国", origin="DATASET", now_ms=1
-        )
-        hangzhou = directory.create_place(
-            connection, kind="city", canonical_name="杭州", parent_place_id=china, now_ms=2
-        )
-        lake = directory.create_place(
-            connection, kind="attraction", canonical_name="西湖", parent_place_id=hangzhou, now_ms=3
-        )
-        other_city = directory.create_place(
-            connection, kind="city", canonical_name="杭州", parent_place_id=china, now_ms=4
-        )
         # A second PRESENT location of the same content must not be counted twice.
         connection.execute(
             "INSERT INTO file_locations(source_id, relative_path, path_key, asset_id, size, "
@@ -780,8 +770,7 @@ def test_place_filters_are_authoritative_and_deduplicated(catalog: Catalog) -> N
 
 def test_coverage_and_cursor_binding(catalog: Catalog, service: PlaceService) -> None:
     assets = seed_assets(catalog, 3)
-    with catalog.write() as connection:
-        city = directory.create_place(connection, kind="city", canonical_name="杭州", now_ms=1)
+    city = install_source_places(catalog)["hangzhou"]
     service.write_assignment(
         asset_id=assets[0], action="ASSIGN", target_place_id=city, request_id="c1",
         expected_revision=0,
@@ -795,11 +784,11 @@ def test_coverage_and_cursor_binding(catalog: Catalog, service: PlaceService) ->
     assert report["places_assigned"] == 1
     assert report["places_manual_unassigned"] == 1
     assert report["places_unclassified"] == 2
-    assert report["place_resolved"] == 0 and report["resolver_available"] is False
+    assert report["place_resolved"] == 0 and report["resolver_available"] is True
     assert report["places_suggested"] == 0
 
     first = service.list_places(limit=1)
-    assert first["has_more"] is False and first["next_cursor"] is None
+    assert first["has_more"] is True and first["next_cursor"] is not None
     with catalog.write() as connection:
         directory.create_place(connection, kind="custom", canonical_name="外婆家", now_ms=2)
     stale = encode_place_cursor(revision=first["catalog_filter_revision"], place_id=city)

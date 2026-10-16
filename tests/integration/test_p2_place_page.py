@@ -620,6 +620,7 @@ def test_undo_compensates_and_refuses_after_a_later_edit(api_env) -> None:
         target = await first_local_candidate(client, asset_id)
 
         confirmed = await confirm_suggestion(client, api_env, asset_id, target=target, expected=0)
+        assert confirmed.status_code == 200, confirmed.text
         first_operation = confirmed.json()
         undone = await undo_operation(
             client, api_env, first_operation, request_id="p2-03c-undo-1"
@@ -641,18 +642,22 @@ def test_undo_compensates_and_refuses_after_a_later_edit(api_env) -> None:
             request_id="p2-03c-confirm-2",
         )
         second_operation = second.json()
-        other = await create_place(client, api_env, kind="custom", name="我的标记")
+        assert second.status_code == 200, second.text
+        other_id = int(api_env.service.catalog.read_one(
+            "SELECT place_id FROM geo_dataset_place_refs WHERE external_id='city-suzhou'"
+        )["place_id"])
         revision, _mode = await current_assignment(client, asset_id)
         later = await client.put(
             f"/api/v1/assets/{asset_id}/place-assignment",
             json={
                 "action": "assign",
-                "target_place_id": other["place_id"],
+                "target_place_id": other_id,
                 "request_id": "p2-03c-later-edit",
                 "expected_revision": revision,
             },
             headers=api_env.post_headers(api_env.csrf_token),
         )
+        assert later.status_code == 200, later.text
         later_operation = later.json()
         refused = await undo_operation(
             client, api_env, second_operation, request_id="p2-03c-undo-2"
@@ -728,28 +733,53 @@ def test_undo_compensates_and_refuses_after_a_later_edit(api_env) -> None:
 
 
 def test_a_missing_package_reports_itself_and_manual_curation_keeps_working(api_env) -> None:
-    """The dataset panel must show the truth, and a broken package never blocks the page."""
+    """Historical USER state survives; new assignments still require source provenance."""
+    from p2_legacy_place_fixtures import seed_legacy_assignment
+
+    from photo_search.ingestion.service import CatalogService
+    from photo_search.places.service import PlaceService
+
+    write_gps_jpeg(api_env.library / "plain.jpg", position=None)
+    source = api_env.register_source("library")
+    api_env.scan(int(source["source_id"]))
+    asset_id = api_env.first_asset_id()
+    city = PlaceService(api_env.service.catalog, clock=api_env.clock).create_place(
+        kind="custom", canonical_name="历史家庭地点",
+    )
+    api_env.service.close()
+    seed_legacy_assignment(api_env.data_root, asset_id=asset_id, place_id=city["place_id"])
+    api_env.service = CatalogService.open(data_root=api_env.data_root, clock=api_env.clock)
 
     async def scenario(client: AsyncClient) -> dict:
         await api_env.authenticate(client)
-        # A photo without GPS: manual classification must not depend on a package or GPS.
-        write_gps_jpeg(api_env.library / "plain.jpg", position=None)
-        source = api_env.register_source("library")
-        api_env.scan(int(source["source_id"]))
-        asset_id = api_env.first_asset_id()
 
         before = await client.get("/api/v1/places/datasets")
-        city = await create_place(client, api_env, kind="city", name="杭州")
+        new_place = await create_place(client, api_env, kind="custom", name="新家庭地点")
+        revision_before = revision_module.read_filter_revision(api_env.service.catalog.connection)
         assigned = await client.put(
             f"/api/v1/assets/{asset_id}/place-assignment",
             json={
                 "action": "assign",
-                "target_place_id": city["place_id"],
+                "target_place_id": new_place["place_id"],
                 "request_id": "p2-03c-manual-1",
-                "expected_revision": 0,
+                "expected_revision": 1,
             },
             headers=api_env.post_headers(api_env.csrf_token),
         )
+        assert assigned.status_code == 404, assigned.text
+        assert assigned.json()["code"] == "PLACE_NOT_FOUND"
+        assert api_env.service.catalog.read_one("SELECT COUNT(*) FROM place_operations")[0] == 1
+        assert api_env.service.catalog.read_one(
+            "SELECT COUNT(*) FROM asset_place_assignment_history"
+        )[0] == 1
+        assert revision_module.read_filter_revision(
+            api_env.service.catalog.connection
+        ) == revision_before
+        historical_members = await client.get(
+            "/api/v1/assets", params={"place_ids": city["place_id"]},
+        )
+        assert historical_members.status_code == 200, historical_members.text
+        assert [item["asset_id"] for item in historical_members.json()["assets"]] == [asset_id]
         installed = install_package(api_env)
         active = await client.get("/api/v1/places/datasets")
 
@@ -787,9 +817,7 @@ def test_a_missing_package_reports_itself_and_manual_curation_keeps_working(api_
     assert before.json()["active_dataset"] is None
     assert before.json()["datasets"] == []
 
-    assert result["assigned"].status_code == 200, result["assigned"].text
-    assigned_body = result["assigned"].json()
-    assert assigned_body["changed"] is True
+    assert result["assigned"].status_code == 404, result["assigned"].text
 
     active = result["active"]
     assert active.status_code == 200, active.text

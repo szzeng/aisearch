@@ -586,21 +586,25 @@ def fail_exhausted_leases(
     task_filter = "" if task_type is None else " AND task_type = ?"
     filter_parameters: tuple = () if task_type is None else (task_type,)
     processor_sql, processor_parameters = _processor_filter(processor_ids)
+    predicate = (
+        "state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts"
+        f"{task_filter}{processor_sql}"
+    )
+    parameters = (STATE_RUNNING, int(now_ms), *filter_parameters, *processor_parameters)
     rows = connection.execute(
         "SELECT job_id, subject_type, subject_id, attempts, max_attempts FROM jobs "
-        f"WHERE state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts{task_filter}"
-        f"{processor_sql}",
-        (STATE_RUNNING, int(now_ms), *filter_parameters, *processor_parameters),
+        f"WHERE {predicate}",
+        parameters,
     ).fetchall()
     if not rows:
         return []
-    job_ids = [int(row["job_id"]) for row in rows]
-    placeholders = ", ".join("?" for _ in job_ids)
+    # Both statements run in the caller's single-writer transaction, so the same
+    # predicate selects exactly these rows without one SQL variable per expired job.
     connection.execute(
         "UPDATE jobs SET state = ?, attempts = attempts + 1, lease_token = NULL, "
         "lease_expires_at = NULL, worker_id = NULL, last_error_code = ?, last_error_message = ?, "
-        f"updated_at = ? WHERE job_id IN ({placeholders})",
-        (STATE_FAILED, LEASE_EXPIRED, _EXHAUSTED_MESSAGE, int(now_ms), *job_ids),
+        f"updated_at = ? WHERE {predicate}",
+        (STATE_FAILED, LEASE_EXPIRED, _EXHAUSTED_MESSAGE, int(now_ms), *parameters),
     )
     _sync_subject_state(connection, rows=rows, now_ms=int(now_ms))
     return list(rows)

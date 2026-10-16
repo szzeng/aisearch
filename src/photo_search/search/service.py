@@ -194,11 +194,9 @@ def _projection_block(
 ) -> dict[str, Any]:
     summary = search_documents.projection_summary(catalog.connection)
     processed = 0 if catch_up is None else int(catch_up["processed"])
-    state = (
-        str(catch_up["state"])
-        if catch_up is not None
-        else ("SYNCED" if int(summary["queued_assets"]) == 0 else "LAGGING")
-    )
+    # Catch-up ran before this read. A writer may have queued another change,
+    # or another worker may have drained the queue; report the current projection.
+    state = "LAGGING" if summary["queued_assets"] or summary["stale_documents"] else "SYNCED"
     block: dict[str, Any] = {
         **summary,
         "state": state,

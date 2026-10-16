@@ -447,6 +447,7 @@ def test_inbox_reason_summary_filters_and_cursors_are_read_only_and_private(api_
         summary = (await client.get("/api/v1/faces/inbox/summary")).json()
         assert summary == {
             "total": 5,
+            "all_total": 5, "quality_hidden": 1, "quality_view": "all",
             "held": 0,
             "reasons": {
                 "BORDERLINE": 1,
@@ -498,7 +499,10 @@ def test_summary_separates_open_redetection_hold_from_machine_quality(tmp_path):
         low = replace(record(), quality_state="LOW", quality_reason="SMALL")
         harness.write_face_document(low_asset, [low])
         before = tuple(harness.catalog.connection.iterdump())
-        assert inbox_summary(harness.catalog) == {"total": 1, "reasons": {"SMALL": 1}, "held": 1}
+        assert inbox_summary(harness.catalog) == {
+            "total": 1, "reasons": {"SMALL": 1}, "held": 1,
+            "all_total": 1, "quality_hidden": 1, "quality_view": "all",
+        }
         assert tuple(harness.catalog.connection.iterdump()) == before
     finally:
         harness.close()
@@ -515,10 +519,12 @@ def test_summary_waits_for_ready_generation_after_one_face_is_confirmed(tmp_path
         assert index.generation()["state"] == "PENDING"
         assert inbox_summary(harness.catalog) == {
             "total": 2, "reasons": {"WAITING_INDEX": 2}, "held": 0,
+            "all_total": 2, "quality_hidden": 0, "quality_view": "all",
         }
         index.process_all(now_ms=3)
         assert inbox_summary(harness.catalog) == {
             "total": 2, "reasons": {"NO_MATCH": 2}, "held": 0,
+            "all_total": 2, "quality_hidden": 0, "quality_view": "all",
         }
     finally:
         harness.close()

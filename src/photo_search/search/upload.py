@@ -67,7 +67,10 @@ MAX_UPLOAD_PIXELS = 60_000_000
 #: enforced by killing a thread — the same honest "bounded wait, not preemption" rule the
 #: P2-06B rerank adapter uses.
 DECODE_BUDGET_MS = 20_000
-#: JPEG inputs are decoded with Pillow's DCT shortcut at most this long edge. This is the
+#: Upload validation decodes JPEG inputs with Pillow's DCT shortcut at most this long edge.
+#: Encoding still reads the validated original file with the selected adapter, exactly like
+#: indexing: this preview must never change the representation of an existing model space.
+#: This is the
 #: same order as the frozen P1-03 preview contract (1600) and only ever *reduces* the
 #: resolution of an oversized input; the adapter's ``image_preprocess_version`` owns the
 #: final resize.
@@ -161,7 +164,12 @@ class UploadedImage:
 
 @dataclass(frozen=True)
 class StagedUpload:
-    """One validated upload living in a private temporary directory."""
+    """One validated upload; ``path`` is the original encoder input, ``image`` the preview.
+
+    Only the adapter owns model preprocessing. The validation preview can be downsampled and
+    orientation-normalized, so encoding it would diverge from indexing the original bytes.
+    Both inputs remain valid only within the :func:`stage_upload` context.
+    """
 
     directory: Path
     path: Path
@@ -443,13 +451,17 @@ def image_encoder_of(encoder: Any) -> Any | None:
 
 
 def encode_image_query(
-    encoder: Any, image: Image.Image, *, space_id: str, dimension: int
+    encoder: Any, image: Path | Image.Image, *, space_id: str, dimension: int
 ) -> list[float]:
     """One validated query vector for the uploaded image.
 
     The result is checked exactly like P2-05's text query vector (one finite vector of the
     bound dimension, and only for the bound space), so the image tower can never rank inside
     a space it does not produce.
+
+    Upload callers pass ``StagedUpload.path`` after validation; the original file follows the
+    same adapter preprocessing as library indexing. PIL input remains available to direct
+    adapter callers, but the validation preview is not a replacement for the original file.
     """
     check_encoder_binding(encoder.spec(), space_id=space_id, dimension=int(dimension))
     try:

@@ -365,6 +365,7 @@ def test_a_broken_active_package_is_reported_but_manual_work_continues(api_env) 
 
 def test_suggestion_revision_is_independent_of_the_filter_revision(api_env) -> None:
     install_package(api_env)
+    filter_before = revision_module.read_filter_revision(api_env.service.catalog.connection)
     asset_id = prepare_asset(api_env)
 
     async def scenario(client: AsyncClient) -> dict[str, Any]:
@@ -374,7 +375,12 @@ def test_suggestion_revision_is_independent_of_the_filter_revision(api_env) -> N
     body = api_env.scenario(scenario)["body"]
 
     assert body["suggestion_revision"] >= 1
-    assert body["catalog_filter_revision"] == 0
+    # prepare_asset scans one new asset; GPS/resolution must add no further filter event.
+    assert body["catalog_filter_revision"] == filter_before + 1
     connection = api_env.service.catalog.connection
-    assert revision_module.read_filter_revision(connection) == 0
+    assert revision_module.read_filter_revision(connection) == filter_before + 1
+    assert [row["cause"] for row in api_env.service.catalog.read_all(
+        "SELECT cause FROM catalog_filter_revision_events WHERE revision > ? ORDER BY revision",
+        (filter_before,),
+    )] == ["ASSET_ADDED"]
     assert revision_module.read_suggestion_revision(connection) == body["suggestion_revision"]

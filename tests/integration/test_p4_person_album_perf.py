@@ -19,16 +19,16 @@ def test_people_page_batches_only_the_selected_forty_people(tmp_path) -> None:
         catalog = harness.catalog
         for index in range(42):
             person_id = harness.add_person(name=f"人物 {index}" if index % 2 else None)
-            if index % 3:
-                asset_id = harness.add_asset(f"person-{index}.jpg")
-                face_id = harness.add_face(asset_id)
-                harness.add_link(face_id, person_id)
-                if index % 5 == 0:
-                    with catalog.write() as connection:
-                        connection.execute(
-                            "UPDATE persons SET avatar_face_id = ? WHERE person_id = ?",
-                            (face_id, person_id),
-                        )
+            # Everyday lists now exclude empty identities before pagination.
+            asset_id = harness.add_asset(f"person-{index}.jpg")
+            face_id = harness.add_face(asset_id)
+            harness.add_link(face_id, person_id)
+            if index % 5 == 0:
+                with catalog.write() as connection:
+                    connection.execute(
+                        "UPDATE persons SET avatar_face_id = ? WHERE person_id = ?",
+                        (face_id, person_id),
+                    )
 
         selected = catalog.read_all(
             "SELECT p.* FROM persons AS p WHERE p.merged_into IS NULL "
@@ -41,7 +41,8 @@ def test_people_page_batches_only_the_selected_forty_people(tmp_path) -> None:
 
         assert len(page["persons"]) == 40 and page["has_more"]
         assert page["next_cursor"]
-        assert len(statements) == 8  # page/count/avatar plus bounded collection projections
+        assert statements[0] == "BEGIN DEFERRED" and statements[-1] == "COMMIT"
+        assert len(statements[1:-1]) == 8  # same bounded reads inside one snapshot
         expected = [_album_summary(catalog.connection, row) for row in selected[:40]]
         for summary in expected:
             summary["collections"] = []

@@ -49,6 +49,9 @@ def test_v28_upgrade_is_lossless_and_atomic(tmp_path, monkeypatch, interrupt):
     finally:
         connection.close()
     before = rows(path)
+    # Pin both migration discovery and support to this historical 28 -> 29 contract.
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 29)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 29))
     if interrupt:
         directory = migrations_upto(tmp_path, 29)
         script = next(directory.glob("0029_*.sql"))

@@ -106,7 +106,8 @@ def run_worker(
                 device_policy=DevicePolicy(device_policy),
                 enable_profiling=True,
             )
-            adapter.load()
+            # The factory returns an already loaded adapter; loading again would recreate
+            # both ONNX sessions or reload the Qwen weights before the first request.
             completed_steps.append("model_loaded")
             failure_details["device"] = adapter.resolution.as_dict()
             while True:

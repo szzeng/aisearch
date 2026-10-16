@@ -44,7 +44,8 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
         "faces", "face_embeddings", "face_person_links", "face_assignment_controls",
         "face_exclusions", "face_association_queue", "face_index_entries",
         "face_index_outbox", "face_candidates", "face_inbox_hidden", "person_operations",
-        "person_operation_items", "person_collection_members", "persons", "person_aliases", "asset_geo_facts",
+        "person_operation_items", "person_collection_members", "person_collection_face_members",
+        "persons", "person_aliases", "asset_geo_facts",
         "asset_place_assignments", "asset_place_assignment_history", "place_operations",
         "place_operation_items", "search_documents", "search_feedback",
         "search_projection_queue", "jobs", "artifacts", "index_outbox", "index_entries",
@@ -75,6 +76,10 @@ def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_
         checks.append(("asset_place_assignment_history", "asset_id = ? AND (manual_lock = 1 OR origin = 'MANUAL')", (asset_id,), "人工地点历史"))
     if "search_feedback" in tables:
         checks.append(("search_feedback", "asset_id = ?", (asset_id,), "搜索反馈历史"))
+    if "person_collection_face_members" in tables:
+        # The archive survives face replacement and content changes. Its soft
+        # asset anchor remains a human reference even without a current face.
+        checks.append(("person_collection_face_members", "asset_id = ?", (asset_id,), "人脸合集收录"))
 
     has_faces = "faces" in tables and _exists(connection, "faces", "asset_id = ?", (asset_id,))
     if has_faces:

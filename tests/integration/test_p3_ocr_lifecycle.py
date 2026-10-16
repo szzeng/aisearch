@@ -56,11 +56,12 @@ def harness(tmp_path: Path) -> Harness:
 
 def qualified_scheduler(harness: Harness) -> Any:
     """A scheduler with stub CPU qualification and no GPU qualification."""
-    spec = ocr_processor_spec()
+    spec = ocr_processor_spec("cpu")
     scheduler = build_scheduler(harness.catalog, spec)
 
     class StubCache:
-        def engine(self, _data_root: Path, *, resolved_device: str) -> Any:
+        def engine(self, _data_root: Path, *, resolved_device: str, orientation_retry: bool) -> Any:
+            assert orientation_retry is True
             if resolved_device == "gpu":
                 raise CatalogError(RUNTIME_CAPABILITY_UNAVAILABLE, "GPU is not qualified")
             return SimpleNamespace(runtime_provider="CPUExecutionProvider")
@@ -70,7 +71,7 @@ def qualified_scheduler(harness: Harness) -> Any:
         spec,
         StubCache(),
         data_root=harness.data_root,
-        now_ms=1_000,
+        now_ms=harness.clock(),
         note="P3-01 lifecycle fixture",
     )
     return scheduler

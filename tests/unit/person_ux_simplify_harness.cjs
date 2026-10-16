@@ -1,7 +1,7 @@
 const fs=require('fs'), vm=require('vm'), assert=require('assert/strict');
 const scenario=process.argv[2];
 class Element {
-  constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.value='';this.hidden=false;this.disabled=false;this.classList={add(){},remove(){}};}
+  constructor(tag){this.tag=tag;this.children=[];this.events={};this.attributes={};this.dataset={};this.value='';this.hidden=false;this.disabled=false;this.classList={add(){},remove(){}};}
   set textContent(v){this.text=String(v);this.replaceChildren();}
   get textContent(){return (this.text||'')+this.children.map(c=>c.textContent||'').join(' ');}
   append(...items){items.forEach(c=>{if(c.parentNode)c.remove();c.parentNode=this;this.children.push(c);});}
@@ -20,7 +20,7 @@ class Element {
 const descendants=e=>e.children.flatMap(c=>[c,...descendants(c)]);
 const elements=new Map(), get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
 get("pt-faces").hidden=true;
-const requests=[], mutations=[], deferred=[];let holdSave=false, releaseSave;let personRevision=7, failSave=false, holdReview=false, releaseReview, noCandidates=false, conflict=false, reviewAvailable=true;
+const requests=[], mutations=[], deferred=[];let holdSave=false, releaseSave;let collectionChoiceFailures=0;let personRevision=7, failSave=false, holdReview=false, releaseReview, noCandidates=false, conflict=false, reviewAvailable=true;
 const f=id=>({face_id:String(id).padStart(64,'0'),asset_id:id,control_revision:3,assignment_revision:4,mode:'AUTO',thumbnail_url:null});
 const people=Array.from({length:45},(_,i)=>({person_id:i+1,name:'人物'+(i+1),revision:7,asset_count:1,thumbnail_url:null}));
 const old='a'.repeat(64), group={old_face_id:old,asset_id:3,control_mode:'MANUAL_ASSIGNED',revision:6,has_active_exclusions:true};
@@ -39,6 +39,12 @@ const context={URL,URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(re
     if(conflict)return response({code:'PERSON_REVISION_CONFLICT'},409);
     return response({operation_id:'op1',operation_revision:8,operation_type:'BATCH_FACE_EDIT',changed:1});
   }
+  if(scenario==='collection_choices' && url.includes('/persons/collections?')) {
+    if(collectionChoiceFailures){collectionChoiceFailures--;return response({code:'TEMPORARY'},503);}
+    const start=Number(new URL(url,'http://local').searchParams.get('cursor')||0);
+    return response({collections:Array.from({length:start?1:40},(_,i)=>({collection_id:start+i+1,instance_token:'tok'+(start+i),revision:1,name:'合集'+(start+i+1),member_count:1,photo_count:2})),has_more:!start,next_cursor:start?null:'40'});
+  }
+  if(scenario==='collection_choices' && url.includes('/faces/inbox/groups/candidate%3A'))return response({faces:[f(3),f(4)],has_more:false});
   if(url.includes('/persons/browse')){const q=new URLSearchParams(url.split('?')[1]);const second=q.has('cursor');return response({persons:q.get('limit')==='20'?people.slice(0,20):people.slice(second?40:0,second?45:40),has_more:!second,next_cursor:second?null:'next'});}
   if(url.includes('/persons/collections/1/tok/people'))return response({collection:{collection_id:1,instance_token:'tok',revision:1},people:people.slice(0,2),has_more:false,next_cursor:null});
   if(url==='/api/v1/persons/1')return response({...people[0],revision:personRevision});
@@ -59,7 +65,7 @@ vm.createContext(context);
 let personCode=fs.readFileSync('src/photo_search/web/persons.js','utf8').replace('window.AIPersonTools = { install,','window.AIPersonTools = { _state: state, install,');
 vm.runInContext(personCode,context);
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary,setLibraryView};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary,setLibraryView,notifyPeopleChanged,selectInboxCandidateGroup};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 const clickBox=(box,extra={})=>{const before=box.checked;box.checked=!before;const event=box.fire('click',extra);if(event?.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return event;};
@@ -123,6 +129,43 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
   assert.equal(album.state.libraryView,'faces','actual category history still navigates');
   assert.equal(get('pa-album').hidden,true);assert.equal(get('pa-library').hidden,false);
   assert.equal(mutations.length,0,'navigation does not submit data writes');
+  // A collection directory loaded earlier must not retain counts from before a
+  // person/face edit performed on another category.
+  await change('collections');await change('people');
+  await album.mutate('/faces/'+f(1).face_id+'/assignment',{action:'assign'},'PUT','归属已保存');await flush();
+  start=requests.length;await change('collections');
+  assert(requests.slice(start).some(r=>r.url.startsWith('/api/v1/persons/collections?')),
+    'returning to collections reloads counts and member state changed in another category');
+
+ }
+ if(scenario==='collection_choices'){
+  const reads=()=>requests.filter(r=>r.url.includes('/persons/collections?')).length;
+  const change=async view=>{assert(album.setLibraryView(view));await flush();};
+  assert.equal(reads(),0,'ordinary entry keeps the collection directory lazy');
+  await change('unnamed');await change('faces');
+  get('pa-inbox-batch-toggle').fire('click');await flush();await flush();
+  assert.equal(get('pa-inbox-collection-choice').children.length,42,'first face-management entry loads every existing collection without visiting its category');
+  assert.equal(get('pa-collection-choice').children.length,42,'both selectors share the loaded directory');
+  assert.equal(reads(),2,'one request per directory page');
+  album.renderFaceManagement();album.renderFaceManagement();await flush();
+  assert.equal(reads(),2,'selection redraws reuse the directory');
+  get('pa-inbox-batch-toggle').fire('click');
+  album.notifyPeopleChanged();collectionChoiceFailures=1;
+  get('pa-inbox-hidden-toggle').fire('click');get('pa-inbox-hidden-batch-toggle').fire('click');await flush();await flush();
+  assert.match(get('pa-status').textContent,/合集选项加载失败/,'a failed hidden-face chooser load reports an error on the visible page');
+  const failedReads=reads();album.renderFaceManagement();await flush();assert.equal(reads(),failedReads,'a redraw does not endlessly retry a failed choice load');
+  await get('pa-inbox-collection-choice').fire('focus');await flush();
+  assert.equal(reads(),failedReads+2,'focusing the selector retries and completes its pages');
+  assert.equal(get('pa-inbox-collection-choice').children.length,42);
+  get('pa-inbox-hidden-batch-toggle').fire('click');album.notifyPeopleChanged();
+  const beforeImplicit=reads();await album.selectInboxCandidateGroup('candidate:1','all',false);await flush();await flush();
+  assert.equal(album.state.inboxBatchMode,true);
+  assert.equal(reads(),beforeImplicit+2,'selecting a candidate group implicitly opens and refreshes the chooser');
+  await change('people');album.notifyPeopleChanged();
+  const beforePeople=reads();get('pa-batch-toggle').fire('click');await flush();await flush();
+  assert.equal(reads(),beforePeople+2,'person batch entry refreshes dirty collection options');
+  assert.equal(get('pa-collection-choice').children.length,42);
+  assert.equal(mutations.length,0,'opening or retrying choosers never writes data');
  }
  if(scenario==='mode'){
   album.openAlbum(people[0]);await flush();assert.equal(get('pt-organize').textContent,'整理照片');

@@ -45,6 +45,8 @@ SPEC_REVISIONS = {
 #: The two preprocessing/pooling version labels of the shipped Chinese-CLIP adapter. They are
 #: part of the published spec, so they are constants rather than recomputed strings.
 CLIP_IMAGE_PREPROCESS_VERSION = "clip-224-shortest-bicubic-rgb-v1"
+NORMALIZED_ORIENTATION = "exif-transpose-v1"
+CLIP_NORMALIZED_IMAGE_PREPROCESS_VERSION = "clip-224-shortest-bicubic-exif-rgb-v2"
 CLIP_QUERY_PREPROCESS_VERSION = "bert-maxlen52-truncate-right-v1"
 CLIP_INSTRUCTION_TEMPLATE_VERSION = "none-v1"
 NORMALIZATION_VERSION = "L2-v1"
@@ -246,6 +248,25 @@ def _integer(value: Any, *, where: str, minimum: int = 1) -> int:
     return int(value)
 
 
+def image_orientation_policy(manifest: Mapping[str, Any]) -> str | None:
+    """Absent means the exact historical adapter behavior; new orientation needs a new provider.
+
+    The registry resolves persisted processors by provider and model revision. Reusing either
+    shipped legacy provider with changed orientation would make its existing generation
+    unservable, even if the new space hash were different.
+    """
+    preprocessing = manifest.get("preprocessing", {})
+    if "orientation" not in preprocessing:
+        return None
+    policy = preprocessing["orientation"]
+    if policy != NORMALIZED_ORIENTATION:
+        raise _invalid("preprocessing.orientation is not supported", orientation=policy)
+    provider = provider_block(manifest)
+    if provider["provider_id"] in {"chinese-clip-vit-b-16", "qwen3-vl-embedding-2b"}:
+        raise _invalid("changed image orientation requires a new provider_id")
+    return NORMALIZED_ORIENTATION
+
+
 def _clip_identity(manifest: Mapping[str, Any], provider: Mapping[str, Any]) -> Identity:
     """The historical Chinese-CLIP derivation, byte for byte the pre-P4 identity."""
     model = manifest["model"]
@@ -304,7 +325,10 @@ def _clip_identity(manifest: Mapping[str, Any], provider: Mapping[str, Any]) -> 
             }
             for role in ("image", "text")
         ),
-        image_preprocess_version=CLIP_IMAGE_PREPROCESS_VERSION,
+        image_preprocess_version=(
+            CLIP_NORMALIZED_IMAGE_PREPROCESS_VERSION
+            if image_orientation_policy(manifest) else CLIP_IMAGE_PREPROCESS_VERSION
+        ),
         query_preprocess_version=CLIP_QUERY_PREPROCESS_VERSION,
         tokenizer_version=f"bert-vocab-{str(tokenizer['vocab_sha256'])[:12]}",
         instruction_template_version=CLIP_INSTRUCTION_TEMPLATE_VERSION,
@@ -412,7 +436,7 @@ def _qwen_identity(manifest: Mapping[str, Any], provider: Mapping[str, Any]) -> 
                 max_pixels=int(preprocessing["max_pixels"]),
                 patch=int(preprocessing["patch_size"]),
                 merge=int(preprocessing["merge_size"]),
-            )
+            ) + ("+exif-transpose-v1" if image_orientation_policy(manifest) else "")
         ),
         query_preprocess_version="qwen3vl-chat-template-addgen-rightpad-v1",
         tokenizer_version=f"qwen3vl-tokenizer-{str(tokenizer.get('sha256') or '')[:12]}",
@@ -479,7 +503,10 @@ def build_processor_spec(
     return ProcessorSpec.from_envelope(
         {
             "contract_version": CONTRACT_VERSION,
-            "spec_revision": SPEC_REVISIONS[identity.adapter],
+            "spec_revision": (
+                SPEC_REVISIONS[identity.adapter].removesuffix("-v1") + "-exif-v2"
+                if image_orientation_policy(manifest) else SPEC_REVISIONS[identity.adapter]
+            ),
             "processor_id": identity.processor_id,
             "processor_kind": "embedding_model",
             "task_type": "image_embedding",
@@ -577,11 +604,13 @@ def required_artifact_names(manifest: Mapping[str, Any]) -> tuple[str, ...]:
 __all__ = [
     "CLIP_ADAPTER",
     "CLIP_IMAGE_PREPROCESS_VERSION",
+    "CLIP_NORMALIZED_IMAGE_PREPROCESS_VERSION",
     "CLIP_INSTRUCTION_TEMPLATE_VERSION",
     "CLIP_QUERY_PREPROCESS_VERSION",
     "KNOWN_ADAPTERS",
     "LEGACY_PROVIDERS",
     "NORMALIZATION_VERSION",
+    "NORMALIZED_ORIENTATION",
     "QWEN_ADAPTER",
     "SPEC_REVISIONS",
     "Identity",
@@ -589,6 +618,7 @@ __all__ = [
     "build_processor_spec",
     "effective_device_policy",
     "identity_of",
+    "image_orientation_policy",
     "model_dir_for",
     "provider_block",
     "provider_id_of_processor",

@@ -21,7 +21,13 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from p2_search_api_fixtures import QUERY_VECTORS, SearchEnv, build_search_env
-from p2_search_fixtures import FakeImageEncoder, assign_place, create_place, embedding_spec
+from p2_search_fixtures import (
+    FakeImageEncoder,
+    assign_place,
+    confirm_pending,
+    embedding_spec,
+    install_source_places,
+)
 from PIL import Image
 
 from photo_search.api import routes
@@ -133,6 +139,34 @@ def upload_directories() -> set[str]:
 
 
 # --------------------------------------------------------------------- success path
+def test_upload_passes_original_exif_bytes_to_the_selected_adapter(
+    image_env: SearchEnv, tmp_path: Path
+) -> None:
+    path = tmp_path / "orientation-6.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    Image.new("RGB", (40, 24), (40, 90, 150)).save(path, "JPEG", exif=exif)
+    payload = path.read_bytes()
+    before = snapshot(image_env)
+
+    async def scenario(client: AsyncClient):
+        csrf = await image_env.authenticate(client)
+        return await upload(
+            client, image_env, csrf, payload=payload, fields={"request_id": "original-exif"}
+        )
+
+    response = image_env.scenario(scenario)
+    assert response.status_code == 200, response.text
+    facts = response.json()["image_query"]
+    assert (facts["width"], facts["height"]) == (24, 40)
+    encoder = image_env.encoder
+    assert encoder.image_payloads == [payload]
+    assert encoder.image_sizes == [(40, 24)]
+    assert len(encoder.image_paths) == 1
+    assert not encoder.image_paths[0].exists()
+    assert snapshot(image_env) == before
+
+
 def test_an_uploaded_image_reuses_the_frozen_ranking_and_writes_nothing(
     image_env: SearchEnv, tmp_path: Path
 ) -> None:
@@ -278,7 +312,8 @@ def test_a_lagging_semantic_entry_is_named_instead_of_hidden(
     still catching up" with a count instead of pretending the photo does not exist.
     """
     late_asset = image_env.assets["beach sunset.jpg"]
-    place_id = create_place(image_env.catalog, "杭州西湖")
+    place_id = install_source_places(image_env.catalog)["west_lake"]
+    confirm_pending(image_env.catalog)
     assign_place(
         image_env.catalog,
         asset_id=late_asset,

@@ -17,12 +17,15 @@ from photo_search.taken_time.read import asset_view
 def test_person_album_bounded_before_after_measurement(api_env: ApiEnv) -> None:
     photos = seed_library(
         api_env,
-        {f"perf-{index:02d}.jpg": [(20, 20, 100, 100)] for index in range(61)},
+        {f"perf-{index:02d}.jpg": [(20, 20, 100, 100), (110, 20, 190, 100)] for index in range(61)},
     )
     catalog = api_env.service.catalog
     person_ids = [add_person(catalog, name=f"人物 {index:02d}") for index in range(42)]
     for photo in photos.values():
         add_link(catalog, photo["faces"][0], person_ids[0])
+    # The current browse contract requires an effective photo member for each identity.
+    for person_id, photo in zip(person_ids[1:], photos.values(), strict=False):
+        add_link(catalog, photo["faces"][1], person_id)
 
     original_summaries = album_reads._album_summaries
     original_facts = album_reads._photo_page_facts
@@ -30,7 +33,8 @@ def test_person_album_bounded_before_after_measurement(api_env: ApiEnv) -> None:
     main_query_samples: list[float] = []
     main_query: dict[str, object] = {}
 
-    def scalar_summaries(connection, rows):
+    def scalar_summaries(connection, rows, *, reuse_asset_counts=False, quality_view="all"):
+        assert quality_view == "all"
         return [album_reads._album_summary(connection, row) for row in rows]
 
     def scalar_facts(connection, *, asset_ids, person_id):

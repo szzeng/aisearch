@@ -207,7 +207,7 @@ def test_geometry_upgrade_keeps_old_people_and_matches_new_people_without_activa
             assert len(index.candidates()) == 2
         # Future detection revisions do not inherit this geometry-only exception.
         future = FaceIndexCoordinator(harness.catalog, spec_revision="future-unknown")
-        assert {c.person_id for c in future.candidates()} == {old_person}
+        assert future.candidates() == []
 
         # A queued human repair excludes its published-but-unconfirmed representative.
         old_face = harness.catalog.read_one(

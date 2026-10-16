@@ -14,7 +14,7 @@ from ocr_smoke_fixture import build_library, install_pinned_weights
 from p4_02y_l_workdir import new_work_dir, prepare_work_dir
 
 from photo_search.ocr.engine import OcrEngineCache, recognize_image
-from photo_search.ocr.processor import _decode
+from photo_search.ocr.processor import _decode, ocr_processor_spec
 from photo_search.runtime.device import runtime_capabilities
 
 
@@ -50,7 +50,8 @@ def _run_device(
 ) -> dict[str, Any]:
     cache = OcrEngineCache()
     started = time.perf_counter()
-    engine = cache.engine(data_root, resolved_device=device)
+    engine = cache.engine(data_root, resolved_device=device, orientation_retry=True)
+    profile = ocr_processor_spec(device)
     startup_ms = (time.perf_counter() - started) * 1000.0
     warmup_ms: dict[str, float] = {}
     for name, image in images.items():
@@ -73,6 +74,10 @@ def _run_device(
         round_totals.append((time.perf_counter() - round_started) * 1000.0)
     memory_after = _gpu_snapshot()
     return {
+        "processor_id": profile.processor_id,
+        "spec_revision": profile.spec_revision,
+        "config_hash": profile.config_hash,
+        "orientation_retry": engine.orientation_retry,
         "resolved_device": engine.resolved_device,
         "runtime_provider": engine.runtime_provider,
         "session_providers": {key: list(value) for key, value in engine.session_providers.items()},

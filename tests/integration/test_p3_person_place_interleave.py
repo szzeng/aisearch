@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from p2_search_fixtures import install_source_places
 from p3_redetection_fixtures import RedetectionHarness, confirm_decision
 
 from photo_search.persons import mapping as mapping_module
@@ -32,7 +33,7 @@ def _place_service(harness: RedetectionHarness) -> PlaceService:
 def test_authorities_do_not_overwrite_each_other(harness: RedetectionHarness) -> None:
     """X-001: person merge → place assign → face correction."""
     places = _place_service(harness)
-    place = places.create_place(kind="city", canonical_name="杭州")
+    place = {"place_id": install_source_places(harness.catalog)["hangzhou"]}
     asset_id = harness.add_asset("交错.jpg")
     target = harness.add_person(name="爸爸")
     source = harness.add_person(name="老爸")
@@ -84,7 +85,7 @@ def test_authorities_do_not_overwrite_each_other(harness: RedetectionHarness) ->
 def test_undo_across_families_is_independent(harness: RedetectionHarness) -> None:
     """X-003: a person undo and a place undo do not touch each other's facts."""
     places = _place_service(harness)
-    place = places.create_place(kind="city", canonical_name="苏州")
+    place = {"place_id": install_source_places(harness.catalog)["west_lake"]}
     asset_id = harness.add_asset("两个撤销.jpg")
     person = harness.add_person(name=None)
     face = harness.add_face(asset_id, ordinal=0)
@@ -131,7 +132,7 @@ def test_a_mapping_confirmation_moves_the_shared_filter_revision(
     task re-runs in full.
     """
     places = _place_service(harness)
-    place = places.create_place(kind="city", canonical_name="南京")
+    place = {"place_id": install_source_places(harness.catalog)["beijing"]}
     asset_id = harness.add_asset("会话.jpg")
     dad = harness.add_person(name="爸爸")
     anchor = harness.seed_anchor(asset_id, person_id=dad)

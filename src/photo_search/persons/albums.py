@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
-from photo_search.api.queries import asset_page, encode_capture_cursor
+from photo_search.api.queries import encode_capture_cursor, read_asset_page_in_snapshot
 from photo_search.catalog.video import photo_asset_sql
 from photo_search.face.contract import (
     FACE_ARTIFACT_REVISION,
@@ -56,6 +56,18 @@ def _position(cursor: str | None, binding: list[Any], default: Any) -> Any:
 def _album_summary(connection: Any, row: Any) -> dict[str, Any]:
     """Choose a display avatar from effective members without changing stored human facts."""
     summary = person_summary(connection, row)
+    # The stored cover is the first ordering key, so a valid effective member
+    # wins regardless of its quality. Only invalid/unset covers need a full sort.
+    if row["avatar_face_id"]:
+        stored = connection.execute(
+            "SELECT f.face_id FROM faces AS f JOIN face_person_links AS l ON l.face_id = f.face_id "
+            "JOIN assets AS a ON a.asset_id = f.asset_id "
+            "WHERE f.face_id = ? AND l.person_id = ? AND a.state = 'ACTIVE' AND "
+            + MEMBER_PREDICATE,
+            (str(row["avatar_face_id"]), summary["person_id"]),
+        ).fetchone()
+        if stored is not None:
+            return summary
     avatar = connection.execute(
         "SELECT f.face_id FROM face_person_links AS l JOIN faces AS f ON f.face_id = l.face_id "
         "JOIN assets AS a ON a.asset_id = f.asset_id WHERE l.person_id = ? "
@@ -269,6 +281,28 @@ def _photo_page_facts(
 
 
 def people_page(
+    catalog: Any,
+    *,
+    kind: str,
+    q: str,
+    limit: int,
+    cursor: str | None,
+    sort: str = "person_id",
+    visibility: str = "all",
+    ignore_state: str | None = None,
+    quality_view: str = "all",
+    collection_state: str = "all",
+) -> dict[str, Any]:
+    """Bind identities, ordering, summaries and cursor to one authority snapshot."""
+    with catalog.read_snapshot():
+        return _people_page(
+            catalog, kind=kind, q=q, limit=limit, cursor=cursor, sort=sort,
+            visibility=visibility, ignore_state=ignore_state, quality_view=quality_view,
+            collection_state=collection_state,
+        )
+
+
+def _people_page(
     catalog: Any,
     *,
     kind: str,
@@ -507,12 +541,20 @@ def people_page(
 def photo_page(
     catalog: Any, cache: Any, *, person_id: int, limit: int, cursor: str | None
 ) -> dict[str, Any]:
+    """Resolve the person, page and its display facts in one read snapshot."""
+    with catalog.read_snapshot():
+        return _photo_page(catalog, cache, person_id=person_id, limit=limit, cursor=cursor)
+
+
+def _photo_page(
+    catalog: Any, cache: Any, *, person_id: int, limit: int, cursor: str | None
+) -> dict[str, Any]:
     canonical = resolve_canonical_person_id(catalog.connection, person_id)
     binding = ["personphotos1", canonical]
     inner = _position(cursor, binding, None)
     if inner is not None and not isinstance(inner, str):
         raise ApiError(INVALID_CURSOR, "invalid photo position", status=422)
-    page = asset_page(
+    page = read_asset_page_in_snapshot(
         catalog, cache, limit=limit + 1, cursor=inner, person_ids=(canonical,), order="capture_desc"
     )
     # The legacy assets endpoint permits a final empty continuation. A personal album

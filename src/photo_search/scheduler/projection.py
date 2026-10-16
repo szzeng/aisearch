@@ -330,6 +330,8 @@ def ocr_summary(
             state = "BLOCKED"
         elif failed:
             state = "FAILED"
+        elif stale:
+            state = "LAGGING"
         elif documents:
             state = "SYNCED"
         else:

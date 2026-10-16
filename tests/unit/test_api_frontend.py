@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import base64
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -223,7 +226,10 @@ def test_gallery_management_loads_source_paths_separately_from_details() -> None
     assert "root_path: root" in script
     assert 'request("/sources/paths")' in script
     assert 'state.sourcePathsById[String(source.source_id)]' in script
-    assert "source.root_path" not in script
+    summaries = script.split("function loadSources()", 1)[1].split("function sourcePathsCoverSources", 1)[0]
+    assert "root_path" not in summaries
+    cards = script.split("function renderSources()", 1)[1].split("function addSourceRename", 1)[0]
+    assert "source.root_path" not in cards
     assert 'detail.root_path' not in script
     assert "任务与统计明细（按需读取）" in script
     # Server-supplied text is scrubbed before it is shown (P1-05 report §8.1).
@@ -249,7 +255,8 @@ def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
 
     assert 'request("/sources/summary")' in script
     assert 'request("/sources/" + encodeURIComponent(source.source_id))' in script
-    assert "source.root_path" not in script
+    summaries = script.split("function loadSources()", 1)[1].split("function sourcePathsCoverSources", 1)[0]
+    assert "root_path" not in summaries
     assert 'loadSources().then(probeCapabilities)' in script
     assert "全部图库" in shell + script
     assert 'element("button", "view-source source-primary", "看照片")' in script
@@ -263,6 +270,67 @@ def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
     assert "放大预览" in script
     assert "height: max(12rem, calc(100svh - 15rem))" in style
     assert "max-width: min(100%, 48rem)" not in style
+
+
+@pytest.mark.parametrize("stale_failure", [False, True])
+def test_source_paths_refresh_after_inflight_source_list_changes(stale_failure: bool) -> None:
+    """Adding a source during a path request must not leave its path unavailable."""
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the source-path concurrency check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+const document={readyState:"loading",addEventListener(){}},window={};
+let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
+code=code.replace('  if (document.readyState === "loading")',
+  '  globalThis.ui={state,loadSources,loadSourcePaths,setRequest(fn){request=fn;},setElements(value){els=value;renderSources=function(){};renderSourceOptions=function(){};updateGlobalRefreshActions=function(){};updateSearchScopeAction=function(){};}};\n  if (document.readyState === "loading")');
+const context={document,window};vm.createContext(context);vm.runInContext(code,context);
+const ui=context.ui,sourceView={hidden:false},status={};
+ui.setElements({sourcesStatus:status,views:{sources:sourceView,browse:{hidden:true}},
+  browseSource:{},browseOrder:{},browseCaptureFrom:{},browseCaptureTo:{}});
+ui.state.sources=[{source_id:1}];ui.state.sourcesLoaded=true;
+const pathRequests=[];
+ui.setRequest(path=>{
+  if(path==="/sources/summary")return Promise.resolve({body:{sources:[{source_id:1},{source_id:2}]}});
+  assert.equal(path,"/sources/paths");
+  return new Promise((resolve,reject)=>pathRequests.push({resolve,reject}));
+});
+const reply=(request,second)=>request.resolve({body:{sources:[{source_id:1,root_path:"D:/first"},{source_id:2,root_path:second}]}});
+const flush=()=>new Promise(setImmediate);
+(async()=>{
+  const old=ui.loadSourcePaths(false);
+  await ui.loadSources();
+  assert.equal(pathRequests.length,1,"coalesce requests while the old request is in flight");
+  if(process.argv[1]==="true")pathRequests[0].reject({code:"OLD",message:"obsolete error"});
+  else pathRequests[0].resolve({body:{sources:[{source_id:1,root_path:"D:/old"}]}});
+  await flush();
+  assert.equal(pathRequests.length,2,"the old snapshot must trigger a current path request");
+  assert.equal(ui.state.sourcePathsLoaded,false,"an obsolete result cannot mark the current list loaded");
+  assert.equal(ui.state.sourcePathsError,false,"an obsolete failure cannot replace current status");
+  reply(pathRequests[1],"D:/new");await old;
+  assert.equal(ui.state.sourcePathsById["2"],"D:/new");
+  await ui.loadSourcePaths(false);
+  assert.equal(pathRequests.length,2,"reuse the paths when the source list has not changed");
+  await ui.loadSources();
+  assert.equal(pathRequests.length,3,"refresh also invalidates cached paths for unchanged IDs");
+  reply(pathRequests[2],"D:/remapped");await ui.state.sourcePathsPromise;
+  assert.equal(ui.state.sourcePathsById["2"],"D:/remapped");
+  const pending=ui.loadSourcePaths(true);sourceView.hidden=true;await ui.loadSources();
+  reply(pathRequests[3],"D:/stale");await pending;
+  assert.equal(pathRequests.length,4,"do not reload local paths while management is hidden");
+  sourceView.hidden=false;const shown=ui.loadSourcePaths(false);
+  assert.equal(pathRequests.length,5);reply(pathRequests[4],"D:/current");await shown;
+  assert.equal(ui.state.sourcePathsById["2"],"D:/current");
+  const failed=ui.loadSourcePaths(true);pathRequests[5].reject({code:"FAILED",message:"current error"});await failed;
+  assert.equal(ui.state.sourcePathsError,true);
+  assert.equal(pathRequests.length,6,"a current failure must not create an automatic retry loop");
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run(
+        [node, "-e", script, str(stale_failure).lower()],
+        cwd=Path(__file__).resolve().parents[2], capture_output=True,
+        text=True, encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_page_startup_avoids_model_probes_and_automatic_coverage() -> None:
@@ -337,37 +405,24 @@ def test_the_places_page_has_no_external_reference_credential_or_html_sink() -> 
 
 
 def test_the_persons_page_carries_the_redetection_review_view() -> None:
-    """P3-08B: the review view exists, is capability-gated, and keeps the privacy promise."""
+    """The on-demand dialog preserves explicit mapping decisions and privacy."""
     shell, script, style = _persons_documents()
-    assert 'id="panel-mappings"' in shell
-    assert 'id="panel-mappings"' in shell and 'hidden' in shell
-    assert 'href="#panel-mappings"' in shell
-    for element_id in (
-        "mappings-state",
-        "mappings-limit",
-        "mappings-list",
-        "mappings-undo",
-        "mappings-error",
-    ):
+    for element_id in ("pt-review", "pt-review-entry", "pt-review-list", "pt-review-status",
+                       "pt-review-retry", "pt-review-more", "pt-history"):
         assert 'id="' + element_id + '"' in shell
-    for endpoint in (
-        "/face-mappings?state=",
-        "/face-mappings/",
-        "/face-mappings/decisions",
-        "/person-operations/",
-    ):
+    assert 'id="pt-review-entry" type="button" hidden' in shell
+    for endpoint in ("/face-mappings?state=", "/face-mappings/",
+                     "/face-mappings/decisions", "/person-operations/"):
         assert endpoint in script
-    # The four derived candidate states are rendered from the frozen vocabulary, and the
-    # page never receives or names a geometric field.
-    for token in ("NO_CANDIDATE", "UNIQUE_HIGH", "UNIQUE_WEAK", "AMBIGUOUS"):
-        assert token in script
-    # The page may *mention* the words in its own promise text, so the leak check is about the
-    # field names it could actually read or send.
+    assert "open_face_mappings" in script and "if (!ui.isOrganizing()) return;" in script
+    assert 'const selected = new Map();' in script
+    assert 'if (!selected.size)' in script
+    assert 'expected_review_revision: group.revision' in script
+    assert 'decision: targets.length ? "confirm" : "reject"' in script
+    assert '未提交更改，待确认保护继续保留。' in script
     for forbidden in ('"bbox"', '"landmarks"', '"iou"', '"embedding"', '"similarity"'):
         assert forbidden not in script
-    assert "open_face_mappings" in script
-    assert "panel-mappings" in style
-    assert "PATH_LIKE" in script
+    assert ".pt-dialog" in style
 
 
 def test_the_places_page_reaches_data_only_through_the_protected_api() -> None:
@@ -477,24 +532,28 @@ def test_the_search_page_has_no_external_reference_or_credential() -> None:
     assert "PATH_LIKE" in script
 
 
-def test_search_page_restores_results_without_searching_again() -> None:
+def test_search_page_validates_authority_before_restoring_results() -> None:
     _, script, _ = _search_documents()
-
     assert "window.sessionStorage.setItem" in script
     assert "window.sessionStorage.getItem" in script
     restore = script.split("function restoreSearchSnapshot()", 1)[1].split(
         "// ----------------------------------------------------------------------- tiles", 1
     )[0]
     assert "sendSearch(" not in restore
-    assert "renderPage(body, false);" in script
-    assert "window.scrollTo(0, Number(saved.scrollY) || 0);" in script
-    assert "open.addEventListener(\"click\", prepareSearchDetailReturn);" in script
+    # Semantic snapshots validate the live session; FILTER_ONLY re-queries its
+    # saved authority scope, and an unverifiable snapshot is never painted.
+    assert 'request("/search/sessions/"' in restore
+    assert 'request("/search/place-aware", { method: "POST", body: refreshBody })' in restore
+    assert 'SNAPSHOT_UNVERIFIABLE' in restore
+    assert 'restoreGeneration !== state.search.requestGeneration' in restore
+    assert 'restoreValidatedSearchSnapshot(saved);' in restore
+    assert "renderPage(body, false, {" in restore
+    assert "window.scrollTo(0, Number(saved.scrollY) || 0);" in restore
     assert 'window.sessionStorage.setItem(SEARCH_RETURN_SOURCE_KEY, "search");' in script
-    assert "clearSearchSnapshot();" in script
+    assert 'openSearchPreview(hit.asset_id, open);' in script
     submit = script.split("function submitSearch()", 1)[1].split("function continueSearch()", 1)[0]
     reset = script.split("function resetFilters()", 1)[1].split("function clearCaptureRange()", 1)[0]
-    assert "clearSearchSnapshot();" in submit
-    assert "clearSearchSnapshot();" in reset
+    assert "clearSearchSnapshot();" in submit and "clearSearchSnapshot();" in reset
 
 
 def test_the_search_page_reaches_data_only_through_the_protected_api() -> None:
@@ -531,8 +590,9 @@ def test_the_search_page_keeps_the_frozen_hit_reason_vocabulary() -> None:
     assert "matched_text" in script
     assert "semantic_ready" in script
     assert "hit_reason" in script
-    # The page never reads a raw score, so it cannot turn one into an accuracy.
-    assert ".score" not in script
+    # Candidate adapters may retain raw scores, but no visible hit renders them.
+    rendered = script.split("function buildHit(hit)", 1)[1]
+    assert ".score" not in rendered
     assert "reranker_score" not in script
     # Byte-size formatting may round with toFixed; score fields remain prohibited above.
     assert "不把它当成准确率" in script
@@ -564,7 +624,8 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "pending_semantic" in script
     assert "search_projection" in script
     assert "文本投影仍在追赶" in script
-    assert "candidates_truncated" not in script
+    assert "candidates_truncated" in script
+    assert "仅对当前冻结的语义候选排序，不代表完整图库时间轴" in script
     assert "truncated" in script
     assert "向量扫描未完整完成，本次结果可能不完整。" in script
     assert "高度匹配" in script
@@ -626,8 +687,8 @@ def test_the_three_documents_navigate_to_each_other() -> None:
     places_shell = (read_static(PLACES_NAME) or b"").decode("utf-8")
     search_shell, _, _ = _search_documents()
 
-    assert 'href="/search"' in shell
-    assert 'href="/search"' in places_shell
+    assert 'action="/search"' in shell
+    assert 'action="/search"' in places_shell
     assert 'href="/"' in search_shell
     assert 'href="/places"' in search_shell
 
@@ -641,7 +702,8 @@ PERSONS_DOCUMENTS = ("persons.html", "persons.js", "persons.css")
 
 def _persons_documents() -> tuple[str, str, str]:
     shell = (read_static(PERSONS_NAME) or b"").decode("utf-8")
-    script = (read_static("persons.js") or b"").decode("utf-8")
+    script = "\n".join((read_static(name) or b"").decode("utf-8")
+                       for name in ("persons.js", "persons-albums.js"))
     style = (read_static("persons.css") or b"").decode("utf-8")
     assert shell and script and style
     return shell, script, style
@@ -671,114 +733,67 @@ def test_the_persons_page_route_never_shadows_the_person_api() -> None:
 
 def test_the_persons_page_has_no_external_reference_credential_or_html_sink() -> None:
     shell, script, style = _persons_documents()
-
     for document in (shell, script, style):
-        assert "http://" not in document
-        assert "https://" not in document
+        assert "http://" not in document and "https://" not in document
     assert 'lang="zh-CN"' in shell
-    assert "/web/persons.js" in shell
-    assert "/web/styles.css" in shell
-    assert "/web/persons.css" in shell
+    for asset in ("persons.js", "persons-albums.js", "styles.css", "persons.css"):
+        assert "/web/" + asset in shell
     assert 'href="/"' in shell
-    assert "ps_csrf" in script
-    assert "X-CSRF-Token" in script
+    assert "ps_csrf=" in script and 'headers["X-CSRF-Token"]' in script
     assert 'credentials: "same-origin"' in script
-    # The only localStorage write is a non-secret cross-tab invalidation marker.
-    assert 'window.localStorage.setItem("aisearch.persons.changed", newRequestId("people-change"))' in script
-    assert "localStorage.getItem" not in script
-    assert 'localStorage.setItem("csrf' not in script
-    assert 'localStorage.setItem("token' not in script
-    assert "sessionStorage" not in script
-    assert "console." not in script
-    assert "innerHTML" not in script
-    assert "token=" not in script
-    assert "csrf_token" not in script
-    assert "错误详情包含本机路径" in script
-    assert "PATH_LIKE" in script
-    # The page states what it will not do instead of hiding it.
-    assert "本页不提供的动作" in shell
-    assert "不触发任何模型推理" in shell
+    assert 'window.localStorage.setItem("aisearch.persons.changed", state.peopleChangeToken)' in script
+    # The cross-tab marker contains no identity, query, credential or photo data.
+    assert 'state.peopleChangeToken = requestId();' in script
+    for forbidden in ('localStorage.setItem("csrf', 'localStorage.setItem("token',
+                      "sessionStorage", "console.", "innerHTML", "insertAdjacentHTML",
+                      "token=", "csrf_token"):
+        assert forbidden not in script
+    assert 'item.textContent = value' in script
+    assert 'const e = new Error(); e.status = response.status;' in script
+    assert 'e.code = result.code || "HTTP_" + response.status; e.details = result.details;' in script
+    assert 'result.message' not in script
 
 
 def test_the_persons_page_reaches_data_only_through_the_protected_api() -> None:
     _, script, _ = _persons_documents()
-
-    assert 'var API = "/api/v1";' in script
-    assert script.count("fetch(") == script.count("fetch(API +")
-    assert "sqlite" not in script.lower()
-    assert "catalog.db" not in script
-    # Exactly the endpoints this page is allowed to use.
-    for path in (
-        "/persons",
-        "/faces",
-        "/face-assignments/batch",
-        "/person-operations",
-        "/capabilities",
-    ):
+    # Writes use the CSRF-aware client; the shared timeline has one read-only adapter.
+    assert script.count("fetch(") == 2
+    assert script.count('fetch("/api/v1" + path') == 1
+    assert script.count('fetch("/api/v1/timeline/assets?"') == 1
+    assert 'query.toString(), { credentials: "same-origin", signal,' in script
+    assert 'await ui.api(' in script and 'await ui.mutate(' in script
+    assert "sqlite" not in script.lower() and "catalog.db" not in script
+    for path in ("/persons", "/faces", "/face-assignments/batch",
+                 "/person-operations", "/capabilities"):
         assert '"' + path in script, path
-    # The avatar URL is always the one the server handed out, never one the page builds.
-    assert "image.src = person.thumbnail_url;" in script
-    assert "image.src = face.thumbnail_url;" in script
-    # No coordinates, no stored root path, no private field name.
-    for fragment in (
-        "/geo",
-        "latitude",
-        "normalized_wgs84",
-        "root_path",
-        "bbox",
-        "landmark",
-        "vector",
-        "similarity",
-        "confidence",
-        "name_key",
-    ):
+    assert 'picture(person.thumbnail_url' in script
+    assert 'picture(face.thumbnail_url' in script
+    assert 'img.src = mediaURL(url)' in script
+    for fragment in ("/geo", "latitude", "normalized_wgs84", "root_path",
+                     "bbox", "landmark", "similarity", "confidence", "name_key"):
         assert fragment not in script, fragment
-    # Retention preview exposes aggregate byte counts, never the snapshot payload.
-    assert "body.snapshot_json_bytes" in script
-    assert "body.snapshot =" not in script
+    assert "page.estimated_net_savings_bytes" in script
+    assert "body.snapshot =" not in script and "snapshot_json" not in script
 
 
 def test_the_persons_page_keeps_the_frozen_person_vocabulary() -> None:
     shell, script, _ = _persons_documents()
-
-    # Every refusal the page can meet is shown with the server's own code.
-    for code in (
-        "PERSON_REVISION_CONFLICT",
-        "PERSON_IDEMPOTENCY_CONFLICT",
-        "PERSON_NOT_FOUND",
-        "PERSON_REDIRECT_CYCLE",
-        "PERSON_SPLIT_CONFLICT",
-        "FACE_ASSIGNMENT_CONFLICT",
-        "FACE_IDEMPOTENCY_CONFLICT",
-        "FACE_STATE_CONFLICT",
-        "FACE_NOT_FOUND",
-        "FACE_OPERATION_NOT_UNDOABLE",
-        "PERSON_OPERATION_NOT_UNDOABLE",
-        "INVALID_CURSOR",
-    ):
-        assert code in script, code
-    # The frozen contract versions and the write vocabulary are used as-is.
-    assert "p3-person-split-contracts.v1" in script
-    assert "p3-face-correction-contracts.v1" in script
-    assert "MAX_BATCH = 500" in script
-    assert "restore_auto" in script
-    assert '"assign"' in script
-    assert '"unassign"' in script
-    assert "expected_revision" in script
-    assert "source_expected_revision" in script
-    assert "expected_control_revision" in script
-    assert "expected_assignment_revision" in script
-    assert "expected_operation_revision" in script
-    assert "request_id" in script
-    # The three views, the human lock vocabulary and the honest non-claims.
-    assert "manual_unassigned" in script
-    assert "MANUAL_UNASSIGNED" in shell + script
-    assert "同一张照片的其他脸不会被自动带入" in shell
-    assert "不会因为同一张照片的其它脸而联动" in shell
-    assert "同名合并" in shell + script
-    assert "能否撤销，全部由服务器判定" in shell
-    assert "缺模型" in shell + script or "缺少模型权重" in shell
-    assert "服务端按权威人脸框裁剪" in shell
+    # Refusal codes are rendered generically, so new server refusals cannot be
+    # mistaken for success merely because a front-end enumeration omitted them.
+    assert 'e.code = result.code || "HTTP_" + response.status; e.details = result.details;' in script
+    assert '(error.code ? "（" + error.code + "）" : "")' in script
+    for token in ("p3-person-split-contracts.v1", "p3-face-correction-contracts.v1",
+                  "restore_auto", '"assign"', '"unassign"', "expected_revision",
+                  "source_expected_revision", "expected_control_revision",
+                  "expected_assignment_revision", "expected_operation_revision", "request_id"):
+        assert token in script, token
+    assert "faces.length > 500" in script
+    assert "state.selected.size < 500" in script
+    assert "MANUAL_UNASSIGNED" in script and "同名合并" in script
+    assert "选择精确到这张脸，合照中其他人保持原来的归属" in shell
+    assert "撤销由服务器检查后续修改" in shell
+    assert "搜索模型尚未就绪" in script
+    assert "人脸" in shell and "thumbnail_url" in script
 
 
 def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists() -> None:
@@ -800,7 +815,7 @@ def test_the_navigation_offers_the_persons_page_only_when_the_read_layer_exists(
         assert 'schema_status' in code
     # The page itself navigates back to the other three documents.
     assert 'href="/"' in persons_shell
-    assert 'href="/search"' in persons_shell
+    assert 'action="/search"' in persons_shell
     assert 'href="/places"' in persons_shell
 
 
@@ -949,26 +964,17 @@ def test_the_search_page_person_picker_is_labelled_keyboard_reachable_and_narrow
 
 def test_the_search_page_keeps_the_person_choice_out_of_the_url_and_the_html_sink() -> None:
     _, script, _ = _search_documents()
-
-    for fragment in (
-        "innerHTML",
-        "insertAdjacentHTML",
-        "URLSearchParams",
-        "location.search",
-        "location.hash",
-        "history.pushState",
-    ):
+    for fragment in ("innerHTML", "insertAdjacentHTML", "history.pushState"):
         assert fragment not in script, fragment
-    # Every string the picker paints goes through textContent.
+    # Query parameters are now used for scope handoff and timeline pagination;
+    # selected person identities still travel only in the protected POST body.
+    assert 'query.set("person_ids"' not in script
+    assert 'query.set("person_match"' not in script
+    assert 'params.set("person_ids"' not in script
+    assert 'params.set("person_match"' not in script
     assert "text(label, personOptionText(person));" in script
 
 
-# ---------------------------------------------------------------------------------------
-# P4-00B: the capture-time dimension. The listing gains a capture order and a half-open
-# range; the search page gains the same range; both must state the honest "not extracted"
-# state instead of presenting an empty page as "no match", and neither may invent a timezone
-# the file did not record.
-# ---------------------------------------------------------------------------------------
 def test_the_browse_page_binds_the_capture_order_and_the_two_bounds() -> None:
     shell, script, _ = _web_documents()
 

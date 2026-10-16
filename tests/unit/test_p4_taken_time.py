@@ -417,12 +417,14 @@ def test_the_capture_condition_joins_the_same_and_set_as_every_other_condition()
         assert "EXISTS (SELECT 1 FROM asset_metadata AS m" in sql
         assert "ap.mode = 'MANUAL_ASSIGNED'" in sql
         assert MEMBER_PREDICATE in sql
-        # The parameter order follows the SQL text: source, person, capture, place.
-        assert parameters == [4, 7, *contract.CAPTURE_SOURCES,
+        # Source is bound independently for photo eligibility and availability;
+        # both must stay in the same AND scope as person, capture and place.
+        assert "photo_location.source_id = ?" in sql
+        assert parameters == [4, 4, 7, *contract.CAPTURE_SOURCES,
                               contract.parse_bound("2022-01-01"),
                               contract.parse_bound("2023-01-01")]
         # The same fragment is what the asset listing applies - one predicate, two surfaces.
         predicate, predicate_parameters = capture_condition(connection, scope)
-        assert predicate in sql and predicate_parameters == parameters[2:6]
+        assert predicate in sql and predicate_parameters == parameters[3:7]
     finally:
         connection.close()

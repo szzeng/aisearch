@@ -138,8 +138,9 @@ class WorkerQueryEncoder:
     def __init__(self, client: Any, spec: ProcessorSpec) -> None:
         self._client = client
         self._spec = spec
-        #: The worker client is a single request/reply channel; this lock is what keeps two
-        #: concurrent searches from reading each other's reply.
+        self._closed = False
+        #: Health, inference and shutdown share one request/reply channel. Every client
+        #: call must hold this lock so a background build cannot consume a search reply.
         self._lock = threading.Lock()
 
     def spec(self) -> ProcessorSpec:
@@ -155,7 +156,9 @@ class WorkerQueryEncoder:
         which is what lets the refresh embed new content in exactly the space the query path
         already serves (P4-02Y §6C).
         """
-        reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
+        with self._lock:
+            self._require_open()
+            reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
         return reply if isinstance(reply, dict) else {}
 
     def encode_queries(
@@ -168,7 +171,7 @@ class WorkerQueryEncoder:
     def encode_images(
         self, asset_inputs: Sequence[Any], cancellation: Any = None
     ) -> list[list[float]]:
-        """One vector per query image; a decoded upload is staged as PNG for the worker."""
+        """Encode unchanged image paths; explicit PIL inputs are staged as PNG."""
         dimension = self._dimension()
         return [
             self._vector(self._worker_image(item), dimension, "query image")
@@ -179,35 +182,51 @@ class WorkerQueryEncoder:
         """One vector for one image *path*, the spelling the indexing side calls.
 
         ``photo_search.indexing.semantic`` hands the image tower a path of a catalogued
-        original; the upload/search half of this adapter hands it a decoded image. Both are
+        original; the upload/search half hands it the staged original upload path. Both are
         the same worker call, so the API process can embed the delta of a refresh without a
         second model instance (P4-02Y §6C).
         """
         return self._vector(self._worker_image(image), self._dimension(), "image")
 
     def close(self) -> None:
-        """Stop the worker process. Shutdown is idempotent and never raises."""
-        self._client.shutdown()
+        """Stop once, after the in-flight request leaves the shared channel."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._client.shutdown()
 
     # --------------------------------------------------------------------- internals
     def _dimension(self) -> int:
         return int(self._spec.envelope["dimension"])
 
+    def _require_open(self) -> None:
+        """Refuse a closed channel while holding the same lock as its shutdown."""
+        if self._closed:
+            raise CatalogError(
+                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "the AI worker channel is closed",
+                details={"reason": "WORKER_CLOSED"},
+            )
+
     def _worker_text(self, text: str) -> Any:
         with self._lock:
+            self._require_open()
             return self._client.encode_text(text)
 
     def _worker_image(self, image: Any) -> Any:
-        # The worker protocol carries a *path*: a decoded upload is written to a private
-        # temporary PNG of this process and removed before the vector is returned.
+        # Paths pass unchanged to the worker so original upload metadata is preserved.
+        # Explicit PIL inputs use a private temporary PNG, removed before returning.
         save = getattr(image, "save", None)
         if not callable(save):
             with self._lock:
+                self._require_open()
                 return self._client.encode_image(Path(image))
         with tempfile.TemporaryDirectory(prefix="photo-search-query-") as raw:
             path = Path(raw) / "query.png"
             save(str(path), "PNG")
             with self._lock:
+                self._require_open()
                 return self._client.encode_image(path)
 
     def _vector(self, reply: Any, dimension: int, what: str) -> list[float]:

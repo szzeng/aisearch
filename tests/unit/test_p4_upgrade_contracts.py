@@ -2023,18 +2023,19 @@ def test_migration_contract_and_byte_identity() -> None:
     for name, expected in FROZEN_MIGRATION_HASHES.items():
         path = MIGRATIONS_DIR / name
         assert path.is_file(), name
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, name
+        # Checkout newline conversion is not a migration-content change.
+        assert hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == expected, name
 
 
 def test_adr_records_the_companion_hash_and_the_earlier_companions_are_untouched() -> None:
     recorded = re.findall(r"SHA-256：`([0-9a-f]{64})`", ADR)
     assert len(recorded) == 1, recorded
-    assert recorded[0] == hashlib.sha256(COMPANION_PATH.read_bytes()).hexdigest()
+    assert recorded[0] == hashlib.sha256(COMPANION_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     assert "Proposed" in ADR
     assert "ENGINEERING CONTRACT REVIEW PASS / SOL FREEZE PENDING" in ADR
     assert "P4-03B" in ADR
     for name, expected in FROZEN_COMPANIONS.items():
-        assert hashlib.sha256((CONTRACTS / name).read_bytes()).hexdigest() == expected, name
+        assert hashlib.sha256((CONTRACTS / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest() == expected, name
 
 
 def test_the_companion_declares_no_supersession_and_no_private_property() -> None:

@@ -164,8 +164,10 @@ class FlowEnv:
         row = service.catalog.read_one("SELECT MIN(source_id) AS value FROM source_roots")
         service.run_scan(int(row["value"]))
 
-def build_space(service: CatalogService, *, provider: str, adapter: StubAdapter) -> dict[str, Any]:
-    manifest = CLIP_MANIFEST if provider == "clip" else QWEN_MANIFEST
+def build_space(
+    service: CatalogService, *, provider: str, adapter: StubAdapter, manifest: Path | None = None
+) -> dict[str, Any]:
+    manifest = manifest or (CLIP_MANIFEST if provider == "clip" else QWEN_MANIFEST)
     spec = semantic.semantic_spec(manifest, {})
     payload = semantic.build_index(
         service.catalog,
@@ -298,6 +300,44 @@ def test_a_candidate_build_never_moves_the_pointer_and_the_selection_does(tmp_pa
         assert active.space_id == str(qwen_spec.envelope["space_id"])
 
 
+@pytest.mark.parametrize("manifest", [CLIP_MANIFEST, QWEN_MANIFEST])
+def test_orientation_upgrade_is_a_separate_candidate_and_can_return_to_legacy(
+    tmp_path: Path, manifest: Path
+) -> None:
+    env = FlowEnv.build(tmp_path)
+    service = env.service()
+    try:
+        old_spec = semantic.semantic_spec(manifest, {})
+        old = build_space(
+            service, provider="unused", manifest=manifest,
+            adapter=StubAdapter(old_spec, pytorch=manifest == QWEN_MANIFEST),
+        )
+        before = profile_module.active_profile(service.catalog)
+        assert before is not None
+        new_manifest = manifest.with_stem(manifest.stem + "-exif-v2")
+        new_spec = semantic.semantic_spec(new_manifest, {})
+        new = build_space(
+            service, provider="unused", manifest=new_manifest,
+            adapter=StubAdapter(new_spec, pytorch=manifest == QWEN_MANIFEST),
+        )
+        assert new["profile"]["activated"] is False
+        assert profile_module.active_profile(service.catalog) == before
+        assert old_spec.processor_id != new_spec.processor_id
+        assert old["build"]["generation"]["generation_id"] != new["build"]["generation"]["generation_id"]
+        assert new["build"]["generation"]["entries"] == {"CONFIRMED": 3}
+        new_profile = str(new["profile"]["profile_id"])
+        activate_candidate(service.catalog, new_profile, str(new_spec.envelope["space_id"]))
+        assert profile_module.active_profile(service.catalog).profile_id == new_profile
+        activate_candidate(
+            service.catalog, str(old["profile"]["profile_id"]), str(old_spec.envelope["space_id"])
+        )
+        assert profile_module.active_profile(service.catalog).profile_id == before.profile_id
+    finally:
+        service.close()
+    with env.open_catalog() as reopened:
+        assert profile_module.active_profile(reopened).space_id == old_spec.envelope["space_id"]
+
+
 def test_switching_back_requires_full_coverage_and_rejects_a_gap(tmp_path: Path) -> None:
     env = FlowEnv.build(tmp_path)
     service = env.service()
@@ -414,19 +454,18 @@ def test_a_pending_outbox_or_an_offline_asset_blocks_the_selection(tmp_path: Pat
         service.close()
 
 
-def test_a_video_in_the_library_never_blocks_the_selection(tmp_path: Path) -> None:
-    """The gate is about the content *this index is about*, not about every file in the source.
+def test_non_image_content_with_an_image_extension_never_blocks_the_selection(tmp_path: Path) -> None:
+    """The selection gate excludes non-image content even with an allowed image extension.
 
-    A real library holds videos, archives and files the decoder cannot identify; none of them can
-    ever carry an image-text vector, so requiring them would turn a permanent property of the
-    library into a permanent refusal. The frozen media policy decides, and the decision is
-    reported: every indexable image must still be covered, and a missing image still refuses.
+    The scanner excludes normal video extensions before registration. An image extension can
+    still conceal video content, so the frozen media policy must exclude and report that
+    content. Every indexable image must still be covered, and a missing image still refuses.
     """
     env = FlowEnv.build(tmp_path)
     service = env.service()
     try:
-        # A real ISO-BMFF (mp4) header next to the photos: out of scope for this index.
-        (env.library / "movie.mp4").write_bytes(
+        # An allowed suffix reaches the content gate; the ISO-BMFF bytes are not an image.
+        (env.library / "movie-disguised.jpg").write_bytes(
             b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41"
         )
         env.rescan(service)

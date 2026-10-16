@@ -32,6 +32,7 @@ from photo_search.catalog.errors import (
     SPACE_MISMATCH,
     CatalogError,
 )
+from photo_search.catalog.image_policy import image_location_sql
 from photo_search.catalog.video import photo_asset_sql
 from photo_search.indexing.store import LanceVectorIndex
 from photo_search.persons.collection_sql import collection_condition
@@ -81,10 +82,10 @@ MAX_PERSON_IDS = 100
 #: ADR-0009 §2.1: the two spellings of ``person_match``.
 PERSON_MATCH_VALUES = ("all", "any")
 
-_CONFIRMED_BLOCK_SQL = (
+_CONFIRMED_CANDIDATES_SQL = (
     "SELECT e.asset_id FROM index_entries AS e JOIN assets AS a ON a.asset_id = e.asset_id "
     "WHERE e.generation_id = ? AND e.space_id = ? AND e.state = 'CONFIRMED' "
-    "AND ({scope}) AND e.asset_id > ? ORDER BY e.asset_id LIMIT ?"
+    "AND ({scope}) AND e.asset_id > 0 ORDER BY e.asset_id"
 )
 _READY_ENTRY_SQL = (
     "EXISTS (SELECT 1 FROM index_entries AS e JOIN index_generations AS g "
@@ -439,11 +440,21 @@ def authoritative_page(
     have reached a row outside the authority.
     """
     where, parameters = scope_condition(catalog.connection, scope)
-    total = int(
-        catalog.read_one(
-            f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(parameters)
-        )["value"]
-    )
+    if scope == SearchScope():
+        # A full-catalog count must still include zero-location legacy assets and
+        # exclude assets with only non-image locations. Group locations once rather
+        # than probing them twice for every asset in an unrelated covering-index order.
+        # NULL asset ids are unbound locations and must not poison NOT IN.
+        image_sql = image_location_sql("count_location")
+        count_sql = (
+            "SELECT COUNT(*) AS value FROM assets AS a WHERE a.asset_id NOT IN "
+            "(SELECT count_location.asset_id FROM file_locations AS count_location "
+            "WHERE count_location.asset_id IS NOT NULL GROUP BY count_location.asset_id "
+            f"HAVING MAX(CASE WHEN {image_sql} THEN 1 ELSE 0 END) = 0)"
+        )
+    else:
+        count_sql = f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}"
+    total = int(catalog.read_one(count_sql, tuple(parameters))["value"])
     rows = catalog.read_all(
         f"SELECT a.asset_id FROM assets AS a WHERE {where} ORDER BY a.asset_id LIMIT ?",
         (*parameters, int(limit)),
@@ -507,6 +518,27 @@ def text_column_matches(
     return {asset_id: sorted(columns) for asset_id, columns in hits.items()}
 
 
+
+def _confirmed_candidate_cursor(
+    catalog: Any, binding: VectorBinding, where: str, parameters: Sequence[Any]
+) -> sqlite3.Cursor:
+    """Open one authoritative stream; complex IN members are evaluated only once.
+
+    The statement's read snapshot lasts until the cursor is exhausted/closed. No
+    explicit transaction is opened or committed, and the service's final live
+    membership/revision checks still run after the cursor has closed.
+    """
+    return catalog.connection.execute(
+        _CONFIRMED_CANDIDATES_SQL.format(scope=where),
+        (binding.generation_id, binding.space_id, *parameters),
+    )
+
+
+def _confirmed_candidate_batch(cursor: sqlite3.Cursor, size: int) -> list[sqlite3.Row]:
+    """Fetch one bounded block; kept separate so diagnostics include actual SQL work."""
+    return cursor.fetchmany(size)
+
+
 def vector_channel(
     catalog: Any,
     *,
@@ -520,62 +552,40 @@ def vector_channel(
 ) -> dict[str, Any]:
     """The image-text channel: top-k inside the *confirmed* authoritative candidates.
 
-    The candidate stream is a keyset walk over ``index_entries`` (CONFIRMED) joined with
+    The candidate stream is one ordered cursor over ``index_entries`` (CONFIRMED) joined with
     the authority, so the merge of the per-block top-k is exactly the global top-k of that
     candidate set - no global Top-K is ever fetched and then filtered.
     """
+    if int(block_size) < 1:
+        # sqlite3.fetchmany(0/-1) may fetch all rows; never let an invalid diagnostic
+        # override silently turn the bounded candidate stream into an unbounded list.
+        raise ValueError("block_size must be positive")
     where, parameters = scope_condition(catalog.connection, scope)
     merged: dict[int, dict[str, Any]] = {}
     blocks = scanned = 0
     truncated = False
-    after = 0
-    while True:
-        rows = catalog.read_all(
-            _CONFIRMED_BLOCK_SQL.format(scope=where),
-            (
-                binding.generation_id,
-                binding.space_id,
-                *parameters,
-                after,
-                int(block_size),
-            ),
-        )
-        ids = [int(row["asset_id"]) for row in rows]
-        if not ids:
-            break
-        blocks += 1
-        scanned += len(ids)
-        # P4-02M: one bounded call per block - the engine returns its ``top_k + 1`` nearest
-        # candidates and reports whether that answer is already complete for the caller's
-        # ``(distance, asset_id)`` order. Only a block whose boundary tie group was cut falls
-        # back to the exhaustive one-row-per-candidate call, so the merged result is exactly
-        # the exhaustive path's while a resolved block transfers ``top_k + 1`` rows instead of
-        # one row per candidate id.
-        # The bounded access path is an *optimization*, not a new contract: a substitute index
-        # that offers only the exhaustive ``search_candidates`` (the A3 contract test's stub,
-        # diagnostics) keeps working and produces byte-identical rows, because the exhaustive
-        # call *is* the documented behaviour. Only a resolved bounded answer is trusted.
-        bounded = getattr(index, "search_candidates_bounded", None)
-        hits: list[dict[str, Any]]
-        if bounded is None:
-            hits = index.search_candidates(
-                generation_id=binding.generation_id,
-                dimension=binding.dimension,
-                query_vector=query_vector,
-                asset_ids=ids,
-                limit=int(top_k),
-                space_id=binding.space_id,
-            )
-        else:
-            hits, resolved = bounded(
-                generation_id=binding.generation_id,
-                dimension=binding.dimension,
-                query_vector=query_vector,
-                asset_ids=ids,
-                top_k=int(top_k),
-                space_id=binding.space_id,
-            )
-            if not resolved:
+    cursor = _confirmed_candidate_cursor(catalog, binding, where, parameters)
+    try:
+        while True:
+            rows = _confirmed_candidate_batch(cursor, int(block_size))
+            ids = [int(row["asset_id"]) for row in rows]
+            if not ids:
+                break
+            blocks += 1
+            scanned += len(ids)
+            # P4-02M: one bounded call per block - the engine returns its ``top_k + 1`` nearest
+            # candidates and reports whether that answer is already complete for the caller's
+            # ``(distance, asset_id)`` order. Only a block whose boundary tie group was cut falls
+            # back to the exhaustive one-row-per-candidate call, so the merged result is exactly
+            # the exhaustive path's while a resolved block transfers ``top_k + 1`` rows instead of
+            # one row per candidate id.
+            # The bounded access path is an *optimization*, not a new contract: a substitute index
+            # that offers only the exhaustive ``search_candidates`` (the A3 contract test's stub,
+            # diagnostics) keeps working and produces byte-identical rows, because the exhaustive
+            # call *is* the documented behaviour. Only a resolved bounded answer is trusted.
+            bounded = getattr(index, "search_candidates_bounded", None)
+            hits: list[dict[str, Any]]
+            if bounded is None:
                 hits = index.search_candidates(
                     generation_id=binding.generation_id,
                     dimension=binding.dimension,
@@ -584,14 +594,42 @@ def vector_channel(
                     limit=int(top_k),
                     space_id=binding.space_id,
                 )
-        for row in hits:
-            merged[int(row["asset_id"])] = row
-        if len(ids) < int(block_size):
-            break
-        after = ids[-1]
-        if blocks >= int(max_blocks):
-            truncated = True
-            break
+            else:
+                hits, resolved = bounded(
+                    generation_id=binding.generation_id,
+                    dimension=binding.dimension,
+                    query_vector=query_vector,
+                    asset_ids=ids,
+                    top_k=int(top_k),
+                    space_id=binding.space_id,
+                )
+                if not resolved:
+                    hits = index.search_candidates(
+                        generation_id=binding.generation_id,
+                        dimension=binding.dimension,
+                        query_vector=query_vector,
+                        asset_ids=ids,
+                        limit=int(top_k),
+                        space_id=binding.space_id,
+                    )
+            for row in hits:
+                merged[int(row["asset_id"])] = row
+            # Candidate ids are unique across the streamed blocks. Once a row falls below
+            # the best K of the blocks already seen, future blocks cannot promote it.
+            # Retain that exact prefix instead of accumulating K rows for every block.
+            # The secondary asset-id order is essential when distances tie.
+            if len(merged) > int(top_k):
+                best = sorted(
+                    merged.values(), key=lambda item: (item["distance"], item["asset_id"])
+                )[: int(top_k)]
+                merged = {int(item["asset_id"]): item for item in best}
+            if len(ids) < int(block_size):
+                break
+            if blocks >= int(max_blocks):
+                truncated = True
+                break
+    finally:
+        cursor.close()
     ranked = sorted(merged.values(), key=lambda item: (item["distance"], item["asset_id"]))
     return {
         "hits": ranked[: int(top_k)],

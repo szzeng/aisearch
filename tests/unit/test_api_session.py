@@ -69,7 +69,22 @@ def test_session_ids_are_unpredictable_and_distinct() -> None:
     assert len(first.session_id) >= 32
 
 
-def test_bootstrap_writes_a_credential_file_under_the_data_root(tmp_path: Path) -> None:
+@pytest.fixture()
+def credential_permissions(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Observe the bootstrap permission boundary without changing the host DACL."""
+    calls: list[Path] = []
+
+    def record(path: Path) -> str:
+        calls.append(path)
+        return "test-permission-hook"
+
+    monkeypatch.setattr(session_module, "restrict_credential_file", record)
+    return calls
+
+
+def test_bootstrap_writes_a_credential_file_under_the_data_root(
+    tmp_path: Path, credential_permissions: list[Path],
+) -> None:
     data_root = tmp_path / "PhotoSearchData"
     bootstrap = bootstrap_session_credential(ApiSettings(data_root=data_root))
 
@@ -83,10 +98,13 @@ def test_bootstrap_writes_a_credential_file_under_the_data_root(tmp_path: Path) 
     assert payload["token"] != ""
     # The credential never lives inside a source directory or an install directory.
     assert path.parent.name == "runtime"
-    assert bootstrap.permission
+    assert bootstrap.permission == "test-permission-hook"
+    assert credential_permissions == [path]
 
 
-def test_bootstrap_rotates_the_credential_under_the_same_data_root(tmp_path: Path) -> None:
+def test_bootstrap_rotates_the_credential_under_the_same_data_root(
+    tmp_path: Path, credential_permissions: list[Path],
+) -> None:
     """A restarted launcher replaces, rather than reuses, its bootstrap credential."""
     data_root = tmp_path / "PhotoSearchData"
     first = bootstrap_session_credential(ApiSettings(data_root=data_root))
@@ -96,6 +114,8 @@ def test_bootstrap_rotates_the_credential_under_the_same_data_root(tmp_path: Pat
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert first.token != second.token
     assert payload["token"] == second.token
+    assert first.permission == second.permission == "test-permission-hook"
+    assert credential_permissions == [path, path]
 
 
 def test_windows_credential_acl_retains_delete_for_atomic_rotation(

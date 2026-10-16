@@ -93,7 +93,7 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  assert(calls.some(c=>c.url.includes('/persons/browse?kind=all')),'the existing dialog loads searchable people');
  get('edit').close();
  host=new Element('div');ui.renderInboxFace(host,{...faces[0],suggestions:[]},true);
- assert.equal(host.children[0].children[3].textContent,'选择人物','ignored face without a suggestion still has a manual assignment entry');
+ assert.equal(host.children[0].choosePersonButton.textContent,'选择人物','ignored face without a suggestion still has a manual assignment entry');
  // The quick action depends on an actual candidate, including quality reasons and ties.
  for(const reason of ['BORDERLINE','NEAR_TIE','SAME_IMAGE_CONFLICT','OTHER_SUGGESTION','SMALL','LOW_QUALITY','MANUAL_UNASSIGNED']){
   const host=new Element('div');ui.renderInboxFace(host,face('e',reason),false);
@@ -105,7 +105,8 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  }
  ui.state.hiddenBatchMode=true;host=new Element('div');ui.renderInboxFace(host,faces[0],true);
  get('inbox-hidden-cards').append(host.children[0]);ui.renderFaceManagement();
- assert(host.children[0].confirmButton.hidden,'batch selection hides its dedicated controls');
+ assert(host.children[0].confirmButton.hidden && host.children[0].confirmButton.disabled,'batch selection keeps its dedicated controls');
+ assert.equal(host.children[0].selectionButton.hidden,false);
  ui.state.hiddenBatchMode=false;ui.state.organize=true;get('inbox-kind').value='all';await ui.loadInbox(false);
  const groups=get('inbox-cards').children.slice();
  for(const g of groups){g.open=true;g.fire('toggle');}await flush();
@@ -171,7 +172,7 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  refreshedGroup.open=false;refreshedGroup.fire('toggle');refreshedGroup.open=true;refreshedGroup.fire('toggle');await flush();
  assert(calls.filter(c=>c.url.includes('/faces/inbox/hidden/groups/candidate%3A')).length>groupReadsBefore,'failed expanded group can retry on reopen');
  const manualHost=new Element('div');ui.renderInboxFace(manualHost,{...faces[0],face_id:'d'.repeat(64),suggestions:[]},true);
- await manualHost.children[0].children[3].fire('click');await flush();
+ await manualHost.children[0].choosePersonButton.fire('click');await flush();
  const choice=get('choices').children.find(e=>String(e.className||'').includes('pa-choice'));
  assert(choice,'manual assignment offers an existing person with its avatar');choice.fire('click');
  assert.equal(get('edit-submit').disabled,false);ui.submitEdit({preventDefault(){}});await flush();

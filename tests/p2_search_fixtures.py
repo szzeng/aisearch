@@ -205,8 +205,8 @@ class FakeImageEncoder(FakeEncoder):
     It is one adapter with both halves, exactly like the frozen ADR-0003 §7 boundary: the
     text half answers from a lookup table and the image half returns one pinned vector, so a
     test can say "this uploaded image is semantically equal to <asset>". It records the
-    decoded sizes it was handed, which is how the EXIF-orientation and decode-bound
-    assertions stay observable without any real model.
+    raw sizes and bytes of path inputs, so upload tests can verify that validation leaves
+    the original encoder input intact without loading any real model.
     """
 
     def __init__(
@@ -222,12 +222,25 @@ class FakeImageEncoder(FakeEncoder):
         self.image_error = image_error
         self.image_calls = 0
         self.image_sizes: list[tuple[int, int]] = []
+        self.image_paths: list[Path] = []
+        self.image_payloads: list[bytes] = []
 
     def encode_images(
         self, asset_inputs: Sequence[Any], cancellation: Any = None
     ) -> list[list[float]]:
         self.image_calls += 1
-        self.image_sizes = [(int(item.width), int(item.height)) for item in asset_inputs]
+        self.image_sizes = []
+        self.image_paths = []
+        self.image_payloads = []
+        for item in asset_inputs:
+            if isinstance(item, (str, Path)):
+                path = Path(item)
+                self.image_paths.append(path)
+                self.image_payloads.append(path.read_bytes())
+                with Image.open(path) as source:
+                    self.image_sizes.append(source.size)
+            else:
+                self.image_sizes.append((int(item.width), int(item.height)))
         if self.image_error is not None:
             raise self.image_error
         return [list(self.image_vector) for _ in asset_inputs]

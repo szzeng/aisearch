@@ -110,6 +110,28 @@ V6_TABLES = (
     "face_redetection_mappings",
     # P4-00B: the derived taken-time fact of every already-processed asset (ADR-0011 §2).
     "asset_metadata",
+    # Subsequent additive browse, face-detail, curation, and retention migrations.
+    "cn_admin_ids",
+    "cn_admin_place_refs",
+    "cn_admin_resolutions",
+    "cn_base_china_places",
+    "cn_dataset_regions",
+    "cn_legacy_links",
+    "cn_update_runs",
+    "face_detail_association_queue",
+    "face_detail_auto_assets",
+    "face_detail_batch_assets",
+    "face_detail_batches",
+    "face_detail_coordinate_frames",
+    "face_inbox_hidden",
+    "geo_dataset_place_refs",
+    "map_member_revision",
+    "person_collection_members",
+    "person_collections",
+    # Official 0032: explicit soft anchors for archived individual faces.
+    "person_collection_face_members",
+    "person_hidden",
+    "person_operation_retention",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

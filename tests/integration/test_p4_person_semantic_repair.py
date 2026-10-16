@@ -132,6 +132,14 @@ def test_person_rename_reprojects_existing_vectors_without_reencoding(search_env
     assert sunset in [int(row["asset_id"]) for row in before.json()["hits"]]
 
     person_service = PersonService(catalog)
+    prior_projection = {
+        int(row["asset_id"]): int(row["revision"])
+        for row in catalog.read_all(
+            "SELECT asset_id, MAX(projection_revision) AS revision FROM index_outbox "
+            "WHERE generation_id=? AND asset_id IN (?,?) GROUP BY asset_id",
+            (env.generation, sunset, second_member),
+        )
+    }
     renamed = person_service.rename(
         person_id=person_id, name="Alice", request_id="semantic-rename", expected_revision=1
     )
@@ -179,7 +187,10 @@ def test_person_rename_reprojects_existing_vectors_without_reencoding(search_env
             str(row["state"]), int(row["projection_revision"]), row["last_error_code"]
         )
         for row in outbox
-    } == {sunset: ("PENDING", 1, None), second_member: ("CONFIRMED", 0, None)}
+    } == {
+        sunset: ("PENDING", prior_projection[sunset] + 1, None),
+        second_member: ("CONFIRMED", prior_projection[second_member], None),
+    }
 
     replay = person_service.rename(
         person_id=person_id, name="Alice", request_id="semantic-rename", expected_revision=1

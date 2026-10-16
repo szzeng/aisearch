@@ -19,9 +19,9 @@ from p2_search_fixtures import (
     build_library,
     configured_scheduler,
     confirm_pending,
-    create_place,
     embedding_spec,
     index_vector,
+    install_source_places,
 )
 
 from photo_search.artifacts.store import generation_id_for
@@ -159,7 +159,8 @@ def test_the_same_query_twice_is_byte_identical(env: dict[str, Any]) -> None:
 def test_a_text_hit_says_whether_the_file_name_or_the_place_matched(env: dict[str, Any]) -> None:
     catalog = env["catalog"]
     sunset = env["assets"]["beach sunset.jpg"]
-    place_id = create_place(catalog, "杭州", aliases=[{"text": "Hangzhou", "language": "en"}])
+    place_id = install_source_places(catalog)["hangzhou"]
+    confirm_pending(catalog)
     assign_place(catalog, asset_id=sunset, place_id=place_id, request_id="req-place-1")
     revision_before = catalog.read_one(
         "SELECT revision FROM catalog_filter_revision WHERE revision_id = 1"
@@ -230,7 +231,8 @@ def test_a_text_hit_reports_the_place_and_file_name_and_never_leaks_a_path(
 ) -> None:
     catalog = env["catalog"]
     lake = env["assets"]["杭州西湖 照片.jpg"]
-    place_id = create_place(catalog, "西湖")
+    place_id = install_source_places(catalog)["west_lake"]
+    confirm_pending(catalog)
     assign_place(catalog, asset_id=lake, place_id=place_id, request_id="req-place-2")
     # The place edit queued a reprojection for the lake's confirmed vector; replaying it
     # puts the asset back into semantic recall, so the hit can be explained by both probes.

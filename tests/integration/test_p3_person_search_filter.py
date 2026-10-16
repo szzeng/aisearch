@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from catalog_concurrency_fixtures import second_catalog_writer
 from httpx import AsyncClient
 from p2_search_api_fixtures import QUERY_VECTORS, SearchEnv, build_search_env
 from p2_search_fixtures import (
@@ -59,7 +60,8 @@ COMPANION = json.loads(
     (CONTRACTS / "p3-person-search-contracts.v1.json").read_text(encoding="utf-8")
 )
 
-#: The four companions P3-07B promises to leave byte-identical, plus the P3-07A one.
+#: Canonical LF companion hashes; p2's approved P4-02Y-L structured_model extension
+#: is checked separately against both its current and historical frozen bytes.
 FROZEN_CONTRACT_SHA256 = {
     "p2-contracts.v1.json": (
         "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
@@ -162,10 +164,6 @@ def seed(env: PersonSearchEnv) -> Seeded:
     # outbox here (as a restart would) keeps the vector channel comparable without hiding
     # the person behaviour behind a pending catch-up.
     confirm_pending(env.catalog)
-    # Ninety-six further unnamed people so the frozen 100-id ceiling can be demonstrated
-    # with ids that really exist: only the four above carry any face.
-    for _ in range(MAX_PERSON_IDS - 4):
-        env.person()
     return Seeded(
         env=env,
         sunset=sunset,
@@ -312,7 +310,12 @@ def test_shape_refusals_are_structured_and_write_nothing(
 
 def test_the_person_id_ceiling_is_its_own_frozen_refusal(seeded: Seeded) -> None:
     state = seeded
+    # Only this boundary case needs 100 existing identities; the other scenarios use
+    # the four people whose membership and manual state the shared fixture exercises.
+    for _ in range(MAX_PERSON_IDS - 4):
+        state.env.person()
     before = authority_snapshot(state)
+    assert before["persons"] == MAX_PERSON_IDS
 
     async def scenario(client: AsyncClient) -> Any:
         csrf = await state.search.authenticate(client)
@@ -526,8 +529,7 @@ def test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer(
     answers are accepted; the mixed one is not.
     """
     state = seeded
-    second = Catalog.open(db_path=state.env.catalog.db_path)
-    try:
+    with second_catalog_writer(state.env.catalog) as (second, run_commit):
         persons = PersonService(second, clock=second.now_ms)
         merged: dict[str, Any] = {}
         real_resolve = search_service.resolve_canonical_person_id
@@ -553,7 +555,7 @@ def test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer(
         def spy(connection: Any, person_id: int) -> int:
             value = real_resolve(connection, person_id)
             if not merged:
-                commit_merge()
+                run_commit(commit_merge)
             return value
 
         monkeypatch.setattr(search_service, "resolve_canonical_person_id", spy)
@@ -569,8 +571,6 @@ def test_a_merge_during_the_canonical_resolution_is_never_a_mixed_answer(
             )
 
         response = state.search.scenario(scenario)
-    finally:
-        second.close()
     assert merged, "the second connection must really have committed the merge"
     assert response.status_code == 200, response.text
     observed = (
@@ -587,8 +587,7 @@ def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
 ) -> None:
     """A bounded re-run still ends in a structured refusal, never in a mixed page."""
     state = seeded
-    second = Catalog.open(db_path=state.env.catalog.db_path)
-    try:
+    with second_catalog_writer(state.env.catalog) as (second, run_commit):
         persons = PersonService(second, clock=second.now_ms)
         moves = {"count": 0}
         real_resolve = search_service.resolve_canonical_person_id
@@ -607,7 +606,7 @@ def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
 
         def spy(connection: Any, person_id: int) -> int:
             value = real_resolve(connection, person_id)
-            rename_every_time()
+            run_commit(rename_every_time)
             return value
 
         monkeypatch.setattr(search_service, "resolve_canonical_person_id", spy)
@@ -619,8 +618,6 @@ def test_a_catalog_that_keeps_moving_the_revision_refuses_instead_of_mixing(
 
         response = state.search.scenario(scenario)
         sessions_after = len(state.search.context.search_sessions)
-    finally:
-        second.close()
     assert response.status_code == 409, response.text
     payload = response.json()
     assert payload["code"] == CATALOG_FILTER_REVISION_STALE
@@ -672,8 +669,7 @@ def test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page(
     session is registered only once the page is known to be publishable.
     """
     state = seeded
-    second = Catalog.open(db_path=state.env.catalog.db_path)
-    try:
+    with second_catalog_writer(state.env.catalog) as (second, run_commit):
         commit, merged = _second_connection_merger(state, second)
         real_entries_of = search_service._entries_of
         attempts = {"count": 0}
@@ -682,7 +678,7 @@ def test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page(
             value = real_entries_of(payload)
             attempts["count"] += 1
             if not merged:
-                commit()
+                run_commit(commit)
             return value
 
         monkeypatch.setattr(search_service, "_entries_of", spy)
@@ -700,8 +696,6 @@ def test_a_merge_after_the_last_retrieval_read_is_never_a_mixed_page(
 
         response = state.search.scenario(scenario)
         sessions_after = len(state.search.context.search_sessions)
-    finally:
-        second.close()
     assert merged, "the second connection must really have committed the merge"
     assert response.status_code == 200, response.text
     observed = (list(response.json()["filters"]["person_ids"]), hit_set(response))
@@ -719,20 +713,22 @@ def test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page(
 ) -> None:
     """The same gate covers the independent suggestion revision the suggested page depends on."""
     state = seeded
-    second = Catalog.open(db_path=state.env.catalog.db_path)
-    try:
+    with second_catalog_writer(state.env.catalog) as (second, run_commit):
         moved: dict[str, int] = {}
         real_entries_of = search_service._entries_of
+
+        def bump_suggestion() -> None:
+            with second.write() as connection:
+                moved["revision"] = place_revision.bump_suggestion_revision(
+                    connection,
+                    cause=place_revision.CAUSE_SUGGESTION_CHANGED,
+                    now_ms=1,
+                )
 
         def spy(payload: dict[str, Any]) -> Any:
             value = real_entries_of(payload)
             if not moved:
-                with second.write() as connection:
-                    moved["revision"] = place_revision.bump_suggestion_revision(
-                        connection,
-                        cause=place_revision.CAUSE_SUGGESTION_CHANGED,
-                        now_ms=1,
-                    )
+                run_commit(bump_suggestion)
             return value
 
         monkeypatch.setattr(search_service, "_entries_of", spy)
@@ -742,8 +738,6 @@ def test_a_suggested_candidate_change_after_the_last_read_is_never_a_mixed_page(
             return await post(client, state, csrf, place_state="suggested")
 
         response = state.search.scenario(scenario)
-    finally:
-        second.close()
     assert moved, "the second connection must really have moved the suggestion revision"
     assert response.status_code == 200, response.text
     # The answered page is anchored to the state its predicate was verified against, not to
@@ -765,8 +759,7 @@ def test_an_exhausted_retry_names_the_counter_that_moved(
     revision wins, exactly as ``_continue_session`` orders them.
     """
     state = seeded
-    second = Catalog.open(db_path=state.env.catalog.db_path)
-    try:
+    with second_catalog_writer(state.env.catalog) as (second, run_commit):
         persons = PersonService(second, clock=second.now_ms)
         moves = {"count": 0}
         real_entries_of = search_service._entries_of
@@ -792,7 +785,7 @@ def test_an_exhausted_retry_names_the_counter_that_moved(
 
         def spy(payload: dict[str, Any]) -> Any:
             value = real_entries_of(payload)
-            mutate()
+            run_commit(mutate)
             return value
 
         monkeypatch.setattr(search_service, "_entries_of", spy)
@@ -806,8 +799,6 @@ def test_an_exhausted_retry_names_the_counter_that_moved(
         response = state.search.scenario(scenario)
         filter_after = state.env.filter_revision()
         sessions_after = len(state.search.context.search_sessions)
-    finally:
-        second.close()
     assert response.status_code == 409, response.text
     payload = response.json()
     details = payload["details"]
@@ -1349,6 +1340,8 @@ def _jpeg_bytes() -> bytes:
 def test_the_frozen_contracts_migrations_and_schema_version_are_untouched(
     seeded: Seeded,
 ) -> None:
+    from frozen_contract_fixtures import assert_p2_approved_extension
+
     state = seeded
     historical_contract = subprocess.run(
         [
@@ -1362,8 +1355,11 @@ def test_the_frozen_contracts_migrations_and_schema_version_are_untouched(
     ).stdout
     assert hashlib.sha256(historical_contract).hexdigest() == P2_CONTRACT_HISTORY_SHA256
     for name, expected in FROZEN_CONTRACT_SHA256.items():
-        raw = (CONTRACTS / name).read_bytes()
+        # Compare canonical Git text bytes, independent of Windows checkout newlines.
+        raw = (CONTRACTS / name).read_bytes().replace(b"\r\n", b"\n")
         assert hashlib.sha256(raw).hexdigest() == expected, name
+        if name == "p2-contracts.v1.json":
+            assert_p2_approved_extension(raw)
     current_p2_contract = json.loads(
         (CONTRACTS / "p2-contracts.v1.json").read_text(encoding="utf-8")
     )

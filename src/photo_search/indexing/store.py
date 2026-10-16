@@ -85,6 +85,40 @@ CANDIDATE_ROW_COLUMNS = (
 )
 
 
+def _candidate_id_condition(ids: Sequence[int]) -> str:
+    """Encode sorted, unique authoritative ids without widening their membership.
+
+    Large consecutive candidate blocks otherwise produce thousands of IN literals
+    that the engine must plan for every block. A small union of exact consecutive
+    runs is equivalent, including every hole. Keep short/sparse sets on IN, and cap
+    the disjunction so scattered filters cannot create a deep expression tree.
+    """
+    if not ids:
+        return "false"
+    original = "asset_id IN (" + ", ".join(str(value) for value in ids) + ")"
+    if len(ids) < 64:
+        return original
+    terms: list[str] = []
+    start = end = ids[0]
+
+    def term(low: int, high: int) -> str:
+        if low == high:
+            return f"asset_id = {low}"
+        return f"(asset_id BETWEEN {low} AND {high})"
+
+    for value in ids[1:]:
+        if value == end + 1:
+            end = value
+            continue
+        terms.append(term(start, end))
+        if len(terms) >= 64:
+            return original
+        start = end = value
+    terms.append(term(start, end))
+    compact = "(" + " OR ".join(terms) + ")"
+    return compact if len(compact) < len(original) else original
+
+
 def _lance_literal(value: str) -> str:
     """One quoted SQL literal for a Lance filter, or a structured refusal.
 
@@ -267,10 +301,30 @@ class LanceVectorIndex:
         return {"state": "created", "index": ASSET_SCALAR_INDEX}
 
     def count(self, *, generation_id: str, dimension: int, space_id: str) -> int:
-        rows = self.rows(generation_id=generation_id, dimension=dimension)
-        if any(str(row["space_id"]) != str(space_id) for row in rows):
-            raise CatalogError(SPACE_MISMATCH, "a Lance generation contains a foreign space")
-        return len(rows)
+        """Count a fully checked generation without loading its vectors into Python."""
+        table = self._table(generation_id=generation_id, dimension=dimension, create=False)
+        if table is None:
+            return 0
+        import pyarrow.compute as pc
+
+        # A metadata-only total could hide an unreadable vector payload. Read every
+        # column in bounded Arrow batches, preserving the former full-read check
+        # without creating a Python list/float object for every vector component.
+        expected = int(table.count_rows())
+        scanned = 0
+        with table.search().to_batches(batch_size=4096) as batches:
+            for batch in batches:
+                batch.validate(full=True)
+                scanned += batch.num_rows
+                for column, value in (("space_id", space_id), ("generation_id", generation_id)):
+                    matches = pc.fill_null(pc.equal(batch[column], str(value)), False)
+                    if batch.num_rows and not pc.all(matches).as_py():
+                        raise CatalogError(
+                            SPACE_MISMATCH, "a Lance generation contains a foreign identity"
+                        )
+        if scanned != expected:
+            raise CatalogError(INDEX_REPAIR_REQUIRED, "Lance scan and metadata row counts differ")
+        return scanned
 
     def search(
         self,
@@ -384,7 +438,7 @@ class LanceVectorIndex:
         ids = sorted({int(value) for value in asset_ids})
         if not ids:
             return []
-        conditions = ["asset_id IN (" + ", ".join(str(value) for value in ids) + ")"]
+        conditions = [_candidate_id_condition(ids)]
         if space_id is not None:
             conditions.append(f"space_id = {_lance_literal(str(space_id))}")
         rows = self.search(
@@ -427,7 +481,7 @@ class LanceVectorIndex:
         ids = sorted({int(value) for value in asset_ids})
         if not ids:
             return [], True
-        conditions = ["asset_id IN (" + ", ".join(str(value) for value in ids) + ")"]
+        conditions = [_candidate_id_condition(ids)]
         if space_id is not None:
             conditions.append(f"space_id = {_lance_literal(str(space_id))}")
         wanted = int(top_k)
@@ -973,7 +1027,8 @@ class IndexCoordinator:
     @staticmethod
     def _make_generation_ready(connection: sqlite3.Connection, generation_id: str, now_ms: int) -> None:
         pending = connection.execute(
-            "SELECT COUNT(*) FROM index_outbox WHERE generation_id = ? AND state <> 'CONFIRMED'",
+            "SELECT EXISTS(SELECT 1 FROM index_outbox "
+            "WHERE generation_id = ? AND state <> 'CONFIRMED')",
             (generation_id,),
         ).fetchone()[0]
         if int(pending):

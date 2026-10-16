@@ -18,24 +18,32 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from typing import Any
+
+from photo_search.search.tokens import TOKENIZER_VERSION
 
 #: The frozen job protocol this processor speaks (ADR-0003 §1/§2).
 CONTRACT_VERSION = "p2-contracts.v1"
 
 OCR_LEGACY_PROCESSOR_ID = "ocr-text@1"
-OCR_CPU_PROCESSOR_ID = "ocr-text-cpu-fp32@2"
-OCR_GPU_PROCESSOR_ID = "ocr-text-cuda-fp32@2"
+OCR_V2_CPU_PROCESSOR_ID = "ocr-text-cpu-fp32@2"
+OCR_V2_GPU_PROCESSOR_ID = "ocr-text-cuda-fp32@2"
+OCR_CPU_PROCESSOR_ID = "ocr-text-cpu-fp32@3"
+OCR_GPU_PROCESSOR_ID = "ocr-text-cuda-fp32@3"
 # Keep the executable and retired identities in one declaration. A future processor
 # upgrade must explicitly move an identity from active to retired here.
 OCR_ACTIVE_PROCESSOR_IDS = (OCR_CPU_PROCESSOR_ID, OCR_GPU_PROCESSOR_ID)
-OCR_RETIRED_PROCESSOR_IDS = (OCR_LEGACY_PROCESSOR_ID,)
+OCR_RETIRED_PROCESSOR_IDS = (
+    OCR_LEGACY_PROCESSOR_ID, OCR_V2_CPU_PROCESSOR_ID, OCR_V2_GPU_PROCESSOR_ID,
+)
+OCR_READABLE_PROCESSOR_IDS = (*OCR_RETIRED_PROCESSOR_IDS, *OCR_ACTIVE_PROCESSOR_IDS)
 # The auto path starts on CUDA; legacy remains a read-only historical identity.
 OCR_PROCESSOR_ID = OCR_GPU_PROCESSOR_ID
 OCR_PROCESSOR_IDS = OCR_ACTIVE_PROCESSOR_IDS
 OCR_TASK_TYPE = "image_ocr"
-OCR_CPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cpu-fp32-v2"
-OCR_GPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cuda-fp32-v2"
+OCR_CPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cpu-fp32-v3"
+OCR_GPU_SPEC_REVISION = "ocr-text-ppocrv4-mobile-cuda-fp32-v3"
 OCR_SPEC_REVISION = OCR_GPU_SPEC_REVISION
 OCR_ARTIFACT_REVISION = "ocr-document.v1"
 OCR_OUTPUT_TYPE = "ocr_document.v1"
@@ -115,15 +123,18 @@ ENGINE_VERSION = "1.4.4"
 OCR_RUNTIME_PACKAGE_ID = "onnxruntime-gpu@1.30.0"
 
 
-def execution_config(device: str) -> dict[str, Any]:
-    """Canonical static identity input for one v2 single-device OCR profile."""
+def execution_config(device: str, *, version: int = 3) -> dict[str, Any]:
+    """Canonical profile identity; v2 is retained only for historical readers."""
     normalized = str(device)
     if normalized not in ("cpu", "gpu"):
         raise ValueError("OCR execution device must be cpu or gpu")
+    if version not in (2, 3):
+        raise ValueError("OCR execution config version must be 2 or 3")
     provider = "CPUExecutionProvider" if normalized == "cpu" else "CUDAExecutionProvider"
-    engine_config = {**ENGINE_CONFIG, "providers": [provider]}
-    return {
-        "version": "ocr-execution-config.v2",
+    engine_config = deepcopy(LEGACY_ENGINE_CONFIG if version == 2 else ENGINE_CONFIG)
+    engine_config["providers"] = [provider]
+    result = {
+        "version": f"ocr-execution-config.v{version}",
         "pinned_config_yaml_sha256": CONFIG_HASH,
         "model_fingerprint": MODEL_FINGERPRINT,
         "engine": OCR_ENGINE,
@@ -132,17 +143,23 @@ def execution_config(device: str) -> dict[str, Any]:
         "output": {
             "artifact_revision": OCR_ARTIFACT_REVISION,
             "output_type": OCR_OUTPUT_TYPE,
-            "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
-            "coordinate_decimals": COORDINATE_DECIMALS,
+            "low_confidence_threshold": 0.6 if version == 2 else LOW_CONFIDENCE_THRESHOLD,
+            "coordinate_decimals": 2 if version == 2 else COORDINATE_DECIMALS,
         },
         "provider": provider,
         "precision": "FP32",
         "runtime_package_id": OCR_RUNTIME_PACKAGE_ID,
     }
+    if version == 3:
+        engine_config["orientation_retry"] = dict(ORIENTATION_RETRY_CONFIG)
+        result["output"]["deduplication"] = dict(DEDUPLICATION_CONFIG)
+    return result
 
 
-def execution_config_hash(device: str) -> str:
-    return hashlib.sha256(_canonical(execution_config(device)).encode("utf-8")).hexdigest()
+def execution_config_hash(device: str, *, version: int = 3) -> str:
+    return hashlib.sha256(
+        _canonical(execution_config(device, version=version)).encode("utf-8")
+    ).hexdigest()
 
 
 
@@ -178,6 +195,38 @@ LOW_CONFIDENCE_THRESHOLD = 0.6
 #: seen twice in the overlap band of two slices.
 DUPLICATE_IOU = 0.5
 
+# The active profile records every decision used by text-aware slice deduplication.
+# Historical v2 identities deliberately omit this new output policy.
+DEDUPLICATION_CONFIG: dict[str, Any] = {
+    "version": "text-aware-overlap.v1",
+    "comparison": "whitespace-elision-if-token-equivalent",
+    "comparison_tokenizer_version": TOKENIZER_VERSION,
+    "duplicate_iou": DUPLICATE_IOU,
+    "substring_coverage": 0.8,
+    "line_overlap": 0.8,
+    "line_max_thickness_ratio": 1.5,
+    "line_center_tolerance": 0.25,
+    "line_geometry": "polygon-major-axis-projection",
+    "truncation_min_extension": 0.5,
+    "truncation_edge_tolerance": 1.0,
+    "full_text_confidence_gt": LOW_CONFIDENCE_THRESHOLD,
+    "prefer": "longer-contained-text-then-confidence",
+    "uncertain_overlap": "keep",
+    "tie_break": "normalized-length,confidence,box,text,polygon",
+}
+
+ORIENTATION_RETRY_CONFIG: dict[str, Any] = {
+    "version": "rotated-low-confidence-original-retry.v1",
+    "trigger": "applied_180_and_empty_or_score_lte_threshold",
+    "trigger_confidence_threshold": 0.6,
+    "retry_orientation": "original_crop",
+    "retry_min_confidence": 0.6,
+    "retry_min_gain": 0.1,
+    "selection": "alternative_score_gt_min_and_gte_classified_score_plus_gain",
+    "otherwise": "keep_classified_result",
+    "max_extra_recognition_passes": 1,
+}
+
 #: Bounded result: one document may carry at most this many regions.
 MAX_REGIONS = 2_000
 
@@ -190,7 +239,7 @@ COORDINATE_DECIMALS = 2
 
 #: The frozen engine settings recorded in every artifact payload. They are the values the
 #: P0-04 manifest measured for the pinned files, plus the two P3-01 decisions above.
-ENGINE_CONFIG: dict[str, Any] = {
+LEGACY_ENGINE_CONFIG: dict[str, Any] = {
     "channel_order": "BGR",
     "det_limit_side_len": 736,
     "det_limit_type": "min",
@@ -205,12 +254,17 @@ ENGINE_CONFIG: dict[str, Any] = {
     "use_cls": True,
     "use_det": True,
     "use_rec": True,
-    "text_score": MIN_TEXT_SCORE,
-    "max_side_len": MAX_LONG_EDGE,
+    "text_score": 0.0,
+    "max_side_len": 2_000,
     "min_side_len": 30,
     "providers": ["CPUExecutionProvider"],
 }
 
+ENGINE_CONFIG: dict[str, Any] = deepcopy(LEGACY_ENGINE_CONFIG)
+ENGINE_CONFIG.update(text_score=MIN_TEXT_SCORE, max_side_len=MAX_LONG_EDGE)
+
+OCR_V2_CPU_CONFIG_HASH = execution_config_hash("cpu", version=2)
+OCR_V2_GPU_CONFIG_HASH = execution_config_hash("gpu", version=2)
 OCR_CPU_CONFIG_HASH = execution_config_hash("cpu")
 OCR_GPU_CONFIG_HASH = execution_config_hash("gpu")
 

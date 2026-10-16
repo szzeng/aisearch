@@ -25,10 +25,10 @@ from typing import Any
 
 import numpy as np
 import onnxruntime
-from PIL import Image
-from transformers import BertTokenizerFast
+from PIL import Image, ImageOps
 
-from photo_search.models.embedding.base import analyze_manifest
+from photo_search.media.decode import restore_recorded_orientation
+from photo_search.models.embedding.base import analyze_manifest, image_orientation_policy
 from photo_search.runtime.device import (
     DevicePolicy,
     DeviceResolution,
@@ -101,10 +101,10 @@ class ChineseClipOnnxAdapter:
         runtime = self.manifest["runtime"]
         preprocessing = self.manifest["preprocessing"]
         tokenizer = self.manifest["tokenizer"]
-        digest = self.manifest["artifacts"]["onnx"]["image"]["sha256"][:16]
+        self._orientation_policy = image_orientation_policy(self.manifest)
         self._spec = ProcessorSpec(
-            processor_id=f"{self._identity.provider_id}@{model['resolved_revision'][:12]}",
-            space_id=f"{self._identity.provider_id}:{digest}",
+            processor_id=self._identity.processor_id,
+            space_id=self._identity.space_id,
             dimension=int(embedding["dimension"]),
             metric=str(embedding["metric"]),
             normalization=str(embedding["normalization"]),
@@ -146,6 +146,8 @@ class ChineseClipOnnxAdapter:
         for path in (self._image_path, self._text_path, self._tokenizer_path):
             if not path.is_file():
                 raise FileNotFoundError(f"required model artifact not found: {path}")
+        from transformers import BertTokenizerFast
+
         self._capabilities = runtime_capabilities()
         self._resolution = resolve_device(
             self._config.requested_device,
@@ -256,7 +258,12 @@ class ChineseClipOnnxAdapter:
 
     def _preprocess(self, image_path: Path) -> np.ndarray:
         with Image.open(image_path) as source:
-            image = source.convert("RGB")
+            if self._orientation_policy:
+                restore_recorded_orientation(source)
+                image = ImageOps.exif_transpose(source).convert("RGB")
+            else:
+                # Published legacy CLIP vectors used stored pixels, including EXIF rotations.
+                image = source.convert("RGB")
             width, height = image.size
             size = self._spec.image_size
             scale = size / min(width, height)

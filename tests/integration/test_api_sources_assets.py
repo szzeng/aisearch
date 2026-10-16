@@ -168,6 +168,37 @@ def test_source_summary_is_rootless_lightweight_and_session_protected(api_env, m
     assert "progress" not in str(body)
 
 
+def test_source_paths_are_session_protected_without_counts_or_disk_probes(api_env, monkeypatch) -> None:
+    source = api_env.service.register_source(display_name="中文图库", root_path=api_env.library)
+    offline = api_env.service.register_source(
+        display_name="离线图库", root_path=api_env.tmp_path / "offline"
+    )
+
+    def unexpected_work(*args, **kwargs):
+        raise AssertionError("path listing must only read registered source rows")
+
+    monkeypatch.setattr(CatalogService, "get_source", unexpected_work)
+    monkeypatch.setattr(CatalogService, "counts", unexpected_work)
+    monkeypatch.setattr(refresh_progress, "source_progress", unexpected_work)
+    monkeypatch.setattr("photo_search.ingestion.service.os.path.isdir", unexpected_work)
+
+    async def scenario(client: AsyncClient) -> None:
+        anonymous = await client.get("/api/v1/sources/paths")
+        assert anonymous.status_code == 401
+        assert source["root_path"] not in anonymous.text
+        await api_env.authenticate(client)
+        response = await client.get("/api/v1/sources/paths")
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "sources": [
+                {"source_id": item["source_id"], "root_path": item["root_path"]}
+                for item in (source, offline)
+            ]
+        }
+
+    api_env.scenario(scenario)
+
+
 def test_capabilities_reports_the_contract_without_local_paths(api_env) -> None:
     async def scenario(client: AsyncClient) -> dict:
         await api_env.authenticate(client)
@@ -608,25 +639,51 @@ def test_api_writes_do_not_collide_with_a_running_scan(api_env) -> None:
         started = await client.post(
             f"/api/v1/sources/{source['source_id']}/scan", headers=api_env.post_headers(csrf)
         )
+        assert started.status_code == 202, started.json()
         observed: list[tuple[int, str]] = []
         scan_states: list[str] = []
+        server_errors: list[dict] = []
+
+        def record_server_error(response) -> None:
+            if response.status_code >= 500:
+                server_errors.append({
+                    "method": response.request.method,
+                    "path": response.request.url.path,
+                    "status": response.status_code,
+                    "body": response.json(),
+                })
+
         for _ in range(12):
             duplicate = await client.post(
                 "/api/v1/sources",
                 json={"display_name": "repeat", "root_path": str(api_env.library)},
                 headers=api_env.post_headers(csrf),
             )
+            record_server_error(duplicate)
             observed.append((duplicate.status_code, duplicate.json().get("code", "")))
             stats = await client.get("/api/v1/stats")
+            record_server_error(stats)
             observed.append((stats.status_code, str(stats.json().get("partial"))))
             jobs = await client.get("/api/v1/jobs")
+            record_server_error(jobs)
+            assert jobs.status_code == 200, jobs.json()
             state = jobs.json()["jobs"][0]["state"]
             scan_states.append(state)
             observed.append((jobs.status_code, state))
-        return {"started": started.status_code, "observed": observed, "scan_states": scan_states}
+        return {
+            "started": started.status_code, "observed": observed,
+            "scan_states": scan_states, "server_errors": server_errors,
+        }
 
-    result = api_env.scenario(scenario)
+    runner = api_env.context.runner()
+    try:
+        result = api_env.scenario(scenario)
+    finally:
+        # Even a failed HTTP assertion must drain the worker before the next test can
+        # inject submission failures into the shared scanner module.
+        scan_idle = runner.wait_idle(120.0)
     assert result["started"] == 202
+    assert not result["server_errors"], result["server_errors"]
     codes = {status for status, _ in result["observed"]}
     assert 500 not in codes, result["observed"]
     assert codes <= {200, 409}
@@ -635,7 +692,7 @@ def test_api_writes_do_not_collide_with_a_running_scan(api_env) -> None:
     # Real overlap evidence: the requests were served while the scan was not yet terminal.
     assert set(result["scan_states"]) & {"QUEUED", "RUNNING"}, result["scan_states"]
 
-    assert api_env.context.runner().wait_idle(120.0) is True
+    assert scan_idle is True
     job = api_env.service.catalog.read_one("SELECT state, progress FROM jobs WHERE job_id = 1")
     assert job["state"] == "SUCCEEDED"
     assert api_env.service.counts()["locations_present"] == 400

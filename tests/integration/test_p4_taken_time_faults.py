@@ -161,9 +161,11 @@ def test_d3_an_interrupted_extraction_resumes_without_rewriting_or_skipping(api_
     events = api_env.service.catalog.read_all(
         "SELECT cause, changed_count FROM catalog_filter_revision_events ORDER BY revision"
     )
-    assert [str(row["cause"]) for row in events] == ["CAPTURE_TIME_CHANGED"] * 4
+    assert [str(row["cause"]) for row in events] == (
+        ["ASSET_ADDED"] * 4 + ["CAPTURE_TIME_CHANGED"] * 4
+    )
     # One transaction at most +1, and one changed asset per event.
-    assert [int(row["changed_count"]) for row in events] == [1, 1, 1, 1]
+    assert [int(row["changed_count"]) for row in events] == [1] * 8
 
 
 # --------------------------------------------------------------------------------- D4
@@ -211,10 +213,13 @@ def test_d4_a_file_that_changes_mid_read_is_not_adopted_and_is_re_extracted(
     # The rescan records the new observation: the input revision moves, so the asset is a new
     # logical job and the re-extraction publishes the EXIF fact - a second artifact row.
     api_env.scan(source["source_id"])
+    revision_after_rescan = filter_revision(catalog)
+    assert revision_after_rescan - revision_before == 3
+    assert filter_causes(catalog)[-2:] == ["ASSET_CONTENT_DETACHED", "ASSET_LOCATION_BOUND"]
     run_extraction(catalog, force=True)
     again = row_for(catalog, asset_id)
     assert again is not None and again.time_source == "EXIF_ORIGINAL"
-    assert filter_revision(catalog) - revision_before == 2
+    assert filter_revision(catalog) - revision_after_rescan == 1
     revisions = [
         str(row["input_revision"])
         for row in catalog.read_all(
@@ -473,7 +478,7 @@ def test_d8_a_capture_write_moves_the_revision_and_the_other_orders_are_unchange
         if not page["has_more"]:
             break
     assert sorted(reopened) == sorted(assets_by_basename(catalog).values())
-    assert filter_causes(catalog) == ["CAPTURE_TIME_CHANGED"] * 4
+    assert filter_causes(catalog) == ["ASSET_ADDED"] * 4 + ["CAPTURE_TIME_CHANGED"] * 4
 
 
 async def _get(client: AsyncClient, api_env, params: dict[str, Any]) -> dict[str, Any]:

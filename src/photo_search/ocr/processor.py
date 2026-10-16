@@ -24,6 +24,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +183,7 @@ def build_payload(
     paths, the job id): the artifact is content-addressed, so a deterministic repair pass
     has to reproduce the identical bytes.
     """
+    config_hash, engine_config = _payload_profile(str(processor_id))
     regions = [region.as_dict() for region in document.regions]
     return {
         "contract_version": contract.CONTRACT_VERSION,
@@ -192,18 +194,8 @@ def build_payload(
         "engine": contract.OCR_ENGINE,
         "engine_version": contract.ENGINE_VERSION,
         "model_fingerprint": contract.MODEL_FINGERPRINT,
-        "config_hash": {
-            contract.OCR_LEGACY_PROCESSOR_ID: contract.CONFIG_HASH,
-            contract.OCR_CPU_PROCESSOR_ID: contract.OCR_CPU_CONFIG_HASH,
-            contract.OCR_GPU_PROCESSOR_ID: contract.OCR_GPU_CONFIG_HASH,
-        }[str(processor_id)],
-        "engine_config": (
-            dict(contract.ENGINE_CONFIG)
-            if str(processor_id) == contract.OCR_LEGACY_PROCESSOR_ID
-            else contract.execution_config(
-                "cpu" if str(processor_id) == contract.OCR_CPU_PROCESSOR_ID else "gpu"
-            )["recognition_and_preprocess"]
-        ),
+        "config_hash": config_hash,
+        "engine_config": engine_config,
         "decode_format": str(decode_format),
         "original_size": [int(document.original_size[0]), int(document.original_size[1])],
         "working_size": [int(document.working_size[0]), int(document.working_size[1])],
@@ -253,6 +245,8 @@ def extract_for_asset(
     clock: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     """Read the registered original, recognise it and return the document payload."""
+    if str(processor_id) not in contract.OCR_ACTIVE_PROCESSOR_IDS:
+        raise CatalogError(ARTIFACT_INVALID, "a retired OCR profile cannot execute new work")
     row = catalog.read_one("SELECT sha256 FROM assets WHERE asset_id = ?", (int(asset_id),))
     if row is None:
         raise CatalogError(
@@ -281,6 +275,7 @@ def extract_for_asset(
         resolved_device=resolved_device,
         runtime_provider=runtime_provider,
         precision=precision,
+        orientation_retry=True,
     )
     document = recognize_image(
         engine,
@@ -482,6 +477,22 @@ def ocr_executor(
 
 
 # --------------------------------------------------------------------- payload checks
+def _payload_profile(processor_id: str) -> tuple[str, dict[str, Any]]:
+    """Resolve historical bytes separately from the active execution configuration."""
+    if processor_id == contract.OCR_LEGACY_PROCESSOR_ID:
+        return contract.CONFIG_HASH, deepcopy(contract.LEGACY_ENGINE_CONFIG)
+    profiles = {
+        contract.OCR_V2_CPU_PROCESSOR_ID: ("cpu", 2, contract.OCR_V2_CPU_CONFIG_HASH),
+        contract.OCR_V2_GPU_PROCESSOR_ID: ("gpu", 2, contract.OCR_V2_GPU_CONFIG_HASH),
+        contract.OCR_CPU_PROCESSOR_ID: ("cpu", 3, contract.OCR_CPU_CONFIG_HASH),
+        contract.OCR_GPU_PROCESSOR_ID: ("gpu", 3, contract.OCR_GPU_CONFIG_HASH),
+    }
+    if processor_id not in profiles:
+        raise CatalogError(ARTIFACT_INVALID, "the OCR document was produced by another processor")
+    device, version, config_hash = profiles[processor_id]
+    return config_hash, contract.execution_config(device, version=version)["recognition_and_preprocess"]
+
+
 def _number(value: Any, *, where: str, low: float, high: float) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise CatalogError(ARTIFACT_INVALID, f"{where} must be a number")
@@ -508,12 +519,7 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
     if str(payload["contract_version"]) != contract.CONTRACT_VERSION:
         raise CatalogError(ARTIFACT_INVALID, "the OCR document carries a foreign contract")
     processor_id = str(payload["processor_id"])
-    if processor_id not in (
-        contract.OCR_LEGACY_PROCESSOR_ID,
-        contract.OCR_CPU_PROCESSOR_ID,
-        contract.OCR_GPU_PROCESSOR_ID,
-    ):
-        raise CatalogError(ARTIFACT_INVALID, "the OCR document was produced by another processor")
+    expected_hash, expected_engine_config = _payload_profile(processor_id)
     if str(payload["source"]) != contract.OCR_SOURCE:
         raise CatalogError(ARTIFACT_INVALID, "the OCR document source is not the pinned engine")
     revision = str(payload["input_revision"])
@@ -525,22 +531,10 @@ def validate_payload(payload: Mapping[str, Any]) -> None:
             raise CatalogError(ARTIFACT_INVALID, f"{key} is not a sha256")
     if str(payload["model_fingerprint"]) != contract.MODEL_FINGERPRINT:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by other weights")
-    expected_hash = {
-        contract.OCR_LEGACY_PROCESSOR_ID: contract.CONFIG_HASH,
-        contract.OCR_CPU_PROCESSOR_ID: contract.OCR_CPU_CONFIG_HASH,
-        contract.OCR_GPU_PROCESSOR_ID: contract.OCR_GPU_CONFIG_HASH,
-    }[processor_id]
     if str(payload["config_hash"]) != expected_hash:
         raise CatalogError(ARTIFACT_INVALID, "the document was produced by another config")
     if not isinstance(payload["engine_config"], Mapping):
         raise CatalogError(ARTIFACT_INVALID, "engine_config must be an object")
-    expected_engine_config = (
-        dict(contract.ENGINE_CONFIG)
-        if processor_id == contract.OCR_LEGACY_PROCESSOR_ID
-        else contract.execution_config(
-            "cpu" if processor_id == contract.OCR_CPU_PROCESSOR_ID else "gpu"
-        )["recognition_and_preprocess"]
-    )
     if dict(payload["engine_config"]) != expected_engine_config:
         raise CatalogError(ARTIFACT_INVALID, "the OCR engine config does not match its profile")
     if str(payload["decode_format"]) != str(payload["decode_format"]).upper():

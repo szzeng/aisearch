@@ -10,6 +10,14 @@ def test_actual_js_batches_require_a_click_keep_retry_position_and_refresh_reaso
     assert node, "Node is required for the personal-page behavior check"
     script = r"""
 const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+// Keep real timer behavior during the scenario, then dispose its UI on completion.
+const pendingTimers = new Set();
+const testSetTimeout = (callback, delay, ...args) => {
+  const timer = setTimeout(() => { pendingTimers.delete(timer); callback(...args); }, delay);
+  pendingTimers.add(timer); return timer;
+};
+const testClearTimeout = timer => { clearTimeout(timer); pendingTimers.delete(timer); };
+const disposeTimers = () => { for (const timer of pendingTimers) clearTimeout(timer); pendingTimers.clear(); };
 class Element {
   constructor(tag) { this.tag = tag; this.children = []; this.value = ""; this.hidden = false;
     this.textContent = ""; this.dataset = {}; this.listeners = {}; this.classList = {add(){}}; }
@@ -30,7 +38,7 @@ const faces = [
   {face_id:"b".repeat(64),asset_id:1,organization_reason:"SAME_IMAGE_CONFLICT",suggestions:[]},
 ];
 const context = {
-  URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout, clearTimeout,
+  URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout:testSetTimeout, clearTimeout:testClearTimeout,
   window:{scrollY:0,addEventListener(){},localStorage:{getItem:()=>null,setItem(){}}},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic-csrf",addEventListener(){},
     getElementById:get,createElement:tag=>new Element(tag)},
@@ -69,8 +77,8 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   assert.equal(get("pa-inbox-cards").children[0].children[0].children[2].textContent,"2 张待确认照片");
   const groupCard = get("pa-inbox-cards").children[0]; groupCard.open = true; groupCard.fire("toggle"); await flush();
   assert(requests.some(r=>r.url.startsWith("/api/v1/faces/inbox/groups/candidate%3A1?")));
-  assert.equal(groupCard.children[1].children.length,1);
-  const suggestedCard = groupCard.children[1].children[0];
+  assert.equal(groupCard.querySelector(".pa-inbox-group-faces").children.length,1);
+  const suggestedCard = groupCard.querySelector(".pa-inbox-group-faces").children[0];
   assert.equal(suggestedCard.confirmButton.textContent,"确认是妈妈");
   assert.equal(suggestedCard.otherPersonButton.textContent,"选其他人");
   await suggestedCard.confirmButton.fire("click");
@@ -123,7 +131,7 @@ const ui = context.ui, flush = () => new Promise(setImmediate);
   await ui.loadInbox(false);
   const filtered = requests.filter(r=>r.url.startsWith("/api/v1/faces/inbox?")).at(-1).url;
   assert(filtered.includes("kind=quality") && !filtered.includes("cursor="));
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().finally(disposeTimers).catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
         [node, "-e", script],

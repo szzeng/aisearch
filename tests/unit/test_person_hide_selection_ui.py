@@ -51,7 +51,7 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeo
    return {ok:true,json:async()=>({persons:[],faces:[],has_more:false,next_cursor:null})};
  }};
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,setLibraryView};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
@@ -106,8 +106,11 @@ const clickPerson=async id=>{await get("pa-cards").children[id-1].fire("click");
  await clickPerson(1);confirmResult=true;visibilityFailure=false;
  const inboxBefore=requests.filter(request=>request.url.includes("/faces/inbox/groups")).length;
  await get("pa-visibility-submit").fire("click");await flush();
+ assert.equal(requests.filter(request=>request.url.includes("/faces/inbox/groups")).length,inboxBefore,
+   "excluding a person does not fetch the hidden inbox category");
+ context.ui.setLibraryView("faces", {history:false});await flush();
  assert.equal(requests.filter(request=>request.url.includes("/faces/inbox/groups")).length,inboxBefore+1,
-   "excluding a person refreshes the loaded inbox so stale recommendations disappear");
+   "entering the inbox fetches current recommendations after the exclusion");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

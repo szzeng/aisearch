@@ -11,10 +11,10 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-person-avatar-click-a-3' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-upstream-sync-20261016-2' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
-class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
+class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;this.some=undefined;} }
 class Element {
  constructor(tag){this.tag=tag;this.tagName=String(tag).toUpperCase();this.children=new HTMLCollectionMock();this.value='';this.text='';this.hidden=false;this.disabled=false;
   this.events={};this.attributes={};this.dataset={};this.open=false;this.classList={add(){}};}
@@ -29,12 +29,13 @@ class Element {
  querySelectorAll(){return [];}focus(options){this.focusOptions=options;}
  showModal(){this.open=true;}close(){this.open=false;}
  getBoundingClientRect(){const index=this.parent?.children.indexOf(this)||0;
-  const top=(this.parent===get('inbox-cards')?1800:0)+index*100-context.window.scrollY;return {top,bottom:top+100};}
+  const top=(this.parent===get('inbox-cards')?1800:this.parent===get('collections')?collectionOffset:0)+index*100-context.window.scrollY;return {top,bottom:top+100};}
 }
 // Model browser replacement/move semantics, including avatar reuse.
 if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(next,old){const i=this.children.indexOf(old);assert(i>=0);this.children[i]=next;next.parentNode=this;return old;};
 if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!id.startsWith('pa-'))id='pa-'+id;if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);};
+let collectionOffset=0;
 const calls=[];let revision=1,memberRevision=1,memberGate=null,memberActive=0,maxMemberActive=0,memberInitialFail=false,uuid=0,failSecond=false,delayed=null,summaryGate=null,releaseSummary=null,photoFixture=false;
 const photos=Array.from({length:125},(_,i)=>({asset_id:5000+i,taken_time:null}));
 const collections=Array.from({length:45},(_,i)=>({collection_id:i+1,name:'合集'+i,member_count:1,photo_count:2,instance_token:'token'+i}));
@@ -143,8 +144,11 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  assert.equal(calls.filter(c=>c.url.includes('/persons/browse?')).length,browseBeforeMode,'same mode click preserves state and does not reload');
  ui.state.selectedPeople.clear();people=[people[1],people[0],...people.slice(2)];await ui.loadPeople(false);
  context.window.scrollY=1900;const atConfirm=calls.length;
+ ui.state.selectAnchors.set('faces:inbox:list',group33.querySelector('.pa-inbox-group-faces').children[0].faceId);
  await group33.querySelector('.pa-inbox-group-faces').children[0].confirmButton.fire('click');assert.equal(calls.length,atConfirm+1);
- groups=groups.filter(id=>id!==11);group33.open=false;group33.fire('toggle');await flush();await flush();await flush();
+ groups=groups.filter(id=>id!==11);group33.open=false;group33.fire('toggle');
+ assert.equal(ui.state.selectAnchors.has('faces:inbox:list'),false,'collapse clears a nested face anchor through native HTMLCollection children');
+ await flush();await flush();await flush();
  assert.deepEqual(keys(),['candidate:22','candidate:33','candidate:44'],'collapse restores all three loaded outer pages');
  assert.deepEqual(ids(),[1,2,3]);assert.equal(context.window.scrollY,1800,'surviving visible card stays at the same viewport offset');
  const reopened=get('inbox-cards').children[0];assert.equal(reopened.open,true);
@@ -237,6 +241,22 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  assert.equal(ui.state.previewAssetId,81,'standalone-face avatar opens its source photo');
  faceCardB.fire('click',{target:faceCardB,shiftKey:true});
  assert.deepEqual(Array.from(ui.state.selectedCollectionFaces),['face-a','face-b'],'Shift adds the loaded standalone-face range');
+ // Returning from a collection restores its own directory card anchor, even if
+ // the previous person directory had a different position or layout changed.
+ ui.state.libraryNavigationReady=true;ui.state.libraryView='collections';ui.state.returnCollection=null;
+ get('library').hidden=false;get('album').hidden=true;
+ ui.state.libraryPosition={y:100,anchors:[{key:'person:1',top:0}]};
+ context.window.scrollY=1850;
+ ui.openCollection(collections[20]);await flush();
+ const collectionPosition=ui.state.libraryPosition;
+ assert.equal(collectionPosition.y,1850,'opening from the directory saves the collection scroll');
+ assert.equal(collectionPosition.anchors[0].key,'collection:19','return position is anchored to a visible collection card');
+ collectionOffset=200;context.window.scrollY=25;
+ ui.openCollection(collections[21]);await flush();
+ assert.equal(ui.state.libraryPosition,collectionPosition,'an album-side collection entry preserves the original directory anchor');
+ ui.backToLibrary();await flush();await flush();
+ assert.equal(context.window.scrollY,2050,'return keeps the same collection card at the same viewport offset after layout changes');
+
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(

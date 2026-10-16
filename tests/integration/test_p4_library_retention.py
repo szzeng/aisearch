@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from httpx import AsyncClient
 
 
@@ -288,3 +289,42 @@ def test_library_retention_protects_index_outbox_and_offline_sources(api_env) ->
     assert by_id[1]["has_human_or_protected_references"] is True
     assert by_id[2]["classification"] == "全局无可用位置但证据不足"
     assert "离线" in by_id[2]["reason"]
+
+
+@pytest.mark.parametrize("with_location", [False, True])
+def test_archived_face_soft_anchor_remains_protected_after_face_and_content_change(
+    api_env, with_location: bool,
+) -> None:
+    from photo_search.library_retention import library_retention_preview
+    from photo_search.persons.collections import create_collection
+
+    catalog = api_env.service.catalog
+    locations = ()
+    if with_location:
+        source_path = api_env.tmp_path / "source-archive"
+        source_path.mkdir()
+        source = api_env.register_source("Archived", source_path)
+        locations = ((int(source["source_id"]), "MISSING"),)
+    for asset_id in (1, 2):
+        _seed_asset(catalog, asset_id, locations=locations)
+    collection = create_collection(catalog, "Archived faces")["collection"]
+    with catalog.write() as connection:
+        connection.execute("DELETE FROM search_projection_queue WHERE asset_id IN (1,2)")
+        # No face row remains, and the archive's content SHA differs from the
+        # current asset. Neither condition may erase this manual reference.
+        connection.execute(
+            "INSERT INTO person_collection_face_members"
+            "(collection_id,source_face_id,asset_id,input_revision,created_at) VALUES(?,?,?,?,1)",
+            (collection["collection_id"], "f" * 64, 1, "a" * 64),
+        )
+    before = catalog.connection.total_changes
+    result = library_retention_preview(catalog)
+    by_id = {row["asset_id"]: row for row in result["items"]}
+    assert result["unknown_reference_schema"] is False
+    assert by_id[1]["has_human_or_protected_references"] is True
+    assert by_id[2]["has_human_or_protected_references"] is False
+    if with_location:
+        assert by_id[1]["classification"] == "包含人工信息或受保护引用"
+        assert by_id[1]["reason"] == "人脸合集收录"
+    assert "不具备清理资格" in by_id[1]["retention_eligibility"]
+    assert catalog.connection.total_changes == before

@@ -40,8 +40,8 @@ from photo_search.models.embedding.base import (
     provider_block,
     provider_id_of_processor,
     read_manifest,
+    required_artifact_names,
 )
-from photo_search.models.embedding.base import required_artifact_names
 from photo_search.models.embedding.qwen3_vl import verify_pinned_files
 from photo_search.models.embedding.registry import model_manifests_dir, registry_for
 from photo_search.runtime.data_root_lease import DataRootLeaseBusy, acquire_data_root_lease

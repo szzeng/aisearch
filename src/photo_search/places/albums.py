@@ -84,7 +84,13 @@ def _album_rows(catalog: Any, data_root: Any, *, suppress_cn: bool = True) -> tu
              LEFT JOIN place_resolution_candidates pc
                ON pc.resolution_id = pr.resolution_id AND pc.rank = 1
              LEFT JOIN places candidate ON candidate.place_id = pc.local_place_id
-            WHERE ({photo_sql})
+            WHERE a.asset_id IN (
+                    SELECT asset_id FROM asset_place_assignments
+                     WHERE record_state='ACTIVE' AND mode='MANUAL_ASSIGNED'
+                    UNION
+                    SELECT asset_id FROM place_resolutions WHERE status='CANDIDATES'
+                  )
+              AND ({photo_sql})
               AND EXISTS (SELECT 1 FROM file_locations l WHERE l.asset_id = a.asset_id
                            AND l.availability = 'PRESENT')
               AND (ap.mode = 'MANUAL_ASSIGNED' OR
