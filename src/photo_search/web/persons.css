@@ -20,6 +20,9 @@ button.pa-person-card[aria-pressed="true"] { outline: 2px solid var(--accent); b
 .pa-inbox-group { min-width: 0; border-radius: 1rem; }
 .pa-inbox-group > summary { cursor: pointer; list-style: none; }
 .pa-inbox-group > summary::-webkit-details-marker { display: none; }
+#pa-collection-faces { grid-template-columns: repeat(auto-fill, minmax(min(100%, 7.5rem), 1fr)); align-items: start; gap: 0.65rem; margin: 0.8rem 0; }
+#pa-collection-faces .pa-collection-face-card { min-height: 0; padding: 0.45rem; cursor: pointer; }
+#pa-collection-faces .pa-avatar { width: 5.25rem; height: 5.25rem; }
 .pa-inbox-group-faces { padding-inline-start: 1rem; }
 .pa-inbox-single .pa-person-card { height: 100%; }
 .pa-inbox-face-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; width: 100%; min-width: 0; }
@@ -81,6 +84,7 @@ body.app-shell main > .pa-shell { padding: clamp(1rem, 2.4vw, 2rem); }
 .pa-directory-tools { margin-top: 1.2rem; }
 .pa-directory-tools > .pa-search { margin: 0 0 0.65rem; }
 .pa-person-card { min-height: 12rem; padding: 1rem 0.65rem; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow-soft); transition: border-color 120ms ease, background-color 120ms ease; }
+.pa-collection-face-card { min-height: 0; }
 button.pa-person-card:hover, button.pa-person-card:focus-visible { border-color: var(--accent); background: var(--tint); }
 button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; background: var(--tint); }
 .pa-avatar { width: clamp(5rem, 9vw, 7rem); height: clamp(5rem, 9vw, 7rem); border: 2px solid var(--line); box-shadow: 0 0 0 0.25rem var(--bg); }

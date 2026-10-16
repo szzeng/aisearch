@@ -447,6 +447,9 @@ def test_face_members_are_static_soft_anchors_and_ignore_state_is_independent(ap
         csrf = await api_env.authenticate(client)
         headers = api_env.post_headers(csrf)
         path = _collection_url(catalog, cid)
+        person_only_faces = await client.get(path + "/faces")
+        assert person_only_faces.status_code == 200
+        assert person_only_faces.json()["faces"] == [], "person membership does not create static face archives"
         payload = {"action": "add", "face_ids": [first, second, third], "expected_revision": revision, "hide_after_add": True}
         saved = await client.post(path + "/faces", headers=headers, json=payload)
         assert saved.status_code == 200, saved.text
@@ -490,8 +493,36 @@ def test_face_members_are_static_soft_anchors_and_ignore_state_is_independent(ap
         assert removed.status_code == 200
         assert catalog.read_one("SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (second,))["ignore_state"] == "EXCLUDED"
         assert catalog.read_one("SELECT ignore_state FROM face_inbox_hidden WHERE face_id=?", (first,))["ignore_state"] == "TEMPORARY"
-
     api_env.scenario(scenario)
+
+
+def test_face_members_page_never_mixes_collections(api_env: ApiEnv) -> None:
+    from photo_search.persons import collections
+
+    seeded = seed_library(api_env, {
+        "合集甲脸.jpg": [(20, 20, 90, 90)],
+        "合集乙脸.jpg": [(120, 20, 190, 90)],
+    })
+    catalog = api_env.service.catalog
+    face_a = seeded["合集甲脸.jpg"]["faces"][0]
+    face_b = seeded["合集乙脸.jpg"]["faces"][0]
+    record_a = collections.create_collection(catalog, "合集甲") ["collection"]
+    record_b = collections.create_collection(catalog, "合集乙") ["collection"]
+    id_a, token_a = int(record_a["collection_id"]), str(record_a["instance_token"])
+    id_b, token_b = int(record_b["collection_id"]), str(record_b["instance_token"])
+    collections.edit_face_members(
+        catalog, id_a, action="add", face_ids=[face_a], instance_token=token_a,
+        expected_revision=int(record_a["revision"]),
+    )
+    collections.edit_face_members(
+        catalog, id_b, action="add", face_ids=[face_b], instance_token=token_b,
+        expected_revision=int(record_b["revision"]),
+    )
+
+    page_a = collections.face_members_page(catalog, id_a, instance_token=token_a)
+    page_b = collections.face_members_page(catalog, id_b, instance_token=token_b)
+    assert {face["face_id"] for face in page_a["faces"]} == {face_a}
+    assert {face["face_id"] for face in page_b["faces"]} == {face_b}
 
 
 def test_face_archive_uses_only_confirmed_unique_high_redetection_mapping(api_env: ApiEnv) -> None:

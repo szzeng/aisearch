@@ -8,7 +8,7 @@
 
 A 的 Schema v32/合集实现已在 `b389f8d`；B 增补新版 source-crop worker 合成链路和合集限定搜索/时间轴测试。定向 JUnit **4/0/0/0**，Ruff、`git diff --check` 通过；source-crop 与 search/timeline 状态 **PASS**。Luna High 子代理独立复核已完成、无 finding；这是 LUNA High review，不是 DS-H review。
 
-浏览器新会话在隔离合成库成功认证、展开候选组并明确选中 2 张脸、选择现有测试合集。提交确认处重现 `Emulation.setFocusEmulationEnabled` 超时，停止交互；数据库核对无写入。浏览器写入/回显、单脸区域、原图/crop、移出计数与忽略状态仍 **PENDING**，B 和 Fast Organize 整体均不标 PASS。[B 任务卡](tasks/P4-PERSON-FAST-ORGANIZE-B.md) / [B 报告](reports/P4-PERSON-FAST-ORGANIZE-B.md)。
+合集“人物”页读取 person members；“单独收录的人脸”仅读独立 face members。`CLIENT_ERROR` 的候选组渲染已修复。用户复测发现切换合集后会残留上一合集的旧卡片：现切换时作废旧请求并清理卡片/加载状态；后端查询本身按 collection_id 限定。进入“人物”页自动展开人脸区。隔离浏览器验证甲/乙各显示不同 face_id。用户反馈多张脸竖向堆叠后，确认原因为按候选 person_id 分全宽行；现将人脸卡直接放入统一响应式网格，辅助标签保留建议名，页面只显示一次说明；头像卡悬停显示手型鼠标，不改变边框或背景；进入合集人物相册会隐藏合集专属的人脸区域。8 张合成脸在内置浏览器显示为同一画廊，定向 UI JUnit **1 passed**；截图及原因见 [B 验收报告](reports/P4-PERSON-FAST-ORGANIZE-B.md)。Node、Ruff、diff-check 通过。截图与报告见 [B 验收报告](reports/P4-PERSON-FAST-ORGANIZE-B.md)。脸卡移出、原图/crop、忽略状态及合集搜索/时间轴交互仍 **PENDING**，B 和 Fast Organize 整体不标 PASS。[B 任务卡](tasks/P4-PERSON-FAST-ORGANIZE-B.md) / [B 报告](reports/P4-PERSON-FAST-ORGANIZE-B.md)。
 
 ## Context: P4-PERSON-FAST-ORGANIZE-A
 

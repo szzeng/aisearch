@@ -64,3 +64,7 @@ Ruff 检查命令：
 ## B 闭环进展（2026-10-16）
 
 新版 source-crop worker 的合成验收以及合集限定搜索/时间轴证据已在 [B 验收报告](P4-PERSON-FAST-ORGANIZE-B.md) 通过。浏览器使用新隔离 fixture 重新认证并完成候选组明确选择，但最终写入确认处重现 `Emulation.setFocusEmulationEnabled` 超时；数据库核对为零写入，按卡停止重试。因此 A 的 source-crop 缺口已关闭，BROWSER_PENDING 仍保留，A/B 整体不标 PASS。
+
+## 人脸合集错误反馈修复（2026-10-16）
+
+浏览器诊断中合集脸级写入返回 401，未写入合成 catalog；随后 CUA/CDP 超时，按任务卡停止交互。人物页共用 API 错误处理已更新：对无结构 404、非 JSON 响应和网络失败显示原因/状态，对 401 明确要求重启本地图库并使用启动器新生成的一次性链接，对 403 保留拒绝码；附带可用的 request ID，Persons 脚本缓存版本同步递增。定向 UI/API pytest 3 passed，Luna High 限定复核无 finding，完整记录见 [B 验收报告](P4-PERSON-FAST-ORGANIZE-B.md)。这没有消除服务端 401 本身，也未完成浏览器闭环。

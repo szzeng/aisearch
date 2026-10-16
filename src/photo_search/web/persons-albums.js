@@ -78,11 +78,17 @@
   }
   function requestId() { return "album-" + crypto.randomUUID(); }
   function errorText(error) {
-    if (error.status === 401 || error.status === 403) return "会话已失效，请从启动器的一次性链接重新打开。";
+    const requestHint = error.requestId ? "（请求编号 " + String(error.requestId).slice(0, 64) + "）" : "";
+    if (error.status === 401) return "本地会话已失效。请完全退出并重启本地图库，再打开启动器新生成的一次性链接。" + requestHint;
+    if (error.status === 403) return "本地服务拒绝了此请求" + (error.code ? "（" + error.code + "）" : "（HTTP 403）") + "。请从本机图库页面重试。" + requestHint;
+    if (error.code === "NETWORK_ERROR") return "无法连接本地服务，请确认图库程序仍在运行；必要时从启动器重启。" + requestHint;
+    if (error.code === "NON_JSON_RESPONSE") return "本地服务返回了无法识别的错误（HTTP " + Number(error.status || 0) + "）。请完全退出并从启动器重新打开。" + requestHint;
+    if (error.status === 404 && error.code === "HTTP_404") return "本地服务没有提供此接口（HTTP 404），可能与当前页面版本不匹配。请完全退出并从启动器重新打开。" + requestHint;
     if (error.code === "PENDING_WRITE") return "上次保存结果尚未确认，请先点“重试上次保存”。";
     if (error.status === 409) return "整理状态有更新，请刷新后再试。" + (error.details && error.details.reason ? "（" + error.details.reason + "）" : "");
     if (error.code && /MODEL|RUNTIME|PROFILE|SPACE|GENERATION/.test(error.code)) return "搜索模型尚未就绪，仍可点“全部照片”浏览相册。";
-    return "这次操作没有完成，请重试。" + (error.code ? "（" + error.code + "）" : "");
+    const diagnostic = error.code || (error.status ? "HTTP_" + Number(error.status) : "CLIENT_ERROR");
+    return "这次操作没有完成，请重试。（" + diagnostic + "）" + requestHint;
   }
   async function api(path, body, method) {
     const headers = { Accept: "application/json" };
@@ -92,12 +98,25 @@
       if (!csrf) { const e = new Error(); e.status = 401; throw e; }
       headers["X-CSRF-Token"] = decodeURIComponent(csrf.slice(8));
     }
-    const response = await fetch("/api/v1" + path, { method: method || (body ? "POST" : "GET"),
-      credentials: "same-origin", cache: "no-store", headers, body: body ? JSON.stringify(body) : undefined });
-    const result = await response.json();
+    let response;
+    try {
+      response = await fetch("/api/v1" + path, { method: method || (body ? "POST" : "GET"),
+        credentials: "same-origin", cache: "no-store", headers, body: body ? JSON.stringify(body) : undefined });
+    } catch (error) {
+      const e = new Error(); e.code = "NETWORK_ERROR"; throw e;
+    }
+    let result;
+    try { result = await response.json(); }
+    catch (error) {
+      const e = new Error(); e.status = response.status; e.code = "NON_JSON_RESPONSE";
+      e.requestId = response.headers && response.headers.get ? response.headers.get("X-Request-ID") : null;
+      throw e;
+    }
     if (!response.ok) {
       const e = new Error(); e.status = response.status;
-      e.code = result.code; e.details = result.details; throw e;
+      e.code = result.code || "HTTP_" + response.status; e.details = result.details;
+      e.requestId = result.request_id || (response.headers && response.headers.get ? response.headers.get("X-Request-ID") : null);
+      throw e;
     }
     return result;
   }
@@ -842,7 +861,7 @@
     $("title").textContent = state.collection.name;
     $("album-kind").textContent = "人物合集";
     $("album-avatar").replaceChildren(node("span", "人物合集", "pa-collection-badge"));
-    $("album-note").textContent = Number(state.collection.member_count || 0) + " 个人物 · " + Number(state.collection.face_member_count || 0) + " 张单独收录的人脸 · " + Number(state.collection.photo_count || 0) + " 张去重照片。按脸收录只保存这张脸所在的照片。";
+    $("album-note").textContent = Number(state.collection.member_count || 0) + " 个人物 · " + Number(state.collection.face_member_count || 0) + " 张单独收录的人脸 · " + Number(state.collection.photo_count || 0) + " 张去重照片。人物成员显示在“人物”页；这里仅显示单独选中的人脸。按脸收录只保存这张脸所在的照片。";
     $("name").hidden = true; $("merge").hidden = true; $("cover").hidden = true;
     $("search-photos").hidden = true; $("collection-view-controls").hidden = false;
     refreshSearchScopeAction();
@@ -854,7 +873,12 @@
   }
   function openCollection(collection) {
     if (state.writing || state.pendingWrite || state.collectionActionBusy || state.collectionPeopleBusy) return;
-    state.returnCollection = null; state.collectionSeq++; state.selectedCollectionFaces.clear(); state.collectionFaceLoadedIds = []; state.collectionFaceCursor = null; state.collectionFacesManage = false; state.collectionFacesStale = false;
+    state.returnCollection = null; state.collectionSeq++; state.collectionFaceSeq = (state.collectionFaceSeq || 0) + 1;
+    state.busy.delete("collectionFacesLoad"); state.collectionFaceCards = new Map();
+    state.selectedCollectionFaces.clear(); state.collectionFaceLoadedIds = []; state.collectionFaceCursor = null; state.collectionFaceHasMore = false;
+    state.collectionFaceAnchor = null; state.collectionFacesManage = false; state.collectionFacesStale = false;
+    $("collection-faces").replaceChildren(); $("collection-faces-note").textContent = "";
+    $("collection-faces-retry").hidden = true; $("collection-faces-more").hidden = true;
     state.collection = collection; state.person = null; state.collectionMode = "photos"; state.collectionPeopleCursor = null; state.collectionSelectedPeople.clear(); state.collectionPeopleManage = false; state.collectionRemoveUnknown = false; state.collectionPeopleStale = false;
     state.coverMode = false; state.searching = false; $("library").hidden = true; $("album").hidden = false;
     $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("collection-face-section").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
@@ -888,13 +912,17 @@
   function collectionFaceCard(face) {
     const card = node("article", undefined, "pa-person-card pa-collection-face-card");
     card.faceId = String(face.face_id); card.dataset.faceId = card.faceId; card.dataset.collectionFace = "true";
+    const description = face.candidate ? "建议归入 " + face.candidate.name
+      : face.assigned_person ? "已归属 " + face.assigned_person.name : "单独收录的人脸";
+    card.title = description; card.setAttribute("aria-label", description);
     const image = face.thumbnail_url || null;
     card.append(picture(image, face.status === "CURRENT" ? "单独收录的人脸" : "原照片，等待人脸重新关联", "pa-avatar"));
-    const title = face.assigned_person
-      ? "已归属 " + face.assigned_person.name + " · 仅收此照片"
-      : face.candidate ? "建议归入 " + face.candidate.name + " · 仅当前收录脸" : "单独收录的人脸";
-    card.append(node("strong", title));
-    card.append(node("span", face.status === "CURRENT" ? "只包含这张脸所在的照片" : face.status === "NEEDS_REASSOCIATION" ? "待重新关联；已保留照片，不会指向其他人脸" : face.status === "SOURCE_MISSING" ? "来源不可用；收录锚点仍保留" : "照片内容已变化；收录暂不显示", "hint"));
+    if (face.assigned_person) card.append(node("strong", "已归属 " + face.assigned_person.name));
+    if (face.status !== "CURRENT") {
+      const statusText = face.status === "NEEDS_REASSOCIATION" ? "待重新关联；已保留照片，不会指向其他人脸"
+        : face.status === "SOURCE_MISSING" ? "来源不可用；收录锚点仍保留" : "照片内容已变化；收录暂不显示";
+      card.append(node("span", statusText, "hint"));
+    }
     if (face.ignore_state) card.append(node("span", face.ignore_state === "EXCLUDED" ? "明确排除" : "暂时忽略", "hint"));
     const choose = node("input"); choose.type = "checkbox"; choose.className = "pt-person-checkbox";
     choose.hidden = !state.collectionFacesManage; choose.checked = state.selectedCollectionFaces.has(card.faceId);
@@ -940,7 +968,7 @@
     const seq = (state.collectionFaceSeq || 0) + 1; state.collectionFaceSeq = seq;
     if (!more) {
       state.collectionFaceCursor = null; state.collectionFaceHasMore = false; state.collectionFaceLoadedIds = [];
-      state.collectionFaceGroups = new Map(); state.collectionFaceCards = new Map(); state.selectedCollectionFaces.clear(); state.collectionFaceAnchor = null;
+      state.collectionFaceCards = new Map(); state.selectedCollectionFaces.clear(); state.collectionFaceAnchor = null;
       $("collection-faces").replaceChildren(); $("collection-faces-retry").hidden = true;
     }
     const values = { limit: 40 }; if (more) values.cursor = state.collectionFaceCursor;
@@ -958,23 +986,13 @@
         state.collectionFaceLoadedIds.push(id);
         const card = collectionFaceCard(face);
         state.collectionFaceCards.set(id, card);
-        if (face.candidate) {
-          const key = String(face.candidate.person_id);
-          let group = state.collectionFaceGroups.get(key);
-          if (!group) {
-            group = node("details", undefined, "pa-collection-face-group");
-            group.dataset.candidateId = key;
-            const summary = node("summary", "建议归入 " + face.candidate.name + "（只显示本合集已收录的人脸）", "hint");
-            const members = node("div", undefined, "pa-people-grid"); group.append(summary, members);
-            state.collectionFaceGroups.set(key, { group, members }); $("collection-faces").append(group);
-          }
-          group.members.append(card);
-        } else $("collection-faces").append(card);
+        $("collection-faces").append(card);
+
       }
       state.collectionFaceCursor = page.next_cursor; state.collectionFaceHasMore = Boolean(page.has_more && page.next_cursor);
       state.collectionFacesStale = false;
       $("collection-faces-more").hidden = !state.collectionFaceHasMore;
-      $("collection-faces-note").textContent = Number(collection.face_member_count || 0) + " 张脸 · 候选分组只展示当前合集已收录的人脸；分组不会更改归属。";
+      $("collection-faces-note").textContent = Number(collection.face_member_count || 0) + " 张脸 · 建议仅供参考，不会更改人脸归属。";
       updateCollectionFaceSelection(); return true;
     } catch (error) {
       if (seq === state.collectionFaceSeq) {
@@ -983,7 +1001,9 @@
         if (!more) $("collection-faces-retry").hidden = false;
       }
       return false;
-    } finally { state.busy.delete("collectionFacesLoad"); updateCollectionFaceSelection(); }
+    } finally {
+      if (seq === state.collectionFaceSeq) { state.busy.delete("collectionFacesLoad"); updateCollectionFaceSelection(); }
+    }
   }
   function updateCollectionFaceSelection() {
     const managing = state.collectionFacesManage;
@@ -1254,7 +1274,7 @@
       state.collection = state.returnCollection; state.returnCollection = null; state.person = null;
       state.collectionMode = "people"; state.collectionPeopleManage = false; state.collectionSelectedPeople.clear(); state.collectionSeq++; state.photoSeq++;
       $("album").hidden = false; $("library").hidden = true; $("collection-view-controls").hidden = false;
-      $("collection-people").hidden = false; $("collection-people-actions").hidden = false; updateCollectionSelection();
+      $("collection-people").hidden = false; $("collection-people-actions").hidden = false; $("collection-face-section").hidden = false; $("collection-face-section").open = true; updateCollectionSelection();
       $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true");
       $("photos").hidden = true; $("photos-more").hidden = true; collectionHeading(); loadCollectionPeople(false); syncDirectoryPagers(); $("back").focus(); return;
     }
@@ -1768,7 +1788,7 @@
     if (!$("library").hidden) state.libraryPosition = captureLibraryPosition();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     state.collection = null; state.collectionSeq++; state.person = person; state.coverMode = false; $("library").hidden = true; $("album").hidden = false;
-    $("collection-people").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
+    $("collection-people").hidden = true; $("collection-face-section").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false;
     $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true;
     $("photo-query").value = ""; state.searching = false; albumHeading(); loadPhotos(false); syncDirectoryPagers();
     $("back").focus();
@@ -2504,7 +2524,7 @@
     if (!state.collectionPager) $("collections-more").addEventListener("click", () => loadCollections(true));
     $("collection-add").addEventListener("click", () => addSelectionToCollection(false));
     $("collection-photos-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionPeopleManage) finishCollectionPeopleManagement(); state.collectionMode = "photos"; $("collection-photos-tab").setAttribute("aria-pressed", "true"); $("collection-people-tab").setAttribute("aria-pressed", "false"); $("collection-people").hidden = true; $("collection-people-actions").hidden = true; $("collection-people-more").hidden = true; $("collection-people-retry").hidden = true; $("collection-face-section").hidden = true; $("photos").hidden = false; $("photos-more").hidden = false; syncDirectoryPagers(); loadPhotos(false); });
-    $("collection-people-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionMode !== "people") { state.collectionPeopleManage = false; state.collectionSelectedPeople.clear(); } state.collectionMode = "people"; refreshSearchScopeAction(); $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; $("collection-face-section").hidden = false; updateCollectionSelection(); updateCollectionFaceSelection(); syncDirectoryPagers(); loadCollectionPeople(false); });
+    $("collection-people-tab").addEventListener("click", () => { if (!state.collection || state.collectionPeopleBusy) return; if (state.collectionMode !== "people") { state.collectionPeopleManage = false; state.collectionSelectedPeople.clear(); } state.collectionMode = "people"; refreshSearchScopeAction(); $("collection-photos-tab").setAttribute("aria-pressed", "false"); $("collection-people-tab").setAttribute("aria-pressed", "true"); $("photos").hidden = true; $("photos-more").hidden = true; $("timeline").hidden = true; $("collection-people").hidden = false; $("collection-face-section").hidden = false; $("collection-face-section").open = true; updateCollectionSelection(); updateCollectionFaceSelection(); syncDirectoryPagers(); loadCollectionPeople(false); if (!state.collectionFaceLoadedIds.length) loadCollectionFaces(false); });
     $("collection-face-section").addEventListener("toggle", () => { if ($("collection-face-section").open && state.collection && state.collectionMode === "people" && !state.collectionFaceLoadedIds.length) loadCollectionFaces(false); });
     $("collection-faces-manage").addEventListener("click", () => { if (state.collectionPeopleBusy || state.collectionFacesStale) return; state.collectionFacesManage = !state.collectionFacesManage; if (!state.collectionFacesManage) { state.selectedCollectionFaces.clear(); state.collectionFaceAnchor = null; } updateCollectionFaceSelection(); });
     $("collection-faces-select-loaded").addEventListener("click", selectLoadedCollectionFaces);
