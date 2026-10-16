@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="18" time="4.368" timestamp="2026-10-16T02:01:42.623459+08:00" hostname="TCC_SZ"><testcase classname="tests.integration.test_api_access" name="test_openapi_document_is_behind_the_session" time="0.451" /><testcase classname="tests.integration.test_api_frontend_routes" name="test_the_search_page_is_public_while_its_api_stays_protected" time="0.194"><failure message="assert 'href=&quot;/search&quot;' in '&lt;!DOCTYPE html&gt;\n&lt;html lang=&quot;zh-CN&quot;&gt;\n  &lt;head&gt;\n    &lt;meta charset=&quot;utf-8&quot; /&gt;\n    &lt;meta name=&quot;viewport&quot; content=&quot;widt...    &lt;noscript&gt;\n      &lt;p class=&quot;error&quot;&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'&#10; +  where '&lt;!DOCTYPE html&gt;\n&lt;html lang=&quot;zh-CN&quot;&gt;\n  &lt;head&gt;\n    &lt;meta charset=&quot;utf-8&quot; /&gt;\n    &lt;meta name=&quot;viewport&quot; content=&quot;widt...    &lt;noscript&gt;\n      &lt;p class=&quot;error&quot;&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n' = &lt;Response [200 OK]&gt;.text">api_env = ApiEnv(tmp_path=WindowsPath('D:/SZ/project/aisearch/.pytest-tmp/P4-RELEASE-030/test_the_search_page_is_public0'), data...0&gt;, session_id='[redacted]', csrf_token='[redacted]')
+
+    def test_the_search_page_is_public_while_its_api_stays_protected(api_env) -&gt; None:
+        """``/search`` is the P2-07 document; ``/api/v1/search`` is still session-protected."""
+
+        async def scenario(client: AsyncClient) -&gt; dict:
+            page = await client.get("/search")
+            script = await client.get("/web/search.js")
+            style = await client.get("/web/search.css")
+            shell = await client.get("/")
+            places = await client.get("/places")
+            anonymous = await client.post("/api/v1/search", json={"request_id": "r1"})
+            image = await client.post("/api/v1/search/image")
+            await api_env.authenticate(client)
+            profile = await client.get("/api/v1/search-profile")
+            return {
+                "page": page,
+                "script": script,
+                "style": style,
+                "shell": shell,
+                "places": places,
+                "anonymous": anonymous,
+                "image": image,
+                "profile": profile,
+            }
+
+        result = api_env.scenario(scenario)
+
+        page = result["page"]
+        assert page.status_code == 200, page.text
+        assert page.headers["Content-Type"].startswith("text/html")
+        assert "no-cache" in page.headers["Cache-Control"]
+        assert "http://" not in page.text and "https://" not in page.text
+        assert "搜索" in page.text
+        assert str(api_env.library) not in page.text
+        assert str(api_env.data_root) not in page.text
+        assert TOKEN not in page.text
+
+        assert result["script"].status_code == 200
+        assert "javascript" in result["script"].headers["Content-Type"]
+        assert result["style"].status_code == 200
+        assert result["style"].headers["Content-Type"].startswith("text/css")
+
+        # The three documents link to each other.
+&gt;       assert 'href="/search"' in result["shell"].text
+E       assert 'href="/search"' in '&lt;!DOCTYPE html&gt;\n&lt;html lang="zh-CN"&gt;\n  &lt;head&gt;\n    &lt;meta charset="utf-8" /&gt;\n    &lt;meta name="viewport" content="widt...    &lt;noscript&gt;\n      &lt;p class="error"&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n'
+E        +  where '&lt;!DOCTYPE html&gt;\n&lt;html lang="zh-CN"&gt;\n  &lt;head&gt;\n    &lt;meta charset="utf-8" /&gt;\n    &lt;meta name="viewport" content="widt...    &lt;noscript&gt;\n      &lt;p class="error"&gt;本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。&lt;/p&gt;\n    &lt;/noscript&gt;\n  &lt;/body&gt;\n&lt;/html&gt;\n' = &lt;Response [200 OK]&gt;.text
+
+tests\integration\test_api_frontend_routes.py:229: AssertionError</failure></testcase><testcase classname="tests.integration.test_p2_search_endpoint" name="test_an_explicitly_bound_text_search_answers_one_reproducible_page" time="1.344" /><testcase classname="tests.unit.test_catalog_migrations" name="test_fresh_database_migrates_to_the_supported_version" time="0.155" /><testcase classname="tests.unit.test_catalog_migrations" name="test_repeated_migration_is_idempotent" time="0.131" /><testcase classname="tests.unit.test_catalog_migrations" name="test_face_inbox_ignore_state_migration_preserves_legacy_rows_as_temporary" time="0.001" /><testcase classname="tests.unit.test_catalog_migrations" name="test_schema_31_upgrade_adds_empty_face_members_without_changing_existing_facts" time="0.361" /><testcase classname="tests.unit.test_catalog_migrations" name="test_schema_21_people_remain_visible_after_visibility_migration" time="0.247" /><testcase classname="tests.unit.test_catalog_migrations" name="test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused" time="0.296" /><testcase classname="tests.unit.test_catalog_migrations" name="test_versioned_database_with_missing_core_object_is_inconsistent" time="0.142" /><testcase classname="tests.unit.test_catalog_migrations" name="test_tables_without_a_usable_version_are_inconsistent" time="0.006" /><testcase classname="tests.unit.test_catalog_migrations" name="test_too_new_schema_is_refused_before_any_write_side_effect" time="0.107" /><testcase classname="tests.unit.test_catalog_migrations" name="test_failed_migration_rolls_back_and_keeps_the_old_version" time="0.208" /><testcase classname="tests.unit.test_catalog_migrations" name="test_upgrade_creates_a_consistent_backup_first" time="0.231" /><testcase classname="tests.unit.test_catalog_migrations" name="test_insufficient_disk_space_blocks_a_new_database" time="0.003" /><testcase classname="tests.unit.test_catalog_migrations" name="test_preflight_reads_a_live_wal_database_without_changing_it" time="0.172" /><testcase classname="tests.unit.test_catalog_migrations" name="test_catalog_open_exposes_no_migration_bypass" time="0.000" /><testcase classname="tests.unit.test_catalog_migrations" name="test_a_build_without_migration_scripts_fails_loudly" time="0.006" /></testsuite></testsuites>

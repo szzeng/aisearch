@@ -242,7 +242,7 @@ from photo_search.search.upload import (
 from photo_search.storage import quick_storage_summary
 from photo_search.taken_time import read as taken_time_read
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 # Local catalog ids can be reused after a rebuild. Revalidate the id-based URL;
 # the underlying content-addressed files still need no regeneration.
