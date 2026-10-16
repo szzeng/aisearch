@@ -1,6 +1,10 @@
 # Development status
 
-## Current user-directed task: P4-PERSON-AVATAR-HOVER-A — IMPLEMENTED / BROWSER ACCEPTANCE PENDING (2026-10-16)
+## Current user-directed task: P4-PERSON-AVATAR-CLICK-A — IMPLEMENTED / BASIC VALIDATED (2026-10-16)
+
+Luna High 已补齐“还没认出是谁 → 已忽略的人脸”：与待整理人脸、合集独立人脸一样，头像看照片、底框选择；人物级卡片保持原模式。最新定向 JUnit **4/0/0/0**，Node、Ruff、diff-check 通过，资源版本 `p4-person-avatar-click-a-3`。按要求未跑浏览器（`BROWSER_NOT_RUN_USER_REQUEST`），不标整体 PASS；保留共享提交 `7330bfd`，交付方式按用户追加要求为本地范围提交，不推送。下一步用户日常试用反馈。[任务卡](tasks/P4-PERSON-AVATAR-CLICK-A.md) / [报告](reports/P4-PERSON-AVATAR-CLICK-A.md)。
+
+## Previous task: P4-PERSON-AVATAR-HOVER-A — IMPLEMENTED / BROWSER ACCEPTANCE PENDING (2026-10-16)
 
 人物页头像（主头像、小头像及旧版人物工具头像/占位图）统一增加轻微悬停边框强调与柔和光圈，尊重减少动态效果设置。CSS 资源版本与断言已同步；未运行测试。用户要求跳过后续浏览器验证，单头像 DOM 探查不作为视觉验收通过。[任务卡](tasks/P4-PERSON-AVATAR-HOVER-A.md) / [报告](reports/P4-PERSON-AVATAR-HOVER-A.md)。
 

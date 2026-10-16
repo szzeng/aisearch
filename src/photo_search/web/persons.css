@@ -409,6 +409,9 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 .pt-avatar-select { position: relative; display: inline-block; cursor: pointer; }
 .pt-avatar-checkbox, .pt-person-checkbox { position: absolute; width: 24px; height: 24px; margin: 0; accent-color: #238477; cursor: pointer; z-index: 1; }
 .pt-avatar-checkbox { top: 4px; right: 4px; }
+#pa-collection-faces .pt-person-checkbox, #pa-inbox-cards .pt-avatar-checkbox, #pa-inbox-hidden-cards .pt-avatar-checkbox {
+  position: static; top: auto; left: auto; align-self: flex-end; margin: 0.15rem;
+}
 #pa-cards .pa-person-card { position: relative; cursor: pointer; }
 .pt-person-checkbox { top: 12px; left: calc(50% + 20px); }
 .pa-person-selection { position: static; }

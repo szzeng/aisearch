@@ -11,7 +11,7 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-person-nav-implement-a-4' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-person-avatar-click-a-3' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
@@ -24,7 +24,7 @@ class Element {
  replaceChild(next,old){const index=this.children.indexOf(old);if(index<0)throw Error('missing child');old.parent=null;if(next.parent)next.parent.children=next.parent.children.filter(x=>x!==next);next.parent=this;this.children[index]=next;return old;}
  remove(){if(this.parent)this.parent.children=this.parent.children.filter(x=>x!==this);this.parent=null;}
  setAttribute(k,v){this.attributes[k]=v;}removeAttribute(k){delete this.attributes[k];}
- addEventListener(n,fn){this.events[n]=fn;}removeEventListener(n){delete this.events[n];}fire(n,...args){return this.events[n]?.(...args);}
+ addEventListener(n,fn){const prior=this.events[n];this.events[n]=prior?event=>{prior(event);return fn(event);}:fn;}removeEventListener(n){delete this.events[n];}fire(n,event={target:this,currentTarget:this,preventDefault(){},stopPropagation(){}}){return this.events[n]?.(event);}
  querySelector(s){return Array.from(this.children).find(c=>String(c.className||'').split(' ').includes(s.slice(1)));}
  querySelectorAll(){return [];}focus(options){this.focusOptions=options;}
  showModal(){this.open=true;}close(){this.open=false;}
@@ -77,7 +77,7 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 vm.createContext(context);vm.runInContext(fs.readFileSync('src/photo_search/web/scroll-pager.js','utf8'),context);
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,loadCollectionPeople,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,openCollection,loadPhotos,loadDetailBatch,boot};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,loadCollectionPeople,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,openCollection,loadPhotos,loadDetailBatch,boot,reconcilePeopleCards,collectionFaceCard};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
@@ -214,10 +214,33 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  await ui.loadCollectionPeople(true);
  assert.equal(ui.state.collectionPeopleStale,true,'a changed collection revision blocks old member results');
  assert.equal(get('collection-people').children.length,0);assert.equal(ui.state.collectionSelectedPeople.size,0);
+ // Collection person-member avatars retain the original batch-selection behavior.
+ ui.state.collectionPeopleStale=false;ui.state.collectionPeopleManage=true;ui.state.collectionSelectedPeople=new Set([1000]);
+ await ui.loadCollectionPeople(false);const member=get('collection-people').children[0],memberAvatar=member.avatarPicture;
+ const selectedMember=ui.state.collectionSelectedPeople.has(1000),personBeforeAvatar=ui.state.person;
+ member.fire('click',{target:memberAvatar.children[0],shiftKey:false});
+ assert.notEqual(ui.state.collectionSelectedPeople.has(1000),selectedMember,'member avatar selects or deselects the person');
+ assert.equal(ui.state.person,personBeforeAvatar,'member avatar does not navigate to the person album in management');
+ // Ordinary person avatars also keep selecting their card in batch mode.
+ ui.state.batchMode=true;ui.state.selectedPeople=new Set();
+ const personCard=get('cards').children[0],personAvatar=personCard.avatarPicture;
+ personCard.fire('click',{target:personAvatar.children[0],shiftKey:false});
+ assert(ui.state.selectedPeople.has(personCard.personId),'person avatar click uses the existing card selection behavior');
+ // A standalone collection-face avatar opens its source photo; its body toggles and Shift adds a loaded range.
+ ui.state.collectionFacesManage=true;ui.state.collectionFacesStale=false;ui.state.collectionPeopleBusy=false;
+ ui.state.collectionFaceLoadedIds=['face-a','face-b'];ui.state.collectionFaceAnchor=null;ui.state.selectedCollectionFaces.clear();
+ const faceCardA=ui.collectionFaceCard({face_id:'face-a',asset_id:81,status:'CURRENT'});
+ const faceCardB=ui.collectionFaceCard({face_id:'face-b',asset_id:82,status:'CURRENT'});
+ assert.notEqual(faceCardA.selectionBox.parent,faceCardA.avatarPicture,'checkbox is outside the standalone-face avatar');
+ faceCardA.fire('click',{target:faceCardA,shiftKey:false});assert(ui.state.selectedCollectionFaces.has('face-a'));
+ faceCardA.fire('click',{target:faceCardA.avatarPicture.children[0],shiftKey:false,currentTarget:faceCardA});
+ assert.equal(ui.state.previewAssetId,81,'standalone-face avatar opens its source photo');
+ faceCardB.fire('click',{target:faceCardB,shiftKey:true});
+ assert.deepEqual(Array.from(ui.state.selectedCollectionFaces),['face-a','face-b'],'Shift adds the loaded standalone-face range');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(
         [node, "-e", script], cwd=Path(__file__).resolve().parents[2],
         capture_output=True, text=True, encoding="utf-8", timeout=15,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr

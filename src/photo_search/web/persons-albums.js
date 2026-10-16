@@ -24,6 +24,13 @@
     if (className) item.className = className;
     return item;
   }
+  function contains(root, target) {
+    if (!root || !target) return false;
+    if (root === target) return true;
+    if (typeof root.contains === "function") return root.contains(target);
+    for (let item = target.parentNode || target.parent; item; item = item.parentNode || item.parent) if (item === root) return true;
+    return false;
+  }
   function button(label, action, className) {
     const item = node("button", label, className); item.type = "button";
     item.addEventListener("click", action); return item;
@@ -916,7 +923,14 @@
       : face.assigned_person ? "已归属 " + face.assigned_person.name : "单独收录的人脸";
     card.title = description; card.setAttribute("aria-label", description);
     const image = face.thumbnail_url || null;
-    card.append(picture(image, face.status === "CURRENT" ? "单独收录的人脸" : "原照片，等待人脸重新关联", "pa-avatar"));
+    const avatarPicture = picture(image, face.status === "CURRENT" ? "单独收录的人脸" : "原照片，等待人脸重新关联", "pa-avatar");
+    avatarPicture.tabIndex = 0; avatarPicture.setAttribute("role", "button"); avatarPicture.setAttribute("aria-label", "打开人脸来源照片");
+    avatarPicture.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (!state.writing && !state.pendingWrite && !state.collectionPeopleBusy && !state.collectionFacesStale) preview(Number(face.asset_id), avatarPicture, face);
+    });
+    card.avatarPicture = avatarPicture; card.append(avatarPicture);
     if (face.assigned_person) card.append(node("strong", "已归属 " + face.assigned_person.name));
     if (face.status !== "CURRENT") {
       const statusText = face.status === "NEEDS_REASSOCIATION" ? "待重新关联；已保留照片，不会指向其他人脸"
@@ -945,10 +959,22 @@
     card.selectionBox = choose; card.append(choose);
     card.addEventListener("click", (event) => {
       if (event.target === choose) return;
-      if (state.collectionFacesManage) selectCollectionFaceRange(card.faceId);
-      else preview(Number(face.asset_id), event.currentTarget, face);
+      if (state.writing || state.pendingWrite || state.collectionPeopleBusy || state.collectionFacesStale) return;
+      if (state.collectionFacesManage && contains(avatarPicture, event.target)) { preview(Number(face.asset_id), avatarPicture, face); return; }
+      if (state.collectionFacesManage) {
+        if (event.shiftKey) selectCollectionFaceRange(card.faceId);
+        else toggleCollectionFace(card.faceId);
+      } else preview(Number(face.asset_id), event.currentTarget, face);
     });
     return card;
+  }
+  function toggleCollectionFace(faceId) {
+    if (!state.collectionFacesManage || state.collectionFacesStale || state.collectionPeopleBusy || state.writing || state.pendingWrite) return;
+    const id = String(faceId);
+    if (state.selectedCollectionFaces.has(id)) state.selectedCollectionFaces.delete(id);
+    else if (state.selectedCollectionFaces.size >= 500) { message("一次最多选择 500 张脸。"); return; }
+    else state.selectedCollectionFaces.add(id);
+    state.collectionFaceAnchor = id; updateCollectionFaceSelection();
   }
   function selectCollectionFaceRange(faceId) {
     if (!state.collectionFacesManage || state.collectionFacesStale || state.collectionPeopleBusy || state.writing || state.pendingWrite) return;
@@ -1347,16 +1373,19 @@
     const comparison = node("div", undefined, "pa-inbox-face-comparison");
     const left = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-face");
     const avatar = node("div", undefined, "pt-avatar-select");
-    avatar.append(picture(face.thumbnail_url, "待整理人脸", "pa-avatar"), selection);
+    card.avatarWrapper = avatar;
+    const faceAvatar = picture(face.thumbnail_url, "待整理人脸", "pa-avatar");
+    faceAvatar.tabIndex = 0; faceAvatar.setAttribute("role", "button"); faceAvatar.setAttribute("aria-label", "打开这张人脸对应的照片");
+    faceAvatar.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault(); if (!state.writing && !state.pendingWrite && !state.faceVisibilityBusy) preview(face.asset_id, faceAvatar);
+    });
+    avatar.append(faceAvatar);
     selection.disabled = !(hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode) || state.writing || Boolean(state.pendingWrite) || state.faceVisibilityBusy;
     avatar.addEventListener("click", event => {
-      if (event.target === selection) return;
-      if (hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode) {
-        event.preventDefault(); event.stopPropagation();
-        if (event.shiftKey && selectInboxRange(card, event)) return;
-        toggleInboxFace(card.faceId, card.hiddenFace);
-      }
-      else { event.preventDefault(); preview(face.asset_id, event.currentTarget); }
+      event.preventDefault(); event.stopPropagation();
+      if (state.writing || state.pendingWrite || state.faceVisibilityBusy) return;
+      preview(face.asset_id, event.currentTarget);
     });
     left.append(avatar, node("span", hiddenFace
       ? (face.ignore_state === "EXCLUDED" ? "明确排除" : "暂时忽略")
@@ -1364,12 +1393,13 @@
     comparison.append(left);
     if (suggestion) {
       const right = node("div", undefined, "pa-inbox-compare-side pa-inbox-compare-reference");
+      card.referenceSide = right;
       const reference = picture(suggestion.thumbnail_url, "参考头像：" + name(suggestion), "pa-avatar pa-reference-avatar");
       if (!suggestion.thumbnail_url) reference.children[0].textContent = "暂无参考头像";
       right.append(reference, node("span", "可能是" + name(suggestion), "hint"));
       comparison.append(right);
     }
-    card.append(comparison);
+    card.append(comparison, selection);
     card.viewButton = button("查看整张照片", event => preview(face.asset_id, event.currentTarget));
     card.viewButton.addEventListener("click", event => event.stopPropagation());
     card.append(card.viewButton, node("span", organizationText(face), "hint"));
@@ -1383,7 +1413,8 @@
       card.append(card.choosePersonButton);
     }
     card.addEventListener("click", event => {
-      if ([selection, card.viewButton, card.confirmButton, card.otherPersonButton, card.choosePersonButton].includes(event.target)) return;
+      if ([selection, card.viewButton, card.confirmButton, card.otherPersonButton, card.choosePersonButton].some((target) => contains(target, event.target))) return;
+      if (contains(card.avatarWrapper, event.target) || contains(card.referenceSide, event.target)) return;
       if (hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode) {
         if (event.shiftKey && selectInboxRange(card, event)) return;
         toggleInboxFace(card.faceId, card.hiddenFace);
