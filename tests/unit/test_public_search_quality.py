@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import io
+import json
 import sys
+import tarfile
 import zipfile
 
 import numpy as np
 import pytest
+from PIL import Image
 
+from tools.evaluation import public_search_quality as public_quality
 from tools.evaluation.public_search_quality import (
     main,
     normalized,
@@ -106,3 +112,129 @@ def test_cli_refuses_occupied_output_without_loading_or_writing(tmp_path, monkey
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "preserve existing evidence" in captured.err
+
+
+def test_official_source_splits_have_separate_verified_metadata_caches(tmp_path, monkeypatch):
+    ids = {name: f"COCO_val2014_{number:012d}" for number, name in enumerate(("test", "train", "val"), 1)}
+    archive = tmp_path / "coco-cn-version1805v1.1.tar.gz"
+    with tarfile.open(archive, "w:gz") as handle:
+        members = {f"coco-cn_{split}.txt": key + "\n" for split, key in ids.items()}
+        members["imageid.human-written-caption.txt"] = "\n".join(f"{key}#0\t中文描述" for key in ids.values())
+        for name, content in members.items():
+            raw = content.encode()
+            entry = tarfile.TarInfo("coco-cn-version1805v1.1/" + name)
+            entry.size = len(raw)
+            handle.addfile(entry, io.BytesIO(raw))
+    monkeypatch.setattr(public_quality, "CN_SHA", public_quality.sha256(archive))
+    remote = io.BytesIO()
+    with zipfile.ZipFile(remote, "w", zipfile.ZIP_DEFLATED) as handle:
+        for split in ("train2014", "val2014"):
+            handle.writestr(f"annotations/captions_{split}.json", json.dumps({
+                "licenses": [{"id": 4, "name": "CC-BY"}],
+                "images": [{"file_name": key + ".jpg", "license": 4} for key in ids.values()] if split == "val2014" else [],
+            }))
+    loads = []
+
+    def remote_zip(url):
+        loads.append(url)
+        return io.BytesIO(remote.getvalue())
+
+    monkeypatch.setattr(public_quality, "RemoteZip", remote_zip)
+    # An old cache only knew about test IDs; it must not suppress the train data.
+    public_quality.write_json(tmp_path / "coco-image-license-metadata.json", {"images": {ids["test"]: {}}})
+    for split in ("test", "train", "val"):
+        selected, captions, metadata = public_quality.load_annotations(tmp_path, split)
+        assert selected == [ids[split]]
+        assert set(metadata["images"]) == {ids[split]}
+        assert captions[ids[split]] == ["中文描述"]
+        assert metadata["source_split"] == split
+    assert len(loads) == 3
+    public_quality.load_annotations(tmp_path, "train")
+    assert len(loads) == 3
+    train_cache = tmp_path / "coco-image-license-metadata-train.json"
+    tampered = json.loads(train_cache.read_text(encoding="utf-8"))
+    tampered["source_split"] = "test"
+    public_quality.write_json(train_cache, tampered)
+    with pytest.raises(ValueError, match="source split"):
+        public_quality.load_annotations(tmp_path, "train")
+
+
+def _jpeg_bytes(color):
+    output = io.BytesIO()
+    Image.new("RGB", (4, 4), color).save(output, format="JPEG")
+    return output.getvalue()
+
+
+def _mock_public_downloads(monkeypatch):
+    ids = [f"COCO_val2014_{number:012d}" for number in range(1, 4)]
+    contents = dict(zip(ids, [_jpeg_bytes(color) for color in ("red", "green", "blue")], strict=True))
+    source_splits, requested = [], []
+
+    def annotations(directory, source_split="test"):
+        source_splits.append(source_split)
+        return ids, {key: ["独立图片"] for key in ids}, {
+            "licenses": {"4": {"id": 4, "name": "CC-BY"}},
+            "images": {key: {"file_name": key + ".jpg", "license": 4, "coco_url": f"http://images.cocodataset.org/val2014/{key}.jpg"} for key in ids},
+        }
+
+    def fetch_image(url, **kwargs):
+        key = url.rsplit("/", 1)[-1][:-4]
+        requested.append(key)
+        return contents[key]
+
+    monkeypatch.setattr(public_quality, "load_annotations", annotations)
+    monkeypatch.setattr(public_quality, "fetch", fetch_image)
+    return ids, contents, source_splits, requested
+
+
+def test_prepare_excludes_prior_ids_before_download_and_records_provenance(tmp_path, monkeypatch):
+    ids, contents, source_splits, requested = _mock_public_downloads(monkeypatch)
+    excluded = tmp_path / "previous.json"
+    public_quality.write_json(excluded, {
+        "schema": "public-search-quality-dataset-v1",
+        "images": [{"id": ids[0], "sha256": hashlib.sha256(contents[ids[0]]).hexdigest()}],
+    })
+    result = public_quality.prepare(argparse.Namespace(
+        output=tmp_path / "new", count=2, tuning=1, seed=42,
+        source_split="train", exclude_dataset=excluded,
+    ))
+    assert result["status"] == "ok"
+    assert source_splits == ["train"]
+    assert set(requested) == set(ids[1:])
+    dataset = json.loads((tmp_path / "new" / "dataset.json").read_text(encoding="utf-8"))
+    assert {row["id"] for row in dataset["images"]} == set(ids[1:])
+    assert dataset["source_split"] == "train"
+    assert dataset["excluded_dataset"]["sha256"] == public_quality.sha256(excluded)
+
+
+def test_prepare_refuses_same_content_under_a_different_id(tmp_path, monkeypatch):
+    ids, contents, source_splits, _ = _mock_public_downloads(monkeypatch)
+    excluded = tmp_path / "previous.json"
+    public_quality.write_json(excluded, {
+        "schema": "public-search-quality-dataset-v1",
+        "images": [{"id": "different-old-id", "sha256": hashlib.sha256(contents[ids[1]]).hexdigest()}],
+    })
+    # Older Python callers do not have source_split; they keep official test.
+    with pytest.raises(ValueError, match="content overlaps"):
+        public_quality.prepare(argparse.Namespace(
+            output=tmp_path / "new", count=3, tuning=1, seed=42, exclude_dataset=excluded,
+        ))
+    assert source_splits == ["test"]
+    assert not (tmp_path / "new" / "dataset.json").exists()
+
+
+def test_prepare_legacy_arguments_and_duplicate_content_guard(tmp_path, monkeypatch):
+    ids, contents, source_splits, _ = _mock_public_downloads(monkeypatch)
+    contents[ids[1]] = contents[ids[0]]
+    with pytest.raises(ValueError, match="duplicate content"):
+        public_quality.prepare(argparse.Namespace(output=tmp_path / "new", count=3, tuning=1, seed=42))
+    assert source_splits == ["test"]
+    assert not (tmp_path / "new" / "dataset.json").exists()
+
+
+def test_prepare_refuses_an_existing_dataset_without_touching_it(tmp_path):
+    original = b"preserve the previous selection and evidence"
+    (tmp_path / "dataset.json").write_bytes(original)
+    with pytest.raises(public_quality.ExistingRunOutputError, match="preserve existing dataset"):
+        public_quality.prepare(argparse.Namespace(output=tmp_path))
+    assert (tmp_path / "dataset.json").read_bytes() == original

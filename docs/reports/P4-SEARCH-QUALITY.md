@@ -82,3 +82,71 @@ $env:USE_TORCH = '1'
 ```
 
 完整受影响验证命令与退出码在 `test-results/search-quality-20261016/affected-execution.json`；原始 JUnit/对照/身份核验均在同目录。公开图片、向量和最终指纹在 `.tmp/search-quality-20261016/`。它们是本机可复核证据，不随 Git 分发；仓库仅保留代码、回归测试、小型合成夹具及本摘要。
+
+## 同类项目方案对照（第二阶段，2026-10-16）
+
+按用户要求继续查官方文档及固定源码；不是安装竞品后的整体验收。已合流远端 `0dd903d` 的有界人物整理功能，52项受影响测试通过；该提交和前次遗留浏览器PENDING继续由原卡跟踪。本阶段复用已有权重、独立公开/合成数据，不改变生产搜索默认值。
+
+| 项目与定位 | 核对到的实际方法 | 对本项目的判断 |
+|---|---|---|
+| [Immich](https://docs.immich.app/features/searching/)，自托管照片库，源码 `e5094d5` | Postgres + VectorChord；OCR把中文转为重叠双字，再做trigram模糊匹配；不同模型使用对应预处理 | 借鉴OCR错字候选；不能把模糊匹配当作精确编号/短语，也没有理由仅为相同功能换数据库 |
+| [Ente Photos](https://ente.com/ml/)，端到端加密照片产品，源码 `0f6c3b6` | 本机MobileCLIP，余弦门槛0.175；查询向量缓存与预热；USearch在源码中受功能开关控制 | 门槛值得校准实测，数值不能跨模型搬用；其OCR是按需文字选择，不是我们这样的全图库OCR索引 |
+| [LibrePhotos](https://docs.librephotos.com/docs/user-guide/search/)，自托管照片库，源码 `28fb70f` | OpenCLIP + FAISS精确内积；文字匹配与过阈值的语义结果取并集，文档明确最终列表不按相似度排序；同一次图像编码还能生成标签 | 它的31.3是未归一化内积，不能作为我们的cosine阈值；现有RRF继续保留。复用向量做受控标签是后续候选 |
+| [PhotoPrism](https://docs.photoprism.app/user-guide/search/filters/)，自托管照片管理，源码 `9321352` | 标签/关键词关系加SQL条件，可选模型生成描述；审查的照片搜索路径不是CLIP+BM25融合 | 明确筛选和可解释标签值得借鉴；自动描述不等同于可靠OCR |
+| [digiKam](https://docs.digikam.org/en/left_sidebar/similarity_view.html)，本地桌面照片管理，官方Invent `cb31e36` | Haar小波指纹用于相似图/重复图/草图；Tesseract是显式批量后处理 | 感知指纹与中文语义搜索互补，不能替代语义向量或字节身份 |
+
+关键实现：[Immich OCR词法](https://github.com/immich-app/immich/blob/e5094d54e95fc5c7d6f39990485835b15c0707bf/server/src/utils/database.ts#L372)、[Ente门槛及缓存](https://github.com/ente-io/ente/blob/0f6c3b6367a07b8d55e5d134682749c2389afde3/mobile/apps/photos/lib/services/machine_learning/semantic_search/semantic_search_service.dart#L35)、[LibrePhotos精确索引](https://github.com/LibrePhotos/librephotos/blob/28fb70f944e00ad749ee77e9b2eecc78ff98b610/apps/backend/image_similarity/retrieval_index.py)、[PhotoPrism搜索](https://github.com/photoprism/photoprism/blob/9321352a7dac030ff51eade6f43044ac39a1b1e7/internal/entity/search/photos.go)、[digiKam小波指纹](https://invent.kde.org/graphics/digikam/-/blob/cb31e36b97ee1c0a06cc0c1b7d576f745ff98973/core/libs/database/haar/haar.cpp)。LibrePhotos的64位pHash去重仍是全对全比较，不能直接扩到30万张；digiKam的GitHub镜像已旧，本次核对的是官方Invent。
+
+### 实际尝试一：容忍OCR错字
+
+当前/旧文字策略走真实SQLite Catalog/FTS。Immich方向用SQLite Python UDF近似Postgres文档定义的完整词区间trigram Jaccard，固定默认门槛0.5；没有部署Postgres或复现其GIN执行计划，不声称这是Immich整机效果。分别输出六字段适配和OCR-only结果，原产品的OCR过滤也不等于本实验相似度排序。
+
+在冻结的新40条文本、22查询上，六字段近似法能找回4/4自然句和4/4错字目标，当前字面FTS两组均0/4；代价是编号返回精度87.5%→50%、跨字段条件100%→37.5%、无相关查询误报0/2→1/2。例如查ZX9019带出ZX9012/ZX9013，“深圳 灯塔”带出珠海灯塔。原76条记录/30查询也没有整体变好：当前正例召回100%、无相关误报0/4，模糊近似为92.3%、3/4。均为刻意设计的小组，不能当总体准确率。
+
+因此本轮保留精确默认行为；模糊候选适合后续独立的“纠错/放宽”入口。它还需要有界候选索引，不能把这里的小数据UDF全扫描放进30万图库。
+
+### 实际尝试二：整图、融合与阈值
+
+固定600张新的公开COCO-CN图片，来自官方train部分，按本项目用途重新固定200张调整、400张确认，seed20261017；确认有453条中文描述。旧240张的ID与内容SHA均排除，新增集内部重复内容也拒绝。这里的“未见”指本项目未使用，不保证模型训练未见。下载图片约96.5MB，许可/来源/文件指纹保留；实际GPU仍为RTX5070Ti16GB。
+
+方案在结果前声明：中心裁剪、整图补边、两视图取最大、两视图平均后归一化为一条向量、Qwen512，以及CLIP+Qwen等权RRF和按调整集均值/标准差归一化后的等权分数。维度实验继续保留原512/1024/2048对照；没有按新确认结果网格调参。
+
+| 新确认集：400图、453条中文描述 | 对应图片排第一 | 排前五 |
+|---|---:|---:|
+| CLIP 中心裁剪 | 68.87% | 92.27% |
+| CLIP 整图补边 | 70.42% | 91.61% |
+| CLIP 两视图取最大 | 72.85% | 92.72% |
+| CLIP 两视图平均单向量 | 70.64% | 92.49% |
+| Qwen 512维 | 72.19% | 96.03% |
+| CLIP+Qwen 等权RRF | 75.28% | 96.03% |
+| CLIP+Qwen 调整集标准化分数融合 | 77.92% | 96.25% |
+
+双视图最大值相对中心裁剪 +3.97个百分点，31条改善/13条退步，按图片分组bootstrap 95%区间[0.69,7.63]；单均值向量只+1.77，区间[-1.04,4.54]，未证明可以保留全部收益。标准化融合相对Qwen512为+5.74，39条改善/13条退步，区间[2.59,8.95]；RRF为+3.09，区间[-1.30,7.17]。区间均未作多重比较校正，限于预声明方案的小图库配对检索。宽/高画幅子集92图110查询单列于原始结果，不据此追加规则。
+
+这里融合的是**两个图像模型的检索结果**，不是已经证明文字FTS与图像通道应该改用该公式。两模型错误有互补：只CLIP正确50条、只Qwen正确65条；但融合仍有13条相对Qwen退步。更大的确认集也显示第一阶段小集的高分不能外推。
+
+Qwen维度独立重算：512/1024/2048的Top1为72.19%/72.63%/74.61%。2048相对512 +2.43个百分点，区间[0,4.99]，1024 +0.44，区间[-1.56,2.49]。仍未据此改默认。
+
+**阈值诊断：** 直接照搬Ente的0.175，在400图库里CLIP平均返回398.69张，Qwen返回71.93张。仅在调整集选择保留至少95%已知配对的阈值（CLIP0.41618、Qwen0.35507）后，确认集平均候选降至6.79/5.39张，但已知目标也只保留94.04%/96.03%。其他图片未穷尽标注，因此不能把它叫precision，也不能证明真实“无相关图”的拒绝效果。当前默认不增加这个硬截断。
+
+**成本与决定：** 双视图最大值、双模型标准化融合是最值得继续的候选；平均成单向量尚未证明足够好。双视图/双模型512维裸向量约1.23GB/30万图，而一条512维约614MB；双模型还要两次查询编码及两个独立空间。当前产品只有一个活动图像世代，不能用一处排序改动偷偷启用双模型；本轮保持默认，不修改持久格式/依赖或真实索引。FAISS/USearch/VectorChord没有在本轮替换测试，同行使用它们不等于我们的精确有界筛选应该改成ANN。
+
+本轮CLIP模型加载26.75秒、文字单次p50 3.35ms；Qwen加载23.27秒、文字p50 28.22ms。与上轮203秒加载不同，但模型代码未改、未控制系统冷缓存，不能声称冷启动已修复。模型运行串行，未证明双模型同时常驻显存或产品端到端延迟。
+
+### 第二阶段验证与复现
+
+新增/扩展工具测试：公开数据准备12项、视觉重放21项、文字对照9项均通过；上游合流受影响52项通过，实际exit0。两次模型运行、数据准备、fit/evaluate和Qwen维度重算均有实际退出记录及JUnit。独立审查推动补上文字实验依赖指纹、视觉captions类型等完整性校验；修复前后文字208条结果和探索视觉排名完全一致。工具/夹具变化不触发未变产品全仓重跑。本轮未新增UI行为，不把上游既有浏览器缺口算作通过。
+
+先按前文设置项目Python、临时目录及缓存，再运行；模型目录须已有权重，输出使用新路径：
+
+```powershell
+& $py tools/evaluation/public_search_quality.py prepare --output .tmp/peer-repro/data --source-split train --exclude-dataset .tmp/search-quality-20261016/datasets/dataset.json --count 600 --tuning 200 --seed 20261017
+# 使用前文 run 命令分别生成 .tmp/peer-repro/clip 与 qwen，dataset 改为 .tmp/peer-repro/data/dataset.json
+& $py -m tools.evaluation.peer_search_quality fit --dataset .tmp/peer-repro/data/dataset.json --clip-run .tmp/peer-repro/clip --qwen-run .tmp/peer-repro/qwen --plan tools/evaluation/peer_search_plan.json --mode confirmation --exclude-dataset .tmp/search-quality-20261016/datasets/dataset.json --output test-results/peer-repro-frozen.json
+& $py -m tools.evaluation.peer_search_quality evaluate --dataset .tmp/peer-repro/data/dataset.json --clip-run .tmp/peer-repro/clip --qwen-run .tmp/peer-repro/qwen --plan tools/evaluation/peer_search_plan.json --mode confirmation --exclude-dataset .tmp/search-quality-20261016/datasets/dataset.json --frozen test-results/peer-repro-frozen.json --output test-results/peer-repro-result.json
+& $py -m tools.evaluation.peer_text_search --freeze-to test-results/peer-text-plan.json
+& $py -m tools.evaluation.peer_text_search --plan test-results/peer-text-plan.json --result test-results/peer-text-result.json
+& $py -m pytest -q tests/unit/test_public_search_quality.py tests/unit/test_peer_search_quality.py tests/unit/test_peer_text_search.py --basetemp=.pytest-tmp/peer-repro --junitxml=test-results/peer-repro.xml
+```
+
+首次复现须先按第一阶段prepare命令生成旧240图排除清单；公开图片与向量不随Git分发。原始材料在 `.tmp/peer-search-20261016/`、`test-results/peer-search-20261016/`。固定方案随代码保存于 `tools/evaluation/peer_search_plan.json`；旧240的新变体结果只作二次探索，新600为本轮确认。

@@ -141,7 +141,11 @@ def public_image_path(directory: Path, filename: str, image_id: str) -> Path:
     return destination
 
 
-def load_annotations(directory: Path) -> tuple[list[str], dict[str, list[str]], dict[str, Any]]:
+def load_annotations(
+    directory: Path, source_split: str = "test",
+) -> tuple[list[str], dict[str, list[str]], dict[str, Any]]:
+    if source_split not in {"test", "train", "val"}:
+        raise ValueError("unknown official COCO-CN source split")
     archive = directory / "coco-cn-version1805v1.1.tar.gz"
     if not archive.exists():
         archive.write_bytes(fetch(CN_URL, cap=17 * 1024 * 1024))
@@ -150,15 +154,24 @@ def load_annotations(directory: Path) -> tuple[list[str], dict[str, list[str]], 
     prefix = "coco-cn-version1805v1.1/"
     with tarfile.open(archive, "r:gz") as handle:
         # Read exact known regular members; never extract supplied paths or code.
-        test_ids = handle.extractfile(prefix + "coco-cn_test.txt").read().decode("utf-8").splitlines()
+        selected_ids = handle.extractfile(prefix + f"coco-cn_{source_split}.txt").read().decode("utf-8").splitlines()
         caption_text = handle.extractfile(prefix + "imageid.human-written-caption.txt").read().decode("utf-8")
     captions: dict[str, list[str]] = {}
     for line in caption_text.splitlines():
         key, caption = line.split("\t", 1)
         captions.setdefault(key.split("#", 1)[0], []).append(caption.strip())
-    metadata_path = directory / "coco-image-license-metadata.json"
+    selected_id_set = set(selected_ids)
+    cache_identity = {
+        "source_split": source_split, "annotations_sha256": CN_SHA,
+        "ids_sha256": hashlib.sha256("\n".join(sorted(selected_id_set)).encode()).hexdigest(),
+    }
+    # The old unqualified cache only contained official test IDs. Never reuse it
+    # for train/val, and bind even a named cache to the actual annotation IDs.
+    metadata_path = directory / f"coco-image-license-metadata-{source_split}.json"
     if metadata_path.exists():
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if any(metadata.get(key) != value for key, value in cache_identity.items()):
+            raise ValueError("public metadata cache does not match its source split")
     else:
         reader = RemoteZip(COCO_URL)
         with zipfile.ZipFile(reader) as handle:
@@ -171,22 +184,22 @@ def load_annotations(directory: Path) -> tuple[list[str], dict[str, list[str]], 
             licenses.update({str(item["id"]): item for item in decoded["licenses"]})
             for item in decoded["images"]:
                 key = Path(item["file_name"]).stem
-                if key in test_ids:
+                if key in selected_id_set:
                     images[key] = item
-        metadata = {"source": COCO_URL, "licenses": licenses, "images": images}
+        metadata = {"source": COCO_URL, **cache_identity, "licenses": licenses, "images": images}
         write_json(metadata_path, metadata)
-    return test_ids, captions, metadata
+    return selected_ids, captions, metadata
 
 
 def select_images(
     test_ids: list[str], captions: dict[str, list[str]], metadata: dict[str, Any],
-    *, count: int, tuning: int, seed: int,
+    *, count: int, tuning: int, seed: int, excluded_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     if not 0 < tuning < count:
         raise ValueError("tuning size must leave a nonempty holdout")
     eligible = sorted({
         key for key in test_ids
-        if key in captions and key in metadata["images"]
+        if key not in (excluded_ids or ()) and key in captions and key in metadata["images"]
         and int(metadata["images"][key]["license"]) in ALLOWED_LICENSES
     })
     if len(eligible) < count:
@@ -206,10 +219,35 @@ def select_images(
 
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     directory = args.output.resolve()
+    if (directory / "dataset.json").exists():
+        raise ExistingRunOutputError(f"preserve existing dataset; choose another output directory: {directory}")
     directory.mkdir(parents=True, exist_ok=True)
-    test_ids, captions, metadata = load_annotations(directory)
+    source_split = getattr(args, "source_split", "test")
+    excluded_ids: set[str] = set()
+    excluded_hashes: set[str] = set()
+    exclusion = None
+    excluded_dataset = getattr(args, "exclude_dataset", None)
+    if excluded_dataset is not None:
+        excluded_path = Path(excluded_dataset).resolve()
+        excluded_bytes = excluded_path.read_bytes()
+        previous = json.loads(excluded_bytes)
+        if previous.get("schema") != "public-search-quality-dataset-v1" or not isinstance(previous.get("images"), list):
+            raise ValueError("exclude dataset must be a prepared public dataset")
+        for row in previous["images"]:
+            key, digest = row.get("id"), row.get("sha256")
+            if not isinstance(key, str) or not key or not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+                raise ValueError("exclude dataset needs an image ID and SHA256 for every image")
+            excluded_ids.add(key)
+            excluded_hashes.add(digest)
+        exclusion = {
+            "path": str(excluded_path), "sha256": hashlib.sha256(excluded_bytes).hexdigest(),
+            "images": len(previous["images"]), "unique_ids": len(excluded_ids),
+            "unique_content_hashes": len(excluded_hashes),
+        }
+    test_ids, captions, metadata = load_annotations(directory, source_split)
     selected = select_images(
-        test_ids, captions, metadata, count=args.count, tuning=args.tuning, seed=args.seed
+        test_ids, captions, metadata, count=args.count, tuning=args.tuning, seed=args.seed,
+        excluded_ids=excluded_ids,
     )
     images_dir = directory / "images"
     images_dir.mkdir(exist_ok=True)
@@ -224,13 +262,19 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         from PIL import Image
         with Image.open(path) as image:
             image.verify()
-        return {**row, "path": str(path), "sha256": sha256(path), "bytes": path.stat().st_size}
+        digest = sha256(path)
+        if digest in excluded_hashes:
+            raise ValueError(f"public image content overlaps the excluded dataset: {row['id']}")
+        return {**row, "path": str(path), "sha256": digest, "bytes": path.stat().st_size}
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         images = list(pool.map(download, selected))
+    if len({row["sha256"] for row in images}) != len(images):
+        raise ValueError("selected public image IDs contain duplicate content")
     result = {
         "schema": "public-search-quality-dataset-v1", "seed": args.seed,
-        "selection": "fixed random subset of official COCO-CN test IDs after license eligibility",
+        "source_split": source_split, "excluded_dataset": exclusion,
+        "selection": f"fixed random subset of official COCO-CN {source_split} IDs after license eligibility and exclusion",
         "split_policy": "image-disjoint; each split uses its own image gallery",
         "annotations_source": CN_URL, "annotations_sha256": CN_SHA,
         "annotations_license": "MIT as declared by the official COCO-CN HF card",
@@ -405,6 +449,8 @@ def main() -> int:
     setup.add_argument("--count", type=int, default=240)
     setup.add_argument("--tuning", type=int, default=60)
     setup.add_argument("--seed", type=int, default=20261016)
+    setup.add_argument("--source-split", choices=("test", "train", "val"), default="test")
+    setup.add_argument("--exclude-dataset", type=Path, help="Previously inspected dataset to exclude by image ID and content SHA256")
     experiment = commands.add_parser("run")
     experiment.add_argument("--dataset", type=Path, required=True)
     experiment.add_argument("--output", type=Path, required=True)
