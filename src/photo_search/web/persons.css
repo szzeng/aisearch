@@ -412,3 +412,31 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
 #pa-collection-people .pa-person-card[aria-pressed="true"] { outline: 3px solid #238477; background: #eaf5f1; }
 #pa-collection-people .pa-person-card:focus-visible { outline: 3px solid #238477; outline-offset: 3px; }
 .danger-action { color: var(--danger, #9f2d2d); border-color: currentColor; }
+
+/* People page category navigation. Existing controls remain in the document. */
+.pa-view-tabs,
+.pa-organize-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.pa-view-tabs {
+  margin: 0.75rem 0 0;
+  padding: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.pa-view-tabs button,
+.pa-organize-tabs button { border-radius: 999px; }
+.pa-view-tabs button[aria-pressed="true"],
+.pa-organize-tabs button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--tint);
+  color: var(--fg);
+}
+.pa-organize-tabs { margin: 0.7rem 0 0; }
+#pa-library [hidden] { display: none !important; }
+@media (max-width: 480px) {
+  .pa-view-tabs button,
+  .pa-organize-tabs button { flex: 1 1 auto; }
+}

@@ -7,7 +7,8 @@ from pathlib import Path
 
 def test_collection_list_and_photo_page_show_total_distinct_photo_count() -> None:
     html = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert "persons-albums.js?v=p4-person-fast-organize-a-2" in html.read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-person-nav-implement-a-4" in html.read_text(encoding="utf-8")
+    assert "persons.css?v=p4-person-nav-implement-a-4" in html.read_text(encoding="utf-8")
     script_source = html.with_name("persons-albums.js").read_text(encoding="utf-8")
     assert "new Set([...state.selectedInboxFaces, ...state.selectedHiddenFaces]).size" in script_source
     assert "preview(Number(face.asset_id), event.currentTarget, face)" in script_source

@@ -1,6 +1,10 @@
 # Development status
 
-## Current user-directed task: P4-PERSON-FAST-ORGANIZE-B — ACCEPTANCE PARTIAL (2026-10-16)
+## Current user-directed task: P4-PERSON-NAV-IMPLEMENT-A — IMPLEMENTED / BASIC VALIDATED (2026-10-16)
+
+已接入生产分类：人物／合集／待整理，待整理下未命名人物／未识别人脸分别显示和加载，保留原功能；分类切换清选择并恢复各自筛选。追加修复图片关闭误退列表：同 URL 图片历史不触发分类切换。最终定向 JUnit **28/0/0/0**、Node、Ruff、diff-check 通过；隔离合成库内置浏览器完成分类、筛选/选择、合集返回、前进/后退及人物／未命名／合集图片关闭（关闭按钮、Esc、浏览器返回）。Luna High 实现与 JS 限定复核不代替完整独立工程审查；长列表、200% 缩放、完整写入/撤销和性能未验收，不标整体 PASS。本轮仅本地范围提交，不推送。[任务卡](tasks/P4-PERSON-NAV-IMPLEMENT-A.md) / [报告与截图](reports/P4-PERSON-NAV-IMPLEMENT-A.md) / [后续审查卡](tasks/P4-PERSON-NAV-IMPLEMENT-A-review.md)。
+
+## Product context: P4-PERSON-FAST-ORGANIZE-B — ACCEPTANCE PARTIAL (2026-10-16)
 
 A 的 Schema v32/合集实现已在 `b389f8d`；B 增补新版 source-crop worker 合成链路和合集限定搜索/时间轴测试。定向 JUnit **4/0/0/0**，Ruff、`git diff --check` 通过；source-crop 与 search/timeline 状态 **PASS**。Luna High 子代理独立复核已完成、无 finding；这是 LUNA High review，不是 DS-H review。
 

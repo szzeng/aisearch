@@ -11,7 +11,7 @@ def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
     page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-ui2-scroll-load-b-3' in page.read_text(encoding="utf-8")
+    assert 'persons-albums.js?v=p4-person-nav-implement-a-4' in page.read_text(encoding="utf-8")
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;} }
@@ -77,7 +77,7 @@ const context={URLSearchParams,URL,crypto:{randomUUID:()=>String(++uuid)},setTim
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 vm.createContext(context);vm.runInContext(fs.readFileSync('src/photo_search/web/scroll-pager.js','utf8'),context);
-code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,loadCollectionPeople,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,openCollection,loadPhotos,boot};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,loadPeople,loadInbox,loadInboxSummary,loadCollections,loadCollectionPeople,ensureAllCollectionsLoaded,refreshPeopleViews,refreshChangedPeople,refreshAfterWrite,backToLibrary,setView,renderPeopleManagement,addSelectionToCollection,openCollection,loadPhotos,loadDetailBatch,boot};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.runInContext(code,context);const ui=context.ui;
 const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards').children.map(c=>c.groupKey);
@@ -86,7 +86,10 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  assert(!calls.some(c=>c.url.includes('/persons/collections')),'collapsed collections do not load on entry');
  assert(!calls.some(c=>c.url.includes('/faces/source-detail-preview')||c.url==='/api/v1/sources'),'unused rematch preview and source list are deferred');
  assert(calls.find(c=>c.url.includes('/persons/browse?')).url.includes('sort=photos_recent_desc'));
- await ui.setView(true);await flush();
+ // This loader-level fixture exercises both retained datasets together; the native
+ // mutually exclusive navigation is covered by the navigation workflow scenario.
+ ui.state.libraryNavigationReady=false;ui.state.libraryView='unnamed';ui.state.organize=true;
+ await ui.loadPeople(false);await ui.loadDetailBatch(false);await flush();
  assert(calls.some(c=>c.url.includes('/faces/source-detail-batches/active')),'current active rematch status remains visible');
  summaryGate=new Promise(resolve=>{releaseSummary=resolve;});
  await ui.loadInbox(false);
@@ -108,9 +111,9 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  await ui.loadPeople(false);await ui.loadPeople(true);await ui.loadPeople(true);
  await ui.loadInbox(false);await ui.loadInbox(true);await ui.loadInbox(true);
  assert.deepEqual(ids(),[1,2,3]);assert.equal(ui.state.peoplePages,3);assert.equal(ui.state.inboxPages,3);
- for(const g of get('inbox-cards').children.slice(1)){g.open=true;g.fire('toggle');await flush();await g.children[2].fire('click');}
+ for(const g of get('inbox-cards').children.slice(1)){g.open=true;g.fire('toggle');await flush();await g.querySelector('.pa-inbox-group-more').fire('click');}
  const group22=get('inbox-cards').children[1],group33=get('inbox-cards').children[2];
- assert.equal(group22.children[1].children.length,4);assert.equal(group33.children[1].children.length,4);
+ assert.equal(group22.querySelector('.pa-inbox-group-faces').children.length,4);assert.equal(group33.querySelector('.pa-inbox-group-faces').children.length,4);
  // Refresh reconciles cards by person id and keeps the loaded image object.
  const originalCard=get('cards').children[0],originalImage=originalCard.avatarImage;
  people=[people[1],{...people[0],name:'最新人物名',revision:9,asset_count:42,collections:[{collection_id:4,name:'旅行'}]},...people.slice(2)];
@@ -140,12 +143,12 @@ const ids=()=>get('cards').children.map(c=>c.personId),keys=()=>get('inbox-cards
  assert.equal(calls.filter(c=>c.url.includes('/persons/browse?')).length,browseBeforeMode,'same mode click preserves state and does not reload');
  ui.state.selectedPeople.clear();people=[people[1],people[0],...people.slice(2)];await ui.loadPeople(false);
  context.window.scrollY=1900;const atConfirm=calls.length;
- await group33.children[1].children[0].confirmButton.fire('click');assert.equal(calls.length,atConfirm+1);
+ await group33.querySelector('.pa-inbox-group-faces').children[0].confirmButton.fire('click');assert.equal(calls.length,atConfirm+1);
  groups=groups.filter(id=>id!==11);group33.open=false;group33.fire('toggle');await flush();await flush();await flush();
  assert.deepEqual(keys(),['candidate:22','candidate:33','candidate:44'],'collapse restores all three loaded outer pages');
  assert.deepEqual(ids(),[1,2,3]);assert.equal(context.window.scrollY,1800,'surviving visible card stays at the same viewport offset');
  const reopened=get('inbox-cards').children[0];assert.equal(reopened.open,true);
- assert.equal(reopened.children[1].children.length,4,'other expanded group retains both loaded face pages');
+ assert.equal(reopened.querySelector('.pa-inbox-group-faces').children.length,4,'other expanded group retains both loaded face pages');
  assert.equal(ui.state.inboxCursor,null);assert.equal(ui.state.listCursor,revision+':3');
  await ui.loadPeople(true);assert.deepEqual(ids(),[1,2,3,4],'load more continues with refreshed cursors');
  // Naming from a later unnamed card refreshes its loaded extent and preserves album return scroll.

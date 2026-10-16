@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>人物相册</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-ui2-scroll-load-b-3" />
+    <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" />
+    <script src="/web/map-config.js" defer></script>
+    <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
+    <script src="/web/photo-info.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
+    <script src="/web/persons.js?v=p4-ui2-person-batch-ux-fix-a-1" defer></script>
+    <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-fast-organize-a-6" defer></script>
+      <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
+  <link rel="stylesheet" href="/web/navigation.css?v=project-nav-preview-2" />
+    <script src="/web/navigation.js?v=project-nav-preview-2" defer></script>
+  </head>
+  <body class="app-shell">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <aside class="app-sidebar" aria-label="应用导航">
+      <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
+      <nav class="app-nav" aria-label="主要导航">
+        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <!-- The existing page capability probe reveals this entry when person data is readable. -->
+        <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons" aria-current="page"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
+        <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
+      </nav>
+      <nav class="app-nav app-nav-secondary" aria-label="其他入口">
+        <a class="nav-link" data-shell-page="map" href="/map"><span class="nav-icon" aria-hidden="true">⌖</span>地图相册</a>
+        <a class="nav-link" data-shell-page="management" href="/?view=sources"><span class="nav-icon" aria-hidden="true">⚙</span>图库管理</a>
+      </nav>
+    </aside>
+
+    <div class="app-workspace">
+<header class="app-header has-global-search">
+      <h1>人物相册</h1><span class="project-preview-label">页面分类样板 · 隔离示例图库</span>
+      <form class="global-search-form" action="/search" method="get" role="search">
+        <label class="sr-only" for="global-search-query">搜索照片</label>
+        <input id="global-search-query" name="q" type="search" maxlength="256" autocomplete="off" placeholder="描述你想找的照片，例如：海边日落" />
+        <button type="submit">全库搜索</button>
+        <button id="global-search-scope" type="button" hidden>搜索此相册</button>
+      </form>
+      <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
+    </header>
+
+    <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
+
+    <main id="main" tabindex="-1">
+      <section id="pa-library" class="panel pa-shell" aria-label="我的人物">
+        <div class="pa-heading pa-library-heading"><div><p class="pa-eyebrow">人物与相册</p><h2>熟悉的人，都在这里</h2><p class="hint">点头像看照片；取个名字，下次直接搜。</p></div>
+          <div class="pa-mode-switch row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
+        </div>
+        <section class="pa-collections-section" aria-label="人物合集"><div class="pa-section-heading"><div><h3>人物合集</h3><p class="hint">把常一起出现的人物放在一起浏览。</p></div><div class="row-actions"><button type="button" id="pa-collections-toggle">查看合集</button><button type="button" id="pa-collection-create">新建合集</button></div></div>
+          <section id="pa-collections-panel" hidden><p id="pa-collections-note" class="hint" role="status" aria-live="polite"></p><button id="pa-collections-retry" type="button" hidden>重试加载合集</button><div id="pa-collections" class="pa-people-grid pa-collection-grid"></div><div id="pa-collections-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
+        </section>
+        <div class="pa-directory-tools"><form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">筛选人物</label><input id="pa-query" type="search" maxlength="200" placeholder="筛选人物，例如：妈妈" autocomplete="off" /><button>筛选人物</button></form>
+        <label class="pa-collection-filter"><input id="pa-collection-state" type="checkbox" />只看未加入合集</label>
+        <p class="hint">人物按照片数量从多到少排列。</p>
+        <div class="row-actions" aria-label="人物批量管理">
+          <button type="button" id="pa-batch-toggle">批量管理</button>
+          <button type="button" id="pa-hidden-toggle">查看已忽略</button>
+          <div id="pa-ignore-state-filter" class="row-actions" hidden aria-label="忽略状态">
+            <button type="button" id="pa-ignore-temporary" aria-pressed="true">暂时忽略</button>
+            <button type="button" id="pa-ignore-excluded" aria-pressed="false">明确排除</button>
+          </div>
+            <span id="pa-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-people-clear" type="button" hidden>清空选择</button>
+          <button type="button" id="pa-visibility-submit" hidden disabled>忽略所选</button>
+          <label id="pa-ignore-state-label" hidden>忽略方式
+            <select id="pa-ignore-state"><option value="TEMPORARY">暂时忽略，以后可能处理</option><option value="EXCLUDED">明确排除，不再推荐</option></select>
+          </label>
+          <select id="pa-collection-choice" hidden aria-label="加入哪个合集"><option value="">选择合集</option></select>
+          <label id="pa-collection-hide-label" hidden><input id="pa-collection-hide" type="checkbox" />加入后忽略</label>
+          <button type="button" id="pa-collection-add" hidden disabled>加入合集</button>
+          <button type="button" id="pa-batch-merge" hidden disabled>合并到…</button>
+        </div>
+        <p class="hint">批量管理时按住 Shift 连选，仅限已加载人物。</p>
+        </div>
+        <p id="pa-list-count" class="hint" role="status" aria-live="polite" hidden></p>
+        <p id="pa-list-note" class="hint"></p>
+        <button id="pa-people-retry" type="button" hidden>重试加载人物</button>
+        <div id="pa-cards" class="pa-people-grid"></div>
+        <div id="pa-people-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div>
+        <button type="button" id="pa-more" hidden>再看一些人物</button>
+        <section id="pa-inbox" hidden>
+          <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
+          <div class="row-actions"><button id="pt-review-entry" type="button" hidden>识别更新待确认</button><button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button><span id="pt-review-summary-status" role="status"></span><details><summary>更多</summary><button id="pt-history-entry" type="button">操作历史</button></details></div>
+          <h3>还没认出是谁</h3>
+          <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
+          <div class="row-actions">
+            <label for="pa-inbox-kind">查看</label>
+            <select id="pa-inbox-kind">
+              <option value="all">全部待整理</option><option value="suggested">有相似人物建议</option>
+              <option value="quality">小脸或清晰度不足</option><option value="manual">我移出的人脸</option>
+              <option value="pending">还没有可靠匹配</option>
+            </select>
+          </div>
+          <details id="pa-recognition-tools"><summary>识别与补匹配工具</summary><div class="row-actions">
+            <button id="pa-rematch" type="button">补匹配未归类人脸</button>
+            <button id="pa-rematch-restart" type="button">从头重新检查旧照片</button>
+            <label for="pa-detail-source">补识别范围</label>
+            <select id="pa-detail-source"><option value="">全部图库</option></select>
+            <button id="pa-detail-batch" type="button">一键原图补识别</button>
+            <button id="pa-detail-pause" type="button" hidden>暂停补识别</button>
+            <button id="pa-detail-resume" type="button" hidden>继续补识别</button>
+            <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
+          </div>
+          </details>
+          <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
+          <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-summary-retry" type="button" hidden>重试统计</button>
+          <p id="pa-inbox-load-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-retry" type="button" hidden>重试加载待整理人脸</button>
+          <p class="hint">批量整理时按住 Shift 连选，仅限已加载人脸；候选组需先展开。</p>
+          <p class="hint">仅加入合集：只收藏这次选择的人脸/照片，不代表确认同一个人，也不会自动收进以后出现的相似脸。确认人物并继续识别：明确指定或建立人物后，符合现有识别条件的新照片才可能归入；需将人物加入合集，照片才会动态增加。</p>
+          <div class="row-actions" aria-label="待整理人脸批量管理">
+            <button id="pa-inbox-batch-toggle" type="button" aria-pressed="false">批量整理</button>
+            <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-clear" type="button" hidden>清空选择</button>
+            <label id="pa-inbox-ignore-state-label" hidden>忽略方式
+              <select id="pa-inbox-ignore-state"><option value="TEMPORARY">暂时忽略，以后可能处理</option><option value="EXCLUDED">明确排除，这些脸不再参与人物推荐</option></select>
+            </label>
+            <button id="pa-inbox-hide-submit" type="button" hidden disabled>暂时忽略所选人脸</button>
+            <select id="pa-inbox-collection-choice" hidden aria-label="将所选人脸加入哪个合集"><option value="">选择合集</option></select>
+            <label id="pa-inbox-collection-hide-label" hidden><input id="pa-inbox-collection-hide" type="checkbox" />加入后暂时忽略</label>
+            <button id="pa-inbox-collection-add" type="button" hidden disabled>加入合集</button>
+            <button id="pa-inbox-assign" type="button" hidden disabled>移到已有的人物</button>
+            <button id="pa-inbox-unassign" type="button" hidden disabled>从人物移出</button>
+            <button id="pa-inbox-auto" type="button" hidden disabled>恢复自动判断（保留排除）</button>
+          </div>
+          <div id="pa-inbox-cards" class="pa-people-grid"></div>
+          <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
+          <section class="pa-inbox-hidden" aria-label="已忽略人脸">
+            <h3>已忽略的人脸</h3>
+            <p class="hint">暂时忽略会保留人物建议；明确排除会让这张脸不再参与人物推荐。两种状态都保留原照片和人脸，可在这里恢复。</p>
+            <button id="pa-inbox-hidden-toggle" type="button" aria-expanded="false">查看已忽略人脸</button>
+            <div id="pa-inbox-hidden-content" hidden>
+              <div class="row-actions">
+                <button id="pa-inbox-hidden-batch-toggle" type="button" aria-pressed="false" hidden>管理已忽略人脸</button>
+                <span id="pa-inbox-hidden-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-hidden-clear" type="button" hidden>清空选择</button>
+                <button id="pa-inbox-restore-submit" type="button" hidden disabled>恢复所选人脸</button>
+              </div>
+              <div id="pa-inbox-hidden-cards" class="pa-people-grid"></div>
+              <button id="pa-inbox-hidden-more" type="button" hidden>再看一些已忽略人脸</button>
+            </div>
+          </section>
+        </section>
+      </section>
+      <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>
+        <button id="pa-back" type="button">← 所有人物</button>
+        <div id="pa-collection-view-controls" class="pa-collection-toolbar" hidden><div class="pa-mode-switch row-actions"><button id="pa-collection-photos-tab" type="button" aria-pressed="true">照片</button><button id="pa-collection-people-tab" type="button" aria-pressed="false">人物</button></div><div class="row-actions"><button id="pa-collection-rename" type="button">改名</button><button id="pa-collection-delete" type="button" class="danger-action">删除合集</button></div></div>
+        <div id="pa-collection-people-actions" class="row-actions" hidden><button id="pa-collection-manage-toggle" type="button" aria-pressed="false">管理合集人物</button><span id="pa-collection-people-selected" class="hint" hidden></span><button id="pa-collection-people-select-loaded" type="button" hidden>全选已加载</button><button id="pa-collection-people-invert-loaded" type="button" hidden>反选已加载</button><button id="pa-collection-remove" type="button" hidden disabled>移出所选</button><button id="pa-collection-selection-clear" type="button" hidden>清空选择</button><button id="pa-collection-people-reload" type="button" hidden>刷新合集人物</button><span class="hint">按住 Shift 连选，仅限已加载人物</span></div><div id="pa-collection-people" class="pa-people-grid" hidden></div><button id="pa-collection-people-retry" type="button" hidden>重试加载合集人物</button><div id="pa-collection-people-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button id="pa-collection-people-more" type="button" hidden>更多人物</button>
+        <details id="pa-collection-face-section" class="pa-collection-faces" hidden><summary>单独收录的人脸</summary><p id="pa-collection-faces-note" class="hint" role="status" aria-live="polite"></p><div class="row-actions"><button id="pa-collection-faces-manage" type="button" aria-pressed="false">管理已收录人脸</button><span id="pa-collection-faces-selected" class="hint" hidden></span><button id="pa-collection-faces-select-loaded" type="button" hidden>全选已加载</button><button id="pa-collection-faces-clear" type="button" hidden>清空选择</button><button id="pa-collection-faces-remove" type="button" hidden disabled>移出合集</button><button id="pa-collection-faces-reload" type="button" hidden>刷新人脸</button></div><div id="pa-collection-faces" class="pa-people-grid"></div><button id="pa-collection-faces-retry" type="button" hidden>重试加载已收录人脸</button><div id="pa-collection-faces-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button id="pa-collection-faces-more" type="button" hidden>更多人脸</button></details>
+        <div class="pa-heading pa-album-heading"><div class="pa-album-identity"><span id="pa-album-avatar"></span><div><p class="pa-eyebrow" id="pa-album-kind">人物相册</p><h2 id="pa-title"></h2><p class="hint" id="pa-album-note"></p></div></div><div class="pa-album-actions"><button id="pa-cover" type="button">更换封面</button><button id="pa-name" type="button">取名字</button><details id="pa-person-tools-menu" class="pa-more-actions"><summary>人物整理</summary><div class="pa-more-actions-menu"><button id="pa-merge" type="button">这是同一个人</button><button id="pt-organize" type="button">整理照片</button></div></details></div></div>
+        <form id="pa-search-photos" class="pa-search"><label class="sr-only" for="pa-photo-query">在这个人的照片中搜索</label><input id="pa-photo-query" type="search" maxlength="256" placeholder="在这个人的照片里找：海边、生日……" /><button>搜索照片</button><button id="pa-all-photos" type="button">全部照片</button></form>
+        <section id="pt-faces" hidden aria-label="逐脸整理">
+          <h3>选择需要更正的脸</h3><p class="hint">选择精确到这张脸，合照中其他人保持原来的归属；跨页选择最多 500 张脸。</p>
+          <div class="row-actions"><span id="pt-face-count" role="status"></span><button id="pt-face-clear-all" type="button">清空选择</button><button id="pt-face-assign" type="button">移到已有的人物</button><button id="pt-face-unassign" type="button">仅移出，留待整理</button><button id="pt-face-regroup" type="button">移出并重新智能分组</button><button id="pt-face-split" type="button">拆成新的未命名人物</button><button id="pt-face-clear" type="button">取消选择</button><button id="pt-face-retry" type="button">刷新 / 重试</button></div>
+          <details><summary>更多人脸操作</summary><p class="hint">恢复自动仅解除协议允许的人工控制；保留排除，不会立即重新检测。</p><button id="pt-face-restore" type="button">恢复所选脸的自动判断</button></details>
+          <p class="hint">按住 Shift 连选，仅限已加载；全选和反选不会自动加载更多。每次归属操作独立保存。“完成整理”只退出选择模式，不需要统一提交。</p><p id="pt-face-status" role="status" aria-live="polite"></p><div id="pt-face-list" class="pa-people-grid"></div><button id="pt-face-more" type="button" hidden>更多人脸</button>
+        </section>
+        <p id="pa-photo-note" class="hint" role="status"></p><button id="pa-timeline-refresh" type="button" hidden>重新加载合集（重置日期筛选）</button><div id="pa-timeline" class="pa-timeline"></div><div id="pa-photos" class="pa-photo-grid" hidden></div><div id="pa-photos-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button id="pa-photos-more" type="button" hidden>再看一些照片</button>
+      </section>
+      <p id="pa-status" class="notice" role="status" aria-live="polite" hidden></p>
+      <button id="pa-write-retry" type="button" hidden>重试上次保存</button>
+      <div id="pa-undo-bar" class="pa-undo" hidden><span id="pa-undo-text"></span><button id="pa-undo" type="button">撤销</button><button id="pa-undo-dismiss" type="button" aria-label="收起撤销提示">收起</button></div>
+      <dialog id="pa-preview" class="pa-dialog pa-preview"><div class="pa-heading"><h2>查看照片</h2><button id="pa-preview-close" type="button">关闭</button></div><img id="pa-preview-image" alt="整张照片" /><aside id="pa-preview-photo-info" class="photo-info-panel"></aside><nav id="pa-preview-nav" class="pa-preview-nav" aria-label="切换人物照片" hidden><button id="pa-preview-prev" type="button" disabled>← 上一张</button><span id="pa-preview-position" class="hint" role="status" aria-live="polite"></span><button id="pa-preview-next" type="button" disabled>下一张 →</button></nav><p id="pa-preview-note" class="hint" role="status"></p><button id="pa-face-detail" type="button" hidden>尝试原图细节识别</button><div id="pa-preview-faces" class="pa-face-row"></div><button id="pa-review" type="button" hidden>查看识别更新待确认</button></dialog>
+      <dialog id="pa-edit" class="pa-dialog"><h2 id="pa-edit-title"></h2><p id="pa-edit-note" class="hint"></p>
+        <form id="pa-edit-form"><label for="pa-edit-query" id="pa-edit-label">名字</label><input id="pa-edit-query" maxlength="200" autocomplete="off" /><button id="pa-edit-find" type="button" hidden>查找人物</button><div id="pa-choices" class="pa-choices"></div><button id="pa-choice-more" type="button" hidden>更多人物</button><button id="pa-create-person" type="button" hidden>新建未命名人物（仅这张脸）</button><p id="pa-create-person-note" hidden>只用这张脸建立人物</p><p id="pa-edit-error" class="error" role="alert"></p><div class="row-actions"><button id="pa-edit-submit">保存</button><button id="pa-edit-cancel" type="button">取消</button></div></form>
+      </dialog>
+      <dialog id="pt-review" class="pa-dialog pt-dialog">
+        <div class="pa-heading"><h2 id="pt-review-title">识别更新待确认</h2><button id="pt-review-close" type="button">关闭</button></div>
+        <p class="hint">只有明确确认才转移人工知识；拒绝不会指定人物，暂不处理保留待确认保护。</p>
+        <p id="pt-review-status" role="status" aria-live="polite"></p><button id="pt-review-retry" type="button">刷新 / 重试</button>
+        <div id="pt-review-list" class="pa-people-grid"></div><button id="pt-review-more" type="button" hidden>更多待确认</button>
+      </dialog>
+      <dialog id="pt-history" class="pa-dialog pt-dialog">
+        <div class="pa-heading"><h2>操作历史</h2><button id="pt-history-close" type="button">关闭</button></div>
+        <p class="hint">撤销由服务器检查后续修改；快捷提示收起后仍可在这里找到操作。</p>
+        <p id="pt-history-status" role="status" aria-live="polite"></p><button id="pt-history-retry" type="button">刷新 / 重试</button>
+        <div id="pt-history-list"></div><button id="pt-history-more" type="button" hidden>更早的操作</button>
+        <details><summary>清理旧记录</summary><p class="hint">仅清理严格超过 30 天且不在最近 200 条内的安全撤销快照，每批最多 100 条；拆分与映射等受保护记录跳过。清理后无法恢复撤销能力。</p>
+          <button id="pt-retention-preview" type="button">预览可清理记录</button><button id="pt-retention-confirm" type="button" disabled>确认清理一批</button><p id="pt-retention-status" role="status" aria-live="polite"></p>
+        </details>
+      </dialog>
+    </main>
+</div><!-- .app-workspace -->
+
+    <noscript>
+      <p class="error">本页面需要 JavaScript 才能工作；请使用支持脚本的浏览器打开。</p>
+    </noscript>
+  </body>
+</html>

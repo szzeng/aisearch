@@ -250,7 +250,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
         assert "/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" in document
     assert "search.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-person-nav-implement-a-4" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"

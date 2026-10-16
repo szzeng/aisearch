@@ -8,7 +8,7 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-ui2-scroll-load-b-3" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-nav-implement-a-4" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
@@ -16,7 +16,7 @@
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/persons.js?v=p4-ui2-person-batch-ux-fix-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-person-fast-organize-a-2" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-nav-implement-a-4" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell">
@@ -52,12 +52,26 @@
 
     <main id="main" tabindex="-1">
       <section id="pa-library" class="panel pa-shell" aria-label="我的人物">
-        <div class="pa-heading pa-library-heading"><div><p class="pa-eyebrow">人物与相册</p><h2>熟悉的人，都在这里</h2><p class="hint">点头像看照片；取个名字，下次直接搜。</p></div>
-          <div class="pa-mode-switch row-actions"><button id="pa-people" type="button" aria-pressed="true">人物</button><button id="pa-organize" type="button" aria-pressed="false">整理一下</button><button id="pa-refresh" type="button">刷新</button></div>
+        <div class="pa-heading pa-library-heading"><div><p class="pa-eyebrow">人物与相册</p><h2 id="pa-library-title">熟悉的人，都在这里</h2><p class="hint">点头像看照片；取个名字，下次直接搜。</p></div>
+          <div class="pa-mode-switch row-actions"><button id="pa-refresh" type="button">刷新</button></div>
         </div>
-        <section class="pa-collections-section" aria-label="人物合集"><div class="pa-section-heading"><div><h3>人物合集</h3><p class="hint">把常一起出现的人物放在一起浏览。</p></div><div class="row-actions"><button type="button" id="pa-collections-toggle">查看合集</button><button type="button" id="pa-collection-create">新建合集</button></div></div>
+        <nav class="pa-view-tabs" aria-label="人物分类">
+          <button id="pa-people" type="button" aria-pressed="true">人物</button>
+          <button id="pa-collections-view" type="button" aria-pressed="false">合集</button>
+          <button id="pa-organize" type="button" aria-pressed="false">待整理</button>
+        </nav>
+        <nav id="pa-organize-tabs" class="pa-organize-tabs" aria-label="待整理分类" hidden>
+          <button id="pa-unnamed" type="button" aria-pressed="true">未命名人物</button>
+          <button id="pa-unrecognized" type="button" aria-pressed="false">未识别人脸</button>
+        </nav>
+        <section id="pa-organize-tools" aria-label="整理辅助功能" hidden>
+          <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
+          <div class="row-actions"><button id="pt-review-entry" type="button" hidden>识别更新待确认</button><button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button><span id="pt-review-summary-status" role="status"></span><details><summary>更多</summary><button id="pt-history-entry" type="button">操作历史</button></details></div>
+        </section>
+        <section id="pa-collections-section" class="pa-collections-section" aria-label="人物合集" hidden><div class="pa-section-heading"><div><h3>人物合集</h3><p class="hint">把常一起出现的人物放在一起浏览。</p></div><div class="row-actions"><button type="button" id="pa-collections-toggle" hidden>查看合集</button><button type="button" id="pa-collection-create">新建合集</button></div></div>
           <section id="pa-collections-panel" hidden><p id="pa-collections-note" class="hint" role="status" aria-live="polite"></p><button id="pa-collections-retry" type="button" hidden>重试加载合集</button><div id="pa-collections" class="pa-people-grid pa-collection-grid"></div><div id="pa-collections-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
         </section>
+        <section id="pa-people-region" aria-label="人物列表">
         <div class="pa-directory-tools"><form id="pa-find" class="pa-search"><label class="sr-only" for="pa-query">筛选人物</label><input id="pa-query" type="search" maxlength="200" placeholder="筛选人物，例如：妈妈" autocomplete="off" /><button>筛选人物</button></form>
         <label class="pa-collection-filter"><input id="pa-collection-state" type="checkbox" />只看未加入合集</label>
         <p class="hint">人物按照片数量从多到少排列。</p>
@@ -86,9 +100,8 @@
         <div id="pa-cards" class="pa-people-grid"></div>
         <div id="pa-people-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div>
         <button type="button" id="pa-more" hidden>再看一些人物</button>
+        </section>
         <section id="pa-inbox" hidden>
-          <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
-          <div class="row-actions"><button id="pt-review-entry" type="button" hidden>识别更新待确认</button><button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button><span id="pt-review-summary-status" role="status"></span><details><summary>更多</summary><button id="pt-history-entry" type="button">操作历史</button></details></div>
           <h3>还没认出是谁</h3>
           <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
           <div class="row-actions">

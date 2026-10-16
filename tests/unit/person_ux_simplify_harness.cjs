@@ -26,7 +26,7 @@ const people=Array.from({length:45},(_,i)=>({person_id:i+1,name:'人物'+(i+1),r
 const old='a'.repeat(64), group={old_face_id:old,asset_id:3,control_mode:'MANUAL_ASSIGNED',revision:6,has_active_exclusions:true};
 const response=(data,status=200)=>({ok:status<400,status,json:async()=>data});
 const windowEvents={};
-const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(requests.length)},setTimeout:fn=>{deferred.push(fn);return deferred.length;},clearTimeout(){},
+const context={URL,URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(requests.length)},setTimeout:fn=>{deferred.push(fn);return deferred.length;},clearTimeout(){},
  window:{location:{search:'',hash:'',href:'http://local/persons'},scrollY:0,addEventListener(k,fn){windowEvents[k]=fn;},confirm:()=>true},
  document:{readyState:'loading',cookie:'ps_csrf=synthetic',addEventListener(k,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag),querySelector(selector){return selector==='dialog[open]'?[...elements.values()].find(e=>e.tag==='dialog'&&e.open)||null:null;}},
  fetch:async(url,options={})=>{
@@ -51,11 +51,15 @@ const context={URLSearchParams,Date,Map,Set,crypto:{randomUUID:()=>String(reques
   if(url==='/api/v1/capabilities')return response({faces:{open_face_mappings:1}});
   return response({persons:[],faces:[],groups:[],has_more:false});
  }};
+context.window.history={
+ pushState(_state,_title,path){const url=new URL(path,context.window.location.href);context.window.location={href:url.href,search:url.search,hash:url.hash};},
+ replaceState(_state,_title,path){this.pushState(_state,_title,path);}
+};
 vm.createContext(context);
 let personCode=fs.readFileSync('src/photo_search/web/persons.js','utf8').replace('window.AIPersonTools = { install,','window.AIPersonTools = { _state: state, install,');
 vm.runInContext(personCode,context);
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary};\n  if (document.readyState === "loading")');
+code=code.replace('  if (document.readyState === "loading")','  globalThis.album={state,mutate,preview,loadPreviewReviews,loadChoices,submitEdit,renderInboxFace,renderFaceManagement,loadCollectionPeople,openAlbum,backToLibrary,setLibraryView};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);
 const flush=async()=>{await new Promise(setImmediate);await new Promise(setImmediate);};
 const clickBox=(box,extra={})=>{const before=box.checked;box.checked=!before;const event=box.fire('click',extra);if(event?.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return event;};
@@ -65,6 +69,61 @@ const button=(root,text)=>{const found=descendants(root).find(e=>e.tag==='button
  context.document.ready();await flush();
  const tools=context.window.AIPersonTools, album=context.album;
  assert(!requests.some(r=>/face-mappings|person-operations|\/faces\?/.test(r.url)), 'normal first page stays bounded');
+ if(scenario==='navigation'){
+  const change=async view=>{assert.equal(album.setLibraryView(view),true);await flush();};
+  const endpoints=()=>requests.map(r=>r.url);
+  assert(!endpoints().some(u=>u.includes('/faces/inbox')),'people entry does not load hidden inbox');
+  get('pa-query').value='妈妈';get('pa-collection-state').checked=true;
+  album.state.selectedPeople.add(1);album.state.selectedPeopleSnapshots.set(1,people[0]);
+  let start=requests.length;await change('unnamed');
+  assert.equal(album.state.selectedPeople.size,0);assert.equal(album.state.batchMode,false);
+  assert(get('pa-people-region').hidden===false&&get('pa-inbox').hidden===true);
+  assert(requests.slice(start).some(r=>r.url.includes('kind=unnamed')));
+  assert(!requests.slice(start).some(r=>r.url.includes('/faces/inbox')),'unnamed never loads a hidden inbox');
+  assert.equal(get('pa-query').value,'');get('pa-query').value='人物组';
+  start=requests.length;await change('faces');
+  assert(get('pa-people-region').hidden&& !get('pa-inbox').hidden);
+  assert(requests.slice(start).some(r=>r.url.includes('/faces/inbox')));
+  assert(!requests.slice(start).some(r=>r.url.includes('/persons/browse')),'faces never loads the hidden directory');
+  album.state.selectedInboxFaces.add('old');album.state.selectedHiddenFaces.add('hidden');
+  await change('people');assert.equal(get('pa-query').value,'妈妈');assert.equal(get('pa-collection-state').checked,true);
+  assert.equal(album.state.selectedInboxFaces.size,0);assert.equal(album.state.selectedHiddenFaces.size,0);
+  await change('unnamed');assert.equal(get('pa-query').value,'人物组');
+  album.state.selectedPeople.add(1);await change('unnamed');assert(album.state.selectedPeople.has(1),'reselecting the same category does not discard selection');
+  album.state.writing=true;assert.equal(album.setLibraryView('collections'),false);assert.equal(album.state.libraryView,'unnamed');
+  album.state.writing=false;album.state.pendingWrite={request_id:'unknown'};assert.equal(album.setLibraryView('faces'),false);
+  album.state.pendingWrite=null;album.state.inboxConfirmationsPending=true;await change('people');
+  assert.equal(album.state.inboxConfirmationsPending,false,'committed quick confirmations defer a refresh, not navigation');start=requests.length;await change('collections');
+  assert(!get('pa-collections-section').hidden&&get('pa-inbox').hidden&&get('pa-people-region').hidden);
+  assert(requests.slice(start).some(r=>r.url.includes('/persons/collections')));
+  assert(!requests.slice(start).some(r=>r.url.includes('/persons/browse')||r.url.includes('/faces/inbox')));
+  assert.equal(new URL(context.window.location.href).searchParams.get('person_view'),'collections');
+  await change('people');const normal=context.fetch;let finish;
+  context.fetch=(url,options)=>url.includes('kind=unnamed')?new Promise(resolve=>finish=resolve):normal(url,options);
+  assert(album.setLibraryView('unnamed'));await flush();assert(finish,'old unnamed request is in flight');
+  assert(album.setLibraryView('people'));await flush();
+  finish(response({persons:[{person_id:999,name:'old response',revision:1,asset_count:1}],has_more:false}));await flush();
+  assert(!get('pa-cards').children.some(card=>card.personId===999),'late responses cannot replace the new category');
+  context.fetch=normal;
+  for(const view of ['people','unnamed','collections']){
+    await change(view);
+    get('pa-library').hidden=true;get('pa-album').hidden=false;
+    album.state.person=view==='collections'?null:people[0];
+    album.state.collection=view==='collections'?{collection_id:1,instance_token:'tok'}:null;
+    const person=album.state.person,collection=album.state.collection;
+    start=requests.length;
+    windowEvents.popstate({state:null});await flush();
+    assert.equal(get('pa-album').hidden,false,'viewer history dismissal keeps the current album');
+    assert.equal(get('pa-library').hidden,true);
+    assert.equal(album.state.person,person);assert.equal(album.state.collection,collection);
+    assert.equal(requests.length,start,'viewer dismissal does not reload the underlying page');
+  }
+  context.window.history.pushState(null,'','/persons?person_view=faces');
+  windowEvents.popstate({state:null});await flush();
+  assert.equal(album.state.libraryView,'faces','actual category history still navigates');
+  assert.equal(get('pa-album').hidden,true);assert.equal(get('pa-library').hidden,false);
+  assert.equal(mutations.length,0,'navigation does not submit data writes');
+ }
  if(scenario==='mode'){
   album.openAlbum(people[0]);await flush();assert.equal(get('pt-organize').textContent,'整理照片');
   await get('pt-organize').fire('click');await flush();assert.equal(get('pt-organize').textContent,'完成整理');

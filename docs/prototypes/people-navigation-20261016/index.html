@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>人物 · 相册</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar" aria-label="应用主导航">
+    <a class="brand" href="#people" aria-label="相册首页"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><rect x="3" y="4" width="26" height="24" rx="7" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="11" cy="12" r="3" fill="currentColor"/><path d="m6 24 7-7 4 4 4-5 6 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>相册<small>把日子，慢慢收藏</small></span></a>
+    <nav class="primary-nav">
+      <a href="#photos" data-primary="photos"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m5 17 5-5 3 3 3-4 3 6"/></svg></span>照片</a>
+      <a href="#people" data-primary="people"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0m1-4a4 4 0 0 1 5 4"/></svg></span>人物</a>
+      <a href="#places" data-primary="places"><span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s7-6.1 7-12a7 7 0 1 0-14 0c0 5.9 7 12 7 12Z"/><circle cx="12" cy="9" r="2.2"/></svg></span>地点</a>
+    </nav>
+    <div class="sidebar-bottom"><div class="library-chip"><span class="live-dot"></span><span>个人图库<small>最近更新 · 今天</small></span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m5 6 3 3 3-3"/></svg></div><div class="sidebar-foot">本地照片 · 私人珍藏</div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="crumbline"><span>我的图库</span><span class="crumb-slash">/</span><strong>人物</strong></div><div class="top-actions"><button class="icon-button" id="helpBtn" aria-label="查看说明" title="查看说明"><svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5"/><path d="M8 7.3a2.1 2.1 0 1 1 3.3 1.7c-.9.6-1.3 1-1.3 2.1m0 2.4h.01"/></svg></button><span class="profile" aria-hidden="true">林</span><span class="demo-badge">交互样板 · 示例数据</span></div></header>
+    <main id="main" tabindex="-1"></main>
+  </div>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="modal" class="modal"></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

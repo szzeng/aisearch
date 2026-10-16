@@ -1,0 +1,63 @@
+/* Navigation and visibility adapter for the real people page preview. */
+#pa-library .pa-preview-tabs,
+#pa-library .pa-preview-subtabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+#pa-library .pa-preview-tabs {
+  margin: 0.75rem 0 0;
+  padding: 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+#pa-library .pa-preview-tabs button,
+#pa-library .pa-preview-subtabs button {
+  border-radius: 999px;
+}
+
+#pa-library .pa-preview-tabs button[aria-pressed="true"],
+#pa-library .pa-preview-subtabs button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--tint);
+  color: var(--fg);
+}
+
+#pa-library .pa-preview-subtabs {
+  margin: 0.7rem 0 0;
+}
+
+#pa-library .pa-preview-subtabs[hidden] {
+  display: none !important;
+}
+
+#pa-library .pa-preview-content {
+  min-width: 0;
+}
+
+#pa-library [data-preview-region] {
+  display: none !important;
+}
+
+#pa-library[data-preview-view="people"] [data-preview-region="people"],
+#pa-library[data-preview-view="unnamed"] [data-preview-region="people"],
+#pa-library[data-preview-view="collections"] [data-preview-region="collections"] {
+  display: block !important;
+}
+
+#pa-library[data-preview-view="faces"] #pa-inbox:not([hidden]) {
+  display: block !important;
+}
+
+@media (max-width: 480px) {
+  #pa-library .pa-preview-tabs {
+    gap: 0.25rem;
+  }
+
+  #pa-library .pa-preview-tabs button,
+  #pa-library .pa-preview-subtabs button {
+    flex: 1 1 auto;
+  }
+}

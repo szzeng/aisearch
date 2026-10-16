@@ -5,7 +5,7 @@
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
   let setSearchScopeAction = function () {};
-  const state = { organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { libraryView: "people", lastOrganizeView: "unnamed", libraryNavigationReady: false, directorySnapshots: new Map(), peopleRestore: null, organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoHasMore: false, photoPager: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0, previewHandle: null, previewUI: null,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -121,8 +121,11 @@
     }
     return { ...page, [key]: items, loadedPages: pages };
   }
-  function libraryItems() { return [...$("cards").children, ...$("inbox-cards").children]; }
-  function itemKey(item) { return item.groupKey || (item.personId ? "person:" + item.personId : item.faceId ? "face:" + item.faceId : null); }
+  function libraryItems() {
+    if (!state.libraryNavigationReady) return [...$("cards").children, ...$("inbox-cards").children];
+    return Array.from($(state.libraryView === "collections" ? "collections" : state.libraryView === "faces" ? "inbox-cards" : "cards").children);
+  }
+  function itemKey(item) { return (item.dataset && item.dataset.collectionId ? "collection:" + item.dataset.collectionId : null) || item.groupKey || (item.personId ? "person:" + item.personId : item.faceId ? "face:" + item.faceId : null); }
   function captureLibraryPosition() {
     if ($("library").hidden) return state.libraryPosition;
     const position = { y: window.scrollY || 0, anchors: [] };
@@ -152,12 +155,14 @@
       state.listSeq++; state.peopleLoadPromise = null; state.peopleLoadBinding = null; state.busy.delete("people");
     }
     const loads = [loadPeople(false)];
-    if (!$("collections-panel").hidden || state.collectionListLoaded) loads.push(reloadCollections());
+    if (!state.libraryNavigationReady || state.libraryView === "collections") {
+      if (!$("collections-panel").hidden || state.collectionListLoaded) loads.push(reloadCollections());
+    }
     const openGroups = (host) => Array.from(host.children).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
-    if (state.organize) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
-    const hiddenLoad = state.inboxHiddenVisible
+    if (state.organize && inboxDirectoryActive()) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
+    const hiddenLoad = state.inboxHiddenVisible && inboxDirectoryActive()
       ? loadHiddenFaces(false, openGroups($("inbox-hidden-cards"))) : Promise.resolve(true);
-    if (state.inboxHiddenVisible) loads.push(hiddenLoad);
+    if (state.inboxHiddenVisible && inboxDirectoryActive()) loads.push(hiddenLoad);
     // Entering a member album suspends the parent collection rather than closing it.
     const collection = state.collection || state.returnCollection;
     state.collectionSelectedPeople.clear(); updateCollectionSelection();
@@ -189,6 +194,114 @@
     state.peopleRefreshPending = true;
     refreshPeopleViews();
   }
+  function peopleDirectoryActive() {
+    return !state.libraryNavigationReady || ["people", "unnamed"].includes(state.libraryView);
+  }
+  function inboxDirectoryActive() {
+    return !state.libraryNavigationReady || state.libraryView === "faces";
+  }
+  function directoryNavigationBusy() {
+    return state.writing || Boolean(state.pendingWrite) || state.visibilityBusy || state.faceVisibilityBusy
+      || state.collectionActionBusy || state.collectionPeopleBusy;
+  }
+  function requestedLibraryView() {
+    const value = new URLSearchParams(window.location.search).get("person_view");
+    return ["people", "collections", "unnamed", "faces"].includes(value) ? value : "people";
+  }
+  function directoryFocusId() {
+    return { people: "people", collections: "collections-view", unnamed: "unnamed", faces: "unrecognized" }[state.libraryView];
+  }
+  function syncLibraryView() {
+    if (!state.libraryNavigationReady) return;
+    const view = state.libraryView, organizing = view === "unnamed" || view === "faces";
+    $("people").setAttribute("aria-pressed", String(view === "people"));
+    $("collections-view").setAttribute("aria-pressed", String(view === "collections"));
+    $("organize").setAttribute("aria-pressed", String(organizing));
+    $("unnamed").setAttribute("aria-pressed", String(view === "unnamed"));
+    $("unrecognized").setAttribute("aria-pressed", String(view === "faces"));
+    $("organize-tabs").hidden = !organizing;
+    $("organize-tools").hidden = !organizing;
+    $("people-region").hidden = !peopleDirectoryActive();
+    $("collections-section").hidden = view !== "collections";
+    $("collections-panel").hidden = view !== "collections";
+    $("inbox").hidden = view !== "faces";
+    $("library-title").textContent = view === "collections" ? "人物合集" : organizing ? "待整理" : "人物";
+  }
+  function updateDirectoryBackLabel() {
+    if (!state.libraryNavigationReady || photoReturnRequested()) return;
+    $("back").textContent = state.returnCollection || state.libraryView === "collections" ? "← 返回合集"
+      : state.libraryView === "unnamed" ? "← 未命名人物" : state.libraryView === "faces" ? "← 未识别人脸" : "← 所有人物";
+  }
+  function writeLibraryRoute(replace) {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("person_view") === state.libraryView) return;
+    url.searchParams.set("person_view", state.libraryView);
+    window.history[replace ? "replaceState" : "pushState"](null, "", url.pathname + url.search + url.hash);
+  }
+  function rememberDirectoryView() {
+    if (!state.libraryNavigationReady || $("library").hidden) return;
+    state.directorySnapshots.set(state.libraryView, {
+      query: $("query").value, collectionState: $("collection-state").checked,
+      hiddenView: state.hiddenView, ignoreState: state.ignoreState,
+      pages: state.peoplePages, position: captureLibraryPosition(),
+    });
+  }
+  async function loadLibraryView() {
+    if (state.organize && window.AIPersonTools) window.AIPersonTools.summary();
+    if (state.libraryView === "collections") {
+      if (!state.collectionListLoaded) return loadCollections(false);
+      const snapshot = state.directorySnapshots.get("collections");
+      if (snapshot) restoreLibraryPosition(snapshot.position);
+      return;
+    }
+    if (state.libraryView === "faces") {
+      const loads = [loadInbox(false), loadDetailBatch(false)];
+      if (state.inboxHiddenVisible) loads.push(loadHiddenFaces(false));
+      await Promise.all(loads);
+      return;
+    }
+    return loadPeople(false);
+  }
+  function setLibraryView(view, options) {
+    options = options || {};
+    if (!["people", "collections", "unnamed", "faces"].includes(view)) return false;
+    if (directoryNavigationBusy()) {
+      message(state.pendingWrite ? errorText({ code: "PENDING_WRITE" }) : "正在保存整理结果，请稍后切换分类。");
+      if (options.history === false) writeLibraryRoute(true);
+      return false;
+    }
+    if (view === state.libraryView && !options.force) return true;
+    rememberDirectoryView();
+    state.listSeq++; state.inboxSeq++; state.inboxFilterSeq++; state.inboxSummarySeq++; state.hiddenFaceSeq++;
+    state.collectionListSeq++; state.collectionListPromise = null;
+    state.peopleLoadPromise = null; state.peopleLoadBinding = null;
+    state.busy.delete("people"); state.busy.delete("inbox"); state.busy.delete("hidden-faces");
+    state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear();
+    state.selectedInboxFaces.clear(); state.selectedHiddenFaces.clear(); inboxFaceSnapshots.clear();
+    state.inboxConfirmationsPending = false;
+    state.selectAnchors.clear(); state.batchMode = false; state.inboxBatchMode = false; state.hiddenBatchMode = false;
+    state.detailBatchSeq++;
+    if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
+    state.libraryNavigationReady = true; state.libraryView = view;
+    state.organize = view === "unnamed" || view === "faces";
+    if (state.organize) state.lastOrganizeView = view;
+    const snapshot = state.directorySnapshots.get(view);
+    if (view === "faces") state.inboxRestorePosition = snapshot ? snapshot.position : null;
+    if (peopleDirectoryActive()) {
+      $("query").value = snapshot ? snapshot.query : "";
+      $("collection-state").checked = snapshot ? snapshot.collectionState : false;
+      state.hiddenView = snapshot ? snapshot.hiddenView : false;
+      state.ignoreState = snapshot ? snapshot.ignoreState : "TEMPORARY";
+      state.peopleRestore = snapshot ? { pages: Math.min(3, Math.max(1, snapshot.pages)),
+        position: snapshot.pages > 3 ? { y: 0, anchors: [] } : snapshot.position } : null;
+      state.peopleBinding = null; state.peoplePages = 0; state.listCursor = null; state.peopleHasMore = false;
+      $("cards").replaceChildren(); $("list-count").hidden = true; $("more").hidden = true;
+    }
+    syncLibraryView(); renderPeopleManagement(); renderFaceManagement(); syncDirectoryPagers(true);
+    if (options.history !== false) writeLibraryRoute(false);
+    loadLibraryView();
+    return true;
+  }
   function peopleValues() {
     const values = { kind: state.hiddenView ? "all" : (state.organize ? "unnamed" : "named"),
       visibility: state.hiddenView ? "hidden" : "visible", q: $("query").value.trim(), sort: "photos_recent_desc", limit: 40,
@@ -204,7 +317,7 @@
   }
   function syncDirectoryPagers(reset) {
     if (reset) [state.peoplePager, state.collectionPager, state.collectionPeoplePager, state.photoPager].forEach((pager) => { if (pager) pager.reset(); });
-    if (state.peoplePager) { state.peoplePager.setEnabled(!$('library').hidden); state.peoplePager.update(); }
+    if (state.peoplePager) { state.peoplePager.setEnabled(!$('library').hidden && peopleDirectoryActive()); state.peoplePager.update(); }
     if (state.collectionPager) { state.collectionPager.setEnabled(!$('library').hidden && !$('collections-panel').hidden); state.collectionPager.update(); }
     if (state.collectionPeoplePager) {
       state.collectionPeoplePager.setEnabled(!$('album').hidden && Boolean(state.collection) && state.collectionMode === 'people'
@@ -221,7 +334,7 @@
   function installDirectoryPagers() {
     if (!window.PhotoScrollPager) return;
     state.peoplePager = window.PhotoScrollPager.create({ sentinel: $('people-sentinel'), button: $('more'),
-      load: () => loadPeople(true), canLoad: () => !$('library').hidden && state.peopleHasMore && Boolean(state.listCursor) && !state.busy.has('people') });
+      load: () => loadPeople(true), canLoad: () => !$('library').hidden && peopleDirectoryActive() && state.peopleHasMore && Boolean(state.listCursor) && !state.busy.has('people') });
     state.collectionPager = window.PhotoScrollPager.create({ sentinel: $('collections-sentinel'), button: $('collections-more'),
       load: () => loadCollections(true), canLoad: () => !$('library').hidden && !$('collections-panel').hidden && state.collectionsHasMore && Boolean(state.collectionListCursor) && !state.collectionListPromise });
     state.collectionPeoplePager = window.PhotoScrollPager.create({ sentinel: $('collection-people-sentinel'), button: $('collection-people-more'),
@@ -561,6 +674,7 @@
     window.history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
   async function loadPeople(more) {
+    if (!peopleDirectoryActive()) { state.peopleRefreshPending = true; return false; }
     if (more && state.busy.has("people")) return;
     const values = peopleValues(), binding = JSON.stringify(values);
     if (!more && state.peopleLoadPromise && state.peopleLoadBinding === binding) return state.peopleLoadPromise;
@@ -568,9 +682,11 @@
     const sameView = binding === state.peopleBinding;
     const append = Boolean(more && state.listCursor && sameView);
     if (!append) state.selectAnchors.delete("people:" + String(state.hiddenView) + ":" + binding);
-    const pageCount = append ? 1 : sameView ? Math.min(3, Math.max(1, state.peoplePages)) : 1;
+    const restore = !more ? state.peopleRestore : null;
+    if (!more) state.peopleRestore = null;
+    const pageCount = restore ? restore.pages : append ? 1 : sameView ? Math.min(3, Math.max(1, state.peoplePages)) : 1;
     const resetDeepPosition = !append && sameView && state.peoplePages > pageCount;
-    const position = sameView && !resetDeepPosition ? captureLibraryPosition() : null;
+    const position = restore ? restore.position : sameView && !resetDeepPosition ? captureLibraryPosition() : null;
     if (resetDeepPosition && window.scrollTo) window.scrollTo(0, 0);
     if (!append && state.peoplePager) state.peoplePager.reset();
     $("people-retry").hidden = true;
@@ -719,6 +835,7 @@
     finally { state.collectionActionBusy = false; updateCollectionSelection(); }
   }
   function collectionHeading() {
+    updateDirectoryBackLabel();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     document.getElementById("pt-organize").hidden = true;
     $("person-tools-menu").hidden = true;
@@ -1150,7 +1267,7 @@
     if (!peopleListIsFresh() && !(state.busy.has("people") && state.peopleLoadBinding === JSON.stringify(peopleValues()))) {
       refreshPeopleViews(state.libraryPosition);
     }
-    $("people").focus({ preventScroll: true });
+    $(state.libraryNavigationReady ? directoryFocusId() : "people").focus({ preventScroll: true });
   }
   function organizationText(face) {
     if (face.display_quality_reason === "DISPLAY_LOW_QUALITY") return "疑似低质量，仅整理页自动收起";
@@ -1417,6 +1534,7 @@
     }
   }
   async function loadInbox(more, reopenGroups) {
+    if (!inboxDirectoryActive()) return false;
     if (more && (state.busy.has("inbox") || state.inboxConfirmationsPending)) return;
     const seq = ++state.inboxSeq; state.busy.add("inbox"); $("inbox-more").disabled = true;
     const values = { limit: 30, kind: $("inbox-kind").value || "all", quality_view: state.qualityView };
@@ -1425,7 +1543,8 @@
     const append = Boolean(more && state.inboxCursor && sameView);
     if (!append) state.selectAnchors.forEach((_, key) => { if (key.startsWith("faces:inbox:")) state.selectAnchors.delete(key); });
     const pageCount = append ? 1 : sameView ? Math.max(1, state.inboxPages) : 1;
-    const position = sameView ? captureLibraryPosition() : null;
+    const position = !more && state.inboxRestorePosition ? state.inboxRestorePosition : sameView ? captureLibraryPosition() : null;
+    if (!more) state.inboxRestorePosition = null;
     const oldGroups = new Map(Array.from($("inbox-cards").children).filter((item) => item.groupKey).map((item) => [item.groupKey, item]));
     const expanded = sameView ? reopenGroups || Array.from(oldGroups.values()).filter((item) => item.open).map((item) => item.groupKey) : [];
     if (more && state.inboxCursor) values.cursor = state.inboxCursor;
@@ -1460,6 +1579,7 @@
     finally { if (seq === state.inboxSeq) { state.busy.delete("inbox"); $("inbox-more").disabled = false; } }
   }
   async function loadHiddenFaces(more, reopenGroups) {
+    if (!inboxDirectoryActive()) return false;
     if (more && state.busy.has("hidden-faces")) return;
     const seq = (state.hiddenFaceSeq || 0) + 1; state.hiddenFaceSeq = seq;
     state.busy.add("hidden-faces"); $("inbox-hidden-more").disabled = true;
@@ -1628,25 +1748,10 @@
     clearPeopleSelection(); state.ignoreState = ignoreState; state.listSeq++; state.listCursor = null; loadPeople(false);
   }
   function setView(organize) {
-    if (state.organize === organize && !state.hiddenView) return;
-    clearPeopleSelection(); state.hiddenView = false;
-    state.organize = organize;
-    if (organize) {
-      state.qualityView = "clean"; $("quality-toggle").checked = false;
-      $("inbox-kind").value = "all";
-    }
-    state.inboxSeq++; state.inboxFilterSeq++; state.inboxSummarySeq++; state.listSeq++;
-    if (!organize) {
-      state.detailBatchSeq++;
-      if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
-    }
-    $("people").setAttribute("aria-pressed", String(!organize));
-    $("organize").setAttribute("aria-pressed", String(organize)); $("inbox").hidden = !organize;
-    $("query").value = ""; loadPeople(false); if (organize) loadInbox(false);
-    if (organize) loadDetailBatch(false);
-    if (organize && window.AIPersonTools) window.AIPersonTools.summary();
+    return setLibraryView(organize ? state.lastOrganizeView : "people");
   }
   function albumHeading() {
+    updateDirectoryBackLabel();
     $("collection-view-controls").hidden = true; $("search-photos").hidden = false;
     $("person-tools-menu").hidden = false;
     $("album-kind").textContent = "人物相册";
@@ -2257,6 +2362,10 @@
     finally { $("undo").disabled = false; }
   }
   function boot() {
+    state.libraryNavigationReady = true; state.libraryView = requestedLibraryView();
+    state.organize = state.libraryView === "unnamed" || state.libraryView === "faces";
+    if (state.organize) state.lastOrganizeView = state.libraryView;
+    syncLibraryView();
     installDirectoryPagers();
     setSearchScopeAction = window.SearchScopeEntry ? window.SearchScopeEntry.configure({
       button: document.getElementById("global-search-scope"),
@@ -2283,6 +2392,20 @@
       catch (error) { message(errorText(error)); }
     });
     $("people").addEventListener("click", () => setView(false)); $("organize").addEventListener("click", () => setView(true));
+    $("collections-view").addEventListener("click", () => setLibraryView("collections"));
+    $("unnamed").addEventListener("click", () => setLibraryView("unnamed"));
+    $("unrecognized").addEventListener("click", () => setLibraryView("faces"));
+    window.addEventListener("popstate", () => {
+      if (requestedPersonId()) return;
+      // Shared photo viewers own same-URL history entries. Dismissing one must
+      // leave its underlying album, filters, timeline and scroll position intact.
+      if (requestedLibraryView() === state.libraryView) return;
+      if (directoryNavigationBusy()) { writeLibraryRoute(true); return; }
+      // Unwind a person opened inside a collection, then that collection if needed.
+      if (!$("album").hidden) backToLibrary();
+      if (!$("album").hidden) backToLibrary();
+      setLibraryView(requestedLibraryView(), { history: false });
+    });
     $("batch-toggle").addEventListener("click", () => {
       if (state.visibilityBusy || state.faceVisibilityBusy || state.writing || state.pendingWrite) return;
       state.batchMode = !state.batchMode;
@@ -2480,7 +2603,7 @@
     window.addEventListener("pageshow", syncDirectoryPagers);
     const linkedPersonId = requestedPersonId();
     if (linkedPersonId) openPersonById(linkedPersonId);
-    else { loadPeople(false); }
+    else { loadLibraryView(); }
     const assetId = Number(new URLSearchParams(typeof window !== "undefined" ? window.location.search : "").get("asset_id"));
     if (Number.isSafeInteger(assetId) && assetId > 0 && window.location.hash !== "#panel-mappings") preview(assetId);
   }
