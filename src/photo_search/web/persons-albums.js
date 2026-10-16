@@ -5,7 +5,7 @@
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
   let setSearchScopeAction = function () {};
-  const state = { libraryView: "people", lastOrganizeView: "unnamed", libraryNavigationReady: false, directorySnapshots: new Map(), peopleRestore: null, organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { libraryView: "people", lastOrganizeView: "unnamed", ignoredObject: "faces", libraryNavigationReady: false, directorySnapshots: new Map(), peopleRestore: null, organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoHasMore: false, photoPager: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0, previewHandle: null, previewUI: null,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -186,7 +186,9 @@
       if (!$("collections-panel").hidden || state.collectionListLoaded) loads.push(reloadCollections());
     }
     const openGroups = (host) => Array.from(host.children).filter((item) => item.groupKey && item.open).map((item) => item.groupKey);
-    if (state.organize && inboxDirectoryActive()) loads.push(loadInbox(false, openGroups($("inbox-cards"))));
+    if (state.organize && state.libraryView !== "ignored" && inboxDirectoryActive()) {
+      loads.push(loadInbox(false, openGroups($("inbox-cards"))));
+    }
     const hiddenLoad = state.inboxHiddenVisible && inboxDirectoryActive()
       ? loadHiddenFaces(false, openGroups($("inbox-hidden-cards"))) : Promise.resolve(true);
     if (state.inboxHiddenVisible && inboxDirectoryActive()) loads.push(hiddenLoad);
@@ -229,10 +231,12 @@
     refreshPeopleViews();
   }
   function peopleDirectoryActive() {
-    return !state.libraryNavigationReady || ["people", "unnamed"].includes(state.libraryView);
+    return !state.libraryNavigationReady || ["people", "unnamed"].includes(state.libraryView)
+      || (state.libraryView === "ignored" && state.ignoredObject === "people");
   }
   function inboxDirectoryActive() {
-    return !state.libraryNavigationReady || state.libraryView === "faces";
+    return !state.libraryNavigationReady || state.libraryView === "faces"
+      || (state.libraryView === "ignored" && state.ignoredObject === "faces");
   }
   function directoryNavigationBusy() {
     return state.writing || Boolean(state.pendingWrite) || state.visibilityBusy || state.faceVisibilityBusy
@@ -240,31 +244,44 @@
   }
   function requestedLibraryView() {
     const value = new URLSearchParams(window.location.search).get("person_view");
-    return ["people", "collections", "unnamed", "faces"].includes(value) ? value : "people";
+    return ["people", "collections", "unnamed", "faces", "ignored"].includes(value) ? value : "people";
   }
   function directoryFocusId() {
-    return { people: "people", collections: "collections-view", unnamed: "unnamed", faces: "unrecognized" }[state.libraryView];
+    return { people: "people", collections: "collections-view", unnamed: "unnamed", faces: "unrecognized", ignored: "ignored" }[state.libraryView];
   }
   function syncLibraryView() {
     if (!state.libraryNavigationReady) return;
-    const view = state.libraryView, organizing = view === "unnamed" || view === "faces";
+    const view = state.libraryView, organizing = view === "unnamed" || view === "faces" || view === "ignored";
     $("people").setAttribute("aria-pressed", String(view === "people"));
     $("collections-view").setAttribute("aria-pressed", String(view === "collections"));
     $("organize").setAttribute("aria-pressed", String(organizing));
     $("unnamed").setAttribute("aria-pressed", String(view === "unnamed"));
     $("unrecognized").setAttribute("aria-pressed", String(view === "faces"));
+    $("ignored").setAttribute("aria-pressed", String(view === "ignored"));
+    $("ignored-object-faces").setAttribute("aria-pressed", String(state.ignoredObject === "faces"));
+    $("ignored-object-people").setAttribute("aria-pressed", String(state.ignoredObject === "people"));
+    $("ignored-temporary").setAttribute("aria-pressed", String(state.ignoreState === "TEMPORARY"));
+    $("ignored-excluded").setAttribute("aria-pressed", String(state.ignoreState === "EXCLUDED"));
+    $("ignored-object-filter").hidden = view !== "ignored";
+    $("ignored-state-filter").hidden = view !== "ignored";
+    $("ignored-people").hidden = view !== "ignored" || state.ignoredObject !== "people";
+    $("ignored-faces").hidden = view !== "ignored" || state.ignoredObject !== "faces";
     $("organize-tabs").hidden = !organizing;
-    $("organize-tools").hidden = !organizing;
+    $("organize-tools").hidden = view !== "faces";
+    if (view !== "faces") $("organize-tools").open = false;
+    $("quality-tools").hidden = view !== "faces";
     $("people-region").hidden = !peopleDirectoryActive();
     $("collections-section").hidden = view !== "collections";
     $("collections-panel").hidden = view !== "collections";
-    $("inbox").hidden = view !== "faces";
-    $("library-title").textContent = view === "collections" ? "人物合集" : organizing ? "待整理" : "人物";
+    $("inbox").hidden = view !== "faces" && view !== "ignored";
+    $("inbox-content").hidden = view === "ignored";
+    $("ignored-people").hidden = true;
+    $("library-title").textContent = view === "collections" ? "人物合集" : view === "ignored" ? "已忽略" : organizing ? "待整理" : "人物";
   }
   function updateDirectoryBackLabel() {
     if (!state.libraryNavigationReady || photoReturnRequested()) return;
     $("back").textContent = state.returnCollection || state.libraryView === "collections" ? "← 返回合集"
-      : state.libraryView === "unnamed" ? "← 未命名人物" : state.libraryView === "faces" ? "← 未识别人脸" : "← 所有人物";
+      : state.libraryView === "unnamed" ? "← 未命名人物" : state.libraryView === "faces" ? "← 未识别人脸" : state.libraryView === "ignored" ? "← 已忽略" : "← 所有人物";
   }
   function writeLibraryRoute(replace) {
     const url = new URL(window.location.href);
@@ -274,14 +291,15 @@
   }
   function rememberDirectoryView() {
     if (!state.libraryNavigationReady || $("library").hidden) return;
-    state.directorySnapshots.set(state.libraryView, {
+    const snapshotKey = state.libraryView === "ignored" ? "ignored:" + state.ignoredObject : state.libraryView;
+    state.directorySnapshots.set(snapshotKey, {
       query: $("query").value, collectionState: $("collection-state").checked,
-      hiddenView: state.hiddenView, ignoreState: state.ignoreState,
+      hiddenView: state.hiddenView, ignoreState: state.ignoreState, ignoredObject: state.ignoredObject,
       pages: state.peoplePages, position: captureLibraryPosition(),
     });
   }
   async function loadLibraryView() {
-    if (state.organize && window.AIPersonTools) window.AIPersonTools.summary();
+    if (state.libraryView === "faces" && window.AIPersonTools) window.AIPersonTools.summary();
     if (state.libraryView === "collections") {
       if (!state.collectionListLoaded || state.collectionListDirty) return loadCollections(false);
       const snapshot = state.directorySnapshots.get("collections");
@@ -290,15 +308,18 @@
     }
     if (state.libraryView === "faces") {
       const loads = [loadInbox(false), loadDetailBatch(false)];
-      if (state.inboxHiddenVisible) loads.push(loadHiddenFaces(false));
       await Promise.all(loads);
       return;
+    }
+    if (state.libraryView === "ignored") {
+      if (state.ignoredObject === "faces") return loadHiddenFaces(false);
+      return loadPeople(false);
     }
     return loadPeople(false);
   }
   function setLibraryView(view, options) {
     options = options || {};
-    if (!["people", "collections", "unnamed", "faces"].includes(view)) return false;
+    if (!["people", "collections", "unnamed", "faces", "ignored"].includes(view)) return false;
     if (directoryNavigationBusy()) {
       message(state.pendingWrite ? errorText({ code: "PENDING_WRITE" }) : "正在保存整理结果，请稍后切换分类。");
       if (options.history === false) writeLibraryRoute(true);
@@ -317,20 +338,24 @@
     state.detailBatchSeq++;
     if (state.detailBatchTimer) { clearTimeout(state.detailBatchTimer); state.detailBatchTimer = null; }
     state.libraryNavigationReady = true; state.libraryView = view;
-    state.organize = view === "unnamed" || view === "faces";
-    if (state.organize) state.lastOrganizeView = view;
-    const snapshot = state.directorySnapshots.get(view);
-    if (view === "faces") state.inboxRestorePosition = snapshot ? snapshot.position : null;
+    state.organize = view === "unnamed" || view === "faces" || view === "ignored";
+    if (view === "unnamed" || view === "faces") state.lastOrganizeView = view;
+    const snapshot = state.directorySnapshots.get(view === "ignored" ? "ignored:" + state.ignoredObject : view);
+    if (view === "faces" || (view === "ignored" && state.ignoredObject === "faces")) state.inboxRestorePosition = snapshot ? snapshot.position : null;
     if (peopleDirectoryActive()) {
       $("query").value = snapshot ? snapshot.query : "";
       $("collection-state").checked = snapshot ? snapshot.collectionState : false;
-      state.hiddenView = snapshot ? snapshot.hiddenView : false;
+      state.hiddenView = view === "ignored" && state.ignoredObject === "people";
       state.ignoreState = snapshot ? snapshot.ignoreState : "TEMPORARY";
+      if (view === "ignored" && options.resetIgnoredState) state.ignoreState = "TEMPORARY";
       state.peopleRestore = snapshot ? { pages: Math.min(3, Math.max(1, snapshot.pages)),
         position: snapshot.pages > 3 ? { y: 0, anchors: [] } : snapshot.position } : null;
       state.peopleBinding = null; state.peoplePages = 0; state.listCursor = null; state.peopleHasMore = false;
       $("cards").replaceChildren(); $("list-count").hidden = true; $("more").hidden = true;
     }
+    if (view === "ignored" && options.resetIgnoredState) state.ignoreState = "TEMPORARY";
+    if (view === "ignored" && state.ignoredObject === "faces") state.hiddenView = false;
+    state.inboxHiddenVisible = view === "ignored" && state.ignoredObject === "faces";
     syncLibraryView(); renderPeopleManagement(); renderFaceManagement(); syncDirectoryPagers(true);
     if (options.history !== false) writeLibraryRoute(false);
     loadLibraryView();
@@ -483,7 +508,9 @@
     $("batch-toggle").setAttribute("aria-pressed", String(state.batchMode));
     $("batch-toggle").textContent = state.batchMode ? "退出批量管理" : "批量管理";
     $("hidden-toggle").textContent = state.hiddenView ? "返回人物列表" : "查看已忽略";
+    $("hidden-toggle").hidden = state.libraryView === "ignored";
     $("ignore-state-filter").hidden = !state.hiddenView;
+    if (state.libraryView === "ignored") $("ignore-state-filter").hidden = true;
     $("ignore-temporary").setAttribute("aria-pressed", String(state.ignoreState === "TEMPORARY"));
     $("ignore-excluded").setAttribute("aria-pressed", String(state.ignoreState === "EXCLUDED"));
     $("ignore-state-label").hidden = !state.batchMode || state.hiddenView;
@@ -537,7 +564,7 @@
       const result = await api("/persons/visibility", requestBody);
       state.selectedPeople.clear(); state.listCursor = null; renderPeopleManagement();
       const refreshes = [loadPeople(false)];
-      if (state.organize) refreshes.push(loadInbox(false));
+      if (state.libraryView === "faces") refreshes.push(loadInbox(false));
       await Promise.all(refreshes);
       message("已" + action + " " + result.changed + " 个人物。", true);
     } catch (error) { message(action + "没有完成：" + errorText(error)); }
@@ -552,7 +579,6 @@
         item.selectionButton.hidden = !managing;
         item.selectionButton.checked = selected;
         item.selectionButton.disabled = !managing || state.writing || state.pendingWrite || state.faceVisibilityBusy;
-        if (item.viewButton) item.viewButton.hidden = managing;
         [item.confirmButton, item.otherPersonButton, item.choosePersonButton].filter(Boolean).forEach((action) => {
           action.hidden = managing; action.disabled = managing || state.writing || Boolean(state.pendingWrite);
         });
@@ -575,11 +601,10 @@
     $("inbox-hidden-batch-toggle").disabled = busy;
     $("inbox-selection-count").hidden = !state.inboxBatchMode;
     $("inbox-selection-count").textContent = "已选 " + selected + " / 500 张脸";
-    $("inbox-hide-submit").hidden = !state.inboxBatchMode;
-    $("inbox-hide-submit").textContent = $("inbox-ignore-state").value === "EXCLUDED" ? "明确排除所选人脸" : "暂时忽略所选人脸";
-    $("inbox-hide-submit").disabled = busy || selected === 0 || selected > 500;
-    $("inbox-ignore-state-label").hidden = !state.inboxBatchMode;
-    $("inbox-ignore-state").disabled = busy;
+    ["inbox-hide-temporary", "inbox-hide-excluded"].forEach(id => {
+      $(id).hidden = !state.inboxBatchMode;
+      $(id).disabled = busy || selected === 0 || selected > 500;
+    });
     $("inbox-collection-choice").hidden = !state.inboxBatchMode && !state.hiddenBatchMode;
     $("inbox-collection-choice").disabled = busy;
     $("inbox-collection-hide-label").hidden = !state.inboxBatchMode && !state.hiddenBatchMode;
@@ -593,9 +618,6 @@
     $("inbox-hidden-selection-count").textContent = "已选 " + state.selectedHiddenFaces.size + " 张已忽略人脸";
     $("inbox-clear").hidden = !state.inboxBatchMode; $("inbox-clear").disabled = busy;
     $("inbox-hidden-clear").hidden = !state.hiddenBatchMode || !state.inboxHiddenVisible; $("inbox-hidden-clear").disabled = busy;
-    $("inbox-hidden-toggle").setAttribute("aria-expanded", String(state.inboxHiddenVisible));
-    $("inbox-hidden-toggle").textContent = state.inboxHiddenVisible ? "收起已忽略人脸" : "查看已忽略人脸";
-    $("inbox-hidden-content").hidden = !state.inboxHiddenVisible;
     ["inbox-assign", "inbox-unassign", "inbox-auto"].forEach(id => {
       $(id).hidden = !state.inboxBatchMode;
       $(id).disabled = busy || !selected || selected > 500;
@@ -646,12 +668,13 @@
       items: faces.map(face => ({face_id:face.face_id, action, target_person_id:null, expected_revision:face.control_revision})) }, "POST", "已更正所选人脸"); }
     catch (error) { message(errorText(error)); }
   }
-  async function submitInboxVisibility(hidden) {
+  async function submitInboxVisibility(hidden, requestedIgnoreState) {
     if (state.faceVisibilityBusy) return;
     const selected = hidden ? state.selectedInboxFaces : state.selectedHiddenFaces;
     if (!selected.size) return;
     if (selected.size > 500) { message("一次最多操作 500 张脸。"); return; }
-    const ids = Array.from(selected), ignoreState = hidden ? $("inbox-ignore-state").value : "TEMPORARY";
+    const ids = Array.from(selected), ignoreState = hidden
+      ? (requestedIgnoreState === "EXCLUDED" ? "EXCLUDED" : "TEMPORARY") : "TEMPORARY";
     const action = !hidden ? "恢复" : ignoreState === "EXCLUDED" ? "明确排除" : "暂时忽略";
     const consequence = ignoreState === "EXCLUDED" && hidden ? "；这些脸将不再参与任何人物推荐" : "";
     if (!window.confirm("确定" + action + "所选 " + ids.length + " 张人脸吗" + consequence + "？")) return;
@@ -661,7 +684,7 @@
     try {
       const result = await api("/faces/inbox/visibility", { face_ids: ids, hidden, ignore_state: ignoreState });
       selected.clear();
-      await loadInbox(false, expanded);
+      if (state.libraryView === "faces") await loadInbox(false, expanded);
       if (state.inboxHiddenVisible) await loadHiddenFaces(false, expandedHidden);
       message("已" + action + " " + result.changed + " 张人脸。", true);
     } catch (error) { message(action + "人脸没有完成：" + errorText(error)); }
@@ -1367,7 +1390,12 @@
       }
       state.collectionById.set(String(collection.collection_id), collection);
       if (personAdded || faceAdded) {
-        await Promise.all([personIds.length ? loadPeople(false) : Promise.resolve(true), faceIds.length ? loadInbox(false) : Promise.resolve(true), faceIds.length && state.inboxHiddenVisible ? loadHiddenFaces(false) : Promise.resolve(true), refreshCollectionsIfUsed()]);
+        await Promise.all([
+          personIds.length ? loadPeople(false) : Promise.resolve(true),
+          faceIds.length && state.libraryView === "faces" ? loadInbox(false) : Promise.resolve(true),
+          faceIds.length && state.inboxHiddenVisible ? loadHiddenFaces(false) : Promise.resolve(true),
+          refreshCollectionsIfUsed(),
+        ]);
         notifyPeopleChanged();
       }
       const success = [];
@@ -1484,9 +1512,7 @@
       comparison.append(right);
     }
     card.append(comparison, selection);
-    card.viewButton = button("查看整张照片", event => preview(face.asset_id, event.currentTarget));
-    card.viewButton.addEventListener("click", event => event.stopPropagation());
-    card.append(card.viewButton, node("span", organizationText(face), "hint"));
+    card.append(node("span", organizationText(face), "hint"));
     if (suggestion) {
       card.confirmButton = button("确认是" + name(suggestion), () => confirmSuggestion(face, suggestion, card, groupDetails));
       card.confirmButton.setAttribute("aria-pressed", "false");
@@ -1497,7 +1523,7 @@
       card.append(card.choosePersonButton);
     }
     card.addEventListener("click", event => {
-      if ([selection, card.viewButton, card.confirmButton, card.otherPersonButton, card.choosePersonButton].some((target) => contains(target, event.target))) return;
+      if ([selection, card.confirmButton, card.otherPersonButton, card.choosePersonButton].some((target) => contains(target, event.target))) return;
       if (contains(card.avatarWrapper, event.target) || contains(card.referenceSide, event.target)) return;
       if (hiddenFace ? state.hiddenBatchMode : state.inboxBatchMode) {
         if (event.shiftKey && selectInboxRange(card, event)) return;
@@ -1561,6 +1587,7 @@
     const confirmationVersion = details.confirmationVersion || 0;
     try {
       const values = { limit: 30, kind, quality_view: state.qualityView };
+      if (hiddenFace) values.ignore_state = state.ignoreState;
       if (cursor) values.cursor = cursor;
       const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
       const page = await readLoadedPages(route + encodeURIComponent(groupKey), values, "faces",
@@ -1583,7 +1610,7 @@
     const selected = hiddenFace ? state.selectedHiddenFaces : state.selectedInboxFaces;
     const seq = hiddenFace ? state.hiddenFaceSeq : state.inboxSeq;
     const route = hiddenFace ? "/faces/inbox/hidden/groups/" : "/faces/inbox/groups/";
-    const values = hiddenFace ? { limit: 30 } : { limit: 30, kind, quality_view: state.qualityView };
+    const values = hiddenFace ? { limit: 30, ignore_state: state.ignoreState } : { limit: 30, kind, quality_view: state.qualityView };
     const faces = []; let cursor = null;
     try {
       do {
@@ -1715,29 +1742,34 @@
   }
   async function loadHiddenFaces(more, reopenGroups) {
     if (!inboxDirectoryActive()) return false;
+    if (state.libraryView !== "ignored" || state.ignoredObject !== "faces") return false;
     if (more && state.busy.has("hidden-faces")) return;
     const seq = (state.hiddenFaceSeq || 0) + 1; state.hiddenFaceSeq = seq;
+    const ignoreState = state.ignoreState;
     state.busy.add("hidden-faces"); $("inbox-hidden-more").disabled = true;
-    const values = { limit: 30 };
+    const values = { limit: 30, ignore_state: ignoreState };
     if (more && state.inboxHiddenCursor) values.cursor = state.inboxHiddenCursor;
     if (!more) { state.selectAnchors.forEach((_, key) => { if (key.startsWith("faces:hidden:")) state.selectAnchors.delete(key); }); $("inbox-hidden-cards").replaceChildren(); state.inboxHiddenCursor = null; }
     try {
-      const page = await api("/faces/inbox/hidden/groups" + params(values));
-      if (seq !== state.hiddenFaceSeq) return true;
-      page.cards.forEach((card) => $("inbox-hidden-cards").append(
+      const grouped = ignoreState === "TEMPORARY";
+      const page = await api((grouped ? "/faces/inbox/hidden/groups" : "/faces/inbox/hidden") + params(values));
+      if (seq !== state.hiddenFaceSeq || ignoreState !== state.ignoreState) return true;
+      const cards = grouped ? page.cards.map((card) => card.type === "candidate_group" ? card : ({ type: "single_face", face: card.face }))
+        : page.faces.map((face) => ({ type: "single_face", face }));
+      cards.forEach((card) => $("inbox-hidden-cards").append(
         card.type === "candidate_group" ? renderInboxGroup(card, "all", true) : (() => {
           const wrapper = node("div", undefined, "pa-inbox-single");
           renderInboxFace(wrapper, card.face, true); return wrapper;
         })()));
       const groupLoads = [];
-      if (reopenGroups && reopenGroups.length) Array.from($("inbox-hidden-cards").children).forEach((item) => {
+      if (grouped && reopenGroups && reopenGroups.length) Array.from($("inbox-hidden-cards").children).forEach((item) => {
         if (item.groupKey && reopenGroups.includes(item.groupKey)) {
           item.open = true; groupLoads.push(item.openGroup());
         }
       });
       if (!(await Promise.all(groupLoads)).every(Boolean)) return false;
       state.inboxHiddenCursor = page.next_cursor; $("inbox-hidden-more").hidden = !page.has_more;
-      if (!$("inbox-hidden-cards").children.length) $("inbox-hidden-cards").append(node("p", "暂时没有已忽略的人脸。", "hint"));
+      if (!$("inbox-hidden-cards").children.length) $("inbox-hidden-cards").append(node("p", ignoreState === "EXCLUDED" ? "没有明确排除的人脸。" : "没有暂时忽略的人脸。", "hint"));
       return true;
     } catch (error) {
       if (seq === state.hiddenFaceSeq) { message(errorText(error)); return false; }
@@ -1759,7 +1791,7 @@
         state.rematchAfter = result.next_after_asset_id || 0;
         $("rematch").textContent = result.has_more ? "继续补匹配剩余人脸" : "补匹配未归类人脸";
       }
-      await Promise.all([loadPeople(false), loadInbox(false), refreshCollectionsIfUsed()]);
+      await Promise.all([loadPeople(false), state.libraryView === "faces" ? loadInbox(false) : Promise.resolve(true), refreshCollectionsIfUsed()]);
       message("这批处理了 " + result.processed + " 张照片，归入已有人物 " + result.merged
         + " 张脸，新增未命名人物 " + result.new_groups + " 个。"
         + (result.has_more ? "可继续处理剩余人脸。" : "仍未归类的脸可按原因整理。")
@@ -1768,7 +1800,7 @@
     finally { state.writing = false; state.busy.delete("rematch"); $("rematch").disabled = false; $("rematch-restart").disabled = false; }
   }
   function detailBatchNote(batch) {
-    if (!batch || batch.state === "IDLE") return "一键处理当前全部图库中机器待归类、有人物建议或原图像素更充分的小脸照片；合照按照片去重。没有检测到脸的照片不在此批次内。";
+    if (!batch || batch.state === "IDLE") return "";
     const labels = { QUEUED: "排队中", RUNNING: "正在处理", PAUSED: "已暂停", COMPLETE: "已完成", PARTIAL_FAILED: "已完成（有失败可重试）" };
     return (labels[batch.state] || batch.state) + " · 照片 " + batch.processed + "/" + batch.total
       + " · 成功 " + batch.succeeded + " · 跳过 " + batch.skipped + " · 失败 " + batch.failed
@@ -1784,7 +1816,7 @@
     $("detail-batch").disabled = active || paused;
     if (previous && ["QUEUED", "RUNNING"].includes(previous.state)
         && ["COMPLETE", "PARTIAL_FAILED"].includes(stateName)) {
-      loadPeople(false); if (state.organize) loadInbox(false); refreshCollectionsIfUsed();
+      loadPeople(false); if (state.libraryView === "faces") loadInbox(false); refreshCollectionsIfUsed();
     }
     $("detail-pause").hidden = !active;
     $("detail-resume").hidden = stateName !== "PAUSED";
@@ -1879,8 +1911,33 @@
     return Promise.all([loadPeople(false), loadInbox(false)]);
   }
   function setIgnoreState(ignoreState) {
-    if (!state.hiddenView || !["TEMPORARY", "EXCLUDED"].includes(ignoreState) || state.ignoreState === ignoreState) return;
-    clearPeopleSelection(); state.ignoreState = ignoreState; state.listSeq++; state.listCursor = null; loadPeople(false);
+    if (state.libraryView !== "ignored" || !["TEMPORARY", "EXCLUDED"].includes(ignoreState) || state.ignoreState === ignoreState) return;
+    if (directoryNavigationBusy()) { message("正在保存整理结果，请稍后切换筛选。"); return; }
+    clearPeopleSelection(); state.selectedHiddenFaces.clear();
+    state.selectAnchors.delete("faces:hidden:list"); state.ignoreState = ignoreState;
+    state.listSeq++; state.hiddenFaceSeq++; state.listCursor = null; state.inboxHiddenCursor = null;
+    state.peoplePages = 0; state.peopleBinding = null; state.peopleHasMore = false;
+    $("cards").replaceChildren(); $("list-count").textContent = ""; $("list-count").hidden = true;
+    $("more").hidden = true; $("more").disabled = false; $("list-note").textContent = "正在找人物……";
+    $("inbox-hidden-cards").replaceChildren(); syncDirectoryPagers(true); syncLibraryView(); renderPeopleManagement(); renderFaceManagement();
+    if (state.ignoredObject === "faces") loadHiddenFaces(false); else loadPeople(false);
+  }
+  function setIgnoredObject(object) {
+    if (state.libraryView !== "ignored" || !["faces", "people"].includes(object) || state.ignoredObject === object) return;
+    if (directoryNavigationBusy()) { message("正在保存整理结果，请稍后切换对象。"); return; }
+    rememberDirectoryView(); state.ignoredObject = object; state.hiddenView = object === "people";
+    state.selectedPeople.clear(); state.selectedPeopleSnapshots.clear(); state.selectedHiddenFaces.clear();
+    state.selectAnchors.clear(); state.listSeq++; state.hiddenFaceSeq++; state.listCursor = null; state.inboxHiddenCursor = null;
+    state.peoplePages = 0; $("cards").replaceChildren(); $("inbox-hidden-cards").replaceChildren();
+    state.inboxHiddenVisible = object === "faces"; state.hiddenBatchMode = false;
+    syncLibraryView(); renderPeopleManagement(); renderFaceManagement(); syncDirectoryPagers(true);
+    loadLibraryView();
+  }
+  function enterIgnored(object) {
+    if (directoryNavigationBusy()) return setLibraryView("ignored");
+    state.ignoredObject = object === "people" ? "people" : "faces";
+    state.ignoreState = "TEMPORARY";
+    return setLibraryView("ignored", { force: true, resetIgnoredState: true });
   }
   function setView(organize) {
     return setLibraryView(organize ? state.lastOrganizeView : "people");
@@ -2381,11 +2438,12 @@
       notifyPeopleChanged();
       message("已新建未命名人物（1 张脸）", true);
       loadPeople(false);
-      if (state.organize) {
+      if (state.libraryView === "faces") {
         const openGroups = Array.from($("inbox-cards").children)
           .filter((item) => item.open && item.groupKey).map((item) => item.groupKey);
         loadInbox(false, openGroups);
       }
+      if (state.inboxHiddenVisible) loadHiddenFaces(false);
     } catch (error) {
       // A transport failure leaves commit status unknown; retain this intent's request_id
       // so clicking retry cannot create a second person. HTTP responses are definitive.
@@ -2531,6 +2589,11 @@
     $("collections-view").addEventListener("click", () => setLibraryView("collections"));
     $("unnamed").addEventListener("click", () => setLibraryView("unnamed"));
     $("unrecognized").addEventListener("click", () => setLibraryView("faces"));
+    $("ignored").addEventListener("click", () => enterIgnored("faces"));
+    $("ignored-object-faces").addEventListener("click", () => setIgnoredObject("faces"));
+    $("ignored-object-people").addEventListener("click", () => setIgnoredObject("people"));
+    $("ignored-temporary").addEventListener("click", () => setIgnoreState("TEMPORARY"));
+    $("ignored-excluded").addEventListener("click", () => setIgnoreState("EXCLUDED"));
     window.addEventListener("popstate", () => {
       if (requestedPersonId()) return;
       // Shared photo viewers own same-URL history entries. Dismissing one must
@@ -2563,8 +2626,8 @@
     $("inbox-hidden-clear").addEventListener("click", () => clearInboxSelection(true));
     $("visibility-submit").addEventListener("click", submitVisibility);
     $("hidden-toggle").addEventListener("click", () => {
-      state.hiddenView = !state.hiddenView; if (state.hiddenView) state.ignoreState = "TEMPORARY"; state.selectedPeople.clear(); renderPeopleManagement();
-      $("query").value = ""; loadPeople(false);
+      if (!state.hiddenView) { enterIgnored("people"); return; }
+      setLibraryView("people");
     });
     $("ignore-temporary").addEventListener("click", () => setIgnoreState("TEMPORARY"));
     $("ignore-excluded").addEventListener("click", () => setIgnoreState("EXCLUDED"));
@@ -2606,18 +2669,13 @@
     $("quality-toggle").addEventListener("change", () => {
       setQualityView($("quality-toggle").checked ? "all" : "clean");
     });
-    $("inbox-hide-submit").addEventListener("click", () => submitInboxVisibility(true));
-    $("inbox-ignore-state").addEventListener("change", renderFaceManagement);
+    $("inbox-hide-temporary").addEventListener("click", () => submitInboxVisibility(true, "TEMPORARY"));
+    $("inbox-hide-excluded").addEventListener("click", () => submitInboxVisibility(true, "EXCLUDED"));
     $("inbox-collection-add").addEventListener("click", () => addSelectionToCollection(true));
     $("inbox-assign").addEventListener("click", () => editSelectedInbox("assign"));
     $("inbox-unassign").addEventListener("click", () => editSelectedInbox("unassign"));
     $("inbox-auto").addEventListener("click", () => editSelectedInbox("restore_auto"));
     $("inbox-restore-submit").addEventListener("click", () => submitInboxVisibility(false));
-    $("inbox-hidden-toggle").addEventListener("click", () => {
-      state.inboxHiddenVisible = !state.inboxHiddenVisible;
-      renderFaceManagement();
-      if (state.inboxHiddenVisible) loadHiddenFaces(false);
-    });
     $("inbox-hidden-more").addEventListener("click", () => loadHiddenFaces(true));
     $("rematch").addEventListener("click", () => rematchFaces(false));
     $("rematch-restart").addEventListener("click", () => rematchFaces(true));

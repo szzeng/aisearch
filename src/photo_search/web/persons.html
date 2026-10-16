@@ -8,7 +8,7 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
-    <link rel="stylesheet" href="/web/persons.css?v=p4-person-avatar-click-a-3" />
+    <link rel="stylesheet" href="/web/persons.css?v=p4-person-organize-ux-cleanup-6" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-detail-attribution-collapse-b-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
@@ -16,7 +16,7 @@
     <script src="/web/photo-timeline.js?v=p4-ui-timeline-click-path-fix-a-1" defer></script>
     <script src="/web/persons.js?v=p4-ui2-person-batch-ux-fix-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
-    <script src="/web/persons-albums.js?v=p4-upstream-sync-20261016-2" defer></script>
+    <script src="/web/persons-albums.js?v=p4-person-organize-ux-cleanup-6" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell">
@@ -63,11 +63,38 @@
         <nav id="pa-organize-tabs" class="pa-organize-tabs" aria-label="待整理分类" hidden>
           <button id="pa-unnamed" type="button" aria-pressed="true">未命名人物</button>
           <button id="pa-unrecognized" type="button" aria-pressed="false">未识别人脸</button>
+          <button id="pa-ignored" type="button" aria-pressed="false">已忽略</button>
         </nav>
-        <section id="pa-organize-tools" aria-label="整理辅助功能" hidden>
-          <div class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
-          <div class="row-actions"><button id="pt-review-entry" type="button" hidden>识别更新待确认</button><button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button><span id="pt-review-summary-status" role="status"></span><details><summary>更多</summary><button id="pt-history-entry" type="button">操作历史</button></details></div>
-        </section>
+        <div id="pa-ignored-object-filter" class="row-actions pa-ignored-filters" hidden aria-label="已忽略对象">
+          <button id="pa-ignored-object-faces" type="button" aria-pressed="true">人脸</button>
+          <button id="pa-ignored-object-people" type="button" aria-pressed="false">人物</button>
+        </div>
+        <div id="pa-ignored-state-filter" class="row-actions pa-ignored-filters" hidden aria-label="忽略状态">
+          <button id="pa-ignored-temporary" type="button" aria-pressed="true">暂时忽略</button>
+          <button id="pa-ignored-excluded" type="button" aria-pressed="false">明确排除</button>
+          <p class="hint">人物级排除会让人物不再作为自动匹配候选；单脸排除只跳过这张脸，未来新检测到的同一人仍可能出现。</p>
+        </div>
+        <details id="pa-organize-tools" class="pa-more-actions" aria-label="整理辅助功能" hidden>
+          <summary>更多操作</summary>
+          <div class="pa-more-actions-menu">
+            <div id="pa-quality-tools" class="row-actions"><label><input id="pa-quality-toggle" type="checkbox" />显示疑似低质量人脸</label></div>
+            <button id="pt-review-entry" type="button" hidden>识别更新待确认</button>
+            <button id="pt-review-summary-retry" type="button" hidden>重试待确认数量</button>
+            <button id="pt-history-entry" type="button">操作历史</button>
+            <details id="pa-inbox-help"><summary>整理说明</summary><p class="hint">仅加入合集只收藏这次选择，不代表确认同一个人。确认人物后，符合现有识别条件的新照片才可能归入；加入人物合集后照片会动态增加。</p></details>
+            <details id="pa-recognition-tools"><summary>识别与补匹配工具</summary><div class="row-actions">
+              <button id="pa-rematch" type="button">补匹配未归类人脸</button>
+              <button id="pa-rematch-restart" type="button">从头重新检查旧照片</button>
+              <label for="pa-detail-source">补识别范围</label>
+              <select id="pa-detail-source"><option value="">全部图库</option></select>
+              <button id="pa-detail-batch" type="button">一键原图补识别</button>
+              <button id="pa-detail-pause" type="button" hidden>暂停补识别</button>
+              <button id="pa-detail-resume" type="button" hidden>继续补识别</button>
+              <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
+            </div></details>
+          </div>
+        </details>
+        <span id="pt-review-summary-status" class="hint" role="status" aria-live="polite"></span>
         <section id="pa-collections-section" class="pa-collections-section" aria-label="人物合集" hidden><div class="pa-section-heading"><div><h3>人物合集</h3><p class="hint">把常一起出现的人物放在一起浏览。</p></div><div class="row-actions"><button type="button" id="pa-collections-toggle" hidden>查看合集</button><button type="button" id="pa-collection-create">新建合集</button></div></div>
           <section id="pa-collections-panel" hidden><p id="pa-collections-note" class="hint" role="status" aria-live="polite"></p><button id="pa-collections-retry" type="button" hidden>重试加载合集</button><div id="pa-collections" class="pa-people-grid pa-collection-grid"></div><div id="pa-collections-sentinel" class="pa-scroll-sentinel" aria-hidden="true"></div><button type="button" id="pa-collections-more" hidden>更多合集</button></section>
         </section>
@@ -102,8 +129,8 @@
         <button type="button" id="pa-more" hidden>再看一些人物</button>
         </section>
         <section id="pa-inbox" hidden>
-          <h3>还没认出是谁</h3>
-          <p class="hint">从照片里找到的脸，选一个熟悉的人就能归进去。补匹配会利用已经认出的人，继续整理未归类的人脸。</p>
+          <div id="pa-inbox-content">
+          <h3>未识别人脸</h3>
           <div class="row-actions">
             <label for="pa-inbox-kind">查看</label>
             <select id="pa-inbox-kind">
@@ -112,52 +139,39 @@
               <option value="pending">还没有可靠匹配</option>
             </select>
           </div>
-          <details id="pa-recognition-tools"><summary>识别与补匹配工具</summary><div class="row-actions">
-            <button id="pa-rematch" type="button">补匹配未归类人脸</button>
-            <button id="pa-rematch-restart" type="button">从头重新检查旧照片</button>
-            <label for="pa-detail-source">补识别范围</label>
-            <select id="pa-detail-source"><option value="">全部图库</option></select>
-            <button id="pa-detail-batch" type="button">一键原图补识别</button>
-            <button id="pa-detail-pause" type="button" hidden>暂停补识别</button>
-            <button id="pa-detail-resume" type="button" hidden>继续补识别</button>
-            <button id="pa-detail-retry" type="button" hidden>重试失败照片</button>
-          </div>
-          </details>
           <p id="pa-detail-batch-note" class="hint" role="status" aria-live="polite"></p>
           <p id="pa-inbox-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-summary-retry" type="button" hidden>重试统计</button>
           <p id="pa-inbox-load-note" class="hint" role="status" aria-live="polite"></p><button id="pa-inbox-retry" type="button" hidden>重试加载待整理人脸</button>
-          <p class="hint">批量整理时按住 Shift 连选，仅限已加载人脸；候选组需先展开。</p>
-          <p class="hint">仅加入合集：只收藏这次选择的人脸/照片，不代表确认同一个人，也不会自动收进以后出现的相似脸。确认人物并继续识别：明确指定或建立人物后，符合现有识别条件的新照片才可能归入；需将人物加入合集，照片才会动态增加。</p>
           <div class="row-actions" aria-label="待整理人脸批量管理">
             <button id="pa-inbox-batch-toggle" type="button" aria-pressed="false">批量整理</button>
             <span id="pa-inbox-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-clear" type="button" hidden>清空选择</button>
-            <label id="pa-inbox-ignore-state-label" hidden>忽略方式
-              <select id="pa-inbox-ignore-state"><option value="TEMPORARY">暂时忽略，以后可能处理</option><option value="EXCLUDED">明确排除，这些脸不再参与人物推荐</option></select>
-            </label>
-            <button id="pa-inbox-hide-submit" type="button" hidden disabled>暂时忽略所选人脸</button>
-            <select id="pa-inbox-collection-choice" hidden aria-label="将所选人脸加入哪个合集"><option value="">选择合集</option></select>
-            <label id="pa-inbox-collection-hide-label" hidden><input id="pa-inbox-collection-hide" type="checkbox" />加入后暂时忽略</label>
-            <button id="pa-inbox-collection-add" type="button" hidden disabled>加入合集</button>
+            <button id="pa-inbox-hide-temporary" type="button" hidden disabled>暂时忽略所选人脸</button>
+            <button id="pa-inbox-hide-excluded" type="button" hidden disabled>排除所选人脸</button>
             <button id="pa-inbox-assign" type="button" hidden disabled>移到已有的人物</button>
             <button id="pa-inbox-unassign" type="button" hidden disabled>从人物移出</button>
             <button id="pa-inbox-auto" type="button" hidden disabled>恢复自动判断（保留排除）</button>
           </div>
           <div id="pa-inbox-cards" class="pa-people-grid"></div>
           <button id="pa-inbox-more" type="button" hidden>再整理一些</button>
-          <section class="pa-inbox-hidden" aria-label="已忽略人脸">
-            <h3>已忽略的人脸</h3>
-            <p class="hint">暂时忽略会保留人物建议；明确排除会让这张脸不再参与人物推荐。两种状态都保留原照片和人脸，可在这里恢复。</p>
-            <button id="pa-inbox-hidden-toggle" type="button" aria-expanded="false">查看已忽略人脸</button>
-            <div id="pa-inbox-hidden-content" hidden>
-              <div class="row-actions">
-                <button id="pa-inbox-hidden-batch-toggle" type="button" aria-pressed="false" hidden>管理已忽略人脸</button>
-                <span id="pa-inbox-hidden-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-hidden-clear" type="button" hidden>清空选择</button>
-                <button id="pa-inbox-restore-submit" type="button" hidden disabled>恢复所选人脸</button>
-              </div>
-              <div id="pa-inbox-hidden-cards" class="pa-people-grid"></div>
-              <button id="pa-inbox-hidden-more" type="button" hidden>再看一些已忽略人脸</button>
-            </div>
-          </section>
+          </div>
+          <div class="row-actions pa-ignored-batch-actions" aria-label="批量合集操作">
+            <select id="pa-inbox-collection-choice" hidden aria-label="将所选人脸加入哪个合集"><option value="">选择合集</option></select>
+            <label id="pa-inbox-collection-hide-label" hidden><input id="pa-inbox-collection-hide" type="checkbox" />加入后暂时忽略</label>
+            <button id="pa-inbox-collection-add" type="button" hidden disabled>加入合集</button>
+          </div>
+        </section>
+        <section id="pa-ignored-people" class="pa-ignored-panel" aria-label="已忽略人物" hidden>
+          <p class="hint">可在此恢复暂时忽略或明确排除的人物；已命名和未命名人物都会显示。</p>
+        </section>
+        <section id="pa-ignored-faces" class="pa-ignored-panel" aria-label="已忽略人脸" hidden>
+          <p class="hint">暂时忽略会保留候选分组；明确排除按人脸平铺显示。可恢复人脸，照片和人工归属不会改变。</p>
+          <div class="row-actions" aria-label="管理已忽略人脸">
+            <button id="pa-inbox-hidden-batch-toggle" type="button" aria-pressed="false" hidden>管理已忽略人脸</button>
+            <span id="pa-inbox-hidden-selection-count" class="hint" role="status" aria-live="polite" hidden></span><button id="pa-inbox-hidden-clear" type="button" hidden>清空选择</button>
+            <button id="pa-inbox-restore-submit" type="button" hidden disabled>恢复所选人脸</button>
+          </div>
+          <div id="pa-inbox-hidden-cards" class="pa-people-grid"></div>
+          <button id="pa-inbox-hidden-more" type="button" hidden>再看一些已忽略的人脸</button>
         </section>
       </section>
       <section id="pa-album" class="panel pa-shell" aria-label="人物照片" hidden>

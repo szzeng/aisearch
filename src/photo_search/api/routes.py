@@ -1848,19 +1848,22 @@ async def face_inbox(
 
 @router.get("/faces/inbox/hidden", summary="Read a page of explicitly hidden inbox faces")
 async def face_inbox_hidden(
-    request: Request, limit: int | None = None, cursor: str | None = None
+    request: Request, limit: int | None = None, cursor: str | None = None,
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] | None = None,
 ) -> dict[str, Any]:
     return person_albums.inbox_hidden_page(
-        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor
+        service_of(request).catalog, limit=clamp_person_limit(limit), cursor=cursor, ignore_state=ignore_state
     )
 
 
 @router.get("/faces/inbox/hidden/groups", summary="Read grouped ignored inbox faces")
 async def face_inbox_hidden_groups(
-    request: Request, limit: int | None = None, cursor: str | None = None
+    request: Request, limit: int | None = None, cursor: str | None = None,
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] | None = None,
 ) -> dict[str, Any]:
     return person_albums.inbox_hidden_group_page(
-        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor
+        service_of(request).catalog, limit=min(clamp_person_limit(limit), 30), cursor=cursor,
+        ignore_state=ignore_state,
     )
 
 
@@ -1869,13 +1872,15 @@ async def face_inbox_hidden_groups(
     summary="Read one ignored-face candidate group's faces",
 )
 async def face_inbox_hidden_group_faces(
-    request: Request, group_key: str, limit: int | None = None, cursor: str | None = None
+    request: Request, group_key: str, limit: int | None = None, cursor: str | None = None,
+    ignore_state: Literal["TEMPORARY", "EXCLUDED"] | None = None,
 ) -> dict[str, Any]:
     return person_albums.inbox_hidden_group_faces(
         service_of(request).catalog,
         group_key=group_key,
         limit=min(clamp_person_limit(limit), 30),
         cursor=cursor,
+        ignore_state=ignore_state,
     )
 
 

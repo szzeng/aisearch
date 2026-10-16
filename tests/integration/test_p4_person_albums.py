@@ -914,6 +914,10 @@ def test_ignored_assignment_visibility_group_cursor_and_undo(api_env: ApiEnv) ->
 
         flat = (await client.get("/api/v1/faces/inbox/hidden", params={"limit": 1})).json()
         assert flat["has_more"]
+        stateful_flat = (await client.get(
+            "/api/v1/faces/inbox/hidden", params={"limit": 1, "ignore_state": "TEMPORARY"}
+        )).json()
+        assert stateful_flat["has_more"]
         initial = (await client.get("/api/v1/faces/inbox/hidden/groups", params={"limit": 1})).json()
         assert initial["has_more"] and initial["cards"][0]["type"] == "candidate_group"
         candidate_card = initial["cards"][0]
@@ -973,6 +977,15 @@ def test_ignored_assignment_visibility_group_cursor_and_undo(api_env: ApiEnv) ->
             params={"limit": 1, "cursor": initial["next_cursor"]},
         )
         assert stale_group_cursor.status_code == 409
+        stale_stateful_flat_cursor = await client.get(
+            "/api/v1/faces/inbox/hidden",
+            params={
+                "limit": 1,
+                "ignore_state": "TEMPORARY",
+                "cursor": stateful_flat["next_cursor"],
+            },
+        )
+        assert stale_stateful_flat_cursor.status_code == 409
         # The legacy flat cursor remains an ordinary face-id keyset cursor.
         flat_next = await client.get("/api/v1/faces/inbox/hidden", params={
             "limit": 1, "cursor": flat["next_cursor"],
@@ -1000,6 +1013,120 @@ def test_ignored_assignment_visibility_group_cursor_and_undo(api_env: ApiEnv) ->
         assert coface in {face["face_id"] for face in (await client.get(
             "/api/v1/faces/inbox/hidden"
         )).json()["faces"]}
+
+    api_env.scenario(scenario)
+
+
+def test_hidden_inbox_ignore_state_filters_and_cursor_bindings(api_env: ApiEnv) -> None:
+    photos = seed_library(api_env, {
+        "temporary-one.jpg": [(20, 20, 90, 90)],
+        "temporary-two.jpg": [(25, 25, 95, 95)],
+        "temporary-other-one.jpg": [(28, 28, 98, 98)],
+        "temporary-other-two.jpg": [(29, 29, 99, 99)],
+        "excluded-one.jpg": [(30, 30, 100, 100)],
+        "excluded-two.jpg": [(35, 35, 105, 105)],
+    })
+    catalog = api_env.service.catalog
+    candidate = add_person(catalog, name="候选")
+    other_candidate = add_person(catalog, name="另一候选")
+    face_ids = [photos[name]["faces"][0] for name in (
+        "temporary-one.jpg", "temporary-two.jpg", "excluded-one.jpg", "excluded-two.jpg",
+        "temporary-other-one.jpg", "temporary-other-two.jpg"
+    )]
+    for index, face_id in enumerate(face_ids):
+        add_link(catalog, face_id, other_candidate if index in (3, 4, 5) else candidate,
+                 decision="SUGGESTED", confidence=.9-index*.1)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        for ignore_state, ids in (("TEMPORARY", face_ids[:2] + face_ids[4:]), ("EXCLUDED", face_ids[2:4])):
+            response = await client.post("/api/v1/faces/inbox/visibility", headers=headers,
+                json={"face_ids": ids, "hidden": True, "ignore_state": ignore_state})
+            assert response.status_code == 200
+
+        legacy = (await client.get("/api/v1/faces/inbox/hidden", params={"limit": 20})).json()
+        assert {face["face_id"] for face in legacy["faces"]} == set(face_ids)
+        legacy_flat_first = (await client.get("/api/v1/faces/inbox/hidden", params={"limit": 1})).json()
+        legacy_flat_next = await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "cursor": legacy_flat_first["next_cursor"]})
+        assert legacy_flat_first["has_more"] and legacy_flat_next.status_code == 200
+        legacy_groups = (await client.get("/api/v1/faces/inbox/hidden/groups", params={"limit": 20})).json()
+        assert legacy_groups["cards"]
+        assert {card["face"]["ignore_state"] for card in legacy_groups["cards"]} == {"TEMPORARY", "EXCLUDED"}
+        legacy_group_first = (await client.get("/api/v1/faces/inbox/hidden/groups", params={"limit": 1})).json()
+        legacy_group_next = await client.get("/api/v1/faces/inbox/hidden/groups", params={
+            "limit": 1, "cursor": legacy_group_first["next_cursor"]})
+        assert legacy_group_first["has_more"] and legacy_group_next.status_code == 200
+        temporary = (await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "ignore_state": "TEMPORARY"})).json()
+        excluded = (await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "ignore_state": "EXCLUDED"})).json()
+        assert temporary["has_more"] and excluded["has_more"]
+        assert {face["ignore_state"] for face in temporary["faces"]} == {"TEMPORARY"}
+        assert {face["ignore_state"] for face in excluded["faces"]} == {"EXCLUDED"}
+        assert excluded["faces"][0]["suggestions"] == []
+        excluded_second = await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "ignore_state": "EXCLUDED", "cursor": excluded["next_cursor"]})
+        assert excluded_second.status_code == 200
+        assert excluded_second.json()["faces"][0]["face_id"] != excluded["faces"][0]["face_id"]
+        cross_flat = await client.get("/api/v1/faces/inbox/hidden", params={
+            "limit": 1, "ignore_state": "EXCLUDED", "cursor": temporary["next_cursor"]})
+        assert cross_flat.status_code == 409
+        cross_flat_to_groups = await client.get("/api/v1/faces/inbox/hidden/groups", params={
+            "ignore_state": "TEMPORARY", "cursor": temporary["next_cursor"]})
+        assert cross_flat_to_groups.status_code == 409
+
+        temp_groups = (await client.get("/api/v1/faces/inbox/hidden/groups", params={
+            "limit": 1, "ignore_state": "TEMPORARY"})).json()
+        assert len(temp_groups["cards"]) == 1
+        assert temp_groups["cards"][0]["type"] == "candidate_group"
+        assert temp_groups["cards"][0]["photo_count"] == 2
+        cross_groups_to_flat = await client.get("/api/v1/faces/inbox/hidden", params={
+            "ignore_state": "TEMPORARY", "cursor": temp_groups["next_cursor"]})
+        assert cross_groups_to_flat.status_code == 409
+        other_group_page = await client.get("/api/v1/faces/inbox/hidden/groups", params={
+            "ignore_state": "TEMPORARY", "cursor": temp_groups["next_cursor"]})
+        assert other_group_page.status_code == 200
+        other_group = other_group_page.json()["cards"][0]["group_key"]
+        cross_group = await client.get("/api/v1/faces/inbox/hidden/groups", params={
+            "ignore_state": "EXCLUDED"})
+        assert cross_group.status_code == 422
+        temp_detail = (await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{temp_groups['cards'][0]['group_key']}",
+            params={"limit": 1, "ignore_state": "TEMPORARY"},
+        )).json()
+        assert temp_detail["has_more"]
+        temp_detail_next = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{temp_groups['cards'][0]['group_key']}",
+            params={"limit": 1, "ignore_state": "TEMPORARY", "cursor": temp_detail["next_cursor"]},
+        )
+        assert temp_detail_next.status_code == 200
+        assert temp_detail_next.json()["faces"][0]["face_id"] != temp_detail["faces"][0]["face_id"]
+        group_cross_cursor = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{temp_groups['cards'][0]['group_key']}",
+            params={"limit": 1, "cursor": temp_detail["next_cursor"]},
+        )
+        assert group_cross_cursor.status_code == 409
+        group_key_cross_cursor = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{other_group}",
+            params={"limit": 1, "ignore_state": "TEMPORARY", "cursor": temp_detail["next_cursor"]},
+        )
+        assert group_key_cross_cursor.status_code == 409
+        group_detail = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{temp_groups['cards'][0]['group_key']}",
+            params={"ignore_state": "EXCLUDED"},
+        )
+        assert group_detail.status_code == 422
+        excluded_invalid = await client.get("/api/v1/faces/inbox/hidden", params={"ignore_state": "bad"})
+        assert excluded_invalid.status_code == 422
+        invalid_group = await client.get("/api/v1/faces/inbox/hidden/groups", params={"ignore_state": "bad"})
+        assert invalid_group.status_code == 422
+        invalid_detail = await client.get(
+            f"/api/v1/faces/inbox/hidden/groups/{temp_groups['cards'][0]['group_key']}",
+            params={"ignore_state": "bad"},
+        )
+        assert invalid_detail.status_code == 422
 
     api_env.scenario(scenario)
 
