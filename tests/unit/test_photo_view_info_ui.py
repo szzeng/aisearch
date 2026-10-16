@@ -13,7 +13,7 @@ def test_photo_info_renders_paths_people_gps_and_releases_stale_maps() -> None:
     script = r"""
 const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
 class Element {
-  constructor(tag) { this.tagName=tag; this.children=[]; this.events={}; this.attributes={}; this.dataset={}; this.style={}; this.hidden=false; this.value=""; this.parentNode=null; this.classList={add(){},remove(){}}; }
+  constructor(tag) { this.tagName=tag; this.children=[]; this.events={}; this.attributes={}; this.dataset={}; this.style={}; this.hidden=false; this.value=""; this.parentNode=null; this.classList={names:new Set(),add(name){this.names.add(name);},remove(name){this.names.delete(name);},contains(name){return this.names.has(name);},toggle(name){if(this.names.has(name)){this.names.delete(name);return false;}this.names.add(name);return true;}}; }
   set textContent(value) { this.text=String(value); this.children.forEach(c=>c.parentNode=null); this.children=[]; }
   get textContent() { return (this.text||"")+this.children.map(c=>c.textContent).join(""); }
   append(...items) { items.forEach(c=>{ if(c && typeof c==="object"){c.parentNode=this;} this.children.push(c); }); }
@@ -22,6 +22,7 @@ class Element {
   after(item) { if(!this.parentNode)return; const a=this.parentNode.children,i=a.indexOf(this); item.parentNode=this.parentNode; a.splice(i+1,0,item); }
   setAttribute(key,value) { this.attributes[key]=String(value); }
   removeAttribute(key) { delete this[key]; }
+  querySelector(selector) { return selector===".maplibregl-ctrl-attrib" ? (this.attributionControl||null) : selector===".maplibregl-ctrl-attrib-button" ? (this.attributionButton||null) : null; }
   addEventListener(event,callback) { (this.events[event] ||= []).push(callback); }
   fire(event,extra={}) { (this.events[event]||[]).forEach(fn=>fn(Object.assign({target:this,key:""},extra))); }
   getBoundingClientRect() { return {left:0,top:0,width:this.clientWidth||800,height:this.clientHeight||600}; }
@@ -34,7 +35,7 @@ class Element {
 const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
-class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
+class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;const summary={attributes:{},setAttribute(key,value){this.attributes[key]=String(value);}};const control={open:true,attributes:{open:""},attributionButton:summary,classList:{classes:new Set(["maplibregl-compact","maplibregl-compact-show"]),remove(name){this.classes.delete(name);}},querySelector(selector){return selector===".maplibregl-ctrl-attrib-button"?summary:null;},setAttribute(key,value){this.attributes[key]=String(value);},removeAttribute(name){delete this.attributes[name];}};this.options.container.attributionControl=control;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
 const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
 const fetches=[]; let releaseDetail;
 const ok=body=>({ok:true,status:200,json:async()=>body});
@@ -90,7 +91,15 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(maps[0].options.center[0],0); assert.equal(maps[0].options.center[1],0);
   assert.equal(maps[0].options.attributionControl.compact,true,"detail map uses compact attribution mode");
   maps[0].events.load();
-  assert.ok(maps[0].fired.includes("drag"),"the non-interactive detail map collapses attribution on initial load");
+  assert.equal(maps[0].options.container.attributionControl.open,false,"the detail map closes the compact attribution disclosure on initial load");
+  assert.ok(!maps[0].options.container.attributionControl.classList.classes.has("maplibregl-compact-show"),"the long attribution text is hidden until deliberately opened");
+  const mapBlock=all(host,n=>n.className==="photo-info-map")[0], attributionSummary={attributes:{},closest:selector=>selector===".maplibregl-ctrl-attrib-button"?attributionSummary:null,setAttribute(key,value){this.attributes[key]=String(value);}};
+  let prevented=false; mapBlock.fire("click",{target:attributionSummary,preventDefault(){prevented=true;}});
+  assert.ok(mapBlock.classList.names.has("photo-info-map-attribution-open"),"the attribution button can deliberately expand its text");
+  assert.equal(maps[0].options.container.attributionControl.open,true); assert.equal(attributionSummary.attributes["aria-expanded"],"true"); assert.ok(prevented);
+  mapBlock.fire("click",{target:attributionSummary,preventDefault(){prevented=true;}});
+  assert.ok(!mapBlock.classList.names.has("photo-info-map-attribution-open"),"the attribution button can collapse its text again");
+  assert.equal(maps[0].options.container.attributionControl.open,false); assert.equal(attributionSummary.attributes["aria-expanded"],"false");
   assert.equal(JSON.stringify(maps[0].source.source.data.geometry.coordinates),"[0,0]");
   assert.equal(all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径").length,3);
   const localButtons=all(host,n=>n.className==="photo-info-local-action");
@@ -246,11 +255,11 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-ui2-photo-detail-entry-a-1" in document
-        assert "/web/photo-info.css?v=p4-ui2-photo-detail-entry-a-1" in document
+        assert "/web/photo-info.js?v=p4-photo-detail-attribution-collapse-b-1" in document
+        assert "/web/photo-info.css?v=p4-photo-detail-attribution-collapse-b-1" in document
     assert "search.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-person-nav-implement-a-4" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-person-avatar-click-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"

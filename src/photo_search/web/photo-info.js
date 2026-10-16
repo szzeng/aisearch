@@ -143,8 +143,32 @@
   function disposeMap(state) {
     if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; }
   }
+  function collapseMapAttribution(canvas) {
+    var control = canvas.querySelector && canvas.querySelector(".maplibregl-ctrl-attrib");
+    if (!control) return;
+    control.classList.remove("maplibregl-compact-show");
+    control.open = false;
+    control.removeAttribute("open");
+    var summary = control.querySelector && control.querySelector(".maplibregl-ctrl-attrib-button");
+    if (summary) summary.setAttribute("aria-expanded", "false");
+  }
   function showMap(host, asset, assetId, state) {
     var block = node("section", undefined, "photo-info-map");
+    block.addEventListener("click", function (event) {
+      var target = event.target;
+      var summary = target && typeof target.closest === "function" && target.closest(".maplibregl-ctrl-attrib-button");
+      if (!summary) return;
+      block.classList.toggle("photo-info-map-attribution-open");
+      var control = canvas.querySelector && canvas.querySelector(".maplibregl-ctrl-attrib");
+      var expanded = block.classList.contains("photo-info-map-attribution-open");
+      if (control) {
+        control.open = expanded;
+        if (expanded) control.setAttribute("open", "");
+        else control.removeAttribute("open");
+      }
+      summary.setAttribute("aria-expanded", String(expanded));
+      if (event.preventDefault) event.preventDefault();
+    });
     block.append(node("h3", "拍摄位置"));
     var coords = node("p", "坐标：" + asset.latitude + ", " + asset.longitude, "hint"); block.append(coords);
     var canvas = node("div", undefined, "photo-info-map-canvas");
@@ -182,9 +206,8 @@
           ids.forEach(function (id, index) { state.map.addLayer({ id: id, type: "raster", source: sourceNames[index], minzoom: 0, maxzoom: 18 }); });
           state.map.addSource("photo-location", { type: "geojson", data: { type: "Feature", geometry: { type: "Point", coordinates: [asset.longitude, asset.latitude] }, properties: {} } });
           state.map.addLayer({ id: "photo-location", type: "circle", source: "photo-location", paint: { "circle-radius": 7, "circle-color": "#dc3545", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-          // Compact attribution starts expanded and normally collapses after a drag.
-          // The detail map is intentionally non-interactive, so fire that public event once.
-          state.map.fire("drag");
+          // Compact attribution starts open; this detail map cannot be dragged to dismiss it.
+          collapseMapAttribution(canvas);
         });
         state.map.on("error", unavailable);
       }).catch(unavailable);
