@@ -55,7 +55,7 @@ CLIP 整轮 39.69 秒；Qwen 整轮 259.12 秒，其中加载 **202.84 秒**，2
 
 - **保留 SQLite FTS5、LanceDB、现有模型和等权 RRF。** 当前可确认的问题来自查询构造/执行计划。SQLite 已支持 BM25 字段权重；RRF 按名次融合，归一化分数融合也有[研究依据](https://arxiv.org/abs/2210.11934)，但需要真实图像加 OCR 的联合相关性标签，纯文本样本不足以选全局权重。
 - **暂不引入 jieba。** 隔离实验的 46 个刻意刁钻样例中，旧策略 22、当前 38、jieba 42 个通过；但 17 个专名当前全对，jieba 仅 14 个，还需约 0.51 秒初始化和 72MiB 内存。总分更高不等于适合直接替换；词典仍会误拆作品名。实验依赖未进入产品环境。
-- **后续优先扩大整图/双视图和维度试验。** [SigLIP2 NaFlex](https://huggingface.co/google/siglip2-base-patch16-naflex)提供多语言及画幅适应方向；[Qwen3-VL Reranker](https://github.com/QwenLM/Qwen3-VL-Embedding)可针对少量候选精排，但需要额外模型、显存与延迟实测。本轮未下载这些权重。MobileCLIP2 的研究用途模型许可也不适合直接作为产品替换项。
+- **后续优先扩大整图/双视图和维度试验。** [SigLIP2 NaFlex](https://huggingface.co/google/siglip2-base-patch16-naflex)提供多语言及画幅适应方向；[Qwen3-VL Reranker](https://github.com/QwenLM/Qwen3-VL-Embedding)可针对少量候选精排，但需要额外模型、显存与延迟实测。第一阶段未下载；SigLIP2获准后的追加实测见文末，Reranker仍未下载。MobileCLIP2 的研究用途模型许可也不适合直接作为产品替换项。
 
 ## 验证与复现
 
@@ -150,3 +150,31 @@ Qwen维度独立重算：512/1024/2048的Top1为72.19%/72.63%/74.61%。2048相�
 ```
 
 首次复现须先按第一阶段prepare命令生成旧240图排除清单；公开图片与向量不随Git分发。原始材料在 `.tmp/peer-search-20261016/`、`test-results/peer-search-20261016/`。固定方案随代码保存于 `tools/evaluation/peer_search_plan.json`；旧240的新变体结果只作二次探索，新600为本轮确认。
+
+### SigLIP2 NaFlex追加对照
+
+用户单独批准后，下载[Google SigLIP2 Base NaFlex](https://huggingface.co/google/siglip2-base-patch16-naflex/tree/b53b807d3a2d5e2b3911292f2d69e5341cdc064c)，固定revision `b53b807d`，Apache-2.0。8文件共1,539,627,432字节，逐项核对官方LFS SHA256或Git blob身份；权重留在忽略的 `PhotoSearchData/models/siglip2-base-patch16-naflex/`。小型文件校验清单 `tools/evaluation/siglip_model_lock.json` 随代码保存。
+
+同一600图及原200/400划分，原生768维、float32、batch1；官方NaFlex最多256块、每块16×16像素，尽量保留画幅比例。文本仅转小写，固定64 tokens和官方填充，不加英文分类模板；图像EXIF转正/RGB后交官方processor。没有调参或改生产配置。这是已经看过基线结果后的追加固定对照，不是新的盲测。
+
+| 400图、453条查询 | 配对图片排第一 | 排前五 |
+|---|---:|---:|
+| Chinese-CLIP默认 | 68.87% | 92.27% |
+| Chinese-CLIP双视图最大值 | 72.85% | 92.72% |
+| Qwen512 | 72.19% | 96.03% |
+| Qwen2048 | 74.61% | 96.69% |
+| SigLIP2 NaFlex768 | 62.03% | 88.08% |
+
+SigLIP2相对默认CLIP为46条改善、77条退步，Top1差值−6.84个百分点，图片分组bootstrap 95%区间[−12.04,−1.64]；相对Qwen512差值−10.15，区间[−15.34,−4.93]。区间未作多重比较校正；配对命中率仍不是穷尽相关性precision。当前证据不支持换成该版本。独立核对666句最长32 tokens、没有触发64长度截断；原预声明宽/高画幅子集为69/110命中（62.73%），未显示足以替换的收益。
+
+RTX5070Ti上的实际编码：666条文字共3.19秒，中位数3.45ms、p95 5.64ms；600图片共6.30秒，中位数9.80ms、p95 11.66ms。同步计时包含预处理、传输、归一化，第一次文字/图片分别593.56/363.85ms，未丢弃。PyTorch峰值分配1.52GB、保留1.62GB，不含框架分配器以外的CUDA开销或其他进程；没有据此宣称GTX1660资格通过。权重/processor加载2.86秒，另有文件核验3.08秒、导入3.07秒、CUDA初始化0.14秒；完整进程20.99秒。下载后文件缓存已热，不当作冷启动承诺。
+
+768维令30万张裸float32向量约922MB，比512维多50%；本样本中文效果更低，所以保留现有模型。模型运行和CPU比较实际exit0；新增13项工具测试与Ruff通过，复用未改旧工具/产品证据，没有重新执行全仓测试。真实模型调用验证了NaFlex的pixel mask和spatial shapes路径，工具保护模型/数据/运行环境身份与旧证据。
+
+复现：先按固定revision准备模型目录并用锁文件校验，使用前文Python/项目缓存环境；运行后执行CPU比较，不需要再次编码旧模型：
+
+```powershell
+& $py -m tools.evaluation.siglip_search_quality run --dataset .tmp/peer-search-20261016/datasets/dataset.json --model-dir PhotoSearchData/models/siglip2-base-patch16-naflex --model-lock tools/evaluation/siglip_model_lock.json --output .tmp/siglip-repro
+& $py -m tools.evaluation.siglip_search_quality compare --dataset .tmp/peer-search-20261016/datasets/dataset.json --run-dir .tmp/siglip-repro --clip-run .tmp/peer-search-20261016/clip-confirmation --qwen-run .tmp/peer-search-20261016/qwen-confirmation --plan tools/evaluation/peer_search_plan.json --exclude-dataset .tmp/search-quality-20261016/datasets/dataset.json --output test-results/siglip-repro-comparison.json
+& $py -m pytest -q tests/unit/test_siglip_search_quality.py --basetemp=.pytest-tmp/siglip-repro --junitxml=test-results/siglip-repro.xml
+```
