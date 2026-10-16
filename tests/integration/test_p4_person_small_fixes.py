@@ -18,6 +18,11 @@ def test_case_insensitive_literal_name_alias_search_preserves_identity(api_env: 
     upper = add_person(catalog, name="Alice")
     lower = add_person(catalog, name="alice")
     unicode_person = add_person(catalog, name="Straße张三")
+    photos = seed_library(api_env, {
+        f"name-member-{index}.jpg": [(20, 20, 90, 90)] for index in range(3)
+    })
+    for person_id, photo in zip((upper, lower, unicode_person), photos.values(), strict=True):
+        add_link(catalog, photo["faces"][0], person_id)
     with catalog.write() as connection:
         connection.execute(
             "INSERT INTO person_aliases(person_id, alias, normalized_alias, created_at) VALUES (?, ?, ?, 1)",
@@ -112,7 +117,7 @@ def test_rename_is_live_in_both_inbox_groups_and_person_choices(api_env: ApiEnv)
     api_env.scenario(scenario)
 
 
-def test_removed_hidden_members_return_to_named_and_unnamed_lists_atomically(api_env: ApiEnv) -> None:
+def test_removed_members_keep_ignore_state_until_explicit_restore(api_env: ApiEnv) -> None:
     catalog = api_env.service.catalog
     photos = seed_library(api_env, {f"{i}.jpg": [(20, 20, 90, 90)] for i in range(2)})
     named, unnamed = add_person(catalog, name="名字"), add_person(catalog)
@@ -121,44 +126,71 @@ def test_removed_hidden_members_return_to_named_and_unnamed_lists_atomically(api
     first, second = [collections.create_collection(catalog, n)["collection"] for n in ("第一组", "第二组")]
     for c in (first, second):
         collections.edit_members(catalog, c["collection_id"], instance_token=c["instance_token"], action="add", person_ids=[named, unnamed], hide_after_add=True)
+    service = PersonService.open(catalog)
+    service.set_visibility(person_ids=[named], hidden=True, ignore_state="EXCLUDED")
+    hidden_before = [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")]
     before = {table: [tuple(row) for row in catalog.read_all(f"SELECT * FROM {table}")]
               for table in ("persons", "faces", "face_person_links", "face_assignment_controls", "face_exclusions")}
-    service = PersonService.open(catalog)
     cid, token = first["collection_id"], first["instance_token"]
     with pytest.raises(Exception):
         collections.edit_members(catalog, cid, instance_token=token, action="remove", person_ids=[named, 999999])
-    assert catalog.read_one("SELECT COUNT(*) FROM person_hidden")[0] == 2
-    # Failure after visibility deletion must roll back membership and visibility together.
+    assert [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")] == hidden_before
+    # A failure after member deletion must roll back the removal, keeping ignore facts intact.
     catalog.connection.execute("CREATE TEMP TRIGGER fail_collection_revision BEFORE UPDATE ON person_collections BEGIN SELECT RAISE(ABORT, 'injected'); END")
     with pytest.raises(Exception, match="injected"):
         collections.edit_members(catalog, cid, instance_token=token, action="remove", person_ids=[named, unnamed])
     catalog.connection.execute("DROP TRIGGER fail_collection_revision")
-    assert catalog.read_one("SELECT COUNT(*) FROM person_hidden")[0] == 2
+    assert [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")] == hidden_before
     assert catalog.read_one("SELECT COUNT(*) FROM person_collection_members WHERE collection_id=?", (cid,))[0] == 2
     result = collections.edit_members(catalog, cid, instance_token=token, action="remove", person_ids=[named, unnamed])
     assert result["changed"] == 2
+    assert catalog.read_one("SELECT COUNT(*) FROM person_collection_members WHERE collection_id=?", (cid,))[0] == 0
+    assert [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")] == hidden_before
+    for kind, person, ignore_state in (("named", named, "EXCLUDED"), ("unnamed", unnamed, "TEMPORARY")):
+        visible = albums.people_page(catalog, kind=kind, q="", limit=40, cursor=None, visibility="visible")
+        assert visible["persons"] == []
+        hidden = albums.people_page(
+            catalog, kind=kind, q="", limit=40, cursor=None, visibility="hidden", ignore_state=ignore_state,
+        )
+        assert [p["person_id"] for p in hidden["persons"]] == [person]
+    assert len(collections.people_page(catalog, second["collection_id"], instance_token=second["instance_token"])["people"]) == 2
+    restored = service.set_visibility(person_ids=[named, unnamed], hidden=False)
+    assert restored["changed"] == 2 and restored["hidden"] is False
+    assert catalog.read_one("SELECT COUNT(*) FROM person_hidden")[0] == 0
     for kind, person in (("named", named), ("unnamed", unnamed)):
         page = albums.people_page(catalog, kind=kind, q="", limit=40, cursor=None, visibility="visible")
         assert [p["person_id"] for p in page["persons"]] == [person]
     assert len(collections.people_page(catalog, second["collection_id"], instance_token=second["instance_token"])["people"]) == 2
-    service.set_visibility(person_ids=[named], hidden=True)
+    service.set_visibility(person_ids=[named], hidden=True, ignore_state="EXCLUDED")
     assert collections.edit_members(catalog, cid, instance_token=token, action="remove", person_ids=[named])["changed"] == 0
-    assert catalog.read_one("SELECT person_id FROM person_hidden WHERE person_id=?", (named,)) is not None
+    assert catalog.read_one("SELECT ignore_state FROM person_hidden WHERE person_id=?", (named,))[0] == "EXCLUDED"
     for table, expected in before.items():
         assert [tuple(row) for row in catalog.read_all(f"SELECT * FROM {table}")] == expected
 
 
-def test_removing_merged_member_restores_only_actual_hidden_anchors(api_env: ApiEnv) -> None:
+def test_removing_merged_member_preserves_ignores_and_explicit_restore_resolves_target(api_env: ApiEnv) -> None:
     catalog = api_env.service.catalog
     source, target, unrelated = [add_person(catalog) for _ in range(3)]
     collection = collections.create_collection(catalog, "合并成员")["collection"]
     cid, token = collection["collection_id"], collection["instance_token"]
     collections.edit_members(catalog, cid, instance_token=token, action="add", person_ids=[source, target], hide_after_add=True)
-    PersonService.open(catalog).set_visibility(person_ids=[unrelated], hidden=True)
+    service = PersonService.open(catalog)
+    service.set_visibility(person_ids=[source], hidden=True, ignore_state="EXCLUDED")
+    service.set_visibility(person_ids=[unrelated], hidden=True)
+    hidden_before = [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")]
     with catalog.write() as connection:
         connection.execute("UPDATE persons SET merged_into=? WHERE person_id=?", (target, source))
     assert collections.edit_members(catalog, cid, instance_token=token, action="remove", person_ids=[target, unrelated])["changed"] == 2
-    assert [row[0] for row in catalog.read_all("SELECT person_id FROM person_hidden")] == [unrelated]
+    assert catalog.read_one("SELECT COUNT(*) FROM person_collection_members WHERE collection_id=?", (cid,))[0] == 0
+    assert [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")] == hidden_before
+    # Explicit restoration through the old ID addresses only the active canonical person.
+    restored = service.set_visibility(person_ids=[source], hidden=False)
+    assert restored["person_count"] == 1 and restored["changed"] == 1
+    assert catalog.read_one("SELECT person_id FROM person_hidden WHERE person_id=?", (target,)) is None
+    assert [tuple(row) for row in catalog.read_all("SELECT * FROM person_hidden ORDER BY person_id")] == [
+        row for row in hidden_before if row[0] != target
+    ]
+    assert service.set_visibility(person_ids=[target], hidden=False)["changed"] == 0
 
 
 def test_collection_reads_follow_correction_merge_and_undo(api_env: ApiEnv) -> None:

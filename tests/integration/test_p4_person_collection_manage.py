@@ -14,6 +14,12 @@ def test_collection_labels_and_unassigned_filter_are_canonical_paged_and_version
 ) -> None:
     catalog = api_env.service.catalog
     people = [add_person(catalog, name=f"person-{index:03}") for index in range(85)]
+    photos = seed_library(api_env, {
+        **{f"member-{index:03}.jpg": [(20, 20, 90, 90)] for index in range(85)},
+        "unnamed.jpg": [(20, 20, 90, 90)],
+    })
+    for index, person_id in enumerate(people):
+        add_link(catalog, photos[f"member-{index:03}.jpg"]["faces"][0], person_id)
     group = collections.create_collection(catalog, "日常合集")["collection"]
     collection_id, token = group["collection_id"], group["instance_token"]
     collections.edit_members(
@@ -94,7 +100,7 @@ def test_collection_labels_and_unassigned_filter_are_canonical_paged_and_version
         )
     assert rejected.value.status == 409
 
-    photo = seed_library(api_env, {"unnamed.jpg": [(20, 20, 90, 90)]})["unnamed.jpg"]
+    photo = photos["unnamed.jpg"]
     unnamed = add_person(catalog)
     add_link(catalog, photo["faces"][0], unnamed)
     assert albums.people_page(

@@ -37,7 +37,8 @@ SCHEMA_PATH = (
 )
 ADR_PATH = ROOT / "docs" / "decisions" / "ADR-0009-person-place-combined-search-contract.md"
 
-#: The four companions this task promises to leave byte-identical (ADR-0009 §1).
+#: Canonical LF companion hashes. p2 additionally carries the approved P4-02Y-L
+#: structured_model extension; the helper below also verifies its historical bytes.
 FROZEN_COMPANIONS = {
     "p2-contracts.v1.json": (
         "4270997cac64a3c19c80f1d118b5e3d16022fdccb2c0a454c21d43d7730325fa"
@@ -307,10 +308,15 @@ def test_schema_does_not_restate_the_frozen_p2_search_envelope() -> None:
 
 
 def test_existing_companions_are_byte_identical() -> None:
+    from frozen_contract_fixtures import assert_p2_approved_extension
+
     contracts = ROOT / "docs" / "decisions" / "contracts"
     for name, expected in FROZEN_COMPANIONS.items():
-        raw = (contracts / name).read_bytes()
+        # Git text checkouts may use CRLF; keep the frozen canonical LF content hash.
+        raw = (contracts / name).read_bytes().replace(b"\r\n", b"\n")
         assert hashlib.sha256(raw).hexdigest() == expected, name
+        if name == "p2-contracts.v1.json":
+            assert_p2_approved_extension(raw)
 
 
 # ------------------------------------------------------------------- request shape

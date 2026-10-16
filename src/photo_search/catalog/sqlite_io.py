@@ -55,12 +55,20 @@ def open_readonly(path: str | Path, *, immutable: bool | None = None) -> sqlite3
     return connection
 
 
-def connect_rw(path: str | Path) -> sqlite3.Connection:
-    """Open a read-write connection with foreign keys on and manual transactions."""
+def connect_rw(path: str | Path, *, create: bool = True) -> sqlite3.Connection:
+    """Open a read-write connection with foreign keys on and manual transactions.
+
+    ``create=False`` is for workers over an already opened catalog: a removed
+    database must fail rather than create a new empty file during shutdown/restore.
+    """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    target = str(path) if create else f"file:{quote(path.absolute().as_posix(), safe='/:')}?mode=rw"
     try:
-        connection = sqlite3.connect(str(path), isolation_level=None, timeout=BUSY_TIMEOUT_SECONDS)
+        connection = sqlite3.connect(
+            target, uri=not create, isolation_level=None, timeout=BUSY_TIMEOUT_SECONDS,
+        )
     except sqlite3.Error as error:
         raise CatalogError(
             CATALOG_UNREADABLE,

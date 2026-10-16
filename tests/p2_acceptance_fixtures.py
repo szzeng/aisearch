@@ -33,11 +33,11 @@ from p2_search_fixtures import (
 
 from photo_search.geo import extract as geo_extract
 from photo_search.geo import resolver as resolver_module
+from photo_search.indexing.store import IndexCoordinator
 from photo_search.ingestion.service import CatalogService
 from photo_search.jobs import queue as jobs
 from photo_search.places import assignments as assignments_module
 from photo_search.places import datasets as datasets_module
-from photo_search.places import directory as directory_module
 from photo_search.places import revision as revision_module
 from photo_search.scheduler import engine
 
@@ -168,19 +168,30 @@ def row_snapshot(catalog: Any, sql: str, parameters: tuple = ()) -> list[tuple]:
 
 
 # ------------------------------------------------------------------------------ places
-def make_place(catalog: Any, name: str, **options: Any) -> int:
-    now_ms = int(options.pop("now_ms", 1_500))
-    with catalog.write() as connection:
-        return int(
-            directory_module.create_place(
-                connection,
-                kind=str(options.pop("kind", "city")),
-                canonical_name=str(name),
-                parent_place_id=options.pop("parent_place_id", None),
-                aliases=list(options.pop("aliases", ())),
-                now_ms=now_ms,
-            )
-        )
+def make_source_place(catalog: Any, name: str) -> int:
+    """Install a real synthetic source choice before exercising new manual assignments."""
+    dataset_id = "p2-acceptance-source-place"
+    source = Path(catalog.data_root) / "test-fixtures" / dataset_id
+    build_package(source, dataset_id=dataset_id, aliases=(), places=({
+        "dataset_place_id": "acceptance-city",
+        "kind": "city",
+        "display_name": str(name),
+        "country_code": "CN",
+        "latitude": 30.2741,
+        "longitude": 120.1551,
+    },))
+    staged = datasets_module.stage_package(catalog, source)
+    validated = datasets_module.validate_dataset(catalog, str(staged["dataset_id"]))
+    datasets_module.activate_dataset(catalog, str(validated["dataset_id"]))
+    # Complete any setup projection work before measuring the separate manual edit's
+    # pending/recovery effects.
+    IndexCoordinator(catalog).process_all(now_ms=int(catalog.clock()))
+    row = catalog.read_one(
+        "SELECT place_id FROM geo_dataset_place_refs WHERE dataset_id=? AND external_id=?",
+        (dataset_id, "acceptance-city"),
+    )
+    assert row is not None
+    return int(row["place_id"])
 
 
 def assignment_row(catalog: Any, asset_id: int) -> Any:

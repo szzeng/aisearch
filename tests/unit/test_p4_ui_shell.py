@@ -74,13 +74,15 @@ const document={readyState:"loading",addEventListener(){},querySelectorAll:()=>l
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui={state,handleHash,showView,revealPersonsNav,setElements(value){els=value;},stubDetail(fn){renderDetail=fn;},stubBrowseMode(fn){showBrowseMode=fn;}};\n  if (document.readyState === "loading")');
-const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:(...args)=>{requests.push(args);}};
+const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:(...args)=>{requests.push(args);return Promise.resolve({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({sources:[]})});}};
 vm.createContext(context);vm.runInContext(code,context);
 const focusCalls=[];
 const sections={sources:{hidden:true},browse:{hidden:true},detail:{hidden:true}},main={focus(options){focusCalls.push(options);}};
 const ui=context.ui;ui.setElements({views:sections,navButtons:[],main,assetGrid:{querySelector(){return null;}}});
 ui.stubBrowseMode(()=>{});
 ui.state.browse.loaded=true;
+// Warm management paths do not require another request just to select a route.
+ui.state.sourcePathsLoaded=true;
 ui.handleHash();assert.equal(sections.browse.hidden,false,"plain / opens photo browsing");
 assert.equal(focusCalls[focusCalls.length-1].preventScroll,true,"route focus preserves the current scroll position");
 assert.equal(links[0].values["aria-current"],"page");
@@ -94,6 +96,18 @@ location.hash="";ui.handleHash();assert.equal(sections.browse.hidden,false,"deta
 ui.revealPersonsNav({schema_version:12,schema_status:"ok"});assert.equal(personsLink.hidden,true);
 ui.revealPersonsNav({schema_version:13,schema_status:"ok"});assert.equal(personsLink.hidden,false);
 assert.deepEqual(requests,[],"route selection and navigation do not start API or write requests");
+(async()=>{
+  ui.state.sourcePathsLoaded=false;
+  ui.showView("browse");assert.equal(requests.length,0,"photo browsing does not fetch management paths");
+  ui.showView("sources");
+  await ui.state.sourcePathsPromise;
+  assert.equal(requests.length,1,"uncached management paths require exactly one read");
+  assert.equal(requests[0][0],"/api/v1/sources/paths");
+  assert.equal(requests[0][1].method,"GET");assert.equal(requests[0][1].credentials,"same-origin");
+  assert.equal(requests[0][1].cache,"no-store");
+  ui.showView("browse");ui.showView("sources");
+  assert.equal(requests.length,1,"returning to management reuses current paths without other API or write requests");
+})().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
         [node, "-e", script],

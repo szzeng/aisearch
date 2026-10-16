@@ -333,20 +333,28 @@ def enrichment_counts(
         raise ValueError("processor_id must contain at least one processor")
     processor_placeholders = _placeholders(processor_ids)
     clause, parameters = _scope_clause(source_id)
-    if fact_table is None:
-        handled = int(
-            catalog.read_one(
-                "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
-                "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
-                f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-                f"AND j.processor_id IN ({processor_placeholders}) "
-                f"AND j.state IN ({_placeholders(_TERMINAL_JOB_STATES)}) "
-                "AND j.input_revision = a.sha256 "
-                f"AND a.asset_id IN ({clause})",
-                (*task_types, *processor_ids, *_TERMINAL_JOB_STATES, *parameters),
-            )["n"]
-        )
-    else:
+    # One asset may have several task types, processors or historical revisions.
+    # Each subset therefore keeps its own DISTINCT; attempted deliberately also
+    # includes older revisions. Job-derived counts share one statement snapshot.
+    handled_sql = (
+        "COUNT(DISTINCT CASE WHEN j.input_revision = a.sha256 "
+        f"AND j.state IN ({_placeholders(_TERMINAL_JOB_STATES)}) "
+        "THEN a.asset_id END) AS handled, "
+        if fact_table is None else ""
+    )
+    row = catalog.read_one(
+        "SELECT " + handled_sql
+        + "COUNT(DISTINCT CASE WHEN j.input_revision = a.sha256 "
+        f"AND j.state IN ({_placeholders(_LIVE_JOB_STATES)}) "
+        "THEN a.asset_id END) AS pending, COUNT(DISTINCT a.asset_id) AS attempted "
+        "FROM jobs AS j JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+        f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
+        f"AND j.processor_id IN ({processor_placeholders}) "
+        f"AND a.asset_id IN ({clause})",
+        (*(_TERMINAL_JOB_STATES if fact_table is None else ()), *_LIVE_JOB_STATES,
+         *task_types, *processor_ids, *parameters),
+    )
+    if fact_table is not None:
         handled = int(
             catalog.read_one(
                 f"SELECT COUNT(*) AS n FROM {fact_table} AS f "
@@ -354,29 +362,9 @@ def enrichment_counts(
                 parameters,
             )["n"]
         )
-    pending = int(
-        catalog.read_one(
-            "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
-            "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
-            f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-            f"AND j.processor_id IN ({processor_placeholders}) "
-            f"AND j.state IN ({_placeholders(_LIVE_JOB_STATES)}) "
-            "AND j.input_revision = a.sha256 "
-            f"AND a.asset_id IN ({clause})",
-            (*task_types, *processor_ids, *_LIVE_JOB_STATES, *parameters),
-        )["n"]
-    )
-    attempted = int(
-        catalog.read_one(
-            "SELECT COUNT(DISTINCT a.asset_id) AS n FROM jobs AS j "
-            "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
-            f"WHERE j.subject_type = 'asset' AND j.task_type IN ({task_placeholders}) "
-            f"AND j.processor_id IN ({processor_placeholders}) "
-            f"AND a.asset_id IN ({clause})",
-            (*task_types, *processor_ids, *parameters),
-        )["n"]
-    )
-    return {"handled": handled, "pending": pending, "attempted": attempted}
+    else:
+        handled = int(row["handled"])
+    return {"handled": handled, "pending": int(row["pending"]), "attempted": int(row["attempted"])}
 
 
 def ocr_enrichment_counts(catalog: Any, *, source_id: int | None) -> dict[str, int]:

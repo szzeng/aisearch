@@ -73,6 +73,8 @@ def _catalog() -> sqlite3.Connection:
             PRIMARY KEY(face_id, person_id, assignment_kind)
         );
         CREATE TABLE faces(face_id TEXT PRIMARY KEY, asset_id INTEGER);
+        CREATE TABLE person_hidden(person_id INTEGER PRIMARY KEY, ignore_state TEXT);
+        CREATE TABLE face_inbox_hidden(face_id TEXT PRIMARY KEY, ignore_state TEXT);
         CREATE TABLE face_exclusions(
             face_id TEXT, person_id INTEGER, operation_id TEXT, active INTEGER,
             created_at INTEGER, PRIMARY KEY(face_id, person_id)

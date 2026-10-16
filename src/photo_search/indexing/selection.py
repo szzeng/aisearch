@@ -55,11 +55,6 @@ from photo_search.catalog.errors import (
 #: How many missing asset ids the report lists (the counts stay exact).
 MISSING_SAMPLE_LIMIT = 20
 
-#: A full Lance row-count cross-check materialises the generation, so it is bounded here. A
-#: larger generation is reported as ``checked="bounded"`` and the gate refuses instead of
-#: pretending the index was verified.
-FULL_LANCE_CHECK_MAX_ROWS = 20_000
-
 #: How many confirmed artifacts are read back (and checksum-verified) before the rest are only
 #: checked for existence. A 0-16 MiB embedding file is cheap to read; the bound keeps the
 #: selection predictable on a large library.
@@ -403,13 +398,12 @@ def lance_health(
     space_id: str,
     dimension: int,
     expected_rows: int,
-    full_check_max_rows: int = FULL_LANCE_CHECK_MAX_ROWS,
 ) -> dict[str, Any]:
     """Whether the Lance table of one generation is openable and matches the catalog.
 
-    The row-count cross-check materialises the generation through the existing adapter, so it is
-    bounded: a larger generation is reported as ``checked="bounded"`` and the gate refuses rather
-    than assuming the derived store is intact.
+    The adapter reads every column in bounded Arrow batches and checks every row's
+    generation/space identity. No vector becomes a Python float list, so large
+    generations receive the same full check without unbounded Python allocations.
     """
     from photo_search.indexing.store import LanceVectorIndex
 
@@ -421,10 +415,6 @@ def lance_health(
         "rows": None,
         "state": "unknown",
     }
-    if int(expected_rows) > int(full_check_max_rows):
-        result["state"] = "unverified"
-        result["reason"] = "ROW_COUNT_CHECK_BOUNDED"
-        return result
     try:
         rows = index.count(
             generation_id=str(generation_id), dimension=int(dimension), space_id=str(space_id)
@@ -629,7 +619,6 @@ def selection_report(
 
 __all__ = [
     "FULL_ARTIFACT_VERIFY_MAX",
-    "FULL_LANCE_CHECK_MAX_ROWS",
     "CoverageReport",
     "LibraryRequirements",
     "catalog_requirements",

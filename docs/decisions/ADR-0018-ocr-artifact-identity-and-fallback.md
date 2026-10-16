@@ -70,3 +70,12 @@ force 在选定配置内复用原五字段 job；跨设备是不同 processor �
 唯一下一步：[P4-02Y-L-IDENTITY-A](../tasks/P4-02Y-L-IDENTITY-A.md)。必须覆盖双向 force/replay、
 GPU 成功不排 CPU、故障兜底/重启/失败保留旧结果、禁止兜底反例、legacy reader 与 projection 原子性。
 本裁决只更新文档；产品修复、独立工程复核与原任务待验项仍未完成。
+
+## 5. 后续处理配置修订（2026-10-16）
+
+`P4-OCR-PREFIX` 在既有版本/退役机制上发布 CPU/GPU `@3` 配置，修复切片去重丢前缀和方向分类误翻长行；不改变 payload 字段、artifact revision、current projection、提交或设备兜底协议。
+
+- 新工作统一使用 `ocr-text-cpu-fp32@3` / `ocr-text-cuda-fp32@3`，spec revision 对应 `...-v3`，有效配置版本为 `ocr-execution-config.v3`。config hash 同时覆盖文本/几何去重和有界方向复核规则，仍使用原 pinned 权重。
+- 保留 `@1` 和 CPU/GPU `@2` 的历史读取、原 config hash 和不可变字节；它们明确退役，不运行新算法。旧未完成任务复用已有有界 CAS 收尾，live/异常租约继续保护。已有 current OCR 不因升级自动重算或被删除；用户选择的目标重识别成功后才原子替换 current，失败保持旧结果。
+- 去重只在文字、物理行、覆盖和截断端点都有证据时合并；不确定或冲突读数保留，原文/置信度不改写。方向分类继续启用；只有实际翻转 180° 后得到空/低置信结果的裁剪，追加至多一次原方向识别，且结果置信度超过 0.6、提高至少 0.1 才替换。
+- 这次是既有处理器版本机制的后续配置，不新增 schema、全局任务协议、依赖或自动全库迁移。实施与验收范围以 [最终变更说明](../reports/P4-UPSTREAM-MERGE-20261016.md) 为准，历史验收结论不追认。

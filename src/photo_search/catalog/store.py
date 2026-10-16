@@ -814,28 +814,21 @@ def catalog_counts(connection: sqlite3.Connection, *, source_id: int | None = No
         }
         return counts
     parameters = (int(source_id),)
+    # These fields describe the same source-location snapshot. Count the
+    # conditional subsets together instead of seeking that source five times.
+    locations = connection.execute(
+        "SELECT COUNT(*) AS locations, COUNT(DISTINCT asset_id) AS assets, "
+        "COUNT(CASE WHEN availability = 'PRESENT' THEN 1 END) AS locations_present, "
+        "COUNT(CASE WHEN availability = 'MISSING' THEN 1 END) AS locations_missing, "
+        "COUNT(CASE WHEN availability = 'PRESENT' AND asset_id IS NULL THEN 1 END) "
+        "AS locations_pending_content FROM file_locations WHERE source_id = ?",
+        parameters,
+    ).fetchone()
+    location_counts = {key: int(locations[key]) for key in locations.keys()}
     counts = {
         "sources": 1,
-        "assets": scalar(
-            "SELECT COUNT(DISTINCT asset_id) FROM file_locations "
-            "WHERE source_id = ? AND asset_id IS NOT NULL",
-            parameters,
-        ),
         "assets_total": assets_total,
-        "locations": scalar("SELECT COUNT(*) FROM file_locations WHERE source_id = ?", parameters),
-        "locations_present": scalar(
-            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND availability = 'PRESENT'",
-            parameters,
-        ),
-        "locations_missing": scalar(
-            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND availability = 'MISSING'",
-            parameters,
-        ),
-        "locations_pending_content": scalar(
-            "SELECT COUNT(*) FROM file_locations WHERE source_id = ? AND availability = 'PRESENT' "
-            "AND asset_id IS NULL",
-            parameters,
-        ),
+        **location_counts,
         "scans": scalar("SELECT COUNT(*) FROM scan_runs WHERE source_id = ?", parameters),
         "jobs": scalar(
             "SELECT COUNT(*) FROM jobs WHERE subject_type = ? AND subject_id IN "

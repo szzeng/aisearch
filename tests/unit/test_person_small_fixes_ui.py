@@ -35,7 +35,7 @@ const collection={collection_id:2,instance_token:'a'.repeat(32),name:'合集',re
 const ok=body=>({ok:true,json:async()=>body});
 const context={URLSearchParams,URL,setTimeout:()=>1,clearTimeout(){},crypto:{randomUUID:()=>String(++uuid)},
  window:{location:{href:'http://local/persons',search:''},confirm:()=>true,history:{replaceState(){}},
- addEventListener(n,fn){events[n]=fn;},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}},
+ addEventListener(n,fn){const prior=events[n];events[n]=prior?(...args)=>{prior(...args);fn(...args);}:fn;},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)}},
  document:{readyState:'loading',cookie:'ps_csrf=csrf',getElementById:get,createElement:t=>new Element(t),addEventListener(){}},
  fetch:async(url,opts={})=>{calls.push({url,opts});
   if(url.endsWith('/label')){display=JSON.parse(opts.body).name;revision++;return ok({changed:true,operation_id:'rename',operation_revision:1});}
@@ -48,7 +48,7 @@ const context={URLSearchParams,URL,setTimeout:()=>1,clearTimeout(){},crypto:{ran
   if(url.includes('/persons/7/photos?')||url.includes('/persons/8/photos?'))return ok({person:merged?target:person(),assets:[],has_more:false});
   if(url.includes('/persons/collections?'))return ok({collections:[collection],has_more:false});
   if(url.endsWith('/members'))return ok({changed:1});
-   if(url.includes('/people?')){if(delayedPeople)return delayedPeople;return ok({people:collectionPeople||[person()],has_more:false});}
+   if(url.includes('/people?')){if(delayedPeople)return delayedPeople;return ok({collection,people:collectionPeople||[person()],has_more:false});}
    if(url.includes('/collections/')&&url.includes('/photos?'))return ok({collection,assets:[{asset_id:99}],has_more:false});
   if(url.includes('/faces/inbox/hidden/groups?'))return ok({cards:[{type:'candidate_group',group_key:'candidate:7',candidate_name:display,photo_count:2,face:{thumbnail_url:null}}],has_more:false});
   if(url.includes('/faces/inbox/groups?'))return ok({cards:[{type:'candidate_group',group_key:'candidate:7',candidate_name:display,photo_count:4,face:{thumbnail_url:null}}],has_more:false});
@@ -60,7 +60,9 @@ let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui,flush=()=>new Promise(setImmediate);
 (async()=>{
- ui.boot();await flush();ui.state.organize=true;ui.state.inboxHiddenVisible=true;
+ // This loader-level scenario retains both directories; category isolation is
+ // exercised by the navigation workflow test.
+ ui.boot();await flush();ui.state.libraryNavigationReady=false;ui.state.organize=true;ui.state.inboxHiddenVisible=true;
  ui.state.person=person();ui.editBase({mode:'name',person:person()},'改名','');get('edit-query').value='Alice';
  await get('edit-form').fire('submit');await flush();await flush();
  assert(get('inbox-cards').textContent.includes('Alice'),'visible groups show saved name');
@@ -84,14 +86,14 @@ vm.createContext(context);vm.runInContext(code,context);const ui=context.ui,flus
  assert.equal(get('edit-query').value,'尚未提交');
  get('edit').close();ui.state.returnCollection=collection;ui.backToLibrary();await flush();
  assert(get('collection-people').textContent.includes('Dora'),'returning to collection rebuilds stale member labels');
- ui.state.collectionSelectedPeople.add(7);const before=calls.length;await ui.removeCollectionSelection();await flush();
+ ui.state.collectionPeopleManage=true;ui.state.collectionSelectedPeople.add(7);const before=calls.length;await ui.removeCollectionSelection();await flush();
  const recent=calls.slice(before);assert(recent.some(c=>c.url.endsWith('/members')));
  assert(recent.some(c=>c.url.includes('/persons/browse?')),'removal refreshes ordinary named/unnamed lists');
- assert(get('status').textContent.includes('人物或未命名列表'));
+ assert(get('status').textContent.includes('人物忽略状态保持不变'));
  // Enter an actual collection card; writes must refresh its suspended parent list.
  collectionPeople=[person(),target];ui.state.collection=collection;ui.state.collectionMode='people';
  await ui.loadCollectionPeople(false);assert.equal(get('collection-people').children.length,2);
- get('collection-people').children[0].children[1].fire('click');await flush();
+ get('collection-people').children[0].fire('click');await flush();
  assert.equal(ui.state.collection,null);assert.equal(ui.state.returnCollection.collection_id,2);
  assert.equal(get('collection-people-actions').hidden,true,'parent controls stay hidden inside one person');
  ui.state.collectionSelectedPeople.add(7);

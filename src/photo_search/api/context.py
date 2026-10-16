@@ -58,6 +58,7 @@ class ApiContext:
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
         self._encoder_resolved = False
+        self._adapter_lock = threading.RLock()
         #: P2-06B: the optional reranker adapter, injected exactly like the query encoder.
         #: This build ships none, and a request that asks for a rerank is then answered with
         #: the base page plus ``rerank_state=UNAVAILABLE`` instead of a silent no-op.
@@ -177,17 +178,21 @@ class ApiContext:
         reported honestly by ``GET /capabilities`` and turns a request that needs the
         semantic channel into a structured refusal instead of a silently text-only page.
         """
-        if self._encoder_resolved:
+        with self._adapter_lock:
+            if self._closed:
+                return None
+            if self._encoder_resolved:
+                return self._encoder
+            if self._encoder_factory is None:
+                self._encoder_resolved = True
+                return None
+            try:
+                self._encoder = self._encoder_factory()
+            except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
+                logger.debug("building the query encoder failed", exc_info=True)
+                self._encoder = None
+            self._encoder_resolved = True
             return self._encoder
-        self._encoder_resolved = True
-        if self._encoder_factory is None:
-            return None
-        try:
-            self._encoder = self._encoder_factory()
-        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
-            logger.debug("building the query encoder failed", exc_info=True)
-            self._encoder = None
-        return self._encoder
 
     def reranker(self) -> Any:
         """The reranker half of the ADR-0003 §7 boundary, or ``None`` when none is wired.
@@ -196,17 +201,21 @@ class ApiContext:
         framework, a deployment supplies the adapter, and an absent or broken adapter is
         reported honestly (``rerank_state=UNAVAILABLE``) rather than faked.
         """
-        if self._reranker_resolved:
+        with self._adapter_lock:
+            if self._closed:
+                return None
+            if self._reranker_resolved:
+                return self._reranker
+            if self._reranker_factory is None:
+                self._reranker_resolved = True
+                return None
+            try:
+                self._reranker = self._reranker_factory()
+            except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
+                logger.debug("building the reranker adapter failed", exc_info=True)
+                self._reranker = None
+            self._reranker_resolved = True
             return self._reranker
-        self._reranker_resolved = True
-        if self._reranker_factory is None:
-            return None
-        try:
-            self._reranker = self._reranker_factory()
-        except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
-            logger.debug("building the reranker adapter failed", exc_info=True)
-            self._reranker = None
-        return self._reranker
 
     def close(self) -> None:
         """Stop the worker, the query encoder and both connections; safe to call twice."""
@@ -251,8 +260,9 @@ class ApiContext:
         # P4-02N: an adapter that owns a worker process is stopped here as well. The seam is
         # duck-typed on purpose - the documented ADR-0003 adapter has ``close()`` and a test
         # stand-in may not, which must never turn a shutdown into a failure.
-        encoder = self._encoder
-        self._encoder = None
+        with self._adapter_lock:
+            encoder = self._encoder
+            self._encoder = None
         stop = getattr(encoder, "close", None)
         if callable(stop):
             try:

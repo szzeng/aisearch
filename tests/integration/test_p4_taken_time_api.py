@@ -385,13 +385,9 @@ def test_the_search_condition_joins_the_one_and_set_and_echoes_v2(api_env) -> No
     async def scenario(client: AsyncClient) -> dict[str, Any]:
         nonlocal place_id
         csrf = await api_env.authenticate(client)
-        created = await client.post(
-            "/api/v1/places",
-            json={"kind": "city", "canonical_name": "测试城市"},
-            headers=api_env.post_headers(csrf),
-        )
-        assert created.status_code == 201, created.text
-        place_id = int(created.json()["place_id"])
+        from p2_search_fixtures import install_source_places
+
+        place_id = install_source_places(api_env.service.catalog)["hangzhou"]
         assigned = await client.put(
             f"/api/v1/assets/{names['原图 有偏移.jpg']}/place-assignment",
             json={

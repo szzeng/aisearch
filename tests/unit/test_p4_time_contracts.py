@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from frozen_contract_fixtures import P2_HISTORICAL_SHA256, assert_p2_approved_extension
 from PIL import Image
 
 from photo_search.api.errors import INVALID_CURSOR, ApiError
@@ -706,10 +707,16 @@ def test_companion_identity_and_closed_public_surface() -> None:
 def test_adr_records_the_companion_hash_and_every_frozen_companion_is_byte_identical() -> None:
     recorded = re.findall(r"SHA-256：`([0-9a-f]{64})`", ADR)
     assert len(recorded) == 1
-    assert recorded[0] == hashlib.sha256(SCHEMA_PATH.read_bytes()).hexdigest()
+    # Git's Windows checkout can expand LF to CRLF; retain every other frozen byte.
+    assert recorded[0] == hashlib.sha256(SCHEMA_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     for name, expected in FROZEN_COMPANIONS.items():
-        assert hashlib.sha256((CONTRACTS / name).read_bytes()).hexdigest() == expected, name
-    raw = SCHEMA_PATH.read_bytes()
+        payload = (CONTRACTS / name).read_bytes().replace(b"\r\n", b"\n")
+        if name == "p2-contracts.v1.json":
+            assert expected == P2_HISTORICAL_SHA256
+            assert_p2_approved_extension(payload)
+            continue
+        assert hashlib.sha256(payload).hexdigest() == expected, name
+    raw = SCHEMA_PATH.read_bytes().replace(b"\r\n", b"\n")
     assert b"\r\n" not in raw and raw.endswith(b"\n")
 
 

@@ -29,11 +29,10 @@ from photo_search.catalog.errors import (
 )
 from photo_search.models.embedding.base import (
     CLIP_ADAPTER,
-    Identity,
     LEGACY_PROVIDERS,
+    Identity,
     analyze_manifest,
     model_dir_for,
-    provider_block,
     provider_id_of_processor,
     read_manifest,
     required_artifact_names,

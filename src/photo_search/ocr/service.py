@@ -420,7 +420,9 @@ def record_runtime_evidence(
     }
     for device_name in ("cpu", "gpu"):
         try:
-            engines_by_device[device_name] = cache.engine(data_root, resolved_device=device_name)
+            engines_by_device[device_name] = cache.engine(
+                data_root, resolved_device=device_name, orientation_retry=True,
+            )
         except Exception as error:  # each device contributes independent qualification evidence
             code = str(getattr(error, "code", ""))
             if code in shared_failure_codes:

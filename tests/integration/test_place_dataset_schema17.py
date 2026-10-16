@@ -106,7 +106,22 @@ def test_schema16_package_recovers_into_empty_schema17_catalog(tmp_path):
         (5, 20, 21, True),
         (5, 15, 21, False),
         (22, 22, 21, False),
-        (18, 18, 22, False),
+        (18, 18, 22, True),
+        (5, 16, 32, True),
+        (18, 18, 32, True),
+        (5, 31, 32, True),
+        (5, 15, 32, False),
+        (33, 33, 32, False),
+        (5, 16, 33, True),
+        (18, 18, 33, True),
+        (5, 31, 33, True),
+        (5, 32, 33, True),
+        (5, 33, 33, True),
+        (5, 15, 33, False),
+        (34, 34, 33, False),
+        (5, 16, 34, False),
+        (18, 18, 34, False),
+        (5, 33, 34, False),
     ],
 )
 def test_schema_bridge_is_explicit_and_bounded(tmp_path, minimum, maximum, supported, accepted):
@@ -136,7 +151,7 @@ def test_future_schema_bridge_requires_review_ceiling_to_advance():
     )
 
 
-@pytest.mark.parametrize("supported", [17, 20, 21])
+@pytest.mark.parametrize("supported", [17, 20, 21, 32, 33])
 def test_schema_bridge_still_rejects_corrupt_files(tmp_path, supported):
     package = tmp_path / "package"
     build_package(package, compatible=(5, 16))

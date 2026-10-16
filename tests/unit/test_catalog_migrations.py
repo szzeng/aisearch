@@ -152,56 +152,23 @@ def _file_digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _restore_schema_27_operation_checks(connection: sqlite3.Connection) -> None:
-    """Make current empty fixtures match the pre-0028 closed operation vocabulary."""
-    connection.execute("DROP TABLE person_operation_items")
-    connection.execute("DROP TABLE person_operations")
-    connection.executescript(
-        """
-        CREATE TABLE person_operations (
-            operation_id          TEXT PRIMARY KEY CHECK(operation_id <> ''),
-            request_id            TEXT NOT NULL UNIQUE CHECK(request_id <> ''),
-            payload_sha256        TEXT NOT NULL
-                CHECK(length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
-            type                  TEXT NOT NULL CHECK(type IN (
-                'RENAME', 'MERGE_BY_NAME', 'MERGE', 'BATCH_MERGE', 'UNDO',
-                'FACE_ASSIGN', 'FACE_UNASSIGN', 'FACE_RESTORE_AUTO', 'BATCH_FACE_EDIT',
-                'SPLIT', 'FACE_MAPPING_CONFIRM', 'FACE_MAPPING_REJECT')),
-            source_person_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(source_person_ids_json)),
-            target_person_id      INTEGER REFERENCES persons(person_id) ON DELETE RESTRICT,
-            state                 TEXT NOT NULL CHECK(state IN ('COMMITTED', 'UNDONE')),
-            operation_revision    INTEGER NOT NULL UNIQUE CHECK(operation_revision >= 1),
-            undo_of_operation_id  TEXT REFERENCES person_operations(operation_id) ON DELETE RESTRICT,
-            undone_by             TEXT REFERENCES person_operations(operation_id) ON DELETE RESTRICT,
-            catalog_filter_revision INTEGER NOT NULL DEFAULT 0 CHECK(catalog_filter_revision >= 0),
-            created_at            INTEGER NOT NULL CHECK(created_at >= 0),
-            committed_at          INTEGER NOT NULL CHECK(committed_at >= 0),
-            CHECK(undo_of_operation_id IS NULL OR undo_of_operation_id <> operation_id),
-            CHECK(undone_by IS NULL OR undone_by <> operation_id),
-            CHECK(state = 'COMMITTED' OR undone_by IS NOT NULL)
-        );
-        CREATE TABLE person_operation_items (
-            operation_id       TEXT NOT NULL REFERENCES person_operations(operation_id)
-                ON DELETE RESTRICT,
-            item_index         INTEGER NOT NULL CHECK(item_index >= 0),
-            entity_type        TEXT NOT NULL CHECK(entity_type IN (
-                'PERSON_BUNDLE', 'FACE_CONTROL', 'SPLIT_GROUP', 'FACE_MAPPING_GROUP')),
-            entity_id          INTEGER CHECK(entity_id IS NULL OR entity_id >= 1),
-            entity_key         TEXT CHECK(entity_key IS NULL OR entity_key <> ''),
-            before_value_json  TEXT NOT NULL CHECK(json_valid(before_value_json)),
-            after_value_json   TEXT NOT NULL CHECK(json_valid(after_value_json)),
-            after_revision     INTEGER NOT NULL CHECK(after_revision >= 0
-                AND (entity_type <> 'PERSON_BUNDLE' OR after_revision >= 1)),
-            PRIMARY KEY(operation_id, item_index),
-            CHECK((entity_type IN ('PERSON_BUNDLE', 'SPLIT_GROUP')) = (entity_id IS NOT NULL)),
-            CHECK((entity_type IN ('FACE_CONTROL', 'FACE_MAPPING_GROUP')) = (entity_key IS NOT NULL))
-        );
-        CREATE INDEX idx_person_operations_committed
-            ON person_operations(committed_at, operation_id);
-        CREATE INDEX idx_person_operation_items_entity
-            ON person_operation_items(entity_id, operation_id);
-        """
-    )
+def _create_historical_catalog(path: Path, version: int) -> None:
+    """Build the actual migration prefix, without future objects in an old fixture."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        for number, script in schema.migration_files():
+            if number > version:
+                break
+            connection.executescript(script.read_text(encoding="utf-8"))
+        connection.execute(
+            "INSERT INTO metadata(key,value) VALUES(?,?)",
+            (schema.SCHEMA_VERSION_KEY, str(version)),
+        )
+        connection.commit()
+        schema.verify_schema(connection, version)
+    finally:
+        connection.close()
 
 
 class _Usage:
@@ -304,7 +271,7 @@ def test_schema_31_upgrade_adds_empty_face_members_without_changing_existing_fac
             connection.close()
 
     with monkeypatch.context() as current:
-        current.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 32)
+        current.setattr(schema, "SUPPORTED_SCHEMA_VERSION", SUPPORTED)
         current.setattr(schema, "MIGRATIONS_DIR", source_migrations)
         broken_migrations = tmp_path / "migrations-v32-broken"
         shutil.copytree(source_migrations, broken_migrations)
@@ -326,14 +293,14 @@ def test_schema_31_upgrade_adds_empty_face_members_without_changing_existing_fac
         current.setattr(schema, "MIGRATIONS_DIR", source_migrations)
         result = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert result.previous_version == 31
-    assert result.applied == (32,)
+    assert result.applied == tuple(range(32, SUPPORTED + 1))
     assert result.backup_path is not None
     repeated = migrate_database(db_path, data_root=_data_root(tmp_path))
-    assert repeated.schema_version == 32
+    assert repeated.schema_version == SUPPORTED
     assert repeated.applied == ()
     connection = open_readonly(db_path)
     try:
-        schema.verify_schema(connection, 32)
+        schema.verify_schema(connection, SUPPORTED)
         assert [tuple(row) for row in connection.execute("SELECT * FROM persons")] == person_rows
         assert [tuple(row) for row in connection.execute("SELECT * FROM person_collection_members")] == person_members
         assert [tuple(row) for row in connection.execute("SELECT * FROM person_hidden")] == person_hidden
@@ -361,19 +328,9 @@ def test_schema_31_upgrade_adds_empty_face_members_without_changing_existing_fac
 
 def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
-    migrate_database(db_path, data_root=_data_root(tmp_path))
+    _create_historical_catalog(db_path, 21)
     connection = connect_rw(db_path)
     try:
-        connection.execute("DROP TABLE person_collection_members")
-        connection.execute("DROP TABLE person_collection_face_members")
-        connection.execute("DROP TABLE person_collections")
-        connection.execute("DROP TABLE face_inbox_hidden")
-        connection.execute("DROP TABLE person_hidden")
-        connection.execute("DROP TABLE person_operation_retention")
-        _restore_schema_27_operation_checks(connection)
-        connection.execute(
-            "UPDATE metadata SET value = '21' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
-        )
         connection.execute(
             "INSERT INTO persons(name, name_key, avatar_face_id, merged_into, revision, "
             "created_at, updated_at) VALUES (NULL, NULL, NULL, NULL, 1, 1, 1)"
@@ -399,25 +356,9 @@ def test_schema_21_people_remain_visible_after_visibility_migration(tmp_path: Pa
 
 def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
-    migrate_database(db_path, data_root=_data_root(tmp_path))
+    _create_historical_catalog(db_path, 24)
     connection = connect_rw(db_path)
     try:
-        connection.execute("DROP TABLE person_collection_members")
-        connection.execute("DROP TABLE person_collection_face_members")
-        connection.execute("DROP TABLE person_collections")
-        connection.execute("DROP TABLE person_operation_retention")
-        connection.execute("DROP TABLE person_hidden")
-        connection.execute("DROP TABLE face_inbox_hidden")
-        connection.executescript(
-            (schema.MIGRATIONS_DIR / "0022_person_hidden.sql").read_text(encoding="utf-8")
-        )
-        connection.executescript(
-            (schema.MIGRATIONS_DIR / "0023_face_inbox_hidden.sql").read_text(encoding="utf-8")
-        )
-        _restore_schema_27_operation_checks(connection)
-        connection.executescript(
-            (schema.MIGRATIONS_DIR / "0024_person_collections.sql").read_text(encoding="utf-8")
-        )
         person_id = int(connection.execute(
             "INSERT INTO persons(name, name_key, avatar_face_id, merged_into, revision, "
             "created_at, updated_at) VALUES (NULL, NULL, NULL, NULL, 1, 1, 1)"
@@ -436,9 +377,6 @@ def test_schema_24_upgrade_protects_stale_instance_when_deleted_id_is_reused(tmp
         connection.execute(
             "INSERT INTO person_collection_members(collection_id, person_id) VALUES (?, ?)",
             (collection_id, person_id),
-        )
-        connection.execute(
-            "UPDATE metadata SET value = '24' WHERE key = ?", (schema.SCHEMA_VERSION_KEY,)
         )
         connection.commit()
     finally:

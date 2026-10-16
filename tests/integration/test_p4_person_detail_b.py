@@ -11,6 +11,7 @@ from p3_redetection_fixtures import make_record, shifted_bbox, shifted_landmarks
 
 from photo_search.api.face_detail_runner import FaceDetailRunner
 from photo_search.artifacts.store import ArtifactStore
+from photo_search.catalog import schema
 from photo_search.catalog.db import Catalog
 from photo_search.face import contract, detail_policy
 from photo_search.face import service as faces
@@ -542,18 +543,30 @@ def test_schema19_upgrade_preserves_manual_facts_and_batch_cursor(api_env):
     path = api_env.tmp_path / "schema19" / "catalog" / "catalog.db"
     path.parent.mkdir(parents=True)
     destination = sqlite3.connect(path)
-    catalog.connection.backup(destination)
-    destination.executescript(
-        "DROP TABLE geo_dataset_place_refs; DROP TABLE cn_admin_place_refs; "
-        "DROP TABLE face_detail_coordinate_frames; DROP TABLE face_detail_auto_assets; "
-        "DROP INDEX ux_face_detail_batch_asset_job; "
-        "CREATE UNIQUE INDEX ux_face_detail_batch_asset_job ON face_detail_batch_assets(job_id) "
-        "WHERE job_id IS NOT NULL; UPDATE metadata SET value='19' WHERE key='schema_version';"
-    )
+    # Build the genuine historical prefix; relabelling today's schema as 19 leaves
+    # future objects behind and must be rejected by the production schema gate.
+    for version, script in schema.migration_files():
+        if version > 19:
+            break
+        destination.executescript(script.read_text(encoding="utf-8"))
+    for table in schema.business_tables(destination):
+        if table.startswith("search_documents_fts"):
+            continue  # The search_documents triggers populate this derived FTS table.
+        columns = [row[1] for row in destination.execute(f'PRAGMA table_info("{table}")')]
+        names = ",".join(f'"{column}"' for column in columns)
+        values = catalog.connection.execute(f'SELECT {names} FROM "{table}"').fetchall()
+        destination.executemany(
+            f'INSERT OR REPLACE INTO "{table}" ({names}) VALUES ({",".join("?" for _ in columns)})',
+            [tuple(row) for row in values],
+        )
+    destination.execute("UPDATE metadata SET value='19' WHERE key='schema_version'")
+    destination.commit()
+    schema.verify_schema(destination, 19)
+    assert not destination.execute("PRAGMA foreign_key_check").fetchall()
     destination.close()
     upgraded = Catalog.open(path, data_root=path.parent.parent)
     try:
-        assert upgraded.schema_version == 21
+        assert upgraded.schema_version == schema.SUPPORTED_SCHEMA_VERSION
         assert upgraded.read_one(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cn_admin_place_refs'"
         ) is not None

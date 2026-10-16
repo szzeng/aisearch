@@ -92,9 +92,10 @@ def candidates(count: int = 3) -> tuple[RerankCandidate, ...]:
 
 def test_scored_rows_are_deterministic_candidate_scores_only() -> None:
     adapter = StubReranker(scores={10: 0.2, 11: 0.9, 12: 0.5})
-    first = rerank_hits(adapter, query="sunset", candidates=candidates())
-    second = rerank_hits(adapter, query="sunset", candidates=candidates())
+    first = rerank_hits(adapter, query="sunset", candidates=candidates(), clock=lambda: 100.0)
+    second = rerank_hits(adapter, query="sunset", candidates=candidates(), clock=lambda: 100.0)
     assert first.state == RERANK_STATE_OK
+    assert first.elapsed_ms == second.elapsed_ms == 0
     assert first.to_envelope() == second.to_envelope()
     assert [row.asset_id for row in first.rows] == [11, 12, 10]
     assert [row.rank for row in first.rows] == [2, 3, 1]

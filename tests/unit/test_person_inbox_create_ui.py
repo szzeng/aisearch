@@ -12,6 +12,14 @@ def test_create_action_from_both_inbox_entry_points_and_reuses_unknown_request_i
     assert node, "Node is required for the personal-page behavior check"
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+// Keep real timer behavior during the scenario, then dispose its UI on completion.
+const pendingTimers = new Set();
+const testSetTimeout = (callback, delay, ...args) => {
+  const timer = setTimeout(() => { pendingTimers.delete(timer); callback(...args); }, delay);
+  pendingTimers.add(timer); return timer;
+};
+const testClearTimeout = timer => { clearTimeout(timer); pendingTimers.delete(timer); };
+const disposeTimers = () => { for (const timer of pendingTimers) clearTimeout(timer); pendingTimers.clear(); };
 class Element {
   constructor(tag){this.tag=tag;this.children=[];this.value="";this.hidden=false;this.disabled=false;
     this.textContent="";this.dataset={};this.listeners={};this.attributes={};this.open=false;this.className="";
@@ -33,7 +41,7 @@ if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(nex
 if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),calls=[];let uuid=0,createCount=0,releaseSecond;
 const get=id=>{if(!id.startsWith("pa-"))id="pa-"+id;if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-const context={URLSearchParams,crypto:{randomUUID:()=>"intent-"+(++uuid)},setTimeout,clearTimeout,
+const context={URLSearchParams,crypto:{randomUUID:()=>"intent-"+(++uuid)},setTimeout:testSetTimeout,clearTimeout:testClearTimeout,
   window:{addEventListener(){},location:{search:"",href:"http://local/persons"}},
   document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(){},getElementById:get,
     createElement:t=>new Element(t)},
@@ -63,7 +71,8 @@ const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/a
 (async()=>{
   ui.state.operation={operation_id:"old",operation_revision:1,changed:true};
   ui.state.organize=true;
-  ui.state.undoTimer=setTimeout(()=>{},10000);get("undo-bar").hidden=false;
+  ui.state.undoTimer=testSetTimeout(()=>{},10000);get("undo-bar").hidden=false;
+  const previousUndoTimer=ui.state.undoTimer;
   for(const f of [face("a",false),face("b",true)]){
     const host=new Element("div");ui.renderInboxFace(host,f,false);
     const entry=host.children[0].children.filter(x=>x.tag==="button").at(-1);
@@ -84,6 +93,7 @@ const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/a
       assert.equal(secondRequest.body.request_id,firstRequest.body.request_id,"unknown outcome retries same intent id");
       releaseSecond();await retry;
       assert.equal(ui.state.operation,null);assert.equal(ui.state.undoTimer,null);assert.equal(get("undo-bar").hidden,true);
+      assert(!pendingTimers.has(previousUndoTimer),"creation cancels the previous undo timer");
       assert.equal(get("edit").open,false);assert.notEqual(get("status").textContent,"");
     assert(calls.some(x=>x.url.startsWith("/api/v1/persons/browse?")),"people list refreshes after creation");
       assert(calls.some(x=>x.url.startsWith("/api/v1/faces/inbox/groups?")),"pending inbox refreshes after creation");
@@ -98,7 +108,7 @@ const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/a
   assert(history.includes("CREATE_PERSON_FROM_FACE:"));
   assert(history.includes('operation.operation_type === "CREATE_PERSON_FROM_FACE"'));
   assert(history.includes('ui.mutate("/person-operations/" + operation.operation_id + "/undo"'),"existing operation undo remains wired");
-})().catch(e=>{console.error(e);process.exitCode=1;});
+})().finally(disposeTimers).catch(e=>{console.error(e);process.exitCode=1;});
 """
     result = subprocess.run(
         [node, "-e", script],

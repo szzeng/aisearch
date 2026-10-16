@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from conftest import ApiEnv
 from p3_person_fixtures import PersonHarness
-from p3_persons_page_fixtures import add_person, seed_library
+from p3_persons_page_fixtures import add_link, add_person, seed_library
 
 from photo_search.catalog.errors import CatalogError
 from photo_search.persons import operations
@@ -184,9 +184,10 @@ def test_alias_and_merged_source_names_do_not_own_active_names(h):
 
 
 def test_personal_label_case_collision_then_explicit_merge_and_undo(api_env: ApiEnv):
-    seed_library(api_env, {"synthetic.jpg": [(20, 20, 90, 90)]})
+    photo = seed_library(api_env, {"synthetic.jpg": [(20, 20, 90, 90)]})["synthetic.jpg"]
     catalog = api_env.service.catalog
     target, source = add_person(catalog, name="Alice"), add_person(catalog, name="alice")
+    add_link(catalog, photo["faces"][0], target)
 
     async def scenario(client):
         csrf = await api_env.authenticate(client)

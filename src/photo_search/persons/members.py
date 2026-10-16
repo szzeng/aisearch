@@ -39,17 +39,13 @@ MEMBER_SQL = (
 
 def member_counts(connection: sqlite3.Connection, person_id: int) -> tuple[int, int]:
     """``(faces, assets)`` of the effective member set of one person."""
-    faces = int(
-        connection.execute(
-            MEMBER_SQL.format(aggregate="*"), (int(person_id),)
-        ).fetchone()["total"]
-    )
-    assets = int(
-        connection.execute(
-            MEMBER_SQL.format(aggregate="DISTINCT f.asset_id"), (int(person_id),)
-        ).fetchone()["total"]
-    )
-    return faces, assets
+    row = connection.execute(
+        "SELECT COUNT(*) AS faces, COUNT(DISTINCT f.asset_id) AS assets "
+        "FROM face_person_links AS l JOIN faces AS f ON f.face_id = l.face_id "
+        "WHERE l.person_id = ? AND " + MEMBER_PREDICATE,
+        (int(person_id),),
+    ).fetchone()
+    return int(row["faces"]), int(row["assets"])
 
 
 __all__ = ["MEMBER_PREDICATE", "MEMBER_SQL", "member_counts"]

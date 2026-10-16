@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -23,7 +22,7 @@ def test_places_page_versions_assets_and_scopes_hidden_views() -> None:
     web = ROOT / "src" / "photo_search" / "web"
     page = (web / "places.html").read_text(encoding="utf-8")
     styles = (web / "places.css").read_text(encoding="utf-8")
-    assert "places-albums.js?v=p4-ui2-places-simplify-a-1" in page
+    assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in page
     assert "places.js?v=p4-ui2-places-simplify-a-1" in page
     assert "places.css?v=p4-ui2-places-simplify-a-1" in page
     assert 'id="open-place-management"' in page and "整理地点</button>" in page

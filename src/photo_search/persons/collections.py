@@ -11,7 +11,7 @@ import unicodedata
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
-from photo_search.api.queries import asset_page, encode_capture_cursor
+from photo_search.api.queries import encode_capture_cursor, read_asset_page_in_snapshot
 from photo_search.catalog.errors import CATALOG_FILTER_REVISION_STALE
 from photo_search.catalog.video import photo_asset_sql
 from photo_search.persons import albums
@@ -32,15 +32,14 @@ _MAX_NAME = 80
 _TRUSTED_REASSOCIATION_CTE = (
     "trusted_reassociations AS ("
     "SELECT m.old_face_id, MIN(m.new_face_id) AS new_face_id "
-    "FROM face_redetection_groups AS g "
-    "JOIN face_redetection_mappings AS m ON m.old_face_id=g.old_face_id "
+    "FROM archive_page AS archived "
+    "CROSS JOIN face_redetection_mappings AS m ON m.old_face_id=archived.source_face_id "
+    "JOIN face_redetection_groups AS g ON g.old_face_id=m.old_face_id "
     "JOIN faces AS mapped_face ON mapped_face.face_id=m.new_face_id "
     "AND mapped_face.asset_id=m.asset_id AND mapped_face.spec_revision=m.new_spec_revision "
     "WHERE g.asset_id=m.asset_id AND g.old_spec_revision=m.old_spec_revision "
     "AND g.state='CONFIRMED' AND g.candidate_state='UNIQUE_HIGH' "
     "AND m.state='CONFIRMED' AND m.match_state='HIGH' "
-    "AND EXISTS (SELECT 1 FROM person_collection_face_members AS archived "
-    "WHERE archived.collection_id=? AND archived.source_face_id=m.old_face_id) "
     "GROUP BY m.old_face_id HAVING COUNT(*)=1)"
 )
 
@@ -89,11 +88,17 @@ def _normalise_collection_name(value: Any) -> tuple[str, str]:
     return display, "nfc1:" + unicodedata.normalize("NFC", display.casefold())
 
 
-def _canonical_cte() -> str:
+def _canonical_cte(*, collection_count: int = 0) -> str:
+    """Resolve stable anchors, optionally binding a bounded collection page first."""
+    scope = (
+        "WHERE m.collection_id IN (" + ", ".join("?" for _ in range(collection_count)) + ") "
+        if collection_count else ""
+    )
     return (
         "WITH RECURSIVE chain(collection_id, origin_id, person_id, merged_into, path) AS ("
         "SELECT m.collection_id, p.person_id, p.person_id, p.merged_into, ',' || p.person_id || ',' "
         "FROM person_collection_members AS m JOIN persons AS p ON p.person_id = m.person_id "
+        + scope +
         "UNION ALL SELECT c.collection_id, c.origin_id, p.person_id, p.merged_into, "
         "c.path || p.person_id || ',' FROM chain AS c JOIN persons AS p "
         "ON p.person_id = c.merged_into WHERE c.merged_into IS NOT NULL "
@@ -161,15 +166,22 @@ def _collection_photo_counts(connection: Any, collection_ids: list[int]) -> dict
     if not collection_ids:
         return {}
     placeholders = ", ".join("?" for _ in collection_ids)
-    photo_sql, _photo_parameters = photo_asset_sql(asset_alias="a")
+    photo_sql, photo_parameters = photo_asset_sql(asset_alias="a")
     ids = tuple(int(collection_id) for collection_id in collection_ids)
+    # Bound the recursive seed before reading faces. Multiple stable anchors may
+    # resolve to the same person after a merge, so visit that person's faces once.
+    # Without an explicit join order SQLite can scan every effective face link
+    # before checking the bounded page, even when it contains only small albums.
     rows = connection.execute(
-        _canonical_cte()
-        + ", eligible_assets AS ("
-        "SELECT cm.collection_id, f.asset_id FROM canonical_members AS cm "
-        "JOIN face_person_links AS l ON l.person_id = cm.person_id "
-        "JOIN faces AS f ON f.face_id = l.face_id JOIN assets AS a ON a.asset_id = f.asset_id "
-        "WHERE cm.collection_id IN (" + placeholders + ") AND a.state = 'ACTIVE' AND "
+        _canonical_cte(collection_count=len(collection_ids))
+        + ", current_members AS (SELECT DISTINCT collection_id, person_id FROM canonical_members), "
+        "eligible_assets AS (SELECT cm.collection_id, f.asset_id "
+        "FROM current_members AS cm "
+        "CROSS JOIN face_person_links AS l INDEXED BY idx_face_person_links_person "
+        "ON l.person_id = cm.person_id "
+        "JOIN faces AS f ON f.face_id = l.face_id "
+        "JOIN assets AS a ON a.asset_id = f.asset_id "
+        "WHERE a.state = 'ACTIVE' AND "
         + MEMBER_PREDICATE + " AND " + photo_sql + " AND "
         "(NOT EXISTS (SELECT 1 FROM file_locations any_location WHERE any_location.asset_id=a.asset_id) "
         "OR EXISTS (SELECT 1 FROM file_locations present_location WHERE present_location.asset_id=a.asset_id "
@@ -181,12 +193,18 @@ def _collection_photo_counts(connection: Any, collection_ids: list[int]) -> dict
         "OR EXISTS (SELECT 1 FROM file_locations present_location WHERE present_location.asset_id=fm.asset_id "
         "AND present_location.availability='PRESENT'))) "
         "SELECT collection_id, COUNT(DISTINCT asset_id) AS photo_count FROM eligible_assets GROUP BY collection_id",
-        (*ids, *ids),
+        (*ids, *photo_parameters, *ids, *photo_parameters),
     ).fetchall()
     return {int(row["collection_id"]): int(row["photo_count"]) for row in rows}
 
 
 def list_collections(catalog: Any, *, limit: int = 40, cursor: str | None = None) -> dict[str, Any]:
+    """Read collection identities, member counts and photo counts together."""
+    with catalog.read_snapshot():
+        return _list_collections(catalog, limit=limit, cursor=cursor)
+
+
+def _list_collections(catalog: Any, *, limit: int = 40, cursor: str | None = None) -> dict[str, Any]:
     limit = max(1, min(int(limit), 100))
     binding: list[Any] = ["collections1"]
     after = _decode(cursor, _CURSOR_PREFIX, binding)
@@ -244,16 +262,24 @@ def create_collection(catalog: Any, name: Any) -> dict[str, Any]:
 
 
 def collection_detail(catalog: Any, collection_id: int, *, instance_token: str) -> dict[str, Any]:
+    with catalog.read_snapshot():
+        return _collection_detail(catalog, collection_id, instance_token=instance_token, include_photo_count=True)
+
+
+def _collection_detail(catalog: Any, collection_id: int, *, instance_token: str, include_photo_count: bool = False) -> dict[str, Any]:
     connection = catalog.connection
     row = _require_collection_instance(connection, collection_id, instance_token)
     count = connection.execute(
-        _canonical_cte() + "SELECT COUNT(DISTINCT person_id) FROM canonical_members WHERE collection_id = ?",
+        _canonical_cte(collection_count=1) + "SELECT COUNT(DISTINCT person_id) FROM canonical_members",
         (int(collection_id),),
     ).fetchone()[0]
     face_count = connection.execute(
         "SELECT COUNT(*) FROM person_collection_face_members WHERE collection_id = ?", (int(collection_id),)
     ).fetchone()[0]
-    return {"collection": _collection_summary({**dict(row), "member_count": int(count), "face_member_count": int(face_count)})}
+    summary = _collection_summary({**dict(row), "member_count": int(count), "face_member_count": int(face_count)})
+    if include_photo_count:
+        summary["photo_count"] = _collection_photo_counts(connection, [int(collection_id)]).get(int(collection_id), 0)
+    return {"collection": summary}
 
 
 def rename_collection(catalog: Any, collection_id: int, name: Any, *, instance_token: str) -> dict[str, Any]:
@@ -267,7 +293,8 @@ def rename_collection(catalog: Any, collection_id: int, name: Any, *, instance_t
                     "WHERE collection_id = ?",
                     (display, name_key, catalog.now_ms(), int(collection_id)),
                 )
-            return collection_detail(catalog, collection_id, instance_token=instance_token)
+            # Reuse the already-held write transaction, without nesting a read snapshot.
+            return _collection_detail(catalog, collection_id, instance_token=instance_token)
     except Exception as error:
         if "UNIQUE constraint failed" in str(error):
             raise ApiError(VALIDATION_ERROR, "已存在同名人物合集", status=409) from error
@@ -379,7 +406,12 @@ def edit_face_members(
             rows = connection.execute(
                 "SELECT f.face_id, f.asset_id, f.input_revision FROM faces AS f "
                 "JOIN assets AS a ON a.asset_id=f.asset_id WHERE f.face_id IN (" + placeholders + ") "
-                "AND a.state='ACTIVE' AND f.input_revision=a.sha256 AND " + photo_sql,
+                "AND a.state='ACTIVE' AND f.input_revision=a.sha256 "
+                "AND (NOT EXISTS (SELECT 1 FROM file_locations AS any_location "
+                "WHERE any_location.asset_id=a.asset_id) OR EXISTS ("
+                "SELECT 1 FROM file_locations AS present_location "
+                "WHERE present_location.asset_id=a.asset_id AND present_location.availability='PRESENT')) "
+                "AND " + photo_sql,
                 (*ids, *photo_parameters),
             ).fetchall()
             found = {str(row["face_id"]): row for row in rows}
@@ -434,6 +466,19 @@ def face_members_page(
     limit: int = 40,
     cursor: str | None = None,
 ) -> dict[str, Any]:
+    """Read archive revision, cursor and face facts in the same snapshot."""
+    with catalog.read_snapshot():
+        return _face_members_page(catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor)
+
+
+def _face_members_page(
+    catalog: Any,
+    collection_id: int,
+    *,
+    instance_token: str,
+    limit: int = 40,
+    cursor: str | None = None,
+) -> dict[str, Any]:
     """Page saved soft anchors and mark stale or missing source detections honestly."""
     limit = max(1, min(int(limit), 100))
     connection = catalog.connection
@@ -444,22 +489,23 @@ def face_members_page(
     if after is not None and (not isinstance(after, str) or len(after) != 64 or any(c not in "0123456789abcdef" for c in after)):
         raise ApiError(INVALID_CURSOR, "合集人脸游标无效", status=409)
     continuation = " AND fm.source_face_id > ?" if after is not None else ""
-    values: tuple[Any, ...] = (int(collection_id), int(collection_id)) + (() if after is None else (after,)) + (limit + 1,)
+    values: tuple[Any, ...] = (int(collection_id),) + (() if after is None else (after,)) + (limit + 1,)
     rows = catalog.read_all(
-        "WITH " + _TRUSTED_REASSOCIATION_CTE + ", page AS (SELECT fm.source_face_id, fm.asset_id, fm.input_revision, fm.created_at, "
+        "WITH archive_page AS (SELECT fm.* FROM person_collection_face_members AS fm "
+        "WHERE fm.collection_id=?" + continuation + " ORDER BY fm.source_face_id LIMIT ?), "
+        + _TRUSTED_REASSOCIATION_CTE + ", page AS (SELECT fm.source_face_id, fm.asset_id, fm.input_revision, fm.created_at, "
         "a.sha256, a.state, COALESCE(mapped_face.face_id, f.face_id) AS current_face_id, "
         "COALESCE(mapped_face.quality_state, f.quality_state) AS quality_state, "
         "COALESCE(mapped_face.quality_reason, f.quality_reason) AS quality_reason, "
         "(NOT EXISTS (SELECT 1 FROM file_locations any_location WHERE any_location.asset_id=fm.asset_id) "
         "OR EXISTS (SELECT 1 FROM file_locations present_location WHERE present_location.asset_id=fm.asset_id "
         "AND present_location.availability='PRESENT')) AS source_present "
-        "FROM person_collection_face_members AS fm LEFT JOIN assets AS a ON a.asset_id=fm.asset_id "
+        "FROM archive_page AS fm LEFT JOIN assets AS a ON a.asset_id=fm.asset_id "
         "LEFT JOIN trusted_reassociations AS reassociation ON reassociation.old_face_id=fm.source_face_id "
         "LEFT JOIN faces AS mapped_face ON mapped_face.face_id=reassociation.new_face_id "
         "AND mapped_face.asset_id=fm.asset_id AND mapped_face.input_revision=fm.input_revision "
         "LEFT JOIN faces AS f ON f.face_id=fm.source_face_id AND f.asset_id=fm.asset_id "
-        "AND f.input_revision=fm.input_revision WHERE fm.collection_id=?" + continuation +
-        " ORDER BY fm.source_face_id LIMIT ?), suggestions AS ("
+        "AND f.input_revision=fm.input_revision), suggestions AS ("
         "SELECT l.face_id, l.person_id, ROW_NUMBER() OVER (PARTITION BY l.face_id ORDER BY l.confidence DESC, l.person_id) AS position "
         "FROM page JOIN face_person_links AS l ON l.face_id=page.current_face_id "
         "JOIN persons AS p ON p.person_id=l.person_id "
@@ -472,7 +518,8 @@ def face_members_page(
         "LEFT JOIN face_person_links AS l ON l.face_id=page.current_face_id "
         "AND " + MEMBER_PREDICATE + " LEFT JOIN persons AS assigned_person ON assigned_person.person_id=l.person_id "
         "LEFT JOIN suggestions ON suggestions.face_id=page.current_face_id AND suggestions.position=1 "
-        "LEFT JOIN persons AS candidate_person ON candidate_person.person_id=suggestions.person_id",
+        "LEFT JOIN persons AS candidate_person ON candidate_person.person_id=suggestions.person_id "
+        "ORDER BY page.source_face_id",
         values,
     )
     more = len(rows) > limit
@@ -513,6 +560,13 @@ def face_members_page(
 
 
 def people_page(
+    catalog: Any, collection_id: int, *, instance_token: str, limit: int = 40, cursor: str | None = None
+) -> dict[str, Any]:
+    with catalog.read_snapshot():
+        return _people_page(catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor)
+
+
+def _people_page(
     catalog: Any, collection_id: int, *, instance_token: str, limit: int = 40, cursor: str | None = None
 ) -> dict[str, Any]:
     limit = max(1, min(int(limit), 100))
@@ -570,7 +624,7 @@ def _collection_photo_faces(connection: Any, collection_id: int, asset_ids: list
         return {}
     placeholders = ",".join("?" for _ in asset_ids)
     rows = connection.execute(
-        _canonical_cte()
+        _canonical_cte(collection_count=1)
         + ", current_members AS (SELECT DISTINCT collection_id, person_id FROM canonical_members), "
         "eligible_faces AS (SELECT DISTINCT f.asset_id, f.face_id, f.face_pixels "
         "FROM faces AS f JOIN face_person_links AS l ON l.face_id = f.face_id "
@@ -580,27 +634,29 @@ def _collection_photo_faces(connection: Any, collection_id: int, asset_ids: list
         "(PARTITION BY asset_id ORDER BY face_pixels DESC, face_id) AS position FROM eligible_faces) "
         "SELECT asset_id, face_id, position FROM ranked_faces "
         "WHERE position <= 9 ORDER BY asset_id, position",
-        (int(collection_id), *asset_ids),
+        (int(collection_id), int(collection_id), *asset_ids),
     ).fetchall()
     grouped: dict[int, list[str]] = {}
     for row in rows:
         grouped.setdefault(int(row["asset_id"]), []).append(str(row["face_id"]))
     archived_rows = connection.execute(
-        _canonical_cte()
-        + ", " + _TRUSTED_REASSOCIATION_CTE
+        _canonical_cte(collection_count=1)
+        + ", archive_page AS (SELECT fm.* FROM person_collection_face_members AS fm "
+        "WHERE fm.collection_id=? AND fm.asset_id IN (" + placeholders + ")), "
+        + _TRUSTED_REASSOCIATION_CTE
         + ", current_members AS (SELECT DISTINCT collection_id, person_id FROM canonical_members), "
         "ranked AS (SELECT fm.asset_id, fm.source_face_id, COALESCE(mapped_face.face_id, f.face_id) AS current_face_id, "
         "ROW_NUMBER() OVER (PARTITION BY fm.asset_id ORDER BY fm.created_at, fm.source_face_id) AS position, "
         "COUNT(*) OVER (PARTITION BY fm.asset_id) AS total "
-        "FROM person_collection_face_members AS fm JOIN assets AS a ON a.asset_id=fm.asset_id "
+        "FROM archive_page AS fm JOIN assets AS a ON a.asset_id=fm.asset_id "
         "LEFT JOIN trusted_reassociations AS reassociation ON reassociation.old_face_id=fm.source_face_id "
         "LEFT JOIN faces AS mapped_face ON mapped_face.face_id=reassociation.new_face_id "
         "AND mapped_face.asset_id=fm.asset_id AND mapped_face.input_revision=fm.input_revision "
         "LEFT JOIN faces AS f ON f.face_id=fm.source_face_id AND f.asset_id=fm.asset_id "
-        "AND f.input_revision=fm.input_revision WHERE fm.collection_id=? AND a.state='ACTIVE' "
+        "AND f.input_revision=fm.input_revision WHERE a.state='ACTIVE' "
         "AND a.sha256=fm.input_revision AND (NOT EXISTS (SELECT 1 FROM file_locations any_location WHERE any_location.asset_id=fm.asset_id) "
         "OR EXISTS (SELECT 1 FROM file_locations present_location WHERE present_location.asset_id=fm.asset_id "
-        "AND present_location.availability='PRESENT')) AND fm.asset_id IN (" + placeholders + ") "
+        "AND present_location.availability='PRESENT')) "
         "AND NOT EXISTS (SELECT 1 FROM face_person_links AS l JOIN current_members AS cm ON cm.person_id=l.person_id "
         "WHERE cm.collection_id=fm.collection_id AND l.face_id=COALESCE(mapped_face.face_id, f.face_id) AND " + MEMBER_PREDICATE + ")) "
         "SELECT * FROM ranked WHERE position<=20 ORDER BY asset_id, position",
@@ -631,6 +687,13 @@ def _collection_photo_faces(connection: Any, collection_id: int, asset_ids: list
 def photo_page(
     catalog: Any, cache: Any, collection_id: int, *, instance_token: str, limit: int = 60, cursor: str | None = None
 ) -> dict[str, Any]:
+    with catalog.read_snapshot():
+        return _photo_page(catalog, cache, collection_id, instance_token=instance_token, limit=limit, cursor=cursor)
+
+
+def _photo_page(
+    catalog: Any, cache: Any, collection_id: int, *, instance_token: str, limit: int = 60, cursor: str | None = None
+) -> dict[str, Any]:
     limit = max(1, min(int(limit), 100))
     connection = catalog.connection
     collection = _require_collection_instance(connection, collection_id, instance_token)
@@ -647,7 +710,7 @@ def photo_page(
             (*condition_parameters, *photo_parameters),
         )["total"]
     )
-    page = asset_page(
+    page = read_asset_page_in_snapshot(
         catalog, cache, limit=limit + 1, cursor=inner, order="capture_desc", collection_id=int(collection_id)
     )
     if int(page["catalog_filter_revision"]) != int(filter_revision):

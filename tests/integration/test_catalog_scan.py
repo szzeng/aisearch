@@ -152,8 +152,9 @@ def test_scan_records_identity_for_hard_fixtures(harness: Harness, tmp_path: Pat
     _write(source_root / "a.jpg", b"AAAA")
     _write(source_root / "b.jpg", b"AAAA")
     _write(long_file, b"CCCC")
-    _write(source_root / "empty.bin", b"")
-    _write(source_root / "notes.txt", b"not an image")
+    # Registration depends on the allowed image path, not successful decoding.
+    _write(source_root / "empty.jpg", b"")
+    _write(source_root / "invalid.jpg", b"not an image")
     read_only = _write(source_root / "readonly.jpg", b"RO")
     os.chmod(read_only, stat.S_IREAD)
     try:
@@ -180,8 +181,8 @@ def test_scan_records_identity_for_hard_fixtures(harness: Harness, tmp_path: Pat
         assert shared is not None
         assert _asset_id(harness, "b.jpg") == shared
         assert any(row["relative_path"].endswith("c 图片.jpg") for row in _locations(harness))
-        assert _asset_id(harness, "empty.bin") is not None
-        assert _asset_id(harness, "notes.txt") is not None
+        assert _asset_id(harness, "empty.jpg") is not None
+        assert _asset_id(harness, "invalid.jpg") is not None
         assert _asset_id(harness, "readonly.jpg") is not None
 
         os.replace(source_root / "a.jpg", source_root / "renamed.jpg")
@@ -396,6 +397,8 @@ def test_positive_writes_require_a_live_submission(
     real_validate = jobs.validate_submission
 
     def refuse_first(connection, **kwargs):
+        if connection is not harness.service.catalog.connection:
+            return real_validate(connection, **kwargs)
         calls["count"] += 1
         if calls["count"] == 1:
             raise CatalogError("PROCESSOR_MISMATCH", "simulated unqualified execution")
@@ -405,6 +408,7 @@ def test_positive_writes_require_a_live_submission(
     with pytest.raises(CatalogError) as error:
         harness.service.run_scan(source_id)
     assert error.value.code == "PROCESSOR_MISMATCH"
+    assert calls["count"] == 1
     counts = harness.service.counts(source_id=source_id)
     assert counts["locations"] == 0
     assert counts["assets_total"] == 0
@@ -433,6 +437,8 @@ def test_content_binding_requires_a_live_submission(
     real_validate = jobs.validate_submission
 
     def refuse_binding(connection, **kwargs):
+        if connection is not harness.service.catalog.connection:
+            return real_validate(connection, **kwargs)
         calls["count"] += 1
         if calls["count"] == 3:
             raise CatalogError("STALE_INPUT_REVISION", "simulated revision change")

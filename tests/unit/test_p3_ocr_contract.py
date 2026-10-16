@@ -175,17 +175,17 @@ def test_the_processor_declares_gpu_and_cpu_without_vector_identity() -> None:
 
 
 def test_v2_execution_hashes_are_versioned_and_device_specific() -> None:
-    cpu = contract.execution_config("cpu")
-    gpu = contract.execution_config("gpu")
+    cpu = contract.execution_config("cpu", version=2)
+    gpu = contract.execution_config("gpu", version=2)
     assert cpu["version"] == gpu["version"] == "ocr-execution-config.v2"
     assert cpu["provider"] == "CPUExecutionProvider"
     assert gpu["provider"] == "CUDAExecutionProvider"
     assert cpu["precision"] == gpu["precision"] == "FP32"
-    assert contract.OCR_CPU_CONFIG_HASH == contract.execution_config_hash("cpu")
-    assert contract.OCR_GPU_CONFIG_HASH == contract.execution_config_hash("gpu")
-    assert contract.OCR_CPU_CONFIG_HASH != contract.OCR_GPU_CONFIG_HASH
-    assert contract.OCR_CPU_CONFIG_HASH == "b34753ca9d2bd6f2c824d792b9af8debe1ecd788258e7bafbb2c56b76fd478f3"
-    assert contract.OCR_GPU_CONFIG_HASH == "6936ffae2b03479335a09ed69bb18d5d821ca4d2a1029c27d56f007c66aef5c6"
+    assert contract.OCR_V2_CPU_CONFIG_HASH == contract.execution_config_hash("cpu", version=2)
+    assert contract.OCR_V2_GPU_CONFIG_HASH == contract.execution_config_hash("gpu", version=2)
+    assert contract.OCR_V2_CPU_CONFIG_HASH != contract.OCR_V2_GPU_CONFIG_HASH
+    assert contract.OCR_V2_CPU_CONFIG_HASH == "b34753ca9d2bd6f2c824d792b9af8debe1ecd788258e7bafbb2c56b76fd478f3"
+    assert contract.OCR_V2_GPU_CONFIG_HASH == "6936ffae2b03479335a09ed69bb18d5d821ca4d2a1029c27d56f007c66aef5c6"
 
 
 # ---------------------------------------------------------------------------- payload

@@ -1186,8 +1186,12 @@ def _scoped_asset_page(
         int(after_asset_id),
         max(int(limit), 1),
     )
+    location_index = (
+        "idx_file_locations_present_source_asset" if source_id is not None
+        else "idx_file_locations_present_asset"
+    )
     rows = catalog.read_all(
-        "SELECT DISTINCT l.asset_id AS asset_id FROM file_locations AS l "
+        f"SELECT DISTINCT l.asset_id AS asset_id FROM file_locations AS l INDEXED BY {location_index} "
         "WHERE l.availability = 'PRESENT' AND l.asset_id IS NOT NULL "
         f"{source_filter} AND l.asset_id > ? ORDER BY l.asset_id LIMIT ?",
         parameters,

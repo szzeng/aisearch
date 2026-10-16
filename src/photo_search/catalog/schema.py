@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
@@ -75,7 +76,8 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0029 adds selected-face atomic regroup; 0030 classifies person ignores; 0031
 # classifies per-face inbox ignores while preserving existing hidden rows as TEMPORARY.
 # 0032 adds soft-anchored face-level person collection membership.
-SUPPORTED_SCHEMA_VERSION = 32
+# 0033 adds ordered photo/source reads and pending-only generation readiness checks.
+SUPPORTED_SCHEMA_VERSION = 33
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
@@ -119,17 +121,33 @@ def schema_objects(connection: sqlite3.Connection) -> dict[tuple[str, str], str]
     return objects
 
 
-def expected_objects(version: int) -> dict[tuple[str, str], str]:
-    """Build the schema this build expects for ``version`` from the migration scripts."""
+@lru_cache(maxsize=16)
+def _compiled_expected_objects(
+    version: int, scripts: tuple[str, ...],
+) -> tuple[tuple[tuple[str, str], str], ...]:
+    """Cache only immutable expected DDL, keyed by version and exact script contents."""
     connection = sqlite3.connect(":memory:")
     try:
-        for file_version, path in migration_files():
-            if file_version > version:
-                break
-            connection.executescript(path.read_text(encoding="utf-8"))
-        return schema_objects(connection)
+        for script in scripts:
+            connection.executescript(script)
+        return tuple(schema_objects(connection).items())
     finally:
         connection.close()
+
+
+def expected_objects(version: int) -> dict[tuple[str, str], str]:
+    """Read and validate the migration inputs, reusing their compiled expected schema.
+
+    Always check the complete migration list and read the relevant contents: a removed
+    script or an edit preserving its size/mtime must not reuse a stale expectation.
+    Actual database objects are never cached, and callers receive their own dictionary.
+    """
+    scripts = tuple(
+        path.read_text(encoding="utf-8")
+        for file_version, path in migration_files()
+        if file_version <= version
+    )
+    return dict(_compiled_expected_objects(version, scripts))
 
 
 def verify_schema(connection: sqlite3.Connection, version: int) -> None:

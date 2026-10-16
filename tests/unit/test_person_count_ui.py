@@ -22,7 +22,7 @@ class Element {
 }
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const requests=[];
-const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
+const context={URL,URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
  window:{location:{search:"",href:"http://local/persons"},confirm:()=>false,addEventListener(){}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url)=>{requests.push(url);let body={};
@@ -33,6 +33,8 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeo
    else if(url.includes("/faces/source-detail-batches/active"))body={state:"IDLE",batch_id:null};
    else if(url.includes("/faces/source-detail-preview"))body={total:0};
    return {ok:true,json:async()=>body};}};
+const navigate=(_state,_title,path)=>{const url=new URL(path,context.window.location.href);Object.assign(context.window.location,{href:url.href,search:url.search,hash:url.hash});};
+context.window.history={pushState:navigate,replaceState:navigate};
 vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/persons-albums.js","utf8"),context);
 const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
 (async()=>{

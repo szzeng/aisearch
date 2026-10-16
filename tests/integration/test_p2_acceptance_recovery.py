@@ -24,7 +24,7 @@ from p2_acceptance_fixtures import (
     install_dataset,
     latest_job,
     latest_scan,
-    make_place,
+    make_source_place,
     place_action,
     reopen_service,
     replace_photo,
@@ -141,7 +141,7 @@ def test_an_interrupted_scan_resumes_after_a_restart_without_false_missing(
     env = acceptance_env(tmp_path)
     try:
         catalog = env.catalog
-        place_id = make_place(catalog, "杭州西湖")
+        place_id = make_source_place(catalog, "杭州西湖")
         locked_asset = env.assets["杭州西湖 照片.jpg"]
         place_action(
             catalog,
@@ -209,7 +209,13 @@ def test_an_interrupted_scan_resumes_after_a_restart_without_false_missing(
         assert int(outcome["scan_id"]) == int(scan["scan_id"]) == int(runs[1]["scan_id"])
         assert latest_job(catalog)["attempts"] >= 1
         assert assignment_row(catalog, locked_asset)["place_id"] == place_id
-        assert filter_revision(catalog) == revision_before
+        # New asset membership now shares the authoritative filter revision. The scan
+        # preserves the manual place fact and publishes exactly its three new assets.
+        assert filter_revision(catalog) == revision_before + 3
+        assert [str(row["cause"]) for row in catalog.read_all(
+            "SELECT cause FROM catalog_filter_revision_events WHERE revision > ? "
+            "ORDER BY revision", (revision_before,)
+        )] == ["ASSET_ADDED"] * 3
     finally:
         env.context.close()
         env.library.close()

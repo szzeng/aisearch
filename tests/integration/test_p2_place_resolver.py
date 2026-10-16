@@ -98,6 +98,7 @@ def resolution_rows(harness: Harness) -> list:
 def test_a_valid_gps_fact_produces_ranked_suggestion_only_candidates(harness: Harness) -> None:
     harness.install("mini-1")
     asset_id = prepare_asset(harness, "hangzhou.jpg", HANGZHOU_POSITION)
+    filter_before = revision_module.read_filter_revision(harness.catalog.connection)
 
     assert harness.run_resolver([asset_id]) == 1
 
@@ -119,7 +120,7 @@ def test_a_valid_gps_fact_produces_ranked_suggestion_only_candidates(harness: Ha
     # Suggestion revision moves; the authoritative filter revision does not.
     connection = harness.catalog.connection
     assert revision_module.read_suggestion_revision(connection) == 1
-    assert revision_module.read_filter_revision(connection) == 0
+    assert revision_module.read_filter_revision(connection) == filter_before
     # The machine product is published as a structured artifact.
     artifact = harness.catalog.read_one(
         "SELECT artifact_type, artifact_revision FROM artifacts WHERE processor_id = ?",
@@ -246,6 +247,7 @@ def test_a_manual_assignment_wins_and_still_moves_both_revisions(harness: Harnes
     harness.install("mini-1")
     asset_id = prepare_asset(harness, "hangzhou.jpg", HANGZHOU_POSITION)
     harness.run_resolver([asset_id])
+    filter_before = revision_module.read_filter_revision(harness.catalog.connection)
     suzhou = place_id_of(harness, "city-suzhou")
 
     result = assign(harness, asset_id, suzhou, request_id="manual-1")
@@ -258,7 +260,7 @@ def test_a_manual_assignment_wins_and_still_moves_both_revisions(harness: Harnes
     )
     assert str(row["mode"]) == "MANUAL_ASSIGNED" and str(row["origin"]) == "MANUAL"
     assert int(row["place_id"]) == suzhou and int(row["manual_lock"]) == 1
-    assert revision_module.read_filter_revision(harness.catalog.connection) == 1
+    assert revision_module.read_filter_revision(harness.catalog.connection) == filter_before + 1
     # A manual lock hides the machine suggestions for this asset.
     assert revision_module.read_suggestion_revision(harness.catalog.connection) == 2
     view = suggestion_module.suggestion_view(harness.catalog.connection, asset_id)
@@ -397,7 +399,11 @@ def test_resolution_blocks_without_a_dataset_and_the_manual_paths_stay_usable(
 
 
 def test_manual_places_and_assignment_work_with_a_missing_package(harness: Harness) -> None:
+    from p2_legacy_place_fixtures import seed_legacy_assignment
+
+    from photo_search.ingestion.service import CatalogService
     from photo_search.places import directory
+    from photo_search.places.service import PlaceService
 
     asset_id = prepare_asset(harness, "hangzhou.jpg", HANGZHOU_POSITION)
     with harness.catalog.write() as connection:
@@ -411,15 +417,49 @@ def test_manual_places_and_assignment_work_with_a_missing_package(harness: Harne
             now_ms=int(harness.clock()),
         )
 
-    result = assign(harness, asset_id, place_id, request_id="manual-no-dataset")
+    before_revision = revision_module.read_filter_revision(harness.catalog.connection)
+    with pytest.raises(CatalogError) as error:
+        assign(harness, asset_id, place_id, request_id="manual-no-dataset")
+    assert error.value.code == "PLACE_NOT_FOUND"
+    assert harness.catalog.read_one("SELECT COUNT(*) FROM place_operations")[0] == 0
+    assert harness.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignments")[0] == 0
+    assert revision_module.read_filter_revision(harness.catalog.connection) == before_revision
 
-    assert result["changed"] is True
+    # A pre-source-gate USER assignment is a different input from a new ASSIGN request.
+    harness.service.close()
+    seed_legacy_assignment(harness.data_root, asset_id=asset_id, place_id=place_id)
+    harness.service = CatalogService.open(data_root=harness.data_root, clock=harness.clock)
     assert harness.catalog.read_one(
         "SELECT mode FROM asset_place_assignments WHERE asset_id = ?", (asset_id,)
     )["mode"] == "MANUAL_ASSIGNED"
     assert harness.catalog.read_one(
         "SELECT COUNT(*) AS value FROM place_resolutions"
     )["value"] == 0
+    service = PlaceService(harness.catalog, clock=harness.clock)
+    replay_revision = revision_module.read_filter_revision(harness.catalog.connection)
+    replayed = service.write_assignment(
+        asset_id=asset_id, action="ASSIGN", target_place_id=place_id, expected_revision=0,
+        request_id=f"legacy-place-operation-{asset_id}",
+    )
+    assert replayed["operation_id"] == f"legacy-place-operation-{asset_id}"
+    assert harness.catalog.read_one("SELECT COUNT(*) FROM place_operations")[0] == 1
+    assert harness.catalog.read_one("SELECT COUNT(*) FROM asset_place_assignment_history")[0] == 1
+    assert revision_module.read_filter_revision(harness.catalog.connection) == replay_revision
+    cancelled = service.write_assignment(
+        asset_id=asset_id, action="UNASSIGN", target_place_id=None, expected_revision=1,
+        request_id="legacy-cancel",
+    )
+    assert cancelled["changed"] is True
+    restored = service.undo(
+        operation_id=cancelled["operation_id"], request_id="legacy-cancel-undo",
+        expected_operation_revision=cancelled["operation_revision"],
+    )
+    assert restored["changed"] is True
+    row = harness.catalog.read_one(
+        "SELECT place_id, mode, manual_lock FROM asset_place_assignments WHERE asset_id=?",
+        (asset_id,),
+    )
+    assert tuple(row) == (place_id, "MANUAL_ASSIGNED", 1)
 
 
 def test_an_interrupted_resolution_transaction_rolls_back_completely(

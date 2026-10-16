@@ -208,6 +208,7 @@ def test_rapidocr_wrapped_cuda_failure_uses_structured_ort_cause() -> None:
     infer.session = FakeSession()
     pinned = PinnedOcrEngine.__new__(PinnedOcrEngine)
     pinned.resolved_device = "gpu"
+    pinned.orientation_retry = False
     pinned._engine = lambda image: (infer(image), 0)
     with pytest.raises(CatalogError) as caught:
         pinned.read(None)
@@ -820,5 +821,3 @@ def test_changed_input_does_not_create_cpu_fallback(harness: Any, monkeypatch: A
     jobs = jobs_for(harness, asset_id)
     assert jobs[contract.OCR_GPU_PROCESSOR_ID]["state"] == "BLOCKED"
     assert contract.OCR_CPU_PROCESSOR_ID not in jobs
-
-\n

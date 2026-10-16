@@ -1,10 +1,9 @@
 """The read-only business API plus the controlled file endpoints (architecture §10.2).
 
-Every handler is ``async`` and does its catalog work on the event loop thread, which is the
-thread the owned SQLite connection was opened on. Media generation uses a separate
-thread-owned read-only catalog connection and a bounded worker slot, so first-view image
-decodes do not block other API requests or serialize every eager cover on the event loop.
-Reading published media bytes also stays in a worker thread.
+Writes use the application's owned connection on the event loop. Expensive browse
+and search work uses a bounded pool with thread-owned catalog connections.
+Media generation separately owns read-only worker connections and bounded worker slots;
+reading published media bytes also stays in a worker thread.
 """
 
 from __future__ import annotations
@@ -25,6 +24,11 @@ from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from photo_search.api import timeline as timeline_queries
+from photo_search.api.catalog_reads import (
+    run_catalog_projection,
+    run_catalog_read,
+    run_catalog_search,
+)
 from photo_search.api.context import ApiContext
 from photo_search.api.errors import (
     MEDIA_NOT_READY,
@@ -133,11 +137,13 @@ from photo_search.api.models import (
 )
 from photo_search.api.queries import (
     asset_detail,
-    asset_page,
     clamp_limit,
     job_detail,
     job_page,
     media_state,
+    prepare_asset_page,
+    read_asset_page,
+    source_list,
 )
 from photo_search.api.session import (
     COOKIE_PATH,
@@ -376,7 +382,13 @@ def page_capabilities(request: Request) -> dict[str, Any]:
 )
 async def capabilities(request: Request) -> dict[str, Any]:
     """Read-only build facts. Opens the catalog read-only, so it never writes anything."""
-    settings = context_of(request).settings
+    # Capabilities use independent read-only probes even for an absent/old catalog;
+    # opening the application's mutable Catalog here would change that contract.
+    return await asyncio.to_thread(_capabilities_read, context_of(request))
+
+
+def _capabilities_read(context: ApiContext) -> dict[str, Any]:
+    settings = context.settings
     info = catalog_info(None, data_root=settings.data_root)
     error = info.get("error")
     if isinstance(error, dict) and error.get("code"):
@@ -408,7 +420,7 @@ async def capabilities(request: Request) -> dict[str, Any]:
         "indexing": index_summary(catalog_db_path(settings.data_root)),
         # P2-04 derived-search counts plus the P2-06A active profile (never any search
         # text, session token, coordinate or path).
-        "search": _search_capabilities(request),
+        "search": _search_capabilities(context),
         # P3-01: how much of the library carries a current OCR document, how much is still
         # catching up, and whether the pinned weights are installed. Counts and states only:
         # no recognised text and no coordinate is projected here.
@@ -427,14 +439,13 @@ async def capabilities(request: Request) -> dict[str, Any]:
     }
 
 
-def _search_capabilities(request: Request) -> dict[str, Any] | None:
+def _search_capabilities(context: ApiContext) -> dict[str, Any] | None:
     """Merge the read-only search facts of this catalog, or ``None`` when none exist.
 
     ``query_encoder_available`` is the honest answer to "can this process run the semantic
     channel at all?": this build ships no embedding adapter inside the API process
     (ADR-0003 §7), so a caller can disable the semantic entry instead of being refused.
     """
-    context = context_of(request)
     db_path = catalog_db_path(context.settings.data_root)
     projection = search_projection_summary(db_path)
     profile = search_profile_summary(db_path)
@@ -543,6 +554,11 @@ _MEDIA_SUMMARY_FIELDS = (
 @router.get("/stats", response_model=StatsResponse, summary="Counts plus artifact coverage")
 async def stats(request: Request) -> dict[str, Any]:
     service = service_of(request)
+    return await run_catalog_read(service.catalog, _stats_read, data_root=service.data_root)
+
+
+def _stats_read(catalog: Any, *, data_root: Path) -> dict[str, Any]:
+    service = CatalogService(catalog, data_root=data_root)
     report = service.media_report()
     media = {
         kind: {field: bucket.get(field) for field in _MEDIA_SUMMARY_FIELDS}
@@ -714,18 +730,12 @@ def _with_progress(
 async def list_sources(request: Request) -> dict[str, Any]:
     context = context_of(request)
     service = context.service()
-    binding, available = _source_progress_context(context, service)
-    return {
-        "sources": [
-            _with_progress(
-                service,
-                service.get_source(int(row["source_id"])),
-                binding=binding,
-                available=available,
-            )
-            for row in service.list_sources()
-        ]
-    }
+    return await run_catalog_read(
+        service.catalog, source_list,
+        manifest_path=context.refresh_manifest_path(),
+        device_policy=context.refresh_device_policy(),
+        data_root=context.settings.data_root,
+    )
 
 
 @router.post(
@@ -747,6 +757,14 @@ async def create_source(request: Request, payload: SourceCreateRequest) -> dict[
 async def get_source(request: Request, source_id: int) -> dict[str, Any]:
     context = context_of(request)
     service = context.service()
+    return await run_catalog_read(
+        service.catalog, _source_detail_read, source_id,
+        context=context, data_root=service.data_root,
+    )
+
+
+def _source_detail_read(catalog: Any, source_id: int, *, context: ApiContext, data_root: Path) -> dict[str, Any]:
+    service = CatalogService(catalog, data_root=data_root)
     binding, available = _source_progress_context(context, service)
     return _with_progress(
         service,
@@ -910,9 +928,7 @@ async def list_assets(
     cursor: str | None = None,
 ) -> dict[str, Any]:
     service = service_of(request)
-    return asset_page(
-        service.catalog,
-        service.media_cache(),
+    parameters = dict(
         limit=clamp_limit(limit),
         cursor=cursor,
         source_id=source_id,
@@ -926,6 +942,15 @@ async def list_assets(
         text=text,
         capture_from=capture_from,
         capture_to_exclusive=capture_to_exclusive,
+    )
+    projection = None
+    if text is not None:
+        projection = await run_catalog_projection(
+            service.catalog, prepare_asset_page, **parameters
+        )
+    return await run_catalog_read(
+        service.catalog, read_asset_page, service.media_cache(),
+        projection=projection, **parameters,
     )
 
 
@@ -950,8 +975,8 @@ async def list_timeline_assets(
     limit: int | None = Query(default=None, ge=1, le=200),
 ) -> dict[str, Any]:
     service = service_of(request)
-    return timeline_queries.timeline_page(
-        service.catalog,
+    return await run_catalog_read(
+        service.catalog, timeline_queries.timeline_page,
         kind=kind,
         source_id=source_id,
         person_id=person_id,
@@ -985,8 +1010,8 @@ async def get_timeline_periods(
     year: int | None = Query(default=None, ge=1, le=9999),
 ) -> dict[str, Any]:
     service = service_of(request)
-    return timeline_queries.timeline_periods(
-        service.catalog,
+    return await run_catalog_read(
+        service.catalog, timeline_queries.timeline_periods,
         kind=kind,
         source_id=source_id,
         person_id=person_id,
@@ -1261,7 +1286,8 @@ async def list_place_albums(
     name: str | None = Query(default=None, max_length=200),
 ) -> dict[str, Any]:
     service = service_of(request)
-    return place_albums.albums(service.catalog, service.data_root, kind=kind, name=name)
+    return await run_catalog_read(service.catalog, place_albums.albums,
+                                  service.data_root, kind=kind, name=name)
 
 
 @router.post("/places/albums/backfill", summary="Fill missing GPS and nearby-place results in one bounded batch")
@@ -1279,8 +1305,9 @@ async def list_place_album_assets(
     cursor: str | None = None,
 ) -> dict[str, Any]:
     service = service_of(request)
-    return place_albums.album_assets(
-        service.catalog, service.data_root, kind=kind, key=key, limit=limit, cursor=cursor
+    return await run_catalog_read(
+        service.catalog, place_albums.album_assets, service.data_root,
+        kind=kind, key=key, limit=limit, cursor=cursor
     )
 
 
@@ -1652,8 +1679,8 @@ async def browse_persons(
     limit: int | None = None,
     cursor: str | None = None,
 ) -> dict[str, Any]:
-    return person_albums.people_page(
-        service_of(request).catalog,
+    return await run_catalog_read(
+        service_of(request).catalog, person_albums.people_page,
         kind=kind,
         q=q,
         sort=sort,
@@ -1670,7 +1697,9 @@ async def browse_persons(
 async def list_person_collections(
     request: Request, limit: int = 40, cursor: str | None = None
 ) -> dict[str, Any]:
-    return person_collections.list_collections(service_of(request).catalog, limit=limit, cursor=cursor)
+    return await run_catalog_read(
+        service_of(request).catalog, person_collections.list_collections, limit=limit, cursor=cursor
+    )
 
 
 @router.post("/persons/collections", summary="Create a personal person collection")
@@ -1684,8 +1713,8 @@ async def create_person_collection(
 async def get_person_collection(
     request: Request, collection_id: int, instance_token: str
 ) -> dict[str, Any]:
-    return person_collections.collection_detail(
-        service_of(request).catalog, collection_id, instance_token=instance_token
+    return await run_catalog_read(
+        service_of(request).catalog, person_collections.collection_detail, collection_id, instance_token=instance_token
     )
 
 
@@ -1725,8 +1754,9 @@ async def edit_person_collection_members(
 async def person_collection_faces(
     request: Request, collection_id: int, instance_token: str, limit: int = 40, cursor: str | None = None
 ) -> dict[str, Any]:
-    return person_collections.face_members_page(
-        service_of(request).catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor
+    return await run_catalog_read(
+        service_of(request).catalog, person_collections.face_members_page,
+        collection_id, instance_token=instance_token, limit=limit, cursor=cursor
     )
 
 
@@ -1745,8 +1775,8 @@ async def edit_person_collection_faces(
 async def person_collection_people(
     request: Request, collection_id: int, instance_token: str, limit: int = 40, cursor: str | None = None
 ) -> dict[str, Any]:
-    return person_collections.people_page(
-        service_of(request).catalog, collection_id, instance_token=instance_token, limit=limit, cursor=cursor
+    return await run_catalog_read(
+        service_of(request).catalog, person_collections.people_page, collection_id, instance_token=instance_token, limit=limit, cursor=cursor
     )
 
 
@@ -1755,8 +1785,8 @@ async def person_collection_photos(
     request: Request, collection_id: int, instance_token: str, limit: int = 60, cursor: str | None = None
 ) -> dict[str, Any]:
     service = service_of(request)
-    return person_collections.photo_page(
-        service.catalog, service.media_cache(), collection_id,
+    return await run_catalog_read(
+        service.catalog, person_collections.photo_page, service.media_cache(), collection_id,
         instance_token=instance_token, limit=limit, cursor=cursor
     )
 
@@ -1782,8 +1812,8 @@ async def person_photos(
     request: Request, person_id: int, limit: int | None = None, cursor: str | None = None
 ) -> dict[str, Any]:
     service = service_of(request)
-    return person_albums.photo_page(
-        service.catalog,
+    return await run_catalog_read(
+        service.catalog, person_albums.photo_page,
         service.media_cache(),
         person_id=person_id,
         limit=clamp_person_limit(limit),
@@ -2354,12 +2384,15 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
     """
     context = context_of(request)
     envelope = SearchRequest.from_envelope(payload.model_dump())
+    return await run_catalog_search(
+        context.service().catalog, _search_request_worker, envelope, context=context,
+    )
+
+
+def _search_request_worker(catalog: Any, envelope: SearchRequest, *, context: ApiContext) -> dict[str, Any]:
     return search_request(
-        context.service().catalog,
-        envelope,
-        sessions=context.search_sessions,
-        encoder=context.query_encoder(),
-        reranker=context.reranker(),
+        catalog, envelope, sessions=context.search_sessions,
+        encoder=context.query_encoder(), reranker=context.reranker(),
     )
 
 
@@ -2372,7 +2405,18 @@ async def search_session_time_page(
 ) -> dict[str, Any]:
     """Page by trusted capture time within one frozen, bounded semantic candidate set."""
     context = context_of(request)
-    session = context.search_sessions.get(session_id)
+    service = context.service()
+    return await run_catalog_read(
+        service.catalog, _search_session_time_worker, session_id,
+        sessions=context.search_sessions, data_root=service.data_root, limit=limit, cursor=cursor,
+    )
+
+
+def _search_session_time_worker(
+    catalog: Any, session_id: str, *, sessions: Any, data_root: Path, limit: int,
+    cursor: str | None,
+) -> dict[str, Any]:
+    session = sessions.get(session_id)
     if session is None:
         raise CatalogError(
             SEARCH_SESSION_EXPIRED,
@@ -2385,8 +2429,6 @@ async def search_session_time_page(
             "capture-time browsing is available only for a semantic candidate snapshot",
             details={"reason": "SEMANTIC_CANDIDATE_SNAPSHOT_REQUIRED"},
         )
-    service = context.service()
-    catalog = service.catalog
     requested_profile_id = session.extra.get("requested_profile_id", session.profile_id)
     binding_request = SearchRequest(
         request_id="semantic-time-browse",
@@ -2428,7 +2470,7 @@ async def search_session_time_page(
         from photo_search.places.timeline import selected_members_sql
 
         _, _, place_revisions = selected_members_sql(
-            catalog, service.data_root,
+            catalog, data_root,
             kind=str(album_scope_revision[3]), key=str(album_scope_revision[4]),
         )
         current_place_revision = (
@@ -2595,6 +2637,16 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     """Additive entry that resolves place intent before reusing the existing search/session service."""
     context = context_of(request)
     service = context.service()
+    return await run_catalog_search(
+        service.catalog, _place_aware_search_worker, payload,
+        context=context, data_root=service.data_root,
+    )
+
+
+def _place_aware_search_worker(
+    catalog: Any, payload: PlaceAwareSearchRequestModel, *, context: ApiContext, data_root: Path,
+) -> dict[str, Any]:
+    service = CatalogService(catalog, data_root=data_root)
     original = payload.original_query
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
     selected_scope = payload.search_scope
@@ -3424,8 +3476,17 @@ async def post_search_image(request: Request) -> dict[str, Any]:
     """
     context = context_of(request)
     body = await _read_bounded_body(request, limit=DEFAULT_LIMITS.max_body_bytes)
+    return await run_catalog_search(
+        context.service().catalog, _search_image_worker, body,
+        content_type=request.headers.get("content-type"), context=context,
+    )
+
+
+def _search_image_worker(
+    catalog: Any, body: bytes, *, content_type: str | None, context: ApiContext,
+) -> dict[str, Any]:
     form = parse_multipart_form(
-        request.headers.get("content-type"),
+        content_type,
         body,
         max_body_bytes=DEFAULT_LIMITS.max_body_bytes,
     )
@@ -3435,7 +3496,6 @@ async def post_search_image(request: Request) -> dict[str, Any]:
             "the request must carry one multipart file field named image", field="image"
         )
     envelope = _image_search_request(form.fields)
-    catalog = context.service().catalog
     binding = resolve_request_binding(catalog, envelope)
     if binding is None:
         raise search_fail(
@@ -3444,11 +3504,7 @@ async def post_search_image(request: Request) -> dict[str, Any]:
             field="profile_id",
         )
     encoder = image_encoder_of(context.query_encoder())
-    # Decoding and encoding are the only heavy steps here, so they run in a worker thread:
-    # the catalog connection stays on the request thread (as in the media endpoints) and the
-    # event loop is never blocked by a large photo.
-    facts, vector = await asyncio.to_thread(
-        _prepare_upload,
+    facts, vector = _prepare_upload(
         upload.payload,
         encoder,
         str(binding.space_id),
@@ -3552,7 +3608,7 @@ def _prepare_upload(
         vector: list[float] | None = None
         if encoder is not None and not continuation:
             vector = encode_image_query(
-                encoder, staged.image, space_id=str(space_id), dimension=int(dimension)
+                encoder, staged.path, space_id=str(space_id), dimension=int(dimension)
             )
         return staged.facts, vector
 

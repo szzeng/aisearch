@@ -10,6 +10,14 @@ def test_inbox_face_selection_paging_preview_and_hide_restore_keep_explicit_ids(
     assert node, "Node is required for the personal-page behavior check"
     script = r"""
 const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+// Keep real timer behavior during the scenario, then dispose its UI on completion.
+const pendingTimers = new Set();
+const testSetTimeout = (callback, delay, ...args) => {
+  const timer = setTimeout(() => { pendingTimers.delete(timer); callback(...args); }, delay);
+  pendingTimers.add(timer); return timer;
+};
+const testClearTimeout = timer => { clearTimeout(timer); pendingTimers.delete(timer); };
+const disposeTimers = () => { for (const timer of pendingTimers) clearTimeout(timer); pendingTimers.clear(); };
 class Element {
   constructor(tag) { this.tag=tag; this.children=[]; this.value=""; this.hidden=false; this.disabled=false;
     this.textContent=""; this.dataset={}; this.listeners={}; this.attributes={}; this.open=false;
@@ -32,7 +40,7 @@ const hiddenA={face_id:"c".repeat(64),asset_id:3,organization_reason:"BLURRY",su
 const hiddenB={face_id:"d".repeat(64),asset_id:4,organization_reason:"SMALL",suggestions:[]};
 let groupPage=0, hiddenPage=0, confirmResult=true, failVisibility=false, restored=false;
 const context={
-  URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout, clearTimeout,
+  URLSearchParams, crypto:{randomUUID:()=>"synthetic-request"}, setTimeout:testSetTimeout, clearTimeout:testClearTimeout,
   window:{confirm:()=>confirmResult,addEventListener(){},location:{search:"",href:"http://local/persons"},AIPhotoInfo:{open(id){return {dialog:{open:true},setAsset(){},setPosition(){},setNavigationEnabled(){},close(){}};}}},
   document:{readyState:"loading",cookie:"ps_csrf=synthetic-csrf",addEventListener(){},
     getElementById:get,createElement:tag=>new Element(tag)},
@@ -72,10 +80,10 @@ code=code.replace('  if (document.readyState === "loading")',
 vm.createContext(context);vm.runInContext(code,context);
 const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
-  ui.state.batchMode=true;ui.state.inboxBatchMode=true;ui.renderPeopleManagement();ui.renderFaceManagement();
+  ui.state.inboxBatchMode=true;ui.state.hiddenBatchMode=true;ui.renderFaceManagement();
   await ui.loadInbox(false);const group=get("pa-inbox-cards").children[0];
   group.open=true;group.fire("toggle");await flush();
-  const firstCard=group.children[2].children[0];
+  const firstCard=group.querySelector(".pa-inbox-group-faces").children[0];
   const comparison=firstCard.children[0];assert(comparison,"face card has comparison layout");
   const avatar=comparison.children[0]&&comparison.children[0].children[0];assert(avatar,"face comparison has clickable avatar wrapper");
   const facePicture=avatar.children[0];assert(facePicture,"avatar wrapper contains the photo");
@@ -94,8 +102,8 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   firstCard.selectionButton.checked=true;firstCard.selectionButton.fire("change");
   assert.equal(ui.state.selectedInboxFaces.has(faceA.face_id),true);
   assert.equal(get("pa-inbox-cards").children[0],group);
-  const more=group.children[3];assert.equal(more.hidden,false);await more.fire("click");
-  const secondCard=group.children[2].children[1];
+  const more=group.querySelector(".pa-inbox-group-more");assert.equal(more.hidden,false);await more.fire("click");
+  const secondCard=group.querySelector(".pa-inbox-group-faces").children[1];
   secondCard.selectionButton.checked=true;secondCard.selectionButton.fire("change");
   assert.deepEqual(Array.from(ui.state.selectedInboxFaces),[faceA.face_id,faceB.face_id]);
   assert.equal(get("pa-inbox-selection-count").textContent,"已选 2 / 500 张脸");
@@ -126,11 +134,11 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   hiddenGroup.children[0].fire("click"); // The group heading never selects every face.
   assert.equal(ui.state.selectedHiddenFaces.size,0);
   hiddenGroup.open=true;hiddenGroup.fire("toggle");await flush();
-  hiddenGroup.children[2].children[0].selectionButton.checked=true;hiddenGroup.children[2].children[0].selectionButton.fire("change");
-  const hiddenMore=hiddenGroup.children[3];assert.equal(hiddenMore.hidden,false);await hiddenMore.fire("click");
-  hiddenGroup.children[2].children[1].selectionButton.checked=true;hiddenGroup.children[2].children[1].selectionButton.fire("change");
+  hiddenGroup.querySelector(".pa-inbox-group-faces").children[0].selectionButton.checked=true;hiddenGroup.querySelector(".pa-inbox-group-faces").children[0].selectionButton.fire("change");
+  const hiddenMore=hiddenGroup.querySelector(".pa-inbox-group-more");assert.equal(hiddenMore.hidden,false);await hiddenMore.fire("click");
+  hiddenGroup.querySelector(".pa-inbox-group-faces").children[1].selectionButton.checked=true;hiddenGroup.querySelector(".pa-inbox-group-faces").children[1].selectionButton.fire("change");
   assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),[hiddenA.face_id,hiddenB.face_id]);
-  const ignoredCard=hiddenGroup.children[2].children[0],ignoredAvatar=ignoredCard.children[0].children[0].children[0];
+  const ignoredCard=hiddenGroup.querySelector(".pa-inbox-group-faces").children[0],ignoredAvatar=ignoredCard.children[0].children[0].children[0];
   ui.state.hiddenBatchMode=false;
   ignoredAvatar.fire("click",{target:ignoredAvatar.children[0],currentTarget:ignoredAvatar,preventDefault(){},stopPropagation(){}});
   assert.equal(ui.state.previewAssetId,hiddenA.asset_id,"ignored-face avatar still previews its source in ordinary browsing");
@@ -142,7 +150,7 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   assert.equal(ui.state.previewAssetId,hiddenA.asset_id,"ignored-face avatar previews while managing");
   assert.deepEqual(Array.from(ui.state.selectedHiddenFaces),selectedBeforeAvatar,"avatar preview leaves the hidden-face selection intact");
   assert.equal(ui.state.selectAnchors.get("faces:hidden:list"),anchorBeforeAvatar,"avatar preview leaves the hidden-face range anchor intact");
-  const secondIgnoredCard=hiddenGroup.children[2].children[1];
+  const secondIgnoredCard=hiddenGroup.querySelector(".pa-inbox-group-faces").children[1];
   secondIgnoredCard.fire("click",{target:secondIgnoredCard,shiftKey:false});
   assert.equal(ui.state.selectedHiddenFaces.has(hiddenB.face_id),false,"the ignored-face card body toggles selection");
   secondIgnoredCard.fire("click",{target:secondIgnoredCard,shiftKey:false});
@@ -152,7 +160,7 @@ const ui=context.ui,flush=()=>new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(JSON.parse(restoreRequest.options.body),{face_ids:[hiddenA.face_id,hiddenB.face_id],hidden:false,ignore_state:"TEMPORARY"});
   assert.equal(ui.state.selectedHiddenFaces.size,0);
   assert(hiddenPage>=2);
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().finally(disposeTimers).catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(
         [node, "-e", script],

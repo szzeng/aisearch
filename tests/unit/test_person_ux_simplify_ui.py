@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["navigation", "faces", "inbox", "merge", "mapping", "history", "retry", "stale", "mode", "selection", "escape"])
+@pytest.mark.parametrize("scenario", ["navigation", "collection_choices", "faces", "inbox", "merge", "mapping", "history", "retry", "stale", "mode", "selection", "escape"])
 def test_person_organization_workflows(scenario: str) -> None:
     node = shutil.which("node")
     assert node, "Node is required for the person workflow checks"

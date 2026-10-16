@@ -445,10 +445,13 @@ def test_real_place_state_makes_the_scope_predicate_non_tautological() -> None:
     """
     connection = sqlite3.connect(":memory:")
     try:
+        # The shared scope now always restricts ordinary results to photos. Test
+        # whether place_state adds an extra predicate relative to that universe.
+        photo_scope = scope_condition(connection, SearchScope.build())[0]
         tautological = [
             state
             for state in ("any", "assigned", "unassigned", "manual_unassigned", "suggested")
-            if scope_condition(connection, SearchScope.build(place_state=state))[0] == "1"
+            if scope_condition(connection, SearchScope.build(place_state=state))[0] == photo_scope
         ]
     finally:
         connection.close()
@@ -481,6 +484,10 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
     try:
         connection.executescript(
             "CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, state TEXT);"
+            "CREATE TABLE file_locations(asset_id INTEGER, source_id INTEGER, "
+            "relative_path TEXT, availability TEXT);"
+            "INSERT INTO file_locations VALUES (1,1,'one.jpg','PRESENT'),"
+            "(2,1,'two.jpg','PRESENT');"
             "CREATE TABLE index_entries(asset_id INTEGER, generation_id TEXT, space_id TEXT, "
             "state TEXT);"
             "INSERT INTO assets(asset_id, state) VALUES (1, 'ACTIVE'), (2, 'ACTIVE');"

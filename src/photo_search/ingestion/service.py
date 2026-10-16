@@ -48,6 +48,24 @@ def _default_stability_sleep(milliseconds: int) -> None:
     time.sleep(milliseconds / 1000.0)
 
 
+def _reject_source_overlap(connection: Any, root: str) -> None:
+    """Use the same lexical overlap rule and error on both registration checks."""
+    for row in store.list_source_rows(connection):
+        existing = str(row["root_path"])
+        if is_same_or_ancestor(root, existing) or is_same_or_ancestor(existing, root):
+            raise CatalogError(
+                SOURCE_OVERLAP,
+                f"source root overlaps the existing source {int(row['source_id'])}",
+                details={
+                    "existing_source_id": int(row["source_id"]),
+                    "existing_root_path": existing,
+                    "root_path": root,
+                    "hint": "merge into the existing source or re-map it instead of adding a "
+                    "second overlapping source",
+                },
+            )
+
+
 class CatalogService:
     """Thin, testable facade over the catalog, the job queue and the scan loop."""
 
@@ -193,21 +211,13 @@ class CatalogService:
             )
         status = "ONLINE" if os.path.isdir(root) else "OFFLINE"
         hint = volume_hint if volume_hint is not None else (ntpath.splitdrive(root)[0] or None)
+        # A committed conflict can be refused without waiting for a scan's writer.
+        # End this read snapshot before acquiring the write transaction: the precheck
+        # only permits rejection, and registration must still recheck current roots.
+        with self.catalog.read_snapshot() as connection:
+            _reject_source_overlap(connection, root)
         with self.catalog.write() as connection:
-            for row in store.list_source_rows(connection):
-                existing = str(row["root_path"])
-                if is_same_or_ancestor(root, existing) or is_same_or_ancestor(existing, root):
-                    raise CatalogError(
-                        SOURCE_OVERLAP,
-                        f"source root overlaps the existing source {int(row['source_id'])}",
-                        details={
-                            "existing_source_id": int(row["source_id"]),
-                            "existing_root_path": existing,
-                            "root_path": root,
-                            "hint": "merge into the existing source or re-map it instead of adding a "
-                            "second overlapping source",
-                        },
-                    )
+            _reject_source_overlap(connection, root)
             source_id = store.insert_source(
                 connection,
                 display_name=str(display_name).strip(),

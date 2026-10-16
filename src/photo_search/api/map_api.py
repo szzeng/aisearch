@@ -5,17 +5,20 @@ from __future__ import annotations
 import base64
 import json
 import math
+from collections.abc import Iterable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from photo_search.api.catalog_reads import map_count_cache, run_catalog_read
 from photo_search.api.routes import service_of
 from photo_search.taken_time import read as time_read
 
 router = APIRouter(prefix="/api/v1/map", tags=["map"])
 MAX_PHOTO_POINTS = 5000
 MAX_GRID_CELLS = 1000
+ASSET_PAGE_PROBE_SIZE = 4096
 
 
 def _provider_config(request: Request):
@@ -153,6 +156,40 @@ def _grid_expression(
     return xexpr, xargs, yexpr, yargs
 
 
+def _bounded_grid(rows: Iterable[Any], level: int) -> tuple[list[list[Any]], int]:
+    """Fold fine cells into exact parents, retaining at most 1001 cells.
+
+    Grid levels divide the same viewport by powers of two. Parent indices are
+    therefore integer shifts, including the clamped east/north boundary cells.
+    Once occupied parents exceed the cap, adding rows can never reduce that
+    number, so it is safe to coarsen while streaming the single SQL aggregation.
+    """
+    original_level = level
+    cells: dict[tuple[int, int], list[Any]] = {}
+
+    def add(target: dict, key: tuple[int, int], row: Any) -> None:
+        current = target.get(key)
+        if current is None:
+            target[key] = [*key, int(row[2]), *row[3:7]]
+        else:
+            current[2] += int(row[2])
+            current[3] = min(current[3], row[3])
+            current[4] = max(current[4], row[4])
+            current[5] = min(current[5], row[5])
+            current[6] = max(current[6], row[6])
+
+    for row in rows:
+        shift = original_level - level
+        add(cells, (int(row[0]) >> shift, int(row[1]) >> shift), row)
+        while len(cells) > MAX_GRID_CELLS and level > 0:
+            parents: dict[tuple[int, int], list[Any]] = {}
+            for cell in cells.values():
+                add(parents, (cell[0] >> 1, cell[1] >> 1), cell)
+            cells = parents
+            level -= 1
+    return [cells[key] for key in sorted(cells)], level
+
+
 def _read(request: Request):
     return service_of(request).catalog
 
@@ -163,9 +200,61 @@ def _from_sql(bbox: tuple[float, float, float, float] | None) -> str:
     return "assets a JOIN asset_geo_facts AS g USING(asset_id)"
 
 
+def _exact_total(db: Any, connection: Any, *, version: int, source: str,
+                 where: str, args: list[Any]) -> int:
+    # The caller has already read `version` inside this same read_snapshot.
+    # Migration 0017 bumps it for all geo changes, asset sha/state/delete and
+    # location insert/delete/asset/availability changes used by these predicates.
+    # Cursor/limit/order only alter paging, not membership, and stay outside key.
+    cache = map_count_cache(db)
+    key = (version, source, where, tuple(args))
+    total = cache.get(key)
+    if total is None:
+        total = int(connection.execute(
+            f"SELECT COUNT(*) FROM {source} WHERE {where}", args
+        ).fetchone()[0])
+        cache.put(key, total)
+    return total
+
+
+def _asset_id_page(conn: Any, *, source: str, where: str, args: list[Any],
+                   total: int, before: int, size: int) -> list[Any]:
+    """Seek dense viewports without sorting every matching GPS row.
+
+    Probe only the next bounded window of raw asset IDs. If it contains a full
+    page, these are necessarily the globally first matches. Otherwise use the
+    spatial plan, so a sparse viewport cannot cause an unbounded ID scan.
+    """
+    if total == 0:
+        return []
+    columns = "a.asset_id,a.created_at,g.latitude,g.longitude"
+    if total > MAX_PHOTO_POINTS:
+        floor = conn.execute(
+            "SELECT MIN(asset_id) FROM (SELECT asset_id FROM assets "
+            "WHERE asset_id<? ORDER BY asset_id DESC LIMIT ?)",
+            (before, ASSET_PAGE_PROBE_SIZE),
+        ).fetchone()[0]
+        if floor is None:
+            return []
+        rows = conn.execute(
+            f"SELECT {columns} FROM assets a CROSS JOIN asset_geo_facts g USING(asset_id) "
+            f"WHERE {where} AND a.asset_id<? AND a.asset_id>=? "
+            "ORDER BY a.asset_id DESC LIMIT ?", [*args, before, floor, size],
+        ).fetchall()
+        if len(rows) == size:
+            return rows
+    return conn.execute(
+        f"SELECT {columns} FROM {source} WHERE {where} AND a.asset_id<? "
+        "ORDER BY a.asset_id DESC LIMIT ?", [*args, before, size],
+    ).fetchall()
+
+
 @router.get("/summary")
 async def map_summary(request: Request) -> dict[str, Any]:
-    db = _read(request)
+    return await run_catalog_read(_read(request), _map_summary)
+
+
+def _map_summary(db: Any) -> dict[str, Any]:
     with db.read_snapshot() as conn:
         where, args = _where(None)
         source = _from_sql(None)
@@ -212,6 +301,19 @@ async def map_assets(
     grid_zoom: int | None = None,
     order: str = "asset_id_desc",
 ) -> dict[str, Any]:
+    return await run_catalog_read(
+        _read(request), _map_assets, west=west, south=south, east=east, north=north,
+        limit=limit, cursor=cursor, asset_id=asset_id, cell_id=cell_id,
+        grid_zoom=grid_zoom, order=order,
+    )
+
+
+def _map_assets(
+    db: Any, *, west: float | None = None, south: float | None = None,
+    east: float | None = None, north: float | None = None, limit: int = 48,
+    cursor: str | None = None, asset_id: int | None = None, cell_id: str | None = None,
+    grid_zoom: int | None = None, order: str = "asset_id_desc",
+) -> dict[str, Any]:
     if order not in {"asset_id_desc", "capture_time_desc"}:
         raise HTTPException(status_code=422, detail="unsupported map asset order")
     if order == "capture_time_desc" and (asset_id is not None or cell_id is not None):
@@ -221,7 +323,6 @@ async def map_assets(
         )
     bbox = _valid_bbox(west, south, east, north)
     size = max(1, min(100, int(limit)))
-    db = _read(request)
     with db.read_snapshot() as conn:
         where, args = _where(bbox)
         source = _from_sql(bbox)
@@ -276,10 +377,7 @@ async def map_assets(
                 raise HTTPException(
                     status_code=422, detail="invalid or expired map cursor"
                 ) from exc
-        total = conn.execute(
-            f"SELECT COUNT(*) FROM {source} WHERE {where}",
-            args,
-        ).fetchone()[0]
+        total = _exact_total(db, conn, version=version, source=source, where=where, args=args)
         if order == "capture_time_desc":
             trusted_time = time_read.rules_version_matches(conn)
             source_with_time = source + " LEFT JOIN asset_metadata AS m USING(asset_id)"
@@ -306,10 +404,10 @@ async def map_assets(
                 [*time_args, size + 1],
             ).fetchall()
         else:
-            rows = conn.execute(
-                f"SELECT a.asset_id,a.created_at,g.latitude,g.longitude FROM {source} WHERE {where} AND a.asset_id<? ORDER BY a.asset_id DESC LIMIT ?",
-                [*args, after or 9223372036854775807, size + 1],
-            ).fetchall()
+            rows = _asset_id_page(
+                conn, source=source, where=where, args=args, total=total,
+                before=after or 9223372036854775807, size=size + 1,
+            )
         has_more = len(rows) > size
         rows = rows[:size]
         assets = [
@@ -362,20 +460,23 @@ async def map_points(
     north: float | None = None,
     zoom: int = 3,
 ) -> dict[str, Any]:
+    return await run_catalog_read(
+        _read(request), _map_points, west=west, south=south, east=east, north=north, zoom=zoom,
+    )
+
+
+def _map_points(
+    db: Any, *, west: float | None = None, south: float | None = None,
+    east: float | None = None, north: float | None = None, zoom: int = 3,
+) -> dict[str, Any]:
     bbox = _valid_bbox(west, south, east, north)
     if not 0 <= int(zoom) <= 22:
         raise HTTPException(status_code=422, detail="zoom must be between 0 and 22")
-    db = _read(request)
     with db.read_snapshot() as conn:
         where, args = _where(bbox)
         source = _from_sql(bbox)
-        total = int(
-            conn.execute(
-                f"SELECT COUNT(*) FROM {source} WHERE {where}",
-                args,
-            ).fetchone()[0]
-        )
         version = _revision(conn)
+        total = _exact_total(db, conn, version=version, source=source, where=where, args=args)
         if total <= MAX_PHOTO_POINTS:
             rows = conn.execute(
                 f"SELECT a.asset_id,g.longitude,g.latitude FROM {source} WHERE {where} ORDER BY a.asset_id",
@@ -399,15 +500,10 @@ async def map_points(
         # Cells divide the requested viewport so city and small-area grids remain useful.
         level = max(0, min(20, int(zoom) + 2))
         xexpr, xargs, yexpr, yargs = _grid_expression(bbox, level)
-        while True:
-            rows = conn.execute(
-                f"SELECT ({xexpr}) gx, ({yexpr}) gy, COUNT(*) n, MIN(g.longitude),MAX(g.longitude),MIN(g.latitude),MAX(g.latitude) FROM {source} WHERE {where} GROUP BY gx,gy ORDER BY gx,gy",
-                [*xargs, *yargs, *args],
-            ).fetchall()
-            if len(rows) <= MAX_GRID_CELLS or level == 0:
-                break
-            level -= 1
-            xexpr, xargs, yexpr, yargs = _grid_expression(bbox, level)
+        rows, level = _bounded_grid(conn.execute(
+            f"SELECT ({xexpr}) gx, ({yexpr}) gy, COUNT(*) n, MIN(g.longitude),MAX(g.longitude),MIN(g.latitude),MAX(g.latitude) FROM {source} WHERE {where} GROUP BY gx,gy ORDER BY gx,gy",
+            [*xargs, *yargs, *args],
+        ), level)
         features = [
             {
                 "type": "Feature",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from catalog_concurrency_fixtures import second_catalog_writer
 from conftest import ApiEnv
 from p2_search_api_fixtures import build_search_env
 from p3_persons_page_fixtures import add_link, add_person, insert_face, seed_library
@@ -411,7 +412,8 @@ def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: 
         assert empty_page.json()["collection_scope"]["collection_id"] == empty_id
 
         # Members can exceed the ordinary SearchScope 100-person cap: the predicate takes
-        # one collection parameter and still deduplicates a shared asset before paging.
+        # one collection ID per union arm, independent of the member count, and
+        # still deduplicates a shared asset before paging.
         more_people = [add_person(catalog) for _ in range(99)]
         expanded = await client.post(_url(catalog, collection_id) + "/members", headers=headers,
                                      json={"action": "add", "person_ids": more_people})
@@ -422,7 +424,7 @@ def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: 
         )["n"] == 101
         sql, params = scope_condition(catalog.connection,
                                      SearchScope.build(collection_id=collection_id))
-        assert len(params) == 1
+        assert params == [collection_id, collection_id]
         assert catalog.read_all(f"SELECT a.asset_id FROM assets a WHERE {sql}", params)
         plan = catalog.read_all(f"EXPLAIN QUERY PLAN SELECT a.asset_id FROM assets a WHERE {sql}", params)
         assert "person_collection_members" in " ".join(str(row["detail"]) for row in plan)
@@ -455,15 +457,18 @@ def test_collection_parse_scope_paging_empty_over_100_and_stale_cursor(api_env: 
         from photo_search.persons import collections as collection_service
         regular_filter_page = routes._filter_only_search_page
 
+        def commit_membership_edit():
+            collection_service.edit_members(race_writer, race_id, action="add",
+                                            person_ids=[outside], instance_token=race_token)
+
         def race_after_page(service, request, **kwargs):
             collection_scope = kwargs.get("collection_scope")
             result = regular_filter_page(service, request, **kwargs)
             if collection_scope and collection_scope["collection_id"] == race_id:
-                collection_service.edit_members(catalog, race_id, action="add",
-                                                person_ids=[outside], instance_token=race_token)
+                run_commit(commit_membership_edit)
             return result
 
-        with monkeypatch.context() as scoped_patch:
+        with second_catalog_writer(catalog) as (race_writer, run_commit), monkeypatch.context() as scoped_patch:
             scoped_patch.setattr(routes, "_filter_only_search_page", race_after_page)
             raced = await client.post("/api/v1/search/place-aware", headers=headers, json={
                 "request_id": "collection-search-publish-race", "original_query": "竞争更新的照片",

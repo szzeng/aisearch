@@ -365,18 +365,22 @@ def rebuild_all(catalog: Catalog, *, batch_size: int = DRAIN_BATCH_SIZE) -> dict
 
 def projection_summary(connection: sqlite3.Connection) -> dict[str, Any]:
     """Cheap, path-free lag facts for diagnostics and the list response."""
-    documents = int(connection.execute("SELECT COUNT(*) FROM search_documents").fetchone()[0])
-    stale = int(
-        connection.execute(
-            "SELECT COUNT(*) FROM search_documents WHERE tokenizer_version <> ? "
-            "OR fts_generation_id <> ?",
-            (int(TOKENIZER_VERSION), FTS_GENERATION_ID),
-        ).fetchone()[0]
-    )
+    # Both version columns are NOT NULL. Count the matching range in the existing
+    # covering index instead of evaluating an OR of inequalities for every row.
+    # One statement also keeps the document/queue counts in the same read snapshot
+    # when the caller does not already hold an explicit read transaction.
+    row = connection.execute(
+        "SELECT (SELECT COUNT(*) FROM search_documents), "
+        "(SELECT COUNT(*) FROM search_documents WHERE tokenizer_version = ? "
+        "AND fts_generation_id = ?), "
+        "(SELECT COUNT(*) FROM search_projection_queue)",
+        (int(TOKENIZER_VERSION), FTS_GENERATION_ID),
+    ).fetchone()
+    documents = int(row[0])
     return {
         "documents": documents,
-        "queued_assets": queue_depth(connection),
-        "stale_documents": stale,
+        "queued_assets": int(row[2]),
+        "stale_documents": documents - int(row[1]),
         "tokenizer_version": int(TOKENIZER_VERSION),
         "fts_generation_id": FTS_GENERATION_ID,
     }

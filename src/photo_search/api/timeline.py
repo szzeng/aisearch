@@ -204,7 +204,8 @@ def _where_for_bucket(where: str, params: list[Any], *, bucket: str,
                 if month is not None:
                     next_year, next_month = (int(year) + 1, 1) if int(month) == 12 else (int(year), int(month) + 1)
                     start = (date(int(year), int(month), 1) - date(1, 1, 1)).days * 86_400_000
-                    end = (date(next_year, next_month, 1) - date(1, 1, 1)).days * 86_400_000
+                    end = ((date(next_year, next_month, 1) - date(1, 1, 1)).days * 86_400_000
+                           if next_year <= 9999 else 315_537_897_600_000)
                     values[-2:] = [int(start), int(end)]
         elif bucket == "unknown":
             if rules_match:
@@ -263,16 +264,102 @@ def _seek_position(time_basis: str, year: int | None, month: int | None) -> list
             end_key = 315_537_897_600_000
         else:
             end_key = (date(next_year, next_month, 1) - date(1, 1, 1)).days * 86_400_000
-        return [0, int(end_key), 9_223_372_036_854_775_807]
+        # The next period's first millisecond is exclusive, including every ID at that key.
+        return [0, int(end_key), 0]
     if month is None:
         next_year, next_month = int(year) + 1, 1
     else:
         next_year, next_month = ((int(year) + 1, 1) if int(month) == 12 else (int(year), int(month) + 1))
     if next_year > 9999:
-        end_ms = 253_402_300_799_999
+        end_ms = 253_402_300_800_000
     else:
         end_ms = int(datetime(next_year, next_month, 1).astimezone().timestamp() * 1000)
-    return [0, int(end_ms), 9_223_372_036_854_775_807]
+    return [0, int(end_ms), 0]
+
+
+def _timeline_rows(connection: Any, where: str, params: list[Any], *, time_basis: str,
+                   bucket: str, rules_match: bool, after: list[int] | None,
+                   inclusive: bool, size: int) -> list[dict[str, Any]]:
+    """Seek each ordered bucket, then merge only the bounded capture-source candidates.
+
+    The metadata index starts with time_source. Two equality seeks preserve the global
+    capture order without sorting all capture rows across both sources. Unknown/pending
+    buckets use the asset creation index and are visited only if earlier buckets run out.
+    """
+    if time_basis == "library":
+        ranks = [0]
+    elif not rules_match:
+        ranks = [2] if bucket in ("all", "pending") else []
+    else:
+        ranks = [0, 1, 2] if bucket == "all" else [{"capture": 0, "unknown": 1, "pending": 2}[bucket]]
+    result: list[dict[str, Any]] = []
+    for rank in ranks:
+        if after is not None and rank < after[0]:
+            continue
+        capture = time_basis == "capture" and rules_match and rank == 0
+        sort_key = "m.taken_at_sort" if capture else "a.created_at"
+        id_key = "m.asset_id" if capture else "a.asset_id"
+        if capture:
+            source = "asset_metadata AS m JOIN assets AS a ON a.asset_id=m.asset_id"
+        else:
+            source = "assets AS a"
+            if time_basis == "capture":
+                # Unknown rows require metadata. Keep assets as the outer ordered
+                # scan, otherwise SQLite scans both metadata sources and sorts
+                # every unknown row before returning this small page.
+                join = "CROSS JOIN" if rules_match and rank == 1 else "LEFT JOIN"
+                source += f" {join} asset_metadata AS m ON m.asset_id=a.asset_id"
+        fields = (
+            "m.taken_at_sort AS sort_value,m.time_source,m.time_confidence,m.timezone_offset"
+            if time_basis == "capture" else
+            "a.created_at AS sort_value,NULL AS time_source,NULL AS time_confidence,NULL AS timezone_offset"
+        )
+        remaining = size - len(result)
+        candidates: list[dict[str, Any]] = []
+        for capture_source in CAPTURE_SOURCES if capture else (None,):
+            conditions, values = [where], list(params)
+            if capture:
+                conditions.append("m.time_source=? AND m.taken_at_sort IS NOT NULL")
+                values.append(capture_source)
+            elif time_basis == "capture" and rules_match:
+                conditions.append("m.time_source IN ('EXIF_ROOT','FILE_MTIME')" if rank == 1
+                                  else "m.asset_id IS NULL")
+            if after is not None and rank == after[0]:
+                operator = "<=" if inclusive else "<"
+                conditions.append(f"({sort_key},{id_key}) {operator} (?,?)")
+                values.extend(after[1:])
+            sql = (
+                f"SELECT a.asset_id,a.sha256,a.created_at,{fields},"
+                f"{rank} AS timeline_rank,{sort_key} AS timeline_sort FROM {source} "
+                f"WHERE {' AND '.join(f'({condition})' for condition in conditions)} "
+                f"ORDER BY {sort_key} DESC,{id_key} DESC LIMIT ?"
+            )
+            candidates.extend(dict(row) for row in connection.execute(sql, (*values, remaining)))
+        if capture:
+            candidates.sort(key=lambda row: (row["timeline_sort"], row["asset_id"]), reverse=True)
+        result.extend(candidates[:remaining])
+        if len(result) == size:
+            break
+    if result:
+        # Resolve the preferred file only for the selected page, not for every asset
+        # considered by an ordered SQL scan. The PRESENT/lowest-location-id rule is unchanged.
+        marks = ",".join("?" for _ in result)
+        locations = {
+            int(row["asset_id"]): row for row in connection.execute(
+                "SELECT a.asset_id,location.relative_path,source.root_path FROM assets AS a "
+                "LEFT JOIN file_locations AS location ON location.location_id=("
+                "SELECT candidate.location_id FROM file_locations AS candidate "
+                "WHERE candidate.asset_id=a.asset_id "
+                "ORDER BY CASE candidate.availability WHEN 'PRESENT' THEN 0 ELSE 1 END,"
+                "candidate.location_id LIMIT 1) "
+                "LEFT JOIN source_roots AS source ON source.source_id=location.source_id "
+                f"WHERE a.asset_id IN ({marks})", [row["asset_id"] for row in result]
+            )
+        }
+        for row in result:
+            location = locations[row["asset_id"]]
+            row.update(relative_path=location["relative_path"], root_path=location["root_path"])
+    return result
 
 
 def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = None,
@@ -309,57 +396,11 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
                                allow_stale=anchor is not None)
         if after is None:
             after = _seek_position(time_basis, seek_year, seek_month)
-        metadata_join = " LEFT JOIN asset_metadata AS m ON m.asset_id = a.asset_id" if time_basis == "capture" else ""
         where, params = _where_for_bucket(where, params, bucket=bucket, time_basis=time_basis,
                                          rules_match=rules_match, year=year, month=month)
-        if time_basis == "capture":
-            if bucket == "all":
-                where = f"({where}) AND (m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') OR m.time_source IN ('EXIF_ROOT','FILE_MTIME') OR m.asset_id IS NULL OR ? = 0)"
-                params.append(1 if rules_match else 0)
-            selection = "m.taken_at_sort AS sort_value, m.time_source AS time_source, m.time_confidence AS time_confidence, m.timezone_offset AS timezone_offset"
-            if bucket in ("unknown", "pending") or not rules_match:
-                order = "a.created_at DESC, a.asset_id DESC"
-                timeline_rank = "2" if not rules_match else ("1" if bucket == "unknown" else "2")
-                timeline_sort = "a.created_at"
-            elif bucket == "all":
-                timeline_rank = (
-                    "CASE WHEN m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') "
-                    "AND m.taken_at_sort IS NOT NULL THEN 0 "
-                    "WHEN m.time_source IN ('EXIF_ROOT','FILE_MTIME') THEN 1 ELSE 2 END"
-                )
-                timeline_sort = (
-                    "CASE WHEN m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') "
-                    "AND m.taken_at_sort IS NOT NULL THEN m.taken_at_sort ELSE a.created_at END"
-                )
-                order = f"{timeline_rank}, {timeline_sort} DESC, a.asset_id DESC"
-            else:
-                timeline_rank = "0"
-                timeline_sort = "m.taken_at_sort"
-                order = "m.taken_at_sort DESC, a.asset_id DESC"
-            selection += f", {timeline_rank} AS timeline_rank, {timeline_sort} AS timeline_sort"
-        else:
-            timeline_rank = "0"
-            timeline_sort = "a.created_at"
-            selection = "a.created_at AS sort_value, NULL AS time_source, NULL AS time_confidence, NULL AS timezone_offset, 0 AS timeline_rank, a.created_at AS timeline_sort"
-            order = "a.created_at DESC, a.asset_id DESC"
-        if after is not None:
-            after_rank, after_key, after_id = after
-            comparison = "<=" if anchor is not None else "<"
-            id_comparison = "<=" if anchor is not None else "<"
-            where = (f"({where}) AND ({timeline_rank} > ? OR ({timeline_rank} = ? AND "
-                     f"({timeline_sort} {comparison} ? OR ({timeline_sort} = ? AND a.asset_id {id_comparison} ?))))")
-            params.extend([after_rank, after_rank, after_key, after_key, after_id])
-        rows = connection.execute(
-            f"SELECT a.asset_id, a.sha256, a.created_at, {selection}, "
-            "location.relative_path AS relative_path, source.root_path AS root_path "
-            f"FROM assets AS a{metadata_join} "
-            "LEFT JOIN file_locations AS location ON location.location_id = ("
-            "SELECT candidate.location_id FROM file_locations AS candidate "
-            "WHERE candidate.asset_id = a.asset_id "
-            "ORDER BY CASE candidate.availability WHEN 'PRESENT' THEN 0 ELSE 1 END, candidate.location_id LIMIT 1) "
-            "LEFT JOIN source_roots AS source ON source.source_id = location.source_id "
-            f"WHERE {where} ORDER BY {order} LIMIT ?", (*params, page_limit + 1)
-        ).fetchall()
+        rows = _timeline_rows(connection, where, params, time_basis=time_basis, bucket=bucket,
+                              rules_match=rules_match, after=after, inclusive=anchor is not None,
+                              size=page_limit + 1)
         page = list(rows[:page_limit])
         has_more = len(rows) > page_limit
         assets: list[dict[str, Any]] = []
@@ -438,60 +479,50 @@ def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None =
         revision_value = revision.read_filter_revision(connection)
         rules = time_read.rules_version(connection)
         rules_match = rules == time_contract.RULES_VERSION
-        base_count = int(connection.execute(f"SELECT COUNT(*) FROM assets AS a WHERE {base}", params).fetchone()[0])
-        if rules_match:
-            trusted = int(connection.execute(
-                f"SELECT COUNT(*) FROM assets AS a JOIN asset_metadata AS m USING(asset_id) WHERE ({base}) AND m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL",
-                params,
-            ).fetchone()[0])
-            unknown = int(connection.execute(
-                f"SELECT COUNT(*) FROM assets AS a JOIN asset_metadata AS m USING(asset_id) WHERE ({base}) AND m.time_source IN ('EXIF_ROOT','FILE_MTIME')",
-                params,
-            ).fetchone()[0])
-        else:
-            trusted = unknown = 0
-        pending = base_count - trusted - unknown
-        if pending < 0:
-            raise RuntimeError("timeline date counts exceeded effective asset count")
-        if time_basis == "capture":
-            if rules_match:
-                day_offset = "CAST(m.taken_at_sort / 86400000 AS INTEGER)"
-                civil = "date('0001-01-01', '+' || " + day_offset + " || ' days')"
-                year_expr = f"strftime('%Y', {civil})"
-                month_expr = f"strftime('%m', {civil})"
-                if year is None:
-                    rows = connection.execute(
-                        f"SELECT {year_expr} AS year, COUNT(*) AS count FROM assets AS a JOIN asset_metadata AS m USING(asset_id) WHERE ({base}) AND m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL GROUP BY year ORDER BY year DESC",
-                        params,
-                    ).fetchall()
-                    years = [{"year": int(row["year"]), "count": int(row["count"])} for row in rows if row["year"]]
-                    months = []
-                else:
-                    rows = connection.execute(
-                        f"SELECT {month_expr} AS month, COUNT(*) AS count FROM assets AS a JOIN asset_metadata AS m USING(asset_id) WHERE ({base}) AND m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL AND {year_expr} = ? GROUP BY month ORDER BY month DESC",
-                        (*params, f"{int(year):04d}"),
-                    ).fetchall()
-                    years = []
-                    months = [{"month": int(row["month"]), "count": int(row["count"])} for row in rows if row["month"]]
-            else:
-                years = months = []
-        else:
-            year_expr = "strftime('%Y', a.created_at / 1000, 'unixepoch', 'localtime')"
-            month_expr = "strftime('%m', a.created_at / 1000, 'unixepoch', 'localtime')"
+        trusted_sql = "m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL"
+        rank_sql = (f"CASE WHEN {trusted_sql} THEN 0 WHEN m.time_source IN ('EXIF_ROOT','FILE_MTIME') "
+                    "THEN 1 ELSE 2 END") if rules_match else "2"
+        period_params: list[Any] = []
+        if time_basis == "capture" and rules_match:
+            day_offset = "CAST(m.taken_at_sort / 86400000 AS INTEGER)"
+            civil = "date('0001-01-01', '+' || " + day_offset + " || ' days')"
             if year is None:
-                rows = connection.execute(
-                    f"SELECT {year_expr} AS year, COUNT(*) AS count FROM assets AS a WHERE ({base}) GROUP BY year ORDER BY year DESC",
-                    params,
-                ).fetchall()
-                years = [{"year": int(row["year"]), "count": int(row["count"])} for row in rows if row["year"]]
-                months = []
+                period_sql = f"CASE WHEN {trusted_sql} THEN strftime('%Y', {civil}) END"
             else:
-                rows = connection.execute(
-                    f"SELECT {month_expr} AS month, COUNT(*) AS count FROM assets AS a WHERE ({base}) AND {year_expr} = ? GROUP BY month ORDER BY month DESC",
-                    (*params, f"{int(year):04d}"),
-                ).fetchall()
-                years = []
-                months = [{"month": int(row["month"]), "count": int(row["count"])} for row in rows if row["month"]]
+                low = (date(int(year), 1, 1) - date(1, 1, 1)).days * 86_400_000
+                high = ((date(int(year) + 1, 1, 1) - date(1, 1, 1)).days * 86_400_000
+                        if int(year) < 9999 else 315_537_897_600_000)
+                period_sql = (f"CASE WHEN {trusted_sql} AND m.taken_at_sort>=? AND m.taken_at_sort<? "
+                              f"THEN strftime('%m', {civil}) END")
+                period_params = [low, high]
+        elif time_basis == "capture":
+            period_sql = "NULL"
+        elif year is None:
+            period_sql = "strftime('%Y', a.created_at / 1000, 'unixepoch', 'localtime')"
+        else:
+            period_sql = ("CASE WHEN strftime('%Y', a.created_at / 1000, 'unixepoch', 'localtime')=? "
+                          "THEN strftime('%m', a.created_at / 1000, 'unixepoch', 'localtime') END")
+            period_params = [f"{int(year):04d}"]
+        # Counts and requested date facets share exactly one qualified membership scan.
+        # NULL periods retain other years and untrusted rows in the global readiness counts.
+        rows = connection.execute(
+            f"SELECT {rank_sql} AS date_rank,{period_sql} AS period,COUNT(*) AS count "
+            "FROM assets AS a LEFT JOIN asset_metadata AS m USING(asset_id) "
+            f"WHERE ({base}) GROUP BY date_rank,period", (*period_params, *params)
+        ).fetchall()
+        totals = [0, 0, 0]
+        periods: dict[int, int] = {}
+        for row in rows:
+            count = int(row["count"])
+            totals[int(row["date_rank"])] += count
+            if row["period"] is not None:
+                key = int(row["period"])
+                periods[key] = periods.get(key, 0) + count
+        trusted, unknown, pending = totals
+        base_count = sum(totals)
+        entries = [{"year" if year is None else "month": key, "count": periods[key]}
+                   for key in sorted(periods, reverse=True)]
+        years, months = (entries, []) if year is None else ([], entries)
         return {
             "scope": {"kind": kind, **scope}, "time_basis": time_basis,
             "calendar_timezone": "system-local", "years": years, "months": months,

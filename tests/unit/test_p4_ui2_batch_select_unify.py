@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -127,9 +126,11 @@ class Element {
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element('div'));return elements.get(id);},writes=[];
 const context={URLSearchParams,Date,Map,Set,WeakSet,document:{readyState:'loading',cookie:'ps_csrf=csrf',addEventListener(){},getElementById:get,createElement:t=>new Element(t)},window:{location:{search:'',href:'http://local/persons'},addEventListener(){},confirm:()=>true},fetch:async(url,options={})=>{if(options.method&&options.method!=='GET'){writes.push({url,body:JSON.parse(options.body)});return {ok:true,status:200,json:async()=>({changed:writes.at(-1).body.face_ids.length})};}return {ok:true,status:200,json:async()=>({cards:[],faces:[],has_more:false,next_cursor:null})};},setTimeout:()=>1,clearTimeout(){}};
 let source=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
-source=source.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();','  globalThis.__probe={state,renderInboxFace,renderInboxGroup,renderFaceManagement,loadedInboxCards,selectInboxRange,clearInboxSelection,submitInboxVisibility};\n  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();');
+source=source.replace('  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();','  globalThis.__probe={state,renderInboxFace,renderInboxGroup,renderFaceManagement,loadedInboxCards,selectInboxRange,clearInboxSelection,submitInboxVisibility,setPreview(fn){preview=fn;}};\n  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();');
 vm.createContext(context);vm.runInContext(source,context);
 const ui=context.__probe,face=id=>({face_id:id,asset_id:id,thumbnail_url:null,suggestions:[{person_id:1,name:'参考人物',thumbnail_url:null}],control_revision:1});
+// This test owns selection; the shared viewer has its own modal/navigation tests.
+const previews=[];ui.setPreview((assetId,returnFocus)=>previews.push({assetId,returnFocus}));
 const deferred=[];context.setTimeout=fn=>{deferred.push(fn);return deferred.length;};
 const clickBox=(box,event={})=>{const before=box.checked;box.checked=!before;const dispatched=box.fire('click',event);if(dispatched.defaultPrevented)box.checked=before;else box.fire('change');deferred.splice(0).forEach(fn=>fn());return dispatched;};
 (async()=>{
@@ -142,9 +143,15 @@ const clickBox=(box,event={})=>{const before=box.checked;box.checked=!before;con
  const boxes=[g1.children[0].selectionButton,g1.children[1].selectionButton,g2.children[0].selectionButton];
  assert.equal(boxes[0].hidden,false,'the inbox-specific management mode reveals checkboxes');
  const faceCard=g1.children[0],avatar=faceCard.children[0].children[0].children[0];
- let stopped=false;avatar.events.click({target:avatar.children[0],stopPropagation(){stopped=true;},preventDefault(){}});
- assert.equal(stopped,true,'face-image selection stops bubbling so the card cannot toggle it a second time');
- assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['101'],'face-image click selects exactly once');
+ ui.state.selectedInboxFaces.add('102');ui.state.selectAnchors.set('faces:inbox:list','102');
+ let stopped=false;avatar.events.click({target:avatar.children[0],currentTarget:avatar,stopPropagation(){stopped=true;},preventDefault(){}});
+ assert.equal(stopped,true,'opening a face photo stops bubbling into card selection');
+ assert.equal(previews.length,1);assert.equal(previews[0].assetId,101);assert.equal(previews[0].returnFocus,avatar);
+ faceCard.fire('click',{target:avatar.children[0],shiftKey:true});
+ assert.deepEqual(Array.from(ui.state.selectedInboxFaces),['102'],'avatar preview and the parent guard preserve the selection even in batch mode');
+ assert.equal(ui.state.selectAnchors.get('faces:inbox:list'),'102','avatar preview does not move the range anchor');
+ ui.state.writing=true;avatar.events.click({target:avatar.children[0],currentTarget:avatar,stopPropagation(){},preventDefault(){}});
+ assert.equal(previews.length,1,'a pending write blocks avatar navigation');ui.state.writing=false;
  ui.state.selectedInboxFaces.clear();ui.state.selectAnchors.clear();
  const firstClick=clickBox(boxes[0]);assert.equal(firstClick.defaultPrevented,false,'ordinary selection uses native checkbox change');
  const shift=clickBox(boxes[2],{shiftKey:true});assert.equal(shift.defaultPrevented,true,'range selection suppresses the native endpoint toggle');

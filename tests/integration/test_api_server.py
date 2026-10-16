@@ -14,6 +14,17 @@ from pathlib import Path
 import httpx
 
 MODULE = [sys.executable, "-m", "photo_search"]
+# Run the real launcher in its own interpreter while isolating only the OS ACL
+# side effect; credential persistence, one-time exchange and HTTP protections stay real.
+ISOLATED_LAUNCHER = [
+    sys.executable,
+    "-c",
+    "import runpy\n"
+    "from unittest.mock import patch\n"
+    "with patch('photo_search.api.session.restrict_credential_file', "
+    "return_value='test-permission-hook'):\n"
+    "    runpy.run_module('photo_search', run_name='__main__')\n",
+]
 START_TIMEOUT_SECONDS = 60.0
 
 
@@ -44,7 +55,7 @@ def test_launcher_serves_the_api_on_loopback_and_redacts_the_credential(tmp_path
     stdout: list[str] = []
     stderr: list[str] = []
     process = subprocess.Popen(
-        [*MODULE, "--port", str(port), "--data-root", str(data_root)],
+        [*ISOLATED_LAUNCHER, "--port", str(port), "--data-root", str(data_root)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -102,7 +113,8 @@ def test_launcher_serves_the_api_on_loopback_and_redacts_the_credential(tmp_path
             assert "HttpOnly" not in csrf_cookie
             csrf = session.json()["csrf_token"]
 
-            assert client.get("/api/v1/stats").status_code == 200
+            stats = client.get("/api/v1/stats")
+            assert stats.status_code == 200, stats.text
             assert client.get("/api/v1/session", params={"token": token}).status_code == 401
             created = client.post(
                 "/api/v1/sources",

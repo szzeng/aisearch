@@ -1,0 +1,390 @@
+{
+  "provenance": {
+    "source": "Pre-upgrade implementation preserved at .tmp/ocr-prefix-20261016/starting-tree",
+    "source_sha256": {
+      "src/photo_search/ocr/contract.py": "603936dd9995fe6f409649942d06eab703b45457bf02be2b7f80f9d1a10e013e",
+      "src/photo_search/ocr/processor.py": "fdaabd42973cd9eb72e941396223015feee30bd31764183ea8204b34c95c5ed7"
+    }
+  },
+  "execution_configs": {
+    "cpu": {
+      "payload": {
+        "version": "ocr-execution-config.v2",
+        "pinned_config_yaml_sha256": "bf94a1da4cba828e67b1d61e27cee14d9e7da27c9f272e04048a17e41ae97332",
+        "model_fingerprint": "2a5ae91b8a9e6d6fe2f4c6b3918e1e90d045740c80f0aef3653696413218ff7a",
+        "engine": "rapidocr-onnxruntime",
+        "engine_version": "1.4.4",
+        "recognition_and_preprocess": {
+          "channel_order": "BGR",
+          "det_limit_side_len": 736,
+          "det_limit_type": "min",
+          "det_thresh": 0.3,
+          "det_box_thresh": 0.5,
+          "det_unclip_ratio": 1.6,
+          "det_use_dilation": true,
+          "det_score_mode": "fast",
+          "cls_image_shape": [
+            3,
+            48,
+            192
+          ],
+          "cls_thresh": 0.9,
+          "rec_image_shape": [
+            3,
+            48,
+            320
+          ],
+          "use_cls": true,
+          "use_det": true,
+          "use_rec": true,
+          "text_score": 0.0,
+          "max_side_len": 2000,
+          "min_side_len": 30,
+          "providers": [
+            "CPUExecutionProvider"
+          ]
+        },
+        "output": {
+          "artifact_revision": "ocr-document.v1",
+          "output_type": "ocr_document.v1",
+          "low_confidence_threshold": 0.6,
+          "coordinate_decimals": 2
+        },
+        "provider": "CPUExecutionProvider",
+        "precision": "FP32",
+        "runtime_package_id": "onnxruntime-gpu@1.30.0"
+      },
+      "sha256": "b34753ca9d2bd6f2c824d792b9af8debe1ecd788258e7bafbb2c56b76fd478f3"
+    },
+    "gpu": {
+      "payload": {
+        "version": "ocr-execution-config.v2",
+        "pinned_config_yaml_sha256": "bf94a1da4cba828e67b1d61e27cee14d9e7da27c9f272e04048a17e41ae97332",
+        "model_fingerprint": "2a5ae91b8a9e6d6fe2f4c6b3918e1e90d045740c80f0aef3653696413218ff7a",
+        "engine": "rapidocr-onnxruntime",
+        "engine_version": "1.4.4",
+        "recognition_and_preprocess": {
+          "channel_order": "BGR",
+          "det_limit_side_len": 736,
+          "det_limit_type": "min",
+          "det_thresh": 0.3,
+          "det_box_thresh": 0.5,
+          "det_unclip_ratio": 1.6,
+          "det_use_dilation": true,
+          "det_score_mode": "fast",
+          "cls_image_shape": [
+            3,
+            48,
+            192
+          ],
+          "cls_thresh": 0.9,
+          "rec_image_shape": [
+            3,
+            48,
+            320
+          ],
+          "use_cls": true,
+          "use_det": true,
+          "use_rec": true,
+          "text_score": 0.0,
+          "max_side_len": 2000,
+          "min_side_len": 30,
+          "providers": [
+            "CUDAExecutionProvider"
+          ]
+        },
+        "output": {
+          "artifact_revision": "ocr-document.v1",
+          "output_type": "ocr_document.v1",
+          "low_confidence_threshold": 0.6,
+          "coordinate_decimals": 2
+        },
+        "provider": "CUDAExecutionProvider",
+        "precision": "FP32",
+        "runtime_package_id": "onnxruntime-gpu@1.30.0"
+      },
+      "sha256": "6936ffae2b03479335a09ed69bb18d5d821ca4d2a1029c27d56f007c66aef5c6"
+    }
+  },
+  "artifacts": [
+    {
+      "processor_id": "ocr-text@1",
+      "payload": {
+        "contract_version": "p2-contracts.v1",
+        "processor_id": "ocr-text@1",
+        "input_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "location_id": 7,
+        "source": "RAPIDOCR_PPOCRV4_MOBILE",
+        "engine": "rapidocr-onnxruntime",
+        "engine_version": "1.4.4",
+        "model_fingerprint": "2a5ae91b8a9e6d6fe2f4c6b3918e1e90d045740c80f0aef3653696413218ff7a",
+        "config_hash": "bf94a1da4cba828e67b1d61e27cee14d9e7da27c9f272e04048a17e41ae97332",
+        "engine_config": {
+          "channel_order": "BGR",
+          "det_limit_side_len": 736,
+          "det_limit_type": "min",
+          "det_thresh": 0.3,
+          "det_box_thresh": 0.5,
+          "det_unclip_ratio": 1.6,
+          "det_use_dilation": true,
+          "det_score_mode": "fast",
+          "cls_image_shape": [
+            3,
+            48,
+            192
+          ],
+          "cls_thresh": 0.9,
+          "rec_image_shape": [
+            3,
+            48,
+            320
+          ],
+          "use_cls": true,
+          "use_det": true,
+          "use_rec": true,
+          "text_score": 0.0,
+          "max_side_len": 2000,
+          "min_side_len": 30,
+          "providers": [
+            "CPUExecutionProvider"
+          ]
+        },
+        "decode_format": "JPEG",
+        "original_size": [
+          1200,
+          800
+        ],
+        "working_size": [
+          1200,
+          800
+        ],
+        "scale": 1.0,
+        "slice_count": 1,
+        "region_count": 1,
+        "low_confidence_threshold": 0.6,
+        "low_confidence_regions": 0,
+        "original_text": "OCR historical 1280",
+        "regions": [
+          {
+            "index": 0,
+            "box": [
+              1.0,
+              10.0,
+              100.0,
+              30.0
+            ],
+            "polygon": [
+              [
+                1.0,
+                10.0
+              ],
+              [
+                100.0,
+                10.0
+              ],
+              [
+                100.0,
+                30.0
+              ],
+              [
+                1.0,
+                30.0
+              ]
+            ],
+            "text": "OCR historical 1280",
+            "confidence": 0.600001
+          }
+        ]
+      },
+      "canonical_payload_sha256": "89722b61923f9824622ec718c68bac9794dfd18710ac0187ac59402a7ae59934",
+      "canonical_payload_bytes": 1215,
+      "artifact_id": "ocr-document:ocr-text@1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "processor_id": "ocr-text-cpu-fp32@2",
+      "payload": {
+        "contract_version": "p2-contracts.v1",
+        "processor_id": "ocr-text-cpu-fp32@2",
+        "input_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "location_id": 7,
+        "source": "RAPIDOCR_PPOCRV4_MOBILE",
+        "engine": "rapidocr-onnxruntime",
+        "engine_version": "1.4.4",
+        "model_fingerprint": "2a5ae91b8a9e6d6fe2f4c6b3918e1e90d045740c80f0aef3653696413218ff7a",
+        "config_hash": "b34753ca9d2bd6f2c824d792b9af8debe1ecd788258e7bafbb2c56b76fd478f3",
+        "engine_config": {
+          "channel_order": "BGR",
+          "det_limit_side_len": 736,
+          "det_limit_type": "min",
+          "det_thresh": 0.3,
+          "det_box_thresh": 0.5,
+          "det_unclip_ratio": 1.6,
+          "det_use_dilation": true,
+          "det_score_mode": "fast",
+          "cls_image_shape": [
+            3,
+            48,
+            192
+          ],
+          "cls_thresh": 0.9,
+          "rec_image_shape": [
+            3,
+            48,
+            320
+          ],
+          "use_cls": true,
+          "use_det": true,
+          "use_rec": true,
+          "text_score": 0.0,
+          "max_side_len": 2000,
+          "min_side_len": 30,
+          "providers": [
+            "CPUExecutionProvider"
+          ]
+        },
+        "decode_format": "JPEG",
+        "original_size": [
+          1200,
+          800
+        ],
+        "working_size": [
+          1200,
+          800
+        ],
+        "scale": 1.0,
+        "slice_count": 1,
+        "region_count": 1,
+        "low_confidence_threshold": 0.6,
+        "low_confidence_regions": 0,
+        "original_text": "OCR historical 1280",
+        "regions": [
+          {
+            "index": 0,
+            "box": [
+              1.0,
+              10.0,
+              100.0,
+              30.0
+            ],
+            "polygon": [
+              [
+                1.0,
+                10.0
+              ],
+              [
+                100.0,
+                10.0
+              ],
+              [
+                100.0,
+                30.0
+              ],
+              [
+                1.0,
+                30.0
+              ]
+            ],
+            "text": "OCR historical 1280",
+            "confidence": 0.600001
+          }
+        ]
+      },
+      "canonical_payload_sha256": "06d65193649f01ddd2455f5c93f587ace8378b314b8c35105a3cd0c3f748e7d3",
+      "canonical_payload_bytes": 1224,
+      "artifact_id": "ocr-document:ocr-text-cpu-fp32@2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "processor_id": "ocr-text-cuda-fp32@2",
+      "payload": {
+        "contract_version": "p2-contracts.v1",
+        "processor_id": "ocr-text-cuda-fp32@2",
+        "input_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "location_id": 7,
+        "source": "RAPIDOCR_PPOCRV4_MOBILE",
+        "engine": "rapidocr-onnxruntime",
+        "engine_version": "1.4.4",
+        "model_fingerprint": "2a5ae91b8a9e6d6fe2f4c6b3918e1e90d045740c80f0aef3653696413218ff7a",
+        "config_hash": "6936ffae2b03479335a09ed69bb18d5d821ca4d2a1029c27d56f007c66aef5c6",
+        "engine_config": {
+          "channel_order": "BGR",
+          "det_limit_side_len": 736,
+          "det_limit_type": "min",
+          "det_thresh": 0.3,
+          "det_box_thresh": 0.5,
+          "det_unclip_ratio": 1.6,
+          "det_use_dilation": true,
+          "det_score_mode": "fast",
+          "cls_image_shape": [
+            3,
+            48,
+            192
+          ],
+          "cls_thresh": 0.9,
+          "rec_image_shape": [
+            3,
+            48,
+            320
+          ],
+          "use_cls": true,
+          "use_det": true,
+          "use_rec": true,
+          "text_score": 0.0,
+          "max_side_len": 2000,
+          "min_side_len": 30,
+          "providers": [
+            "CUDAExecutionProvider"
+          ]
+        },
+        "decode_format": "JPEG",
+        "original_size": [
+          1200,
+          800
+        ],
+        "working_size": [
+          1200,
+          800
+        ],
+        "scale": 1.0,
+        "slice_count": 1,
+        "region_count": 1,
+        "low_confidence_threshold": 0.6,
+        "low_confidence_regions": 0,
+        "original_text": "OCR historical 1280",
+        "regions": [
+          {
+            "index": 0,
+            "box": [
+              1.0,
+              10.0,
+              100.0,
+              30.0
+            ],
+            "polygon": [
+              [
+                1.0,
+                10.0
+              ],
+              [
+                100.0,
+                10.0
+              ],
+              [
+                100.0,
+                30.0
+              ],
+              [
+                1.0,
+                30.0
+              ]
+            ],
+            "text": "OCR historical 1280",
+            "confidence": 0.600001
+          }
+        ]
+      },
+      "canonical_payload_sha256": "7ec52972c3032bf6a1c9936ba4c70647a4644c9eff7545d31d959a717572c247",
+      "canonical_payload_bytes": 1226,
+      "artifact_id": "ocr-document:ocr-text-cuda-fp32@2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ]
+}

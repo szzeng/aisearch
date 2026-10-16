@@ -341,3 +341,35 @@ def test_rebuild_all_only_rewrites_documents_of_a_stale_generation(
     row = documents.document_row(catalog.connection, seeded.assets[0])
     assert int(row["tokenizer_version"]) == documents.TOKENIZER_VERSION
     assert str(row["fts_generation_id"]) == documents.FTS_GENERATION_ID
+
+
+def test_projection_summary_counts_both_version_mismatches_and_current_queue(
+    catalog: Catalog,
+) -> None:
+    assert documents.projection_summary(catalog.connection)["documents"] == 0
+    assert documents.projection_summary(catalog.connection)["stale_documents"] == 0
+    seeded = seed(catalog, assets=4, place_names=("中国", "深圳"))
+    documents.rebuild_all(catalog)
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE search_documents SET tokenizer_version = ? WHERE asset_id IN (?, ?)",
+            (documents.TOKENIZER_VERSION + 1, seeded.assets[0], seeded.assets[2]),
+        )
+        connection.execute(
+            "UPDATE search_documents SET fts_generation_id = 'other-generation' "
+            "WHERE asset_id IN (?, ?)",
+            (seeded.assets[1], seeded.assets[2]),
+        )
+    assign(catalog, seeded.assets[3], seeded.city)
+    summary = documents.projection_summary(catalog.connection)
+    assert summary == {
+        "documents": 4,
+        "queued_assets": 1,
+        "stale_documents": 3,
+        "tokenizer_version": documents.TOKENIZER_VERSION,
+        "fts_generation_id": documents.FTS_GENERATION_ID,
+    }
+    documents.rebuild_all(catalog)
+    repaired = documents.projection_summary(catalog.connection)
+    assert repaired["documents"] == 4
+    assert repaired["queued_assets"] == repaired["stale_documents"] == 0

@@ -24,7 +24,7 @@ from p2_acceptance_fixtures import (
     dataset_status,
     filter_revision,
     install_dataset,
-    make_place,
+    make_source_place,
     place_action,
     rescan,
     run_gps,
@@ -141,7 +141,7 @@ def test_add_rename_move_and_delete_stay_consistent_with_search(tmp_path: Path) 
     env = acceptance_env(tmp_path)
     try:
         catalog = env.catalog
-        place_id = make_place(catalog, "杭州西湖")
+        place_id = make_source_place(catalog, "杭州西湖")
         renamed = env.assets["beach sunset.jpg"]
         moved = env.assets["杭州西湖 照片.jpg"]
         deleted = env.assets["IMG_0001.JPG"]
@@ -182,7 +182,14 @@ def test_add_rename_move_and_delete_stay_consistent_with_search(tmp_path: Path) 
         assert locations["杭州西湖 照片.jpg"]["asset_id"] == moved
         assert locations["IMG_0001.JPG"]["availability"] == "MISSING"
         assert locations["IMG_0001.JPG"]["asset_id"] == deleted
-        assert filter_revision(catalog) == revision  # a scan never moves the place revision
+        # The new asset moves shared membership authority; file renames and the
+        # preserved manual assignment do not create extra place-revision events.
+        assert filter_revision(catalog) == revision + 1
+        assert [str(row["cause"]) for row in catalog.read_all(
+            "SELECT cause FROM catalog_filter_revision_events WHERE revision > ? "
+            "ORDER BY revision", (revision,)
+        )] == ["ASSET_ADDED"]
+        revision += 1
 
         # The first query after the rename already finds the asset (the projection catches up
         # inside the request, and the authoritative path is re-checked).
@@ -330,7 +337,7 @@ def test_a_live_session_answers_with_identifiable_staleness_codes(tmp_path: Path
     env = acceptance_env(tmp_path)
     try:
         catalog = env.catalog
-        place_id = make_place(catalog, "杭州西湖")
+        place_id = make_source_place(catalog, "杭州西湖")
         target = env.assets["beach sunset.jpg"]
         place_action(
             catalog,
@@ -552,7 +559,7 @@ def test_upload_search_writes_nothing_and_reuses_the_authoritative_recheck(
                 ],
             }
 
-        place_id = make_place(catalog, "杭州西湖")
+        place_id = make_source_place(catalog, "杭州西湖")
         target = env.assets["beach sunset.jpg"]
         place_action(
             catalog,

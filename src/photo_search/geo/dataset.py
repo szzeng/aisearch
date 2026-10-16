@@ -76,9 +76,11 @@ MANIFEST_KEYS = frozenset(
 )
 _COMPATIBLE_KEYS = frozenset({"minimum", "maximum"})
 PLACE_LEGACY_MAX_FLOOR = 16
-# Schemas through 21 have been reviewed for package compatibility. 0021 adds only
-# catalog-side source identity references; GeoNames bytes and the CN addon contract stay fixed.
-PLACE_COMPAT_REVIEWED_THROUGH = 31
+# Schemas through 33 have been reviewed for package compatibility. Official 0032
+# adds face-collection anchors; 0033 adds catalog read indexes. Neither changes
+# place tables, GeoNames bytes, projection semantics or the CN addon contract.
+# Keep this explicit: a future catalog version still needs a compatibility review.
+PLACE_COMPAT_REVIEWED_THROUGH = 33
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

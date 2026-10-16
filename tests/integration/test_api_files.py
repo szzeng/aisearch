@@ -327,8 +327,12 @@ def test_original_bytes_ranges_and_headers(api_env) -> None:
 
 
 def test_large_original_is_streamed_in_chunks_with_a_matching_hash(api_env) -> None:
-    payload = random.Random(20260912).randbytes(1_500_000)
-    target = api_env.library / "big.bin"
+    encoded = io.BytesIO()
+    Image.frombytes("RGB", (1000, 500), random.Random(20260912).randbytes(1_500_000)).save(
+        encoded, format="BMP"
+    )
+    payload = encoded.getvalue()
+    target = api_env.library / "big.bmp"
     target.write_bytes(payload)
     _stamp_old(target)
     api_env.scan(api_env.register_source()["source_id"])
@@ -343,7 +347,7 @@ def test_large_original_is_streamed_in_chunks_with_a_matching_hash(api_env) -> N
     assert result["status"] == 200
     assert len(result["body"]) == len(payload)
     assert result["headers"]["Content-Length"] == str(len(payload))
-    assert result["headers"]["Content-Type"] == "application/octet-stream"
+    assert result["headers"]["Content-Type"] == "image/bmp"
     assert hashlib.sha256(result["body"]).hexdigest() == hashlib.sha256(payload).hexdigest()
 
 

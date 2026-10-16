@@ -13,6 +13,8 @@ __pycache__/
 
 # Test reports
 test-results/
+# Raw test/benchmark/browser outputs are local or CI artifacts, not source changes.
+/docs/reports/artifacts/
 
 # Throw-away copies of the frozen bundle used by the C-level degraded acceptance
 # (tools/diagnostics/heif_degraded_bundle.py): a full onedir tree, never a source artifact.
@@ -21,18 +23,20 @@ test-results/
 # Build output
 build/
 dist/
-*.spec
+# Generated root-level PyInstaller specs; checked-in packaging specs remain visible.
+/*.spec
 
 # Local runtime data
-runtime/
-data/
-tmp/
-temp/
+# Root-only: nested runtime/data directories may contain application or test source.
+/runtime/
+/data/
+/tmp/
+/temp/
 
 # AI models and generated assets
-# models/
-embeddings/
-indexes/
+/models/
+/embeddings/
+/indexes/
 *.bin
 *.onnx
 *.pt
@@ -43,10 +47,30 @@ indexes/
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
 
 # Logs
 *.log
 .tmp/
+# Local deployment data may include model weights and provider credentials.
+/PhotoSearchData/
+# Local deployment bundles, not ZIP fixtures stored under tests/.
+/PhotoSearch*_Deploy_Pack.zip
+
+# Local credentials; templates with placeholder values belong in source control.
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 
 # IDE / editor
 .vscode/

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from httpx import AsyncClient
+from p2_search_fixtures import install_source_places
 
 
 async def get_json(client: AsyncClient, url: str, **kwargs: Any) -> dict[str, Any]:
@@ -50,13 +51,7 @@ def test_text_search_matches_file_names_and_the_effective_place(api_env) -> None
         sunset = names["beach-sunset.jpg"]
         image = names["IMG_0001.JPG"]
 
-        created = await client.post(
-            "/api/v1/places",
-            json={"kind": "city", "canonical_name": "杭州", "aliases": [{"text": "Hangzhou", "language": "en"}]},
-            headers=api_env.post_headers(csrf),
-        )
-        assert created.status_code == 201, created.text
-        place_id = int(created.json()["place_id"])
+        place_id = install_source_places(api_env.service.catalog)["hangzhou"]
         assigned = await client.put(
             f"/api/v1/assets/{sunset}/place-assignment",
             json={
@@ -150,13 +145,7 @@ def test_text_search_ands_with_the_authoritative_place_filter_and_keeps_the_curs
         lake = names["杭州西湖 照片.jpg"]
         sunset = names["beach-sunset.jpg"]
         image = names["IMG_0001.JPG"]
-        created = await client.post(
-            "/api/v1/places",
-            json={"kind": "city", "canonical_name": "杭州"},
-            headers=api_env.post_headers(csrf),
-        )
-        assert created.status_code == 201, created.text
-        place_id = int(created.json()["place_id"])
+        place_id = install_source_places(api_env.service.catalog)["hangzhou"]
         for index, asset_id in enumerate((sunset, image)):
             response = await client.put(
                 f"/api/v1/assets/{asset_id}/place-assignment",

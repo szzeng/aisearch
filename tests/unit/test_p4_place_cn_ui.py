@@ -92,7 +92,7 @@ def test_place_page_defers_management_requests_and_supports_anchor_loading():
     assert node is not None
     harness = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
-const source=fs.readFileSync('src/photo_search/web/places.js','utf8');
+const source=fs.readFileSync('src/photo_search/web/places.js','utf8').replace(/\r\n/g,'\n');
 const start=source.indexOf('  function setupDeferredPanels()');
 const end=source.indexOf('\n\n  if (document.readyState',start);
 const extracted=source.slice(start,end);

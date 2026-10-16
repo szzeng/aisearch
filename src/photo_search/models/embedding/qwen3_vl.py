@@ -35,10 +35,12 @@ from photo_search.catalog.errors import (
     EMBEDDING_WEIGHTS_MISSING,
     CatalogError,
 )
+from photo_search.media.decode import restore_recorded_orientation
 from photo_search.models.embedding.base import (
     QWEN_ADAPTER,
     analyze_manifest,
     effective_device_policy,
+    image_orientation_policy,
     read_manifest,
 )
 from photo_search.runtime.device import DevicePolicy, DeviceResolution
@@ -181,6 +183,7 @@ class Qwen3VLEmbeddingAdapter:
         self.manifest_path = Path(manifest_path)
         self.manifest = read_manifest(self.manifest_path)
         self._provider, self._identity = analyze_manifest(self.manifest)
+        self._orientation_policy = image_orientation_policy(self.manifest)
         self._config = runtime_config or QwenRuntimeConfig(
             device_policy=str(self._provider["device_policy"])
         )
@@ -454,7 +457,7 @@ class Qwen3VLEmbeddingAdapter:
         return [self.encode_image(item) for item in asset_inputs]
 
     def _read_local_image(self, image_path: Path | str) -> Image.Image:
-        """One local, fully decoded, orientation-corrected RGB image; never a remote input."""
+        """Decode a local RGB image with this space's frozen orientation policy."""
         text = str(image_path)
         lowered = text.strip().lower()
         if "://" in lowered:
@@ -471,6 +474,10 @@ class Qwen3VLEmbeddingAdapter:
                 details={"reason": "IMAGE_MISSING"},
             )
         with Image.open(path) as source:
+            if self._orientation_policy:
+                # The versioned provider also handles HEIF EXIF-only orientation. Container
+                # transforms already applied by libheif must not be applied twice.
+                restore_recorded_orientation(source)
             return ImageOps.exif_transpose(source).convert("RGB")
 
     def _encode(

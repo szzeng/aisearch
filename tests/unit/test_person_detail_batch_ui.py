@@ -27,7 +27,7 @@ const result=()=>({batch_id:stage==="IDLE"?null:"batch-2",source_id:2,state:stag
  succeeded:stage==="COMPLETE"?3:stage==="PARTIAL_FAILED"?2:0,
  skipped:0,failed:stage==="PARTIAL_FAILED"?1:0,needs_review:0});
 const response=body=>({ok:true,json:async()=>body});
-const context={URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
+const context={URL,URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
  setTimeout:fn=>{const t={fn};timers.push(t);return t;},clearTimeout:t=>{if(t)t.cancelled=true;},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url,options)=>{
@@ -49,6 +49,8 @@ const context={URLSearchParams,Date,crypto:{randomUUID:()=>"fake"},
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,state,loadDetailBatch,renderPhotos};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
+const navigate=(_state,_title,path)=>{const url=new URL(path,context.window.location.href);Object.assign(context.window.location,{href:url.href,search:url.search,hash:url.hash});};
+context.window.history={pushState:navigate,replaceState:navigate};
 vm.createContext(context);vm.runInContext(code,context);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t.ran=true;await t.fn();await flush();};
@@ -64,6 +66,9 @@ const tick=async()=>{const t=timers.find(x=>!x.cancelled&&!x.ran);assert.ok(t);t
  assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
  assert.equal(requests.some(x=>x.url.includes("source-detail-batches/active")),false);
  await get("pa-organize").fire("click");await flush();
+ assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
+ await get("pa-unrecognized").fire("click");await flush();
+ assert.equal(context.ui.state.libraryView,"faces");
  assert.equal(requests.some(x=>x.url==="/api/v1/sources"),false);
  get("pa-recognition-tools").open=true; await get("pa-recognition-tools").fire("toggle");await flush();
  assert.equal(requests.some(x=>x.url==="/api/v1/sources"),true);

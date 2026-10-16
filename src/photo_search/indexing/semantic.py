@@ -68,6 +68,8 @@ PROFILE_ID_PREFIX = "semantic-"
 PROFILE_QUERY_PARSER_VERSION = "match-expression-v1"
 #: The default number of assets one build command enqueues when no bound is given.
 DEFAULT_BUILD_LIMIT = 5000
+#: Candidate rows are read in bounded SQL pages, including one row of lookahead.
+SELECTION_PAGE_SIZE = 256
 
 #: The location a build reads from. Only a ``PRESENT`` location is usable: encoding a
 #: ``MISSING`` one would publish a vector for a file the catalog no longer has.
@@ -77,29 +79,30 @@ _PRESENT_SOURCE_SQL = (
     "WHERE l.asset_id = ? AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1"
 )
 
-#: ``source_predicate`` is either empty or ``f.source_id = ? AND``. It must compose with the
-#: ``NOT EXISTS`` clause - adding a second ``WHERE`` for the source filter made every
-#: ``build --source-id`` call a SQL syntax error (DS-H review F1).
-#: ``cursor_predicate`` is either empty or ``a.asset_id > ? AND``; it is what lets the
-#: P4-02Y-I build walk a whole source in bounded pages instead of materialising the pending
-#: set at once. Both predicates come *before* the ``NOT EXISTS`` so their parameters stay in
-#: the same order as the placeholders.
+#: Start from the ordered PRESENT locations, not an unbounded materialisation of assets.
+#: For a source-scoped build, choose the first position *in that source*: choosing the
+#: global first position before filtering would omit content shared with an earlier source.
+#: Migration 0032 supplies both ordered partial indexes; the hints keep paging bounded
+#: independently of SQLite's statistics and of the relative sizes of the sources.
 #: Assets that have a readable original and no confirmed embedding for their *current*
 #: content revision. A confirmed entry whose artifact came from a different revision (the file
 #: changed) is deliberately not a hit: that asset needs a new job.
 _TARGET_SQL = (
-    "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256, "
+    "SELECT a.asset_id AS asset_id, a.sha256 AS sha256, "
     "f.relative_path AS relative_path, r.root_path AS root_path "
-    "FROM assets AS a "
-    "JOIN file_locations AS f ON f.location_id = ("
-    "SELECT l.location_id FROM file_locations AS l WHERE l.asset_id = a.asset_id "
-    "AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1) "
+    "FROM file_locations AS f INDEXED BY {location_index} "
+    "JOIN assets AS a ON a.asset_id = f.asset_id "
     "JOIN source_roots AS r ON r.source_id = f.source_id "
-    "WHERE {source_predicate}{cursor_predicate}NOT EXISTS ("
+    "WHERE f.availability = 'PRESENT' AND f.asset_id IS NOT NULL AND f.asset_id > ? "
+    "{source_predicate}AND f.location_id = ("
+    "SELECT l.location_id FROM file_locations AS l WHERE l.asset_id = f.asset_id "
+    "AND l.availability = 'PRESENT' {location_source_predicate}"
+    "ORDER BY l.location_id LIMIT 1) "
+    "AND NOT EXISTS ("
     "SELECT 1 FROM index_entries AS e JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
     "WHERE e.asset_id = a.asset_id AND e.space_id = ? AND e.generation_id = ? "
     "AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256) "
-    "ORDER BY a.asset_id"
+    "ORDER BY f.asset_id LIMIT ?"
 )
 
 
@@ -175,47 +178,62 @@ def semantic_selection(
     a caller that has to cover a 20-30 万 first build can page through the whole scope with
     bounded memory instead of asking for every pending row at once (P4-02Y-I §2).
     """
-    source_predicate = ""
-    parameters: tuple[Any, ...] = ()
-    if source_id is not None:
-        source_predicate = "f.source_id = ? AND "
-        parameters = (int(source_id),)
-    cursor_predicate = ""
-    if after_asset_id is not None:
-        cursor_predicate = "a.asset_id > ? AND "
-        parameters = (*parameters, int(after_asset_id))
-    generation_id = generation_id_for(str(space_id), str(processor_id))
-    rows = catalog.read_all(
-        _TARGET_SQL.format(
-            source_predicate=source_predicate, cursor_predicate=cursor_predicate
+    scoped = source_id is not None
+    sql = _TARGET_SQL.format(
+        location_index=(
+            "idx_file_locations_present_source_asset" if scoped
+            else "idx_file_locations_present_asset"
         ),
-        (*parameters, str(space_id), generation_id),
+        source_predicate="AND f.source_id = ? " if scoped else "",
+        location_source_predicate="AND l.source_id = f.source_id " if scoped else "",
     )
+    source_parameters = (int(source_id),) if scoped else ()
+    cursor = int(after_asset_id) if after_asset_id is not None else 0
+    generation_id = generation_id_for(str(space_id), str(processor_id))
     wanted = None if limit is None else max(0, int(limit))
     targets: list[dict[str, Any]] = []
     labels: dict[str, int] = {}
     sample: list[dict[str, Any]] = []
     out_of_scope = 0
     checked = 0
-    for row in rows:
-        checked += 1
-        path = Path(str(row["root_path"])) / str(row["relative_path"])
-        eligible, label = image_eligibility(path)
-        if eligible:
-            if wanted is None or len(targets) < wanted:
-                targets.append(
-                    {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
-                )
-            if wanted is not None and len(targets) >= wanted:
-                break
-            continue
-        out_of_scope += 1
-        labels[label] = labels.get(label, 0) + 1
-        if len(sample) < 20:
-            sample.append({"asset_id": int(row["asset_id"]), "label": label})
+    complete = False
+    while True:
+        # The extra row distinguishes a full last page from a truncated answer without
+        # opening/decode-checking a file outside the requested target budget.
+        page_size = SELECTION_PAGE_SIZE
+        if wanted is not None:
+            page_size = min(page_size, max(1, wanted - len(targets)))
+        rows = catalog.read_all(
+            sql,
+            (cursor, *source_parameters, str(space_id), generation_id, page_size + 1),
+        )
+        page = rows[:page_size]
+        has_more = len(rows) > page_size
+        reached_limit = False
+        for row in page:
+            checked += 1
+            cursor = int(row["asset_id"])
+            path = Path(str(row["root_path"])) / str(row["relative_path"])
+            eligible, label = image_eligibility(path)
+            if eligible:
+                if wanted is None or len(targets) < wanted:
+                    targets.append(
+                        {"asset_id": cursor, "input_revision": str(row["sha256"])}
+                    )
+                if wanted is not None and len(targets) >= wanted:
+                    reached_limit = True
+                    break
+                continue
+            out_of_scope += 1
+            labels[label] = labels.get(label, 0) + 1
+            if len(sample) < 20:
+                sample.append({"asset_id": cursor, "label": label})
+        if reached_limit or not has_more:
+            complete = not has_more and (not page or cursor == int(page[-1]["asset_id"]))
+            break
     return {
         "checked": checked,
-        "coverage_complete": checked == len(rows),
+        "coverage_complete": complete,
         "targets": targets,
         "out_of_scope": {
             "count": out_of_scope,

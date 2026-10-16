@@ -185,7 +185,7 @@ def test_an_accepted_upload_reports_its_measured_facts_and_is_removed_afterwards
     assert not directory.exists()
 
 
-def test_exif_orientation_is_applied_before_the_image_reaches_the_adapter(
+def test_exif_orientation_normalizes_facts_without_rewriting_the_encoder_input(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "rotated.jpg"
@@ -194,9 +194,13 @@ def test_exif_orientation_is_applied_before_the_image_reaches_the_adapter(
     exif[0x0112] = 6
     image.save(path, "JPEG", quality=90, exif=exif)
     with stage_upload(path.read_bytes()) as staged:
-        # Orientation 6 means the upright frame is the stored one rotated, so the upright
-        # size is the swapped one: the adapter sees exactly the pixels the user sees.
+        # Facts describe the upright preview; the selected adapter retains ownership of
+        # preprocessing the untouched source, including historical orientation behavior.
         assert (staged.facts.width, staged.facts.height) == (18, 24)
+        assert staged.path.read_bytes() == path.read_bytes()
+        with Image.open(staged.path) as source:
+            assert source.size == (24, 18)
+            assert source.getexif()[0x0112] == 6
 
 
 def test_an_empty_upload_is_a_caller_error() -> None:
