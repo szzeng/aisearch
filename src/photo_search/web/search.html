@@ -8,12 +8,12 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1" />
     <link rel="stylesheet" href="/web/search.css?v=p4-ui-shell-a-f1-5" />
-    <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-face-manage-a-2" />
+    <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-face-manage-a-refresh-1" />
     <script src="/web/map-config.js" defer></script>
-    <script src="/web/photo-info.js?v=p4-photo-face-manage-a-2" defer></script>
+    <script src="/web/photo-info.js?v=p4-photo-face-manage-a-refresh-2" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-photo-face-manage-a-2" defer></script>
+    <script src="/web/search.js?v=p4-search-text-mode-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -54,13 +54,21 @@
       <p class="search-intro">描述照片里的内容、人物、地点或时间；已识别的条件会列在下方，可继续调整筛选。</p>
       <details class="search-explainer">
         <summary>搜索条件与结果说明</summary>
-        <p>例如“2023年张三在济南拍的日落”或“去年夏天的照片”。识别到的拍摄时间、人物和地点会显示为可取消条件；剩余内容词继续进行语义与文字搜索。纯条件结果可以继续翻页到末尾，语义结果最多浏览5000条。</p>
-        <p>结果会说明命中原因、命中文本列与「语义是否就绪」。向量距离、BM25 与精排分数都不会被换算成“准确率”或百分比。</p>
+        <p>综合搜索可以描述画面，例如“2023年张三在济南拍的日落”。识别到的时间、人物和地点会显示为可取消条件。按文字找适合文件名、票据文字和编号，查询中的姓名、地名和年份会保留为文字。</p>
+        <p>两种方式都支持手动筛选。搜索最多保留5000条候选，达到上限时可缩小范围；只使用筛选、不输入文字时可以继续翻页到末尾。结果会说明匹配原因，排序分数不代表准确率。</p>
       </details>
 
       <section id="panel-query" class="panel" aria-labelledby="query-title">
         <h2 id="query-title">查询与筛选</h2>
         <div id="search-filter-controls" class="filters">
+          <p class="wide">
+            <label for="query-retrieval-mode">搜索方式</label>
+            <select id="query-retrieval-mode" aria-describedby="retrieval-mode-hint">
+              <option value="combined">综合搜索</option>
+              <option value="text">按文字找</option>
+            </select>
+            <span class="hint" id="retrieval-mode-hint">综合搜索理解画面和条件；按文字找匹配文件名、已归属地点名称和已识别文字，适合截图、票据、编号。图片文字须先完成识别。</span>
+          </p>
           <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <div id="result-intent-scope" class="wide" hidden aria-live="polite"></div>
           <details class="advanced-search-filter wide">
@@ -115,11 +123,9 @@
           <fieldset id="capture-filter" class="capture-filter wide">
             <legend>拍摄时间范围（只作用于普通搜索）</legend>
             <p class="hint" id="capture-hint">
-              条件只命中「拍摄时间」（文件自己声明的 EXIF 原始/数字化时间），左闭右开：
-              包含起始时刻、不包含结束时刻。只写日期时按当天 00:00:00.000 处理；
-              带时区后缀（<code>Z</code> 或 <code>±HH:MM</code>）会被服务端以
-              <code>INVALID_TIME_RANGE</code> 明确拒绝，因为拍摄时间没有唯一时区。
-              没有拍摄时间的照片（只有文件时间）永远不参与这个条件；上传搜图也不携带它。
+              按照片记录的拍摄时间筛选，包含开始日期，不包含结束日期。
+              例如查2023年，填写2023-01-01至2024-01-01。
+              没有拍摄时间的照片不参与此筛选；如需填写具体时刻，请使用不带时区的日期时间。
             </p>
             <div class="capture-controls">
               <p>
@@ -156,18 +162,16 @@
           <fieldset id="person-filter" class="person-filter wide">
             <legend>人物筛选（只作用于普通搜索）</legend>
             <p class="hint" id="person-hint">
-              人物只来自受会话保护的 <code>GET /api/v1/persons</code>：它只列 active canonical
-              人物，并按 <code>person_id</code> 稳定分页。只有真的选中人物时，普通搜索才会带上
-              <code>person_ids</code> 与 <code>person_match</code>，并与地点、来源、可用性按 AND
-              组合；同名人物各按自己的 <code>#person_id</code> 计，本页不做任何本地命中或二次过滤。
-              上传搜图不发送人物条件。
+              选择照片中需要出现的人物。“任一”表示至少有一个所选人物，
+              “全部”表示所有所选人物同框。人物条件与来源、地点和时间条件同时生效；
+              同名人物用编号区分。上传搜图暂不支持人物筛选。
             </p>
             <div class="person-controls">
               <p>
                 <label for="query-person-match">人物匹配方式</label>
                 <select id="query-person-match">
-                  <option value="any">任一（any）</option>
-                  <option value="all">全部（all）</option>
+                  <option value="any">任一人物出现</option>
+                  <option value="all">全部人物同框</option>
                 </select>
               </p>
               <p class="filter-actions">
@@ -179,10 +183,10 @@
             <ul
               id="person-options"
               class="person-options"
-              aria-label="可选人物（active canonical，按 person_id 稳定排序）"
+              aria-label="可选人物"
             ></ul>
             <p>
-              <button type="button" id="person-more" hidden>加载更多人物（沿用当前游标）</button>
+              <button type="button" id="person-more" hidden>加载更多人物</button>
             </p>
             <p class="hint" id="person-echo"></p>
             <p class="state-block" id="person-status" role="status" aria-live="polite"></p>
@@ -199,8 +203,7 @@
         </div>
         <p class="hint" id="binding-hint"></p>
         <p class="hint">
-          高级地点筛选按 P2-03A/B 的语义：<code>place_state=suggested</code> 只列出「待确认建议」，
-          机器候选不参与有效地点过滤；要按有效归属筛选请选「已归类」等状态。
+          地点的“待确认建议”只表示机器建议；选择“已归类”时，只使用已经生效的地点归属。
         </p>
         <div id="query-status" class="state-block" role="status" aria-live="polite"></div>
         <div id="query-actions" class="row-actions" hidden>
@@ -234,15 +237,11 @@
       <section id="panel-upload" class="panel" aria-labelledby="upload-title">
         <h2 id="upload-title">上传图片找相似</h2>
         <p class="hint">
-          上传的图片只用于本次查询：服务端会把它写进一个临时目录、校验后立即删除，
-          不新增资产、不写任何索引行。当前筛选条件同样生效。没有接入图像编码器时服务端会
-          以结构化错误明确拒绝，而不是用文本通道冒充结果。
+          选择一张图片，查找图库中画面相似的照片。需要启用画面搜索模型。
+          上传图片只用于本次查询，临时副本在处理后删除，不会加入图库。
         </p>
         <p class="hint">
-          人物筛选只作用于普通搜索：这个上传请求不携带
-          <code>person_ids</code>/<code>person_match</code>（服务端的 multipart 闭集里没有这两个字段）。
-          拍摄时间范围同理：multipart 闭集里没有 <code>capture_from</code>/<code>capture_to_exclusive</code>，
-          上传图搜索不会收到也不会发送任何拍摄时间条件。
+          上传搜图支持来源、可用性和地点筛选，暂不支持人物或拍摄时间筛选。
         </p>
         <form id="upload-form" class="filters" novalidate>
           <p class="wide">
@@ -264,8 +263,8 @@
       <section id="panel-coverage" class="panel" aria-labelledby="coverage-title">
         <h2 id="coverage-title">分项覆盖率（分类别，不合成一个准确率）</h2>
         <p class="hint">
-          下面每一项都来自只读接口，各自标注口径与来源。它们**不**构成一个“整体 AI 准确率”：
-          文本投影覆盖高不代表语义模型好，语义索引覆盖高也不代表地点归类完整。
+          这里显示文字索引、画面索引、地点和来源的准备情况。
+          准备完成的比例不代表搜索准确率，各项需要分别查看。
         </p>
         <div id="coverage-body" class="coverage" role="status" aria-live="polite">
           点击“读取覆盖率”查看，进入搜索页无需等待统计。

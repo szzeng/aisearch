@@ -576,8 +576,9 @@ def capture_digest(
     person_match: str,
     capture_from: str | None,
     capture_to_exclusive: str | None,
+    retrieval_mode: str = "combined",
 ) -> str:
-    """ADR-0011 §6.5: the p3 digest payload plus the two canonical capture bounds."""
+    """Capture bounds remain canonical within each explicit retrieval mode."""
     canonical_from = (
         None if capture_from is None else normalize_capture_bound(capture_from, field="capture_from")
     )
@@ -590,6 +591,7 @@ def capture_digest(
         if canonical_from >= canonical_to:
             raise BoundRefused("capture_range_not_ascending", "capture_from")
     payload = {
+        "retrieval_mode": retrieval_mode,
         "text": text,
         "source_id": source_id,
         "availability": availability,
@@ -1196,7 +1198,7 @@ def assert_echo_carries_exactly_two_revisions(echo: dict[str, Any]) -> None:
         assert forbidden not in blob
 
 
-def test_the_continuation_digest_adds_exactly_the_two_capture_bounds() -> None:
+def test_the_continuation_digest_binds_normalized_capture_bounds_and_retrieval_mode() -> None:
     import inspect
 
     live = tuple(inspect.signature(query_hash).parameters)
@@ -1240,6 +1242,16 @@ def test_the_continuation_digest_adds_exactly_the_two_capture_bounds() -> None:
         capture_to_exclusive=normalize_capture_bound("2023-01-01"),
     )
     assert live_year_2022 == year_2022
+    text_year_2022 = query_hash(
+        **base, retrieval_mode="text",
+        capture_from=normalize_capture_bound("2022-01-01"),
+        capture_to_exclusive=normalize_capture_bound("2023-01-01"),
+    )
+    assert text_year_2022 == capture_digest(
+        **base, retrieval_mode="text", capture_from="2022-01-01",
+        capture_to_exclusive="2023-01-01",
+    )
+    assert text_year_2022 != live_year_2022
     assert (
         query_hash(
             **base,

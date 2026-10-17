@@ -240,6 +240,27 @@
     var status = node("p", "", "hint"); status.setAttribute("role", "status");
     var refresh = node("button", "刷新当前照片人脸"); refresh.type = "button";
     var stale = false;
+    function writeFace(path, method, value) {
+      return writeRequest(path, method, value).then(function (result) {
+        // The write is confirmed even if the viewer was closed while it ran.
+        // Keep refresh failures separate from an unknown write result.
+        if (typeof state.onFacesChanged === "function") {
+          Promise.resolve().then(function () { return state.onFacesChanged(Number(assetId), result); })
+            .catch(function () {
+              if (!state.active) return;
+              if (!state.faceRefreshWarning) {
+                state.faceRefreshWarning = node("p", "", "hint"); state.faceRefreshWarning.setAttribute("role", "status");
+                section.append(state.faceRefreshWarning);
+              }
+              state.faceRefreshWarning.textContent = "人脸已保存；人物列表刷新失败，请刷新列表查看，不要重复提交。";
+            });
+        } else {
+          try { window.localStorage.setItem("aisearch.persons.changed", faceRequestId()); }
+          catch (error) { /* Other pages still refresh when explicitly reopened. */ }
+        }
+        return result;
+      });
+    }
     function setStale(message) {
       stale = true; panel.dataset.stale = "true"; status.textContent = message;
       panel.querySelectorAll("button, input").forEach(function (control) { control.disabled = true; });
@@ -282,7 +303,7 @@
       function applyVisibility(ids, hidden, ignoreState) {
         if (!ids.length || !state.active || stale) return;
         temporary.disabled = excluded.disabled = true; status.textContent = "正在保存人脸状态……";
-        writeRequest("/faces/inbox/visibility", "POST", { face_ids: ids, hidden: hidden, ignore_state: ignoreState })
+        writeFace("/faces/inbox/visibility", "POST", { face_ids: ids, hidden: hidden, ignore_state: ignoreState })
           .then(function () { if (!state.active) return; status.textContent = "状态已保存。"; return reload(); })
           .catch(function (error) { if (state.active) {
             if (error.status >= 500 || !error.status) setStale("保存结果暂时无法确认。请先刷新当前照片状态，再决定是否重试。");
@@ -319,8 +340,8 @@
               var remove = node("button", "移出人物"); remove.type = "button";
               remove.addEventListener("click", function () {
                 remove.disabled = true;
-                writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", {
-                  contract_version: "p3-face-correction-contracts.v1", request_id: remove.dataset.requestId || (remove.dataset.requestId = faceRequestId()), action: "remove",
+                writeFace("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", {
+                  contract_version: "p3-face-correction-contracts.v1", request_id: remove.dataset.requestId || (remove.dataset.requestId = faceRequestId()), action: "unassign",
                   expected_revision: Number(face.control_revision || 0)
                 }).then(reload).catch(function (error) { status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "移出失败。"; }).then(function () { remove.disabled = false; });
               }); card.append(remove);
@@ -333,7 +354,7 @@
                   request("/persons/browse?kind=all&sort=photos_desc&limit=20&q=" + encodeURIComponent(query.value.trim())).then(function (page) {
                     (page.persons || []).filter(function (person) { return Number(person.person_id) !== Number(face.assigned_person_id); }).forEach(function (person) {
                       var option = node("button", person.name || "未命名的人"); option.type = "button"; option.addEventListener("click", function () {
-                        option.disabled = true; writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("更换结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "更换人物失败。"; });
+                        option.disabled = true; writeFace("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("更换结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "更换人物失败。"; });
                       }); choices.append(option);
                     });
                   }).catch(function (error) { status.textContent = error.message || "人物暂时无法读取。"; }).then(function () { find.disabled = false; });
@@ -351,13 +372,13 @@
                 request("/persons/browse?kind=all&sort=photos_desc&limit=20&q=" + encodeURIComponent(query.value.trim()))
                   .then(function (page) { (page.persons || []).forEach(function (person) { var option = node("button", person.name || "未命名的人"); option.type = "button"; option.addEventListener("click", function () {
                     option.disabled = true;
-                    writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("指定结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "指定人物失败。"; });
+                    writeFace("/faces/" + encodeURIComponent(face.face_id) + "/assignment", "PUT", { contract_version: "p3-face-correction-contracts.v1", request_id: option.dataset.requestId || (option.dataset.requestId = faceRequestId()), action: "assign", target_person_id: person.person_id, expected_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("指定结果暂时无法确认。请刷新当前照片状态。"); else status.textContent = error.status === 409 ? "归属已变化，请刷新后重试。" : error.message || "指定人物失败。"; });
                   }); choices.append(option); }); if (!(page.persons || []).length) choices.append(node("span", "没有找到人物。", "hint")); })
                   .catch(function (error) { status.textContent = error.message || "人物暂时无法读取。"; }).then(function () { choose.disabled = false; });
               });
               card.append(query, choose, choices);
               var create = node("button", "新建未命名人物"); create.type = "button";
-              create.addEventListener("click", function () { create.disabled = true; writeRequest("/faces/" + encodeURIComponent(face.face_id) + "/create-person", "POST", { contract_version: "p4-person-create-from-face.v1", request_id: create.dataset.requestId || (create.dataset.requestId = faceRequestId()), expected_control_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("新建结果暂时无法确认。请刷新照片状态，不要使用新请求重复创建。"); else status.textContent = error.status === 409 ? "人脸状态已变化，请刷新后重试。" : error.message || "创建人物失败。"; }).then(function () { create.disabled = false; }); }); card.append(create);
+              create.addEventListener("click", function () { create.disabled = true; writeFace("/faces/" + encodeURIComponent(face.face_id) + "/create-person", "POST", { contract_version: "p4-person-create-from-face.v1", request_id: create.dataset.requestId || (create.dataset.requestId = faceRequestId()), expected_control_revision: Number(face.control_revision || 0) }).then(reload).catch(function (error) { if (error.status >= 500 || !error.status) setStale("新建结果暂时无法确认。请刷新照片状态，不要使用新请求重复创建。"); else status.textContent = error.status === 409 ? "人脸状态已变化，请刷新后重试。" : error.message || "创建人物失败。"; }).then(function () { create.disabled = false; }); }); card.append(create);
               ["TEMPORARY", "EXCLUDED"].forEach(function (ignoreState) { var ignore = node("button", ignoreState === "TEMPORARY" ? "暂时忽略" : "明确排除"); ignore.type = "button"; ignore.addEventListener("click", function () { applyVisibility([face.face_id], true, ignoreState); }); card.append(ignore); });
             }
             details.append(card);
@@ -437,7 +458,8 @@
     var prior = mounts.get(host);
     if (prior) prior.dispose();
     var state = { active: true, map: null, seq: ++serial, onPerson: options && options.onPerson,
-      onFaces: options && options.onFaces, onFacesError: options && options.onFacesError };
+      onFaces: options && options.onFaces, onFacesError: options && options.onFacesError,
+      onFacesChanged: options && options.onFacesChanged };
     var seq = state.seq;
     var disclosure = node("details", undefined, "photo-info-details");
     disclosure.open = true;

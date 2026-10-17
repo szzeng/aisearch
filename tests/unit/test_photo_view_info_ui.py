@@ -40,7 +40,8 @@ document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;const summary={attributes:{},setAttribute(key,value){this.attributes[key]=String(value);}};const control={open:true,attributes:{open:""},attributionButton:summary,classList:{classes:new Set(["maplibregl-compact","maplibregl-compact-show"]),remove(name){this.classes.delete(name);}},querySelector(selector){return selector===".maplibregl-ctrl-attrib-button"?summary:null;},setAttribute(key,value){this.attributes[key]=String(value);},removeAttribute(name){delete this.attributes[name];}};this.options.container.attributionControl=control;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
 const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
-const fetches=[]; const faceWrites=[]; let releaseDetail;
+const fetches=[]; const faceWrites=[]; const changeTokens=[]; let releaseDetail,faceWriteStatus=200;
+window.localStorage={setItem:(key,value)=>changeTokens.push({key,value}),getItem:()=>null};
 const ok=body=>({ok:true,status:200,json:async()=>body});
 const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height:800,format:"jpeg",availability:"present",taken_time:{label:"file_time",taken_at:"2020-01-02T03:04:05.000",camera:"Camera X"},locations:[
   {location_id:11,source_id:1,source_display_name:"旅行",relative_path:"照片/海边.jpg",availability:"PRESENT"},
@@ -52,7 +53,10 @@ const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height
 const postCalls=[]; let deferLocal=false,releaseLocal;
 const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},URL,fetch:async (url,options)=>{
   if(url.includes("/local-action")) { postCalls.push({url,options}); const body={status:"accepted",action:JSON.parse(options.body).action}; return deferLocal?new Promise(resolve=>{releaseLocal=()=>resolve(ok(body));}):ok(body); }
-  if(options && options.method && options.method!="GET") { faceWrites.push({url,options}); return ok({changed:1,operation_type:"FACE_MAPPING"}); }
+  if(options && options.method && options.method!="GET") {
+    if(url.endsWith("/assignment")) assert.ok(["assign","unassign","restore_auto"].includes(JSON.parse(options.body).action),"the real assignment API rejects unknown action names");
+    faceWrites.push({url,options}); return faceWriteStatus===200 ? ok({changed:1,operation_type:"FACE_MAPPING"}) : {ok:false,status:faceWriteStatus,json:async()=>({code:"SYNTHETIC_WRITE_FAILURE"})};
+  }
   fetches.push(url);
   if(url==="/api/v1/assets/201") { await new Promise(r=>{releaseDetail=r;}); return ok(detail(201)); }
   if(/^\/api\/v1\/assets\/\d+$/.test(url)) return ok(detail(Number(url.split("/").pop())));
@@ -127,8 +131,8 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(fetches.filter(url=>/\/persons\/\d+$/.test(url)).length,0,"canonical person names and avatars do not trigger per-person requests");
   first.dispose(); assert.equal(maps[0].removed,true);
 
-  let sharedFacePage=null;
-  const manager=context.window.AIPhotoInfo.open(501,{people:false,onFaces:(id,page)=>{sharedFacePage={id,page};}}); await flush(); await flush();
+  let sharedFacePage=null; const changedFaces=[];
+  const manager=context.window.AIPhotoInfo.open(501,{people:false,onFaces:(id,page)=>{sharedFacePage={id,page};},onFacesChanged:(id,result)=>changedFaces.push({id,result})}); await flush(); await flush();
   assert.equal(sharedFacePage.id,501,"people:false extensions receive the shared asset face result");
   assert.ok(sharedFacePage.page.faces.length>=3);
   const managerToggle=all(manager.panel,n=>n.className==="photo-face-manager-toggle")[0];
@@ -155,8 +159,59 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(faceWrites[0].options.headers["X-CSRF-Token"],"synthetic-token");
   assert.equal(JSON.parse(faceWrites[0].options.body).expected_control_revision,2);
   assert.ok(JSON.parse(faceWrites[0].options.body).request_id,"creation uses a stable idempotency key");
+  assert.equal(changedFaces.length,1,"confirmed face writes notify the containing person album");
+  assert.equal(changedFaces[0].id,501);
+  assert.equal(changedFaces[0].result.changed,1);
   assert.equal(fetches.filter(url=>/faces\/[34]{64}\/thumbnail/.test(url)).length,0,"collapsed ignored faces do not trigger thumbnail requests");
   manager.close();
+
+  function pendingFace(view) {
+    all(view.panel,n=>n.className==="photo-face-manager-toggle")[0].fire("click");
+    const group=all(view.panel,n=>n.tagName==="details"&&n.className==="photo-face-group"&&n.textContent.includes("待整理 · 1"))[0];
+    group.open=true; group.fire("toggle"); return group;
+  }
+  for(const code of [409,500]) {
+    faceWriteStatus=code;
+    const failed=context.window.AIPhotoInfo.open(501,{onFacesChanged:()=>changedFaces.push("unexpected")});
+    await flush(); await flush();
+    all(pendingFace(failed),n=>n.tagName==="button"&&n.textContent==="新建未命名人物")[0].fire("click");
+    await flush(); await flush();
+    assert.equal(changedFaces.length,1,"rejected and unknown writes do not publish success notifications");
+    failed.close();
+  }
+  faceWriteStatus=200;
+  const ordinary=context.window.AIPhotoInfo.open(501);
+  await flush(); await flush();
+  all(pendingFace(ordinary),n=>n.tagName==="button"&&n.textContent==="暂时忽略")[0].fire("click");
+  await flush(); await flush();
+  assert.equal(changeTokens.length,1,"ordinary photo pages notify existing person views after a confirmed write");
+  assert.equal(changeTokens[0].key,"aisearch.persons.changed");
+  ordinary.close();
+
+  let rejectRefresh;
+  const refreshFailure=context.window.AIPhotoInfo.open(501,{onFacesChanged:()=>new Promise((resolve,reject)=>{rejectRefresh=reject;})});
+  await flush(); await flush();
+  all(pendingFace(refreshFailure),n=>n.tagName==="button"&&n.textContent==="新建未命名人物")[0].fire("click");
+  await flush(); await flush();
+  const successfulWrites=faceWrites.length;
+  rejectRefresh(new Error("synthetic refresh failure")); await flush();
+  assert.match(refreshFailure.panel.textContent,/人脸已保存；人物列表刷新失败/,"a delayed refresh failure remains visible after the manager is repainted");
+  assert.doesNotMatch(refreshFailure.panel.textContent,/新建结果暂时无法确认/,"confirmed writes remain confirmed if a dependent read fails");
+  assert.equal(faceWrites.length,successfulWrites,"a failed refresh does not resend the write");
+  refreshFailure.close();
+
+  const removeViewer=context.window.AIPhotoInfo.open(501); await flush(); await flush();
+  all(removeViewer.panel,n=>n.className==="photo-face-manager-toggle")[0].fire("click");
+  const assignedGroup=all(removeViewer.panel,n=>n.className==="photo-face-group"&&n.textContent.includes("已归属 · 1"))[0];
+  assignedGroup.open=true; assignedGroup.fire("toggle");
+  all(assignedGroup,n=>n.tagName==="button"&&n.textContent==="移出人物")[0].fire("click");
+  await flush(); await flush();
+  const unassign=faceWrites.at(-1);
+  assert.match(unassign.url,/faces\/1{64}\/assignment$/);
+  assert.equal(unassign.options.method,"PUT");
+  assert.equal(JSON.parse(unassign.options.body).action,"unassign","removal uses the backend's authoritative action contract");
+  assert.equal(JSON.parse(unassign.options.body).expected_revision,1);
+  removeViewer.close();
 
   const ordered=context.window.AIPhotoInfo.render(host,401);
   await flush();await flush();
@@ -294,11 +349,11 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-photo-face-manage-a-2" in document
-        assert "/web/photo-info.css?v=p4-photo-face-manage-a-2" in document
-    assert "search.js?v=p4-photo-face-manage-a-2" in (web / "search.html").read_text(encoding="utf-8")
+        assert "/web/photo-info.js?v=p4-photo-face-manage-a-refresh-2" in document
+        assert "/web/photo-info.css?v=p4-photo-face-manage-a-refresh-1" in document
+    assert "search.js?v=p4-search-text-mode-2" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
-    assert "persons-albums.js?v=p4-photo-face-manage-a-2" in (web / "persons.html").read_text(encoding="utf-8")
+    assert "persons-albums.js?v=p4-photo-face-manage-a-refresh-3" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
     assert "/web/app.js?v=p4-upstream-sync-20261016-2" in (web / "index.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")

@@ -178,12 +178,15 @@ assert.match(cancelEls.queryStatus.textContent,/点击全库搜索重新查询/)
 
 search.selectedScope={kind:"person",person_id:8,name:"阿姨"};
 search.intentPlan={person_ids:[4,8,9],person_names:["叔叔","阿姨","表姐"],person_match:"all",
- person_match_before_fixed_scope:"any",content_query:"海边"};
+ content_query:"海边"};
 ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
-assert.deepEqual(search.intentPlan.person_ids,[4,9],"cancelling person scope preserves other explicit person IDs");
-assert.deepEqual(search.intentPlan.person_names,["叔叔","表姐"]);
-assert.equal(search.intentPlan.person_match,"any","cancelling scope restores the parser's original match mode");
-assert.equal(search.intentPlan.person_match_before_fixed_scope,undefined);
+assert.deepEqual(search.intentPlan.person_ids,[4,8,9],"cancelling the independent album preserves every query person");
+assert.deepEqual(search.intentPlan.person_names,["叔叔","阿姨","表姐"]);
+assert.equal(search.intentPlan.person_match,"all","cancelling scope preserves the query's all condition");
+search.selectedScope={kind:"person",person_id:8,name:"阿姨"};
+search.intentPlan={person_ids:[4,8,9],person_match:"all",person_match_before_fixed_scope:"any"};
+ui.renderIntentChips(search.intentPlan);cancelEls.resultIntentScope.children[1].fire("click");
+assert.equal(search.intentPlan,null,"legacy mixed plans are re-parsed on the next explicit search");
 
 search.selectedScope={kind:"collection",collection_id:3,instance_token:"a".repeat(32),revision:2,name:"旅行"};
 search.intentPlan={collection_scope:{collection_id:3,instance_token:"a".repeat(32),revision:2,name:"旅行"},content_query:""};

@@ -328,12 +328,21 @@ def _file_sha256(path: Path) -> str:
 
 
 def _same_content(left: Path, right: Path) -> bool:
+    """Compare complete files in bounded memory, including multi-GB weights.
+
+    Equal lengths (or timestamps) do not prove that a previously installed model
+    is intact. A second prepare-local must repair same-size corruption too.
+    """
     try:
         if left.stat().st_size != right.stat().st_size:
             return False
-        if left.stat().st_size >= 4 * 1024 * 1024:
+        if left.samefile(right):
             return True
-        return left.read_bytes() == right.read_bytes()
+        with left.open("rb") as source, right.open("rb") as installed:
+            while block := source.read(1024 * 1024):
+                if block != installed.read(len(block)):
+                    return False
+            return installed.read(1) == b""
     except OSError:
         return False
 

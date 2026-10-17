@@ -20,6 +20,7 @@ SCENARIOS = (
     "replaced_instance",
     "remove_counts",
     "saved_refresh_failure",
+    "shared_face_write",
 )
 
 NODE_SCRIPT = r"""
@@ -69,7 +70,7 @@ function harness(handler) {
     } };
   let code = fs.readFileSync("src/photo_search/web/persons-albums.js", "utf8");
   code = code.replace('  if (document.readyState === "loading")',
-    '  globalThis.ui = {state, openCollection, openAlbum, loadCollections, loadCollectionFaces, loadCollectionPeople, loadPhotos, backToLibrary, reloadCollectionFaces, removeCollectionFaceSelection};\n  if (document.readyState === "loading")');
+    '  globalThis.ui = {state, openCollection, openAlbum, loadCollections, loadCollectionFaces, loadCollectionPeople, loadPhotos, backToLibrary, reloadCollectionFaces, removeCollectionFaceSelection, refreshAfterPhotoFaceWrite};\n  if (document.readyState === "loading")');
   vm.createContext(context); vm.runInContext(code, context);
   return { ui: context.ui, get, requests };
 }
@@ -177,6 +178,29 @@ const scenarios = {
   },
   async remove_counts() { await removeScenario(false); },
   async saved_refresh_failure() { await removeScenario(true); },
+  async shared_face_write() {
+    const oldPeople=deferred(), oldFaces=deferred(); let peopleReads=0, faceReads=0;
+    const updatedFace={...face(1),assigned_person:{person_id:8,name:"新的归属"},ignore_state:"ACTIVE"};
+    const h=await opened(({url})=>{
+      if(url.includes("/people?")) return ++peopleReads===1 ? oldPeople.promise
+        : response({collection:base,people:[{person_id:8,name:"新的归属",asset_count:2}],has_more:false});
+      if(url.includes("/faces?")) return ++faceReads===1 ? oldFaces.promise : response(facePage(base,[updatedFace]));
+      return response({collection:base});
+    });
+    const oldPeopleLoad=h.ui.loadCollectionPeople(false), oldFacesLoad=h.ui.loadCollectionFaces(false);
+    await h.ui.refreshAfterPhotoFaceWrite(h.ui.state.albumViewSeq);
+    assert.equal(peopleReads,2,"an in-flight member read cannot swallow the post-write refresh");
+    assert.equal(faceReads,2,"refresh static face metadata even when a pre-write read is busy");
+    assert.deepEqual(h.get("pa-collection-faces").children.map(card=>card.faceId),["1"],"assignment changes do not remove a static collection member");
+    assert.match(h.get("pa-collection-faces").children[0].title,/新的归属/);
+    assert.equal(h.ui.state.collection.revision,base.revision,"metadata refresh does not write membership or revision");
+    oldPeople.resolve(response({collection:base,people:[{person_id:7,name:"旧归属",asset_count:3}],has_more:false}));
+    oldFaces.resolve(response(facePage(base,[face(2)])));
+    assert.equal(await oldPeopleLoad,false); assert.equal(await oldFacesLoad,false);
+    assert.deepEqual(h.get("pa-collection-people").children.map(card=>card.personId),[8]);
+    assert.deepEqual(h.get("pa-collection-faces").children.map(card=>card.faceId),["1"]);
+    assert.ok(h.requests.every(request=>request.method==="GET"),"a notification only reads current authoritative state");
+  },
 };
 async function lateMemberRequest(fail) {
   const oldRequest = deferred(), newRequest = deferred();

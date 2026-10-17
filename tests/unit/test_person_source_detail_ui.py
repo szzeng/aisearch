@@ -38,25 +38,35 @@ const context={URLSearchParams,crypto:{randomUUID:()=>"synthetic"},Date,
 let code=fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={boot,preview,state};\n  if (document.readyState === "loading")');
 context.window={location:{search:"",hash:""},addEventListener(){}};
-vm.createContext(context); vm.runInContext(code,context);
+const viewerDom=require("./tests/unit/fixtures/shared_photo_viewer_dom.js");
+viewerDom.install(context,Element);
+vm.createContext(context); vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context); vm.runInContext(code,context);
+const flush=()=>new Promise(setImmediate);
 (async()=>{
-  context.ui.boot(); await context.ui.preview(5);
-  assert.equal(get("pa-face-detail").hidden,false);
-  await get("pa-face-detail").fire("click");
+  context.ui.boot(); await context.ui.preview(5); await flush();
+  assert.equal(context.ui.state.previewUI.faceDetail.hidden,false);
+  await context.ui.state.previewUI.faceDetail.fire("click");
   const post=requests.find(item=>item.url.endsWith("/face-detail"));
   assert.equal(post.options.method,"POST");
   assert.equal(post.options.headers["X-CSRF-Token"],"csrf");
   assert.equal(requests.filter(item=>item.url.endsWith("/face-detail")).length,1);
   assert.equal(requests.filter(item=>item.url==="/api/v1/jobs/44").length,1);
-  assert.equal(get("pa-face-detail").disabled,false);
-  assert.match(get("pa-preview-note").textContent,/可重试/);
-  await get("pa-face-detail").fire("click");
+  assert.equal(context.ui.state.previewUI.faceDetail.disabled,false);
+  assert.match(context.ui.state.previewUI.note.textContent,/可重试/);
+  await context.ui.state.previewUI.faceDetail.fire("click");
   assert.equal(requests.filter(item=>item.url.endsWith("/face-detail")).length,2);
   assert.equal(requests.filter(item=>item.url==="/api/v1/jobs/45").length,1);
-  assert.equal(get("pa-preview-faces").children.length,1);
-  assert.ok(get("pa-preview-faces").children[0].children.some(item=>item.textContent.includes("原图细节结果")));
-  assert.equal(get("pa-face-detail").hidden,true);
-  assert.match(get("pa-preview-note").textContent,/不会自动归组/);
+  await flush();
+  const panel=context.ui.state.previewHandle.panel;
+  viewerDom.all(panel,n=>n.className==="photo-face-manager-toggle")[0].fire("click");
+  const pending=viewerDom.all(panel,n=>n.tag==="details"&&n.className==="photo-face-group"&&n.textContent.includes("待整理 · 1"))[0];
+  pending.open=true; pending.fire("toggle");
+  assert.equal(viewerDom.all(pending,n=>n.className==="photo-face-card").length,1);
+  assert.ok(viewerDom.all(pending,n=>n.tag==="img"&&String(n.src).includes("a".repeat(64))).length);
+  assert.match(context.ui.state.previewUI.note.textContent,/原图细节结果只供人工检查/);
+  assert.equal(context.ui.state.previewUI.faceDetail.hidden,true);
+  assert.equal(requests.filter(item=>item.options&&item.options.method&&item.options.method!=="GET"&&!item.url.endsWith("/face-detail")).length,0,
+    "detail recognition must not automatically assign faces or write person state");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

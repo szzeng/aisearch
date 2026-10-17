@@ -1405,6 +1405,7 @@ class SearchRequestModel(BaseModel):
     contract_version: Literal["p2-contracts.v1"] = "p2-contracts.v1"
     request_id: str = Field(min_length=1, max_length=64)
     text: str | None = Field(default=None, max_length=256)
+    retrieval_mode: Literal["combined", "text"] = "combined"
     profile_id: str | None = Field(default=None, min_length=1, max_length=128)
     space_id: str | None = Field(default=None, min_length=1, max_length=128)
     image_generation_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -1461,6 +1462,7 @@ class SearchResultModel(BaseModel):
 
     contract_version: str
     request_id: str
+    retrieval_mode: Literal["combined", "text"] = "combined"
     search_session_id: str
     profile_id: str | None = None
     image_generation_id: str | None = None

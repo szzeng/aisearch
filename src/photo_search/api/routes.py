@@ -225,7 +225,7 @@ from photo_search.scheduler.projection import (
 from photo_search.search.contracts import FeedbackRequest, SearchRequest
 from photo_search.search.contracts import fail as search_fail
 from photo_search.search.profile import activate_profile, profile_projection
-from photo_search.search.retrieval import SearchScope, scope_condition
+from photo_search.search.retrieval import SearchScope, person_condition, scope_condition
 from photo_search.search.service import (
     _person_authority_base,
     _projection_block,
@@ -2397,7 +2397,8 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
 def _search_request_worker(catalog: Any, envelope: SearchRequest, *, context: ApiContext) -> dict[str, Any]:
     return search_request(
         catalog, envelope, sessions=context.search_sessions,
-        encoder=context.query_encoder(), reranker=context.reranker(),
+        encoder=None if envelope.retrieval_mode == "text" else context.query_encoder(),
+        reranker=None if envelope.retrieval_mode == "text" else context.reranker(),
     )
 
 
@@ -2442,8 +2443,9 @@ def _search_session_time_worker(
         image_generation_id=session.image_generation_id,
         dimension=session.dimension,
     )
-    current_profile = _resolve_profile(catalog, binding_request)
-    current_binding = resolve_request_binding(catalog, binding_request)
+    retrieval_mode = session.extra.get("retrieval_mode", "combined")
+    current_profile = None if retrieval_mode == "text" else _resolve_profile(catalog, binding_request)
+    current_binding = None if retrieval_mode == "text" else resolve_request_binding(catalog, binding_request)
     current_session_binding = (
         None if current_profile is None else current_profile.profile_id,
         None if current_binding is None else current_binding.generation_id,
@@ -2620,11 +2622,17 @@ def _search_session_time_worker(
             ).decode("ascii").rstrip("=")
         return {
             "search_session_id": session.session_id,
+            "retrieval_mode": retrieval_mode,
             "order": "capture_time_desc",
-            "candidate_scope": "current_semantic_candidate_snapshot",
+            "candidate_scope": (
+                "current_text_candidate_snapshot" if retrieval_mode == "text"
+                else "current_semantic_candidate_snapshot"
+            ),
             "total_candidates": len(session.entries),
             "candidates_truncated": bool(session.candidates_truncated),
-            "candidate_limit": 5000,
+            "candidate_limit": (
+                int(session.extra.get("candidate_limit", 5000)) if retrieval_mode == "text" else 5000
+            ),
             "catalog_filter_revision": revision,
             "taken_time_rules_version": time_rules_version,
             "assets": assets,
@@ -2653,6 +2661,19 @@ def _place_aware_search_worker(
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
     original = payload.original_query
+    text_mode = payload.retrieval_mode == "text"
+    if text_mode:
+        SearchRequest(
+            request_id=payload.request_id, retrieval_mode="text", profile_id=payload.profile_id,
+            space_id=payload.space_id, image_generation_id=payload.image_generation_id,
+            dimension=payload.dimension, rerank=payload.rerank,
+        ).validate_retrieval_mode()
+        if payload.intent_plan is not None or any(
+            value is not None and value != original for value in (payload.text, payload.content_query)
+        ):
+            raise ApiError("VALIDATION_ERROR", "文字搜索使用原文，不能同时提交自动搜索计划或改写的查询", status=422)
+        if (payload.place_kind is None) != (payload.place_key is None):
+            raise ApiError("VALIDATION_ERROR", "地点范围需要同时提供类型和标识", status=422)
     kind, key, content = payload.place_kind, payload.place_key, payload.content_query
     selected_scope = payload.search_scope
     if selected_scope is not None:
@@ -2678,7 +2699,7 @@ def _place_aware_search_worker(
 
     coordinator = PersonalSearchCoordinator(service.catalog, service.data_root)
     unified = None
-    if payload.cursor is None and intent_plan is None:
+    if not text_mode and payload.cursor is None and intent_plan is None:
         unified = coordinator.collect(original)
         if (kind is not None and key is not None and unified.get("place_kind") is not None
                 and (kind != unified.get("place_kind") or str(key) != str(unified.get("place_key")))):
@@ -2835,13 +2856,10 @@ def _place_aware_search_worker(
         raise ApiError(INVALID_CURSOR, "搜索计划版本已过期，请重新搜索", status=409)
     if intent_plan is not None:
         try:
-            plan_for_validation = intent_plan
-            if (selected_scope is not None and selected_scope.get("kind") == "person"
-                    and intent_plan.get("person_match_before_fixed_scope") in {"any", "all"}):
-                plan_for_validation = dict(intent_plan)
-                plan_for_validation["person_match"] = intent_plan["person_match_before_fixed_scope"]
+            if "person_match_before_fixed_scope" in intent_plan:
+                raise ValueError("人物范围计划已更新，请重新搜索")
             intent_plan = coordinator.validate(
-                plan_for_validation, original_query=original, parsed=unified,
+                intent_plan, original_query=original, parsed=unified,
                 continuation=payload.cursor is not None,
             )
         except ValueError as error:
@@ -2893,9 +2911,11 @@ def _place_aware_search_worker(
         query_source = str(intent_plan.get("collection_query") or "")
         if intent_plan.get("place_kind") is not None:
             kind, key = intent_plan.get("place_kind"), intent_plan.get("place_key")
-    elif payload.cursor is not None and intent_plan is None and not (kind is not None and key is not None):
+    elif not text_mode and payload.cursor is not None and intent_plan is None and not (kind is not None and key is not None):
         raise ApiError(INVALID_CURSOR, "合集搜索计划缺失，请重新搜索", status=409)
-    if payload.place_cancelled:
+    if text_mode:
+        query_text = original.strip() or None
+    elif payload.place_cancelled:
         kind = key = None
         if client_plan_supplied and intent_plan is not None:
             intent_plan["place_kind"] = intent_plan["place_key"] = None
@@ -2973,7 +2993,7 @@ def _place_aware_search_worker(
             place_source = place_selection.get("source")
         place_block = {"kind": kind, "key": str(key), "name": album["name"], "parent": album.get("parent", ""), "origin": album.get("origin"), "source": place_source, "catalog_filter_revision": revision[0], "suggestion_revision": revision[1], "package_revision": revision[2]}
     # A continuation reuses the structured first-page plan and never re-parses relative dates.
-    if payload.cursor is None and intent_plan is None:
+    if not text_mode and payload.cursor is None and intent_plan is None:
         from photo_search.search.natural_intent import parse_natural_intent
 
         natural = parse_natural_intent(query_text or "", connection=service.catalog.connection)
@@ -3032,6 +3052,9 @@ def _place_aware_search_worker(
     elif intent_plan is not None and not payload.place_cancelled:
         query_text = (intent_plan.get("content_query") or "").strip() or None
     resolved_search_scope = None
+    fixed_person_sql = None
+    fixed_person_parameters: tuple[Any, ...] = ()
+    fixed_person_revision = None
     if selected_scope is not None:
         selected_kind = str(selected_scope.get("kind"))
         if selected_kind == "person":
@@ -3040,30 +3063,20 @@ def _place_aware_search_worker(
             except (TypeError, ValueError, OverflowError) as error:
                 raise ApiError(INVALID_CURSOR, "人物搜索范围无效，请重新选择", status=409) from error
             person_row = service.catalog.read_one(
-                "SELECT person_id, name FROM persons WHERE person_id=? AND merged_into IS NULL",
+                "SELECT person_id, name, (SELECT revision FROM catalog_filter_revision "
+                "WHERE revision_id=1) AS filter_revision "
+                "FROM persons WHERE person_id=? AND merged_into IS NULL",
                 (selected_person_id,),
             )
             if selected_person_id < 1 or person_row is None:
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "人物身份已变化，请重新选择", status=409)
-            if intent_plan is None:
-                intent_plan = {"original_query": original, "content_query": query_text,
-                               "person_ids": [], "person_match": "any"}
-            base_person_match = intent_plan.get(
-                "person_match_before_fixed_scope", intent_plan.get("person_match", "any")
+            # The album is an independent AND condition. Preserve the query's ANY/ALL
+            # group: A's album plus (B OR C) means A AND (B OR C), never A AND B AND C.
+            fixed_person_sql, fixed_parameters = person_condition(
+                SearchScope.build(person_ids=[selected_person_id]),
             )
-            if base_person_match not in {"any", "all"}:
-                base_person_match = "any"
-            intent_plan["person_match_before_fixed_scope"] = base_person_match
-            people = list(dict.fromkeys([int(value) for value in intent_plan.get("person_ids", [])]
-                                        + [selected_person_id]))
-            intent_plan["person_ids"] = people
-            intent_plan["person_names"] = list(dict.fromkeys(
-                [str(value) for value in intent_plan.get("person_names", [])]
-                + [str(person_row["name"] or "未命名人物")]))
-            if len(people) > 1:
-                # A selected album is a fixed conjunct. Another explicit person condition
-                # therefore narrows it to shared photos instead of changing the fixed scope.
-                intent_plan["person_match"] = "all"
+            fixed_person_parameters = tuple(fixed_parameters)
+            fixed_person_revision = int(person_row["filter_revision"])
             resolved_search_scope = {"kind": "person", "person_id": selected_person_id,
                                      "name": str(person_row["name"] or "未命名人物")}
         elif selected_kind == "collection":
@@ -3119,6 +3132,13 @@ def _place_aware_search_worker(
     search_time_sql, search_time_parameters, search_time_identity = _search_time_condition(
         service.catalog, intent_plan,
     )
+    if fixed_person_sql is not None:
+        search_time_sql = (
+            f"({search_time_sql}) AND ({fixed_person_sql})" if search_time_sql is not None
+            else fixed_person_sql
+        )
+        search_time_parameters += fixed_person_parameters
+        search_time_identity += ("fixed_person", selected_person_id)
     values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope"})
     values["text"] = query_text
     if intent_plan is not None:
@@ -3146,9 +3166,10 @@ def _place_aware_search_worker(
             time_identity=search_time_identity,
         )
         result["place_parse_notice"] = parse_notice
-        result["intent_plan"] = intent_plan
+        result["intent_plan"] = None if text_mode else intent_plan
         result["search_scope"] = resolved_search_scope
         _verify_person_collection(service.catalog, collection_scope)
+        _verify_fixed_person_revision(service.catalog, fixed_person_revision)
         return result
     if execution_path == "filter_only":
         result = _filter_only_search_page(
@@ -3160,17 +3181,19 @@ def _place_aware_search_worker(
         result["original_query"] = original
         result["content_query"] = None
         result["place_parse_notice"] = parse_notice
-        result["intent_plan"] = intent_plan
+        result["intent_plan"] = None if text_mode else intent_plan
         result["place_scope"] = None
         result["collection_scope"] = collection_scope
         result["search_scope"] = resolved_search_scope
         _verify_person_collection(service.catalog, collection_scope)
+        _verify_fixed_person_revision(service.catalog, fixed_person_revision)
         return result
     collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
     session_revision = tuple(revision or ()) + collection_revision + tuple(search_time_identity)
     result = search_request(
         service.catalog, envelope, sessions=context.search_sessions,
-        encoder=context.query_encoder(), reranker=context.reranker(),
+        encoder=None if text_mode else context.query_encoder(),
+        reranker=None if text_mode else context.reranker(),
         album_asset_ids=None if place_membership_sql is not None else album_ids,
         album_scope_revision=session_revision or None,
         collection_id=None if collection_scope is None else collection_scope["collection_id"],
@@ -3183,7 +3206,7 @@ def _place_aware_search_worker(
     result["original_query"] = original
     result["content_query"] = query_text
     result["place_parse_notice"] = parse_notice
-    result["intent_plan"] = intent_plan
+    result["intent_plan"] = None if text_mode else intent_plan
     result["collection_scope"] = collection_scope
     result["search_scope"] = resolved_search_scope
     if collection_scope is not None:
@@ -3199,7 +3222,14 @@ def _place_aware_search_worker(
         )) != tuple(revision[:3]):
             raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place scope changed; restart the search", status=409)
     _verify_person_collection(service.catalog, collection_scope)
+    _verify_fixed_person_revision(service.catalog, fixed_person_revision)
     return result
+
+
+def _verify_fixed_person_revision(catalog: Any, expected_revision: int | None) -> None:
+    """The fixed album identity was resolved before the retrieval's own snapshot."""
+    if expected_revision is not None and place_revision.read_filter_revision(catalog.connection) != expected_revision:
+        raise ApiError(CATALOG_FILTER_REVISION_STALE, "人物范围已变化，请重新搜索", status=409)
 
 
 def _verify_person_collection(catalog: Any, collection_scope: dict[str, Any] | None) -> None:
@@ -3275,6 +3305,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
         additional_condition_parameters=additional_condition_parameters,
     )
     fingerprint_payload = json.dumps({
+        "retrieval_mode": request.retrieval_mode,
         "source_id": scope.source_id, "availability": scope.availability,
         "place_ids": list(scope.place_ids), "include_descendants": scope.include_descendants,
         "place_state": scope.place_state, "person_ids": list(scope.person_ids),
@@ -3317,6 +3348,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
             for index, asset_id in enumerate(ids)]
     return {
         "contract_version": "p2-contracts.v1", "request_id": request.request_id,
+        "retrieval_mode": request.retrieval_mode,
         "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
         "space_id": None, "dimension": None,
         "catalog_filter_revision": int(base.filter_revision),
@@ -3360,8 +3392,7 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         additional_condition_parameters=additional_condition_parameters,
         collection_id=None if person_collection is None else person_collection["collection_id"],
     )
-    filter_fingerprint = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": scope.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size}, sort_keys=True, separators=(",", ":"))
-    filter_payload = json.dumps({"source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": request.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size, "person_collection": person_collection, "time_identity": list(time_identity)}, sort_keys=True, separators=(",", ":"))
+    filter_payload = json.dumps({"retrieval_mode": request.retrieval_mode, "source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": request.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size, "person_collection": person_collection, "time_identity": list(time_identity)}, sort_keys=True, separators=(",", ":"))
     filter_fingerprint = hashlib.sha256(filter_payload.encode("utf-8")).hexdigest()
     revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint, None if person_collection is None else person_collection["instance_token"], None if person_collection is None else person_collection["revision"])
     session_id = f"place-album:{kind}:{key}"
@@ -3401,6 +3432,7 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
     hits = [{"asset_id": asset_id, "rank": offset + index + 1, "score": None, "matched_by": {"filter": offset + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
     return {
         "contract_version": "p2-contracts.v1", "request_id": request.request_id,
+        "retrieval_mode": request.retrieval_mode,
         "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
         "space_id": None, "dimension": None,
         "catalog_filter_revision": int(collection["catalog_filter_revision"]),

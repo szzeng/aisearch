@@ -91,8 +91,8 @@ def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or
         assert {hit["asset_id"] for hit in person_scope.json()["hits"]} <= {
             seeded["shared.jpg"]["asset_id"], seeded["ai-only.jpg"]["asset_id"]}
 
-        # Fixed-person scoping temporarily changes a multi-person OR relation to an
-        # intersection; preserve the pre-scope mode so cancelling that identity restores it.
+        # Fixed-person scoping is a separate conjunction; the query's OR group survives
+        # both a repeated search and cancellation of the fixed album scope.
         person_scope_payload = {
             "request_id": "fixed-person-match-mode", "original_query": "张三或李四的照片",
             "search_scope": {"kind": "person", "person_id": first}, "page_size": 10,
@@ -102,15 +102,19 @@ def test_collection_connectors_keep_scope_content_and_refuse_multi_collection_or
         )
         assert person_match.status_code == 200, person_match.text
         returned_plan = person_match.json()["intent_plan"]
-        assert returned_plan["person_match"] == "all"
-        assert returned_plan["person_match_before_fixed_scope"] == "any"
+        assert returned_plan["person_match"] == "any"
+        assert "person_match_before_fixed_scope" not in returned_plan
+        assert returned_plan["person_ids"] == [first, second]
+        assert {hit["asset_id"] for hit in person_match.json()["hits"]} == {
+            seeded["shared.jpg"]["asset_id"], seeded["ai-only.jpg"]["asset_id"],
+        }
 
         person_match_next = await client.post("/api/v1/search/place-aware", headers=headers, json={
             **person_scope_payload, "request_id": "fixed-person-match-mode-next",
             "intent_plan": returned_plan,
         })
         assert person_match_next.status_code == 200, person_match_next.text
-        assert person_match_next.json()["intent_plan"]["person_match_before_fixed_scope"] == "any"
+        assert person_match_next.json()["intent_plan"]["person_match"] == "any"
 
         ai_scope_state = catalog.read_one(
             "SELECT instance_token, revision, name FROM person_collections WHERE collection_id=?",

@@ -1,14 +1,49 @@
 # Photo Search
 
 本地个人照片搜索与整理工具，支持增量扫描建库、中文文字搜索、以图搜图，
-以及按人物、地点和拍摄时间浏览。照片、模型和索引保存在本机；模型须提前安装。
-
-使用 Python 3.12.10 和 `uv`。安装依赖后，用 `uv run photo-search --data-root D:\path\to\PhotoSearchData`
-启动服务，并在浏览器打开启动器给出的一次性会话链接。数据目录应位于安装目录之外。
+以及按人物、地点和拍摄时间浏览。照片、模型和索引保存在本机。
 
 开发与验证入口：[`当前状态`](docs/development-status.md)、
-[`日常测试`](docs/testing.md)、[`性能与可靠性改动`](docs/reports/P4-UPSTREAM-MERGE-20261016.md)。
+[`日常测试`](docs/testing.md)、[`搜索质量与本地产品改进`](docs/reports/P4-SEARCH-QUALITY.md)。
 当前代码和验证仍在迭代，完整验收范围与未完成项以状态页和对应报告为准。
+
+## 安装与启动（Windows 源码版）
+
+先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，然后在仓库根目录的
+PowerShell 中执行。项目要求 **Python 3.12.10**；下面将依赖缓存和 uv 下载的 Python
+保留在项目内，依赖环境默认建在 `.venv/`。
+
+```powershell
+$env:UV_CACHE_DIR = "$PWD\.uv-cache"
+$env:UV_PYTHON_INSTALL_DIR = "$PWD\.tmp\uv-python"
+uv sync --locked --python 3.12.10
+```
+
+当前依赖包含 CUDA 版 PyTorch 和 ONNX Runtime，首次安装体积较大；安装依赖不会下载模型权重。
+将下面的路径替换为实际使用的数据目录，再启动服务。正式使用时，数据目录应位于安装目录之外；
+已有图库应继续使用原数据目录，新目录不会自动继承原来的模型或索引。
+
+```powershell
+uv --cache-dir .uv-cache run photo-search --data-root "D:\path\to\PhotoSearchData"
+```
+
+默认服务地址是 `127.0.0.1:8000`。在浏览器打开启动器本次打印的**一次性会话链接**，
+不要只打开裸地址或重复使用旧链接。首次使用时，在“图库管理”的“新增来源”中填写照片文件夹，
+点击“注册来源”，再点该来源的“开始建库”。后续用“同步全部变化”处理新增或改动的文件。
+画面搜索需要提前准备模型，详见下方模型说明；文字识别完成后，图片里的文字才可被搜索到。
+
+## 如何选择搜索方式
+
+| 方式 | 适用场景与实际行为 |
+| --- | --- |
+| 综合搜索（默认） | 描述画面，例如“2023年张三在济南拍的日落”。结合画面语义和文字检索；识别到的时间、人物和地点显示为可取消条件。画面语义需要可用模型和索引。 |
+| 按文字找 | 查文件名、已归属地点名称和已识别的图片文字，适合截图、票据、编号。查询中的姓名、地名和年份保留为文字，不自动变成筛选条件；不调用图像模型。 |
+| 以图搜图 | 上传图片，按画面相似程度检索；需要可用模型和索引。可使用来源、可用性和地点筛选，不支持人物或拍摄时间筛选。 |
+
+“按文字找”使用已有文字索引，不会自动纠正 OCR 错字；尚未识别的图片文字无法命中。
+引号可以限定连续短语，但匹配仍经过文字规范化，并非逐字节比较。备注、标签、自动图片描述
+目前不是已开放的文字搜索来源。显式选择的人物、来源、地点、时间等筛选仍会约束文字结果；
+不填查询词时，也可仅用筛选条件浏览照片。
 
 ## 仓库目录与本地文件
 
@@ -16,7 +51,7 @@
 | --- | --- |
 | `src/`、`tests/`、`tools/` | 应用源码、回归测试、开发与打包工具；包括其中的 `models/`、`runtime/` 和测试数据目录，应纳入 Git。 |
 | `docs/` | 架构决策、使用说明和简洁的最终变更报告；原始测试/审查输出不默认提交。 |
-| `.tmp/` | 按任务命名的隔离环境、合成数据、原始日志和恢复副本，全部忽略。本机 Python 环境也在这里，清理前先检查引用与运行进程。 |
+| `.venv/`、`.tmp/` | 依赖环境，以及按任务命名的隔离环境、合成数据、原始日志和恢复副本，全部忽略；清理前先检查引用与运行进程。 |
 | `.uv-cache/`、`.pytest-tmp/`、`.pytest_cache/`、`.ruff_cache/` | 依赖和测试缓存，全部忽略；相关工具退出后可按需清理。 |
 | `test-results/` | JUnit、测量 JSON、浏览器截图等原始输出，默认忽略；CI 中作为构建附件保存。已有上游跟踪的历史证据保留。 |
 | `PhotoSearchData/` | 本机已准备的模型、地点包和设置，全部忽略；不是源码。正式使用时，应用数据目录应位于安装目录之外。 |
@@ -44,7 +79,8 @@ uv --cache-dir .uv-cache run python -m photo_search.ocr.cli recognize --data-roo
 
 ## Semantic providers (P4-Embedding-Arch)
 
-Text search and uploaded-image search are served by exactly **one active model**. Two model
+Semantic search and uploaded-image search are served by exactly **one active model**;
+literal text search (按文字找) does not use it. Two model
 families ship today, with legacy and orientation-corrected providers. Each provider has its own
 representation space, index generation and search profile, and a
 512-dimensional vector from one of them is never mixed with the other:
@@ -68,17 +104,21 @@ index generation, but no model download or duplicate weight installation. They d
 existing library automatically. Use the build/select commands below with the chosen `-exif-v2`
 provider, and retain the old profile if a return to its previous behavior is needed.
 
+下面以 Qwen 为例；`--source` 要换成已下载并解压、与仓库固定清单相符的模型目录，
+`prepare-local` 只校验并复制本地文件。`build-candidate` 默认每次最多处理 5000 张，
+大图库需要重复执行以继续构建；覆盖当前图库后，才能切换到输出中的实际 `profile_id`。
+
 ```powershell
-uv run photo-search embedding list --data-root D:\path\to\PhotoSearchData
+uv --cache-dir .uv-cache run photo-search embedding list --data-root D:\path\to\PhotoSearchData
 
-uv run photo-search embedding prepare-local --provider qwen3-vl-embedding-2b `
-  --source tmp/qwen-speed-model --data-root D:\path\to\PhotoSearchData
+uv --cache-dir .uv-cache run photo-search embedding prepare-local --provider qwen3-vl-embedding-2b `
+  --source .tmp/downloads/qwen3-vl-embedding-2b --data-root D:\path\to\PhotoSearchData
 
-uv run photo-search embedding build-candidate --provider qwen3-vl-embedding-2b `
+uv --cache-dir .uv-cache run photo-search embedding build-candidate --provider qwen3-vl-embedding-2b `
   --data-root D:\path\to\PhotoSearchData
 
 # Publish the candidate: stop the service and every other writer of this data root first.
-uv run photo-search embedding select-profile --profile semantic-image-gen-XXXXXXXX `
+uv --cache-dir .uv-cache run photo-search embedding select-profile --profile semantic-image-gen-XXXXXXXX `
   --data-root D:\path\to\PhotoSearchData --stopped
 ```
 

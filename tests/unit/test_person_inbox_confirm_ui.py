@@ -157,6 +157,8 @@ const descendants=e=>[e,...e.children.flatMap(descendants)];
  const flat=flatHost.children[0],flatBefore=calls.length;await flat.confirmButton.fire('click');
  assert(flat.confirmButton.textContent.includes('✓'));assert.equal(calls.length,flatBefore+1);
  await ui.loadInbox(false);assert.equal(ui.state.inboxConfirmationsPending,false);
+ // The ignored candidate list now has its own active directory.
+ ui.state.libraryView='ignored';ui.state.ignoredObject='faces';
  ui.state.inboxHiddenVisible=true;hiddenGroupRefreshFail=true;
  const expanded=ui.renderInboxGroup(group(candidate,faces[0]),'all',true);expanded.open=true;
  get('inbox-hidden-cards').replaceChildren(expanded);

@@ -355,14 +355,14 @@ class Element {
 }
 const window={innerHeight:800,localStorage:{getItem(){return null;}},addEventListener(){},removeEventListener(){},scrollBy(){},requestAnimationFrame:fn=>fn()};
 const document={cookie:"",createElement:()=>new Element()};
-let releaseSummary,periodCalls=0,pageCalls=0,pageRevision=1,periodRevision=2;const fetch=async path=>String(path).includes("/periods")
+let releaseSummary,periodCalls=0,pageCalls=0,pageRevision=1,periodRevision=2,total=1;const paths=[];const fetch=async path=>(paths.push(String(path)),String(path).includes("/periods"))
   ? {ok:true,json:()=>{periodCalls++;return periodCalls===1
-    ? new Promise(resolve=>{releaseSummary=()=>resolve({years:[],months:[],counts:{effective_total:1,trusted:1,unknown:0,pending:0},catalog_filter_revision:periodRevision});})
-    : Promise.resolve({years:[],months:[],counts:{effective_total:1,trusted:1,unknown:0,pending:0},catalog_filter_revision:periodRevision});}}
-  : {ok:true,json:async()=>{pageCalls++;return{assets:[{asset_id:1,anchor:"a",group_key:"2022-01-01",date_state:"trusted"}],next_cursor:null,catalog_filter_revision:pageRevision};}};
+    ? new Promise(resolve=>{releaseSummary=()=>resolve({years:[],months:[],counts:{effective_total:total,trusted:total,unknown:0,pending:0},catalog_filter_revision:periodRevision});})
+    : Promise.resolve({years:[],months:[],counts:{effective_total:total,trusted:total,unknown:0,pending:0},catalog_filter_revision:periodRevision});}}
+  : {ok:true,json:async()=>{pageCalls++;return{assets:total?[{asset_id:1,anchor:"a",group_key:"2022-01-01",date_state:"trusted"}]:[],next_cursor:null,catalog_filter_revision:pageRevision};}};
 const context={window,document,fetch,URLSearchParams,AbortController,URL,Promise,console,CSS:{escape:String},setTimeout,clearTimeout};
 vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-timeline.js","utf8"),context);
-const host=new Element();context.window.PhotoTimeline.mount({host,scope:{kind:"all"}});
+const host=new Element();const timeline=context.window.PhotoTimeline.mount({host,scope:{kind:"all"}});
 const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();await new Promise(resolve=>setTimeout(resolve,0));};
 (async()=>{await settle();assert.equal(typeof releaseSummary,"function");releaseSummary();await settle();const summary=host.querySelector(".photo-timeline__summary-status"),summaryRetry=host.querySelector(".photo-timeline__summary-retry"),pageStatus=host.querySelector(".photo-timeline__status");
   assert.ok(summary.textContent.length>0);assert.equal(summaryRetry.hidden,false,"revision mismatch leaves summary retry available");
@@ -371,6 +371,20 @@ const settle=async()=>{for(let i=0;i<8;i++)await Promise.resolve();await new Pro
   pageRevision=2;periodRevision=2;summaryRetry.fire("click");await settle();
   assert.equal(pageCalls,2,"revision mismatch retry refreshes the photo page");assert.equal(periodCalls,2,"revision mismatch retry refreshes the summary");
   assert.equal(summaryRetry.hidden,true,"aligned retry clears the summary retry state");assert.match(all.textContent,/· 1$/,"aligned revision restores trusted counts");
+  const year=host.querySelector(".photo-timeline__year"),month=host.querySelector(".photo-timeline__month");
+  year.value="2022";month.value="1";
+  host.children[0].children.find(control=>control.textContent==="筛选年月").fire("click");await settle();
+  const beforePages=pageCalls,beforePeriods=periodCalls;
+  pageRevision=3;periodRevision=3;total=0;
+  await timeline.refresh();await settle();
+  assert.equal(pageCalls,beforePages+1,"confirmed membership writes re-read the photo page");
+  assert.equal(periodCalls,beforePeriods+2,"refresh reads scope totals and selected-year months");
+  assert.equal(summaryRetry.hidden,true,"fresh empty album has no stale-summary warning");
+  assert.match(summary.textContent,/当前范围 0 张/);assert.match(all.textContent,/· 0$/);
+  assert.equal(host.querySelectorAll(".photo-timeline__card").length,0);
+  const lastPage=new URL(paths.filter(path=>path.includes("/assets?")).at(-1),"http://local");
+  assert.equal(lastPage.searchParams.get("year"),"2022");assert.equal(lastPage.searchParams.get("month"),"1");
+
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

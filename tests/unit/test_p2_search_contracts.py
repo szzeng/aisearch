@@ -54,6 +54,7 @@ def refusal(payload: dict[str, object]) -> CatalogError:
 def test_a_minimal_request_takes_the_documented_defaults() -> None:
     request = SearchRequest.from_envelope(minimal())
     assert request.request_id == "req-1"
+    assert request.retrieval_mode == "combined"
     assert request.text is None and request.profile_id is None
     assert request.availability == "any" and request.place_state == "any"
     assert request.include_descendants is True
@@ -117,6 +118,27 @@ def test_place_ids_are_deduplicated_and_the_request_round_trips() -> None:
     )
     assert request.place_ids == (3, 1)
     assert SearchRequest.from_envelope(request.to_envelope()) == request
+
+
+@pytest.mark.parametrize("conflict", [
+    {"profile_id": "profile"}, {"space_id": "space"},
+    {"image_generation_id": "generation"}, {"dimension": 3}, {"rerank": True},
+])
+def test_text_mode_rejects_semantic_options(conflict: dict[str, object]) -> None:
+    error = refusal(minimal(retrieval_mode="text", **conflict))
+    assert error.code == VALIDATION_ERROR
+    assert error.details["conflicting_fields"] == list(conflict)
+
+
+def test_text_mode_round_trips_and_old_results_default_to_combined() -> None:
+    request = SearchRequest.from_envelope(minimal(text="深圳", retrieval_mode="text"))
+    assert SearchRequest.from_envelope(request.to_envelope()) == request
+    assert refusal(minimal(retrieval_mode="unknown")).code == VALIDATION_ERROR
+    result = dataclasses.replace(frozen_result(), retrieval_mode="text")
+    assert SearchResult.from_envelope(result.to_envelope()) == result
+    old_result = result.to_envelope()
+    old_result.pop("retrieval_mode")
+    assert SearchResult.from_envelope(old_result).retrieval_mode == "combined"
 
 
 def frozen_result() -> SearchResult:

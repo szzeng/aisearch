@@ -283,9 +283,17 @@ def resolve_binding(
 
 
 def scope_condition(
-    connection: sqlite3.Connection, scope: SearchScope, *, alias: str = "a"
+    connection: sqlite3.Connection,
+    scope: SearchScope,
+    *,
+    alias: str = "a",
+    bounded_candidates: bool = False,
 ) -> tuple[str, list[Any]]:
-    """One SQL predicate over ``<alias>.asset_id`` plus its bound parameters."""
+    """One SQL predicate over ``<alias>.asset_id`` plus its bound parameters.
+
+    ``bounded_candidates`` is only for rechecking an explicit, small asset-ID list.
+    Recall and whole-library counts retain the set-based access path by default.
+    """
     conditions: list[str] = []
     parameters: list[Any] = []
     if scope.album_asset_ids is not None:
@@ -303,7 +311,7 @@ def scope_condition(
         parameters.extend(scope.additional_condition_parameters)
     if scope.collection_id is not None:
         collection_sql, collection_parameters = collection_condition(
-            scope.collection_id, alias=alias
+            scope.collection_id, alias=alias, bounded_candidates=bounded_candidates
         )
         conditions.append(collection_sql)
         parameters.extend(collection_parameters)
@@ -314,10 +322,18 @@ def scope_condition(
         # location of that source per asset. Both forms select exactly the assets that have
         # a location in that source, and ``file_locations.asset_id`` may be NULL, which
         # ``IN`` treats the same way ``EXISTS ... = `` does (a NULL never matches).
-        conditions.append(
-            f"{alias}.asset_id IN (SELECT l.asset_id FROM file_locations AS l "
-            "WHERE l.source_id = ?)"
-        )
+        if bounded_candidates:
+            # Force an asset probe: selecting source_id first would rescan a potentially
+            # large source for every candidate, even when rechecking only one page.
+            conditions.append(
+                "EXISTS (SELECT 1 FROM file_locations AS l INDEXED BY idx_file_locations_asset "
+                f"WHERE l.asset_id = {alias}.asset_id AND l.source_id = ?)"
+            )
+        else:
+            conditions.append(
+                f"{alias}.asset_id IN (SELECT l.asset_id FROM file_locations AS l "
+                "WHERE l.source_id = ?)"
+            )
         parameters.append(int(scope.source_id))
     photo_sql, photo_parameters = photo_asset_sql(source_id=scope.source_id, asset_alias=alias)
     conditions.append(photo_sql)
@@ -332,7 +348,9 @@ def scope_condition(
             "NOT EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = "
             f"{alias}.asset_id AND l.availability = 'PRESENT')"
         )
-    person_sql, person_parameters = person_condition(scope, alias=alias)
+    person_sql, person_parameters = person_condition(
+        scope, alias=alias, bounded_candidates=bounded_candidates
+    )
     if person_sql != "1":
         conditions.append(person_sql)
         parameters.extend(person_parameters)
@@ -367,7 +385,9 @@ def capture_condition(
     return time_read.capture_predicate(connection, scope.capture, alias=alias)
 
 
-def person_condition(scope: SearchScope, *, alias: str = "a") -> tuple[str, list[Any]]:
+def person_condition(
+    scope: SearchScope, *, alias: str = "a", bounded_candidates: bool = False
+) -> tuple[str, list[Any]]:
     """ADR-0009 §3: the photo-level person predicate over ``<alias>.asset_id``.
 
     A photo belongs to a person exactly when it has at least one *effective member face* of
@@ -385,11 +405,23 @@ def person_condition(scope: SearchScope, *, alias: str = "a") -> tuple[str, list
     re-scanned that person's faces per asset. The selected photo set is identical - a photo
     matches exactly when it has at least one effective member face of that person - and
     ``faces.asset_id`` is ``NOT NULL``, so ``IN`` and ``EXISTS`` cannot disagree.
+    A bounded result recheck instead pins the asset-first indexes and join order; it
+    never materialises a person's whole photo set just to validate a page of IDs.
     """
     if not scope.person_ids:
         return "1", []
 
     def exists(person_parameter: str) -> str:
+        if bounded_candidates:
+            # The caller restricts outer assets to a small ID list. Probe their faces
+            # first, then the unique effective link, rather than materialising all
+            # photographs of the requested people again for every result page.
+            return (
+                "EXISTS (SELECT 1 FROM faces AS f INDEXED BY idx_faces_asset "
+                "CROSS JOIN face_person_links AS l INDEXED BY ux_face_person_links_effective "
+                f"WHERE f.asset_id = {alias}.asset_id AND l.face_id = f.face_id AND "
+                f"l.person_id {person_parameter} AND {MEMBER_PREDICATE})"
+            )
         return (
             f"{alias}.asset_id IN (SELECT f.asset_id FROM face_person_links AS l "
             "JOIN faces AS f ON f.face_id = l.face_id WHERE "
