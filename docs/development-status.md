@@ -1,11 +1,13 @@
 # Development status
 
-## Current: P4-PHOTO-FACE-MANAGE-A — 实现与定向验收完成，Luna High 复核无阻塞发现
+## Current: 搜索质量与本地产品完善已验证
 
-本任务从最新同步后的基线 74cfcbd 开始，起始工作树干净。变更涵盖单照片人脸批量读取、共享 viewer 管理面板、人物与搜索入口复用，以及直接受影响测试；没有 schema 或权威写协议变更。
+2026-10-17，分支 `codex/search-quality`，已合流远端 `4ed7e9d`（最后两项仅新增收藏设计卡）。用户已重新授权提交、推送并新建PR；PR #6保持关闭。继续复用[任务卡](tasks/P4-SEARCH-QUALITY.md)和[报告](reports/P4-SEARCH-QUALITY.md)；用户允许按实际收益/成本调整技术栈与架构。
 
-定向 UI/合集集 25 passed，exit 0；JUnit test-results/P4-PHOTO-FACE-MANAGE-A-unit-final-r6.xml。受影响人物与 face-control 集成集 50 passed，exit 0；JUnit test-results/P4-PHOTO-FACE-MANAGE-A-integration-final-r2.xml。Node syntax、Python py_compile、受影响 Ruff 与 git diff --check 均通过。SQL 查询计数在 1/20/50 张脸输入间保持相等。
+本轮新增不依赖图像模型的“按文字找”；修复固定人物相册与ANY/ALL筛选漏图、整理后照片/头像/日期统计不同步、搜索详情返回和跨页预览问题。候选复核改为按照片ID查索引；30万合成记录配对中，来源＋人物首次查询1064→695ms、续页188→4.6ms；追加合集优化实测约1121→790ms、续页195→3.75ms。合集对照存在系统波动，不承诺精确加速比；结果ID/顺序一致。SQLite及默认视觉模型保留是实测取舍，不是固定选型限制。
 
-内置浏览器在隔离合成数据上完成普通照片管理/单脸暂时忽略/返回列表，以及人物相册共享管理与封面选择路径。未访问真实照片库；没有可导出的截图文件。未在浏览器单独运行搜索预览、合集或恢复按钮；搜索/合集由 UI 测试覆盖，恢复由 face-control API/lifecycle 集成覆盖。Luna High 独立复核无阻塞发现；范围及未验项见[任务报告](reports/P4-PHOTO-FACE-MANAGE-A.md)。
+上一轮受影响后端/UI共894节点组合通过、内置浏览器9项观察通过；未变人物后台合流102项证据复用。追加23项候选/57项合集消费者/28项模型提供方共108个不同节点通过，与上一轮存在重叠，不相加冒充全仓回归。修复模型安装跳过同大小损坏权重的问题；候选测试改用独立模板副本，23项实测1.48秒；README/测试入口改为可复用安装说明。Ruff/diff检查及独审通过，原失败保留并闭合。JUnit、退出码、配对测量和身份核对留在忽略的 `test-results/peer-search-20261016/`，追加入口为 `local-polish-verification.json`。独审按实际代理执行，未冒称指定模型。
 
-上一任务 P4-PERSON-ORGANIZE-UX-CLEANUP 的验收记录仍保留于[原任务报告](reports/P4-PERSON-ORGANIZE-UX-CLEANUP.md)；其既有 PENDING 项不由本任务关闭。
+同类项目调研及固定600图实验已完成：双模型标准化融合有质量收益但尚未验证6GB显存完整成本；用户批准下载的SigLIP2在453条中文确认查询Top1/Top5为62.03%/88.08%，低于现有CLIP/Qwen，不替换默认。模型、图片和向量留在项目数据/忽略目录。
+
+本轮未访问真实图库，不代表真实图库精度或正式发行资格。[人物整理卡](tasks/P4-PERSON-ORGANIZE-UX-CLEANUP.md)、[合流余项卡](tasks/P4-UPSTREAM-REVIEW-REMAINDER.md)中的既有双页面版本冲突及未单独浏览器检查的合集管理等范围仍PENDING；不以本轮搜索与单张人脸验证代替。

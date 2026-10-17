@@ -70,7 +70,7 @@ const face=(id,suggestion)=>({face_id:id.repeat(64),asset_id:1,thumbnail_url:"/a
   suggestions:suggestion?[{person_id:9,name:"候选",thumbnail_url:null}]:[]});
 (async()=>{
   ui.state.operation={operation_id:"old",operation_revision:1,changed:true};
-  ui.state.organize=true;
+  ui.state.libraryView="faces";ui.state.organize=true;
   ui.state.undoTimer=testSetTimeout(()=>{},10000);get("undo-bar").hidden=false;
   const previousUndoTimer=ui.state.undoTimer;
   for(const f of [face("a",false),face("b",true)]){

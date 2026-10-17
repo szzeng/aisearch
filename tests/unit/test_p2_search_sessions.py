@@ -83,6 +83,7 @@ def test_query_hash_binds_the_conditions_but_not_the_profile() -> None:
     assert first != query_hash(**{**base, "page_size": 10})  # type: ignore[arg-type]
     assert first != query_hash(**{**base, "place_ids": (2,)})  # type: ignore[arg-type]
     assert first != query_hash(**{**base, "text": None})  # type: ignore[arg-type]
+    assert first != query_hash(**{**base, "retrieval_mode": "text"})  # type: ignore[arg-type]
 
 
 def test_a_cursor_is_opaque_bound_and_never_a_server_error() -> None:

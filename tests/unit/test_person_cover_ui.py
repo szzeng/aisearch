@@ -51,6 +51,8 @@ const context = {
         thumbnail_url:"/api/v1/faces/"+chosen+"/thumbnail"};
       return {ok:true,json:async () => ({changed:true,person})};
     }
+    if (url.includes("/face-review")) return {ok:true,json:async()=>({groups:[]})};
+    if (/^\/api\/v1\/assets\/\d+$/.test(url)) return {ok:true,json:async()=>({asset_id:99,locations:[]})};
     if (url.includes("/assets/")) return {ok:true,json:async () => ({has_more:false,faces:[
       {face_id:chosen,assigned_person_id:7,assigned_person_name:"爸爸",thumbnail_url:"/api/v1/faces/"+chosen+"/thumbnail"},
       {face_id:other,assigned_person_id:8,assigned_person_name:"妈妈",thumbnail_url:"/api/v1/faces/"+other+"/thumbnail"}]})};
@@ -62,17 +64,19 @@ let code = fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code = code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui = {state, boot, openAlbum, preview};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
-vm.createContext(context); vm.runInContext(code,context);
+const viewerDom=require("./tests/unit/fixtures/shared_photo_viewer_dom.js");
+viewerDom.install(context,Element);
+vm.createContext(context); vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context); vm.runInContext(code,context);
 const ui = context.ui, flush = () => new Promise(setImmediate);
 const coverButtons = card => card.children.filter(child => child.textContent === "设为封面");
 (async () => {
   ui.boot(); await flush(); ui.openAlbum(person); await flush();
   get("pa-cover").fire("click"); await flush();
   assert.equal(ui.state.coverMode,true); assert.equal(get("pa-cover").textContent,"取消选择封面");
-  await ui.preview(99);
-  assert.equal(get("pa-preview").open,true);
-  assert.equal(get("pa-preview-faces").children.length,1); // The neighbour is not a cover candidate.
-  let save = coverButtons(get("pa-preview-faces").children[0])[0];
+  await ui.preview(99); await flush();
+  let activeViewer=ui.state.previewHandle; assert.equal(activeViewer.dialog.open,true);
+  assert.equal(ui.state.previewUI.faces.children.length,1); // The neighbour is not a cover candidate.
+  let save = coverButtons(ui.state.previewUI.faces.children[0])[0];
   assert.ok(save); save.fire("click"); save.fire("click");
   assert.equal(save.disabled,true);
   assert.equal(requests.filter(r => r.url.endsWith("/cover")).length,1);
@@ -84,18 +88,23 @@ const coverButtons = card => card.children.filter(child => child.textContent ===
   finishSave(); await flush();
   assert.equal(ui.state.person.avatar_face_id,chosen);
   assert.equal(ui.state.coverMode,false); assert.equal(get("pa-cover").textContent,"更换封面");
-  assert.equal(get("pa-preview").open,false);
+  assert.equal(activeViewer.dialog.open,false);
   assert.equal(get("pa-status").textContent,"已更换人物封面。");
   assert.match(get("pa-album-avatar").children[0].children[1].src,new RegExp(chosen));
   assert.match(get("pa-cards").children[0].children[0].children[1].src,new RegExp(chosen));
-  // Normal photo viewing also exposes cover for this person, never for a neighbour.
-  await ui.preview(99);
-  const cards = get("pa-preview-faces").children;
-  assert.equal(cards.length,2);
-  assert.equal(cards.reduce((n,c) => n+coverButtons(c).length,0),1);
+  // Ordinary photos use the shared manager; the explicit cover picker must
+  // continue to filter out neighbours, including when a save conflicts.
+  await ui.preview(99); await flush(); activeViewer=ui.state.previewHandle;
+  assert.equal(viewerDom.all(activeViewer.panel,n=>n.className==="photo-info-person").length,2);
+  assert.equal(viewerDom.all(activeViewer.dialog,n=>n.textContent==="设为封面").length,0);
+  activeViewer.close(); get("pa-cover").fire("click"); await flush();
+  await ui.preview(99); await flush(); activeViewer=ui.state.previewHandle;
+  const cards=ui.state.previewUI.faces.children;
+  assert.equal(cards.length,1);
+  assert.equal(cards.reduce((n,c)=>n+coverButtons(c).length,0),1);
   failSave = true; save = coverButtons(cards[0])[0]; save.fire("click"); await flush();
-  assert.equal(get("pa-preview").open,true); assert.equal(save.disabled,false);
-  assert.match(get("pa-preview-note").textContent,/刷新后再试/);
+  assert.equal(activeViewer.dialog.open,true); assert.equal(save.disabled,false);
+  assert.match(ui.state.previewUI.note.textContent,/刷新后再试/);
   assert.equal(ui.state.person.avatar_face_id,chosen);
 })().catch(error => {console.error(error);process.exitCode=1;});
 """

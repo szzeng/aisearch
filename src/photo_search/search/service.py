@@ -180,7 +180,9 @@ def _verified_ids(catalog: Any, scope: SearchScope, asset_ids: Sequence[int]) ->
     ids = sorted({int(value) for value in asset_ids})
     if not ids:
         return set()
-    where, parameters = retrieval_module.scope_condition(catalog.connection, scope)
+    where, parameters = retrieval_module.scope_condition(
+        catalog.connection, scope, bounded_candidates=len(ids) <= MAX_TOP_K
+    )
     placeholders = ", ".join("?" for _ in ids)
     rows = catalog.read_all(
         f"SELECT a.asset_id FROM assets AS a WHERE {where} AND a.asset_id IN ({placeholders})",
@@ -506,6 +508,7 @@ def _require_binding_for_text(binding: VectorBinding | None, match: MatchQuery |
             "with no activated search profile the request must bind space_id, "
             "image_generation_id and dimension explicitly",
             field="profile_id",
+            reason="SEARCH_PROFILE_REQUIRED",
         )
 
 
@@ -527,6 +530,7 @@ def _channel_summary(
     binding: VectorBinding | None,
     top_k: int,
     image_query: bool = False,
+    retrieval_mode: str = "combined",
 ) -> dict[str, Any]:
     """Post-retrieval per-channel metadata and the independent strong-match display count.
 
@@ -573,7 +577,10 @@ def _channel_summary(
             "strong_match_available": bool(strong_match_available),
             "scan_truncated": scan_truncated,
             "engine_blocks": int(scan.get("blocks", 0)),
-            "reason": None if engaged else "NO_QUERY_TEXT",
+            "reason": (
+                "TEXT_RETRIEVAL_ONLY" if retrieval_mode == "text"
+                else None if engaged else "NO_QUERY_TEXT"
+            ),
         },
         "authoritative": {
             "total": int(payload["authoritative"]["total"]),
@@ -943,6 +950,7 @@ def _result_envelope(
     """One page as the frozen ``SearchResult`` envelope (the session carries the rest)."""
     return SearchResult(
         request_id=request.request_id,
+        retrieval_mode=request.retrieval_mode,
         search_session_id=session.session_id,
         profile_id=session.profile_id,
         image_generation_id=session.image_generation_id,
@@ -1008,6 +1016,7 @@ def search_request(
     # anchored to are read in ONE snapshot, before the scope exists, so the predicate, the
     # echo and the digest cannot disagree about which people the request named - and cannot
     # mix two authority states either. The revision is the pre-binding of this new search.
+    request.validate_retrieval_mode(image_query=query_vector is not None or query_identity is not None)
     base = _person_authority_base(catalog, request)
     # ADR-0011 §6.5: the capture condition is part of the same AND set and the same digest.
     capture = request.capture_range
@@ -1032,8 +1041,8 @@ def search_request(
 
     scope = build_scope(base.canonical_person_ids)
     match = build_match(request.text) if request.text is not None else None
-    profile = _resolve_profile(catalog, request)
-    binding = _resolve_binding(catalog, request, profile)
+    profile = None if request.retrieval_mode == "text" else _resolve_profile(catalog, request)
+    binding = None if request.retrieval_mode == "text" else _resolve_binding(catalog, request, profile)
     if query_vector is not None and binding is None:
         # An image query has no text to fall back on, so it must be bound to one space.
         raise fail(
@@ -1046,6 +1055,7 @@ def search_request(
             # The digest is "the conditions that must stay identical across pages"; for an
             # uploaded image the image itself is that condition, and it has no text.
             text=request.text if query_identity is None else str(query_identity),
+            retrieval_mode=request.retrieval_mode,
             source_id=request.source_id,
             availability=request.availability,
             place_ids=request.place_ids,
@@ -1084,7 +1094,8 @@ def search_request(
             "a search_session_id alone is not a continuation; send its cursor too",
             field="cursor",
     )
-    _require_binding_for_text(binding, match)
+    if request.retrieval_mode != "text":
+        _require_binding_for_text(binding, match)
     if match is not None and binding is not None and encoder is None and query_vector is None:
         raise _refuse(
             RUNTIME_CAPABILITY_UNAVAILABLE,
@@ -1184,6 +1195,7 @@ def search_request(
                 binding=binding,
                 top_k=int(request.top_k),
                 image_query=query_vector is not None,
+                retrieval_mode=request.retrieval_mode,
             ),
             pending_semantic=candidate["pending_semantic"],
             search_projection=candidate["search_projection"],
@@ -1192,10 +1204,18 @@ def search_request(
                 None if str(outcome.state) == RERANK_STATE_NOT_REQUESTED else outcome.to_envelope()
             ),
             state=str(candidate["state"]),
-            candidates_truncated=len(entries) > MAX_SESSION_IDS,
+            # FTS stops at top_k. A full text batch may have more matches, even though
+            # the session itself fits its bound; do not imply the snapshot is exhaustive.
+            candidates_truncated=(
+                len(entries) > MAX_SESSION_IDS
+                or (request.retrieval_mode == "text" and match is not None
+                    and len(candidate["channels"][FTS_CHANNEL]) >= int(request.top_k))
+            ),
             extra={
                 "search_scope": scope,
                 "requested_profile_id": request.profile_id,
+                "retrieval_mode": request.retrieval_mode,
+                "candidate_limit": min(int(request.top_k), MAX_SESSION_IDS),
                 **(
                     {} if album_scope_revision is None
                     else {"album_scope_revision": list(album_scope_revision)}

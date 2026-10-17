@@ -30,6 +30,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.indexing import semantic
 from photo_search.models.embedding import base
+from photo_search.models.embedding import cli as embedding_cli
 from photo_search.models.embedding.qwen3_vl import (
     Qwen3VLEmbeddingAdapter,
     QwenRuntimeConfig,
@@ -592,3 +593,78 @@ def test_strong_match_uses_representation_specific_thresholds() -> None:
     assert clip_summary["authoritative"] == qwen_summary["authoritative"]
     assert tuple(entry.asset_id for entry in _entries_of(payload)) == (1, 2, 3)
     assert [r["asset_id"] for r in payload["channels"]["vector"]] == [1, 2, 3]
+
+
+@pytest.fixture(params=[CLIP_MANIFEST, QWEN_MANIFEST], ids=["clip", "qwen"])
+def local_model_install(request: Any, tmp_path: Path) -> tuple[Any, Path, str]:
+    """Pinned synthetic files exercise the real installer without model downloads."""
+    manifest = read(request.param)
+    names = base.required_artifact_names(manifest)
+    weight = next(name for name in names if name.endswith((".onnx", ".safetensors")))
+    source = tmp_path / "source"
+    source.mkdir()
+    hashes = {}
+    for name in names:
+        content = b"w" * (4 * 1024 * 1024 + 17) if name == weight else name.encode("utf-8")
+        (source / name).write_bytes(content)
+        hashes[name] = (len(content), hashlib.sha256(content).hexdigest())
+    if "weights" in manifest:
+        for item in manifest["weights"]:
+            item["bytes"], item["sha256"] = hashes[item["name"]]
+    else:
+        for item in manifest["artifacts"]["onnx"].values():
+            item["bytes"], item["sha256"] = hashes[item["path"]]
+        tokenizer = manifest["tokenizer"]
+        tokenizer["vocab_sha256"] = hashes[tokenizer["vocab_file"]][1]
+    data_root = tmp_path / "data"
+    manifest_dir = data_root / "models" / "manifests"
+    manifest_dir.mkdir(parents=True)
+    provider = str(base.provider_block(manifest)["provider_id"])
+    write_manifest(manifest_dir, manifest, provider + ".json")
+    args = SimpleNamespace(data_root=data_root, provider=provider, source=source,
+                           revision=None, force=False)
+    return args, source, weight
+
+
+def test_prepare_local_repairs_same_size_large_weights_and_skips_intact_files(
+    local_model_install: tuple[Any, Path, str], monkeypatch: Any,
+) -> None:
+    args, source, weight = local_model_install
+    first = embedding_cli._prepare_local(args)
+    assert first["verification"]["hashes_verified"]
+    destination = Path(first["model_dir"]) / weight
+    # Corrupt only the final byte, past the former 4 MiB shortcut and chunk boundaries.
+    with destination.open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"!")
+    assert destination.stat().st_size == (source / weight).stat().st_size
+    repaired = embedding_cli._prepare_local(args)
+    assert repaired["copied_files"] == [weight]
+    assert hashlib.sha256(destination.read_bytes()).digest() == hashlib.sha256(
+        (source / weight).read_bytes()
+    ).digest()
+
+    def no_copy(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("intact installed files must not be copied again")
+
+    monkeypatch.setattr(embedding_cli.shutil, "copy2", no_copy)
+    assert embedding_cli._prepare_local(args)["copied_files"] == []
+    args.source = Path(first["model_dir"])
+    assert embedding_cli._prepare_local(args)["copied_files"] == []
+
+
+def test_prepare_local_rejects_corrupt_source_before_touching_installed_model(
+    local_model_install: tuple[Any, Path, str],
+) -> None:
+    args, source, weight = local_model_install
+    installed = embedding_cli._prepare_local(args)
+    manifest = Path(installed["manifest"])
+    destination = Path(installed["model_dir"]) / weight
+    before = (manifest.read_bytes(), embedding_cli._file_sha256(destination))
+    with (source / weight).open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"!")
+    with pytest.raises(CatalogError) as refused:
+        embedding_cli._prepare_local(args)
+    assert refused.value.code == EMBEDDING_WEIGHTS_HASH_MISMATCH
+    assert (manifest.read_bytes(), embedding_cli._file_sha256(destination)) == before

@@ -16,10 +16,17 @@
 
 测试代码、可复用夹具和测量脚本纳入 Git；每轮生成的 JUnit、JSON、截图、日志和审查流水放在忽略的 `test-results/<任务>/` 或 `.tmp/`，CI 中保存为构建附件。仓库只保留必要的最终说明、复现命令、结果摘要和未验边界，同一改动复用已有报告与任务卡。原始失败记录仍保留供本地复核，不因归档而变成通过；不要为每次重跑新增一组待提交文档。旧工具输出到 `docs/reports/artifacts/` 的新增文件也默认忽略。
 
-在仓库根目录使用已准备的 Python 3.12.10 环境，避免为一次测试重建依赖。下面使用本机当前隔离环境；其他工作区改为其现有 `.venv/Scripts/python.exe`。依赖维护仍使用 uv 和项目内 `.uv-cache`。
+在仓库根目录使用已准备的 Python 3.12.10 环境，避免为一次测试重建依赖。新克隆仓库先执行
+[README 中的安装步骤](../README.md#安装与启动windows-源码版)，开发依赖由默认 `dev` 组安装；
+若之前使用了 `--no-dev`，用 `uv --cache-dir .uv-cache sync --locked --group dev --python 3.12.10` 补齐。
+部分 UI 回归会直接调用 `node`，运行前须确保 Node.js 在 PATH 中；真实模型测试还需要对应权重，
+不能把缺少权重而跳过的项目计入通过。
+
+下面默认使用 `.venv`；如果工作区已有其他合格环境，只改 `$testPython`，不要复制某次任务的临时路径。
+临时目录与应用数据均显式隔离，不指向真实图库；这些环境变量只用于当前测试终端。
 
 ```powershell
-$testPython = ".tmp/runtime-review-20261015/full-env/Scripts/python.exe"
+$testPython = "$PWD\.venv\Scripts\python.exe"
 $testRun = Get-Date -Format "yyyyMMdd-HHmmss-fff"
 $testTemp = "$PWD\.tmp\daily-tests\$testRun\tmp"
 New-Item -ItemType Directory -Force -Path $testTemp | Out-Null

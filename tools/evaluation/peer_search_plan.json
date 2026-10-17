@@ -1,0 +1,44 @@
+{
+  "schema": "peer-search-plan-v1",
+  "created_before_replay": "2026-10-16",
+  "variants": [
+    "clip_center",
+    "clip_letterbox",
+    "clip_two_view_max",
+    "clip_mean_vector",
+    "qwen512",
+    "equal_rrf",
+    "equal_zscore"
+  ],
+  "fusion_inputs": [
+    "clip_center",
+    "qwen512"
+  ],
+  "rrf_k": 60,
+  "zscore_fit": "global mean and population standard deviation of each channel's tuning-only query-gallery score matrix",
+  "threshold_channels": [
+    "clip_center",
+    "qwen512"
+  ],
+  "target_retention": 0.95,
+  "borrowed_threshold": 0.175,
+  "bootstrap_repeats": 10000,
+  "seed": 20261016,
+  "wide_aspect_ratio": 1.5,
+  "split_policy": "image-disjoint tuning and holdout galleries; no changing variants or parameters after seeing replay results",
+  "old_dataset_policy": "The 240-image dataset is already observed and every new result on it is exploratory, never a fresh confirmation.",
+  "threshold_limit": "Known-pair target retention and candidate counts only. Other images are not exhaustively judged. Never label these diagnostics no-relevant precision or false-positive rates.",
+  "cost_policy": "Mean-vector needs two image encodings but one stored vector; max needs two vectors. Cross-model fusion requires two text encoders and separate vector spaces/indexes. CPU replay does not measure end-to-end product latency.",
+  "confirmation_dataset": {
+    "source": "official COCO-CN train IDs",
+    "images": 600,
+    "tuning_images": 200,
+    "holdout_images": 400,
+    "sample_seed": 20261017,
+    "licenses": [
+      4,
+      5
+    ],
+    "exclusion": "exclude old dataset image IDs and content SHA256; split by image"
+  }
+}

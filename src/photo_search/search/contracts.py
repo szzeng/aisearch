@@ -58,6 +58,7 @@ MAX_FEEDBACK_PAGE_SIZE = 200
 _REQUEST_REQUIRED = ("contract_version", "request_id")
 _REQUEST_OPTIONAL = (
     "text",
+    "retrieval_mode",
     "profile_id",
     "space_id",
     "image_generation_id",
@@ -116,7 +117,7 @@ _RESULT_FIELDS = (
 #: ADR-0011 §8.1/§8.2: the honesty block is a *sibling* of the frozen result fields and only
 #: appears when the request carried at least one capture bound, so it is an optional key
 #: rather than a new required one. The frozen fields themselves are untouched.
-_RESULT_OPTIONAL = ("taken_time",)
+_RESULT_OPTIONAL = ("taken_time", "retrieval_mode")
 
 
 def fail(message: str, **details: Any) -> CatalogError:
@@ -240,6 +241,7 @@ class SearchRequest:
 
     request_id: str
     text: str | None = None
+    retrieval_mode: str = "combined"
     profile_id: str | None = None
     space_id: str | None = None
     image_generation_id: str | None = None
@@ -268,6 +270,24 @@ class SearchRequest:
     search_session_id: str | None = None
     cursor: str | None = None
     contract_version: str = CONTRACT_VERSION
+
+    def validate_retrieval_mode(self, *, image_query: bool = False) -> None:
+        """Keep literal retrieval independent of all semantic model bindings."""
+        _enum(self.retrieval_mode, ("combined", "text"), where="retrieval_mode")
+        if self.retrieval_mode != "text":
+            return
+        conflicts = [name for name in (
+            "profile_id", "space_id", "image_generation_id", "dimension"
+        ) if getattr(self, name) is not None]
+        if self.rerank:
+            conflicts.append("rerank")
+        if image_query:
+            conflicts.append("image_query")
+        if conflicts:
+            raise fail(
+                "text retrieval cannot use embedding bindings, reranking or an image query",
+                field="retrieval_mode", conflicting_fields=conflicts,
+            )
 
     @classmethod
     def from_envelope(cls, payload: Mapping[str, Any]) -> SearchRequest:
@@ -316,9 +336,13 @@ class SearchRequest:
         capture = parse_capture_range(
             body.get("capture_from"), body.get("capture_to_exclusive")
         )
-        return cls(
+        request = cls(
             request_id=_text(body["request_id"], where="request_id"),
             text=_optional_text(body.get("text"), where="text"),
+            retrieval_mode=_enum(
+                body.get("retrieval_mode", "combined"), ("combined", "text"),
+                where="retrieval_mode",
+            ),
             profile_id=_optional_text(body.get("profile_id"), where="profile_id"),
             space_id=_optional_text(body.get("space_id"), where="space_id"),
             image_generation_id=_optional_text(
@@ -354,12 +378,15 @@ class SearchRequest:
             cursor=_optional_text(body.get("cursor"), where="cursor"),
             contract_version=version,
         )
+        request.validate_retrieval_mode()
+        return request
 
     def to_envelope(self) -> dict[str, Any]:
         return {
             "contract_version": self.contract_version,
             "request_id": self.request_id,
             "text": self.text,
+            "retrieval_mode": self.retrieval_mode,
             "profile_id": self.profile_id,
             "space_id": self.space_id,
             "image_generation_id": self.image_generation_id,
@@ -497,6 +524,7 @@ class SearchResult:
     #: a sibling of the frozen fields (never merged into ``search_projection``) and is present
     #: only when the request really carried a time condition.
     taken_time: dict[str, Any] | None = None
+    retrieval_mode: str = "combined"
     contract_version: str = CONTRACT_VERSION
 
     @classmethod
@@ -558,6 +586,10 @@ class SearchResult:
             taken_time=None
             if body.get("taken_time") is None
             else _object(body["taken_time"], where="taken_time"),
+            retrieval_mode=_enum(
+                body.get("retrieval_mode", "combined"), ("combined", "text"),
+                where="retrieval_mode",
+            ),
             contract_version=version,
         )
 
@@ -565,6 +597,7 @@ class SearchResult:
         payload: dict[str, Any] = {
             "contract_version": self.contract_version,
             "request_id": str(self.request_id),
+            "retrieval_mode": self.retrieval_mode,
             "search_session_id": str(self.search_session_id),
             "profile_id": self.profile_id,
             "image_generation_id": self.image_generation_id,

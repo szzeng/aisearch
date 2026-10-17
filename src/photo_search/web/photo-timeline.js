@@ -597,6 +597,16 @@
       render: reset,
       append: fetchNext,
       reset: reset,
+      refresh: function () {
+        // A membership write changes both photos and their date counts.
+        // Keep the chosen filters while replacing both revision snapshots.
+        var page = reset(), generation = state.generation;
+        var periods = loadPeriods(null).then(function () {
+          return state.disposed || generation !== state.generation || state.year === null
+            ? null : loadPeriods(state.year);
+        });
+        return Promise.all([periods, page]).then(function (results) { return results[1]; });
+      },
       setScope: function (scope, anchor, assetId) {
         saveScopeView();
         state.scope = Object.assign({}, scope || { kind: "all" });

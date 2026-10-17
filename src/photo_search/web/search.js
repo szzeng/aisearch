@@ -29,7 +29,7 @@
   var PERSON_LIMIT = 25;
 
   var HIT_REASON_TEXT = {
-    TEXT: "文本命中（文件名 / 有效地点文本）",
+    TEXT: "文字匹配",
     SEMANTIC: "图文向量命中",
     "TEXT+SEMANTIC": "文本 + 图文向量命中",
     FILTER_ONLY: "仅筛选（本次没有查询文本，两条通道都没有参与排序）",
@@ -38,6 +38,10 @@
     fts: "文本通道名次",
     vector: "向量通道名次",
     filter: "权威列表次序",
+  };
+  var TEXT_FIELD_LABELS = {
+    filename_text: "文件名", place_text: "地点名称", ocr_text: "图片文字",
+    user_text: "备注", tag_text: "标签", caption_text: "图片描述",
   };
   var PROJECTION_STATE_TEXT = { SYNCED: "已同步", LAGGING: "仍在追赶" };
   //: P4-00B: the honest reading of the capture-time block (ADR-0011 §8.1). A capture search
@@ -330,6 +334,12 @@
 
   function successNotices(body) {
     var lines = [];
+    if (body.retrieval_mode === "text") {
+      lines.push({ kind: "informational", text: "本次按文字找：匹配文件名、已归属地点名称及已识别的图片文字。引号可限定完整短语；尚未识别的图片文字暂时无法命中。" });
+    }
+    if (body.candidates_truncated) {
+      lines.push({ kind: "informational", text: "本次候选达到检索上限，可能还有更多匹配。可增加文字或筛选条件缩小范围。" });
+    }
     var projection = body.search_projection || {};
     var capture = captureCondition(body);
     if (capture.present) {
@@ -494,7 +504,9 @@
   function failureLines(failure) {
     var lines = [];
     var reason = (failure.details || {}).reason;
-    if (failure.code === "RUNTIME_CAPABILITY_UNAVAILABLE") {
+    if (failure.code === "VALIDATION_ERROR" && reason === "SEARCH_PROFILE_REQUIRED") {
+      lines.push({ kind: "", text: "尚未启用画面搜索模型。请切换“按文字找”查询文件名或图片文字，也可以只用筛选条件浏览照片。" });
+    } else if (failure.code === "RUNTIME_CAPABILITY_UNAVAILABLE") {
       if (reason === "IMAGE_ENCODER_UNAVAILABLE") {
         lines.push({
           kind: "",
@@ -507,9 +519,8 @@
         lines.push({
           kind: "",
           text:
-            "语义通道未运行：本进程没有查询编码器，所以这次文本查询没有语义召回" +
-            "（RUNTIME_CAPABILITY_UNAVAILABLE / QUERY_ENCODER_UNAVAILABLE）。" +
-            "这不是「没有结果」。",
+            "当前画面搜索模型不可用。可切换“按文字找”查询文件名或图片文字，" +
+            "也可以只用筛选条件浏览照片；本次尚未完成画面搜索。",
         });
       } else {
         lines.push({
@@ -844,6 +855,7 @@
   function conditionFingerprint(filters) {
     return JSON.stringify({
       text: els.queryText.value.trim(),
+      retrievalMode: state.search.mode === "image" ? "image" : textRetrievalMode(),
       source: filters.sourceId,
       fixedScope: state.search.selectedScope ? JSON.stringify(state.search.selectedScope) : null,
       availability: filters.availability,
@@ -886,6 +898,15 @@
   }
 
   // ---------------------------------------------------------------------- search
+  function textRetrievalMode() {
+    return els.queryRetrievalMode && els.queryRetrievalMode.value === "text" ? "text" : "combined";
+  }
+
+  function candidateTimeLabel() {
+    return state.search.lastBody && state.search.lastBody.retrieval_mode === "text"
+      ? "按时间查看文字结果" : "按时间查看当前语义候选";
+  }
+
   function canRunTextSemantic() {
     var search = state.capabilities && state.capabilities.search;
     if (!search) {
@@ -927,7 +948,7 @@
     if (state.search.timeBrowse.active) {
       return loadCandidateTimeBrowse(true);
     }
-    sendSearch(true);
+    return sendSearch(true);
   }
 
   function toggleCandidateTimeBrowse() {
@@ -955,7 +976,7 @@
         updateSearchPreviewNavigation();
       }
       browse.previous = null;
-      els.candidateTimeToggle.textContent = "按时间查看当前语义候选";
+      els.candidateTimeToggle.textContent = candidateTimeLabel();
       if (state.search.pager) {
         state.search.pager.reset();
         state.search.pager.update();
@@ -1030,10 +1051,10 @@
       if (state.search.pager) state.search.pager.update();
       updateSearchPreviewNavigation();
       var note = body.candidates_truncated
-        ? "检索候选已截断，最多浏览冻结快照中的5000条"
-        : "仅对当前冻结的语义候选排序，不代表完整图库时间轴";
+        ? "候选达到检索上限，当前最多浏览 " + number(body.candidate_limit || 5000) + " 条，可能还有更多匹配"
+        : "仅对本次搜索结果排序，不代表完整图库时间轴";
       if (state.search.recycledCount) note += "；已回收较早的 " + state.search.recycledCount + " 张候选";
-      setStatus(els.queryStatus, "按拍摄时间整理当前语义候选 · 已显示 " +
+      setStatus(els.queryStatus, "按拍摄时间整理当前搜索结果 · 已显示 " +
         number(state.search.count) + " / " + number(body.total_candidates) + " · " + note);
       return true;
     }).catch(function (failure) {
@@ -1167,7 +1188,8 @@
 
   function sendTextSearch(continuation, filters) {
     var queryText = els.queryText.value.trim();
-    var placeAware = state.search.placeAware;
+    var literalText = textRetrievalMode() === "text";
+    var placeAware = literalText ? null : state.search.placeAware;
     var body = {
       contract_version: CONTRACT_VERSION,
       request_id: newRequestId("text"),
@@ -1177,6 +1199,7 @@
       page_size: filters.pageSize,
       original_query: placeAware ? placeAware.original_query : queryText,
     };
+    if (literalText) body.retrieval_mode = "text";
     if (placeAware) {
       body.content_query = placeAware.content_query;
       if (placeAware.place_cancelled) {
@@ -1186,7 +1209,7 @@
         body.place_key = placeAware.place_key;
       }
     }
-    if (state.search.intentPlan) {
+    if (!literalText && state.search.intentPlan) {
       body.intent_plan = state.search.intentPlan;
       body.original_query = state.search.intentPlan.original_query || body.original_query;
       body.content_query = state.search.intentPlan.content_query || "";
@@ -1421,29 +1444,11 @@
             String(state.search.intentPlan.place_key || "") === String(selected.place_key || "")) {
           clearPlacePlan(state.search.intentPlan, state.search.placeAware.content_query);
         }
-        if (selected.kind === "person" && state.search.intentPlan) {
-          var plan = state.search.intentPlan;
-          var retainedIndexes = [];
-          plan.person_ids = (plan.person_ids || []).filter(function (id, index) {
-            if (Number(id) === Number(selected.person_id)) return false;
-            retainedIndexes.push(index);
-            return true;
-          });
-          if (Array.isArray(plan.person_names)) {
-            plan.person_names = plan.person_names.filter(function (_name, index) {
-              return retainedIndexes.indexOf(index) >= 0;
-            });
-          }
-          if (plan.person_match_before_fixed_scope === "any" || plan.person_match_before_fixed_scope === "all") {
-            plan.person_match = plan.person_match_before_fixed_scope;
-          } else if (plan.person_ids.length) {
-            // Older saved responses predate the marker. Avoid retaining the stricter
-            // conjunction that was introduced only by adding the fixed person.
-            plan.person_match = "any";
-          } else {
-            plan.person_match = "any";
-          }
-          delete plan.person_match_before_fixed_scope;
+        if (selected.kind === "person" && state.search.intentPlan &&
+            Object.prototype.hasOwnProperty.call(state.search.intentPlan, "person_match_before_fixed_scope")) {
+          // Legacy plans mixed the album person into the query's group. Re-parse them
+          // on the next explicit search; current plans keep both conditions separate.
+          state.search.intentPlan = null;
         }
         if (selected.kind === "collection" && state.search.intentPlan &&
             state.search.intentPlan.collection_scope &&
@@ -1676,8 +1681,11 @@
       var nextCursor = state.search.timeBrowse.active ? state.search.timeBrowse.cursor : state.search.cursor;
       els.gridSentinel.hidden = !nextCursor;
     }
-    setStatus(els.queryStatus, "本次查询没有成功：" + describe(failure), "error");
-    renderNotices(els.resultNotices, failureLines(failure));
+    var failureNotices = failureLines(failure);
+    var failureReason = (failure.details || {}).reason;
+    var modelUnavailable = failureReason === "SEARCH_PROFILE_REQUIRED" || failureReason === "QUERY_ENCODER_UNAVAILABLE";
+    setStatus(els.queryStatus, modelUnavailable ? failureNotices[0].text : "本次查询没有成功：" + describe(failure), "error");
+    renderNotices(els.resultNotices, failureNotices);
     // A failed request is not a statement about the capture-time state; the previous echo
     // and block belong to a different query, so they are cleared instead of left standing.
     text(els.captureEcho, "");
@@ -1704,7 +1712,7 @@
       state.search.recycledCount = windowRestore ? Math.max(0, number(windowRestore.recycledCount)) : 0;
     }
     hits.forEach(function (hit) {
-      els.resultGrid.appendChild(buildHit(hit));
+      els.resultGrid.appendChild(buildHit(hit, body.retrieval_mode));
     });
     state.search.count += hits.length;
     state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
@@ -1732,7 +1740,7 @@
     if (!state.search.timeBrowse.active) {
       state.search.timeBrowse.cursor = null;
       state.search.timeBrowse.previous = null;
-      els.candidateTimeToggle.textContent = "按时间查看当前语义候选";
+      els.candidateTimeToggle.textContent = candidateTimeLabel();
     } else {
       els.candidateTimeToggle.textContent = "返回相关度排序";
     }
@@ -1908,6 +1916,7 @@
   function searchFormSnapshot() {
     return {
       queryText: els.queryText.value,
+      retrievalMode: textRetrievalMode(),
       source: els.querySource.value,
       availability: els.queryAvailability.value,
       placeState: els.queryPlaceState.value,
@@ -1973,6 +1982,7 @@
     var restoreGeneration = state.search.requestGeneration;
     var form = saved.form;
     els.queryText.value = form.queryText || "";
+    if (els.queryRetrievalMode) els.queryRetrievalMode.value = form.retrievalMode === "text" ? "text" : "combined";
     els.querySource.value = form.source || "";
     els.queryAvailability.value = form.availability || "any";
     els.queryPlaceState.value = form.placeState || "any";
@@ -2093,7 +2103,8 @@
   }
 
   // ----------------------------------------------------------------------- tiles
-  function buildHit(hit) {
+  function buildHit(hit, retrievalMode) {
+    retrievalMode = retrievalMode || (state.search.lastBody || {}).retrieval_mode;
     var tile = element("li", "card-tile");
     var frame = element("button", "thumb-frame");
     frame.type = "button";
@@ -2111,7 +2122,7 @@
     caption.appendChild(
       element("span", "hit-reason", HIT_REASON_TEXT[hit.hit_reason] || String(hit.hit_reason))
     );
-    caption.appendChild(
+    if (retrievalMode !== "text") caption.appendChild(
       element(
         "span",
         "hit-evidence",
@@ -2125,7 +2136,7 @@
     }
     var channels = hit.matched_by || {};
     var names = Object.keys(channels);
-    if (names.length) {
+    if (names.length && retrievalMode !== "text") {
       var parts = names.map(function (name) {
         return (CHANNEL_TEXT[name] || name) + " " + channels[name];
       });
@@ -2133,7 +2144,9 @@
     }
     if (hit.matched_text && hit.matched_text.length) {
       caption.appendChild(
-        element("span", "hit-evidence", "命中文本列：" + hit.matched_text.join("、"))
+        element("span", "hit-evidence", "匹配位置：" + hit.matched_text.map(function (field) {
+          return TEXT_FIELD_LABELS[field] || field;
+        }).join("、"))
       );
     }
     var open = element("button", "tile-link", "查看详情");
@@ -2194,7 +2207,10 @@
     var preview = state.search.preview;
     preview.handle = window.AIPhotoInfo.open(assetId, {
       title: "搜索结果照片", alt: "搜索结果照片", extension: extension, people: false, returnFocus: returnFocus,
-      onOpenFullDetails: function (id) { window.AIPhotoInfo.navigateToDetails(id, "search"); },
+      onOpenFullDetails: function (id) {
+        prepareSearchDetailReturn();
+        window.AIPhotoInfo.navigateToDetails(id, "search");
+      },
       onPerson: function (id) {
         prepareSearchDetailReturn();
         window.location.href = "/persons?person_id=" + encodeURIComponent(id) + "&from_photo=photo";
@@ -2209,7 +2225,7 @@
 
   function findSearchPreviewTrigger(assetId) {
     var hit = state.search.hits.find(function (item) { return String(item.asset_id) === String(assetId); });
-    var frame = hit && els.searchResults.querySelector('[data-asset-id="' + String(hit.asset_id).replace(/[^0-9]/g, "") + '"]');
+    var frame = hit && els.resultGrid.querySelector('[data-asset-id="' + String(hit.asset_id).replace(/[^0-9]/g, "") + '"]');
     var tile = frame && frame.parentNode;
     return tile && (tile.querySelector(".tile-link") || frame);
   }
@@ -2538,8 +2554,7 @@
     var lines = [];
     if (!search || !search.active_profile_id) {
       lines.push(
-        "当前没有激活的搜索配置（active_profile_id 为空）：带查询文本的请求会被服务端拒绝" +
-          "（需要激活的 profile 或显式绑定），纯筛选查询不受影响。"
+        "尚未启用画面搜索模型。可使用“按文字找”查询已索引文字，或使用筛选条件浏览照片。"
       );
     } else {
       var model = search.active_embedding_model;
@@ -2568,11 +2583,9 @@
         }
       }
     }
-    if (!search || search.query_encoder_available !== true) {
+    if (search && search.active_profile_id && search.query_encoder_available !== true) {
       lines.push(
-        "本进程没有查询编码器（query_encoder_available=false）：文本查询的语义通道不会运行，" +
-          "服务端会以 RUNTIME_CAPABILITY_UNAVAILABLE / QUERY_ENCODER_UNAVAILABLE 明确拒绝，" +
-          "页面不会把这种情况显示成「没有结果」。"
+        "当前画面搜索模型不可用；“按文字找”和条件筛选仍可使用。"
       );
     }
     text(els.bindingHint, lines.join(" "));
@@ -2811,6 +2824,7 @@
       searchForm: document.getElementById("search-form"),
       searchSubmit: document.getElementById("search-submit"),
       queryText: document.getElementById("query-text"),
+      queryRetrievalMode: document.getElementById("query-retrieval-mode"),
       resultPlaceScope: document.getElementById("result-place-scope"),
       resultIntentScope: document.getElementById("result-intent-scope"),
       querySource: document.getElementById("query-source"),
@@ -2851,6 +2865,13 @@
     };
 
     bindQuerySubmission();
+    els.queryRetrievalMode.addEventListener("change", function () {
+      if (state.search.mode === "image") {
+        setStatus(els.queryStatus, "搜索方式已选择，输入文字后搜索。上传搜图结果仍在下方。");
+      } else if (els.queryText.value.trim() || state.search.lastBody || state.search.loading) {
+        submitSearch();
+      }
+    });
     document.getElementById("query-reset").addEventListener("click", resetFilters);
     document.getElementById("capture-clear").addEventListener("click", clearCaptureRange);
     document.getElementById("query-retry").addEventListener("click", function () {

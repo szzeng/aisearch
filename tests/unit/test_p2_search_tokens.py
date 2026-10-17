@@ -26,6 +26,95 @@ def terms(query: str) -> list[str]:
     return build_match(query).term_texts()
 
 
+def text_hits(query: str, documents: list[str]) -> list[int]:
+    """Query the existing stored character stream through real SQLite FTS5."""
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE VIRTUAL TABLE probe USING fts5(body, tokenize='unicode61')")
+        connection.executemany(
+            "INSERT INTO probe(body) VALUES (?)", [(index_text(text),) for text in documents]
+        )
+        return [
+            int(row[0])
+            for row in connection.execute(
+                "SELECT rowid FROM probe WHERE probe MATCH ? ORDER BY rowid",
+                (build_match(query).expression,),
+            )
+        ]
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("query", "relevant", "distractor"),
+    [
+        ("和田", "和田旅行", "福田旅行"),
+        ("成都", "成都夜景", "成山夜景"),
+        ("都江堰", "都江堰", "江堰"),
+        ("个旧", "个旧旅行", "旧城旅行"),
+        ("那曲", "那曲草原", "曲江草原"),
+        ("之江", "之江新城", "江边新城"),
+        ("我家", "我家庭院", "大家庭院"),
+        ("你家", "你家庭院", "我家庭院"),
+        ("和平", "和平公园", "平安公园"),
+        ("在水一方", "在水一方", "水一方"),
+        ("我的世界", "我的世界截图", "我去的地方是世界"),
+        ("你的名字", "你的名字海报", "名字海报"),
+        ("目的地", "目的地指南", "目录 地图"),
+        ("这是我的战争", "这是我的战争截图", "战争截图"),
+        ("我和你", "我和你合影", "他和你合影"),
+    ],
+)
+def test_chinese_words_keep_embedded_grammar_characters(
+    query: str, relevant: str, distractor: str
+) -> None:
+    assert text_hits(query, [relevant, distractor]) == [1]
+
+
+@pytest.mark.parametrize("query", ["杭州 的 照片", "杭州，的，照片", "杭州（和）照片"])
+def test_only_separate_grammar_words_are_removed(query: str) -> None:
+    assert text_hits(query, ["杭州西湖照片", "杭州西湖", "深圳照片"]) == [1]
+
+
+def test_contiguous_natural_language_stays_a_phrase_without_silent_relaxation() -> None:
+    documents = ["杭州的照片", "杭州西湖照片", "深圳的照片"]
+    assert text_hits("杭州的照片", documents) == [1]
+    # A caller can explicitly separate words. Ordinary semantic search also retains its
+    # independent vector channel; this lexical builder does not guess omitted boundaries.
+    assert text_hits("杭州 的 照片", documents) == [1, 2]
+
+
+@pytest.mark.parametrize("separator", [" ", "，", "-", "/", "\u3000", "\u200b"])
+def test_unquoted_separators_delimit_terms_instead_of_inventing_adjacency(separator: str) -> None:
+    assert text_hits(f"深圳{separator}海边", ["深圳大梅沙海边", "深圳公园", "海边"]) == [1]
+
+
+@pytest.mark.parametrize(
+    "query", ["和田 IMG_0001", "和田ＩＭＧ＿０００１", "和田：IMG-0001", "ＩＭＧ＿０００１和田"]
+)
+def test_chinese_names_and_normalized_latin_identifiers_keep_both_constraints(query: str) -> None:
+    assert text_hits(query, ["和田IMG_0001.JPG", "福田IMG_0001.JPG", "和田IMG_1001.JPG"]) == [1]
+
+
+def test_explicit_phrases_preserve_stops_and_adjacency_across_separators() -> None:
+    assert text_hits('"杭州，的，照片"', ["杭州的照片", "杭州西湖照片"]) == [1]
+    assert text_hits('"和"', ["和", "河"]) == [1]
+    assert text_hits('"the beach"', ["the beach", "beach", "the sunny beach"]) == [1]
+
+
+@pytest.mark.parametrize("query", ["和", "的 和 了 the and", "的，和，了", "the/and/of"])
+def test_separate_stopwords_alone_still_have_no_searchable_term(query: str) -> None:
+    with pytest.raises(CatalogError) as failure:
+        build_match(query)
+    assert failure.value.details["reason"] == "NO_SEARCHABLE_TERM"
+
+
+def test_punctuation_cannot_bypass_the_term_limit() -> None:
+    with pytest.raises(CatalogError) as failure:
+        build_match("，".join(["深圳"] * 33))
+    assert failure.value.details["reason"] == "TOO_MANY_TERMS"
+
+
 def test_chinese_runs_index_one_character_per_token_and_query_as_a_phrase() -> None:
     assert index_text("杭州西湖.jpg") == "杭 州 西 湖 jpg"
     assert terms("西湖") == ['"西 湖"']
@@ -57,8 +146,9 @@ def test_stopwords_do_not_turn_a_query_into_all_words_must_match() -> None:
     assert terms("杭州 的 照片") == ['"杭 州"', '"照 片"']
     assert terms("the beach") == ['"beach"*']
     assert terms("beach of the sunset") == ['"beach"*', '"sunset"*']
-    # A CJK stopword character also ends a run, so it cannot glue two words together.
-    assert terms("杭州的照片") == ['"杭 州"', '"照 片"']
+    # An embedded character is not proven to be a grammar word: preserve the entire
+    # phrase, just as with names such as 和田 or 我的世界.
+    assert terms("杭州的照片") == ['"杭 州 的 照 片"']
 
 
 def test_a_query_of_only_stopwords_is_refused_instead_of_returning_nothing() -> None:

@@ -583,15 +583,15 @@ def test_the_search_page_reaches_data_only_through_the_protected_api() -> None:
 def test_the_search_page_keeps_the_frozen_hit_reason_vocabulary() -> None:
     shell, script, _ = _search_documents()
 
-    # The four frozen reasons are shown verbatim, never re-worded into a score.
+    # All four API reasons have display labels; none becomes an accuracy score.
     for reason in ("TEXT:", "SEMANTIC:", '"TEXT+SEMANTIC"', "FILTER_ONLY"):
         assert reason in script
-    assert "命中原因" in shell + script
+    assert "匹配原因" in shell
     assert "matched_text" in script
     assert "semantic_ready" in script
     assert "hit_reason" in script
     # Candidate adapters may retain raw scores, but no visible hit renders them.
-    rendered = script.split("function buildHit(hit)", 1)[1]
+    rendered = script.split("function buildHit(", 1)[1]
     assert ".score" not in rendered
     assert "reranker_score" not in script
     # Byte-size formatting may round with toFixed; score fields remain prohibited above.
@@ -603,7 +603,7 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     _, script, _ = _search_documents()
 
     # A missing encoder must be said out loud, in both of its two spellings.
-    assert "语义通道未运行" in script
+    assert "本次尚未完成画面搜索" in script
     assert "QUERY_ENCODER_UNAVAILABLE" in script
     assert "IMAGE_ENCODER_UNAVAILABLE" in script
     assert "RUNTIME_CAPABILITY_UNAVAILABLE" in script
@@ -625,7 +625,7 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "search_projection" in script
     assert "文本投影仍在追赶" in script
     assert "candidates_truncated" in script
-    assert "仅对当前冻结的语义候选排序，不代表完整图库时间轴" in script
+    assert "仅对本次搜索结果排序，不代表完整图库时间轴" in script
     assert "truncated" in script
     assert "向量扫描未完整完成，本次结果可能不完整。" in script
     assert "高度匹配" in script
@@ -643,7 +643,7 @@ def test_the_search_page_keeps_the_p2_03_place_filter_semantics() -> None:
     assert "suggested" in shell
     assert "人工未归类" in shell
     # A machine candidate is never presented as an effective place.
-    assert "机器候选不参与有效地点过滤" in shell + script
+    assert "只使用已经生效的地点归属" in shell
 
 
 def test_the_search_page_uploads_without_adding_anything_to_the_catalog() -> None:
@@ -654,8 +654,8 @@ def test_the_search_page_uploads_without_adding_anything_to_the_catalog() -> Non
     # The browser owns the multipart boundary; the page never sets Content-Type by hand.
     assert 'headers["Content-Type"] = "application/json";' in script
     assert "multipart/form-data" not in script
-    assert "不新增资产" in shell
-    assert "临时目录" in shell
+    assert "不会加入图库" in shell
+    assert "临时副本在处理后删除" in shell
     assert "UPLOAD_TOO_LARGE" in script
     assert "UPLOAD_TOO_MANY_PIXELS" in script
     assert "FORMAT_UNSUPPORTED" in script
@@ -878,7 +878,7 @@ def test_the_search_page_keeps_the_upload_request_free_of_person_fields() -> Non
     assert 'form.append("image"' in upload
     assert "person_ids" not in upload
     assert "person_match" not in upload
-    assert "人物筛选只作用于普通搜索" in shell
+    assert "上传搜图暂不支持人物筛选" in shell
     assert "上传搜图不携带人物条件" in script
 
 
@@ -1076,7 +1076,7 @@ def test_the_search_page_sends_the_capture_bounds_only_for_the_text_search() -> 
     upload = script.split("function sendImageSearch(", 1)[1].split("\n  function ", 1)[0]
     for field in ("capture_from", "capture_to_exclusive"):
         assert field not in upload, field
-    assert "上传搜图也不携带它" in shell
+    assert "暂不支持人物或拍摄时间筛选" in shell
 
 
 def test_the_search_page_echoes_the_normalized_capture_condition() -> None:

@@ -927,6 +927,7 @@
   }
   function openCollection(collection) {
     if (state.writing || state.pendingWrite || state.collectionActionBusy || state.collectionPeopleBusy) return;
+    state.albumViewSeq = (state.albumViewSeq || 0) + 1;
     if (!$('library').hidden) state.libraryPosition = captureLibraryPosition();
     resetCollectionFaces();
     state.returnCollection = null; state.collectionSeq++; state.busy.delete("collectionPeopleLoad");
@@ -1088,10 +1089,11 @@
       return false;
     } finally { if (seq === state.collectionFaceSeq) { state.busy.delete("collectionFacesLoad"); updateCollectionFaceSelection(); } }
   }
-  async function reloadCollectionSummary(collection) {
+  async function reloadCollectionSummary(collection, isCurrent) {
     // Read only this collection's authoritative summary, including the distinct
     // photo count; removing two faces need not remove two photos.
     const page = await api(collectionPath(collection));
+    if (isCurrent && !isCurrent()) return null;
     let current = page.collection;
     if (!current || Number(current.collection_id) !== Number(collection.collection_id)
         || current.instance_token !== collection.instance_token) throw new Error("合集实例已变化");
@@ -1406,6 +1408,7 @@
   }
   function backToLibrary() {
     if (state.writing || state.pendingWrite || state.collectionPeopleBusy) return;
+    state.albumViewSeq = (state.albumViewSeq || 0) + 1;
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     if (state.returnCollection) {
       state.collection = state.returnCollection; state.returnCollection = null; state.person = null;
@@ -1957,6 +1960,7 @@
   }
   function openAlbum(person) {
     if (state.writing || state.pendingWrite || state.collectionActionBusy || state.collectionPeopleBusy) return;
+    state.albumViewSeq = (state.albumViewSeq || 0) + 1;
     if (!$("library").hidden) state.libraryPosition = captureLibraryPosition();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
     resetCollectionFaces(); $("collection-face-section").hidden = true;
@@ -2013,12 +2017,13 @@
     state.photoIds.push(id);
     if (state.photoIds.length > 400) state.photoIds.splice(0, state.photoIds.length - 400);
   }
-  function showTimeline(more, preferences) {
+  function showTimeline(more, preferences, faceRefresh) {
     const scope = timelineScope();
     $("timeline").hidden = false; $("photos").hidden = true; $("photos-more").hidden = true;
     syncDirectoryPagers();
     const key = timelineKey(scope);
     if (more) return state.timeline ? state.timeline.append() : Promise.resolve(null);
+    state.photoFaceNavigation = faceRefresh || null;
     if (!state.timeline) {
       state.timeline = window.PhotoTimeline.mount({ host: $("timeline"), scope,
         timeBasis: preferences && preferences.timeBasis, groupBy: preferences && preferences.groupBy,
@@ -2079,6 +2084,7 @@
             state.photoListSeq++;
           } else (body.assets || []).forEach(item => rememberTimelineAsset(item.asset_id));
           state.photoCursor = body.next_cursor || null;
+          if (!values.cursor) restorePreviewAfterFaceRefresh();
           updatePreviewNavigation();
           $("photo-note").textContent = state.collection
             ? "按日期浏览合集照片；同一张照片只显示一次。"
@@ -2092,14 +2098,16 @@
       delete $("timeline").dataset.collectionGone;
       $("timeline-refresh").hidden = true;
     } else {
-      state.timeline.reset();
+      if (faceRefresh && state.timeline.refresh) state.timeline.refresh();
+      else state.timeline.reset();
     }
     state.timelineScopeKey = key;
     return Promise.resolve(true);
   }
-  async function loadPhotos(more) {
+  async function loadPhotos(more, faceRefresh) {
     if ((!state.person && !(state.collection && state.collectionMode === "photos")) || (more && state.busy.has("photos"))) return false;
-    if (!state.searching && !state.coverMode && window.PhotoTimeline) return showTimeline(more);
+    if (!more) state.photoFaceNavigation = faceRefresh || null;
+    if (!state.searching && !state.coverMode && window.PhotoTimeline) return showTimeline(more, undefined, faceRefresh);
     const seq = ++state.photoSeq; state.busy.add("photos"); $("photos-more").disabled = true;
     $("timeline").hidden = true; $("photos").hidden = false;
     const personId = state.person && state.person.person_id;
@@ -2127,6 +2135,7 @@
       if (page.person) { state.person = page.person; albumHeading(); }
       if (page.collection) { state.collection = { ...state.collection, ...page.collection }; collectionHeading(); }
       renderPhotos(page.assets || page.hits || []); state.photoCursor = page.next_cursor || null;
+      if (!more) restorePreviewAfterFaceRefresh();
       state.photoHasMore = Boolean(page.has_more && page.next_cursor);
       $("photos-more").hidden = !state.photoHasMore; syncDirectoryPagers();
       $("photo-note").textContent = $("photos").children.length ? (collectionId ? "点照片查看大图；合集只把人物放在一起浏览。" : state.coverMode ? "点一张喜欢的照片，再选这个人的脸设为封面。" : state.searching ? "搜索结果仅包含这个人的照片。点“全部照片”返回相册。" + (page.candidates_truncated ? " 搜索结果较多，请缩小查询范围。" : "") : "点照片查看大图；认错了可选择对应的人脸更正。") : (state.searching ? emptySearchNote(page) : collectionId ? "这个合集还没有照片。" : "这个人物还没有照片。");
@@ -2139,7 +2148,46 @@
     return state.photoIds.indexOf(state.previewAssetId);
   }
   function previewNode(name) { return state.previewUI && state.previewUI[name]; }
+  function restorePreviewAfterFaceRefresh() {
+    const binding = state.photoFaceNavigation; state.photoFaceNavigation = null;
+    if (!binding || binding.albumViewSeq !== state.albumViewSeq || binding.previewSeq !== state.previewSeq
+        || binding.handle !== state.previewHandle || !state.previewHandle || !state.previewHandle.dialog.open
+        || !state.photoIds.includes(state.previewAssetId)) return;
+    state.previewListSeq = state.photoListSeq;
+  }
+  async function refreshAfterPhotoFaceWrite(albumViewSeq) {
+    notifyPeopleChanged();
+    if (albumViewSeq !== state.albumViewSeq) return;
+    const seq = (state.photoFaceRefreshSeq || 0) + 1; state.photoFaceRefreshSeq = seq;
+    const person = state.person, collection = state.collection;
+    const binding = { albumViewSeq, previewSeq: state.previewSeq, handle: state.previewHandle };
+    const stillCurrent = () => seq === state.photoFaceRefreshSeq && albumViewSeq === state.albumViewSeq;
+    if (person) {
+      // The album summary resolves the current effective display cover; the raw
+      // person record only carries a stored manual cover and has no thumbnail URL.
+      const updated = (await api("/persons/" + person.person_id + "/photos?limit=1")).person;
+      if (!stillCurrent() || !state.person || state.person.person_id !== person.person_id) return;
+      state.person = updated; albumHeading();
+      // Reuse the current album/search scope; do not recreate or close the viewer.
+      await loadPhotos(false, binding);
+    } else if (collection) {
+      // Supersede reads started before the write, even if their busy guards are set.
+      state.collectionSeq++; state.busy.delete("collectionPeopleLoad");
+      state.collectionFaceSeq = (state.collectionFaceSeq || 0) + 1; state.busy.delete("collectionFacesLoad");
+      const updated = await reloadCollectionSummary(collection, stillCurrent);
+      if (!stillCurrent() || state.collection !== collection) return;
+      state.collection = updated; collectionHeading();
+      if (state.collectionMode === "photos") {
+        state.collectionFaceLoadedIds = []; state.collectionFaceCards = new Map();
+        $("collection-faces").replaceChildren();
+        await loadPhotos(false, binding);
+      } else await Promise.all([loadCollectionPeople(false, updated), loadCollectionFaces(false, updated)]);
+    } else if (!$("library").hidden) {
+      await refreshPeopleViews();
+    }
+  }
   function createPreviewUI(assetId, returnFocus) {
+    const albumViewSeq = state.albumViewSeq;
     if (!window.AIPhotoInfo) {
       const dialog = $("preview"), image = $("preview-image");
       state.previewUI = { dialog, image, note: $("preview-note"), faces: $("preview-faces"),
@@ -2180,6 +2228,7 @@
       onFacesError: function (id) {
         if (Number(id) === Number(state.previewAssetId) && state.previewHandle && state.previewHandle.dialog.open) previewNode("note").textContent = "人脸信息暂时无法读取。";
       },
+      onFacesChanged: () => refreshAfterPhotoFaceWrite(albumViewSeq),
       beforeClose: () => !state.writing && !state.pendingWrite,
       navigation: { previous: () => movePreview(-1), next: () => movePreview(1) },
       onClose: () => {

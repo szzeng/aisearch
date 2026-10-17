@@ -56,17 +56,17 @@ const context={URLSearchParams,URL,setTimeout:()=>1,clearTimeout(){},crypto:{ran
   return ok({faces:[],sources:[],has_more:false});
  }};
 let code=fs.readFileSync('src/photo_search/web/persons-albums.js','utf8');
- code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,boot,editBase,editFace,editMerge,writeFace,undo,refreshAfterWrite,backToLibrary,loadCollectionPeople,removeCollectionSelection};\n  if (document.readyState === "loading")');
+ code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,boot,setLibraryView,editBase,editFace,editMerge,writeFace,undo,refreshAfterWrite,backToLibrary,loadCollectionPeople,removeCollectionSelection};\n  if (document.readyState === "loading")');
 if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(){}}};
 vm.createContext(context);vm.runInContext(code,context);const ui=context.ui,flush=()=>new Promise(setImmediate);
 (async()=>{
- // This loader-level scenario retains both directories; category isolation is
- // exercised by the navigation workflow test.
- ui.boot();await flush();ui.state.libraryNavigationReady=false;ui.state.organize=true;ui.state.inboxHiddenVisible=true;
+ // Candidate and ignored-face directories are mutually exclusive in the real UI.
+ ui.boot();await flush();ui.setLibraryView('faces',{history:false});await flush();
  ui.state.person=person();ui.editBase({mode:'name',person:person()},'改名','');get('edit-query').value='Alice';
  await get('edit-form').fire('submit');await flush();await flush();
  assert(get('inbox-cards').textContent.includes('Alice'),'visible groups show saved name');
- assert(get('inbox-hidden-cards').textContent.includes('Alice'),'hidden groups show saved name');
+ ui.setLibraryView('ignored',{history:false});await flush();await flush();
+ assert(get('inbox-hidden-cards').textContent.includes('Alice'),'hidden groups show saved name when opened');
  assert.equal(storage.has('aisearch.persons.changed'),true,'successful rename notifies other tabs');
  ui.editFace({face_id:'f'.repeat(64),control_revision:0,assigned_person_id:null,thumbnail_url:null});await flush();
  assert(get('choices').textContent.includes('Alice'));assert.equal(get('choices').children.filter(x=>x.className==='pa-choice').length,1);
@@ -74,17 +74,23 @@ vm.createContext(context);vm.runInContext(code,context);const ui=context.ui,flus
  assert(picker.url.includes('sort=photos_desc'),'face and merge choices request globally sorted pages');
  display='Bob';revision++;storage.set('aisearch.persons.changed','another-window');
  events.storage({key:'aisearch.persons.changed'});await flush();await flush();
- assert(get('inbox-cards').textContent.includes('Bob'));assert(get('inbox-hidden-cards').textContent.includes('Bob'));
+ assert(get('inbox-hidden-cards').textContent.includes('Bob'),'active ignored groups refresh across windows');
  assert(get('choices').textContent.includes('Bob'));assert(!get('choices').textContent.includes('Alice'));
  assert.equal(get('edit-submit').disabled,true,'stale chosen person requires a fresh selection');
+ get('edit').close();ui.setLibraryView('faces',{history:false});await flush();await flush();
+ assert(get('inbox-cards').textContent.includes('Bob'),'visible groups refresh when revisited');
+ // The freshness assertion belongs to the person directory, whose cache is being checked.
+ ui.setLibraryView('people',{history:false});await flush();await flush();
  const unchanged=calls.length;events.focus();await flush();assert.equal(calls.length,unchanged,'unchanged focus keeps loaded pages');
+ ui.setLibraryView('faces',{history:false});await flush();await flush();
  ui.editBase({mode:'name',person:person()},'改名','');get('edit-query').value='尚未提交';
  display='Carol';storage.set('aisearch.persons.changed','third-window');events.focus();await flush();
  assert.equal(get('edit-query').value,'尚未提交','refresh does not overwrite an unfinished name');
  display='Dora';storage.set('aisearch.persons.changed','browser-back');events.pageshow({persisted:true});await flush();
  assert(get('inbox-cards').textContent.includes('Dora'),'restored browser-back pages refresh current candidate names');
  assert.equal(get('edit-query').value,'尚未提交');
- get('edit').close();ui.state.returnCollection=collection;ui.backToLibrary();await flush();
+ get('edit').close();ui.setLibraryView('people',{history:false});await flush();
+ ui.state.returnCollection=collection;ui.backToLibrary();await flush();
  assert(get('collection-people').textContent.includes('Dora'),'returning to collection rebuilds stale member labels');
  ui.state.collectionPeopleManage=true;ui.state.collectionSelectedPeople.add(7);const before=calls.length;await ui.removeCollectionSelection();await flush();
  const recent=calls.slice(before);assert(recent.some(c=>c.url.endsWith('/members')));

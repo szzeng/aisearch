@@ -30,8 +30,9 @@ if (!Element.prototype.replaceChild) Element.prototype.replaceChild=function(nex
 if (!Element.prototype.remove) Element.prototype.remove=function(){if(this.parentNode){this.parentNode.children=this.parentNode.children.filter(x=>x!==this);this.parentNode=null;}};
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const requests=[],hiddenRemoved=new Set();let confirmResult=false,visibilityFailure=true;
-const context={URLSearchParams,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
- window:{location:{search:"",href:"http://local/persons"},scrollY:700,confirm:()=>confirmResult,addEventListener(){}},
+const context={URLSearchParams,URL,Date,crypto:{randomUUID:()=>"synthetic"},setTimeout:()=>1,clearTimeout(){},
+ window:{location:{search:"",href:"http://local/persons"},scrollY:700,confirm:()=>confirmResult,addEventListener(){},
+   history:{pushState(_state,_title,path){const next=new URL(path,context.window.location.href);Object.assign(context.window.location,{href:next.href,search:next.search,hash:next.hash});},replaceState(_state,_title,path){this.pushState(_state,_title,path);}}},
  document:{readyState:"loading",cookie:"ps_csrf=csrf",addEventListener(name,fn){this.ready=fn;},getElementById:get,createElement:tag=>new Element(tag)},
  fetch:async(url,options={})=>{
    requests.push({url,options});
