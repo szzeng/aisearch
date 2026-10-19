@@ -25,9 +25,9 @@
 
 - `search.css` 显式隐藏 `[hidden]` 的参考摘要和内部缩略图，搜索页 CSS 缓存版本升至 `p4-photo-similar-search-3`，JS 资源版本同步升至 `p4-photo-similar-search-11`。
 - 文字搜索提交立即清空参考栏、缩略图源、文件名/标题/范围、`assetQueryId`/`assetQuery` 和 URL 中的 `similar_asset`；普通结果渲染复用清理逻辑。重新发起相似搜索正常恢复新的参考缩略图与文件名；上传搜图失败恢复代码未改。
-- 定向 JUnit `test-results/P4-PHOTO-SIMILAR-SEARCH-text-clear-r4.xml`：3 passed / 0 failed。新增前端行为断言覆盖提交同步清理（文字请求挂起时）、文字请求成功/503 失败后保持清理、重新进入相似搜索后参考信息重新显示。首次三轮测试仅修正 harness 的 `querySelectorAll` 缺口和断言执行顺序；最终 r4 全部通过。`node --check src/photo_search/web/search.js`、`git diff --check` 通过。
+- 定向 JUnit `test-results/P4-PHOTO-SIMILAR-SEARCH-text-clear-r4.xml`：3 passed / 0 failed。新增前端行为断言覆盖提交同步清理（文字请求挂起时）、文字请求成功/503 失败后保持清理、重新进入相似搜索后参考信息重新显示。r1/r2 两轮测试修正了 harness 的 `querySelectorAll` 缺口和断言顺序；补入 503 失败断言后的 r4 全部通过。`node --check src/photo_search/web/search.js`、`git diff --check` 通过。
 - 内置浏览器在 127.0.0.1 隔离合成数据完成一次桌面流程：普通搜索页无摘要；相似搜索显示参考缩略图、文件名和“搜索范围：全部图库”；按文字搜索后 `similar_asset` 从 URL 消失，摘要立即从可访问树移除。仅验证默认桌面视口；未注入产品浏览器端 API 延迟/失败，也未做窄屏专项。没有访问真实照片库。
-- 本次续修提交 SHA：待提交后补录；不推送。
+- 本次续修实现提交：`762ce4c803475dce126acd0ca537195cbe497c63`；报告/状态 SHA 另有文档提交登记，不推送。
 
 ## 未完成项
 
