@@ -334,7 +334,7 @@ def test_an_unknown_or_undeclared_provider_is_refused() -> None:
 
 def test_a_manifest_only_provider_is_reported_as_not_installed(tmp_path: Path) -> None:
     registry = registry_for(tmp_path)
-    assert registry.default().provider_id == "qwen3-vl-embedding-2b"
+    assert registry.default().provider_id == "qwen3-vl-embedding-2b-exif-v2"
     clip = registry.get("chinese-clip-vit-b-16")
     assert clip.installed is False
     assert clip.reason == "WEIGHTS_MISSING"
@@ -345,7 +345,7 @@ def test_a_manifest_only_provider_is_reported_as_not_installed(tmp_path: Path) -
     assert set(registry.get("qwen3-vl-embedding-2b").missing_files) >= {"model.safetensors"}
 
 
-def test_no_qwen_provider_never_falls_back_to_clip() -> None:
+def test_no_default_provider_never_falls_back_to_clip() -> None:
     registry = EmbeddingRegistry(())
     assert registry.default() is None
 

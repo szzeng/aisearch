@@ -35,3 +35,10 @@ uv run --python 3.12.10 -- ruff check src/photo_search/models/embedding/registry
 - `git diff --check` 对原有 CRLF 的 `test_p4_02n_query_encoder_wiring.py` 新增行按字面报 CR 字符；以 `git -c core.whitespace=cr-at-eol diff --check` 忽略该文件既有行尾格式后通过。其余改动为 LF。
 - 未运行真实 Qwen/CUDA 图片建库；未访问真实 `D:\SZ\project\PhotoSearchData`；未做 30 万图测试。
 - 不自动提交。
+
+## 2026-10-20 后续调整：默认使用 EXIF v2
+
+- 用户将无活动 Profile 时的新图库默认版本改为 `qwen3-vl-embedding-2b-exif-v2`。`EmbeddingRegistry.default()` 现选择该 provider；`_encoder_wiring()` 原有活动 Profile 优先规则不变，已有图库不迁移。
+- EXIF v2 和普通版共用 `models/qwen3_vl_embedding` 权重目录，不增加模型存储或 SQL 查询。
+- 最小定向验证：provider 默认项、缺少默认 provider 不回退、启动解析 EXIF v2 manifest、已有活动 CLIP 保持权威：**4 passed**（JUnit：`test-results/p4_embedding_default_qwen_exif-v2-junit.xml`）。
+- 未加载真实 Qwen/CUDA；此次 follow-up 尚未提交。

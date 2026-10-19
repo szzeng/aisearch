@@ -23,4 +23,10 @@
 
 ## 验收边界
 
-未真实加载 Qwen 权重或 CUDA 建库，因此真实模型闭环仍 PENDING。未触及 `D:\SZ\project\PhotoSearchData`，未进行 30 万图库测试。实现未提交。
+未真实加载 Qwen 权重或 CUDA 建库，因此真实模型闭环仍 PENDING。未触及 `D:\SZ\project\PhotoSearchData`，未进行 30 万图库测试。原始实现已提交 `176d189`（未推送）；本次 EXIF v2 follow-up 尚未提交。
+
+## 2026-10-20 默认版本调整
+
+用户随后指定新图库默认使用 `qwen3-vl-embedding-2b-exif-v2`。已将 `EmbeddingRegistry.default()` 切换到 EXIF v2，并更新启动接线测试；已有活动 Profile 仍优先，CLIP 活动 Profile 回归检查通过。普通版与 EXIF v2 manifest 指向相同的 `models/qwen3_vl_embedding` 权重目录。
+
+最小定向验证 4/4 通过，JUnit 保存于 `test-results/p4_embedding_default_qwen_exif-v2-junit.xml`。真实 Qwen/CUDA 未运行；本次 follow-up 尚未提交。

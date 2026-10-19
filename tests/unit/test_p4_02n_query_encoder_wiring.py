@@ -293,9 +293,9 @@ def test_the_startup_entry_resolves_the_model_relative_to_the_data_root(tmp_path
     args = argparse.Namespace(model_dir=None, model_manifest=None, model_device=None)
     wiring = _encoder_wiring(args, tmp_path)
     assert wiring.reason == "MODEL_DIR_MISSING"
-    assert wiring.provider_id == "qwen3-vl-embedding-2b"
+    assert wiring.provider_id == "qwen3-vl-embedding-2b-exif-v2"
     assert Path(wiring.model_dir) == tmp_path / "models" / "qwen3_vl_embedding"
-    assert Path(wiring.manifest).name == "qwen3-vl-embedding-2b.json"
+    assert Path(wiring.manifest).name == "qwen3-vl-embedding-2b-exif-v2.json"
     assert json.dumps(wiring.to_dict())  # reportable without any model
 
     explicit = argparse.Namespace(

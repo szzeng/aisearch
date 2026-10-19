@@ -181,10 +181,10 @@ class EmbeddingRegistry:
         """The provider a *new* library uses when nothing is configured yet.
 
         Keep this choice separate from serving: an existing library is always routed by its
-        active SearchProfile. This is the ordinary (non-EXIF-v2) Qwen provider; if it is not
+        active SearchProfile. This is the EXIF-v2 Qwen provider; if it is not
         described by the registry, callers fail explicitly instead of falling back to CLIP.
         """
-        return self.find("qwen3-vl-embedding-2b")
+        return self.find("qwen3-vl-embedding-2b-exif-v2")
 
     def require_installed(self, provider_id: str) -> ProviderEntry:
         """``get`` plus the structured "the weights are really here" refusal."""
