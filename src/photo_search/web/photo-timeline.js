@@ -390,7 +390,12 @@
         var card = renderAsset(item);
         card.dataset.assetId = String(item.asset_id);
         card.dataset.anchor = String(item.anchor || "");
-        section.append(card);
+        var presentation = element("div", "photo-timeline__item");
+        presentation.dataset.assetId = String(item.asset_id);
+        presentation.append(card);
+        if (window.PhotoFavorites) presentation.append(window.PhotoFavorites.button(item.asset_id));
+        if (typeof adapter.decorateAsset === "function") adapter.decorateAsset(item, card, presentation);
+        section.append(presentation);
       });
       if (state.request && state.request.replacingPage) {
         var existing = state.request.replacingPage;
@@ -408,6 +413,7 @@
       state.lastGroupToken = lastGroup;
       state.failed = false; retry.hidden = true; next.hidden = !state.hasMore;
       trimPages(page);
+      if (window.PhotoFavorites) window.PhotoFavorites.mount(host);
       return page;
     }
 

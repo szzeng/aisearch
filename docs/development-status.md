@@ -4,6 +4,10 @@
 
 2026-10-19，按用户要求续做更新后的 [P4-MEDIA-CR2-A](tasks/P4-MEDIA-CR2-A.md)，报告：[执行报告](reports/P4-MEDIA-CR2-A.md)。新增显式 build 限定的一次性旧 `FORMAT_UNSUPPORTED` 人脸/OCR job 恢复、schema 0035 持久 marker、当前 SHA/来源/profile/CR2 头校验、有效发布产物跳过与 OCR active profile 页范围 drain。`DECODE_FAILED` 因缺乏旧故障证据暂保守保留。Luna High 首轮复核指出 payload profile 和 CAS 当前 SHA 两项 P2，均已修复并经跟进复核，无新增 finding；CR2 定向合成测试 2/2 通过。完整 unit/integration 原始运行 3212 项为 3152 passed、9 failed、51 skipped。迁移恢复 fixture 漏列新表，已补后定向复跑 1 passed；其余 8 项含并行 UI/favorites 的失败，原完整运行不记 PASS。Ruff、相关 `py_compile`、本任务涉及文件 diff-check 通过。D4 状态矩阵、内置浏览器、真实模型端到端及独立 DS-H 受影响面审查仍 PENDING；因此不标 `CR2 RECOVERY VERIFIED` / `SCOPED PASS`。未访问真实 `PhotoSearchData`。
 
+## Earlier status record: P4-FAVORITES-UX-B — 收藏星标、批量收藏与拍摄时间排序
+
+2026-10-19，本任务状态：PASS（受影响面验收），详见[执行报告](reports/P4-FAVORITES-UX-B.md)与[任务卡](tasks/P4-FAVORITES-UX-B.md)。最终受影响组合 JUnit 40/40 通过（0 failures、0 errors、0 skipped）；Ruff、Node 语法、py_compile、diff-check 通过。Luna High 对完整变更面及最新探针独立复核无剩余 finding。隔离内置浏览器实测首页、搜索、收藏排序、viewer 回写、地图、人物照片页和地点相册星标；注入一次性 revision 写故障确认浏览器保留选择，并验证 Escape 优先关闭 viewer、否则退出选择。Node 行为探针确认选择集精确保留 500 项并拒绝第 501 项、DOM 回收后迟到响应不污染缓存、201 个 ID 按 100/100/1 无重无漏分批且全部按钮状态正确。未访问真实图库、未跑全仓/30万性能测试；并行 CR2 保持当前状态。
+
 ## Earlier status record: P4-UI2-VIEWER-PAN-AVATAR-FIX — 查看器平移与人物头像修复
 
 2026-10-19，交接前状态：[P4-UI2-VIEWER-PAN-AVATAR-FIX](tasks/P4-UI2-VIEWER-PAN-AVATAR-FIX.md)，报告：[执行报告](reports/P4-UI2-VIEWER-PAN-AVATAR-FIX.md)。状态：IMPLEMENTED / ACCEPTANCE PARTIAL。定向单测最终 28/28 通过；此前完整受影响组合 64/64 通过。最后重跑遇并行工作树新增 migration 0035 与 schema 支持版本 34 不一致，38 个 integration 在 fixture setup 报错；不把该次运行称为产品失败或 PASS。JS 语法、Ruff、diff-check 通过。按用户要求跳过浏览器，V01/V04 实际页面与图像边缘验证仍 PENDING。新增 V08 后确认 pointerdown 立即捕获舞台会重定向浏览器 click/dblclick target；现改为超过 4px 拖动阈值后才捕获，dblclick 仍限定图片目标，并抑制实际拖动形成的双击。原生事件序列模拟定向单测 1/1 通过。按用户要求不跑浏览器，真实 V08 由用户手测，仍 PENDING。前一轮提交为 `2df5fe8`；本轮 V08 修正尚未提交。
@@ -13,7 +17,7 @@
 
 2026-10-19，当前卡：[P4-FAVORITES-CORE-A](tasks/P4-FAVORITES-CORE-A.md)，报告：[执行报告](reports/P4-FAVORITES-CORE-A.md)。状态：PASS（组合证据）。已新增 schema 0034、收藏服务/API、共享 viewer 操作及 `/?view=favorites` 收藏网格；收藏状态与 revision 幂等事务更新，游标 revision 失效、retention 保护和备份恢复均有覆盖。完整 unit/integration 执行 3204 项，3151 passed、51 skipped、2 failed；两条人物相册深链 Node harness 用例未改代码单独复跑 2 passed，因此如实标记组合验证，不将原整套运行写作全量 PASS。Ruff、JS 语法、diff-check 通过；内置浏览器隔离合成照片覆盖收藏、详情往返和取消后空态。无截图导出；未访问真实图库，未做收藏规模延迟结论。Luna High 独立复核无阻塞项。
 
-完成 P4-FAVORITES-CORE-A 时的后续卡记录：`P4-FAVORITES-UX-B` 当时保持 READY；后续状态见其任务报告与任务卡。
+后续任务卡 `P4-FAVORITES-UX-B` 在本记录形成后开始实施；当时的验收进度以其最新报告和上方状态摘要为准。本记录保留 A 完成时的历史状态。
 
 ## Previous: 性能设计规范落地
 

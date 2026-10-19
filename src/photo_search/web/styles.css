@@ -1264,3 +1264,33 @@ body.app-shell {
   .map-page.app-shell { overflow: visible; min-height: 100vh; height: auto; }
   .map-page.app-shell > .app-workspace { height: auto; min-height: calc(100vh - 5rem); grid-template-rows: max-content max-content minmax(20rem, 1fr); }
 }
+.favorite-star {
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 0.5rem;
+  inset-inline-end: 0.5rem;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.15rem;
+  border: 1px solid var(--line, #777);
+  border-radius: 999px;
+  background: var(--surface, #fff);
+  color: var(--accent, #ad7c00);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.card-tile, #grid .tile, .album-photo, .photo-timeline__item { position: relative; }
+.photo-select-checkbox {
+  position: absolute;
+  z-index: 3;
+  inset-block-start: 0.55rem;
+  inset-inline-start: 0.55rem;
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--accent, #2766a8);
+}
+.photo-selecting > [data-selected="true"] { outline: 3px solid var(--accent, #2766a8); outline-offset: 2px; }
+.photo-timeline__item > .favorite-star { inset-block-start: 0.65rem; inset-inline-end: 0.65rem; }
+.photo-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
+.photo-selection [role="group"] { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }

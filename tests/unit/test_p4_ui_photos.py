@@ -22,7 +22,7 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
     assert 'id="browse-list-filters" hidden' in html
     assert 'id="browse-list-time-hint" class="hint" hidden' in html
     assert ".browse-controls #browse-list-filters[hidden] {\n  display: none;\n}" in timeline_styles
-    assert 'photo-timeline.css?v=p4-ui2-shell-sticky-a-1' in html
+    assert 'photo-timeline.css?v=p4-favorites-ux-b-1' in html
     assert 'class="view gallery-management-page"' in html
     assert '查看完整校验扫描' not in html  # Management stays in the per-source details.
     assert 'mode: "timeline"' in app

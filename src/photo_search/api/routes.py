@@ -75,6 +75,8 @@ from photo_search.api.models import (
     FaceRegroupRequest,
     FaceRegroupResponse,
     FaceRematchRequest,
+    FavoriteBatchRequest,
+    FavoriteBatchResponse,
     FavoriteListResponse,
     FavoriteStatesResponse,
     FavoriteWriteResponse,
@@ -169,7 +171,12 @@ from photo_search.catalog.errors import (
 from photo_search.catalog.migrate import catalog_info
 from photo_search.config import catalog_db_path
 from photo_search.face.weights import weights_present as face_weights_present
-from photo_search.favorites import favorite_states, list_favorites, set_favorite
+from photo_search.favorites import (
+    favorite_states,
+    list_favorites,
+    set_favorite,
+    set_favorites_batch,
+)
 from photo_search.geo import resolver as geo_resolver
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
@@ -911,10 +918,11 @@ async def get_favorites(
     request: Request,
     limit: int = Query(default=50, ge=1, le=50),
     cursor: str | None = None,
+    order: Literal["recent", "capture_desc"] = "recent",
 ) -> dict[str, Any]:
     service = service_of(request)
     return await run_catalog_read(
-        service.catalog, list_favorites, service.media_cache(), limit=limit, cursor=cursor
+        service.catalog, list_favorites, service.media_cache(), limit=limit, cursor=cursor, order=order
     )
 
 
@@ -934,6 +942,11 @@ async def put_favorite(request: Request, asset_id: int) -> dict[str, Any]:
 @router.delete("/assets/{asset_id}/favorite", response_model=FavoriteWriteResponse, summary="Unfavorite a photo")
 async def delete_favorite(request: Request, asset_id: int) -> dict[str, Any]:
     return set_favorite(service_of(request).catalog, asset_id, favorite=False)
+
+
+@router.post("/favorites/batch", response_model=FavoriteBatchResponse, summary="Set favorite state for photos")
+async def batch_favorites(payload: FavoriteBatchRequest, request: Request) -> dict[str, Any]:
+    return set_favorites_batch(service_of(request).catalog, payload.asset_ids, favorite=payload.is_favorite)
 
 
 @router.get(

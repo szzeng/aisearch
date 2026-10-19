@@ -163,6 +163,8 @@
   transition: transform 140ms ease, box-shadow 140ms ease;
 }
 
+.photo-timeline__item > .photo-timeline__card { width: 100%; }
+
 .photo-timeline__card:hover {
   transform: translateY(-2px);
   box-shadow: 0 8px 22px rgb(24 45 36 / 12%);

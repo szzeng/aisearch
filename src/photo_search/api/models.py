@@ -410,6 +410,7 @@ class FavoriteListResponse(BaseModel):
     next_cursor: str | None = None
     has_more: bool
     favorites_revision: int
+    order: Literal["recent", "capture_desc"] = "recent"
 
 
 class FavoriteStatesResponse(BaseModel):
@@ -421,6 +422,28 @@ class FavoriteWriteResponse(BaseModel):
     asset_id: int
     is_favorite: bool
     changed: bool
+    favorites_revision: int
+
+
+class FavoriteBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_ids: list[StrictInt] = Field(min_length=1, max_length=500)
+    is_favorite: StrictBool
+
+    @field_validator("asset_ids")
+    @classmethod
+    def valid_asset_ids(cls, value: list[int]) -> list[int]:
+        if any(asset_id <= 0 for asset_id in value) or len(set(value)) != len(value):
+            raise ValueError("asset_ids must be distinct positive integers")
+        return value
+
+
+class FavoriteBatchResponse(BaseModel):
+    is_favorite: bool
+    requested: int
+    changed: int
+    unchanged: int
     favorites_revision: int
 
 

@@ -6,15 +6,16 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-core-a-3" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-ux-b-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-favorites-ux-b-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" />
+    <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" defer></script>
-    <script src="/web/photo-timeline.js?v=p4-face-refresh-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-favorites-ux-b-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-favorites-core-a-3" defer></script>
+    <script src="/web/app.js?v=p4-favorites-ux-b-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -23,7 +24,8 @@
     <aside class="app-sidebar" aria-label="应用导航">
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
-        <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
+        <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
         <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>
@@ -223,6 +225,13 @@
           <button type="button" id="browse-reload">刷新</button>
           </div>
         </div>
+        <div class="browse-controls">
+          <label id="favorites-order-label" for="favorites-order" hidden>收藏排序</label>
+          <select id="favorites-order" hidden aria-label="收藏排序">
+            <option value="recent">最近收藏</option>
+            <option value="capture_desc">按拍摄时间（未知时间置尾）</option>
+          </select>
+        </div>
         <p id="browse-scope" class="state-block browse-scope" role="status" aria-live="polite" hidden>
           <span id="browse-scope-name"></span>
           <button type="button" id="clear-browse-source">查看全部图库</button>
@@ -246,6 +255,17 @@
         <div id="browse-list-view">
         <div id="browse-status" class="state-block" role="status" aria-live="polite"></div>
         <button type="button" id="favorites-reload" hidden>刷新收藏</button>
+        <div id="photo-selection" class="photo-selection" hidden>
+          <button type="button" id="photo-select-toggle" aria-pressed="false">选择照片</button>
+          <div id="photo-selection-toolbar" hidden role="group" aria-label="照片批量收藏">
+            <span id="photo-selection-count" class="hint"></span>
+            <button type="button" id="photo-select-all">全选当前项</button>
+            <button type="button" id="photo-select-invert">反选当前项</button>
+            <button type="button" id="photo-select-clear">清空选择</button>
+            <button type="button" id="photo-select-add" disabled>加入收藏</button>
+            <button type="button" id="photo-select-remove" disabled>取消收藏</button>
+          </div>
+        </div>
         <ol id="asset-grid" class="grid" aria-label="按加入时间排列的图片"></ol>
         <div id="grid-sentinel" class="sentinel" hidden></div>
         <p>

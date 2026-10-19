@@ -16,6 +16,7 @@ CURSOR_PREFIX = "fav1"
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 50
 MAX_STATE_IDS = 100
+SQLITE_INT64_MAX = (1 << 63) - 1
 
 
 def _revision(connection: sqlite3.Connection) -> int:
@@ -31,43 +32,77 @@ def _revision(connection: sqlite3.Connection) -> int:
     return revision
 
 
-def _encode_cursor(added_at_ms: int, asset_id: int, revision: int) -> str:
-    raw = f"{CURSOR_PREFIX}:{added_at_ms}:{asset_id}:{revision}".encode("ascii")
+def _encode_cursor(order: str, position: tuple[int, ...], revision: int, catalog_revision: int) -> str:
+    raw = ":".join((CURSOR_PREFIX, order, *(str(value) for value in position), str(revision), str(catalog_revision))).encode("ascii")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_cursor(cursor: str | None) -> tuple[int, int, int] | None:
+def _decode_cursor(cursor: str | None) -> tuple[str, tuple[int, ...], int, int] | None:
     if cursor is None or not str(cursor).strip():
         return None
     try:
         raw = base64.urlsafe_b64decode(str(cursor) + "=" * (-len(str(cursor)) % 4)).decode("ascii")
-        prefix, added_at, asset_id, revision = raw.split(":")
-        values = int(added_at), int(asset_id), int(revision)
+        parts = raw.split(":")
+        if len(parts) < 2 or parts[0] != CURSOR_PREFIX or parts[1] not in ("recent", "capture_desc"):
+            raise ValueError("invalid cursor mode")
+        order = parts[1]
+        width = 2 if order == "recent" else 3
+        if len(parts) != 2 + width + 2:
+            raise ValueError("invalid cursor shape")
+        position = tuple(int(value) for value in parts[2:2 + width])
+        revision, catalog_revision = int(parts[-2]), int(parts[-1])
     except (ValueError, UnicodeDecodeError, binascii.Error) as error:
         raise ApiError("INVALID_CURSOR", "the favorites cursor is not valid", status=422) from error
-    if prefix != CURSOR_PREFIX or min(values) < 0 or values[1] < 1:
+    values = (*position, revision, catalog_revision)
+    if min(values) < 0 or max(values) > SQLITE_INT64_MAX or position[-1] < 1:
         raise ApiError("INVALID_CURSOR", "the favorites cursor is not valid", status=422)
-    return values
+    if order == "capture_desc" and position[0] not in (0, 1):
+        raise ApiError("INVALID_CURSOR", "the favorites cursor is not valid", status=422)
+    return order, position, revision, catalog_revision
 
 
-def list_favorites(catalog: Any, cache: Any, *, limit: int = DEFAULT_LIMIT, cursor: str | None = None) -> dict[str, Any]:
+def list_favorites(catalog: Any, cache: Any, *, limit: int = DEFAULT_LIMIT, cursor: str | None = None,
+                   order: str = "recent") -> dict[str, Any]:
+    if order not in ("recent", "capture_desc"):
+        raise ApiError("VALIDATION_ERROR", "order must be recent or capture_desc", status=422)
     page_limit = max(1, min(int(limit), MAX_LIMIT))
     position = _decode_cursor(cursor)
     with catalog.read_snapshot() as connection:
         revision = _revision(connection)
-        if position is not None and position[2] != revision:
-            raise ApiError(FAVORITES_REVISION_STALE, "收藏内容已变化，请刷新后重新读取。", status=409)
+        from photo_search.places.revision import read_filter_revision
+
+        catalog_revision = read_filter_revision(connection)
+        if position is not None and (position[0] != order or position[2] != revision
+                                     or (order == "capture_desc" and position[3] != catalog_revision)):
+            raise ApiError(FAVORITES_REVISION_STALE, "收藏或排序依据已变化，请刷新后从第一页重新读取。", status=409)
         photo_sql, photo_params = photo_asset_sql(asset_alias="a")
         conditions = ["a.state='ACTIVE'", photo_sql]
         params: list[Any] = list(photo_params)
-        if position is not None:
-            conditions.append("(f.added_at_ms, f.asset_id) < (?, ?)")
-            params.extend((position[0], position[1]))
+        if order == "recent":
+            if position is not None:
+                conditions.append("(f.added_at_ms, f.asset_id) < (?, ?)")
+                params.extend(position[1])
+            order_sql = "f.added_at_ms DESC, f.asset_id DESC"
+            joins = ""
+            selection = "f.asset_id, f.added_at_ms, a.sha256, a.byte_size, a.created_at"
+        else:
+            joins = " LEFT JOIN asset_metadata AS m ON m.asset_id=f.asset_id"
+            trusted_capture = "(m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL)"
+            selection = "f.asset_id, f.added_at_ms, a.sha256, a.byte_size, a.created_at, " + \
+                f"CASE WHEN {trusted_capture} THEN m.taken_at_sort END AS capture_sort"
+            if position is not None:
+                known, sort_key, asset_id = position[1]
+                if known:
+                    conditions.append(f"(({trusted_capture} AND (m.taken_at_sort < ? OR (m.taken_at_sort = ? AND f.asset_id < ?))) OR NOT {trusted_capture})")
+                    params.extend((sort_key, sort_key, asset_id))
+                else:
+                    conditions.append(f"NOT {trusted_capture} AND f.asset_id < ?")
+                    params.append(asset_id)
+            order_sql = f"(NOT {trusted_capture}), CASE WHEN {trusted_capture} THEN m.taken_at_sort END DESC, f.asset_id DESC"
         rows = connection.execute(
-            "SELECT f.asset_id, f.added_at_ms, a.sha256, a.byte_size, a.created_at "
-            "FROM asset_favorites AS f INDEXED BY idx_asset_favorites_recent "
-            "JOIN assets AS a ON a.asset_id=f.asset_id WHERE " + " AND ".join(conditions) +
-            " ORDER BY f.added_at_ms DESC, f.asset_id DESC LIMIT ?",
+            f"SELECT {selection} FROM asset_favorites AS f INDEXED BY idx_asset_favorites_recent "
+            "JOIN assets AS a ON a.asset_id=f.asset_id" + joins + " WHERE " + " AND ".join(conditions) +
+            f" ORDER BY {order_sql} LIMIT ?",
             (*params, page_limit + 1),
         ).fetchall()
         has_more = len(rows) > page_limit
@@ -89,9 +124,15 @@ def list_favorites(catalog: Any, cache: Any, *, limit: int = DEFAULT_LIMIT, curs
         last = page[-1] if page else None
         return {
             "assets": assets,
-            "next_cursor": _encode_cursor(int(last["added_at_ms"]), int(last["asset_id"]), revision) if has_more and last else None,
+            "next_cursor": _encode_cursor(
+                order,
+                (int(last["added_at_ms"]), int(last["asset_id"])) if order == "recent" else
+                (int(last["capture_sort"] is not None), int(last["capture_sort"] or 0), int(last["asset_id"])),
+                revision, catalog_revision if order == "capture_desc" else 0,
+            ) if has_more and last else None,
             "has_more": has_more,
             "favorites_revision": revision,
+            "order": order,
         }
 
 
@@ -137,3 +178,43 @@ def set_favorite(catalog: Any, asset_id: int, *, favorite: bool) -> dict[str, An
             )
         revision = _revision(connection)
         return {"asset_id": asset_id, "is_favorite": bool(favorite), "changed": changed, "favorites_revision": revision}
+
+
+def set_favorites_batch(catalog: Any, asset_ids: list[int], *, favorite: bool) -> dict[str, Any]:
+    ids = [int(value) for value in asset_ids]
+    if not 1 <= len(ids) <= 500 or any(value <= 0 for value in ids) or len(set(ids)) != len(ids):
+        raise ApiError("VALIDATION_ERROR", "asset_ids must contain 1 to 500 distinct positive integers", status=422)
+    photo_sql, photo_params = photo_asset_sql(asset_alias="a")
+    placeholders = ",".join("?" for _ in ids)
+    with catalog.write() as connection:
+        rows = connection.execute(
+            f"SELECT a.asset_id FROM assets AS a WHERE a.asset_id IN ({placeholders}) "
+            f"AND a.state='ACTIVE' AND {photo_sql}", (*ids, *photo_params),
+        ).fetchall()
+        eligible = {int(row[0]) for row in rows}
+        if eligible != set(ids):
+            missing = [value for value in ids if value not in eligible]
+            raise ApiError("INVALID_BATCH_ASSET", "批量收藏包含不存在、非图片或非活动资产；没有执行任何更改。",
+                           status=422, details={"asset_ids": missing})
+        existing_rows = connection.execute(
+            f"SELECT asset_id FROM asset_favorites WHERE asset_id IN ({placeholders})", ids
+        ).fetchall()
+        existing = {int(row[0]) for row in existing_rows}
+        targets = set(ids) if favorite else set()
+        changed_ids = targets - existing if favorite else existing
+        if changed_ids:
+            if favorite:
+                now_ms = int(catalog.now_ms())
+                connection.executemany(
+                    "INSERT INTO asset_favorites(asset_id, added_at_ms) VALUES (?, ?)",
+                    ((asset_id, now_ms) for asset_id in ids if asset_id in changed_ids),
+                )
+            else:
+                connection.executemany(
+                    "DELETE FROM asset_favorites WHERE asset_id=?",
+                    ((asset_id,) for asset_id in ids if asset_id in changed_ids),
+                )
+            connection.execute("UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='favorites_revision'")
+        revision = _revision(connection)
+        return {"is_favorite": bool(favorite), "requested": len(ids), "changed": len(changed_ids),
+                "unchanged": len(ids) - len(changed_ids), "favorites_revision": revision}

@@ -6,13 +6,14 @@
     <meta name="color-scheme" content="light dark" />
     <title>地点整理</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-core-a-3" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-ux-b-1" />
     <link rel="stylesheet" href="/web/places.css?v=p4-ui2-places-simplify-a-1" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-favorites-ux-b-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" />
     <script src="/web/map-config.js" defer></script>
+    <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" defer></script>
-    <script src="/web/photo-timeline.js?v=p4-face-refresh-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-favorites-ux-b-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/places-albums.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
     <script src="/web/places.js?v=p4-ui2-places-simplify-a-1" defer></script>
@@ -24,7 +25,8 @@
     <aside class="app-sidebar" aria-label="应用导航">
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
-        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
+        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
         <a class="nav-link" data-shell-page="places" href="/places" aria-current="page"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>

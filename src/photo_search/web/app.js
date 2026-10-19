@@ -70,6 +70,7 @@
     browse: {
       scope: "all",
       favoritesRevision: null,
+      favoritesOrder: "recent",
       sourceId: "",
       order: "time_desc",
       captureFrom: "",
@@ -1279,6 +1280,7 @@
   function setBrowseScope(scope) {
     var next = scope === "favorites" ? "favorites" : "all";
     if (state.browse.scope === next) return;
+    if (state.browse.photoSelection) state.browse.photoSelection.reset();
     state.browse.scope = next;
     state.browse.sourceId = "";
     state.browse.order = "time_desc";
@@ -1300,6 +1302,9 @@
       text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "“加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。\n“拍摄时间”只来自文件自身声明的时间；文件系统修改时间与 EXIF 根时间不参与拍摄时间范围筛选。");
     }
     if (els.browseModeControls) els.browseModeControls.hidden = favorites;
+    if (els.favoritesOrderLabel) els.favoritesOrderLabel.hidden = !favorites;
+    if (els.favoritesOrder) { els.favoritesOrder.hidden = !favorites; els.favoritesOrder.value = state.browse.favoritesOrder; }
+    if (els.photoSelectionWrap) els.photoSelectionWrap.hidden = !favorites && state.browse.mode !== "list";
     if (els.favoritesReload) els.favoritesReload.hidden = !favorites;
     if (els.browseControls) els.browseControls.hidden = favorites;
     if (els.browseScope) els.browseScope.hidden = favorites;
@@ -1774,6 +1779,7 @@
     var directory = item.directory_path || "";
     var name = element("span", "photo-timeline__filename", filename);
     card.append(image, name);
+    card.dataset.assetId = String(item.asset_id);
     if (directory) card.append(element("small", "photo-timeline__directory", directory));
     if (directory && item.filename) card.title = directory + filename;
     return card;
@@ -1811,6 +1817,7 @@
   function showBrowseMode(mode) {
     if (state.browse.scope === "favorites") mode = "list";
     var useTimeline = mode === "timeline";
+    if (useTimeline && state.browse.photoSelection) state.browse.photoSelection.reset();
     state.browse.mode = useTimeline ? "timeline" : "list";
     els.browseTimeline.hidden = !useTimeline;
     els.browseListView.hidden = useTimeline;
@@ -1820,6 +1827,7 @@
     els.browseShowList.setAttribute("aria-pressed", useTimeline ? "true" : "false");
     els.browseCaptureState.hidden = useTimeline;
     els.browseListFilters.hidden = useTimeline;
+    if (els.photoSelectionWrap) els.photoSelectionWrap.hidden = state.browse.scope !== "favorites" && useTimeline;
     els.browseListTimeHint.hidden = state.browse.scope === "favorites" || useTimeline;
     els.browseTimelineNote.hidden = !useTimeline;
     if (!useTimeline) {
@@ -1885,6 +1893,7 @@
   function loadBrowse(reset) {
     if (state.browse.scope !== "favorites" && state.browse.mode === "timeline") return;
     if (reset) {
+      if (state.browse.photoSelection) state.browse.photoSelection.reset();
       state.browse.requestVersion += 1;
       releaseObjectUrls();
       state.browse.cursor = null;
@@ -1940,6 +1949,7 @@
         assets.forEach(function (asset) {
           els.assetGrid.appendChild(buildTile(asset));
         });
+        if (window.PhotoFavorites) window.PhotoFavorites.mount(els.assetGrid);
         if (window.PhotoScrollPager) {
           state.browse.recycledCount += window.PhotoScrollPager.trimGrid(els.assetGrid, 500);
         }
@@ -2004,6 +2014,7 @@
     var requestVersion = state.browse.requestVersion;
     var params = new URLSearchParams();
     params.set("limit", String(PAGE_SIZE));
+    params.set("order", state.browse.favoritesOrder);
     if (state.browse.cursor) params.set("cursor", state.browse.cursor);
     setStatus(els.browseStatus, reset ? "正在读取收藏…" : "正在读取下一页收藏…");
     return request("/favorites?" + params.toString()).then(function (result) {
@@ -2015,6 +2026,9 @@
       var body = result.body || {};
       var assets = body.assets || [];
       assets.forEach(function (asset) { els.assetGrid.appendChild(buildTile(asset)); });
+      if (window.PhotoFavorites) window.PhotoFavorites.mount(els.assetGrid, function (favoriteResult) {
+        if (state.browse.scope === "favorites" && !favoriteResult.is_favorite) loadBrowse(true);
+      }, null, { ids: assets.map(function (asset) { return asset.asset_id; }), isFavorite: true, revision: body.favorites_revision });
       if (window.PhotoScrollPager) {
         state.browse.recycledCount += window.PhotoScrollPager.trimGrid(els.assetGrid, 500);
       }
@@ -2025,7 +2039,8 @@
       state.browse.loaded = true;
       state.browse.loading = false;
       restoreBrowsePosition();
-      setStatus(els.browseStatus, state.browse.count ? "已显示 " + state.browse.count + " 张收藏照片 · 按最近收藏排列" : "还没有收藏照片。打开照片后点击“☆ 收藏”即可加入。");
+      setStatus(els.browseStatus, state.browse.count ? "已显示 " + state.browse.count + " 张收藏照片 · " +
+        (state.browse.favoritesOrder === "recent" ? "按最近收藏排列" : "按可信拍摄时间排列，未知时间置尾") : "还没有收藏照片。打开照片后点击“☆ 收藏”即可加入。");
       if (els.favoritesReload) els.favoritesReload.hidden = true;
       els.loadMore.hidden = !state.browse.hasMore;
       els.gridSentinel.hidden = !state.browse.hasMore;
@@ -2196,6 +2211,7 @@
 
   function buildTile(asset) {
     var tile = element("li", "card-tile");
+    tile.dataset.assetId = String(asset.asset_id);
     var frame = element("button", "thumb-frame");
     frame.type = "button";
     frame.setAttribute("aria-label", "查看照片 " + asset.asset_id);
@@ -2207,6 +2223,7 @@
     }
     observeThumbnail(frame);
     tile.appendChild(frame);
+    if (window.PhotoFavorites) tile.appendChild(window.PhotoFavorites.button(asset.asset_id));
 
     var caption = element("div", "tile-caption");
     var currentSource = asset.current_location
@@ -2356,6 +2373,10 @@
         window.AIPhotoInfo.navigateToDetails(id, "home");
       },
       onFavoriteChanged: function (id, result) {
+        if (state.browse.scope !== "favorites" && window.PhotoFavorites) {
+          window.PhotoFavorites.invalidate(els.assetGrid);
+          window.PhotoFavorites.invalidate(els.browseTimeline);
+        }
         if (state.browse.scope !== "favorites" || result.is_favorite) return;
         var scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
         var tile = els.assetGrid.querySelector('[data-asset-id="' + String(id) + '"]');
@@ -2952,6 +2973,17 @@
       browseCaptureTo: document.getElementById("browse-capture-to"),
       browseCaptureState: document.getElementById("browse-capture-state"),
       assetGrid: document.getElementById("asset-grid"),
+      favoritesOrderLabel: document.getElementById("favorites-order-label"),
+      favoritesOrder: document.getElementById("favorites-order"),
+      photoSelectionWrap: document.getElementById("photo-selection"),
+      photoSelectionToggle: document.getElementById("photo-select-toggle"),
+      photoSelectionToolbar: document.getElementById("photo-selection-toolbar"),
+      photoSelectionCount: document.getElementById("photo-selection-count"),
+      photoSelectAll: document.getElementById("photo-select-all"),
+      photoSelectInvert: document.getElementById("photo-select-invert"),
+      photoSelectClear: document.getElementById("photo-select-clear"),
+      photoSelectAdd: document.getElementById("photo-select-add"),
+      photoSelectRemove: document.getElementById("photo-select-remove"),
       loadMore: document.getElementById("load-more"),
       favoritesReload: document.getElementById("favorites-reload"),
       gridSentinel: document.getElementById("grid-sentinel"),
@@ -2963,6 +2995,15 @@
         detail: document.getElementById("view-detail"),
       },
     };
+
+    if (window.PhotoBatchSelect) state.browse.photoSelection = window.PhotoBatchSelect.create(els.assetGrid, {
+      toggle: els.photoSelectionToggle, toolbar: els.photoSelectionToolbar, count: els.photoSelectionCount,
+      all: els.photoSelectAll, invert: els.photoSelectInvert, clear: els.photoSelectClear,
+      add: els.photoSelectAdd, remove: els.photoSelectRemove,
+    }, function (body) {
+      els.photoSelectionCount.textContent = (body.is_favorite ? "已加入收藏 " : "已取消收藏 ") + body.changed + " 张，" + body.unchanged + " 张已是目标状态。";
+      if (state.browse.scope === "favorites" && !body.is_favorite) loadBrowse(true);
+    });
 
     els.setSearchScopeAction = window.SearchScopeEntry && window.SearchScopeEntry.configure({
       button: els.searchScopeAction,
@@ -3008,6 +3049,10 @@
       loadBrowse(true);
     });
     els.favoritesReload.addEventListener("click", function () { loadBrowse(true); });
+    els.favoritesOrder.addEventListener("change", function () {
+      state.browse.favoritesOrder = els.favoritesOrder.value === "capture_desc" ? "capture_desc" : "recent";
+      loadBrowse(true);
+    });
     els.browseShowTimeline.addEventListener("click", function () { showBrowseMode("timeline"); });
     els.browseShowList.addEventListener("click", function () { showBrowseMode("list"); });
     els.browseSource.addEventListener("change", function () {

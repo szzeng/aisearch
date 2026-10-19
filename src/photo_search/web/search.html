@@ -6,14 +6,15 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-core-a-3" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-ux-b-1" />
     <link rel="stylesheet" href="/web/search.css?v=p4-ui-shell-a-f1-5" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" />
     <script src="/web/map-config.js" defer></script>
+    <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-search-text-mode-2" defer></script>
+    <script src="/web/search.js?v=p4-favorites-ux-b-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -22,7 +23,8 @@
     <aside class="app-sidebar" aria-label="应用导航">
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
-        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
+        <a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
         <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>
@@ -215,6 +217,17 @@
         <h2 id="results-title">结果</h2>
         <div id="result-notices" class="notices" role="status" aria-live="polite"></div>
         <p><button type="button" id="candidate-time-toggle" hidden>按时间查看当前语义候选</button></p>
+        <div id="search-photo-selection" class="photo-selection">
+          <button type="button" id="search-photo-select-toggle" aria-pressed="false">选择照片</button>
+          <div id="search-photo-selection-toolbar" hidden role="group" aria-label="搜索结果批量收藏">
+            <span id="search-photo-selection-count" class="hint"></span>
+            <button type="button" id="search-photo-select-all">全选当前项</button>
+            <button type="button" id="search-photo-select-invert">反选当前项</button>
+            <button type="button" id="search-photo-select-clear">清空选择</button>
+            <button type="button" id="search-photo-select-add" disabled>加入收藏</button>
+            <button type="button" id="search-photo-select-remove" disabled>取消收藏</button>
+          </div>
+        </div>
         <ol id="result-grid" class="grid" aria-label="搜索结果"></ol>
         <div id="search-grid-sentinel" class="sentinel" hidden></div>
         <p>

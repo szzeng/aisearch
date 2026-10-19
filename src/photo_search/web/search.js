@@ -129,6 +129,7 @@
   };
 
   var els = {};
+  var photoSelection = null;
 
   // ------------------------------------------------------------------ utilities
   function cookieValue(name) {
@@ -1068,6 +1069,7 @@
   }
 
   function sendSearch(continuation) {
+    if (!continuation && photoSelection) photoSelection.reset();
     if (state.search.loading && continuation) {
       return Promise.resolve(false);
     }
@@ -1714,6 +1716,7 @@
     hits.forEach(function (hit) {
       els.resultGrid.appendChild(buildHit(hit, body.retrieval_mode));
     });
+    if (window.PhotoFavorites) window.PhotoFavorites.mount(els.resultGrid);
     state.search.count += hits.length;
     state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
     var removedHits = window.PhotoScrollPager ? window.PhotoScrollPager.trimGrid(els.resultGrid, 500) : 0;
@@ -2106,6 +2109,7 @@
   function buildHit(hit, retrievalMode) {
     retrievalMode = retrievalMode || (state.search.lastBody || {}).retrieval_mode;
     var tile = element("li", "card-tile");
+    tile.dataset.assetId = String(hit.asset_id);
     var frame = element("button", "thumb-frame");
     frame.type = "button";
     frame.setAttribute("aria-label", "查看照片，搜索结果第 " + number(hit.rank) + " 名");
@@ -2113,6 +2117,7 @@
     frame.dataset.assetId = String(hit.asset_id);
     observeThumbnail(frame);
     tile.appendChild(frame);
+    if (window.PhotoFavorites) tile.appendChild(window.PhotoFavorites.button(hit.asset_id));
 
     var caption = element("div", "tile-caption");
     var head = element("p", "hit-head");
@@ -2216,6 +2221,9 @@
         window.location.href = "/persons?person_id=" + encodeURIComponent(id) + "&from_photo=photo";
       },
       navigation: { previous: function () { moveSearchPreview(-1); }, next: function () { moveSearchPreview(1); } },
+      onFavoriteChanged: function () {
+        if (window.PhotoFavorites) window.PhotoFavorites.invalidate(els.resultGrid);
+      },
       onClose: function () {
         preview.seq += 1; preview.assetId = null; preview.handle = null;
         updateSearchPreviewNavigation();
@@ -2847,6 +2855,14 @@
       personStatus: document.getElementById("person-status"),
       resultNotices: document.getElementById("result-notices"),
       resultGrid: document.getElementById("result-grid"),
+      photoSelectionToggle: document.getElementById("search-photo-select-toggle"),
+      photoSelectionToolbar: document.getElementById("search-photo-selection-toolbar"),
+      photoSelectionCount: document.getElementById("search-photo-selection-count"),
+      photoSelectAll: document.getElementById("search-photo-select-all"),
+      photoSelectInvert: document.getElementById("search-photo-select-invert"),
+      photoSelectClear: document.getElementById("search-photo-select-clear"),
+      photoSelectAdd: document.getElementById("search-photo-select-add"),
+      photoSelectRemove: document.getElementById("search-photo-select-remove"),
       gridSentinel: document.getElementById("search-grid-sentinel"),
       loadMore: document.getElementById("load-more"),
       candidateTimeToggle: document.getElementById("candidate-time-toggle"),
@@ -2863,6 +2879,14 @@
       searchPreviewInfo: document.getElementById("search-preview-info"),
       searchPreviewNote: document.getElementById("search-preview-note"),
     };
+
+    if (window.PhotoBatchSelect) photoSelection = window.PhotoBatchSelect.create(els.resultGrid, {
+      toggle: els.photoSelectionToggle, toolbar: els.photoSelectionToolbar, count: els.photoSelectionCount,
+      all: els.photoSelectAll, invert: els.photoSelectInvert, clear: els.photoSelectClear,
+      add: els.photoSelectAdd, remove: els.photoSelectRemove,
+    }, function (body) {
+      els.photoSelectionCount.textContent = (body.is_favorite ? "已加入收藏 " : "已取消收藏 ") + body.changed + " 张，" + body.unchanged + " 张已是目标状态。";
+    });
 
     bindQuerySubmission();
     els.queryRetrievalMode.addEventListener("change", function () {
