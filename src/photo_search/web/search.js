@@ -91,6 +91,8 @@
       total: null,
       loading: false,
       mode: "text",
+      assetQueryId: null,
+      assetQuery: null,
       imageFile: null,
       pendingImageFile: null,
       //: The condition digest this session is bound to (null while no session is open).
@@ -350,7 +352,7 @@
         lines.push({ kind: notice.kind, text: notice.text });
       }
     }
-    if (projection.state === "LAGGING") {
+    if (!body.asset_query && projection.state === "LAGGING") {
       lines.push({
         kind: "",
         text:
@@ -402,7 +404,7 @@
           "）：分页只在这份有界列表内进行。",
       });
     }
-    if (!body.query && !body.image_query) {
+    if (!body.asset_query && !body.query && !body.image_query) {
       lines.push({
         kind: "informational",
         text:
@@ -910,6 +912,92 @@
       ? "按时间查看文字结果" : "按时间查看当前语义候选";
   }
 
+  function similarAssetFromUrl() {
+    var params = new URLSearchParams(window.location.search || "");
+    if (!params.has("similar_asset")) return { present: false };
+    var raw = params.get("similar_asset") || "";
+    if (!/^[1-9][0-9]{0,17}$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      return { present: true, valid: false };
+    }
+    return { present: true, valid: true, assetId: Number(raw), conflicts: params.has("scope_entry") || params.has("q") };
+  }
+
+  function clearSimilarAssetUrl() {
+    var params = new URLSearchParams(window.location.search || "");
+    if (!params.has("similar_asset")) return;
+    params.delete("similar_asset");
+    var query = params.toString();
+    window.history.replaceState(window.history.state, "", (window.location.pathname || "/search") +
+      (query ? "?" + query : "") + (window.location.hash || ""));
+  }
+
+  function setSimilarQueryControls(active) {
+    if (!els.searchFilterControls) return;
+    els.searchFilterControls.inert = Boolean(active);
+    els.searchFilterControls.setAttribute("aria-disabled", active ? "true" : "false");
+    if (els.searchSubmit) els.searchSubmit.textContent = active
+      ? "结束相似搜索并按文字搜索"
+      : state.search.selectedScope ? "搜索当前范围" : "全库搜索";
+  }
+
+  function startSimilarAssetSearch(assetId) {
+    state.search.mode = "asset_image";
+    state.search.assetQueryId = Number(assetId);
+    state.search.assetQuery = null;
+    state.search.selectedScope = null;
+    state.search.favoritesOnly = false;
+    state.search.placeAware = null;
+    state.search.intentPlan = null;
+    state.search.lastBody = null;
+    state.search.lastRequestBody = null;
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.hits = [];
+    state.search.count = 0;
+    state.search.total = null;
+    state.search.binding = null;
+    els.queryText.value = "";
+    els.querySource.value = "";
+    els.queryAvailability.value = "any";
+    els.queryPlaceState.value = "any";
+    els.queryPlaceIds.value = "";
+    els.queryDescendants.value = "true";
+    els.queryCaptureFrom.value = "";
+    els.queryCaptureTo.value = "";
+    els.queryPageSize.value = String(DEFAULT_PAGE_SIZE);
+    els.queryPersonMatch.value = "any";
+    if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = false;
+    clearPersonSelection();
+    setSimilarQueryControls(true);
+    if (els.assetQuerySummary) {
+      text(els.assetQueryTitle, "相似照片搜索");
+      text(els.assetQueryFilename, "正在读取参考照片…");
+      text(els.assetQueryScope, "搜索范围：全部图库");
+      els.assetQueryImage.hidden = true;
+      els.assetQuerySummary.hidden = false;
+    }
+    renderScopeControls();
+    sendSearch(false);
+  }
+
+  function sendSimilarAssetSearch(continuation) {
+    var body = {
+      contract_version: CONTRACT_VERSION,
+      request_id: newRequestId("similar"),
+      asset_id: Number(state.search.assetQueryId),
+      page_size: Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE,
+    };
+    if (continuation) {
+      body.search_session_id = state.search.sessionId;
+      body.cursor = state.search.cursor;
+    } else {
+      state.search.lastRequestBody = JSON.parse(JSON.stringify(body));
+    }
+    return request("/search/by-asset", { method: "POST", body: body }).then(function (result) {
+      return result.body || {};
+    });
+  }
+
   function canRunTextSemantic() {
     var search = state.capabilities && state.capabilities.search;
     if (!search) {
@@ -919,6 +1007,11 @@
   }
 
   function submitSearch() {
+    clearSimilarAssetUrl();
+    state.search.assetQueryId = null;
+    state.search.assetQuery = null;
+    setSimilarQueryControls(false);
+    if (els.assetQuerySummary) els.assetQuerySummary.hidden = true;
     state.search.imageFile = null;
     state.search.pendingImageFile = null;
     clearSearchSnapshot();
@@ -1073,6 +1166,10 @@
   }
 
   function sendSearch(continuation) {
+    if (state.search.mode !== "asset_image") {
+      state.search.assetQuery = null;
+      if (els.assetQuerySummary) els.assetQuerySummary.hidden = true;
+    }
     if (!continuation && photoSelection && state.search.mode !== "image") photoSelection.reset();
     if (state.search.loading && continuation) {
       return Promise.resolve(false);
@@ -1120,9 +1217,10 @@
     }
     state.search.loading = true;
     setStatus(els.queryStatus, continuation ? "正在加载下一页…" : "正在搜索…");
-    var promise =
-      state.search.mode === "image"
-        ? sendImageSearch(continuation, filters)
+    var promise = state.search.mode === "image"
+      ? sendImageSearch(continuation, filters)
+      : state.search.mode === "asset_image"
+        ? sendSimilarAssetSearch(continuation)
         : sendTextSearch(continuation, filters);
     return promise.then(
       function (body) {
@@ -1771,6 +1869,28 @@
     // intent row. This container remains available only for disambiguation choices.
     els.resultPlaceScope.hidden = true;
     var hits = body.hits || [];
+    if (body.asset_query && state.search.mode === "asset_image") {
+      state.search.assetQuery = body.asset_query;
+      if (els.assetQuerySummary) {
+        text(els.assetQueryTitle, "相似照片搜索");
+        text(els.assetQueryFilename, body.asset_query.filename || ("资产 #" + body.asset_query.asset_id));
+        text(els.assetQueryScope, "搜索范围：全部图库");
+        if (body.asset_query.thumbnail_url) {
+          els.assetQueryImage.src = body.asset_query.thumbnail_url;
+          els.assetQueryImage.hidden = false;
+        } else {
+          els.assetQueryImage.removeAttribute("src");
+          els.assetQueryImage.hidden = true;
+        }
+        els.assetQuerySummary.hidden = false;
+      }
+    } else {
+      state.search.assetQuery = null;
+      if (els.assetQuerySummary) {
+        els.assetQuerySummary.hidden = true;
+        if (els.assetQueryImage) els.assetQueryImage.removeAttribute("src");
+      }
+    }
     // Filter-only and place-album cursors keep every loaded page visible as users continue.
     var filterOnly = body.search_session_id === "filter-only" || String(body.search_session_id || "").indexOf("place-album:") === 0;
     if (!continuation) {
@@ -1881,6 +2001,7 @@
 
   function clearSearchSnapshot() {
     try {
+      window.sessionStorage.removeItem(snapshotStorageKey());
       window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY);
       window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
     } catch (_error) {
@@ -1940,6 +2061,17 @@
   }
 
   function restoreOrStartSearch() {
+    var similar = similarAssetFromUrl();
+    if (similar.present) {
+      if (!similar.valid || similar.conflicts) {
+        setStatus(els.queryStatus, !similar.valid
+          ? "相似搜索参考照片编号无效，未执行查询。"
+          : "相似搜索入口与文字查询或固定范围入口冲突，未执行查询。", "error");
+        return;
+      }
+      startSimilarAssetSearch(similar.assetId);
+      return;
+    }
     var entry = consumeEntryScope();
     var query = consumeEntryQuery();
     if (entry.present) {
@@ -1984,7 +2116,9 @@
   function renderScopeControls() {
     if (!els.searchSubmit) return;
     var selected = state.search.selectedScope;
-    els.searchSubmit.textContent = selected ? "搜索当前范围" : "全库搜索";
+    els.searchSubmit.textContent = state.search.mode === "asset_image"
+      ? "结束相似搜索并按文字搜索"
+      : selected ? "搜索当前范围" : "全库搜索";
     if (els.querySource) els.querySource.disabled = Boolean(selected && selected.kind === "source");
   }
 
@@ -2025,56 +2159,133 @@
     };
   }
 
-  function saveSearchSnapshot() {
-    if (!state.search.lastBody || state.search.mode !== "text") {
-      return;
+  function snapshotStorageKey(override) {
+    if (override) return override;
+    var token = window.history && window.history.state && window.history.state.searchSnapshotToken;
+    return token ? SEARCH_SNAPSHOT_KEY + ":" + String(token) : SEARCH_SNAPSHOT_KEY;
+  }
+
+  function pruneSearchSnapshots(keepKey, keepCount) {
+    var storage = window.sessionStorage;
+    var prefix = SEARCH_SNAPSHOT_KEY + ":";
+    var keys = [];
+    for (var index = 0; index < storage.length; index += 1) {
+      var key = storage.key(index);
+      if (key && key.indexOf(prefix) === 0 && key !== keepKey) keys.push(key);
     }
+    if (keys.length <= keepCount) return;
+    keys = keys.map(function (key) {
+      var timestamp = 0;
+      try { timestamp = Number((JSON.parse(storage.getItem(key) || "{}") || {}).saved_at) || 0; }
+      catch (_error) { timestamp = 0; }
+      return { key: key, timestamp: timestamp };
+    }).sort(function (a, b) { return a.timestamp - b.timestamp; });
+    while (keys.length > keepCount) storage.removeItem(keys.shift().key);
+  }
+
+  function saveSearchSnapshot(keyOverride) {
+    if (!state.search.lastBody || (state.search.mode !== "text" && state.search.mode !== "asset_image")) {
+      return false;
+    }
+    var key = snapshotStorageKey(keyOverride);
+    var snapshot = JSON.stringify({
+      saved_at: Date.now(),
+      mode: state.search.mode,
+      assetQueryId: state.search.assetQueryId,
+      assetQuery: state.search.assetQuery,
+      form: searchFormSnapshot(),
+      hits: state.search.hits,
+      windowOffset: state.search.windowOffset,
+      recycledCount: state.search.recycledCount,
+      spacerHeight: window.PhotoScrollPager ? window.PhotoScrollPager.getSpacerHeight(els.resultGrid) : 0,
+      search_session_id: state.search.sessionId,
+      next_cursor: state.search.cursor,
+      count: state.search.count,
+      total_candidates: state.search.total,
+      placeAware: state.search.placeAware,
+      intentPlan: state.search.intentPlan,
+      selectedScope: state.search.selectedScope,
+      binding: state.search.binding,
+      lastBody: state.search.lastBody,
+      lastRequestBody: state.search.lastRequestBody,
+      previewAssetId: state.search.preview.assetId,
+      timeBrowseActive: state.search.timeBrowse.active,
+      timeBrowseCursor: state.search.timeBrowse.cursor,
+      timeBrowsePrevious: state.search.timeBrowse.previous,
+      timeBrowseRulesVersion: state.search.timeBrowse.rulesVersion,
+      scrollY: window.scrollY || 0,
+    });
     try {
-      window.sessionStorage.setItem(
-        SEARCH_SNAPSHOT_KEY,
-        JSON.stringify({
-          form: searchFormSnapshot(),
-          hits: state.search.hits,
-          windowOffset: state.search.windowOffset,
-          recycledCount: state.search.recycledCount,
-          spacerHeight: window.PhotoScrollPager ? window.PhotoScrollPager.getSpacerHeight(els.resultGrid) : 0,
-          search_session_id: state.search.sessionId,
-          next_cursor: state.search.cursor,
-          count: state.search.count,
-          total_candidates: state.search.total,
-          placeAware: state.search.placeAware,
-          intentPlan: state.search.intentPlan,
-          selectedScope: state.search.selectedScope,
-          binding: state.search.binding,
-          lastBody: state.search.lastBody,
-          lastRequestBody: state.search.lastRequestBody,
-          placeAware: state.search.placeAware,
-          previewAssetId: state.search.preview.assetId,
-          timeBrowseActive: state.search.timeBrowse.active,
-          timeBrowseCursor: state.search.timeBrowse.cursor,
-          timeBrowsePrevious: state.search.timeBrowse.previous,
-          timeBrowseRulesVersion: state.search.timeBrowse.rulesVersion,
-          scrollY: window.scrollY || 0,
-        })
-      );
+      pruneSearchSnapshots(key, 5);
+      window.sessionStorage.setItem(key, snapshot);
+      return true;
     } catch (_error) {
-      // Quota or privacy settings can disable storage without affecting current results.
+      try {
+        pruneSearchSnapshots(key, 0);
+        window.sessionStorage.setItem(key, snapshot);
+        return true;
+      } catch (_retryError) {
+        return false;
+      }
     }
   }
 
   function restoreSearchSnapshot() {
     var saved;
+    var restoreKey = snapshotStorageKey();
     try {
-      saved = JSON.parse(window.sessionStorage.getItem(SEARCH_SNAPSHOT_KEY) || "null");
+      saved = JSON.parse(window.sessionStorage.getItem(restoreKey) || "null");
       window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
     } catch (_error) {
       clearSearchSnapshot();
       return;
     }
     if (!saved || !saved.form || !Array.isArray(saved.hits) || !saved.lastBody) {
+      if (window.history && window.history.state && window.history.state.searchSnapshotSaveFailed) {
+        setStatus(els.queryStatus, "上次搜索结果快照未能保存；可从当前条件重新搜索恢复结果。", "error");
+      } else if (window.history && window.history.state && window.history.state.searchSnapshotToken) {
+        setStatus(els.queryStatus, "搜索结果快照已不可用；可从当前条件重新搜索恢复结果。", "error");
+      }
       return;
     }
     var restoreGeneration = state.search.requestGeneration;
+    if (saved.mode === "asset_image" && Number(saved.assetQueryId) > 0) {
+      state.search.mode = "asset_image";
+      state.search.assetQueryId = Number(saved.assetQueryId);
+      state.search.assetQuery = saved.assetQuery || null;
+      els.queryText.value = "";
+      els.queryPageSize.value = saved.form.pageSize || String(DEFAULT_PAGE_SIZE);
+      state.search.sessionId = saved.search_session_id || null;
+      state.search.cursor = saved.next_cursor || null;
+      state.search.total = saved.total_candidates;
+      state.search.lastRequestBody = saved.lastRequestBody || null;
+      setSimilarQueryControls(true);
+      var assetValidationCursor = saved.assetQuery && saved.assetQuery.validation_cursor;
+      if (!assetValidationCursor) {
+        clearSearchSnapshot();
+        setStatus(els.queryStatus, "相似搜索会话无法验证，请重新从照片启动搜索。", "error");
+        return;
+      }
+      request("/search/by-asset", { method: "POST", body: {
+        contract_version: CONTRACT_VERSION,
+        request_id: newRequestId("return-similar"),
+        asset_id: Number(saved.assetQueryId),
+        page_size: Number(saved.form.pageSize) || DEFAULT_PAGE_SIZE,
+        search_session_id: saved.search_session_id,
+        cursor: assetValidationCursor,
+      }}).then(function () {
+        if (restoreGeneration !== state.search.requestGeneration) return;
+        restoreValidatedSearchSnapshot(saved);
+      }).catch(function (failure) {
+        if (restoreGeneration !== state.search.requestGeneration) return;
+        clearSearchSnapshot();
+        clear(els.resultGrid);
+        state.search.sessionId = null; state.search.cursor = null;
+        setStatus(els.queryStatus, "返回时相似搜索会话已过期或参考向量已变化" +
+          (failure && failure.code ? "（" + describe(failure) + "）" : "") + "，请重新搜索。", "error");
+      });
+      return;
+    }
     var form = saved.form;
     els.queryText.value = form.queryText || "";
     if (els.queryRetrievalMode) els.queryRetrievalMode.value = form.retrievalMode === "text" ? "text" : "combined";
@@ -2096,6 +2307,9 @@
     });
     updatePersonSelection();
     state.search.mode = "text";
+    state.search.assetQueryId = null;
+    state.search.assetQuery = null;
+    setSimilarQueryControls(false);
     state.search.hits = [];
     state.search.sessionId = saved.search_session_id || null;
     state.search.cursor = saved.next_cursor || null;
@@ -2189,6 +2403,29 @@
       window.scrollTo(0, Number(saved.scrollY) || 0);
       if (saved.previewAssetId) openSearchPreview(saved.previewAssetId, findSearchPreviewTrigger(saved.previewAssetId));
     });
+  }
+
+  function prepareSearchSimilarReturn() {
+    var token = newRequestId("return-similar");
+    var saved = saveSearchSnapshot(SEARCH_SNAPSHOT_KEY + ":" + token);
+    if (!saved) {
+      setStatus(els.queryStatus, "当前搜索结果无法保存返回快照；返回后可能需要重新搜索。", "error");
+    }
+    try {
+      var current = window.history.state && typeof window.history.state === "object"
+        ? Object.assign({}, window.history.state) : {};
+      if (saved) {
+        current.searchSnapshotToken = token;
+        delete current.searchSnapshotSaveFailed;
+      } else {
+        delete current.searchSnapshotToken;
+        current.searchSnapshotSaveFailed = true;
+      }
+      delete current.photoViewerKey;
+      window.history.replaceState(current, "", window.location.href);
+    } catch (_error) {
+      saveSearchSnapshot();
+    }
   }
 
   function prepareSearchDetailReturn() {
@@ -2286,6 +2523,10 @@
     var preview = state.search.preview;
     preview.handle = window.AIPhotoInfo.open(assetId, {
       title: "搜索结果照片", alt: "搜索结果照片", extension: extension, people: false, returnFocus: returnFocus,
+      onFindSimilar: function (id) {
+        prepareSearchSimilarReturn();
+        window.location.assign("/search?similar_asset=" + encodeURIComponent(id));
+      },
       onOpenFullDetails: function (id) {
         prepareSearchDetailReturn();
         window.AIPhotoInfo.navigateToDetails(id, "search");
@@ -2834,11 +3075,17 @@
     var previous = {
       mode: state.search.mode, sessionId: state.search.sessionId, cursor: state.search.cursor,
       count: state.search.count, total: state.search.total, binding: state.search.binding,
+      assetQueryId: state.search.assetQueryId, assetQuery: state.search.assetQuery,
       hits: state.search.hits, lastBody: state.search.lastBody,
       lastRequestBody: state.search.lastRequestBody,
       timeBrowse: Object.assign({}, state.search.timeBrowse),
       imageFile: state.search.imageFile,
     };
+    clearSimilarAssetUrl();
+    state.search.assetQueryId = null;
+    state.search.assetQuery = null;
+    setSimilarQueryControls(false);
+    if (els.assetQuerySummary) els.assetQuerySummary.hidden = true;
     state.search.mode = "image";
     state.search.pendingImageFile = file;
     setStatus(els.uploadStatus, "正在上传并校验这张图片…");
@@ -2856,6 +3103,10 @@
           return;
         }
         state.search.mode = previous.mode;
+        state.search.assetQueryId = previous.assetQueryId;
+        state.search.assetQuery = previous.assetQuery;
+        setSimilarQueryControls(previous.mode === "asset_image");
+        if (els.assetQuerySummary) els.assetQuerySummary.hidden = previous.mode !== "asset_image";
         state.search.sessionId = previous.sessionId;
         state.search.cursor = previous.cursor;
         state.search.count = previous.count;
@@ -3010,6 +3261,12 @@
       uploadClose: document.getElementById("upload-close"),
       uploadStatus: document.getElementById("upload-status"),
       panelResults: document.getElementById("panel-results"),
+      searchFilterControls: document.getElementById("search-filter-controls"),
+      assetQuerySummary: document.getElementById("asset-query-summary"),
+      assetQueryTitle: document.getElementById("asset-query-title"),
+      assetQueryFilename: document.getElementById("asset-query-filename"),
+      assetQueryScope: document.getElementById("asset-query-scope"),
+      assetQueryImage: document.getElementById("asset-query-image"),
       coverageBody: document.getElementById("coverage-body"),
       coverageDialog: document.getElementById("coverage-dialog"),
       coverageOpen: document.getElementById("open-coverage"),

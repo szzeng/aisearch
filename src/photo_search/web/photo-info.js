@@ -617,11 +617,14 @@
     var headingActions = node("div", undefined, "photo-viewer-heading-actions");
     var fullDetails = node("button", "完整详情", "photo-viewer-details"); fullDetails.type = "button";
     fullDetails.setAttribute("aria-label", "打开当前照片的完整详情");
+    var similarSearch = node("button", "⌕ 找相似照片", "photo-viewer-similar"); similarSearch.type = "button";
+    similarSearch.setAttribute("aria-label", "查找与当前照片相似的照片");
     var favoriteButton = node("button", "☆ 收藏", "photo-viewer-favorite"); favoriteButton.type = "button";
     favoriteButton.disabled = true;
     favoriteButton.setAttribute("aria-pressed", "false");
     favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
     var photoCollectionButton = node("button", "加入照片合集", "photo-viewer-collection"); photoCollectionButton.type = "button";
+    headingActions.append(similarSearch);
     headingActions.append(favoriteButton);
     headingActions.append(photoCollectionButton);
     headingActions.append(fullDetails);
@@ -652,7 +655,7 @@
     if (options.extension) extension.append(options.extension);
     dialog.setAttribute("aria-labelledby", title.id);
     dialog.append(heading, layout, extension); document.body.append(dialog);
-    var mounted = null, generation = 0, currentAssetId = null, historyOwned = false, closingFromHistory = false, navigatingToDetails = false;
+    var mounted = null, generation = 0, currentAssetId = null, historyOwned = false, closingFromHistory = false, navigatingToDetails = false, navigatingToSimilar = false;
     var historyKey = "photo-viewer-" + serial;
     var preview = { image: image, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit", x: 0, y: 0 };
     function applyScale(value, anchorX, anchorY) {
@@ -759,6 +762,7 @@
       favoriteButton.disabled = true; favoriteButton.textContent = "读取收藏…";
       photoCollectionButton.disabled = false;
       photoCollectionButton.textContent = "加入照片合集";
+      similarSearch.disabled = false;
       favoriteButton.setAttribute("aria-pressed", "false");
       favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
       [zoomOut, fit, actual, zoomIn].forEach(function (button) { button.disabled = true; }); zoomLabel.textContent = "读取尺寸中…";
@@ -883,6 +887,24 @@
           historyOwned = true; window.addEventListener("popstate", onPopState);
         }
         if (typeof options.onDetailNavigationError === "function") options.onDetailNavigationError(error);
+      }
+    });
+    similarSearch.addEventListener("click", function () {
+      if (navigatingToSimilar || !dialog.open || !canClose()) return;
+      var targetAssetId = currentAssetId;
+      navigatingToSimilar = true;
+      similarSearch.disabled = true;
+      if (historyOwned && window.removeEventListener) {
+        window.removeEventListener("popstate", onPopState);
+        historyOwned = false;
+      }
+      if (dialog.open) dialog.close();
+      try {
+        if (typeof options.onFindSimilar === "function") options.onFindSimilar(targetAssetId, handle);
+        else window.location.assign("/search?similar_asset=" + encodeURIComponent(targetAssetId));
+      } catch (error) {
+        navigatingToSimilar = false;
+        if (typeof options.onSimilarNavigationError === "function") options.onSimilarNavigationError(error);
       }
     });
     var onPopState = function (event) {

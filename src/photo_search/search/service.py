@@ -1016,6 +1016,7 @@ def search_request(
     additional_condition_sql: str | None = None,
     additional_condition_parameters: Sequence[Any] = (),
     favorites_only: bool = False,
+    session_extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1245,6 +1246,7 @@ def search_request(
                     else {"album_scope_revision": list(album_scope_revision)}
                 ),
                 **({} if favorites_revision is None else {"favorites_revision": favorites_revision}),
+                **({} if session_extra is None else dict(session_extra)),
             },
         )
         hits, next_offset, has_more, token = _render_page(

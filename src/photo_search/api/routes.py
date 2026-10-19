@@ -146,6 +146,8 @@ from photo_search.api.models import (
     SearchRequestModel,
     SearchResultModel,
     SessionResponse,
+    SimilarAssetSearchRequestModel,
+    SimilarAssetSearchResultModel,
     SourceCreateRequest,
     SourceDeleteResponse,
     SourceDetail,
@@ -266,6 +268,7 @@ from photo_search.search.service import (
 from photo_search.search.upload import (
     DEFAULT_LIMITS,
     UploadedImage,
+    checked_query_vector,
     encode_image_query,
     image_encoder_of,
     image_query_identity,
@@ -4650,6 +4653,155 @@ async def post_search_image(request: Request) -> dict[str, Any]:
         context.service().catalog, _search_image_worker, body,
         content_type=request.headers.get("content-type"), context=context,
     )
+
+
+@router.post(
+    "/search/by-asset",
+    response_model=SimilarAssetSearchResultModel,
+    response_model_exclude_unset=True,
+    summary="Find similar photos from one asset's confirmed embedding",
+)
+async def post_search_by_asset(
+    request: Request, payload: SimilarAssetSearchRequestModel
+) -> dict[str, Any]:
+    context = context_of(request)
+    service = context.service()
+    return await run_catalog_search(
+        service.catalog, _search_by_asset_worker, payload.model_dump(), context=context,
+    )
+
+
+def _search_by_asset_worker(
+    catalog: Any, payload: Mapping[str, Any], *, context: ApiContext
+) -> dict[str, Any]:
+    """Read one current confirmed embedding, then reuse the ordinary frozen search path."""
+    asset_id = int(payload["asset_id"])
+    envelope = SearchRequest.from_envelope({
+        "contract_version": str(payload.get("contract_version") or CONTRACT_VERSION),
+        "request_id": str(payload["request_id"]),
+        "retrieval_mode": "combined",
+        "top_k": int(payload["top_k"]),
+        "page_size": int(payload["page_size"]),
+        **({} if payload.get("search_session_id") is None else {
+            "search_session_id": str(payload["search_session_id"])
+        }),
+        **({} if payload.get("cursor") is None else {"cursor": str(payload["cursor"])}),
+    })
+    profile = _resolve_profile(catalog, envelope)
+    if profile is None:
+        raise ApiError(
+            "SEARCH_PROFILE_REQUIRED",
+            "相似照片搜索需要已启用且可用的图像搜索 Profile",
+            status=409,
+            details={"reason": "SEARCH_PROFILE_REQUIRED"},
+        )
+    envelope = replace(envelope, profile_id=profile.profile_id)
+    binding = resolve_request_binding(catalog, envelope)
+    if binding is None:
+        raise ApiError(
+            "SEARCH_PROFILE_REQUIRED",
+            "相似照片搜索需要已启用且可用的图像搜索 Profile",
+            status=409,
+            details={"reason": "SEARCH_PROFILE_REQUIRED"},
+        )
+
+    row = catalog.read_one(
+        "SELECT a.sha256 AS asset_sha256, e.artifact_id, e.space_id AS entry_space_id, "
+        "e.generation_id AS entry_generation_id, ar.*, g.state AS generation_state, "
+        "g.is_active AS generation_is_active, "
+        "(SELECT f.relative_path FROM file_locations f WHERE f.asset_id = a.asset_id "
+        "ORDER BY CASE f.availability WHEN 'PRESENT' THEN 0 ELSE 1 END, f.location_id LIMIT 1) "
+        "AS relative_path "
+        "FROM assets a JOIN index_entries e ON e.asset_id = a.asset_id "
+        "JOIN artifacts ar ON ar.artifact_id = e.artifact_id "
+        "JOIN index_generations g ON g.generation_id = e.generation_id "
+        "WHERE a.asset_id = ? AND a.state = 'ACTIVE' AND e.space_id = ? "
+        "AND e.generation_id = ? AND e.state = 'CONFIRMED' "
+        "AND ar.input_revision = a.sha256 AND ar.artifact_type = 'embedding' "
+        "AND ar.lifecycle_state = 'PUBLISHED' AND ar.processor_id = ? "
+        "AND ar.space_id = ? AND ar.dimension = ? "
+        "AND g.state = 'READY' AND g.is_active = 1 AND g.space_id = ? "
+        "AND g.dimension = ? AND g.processor_id = ?",
+        (asset_id, binding.space_id, binding.generation_id, binding.processor_id,
+         binding.space_id, binding.dimension, binding.space_id, binding.dimension,
+         binding.processor_id),
+    )
+    if row is None:
+        exists = catalog.read_one(
+            "SELECT 1 FROM assets WHERE asset_id = ? AND state = 'ACTIVE'", (asset_id,)
+        )
+        raise ApiError(
+            "ASSET_QUERY_VECTOR_UNAVAILABLE",
+            "当前照片没有可用于相似搜索的已确认有效向量",
+            status=404 if exists is None else 409,
+            details={"reason": "ASSET_NOT_FOUND" if exists is None else "VECTOR_UNAVAILABLE",
+                     "asset_id": asset_id},
+        )
+
+    identity = "asset:{}:{}:{}:{}:{}:{}:{}".format(
+        asset_id, str(row["asset_sha256"]), str(row["artifact_id"]),
+        str(row["checksum_sha256"]), str(binding.generation_id),
+        str(binding.space_id), str(profile.profile_id),
+    )
+    vector = None
+    if envelope.cursor is None:
+        from photo_search.artifacts.store import ArtifactStore
+
+        try:
+            artifact_bytes = ArtifactStore.open(catalog.data_root).read(row)
+            vector_payload = json.loads(artifact_bytes.decode("utf-8"))
+        except CatalogError as error:
+            raise ApiError(
+                "ASSET_QUERY_VECTOR_INVALID",
+                "照片的已发布向量 artifact 缺失或校验失败",
+                status=409,
+                details={"reason": "ARTIFACT_CORRUPT", "asset_id": asset_id},
+            ) from error
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise ApiError(
+                "ASSET_QUERY_VECTOR_INVALID",
+                "照片的已发布向量 artifact 无法读取或解析",
+                status=409,
+                details={"reason": "ARTIFACT_CORRUPT", "asset_id": asset_id},
+            ) from error
+        if not isinstance(vector_payload, dict) or set(vector_payload) != {"vector"}:
+            raise ApiError(
+                "ASSET_QUERY_VECTOR_INVALID",
+                "照片的向量 artifact 格式无效",
+                status=409,
+                details={"reason": "ARTIFACT_CORRUPT", "asset_id": asset_id},
+            )
+        vector = checked_query_vector(vector_payload["vector"], dimension=int(binding.dimension))
+
+    result = search_request(
+        catalog,
+        envelope,
+        sessions=context.search_sessions,
+        query_vector=vector,
+        query_identity=identity,
+        additional_condition_sql="a.asset_id <> ?",
+        additional_condition_parameters=(asset_id,),
+        session_extra={"asset_query_id": asset_id, "asset_query_identity": identity},
+    )
+    relative_path = str(row["relative_path"] or "")
+    filename = safe_display_filename(relative_path, f"asset-{asset_id}")
+    cache = MediaCache.open(catalog.data_root)
+    thumb_state = media_state(catalog, cache, asset_id, THUMBNAIL)
+    preview_state = media_state(catalog, cache, asset_id, PREVIEW)
+    thumbnail_url = None
+    if thumb_state.get("state") == MEDIA_STATE_READY:
+        thumbnail_url = f"/api/v1/assets/{asset_id}/thumbnail"
+    elif preview_state.get("state") == MEDIA_STATE_READY:
+        thumbnail_url = f"/api/v1/assets/{asset_id}/preview"
+    result["asset_query"] = {
+        "asset_id": asset_id,
+        "filename": filename,
+        "thumbnail_url": thumbnail_url,
+        "validation_cursor": context.search_sessions.encode_cursor(
+            str(result["search_session_id"]), 0
+        ),
+    }
+    return result
 
 
 def _search_image_worker(

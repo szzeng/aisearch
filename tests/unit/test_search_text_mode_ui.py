@@ -22,6 +22,7 @@ class Element {
   removeChild(child){this.children.splice(this.children.indexOf(child),1);return child;}
   addEventListener(name,callback){(this.events[name]||=[]).push(callback);}
   setAttribute(name,value){this[name]=String(value);}
+      removeAttribute(name){delete this[name];}
   querySelector(selector){
     const asset=selector.match(/^\[data-asset-id="(\d+)"\]$/);
     const matches=child=>asset?child.dataset.assetId===asset[1]:selector.startsWith(".")&&child.className===selector.slice(1);
