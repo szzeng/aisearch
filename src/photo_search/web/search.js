@@ -91,6 +91,8 @@
       total: null,
       loading: false,
       mode: "text",
+      imageFile: null,
+      pendingImageFile: null,
       //: The condition digest this session is bound to (null while no session is open).
       binding: null,
       placeAware: null,
@@ -108,6 +110,8 @@
       preview: { assetId: null, listVersion: 0, seq: 0, moving: false, handle: null },
     },
     requestCounter: 0,
+    coverageLoaded: false,
+    coverageLoading: false,
     objectUrls: [],
     observer: null,
     person: {
@@ -915,6 +919,8 @@
   }
 
   function submitSearch() {
+    state.search.imageFile = null;
+    state.search.pendingImageFile = null;
     clearSearchSnapshot();
     state.search.hits = [];
     state.search.windowOffset = 0;
@@ -1067,7 +1073,7 @@
   }
 
   function sendSearch(continuation) {
-    if (!continuation && photoSelection) photoSelection.reset();
+    if (!continuation && photoSelection && state.search.mode !== "image") photoSelection.reset();
     if (state.search.loading && continuation) {
       return Promise.resolve(false);
     }
@@ -1170,6 +1176,11 @@
             source: body.place_scope.source,
           };
         }
+        if (state.search.mode === "image" && !continuation) {
+          state.search.imageFile = state.search.pendingImageFile;
+          if (photoSelection) photoSelection.reset();
+        }
+        state.search.pendingImageFile = null;
         renderPage(body, continuation);
         return true;
       },
@@ -1178,6 +1189,19 @@
           return true;
         }
         state.search.loading = false;
+        if (state.search.mode === "image" && !continuation) {
+          var uploadFailureLines = failureLines(failure);
+          setStatus(
+            els.queryStatus,
+            "本次图片搜索没有成功：" + uploadFailureLines.map(function (line) {
+              return line.text;
+            }).join(" "),
+            "error"
+          );
+          renderNotices(els.resultNotices, uploadFailureLines);
+          els.queryActions.hidden = false;
+          return false;
+        }
         onSearchFailure(failure);
         // The caller learns *whether* the query succeeded instead of seeing a resolved
         // promise and reporting a success line for a refused request.
@@ -1670,7 +1694,8 @@
     if (state.search.selectedScope || state.search.favoritesOnly) {
       return Promise.reject({ code: "VALIDATION_ERROR", message: "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", request_id: "" });
     }
-    var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
+    var file = continuation ? state.search.imageFile : state.search.pendingImageFile;
+    if (!file) file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
     if (!file) {
       return Promise.reject({
         code: "VALIDATION_ERROR",
@@ -2474,6 +2499,10 @@
   }
 
   function loadCoverage() {
+    if (state.coverageLoading) return Promise.resolve(false);
+    state.coverageLoading = true;
+    els.coverageReload.disabled = true;
+    els.coverageRefresh.disabled = true;
     clear(els.coverageBody);
     els.coverageBody.appendChild(element("p", "hint", "正在读取覆盖率…"));
     return Promise.all([
@@ -2491,12 +2520,24 @@
         state.sources = sources;
         renderCoverage(capabilities, places, stats, sources);
         renderBindingHint(capabilities);
+        state.coverageLoaded = true;
+        els.coverageReload.hidden = true;
+        els.coverageRefresh.hidden = false;
+        return true;
       })
       .catch(function (failure) {
         clear(els.coverageBody);
         els.coverageBody.appendChild(
           element("p", "error", "读取覆盖率失败：" + describe(failure))
         );
+        return false;
+      })
+      .then(function (loaded) {
+        state.coverageLoading = false;
+        els.coverageReload.disabled = false;
+        els.coverageRefresh.disabled = false;
+        if (!loaded && !state.coverageLoaded) els.coverageReload.hidden = false;
+        return loaded;
       });
   }
 
@@ -2774,28 +2815,62 @@
       setStatus(els.uploadStatus, "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", "error");
       return;
     }
+    var filters = collectFilters();
+    if (filters.problem) {
+      setStatus(els.uploadStatus, filters.problem, "error");
+      return;
+    }
+    if (selectedPersonIds().length || filters.captureFrom || filters.captureTo ||
+        els.queryText.value.trim() || state.search.intentPlan || state.search.placeAware) {
+      setStatus(els.uploadStatus, "以图搜图暂不支持人物、拍摄时间或文字条件；请先清除这些条件。", "error");
+      return;
+    }
+    var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
+    if (!file) {
+      setStatus(els.uploadStatus, "请先选择一张图片。", "error");
+      return;
+    }
+    if (state.search.loading) return;
+    var previous = {
+      mode: state.search.mode, sessionId: state.search.sessionId, cursor: state.search.cursor,
+      count: state.search.count, total: state.search.total, binding: state.search.binding,
+      hits: state.search.hits, lastBody: state.search.lastBody,
+      lastRequestBody: state.search.lastRequestBody,
+      timeBrowse: Object.assign({}, state.search.timeBrowse),
+      imageFile: state.search.imageFile,
+    };
     state.search.mode = "image";
-    clearSearchSnapshot();
-    state.search.hits = [];
-    state.search.lastBody = null;
-    state.search.sessionId = null;
-    state.search.cursor = null;
-    state.search.count = 0;
-    state.search.binding = null;
-    releaseObjectUrls();
-    clear(els.resultGrid);
-    renderNotices(els.resultNotices, []);
-    els.loadMore.hidden = true;
-    els.queryActions.hidden = true;
+    state.search.pendingImageFile = file;
     setStatus(els.uploadStatus, "正在上传并校验这张图片…");
+    els.uploadSubmit.disabled = true;
     var promise = sendSearch(false);
+    var generation = state.search.requestGeneration;
     if (promise) {
       promise.then(function (succeeded) {
+        els.uploadSubmit.disabled = false;
+        if (generation !== state.search.requestGeneration) return;
         if (succeeded) {
-          setStatus(els.uploadStatus, "上传图查询成功（结果见上面的网格）。");
+          setStatus(els.uploadStatus, "图片搜索完成。");
+          if (els.uploadDialog.open) els.uploadDialog.close();
+          els.panelResults.scrollIntoView({ block: "start", behavior: "smooth" });
           return;
         }
-        setStatus(els.uploadStatus, "上传图查询没有成功，详见上面的说明。", "error");
+        state.search.mode = previous.mode;
+        state.search.sessionId = previous.sessionId;
+        state.search.cursor = previous.cursor;
+        state.search.count = previous.count;
+        state.search.total = previous.total;
+        state.search.binding = previous.binding;
+        state.search.hits = previous.hits;
+        state.search.lastBody = previous.lastBody;
+        state.search.lastRequestBody = previous.lastRequestBody;
+        state.search.timeBrowse = previous.timeBrowse;
+        state.search.imageFile = previous.imageFile;
+        state.search.pendingImageFile = null;
+        els.loadMore.hidden = !previous.cursor;
+        if (els.gridSentinel) els.gridSentinel.hidden = !previous.cursor;
+        setStatus(els.uploadStatus, els.queryStatus.textContent || "图片搜索失败。", "error");
+        saveSearchSnapshot();
       });
     }
   }
@@ -2928,8 +3003,19 @@
       candidateTimeToggle: document.getElementById("candidate-time-toggle"),
       uploadForm: document.getElementById("upload-form"),
       uploadFile: document.getElementById("upload-file"),
+      uploadFileName: document.getElementById("upload-file-name"),
+      uploadSubmit: document.getElementById("upload-submit"),
+      uploadDialog: document.getElementById("upload-dialog"),
+      uploadOpen: document.getElementById("open-upload"),
+      uploadClose: document.getElementById("upload-close"),
       uploadStatus: document.getElementById("upload-status"),
+      panelResults: document.getElementById("panel-results"),
       coverageBody: document.getElementById("coverage-body"),
+      coverageDialog: document.getElementById("coverage-dialog"),
+      coverageOpen: document.getElementById("open-coverage"),
+      coverageClose: document.getElementById("coverage-close"),
+      coverageReload: document.getElementById("coverage-reload"),
+      coverageRefresh: document.getElementById("coverage-refresh"),
       searchPreview: document.getElementById("search-preview"),
       searchPreviewImage: document.getElementById("search-preview-image"),
       searchPreviewNav: document.getElementById("search-preview-nav"),
@@ -3169,7 +3255,28 @@
       updatePersonSelection();
     });
     els.uploadForm.addEventListener("submit", submitUpload);
-    document.getElementById("coverage-reload").addEventListener("click", loadCoverage);
+    els.uploadOpen.addEventListener("click", function () {
+      if (state.search.mode !== "image" || !state.search.loading) {
+        setStatus(els.uploadStatus, state.search.loading ? "当前搜索仍在进行中。" : "");
+        els.uploadSubmit.disabled = Boolean(state.search.loading);
+      }
+      els.uploadDialog.showModal();
+      els.uploadFile.focus();
+    });
+    els.uploadClose.addEventListener("click", function () { els.uploadDialog.close(); });
+    els.uploadDialog.addEventListener("close", function () { els.uploadOpen.focus(); });
+    els.uploadFile.addEventListener("change", function () {
+      var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
+      text(els.uploadFileName, file ? file.name : "尚未选择文件");
+    });
+    els.coverageOpen.addEventListener("click", function () {
+      closeOnBackdrop(els.coverageDialog);
+      els.coverageDialog.showModal();
+    });
+    els.coverageClose.addEventListener("click", function () { els.coverageDialog.close(); });
+    els.coverageDialog.addEventListener("close", function () { els.coverageOpen.focus(); });
+    els.coverageReload.addEventListener("click", loadCoverage);
+    els.coverageRefresh.addEventListener("click", loadCoverage);
 
     state.observer = buildObserver();
     updatePersonSelection();

@@ -7,14 +7,14 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-ui-shell-a-f1-5" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-ui2-search-tools-placement-a-2" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-collection-a-2" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-collection-a-2" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-photo-smart-collection-a-1" defer></script>
+    <script src="/web/search.js?v=p4-ui2-search-tools-placement-a-4" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -41,14 +41,11 @@
         <label class="sr-only" for="query-text">搜索照片</label>
         <input id="query-text" name="q" type="search" maxlength="256" autocomplete="off" placeholder="例如：2023年张三在济南拍的日落" />
         <button id="search-submit" type="submit">全库搜索</button>
+        <button id="open-upload" type="button">以图搜图</button>
       </form>
+      <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
-
-    <nav class="page-nav" aria-label="本页内容">
-      <a class="nav-link" href="#panel-upload">上传搜图</a>
-      <a class="nav-link" href="#panel-coverage">分项覆盖率</a>
-    </nav>
 
     <p class="notice" id="notice" role="status" aria-live="polite" hidden></p>
 
@@ -257,11 +254,11 @@
         <p id="search-preview-note" class="hint" role="status" aria-live="polite"></p>
       </dialog>
 
-      <section id="panel-upload" class="panel" aria-labelledby="upload-title">
-        <h2 id="upload-title">上传图片找相似</h2>
+      <dialog id="upload-dialog" class="search-tool-dialog" aria-labelledby="upload-title">
+        <div class="search-tool-heading"><h2 id="upload-title">以图搜图</h2><button id="upload-close" type="button">关闭</button></div>
         <p class="hint">
           选择一张图片，查找图库中画面相似的照片。需要启用画面搜索模型。
-          上传图片只用于本次查询，临时副本在处理后删除，不会加入图库。
+          图片只用于本次搜索，不会加入图库。
         </p>
         <p class="hint">
           上传搜图支持来源、可用性和地点筛选，暂不支持人物或拍摄时间筛选。
@@ -273,18 +270,19 @@
               id="upload-file"
               name="image"
               type="file"
-              accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,image/jpeg,image/png,image/webp,image/bmp,image/gif"
+              accept=".jpg,.jpeg,.png,.webp,.bmp,.gif,.mpo,.heic,.heif,image/jpeg,image/png,image/webp,image/bmp,image/gif,image/heic,image/heif"
             />
+            <span id="upload-file-name" class="hint" aria-live="polite">尚未选择文件</span>
           </p>
           <p class="filter-actions">
-            <button type="submit">用这张图搜索</button>
+            <button id="upload-submit" type="submit">搜索相似照片</button>
           </p>
         </form>
         <div id="upload-status" class="state-block" role="status" aria-live="polite"></div>
-      </section>
+      </dialog>
 
-      <section id="panel-coverage" class="panel" aria-labelledby="coverage-title">
-        <h2 id="coverage-title">分项覆盖率（分类别，不合成一个准确率）</h2>
+      <dialog id="coverage-dialog" class="search-tool-dialog" aria-labelledby="coverage-title">
+        <div class="search-tool-heading"><h2 id="coverage-title">索引状态</h2><button id="coverage-close" type="button">关闭</button></div>
         <p class="hint">
           这里显示文字索引、画面索引、地点和来源的准备情况。
           准备完成的比例不代表搜索准确率，各项需要分别查看。
@@ -294,8 +292,9 @@
         </div>
         <p>
           <button type="button" id="coverage-reload">读取覆盖率</button>
+          <button type="button" id="coverage-refresh" hidden>刷新</button>
         </p>
-      </section>
+      </dialog>
     </main>
 </div><!-- .app-workspace -->
 

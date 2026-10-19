@@ -2,7 +2,7 @@
 
 ## P4-UI2-SEARCH-TOOLS-PLACEMENT-A — 搜索辅助入口布局优化（2026-10-19）
 
-固定搜索栏右侧提供「以图搜图」，页面标题右上角提供按需「索引状态」对话框，结果区底部的旧面板已移除。图片上传成功前不替换旧结果，上传会话支持续页并受搜索世代保护；覆盖率只在显式读取/刷新时请求。受影响前端 JUnit 103/103，Node 语法与 diff-check 通过。隔离内置浏览器验证窄屏、上传成功/失败及续页、覆盖率读取/刷新、收藏范围拒绝和过期响应保护。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**：真实模型质量、合集/人物/拍摄时间逐项浏览器范围和实际合集保存未验；不涉及真实图库、全仓或规模测试。详见[任务卡](tasks/P4-UI2-SEARCH-TOOLS-PLACEMENT-A.md)与[执行报告](reports/P4-UI2-SEARCH-TOOLS-PLACEMENT-A.md)。
+固定搜索栏右侧提供「以图搜图」，页面标题右上角提供按需「索引状态」对话框，结果区底部的旧面板已移除。图片上传成功前不替换旧结果，上传会话支持续页并受搜索世代保护；覆盖率只在显式读取/刷新时请求。受影响前端 JUnit 103/103，Node 语法与 diff-check 通过。隔离内置浏览器验证窄屏、上传成功/失败及续页、覆盖率读取/刷新、收藏范围拒绝和过期响应保护。后续补上索引状态弹窗点击遮罩关闭（内容区不关闭）；该跟进定向前端测试 99/99 通过，本次未重跑浏览器。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**：真实模型质量、合集/人物/拍摄时间逐项浏览器范围和实际合集保存未验；不涉及真实图库、全仓或规模测试。详见[任务卡](tasks/P4-UI2-SEARCH-TOOLS-PLACEMENT-A.md)与[执行报告](reports/P4-UI2-SEARCH-TOOLS-PLACEMENT-A.md)。
 ## Search result card information simplification: P4-SEARCH-RESULT-INFO-SIMPLIFY-A (2026-10-19)
 
 结果卡片移除“语义就绪”、通道名次和独立详情按钮，保留总体排名、缩略图预览与预览详情入口；不改搜索数据映射或请求逻辑。原定向单测 99/99、收藏 UI 单测 4/4；续改后搜索/前端单测 99/99，Node 语法检查通过；按卡未执行浏览器/真实图库/规模性能。状态 PASS（限定范围），报告：[P4-SEARCH-RESULT-INFO-SIMPLIFY-A](reports/P4-SEARCH-RESULT-INFO-SIMPLIFY-A.md)。

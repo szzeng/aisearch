@@ -343,8 +343,11 @@ def test_page_startup_avoids_model_probes_and_automatic_coverage() -> None:
     assert 'request("/sources/summary")' in sources_loader
     assert 'request("/capabilities/page")' in search_script
     assert "capabilitiesPromise.then(loadCoverage)" not in search_script
-    assert 'addEventListener("click", loadCoverage)' in search_script
-    assert "进入搜索页无需等待统计" in search_shell
+    assert 'els.coverageReload.addEventListener("click", loadCoverage)' in search_script
+    assert 'closeOnBackdrop(els.coverageDialog);' in search_script
+    assert 'id="open-coverage"' in search_shell and "索引状态" in search_shell
+    assert 'id="coverage-refresh" hidden' in search_shell
+    assert "点击“读取覆盖率”查看" in search_shell
 
 
 # ---------------------------------------------------------------------------------------
@@ -656,7 +659,16 @@ def test_the_search_page_uploads_without_adding_anything_to_the_catalog() -> Non
     assert 'headers["Content-Type"] = "application/json";' in script
     assert "multipart/form-data" not in script
     assert "不会加入图库" in shell
-    assert "临时副本在处理后删除" in shell
+    assert "图片只用于本次搜索，不会加入图库" in shell
+    assert 'id="open-upload" type="button">以图搜图</button>' in shell
+    assert 'id="upload-submit" type="submit">搜索相似照片</button>' in shell
+    assert ".heic,.heif" in shell and ".mpo" in shell
+    assert 'showModal()' in script and 'addEventListener("close"' in script
+    assert '<section id="panel-upload"' not in shell
+    assert 'state.search.mode !== "image"' in script
+    assert "state.search.imageFile = state.search.pendingImageFile;" in script
+    assert "state.search.selectedScope || state.search.favoritesOnly" in script
+    assert 'setStatus(els.uploadStatus, state.search.loading ? "当前搜索仍在进行中。" : "")' in script
     assert "UPLOAD_TOO_LARGE" in script
     assert "UPLOAD_TOO_MANY_PIXELS" in script
     assert "FORMAT_UNSUPPORTED" in script
@@ -664,13 +676,15 @@ def test_the_search_page_uploads_without_adding_anything_to_the_catalog() -> Non
     # A refused upload is never reported as a success: the submit handler branches on the
     # outcome the search returned instead of assuming the request resolved.
     assert "promise.then(function (succeeded) {" in script
-    assert "上传图查询没有成功" in script
+    assert 'generation !== state.search.requestGeneration' in script
+    assert "state.search.hits = [];" not in script.split("function submitUpload(", 1)[1].split("function resetFilters", 1)[0]
+    assert 'els.panelResults.scrollIntoView' in script
 
 
 def test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy() -> None:
     shell, script, _ = _search_documents()
 
-    assert "分项覆盖率" in shell
+    assert 'id="coverage-title">索引状态</h2>' in shell
     for title in (
         "文本投影覆盖",
         "语义索引覆盖",
@@ -681,6 +695,16 @@ def test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy(
     # Every card states its own basis instead of being folded into one number.
     assert "口径：" in script
     assert "本页不把任何一个换算成「整体 AI 准确率」" in script
+    assert '<section id="panel-coverage"' not in shell
+    assert "if (state.coverageLoading) return Promise.resolve(false);" in script
+
+
+def test_search_tools_fit_the_sticky_header_and_narrow_layout() -> None:
+    shell, _, style = _search_documents()
+    assert 'class="search-coverage-entry"' in shell
+    assert ".search-coverage-entry { grid-column: 3; grid-row: 1;" in style
+    assert "@media (max-width: 760px)" in style
+    assert "grid-template-columns: minmax(0, 1fr);" in style
 
 
 def test_the_three_documents_navigate_to_each_other() -> None:
