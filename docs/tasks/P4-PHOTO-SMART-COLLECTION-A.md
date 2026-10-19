@@ -1,6 +1,6 @@
 # P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
 
-- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。第一轮、地点范围续修及本次 stale 浏览/save-static/重启续验已实施；最新受影响组合 56/56 通过，隔离浏览器验证过期浏览→刷新→另存、排除/恢复与真实进程重启状态保持。真实模型 COMBINED 刷新和独立 DS-H 全影响面审查仍未验，故不标整卡 PASS。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。过期浏览、save-static、FILTER/地点排除排序分页已交付；联合受影响组 59/59、迁移/恢复/性能组 52/52 通过。本次修复 COMBINED active profile 缺失漏报、增加热缓存免检索和普通成员/收藏/智能排除隔离测试。真实 COMBINED 模型、活 worker 崩溃恢复、不同合集排队成本及 DS-H 全影响面审查仍未验。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
 - **优先级**：P2；**建议执行模型**：GPT-6 High（用户在 Codex 手动选择）。人工状态、迁移和并发提交须按 V3.1 §2.4 做符合风险的独立 DS-H 影响面工程审查。
 - **设计基准**：`szzeng/aisearch` / `master`；设计复核基准 `master @ d61e2fe3cdf60044f34132325298f4635be00dd8`（2026-10-19）；提交前远端 `master @ d5795b07a17e5a933ee0366ffe4d4acfb78e1462`；普通照片合集卡已提交为 [`d36c50d`](https://github.com/szzeng/aisearch/commit/d36c50d560bff9b1ef7e943ee0604ad72742d89b)，尚未实施。当前可见产品 Schema v33；**两张 Favorites 与普通照片合集均不能据任务卡存在而视为已实施**。实际开工必须检查最新 HEAD、工作树、已落地迁移、API、报告和活跃模型/索引合同。
 - **实施前置**：`P4-FAVORITES-CORE-A` → `P4-FAVORITES-UX-B` → `P4-PHOTO-COLLECTION-A` 均达到其自身必要验收并具备可信代码。本卡可提前审查，不提前占 migration 版本，不改上一卡已冻结的人工成员真值。
@@ -183,3 +183,13 @@
 - **验证**：最新受影响 JUnit **56 passed, 0 failed, 0 skipped**：`test-results/smart-followup-final-20261019.xml`，覆盖智能合集单元/集成、普通合集、存储 UI 与 viewer UI；包括 stale SQL 资格复核（断言不调用 FTS/vector）、STALE/TRUNCATED/INDEXING 另存确认、FILTER >5000 明确拒绝、另存幂等及候选稳定、缓存 build 游标失效和进程重开/lease 接管。Ruff、py_compile、`node --check app.js`、`git diff --check` 均通过。
 - **隔离浏览器**：127.0.0.1 合成图库完成 3 条核心流程：缓存过期→旧候选显示“上次结果·待更新”→手动刷新→新候选；另存为普通合集并确认静态成员；排除→已排除列表→恢复，并在刷新及真实应用进程重启后核对人工状态。另检查排除照片查看器关闭后回到排除列表。TEXT 流程未调用模型；没有访问真实图库，浏览器未导出截图。
 - **未验项**：真实 COMBINED 向量模型刷新不可在当前合成环境验证；完整跨进程规则替换压力和 DS-H 独立全受影响面审查待做。整卡维持 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不据合成测试声称 30 万容量或模型可用性 PASS。
+
+## 14. 2026-10-19 普通与智能合集联合审查
+
+- **PERF-BOUNDED 三行**：风险为 FILTER 高排除比例分页、候选缓存热打开/发布、最多 5000 候选的 rank/capture_desc 浏览和多合集刷新资源占用；FILTER 继续 SQL 原范围 Keyset、页 50、无成员物化/检索，ranked 缓存有界 5000、应用检索 worker 单并发；以受影响 JUnit、SQL trace 和隔离 100/1000/5000 候选小型计时验证，停止于功能正确且单页/事务无明显异常，不外推 GPU/30 万性能。
+- **明确修复**：COMBINED 规则绑定的 active profile 消失时，详情原先没有标记 `MODEL_REBIND_REQUIRED`，刷新也会多走到 worker 才失败。现对空 profile 和不匹配 profile 同样明确延期刷新、不取得新租约，保留旧 build；真实空 active profile 单测覆盖 freshness、DEFERRED、无 lease、旧 build 保留。有效排名缓存打开增加 API 回归，若进入 `search_request`/检索即失败。
+- **人工数据隔离**：隔离集成测试同时创建普通成员、收藏及智能排名候选，再排除其中一张；断言普通成员、收藏、智能规则/候选和排除各自保持原状态。普通成员与智能规则/排除/收藏互不干扰。
+- **验证**：最终联合智能/普通合集与共享 UI 组 `test-results/joint-smart-combined-20261019.xml` 59/59；迁移、备份恢复、普通保存 COUNT、范围搜索及时间轴组 `test-results/joint-data-20261019-rerun.xml` 52/52；最后针对新增智能状态和隔离边界组 `test-results/joint-smart-final3-20261019.xml` 23/23。Ruff、相关 py_compile、Node `app.js` 语法、diff-check 通过。并行初跑只遇到未预建临时根目录的 SQLite/Lance I/O 环境失败；串行重跑通过。
+- **隔离合成计时**：100/1000/5000 ranked 候选发布分别约 1.35/5.56/30.30 ms；所有 rank 页顺序浏览分别约 1.46/11.93/80.46 ms，capture_desc 分别约 1.26/30.92/517.35 ms（100 页全量串行浏览在 5000 样本，约 5.17 ms/页）。照片含 10% 可信 EXIF、重复时间，其余未知；每种排序都验证全量分页无漏重。是本机小型合成配对，不是容量/延迟保证。FILTER 的 0/50/95/100% 排除、50 张首续页正确性与 SQL COUNT=0 使用既有受影响 JUnit 证据；普通合集重复 COUNT 和时间轴/封面复用已有 300k EXPLAIN/计数/计时报告，本轮定向组重跑通过。
+- **并发及恢复边界**：代码将实际 runner worker 限为 1、同一 smart_id 由 lease 单飞；不同 smart_id 的 ThreadPoolExecutor 待处理队列没有应用层上限，也无排队时长/锁竞争对照，记 **PENDING / 风险**。进程在有效 lease 中途退出后，Catalog 重开会在最长 600 秒 lease 到期前继续报 RUNNING；本轮未做活进程崩溃恢复验证，记 **PENDING**。多智能合集集中刷新与长时间 SQLite 锁占用没有压测证据。
+- **浏览器及验收**：智能 stale→上次结果浏览→刷新、另存静态合集、排除→恢复及 viewer 返回沿用此前实际隔离浏览器记录；本轮补完成普通搜索→保存→详情/viewer→时间轴→移出→返回浏览器流程。真实 COMBINED 模型路径、活 worker 崩溃恢复、不同合集排队、完整跨进程规则替换和 DS-H 全受影响面审查均 **PENDING**。普通 FILTER/TEXT 和两类合集人工状态在已验证边界内可用，但整张智能合集卡保持 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标日常无条件可用。未访问真实 PhotoSearchData。

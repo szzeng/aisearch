@@ -1,6 +1,10 @@
 # Development status
 
-## Current: P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
+## Current joint audit: P4-PHOTO-COLLECTION-A + P4-PHOTO-SMART-COLLECTION-A (2026-10-19)
+
+普通合集受影响测试与浏览器保存/查看/移出闭环通过；智能合集补测模型不可用状态、热缓存免重检索和人工状态隔离。智能/普通合集核心组合 **59 项**，迁移/备份恢复/性能计数组 **52 项**通过；独立 100/1000/5000 候选合成计时未显示有界路径异常。首次并行运行的临时目录错误经项目内目录预建后串行重跑通过。两卡继续保留 **IMPLEMENTED / ACCEPTANCE PARTIAL**：COMBINED 真实模型、刷新中进程退出后的租约自动恢复、不同 smart_id 无界排队及 DS-H 完整独审未验。具体证据与 pending 见两份任务卡和[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)、[普通合集执行报告](reports/P4-PHOTO-COLLECTION-A.md)。只使用隔离合成数据。
+
+## Implementation baseline: P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
 
 2026-10-19 第一轮、地点范围修复及 stale/save-static 恢复续交付已落地。FILTER/place_album 排除、可信 EXIF `capture_desc` Keyset、规则冻结及租约发布 CAS 已覆盖；过期 ranked 缓存现以 SQL 按当前冻结范围/资格/排除复核后标记“上次结果·待更新”浏览，刷新后旧 build 游标失效；save-static 通过普通合集事务另存，FILTER 超 5000 明确拒绝，缓存 stale/truncated/indexing 需要确认。最新受影响 JUnit **56/56** 通过；Ruff、py_compile、Node 语法、diff-check 通过。隔离内置浏览器实测过期→刷新、另存、排除/恢复及应用进程重启状态保持。当前整卡仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**：真实 COMBINED 向量模型和 DS-H 独立全受影响面审查尚未完成。详情见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。未访问真实图库。
 

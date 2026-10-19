@@ -103,3 +103,25 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
 
 - COMBINED 真实向量模型路径、完整跨进程规则替换压力尚未验证；本轮不做 GPU/真实图库测试。
 - 高风险持久状态/并发改动的独立 DS-H 全受影响面工程审查仍 PENDING，因此整卡继续 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。未推送。
+
+## 2026-10-19 普通/智能照片合集联合复核
+
+### 明确缺陷与修复
+
+复核发现 COMBINED 规则固定了 `search_binding` 后，当前 active profile 被清除时，`detail()` 因只比较“存在的 active profile”而未报告 `MODEL_REBIND_REQUIRED`；刷新请求也会在 worker 初始化后才失败。现改为空 profile 或 profile/space/generation/dimension 不匹配都即时标记模型不可用，并在 worker 领 lease 前返回 `DEFERRED`。既有 build、候选、规则和排除保留。新增单测使用 Catalog 实际查询到的空 active profile，断言详情 freshness、延期原因、无 lease、旧 build 保留。
+
+另加当前有效 ranked 缓存的 API 集成回归：将 `search_request` 换为抛错函数，再打开缓存页；结果仍为 `CURRENT` 且顺序一致，确保热缓存打开不重跑检索入口。新增跨域人工状态集成测试：普通成员、收藏、智能规则/候选、智能人工排除同时存在时逐项断言互不改变。
+
+### 性能及正确性验证
+
+- 最终联合 JUnit `test-results/joint-smart-combined-20261019.xml`：**59 passed, 0 failed, 0 errors, 0 skipped**；智能状态新增边界独立组 `test-results/joint-smart-final3-20261019.xml`：**23/23 passed**。迁移、备份恢复和普通性能/范围组 `test-results/joint-data-20261019-rerun.xml`：**52/52 passed**。
+- FILTER 排除比例 0/50/95/100%、50 张首/续页、无 COUNT、拍摄时间重复/未知尾桶和 `place_album` 范围使用既有受影响集成覆盖，本轮最终联合组通过。普通合集保存 COUNT、时间轴首续页和迁移恢复定向组重跑通过；300k 普通合集 EXPLAIN/计时继续引用前述同卡证据。
+- 对 100、1000、5000 个 ranked 候选建立隔离合成 catalog，顺序读取全部 50 张分页并核对无重复/漏图，含 10% trusted EXIF 日期、相同时间和未知时间。发布耗时分别 1.35/5.56/30.30 ms；所有 rank 页中位耗时 1.46/11.93/80.46 ms；capture_desc 全页分别 1.26/30.92/517.35 ms。5000 项捕获排序为 100 页总计约 517 ms（约 5.17 ms/页）。一次本机合成采样只说明该有界样本工作量，没有产品延迟承诺；明细在忽略文件 `test-results/joint-smart-candidate-benchmark-20261019.json`。
+- Ruff、相关 py_compile、`node --check src/photo_search/web/app.js`、`git diff --check` exit 0。首轮并行 pytest 因未预建项目内临时目录出现 SQLite/Lance IO 错误；预建 `.tmp` 与 `.pytest-tmp` 后串行重跑均通过，JUnit保留首轮和重跑记录。
+
+### 浏览器、刷新并发及剩余风险
+
+- 本轮在内置浏览器实际完成普通合集“TEXT 搜索→保存→详情→viewer 开/关→切换时间轴→移出→返回目录”；智能合集 stale 结果浏览→刷新、另存普通合集、排除/恢复及 viewer 返回采用此前同一代码版本的隔离浏览器记录（前节）。未访问真实 PhotoSearchData。
+- 实现确认 `SmartRefreshRunner` 实际 worker 数为 1、同 smart_id 由 lease 单飞，但不同 smart_id 的 executor 待处理队列无应用层上限；没有测量多合集长任务排队或 SQLite 写锁等待。因此“不会无限并发”由单 active worker 满足，“不会无界排队/长时间锁占”仍 **PENDING**，本轮不做无证据队列机制重构。
+- 进程在有效 lease 中途退出后，数据库重开会保留 lease；新请求在 600 秒租约到期前仍报告 RUNNING。已有恢复用例通过模拟到期完成 takeover，不等价于活进程崩溃/自动恢复。此流程 **PENDING**。
+- 真实 COMBINED 模型/GPU、不同 smart_id 排队成本、活 worker 崩溃恢复、完整跨进程规则替换压力，以及 V3.1 §2.4 的 DS-H 完整受影响面独立审查继续 **PENDING**。FILTER 和 TEXT 已验证路径可日常使用；因以上边界，整张智能合集卡继续 **IMPLEMENTED / ACCEPTANCE PARTIAL**。

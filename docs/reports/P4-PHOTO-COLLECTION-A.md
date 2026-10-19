@@ -69,3 +69,21 @@ $env:PYTHONPATH='src;tests;.'
 - 300k 合成前后原始摘要及真实 EXPLAIN/计时：`test-results/P4-PHOTO-COLLECTION-A-perf-baseline.json`、`test-results/P4-PHOTO-COLLECTION-A-perf-after.json`；复测命令为 `.venv\Scripts\python.exe .tmp\p4-photo-perf-z71ua719\measure_after.py`。只表示该隔离数据库和本机执行样本。封面时间为真实 `list_collections(limit=20)` 完整调用，不是单独 SQL 计时；SQL VM 工作步数按 1000 指令回调近似。
 - 该轮没有浏览器验证；本任务搜索结果保存的浏览器闭环仍受 `prompt()` 工具限制，按原报告保持 PENDING。未验证真实进程重启、刷新后的幂等恢复、超大无界稀疏合集容量、不同设备性能或 GPU/真实图库。
 - 智能合集前置接口仍可复用且本轮没有改变搜索/成员数据合同；本报告不把整卡升级为 PASS（仍 `IMPLEMENTED / ACCEPTANCE PARTIAL`），也不启动智能合集。
+
+## 2026-10-19 普通/智能照片合集联合复核
+
+### 目的与结果
+
+按联合复核要求，检查普通合集保存、分页、时间轴、封面与智能 FILTER/排名缓存路径；只使用 `.tmp` 项目内隔离合成 catalog，不读取或修改真实图库。没有发现普通合集重复 COUNT 回归或需要扩大优化范围的查询问题。本轮仅修复了智能合集 COMBINED 空 active-profile 状态漏报，详情见智能合集报告。
+
+### 验证
+
+- 联合功能组：`.venv\Scripts\python.exe -m pytest -q tests\unit\test_photo_smart_collections.py tests\integration\test_p4_photo_smart_collections.py tests\integration\test_p4_photo_collections.py tests\unit\test_photo_collections.py tests\integration\test_p4_storage_ui.py tests\unit\test_photo_view_info_ui.py --junitxml=test-results\joint-smart-combined-20261019.xml --basetemp=.pytest-tmp\joint-smart-combined`：**59 passed, 0 failed, 0 errors, 0 skipped**。
+- 迁移、备份恢复、普通合集 COUNT/范围搜索与时间轴组 `test-results/joint-data-20261019-rerun.xml`：**52 passed, 0 failed, 0 errors, 0 skipped**。覆盖 0036/0037 migration 路径、reopen/restore、保留成员、FILTER 保存统计、合集范围搜索和时间轴消费者；不访问生产数据库。
+- Ruff、相关 Python `py_compile`、`node --check src/photo_search/web/app.js`、`git diff --check` 均 exit 0。并行首轮因本地 Lance/SQLite 临时根目录没有预建报 IO 错误；预建项目内目录后串行重跑通过，未发现产品断言失败。
+- 内置浏览器实际流程：新鲜一次性 session 登录本机 `127.0.0.1:18849`，搜索合成文件名 `beach`（TEXT），保存 1 张为普通合集，详情查看并打开/关闭照片 viewer，切换到拍摄时间轴，移出测试照片并返回目录。每个页面状态符合预期；服务随后停止。该流程由当前实现实测，替代旧报告中 `prompt()` 工具限制下的搜索保存 pending。智能 stale 刷新、另存、排除/恢复沿用同一实现版本的既有隔离浏览器证据，避免重复检查共享 UI。
+- 普通/智能状态隔离新增集成断言在联合 JUnit 通过：新建普通成员与收藏后创建 smart cache、排除一张，验证普通成员、收藏、smart rule/cache 和 exclusion 行分别保持独立。
+
+### 状态
+
+普通合集已通过本轮要求的保存/浏览/移出/返回代表性流程，可在已验证功能范围内进入日常使用。整卡仍 `IMPLEMENTED / ACCEPTANCE PARTIAL`：UI pending-request 跨进程恢复、同 profile 下 generation 变化、极大无界稀疏成员容量和独立 DS-H 全受影响面审查仍未验。既有 300k 合成证据仍是本项目唯一大库对照，不构成其它设备或无界容量承诺。

@@ -575,3 +575,103 @@ def test_stale_ranked_page_is_sql_qualified_and_requires_confirmation_to_save(ap
         assert old_cursor.status_code == 409
 
     api_env.scenario(scenario)
+
+
+def test_current_ranked_cache_reopen_does_not_run_search_or_encoder(api_env, monkeypatch):
+    def no_retrieval(*_args, **_kwargs):
+        raise AssertionError("opening a current smart cache must not rerun search or encoding")
+
+    monkeypatch.setattr("photo_search.api.routes.search_request", no_retrieval)
+    seeded = seed_library(api_env, {"cached-one.jpg": [], "cached-two.jpg": []})
+    ids = [int(item["asset_id"]) for item in seeded.values()]
+    payload = PlaceAwareSearchRequestModel.model_validate({
+        "request_id": "smart-current-cache", "retrieval_mode": "text",
+        "original_query": "cached", "text": "cached", "content_query": "cached",
+    })
+    rule = {"version": 1, "execution_kind": "TEXT", "request": payload.model_dump(
+        exclude={"request_id", "search_session_id", "cursor"}), "display_query": "cached",
+        "content_query": "cached", "confirmed_execution_mode": "ranked_candidates",
+        "confirmed_scope": None, "confirmed_place_scope": None, "confirmed_person_scope": None,
+        "confirmed_filter_revision": None, "confirmed_suggestion_revision": None,
+        "confirmed_favorites_revision": None, "search_binding": None}
+    with api_env.service.catalog.read_snapshot() as connection:
+        signature = photo_smart_collections.dependency_signature(connection, rule)[0]
+    smart = photo_smart_collections.create_collection(
+        api_env.service.catalog, "Current ranked", "smart-current-cache-create", rule,
+        request_hash="current-cache", auth_hash="test-auth", source_hash="current-source",
+    )["collection"]
+    photo_smart_collections.publish_candidates(
+        api_env.service.catalog, smart["smart_id"], ids, signature=signature,
+    )
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        response = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets"
+            f"?instance_token={smart['instance_token']}&limit=50",
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["freshness"] == "CURRENT"
+        assert [int(item["asset_id"]) for item in body["assets"]] == ids
+
+    api_env.scenario(scenario)
+
+
+def test_ordinary_members_smart_rule_exclusions_and_favorites_are_isolated(api_env):
+    from photo_search.favorites import set_favorite
+    from photo_search.photo_collections import create_collection as create_photo_collection
+
+    seeded = seed_library(api_env, {"ordinary.jpg": [], "favorite.jpg": []})
+    ordinary_id = int(seeded["ordinary.jpg"]["asset_id"])
+    favorite_id = int(seeded["favorite.jpg"]["asset_id"])
+    ordinary = create_photo_collection(
+        api_env.service.catalog, "Isolation ordinary", "isolation-ordinary",
+        asset_ids=[ordinary_id],
+    )["collection"]
+    set_favorite(api_env.service.catalog, favorite_id, favorite=True)
+    request = PlaceAwareSearchRequestModel.model_validate({
+        "request_id": "smart-isolation", "retrieval_mode": "text",
+        "original_query": "synthetic", "text": "synthetic", "content_query": "synthetic",
+    })
+    rule = {"version": 1, "execution_kind": "TEXT", "request": request.model_dump(
+        exclude={"request_id", "search_session_id", "cursor"}), "display_query": "synthetic",
+        "content_query": "synthetic", "confirmed_execution_mode": "ranked_candidates",
+        "confirmed_scope": None, "confirmed_place_scope": None, "confirmed_person_scope": None,
+        "confirmed_filter_revision": None, "confirmed_suggestion_revision": None,
+        "confirmed_favorites_revision": None, "search_binding": None}
+    with api_env.service.catalog.read_snapshot() as connection:
+        signature = photo_smart_collections.dependency_signature(connection, rule)[0]
+    smart = photo_smart_collections.create_collection(
+        api_env.service.catalog, "Isolation smart", "isolation-smart", rule,
+        request_hash="isolation-smart", auth_hash="test-auth", source_hash="isolation-source",
+    )["collection"]
+    rule_before = api_env.service.catalog.read_one(
+        "SELECT rule_json FROM photo_smart_collections WHERE smart_id=?", (smart["smart_id"],),
+    )[0]
+    photo_smart_collections.publish_candidates(
+        api_env.service.catalog, smart["smart_id"], [ordinary_id, favorite_id], signature=signature,
+    )
+    photo_smart_collections.set_exclusion(
+        api_env.service.catalog, smart["smart_id"], ordinary_id,
+        instance_token=smart["instance_token"], expected_revision=1, excluded=True,
+    )
+
+    assert [int(row["asset_id"]) for row in api_env.service.catalog.read_all(
+        "SELECT asset_id FROM photo_collection_members WHERE collection_id=? ORDER BY position",
+        (ordinary["collection_id"],),
+    )] == [ordinary_id]
+    assert [int(row["asset_id"]) for row in api_env.service.catalog.read_all(
+        "SELECT asset_id FROM asset_favorites ORDER BY asset_id",
+    )] == [favorite_id]
+    assert [int(row["asset_id"]) for row in api_env.service.catalog.read_all(
+        "SELECT asset_id FROM photo_smart_exclusions WHERE smart_id=?", (smart["smart_id"],),
+    )] == [ordinary_id]
+    assert api_env.service.catalog.read_one(
+        "SELECT rule_json FROM photo_smart_collections WHERE smart_id=?", (smart["smart_id"],),
+    )[0] == rule_before
+    assert [int(row["asset_id"]) for row in api_env.service.catalog.read_all(
+        "SELECT asset_id FROM photo_smart_cache_entries WHERE smart_id=? AND build_id=("
+        "SELECT build_id FROM photo_smart_cache_state WHERE smart_id=?) ORDER BY rank",
+        (smart["smart_id"], smart["smart_id"]),
+    )] == [ordinary_id, favorite_id]

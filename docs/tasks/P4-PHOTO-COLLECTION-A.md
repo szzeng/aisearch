@@ -1,6 +1,6 @@
 # P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
 
-- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）；Favorites CORE/UX 依赖已核验 PASS；schema 35 → migration 0036。剩余关键验收定向组 40/40 通过，覆盖来源身份/版本/到期、捕获时间范围、迁移故障/拒绝、备份恢复与 retention、500/501/5000/5001、追加锁冲突恢复及封面查询计划。全量基线 3179 passed、5 failed、51 skipped；复核后 4 个旧合同/资源版本失败仍属先前行为，timeline cache 断言已随本任务修正。内置浏览器搜索保存被原生 prompt 工具限制；刷新/真实重启 UI 恢复与超大稀疏合集容量仍 pending。详见[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）；Favorites CORE/UX 依赖已核验 PASS；schema 35 → migration 0036。联合受影响组 59/59 与迁移/恢复/性能组 52/52 通过；内置浏览器现已完成 TEXT 搜索→保存→查看/移出→返回闭环，覆盖此前 prompt 工具限制留下的缺口。UI pending-request 进程重启恢复、同 profile 下 generation 变化、极大稀疏合集容量及独立 DS-H 完整审查仍 pending。详见[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
 - **优先级**：P1；**推荐执行模型**：GPT-6 High（用户在 Codex 手动选择）
 - **设计基线**：`szzeng/aisearch`，`master @ cb9700acc35e54d2df9c8e43f5c0803b8740563b`（2026-10-19，复核时未发现更新）；`SUPPORTED_SCHEMA_VERSION=33`。实施前必须检查最新 HEAD、工作树、连续迁移、依赖卡的实际报告和 API，不得按本卡旧编号覆盖新迁移。
 - **前置依赖**：`P4-FAVORITES-CORE-A`、`P4-FAVORITES-UX-B` **实际实现且必要验收完成后才启动编码**。截至设计基线，两者仅有 READY 任务卡，不能假定收藏页、星标、批量选择 API 已存在。
@@ -177,3 +177,10 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 ### 2026-10-19 性能收口续验
 
 最新本地 `master` 上补齐 FILTER_ONLY 后续页统计去重和照片合集 capture 时间轴自适应路径。300k 隔离合成对照确认 5,000 FILTER_ONLY 保存的全范围/offset COUNT 从 100/99 降为每次保存 1/0（受影响路由测试验证）；时间轴对 100/1,000 成员从成员位置索引出发，避免空/稀疏结果扫全局 capture 索引；5,000/150,000 成员由 capture 索引 keyset，真实首/续页计划无临时全局排序。capture period 仍需精确范围统计；封面查询对 20 个合集和 92,200 离线成员实际约 17.71ms，但没有无界合集容量保证。定向组合 25/25 通过（`test-results/P4-PHOTO-COLLECTION-A-perf-final-r4.xml`），Ruff、py_compile、diff-check 通过。封面无实测显示需改，保留其线性离线成员成本。前后证据见同一[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)及忽略目录 performance JSON；仍 ACCEPTANCE PARTIAL，不启动智能合集、不提交。
+
+## 11. 2026-10-19 联合审查
+
+- **性能三行**：风险为保存筛选重复 COUNT、时间轴/封面回归及合集范围浏览成本；复用此前 300k 普通合集证据，并以本轮定向性能/迁移组合与隔离浏览器验证，未扩展全库容量承诺；停止条件是 COUNT 回退、分页范围错误、人工成员改变或出现明显查询回归。
+- **验证**：联合智能/普通合集及共享 UI JUnit `test-results/joint-smart-combined-20261019.xml` 为 59/59；迁移、备份恢复、保存 COUNT、搜索范围和时间轴组合 `test-results/joint-data-20261019-rerun.xml` 为 52/52。Ruff、相关 py_compile、app.js `node --check`、diff-check exit 0。首次并行跑因项目 `.tmp` 父目录未预建发生 SQLite/Lance 临时目录错误；预建后串行重跑全部通过。
+- **浏览器**：隔离 3 照片图库，在 127.0.0.1 实测按文字搜索→保存普通合集→详情查看→viewer 开/关→切换时间轴→移出照片→返回合集目录；所有步骤显示期望状态。由本轮浏览器实际完成，覆盖旧报告中受 prompt 对话框限制留下的保存缺口。智能缓存刷新、另存、排除/恢复流程沿用此前未变代码的内置浏览器记录，详情见智能合集卡/报告。
+- **结论与待验**：普通合集成员顺序与收藏/智能排除隔离的联合测试通过。未完成普通合集 UI pending-request 进程重启恢复、同身份 generation 专测和超大无界稀疏成员容量；高风险人工数据变更的 DS-H 完整独审仍 PENDING。整卡维持 IMPLEMENTED / ACCEPTANCE PARTIAL。没有访问真实图库。

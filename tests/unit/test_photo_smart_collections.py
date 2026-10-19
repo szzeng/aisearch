@@ -240,6 +240,40 @@ def test_refresh_lease_is_single_flight_and_expired_owner_cannot_publish(catalog
                             (smart["smart_id"],))[0] is None
 
 
+def test_combined_missing_active_profile_is_reported_and_refresh_is_deferred(catalog):
+    rule = {**_rule("COMBINED"), "search_binding": {
+        "profile_id": "pinned-profile", "space_id": "space-a",
+        "image_generation_id": "image-a", "dimension": 3,
+    }}
+    smart = create_collection(catalog, "Unavailable model", "missing-profile", rule,
+                              request_hash="missing-profile", auth_hash="auth",
+                              source_hash="source")['collection']
+    published = publish_candidates(catalog, smart["smart_id"], [1, 2],
+                                   signature=_signature(catalog, rule))
+    with catalog.read_snapshot() as connection:
+        current_signature, indexing, current_profile = dependency_signature(connection, rule)
+    assert isinstance(indexing, bool)
+    assert current_profile is None
+    assert current_signature == catalog.read_one(
+        "SELECT dependency_signature FROM photo_smart_cache_state WHERE smart_id=?",
+        (smart["smart_id"],),
+    )[0]
+
+    current = detail(catalog, smart["smart_id"], instance_token=smart["instance_token"])
+    assert current["collection"]["freshness"] == "MODEL_REBIND_REQUIRED"
+    refresh = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"])
+    assert refresh == {"status": "DEFERRED", "refresh_id": None,
+                       "reason": "MODEL_REBIND_REQUIRED", "cached": True}
+    state = catalog.read_one(
+        "SELECT build_id,lease_owner,refresh_status,last_error_code "
+        "FROM photo_smart_cache_state WHERE smart_id=?", (smart["smart_id"],),
+    )
+    assert state["build_id"] == published["build_id"]
+    assert state["lease_owner"] is None
+    assert state["refresh_status"] == "FAILED"
+    assert state["last_error_code"] == "MODEL_REBIND_REQUIRED"
+
+
 def test_publish_rejects_expired_lease_even_before_another_worker_takes_over(catalog):
     rule = _rule("TEXT")
     smart = create_collection(catalog, "Expired publish", "text-create-expired", rule, request_hash="h2",

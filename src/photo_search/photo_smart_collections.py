@@ -326,8 +326,9 @@ def detail(catalog: Any, smart_id: int, *, instance_token: str | None = None) ->
         signature, indexing, current_profile = dependency_signature(catalog.connection, rule)
         summary = _summary(row, cache, signature)
         pinned = rule.get("search_binding") if str(row["execution_kind"]) == "COMBINED" else None
-        if pinned and current_profile and any(pinned.get(key) != current_profile.get(key) for key in
-                                              ("profile_id", "space_id", "image_generation_id", "dimension")):
+        if pinned and (current_profile is None or any(
+                pinned.get(key) != current_profile.get(key) for key in
+                ("profile_id", "space_id", "image_generation_id", "dimension"))):
             summary["freshness"] = "MODEL_REBIND_REQUIRED"
         return {"collection": summary, "rule": {
             "version": int(row["rule_version"]), "execution_kind": str(row["execution_kind"]),
@@ -635,8 +636,9 @@ def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,
         signature, indexing, active = dependency_signature(connection, rule)
         if str(collection["execution_kind"]) == "COMBINED":
             pinned = rule.get("search_binding")
-            if pinned and active and any(pinned.get(key) != active.get(key) for key in
-                                         ("profile_id", "space_id", "image_generation_id", "dimension")):
+            if pinned and (active is None or any(
+                    pinned.get(key) != active.get(key) for key in
+                    ("profile_id", "space_id", "image_generation_id", "dimension"))):
                 cache = connection.execute("SELECT * FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),)).fetchone()
                 connection.execute("UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code='MODEL_REBIND_REQUIRED' WHERE smart_id=?",
                                    (int(smart_id),))
