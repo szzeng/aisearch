@@ -128,6 +128,7 @@
       reason: "",
     },
   };
+  var smartReplaceTarget = null;
 
   var els = {};
   var photoSelection = null;
@@ -1792,6 +1793,10 @@
       els.saveAllFilterCollection.hidden = !body.photo_collection_source_token ||
         body.photo_collection_source_mode !== "all_filter_matches";
     }
+    if (els.saveSmartCollection) {
+      els.saveSmartCollection.hidden = !body.photo_collection_source_token;
+      els.saveSmartCollection.textContent = smartReplaceTarget ? "用本次搜索替换智能规则" : "保存为智能合集";
+    }
     if (els.appendRankedCollection && els.saveRankedCollection) els.appendRankedCollection.hidden = els.saveRankedCollection.hidden;
     if (els.appendAllFilterCollection && els.saveAllFilterCollection) els.appendAllFilterCollection.hidden = els.saveAllFilterCollection.hidden;
     els.loadMore.hidden = !body.has_more;
@@ -2941,6 +2946,7 @@
       photoAppendCollection: document.getElementById("search-photo-append-collection"),
       saveRankedCollection: document.getElementById("search-save-ranked-collection"),
       saveAllFilterCollection: document.getElementById("search-save-all-filter-collection"),
+      saveSmartCollection: document.getElementById("search-save-smart-collection"),
       appendRankedCollection: document.getElementById("search-append-ranked-collection"),
       appendAllFilterCollection: document.getElementById("search-append-all-filter-collection"),
       gridSentinel: document.getElementById("search-grid-sentinel"),
@@ -3051,6 +3057,49 @@
     });
     if (els.saveAllFilterCollection) els.saveAllFilterCollection.addEventListener("click", function () {
       saveSearchSnapshot("all_filter_matches", els.saveAllFilterCollection);
+    });
+    smartReplaceTarget = null;
+    try {
+      smartReplaceTarget = JSON.parse(window.sessionStorage.getItem("photo-smart-replace-target") || "null");
+      if (!smartReplaceTarget || !Number.isSafeInteger(Number(smartReplaceTarget.smart_id)) ||
+          !smartReplaceTarget.instance_token || !Number.isSafeInteger(Number(smartReplaceTarget.expected_revision))) {
+        smartReplaceTarget = null;
+      }
+    } catch (_error) { smartReplaceTarget = null; }
+    if (els.saveSmartCollection) els.saveSmartCollection.addEventListener("click", function () {
+      var body = state.search.lastBody || {};
+      if (!body.photo_collection_source_token) return;
+      els.saveSmartCollection.disabled = true;
+      var replace = smartReplaceTarget;
+      var message = replace
+        ? "将“" + String(replace.name || "智能合集") + "”切换为本次已确认的规则；原有人工排除会保留。"
+        : (body.photo_collection_source_mode === "ranked_candidates"
+          ? "保存本次综合或文字排名规则；候选缓存有上限，之后可手动刷新。"
+          : "保存已确认的筛选条件；新照片会在下次读取时按条件出现。");
+      window.AIPhotoInfo.actionDialog({kind:"text", title:replace ? "替换智能合集规则" : "保存为智能合集",
+        message:message, label:"智能合集名称", value:replace ? String(replace.name || "") : ""})
+        .then(function (name) {
+          if (name === null || !name.trim()) return null;
+          var requestId = window.crypto && window.crypto.randomUUID
+            ? window.crypto.randomUUID() : "smart-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+          var path, requestBody;
+          if (replace) {
+            path = "/photo-smart-collections/" + encodeURIComponent(replace.smart_id) + "/replace-rule";
+            requestBody = {instance_token:replace.instance_token, expected_revision:Number(replace.expected_revision),
+              request_id:requestId, source_token:body.photo_collection_source_token};
+          } else {
+            path = "/photo-smart-collections/from-search";
+            requestBody = {name:name, create_request_id:requestId, source_token:body.photo_collection_source_token};
+          }
+          return request(path, {method:"POST", body:requestBody});
+        }).then(function (result) {
+          if (!result || !result.body) return;
+          if (replace) window.sessionStorage.removeItem("photo-smart-replace-target");
+          var collection = result.body.collection;
+          window.location.href = "/?view=photo-smart-collection&id=" + encodeURIComponent(collection.smart_id);
+        }).catch(function (failure) {
+          setStatus(els.queryStatus, "保存智能合集失败：" + describe(failure), "error");
+        }).finally(function () { els.saveSmartCollection.disabled = false; });
     });
     var pendingAppendRequestIds = Object.create(null);
     function appendSearchSnapshot(mode, button) {

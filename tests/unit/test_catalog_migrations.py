@@ -108,6 +108,14 @@ CORE_TABLES = {
     "photo_collections",
     "photo_collection_members",
     "photo_collection_search_appends",
+    # P4-PHOTO-SMART-COLLECTION-A (0037): durable rules, user exclusions,
+    # bounded published candidates, idempotency receipts, and publication revisions.
+    "photo_smart_collections",
+    "photo_smart_exclusions",
+    "photo_smart_cache_state",
+    "photo_smart_cache_entries",
+    "photo_smart_rule_replacements",
+    "photo_smart_vector_publish_revisions",
     "person_operation_items",
     "person_operations",
     "person_operation_retention",
@@ -594,12 +602,13 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
                         "src/photo_search/catalog/migrations")
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert migrated.previous_version == 35
-    assert migrated.applied == (36,)
+    assert migrated.applied == (36, 37)
     assert migrated.backup_path is not None
     old_build_backup = open_readonly(migrated.backup_path)
     try:
         assert schema.read_schema_version(old_build_backup) == 35
         assert "photo_collections" not in schema.business_tables(old_build_backup)
+        assert "photo_smart_collections" not in schema.business_tables(old_build_backup)
     finally:
         old_build_backup.close()
 

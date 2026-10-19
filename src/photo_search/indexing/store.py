@@ -738,6 +738,7 @@ class IndexCoordinator:
                     "UPDATE index_outbox SET state = 'CONFIRMED', updated_at = ? WHERE event_id = ?",
                     (now_ms, event_id),
                 )
+                self._bump_smart_vector_revision(connection, str(event["generation_id"]))
                 self._make_generation_ready(connection, str(event["generation_id"]), now_ms)
             self.applied_events += 1
             return True
@@ -938,6 +939,8 @@ class IndexCoordinator:
                         (now_ms, event_id),
                     )
                 for generation_id in sorted(touched):
+                    if generation_id in writable:
+                        self._bump_smart_vector_revision(connection, generation_id)
                     self._make_generation_ready(connection, generation_id, now_ms)
             self.applied_events += len(events)
             return len(events)
@@ -1023,6 +1026,14 @@ class IndexCoordinator:
             "source_ids": sources,
             "visible": asset is not None and str(asset["state"]) == "ACTIVE",
         }
+
+    @staticmethod
+    def _bump_smart_vector_revision(connection: sqlite3.Connection, generation_id: str) -> None:
+        connection.execute(
+            "INSERT INTO photo_smart_vector_publish_revisions(generation_id,revision) VALUES(?,1) "
+            "ON CONFLICT(generation_id) DO UPDATE SET revision=revision+1",
+            (str(generation_id),),
+        )
 
     @staticmethod
     def _make_generation_ready(connection: sqlite3.Connection, generation_id: str, now_ms: int) -> None:

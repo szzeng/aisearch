@@ -46,6 +46,8 @@ _KEY_TABLES = (
     "person_collections",
     "person_collection_members",
     "photo_collections",
+    "photo_smart_collections",
+    "photo_smart_rule_replacements",
     "photo_collection_members",
     "photo_collection_search_appends",
     "places",

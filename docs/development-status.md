@@ -1,6 +1,10 @@
 # Development status
 
-## Current: P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
+## Current: P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
+
+2026-10-19，核心 FILTER/TEXT/COMBINED 规则/API、排名缓存、排除/恢复和详情入口已落地。最终受影响组合 JUnit **119/119** 通过，Ruff、py_compile、相关 Node 语法与 diff-check 通过；完整 unit/integration 原始运行 3269 项为 3212 passed、6 failed、51 skipped，5 项为并行 UI 资源/digest 断言，第 6 项 app.js 版本断言在缓存版本更新后通过最终受影响重跑。内置浏览器隔离合成数据实测 TEXT 创建、详情、排除、已排除列表与恢复；排除缩略图路径修复后只做单测，浏览器复核仍 PENDING。Luna High 最终复核确认签名竞态、session coverage 与持久写入/发布失败响应已修；仍有 stale ranked 缓存资格浏览、`save-static` 缺失两项 P1，以及 worker factory 异常租约 P2，因此为 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。真实模型/图库、进程重启刷新、并发替换与 5000 截断另存仍待验；未访问真实图库。详情见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+
+## Earlier status record: P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
 
 2026-10-19，按用户指令实施并续验。schema 0036、合集 CRUD/成员 API、搜索结果新建/追加保存、照片合集限定搜索与时间轴、导航/详情/viewer 入口及 retention/恢复识别已落地。Luna High 复核修复了排名来源 freshness、combined intent plan、追加 API、地点 scope 最终事务校验、封面物化及准确到期判断；追加事务有持久幂等回执。最终剩余关键验收组 **40/40**（`test-results/P4-PHOTO-COLLECTION-A-remainder-final-r7.xml`）通过，涵盖 FILTER/TEXT/COMBINED、捕获时间范围、source-token 身份/篡改/过期、profile/revision 拒绝、0036 故障回滚/旧版拒绝、备份恢复后成员读回、retention、500/501、创建与追加 5000/5001、追加锁失败同键恢复和封面 EXPLAIN。完整 unit/integration 原始基线 3235 项为 3179 passed、5 failed、51 skipped、0 errors；其中本任务 timeline 资源版本断言已同步更新并通过，另 4 个既有资源版本/digest 失败单独复跑仍在，组合证据不称单次最终全量 PASS。隔离内置浏览器验证导航、空合集创建和详情；搜索结果保存受 `prompt()` 工具限制未完成。UI 刷新/真实进程重启恢复、同 profile 身份下 generation 变化、超大无界稀疏合集容量仍待验；封面 EXPLAIN 仅证明索引查询而无 catalog 全表扫描，不作规模承诺。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。智能合集前置后端来源/范围/revision/追加接口具备可复用合同；本任务收口，不自动启动下一卡。未访问真实图库。详见[任务卡](tasks/P4-PHOTO-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-COLLECTION-A.md)。
 

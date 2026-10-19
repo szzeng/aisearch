@@ -137,6 +137,12 @@ V6_TABLES = (
     "photo_collections",
     "photo_collection_members",
     "photo_collection_search_appends",
+    "photo_smart_collections",
+    "photo_smart_exclusions",
+    "photo_smart_cache_state",
+    "photo_smart_cache_entries",
+    "photo_smart_rule_replacements",
+    "photo_smart_vector_publish_revisions",
     "person_hidden",
     "person_operation_retention",
 )

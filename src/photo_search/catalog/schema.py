@@ -78,8 +78,9 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0032 adds soft-anchored face-level person collection membership.
 # 0033 adds ordered photo/source reads and pending-only generation readiness checks.
 # 0034 adds asset favorites; 0035 records one-shot recovery of legacy CR2 format failures;
-# 0036 adds stable user-maintained ordinary photo collections.
-SUPPORTED_SCHEMA_VERSION = 36
+# 0036 adds stable user-maintained ordinary photo collections; 0037 adds independent
+# dynamic smart collection rules, human exclusions and rebuildable bounded rank caches.
+SUPPORTED_SCHEMA_VERSION = 37
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
