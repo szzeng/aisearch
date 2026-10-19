@@ -80,13 +80,15 @@ class CandidateBuildManager:
         _atomic_json(self.path, state)
         return dict(state)
 
-    def status(self) -> dict[str, Any] | None:
+    def status(self, *, refresh_counts: bool = True) -> dict[str, Any] | None:
         state = _read_state(self.root)
         if state is None:
             return None
         if state.get("catalog_identity") != _catalog_identity(self.root):
             state["status"] = "FAILED"
             state["last_error"] = {"code": "CATALOG_IDENTITY_CHANGED"}
+            return state
+        if not refresh_counts:
             return state
         path = Path(catalog_db_path(self.root))
         try:

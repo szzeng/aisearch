@@ -1,6 +1,10 @@
 ## Current task: P4-EMBEDDING-DEFAULT-QWEN-A（2026-10-20）
 
-新图库在没有活动 SearchProfile 时默认普通版 `qwen3-vl-embedding-2b`；既有活动 Profile 继续权威。普通首次建库在分类、入队及 source-built 标记前拒绝孤儿 Lance 表，并在同一阶段确认模型可用；缺权重/CUDA/encoder 时明确失败且无状态写入；补齐资源门禁包装器的单图编码接口。隔离合成定向测试 **58 passed**，Qwen/严格 CUDA 单测 **1 passed**，Ruff 与 CRLF-aware diff 检查通过。Luna High 指出的孤儿/模型预检顺序问题均已修复并确认闭合。真实 Qwen/CUDA 建库与真实 PhotoSearchData 均未触及；未做大图库测试；详见[任务卡](tasks/P4-EMBEDDING-DEFAULT-QWEN-A.md)和[执行报告](reports/P4-EMBEDDING-DEFAULT-QWEN-A.md)。
+新图库在没有活动 SearchProfile 时默认普通版 `qwen3-vl-embedding-2b`；既有活动 Profile 继续权威。普通首次建库在分类、入队及 source-built 标记前拒绝孤儿 Lance 表，并在同一阶段确认模型可用；缺权重/CUDA/encoder 时明确失败且无状态写入；补齐资源门禁包装器的单图编码接口。隔离合成定向测试 **58 passed**，Qwen/严格 CUDA 单测 **1 passed**，Ruff 与 CRLF-aware diff 检查通过。Luna High 指出的孤儿/模型预检顺序问题均已修复并确认闭合。真实 Qwen/CUDA 建库与真实 PhotoSearchData 均未触及；未做大图库测试；已提交 `176d189`，不推送。详见[任务卡](tasks/P4-EMBEDDING-DEFAULT-QWEN-A.md)和[执行报告](reports/P4-EMBEDDING-DEFAULT-QWEN-A.md)。
+
+## Previous task: P4-EMBEDDING-MANAGEMENT-UI-FIX（2026-10-19）
+
+完成搜索模型管理最小安全与性能修复：孤儿 Lance 隔离/恢复统一身份与引用预检；深度覆盖检查改为线程内独立只读连接并合并重复请求；候选资源释放后 query encoder 可重建；能力状态区分 BUSY、缺失与加载失败；高频进度轮询不再聚合 SQLite 统计，并在离页/隐藏时停止。受影响定向 pytest 16 通过、1 项原生 symlink 测试因 WinError 1314 跳过；Ruff、Node、diff-check 通过。隔离内置浏览器确认空图库模型状态与搜索页入口。额外前端检查 100 项中有 2 个基线已有失败，报告列明。Luna High 复核的两项问题已修复并确认。真实 Qwen/CUDA 与 NTFS junction 仍 PENDING；未访问真实 PhotoSearchData。已按用户要求本地提交，不推送。详见[执行报告](reports/P4-EMBEDDING-MANAGEMENT-UI-FIX.md)。
 
 ## Previous task: P4-EMBEDDING-MANAGEMENT-UI-A（2026-10-19）
 

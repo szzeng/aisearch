@@ -288,6 +288,7 @@ ARTIFACT_CACHE_CONTROL = "private, no-cache, must-revalidate"
 ORIGINAL_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
 router = APIRouter(prefix="/api/v1", tags=["photo-search"])
+_embedding_provider_check_tasks: dict[tuple[int, str, str], asyncio.Task[dict[str, Any]]] = {}
 
 
 def _desktop_supported() -> bool:
@@ -483,11 +484,28 @@ def _search_capabilities(context: ApiContext) -> dict[str, Any] | None:
     profile = search_profile_summary(db_path)
     if projection is None and profile is None:
         return None
+    served_model = active_embedding_model(context, profile)
+    try:
+        query_encoder = context.query_encoder()
+    except CatalogError as error:
+        if error.details.get("reason") != "MODEL_RESOURCE_BUSY":
+            raise
+        query_encoder = None
+        query_encoder_state = "BUSY"
+    else:
+        query_encoder_state = (
+            "AVAILABLE" if query_encoder is not None else
+            "DAMAGED" if context._encoder_failure_code else
+            "MODEL_MISSING" if served_model is not None and not served_model.get("installed") else
+            "UNAVAILABLE"
+        )
     return {
         **(projection or {}),
         **(profile or {}),
-        "query_encoder_available": context.query_encoder() is not None,
-        "active_embedding_model": active_embedding_model(context, profile),
+        "query_encoder_available": query_encoder is not None,
+        "query_encoder_state": query_encoder_state,
+        "query_encoder_failure": context._encoder_failure_code,
+        "active_embedding_model": served_model,
     }
 
 
@@ -5053,6 +5071,13 @@ async def get_embedding_management_status(request: Request) -> dict[str, Any]:
     return result
 
 
+@router.get("/embedding-management/task-progress", summary="Read candidate build progress only")
+async def get_embedding_task_progress(request: Request) -> dict[str, Any]:
+    """Return persisted task progress without aggregating catalog entries."""
+    task = context_of(request).embedding_candidate_manager().status(refresh_counts=False)
+    return {"candidate_task": task}
+
+
 @router.post("/embedding-management/providers/{provider_id}/candidate-build")
 async def start_embedding_candidate_build(request: Request, provider_id: str) -> dict[str, Any]:
     payload = await request.json()
@@ -5079,51 +5104,79 @@ async def resume_embedding_candidate_build(request: Request, task_id: str) -> di
 @router.post("/embedding-management/providers/{provider_id}/check")
 async def check_embedding_provider(request: Request, provider_id: str) -> dict[str, Any]:
     """Run the explicit, full candidate coverage/artifact/Lance selection check."""
+    context = context_of(request)
+    root = str(Path(context.settings.data_root).resolve()).casefold()
+    key = (id(asyncio.get_running_loop()), root, str(provider_id))
+    task = _embedding_provider_check_tasks.get(key)
+    if task is None or task.done():
+        task = asyncio.create_task(asyncio.to_thread(_embedding_provider_check_sync, context, str(provider_id)))
+        _embedding_provider_check_tasks[key] = task
+
+        def discard(completed: asyncio.Task[dict[str, Any]]) -> None:
+            if _embedding_provider_check_tasks.get(key) is completed:
+                _embedding_provider_check_tasks.pop(key, None)
+
+        task.add_done_callback(discard)
+    return await asyncio.shield(task)
+
+
+def _embedding_provider_check_sync(context: ApiContext, provider_id: str) -> dict[str, Any]:
+    """Deep check on a worker thread with a connection created and closed on that thread."""
     from photo_search.artifacts.store import ArtifactStore, generation_id_for
     from photo_search.catalog.errors import CatalogError
-    from photo_search.config import vectors_dir
+    from photo_search.config import catalog_db_path, vectors_dir
     from photo_search.indexing import selection as selection_module
     from photo_search.models.embedding.registry import registry_for
 
-    context = context_of(request)
-    service = service_of(request)
-    entry = registry_for(context.settings.data_root).require_installed(provider_id)
+    data_root = context.settings.data_root
+    entry = registry_for(data_root).require_installed(provider_id)
     generation_id = generation_id_for(entry.identity.space_id, entry.identity.processor_id)
-    row = service.catalog.read_one(
-        "SELECT 1 FROM index_generations WHERE generation_id=?", (generation_id,)
-    )
-    if row is None:
-        return {"status": "not_ready", "provider_id": provider_id, "reason": "NO_GENERATION", "switch_eligible": False}
-    store = ArtifactStore.open(context.settings.data_root)
-    report, lance = selection_module.selection_report(
-        service.catalog,
-        store,
-        generation_id=generation_id,
-        space_id=str(entry.identity.space_id),
-        processor_id=str(entry.identity.processor_id),
-        vectors_root=vectors_dir(context.settings.data_root),
-        verify_artifact_bytes=True,
-    )
-    gate_error = None
+    database = Path(catalog_db_path(data_root))
     try:
-        selection_module.require_selection_ready(report, lance=lance)
-    except CatalogError as error:
-        gate_error = error.as_dict()
-    profile = service.catalog.read_one(
-        "SELECT profile_id FROM search_profiles WHERE image_generation_id=? ORDER BY created_at DESC LIMIT 1",
-        (generation_id,),
-    )
-    eligible = bool(entry.installed and profile and gate_error is None)
-    return {
-        "status": "ok",
-        "provider_id": provider_id,
-        "generation_id": generation_id,
-        "profile_id": None if profile is None else str(profile["profile_id"]),
-        "coverage": report.to_dict(),
-        "lance": lance,
-        "switch_eligible": eligible,
-        "selection_error": gate_error,
-    }
+        connection = sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM index_generations WHERE generation_id=?", (generation_id,)
+            ).fetchone()
+            if row is None:
+                return {"status": "not_ready", "provider_id": provider_id,
+                        "reason": "NO_GENERATION", "switch_eligible": False}
+            store = ArtifactStore.open(data_root)
+            report, lance = selection_module.selection_report(
+                connection,
+                store,
+                generation_id=generation_id,
+                space_id=str(entry.identity.space_id),
+                processor_id=str(entry.identity.processor_id),
+                vectors_root=vectors_dir(data_root),
+                verify_artifact_bytes=True,
+            )
+            gate_error = None
+            try:
+                selection_module.require_selection_ready(report, lance=lance)
+            except CatalogError as error:
+                gate_error = error.as_dict()
+            profile = connection.execute(
+                "SELECT profile_id FROM search_profiles WHERE image_generation_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (generation_id,),
+            ).fetchone()
+            eligible = bool(entry.installed and profile and gate_error is None)
+            return {
+                "status": "ok",
+                "provider_id": provider_id,
+                "generation_id": generation_id,
+                "profile_id": None if profile is None else str(profile["profile_id"]),
+                "coverage": report.to_dict(),
+                "lance": lance,
+                "switch_eligible": eligible,
+                "selection_error": gate_error,
+            }
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        raise CatalogError("CATALOG_UNREADABLE", "the catalog could not be read for selection checking") from error
 
 
 @router.post("/embedding-management/providers/{provider_id}/isolate-orphan")

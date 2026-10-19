@@ -65,6 +65,7 @@ class ApiContext:
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
         self._gated_encoder: QueryEncoder | None = None
+        self._encoder_failure_code: str | None = None
         self._encoder_resolved = False
         self._adapter_lock = threading.RLock()
         #: P2-06B: the optional reranker adapter, injected exactly like the query encoder.
@@ -121,6 +122,7 @@ class ApiContext:
             encoder = self._encoder
             self._encoder = None
             self._gated_encoder = None
+            self._encoder_failure_code = None
             self._encoder_resolved = False
         stop = getattr(encoder, "close", None)
         if callable(stop):
@@ -336,10 +338,11 @@ class ApiContext:
                 return None
             try:
                 self._encoder = self._encoder_factory()
-            except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
+            except Exception as error:  # noqa: BLE001 - a broken adapter is reported, never raised here
                 logger.debug("building the query encoder failed", exc_info=True)
                 self._encoder = None
                 self._gated_encoder = None
+                self._encoder_failure_code = type(error).__name__
             self._encoder_resolved = True
             if self._encoder is not None:
                 self._gated_encoder = GatedEncoder(self._encoder, self.model_resource_gate)

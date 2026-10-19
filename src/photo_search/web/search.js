@@ -2973,12 +2973,36 @@
       }
     }
     if (search && search.active_profile_id && search.query_encoder_available !== true) {
-      lines.push(
-        "当前画面搜索模型不可用；“按文字找”和条件筛选仍可使用。"
-      );
+      var unavailableHint = search.query_encoder_state === "BUSY"
+        ? "建库期间模型暂不可用；资源释放后可重试语义搜索。"
+        : search.query_encoder_state === "MODEL_MISSING"
+          ? "当前搜索模型文件缺失；请先恢复模型文件。"
+          : search.query_encoder_state === "DAMAGED"
+            ? "当前搜索模型加载失败（" + safeText(search.query_encoder_failure || "UNKNOWN") + "）；请检查模型状态。"
+            : "当前画面搜索模型不可用。";
+      lines.push(unavailableHint + "“按文字找”和条件筛选仍可使用。");
     }
     text(els.bindingHint, lines.join(" "));
   }
+
+  var busyCapabilityRefresh = false;
+  function refreshBusyEncoderCapability() {
+    var search = state.capabilities && state.capabilities.search;
+    if (document.hidden || busyCapabilityRefresh || !search || search.query_encoder_state !== "BUSY") return;
+    busyCapabilityRefresh = true;
+    request("/capabilities")
+      .then(function (result) {
+        var capabilities = result.body || {};
+        if (capabilities.search) {
+          state.capabilities = capabilities;
+          renderBindingHint(capabilities);
+        }
+      })
+      .catch(function () {})
+      .finally(function () { busyCapabilityRefresh = false; });
+  }
+  document.addEventListener("visibilitychange", refreshBusyEncoderCapability);
+  window.addEventListener("focus", refreshBusyEncoderCapability);
 
   //: The person page is only offered when the read layer it needs really exists in this
   //: catalog: the P3-05B schema (person controls, the widened operation log, the split

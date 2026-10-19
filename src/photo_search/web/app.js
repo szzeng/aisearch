@@ -2785,6 +2785,8 @@
   }
 
   function showView(name) {
+    state.currentView = name;
+    if (name !== "sources") stopEmbeddingTaskPoll();
     if (name !== "detail" && state.detailInfoMount) {
       state.detailInfoMount.dispose();
       state.detailInfoMount = null;
@@ -2826,7 +2828,40 @@
   }
 
   var embeddingStatusRequest = null;
+  var embeddingTaskPollTimer = null;
+  var embeddingTaskPollRequest = null;
   var embeddingChecks = Object.create(null);
+  function stopEmbeddingTaskPoll() {
+    if (embeddingTaskPollTimer !== null) window.clearTimeout(embeddingTaskPollTimer);
+    embeddingTaskPollTimer = null;
+  }
+  function scheduleEmbeddingTaskPoll() {
+    stopEmbeddingTaskPoll();
+    if (state.currentView !== "sources" || document.hidden) return;
+    embeddingTaskPollTimer = window.setTimeout(pollEmbeddingTaskProgress, 1500);
+  }
+  function pollEmbeddingTaskProgress() {
+    embeddingTaskPollTimer = null;
+    if (state.currentView !== "sources" || document.hidden || embeddingTaskPollRequest) return;
+    embeddingTaskPollRequest = request("/embedding-management/task-progress")
+      .then(function (result) {
+        var task = (result.body || {}).candidate_task;
+        if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
+          var activeEl = document.getElementById("active-search-model");
+          if (activeEl) activeEl.textContent = activeEl.textContent.replace(/；候选建库：[^；]*/, "") +
+            "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
+          scheduleEmbeddingTaskPoll();
+        } else {
+          loadEmbeddingManagementStatus();
+        }
+      })
+      .catch(function () { scheduleEmbeddingTaskPoll(); })
+      .finally(function () { embeddingTaskPollRequest = null; });
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stopEmbeddingTaskPoll();
+    else if (state.currentView === "sources") loadEmbeddingManagementStatus();
+  });
   function loadEmbeddingManagementStatus() {
     if (embeddingStatusRequest) return embeddingStatusRequest;
     var activeEl = document.getElementById("active-search-model");
@@ -2968,10 +3003,11 @@
         var task = body.candidate_task;
         if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
           activeEl.textContent += "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
-          window.setTimeout(loadEmbeddingManagementStatus, 1500);
+          scheduleEmbeddingTaskPoll();
         } else if (task && task.last_error) {
+          stopEmbeddingTaskPoll();
           activeEl.textContent += "；候选建库结果：" + task.status + "（" + String(task.last_error.code || "未知错误") + "）";
-        }
+        } else stopEmbeddingTaskPoll();
       })
       .catch(function (failure) {
         activeEl.textContent = "读取模型状态失败：" + describe(failure);

@@ -210,6 +210,115 @@ def _is_reparse(info: os.stat_result) -> bool:
     )
 
 
+def _safe_path_present(path: Path, root: Path) -> bool:
+    """Check a vectors-relative path with lstat so dangling links cannot look absent."""
+    root = root.resolve()
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise ValueError("PATH_OUTSIDE_VECTORS_ROOT") from error
+    current = root
+    for part in relative.parts:
+        current = current / part
+        try:
+            info = current.lstat()
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise ValueError("PATH_IDENTITY_UNREADABLE") from error
+        if _is_reparse(info):
+            raise ValueError("PATH_REPARSE_POINT")
+        if current != path and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("PATH_PARENT_NOT_DIRECTORY")
+    return True
+
+
+def _orphan_error(request: dict[str, Any], reason: str, message: str) -> dict[str, Any]:
+    return {"request_id": request.get("request_id"), "status": "error",
+            "reason": reason, "message": str(message)[:400]}
+
+
+def _orphan_isolation_preflight(
+    root: Path, request: dict[str, Any], *, allow_missing_source: bool = False
+) -> dict[str, Any]:
+    """Revalidate the same data-root, catalog, generation and physical-table binding everywhere."""
+    from photo_search.artifacts.store import generation_id_for
+    from photo_search.indexing.store import _table_name
+    from photo_search.models.embedding.registry import registry_for
+
+    root = Path(root).resolve()
+    requested_root = Path(str(request.get("data_root") or "")).resolve(strict=False)
+    if str(requested_root).casefold() != str(root).casefold():
+        raise ValueError("DATA_ROOT_CHANGED")
+    if request.get("identity") != _data_identity(root):
+        raise ValueError("DATA_IDENTITY_CHANGED")
+    generation_id = str(request.get("generation_id") or "")
+    provider_id = str(request.get("provider_id") or "")
+    try:
+        provider = registry_for(root).get(provider_id)
+    except Exception as error:  # noqa: BLE001 - an unresolved provider cannot authorize a move.
+        raise ValueError("PROVIDER_IDENTITY_UNAVAILABLE") from error
+    expected_generation = generation_id_for(provider.identity.space_id, provider.identity.processor_id)
+    if generation_id != expected_generation:
+        raise ValueError("GENERATION_IDENTITY_CHANGED")
+    table_name = _table_name(generation_id)
+    if str(request.get("table_name") or "") != table_name:
+        raise ValueError("TABLE_NAME_MISMATCH")
+    physical_identity = request.get("physical_identity")
+    if not isinstance(physical_identity, dict) or not physical_identity.get("file_id"):
+        raise ValueError("AUTHORIZED_PHYSICAL_IDENTITY_MISSING")
+
+    db_path = Path(catalog_db_path(root))
+    if db_path.is_file():
+        try:
+            connection = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+            try:
+                tables = {str(row[0]) for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                if "index_generations" in tables and connection.execute(
+                    "SELECT 1 FROM index_generations WHERE generation_id=? LIMIT 1", (generation_id,)
+                ).fetchone():
+                    raise ValueError("GENERATION_REFERENCED")
+                if "search_profiles" in tables and connection.execute(
+                    "SELECT 1 FROM search_profiles WHERE image_generation_id=? LIMIT 1", (generation_id,)
+                ).fetchone():
+                    raise ValueError("PROFILE_REFERENCES_GENERATION")
+            finally:
+                connection.close()
+        except ValueError:
+            raise
+        except sqlite3.Error as error:
+            raise ValueError("CATALOG_UNREADABLE") from error
+
+    vectors_root = Path(vectors_dir(root)).resolve()
+    source = vectors_root / f"{table_name}.lance"
+    source_present = _safe_path_present(source, vectors_root)
+    if not source_present:
+        if not allow_missing_source:
+            raise ValueError("SOURCE_TABLE_MISSING")
+        source_identity = None
+    else:
+        try:
+            source_identity = _physical_facts(source, vectors_root)
+        except ValueError as error:
+            raise ValueError("TABLE_IDENTITY_CHANGED") from error
+        if source_identity != physical_identity:
+            raise ValueError("TABLE_IDENTITY_CHANGED")
+    return {"generation_id": generation_id, "table_name": table_name,
+            "vectors_root": vectors_root, "source": source,
+            "source_identity": source_identity, "source_present": source_present}
+
+
+def _same_moved_physical_identity(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
+    actual = dict(actual)
+    expected = dict(expected)
+    # A same-filesystem rename preserves object/file ids and metadata; only the root path changes.
+    actual.pop("path", None)
+    expected.pop("path", None)
+    return actual == expected
+
+
 def execute_pending_transition(data_root: str | Path, lease: Any) -> dict[str, Any] | None:
     """Consume one offline action while retaining the exact caller-owned data-root lease."""
     if getattr(lease, "_stream", None) is None:
@@ -276,64 +385,70 @@ def _recover_or_isolate_orphan(root: Path, request: dict[str, Any]) -> dict[str,
     from photo_search.config import vectors_dir
 
     vectors_root = Path(vectors_dir(root)).resolve()
-    operation_id = hashlib.sha256(str(request["request_id"]).encode()).hexdigest()[:20]
+    request_id = str(request.get("request_id") or "")
+    operation_id = hashlib.sha256(request_id.encode()).hexdigest()[:20]
     base = vectors_root / "_isolated" / operation_id
-    source = vectors_root / f"{request['table_name']}.lance"
-    backup = base / "backup" / source.name
-    isolated = base / "isolated" / source.name
+    backup_root, isolated_root = base / "backup", base / "isolated"
     journal = _read_json(_state_path(root, ORPHAN_STATE_FILE))
-    if journal and journal.get("request_id") == request.get("request_id") and journal.get("stage") in {"BACKUP_VERIFIED", "MOVE_STARTED", "ISOLATED"}:
-        try:
-            if not backup.is_dir() or _hash_tree(backup) == "":
-                raise ValueError("verified backup is missing")
-            _verify_lance_copy(name=str(request["table_name"]), source_root=None, copy_root=backup.parent)
-            if source.exists() and not isolated.exists():
-                if _hash_tree(source) != _hash_tree(backup):
-                    raise ValueError("source and verified backup differ")
-                os.replace(source, isolated)
-            elif isolated.exists() and not source.exists():
-                if _hash_tree(isolated) != _hash_tree(backup):
-                    raise ValueError("isolated table and verified backup differ")
-            elif source.exists() or not isolated.exists():
-                raise ValueError("source/isolation state is ambiguous")
-            journal.update({"stage": "ISOLATED", "status": "ok", "backup": str(backup), "isolated_path": str(isolated), "recovered_after_restart": True})
-            _atomic_json(_state_path(root, ORPHAN_STATE_FILE), journal)
-            return {"request_id": request.get("request_id"), "status": "ok", "operation": journal, "recovered_after_restart": True}
-        except Exception as error:  # noqa: BLE001 - ambiguity is surfaced for manual recovery.
-            return {"request_id": request.get("request_id"), "status": "error", "reason": "RECOVERY_NEEDS_MANUAL_REVIEW", "message": str(error)[:400]}
-    if (journal and journal.get("request_id") == request.get("request_id")) or base.exists():
-        return {"request_id": request.get("request_id"), "status": "error", "reason": "RECOVERY_NEEDS_MANUAL_REVIEW", "message": "an incomplete backup exists; original table was not moved"}
-    return _isolate_orphan(root, request)
+    source = vectors_root / f"{request.get('table_name', '')}.lance"
+    backup = backup_root / source.name
+    isolated = isolated_root / source.name
+    if not journal and not base.exists():
+        return _isolate_orphan(root, request)
+    if not journal or journal.get("request_id") != request_id:
+        return _orphan_error(request, "RECOVERY_NEEDS_MANUAL_REVIEW", "operation journal does not match the request")
+    if journal.get("stage") not in {"BACKUP_VERIFIED", "MOVE_STARTED", "ISOLATED"}:
+        return _orphan_error(request, "RECOVERY_NEEDS_MANUAL_REVIEW", "backup stage is incomplete; original table was not moved")
+    try:
+        checked = _orphan_isolation_preflight(root, request, allow_missing_source=True)
+        if any(journal.get(key) != request.get(key) for key in (
+            "kind", "data_root", "identity", "provider_id", "generation_id", "table_name", "physical_identity"
+        )):
+            raise ValueError("operation journal binding differs from the original authorization")
+        if not _safe_path_present(backup, vectors_root) or not backup.is_dir():
+            raise ValueError("verified backup is missing")
+        source_present = bool(checked["source_present"])
+        isolated_present = _safe_path_present(isolated, vectors_root)
+        backup_hash = _hash_tree(backup)
+        if not backup_hash or backup_hash != journal.get("backup_sha256"):
+            raise ValueError("backup hash differs from the durable verification record")
+        if source_present and not isolated_present:
+            if checked["source_identity"] != request["physical_identity"]:
+                raise ValueError("source physical identity changed after authorization")
+            if _hash_tree(source) != backup_hash:
+                raise ValueError("source and verified backup differ")
+            _verify_lance_copy(name=checked["table_name"], source_root=vectors_root, copy_root=backup_root)
+            if journal.get("stage") == "BACKUP_VERIFIED":
+                journal["stage"] = "MOVE_STARTED"
+                _atomic_json(_state_path(root, ORPHAN_STATE_FILE), journal)
+            os.replace(source, isolated)
+            isolated_facts = _physical_facts(isolated, vectors_root)
+            if not _same_moved_physical_identity(isolated_facts, request["physical_identity"]):
+                raise ValueError("moved table physical identity differs from the authorization")
+        elif not source_present and isolated_present and journal.get("stage") in {"MOVE_STARTED", "ISOLATED"}:
+            isolated_facts = _physical_facts(isolated, vectors_root)
+            if not _same_moved_physical_identity(isolated_facts, request["physical_identity"]):
+                raise ValueError("isolated table physical identity differs from the authorization")
+            if _hash_tree(isolated) != backup_hash:
+                raise ValueError("isolated table and verified backup differ")
+            _verify_lance_copy(name=checked["table_name"], source_root=isolated_root, copy_root=backup_root)
+        else:
+            raise ValueError("source/isolation state is ambiguous")
+        journal.update({"stage": "ISOLATED", "status": "ok", "backup": str(backup),
+                        "isolated_path": str(isolated), "recovered_after_restart": True})
+        _atomic_json(_state_path(root, ORPHAN_STATE_FILE), journal)
+        return {"request_id": request_id, "status": "ok", "operation": journal, "recovered_after_restart": True}
+    except Exception as error:  # noqa: BLE001 - ambiguity is surfaced; all files stay in place.
+        return _orphan_error(request, "RECOVERY_NEEDS_MANUAL_REVIEW", str(error))
 
 
 def _isolate_orphan(root: Path, request: dict[str, Any]) -> dict[str, Any]:
-    from photo_search.config import vectors_dir
-    from photo_search.indexing.store import _table_name
-
-    generation_id = str(request["generation_id"])
-    name = str(request["table_name"])
-    if name != _table_name(generation_id):
-        return {"request_id": request.get("request_id"), "status": "error", "reason": "TABLE_ID_MISMATCH"}
-    db_path = Path(catalog_db_path(root))
-    if db_path.is_file():
-        with sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True) as connection:
-            tables = {str(row[0]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if "index_generations" in tables and connection.execute(
-                "SELECT 1 FROM index_generations WHERE generation_id=?", (generation_id,)
-            ).fetchone():
-                return {"request_id": request.get("request_id"), "status": "error", "reason": "GENERATION_REFERENCED"}
-            if "search_profiles" in tables and connection.execute(
-                "SELECT 1 FROM search_profiles WHERE image_generation_id=?", (generation_id,)
-            ).fetchone():
-                return {"request_id": request.get("request_id"), "status": "error", "reason": "PROFILE_REFERENCES_GENERATION"}
-    vectors_root = Path(vectors_dir(root)).resolve()
-    source = vectors_root / f"{name}.lance"
     try:
-        current = _physical_facts(source, vectors_root)
+        checked = _orphan_isolation_preflight(root, request)
     except ValueError as error:
-        return {"request_id": request.get("request_id"), "status": "error", "reason": "TABLE_IDENTITY_CHANGED", "message": str(error)}
-    if current != request.get("physical_identity"):
-        return {"request_id": request.get("request_id"), "status": "error", "reason": "TABLE_IDENTITY_CHANGED"}
+        return _orphan_error(request, str(error), str(error))
+    generation_id, name = checked["generation_id"], checked["table_name"]
+    vectors_root, source, current = checked["vectors_root"], checked["source"], checked["source_identity"]
     total_bytes = int(current["bytes"])
     if int(shutil.disk_usage(vectors_root).free) < total_bytes + MIN_FREE_SPACE_BYTES:
         return {"request_id": request.get("request_id"), "status": "error", "reason": "INSUFFICIENT_SPACE", "required_bytes": total_bytes + MIN_FREE_SPACE_BYTES}
@@ -341,12 +456,15 @@ def _isolate_orphan(root: Path, request: dict[str, Any]) -> dict[str, Any]:
     base = vectors_root / "_isolated" / operation_id
     backup_root = base / "backup"
     isolated_root = base / "isolated"
-    if base.exists():
+    if _safe_path_present(base, vectors_root):
         return {"request_id": request.get("request_id"), "status": "error", "reason": "DESTINATION_EXISTS"}
     backup_root.mkdir(parents=True)
     isolated_root.mkdir(parents=True)
     state_path = _state_path(root, ORPHAN_STATE_FILE)
-    state = {"request_id": request.get("request_id"), "table_name": name, "generation_id": generation_id, "status": "running", "stage": "BACKUP_COPYING"}
+    state = {"request_id": request.get("request_id"), "kind": "isolate_orphan",
+             "data_root": request.get("data_root"), "identity": request.get("identity"),
+             "provider_id": request.get("provider_id"), "physical_identity": request.get("physical_identity"),
+             "table_name": name, "generation_id": generation_id, "status": "running", "stage": "BACKUP_COPYING"}
     _atomic_json(state_path, state)
     backup = backup_root / source.name
     try:
@@ -357,13 +475,18 @@ def _isolate_orphan(root: Path, request: dict[str, Any]) -> dict[str, Any]:
             raise ValueError("backup byte verification failed")
 
         _verify_lance_copy(name=name, source_root=vectors_root, copy_root=backup_root)
+        state["backup_sha256"] = _hash_tree(backup)
         state["stage"] = "BACKUP_VERIFIED"
         _atomic_json(state_path, state)
-        if _physical_facts(source, vectors_root) != current:
+        checked_again = _orphan_isolation_preflight(root, request)
+        if checked_again["source_identity"] != current or _hash_tree(source) != state["backup_sha256"]:
             raise ValueError("source table identity changed after backup")
         state["stage"] = "MOVE_STARTED"
         _atomic_json(state_path, state)
         os.replace(source, isolated_root / source.name)
+        moved_identity = _physical_facts(isolated_root / source.name, vectors_root)
+        if not _same_moved_physical_identity(moved_identity, request["physical_identity"]):
+            raise ValueError("moved table physical identity differs from the authorization")
         state.update({"stage": "ISOLATED", "status": "ok", "backup": str(backup), "isolated_path": str(isolated_root / source.name), "verified_bytes": total_bytes})
         _atomic_json(state_path, state)
         return {"request_id": request.get("request_id"), "status": "ok", "operation": state}

@@ -855,7 +855,7 @@ class PlaceDatasetStateResponse(BaseModel):
 class PlaceBatchItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    asset_id: int = Field(ge=1)
+    asset_id: StrictInt = Field(ge=1)
     action: PlaceAssignmentAction
     target_place_id: int | None = Field(default=None, ge=1)
     target_place_ref: str | None = Field(default=None, min_length=5, max_length=512)
