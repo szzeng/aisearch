@@ -666,8 +666,43 @@ def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,
                     pinned.get(key) != active.get(key) for key in
                     ("profile_id", "space_id", "image_generation_id", "dimension"))):
                 cache = connection.execute("SELECT * FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),)).fetchone()
-                connection.execute("UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code='MODEL_REBIND_REQUIRED' WHERE smart_id=?",
-                                   (int(smart_id),))
+                state = connection.execute(
+                    "SELECT refresh_status,refresh_request_id,lease_owner,last_error_code "
+                    "FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),),
+                ).fetchone()
+                if state is not None:
+                    status = str(state["refresh_status"])
+                    request_id = state["refresh_request_id"]
+                    owner = state["lease_owner"]
+                    if status == "RUNNING" and owner and request_id:
+                        # The frozen model is no longer active, so this exact refresh
+                        # may not publish. Clear only the owner/request observed here;
+                        # a later owner or queued request must remain untouched.
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+                            "last_error_code='MODEL_REBIND_REQUIRED',lease_owner=NULL,lease_until_ms=NULL "
+                            "WHERE smart_id=? AND refresh_status='RUNNING' AND lease_owner=? "
+                            "AND refresh_request_id=?",
+                            (int(smart_id), owner, request_id),
+                        )
+                    elif (status == "FAILED" and state["last_error_code"] == "MODEL_REBIND_REQUIRED"
+                          and owner and request_id):
+                        # Repair the split state written by older versions of this branch.
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET lease_owner=NULL,lease_until_ms=NULL "
+                            "WHERE smart_id=? AND refresh_status='FAILED' "
+                            "AND last_error_code='MODEL_REBIND_REQUIRED' AND lease_owner=? "
+                            "AND refresh_request_id=?",
+                            (int(smart_id), owner, request_id),
+                        )
+                    elif status not in {"RUNNING", "QUEUED"} and owner is None:
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+                            "last_error_code='MODEL_REBIND_REQUIRED',lease_until_ms=NULL "
+                            "WHERE smart_id=? AND refresh_status=? AND lease_owner IS NULL "
+                            "AND refresh_request_id IS ?",
+                            (int(smart_id), status, request_id),
+                        )
                 return {"status": "DEFERRED", "refresh_id": None, "reason": "MODEL_REBIND_REQUIRED",
                         "cached": bool(cache and cache["build_id"])}
         state = connection.execute("SELECT * FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),)).fetchone()

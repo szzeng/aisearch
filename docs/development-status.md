@@ -81,3 +81,5 @@
 ## P4-PHOTO-SMART-COLLECTION-REFRESH-CLOSEOUT — 刷新可靠性与真实 COMBINED 收口（2026-10-19）
 
 本轮收口范围 PASS：刷新队列为 1 执行 + 2 等待，重复请求去重，队列满可重试；活动 lease 可续租，取得数据根独占锁后能恢复上一进程遗留任务；真实 Chinese-CLIP COMBINED 查询、智能合集创建/刷新/缓存命中和隔离浏览器失败重试均验证。受影响 JUnit 171/171，Ruff、py_compile、Node 语法和 diff-check 通过。模型执行 CUDA / CUDAExecutionProvider，完整身份及候选、缓存、耗时和 FTS LAGGING 限制见[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。原卡历史整卡 ACCEPTANCE PARTIAL 标记保留，不冒称真实 FTS 追赶、30 万、GTX 1660 或正式 SLA 通过。仅使用独立合成数据与开发机既有模型；未创建后续任务卡。
+
+**智能合集刷新中模型切换补测（2026-10-19）**：修复 `MODEL_REBIND_REQUIRED` 在运行任务期间改写失败状态却遗留旧 owner lease 的边界；按 owner/request 状态 CAS 清 lease，QUEUED 请求保持不变。Chinese-CLIP→模拟 Qwen→恢复、迟到 worker/新 owner、旧版分裂租约、旧缓存与排除保留及立即重试测试 49/49；Luna High 独立复核 PASS。详见同一[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。

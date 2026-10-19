@@ -67,6 +67,58 @@ def _signature(catalog, rule=None):
         return dependency_signature(connection, rule or _rule())[0]
 
 
+def _install_test_search_profiles(catalog):
+    profiles = {
+        "clip": {"profile_id": "test-chinese-clip", "space_id": "test-clip-space",
+                 "image_generation_id": "test-clip-generation", "dimension": 512,
+                 "processor_id": "chinese-clip-vit-b-16"},
+        "qwen": {"profile_id": "test-qwen", "space_id": "test-qwen-space",
+                 "image_generation_id": "test-qwen-generation", "dimension": 2048,
+                 "processor_id": "qwen3-vl-embedding-2b"},
+    }
+    with catalog.write() as connection:
+        for profile in profiles.values():
+            connection.execute(
+                "INSERT INTO index_generations(generation_id,space_id,processor_id,dimension,state,"
+                "is_active,created_at,updated_at) VALUES(?,?,?,?, 'READY',0,1,1)",
+                (profile["image_generation_id"], profile["space_id"], profile["processor_id"],
+                 profile["dimension"]),
+            )
+            connection.execute(
+                "INSERT INTO search_profiles(profile_id,embedding_processor_id,space_id,"
+                "image_generation_id,query_preprocess_version,query_parser_version,"
+                "fts_tokenizer_version,fts_generation_id,reranker_processor_id,"
+                "fusion_config_json,runtime_package_id,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,1)",
+                (profile["profile_id"], profile["processor_id"], profile["space_id"],
+                 profile["image_generation_id"], "test-query-v1", "test-parser-v1", "1",
+                 "fts-v1", None, '{"revision":"test","method":"rrf","parameters":{}}',
+                 "test-runtime"),
+            )
+        connection.execute(
+            "UPDATE active_search_profile SET profile_id=?,updated_at=2 WHERE state_id=1",
+            (profiles["clip"]["profile_id"],),
+        )
+    return profiles
+
+
+def _set_test_active_profile(catalog, profile):
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE active_search_profile SET profile_id=?,updated_at=updated_at+1 WHERE state_id=1",
+            (profile["profile_id"],),
+        )
+
+
+def _combined_profile_rule(profile):
+    rule = {**_rule("COMBINED"), "content_query": "red",
+            "request": {"retrieval_mode": "combined", "text": "red",
+                        "original_query": "red", "content_query": "red"},
+            "search_binding": {key: profile[key] for key in
+                               ("profile_id", "space_id", "image_generation_id", "dimension")}}
+    return rule
+
+
 def test_smart_collection_rule_is_server_structured_and_mode_is_explicit():
     text_rule = rule_from_search({"mode": "ranked_candidates", "confirmed_execution": {
         "mode": "ranked_candidates", "retrieval_mode": "text", "content_query": None,
@@ -287,6 +339,225 @@ def test_combined_missing_active_profile_is_reported_and_refresh_is_deferred(cat
     assert state["build_id"] == published["build_id"]
     assert state["lease_owner"] is None
     assert state["refresh_status"] == "FAILED"
+    assert state["last_error_code"] == "MODEL_REBIND_REQUIRED"
+
+
+def test_model_switch_during_refresh_releases_its_lease_and_allows_retry(catalog, monkeypatch):
+    from photo_search.api import routes
+
+    profiles = _install_test_search_profiles(catalog)
+    rule = _combined_profile_rule(profiles["clip"])
+    smart = create_collection(catalog, "Model switch", "model-switch", rule,
+                              request_hash="model-switch", auth_hash="a", source_hash="s")["collection"]
+    original_build = publish_candidates(catalog, smart["smart_id"], [1, 3],
+                                        signature=_signature(catalog, rule))
+    set_exclusion(catalog, smart["smart_id"], 2, instance_token=smart["instance_token"],
+                  expected_revision=1, excluded=True)
+    rule_before = catalog.read_one(
+        "SELECT rule_json,rule_revision FROM photo_smart_collections WHERE smart_id=?",
+        (smart["smart_id"],),
+    )
+
+    class Service:
+        def __init__(self):
+            self.catalog = Catalog.open(data_root=catalog.data_root)
+            self.data_root = self.catalog.data_root
+
+        def close(self):
+            self.catalog.close()
+
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+    session = SimpleNamespace(
+        entries=[SimpleNamespace(asset_id=3)], channels={}, search_projection={"state": "SYNCED"},
+        pending_semantic=None, candidates_truncated=False,
+    )
+
+    def fake_search(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            assert release.wait(5)
+        return {"search_session_id": f"model-switch-session-{calls}"}
+
+    monkeypatch.setattr(routes, "_place_aware_search_worker", fake_search)
+    context = SimpleNamespace(
+        service=lambda: SimpleNamespace(catalog=catalog), _service_factory=Service,
+        search_sessions=SimpleNamespace(get=lambda _session_id: session),
+    )
+    runner = SmartRefreshRunner(context)
+    try:
+        running = runner.submit(smart["smart_id"], instance_token=smart["instance_token"], manual=True)
+        assert running["status"] == "QUEUED"
+        assert entered.wait(2)
+        old_state = catalog.read_one(
+            "SELECT refresh_status,refresh_request_id,lease_owner FROM photo_smart_cache_state "
+            "WHERE smart_id=?", (smart["smart_id"],),
+        )
+        assert old_state["refresh_status"] == "RUNNING"
+        old_owner = old_state["lease_owner"]
+        old_refresh_id = old_state["refresh_request_id"]
+
+        _set_test_active_profile(catalog, profiles["qwen"])
+        deferred = request_refresh(catalog, smart["smart_id"],
+                                   instance_token=smart["instance_token"], manual=True)
+        assert deferred["status"] == "DEFERRED"
+        invalidated = catalog.read_one(
+            "SELECT build_id,refresh_status,refresh_request_id,lease_owner,lease_until_ms,last_error_code "
+            "FROM photo_smart_cache_state WHERE smart_id=?", (smart["smart_id"],),
+        )
+        assert invalidated["build_id"] == original_build["build_id"]
+        assert invalidated["refresh_status"] == "FAILED"
+        assert invalidated["refresh_request_id"] == old_refresh_id
+        assert invalidated["lease_owner"] is None and invalidated["lease_until_ms"] is None
+        assert invalidated["last_error_code"] == "MODEL_REBIND_REQUIRED"
+
+        _set_test_active_profile(catalog, profiles["clip"])
+        queued_retry = request_refresh(catalog, smart["smart_id"],
+                                       instance_token=smart["instance_token"], manual=True)
+        assert queued_retry["status"] == "QUEUED"
+        assert queued_retry["refresh_id"] != old_refresh_id
+        replacement_lease = claim_refresh_lease(
+            catalog, smart["smart_id"], refresh_id=queued_retry["refresh_id"],
+            rule_revision=queued_retry["rule_revision"],
+        )
+        assert replacement_lease is not None
+        assert replacement_lease["lease_owner"] != old_owner
+
+        # The delayed old search returns after the profile has been restored. Its
+        # original dependency signature now matches again, so lease CAS is what must
+        # prevent its stale result and cleanup from touching the replacement owner.
+        release.set()
+        with runner._lock:
+            old_future = runner._tasks[smart["smart_id"]]["future"]
+        old_future.result(timeout=5)
+        for _ in range(200):
+            with runner._lock:
+                if smart["smart_id"] not in runner._tasks:
+                    break
+            threading.Event().wait(0.01)
+
+        state_after_old_worker = catalog.read_one(
+            "SELECT build_id,refresh_status,refresh_request_id,lease_owner,lease_until_ms "
+            "FROM photo_smart_cache_state WHERE smart_id=?", (smart["smart_id"],),
+        )
+        assert state_after_old_worker["build_id"] == original_build["build_id"]
+        assert state_after_old_worker["refresh_status"] == "RUNNING"
+        assert state_after_old_worker["refresh_request_id"] == queued_retry["refresh_id"]
+        assert state_after_old_worker["lease_owner"] == replacement_lease["lease_owner"]
+        assert state_after_old_worker["lease_until_ms"] == replacement_lease["lease_until_ms"]
+        assert catalog.read_one("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=?",
+                                (smart["smart_id"],))[0] == 1
+        current_rule = catalog.read_one(
+            "SELECT rule_json,rule_revision FROM photo_smart_collections WHERE smart_id=?",
+            (smart["smart_id"],),
+        )
+        assert current_rule["rule_json"] == rule_before["rule_json"]
+        assert current_rule["rule_revision"] == rule_before["rule_revision"]
+
+        # Simulate the replacement task's owner lease expiring. No 600-second wait
+        # is needed to verify the same refresh path can be admitted and published.
+        with catalog.write() as connection:
+            connection.execute(
+                "UPDATE photo_smart_cache_state SET lease_until_ms=? WHERE smart_id=? "
+                "AND lease_owner=? AND refresh_request_id=? AND refresh_status='RUNNING'",
+                (catalog.now_ms() - 1, smart["smart_id"], replacement_lease["lease_owner"],
+                 queued_retry["refresh_id"]),
+            )
+        retried = runner.submit(smart["smart_id"], instance_token=smart["instance_token"], manual=True)
+        assert retried["status"] == "QUEUED"
+        for _ in range(300):
+            with runner._lock:
+                if smart["smart_id"] not in runner._tasks:
+                    break
+            threading.Event().wait(0.01)
+        final_state = catalog.read_one(
+            "SELECT build_id,refresh_status,lease_owner,last_error_code FROM photo_smart_cache_state "
+            "WHERE smart_id=?", (smart["smart_id"],),
+        )
+        assert final_state["build_id"] != original_build["build_id"]
+        assert final_state["refresh_status"] == "NO_CACHE"
+        assert final_state["lease_owner"] is None and final_state["last_error_code"] is None
+        assert catalog.read_one("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=?",
+                                (smart["smart_id"],))[0] == 1
+        assert catalog.read_one("SELECT rule_json FROM photo_smart_collections WHERE smart_id=?",
+                                (smart["smart_id"],))[0] == rule_before["rule_json"]
+    finally:
+        release.set()
+        runner.close()
+
+
+def test_model_switch_while_queued_preserves_queued_request(catalog):
+    profiles = _install_test_search_profiles(catalog)
+    rule = _combined_profile_rule(profiles["clip"])
+    smart = create_collection(catalog, "Queued model switch", "queued-model-switch", rule,
+                              request_hash="queued-model-switch", auth_hash="a",
+                              source_hash="s")["collection"]
+    original_build = publish_candidates(catalog, smart["smart_id"], [1],
+                                        signature=_signature(catalog, rule))
+    queued = request_refresh(catalog, smart["smart_id"],
+                             instance_token=smart["instance_token"], manual=True)
+    assert queued["status"] == "QUEUED"
+    _set_test_active_profile(catalog, profiles["qwen"])
+
+    deferred = request_refresh(catalog, smart["smart_id"],
+                               instance_token=smart["instance_token"], manual=True)
+    assert deferred["status"] == "DEFERRED"
+    state = catalog.read_one(
+        "SELECT build_id,refresh_status,refresh_request_id,lease_owner,lease_until_ms,last_error_code "
+        "FROM photo_smart_cache_state WHERE smart_id=?", (smart["smart_id"],),
+    )
+    assert state["build_id"] == original_build["build_id"]
+    assert state["refresh_status"] == "QUEUED"
+    assert state["refresh_request_id"] == queued["refresh_id"]
+    assert state["lease_owner"] is None and state["lease_until_ms"] is None
+
+    _set_test_active_profile(catalog, profiles["clip"])
+    claimed = claim_refresh_lease(catalog, smart["smart_id"], refresh_id=queued["refresh_id"],
+                                  rule_revision=queued["rule_revision"])
+    assert claimed is not None
+    assert publish_candidates(catalog, smart["smart_id"], [3], signature=_signature(catalog, rule),
+                              expected_rule_revision=queued["rule_revision"],
+                              lease_owner=claimed["lease_owner"],
+                              refresh_id=queued["refresh_id"])["candidate_count"] == 1
+
+
+def test_model_rebind_clears_legacy_failed_state_lease(catalog):
+    profiles = _install_test_search_profiles(catalog)
+    rule = _combined_profile_rule(profiles["clip"])
+    smart = create_collection(catalog, "Legacy model lease", "legacy-model-lease", rule,
+                              request_hash="legacy-model-lease", auth_hash="a",
+                              source_hash="s")["collection"]
+    published = publish_candidates(catalog, smart["smart_id"], [1],
+                                    signature=_signature(catalog, rule))
+    queued = request_refresh(catalog, smart["smart_id"],
+                             instance_token=smart["instance_token"], manual=True)
+    lease = claim_refresh_lease(catalog, smart["smart_id"], refresh_id=queued["refresh_id"],
+                                rule_revision=queued["rule_revision"])
+    assert lease is not None
+    with catalog.write() as connection:
+        # Model the split state written by the pre-fix mismatch branch.
+        connection.execute(
+            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+            "last_error_code='MODEL_REBIND_REQUIRED' WHERE smart_id=? AND lease_owner=? "
+            "AND refresh_request_id=?",
+            (smart["smart_id"], lease["lease_owner"], queued["refresh_id"]),
+        )
+    _set_test_active_profile(catalog, profiles["qwen"])
+
+    deferred = request_refresh(catalog, smart["smart_id"],
+                               instance_token=smart["instance_token"], manual=True)
+    assert deferred["status"] == "DEFERRED"
+    state = catalog.read_one(
+        "SELECT build_id,refresh_status,refresh_request_id,lease_owner,lease_until_ms,last_error_code "
+        "FROM photo_smart_cache_state WHERE smart_id=?", (smart["smart_id"],),
+    )
+    assert state["build_id"] == published["build_id"]
+    assert state["refresh_status"] == "FAILED"
+    assert state["refresh_request_id"] == queued["refresh_id"]
+    assert state["lease_owner"] is None and state["lease_until_ms"] is None
     assert state["last_error_code"] == "MODEL_REBIND_REQUIRED"
 
 

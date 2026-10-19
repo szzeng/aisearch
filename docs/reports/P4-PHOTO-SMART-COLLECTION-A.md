@@ -182,3 +182,24 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
 - **PASS**：本次 P4 refresh closeout 的有界队列、重复去重、活跃 lease 续租、OS 锁后的死亡实例恢复、异常/取消/版本冲突数据保留、真实 COMBINED 查询及创建/刷新/缓存命中、隔离浏览器失败重试，以及 171 项受影响 JUnit 与静态检查。
 - **PENDING（明确排除）**：全图库 30 万认证、GTX 1660 压测、正式 SLA、真实用户图库、截图文件导出；均不属于本轮退出条件。没有因这些项目扩大范围。
 - **已知限制**：合成 FTS projection capability 为 LAGGING，故页面显示索引处理中；CUDA 冷启动真实权重身份/实测见上。本轮不要求/声称 FTS 全量追赶或容量性能结论。
+
+## 2026-10-19 COMBINED 刷新中模型切换边界补测
+
+### 复现与修复
+
+- **复现路径**：`request_refresh()` 在 pinned profile 与 active profile 不匹配时，原分支将 cache state 改为 `FAILED/MODEL_REBIND_REQUIRED`，但保留 `lease_owner` 与 `lease_until_ms`。运行中的 worker 后续发布被状态拒绝，其异常清理只匹配 `RUNNING + owner + refresh_id`，因此旧 lease 最长会留存到超时；切回原 profile 后请求会被误报 `RUNNING`。
+- **最小修复**：模型不匹配分支对观察到的 `RUNNING` 状态，以 `smart_id + RUNNING + lease_owner + refresh_request_id` 条件更新为 FAILED 并清理该 lease；对旧版本遗留的 `FAILED/MODEL_REBIND_REQUIRED` 分裂状态，以同一 owner/request CAS 清理。无活跃 lease 的状态只在仍匹配所读状态且 owner 为空时更新。`QUEUED` 状态保持原 request id 与无 lease，不取消或误清新排队任务。旧 worker 迟到时发布及失败清理仍受原 owner/request/state 校验保护。
+- 未改刷新队列/心跳/启动恢复，不新增迁移。两个隔离数据库测试使用模拟 Chinese-CLIP 与 Qwen SearchProfile，不加载模型或写活动用户配置。
+
+### 定向验证
+
+- 命令：
+
+  ```powershell
+  $env:UV_CACHE_DIR='.uv-cache'; $env:TMP='D:\SZ\project\aisearch\.tmp\pytest-smart-model-switch-20261019'; $env:TEMP=$env:TMP
+  .\.venv\Scripts\python.exe -m pytest -q tests/unit/test_photo_smart_collections.py tests/integration/test_p4_photo_smart_collections.py --junitxml=test-results/smart-model-switch-final.xml --basetemp=.pytest-tmp/smart-model-switch-20261019
+  ```
+
+- JUnit 初轮 `test-results/smart-model-switch-final.xml` 为 48/48；补入旧版本 `FAILED/MODEL_REBIND_REQUIRED` 遗留 lease 修复用例后，最终 `test-results/smart-model-switch-final2.xml` 为 **49 passed, 0 failed, 0 errors, 0 skipped**。用例覆盖运行中 CLIP→Qwen→CLIP、旧查询迟到时已有缓存不能发布、人工排除与规则保留、lease 释放、不同 owner 接管不被旧 worker 清理、未等待 600 秒即可再次排队并完成刷新；另测 QUEUED 状态模型切换时原请求和缓存保持，切回 CLIP 后能按原 request id 领取并发布，以及旧 FAILED 分裂状态的条件清理。
+- Ruff、相关 `py_compile`、`git diff --check` exit 0。未访问真实 `PhotoSearchData`，未实际切换用户活动模型，未重新编码或生成 Qwen 向量。
+- 独立复核由 Luna High 子代理完成：**PASS，无未解决 finding**。复核确认 RUNNING 的 CAS、QUEUED 保留、迟到旧 worker不影响新 owner，并核对最终 JUnit 49/49。

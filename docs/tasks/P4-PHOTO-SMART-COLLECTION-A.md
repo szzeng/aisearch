@@ -213,3 +213,9 @@
 - **浏览器**：隔离 loopback 内置浏览器完成智能合集打开→真实模型刷新→候选查看→排除/刷新；另注入刷新失败验证旧缓存可读、错误码提示及重试成功。当前 CUA 工具未提供截图文件导出路径，未保存截图。
 - **独立复核**：按用户指定由 Luna High 子代理复核。规则替换 stale lease 清理及快速返回前 instance token 授权检查均已修复并重跑最终受影响套件；最终意见记录在执行对话审查中。
 - **范围边界**：没有访问真实照片库、生产数据库或生产向量索引；未下载/训练模型。PENDING 仅为本轮明确排除的 30 万认证、GTX 1660 压测、正式 SLA、真实用户图库及截图导出。无后续优化任务卡。
+
+## 17. 2026-10-19 COMBINED 刷新中模型切换边界补测
+
+- **PERF-BOUNDED 三行**：风险仅限模型绑定失配时 cache 状态、worker lease 与重试状态不一致；在 `request_refresh()` 中按当前状态及 owner/request ID CAS 释放已失效的 RUNNING lease，QUEUED 保持原 request id，不改 1+2 队列或模型执行；以隔离 SQLite 的运行中切换、迟到 worker、新 owner、排队切换及立即重试定向测试后停止，不新增模型向量和容量测试。
+- **实施结果**：Chinese-CLIP pinned rule 在 worker 搜索等待时切换到模拟 Qwen，request 返回 `DEFERRED/MODEL_REBIND_REQUIRED`，原缓存保留，精确的旧 owner lease 被清理；切回原 profile 后立即建立新排队请求。旧 worker 在之后返回时不能发布或清理新 owner。模型切换发生在 QUEUED 时保留原排队身份，无 lease 被错误领取/清理；模型恢复后可继续领取并发布。
+- **验证**：smart collection unit + API integration **49/49**，JUnit `test-results/smart-model-switch-final2.xml`；Ruff、相关 py_compile、diff-check 通过。Luna High 独立复核 PASS。未访问真实数据根或修改用户活动 profile；没有 Qwen 编码/向量生成。
