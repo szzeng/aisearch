@@ -3049,8 +3049,14 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     source_mode = result.pop("photo_collection_source_mode", None)
     auth_session_id = request.cookies.get(SESSION_COOKIE)
     if source_mode and auth_session_id and payload.cursor is None:
+        source_payload = payload.model_dump(mode="json")
+        # A combined search may resolve a server-authored intent plan on the first
+        # request. Its continuation must reuse that exact accepted plan; replaying only
+        # the user's raw text loses the plan and is refused as a stale/missing cursor.
+        if isinstance(result.get("intent_plan"), dict):
+            source_payload["intent_plan"] = result["intent_plan"]
         source_token = context.register_photo_collection_source(
-            auth_session_id=auth_session_id, payload=payload.model_dump(mode="json"),
+            auth_session_id=auth_session_id, payload=source_payload,
             result=result, mode=str(source_mode),
         )
         if source_token:

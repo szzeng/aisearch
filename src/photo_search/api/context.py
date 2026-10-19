@@ -116,7 +116,7 @@ class ApiContext:
         }
         with self._photo_collection_sources_lock:
             for key, item in list(self._photo_collection_sources.items()):
-                if int(item["expires_at_ms"]) < now:
+                if int(item["expires_at_ms"]) <= now:
                     self._photo_collection_sources.pop(key, None)
             if len(self._photo_collection_sources) >= 256:
                 oldest = min(self._photo_collection_sources, key=lambda key: self._photo_collection_sources[key]["expires_at_ms"])
@@ -128,7 +128,7 @@ class ApiContext:
         now = time.time_ns() // 1_000_000
         with self._photo_collection_sources_lock:
             value = self._photo_collection_sources.get(str(token))
-            if value is None or int(value["expires_at_ms"]) < now:
+            if value is None or int(value["expires_at_ms"]) <= now:
                 self._photo_collection_sources.pop(str(token), None)
                 raise ValueError("搜索保存凭据已过期，请重新搜索后保存")
             supplied = hashlib.sha256(str(auth_session_id).encode()).hexdigest()

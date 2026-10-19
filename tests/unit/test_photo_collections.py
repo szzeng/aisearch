@@ -105,3 +105,131 @@ def test_photo_collection_search_save_rechecks_place_revisions_inside_write(cata
                           expected_catalog_filter_revision=current[0], expected_place_scope=expected)
     assert error.value.code == "CATALOG_FILTER_REVISION_STALE"
     assert catalog.read_one("SELECT COUNT(*) FROM photo_collections WHERE name='Stale place scope'")[0] == 0
+
+
+def test_photo_collection_member_batch_boundaries_and_5000_candidate_collection(catalog):
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO assets(sha256,byte_size,created_at,state) VALUES(?,1,1700000000000,'ACTIVE')",
+            [(hashlib.sha256(f"boundary-{index}".encode()).hexdigest(),) for index in range(5001)],
+        )
+    ids = [int(row[0]) for row in catalog.read_all("SELECT asset_id FROM assets ORDER BY asset_id")]
+    made = create_collection(catalog, "Five thousand", "create-5000", asset_ids=ids[:5000])
+    assert made["collection"]["member_count"] == 5000
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM photo_collection_members WHERE collection_id=?",
+        (made["collection"]["collection_id"],),
+    )[0] == 5000
+    with pytest.raises(ApiError):
+        create_collection(catalog, "Five thousand one", "create-5001", asset_ids=ids)
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM photo_collections WHERE name='Five thousand one'"
+    )[0] == 0
+
+    small = create_collection(catalog, "Five hundred batch", "create-500-batch")["collection"]
+    changed = edit_members(catalog, small["collection_id"], ids[:500], action="add",
+                           instance_token=small["instance_token"], expected_revision=1)
+    assert changed["changed"] == 500
+    before = tuple(catalog.read_one(
+        "SELECT revision,member_count,next_position FROM photo_collections WHERE collection_id=?",
+        (small["collection_id"],),
+    ))
+    with pytest.raises(ApiError):
+        edit_members(catalog, small["collection_id"], ids[500:1001], action="add",
+                     instance_token=small["instance_token"], expected_revision=2)
+    assert tuple(catalog.read_one(
+        "SELECT revision,member_count,next_position FROM photo_collections WHERE collection_id=?",
+        (small["collection_id"],),
+    )) == before
+
+
+def test_photo_collection_cover_uses_membership_index_for_sparse_offline_collection(catalog):
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO assets(sha256,byte_size,created_at,state) VALUES(?,1,1700000000000,'ACTIVE')",
+            [(hashlib.sha256(f"offline-cover-{index}".encode()).hexdigest(),) for index in range(5000)],
+        )
+    ids = [int(row[0]) for row in catalog.read_all("SELECT asset_id FROM assets ORDER BY asset_id")]
+    made = create_collection(catalog, "Sparse cover", "create-sparse-cover", asset_ids=ids[:5000])
+    listed = list_collections(catalog, limit=1)
+    assert listed["collections"][0]["cover_asset_id"] is None
+    assert listed["collections"][0]["member_count"] == 5000
+
+    plan = catalog.read_all(
+        "EXPLAIN QUERY PLAN SELECT c.collection_id,a.asset_id FROM photo_collections c "
+        "JOIN photo_collection_members m ON m.collection_id=c.collection_id "
+        "AND m.position=(SELECT m2.position FROM photo_collection_members m2 "
+        "JOIN assets a2 ON a2.asset_id=m2.asset_id AND a2.state='ACTIVE' "
+        "WHERE m2.collection_id=c.collection_id "
+        "AND EXISTS (SELECT 1 FROM file_locations l WHERE l.asset_id=a2.asset_id AND l.availability='PRESENT') "
+        "ORDER BY m2.position LIMIT 1) JOIN assets a ON a.asset_id=m.asset_id "
+        "WHERE c.collection_id IN (?)", (made["collection"]["collection_id"],),
+    )
+    details = " ".join(str(row["detail"]) for row in plan)
+    assert "SEARCH m2 USING INDEX" in details
+    assert "SCAN m2" not in details
+    assert "SCAN assets" not in details
+
+
+def test_photo_collection_write_lock_conflict_rolls_back_and_same_request_retries(catalog):
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.catalog.sqlite_io import connect_rw
+
+    holder = connect_rw(catalog.db_path)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        catalog.connection.execute("PRAGMA busy_timeout=25")
+        with pytest.raises(CatalogError):
+            create_collection(catalog, "Lock retry", "lock-retry")
+        assert catalog.read_one("SELECT COUNT(*) FROM photo_collections WHERE name='Lock retry'")[0] == 0
+        holder.execute("ROLLBACK")
+    finally:
+        holder.close()
+    retried = create_collection(catalog, "Lock retry", "lock-retry")
+    assert retried["reused"] is False
+    assert create_collection(catalog, "Lock retry", "lock-retry")["reused"] is True
+
+
+def test_search_append_write_lock_conflict_retries_atomically(catalog):
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.catalog.sqlite_io import connect_rw
+
+    collection = create_collection(catalog, "Append lock retry", "append-lock-target")["collection"]
+    holder = connect_rw(catalog.db_path)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        catalog.connection.execute("PRAGMA busy_timeout=25")
+        with pytest.raises(CatalogError):
+            edit_members(
+                catalog, collection["collection_id"], [1], action="add",
+                instance_token=collection["instance_token"], expected_revision=1, max_batch=5000,
+                idempotency=("append-lock-request", "session-hash", "payload-hash"),
+            )
+        assert catalog.read_one(
+            "SELECT member_count FROM photo_collections WHERE collection_id=?",
+            (collection["collection_id"],),
+        )[0] == 0
+        assert catalog.read_one(
+            "SELECT COUNT(*) FROM photo_collection_search_appends WHERE request_id='append-lock-request'"
+        )[0] == 0
+        holder.execute("ROLLBACK")
+    finally:
+        holder.close()
+
+    retried = edit_members(
+        catalog, collection["collection_id"], [1], action="add",
+        instance_token=collection["instance_token"], expected_revision=1, max_batch=5000,
+        idempotency=("append-lock-request", "session-hash", "payload-hash"),
+    )
+    assert retried["changed"] == 1
+    replayed = edit_members(
+        catalog, collection["collection_id"], [1], action="add",
+        instance_token=collection["instance_token"], expected_revision=1, max_batch=5000,
+        idempotency=("append-lock-request", "session-hash", "payload-hash"),
+    )
+    assert replayed["reused"] is True
+    assert replayed["changed"] == 1
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM photo_collection_members WHERE collection_id=?",
+        (collection["collection_id"],),
+    )[0] == 1

@@ -562,6 +562,53 @@ def test_failed_migration_rolls_back_and_keeps_the_old_version(
         connection.close()
 
 
+def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 35)
+    broken_migrations = tmp_path / "migrations-0036-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken_migrations)
+    migration = broken_migrations / "0036_photo_collections.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT missing_photo_collection_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken_migrations)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 35
+    rolled_back = open_readonly(db_path)
+    try:
+        tables = set(schema.business_tables(rolled_back))
+        assert not {"photo_collections", "photo_collection_members", "photo_collection_search_appends"} & tables
+        assert rolled_back.execute(
+            "SELECT COUNT(*) FROM metadata WHERE key='photo_collections_revision'"
+        ).fetchone()[0] == 0
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] /
+                        "src/photo_search/catalog/migrations")
+    migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert migrated.previous_version == 35
+    assert migrated.applied == (36,)
+    assert migrated.backup_path is not None
+    old_build_backup = open_readonly(migrated.backup_path)
+    try:
+        assert schema.read_schema_version(old_build_backup) == 35
+        assert "photo_collections" not in schema.business_tables(old_build_backup)
+    finally:
+        old_build_backup.close()
+
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 35)
+    with pytest.raises(CatalogError) as refused:
+        inspect_database(db_path)
+    assert refused.value.code == SCHEMA_TOO_NEW
+
+
 def test_upgrade_creates_a_consistent_backup_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

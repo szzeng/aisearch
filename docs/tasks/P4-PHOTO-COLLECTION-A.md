@@ -1,6 +1,6 @@
 # P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
 
-- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）；Favorites CORE/UX 依赖已核验 PASS；schema 35 → migration 0036。核心定向组合通过，但完整 unit/integration 为 3179 passed、5 failed、51 skipped；浏览器搜索保存受原生 prompt 工具限制未完成，且迁移故障/恢复、token/会话边界、限额与性能计划等验收仍待补；追加写入已加入事务回执和同页重放，刷新后的 UI 回恢复仍待验证/实现。详见[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）；Favorites CORE/UX 依赖已核验 PASS；schema 35 → migration 0036。剩余关键验收定向组 40/40 通过，覆盖来源身份/版本/到期、捕获时间范围、迁移故障/拒绝、备份恢复与 retention、500/501/5000/5001、追加锁冲突恢复及封面查询计划。全量基线 3179 passed、5 failed、51 skipped；复核后 4 个旧合同/资源版本失败仍属先前行为，timeline cache 断言已随本任务修正。内置浏览器搜索保存被原生 prompt 工具限制；刷新/真实重启 UI 恢复与超大稀疏合集容量仍 pending。详见[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
 - **优先级**：P1；**推荐执行模型**：GPT-6 High（用户在 Codex 手动选择）
 - **设计基线**：`szzeng/aisearch`，`master @ cb9700acc35e54d2df9c8e43f5c0803b8740563b`（2026-10-19，复核时未发现更新）；`SUPPORTED_SCHEMA_VERSION=33`。实施前必须检查最新 HEAD、工作树、连续迁移、依赖卡的实际报告和 API，不得按本卡旧编号覆盖新迁移。
 - **前置依赖**：`P4-FAVORITES-CORE-A`、`P4-FAVORITES-UX-B` **实际实现且必要验收完成后才启动编码**。截至设计基线，两者仅有 READY 任务卡，不能假定收藏页、星标、批量选择 API 已存在。
@@ -172,4 +172,4 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 
 ## 10. 本轮执行收口（2026-10-19）
 
-用户要求执行本卡，并在需要复核时使用 Luna High 子代理。实施代码、定向测试及多轮 Luna High 只读复核已完成；复核修复了地点 scope 最终写入版本校验和目录封面结果过量物化。当前状态保持 **IMPLEMENTED / ACCEPTANCE PARTIAL**：追加 API 已有事务回执及同页重试；UI 刷新后的 pending request ID 恢复与真实进程重启回放仍待验，另有封面稀疏/离线扫描计划、迁移故障回滚、备份/retention、token/会话边界、限额/并发边界及关键浏览器闭环未完成。报告：[P4-PHOTO-COLLECTION-A 执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
+用户要求完成本卡关键验收，复核使用 Luna High 子代理。除前序复核修复外，本轮保存 combined 服务端 `intent_plan` 并修正 token 准确到期判断。最终剩余验收组 40/40 通过（JUnit `test-results/P4-PHOTO-COLLECTION-A-remainder-final-r7.xml`），含 0036 回滚/旧版拒绝、恢复后成员读回与 retention、FILTER/TEXT/COMBINED、capture 范围、token/revision/profile、500/501、创建和追加 5000/5001、追加锁冲突恢复、稀疏封面 EXPLAIN；独立跟进未发现新代码问题。仍为 **IMPLEMENTED / ACCEPTANCE PARTIAL**：搜索→保存内置浏览器流程受 `prompt()` 限制，刷新/真实进程重启恢复、同身份 generation 变化及无界稀疏成员规模尚未闭合。历史全量基线保持 5 failures；其中本任务 timeline cache 断言已更新并通过，其余 4 个既有合同/资源版本失败有单独复跑记录。报告：[P4-PHOTO-COLLECTION-A 执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。不启动智能合集。
