@@ -255,7 +255,7 @@
       var tile = document.createElement("article"), img = document.createElement("img"), button = document.createElement("button"), imageButton = document.createElement("button");
       addPhotoHoverData(tile, a.asset_id, a.longitude, a.latitude);
       tile.className = "tile"; tile.dataset.assetId = String(a.asset_id); img.loading = "lazy"; img.src = a.thumbnail || ("/api/v1/assets/" + encodeURIComponent(a.asset_id) + "/thumbnail"); img.alt = "照片 " + a.asset_id;
-      button.textContent = "查看照片"; button.onclick = function () { openAsset(a.asset_id); };
+      button.textContent = "查看照片"; button.className = "map-photo-action"; button.onclick = function () { openAsset(a.asset_id); };
       imageButton.type = "button"; imageButton.className = "map-photo-open"; imageButton.setAttribute("aria-label", "查看照片 " + a.asset_id); imageButton.onclick = button.onclick; imageButton.appendChild(img);
       tile.appendChild(imageButton); tile.appendChild(button);
       if (window.PhotoFavorites) tile.appendChild(window.PhotoFavorites.button(a.asset_id));

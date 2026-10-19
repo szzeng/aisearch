@@ -133,8 +133,10 @@
   box-shadow: 0 2px 8px rgb(24 35 32 / 8%);
 }
 
-.tile button:hover { background: var(--tint); }
-.tile button:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.tile > .map-photo-action:hover,
+.tile > .map-photo-open:hover { background: var(--tint); }
+.tile > .map-photo-action:focus-visible,
+.tile > .map-photo-open:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
 
 .tile img {
   display: block;
@@ -143,7 +145,8 @@
   object-fit: cover;
 }
 
-.tile button {
+.tile > .map-photo-action,
+.tile > .map-photo-open {
   width: 100%;
   padding: 0.45rem;
   border: 0;
@@ -152,7 +155,7 @@
   cursor: pointer;
 }
 
-.tile .map-photo-open {
+.tile > .map-photo-open {
   padding: 0;
 }
 
@@ -180,7 +183,8 @@
 }
 
 .map-photo-hover-marker {
-  position: relative;
+  position: absolute;
+  z-index: 2 !important;
   display: block;
   width: 22px;
   height: 22px;
