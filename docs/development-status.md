@@ -1,4 +1,8 @@
-## Current task: P4-EMBEDDING-MANAGEMENT-UI-A（2026-10-19）
+## Current task: P4-EMBEDDING-DEFAULT-QWEN-A（2026-10-20）
+
+新图库在没有活动 SearchProfile 时默认普通版 `qwen3-vl-embedding-2b`；既有活动 Profile 继续权威。普通首次建库在分类、入队及 source-built 标记前拒绝孤儿 Lance 表，并在同一阶段确认模型可用；缺权重/CUDA/encoder 时明确失败且无状态写入；补齐资源门禁包装器的单图编码接口。隔离合成定向测试 **58 passed**，Qwen/严格 CUDA 单测 **1 passed**，Ruff 与 CRLF-aware diff 检查通过。Luna High 指出的孤儿/模型预检顺序问题均已修复并确认闭合。真实 Qwen/CUDA 建库与真实 PhotoSearchData 均未触及；未做大图库测试；详见[任务卡](tasks/P4-EMBEDDING-DEFAULT-QWEN-A.md)和[执行报告](reports/P4-EMBEDDING-DEFAULT-QWEN-A.md)。
+
+## Previous task: P4-EMBEDDING-MANAGEMENT-UI-A（2026-10-19）
 
 按用户指示实现搜索模型展示、候选分批建库、孤儿表隔离申请及停机切换。定向 pytest 66/66、Ruff、Node、diff-check 通过；Luna High 复核问题已修复。浏览器只验了隔离空库状态展示；模型缺失，建库/检查/切换动作、重启闭环、孤儿故障恢复矩阵和真实 Qwen/CUDA smoke 仍 PENDING。基线 7842b34；保留 api/models.py 用户修改；未触碰真实 PhotoSearchData。用户随后要求简单提交；实现提交 `885fde1e3b832f84e6bea3532ba444677d419a7e`，不推送。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-EMBEDDING-MANAGEMENT-UI-A.md)和[报告](reports/P4-EMBEDDING-MANAGEMENT-UI-A.md)。
 

@@ -632,9 +632,17 @@ def _semantic_build_stage(
     from photo_search.search import profile as profile_module
 
     if manifest_path is None:
+        active_id = profile_module.active_profile_id(catalog.connection)
+        message = (
+            "the active SearchProfile model is unavailable; its installed manifest is required"
+            if active_id is not None
+            else "the default model qwen3-vl-embedding-2b is unavailable; install its ordinary provider manifest and weights"
+        )
+        status.note_error(stage="semantic", code="EMBEDDING_MODEL_UNAVAILABLE", message=message)
         return {
-            "state": STAGE_SKIPPED,
-            "reason": "MANIFEST_UNCONFIGURED",
+            "state": STAGE_FAILED,
+            "reason": "EMBEDDING_MODEL_UNAVAILABLE",
+            "message": message,
             "mode": REFRESH_MODE_BUILD,
             "scopes": [None if scope is None else int(scope) for scope in scopes],
             "classified": 0,
@@ -666,6 +674,101 @@ def _semantic_build_stage(
             **_backlog_report(catalog, derived_space, processor_id, scopes),
         }
     space_id, generation_id = served
+    try:
+        # Refuse orphan reuse before classification writes jobs/outbox rows or marks the
+        # source as built. build_index repeats the same check immediately before its writes.
+        semantic.refuse_orphan_generation_table(
+            catalog, space_id=space_id, processor_id=processor_id
+        )
+    except CatalogError as error:
+        status.note_error(stage="semantic", code=str(error.code), message=str(error.message)[:200])
+        return {
+            "state": STAGE_FAILED,
+            "reason": str(error.details.get("reason") or error.code),
+            "code": str(error.code),
+            "message": str(error.message),
+            "mode": REFRESH_MODE_BUILD,
+            "scopes": [None if scope is None else int(scope) for scope in scopes],
+            "space_id": space_id,
+            "generation_id": generation_id,
+            "classified": 0,
+            "targets": 0,
+            "encoded": 0,
+            "batches": 0,
+            "pages": 0,
+            **_backlog_report(catalog, space_id, processor_id, scopes),
+        }
+    report = {
+        "mode": REFRESH_MODE_BUILD,
+        "scopes": [None if scope is None else int(scope) for scope in scopes],
+        "space_id": space_id,
+        "generation_id": generation_id,
+        "classified": 0,
+        "pages": 0,
+        "coverage_complete": False,
+    }
+    if encoder_factory is None:
+        message = (
+            f"the required semantic model {processor_id} is unavailable; verify its weights and CUDA/runtime requirements"
+        )
+        status.note_error(stage="semantic", code="EMBEDDING_MODEL_UNAVAILABLE", message=message)
+        return {
+            "state": STAGE_FAILED,
+            "reason": "EMBEDDING_MODEL_UNAVAILABLE",
+            "message": message,
+            "targets": 0,
+            "encoded": 0,
+            "batches": 0,
+            **report,
+            **_backlog_report(catalog, space_id, processor_id, scopes),
+            **_content_report(catalog, space_id, content_delta, spec),
+        }
+    try:
+        encoder = encoder_factory()
+    except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
+        code = str(error.code) if isinstance(error, CatalogError) else RUNTIME_CAPABILITY_UNAVAILABLE
+        message = (
+            str(error.message) if isinstance(error, CatalogError)
+            else f"the required semantic model {processor_id} could not be loaded ({type(error).__name__})"
+        )
+        status.note_error(
+            stage="semantic",
+            code=code,
+            message=message,
+        )
+        return {
+            "state": STAGE_FAILED,
+            "reason": "MODEL_LOAD_FAILED",
+            "code": code,
+            "message": message,
+            "targets": 0,
+            "encoded": 0,
+            "batches": 0,
+            **report,
+            **_backlog_report(catalog, space_id, processor_id, scopes),
+            **_content_report(catalog, space_id, content_delta, spec),
+        }
+    if encoder is None:
+        message = (
+            f"the required semantic model {processor_id} did not load; verify its weights and CUDA/runtime requirements"
+        )
+        status.note_error(
+            stage="semantic", code=RUNTIME_CAPABILITY_UNAVAILABLE, message=message
+        )
+        return {
+            "state": STAGE_FAILED,
+            "reason": "MODEL_LOAD_FAILED",
+            "code": RUNTIME_CAPABILITY_UNAVAILABLE,
+            "message": message,
+            "targets": 0,
+            "encoded": 0,
+            "batches": 0,
+            **report,
+            **_backlog_report(catalog, space_id, processor_id, scopes),
+            **_content_report(catalog, space_id, content_delta, spec),
+        }
+    # Validate model availability before classification writes jobs/outbox rows or marks
+    # the source as built. This avoids leaving a failed first-build state when Qwen cannot load.
     classified = 0
     pages = 0
     cancelled = False
@@ -705,44 +808,8 @@ def _semantic_build_stage(
         # The whole classification sweep finished: from now on "this scope has been looked at"
         # is a durable fact, which is what lets the card tell 未建库 from 已扫描但无可索引图片.
         _mark_scopes_built(catalog, scopes=scopes)
-    report = {
-        "mode": REFRESH_MODE_BUILD,
-        "scopes": [None if scope is None else int(scope) for scope in scopes],
-        "space_id": space_id,
-        "generation_id": generation_id,
-        "classified": classified,
-        "pages": pages,
-        "coverage_complete": False,
-    }
-    if encoder_factory is None:
-        return {
-            "state": STAGE_SKIPPED,
-            "reason": "MODEL_UNAVAILABLE",
-            "targets": 0,
-            "encoded": 0,
-            "batches": 0,
-            **report,
-            **_backlog_report(catalog, space_id, processor_id, scopes),
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
-    try:
-        encoder = encoder_factory()
-    except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
-        status.note_error(
-            stage="semantic",
-            code=RUNTIME_CAPABILITY_UNAVAILABLE,
-            message=f"the image encoder could not be loaded ({type(error).__name__})",
-        )
-        return {
-            "state": STAGE_SKIPPED,
-            "reason": "MODEL_LOAD_FAILED",
-            "targets": 0,
-            "encoded": 0,
-            "batches": 0,
-            **report,
-            **_backlog_report(catalog, space_id, processor_id, scopes),
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
+    report["classified"] = classified
+    report["pages"] = pages
     encoded = 0
     batches = 0
     last: dict[str, Any] | None = None

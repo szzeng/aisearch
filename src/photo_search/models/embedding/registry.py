@@ -28,8 +28,6 @@ from photo_search.catalog.errors import (
     CatalogError,
 )
 from photo_search.models.embedding.base import (
-    CLIP_ADAPTER,
-    LEGACY_PROVIDERS,
     Identity,
     analyze_manifest,
     model_dir_for,
@@ -182,14 +180,11 @@ class EmbeddingRegistry:
     def default(self) -> ProviderEntry | None:
         """The provider a *new* library uses when nothing is configured yet.
 
-        That is the historical Chinese-CLIP install, because it is the one configuration the
-        shipped manifests always describe and the only one an existing catalog can be serving.
+        Keep this choice separate from serving: an existing library is always routed by its
+        active SearchProfile. This is the ordinary (non-EXIF-v2) Qwen provider; if it is not
+        described by the registry, callers fail explicitly instead of falling back to CLIP.
         """
-        for provider_id in LEGACY_PROVIDERS.values():
-            entry = self.find(str(provider_id["provider_id"]))
-            if entry is not None and str(entry.adapter) == CLIP_ADAPTER:
-                return entry
-        return None
+        return self.find("qwen3-vl-embedding-2b")
 
     def require_installed(self, provider_id: str) -> ProviderEntry:
         """``get`` plus the structured "the weights are really here" refusal."""

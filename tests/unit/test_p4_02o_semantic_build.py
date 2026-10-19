@@ -16,7 +16,10 @@ import pytest
 from p2_search_fixtures import build_library, write_jpeg
 
 from photo_search.artifacts.store import generation_id_for
+from photo_search.catalog.errors import INDEX_REPAIR_REQUIRED, CatalogError
+from photo_search.config import vectors_dir
 from photo_search.indexing import semantic
+from photo_search.indexing.store import LanceVectorIndex, _table_name
 from photo_search.scheduler.contracts import canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -135,6 +138,31 @@ def test_a_build_publishes_confirms_and_activates_one_profile(tmp_path: Path) ->
             )
             == []
         )
+    finally:
+        library.close()
+
+
+def test_first_build_refuses_an_orphan_lance_table_before_catalog_writes(tmp_path: Path) -> None:
+    library = build_library(tmp_path, PHOTOS)
+    adapter = StubPinnedAdapter()
+    try:
+        spec = semantic.semantic_spec(MANIFEST, semantic.adapter_runtime_facts(adapter))
+        generation_id = generation_id_for(str(spec.envelope["space_id"]), str(spec.processor_id))
+        store = LanceVectorIndex(vectors_dir(library.catalog.data_root))
+        store._table(generation_id=generation_id, dimension=DIMENSION, create=True)
+        jobs_before = int(library.catalog.read_one("SELECT COUNT(*) AS count FROM jobs")["count"])
+
+        with pytest.raises(CatalogError) as refused:
+            semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST, limit=10)
+
+        assert refused.value.code == INDEX_REPAIR_REQUIRED
+        assert refused.value.details["reason"] == "ORPHAN_TABLE"
+        assert "maintenance flow" in str(refused.value.message)
+        assert _table_name(generation_id) in set(store._dependencies()[0].connect(str(store.root)).list_tables().tables)
+        assert library.catalog.read_one(
+            "SELECT 1 FROM index_generations WHERE generation_id = ?", (generation_id,)
+        ) is None
+        assert library.catalog.read_one("SELECT COUNT(*) AS count FROM jobs")["count"] == jobs_before
     finally:
         library.close()
 

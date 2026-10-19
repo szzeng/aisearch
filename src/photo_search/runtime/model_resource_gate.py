@@ -90,6 +90,11 @@ class GatedEncoder:
         with self._gate.query():
             return self._encoder.encode_images(images, cancellation=cancellation)
 
+    def encode_image(self, image: Any) -> Any:
+        """Keep the singular indexing adapter call behind the same foreground gate."""
+        with self._gate.query():
+            return self._encoder.encode_image(image)
+
     def health(self) -> Any:
         with self._gate.query():
             return self._encoder.health()

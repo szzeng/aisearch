@@ -24,6 +24,7 @@ from integration.test_p4_02y_library_refresh import (
     query_vector_for,
 )
 from photo_search.face import contract as face_contract
+from photo_search.indexing import semantic
 from photo_search.jobs import queue as jobs
 from photo_search.refresh import pipeline
 from photo_search.refresh.progress import source_progress
@@ -157,6 +158,9 @@ def test_one_build_click_on_a_new_source_scans_indexes_and_searches(tmp_path: Pa
         assert before["progress"]["built"] is False
         assert before["progress"]["stages"]["semantic"]["state"] == "UNBUILT"
         assert before["progress"]["scan"]["files"] == 0
+        assert env.service().catalog.read_one(
+            "SELECT profile_id FROM active_search_profile WHERE state_id = 1"
+        )["profile_id"] is None
 
         env.adapter.vectors["fresh-00"] = query_vector_for(fresh / "fresh-00.jpg")
         status = run(env, mode="build", source_ids=[source_id])
@@ -174,6 +178,13 @@ def test_one_build_click_on_a_new_source_scans_indexes_and_searches(tmp_path: Pa
         assert status["stages"]["semantic"]["backlog_total"] == 3
         assert status["stages"]["semantic"]["backlog_confirmed"] == 3
         assert status["stages"]["semantic"]["backlog_pending"] == 0
+        active_profile = env.service().catalog.read_one(
+            "SELECT p.embedding_processor_id FROM active_search_profile a "
+            "JOIN search_profiles p ON p.profile_id=a.profile_id WHERE a.state_id=1"
+        )
+        assert active_profile["embedding_processor_id"] == semantic.semantic_spec(
+            MANIFEST, {}
+        ).processor_id
         per_source = [row["source_id"] for row in scan_rows(env)]
         assert per_source.count(source_id) == 1, per_source
         found = env.search("fresh-00")

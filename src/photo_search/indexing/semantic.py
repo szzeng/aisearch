@@ -39,6 +39,7 @@ from PIL import Image
 from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
+    INDEX_REPAIR_REQUIRED,
     PROCESSOR_MISMATCH,
     RUNTIME_RESOLUTION_MISMATCH,
     SPACE_MISMATCH,
@@ -621,6 +622,41 @@ def _validated_image_vector(
     return values
 
 
+def refuse_orphan_generation_table(
+    catalog: Catalog, *, space_id: str, processor_id: str
+) -> None:
+    """Refuse the first write if its deterministic Lance table is orphaned in SQLite."""
+    generation_id = generation_id_for(str(space_id), str(processor_id))
+    if catalog.read_one(
+        "SELECT 1 FROM index_generations WHERE generation_id = ?", (generation_id,)
+    ) is not None:
+        return
+
+    from photo_search.config import vectors_dir
+    from photo_search.indexing.store import _table_name
+
+    vector_root = Path(vectors_dir(catalog.data_root))
+    if not vector_root.is_dir():
+        return
+    try:
+        import lancedb
+
+        physical = set(lancedb.connect(str(vector_root)).list_tables().tables)
+    except Exception as error:  # noqa: BLE001 - uncertain physical state must never be written.
+        raise CatalogError(
+            INDEX_REPAIR_REQUIRED,
+            "could not verify existing Lance tables; semantic indexing was refused",
+            details={"generation_id": generation_id, "reason": "LANCE_CHECK_FAILED"},
+        ) from error
+    table_name = _table_name(generation_id)
+    if table_name in physical:
+        raise CatalogError(
+            INDEX_REPAIR_REQUIRED,
+            "an old Lance vector table remains without a SQLite generation; use the existing embedding maintenance flow to isolate it before building",
+            details={"generation_id": generation_id, "table_name": table_name, "reason": "ORPHAN_TABLE"},
+        )
+
+
 def build_index(
     catalog: Catalog,
     *,
@@ -668,6 +704,7 @@ def build_index(
                 "derived_processor_id": str(spec.processor_id),
             },
         )
+    refuse_orphan_generation_table(catalog, space_id=space_id, processor_id=str(spec.processor_id))
     scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
     evidence = record_runtime_evidence(scheduler, spec, facts, now_ms=catalog.now_ms())
     selection = semantic_selection(

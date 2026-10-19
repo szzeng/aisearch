@@ -11,10 +11,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+import photo_search.__main__ as main_module
 from photo_search.__main__ import _encoder_wiring
 from photo_search.api.context import ApiContext
 from photo_search.api.settings import ApiSettings
@@ -30,7 +32,6 @@ from photo_search.search.embedding import QueryEncoder, check_encoder_binding, e
 from photo_search.workers.query_encoder import (
     WorkerQueryEncoder,
     build_worker_query_encoder,
-    default_model_dir,
     pinned_embedding_spec,
     resolve_query_encoder,
 )
@@ -268,7 +269,6 @@ def test_startup_wires_the_real_adapter_and_stops_it_on_close(tmp_path: Path) ->
     assert wiring.available is True and wiring.reason == "READY"
     context = ApiContext(ApiSettings.create(data_root=tmp_path), encoder_factory=wiring.factory)
     encoder = context.query_encoder()
-    assert isinstance(encoder, WorkerQueryEncoder)
     assert isinstance(encoder, QueryEncoder)
     assert created == [
         (
@@ -293,7 +293,9 @@ def test_the_startup_entry_resolves_the_model_relative_to_the_data_root(tmp_path
     args = argparse.Namespace(model_dir=None, model_manifest=None, model_device=None)
     wiring = _encoder_wiring(args, tmp_path)
     assert wiring.reason == "MODEL_DIR_MISSING"
-    assert Path(wiring.model_dir) == default_model_dir(tmp_path)
+    assert wiring.provider_id == "qwen3-vl-embedding-2b"
+    assert Path(wiring.model_dir) == tmp_path / "models" / "qwen3_vl_embedding"
+    assert Path(wiring.manifest).name == "qwen3-vl-embedding-2b.json"
     assert json.dumps(wiring.to_dict())  # reportable without any model
 
     explicit = argparse.Namespace(
@@ -303,3 +305,27 @@ def test_the_startup_entry_resolves_the_model_relative_to_the_data_root(tmp_path
     assert other.reason == "MODEL_DIR_MISSING"
     assert Path(other.model_dir) == tmp_path / "elsewhere"
     assert Path(other.manifest) == MANIFEST
+
+
+def test_an_existing_active_clip_profile_remains_authoritative(tmp_path: Path, monkeypatch) -> None:
+    clip = object()
+
+    class Registry:
+        def find(self, provider_id: str):
+            assert provider_id == "chinese-clip-vit-b-16"
+            return clip
+
+        def default(self):
+            raise AssertionError("existing libraries must not consult the new-library default")
+
+    monkeypatch.setattr(main_module, "registry_for", lambda _root: Registry())
+    monkeypatch.setattr(main_module, "active_provider_id", lambda _root: "chinese-clip-vit-b-16")
+    monkeypatch.setattr(
+        main_module,
+        "resolve_provider_encoder",
+        lambda *, provider, device: SimpleNamespace(provider=provider, device=device),
+    )
+    wiring = _encoder_wiring(
+        argparse.Namespace(model_dir=None, model_manifest=None, model_device=None), tmp_path
+    )
+    assert wiring.provider is clip
