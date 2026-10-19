@@ -34,4 +34,30 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
 - 刷新 worker 的 service factory 在异常处理块外；初始化失败时 durable lease 最迟在租约过期后才能重试。
 - 真实浏览器 refresh/进程重启恢复、模型/真实向量路径、规则替换并发及 5000 截断另存流程仍待验证；不作 30 万规模、GPU 延迟或真实图库结论。
 
-本任务没有提交或推送；工作树包含并行 UI 改动，保持原样。
+原始实施阶段当时没有提交或推送；本轮修复与交付状态见下节。并行未跟踪脚本 `repair_photo_collections_v36.py` 未修改、未纳入本轮提交。
+
+## 2026-10-19 第一轮：核心正确性与性能修复
+
+### 确认的问题与修复
+
+- FILTER 列表原先循环调用 `_place_aware_search_worker` 补足过滤后的页面；每次调用会重复全量 COUNT，排除很多时还会重复扫描并依赖循环上限。现在把 `NOT EXISTS(photo_smart_exclusions)` 合并进权威筛选 SQL，单次请求取 `limit+1`，并关闭 FILTER 统计 COUNT；排除后的 SQL Keyset 直接决定页内容和 `has_more`。
+- FILTER `capture_desc` 原先沿用资产 ID 顺序，没有整集合时间排序。现在复用 `idx_asset_metadata_capture` 对 `EXIF_ORIGINAL` 和 `EXIF_DIGITIZED` 做有界 keyset 流合并，再以未知时间 asset_id 降序作为尾部。游标绑定 filter/suggestion revision、完整筛选 fingerprint、集合范围身份、收藏 revision、智能合集 rule/exclusion revision 和排序。EXIF_ROOT 与文件时间按现有可信拍摄时间合同归到未知尾部。
+- ranked `capture_desc` 原先把所有非空 `taken_at_sort` 当作可信时间。现在只将可信 EXIF 原始/数字化来源排在前面，其他来源和缺失时间稳定按 asset_id 降序排尾。查询仍只触及已发布、有界的最多 5000 条候选，时间全局排序在 SQL 中完成后再分页。
+- `rule_from_search()` 原先只看 `content_query/text`，原文 TEXT 搜索可能被误存为 FILTER，COMBINED 计划也可能未固化。短期搜索凭据现在附带服务端实际执行模式、确认的内容查询和 intent plan。规则分类以该实际执行路径为准：TEXT 保存原始查询，COMBINED 保存确认计划，纯条件保存 FILTER；缺少可信执行凭据或必要计划时明确拒绝。
+- 刷新 worker 原先在异常捕获范围外创建 service，factory 失败会留下 durable lease 到期；候选发布也未验证 lease 截止时间。初始化异常现在使用请求已打开的共享 service 尽力释放 owner 自己仍有效的租约。发布事务同时比较 owner、lease_until、rule_revision 和依赖签名；失败保留上次已发布缓存，清理使用 owner 条件避免影响接管者。
+
+### 验证与证据
+
+- 最终受影响组合 JUnit：**41 passed, 0 failed, 0 skipped**，`test-results/smart-final-20261019-190731-722.xml`。命令覆盖智能合集单元/集成、普通照片合集集成、收藏拍摄排序及拍摄时间 API 测试。
+- 隔离合成 FILTER 数据共 201 张。分别排除 0%、50%、95%、100%，逐页核对 asset_id oracle；每页 50 张，首续页无重复/遗漏，SQLite trace 未出现 FILTER `SELECT COUNT(*) AS value FROM assets ...`。EXPLAIN 显示排除查询使用 `photo_smart_exclusions` 主键搜索，可信时间流使用 `idx_asset_metadata_capture`。
+- 时间排序验证包含 EXIF_ORIGINAL/EXIF_DIGITIZED、EXIF_ROOT、FILE_MTIME、无 metadata、相同时间跨页；另以三个 ranked cache 候选验证可信时间、未知尾部与续页。FILTER 时间游标在筛选 revision 推进后返回 409。
+- 分类测试覆盖仅有 original_query 的 TEXT、带确认 intent_plan/content_query 的 COMBINED、无内容纯条件 FILTER，以及缺少确认上下文时拒绝。Lease 测试覆盖初始化失败释放、过期后接管、旧 owner 发布拒绝、规则替换后的旧 worker 发布拒绝，均保留之前 build。
+- 受影响 Ruff、`py_compile`、`node --check src/photo_search/web/app.js`、`git diff --check` 均通过，exit 0。没有 schema 或 Python 依赖变化；没有执行浏览器、真实模型、GPU、真实图库或 30 万容量测试。
+
+首轮调试 JUnit `test-results/smart-round1-20261019-190338-509.xml` 保存了 39 项、6 项中间失败：规则重建漏了 Pydantic 必填 request_id，导致两个 FILTER API 用例 500；合成 EXIF_DIGITIZED 置信度不符合 schema；另外两个 LanceDB 失败是 `$TEMP` 子目录未预创建导致测试运行时 panic。创建项目临时目录后 LanceDB 用例通过。后续记录 `smart-round1-20261019-190409-288.xml`（39 项，2 项）暴露 FILTER 默认 `rank` 到内部顺序的接线错误；`smart-affected-20261019-190530-138.xml`（40 项，1 项）发现时间桶布尔排序方向反了。相应代码/fixture 已修，最终 41 项全过；原 XML 均保留未覆盖。
+
+### 当前验收状态与剩余风险
+
+第一轮列出的 FILTER 分页、规则分类、两种 `capture_desc`、worker factory lease 边界和发布 CAS 均已有定向证据。整卡仍为 **IMPLEMENTED / ACCEPTANCE PARTIAL**：用户明确排除的 stale ranked 缓存浏览和 `save-static` 留待后续；刷新浏览器/进程重启、真实向量模型、完整并发规则替换仍未验。根据 V3.1 §2.4，当前高风险改动需要独立 DS-H 全受影响面工程审查，本轮尚未执行该审查，因此不标 PASS。没有访问真实图库。
+
+本轮代码、回归测试和状态记录已组成单独本地 Git 提交；未推送。

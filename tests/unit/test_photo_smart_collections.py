@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
 from photo_search.api.errors import ApiError
 from photo_search.catalog.db import Catalog
 from photo_search.photo_smart_collections import (
+    SmartRefreshRunner,
     create_collection,
     delete_collection,
     dependency_signature,
@@ -14,7 +16,9 @@ from photo_search.photo_smart_collections import (
     exclusions_page,
     list_collections,
     publish_candidates,
+    ranked_assets_page,
     rename_collection,
+    replace_rule,
     request_refresh,
     rule_from_search,
     session_coverage,
@@ -58,14 +62,37 @@ def _signature(catalog, rule=None):
 
 
 def test_smart_collection_rule_is_server_structured_and_mode_is_explicit():
-    text_rule = rule_from_search({"mode": "ranked_candidates", "payload": {
+    text_rule = rule_from_search({"mode": "ranked_candidates", "confirmed_execution": {
+        "mode": "ranked_candidates", "retrieval_mode": "text", "content_query": None,
+        "intent_plan": None, "filters": {},
+    }, "payload": {
         "request_id": "r1", "retrieval_mode": "text", "original_query": "合同",
-        "content_query": "合同", "text": "合同", "page_size": 20,
+        "page_size": 20,
     }})
     assert text_rule["execution_kind"] == "TEXT"
     assert text_rule["content_query"] == "合同"
+    assert text_rule["request"]["text"] == "合同"
     assert "cursor" not in text_rule["request"]
     assert "search_session_id" not in text_rule["request"]
+
+    combined = rule_from_search({"mode": "ranked_candidates", "confirmed_execution": {
+        "mode": "ranked_candidates", "retrieval_mode": "combined", "content_query": "海边日落",
+        "intent_plan": {"plan_version": "p1", "original_query": "海边日落", "content_query": "海边日落",
+                        "person_ids": [], "person_match": "any"}, "filters": {},
+    }, "payload": {"request_id": "r2", "retrieval_mode": "combined", "original_query": "海边日落"}})
+    assert combined["execution_kind"] == "COMBINED"
+    assert combined["request"]["intent_plan"]["content_query"] == "海边日落"
+
+    filter_rule = rule_from_search({"mode": "all_filter_matches", "confirmed_execution": {
+        "mode": "all_filter_matches", "retrieval_mode": "combined", "content_query": None,
+        "intent_plan": {"plan_version": "p1", "content_query": None, "person_ids": [7], "person_match": "any"},
+        "filters": {},
+    }, "payload": {"request_id": "r3", "retrieval_mode": "combined", "original_query": "人物七"}})
+    assert filter_rule["execution_kind"] == "FILTER"
+    assert filter_rule["content_query"] is None
+    assert filter_rule["request"]["intent_plan"]["person_ids"] == [7]
+    with pytest.raises(ApiError):
+        rule_from_search({"mode": "ranked_candidates", "payload": {"retrieval_mode": "text"}})
 
 
 def test_smart_collection_create_idempotent_rename_delete_and_directory_cursor(catalog):
@@ -127,6 +154,37 @@ def test_rank_cache_rejects_more_than_candidate_cap_without_destroying_old_build
                             (smart["smart_id"],))[0] == 2
 
 
+def test_ranked_capture_order_uses_trusted_time_bucket_and_keyset_ties(catalog):
+    from photo_search.api.queries import PREVIEW_SPEC, THUMBNAIL_SPEC
+
+    smart = _create(catalog)["collection"]
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) VALUES(?,?,?,?)",
+            [(1, 900, "EXIF_ROOT", "LOW"), (2, 100, "EXIF_ORIGINAL", "HIGH"),
+             (3, None, "FILE_MTIME", "LOW")],
+        )
+    signature = _signature(catalog)
+    publish_candidates(catalog, smart["smart_id"], [1, 2, 3], signature=signature)
+
+    class Cache:
+        @staticmethod
+        def artifact_path(*, spec, sha256):
+            assert spec in (PREVIEW_SPEC, THUMBNAIL_SPEC)
+            return sha256
+
+        @staticmethod
+        def is_published(_path):
+            return False
+
+    first = ranked_assets_page(catalog, Cache(), smart["smart_id"],
+                               instance_token=smart["instance_token"], limit=1, order="capture_desc")
+    second = ranked_assets_page(catalog, Cache(), smart["smart_id"],
+                                instance_token=smart["instance_token"], limit=2,
+                                cursor=first["next_cursor"], order="capture_desc")
+    assert [asset["asset_id"] for asset in first["assets"] + second["assets"]] == [2, 3, 1]
+
+
 def test_place_suggestion_and_package_revisions_invalidate_rule_signature(catalog):
     rule = _rule()
     before = _signature(catalog, rule)
@@ -180,3 +238,61 @@ def test_refresh_lease_is_single_flight_and_expired_owner_cannot_publish(catalog
     assert error.value.code == "PHOTO_SMART_LEASE_EXPIRED"
     assert catalog.read_one("SELECT build_id FROM photo_smart_cache_state WHERE smart_id=?",
                             (smart["smart_id"],))[0] is None
+
+
+def test_publish_rejects_expired_lease_even_before_another_worker_takes_over(catalog):
+    rule = _rule("TEXT")
+    smart = create_collection(catalog, "Expired publish", "text-create-expired", rule, request_hash="h2",
+                              auth_hash="a", source_hash="s2")["collection"]
+    claim = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"])
+    with catalog.write() as connection:
+        connection.execute("UPDATE photo_smart_cache_state SET lease_until_ms=? WHERE smart_id=?",
+                           (catalog.now_ms() - 1, smart["smart_id"]))
+    with pytest.raises(ApiError) as error:
+        publish_candidates(catalog, smart["smart_id"], [1], signature=_signature(catalog, rule),
+                           expected_rule_revision=claim["rule_revision"], lease_owner=claim["lease_owner"])
+    assert error.value.code == "PHOTO_SMART_LEASE_EXPIRED"
+
+
+def test_replaced_rule_rejects_old_worker_publish_and_preserves_previous_build(catalog):
+    rule = _rule("TEXT")
+    smart = create_collection(catalog, "Replaced rule", "text-create-replaced", rule, request_hash="hr",
+                              auth_hash="a", source_hash="sr")["collection"]
+    previous = publish_candidates(catalog, smart["smart_id"], [1], signature=_signature(catalog, rule))
+    claim = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"], manual=True)
+    next_rule = {**rule, "display_query": "another query", "content_query": "another query"}
+    replace_rule(catalog, smart["smart_id"], instance_token=smart["instance_token"], expected_revision=1,
+                 rule=next_rule, request_id="replace-rule-after-claim", auth_hash="a", request_hash="rr")
+    with pytest.raises(ApiError) as error:
+        publish_candidates(catalog, smart["smart_id"], [2], signature=_signature(catalog, next_rule),
+                           expected_rule_revision=claim["rule_revision"], lease_owner=claim["lease_owner"])
+    assert error.value.code == "PHOTO_SMART_RULE_CHANGED"
+    state = catalog.read_one("SELECT build_id FROM photo_smart_cache_state WHERE smart_id=?",
+                             (smart["smart_id"],))
+    assert state["build_id"] == previous["build_id"]
+
+
+def test_refresh_factory_failure_releases_only_its_lease_and_keeps_old_cache(catalog):
+    rule = _rule("TEXT")
+    smart = create_collection(catalog, "Factory failure", "text-create-factory", rule, request_hash="hf",
+                              auth_hash="a", source_hash="sf")["collection"]
+    published = publish_candidates(catalog, smart["smart_id"], [1], signature=_signature(catalog, rule))
+    claim = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"], manual=True)
+
+    class Context:
+        _service_factory = staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("factory unavailable")))
+
+        @staticmethod
+        def service():
+            return SimpleNamespace(catalog=catalog)
+
+    runner = SmartRefreshRunner(Context())
+    try:
+        runner._run(smart["smart_id"], claim["lease_owner"], claim["rule_revision"])
+    finally:
+        runner.close()
+    state = catalog.read_one("SELECT build_id,lease_owner,refresh_status FROM photo_smart_cache_state WHERE smart_id=?",
+                             (smart["smart_id"],))
+    assert state["build_id"] == published["build_id"]
+    assert state["lease_owner"] is None
+    assert state["refresh_status"] == "FAILED"

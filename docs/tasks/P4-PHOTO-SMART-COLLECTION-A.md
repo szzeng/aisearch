@@ -1,6 +1,6 @@
 # P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
 
-- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。核心规则/缓存/API/UI 已落地；最终受影响组合 119/119 通过，浏览器覆盖隔离 TEXT 创建、详情、排除和恢复。Luna High 最终复核仍发现 stale 快照资格浏览与 `save-static` 两项 P1 缺口，以及 worker factory 异常租约 P2，故不得记 PASS。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。第一轮修复后，FILTER 排除与时间 Keyset、TEXT/COMBINED/FILTER 规则冻结、ranked 时间桶及刷新 lease 定向组合 41/41 通过；worker factory 异常释放租约问题已关闭。旧排名快照资格浏览与 `save-static` 按本轮边界继续后置，浏览器刷新/进程重启、真实模型及并发替换仍待验，当前轮 DS-H 独立影响面审查也未执行，因此不标 PASS。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
 - **优先级**：P2；**建议执行模型**：GPT-6 High（用户在 Codex 手动选择）。人工状态、迁移和并发提交须按 V3.1 §2.4 做符合风险的独立 DS-H 影响面工程审查。
 - **设计基准**：`szzeng/aisearch` / `master`；设计复核基准 `master @ d61e2fe3cdf60044f34132325298f4635be00dd8`（2026-10-19）；提交前远端 `master @ d5795b07a17e5a933ee0366ffe4d4acfb78e1462`；普通照片合集卡已提交为 [`d36c50d`](https://github.com/szzeng/aisearch/commit/d36c50d560bff9b1ef7e943ee0604ad72742d89b)，尚未实施。当前可见产品 Schema v33；**两张 Favorites 与普通照片合集均不能据任务卡存在而视为已实施**。实际开工必须检查最新 HEAD、工作树、已落地迁移、API、报告和活跃模型/索引合同。
 - **实施前置**：`P4-FAVORITES-CORE-A` → `P4-FAVORITES-UX-B` → `P4-PHOTO-COLLECTION-A` 均达到其自身必要验收并具备可信代码。本卡可提前审查，不提前占 migration 版本，不改上一卡已冻结的人工成员真值。
@@ -154,5 +154,14 @@
 - **性能三行**：主风险为排名缓存失效后检索及 FILTER 动态分页；排名缓存 K≤5000、页 P≤50、worker 单并发，FILTER 不物化成员；定向合成 JUnit 119/119 通过，未做 30 万/GPU/真实图库测试，不据此声称容量保证。
 - **验证**：完整 unit/integration 3269 项为 3212 passed、6 failed、51 skipped、0 errors，6 项中 5 项是并行 UI 资源版本/既有 query digest 断言，1 项是运行途中才更新的 app.js 缓存版本断言；最终受影响组合 119/119 通过。Ruff、相关 py_compile、Node 语法与 diff-check 通过。实际命令、JUnit 路径和逐项解释见执行报告。
 - **浏览器**：隔离合成图库、127.0.0.1、内置浏览器覆盖 TEXT 创建、详情、排除、已排除列表及恢复。语义模型未就绪；修复后的排除缩略图路径仅有单测验证，浏览器复核 PENDING；未导出截图。
+
+## 11. 2026-10-19 第一轮：核心正确性与性能修复
+
+- **PERF-BOUNDED**：FILTER 首/续页保持规则范围及 revision 身份；排除在可信筛选 SQL 中先行执行，页大小最多 50，不物化成员、不调用 FTS/向量，FILTER API 不执行全量或 offset COUNT。`capture_desc` 用既有 `idx_asset_metadata_capture` 读两个可信 EXIF 流，再按 asset_id 读取未知时间尾部；ranked 排序只查询当前有界缓存（最多 5000），统一将非可信时间放入尾部。
+- **规则冻结**：来源凭据同时携带服务端确认的执行路径和结构化计划。`TEXT` 从原始查询恢复，`COMBINED` 固定确认的内容查询/intent plan，纯条件按实际 FILTER 路径保存；缺少可恢复身份时拒绝保存。刷新沿用冻结计划，不重新解析原自然语言。
+- **租约**：worker factory 初始化失败后用请求已打开的共享服务尽力释放本任务 lease；发布事务同时校验 owner、有效期、rule_revision 与依赖签名。过期、规则替换和接管后的旧 worker 不发布；失败清理保留既有 build。
+- **验证**：最终受影响组合 JUnit **41 passed, 0 failed, 0 skipped**：`test-results/smart-final-20261019-190731-722.xml`。覆盖 201 张隔离合成照片的 0/50/95/100% 排除、每种排除比例的 50 张首/续页无漏重、COUNT trace 为 0；EXPLAIN 检查排除主键探测和时间索引；FILTER/ranked 时间排序覆盖可信 EXIF、EXIF_ROOT/无时间尾部、同时间跨页及 revision 过期；规则分类与缺失确认拒绝；lease 过期、旧 worker 接管、规则替换、factory 失败与旧缓存保留。受影响普通合集、收藏及拍摄时间回归同组通过。Ruff、py_compile、`node --check app.js`、`git diff --check` 均 exit 0。
+- **中间失败记录**：首轮 JUnit `smart-round1-20261019-190338-509.xml` 为 39 项、6 failed：规则重建漏传 Pydantic 必需 request_id、两个 API 用例因此 500、时间 fixture 违反 EXIF 来源置信度约束，以及两个 LanceDB 测试因 `$TEMP` 目录未预创建而 panic。修正实现/fixture 并创建项目临时目录后重跑；`smart-round1-20261019-190409-288.xml` 的两个默认排序接线失败也已修复。之后时间桶测试发现并修复布尔排序方向；最终 JUnit 41 项全过。所有中间 XML 留在忽略的 `test-results/`。
+- **未关闭项**：本轮没有实现 stale ranked 快照资格浏览和 `save-static`；不声称浏览器 refresh/进程重启恢复、真实模型向量路径、完整并发规则替换及 5000 截断另存通过。上述持久状态/并发高风险改动还需按 V3.1 §2.4 完成独立 DS-H 影响面审查后，才可重新评估整卡验收状态。未访问真实图库。
 - **Luna High 独立复核**：检索前后依赖签名与发布事务重核、实际 search session coverage、缓存发布失败时持久 mutation 的显式成功响应均已补；没有发现本轮修复引入的新问题。旧 ranked 快照当前不可浏览、`save-static` 未实现是两项 P1；worker factory 异常时租约会等到期为 P2。刷新进程重启/模型真实路径、并发替换及候选另存仍 PENDING。
 - 本任务未提交/推送，未读取真实图库；并行 UI 改动原样保留。

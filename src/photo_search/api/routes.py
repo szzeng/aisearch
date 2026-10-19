@@ -1207,42 +1207,32 @@ async def get_photo_smart_assets(request: Request, smart_id: int,
         binding = [int(smart_id), str(instance_token), int(collection["rule_revision"]),
                    int(collection["exclusions_revision"]), order]
         position = photo_smart_collections._cursor_decode(cursor, "psf1", binding)
-        if position is not None and (not isinstance(position, list) or len(position) != 2):
+        if position is not None and (not isinstance(position, list) or
+                                     len(position) != (10 if order == "capture_desc" else 2)):
             raise ApiError(INVALID_CURSOR, "智能合集游标无效，请刷新", status=409)
-        inner_session, inner_cursor = (position if position else [None, None])
+        inner_session, inner_cursor = position if position and order == "rank" else [None, None]
+        capture_position = position if position and order == "capture_desc" else None
         seed_values = dict(rule["request"])
         seed_values["request_id"] = "smart-page-seed-" + secrets.token_hex(8)
         seed = PlaceAwareSearchRequestModel.model_validate(seed_values)
-        if position is not None:
-            # The cursor binds the exclusions revision; a changed set is rejected above.
-            pass
-        output_hits: list[dict[str, Any]] = []
-        raw_more = False
-        scans = 0
-        while len(output_hits) < int(limit) and scans < 100:
-            remaining = int(limit) - len(output_hits)
-            query = seed.model_copy(update={"request_id": "smart-page-" + secrets.token_hex(8),
-                "cursor": inner_cursor, "search_session_id": inner_session, "page_size": remaining})
-            page = await run_catalog_search(service.catalog, _place_aware_search_worker, query,
-                context=context, data_root=service.data_root)
-            ids = [int(hit["asset_id"]) for hit in page.get("hits", [])]
-            if ids:
-                marks = ",".join("?" for _ in ids)
-                excluded = {int(row[0]) for row in service.catalog.read_all(
-                    f"SELECT asset_id FROM photo_smart_exclusions WHERE smart_id=? AND asset_id IN ({marks})",
-                    (int(smart_id), *ids))}
-                output_hits.extend(hit for hit in page.get("hits", []) if int(hit["asset_id"]) not in excluded)
-            raw_more = bool(page.get("has_more"))
-            inner_session, inner_cursor = page.get("search_session_id"), page.get("next_cursor")
-            scans += 1
-            if not raw_more:
-                break
-        selected = output_hits[:int(limit)]
+        query = seed.model_copy(update={"request_id": "smart-page-" + secrets.token_hex(8),
+            "cursor": inner_cursor if order == "rank" else None,
+            "search_session_id": inner_session if order == "rank" else None,
+            "page_size": int(limit)})
+        page = await run_catalog_search(service.catalog, _place_aware_search_worker, query,
+            context=context, data_root=service.data_root, filter_statistics=False,
+            filter_exclusion_smart_id=int(smart_id),
+            filter_order="capture_desc" if order == "capture_desc" else "asset_id",
+            filter_capture_position=capture_position)
+        selected = page.get("hits", [])
         ids = [int(hit["asset_id"]) for hit in selected]
         assets = _photo_smart_summaries(service, ids)
+        has_more = bool(page.get("has_more"))
+        next_position = ([page.get("search_session_id"), page.get("next_cursor")] if order == "rank" else
+                         page.get("smart_capture_position"))
         return {"collection": collection, "assets": assets, "hits": selected,
-                "has_more": raw_more, "next_cursor": photo_smart_collections._cursor_encode(
-                    "psf1", binding, [inner_session, inner_cursor]) if raw_more else None,
+                "has_more": has_more, "next_cursor": photo_smart_collections._cursor_encode(
+                    "psf1", binding, next_position) if has_more else None,
                 "freshness": "CURRENT", "coverage": "DYNAMIC"}
     if info["collection"]["freshness"] != "CURRENT":
         return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
@@ -3363,6 +3353,9 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
 def _place_aware_search_worker(
     catalog: Any, payload: PlaceAwareSearchRequestModel, *, context: ApiContext, data_root: Path,
     filter_statistics: bool = True,
+    filter_exclusion_smart_id: int | None = None,
+    filter_order: str = "asset_id",
+    filter_capture_position: list[Any] | None = None,
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
     favorites_only = bool(payload.favorites_only)
@@ -3926,6 +3919,16 @@ def _place_aware_search_worker(
         _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
         return result
     if execution_path == "filter_only":
+        if filter_exclusion_smart_id is not None:
+            exclusion_sql = (
+                "NOT EXISTS (SELECT 1 FROM photo_smart_exclusions AS pse "
+                "WHERE pse.smart_id=? AND pse.asset_id=a.asset_id)"
+            )
+            if search_time_sql is None:
+                search_time_sql, search_time_parameters = exclusion_sql, (int(filter_exclusion_smart_id),)
+            else:
+                search_time_sql = f"({search_time_sql}) AND ({exclusion_sql})"
+                search_time_parameters += (int(filter_exclusion_smart_id),)
         result = _filter_only_search_page(
             service, envelope, collection_scope=collection_scope,
             additional_condition_sql=search_time_sql,
@@ -3933,6 +3936,8 @@ def _place_aware_search_worker(
             time_identity=search_time_identity,
             favorites_only=favorites_only,
             include_statistics=filter_statistics,
+            order=filter_order,
+            capture_position=filter_capture_position,
         )
         result["original_query"] = original
         result["content_query"] = None
@@ -4098,7 +4103,50 @@ def _search_time_condition(catalog: Any, plan: dict[str, Any] | None) -> tuple[s
     return None, (), ()
 
 
-def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False, include_statistics: bool = True) -> dict[str, Any]:
+def _filter_capture_desc_rows(catalog: Any, where: str, parameters: tuple[Any, ...], *,
+                              limit: int, position: list[int] | None) -> list[Any]:
+    """Read trusted EXIF streams by the shared capture index, then the unknown tail."""
+    trusted_sources = ("EXIF_ORIGINAL", "EXIF_DIGITIZED")
+    known: list[Any] = []
+    if position is None or int(position[0]) == 1:
+        for source in trusted_sources:
+            clauses = ["m.time_source=?", "m.taken_at_sort IS NOT NULL", f"({where})"]
+            values: list[Any] = [source, *parameters]
+            if position is not None:
+                clauses.append("(m.taken_at_sort,m.asset_id) < (?,?)")
+                values.extend((int(position[1]), int(position[2])))
+            known.extend(catalog.read_all(
+                "SELECT a.asset_id,m.taken_at_sort AS capture_sort FROM asset_metadata AS m "
+                "INDEXED BY idx_asset_metadata_capture CROSS JOIN assets AS a ON a.asset_id=m.asset_id "
+                f"WHERE {' AND '.join(clauses)} "
+                "ORDER BY m.taken_at_sort DESC,m.asset_id DESC LIMIT ?",
+                (*values, int(limit) + 1),
+            ))
+        known.sort(key=lambda row: (int(row["capture_sort"]), int(row["asset_id"])), reverse=True)
+        known = known[:int(limit) + 1]
+    if len(known) > int(limit):
+        return known
+
+    unknown_limit = int(limit) + 1 - len(known)
+    unknown_clauses = [
+        f"({where})",
+        "NOT (m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL)",
+    ]
+    unknown_values = list(parameters)
+    if position is not None and int(position[0]) == 0:
+        unknown_clauses.append("a.asset_id < ?")
+        unknown_values.append(int(position[2]))
+    unknown = catalog.read_all(
+        "SELECT a.asset_id,NULL AS capture_sort FROM assets AS a "
+        "LEFT JOIN asset_metadata AS m ON m.asset_id=a.asset_id "
+        f"WHERE {' AND '.join(unknown_clauses)} "
+        "ORDER BY a.asset_id DESC LIMIT ?",
+        (*unknown_values, unknown_limit),
+    )
+    return known + unknown
+
+
+def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False, include_statistics: bool = True, order: str = "asset_id", capture_position: list[int] | None = None) -> dict[str, Any]:
     """Unbounded keyset pages for pure filters, without materializing IDs or sessions."""
     from photo_search.search.service import _person_authority_base
 
@@ -4131,7 +4179,24 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
                  None if collection_scope is None else collection_scope["instance_token"],
                  None if collection_scope is None else collection_scope["revision"], favorites_revision)
     session_id = "filter-only"
-    if request.cursor is not None:
+    capture_after = None
+    if order not in {"asset_id", "capture_desc"}:
+        raise ApiError("VALIDATION_ERROR", "unsupported filter ordering")
+    if order == "capture_desc":
+        if request.cursor is not None:
+            raise ApiError(INVALID_CURSOR, "the capture cursor does not match this search", status=409)
+        if capture_position is not None:
+            if (len(capture_position) != len(revisions) + 3
+                    or capture_position[:len(revisions)] != list(revisions)):
+                raise ApiError(CATALOG_FILTER_REVISION_STALE,
+                               "the filter scope changed; restart the smart collection page", status=409)
+            capture_after = capture_position[len(revisions):]
+            if (any(isinstance(value, bool) or not isinstance(value, int) for value in capture_after)
+                    or capture_after[0] not in (0, 1) or capture_after[1] < 0
+                    or capture_after[2] < 1):
+                raise ApiError(INVALID_CURSOR, "the capture cursor does not match this search", status=409)
+        after = 0
+    elif request.cursor is not None:
         if request.search_session_id != session_id:
             raise ApiError(INVALID_CURSOR, "the filter cursor does not match this search")
         _require_favorites_cursor_revision(request.cursor, favorites_revision)
@@ -4141,10 +4206,12 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     where, params = scope_condition(catalog.connection, scope)
     total = (int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
              if include_statistics else None)
-    rows = catalog.read_all(
-        f"SELECT a.asset_id FROM assets AS a WHERE ({where}) AND a.asset_id>? ORDER BY a.asset_id LIMIT ?",
-        (*params, int(after), int(request.page_size) + 1),
-    )
+    rows = (_filter_capture_desc_rows(catalog, where, tuple(params), limit=int(request.page_size),
+                                      position=capture_after)
+            if order == "capture_desc" else catalog.read_all(
+                f"SELECT a.asset_id,NULL AS capture_sort FROM assets AS a WHERE ({where}) AND a.asset_id>? ORDER BY a.asset_id LIMIT ?",
+                (*params, int(after), int(request.page_size) + 1),
+            ))
     if (place_revision.read_filter_revision(catalog.connection),
         place_revision.read_suggestion_revision(catalog.connection)) != revisions[:2]:
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the filters changed; restart the search", status=409)
@@ -4154,9 +4221,9 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     offset = int(catalog.read_one(
         f"SELECT COUNT(*) AS value FROM assets AS a WHERE ({where}) AND a.asset_id<=?",
         (*params, int(after)),
-    )["value"]) if after and include_statistics else 0
+    )["value"]) if order == "asset_id" and after and include_statistics else 0
     has_more = len(rows) > len(page)
-    token = place_albums._token(ids[-1], revisions) if has_more and ids else None
+    token = place_albums._token(ids[-1], revisions) if order == "asset_id" and has_more and ids else None
     hits = [{"asset_id": asset_id, "rank": offset + index + 1,
              "score": None, "matched_by": {"filter": offset + index + 1},
              "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False}
@@ -4185,6 +4252,13 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
         "pending_semantic": None, "search_projection": _projection_block(catalog, match=None, catch_up=None),
         "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
     }
+    if order == "capture_desc":
+        last = rows[len(page) - 1] if page else None
+        result["smart_capture_position"] = (
+            [*revisions, int(last["capture_sort"] is not None), int(last["capture_sort"] or 0),
+             int(last["asset_id"])]
+            if has_more and last else None
+        )
     _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
     return result
 

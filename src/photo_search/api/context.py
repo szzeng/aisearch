@@ -121,6 +121,15 @@ class ApiContext:
             "search_scope": result.get("search_scope"),
             "place_scope": result.get("place_scope"),
             "collection_scope": result.get("collection_scope"),
+            # Keep the server-confirmed plan and execution path beside the submitted
+            # request. Smart rules must not parse natural language again on refresh.
+            "confirmed_execution": {
+                "mode": mode,
+                "retrieval_mode": clean_payload.get("retrieval_mode"),
+                "content_query": result.get("content_query"),
+                "intent_plan": result.get("intent_plan"),
+                "filters": result.get("filters"),
+            },
             "payload": clean_payload,
         }
         with self._photo_collection_sources_lock:

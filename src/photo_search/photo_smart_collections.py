@@ -57,14 +57,48 @@ def rule_from_search(source: dict[str, Any]) -> dict[str, Any]:
     """Freeze only server-registered, Pydantic-validated search fields as the rule."""
     from photo_search.api.models import PlaceAwareSearchRequestModel
 
-    payload = PlaceAwareSearchRequestModel.model_validate(source["payload"])
-    query = payload.content_query or payload.text or (payload.intent_plan or {}).get("content_query")
-    if query and payload.retrieval_mode == "text":
+    submitted = source.get("payload")
+    confirmed = source.get("confirmed_execution")
+    if not isinstance(submitted, dict) or not isinstance(confirmed, dict):
+        raise _fail("无法恢复服务端确认的搜索规则，请重新搜索后保存", code="PHOTO_SMART_RULE_UNRECOVERABLE")
+    payload = PlaceAwareSearchRequestModel.model_validate(submitted)
+    execution_mode = confirmed.get("mode")
+    retrieval_mode = confirmed.get("retrieval_mode")
+    confirmed_plan = confirmed.get("intent_plan")
+    confirmed_query = confirmed.get("content_query")
+    if execution_mode == "all_filter_matches":
+        kind, query = "FILTER", None
+    elif execution_mode == "ranked_candidates" and retrieval_mode == "text":
+        # The text endpoint searches original_query even when the submitted payload
+        # leaves both `text` and `content_query` empty.
+        query = payload.original_query.strip()
+        if not query:
+            raise _fail("文字搜索缺少可恢复的原始查询，不能保存智能合集", code="PHOTO_SMART_RULE_UNRECOVERABLE")
         kind = "TEXT"
-    elif query:
+    elif execution_mode == "ranked_candidates" and retrieval_mode == "combined":
+        query = str(confirmed_query or (confirmed_plan or {}).get("content_query") or "").strip()
+        if not query:
+            raise _fail("综合搜索缺少服务端确认的内容查询，不能保存智能合集", code="PHOTO_SMART_RULE_UNRECOVERABLE")
         kind = "COMBINED"
     else:
-        kind = "FILTER"
+        raise _fail("搜索执行路径无法恢复，请重新搜索后保存", code="PHOTO_SMART_RULE_UNRECOVERABLE")
+
+    values = payload.model_dump(exclude={"request_id", "search_session_id", "cursor"})
+    if retrieval_mode == "combined":
+        if confirmed_plan is not None:
+            if not isinstance(confirmed_plan, dict):
+                raise _fail("服务端确认的搜索计划无效，不能保存智能合集", code="PHOTO_SMART_RULE_UNRECOVERABLE")
+            values["intent_plan"] = confirmed_plan
+        elif kind == "COMBINED":
+            # A ranked combined query without a frozen structured plan cannot be
+            # replayed safely. Do not fall back to parsing original_query later.
+            raise _fail("综合搜索缺少已确认计划，不能保存智能合集", code="PHOTO_SMART_RULE_UNRECOVERABLE")
+    if query is not None:
+        values["content_query"] = query
+        if retrieval_mode == "text":
+            values["text"] = query
+    values["request_id"] = "photo-smart-frozen-rule"
+    payload = PlaceAwareSearchRequestModel.model_validate(values)
     values = payload.model_dump(exclude={"request_id", "search_session_id", "cursor"})
     # Re-evaluation always follows the confirmed structured request, never a browser SQL fragment.
     return {
@@ -73,6 +107,7 @@ def rule_from_search(source: dict[str, Any]) -> dict[str, Any]:
         "request": values,
         "display_query": payload.original_query,
         "content_query": query,
+        "confirmed_execution_mode": execution_mode,
         "confirmed_scope": source.get("search_scope"),
         "confirmed_place_scope": source.get("place_scope"),
         "confirmed_person_scope": source.get("collection_scope"),
@@ -404,7 +439,13 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
             if valid != set(asset_ids):
                 raise _fail("候选包含不存在或不合格的照片", status=409, code="PHOTO_SMART_CACHE_INVALID")
         state = connection.execute("SELECT * FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),)).fetchone()
-        if lease_owner is not None and (state is None or str(state["lease_owner"] or "") != str(lease_owner)):
+        if lease_owner is not None and (
+            state is None
+            or str(state["lease_owner"] or "") != str(lease_owner)
+            or int(state["lease_until_ms"] or 0) <= catalog.now_ms()
+            or (expected_rule_revision is not None
+                and int(collection["rule_revision"]) != int(expected_rule_revision))
+        ):
             raise _fail("刷新租约已失效，旧工作未发布", status=409, code="PHOTO_SMART_LEASE_EXPIRED")
         connection.execute("DELETE FROM photo_smart_cache_entries WHERE smart_id=?", (int(smart_id),))
         connection.executemany(
@@ -523,18 +564,27 @@ def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_toke
             sort = "e.rank,e.asset_id"
             selected = "e.rank AS smart_rank,NULL AS capture_sort"
         else:
+            trusted_capture = (
+                "(m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') "
+                "AND m.taken_at_sort IS NOT NULL)"
+            )
             if after:
                 known, sort_key, asset_id, _rank = after
                 if int(known):
-                    where.append("((m.taken_at_sort IS NOT NULL AND (m.taken_at_sort<? OR (m.taken_at_sort=? AND a.asset_id<?))) OR m.taken_at_sort IS NULL)")
+                    where.append(
+                        f"(({trusted_capture} AND (m.taken_at_sort<? OR "
+                        "(m.taken_at_sort=? AND a.asset_id<?))) OR NOT "
+                        f"{trusted_capture})"
+                    )
                     params.extend([int(sort_key), int(sort_key), int(asset_id)])
                 else:
-                    where.append("m.taken_at_sort IS NULL AND a.asset_id<?")
+                    where.append(f"NOT {trusted_capture} AND a.asset_id<?")
                     params.append(int(asset_id))
-            sort = "(m.taken_at_sort IS NULL),m.taken_at_sort DESC,a.asset_id DESC"
+            sort = (f"({trusted_capture}) DESC, "
+                    f"CASE WHEN {trusted_capture} THEN m.taken_at_sort END DESC, a.asset_id DESC")
             selected = "e.rank AS smart_rank,m.taken_at_sort AS capture_sort"
         rows = catalog.read_all(
-            "SELECT a.asset_id,a.sha256,a.byte_size,a.created_at,e.rank,m.taken_at_sort,"
+            "SELECT a.asset_id,a.sha256,a.byte_size,a.created_at,e.rank,m.taken_at_sort,m.time_source,"
             + selected + " FROM photo_smart_cache_entries e JOIN assets a ON a.asset_id=e.asset_id "
             "LEFT JOIN asset_metadata m ON m.asset_id=a.asset_id WHERE " + " AND ".join(where) +
             " ORDER BY " + sort + " LIMIT ?", (*params, limit + 1))
@@ -550,7 +600,8 @@ def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_toke
         last = rows[-1] if rows else None
         if more and last:
             position = ([int(last["rank"]), int(last["asset_id"])] if order == "rank" else
-                        [int(last["taken_at_sort"] is not None), int(last["taken_at_sort"] or 0),
+                        [int(last["time_source"] in {"EXIF_ORIGINAL", "EXIF_DIGITIZED"}
+                             and last["taken_at_sort"] is not None), int(last["taken_at_sort"] or 0),
                          int(last["asset_id"]), int(last["rank"])])
             next_cursor = _cursor_encode("psr1", binding, position)
         else:
@@ -624,14 +675,20 @@ class SmartRefreshRunner:
             self._futures.discard(future)
 
     def _run(self, smart_id: int, owner: str, rule_revision: int) -> None:
-        service = self.context._service_factory()
-        catalog = service.catalog
+        service = None
+        catalog = None
+        owns_service = False
         try:
+            service = self.context._service_factory()
+            owns_service = True
+            catalog = service.catalog
             with catalog.write() as connection:
-                state = connection.execute("SELECT lease_owner FROM photo_smart_cache_state WHERE smart_id=?", (smart_id,)).fetchone()
-                if state is None or str(state["lease_owner"] or "") != owner:
+                state = connection.execute("SELECT lease_owner,lease_until_ms FROM photo_smart_cache_state WHERE smart_id=?", (smart_id,)).fetchone()
+                if (state is None or str(state["lease_owner"] or "") != owner
+                        or int(state["lease_until_ms"] or 0) <= catalog.now_ms()):
                     return
-                connection.execute("UPDATE photo_smart_cache_state SET refresh_status='RUNNING' WHERE smart_id=?", (smart_id,))
+                connection.execute("UPDATE photo_smart_cache_state SET refresh_status='RUNNING' WHERE smart_id=? AND lease_owner=?",
+                                   (smart_id, owner))
             collection = _get(catalog, smart_id)
             if int(collection["rule_revision"]) != rule_revision:
                 raise _fail("智能合集规则已变化", status=409, code="PHOTO_SMART_RULE_CHANGED")
@@ -678,14 +735,22 @@ class SmartRefreshRunner:
         except Exception as error:  # keep the prior published build intact on every failure
             code = str(getattr(error, "code", "PHOTO_SMART_REFRESH_FAILED"))
             try:
+                if catalog is None:
+                    # The request path has already opened the shared service before it
+                    # submits this worker. Use it only to release this task's own lease
+                    # when worker initialization itself fails.
+                    service = self.context.service()
+                    catalog = service.catalog
                 with catalog.write() as connection:
                     connection.execute(
                         "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code=?,lease_owner=NULL,lease_until_ms=NULL "
-                        "WHERE smart_id=? AND lease_owner=?", (code[:80], smart_id, owner))
+                        "WHERE smart_id=? AND lease_owner=? AND lease_until_ms>?",
+                        (code[:80], smart_id, owner, catalog.now_ms()))
             except Exception:
                 pass
         finally:
-            service.close()
+            if service is not None and owns_service:
+                service.close()
 
     def close(self) -> None:
         with self._lock:

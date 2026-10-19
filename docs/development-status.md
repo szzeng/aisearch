@@ -2,7 +2,7 @@
 
 ## Current: P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
 
-2026-10-19，核心 FILTER/TEXT/COMBINED 规则/API、排名缓存、排除/恢复和详情入口已落地。最终受影响组合 JUnit **119/119** 通过，Ruff、py_compile、相关 Node 语法与 diff-check 通过；完整 unit/integration 原始运行 3269 项为 3212 passed、6 failed、51 skipped，5 项为并行 UI 资源/digest 断言，第 6 项 app.js 版本断言在缓存版本更新后通过最终受影响重跑。内置浏览器隔离合成数据实测 TEXT 创建、详情、排除、已排除列表与恢复；排除缩略图路径修复后只做单测，浏览器复核仍 PENDING。Luna High 最终复核确认签名竞态、session coverage 与持久写入/发布失败响应已修；仍有 stale ranked 缓存资格浏览、`save-static` 缺失两项 P1，以及 worker factory 异常租约 P2，因此为 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。真实模型/图库、进程重启刷新、并发替换与 5000 截断另存仍待验；未访问真实图库。详情见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+2026-10-19 第一轮核心修复已落地：FILTER 排除先入 SQL、取消全量/offset COUNT 和补页循环；FILTER/ranked `capture_desc` 按可信 EXIF 与未知尾部全局排序；搜索保存规则固化服务端执行路径/intent plan；刷新发布核验 owner、lease 有效期、规则及依赖版本，factory 初始化失败尽力释放租约。受影响组合 JUnit **41/41** 通过，Ruff、py_compile、相关 Node 语法、diff-check 通过；201 张隔离合成数据验证 0/50/95/100% 排除、无漏重分页和 0 次 FILTER COUNT，EXPLAIN 确认排除主键/时间索引。原 119/119 与浏览器 TEXT 创建、详情、排除、恢复证据仍有效。当前仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**：stale ranked 资格浏览、`save-static` 按本轮范围后置；浏览器刷新/进程重启、真实向量模型、完整并发替换/5000 截断另存与本轮 DS-H 独立影响面审查未完成。详情见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。未访问真实图库。
 
 ## Earlier status record: P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
 
