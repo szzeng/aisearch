@@ -63,6 +63,13 @@
 .map-photo-open { display: block; width: 100%; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
 .map-photo-open img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .pa-face-photo-open { display: block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.photo-action-dialog { width: min(28rem, calc(100vw - 2rem)); max-width: none; padding: 1.25rem; border: 1px solid var(--line); border-radius: var(--radius); color: var(--fg); background: var(--panel); box-shadow: 0 1.5rem 4rem #0005; }
+.photo-action-dialog::backdrop { background: #10182080; }
+.photo-action-dialog h2 { margin: 0 0 .6rem; font-size: 1.1rem; }
+.photo-action-dialog p { color: var(--fg-muted); }
+.photo-action-dialog input, .photo-action-dialog select { box-sizing: border-box; width: 100%; min-height: 2.75rem; margin: .25rem 0 .8rem; padding: .5rem .65rem; color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.photo-action-dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .8rem; }
+.photo-action-dialog-actions button { min-height: 2.5rem; }
 @media (max-width: 760px) {
   .detail-viewer-layout, .photo-viewer-layout { grid-template-columns: minmax(0, 1fr); }
   .detail-viewer-layout .photo-info-panel { max-height: 45vh; }

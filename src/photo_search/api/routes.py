@@ -13,6 +13,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import secrets
 import sqlite3
 import sys
 from collections.abc import Mapping
@@ -23,7 +24,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
-from photo_search import photo_collections
+from photo_search import photo_collections, photo_smart_collections
 from photo_search.api import timeline as timeline_queries
 from photo_search.api.catalog_reads import (
     run_catalog_projection,
@@ -116,6 +117,12 @@ from photo_search.api.models import (
     PhotoCollectionFromSearchRequest,
     PhotoCollectionMembersRequest,
     PhotoCollectionRenameRequest,
+    PhotoSmartCollectionDeleteRequest,
+    PhotoSmartCollectionFromSearchRequest,
+    PhotoSmartCollectionRenameRequest,
+    PhotoSmartExclusionRequest,
+    PhotoSmartRefreshRequest,
+    PhotoSmartRuleReplaceRequest,
     PlaceAssignmentRequest,
     PlaceAwareSearchRequestModel,
     PlaceBatchRequest,
@@ -988,6 +995,290 @@ async def delete_photo_collection(payload: PhotoCollectionDeleteRequest, request
                                   collection_id: int) -> dict[str, Any]:
     return photo_collections.delete_collection(service_of(request).catalog, collection_id,
         instance_token=payload.instance_token, expected_revision=payload.expected_revision)
+
+
+@router.get("/photo-smart-collections", summary="Paged smart photo collection metadata")
+async def list_photo_smart_collections(request: Request, limit: int = Query(default=20, ge=1, le=50),
+                                       cursor: str | None = Query(default=None, max_length=2048)) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, photo_smart_collections.list_collections,
+                                  limit=limit, cursor=cursor)
+
+
+@router.post("/photo-smart-collections/from-search", summary="Save a confirmed search rule as a smart collection")
+async def create_photo_smart_collection_from_search(payload: PhotoSmartCollectionFromSearchRequest,
+                                                    request: Request) -> dict[str, Any]:
+    context = context_of(request)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "application session is required", status=401)
+    source_hash = hashlib.sha256(payload.source_token.encode()).hexdigest()
+    auth_hash = hashlib.sha256(auth_session_id.encode()).hexdigest()
+    request_hash = hashlib.sha256(json.dumps([payload.name, source_hash], ensure_ascii=False,
+                                              separators=(",", ":")).encode()).hexdigest()
+    # Durable idempotent replay precedes resolving the short-lived source credential.
+    old = context.service().catalog.read_one(
+        "SELECT * FROM photo_smart_collections WHERE create_request_id=?", (payload.create_request_id,))
+    if old is not None:
+        return photo_smart_collections.create_collection(
+            context.service().catalog, payload.name, payload.create_request_id, {},
+            request_hash=request_hash, auth_hash=auth_hash, source_hash=source_hash)
+    try:
+        source = context.resolve_photo_collection_source(payload.source_token, auth_session_id=auth_session_id)
+    except ValueError as error:
+        raise ApiError(INVALID_CURSOR, str(error), status=409) from error
+    rule = photo_smart_collections.rule_from_search(source)
+    dependency_signature_before = _photo_smart_dependency_signature(context.service().catalog, rule)
+    if source["mode"] == "ranked_candidates":
+        session = context.search_sessions.get(str(source["search_session_id"]))
+        if session is None:
+            raise ApiError(SEARCH_SESSION_EXPIRED, "搜索候选已过期，请重新搜索后创建智能合集", status=409)
+        if not session.entries:
+            raise ApiError("PHOTO_SMART_EMPTY_SEARCH", "本次搜索没有可保存的候选照片", status=409)
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "搜索凭据无效，请重新搜索", status=409) from error
+        validation_request = seed.model_copy(update={
+            "search_session_id": session.session_id,
+            "cursor": context.search_sessions.encode_cursor(session.session_id, 0),
+        })
+        await run_catalog_search(context.service().catalog, _place_aware_search_worker,
+                                 validation_request, context=context,
+                                 data_root=context.service().data_root)
+    else:
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "搜索凭据无效，请重新搜索", status=409) from error
+        await run_catalog_search(context.service().catalog, _place_aware_search_worker,
+                                 seed.model_copy(update={"cursor": None, "search_session_id": None}),
+                                 context=context, data_root=context.service().data_root)
+    dependency_signature_after = _photo_smart_dependency_signature(context.service().catalog, rule)
+    if dependency_signature_after != dependency_signature_before:
+        raise ApiError("PHOTO_SMART_DEPENDENCY_CHANGED", "搜索依赖在保存期间发生变化，请重新搜索", status=409)
+    result = photo_smart_collections.create_collection(
+        context.service().catalog, payload.name, payload.create_request_id, rule,
+        request_hash=request_hash, auth_hash=auth_hash, source_hash=source_hash)
+    # Reuse the exact live ranked snapshot only after the ordinary search binding check.
+    if source["mode"] == "ranked_candidates" and not result["reused"]:
+        session = context.search_sessions.get(str(source["search_session_id"]))
+        ids = [int(entry.asset_id) for entry in session.entries]
+        indexing, truncated = photo_smart_collections.session_coverage(session)
+        try:
+            result["initial_cache"] = photo_smart_collections.publish_candidates(
+                context.service().catalog, int(result["collection"]["smart_id"]), ids,
+                signature=dependency_signature_before, truncated=truncated, indexing=indexing)
+        except ApiError as error:
+            # The rule is already committed. Report that durable success and let the UI
+            # queue a safe refresh instead of returning an error that invites a duplicate.
+            result["initial_cache"] = {"published": False, "refresh_required": True,
+                                       "reason": str(error.code)}
+    return result
+
+
+def _photo_smart_dependency_signature(catalog: Any, rule: dict[str, Any]) -> str:
+    """Read cache dependencies together; incomplete indexing is represented separately."""
+    with catalog.read_snapshot() as connection:
+        signature, _, _ = photo_smart_collections.dependency_signature(connection, rule)
+        return signature
+
+
+@router.post("/photo-smart-collections/{smart_id}/replace-rule", summary="Replace a smart rule from a newly confirmed search")
+async def replace_photo_smart_rule(payload: PhotoSmartRuleReplaceRequest, request: Request,
+                                   smart_id: int) -> dict[str, Any]:
+    context = context_of(request)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "application session is required", status=401)
+    auth_hash = hashlib.sha256(auth_session_id.encode()).hexdigest()
+    source_hash = hashlib.sha256(payload.source_token.encode()).hexdigest()
+    request_hash = hashlib.sha256(json.dumps(
+        [int(smart_id), payload.instance_token, int(payload.expected_revision), source_hash],
+        separators=(",", ":")).encode()).hexdigest()
+    replay = photo_smart_collections.replay_rule_replacement(
+        context.service().catalog, payload.request_id, smart_id=smart_id,
+        auth_hash=auth_hash, request_hash=request_hash)
+    if replay is not None:
+        return replay
+    try:
+        source = context.resolve_photo_collection_source(payload.source_token, auth_session_id=auth_session_id)
+    except ValueError as error:
+        raise ApiError(INVALID_CURSOR, str(error), status=409) from error
+    rule = photo_smart_collections.rule_from_search(source)
+    dependency_signature_before = _photo_smart_dependency_signature(context.service().catalog, rule)
+    session = None
+    if source["mode"] == "ranked_candidates":
+        session = context.search_sessions.get(str(source["search_session_id"]))
+        if session is None or not session.entries:
+            raise ApiError(SEARCH_SESSION_EXPIRED, "搜索候选已过期，请重新搜索后替换", status=409)
+        seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        validation_request = seed.model_copy(update={"search_session_id": session.session_id,
+            "cursor": context.search_sessions.encode_cursor(session.session_id, 0)})
+        await run_catalog_search(context.service().catalog, _place_aware_search_worker,
+            validation_request, context=context, data_root=context.service().data_root)
+    else:
+        seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        await run_catalog_search(context.service().catalog, _place_aware_search_worker,
+            seed.model_copy(update={"cursor": None, "search_session_id": None}),
+            context=context, data_root=context.service().data_root)
+    dependency_signature_after = _photo_smart_dependency_signature(context.service().catalog, rule)
+    if dependency_signature_after != dependency_signature_before:
+        raise ApiError("PHOTO_SMART_DEPENDENCY_CHANGED", "搜索依赖在替换规则期间发生变化，请重新搜索", status=409)
+    result = photo_smart_collections.replace_rule(context.service().catalog, smart_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision,
+        rule=rule, request_id=payload.request_id, auth_hash=auth_hash, request_hash=request_hash)
+    if result["changed"] and session is not None:
+        indexing, truncated = photo_smart_collections.session_coverage(session)
+        try:
+            result["initial_cache"] = photo_smart_collections.publish_candidates(
+                context.service().catalog, smart_id, [int(entry.asset_id) for entry in session.entries],
+                signature=dependency_signature_before, truncated=truncated, indexing=indexing,
+                expected_rule_revision=int(result["collection"]["rule_revision"]))
+        except ApiError as error:
+            # Rule replacement is durable even if the old search snapshot can no longer
+            # seed its cache; detail/refresh will present the new rule with no valid cache.
+            result["initial_cache"] = {"published": False, "refresh_required": True,
+                                       "reason": str(error.code)}
+    return result
+
+
+@router.get("/photo-smart-collections/{smart_id}", summary="Read a smart collection and its rule")
+async def get_photo_smart_collection(request: Request, smart_id: int,
+        instance_token: str | None = Query(default=None, min_length=1, max_length=128)) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, photo_smart_collections.detail,
+                                  smart_id, instance_token=instance_token)
+
+
+@router.post("/photo-smart-collections/{smart_id}/refresh", summary="Queue one bounded smart collection refresh")
+async def post_photo_smart_refresh(payload: PhotoSmartRefreshRequest, request: Request,
+                                   smart_id: int) -> dict[str, Any]:
+    context = context_of(request)
+    catalog = context.service().catalog
+    claim = photo_smart_collections.request_refresh(catalog, smart_id,
+        instance_token=payload.instance_token, manual=payload.manual)
+    if claim["status"] == "QUEUED":
+        try:
+            context.photo_smart_refresh_runner().submit(
+                smart_id, owner=claim["lease_owner"], rule_revision=claim["rule_revision"])
+        except Exception as error:
+            with catalog.write() as connection:
+                connection.execute(
+                    "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code='PHOTO_SMART_WORKER_UNAVAILABLE',lease_owner=NULL,lease_until_ms=NULL WHERE smart_id=? AND lease_owner=?",
+                    (int(smart_id), claim["lease_owner"]))
+            raise ApiError("PHOTO_SMART_WORKER_UNAVAILABLE", "智能合集刷新暂不可用，请稍后重试", status=503) from error
+        return {"status": claim["status"], "refresh_id": claim["refresh_id"],
+                "lease_until_ms": claim["lease_until_ms"]}
+    return {key: value for key, value in claim.items() if key != "lease_owner"}
+
+
+@router.patch("/photo-smart-collections/{smart_id}", summary="Rename a smart collection")
+async def patch_photo_smart_collection(payload: PhotoSmartCollectionRenameRequest, request: Request,
+                                       smart_id: int) -> dict[str, Any]:
+    return photo_smart_collections.rename_collection(service_of(request).catalog, smart_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision, name=payload.name)
+
+
+@router.delete("/photo-smart-collections/{smart_id}", summary="Delete a smart collection")
+async def delete_photo_smart_collection(payload: PhotoSmartCollectionDeleteRequest, request: Request,
+                                        smart_id: int) -> dict[str, Any]:
+    return photo_smart_collections.delete_collection(service_of(request).catalog, smart_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision)
+
+
+@router.get("/photo-smart-collections/{smart_id}/exclusions", summary="Page recoverable smart collection exclusions")
+async def get_photo_smart_exclusions(request: Request, smart_id: int,
+        instance_token: str = Query(min_length=1, max_length=128),
+        limit: int = Query(default=50, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, photo_smart_collections.exclusions_page,
+        smart_id, instance_token=instance_token, limit=limit, cursor=cursor)
+
+
+@router.get("/photo-smart-collections/{smart_id}/assets", summary="Page a smart collection's current or cached results")
+async def get_photo_smart_assets(request: Request, smart_id: int,
+        instance_token: str = Query(min_length=1, max_length=128),
+        limit: int = Query(default=50, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048),
+        order: Literal["rank", "capture_desc"] = "rank") -> dict[str, Any]:
+    context = context_of(request)
+    service = context.service()
+    info = await run_catalog_read(service.catalog, photo_smart_collections.detail, smart_id,
+                                  instance_token=instance_token)
+    collection, rule = info["collection"], info["rule"]
+    if collection["execution_kind"] == "FILTER":
+        binding = [int(smart_id), str(instance_token), int(collection["rule_revision"]),
+                   int(collection["exclusions_revision"]), order]
+        position = photo_smart_collections._cursor_decode(cursor, "psf1", binding)
+        if position is not None and (not isinstance(position, list) or len(position) != 2):
+            raise ApiError(INVALID_CURSOR, "智能合集游标无效，请刷新", status=409)
+        inner_session, inner_cursor = (position if position else [None, None])
+        seed_values = dict(rule["request"])
+        seed_values["request_id"] = "smart-page-seed-" + secrets.token_hex(8)
+        seed = PlaceAwareSearchRequestModel.model_validate(seed_values)
+        if position is not None:
+            # The cursor binds the exclusions revision; a changed set is rejected above.
+            pass
+        output_hits: list[dict[str, Any]] = []
+        raw_more = False
+        scans = 0
+        while len(output_hits) < int(limit) and scans < 100:
+            remaining = int(limit) - len(output_hits)
+            query = seed.model_copy(update={"request_id": "smart-page-" + secrets.token_hex(8),
+                "cursor": inner_cursor, "search_session_id": inner_session, "page_size": remaining})
+            page = await run_catalog_search(service.catalog, _place_aware_search_worker, query,
+                context=context, data_root=service.data_root)
+            ids = [int(hit["asset_id"]) for hit in page.get("hits", [])]
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                excluded = {int(row[0]) for row in service.catalog.read_all(
+                    f"SELECT asset_id FROM photo_smart_exclusions WHERE smart_id=? AND asset_id IN ({marks})",
+                    (int(smart_id), *ids))}
+                output_hits.extend(hit for hit in page.get("hits", []) if int(hit["asset_id"]) not in excluded)
+            raw_more = bool(page.get("has_more"))
+            inner_session, inner_cursor = page.get("search_session_id"), page.get("next_cursor")
+            scans += 1
+            if not raw_more:
+                break
+        selected = output_hits[:int(limit)]
+        ids = [int(hit["asset_id"]) for hit in selected]
+        assets = _photo_smart_summaries(service, ids)
+        return {"collection": collection, "assets": assets, "hits": selected,
+                "has_more": raw_more, "next_cursor": photo_smart_collections._cursor_encode(
+                    "psf1", binding, [inner_session, inner_cursor]) if raw_more else None,
+                "freshness": "CURRENT", "coverage": "DYNAMIC"}
+    if info["collection"]["freshness"] != "CURRENT":
+        return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
+                "freshness": collection["freshness"], "coverage": "BOUNDED",
+                "refresh_required": True}
+    return await run_catalog_read(service.catalog, photo_smart_collections.ranked_assets_page,
+        service.media_cache(), smart_id, instance_token=instance_token, limit=limit, cursor=cursor, order=order)
+
+
+def _photo_smart_summaries(service: Any, asset_ids: list[int]) -> list[dict[str, Any]]:
+    if not asset_ids:
+        return []
+    from photo_search.api.queries import locations_by_asset, summarize_asset
+
+    marks = ",".join("?" for _ in asset_ids)
+    rows = service.catalog.read_all(
+        f"SELECT asset_id,sha256,byte_size,created_at FROM assets WHERE asset_id IN ({marks})", tuple(asset_ids))
+    by_id = {int(row["asset_id"]): row for row in rows}
+    locations = locations_by_asset(service.catalog, asset_ids)
+    return [summarize_asset(service.media_cache(), asset_id=asset_id, sha256=str(by_id[asset_id]["sha256"]),
+        byte_size=int(by_id[asset_id]["byte_size"]), created_at=int(by_id[asset_id]["created_at"]),
+        locations=locations.get(asset_id, [])) for asset_id in asset_ids if asset_id in by_id]
+
+
+@router.put("/photo-smart-collections/{smart_id}/exclusions/{asset_id}", summary="Exclude a photo from a smart collection")
+async def put_photo_smart_exclusion(payload: PhotoSmartExclusionRequest, request: Request,
+                                   smart_id: int, asset_id: int) -> dict[str, Any]:
+    return photo_smart_collections.set_exclusion(service_of(request).catalog, smart_id, asset_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision, excluded=True)
+
+
+@router.delete("/photo-smart-collections/{smart_id}/exclusions/{asset_id}", summary="Restore a smart collection exclusion")
+async def delete_photo_smart_exclusion(payload: PhotoSmartExclusionRequest, request: Request,
+                                      smart_id: int, asset_id: int) -> dict[str, Any]:
+    return photo_smart_collections.set_exclusion(service_of(request).catalog, smart_id, asset_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision, excluded=False)
 
 
 @router.get("/photo-collections/{collection_id}/assets", summary="Page ordinary photo collection members")

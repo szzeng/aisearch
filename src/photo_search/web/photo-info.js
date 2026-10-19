@@ -8,6 +8,52 @@
   var DETAIL_RETURN_KEY = "aisearch.photo-detail-return.v1";
   var DETAIL_RETURN_PATHS = { home: "/", search: "/search", persons: "/persons", places: "/places", map: "/map" };
 
+  function actionDialog(options) {
+    options = options || {};
+    return new Promise(function (resolve) {
+      var dialog = document.createElement("dialog");
+      dialog.className = "photo-action-dialog";
+      dialog.setAttribute("aria-labelledby", "photo-action-dialog-title");
+      var form = document.createElement("form"); form.method = "dialog";
+      var title = document.createElement("h2"); title.id = "photo-action-dialog-title"; title.textContent = options.title || "照片合集";
+      form.appendChild(title);
+      if (options.message) { var message = document.createElement("p"); message.textContent = options.message; form.appendChild(message); }
+      var control = null;
+      if (options.kind === "text") {
+        control = document.createElement("input"); control.type = "text"; control.maxLength = 80;
+        control.value = options.value || ""; control.required = true; control.setAttribute("aria-label", options.label || "名称");
+      } else if (options.kind === "select") {
+        control = document.createElement("select"); control.required = true; control.setAttribute("aria-label", options.label || "选择合集");
+        (options.options || []).forEach(function (item) {
+          var option = document.createElement("option"); option.value = String(item.value); option.textContent = String(item.label);
+          control.appendChild(option);
+        });
+      }
+      if (control) form.appendChild(control);
+      var actions = document.createElement("div"); actions.className = "photo-action-dialog-actions";
+      var cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "取消";
+      var submit = document.createElement("button"); submit.type = "submit"; submit.textContent = options.confirmLabel || "确定";
+      actions.append(cancel, submit); form.appendChild(actions); dialog.appendChild(form); document.body.appendChild(dialog);
+      var settled = false;
+      function finish(value) {
+        if (settled) return;
+        settled = true;
+        if (dialog.open) dialog.close();
+        dialog.remove(); resolve(value);
+      }
+      cancel.addEventListener("click", function () { finish(null); });
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        if (control && !form.reportValidity()) return;
+        finish(options.kind === "confirm" ? true : control ? control.value : true);
+      });
+      dialog.addEventListener("cancel", function (event) { event.preventDefault(); finish(null); });
+      dialog.addEventListener("click", function (event) { if (event.target === dialog) finish(null); });
+      dialog.showModal();
+      if (control) control.focus(); else submit.focus();
+    });
+  }
+
   function detailReturnPath(value, source) {
     try {
       var url = new URL(String(value || ""), window.location.origin);
@@ -883,5 +929,6 @@
     setAsset(assetId);
     return handle;
   }
-  window.AIPhotoInfo = { render: render, open: open, navigateToDetails: saveDetailReturn, consumeDetailReturn: consumeDetailReturn, restoreDetailReturn: restoreDetailReturn };
+  window.AIPhotoInfo = { render: render, open: open, navigateToDetails: saveDetailReturn, consumeDetailReturn: consumeDetailReturn, restoreDetailReturn: restoreDetailReturn,
+    actionDialog: actionDialog };
 })();

@@ -508,6 +508,46 @@ class PhotoCollectionAppendFromSearchRequest(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
+class PhotoSmartCollectionFromSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr = Field(min_length=1, max_length=80)
+    create_request_id: StrictStr = Field(min_length=1, max_length=128)
+    source_token: StrictStr = Field(min_length=16, max_length=256)
+
+
+class PhotoSmartRuleReplaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+    request_id: StrictStr = Field(min_length=1, max_length=128)
+    source_token: StrictStr = Field(min_length=16, max_length=256)
+
+
+class PhotoSmartCollectionRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+    name: StrictStr = Field(min_length=1, max_length=80)
+
+
+class PhotoSmartCollectionDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+
+
+class PhotoSmartExclusionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+
+
+class PhotoSmartRefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    manual: StrictBool = False
+
+
 class ScanState(BaseModel):
     """The ``scan_runs`` projection a job listing may show."""
 

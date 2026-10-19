@@ -9,13 +9,13 @@
     <link rel="stylesheet" href="/web/styles.css?v=p4-photo-collection-a-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
-    <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" />
+    <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-collection-a-2" />
     <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
-    <script src="/web/photo-info.js?v=p4-photo-collection-a-1" defer></script>
+    <script src="/web/photo-info.js?v=p4-photo-collection-a-2" defer></script>
     <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-photo-collection-a-2" defer></script>
+    <script src="/web/app.js?v=p4-photo-smart-collection-a-4" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -285,7 +285,11 @@
 
       <section id="view-photo-collections" class="view gallery-management-page" hidden aria-labelledby="view-photo-collections-title">
         <h2 id="view-photo-collections-title">照片合集</h2>
-        <p class="page-intro">普通照片合集保存你确认的照片；新照片不会自动加入。</p>
+        <p class="home-actions" role="group" aria-label="照片合集类型">
+          <button id="photo-collections-tab-ordinary" type="button" aria-pressed="true">普通合集</button>
+          <button id="photo-collections-tab-smart" type="button" aria-pressed="false">智能合集</button>
+        </p>
+        <p class="page-intro" id="photo-collections-intro">普通照片合集保存你确认的照片；新照片不会自动加入。</p>
         <form id="photo-collection-create" class="home-actions">
           <label for="photo-collection-name">新合集名称</label>
           <input id="photo-collection-name" maxlength="80" required />
@@ -294,6 +298,12 @@
         <div id="photo-collections-status" class="state-block" role="status" aria-live="polite"></div>
         <ul id="photo-collections-list" class="sources"></ul>
         <button id="photo-collections-more" type="button" hidden>加载更多</button>
+        <div id="photo-smart-collections-panel" hidden>
+          <p class="hint">智能合集按已确认的筛选或搜索规则动态更新；文字和综合搜索最多保留 5000 个候选。</p>
+          <div id="photo-smart-collections-status" class="state-block" role="status" aria-live="polite"></div>
+          <ul id="photo-smart-collections-list" class="sources"></ul>
+          <button id="photo-smart-collections-more" type="button" hidden>加载更多</button>
+        </div>
       </section>
 
       <section id="view-photo-collection" class="view gallery-management-page" hidden aria-labelledby="photo-collection-detail-title">
@@ -304,6 +314,24 @@
         <div id="photo-collection-assets" class="grid" aria-label="照片合集照片"></div>
         <button id="photo-collection-more" type="button" hidden>加载更多</button>
         <div id="photo-collection-timeline" class="photo-timeline" hidden aria-label="照片合集时间轴"></div>
+      </section>
+
+      <section id="view-photo-smart-collection" class="view gallery-management-page" hidden aria-labelledby="photo-smart-detail-title">
+        <p><a href="/?view=photo-collections&kind=smart">返回智能合集</a></p>
+        <h2 id="photo-smart-detail-title">智能照片合集</h2>
+        <p id="photo-smart-rule-summary" class="page-intro"></p>
+        <p class="home-actions" role="group" aria-label="智能合集操作">
+          <button id="photo-smart-refresh" type="button">刷新排名缓存</button>
+          <button id="photo-smart-show-results" type="button" aria-pressed="true">匹配结果</button>
+          <button id="photo-smart-show-exclusions" type="button" aria-pressed="false">已排除</button>
+          <label for="photo-smart-order">排序</label>
+          <select id="photo-smart-order"><option value="rank">相关度</option><option value="capture_desc">拍摄时间</option></select>
+          <button id="photo-smart-replace-rule" type="button">用新搜索替换规则</button>
+          <button id="photo-smart-delete" type="button">删除智能合集</button>
+        </p>
+        <p id="photo-smart-detail-status" class="state-block" role="status" aria-live="polite"></p>
+        <div id="photo-smart-assets" class="grid" aria-label="智能合集照片"></div>
+        <button id="photo-smart-more" type="button" hidden>加载更多</button>
       </section>
     </main>
 </div><!-- .app-workspace -->

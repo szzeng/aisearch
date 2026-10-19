@@ -185,6 +185,11 @@ def sync_document(connection: sqlite3.Connection, asset_id: int, *, now_ms: int)
         cursor = connection.execute(
             "DELETE FROM search_documents WHERE asset_id = ?", (int(asset_id),)
         )
+        if cursor.rowcount:
+            connection.execute(
+                "UPDATE metadata SET value=CAST(value AS INTEGER)+1 "
+                "WHERE key='photo_smart_fts_publish_revision'"
+            )
         return "removed" if cursor.rowcount else "unchanged"
     current = document_row(connection, int(asset_id))
     if (
@@ -219,6 +224,11 @@ def sync_document(connection: sqlite3.Connection, asset_id: int, *, now_ms: int)
             int(now_ms),
         ),
     )
+    # The revision shares the caller's SQLite transaction with the FTS projection write.
+    connection.execute(
+        "UPDATE metadata SET value=CAST(value AS INTEGER)+1 "
+        "WHERE key='photo_smart_fts_publish_revision'"
+    )
     return "written"
 
 
@@ -227,6 +237,11 @@ def delete_document(connection: sqlite3.Connection, asset_id: int) -> bool:
     cursor = connection.execute(
         "DELETE FROM search_documents WHERE asset_id = ?", (int(asset_id),)
     )
+    if cursor.rowcount:
+        connection.execute(
+            "UPDATE metadata SET value=CAST(value AS INTEGER)+1 "
+            "WHERE key='photo_smart_fts_publish_revision'"
+        )
     return bool(cursor.rowcount)
 
 

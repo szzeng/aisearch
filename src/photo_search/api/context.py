@@ -88,6 +88,7 @@ class ApiContext:
         self._refresher: LibraryRefresher | None = None
         self._face_detail_runner: FaceDetailRunner | None = None
         self._face_detail_recovery_started = False
+        self._photo_smart_refresh_runner: Any | None = None
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -101,6 +102,7 @@ class ApiContext:
         token = secrets.token_urlsafe(32)
         now = time.time_ns() // 1_000_000
         clean_payload = json.loads(json.dumps(payload, ensure_ascii=False))
+        query_block = result.get("query") if isinstance(result.get("query"), dict) else {}
         value = {
             "auth_session_hash": hashlib.sha256(str(auth_session_id).encode()).hexdigest(),
             "expires_at_ms": now + 600_000,
@@ -109,6 +111,13 @@ class ApiContext:
             "catalog_filter_revision": result.get("catalog_filter_revision"),
             "suggestion_revision": result.get("suggestion_revision"),
             "favorites_revision": result.get("favorites_revision"),
+            "search_binding": {
+                "profile_id": result.get("profile_id"),
+                "space_id": result.get("space_id"),
+                "image_generation_id": result.get("image_generation_id"),
+                "dimension": result.get("dimension"),
+                "fts_generation_id": result.get("fts_generation_id") or query_block.get("fts_generation_id"),
+            },
             "search_scope": result.get("search_scope"),
             "place_scope": result.get("place_scope"),
             "collection_scope": result.get("collection_scope"),
@@ -217,6 +226,14 @@ class ApiContext:
             self._face_detail_runner = FaceDetailRunner(self._service_factory)
         return self._face_detail_runner
 
+    def photo_smart_refresh_runner(self) -> Any:
+        """One bounded smart-search worker; its durable lease coordinates app instances."""
+        if self._photo_smart_refresh_runner is None:
+            from photo_search.photo_smart_collections import SmartRefreshRunner
+
+            self._photo_smart_refresh_runner = SmartRefreshRunner(self)
+        return self._photo_smart_refresh_runner
+
     def query_encoder(self) -> QueryEncoder | None:
         """The query half of the embedding adapter, or ``None`` when none is wired.
 
@@ -287,6 +304,13 @@ class ApiContext:
                 face_detail_runner.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("stopping the source-detail face runner failed", exc_info=True)
+        smart_runner = self._photo_smart_refresh_runner
+        self._photo_smart_refresh_runner = None
+        if smart_runner is not None:
+            try:
+                smart_runner.close()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the smart collection refresh runner failed", exc_info=True)
         runner = self._runner
         self._runner = None
         if runner is not None:
