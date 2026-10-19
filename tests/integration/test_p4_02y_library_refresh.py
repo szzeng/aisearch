@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import threading
 from collections.abc import Callable, Sequence
@@ -807,7 +808,8 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     assert first["cr2_recovery_jobs"] == 1
     candidate_query = next(sql for sql, _ in captured if "FROM jobs j JOIN assets a" in sql)
     artifact_query = next(
-        sql for sql, _ in captured if "FROM artifacts INDEXED BY idx_artifacts_job" in sql
+        sql for sql, _ in captured
+        if "FROM artifacts WHERE processor_id=? AND input_revision IN (" in sql
     )
     candidate_params = next(params for sql, params in captured if sql == candidate_query)
     artifact_params = next(params for sql, params in captured if sql == artifact_query)
@@ -817,8 +819,12 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     artifact_details = " ".join(str(row["detail"]) for row in artifact_plan)
     assert "idx_jobs_subject" in candidate_details
     assert "SCAN j" not in candidate_details
-    assert "idx_artifacts_job" in artifact_details
+    assert "SEARCH artifacts USING INDEX sqlite_autoindex_artifacts_2" in artifact_details
+    assert "sqlite_autoindex_artifacts_2" in artifact_details
     assert "SCAN artifacts" not in artifact_details
+    assert "input_revision IN" in artifact_query
+    assert "artifact_type='structured'" in artifact_query
+    assert "job_id IN" not in artifact_query
     assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "QUEUED"
     saved = catalog.read_one("SELECT * FROM cr2_job_recoveries WHERE job_id=?", (job_id,))
     assert saved["source_error_code"] == "FORMAT_UNSUPPORTED"
@@ -855,6 +861,119 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     )
     assert empty_scope["cr2_recovery_candidates"] == 0
     assert len(captured) == before_empty_scope
+
+
+def test_cr2_recovery_honors_shared_manual_auto_source_detail_artifact(env: RefreshEnv) -> None:
+    """The logical artifact may belong to the other job sharing its content identity."""
+    catalog = env.service().catalog
+    asset = catalog.read_one(
+        "SELECT a.asset_id,l.location_id,l.relative_path FROM assets a "
+        "JOIN file_locations l ON l.asset_id=a.asset_id WHERE l.availability='PRESENT' "
+        "ORDER BY a.asset_id LIMIT 1"
+    )
+    assert asset is not None
+    asset_id = int(asset["asset_id"])
+    original = env.library / str(asset["relative_path"])
+    cr2_path = original.with_suffix(".cr2")
+    if cr2_path.exists():
+        cr2_path.unlink()
+    original.rename(cr2_path)
+    content = b"II*\x00\x08\x00\x00\x00CR\x02\x00shared-source-detail"
+    cr2_path.write_bytes(content)
+    revision = hashlib.sha256(content).hexdigest()
+    now_ms = catalog.now_ms()
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE assets SET sha256=?,byte_size=? WHERE asset_id=?",
+            (revision, len(content), asset_id),
+        )
+        relative = cr2_path.relative_to(env.library).as_posix()
+        connection.execute(
+            "UPDATE file_locations SET relative_path=?,path_key=? WHERE location_id=?",
+            (relative, relative.casefold(), int(asset["location_id"])),
+        )
+        manual_job_id = jobs.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(asset_id),
+            input_revision=revision,
+            task_type=face_contract.FACE_DETAIL_TASK_TYPE,
+            processor_id=face_contract.FACE_PROCESSOR_ID,
+            now_ms=now_ms,
+        )
+        automatic_job_id = jobs.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(asset_id),
+            input_revision=revision,
+            task_type=face_contract.FACE_DETAIL_AUTO_TASK_TYPE,
+            processor_id=face_contract.FACE_PROCESSOR_ID,
+            now_ms=now_ms,
+        )
+        connection.execute(
+            "UPDATE jobs SET state='SUCCEEDED',attempts=1 WHERE job_id=?", (manual_job_id,)
+        )
+        connection.execute(
+            "UPDATE jobs SET state='FAILED',attempts=1,last_error_code='FORMAT_UNSUPPORTED',"
+            "last_error_message='legacy automatic detail decode failure' WHERE job_id=?",
+            (automatic_job_id,),
+        )
+
+    payload = {
+        "processor_id": face_contract.FACE_PROCESSOR_ID,
+        "input_revision": revision,
+        "spec_revision": face_contract.FACE_DETAIL_SPEC_REVISION,
+        "artifact_revision": face_contract.FACE_DETAIL_ARTIFACT_REVISION,
+    }
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    checksum = hashlib.sha256(body).hexdigest()
+    storage_uri = f"artifacts/pending/test/{checksum}.json"
+    artifact_path = env.data_root / storage_uri
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(body)
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO artifacts(artifact_id,processor_id,input_revision,artifact_type,"
+            "artifact_revision,media_type,checksum_sha256,byte_size,storage_uri,space_id,"
+            "dimension,job_id,lifecycle_state,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL,?,'PUBLISHED',?,?)",
+            (
+                "face-document:shared-manual-auto-detail",
+                face_contract.FACE_PROCESSOR_ID,
+                revision,
+                "structured",
+                face_contract.FACE_DETAIL_ARTIFACT_REVISION,
+                "application/json",
+                checksum,
+                len(body),
+                storage_uri,
+                manual_job_id,
+                now_ms,
+                now_ms,
+            ),
+        )
+
+    result = recover_cr2_format_failures(
+        catalog,
+        data_root=env.data_root,
+        asset_ids=[asset_id],
+        source_ids=[1],
+        task_type=face_contract.FACE_DETAIL_AUTO_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        artifact_revision=face_contract.FACE_DETAIL_ARTIFACT_REVISION,
+    )
+    assert result["cr2_recovery_jobs"] == 0
+    assert result["cr2_recovery_published_skips"] == 1
+    assert catalog.read_one(
+        "SELECT state FROM jobs WHERE job_id=?", (automatic_job_id,)
+    )["state"] == "FAILED"
+    assert catalog.read_one(
+        "SELECT job_id FROM artifacts WHERE input_revision=? AND artifact_revision=?",
+        (revision, face_contract.FACE_DETAIL_ARTIFACT_REVISION),
+    )["job_id"] == manual_job_id
+    assert catalog.read_one(
+        "SELECT 1 FROM cr2_job_recoveries WHERE job_id=?", (automatic_job_id,)
+    ) is None
 
 
 def test_asset_target_queries_and_face_job_lookup_are_bounded(env: RefreshEnv, monkeypatch) -> None:

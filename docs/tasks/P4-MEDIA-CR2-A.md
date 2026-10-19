@@ -164,3 +164,10 @@
 - 合成 6000×4000 冷缓存计时 253.62ms→217.03–227.70ms，RAW 解码 2→1 次；暖跑 0.62–0.65ms、0 decode/0 新缓存。8-ID 历史恢复 SQL 重复 100 次共 800 行：230.26ms→4.14ms；EXPLAIN 验证索引。最终两种缓存仍都需要，磁盘占用没有减少；数据只代表本机合成对照。
 - 受影响组合 52 passed；OCR 重复 drain 因 pinned 权重缺件 skip。Luna High 首轮发现配对回退可能越过来源范围，现已在 `build()` 与非 CR2 fallback 传递 `source_ids` 并以合成用例覆盖；跟进复核确认 P2 关闭、无新增问题。此为本专项 Luna H 复核，不替代本任务卡要求的完整恢复面 DS-H。
 - 真实 RAW/LibRaw、真实人物/OCR 模型、完整来源续建、浏览器、30 万图库和独立 DS-H 仍未验；详细证据及报告链接见[专项执行报告](../reports/P4-MEDIA-CR2-A.md#2026-10-19-专项性能审查与最小优化)。整卡仍 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**。
+
+
+### Artifact identity 恢复查询复核（2026-10-19）
+
+- `artifacts.job_id` 是首次发布者身份；去重唯一性依赖 `(processor_id,input_revision,artifact_type,artifact_revision)`。手动与自动 source-detail job 可合法共享同一 published structured artifact。恢复查询已从候选 job ID 匹配调整为当前页候选 SHA 的完整逻辑身份批量匹配，EXPLAIN 确认使用现有复合唯一索引；没有 schema/job/marker 语义变化。
+- 合成回归以手动 detail job 持有共享 artifact、自动 detail job 留有旧 `FORMAT_UNSUPPORTED` 为输入，验证现有产物会阻止误恢复；无共享产物的旧恢复测试仍验证一次性 rewind。两项定向测试通过；EXPLAIN 断言复合唯一索引 SEARCH。详见[执行报告](../reports/P4-MEDIA-CR2-A.md#2026-10-19-artifact-identity-recovery-sql-follow-up)。
+- 未访问真实图库、未做 30 万测试、未重新测 RAW；真实 CR2/模型、完整恢复矩阵及独立 DS-H 等原验收边界仍待完成。本卡状态不变。

@@ -109,21 +109,22 @@ def recover_cr2_format_failures(
     if not candidates:
         return result
 
-    candidate_job_ids = sorted({int(row["job_id"]) for row in candidates})
-    artifact_slots = ",".join("?" for _ in candidate_job_ids)
+    candidate_revisions = sorted({str(row["input_revision"]) for row in candidates})
+    artifact_slots = ",".join("?" for _ in candidate_revisions)
     artifact_rows = catalog.read_all(
-        "SELECT * FROM artifacts INDEXED BY idx_artifacts_job WHERE job_id IN ("
+        "SELECT * FROM artifacts WHERE processor_id=? AND input_revision IN ("
         + artifact_slots
-        + ") AND processor_id=? AND artifact_revision=? AND lifecycle_state='PUBLISHED'",
-        (*candidate_job_ids, str(processor_id), str(artifact_revision)),
+        + ") AND artifact_type='structured' AND artifact_revision=? "
+        "AND lifecycle_state='PUBLISHED'",
+        (str(processor_id), *candidate_revisions, str(artifact_revision)),
     )
-    artifact_by_job_id: dict[int, list[Any]] = {}
+    artifact_by_revision: dict[str, list[Any]] = {}
     for artifact in artifact_rows:
-        artifact_by_job_id.setdefault(int(artifact["job_id"]), []).append(artifact)
+        artifact_by_revision.setdefault(str(artifact["input_revision"]), []).append(artifact)
 
     store = ArtifactStore.open(data_root)
     for row in candidates:
-        artifacts = artifact_by_job_id.get(int(row["job_id"]), [])
+        artifacts = artifact_by_revision.get(str(row["input_revision"]), [])
         if artifacts:
             try:
                 for artifact in artifacts:
