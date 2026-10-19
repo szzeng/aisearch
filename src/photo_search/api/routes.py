@@ -75,6 +75,9 @@ from photo_search.api.models import (
     FaceRegroupRequest,
     FaceRegroupResponse,
     FaceRematchRequest,
+    FavoriteListResponse,
+    FavoriteStatesResponse,
+    FavoriteWriteResponse,
     FeedbackListResponseModel,
     FeedbackRequestModel,
     FeedbackResponseModel,
@@ -166,6 +169,7 @@ from photo_search.catalog.errors import (
 from photo_search.catalog.migrate import catalog_info
 from photo_search.config import catalog_db_path
 from photo_search.face.weights import weights_present as face_weights_present
+from photo_search.favorites import favorite_states, list_favorites, set_favorite
 from photo_search.geo import resolver as geo_resolver
 from photo_search.ingestion.service import CatalogService
 from photo_search.media.cache import MediaCache
@@ -902,6 +906,36 @@ async def get_job(request: Request, job_id: int) -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------ assets
+@router.get("/favorites", response_model=FavoriteListResponse, summary="Paged favorite photos")
+async def get_favorites(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=50),
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    service = service_of(request)
+    return await run_catalog_read(
+        service.catalog, list_favorites, service.media_cache(), limit=limit, cursor=cursor
+    )
+
+
+@router.get("/favorites/states", response_model=FavoriteStatesResponse, summary="Batch favorite states")
+async def get_favorite_states(
+    request: Request,
+    asset_ids: list[int] = Query(..., min_length=1, max_length=100),
+) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, favorite_states, asset_ids)
+
+
+@router.put("/assets/{asset_id}/favorite", response_model=FavoriteWriteResponse, summary="Favorite a photo")
+async def put_favorite(request: Request, asset_id: int) -> dict[str, Any]:
+    return set_favorite(service_of(request).catalog, asset_id, favorite=True)
+
+
+@router.delete("/assets/{asset_id}/favorite", response_model=FavoriteWriteResponse, summary="Unfavorite a photo")
+async def delete_favorite(request: Request, asset_id: int) -> dict[str, Any]:
+    return set_favorite(service_of(request).catalog, asset_id, favorite=False)
+
+
 @router.get(
     "/assets",
     response_model=AssetListResponse,

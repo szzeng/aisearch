@@ -6,15 +6,15 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-gallery-list-layout-a-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-core-a-3" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-ui2-shell-sticky-a-1" />
     <script src="/web/map-config.js" defer></script>
-    <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-face-manage-a-refresh-1" />
-    <script src="/web/photo-info.js?v=p4-photo-face-manage-a-refresh-2" defer></script>
+    <link rel="stylesheet" href="/web/photo-info.css?v=p4-favorites-core-a-1" />
+    <script src="/web/photo-info.js?v=p4-favorites-core-a-1" defer></script>
     <script src="/web/photo-timeline.js?v=p4-face-refresh-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-upstream-sync-20261016-2" defer></script>
+    <script src="/web/app.js?v=p4-favorites-core-a-3" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -23,7 +23,7 @@
     <aside class="app-sidebar" aria-label="应用导航">
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
-        <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
         <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>
@@ -178,17 +178,17 @@
       <section id="view-browse" class="view photos-page" hidden aria-labelledby="view-browse-title">
         <div class="photos-page-heading">
           <h2 id="view-browse-title">全部照片</h2>
-          <div class="browse-mode-controls" role="group" aria-label="照片浏览方式">
+          <div id="browse-mode-controls" class="browse-mode-controls" role="group" aria-label="照片浏览方式">
             <button type="button" id="browse-show-timeline" aria-pressed="true" hidden>时间轴</button>
             <button type="button" id="browse-show-list" aria-pressed="false">列表与高级日期条件</button>
           </div>
         </div>
-        <p class="hint">
+        <p id="browse-intro" class="hint">
           “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。
           「拍摄时间」只来自文件自身声明的时间（EXIF 原始/数字化时间）；文件系统修改时间
           与 EXIF 根时间一律显示为「文件时间」，不参与拍摄时间范围筛选，也绝不被伪装成拍摄时间。
         </p>
-        <div class="browse-controls">
+        <div id="browse-controls" class="browse-controls">
           <label for="browse-source">图库筛选</label>
           <select id="browse-source">
             <option value="">全部图库</option>
@@ -245,6 +245,7 @@
         <div id="browse-timeline" hidden aria-label="照片时间轴"></div>
         <div id="browse-list-view">
         <div id="browse-status" class="state-block" role="status" aria-live="polite"></div>
+        <button type="button" id="favorites-reload" hidden>刷新收藏</button>
         <ol id="asset-grid" class="grid" aria-label="按加入时间排列的图片"></ol>
         <div id="grid-sentinel" class="sentinel" hidden></div>
         <p>

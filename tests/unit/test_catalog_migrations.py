@@ -31,6 +31,7 @@ CORE_TABLES = {
     # P4-00B: the derived taken-time fact of every already-processed asset (ADR-0011 §2), plus
     # the library-level ``taken_time_rules_version`` key inside ``metadata``.
     "asset_metadata",
+    "asset_favorites",
     # P3-01: the current OCR document of every asset and its per-region metadata.
     "asset_ocr_regions",
     "asset_ocr_text",

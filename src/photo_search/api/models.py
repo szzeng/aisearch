@@ -401,6 +401,29 @@ class AssetListResponse(BaseModel):
     search: SearchProjectionSummary | None = None
 
 
+class FavoriteAssetSummary(AssetSummary):
+    favorited_at_ms: int
+
+
+class FavoriteListResponse(BaseModel):
+    assets: list[FavoriteAssetSummary]
+    next_cursor: str | None = None
+    has_more: bool
+    favorites_revision: int
+
+
+class FavoriteStatesResponse(BaseModel):
+    favorite_asset_ids: list[int]
+    favorites_revision: int
+
+
+class FavoriteWriteResponse(BaseModel):
+    asset_id: int
+    is_favorite: bool
+    changed: bool
+    favorites_revision: int
+
+
 class ScanState(BaseModel):
     """The ``scan_runs`` projection a job listing may show."""
 

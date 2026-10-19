@@ -68,6 +68,8 @@
     sourcesRequestVersion: 0,
     detailPreviewFit: null,
     browse: {
+      scope: "all",
+      favoritesRevision: null,
       sourceId: "",
       order: "time_desc",
       captureFrom: "",
@@ -1250,7 +1252,7 @@
   }
 
   function updateSearchScopeAction() {
-    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive) {
+    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive || state.browse.scope === "favorites") {
       if (els.setSearchScopeAction) els.setSearchScopeAction(null, "");
       return;
     }
@@ -1272,6 +1274,42 @@
       els.browseScopeName,
       selected ? "当前仅查看「" + selected.display_name + " · #" + selected.source_id + "」" : ""
     );
+  }
+
+  function setBrowseScope(scope) {
+    var next = scope === "favorites" ? "favorites" : "all";
+    if (state.browse.scope === next) return;
+    state.browse.scope = next;
+    state.browse.sourceId = "";
+    state.browse.order = "time_desc";
+    state.browse.captureFrom = "";
+    state.browse.captureTo = "";
+    state.browse.favoritesRevision = null;
+    state.browse.loaded = false;
+    state.browse.cursor = null;
+    state.browse.hasMore = false;
+    state.browse.returnContext = null;
+    state.browse.returnPending = false;
+    if (els.browseSource) els.browseSource.value = "";
+    if (els.browseOrder) els.browseOrder.value = "time_desc";
+    if (els.browseCaptureFrom) els.browseCaptureFrom.value = "";
+    if (els.browseCaptureTo) els.browseCaptureTo.value = "";
+    var favorites = next === "favorites";
+    if (els.browseTitle) text(els.browseTitle, favorites ? "我的收藏" : "全部照片");
+    if (els.browseIntro) {
+      text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "“加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。\n“拍摄时间”只来自文件自身声明的时间；文件系统修改时间与 EXIF 根时间不参与拍摄时间范围筛选。");
+    }
+    if (els.browseModeControls) els.browseModeControls.hidden = favorites;
+    if (els.favoritesReload) els.favoritesReload.hidden = !favorites;
+    if (els.browseControls) els.browseControls.hidden = favorites;
+    if (els.browseScope) els.browseScope.hidden = favorites;
+    if (els.browseListTimeHint) els.browseListTimeHint.hidden = favorites || state.browse.mode === "timeline";
+    if (els.browseTimelineNote) els.browseTimelineNote.hidden = favorites || state.browse.mode !== "timeline";
+    if (els.browseCaptureState) els.browseCaptureState.hidden = favorites || state.browse.mode === "timeline";
+    if (els.browseTimeline) els.browseTimeline.hidden = favorites || state.browse.mode !== "timeline";
+    if (els.browseListView) els.browseListView.hidden = false;
+    if (state.browse.pager) state.browse.pager.setEnabled(!favorites && state.browse.mode === "list");
+    updateSearchScopeAction();
   }
 
   function startScan(sourceId) {
@@ -1771,6 +1809,7 @@
   }
 
   function showBrowseMode(mode) {
+    if (state.browse.scope === "favorites") mode = "list";
     var useTimeline = mode === "timeline";
     state.browse.mode = useTimeline ? "timeline" : "list";
     els.browseTimeline.hidden = !useTimeline;
@@ -1781,7 +1820,7 @@
     els.browseShowList.setAttribute("aria-pressed", useTimeline ? "true" : "false");
     els.browseCaptureState.hidden = useTimeline;
     els.browseListFilters.hidden = useTimeline;
-    els.browseListTimeHint.hidden = useTimeline;
+    els.browseListTimeHint.hidden = state.browse.scope === "favorites" || useTimeline;
     els.browseTimelineNote.hidden = !useTimeline;
     if (!useTimeline) {
       if (state.browse.pager) state.browse.pager.setEnabled(true);
@@ -1844,7 +1883,7 @@
   }
 
   function loadBrowse(reset) {
-    if (state.browse.mode === "timeline") return;
+    if (state.browse.scope !== "favorites" && state.browse.mode === "timeline") return;
     if (reset) {
       state.browse.requestVersion += 1;
       releaseObjectUrls();
@@ -1863,6 +1902,7 @@
       if (reset) state.browse.owed = true;
       return Promise.resolve(false);
     }
+    if (state.browse.scope === "favorites") return loadFavorites(reset);
     if (continuationRefused(reset)) {
       return Promise.resolve(false);
     }
@@ -1953,6 +1993,53 @@
         }
         return false;
       });
+  }
+
+  function loadFavorites(reset) {
+    if (state.browse.loading) {
+      if (reset) state.browse.owed = true;
+      return Promise.resolve(false);
+    }
+    state.browse.loading = true;
+    var requestVersion = state.browse.requestVersion;
+    var params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
+    if (state.browse.cursor) params.set("cursor", state.browse.cursor);
+    setStatus(els.browseStatus, reset ? "正在读取收藏…" : "正在读取下一页收藏…");
+    return request("/favorites?" + params.toString()).then(function (result) {
+      if (requestVersion !== state.browse.requestVersion || state.browse.scope !== "favorites") {
+        state.browse.loading = false;
+        if (state.browse.owed) { state.browse.owed = false; loadBrowse(true); }
+        return;
+      }
+      var body = result.body || {};
+      var assets = body.assets || [];
+      assets.forEach(function (asset) { els.assetGrid.appendChild(buildTile(asset)); });
+      if (window.PhotoScrollPager) {
+        state.browse.recycledCount += window.PhotoScrollPager.trimGrid(els.assetGrid, 500);
+      }
+      state.browse.count += assets.length;
+      state.browse.cursor = body.next_cursor || null;
+      state.browse.hasMore = Boolean(body.has_more);
+      state.browse.favoritesRevision = Number(body.favorites_revision);
+      state.browse.loaded = true;
+      state.browse.loading = false;
+      restoreBrowsePosition();
+      setStatus(els.browseStatus, state.browse.count ? "已显示 " + state.browse.count + " 张收藏照片 · 按最近收藏排列" : "还没有收藏照片。打开照片后点击“☆ 收藏”即可加入。");
+      if (els.favoritesReload) els.favoritesReload.hidden = true;
+      els.loadMore.hidden = !state.browse.hasMore;
+      els.gridSentinel.hidden = !state.browse.hasMore;
+      if (state.browse.pager) state.browse.pager.update();
+      if (state.browse.owed) { state.browse.owed = false; loadBrowse(true); }
+    }).catch(function (failure) {
+      state.browse.loading = false;
+      if (requestVersion !== state.browse.requestVersion) return;
+      var hint = failure.code === "FAVORITES_REVISION_STALE" ? " 收藏内容已变化，请刷新后从第一页重新读取。" : "";
+      setStatus(els.browseStatus, "读取收藏失败：" + describe(failure) + hint, "error");
+      if (els.favoritesReload) els.favoritesReload.hidden = false;
+      els.loadMore.hidden = false;
+      if (state.browse.pager) state.browse.pager.update();
+    });
   }
 
   function continuationRefused(reset) {
@@ -2169,6 +2256,7 @@
   function saveBrowseReturn(assetId) {
     var snapshot = {
       assetId: String(assetId),
+      scope: state.browse.scope,
       sourceId: state.browse.sourceId,
       order: state.browse.order,
       captureFrom: state.browse.captureFrom,
@@ -2177,6 +2265,7 @@
       returnAssetId: state.browse.returnAssetId,
       returnAssetTop: state.browse.returnAssetTop,
       count: state.browse.count,
+      savedAt: Date.now(),
       mode: state.browse.mode,
       timelineReturnAnchor: state.browse.timelineReturnAnchor,
     };
@@ -2188,6 +2277,7 @@
     var snapshot = null;
     try { snapshot = JSON.parse(window.sessionStorage.getItem(BROWSE_RETURN_KEY) || "null"); } catch (_error) {}
     if (!snapshot || String(snapshot.assetId) !== String(assetId)) return false;
+    setBrowseScope(snapshot.scope === "favorites" ? "favorites" : "all");
     state.browse.sourceId = String(snapshot.sourceId || "");
     state.browse.order = String(snapshot.order || "time_desc");
     state.browse.captureFrom = String(snapshot.captureFrom || "");
@@ -2209,6 +2299,7 @@
     els.browseOrder.value = state.browse.order;
     els.browseCaptureFrom.value = state.browse.captureFrom;
     els.browseCaptureTo.value = state.browse.captureTo;
+    try { window.sessionStorage.removeItem(BROWSE_RETURN_KEY); } catch (_error) {}
     return true;
   }
 
@@ -2264,7 +2355,30 @@
         saveBrowseReturn(id);
         window.AIPhotoInfo.navigateToDetails(id, "home");
       },
-      onClose: function () { state.detailViewer = null; }
+      onFavoriteChanged: function (id, result) {
+        if (state.browse.scope !== "favorites" || result.is_favorite) return;
+        var scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+        var tile = els.assetGrid.querySelector('[data-asset-id="' + String(id) + '"]');
+        if (tile) tile.remove();
+        state.browse.count = Math.max(0, state.browse.count - 1);
+        state.browse.cursor = null;
+        state.browse.hasMore = false;
+        state.browse.favoritesRevision = Number(result.favorites_revision);
+        state.browse.loaded = false;
+        state.browse.requestVersion += 1;
+        state.browse.loading = false;
+        loadBrowse(true).then(function () {
+          window.requestAnimationFrame(function () { window.scrollTo(0, scrollY); });
+        });
+      },
+      onClose: function () {
+        state.detailViewer = null;
+        if (state.browse.scope === "favorites" && returnTile && !returnTile.isConnected) {
+          var nextTile = els.assetGrid.querySelector(".thumb-frame");
+          if (nextTile) nextTile.focus();
+          else els.browseStatus.focus();
+        }
+      }
     });
   }
 
@@ -2617,7 +2731,9 @@
   function clearHash() {
     if (location.hash) {
       // ``replaceState`` does not fire ``hashchange``, so the view switch stays in charge.
-      history.replaceState(null, "", location.pathname + location.search);
+      var path = location.pathname + location.search;
+      if (path === "/" && state.browse.scope === "favorites") path = "/?view=favorites";
+      history.replaceState(null, "", path);
     }
   }
 
@@ -2637,7 +2753,7 @@
     });
     var shellLinks = document.querySelectorAll ? document.querySelectorAll("[data-shell-page]") : [];
     Array.prototype.forEach.call(shellLinks, function (link) {
-      var activePage = name === "sources" ? "management" : "photos";
+      var activePage = name === "sources" ? "management" : (name === "browse" && state.browse.scope === "favorites" ? "favorites" : "photos");
       if (link.dataset.shellPage === activePage) {
         link.setAttribute("aria-current", "page");
       } else {
@@ -2724,6 +2840,16 @@
       }
     }
     var params = new URLSearchParams(String(location.search || ""));
+    if (!location.hash) {
+      try {
+        var savedBrowse = JSON.parse(window.sessionStorage.getItem(BROWSE_RETURN_KEY) || "null");
+        var expectedScope = params.get("view") === "favorites" ? "favorites" : "all";
+        if (savedBrowse && savedBrowse.scope === expectedScope && Number.isFinite(Number(savedBrowse.savedAt)) && Date.now() - Number(savedBrowse.savedAt) < 30 * 60 * 1000) {
+          restoreBrowseReturn(savedBrowse.assetId);
+        }
+      } catch (_error) {}
+    }
+    setBrowseScope(params.get("view") === "favorites" ? "favorites" : "all");
     showView(params.get("view") === "sources" ? "sources" : "browse");
   }
 
@@ -2811,6 +2937,10 @@
       browseListView: document.getElementById("browse-list-view"),
       browseShowTimeline: document.getElementById("browse-show-timeline"),
       browseShowList: document.getElementById("browse-show-list"),
+      browseTitle: document.getElementById("view-browse-title"),
+      browseIntro: document.getElementById("browse-intro"),
+      browseModeControls: document.getElementById("browse-mode-controls"),
+      browseControls: document.getElementById("browse-controls"),
       browseListFilters: document.getElementById("browse-list-filters"),
       browseListTimeHint: document.getElementById("browse-list-time-hint"),
       browseTimelineNote: document.getElementById("browse-timeline-note"),
@@ -2823,6 +2953,7 @@
       browseCaptureState: document.getElementById("browse-capture-state"),
       assetGrid: document.getElementById("asset-grid"),
       loadMore: document.getElementById("load-more"),
+      favoritesReload: document.getElementById("favorites-reload"),
       gridSentinel: document.getElementById("grid-sentinel"),
       detailBody: document.getElementById("detail-body"),
       navButtons: document.querySelectorAll(".nav-button"),
@@ -2876,6 +3007,7 @@
     document.getElementById("browse-reload").addEventListener("click", function () {
       loadBrowse(true);
     });
+    els.favoritesReload.addEventListener("click", function () { loadBrowse(true); });
     els.browseShowTimeline.addEventListener("click", function () { showBrowseMode("timeline"); });
     els.browseShowList.addEventListener("click", function () { showBrowseMode("list"); });
     els.browseSource.addEventListener("change", function () {

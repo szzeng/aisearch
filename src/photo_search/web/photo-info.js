@@ -571,6 +571,11 @@
     var headingActions = node("div", undefined, "photo-viewer-heading-actions");
     var fullDetails = node("button", "完整详情", "photo-viewer-details"); fullDetails.type = "button";
     fullDetails.setAttribute("aria-label", "打开当前照片的完整详情");
+    var favoriteButton = node("button", "☆ 收藏", "photo-viewer-favorite"); favoriteButton.type = "button";
+    favoriteButton.disabled = true;
+    favoriteButton.setAttribute("aria-pressed", "false");
+    favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
+    headingActions.append(favoriteButton);
     headingActions.append(fullDetails);
     var close = node("button", "关闭", "photo-viewer-close"); close.type = "button";
     close.setAttribute("aria-label", "关闭照片预览"); headingActions.append(close); heading.append(headingActions);
@@ -654,6 +659,10 @@
     function setAsset(nextId, nextOptions) {
       generation++; var thisGeneration = generation;
       currentAssetId = String(nextId); preview.naturalWidth = 0; preview.naturalHeight = 0; preview.scale = 1; preview.mode = "fit"; preview.x = 0; preview.y = 0;
+      var isFavorite = false;
+      favoriteButton.disabled = true; favoriteButton.textContent = "读取收藏…";
+      favoriteButton.setAttribute("aria-pressed", "false");
+      favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
       [zoomOut, fit, actual, zoomIn].forEach(function (button) { button.disabled = true; }); zoomLabel.textContent = "读取尺寸中…";
       imageNote.textContent = "正在加载照片预览…"; image.alt = options.alt || "照片大图"; image.removeAttribute("src");
       if (mounted) mounted.dispose();
@@ -680,6 +689,48 @@
         [zoomOut, fit, actual, zoomIn].forEach(function (button) { button.disabled = false; }); fitPreview();
       };
       image.src = previewUrl;
+      function applyFavoriteState(value) {
+        if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+        isFavorite = value;
+        favoriteButton.disabled = false;
+        favoriteButton.textContent = isFavorite ? "★ 已收藏" : "☆ 收藏";
+        favoriteButton.setAttribute("aria-pressed", isFavorite ? "true" : "false");
+        favoriteButton.setAttribute("aria-label", isFavorite ? "取消收藏" : "收藏这张照片");
+      }
+      function readFavoriteState() {
+        return request("/favorites/states?asset_ids=" + encodeURIComponent(String(nextId)))
+          .then(function (body) {
+            if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+            applyFavoriteState((body.favorite_asset_ids || []).map(String).indexOf(String(nextId)) >= 0);
+          });
+      }
+      favoriteButton.onclick = function () {
+        if (favoriteButton.disabled || thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+        var target = !isFavorite;
+        favoriteButton.disabled = true; favoriteButton.textContent = "保存中…";
+        favoriteButton.setAttribute("aria-label", "正在保存收藏状态");
+        writeRequest("/assets/" + encodeURIComponent(String(nextId)) + "/favorite", target ? "PUT" : "DELETE", {})
+          .then(function (body) {
+            if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+            applyFavoriteState(Boolean(body.is_favorite));
+            if (typeof options.onFavoriteChanged === "function") options.onFavoriteChanged(String(nextId), body);
+          })
+          .catch(function () {
+            if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+            favoriteButton.textContent = "重新读取收藏…";
+            favoriteButton.setAttribute("aria-label", "收藏写入未确认，正在重新读取状态");
+            readFavoriteState().catch(function () {
+              if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+              favoriteButton.disabled = true; favoriteButton.textContent = "收藏状态不可用";
+              favoriteButton.setAttribute("aria-label", "收藏状态读取失败");
+            });
+          });
+      };
+      readFavoriteState().catch(function () {
+        if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+        favoriteButton.disabled = true; favoriteButton.textContent = "收藏状态不可用";
+        favoriteButton.setAttribute("aria-label", "收藏状态读取失败");
+      });
       if (typeof options.onAssetChange === "function") options.onAssetChange(currentAssetId, handle);
     }
     function canClose() { return typeof options.beforeClose !== "function" || options.beforeClose(currentAssetId, handle) !== false; }

@@ -1,4 +1,4 @@
-"""Official v31/v32 -> v33 preserves facts and applies scale indexes atomically."""
+"""Official v31/v32 -> current schema preserves facts and applies migrations atomically."""
 from pathlib import Path
 
 import pytest
@@ -54,7 +54,7 @@ def test_scale_indexes_preserve_rows_backup_and_old_build_refusal(
     root, path = prepare(tmp_path, monkeypatch, previous)
     before = rows(path)
     result = migrate_database(path, data_root=root)
-    assert result.applied == tuple(range(previous + 1, 34))
+    assert result.applied == tuple(range(previous + 1, schema.SUPPORTED_SCHEMA_VERSION + 1))
     assert result.previous_version == previous
     assert result.backup_path is not None
     assert inspect_database(result.backup_path) == previous
@@ -63,7 +63,7 @@ def test_scale_indexes_preserve_rows_backup_and_old_build_refusal(
     assert {name: after[name] for name in before} == before
     assert after["person_collection_face_members"] == []
     with Catalog.open(data_root=root) as catalog:
-        schema.verify_schema(catalog.connection, 33)
+        schema.verify_schema(catalog.connection, schema.SUPPORTED_SCHEMA_VERSION)
         assert catalog.read_all("PRAGMA foreign_key_check") == []
         statements = [
             (
@@ -97,7 +97,7 @@ def test_scale_indexes_preserve_rows_backup_and_old_build_refusal(
 def test_partial_scale_index_migration_rolls_back(tmp_path, monkeypatch):
     root, path = prepare(tmp_path, monkeypatch)
     before = rows(path)
-    directory = migrations_upto(tmp_path, 33)
+    directory = migrations_upto(tmp_path, schema.SUPPORTED_SCHEMA_VERSION)
     script = directory / "0033_scale_read_indexes.sql"
     script.write_text(
         script.read_text(encoding="utf-8") + "\nSELECT * FROM missing_fixture_table;\n",
@@ -110,4 +110,6 @@ def test_partial_scale_index_migration_rolls_back(tmp_path, monkeypatch):
         assert error.value.code == MIGRATION_FAILED
     assert schema.MIGRATIONS_DIR == REAL_MIGRATIONS_DIR
     assert inspect_database(path) == 32 and rows(path) == before
-    assert migrate_database(path, data_root=root).applied == (33,)
+    assert migrate_database(path, data_root=root).applied == tuple(
+        range(33, schema.SUPPORTED_SCHEMA_VERSION + 1)
+    )

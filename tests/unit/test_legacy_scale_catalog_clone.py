@@ -80,7 +80,7 @@ def test_explicit_clone_preserves_source_and_every_old_table(source: Path, tmp_p
     result = clone_tool.clone_legacy_scale_catalog(source, destination_root)
     path = Path(result["destination_db"])
     assert path == destination_root / "catalog/catalog.db"
-    assert inspect_database(path) == 33
+    assert inspect_database(path) == schema.SUPPORTED_SCHEMA_VERSION
     assert migrate_database(path, data_root=destination_root).applied == ()
     reader = open_readonly(path)
     try:

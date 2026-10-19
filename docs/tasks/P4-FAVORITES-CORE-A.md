@@ -1,8 +1,8 @@
 # P4-FAVORITES-CORE-A — 照片收藏核心、导航与收藏相册
 
-- **状态**：READY / 任务卡已立项，尚未实施
+- **状态**：PASS（2026-10-19；报告：[P4-FAVORITES-CORE-A](../reports/P4-FAVORITES-CORE-A.md)）
 - **优先级**：P1；**推荐模型**：GPT-6 High
-- **编卡基准**：`szzeng/aisearch` `master` [`2e0e5509c329cddd36c01bee2e50fcb19b83895a`](https://github.com/szzeng/aisearch/commit/2e0e5509c329cddd36c01bee2e50fcb19b83895a)，2026-10-17；当前 `SUPPORTED_SCHEMA_VERSION=33`，已有 `0033_scale_read_indexes.sql`。**实际开工以届时 HEAD、工作树、migration 序号为准**，不得覆盖并行改动。
+- **编卡基准**：`szzeng/aisearch` `master` [`2e0e5509c329cddd36c01bee2e50fcb19b83895a`](https://github.com/szzeng/aisearch/commit/2e0e5509c329cddd36c01bee2e50fcb19b83895a)，2026-10-17；开工时实际 `SUPPORTED_SCHEMA_VERSION=33`，已有 `0033_scale_read_indexes.sql`；本任务新增 0034，当前版本为 34。**实际开工以届时 HEAD、工作树、migration 序号为准**，不得覆盖并行改动。
 - **前置阅读**：`AGENTS.md` → `docs/development-status.md` → `docs/testing.md` → 本卡；针对直接调用链读 `P4-PHOTO-FACE-MANAGE-A`、`P4-UI2-VIEWER-UNIFY-A`、`P4-UI2-BATCH-SELECT-UNIFY-A` 的报告，以及现有图库清理/备份策略。
 - **交付原则**：个人使用、一次完成核心闭环；测试按 `docs/testing.md` 的迁移/人工状态变更规则选取或复用可信证据；不强制真实图库、GPU、模型重跑或 30 万图库完整压测。
 
@@ -34,7 +34,8 @@ CREATE TABLE asset_favorites (
 );
 CREATE INDEX idx_asset_favorites_recent
   ON asset_favorites(added_at_ms DESC, asset_id DESC);
-INSERT INTO metadata(key, value) VALUES ('favorites_revision', '0');
+INSERT INTO metadata(key, value) VALUES ('favorites_revision', '0')
+  ON CONFLICT(key) DO NOTHING;
 ```
 
 - `favorites_revision` 使用**独立的 `metadata` 键**：单调非负整数；与收藏插入/删除**同一写事务**，整次真实状态变化仅递增一次；幂等 no-op 不递增。不创建第二套「收藏状态真值」或多余状态表。
@@ -69,6 +70,16 @@ B 卡将新增批量写入接口；A **不为未使用的批量操作预写复�
 ## 6. 性能与一致性底线
 
 收藏写入仅触及新增小表 + 独立修订元数据；没有模型/GPU/缩略图重建或搜索重排。读收藏列表必须**先按收藏索引限定候选，再 JOIN 资产**，不能扫描 30 万 `assets` 后筛选或把所有收藏读进 Python 排序；单页约 50，使用有界批量位置读。通过合成 SQL `EXPLAIN QUERY PLAN`、调用计数证明「索引驱动、无每图 N+1」即可，不以此冒称 30 万规模压测通过。
+
+### 本次性能设计与验证（2026-10-19 激活时补齐）
+
+- **链路与风险（PERF-BOUNDED）**：收藏列表分页与批量状态读取属于高频读路径；风险在按 `asset_id` 扫全库后过滤、每图读位置导致 N+1，或用游标期间混入不同 favorites revision。请求页默认最多 50 项，状态查询最多 100 个 ID。
+- **做法与边界**：从 `asset_favorites` 最近索引先取当前页候选，再按 `asset_id` 联接 ACTIVE 图片及现有摘要/位置批量投影；写事务仅改收藏行和独立 metadata revision，不做整库回填、模型或搜索投影工作。身份仍绑定完整内容 `asset_id`，离线与扫描不清除收藏。
+- **验证与停止**：核对真实 SQLite 计划及页内查询调用数，覆盖相同毫秒稳定排序、游标/修订冲突、状态批量上限、写幂等与事务回滚；UI 以隔离合成数据在内置浏览器检查收藏、取消及详情返回。只证明有界访问与本次流程，不新增 30 万规模延迟结论；必需 migration/状态/恢复验证完成且无当前范围失败后停止。
+
+### 验证范围与回归触发
+
+本卡新增连续 migration 与人工状态协议，按 `docs/testing.md` 覆盖完整受影响 B 及迁移升级/重启/过新拒绝、失败回滚、事务故障、retention/备份恢复 D；migration 语义变更触发完整 unit/integration 回归。还需按卡面核验 session/CSRF、收藏分页及查询计划、所有共享 viewer 消费入口，以及一条隔离合成图库真实浏览器链路。真实图库、GPU、模型和 30 万压测不在验收范围。
 
 ## 7. 验收、交付与停止
 

@@ -820,6 +820,8 @@ main {
   gap: 0.5rem 0.75rem;
   align-items: center;
 }
+.browse-controls[hidden],
+.browse-mode-controls[hidden] { display: none; }
 
 .gallery-management-page > h2,
 .photos-page > h2 {
@@ -843,6 +845,7 @@ main {
   justify-content: flex-end;
   margin: 0 0 0.4rem;
 }
+.photos-page .browse-mode-controls[hidden] { display: none; }
 
 .photos-page-heading {
   display: flex;

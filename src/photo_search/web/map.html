@@ -2,17 +2,17 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>地图相册 - 本机图片搜索</title>
 <link rel="stylesheet" href="/web/vendor/maplibre-4.7.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="/web/styles.css?v=p4-ui2-shell-sticky-a-1">
+<link rel="stylesheet" href="/web/styles.css?v=p4-favorites-core-a-3">
 <link rel="stylesheet" href="/web/map.css?v=p4-ui2-shell-sticky-a-1">
-<link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-face-manage-a-refresh-1">
+<link rel="stylesheet" href="/web/photo-info.css?v=p4-favorites-core-a-1">
 <script src="/web/map-config.js" defer></script>
-<script src="/web/photo-info.js?v=p4-photo-face-manage-a-refresh-2" defer></script>
+<script src="/web/photo-info.js?v=p4-favorites-core-a-1" defer></script>
 <script src="/web/vendor/maplibre-4.7.1/dist/maplibre-gl.js" defer></script>
 <script src="/web/map.js?v=p4-ui2-map-photo-hover-a-1" defer></script>    <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell map-page"><a class="skip-link" href="#main">跳到主要内容</a>
 <aside class="app-sidebar" aria-label="应用导航"><a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
-<nav class="app-nav" aria-label="主要导航"><a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a><a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a></nav>
+<nav class="app-nav" aria-label="主要导航"><a class="nav-link" data-shell-page="photos" href="/"><span class="nav-icon" aria-hidden="true">▦</span>照片</a><a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a><a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a><a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a></nav>
 <nav class="app-nav app-nav-secondary" aria-label="其他入口"><a class="nav-link" data-shell-page="map" href="/map" aria-current="page"><span class="nav-icon" aria-hidden="true">⌖</span>地图相册</a><a class="nav-link" data-shell-page="management" href="/?view=sources"><span class="nav-icon" aria-hidden="true">⚙</span>图库管理</a></nav></aside>
 <div class="app-workspace">
 <header class="app-header has-global-search map-page-header"><a href="/places">返回地点相册</a><h1>地图相册</h1>

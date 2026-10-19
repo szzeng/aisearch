@@ -80,7 +80,9 @@ PLACE_LEGACY_MAX_FLOOR = 16
 # adds face-collection anchors; 0033 adds catalog read indexes. Neither changes
 # place tables, GeoNames bytes, projection semantics or the CN addon contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
-PLACE_COMPAT_REVIEWED_THROUGH = 33
+# Schema 34 adds only independent asset-favorite state; it does not change the
+# place dataset contract or any place catalog tables.
+PLACE_COMPAT_REVIEWED_THROUGH = 34
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

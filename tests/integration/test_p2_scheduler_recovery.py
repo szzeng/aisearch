@@ -104,6 +104,7 @@ V6_TABLES = (
     "person_aliases",
     "person_operation_items",
     "person_operations",
+    "asset_favorites",
     # P3-08B: the reviewable old/new face mapping of one asset (ADR-0010). Additive to the
     # 0010/0011 tables; the tuple keeps its historical name as the *current* table set.
     "face_redetection_groups",

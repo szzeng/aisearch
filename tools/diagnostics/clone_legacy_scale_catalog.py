@@ -1,4 +1,4 @@
-"""Copy the unpublished scale-only v32 synthetic catalog into the merged v33 schema.
+"""Copy the unpublished scale-only v32 synthetic catalog into the current schema.
 
 This explicit diagnostic tool is not part of application startup. Both paths must be
 inside this checkout's .tmp directory, and the destination data root must not exist.
@@ -27,7 +27,8 @@ from photo_search.catalog.migrate import MIN_MIGRATION_HEADROOM_BYTES  # noqa: E
 from photo_search.catalog.sqlite_io import open_readonly  # noqa: E402
 
 _SYNTHETIC_ROOT = REPO_ROOT / ".tmp"
-_TARGET_VERSION = 33
+_BASE_TARGET_VERSION = 33
+_TARGET_VERSION = schema.SUPPORTED_SCHEMA_VERSION
 
 
 def _validate_path(path: Path) -> Path:
@@ -60,13 +61,27 @@ def _verify_legacy(connection: sqlite3.Connection) -> None:
 
 
 def _upgrade_copy(connection: sqlite3.Connection) -> None:
-    script = (schema.MIGRATIONS_DIR / "0032_person_collection_face_members.sql").read_text(
-        encoding="utf-8"
-    )
+    scripts = [
+        (schema.MIGRATIONS_DIR / "0032_person_collection_face_members.sql").read_text(
+            encoding="utf-8"
+        ),
+        "UPDATE metadata SET value='33' WHERE key='schema_version';",
+    ]
+    for version, migration_path in schema.migration_files():
+        if version <= _BASE_TARGET_VERSION:
+            continue
+        scripts.extend(
+            [
+                migration_path.read_text(encoding="utf-8"),
+                f"UPDATE metadata SET value='{version}' WHERE key='schema_version';",
+            ]
+        )
     try:
         # executescript starts one transaction; validation and version publication are
         # inside it. A failed DDL/validation never publishes a partially upgraded copy.
-        connection.executescript(f"BEGIN IMMEDIATE;\n{script}\n")
+        connection.executescript(
+            "BEGIN IMMEDIATE;\n" + "\n".join(scripts) + "\n"
+        )
         schema.verify_schema(connection, _TARGET_VERSION)
         if list(connection.execute("PRAGMA foreign_key_check")):
             raise CatalogError(SCHEMA_INCONSISTENT, "copied catalog has foreign-key violations")
@@ -92,7 +107,7 @@ def clone_legacy_scale_catalog(source_db: Path, destination_data_root: Path) -> 
     if destination_root.exists():
         raise FileExistsError("destination data root must not already exist")
     if schema.SUPPORTED_SCHEMA_VERSION != _TARGET_VERSION:
-        raise ValueError("this one-time compatibility tool requires the merged v33 build")
+        raise ValueError("the diagnostic target schema differs from this build")
 
     # One read transaction pins preflight and backup to the same committed source
     # snapshot, including any committed WAL frames. The source is never opened RW.

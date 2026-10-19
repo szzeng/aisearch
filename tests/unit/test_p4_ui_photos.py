@@ -28,6 +28,11 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
     assert 'mode: "timeline"' in app
     assert "onRequest: function ()" in app and "timelineEmptyParams = null" in app
     assert 'id="browse-show-list"' in html and "browseCaptureFrom" in app
+    assert 'id="favorites-reload"' in html
+    assert 'data-shell-page="favorites" href="/?view=favorites"' in html
+    assert 'request("/favorites?" + params.toString())' in app
+    assert 'params.get("view") === "favorites"' in app
+    assert 'state.browse.scope === "favorites"' in app
     assert "source-primary-actions" in app and "source-primary" in app
     assert 'method: "PATCH"' in app and 'body: { display_name: name }' in app
     assert 'request("/library/refresh"' in app
