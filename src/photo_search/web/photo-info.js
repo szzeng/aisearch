@@ -832,22 +832,26 @@
           if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
           var collections = body.collections || [];
           if (!collections.length) {
-            var name = window.prompt("还没有照片合集。输入名称创建并收录这张照片：");
-            if (name === null || !name.trim()) return;
-            var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID()
-              : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-            return writeRequest("/photo-collections", "POST", {name:name, create_request_id:requestId,
-              asset_ids:[Number(nextId)]}).then(function () { photoCollectionButton.textContent = "已加入新合集"; });
+            return actionDialog({kind:"text", title:"创建照片合集", message:"还没有照片合集。输入名称并收录这张照片。", label:"合集名称", confirmLabel:"创建并收录"})
+              .then(function (name) {
+                if (name === null || !name.trim()) return;
+                var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID()
+                  : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+                return writeRequest("/photo-collections", "POST", {name:name, create_request_id:requestId,
+                  asset_ids:[Number(nextId)]}).then(function () { photoCollectionButton.textContent = "已加入新合集"; });
+              });
           }
-          var choices = collections.map(function (item, index) { return (index + 1) + ". " + item.name + "（" + item.member_count + " 张）"; });
-          var selected = window.prompt("输入合集序号收录此照片：\n" + choices.join("\n"));
-          var index = Number(selected) - 1;
-          if (!Number.isInteger(index) || index < 0 || index >= collections.length) return;
-          var collection = collections[index];
-          return writeRequest("/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/batch", "POST", {
-            action:"add", asset_ids:[Number(nextId)], instance_token:collection.instance_token,
-            expected_revision:Number(collection.revision)
-          }).then(function () { photoCollectionButton.textContent = "已加入「" + collection.name + "」"; });
+          return actionDialog({kind:"select", title:"加入照片合集", message:"选择要收录这张照片的合集。", label:"照片合集",
+            options:collections.map(function (item) { return {value:item.collection_id, label:item.name + "（" + item.member_count + " 张）"}; })})
+            .then(function (selected) {
+              if (selected === null) return;
+              var collection = collections.find(function (item) { return String(item.collection_id) === String(selected); });
+              if (!collection) return;
+              return writeRequest("/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/batch", "POST", {
+                action:"add", asset_ids:[Number(nextId)], instance_token:collection.instance_token,
+                expected_revision:Number(collection.revision)
+              }).then(function () { photoCollectionButton.textContent = "已加入「" + collection.name + "」"; });
+            });
         }).catch(function (error) {
           if (thisGeneration === generation) photoCollectionButton.textContent = "加入失败：" + (error.message || "请重试");
         }).finally(function () {

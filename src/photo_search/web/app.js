@@ -2855,20 +2855,25 @@
         var rename = element("button", null, "改名");
         rename.type = "button";
         rename.addEventListener("click", function () {
-          var next = window.prompt("照片合集名称", item.name);
-          if (next === null) return;
-          request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"PATCH", body:{
-            instance_token:item.instance_token, expected_revision:item.revision, name:next
-          }}).then(function () { loadPhotoCollections(false); }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+          window.AIPhotoInfo.actionDialog({kind:"text", title:"重命名照片合集", message:"请输入新名称。", label:"合集名称", value:item.name})
+            .then(function (next) {
+              if (next === null) return;
+              return request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"PATCH", body:{
+                instance_token:item.instance_token, expected_revision:item.revision, name:next
+              }}).then(function () { loadPhotoCollections(false); });
+            }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
         });
         row.appendChild(rename);
         var remove = element("button", null, "删除");
         remove.type = "button";
         remove.addEventListener("click", function () {
-          if (!window.confirm("删除合集及其中的收录关系？照片文件不会删除。")) return;
-          request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"DELETE", body:{
-            instance_token:item.instance_token, expected_revision:item.revision
-          }}).then(function () { loadPhotoCollections(false); }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+          window.AIPhotoInfo.actionDialog({kind:"confirm", title:"删除照片合集", message:"删除“" + item.name + "”及其中的收录关系？照片文件不会删除。", confirmLabel:"删除"})
+            .then(function (confirmed) {
+              if (!confirmed) return;
+              return request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"DELETE", body:{
+                instance_token:item.instance_token, expected_revision:item.revision
+              }}).then(function () { loadPhotoCollections(false); });
+            }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
         });
         row.appendChild(remove);
         els.photoCollectionsList.appendChild(row);

@@ -2979,13 +2979,16 @@
     if (els.photoSaveCollection) els.photoSaveCollection.addEventListener("click", function () {
       var selected = photoSelection ? Array.from(photoSelection.selected, Number) : [];
       if (!selected.length || selected.length > 500) return;
-      var name = window.prompt("为这 " + selected.length + " 张已选照片创建合集名称");
-      if (name === null || !name.trim()) return;
-      var requestId = window.crypto && window.crypto.randomUUID
-        ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
       els.photoSaveCollection.disabled = true;
-      request("/photo-collections", {method:"POST", body:{name:name, create_request_id:requestId, asset_ids:selected}})
+      window.AIPhotoInfo.actionDialog({kind:"text", title:"保存为照片合集", message:"为已选的 " + selected.length + " 张照片创建合集。", label:"合集名称"})
+        .then(function (name) {
+          if (name === null || !name.trim()) return null;
+          var requestId = window.crypto && window.crypto.randomUUID
+            ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+          return request("/photo-collections", {method:"POST", body:{name:name, create_request_id:requestId, asset_ids:selected}});
+        })
         .then(function (result) {
+          if (!result) return;
           if (photoSelection) photoSelection.reset();
           window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
         }).catch(function (failure) {
@@ -2996,13 +2999,11 @@
       return request("/photo-collections?limit=50").then(function (result) {
         var collections = (result.body || {}).collections || [];
         if (!collections.length) throw {status:404, message:"还没有照片合集，请先创建一个合集。"};
-        var choice = window.prompt("输入目标合集序号（显示最近 50 个）：\n" + collections.map(function (item, index) {
-          return (index + 1) + ". " + item.name + "（" + item.member_count + " 张）";
-        }).join("\n"));
-        if (choice === null) return null;
-        var index = Number(choice) - 1;
-        if (!Number.isInteger(index) || index < 0 || index >= collections.length) return null;
-        return collections[index];
+        return window.AIPhotoInfo.actionDialog({kind:"select", title:"选择照片合集", message:"显示最近 50 个照片合集。", label:"目标合集",
+          options:collections.map(function (item) { return {value:item.collection_id, label:item.name + "（" + item.member_count + " 张）"}; })})
+          .then(function (selected) {
+            return selected === null ? null : collections.find(function (item) { return String(item.collection_id) === String(selected); }) || null;
+          });
       });
     }
     if (els.photoAppendCollection) els.photoAppendCollection.addEventListener("click", function () {
@@ -3025,26 +3026,30 @@
     function saveSearchSnapshot(mode, button) {
       var body = state.search.lastBody || {};
       if (!body.photo_collection_source_token || body.photo_collection_source_mode !== mode) return;
-      var name = window.prompt(mode === "ranked_candidates"
-        ? "为本次服务端排名候选创建合集名称（候选截断时会要求确认）"
-        : "为全部符合筛选条件的照片创建合集名称（上限 5000 张）");
-      if (name === null || !name.trim()) return;
-      var requestId = window.crypto && window.crypto.randomUUID
-        ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-      var sourceToken = body.photo_collection_source_token;
       button.disabled = true;
-      request("/photo-collections/from-search", {method:"POST", body:{
-        name:name, create_request_id:requestId, source_token:sourceToken,
-        mode:mode, confirm_truncated:false,
-      }}).catch(function (failure) {
-        if (failure.status === 409 && failure.code === "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED" &&
-            window.confirm("本次候选可能被截断，是否保存当前候选快照？")) {
-          return request("/photo-collections/from-search", {method:"POST", body:{
-            name:name, create_request_id:requestId, source_token:sourceToken,
-            mode:mode, confirm_truncated:true,
-          }});
-        }
-        throw failure;
+      window.AIPhotoInfo.actionDialog({kind:"text", title:"保存搜索结果为照片合集",
+        message:mode === "ranked_candidates" ? "按本次服务端排名候选保存；若候选可能被截断，会再次确认。" : "保存全部符合筛选条件的照片，上限 5000 张。",
+        label:"合集名称"}).then(function (name) {
+        if (name === null || !name.trim()) return null;
+        var requestId = window.crypto && window.crypto.randomUUID
+          ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+        var sourceToken = body.photo_collection_source_token;
+        return request("/photo-collections/from-search", {method:"POST", body:{
+          name:name, create_request_id:requestId, source_token:sourceToken,
+          mode:mode, confirm_truncated:false,
+        }}).catch(function (failure) {
+          if (failure.status === 409 && failure.code === "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED") {
+            return window.AIPhotoInfo.actionDialog({kind:"confirm", title:"候选结果可能不完整",
+              message:"本次候选可能被截断。是否保存当前候选快照？", confirmLabel:"保存当前候选"}).then(function (confirmed) {
+              if (!confirmed) return null;
+              return request("/photo-collections/from-search", {method:"POST", body:{
+                name:name, create_request_id:requestId, source_token:sourceToken,
+                mode:mode, confirm_truncated:true,
+              }});
+            });
+          }
+          throw failure;
+        });
       }).then(function (result) {
         if (!result || !result.body || !result.body.collection) return;
         window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
@@ -3120,11 +3125,15 @@
           expected_revision:Number(collection.revision)};
         var path = "/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/from-search";
         return request(path, {method:"POST", body:requestBody}).catch(function (failure) {
-          if (failure.status !== 409 || failure.code !== "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED" ||
-              !window.confirm("本次排名候选可能被截断，是否追加当前候选快照？")) throw failure;
-          requestBody.confirm_truncated = true;
-          return request(path, {method:"POST", body:requestBody});
+          if (failure.status !== 409 || failure.code !== "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED") throw failure;
+          return window.AIPhotoInfo.actionDialog({kind:"confirm", title:"候选结果可能不完整",
+            message:"本次排名候选可能被截断。是否追加当前候选快照？", confirmLabel:"追加当前候选"}).then(function (confirmed) {
+            if (!confirmed) return null;
+            requestBody.confirm_truncated = true;
+            return request(path, {method:"POST", body:requestBody});
+          });
         }).then(function (result) {
+          if (!result) return;
           delete pendingAppendRequestIds[pendingKey];
           setStatus(els.queryStatus, "已追加到「" + collection.name + "」：新增 " + result.body.changed + " 张，已有 " + result.body.unchanged + " 张。", "success");
         });
