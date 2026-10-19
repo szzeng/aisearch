@@ -2812,7 +2812,10 @@
     });
     els.main.focus({ preventScroll: true });
     if (name === "browse") showBrowseMode(state.browse.mode);
-    if (name === "sources") loadSourcePaths(false);
+    if (name === "sources") {
+      loadSourcePaths(false);
+      loadEmbeddingManagementStatus();
+    }
     if (name === "photoCollections") {
       if (state.photoCollectionKind === "smart") loadPhotoSmartCollections(false);
       else loadPhotoCollections(false);
@@ -2820,6 +2823,161 @@
     if (name === "photoCollection") loadPhotoCollectionAssets(false);
     if (name === "photoSmartCollection") loadPhotoSmartAssets(false);
     updateSearchScopeAction();
+  }
+
+  var embeddingStatusRequest = null;
+  var embeddingChecks = Object.create(null);
+  function loadEmbeddingManagementStatus() {
+    if (embeddingStatusRequest) return embeddingStatusRequest;
+    var activeEl = document.getElementById("active-search-model");
+    var listEl = document.getElementById("embedding-provider-list");
+    var otherListEl = document.getElementById("embedding-provider-other-list");
+    if (!activeEl || !listEl) return Promise.resolve();
+    embeddingStatusRequest = request("/embedding-management/status")
+      .then(function (result) {
+        var body = result.body || {};
+        var active = body.active_profile;
+        var activeProvider = (body.providers || []).find(function (provider) {
+          return active && provider.processor_id === active.processor_id &&
+            provider.space_id === active.space_id && provider.generation &&
+            provider.generation.generation_id === active.generation_id;
+        });
+        activeEl.textContent = active
+          ? "当前搜索模型：" + String(activeProvider ? activeProvider.display_name : active.provider_id)
+          : "当前没有活动搜索模型";
+        function renderProviders(target, providers) {
+          target.replaceChildren();
+          providers.forEach(function (provider) {
+          var card = document.createElement("article");
+          card.className = "embedding-provider-card";
+          var title = document.createElement("p");
+          var strong = document.createElement("strong");
+          strong.textContent = String(provider.display_name || provider.provider_id);
+          title.appendChild(strong);
+          var state = document.createElement("p");
+          state.textContent = provider.is_active ? "正在使用" :
+            (!provider.installed ? "未安装" :
+              (provider.index_state === "ORPHAN_TABLE" ? "发现旧索引残留，需要处理" :
+                (provider.index_state === "NO_GENERATION" ? "已安装，未建索引" : "索引待检查")));
+          var detail = document.createElement("p");
+          detail.className = "hint";
+          var generation = provider.generation;
+          detail.textContent = "有效向量：" + (generation ? generation.confirmed : 0) +
+            "；图库覆盖：待检查；切换资格：" + (provider.switch_eligible ? "可切换" : "未核验");
+          card.append(title, state, detail);
+          var task = body.candidate_task;
+          var activeTask = task && ["RUNNING", "PAUSE_REQUESTED", "PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0;
+          if (provider.installed && provider.index_state !== "ORPHAN_TABLE") {
+            var check = document.createElement("button");
+            check.type = "button";
+            check.textContent = "检查";
+            check.addEventListener("click", function () {
+              check.disabled = true;
+              request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/check", {method:"POST"})
+                .then(function (result) { embeddingChecks[provider.provider_id] = result.body || {}; return loadEmbeddingManagementStatus(); })
+                .catch(function (failure) { activeEl.textContent = describe(failure); })
+                .finally(function () { check.disabled = false; });
+            });
+            card.appendChild(check);
+            var checked = embeddingChecks[provider.provider_id];
+            if (checked && checked.switch_eligible && provider.profile_id) {
+              var arrange = document.createElement("button");
+              arrange.type = "button";
+              arrange.textContent = "安排切换";
+              arrange.addEventListener("click", function () {
+                if (!window.confirm("切换将在正常退出并重新打开应用时执行。确认安排？")) return;
+                var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+                request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/switch", {
+                  method:"POST", body:{profile_id:provider.profile_id,request_id:requestId,confirmed:true},
+                }).then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+              });
+              card.appendChild(arrange);
+            }
+          }
+          if (!provider.installed || provider.index_state === "ORPHAN_TABLE") {
+            var disabled = document.createElement("button");
+            disabled.type = "button";
+            disabled.textContent = provider.index_state === "ORPHAN_TABLE" ? "安排隔离旧索引" : "模型未安装";
+            if (provider.index_state === "ORPHAN_TABLE") {
+              disabled.addEventListener("click", function () {
+                if (!window.confirm("将先在 vectors 同一文件系统内复制并校验旧索引，再隔离原表。空间不足或校验失败时原表会保留。确认安排？")) return;
+                var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+                request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/isolate-orphan", {
+                  method:"POST", body:{request_id:requestId,confirmed:true},
+                }).then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+              });
+            } else {
+              disabled.disabled = true;
+            }
+            card.appendChild(disabled);
+          } else if (activeTask && task.provider_id === provider.provider_id) {
+            if (task.status === "RUNNING") {
+              var pause = document.createElement("button");
+              pause.type = "button";
+              pause.textContent = task.status === "PAUSE_REQUESTED" ? "正在暂停…" : "暂停";
+              pause.disabled = task.status === "PAUSE_REQUESTED";
+              pause.addEventListener("click", function () {
+                request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/pause", {method:"POST"})
+                  .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+              });
+              card.appendChild(pause);
+            } else if (["PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0) {
+              var resume = document.createElement("button");
+              resume.type = "button";
+              resume.textContent = "继续建库";
+              resume.addEventListener("click", function () {
+                request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/resume", {method:"POST"})
+                  .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+              });
+              card.appendChild(resume);
+            }
+          } else if (!activeTask) {
+            var start = document.createElement("button");
+            start.type = "button";
+            start.textContent = "开始建库";
+            start.addEventListener("click", function () {
+              if (!window.confirm("候选建库将临时独占模型资源；语义搜索可能等待或返回繁忙。确认开始？")) return;
+              var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+              request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/candidate-build", {
+                method:"POST", body:{request_id:requestId,exclusive_model_use_confirmed:true},
+              }).then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+            });
+            card.appendChild(start);
+          }
+          target.appendChild(card);
+          });
+        }
+        var providers = body.providers || [];
+        renderProviders(listEl, providers.filter(function (item) { return !/EXIF v2/i.test(String(item.display_name || "")); }));
+        if (otherListEl) renderProviders(otherListEl, providers.filter(function (item) { return /EXIF v2/i.test(String(item.display_name || "")); }));
+        var transition = body.offline_transition || {};
+        var pendingTransition = transition.pending;
+        if (pendingTransition) {
+          activeEl.textContent += "；已安排停机操作：" + String(pendingTransition.kind || "未知") + "（退出并重新打开应用后执行）";
+          var cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.textContent = "取消待执行操作";
+          cancel.addEventListener("click", function () {
+            request("/embedding-management/offline-transition", {method:"DELETE"})
+              .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
+          });
+          listEl.appendChild(cancel);
+        } else if (transition.last_result && transition.last_result.status) {
+          activeEl.textContent += "；最近停机操作：" + String(transition.last_result.status);
+        }
+        var task = body.candidate_task;
+        if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
+          activeEl.textContent += "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
+          window.setTimeout(loadEmbeddingManagementStatus, 1500);
+        } else if (task && task.last_error) {
+          activeEl.textContent += "；候选建库结果：" + task.status + "（" + String(task.last_error.code || "未知错误") + "）";
+        }
+      })
+      .catch(function (failure) {
+        activeEl.textContent = "读取模型状态失败：" + describe(failure);
+      })
+      .finally(function () { embeddingStatusRequest = null; });
+    return embeddingStatusRequest;
   }
 
   function loadPhotoCollections(append) {

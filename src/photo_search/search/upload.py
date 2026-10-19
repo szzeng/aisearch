@@ -445,7 +445,7 @@ def image_encoder_of(encoder: Any) -> Any | None:
     image is simply the honest answer "this process has no image tower" — the endpoint then
     refuses structurally instead of falling back to the text channel.
     """
-    if encoder is None or not callable(getattr(encoder, "encode_images", None)):
+    if encoder is None or getattr(encoder, "supports_images", True) is False or not callable(getattr(encoder, "encode_images", None)):
         return None
     return encoder
 

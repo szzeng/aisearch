@@ -5034,6 +5034,149 @@ async def get_search_profile(request: Request) -> dict[str, Any]:
     return profile_projection(service_of(request).catalog)
 
 
+@router.get(
+    "/embedding-management/status",
+    summary="Lightweight installed and active semantic model status",
+)
+async def get_embedding_management_status(request: Request) -> dict[str, Any]:
+    """Read model identity and catalog metadata without loading a model."""
+    from photo_search.models.embedding.management import (
+        embedding_management_status as read_status,
+    )
+
+    context = context_of(request)
+    result = read_status(context.settings.data_root)
+    result["candidate_task"] = context.embedding_candidate_manager().status()
+    from photo_search.models.embedding.offline_transition import transition_status
+
+    result["offline_transition"] = transition_status(context.settings.data_root)
+    return result
+
+
+@router.post("/embedding-management/providers/{provider_id}/candidate-build")
+async def start_embedding_candidate_build(request: Request, provider_id: str) -> dict[str, Any]:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise ApiError("VALIDATION_ERROR", "request body must be an object")
+    manager = context_of(request).embedding_candidate_manager()
+    return manager.start(
+        provider_id,
+        str(payload.get("request_id") or ""),
+        exclusive_confirmed=payload.get("exclusive_model_use_confirmed") is True,
+    )
+
+
+@router.post("/embedding-management/tasks/{task_id}/pause")
+async def pause_embedding_candidate_build(request: Request, task_id: str) -> dict[str, Any]:
+    return context_of(request).embedding_candidate_manager().pause(task_id)
+
+
+@router.post("/embedding-management/tasks/{task_id}/resume")
+async def resume_embedding_candidate_build(request: Request, task_id: str) -> dict[str, Any]:
+    return context_of(request).embedding_candidate_manager().resume(task_id)
+
+
+@router.post("/embedding-management/providers/{provider_id}/check")
+async def check_embedding_provider(request: Request, provider_id: str) -> dict[str, Any]:
+    """Run the explicit, full candidate coverage/artifact/Lance selection check."""
+    from photo_search.artifacts.store import ArtifactStore, generation_id_for
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.config import vectors_dir
+    from photo_search.indexing import selection as selection_module
+    from photo_search.models.embedding.registry import registry_for
+
+    context = context_of(request)
+    service = service_of(request)
+    entry = registry_for(context.settings.data_root).require_installed(provider_id)
+    generation_id = generation_id_for(entry.identity.space_id, entry.identity.processor_id)
+    row = service.catalog.read_one(
+        "SELECT 1 FROM index_generations WHERE generation_id=?", (generation_id,)
+    )
+    if row is None:
+        return {"status": "not_ready", "provider_id": provider_id, "reason": "NO_GENERATION", "switch_eligible": False}
+    store = ArtifactStore.open(context.settings.data_root)
+    report, lance = selection_module.selection_report(
+        service.catalog,
+        store,
+        generation_id=generation_id,
+        space_id=str(entry.identity.space_id),
+        processor_id=str(entry.identity.processor_id),
+        vectors_root=vectors_dir(context.settings.data_root),
+        verify_artifact_bytes=True,
+    )
+    gate_error = None
+    try:
+        selection_module.require_selection_ready(report, lance=lance)
+    except CatalogError as error:
+        gate_error = error.as_dict()
+    profile = service.catalog.read_one(
+        "SELECT profile_id FROM search_profiles WHERE image_generation_id=? ORDER BY created_at DESC LIMIT 1",
+        (generation_id,),
+    )
+    eligible = bool(entry.installed and profile and gate_error is None)
+    return {
+        "status": "ok",
+        "provider_id": provider_id,
+        "generation_id": generation_id,
+        "profile_id": None if profile is None else str(profile["profile_id"]),
+        "coverage": report.to_dict(),
+        "lance": lance,
+        "switch_eligible": eligible,
+        "selection_error": gate_error,
+    }
+
+
+@router.post("/embedding-management/providers/{provider_id}/isolate-orphan")
+async def schedule_orphan_vector_isolation(request: Request, provider_id: str) -> dict[str, Any]:
+    payload = await request.json()
+    if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+        raise ApiError("VALIDATION_ERROR", "confirm the separately scheduled orphan isolation")
+    from photo_search.models.embedding.offline_transition import schedule_orphan_isolation
+
+    try:
+        return schedule_orphan_isolation(
+            context_of(request).settings.data_root,
+            provider_id=provider_id,
+            request_id=str(payload.get("request_id") or ""),
+        )
+    except ValueError as error:
+        raise ApiError("VALIDATION_ERROR", str(error)) from error
+
+
+@router.post("/embedding-management/providers/{provider_id}/switch")
+async def schedule_embedding_profile_switch(request: Request, provider_id: str) -> dict[str, Any]:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise ApiError("VALIDATION_ERROR", "request body must be an object")
+    check = await check_embedding_provider(request, provider_id)
+    profile_id = str(payload.get("profile_id") or "")
+    if not check.get("switch_eligible") or profile_id != str(check.get("profile_id") or ""):
+        raise CatalogError(
+            "SELECTION_COVERAGE_INCOMPLETE",
+            "the candidate did not pass the current selection check",
+            details={"selection_error": check.get("selection_error"), "reason": check.get("reason")},
+        )
+    from photo_search.models.embedding.offline_transition import schedule_profile_switch
+
+    try:
+        return schedule_profile_switch(
+            context_of(request).settings.data_root,
+            provider_id=provider_id,
+            profile_id=profile_id,
+            request_id=str(payload.get("request_id") or ""),
+            confirmed=payload.get("confirmed") is True,
+        )
+    except ValueError as error:
+        raise ApiError("VALIDATION_ERROR", str(error)) from error
+
+
+@router.delete("/embedding-management/offline-transition")
+async def cancel_embedding_offline_transition(request: Request) -> dict[str, Any]:
+    from photo_search.models.embedding.offline_transition import cancel_transition
+
+    return cancel_transition(context_of(request).settings.data_root)
+
+
 @router.post(
     "/search-profile/activate",
     response_model=SearchProfileActivationResponse,

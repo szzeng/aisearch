@@ -31,6 +31,11 @@ from photo_search.config import resolve_data_root
 from photo_search.ingestion.cli import add_catalog_parser, run_catalog_command
 from photo_search.models.embedding.cli import add_embedding_parser, run_embedding_command
 from photo_search.models.embedding.registry import registry_for
+from photo_search.runtime.data_root_lease import (
+    DataRootLease,
+    DataRootLeaseBusy,
+    acquire_data_root_lease,
+)
 from photo_search.runtime.device import DevicePolicy
 from photo_search.storage import storage_clean, storage_inspect
 from photo_search.storage_maintenance import storage_optimize_vectors, storage_vacuum
@@ -115,12 +120,38 @@ def _serve(args: argparse.Namespace) -> int:
     except BindNotAllowed as error:
         print(f"error: BIND_NOT_ALLOWED: {error}", file=sys.stderr)
         return 2
-    # A user-confirmed one-shot maintenance request must run before session creation,
-    # model/GPU wiring, HTTP startup and the service's data-root lease.
+    # Model transitions use a separate offline entry that keeps the real OS lease continuously
+    # through selection and the application lifespan. Ordinary storage maintenance retains its
+    # existing independent lock behavior.
     from photo_search.storage_ui import execute_pending_maintenance
 
+    startup_lease: DataRootLease | None = None
+    transition_path = settings.data_root / "runtime" / "embedding-offline-transition.json"
+    consuming_transition_path = settings.data_root / "runtime" / "embedding-offline-transition-consuming.json"
+    storage_path = settings.data_root / "runtime" / "storage-maintenance-request.json"
+    transition_pending = transition_path.is_file() or consuming_transition_path.is_file()
+    storage_pending = storage_path.is_file()
+    transition_result: dict[str, Any] | None = None
+    if transition_pending and storage_pending:
+        print("photo-search: offline request conflict; no maintenance or model transition was consumed", file=sys.stderr)
+        return 2
+    if transition_pending:
+        try:
+            startup_lease = acquire_data_root_lease(settings.data_root)
+        except DataRootLeaseBusy as error:
+            print(f"photo-search: offline embedding transition is waiting for exclusive ownership: {error}", file=sys.stderr)
+            return 2
+        from photo_search.models.embedding.offline_transition import execute_pending_transition
+
+        try:
+            transition_result = execute_pending_transition(settings.data_root, startup_lease)
+        except Exception as error:  # noqa: BLE001 - keep the old active profile serving on pre-commit failures.
+            transition_result = {"status": "error", "reason": type(error).__name__, "message": str(error)[:400]}
+        if transition_result is not None:
+            print("photo-search: offline embedding transition " + json.dumps(transition_result, ensure_ascii=False, sort_keys=True))
+
     try:
-        maintenance = execute_pending_maintenance(settings.data_root)
+        maintenance = None if transition_pending else execute_pending_maintenance(settings.data_root)
     except Exception as error:  # noqa: BLE001 - consumed authorizations are never replayed.
         maintenance = {"status": "error", "reason": type(error).__name__}
     if maintenance is not None:
@@ -142,7 +173,20 @@ def _serve(args: argparse.Namespace) -> int:
         # manifest the refresh must use.
         refresh_manifest_path=str(wiring.manifest) if wiring.available else None,
     )
-    application = create_app(settings=api.settings, context=api)
+    if startup_lease is not None and transition_result and transition_result.get("status") == "activated":
+        # Selection committed. Resolve the new serving adapter while the same exclusive lease
+        # is still held; a failure is reported honestly and does not roll the pointer back.
+        resolved = api.query_encoder()
+        transition_result["serving_state"] = "READY" if resolved is not None else "ACTIVE_MODEL_UNAVAILABLE"
+        if resolved is None:
+            transition_result["serving_error"] = wiring.reason
+        from photo_search.storage_ui import _atomic_json, _state_path
+
+        _atomic_json(
+            _state_path(settings.data_root, "embedding-offline-transition-result.json"),
+            transition_result,
+        )
+    application = create_app(settings=api.settings, context=api, startup_lease=startup_lease)
     # The credential is printed to the console on purpose: it is the only bootstrap channel
     # the user has, and the access-log filter above keeps it out of every log line.
     print(f"photo-search: listening on http://{settings.bind_host}:{settings.bind_port}")
@@ -164,12 +208,17 @@ def _serve(args: argparse.Namespace) -> int:
     if bootstrap.path is not None:
         print(f"photo-search: credential file {bootstrap.path} ({bootstrap.permission})")
     sys.stdout.flush()
-    uvicorn.run(
-        application,
-        host=settings.bind_host,
-        port=settings.bind_port,
-        log_config=_log_config(),
-    )
+    try:
+        uvicorn.run(
+            application,
+            host=settings.bind_host,
+            port=settings.bind_port,
+            log_config=_log_config(),
+        )
+    finally:
+        if startup_lease is not None:
+            api.set_data_root_lease(None)
+            startup_lease.close()
     return 0
 
 

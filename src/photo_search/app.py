@@ -23,7 +23,7 @@ from photo_search.api.routes import APP_VERSION, router
 from photo_search.api.security import SecurityMiddleware
 from photo_search.api.settings import ApiSettings
 from photo_search.api.web import router as web_router
-from photo_search.runtime.data_root_lease import acquire_data_root_lease
+from photo_search.runtime.data_root_lease import DataRootLease, acquire_data_root_lease
 
 __all__ = ["APP_VERSION", "app", "create_app"]
 
@@ -42,6 +42,7 @@ def create_app(
     refresh_device_policy: str = "cpu_allowed",
     refresh_batch_size: int | None = None,
     refresh_enrich: bool = True,
+    startup_lease: Any | None = None,
 ) -> FastAPI:
     """Build one application instance over the given local settings."""
     resolved = settings or ApiSettings.create()
@@ -61,9 +62,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # The same OS lease is acquired by backup only after this service has stopped.
-        lease = acquire_data_root_lease(api.settings.data_root)
+        # Offline profile selection may transfer its actual lease into this lifespan so there
+        # is no unlock/relock window between pointer activation and serving the new profile.
+        owns_lease = startup_lease is None
+        lease = acquire_data_root_lease(api.settings.data_root) if owns_lease else startup_lease
+        if not owns_lease and (
+            not isinstance(lease, DataRootLease) or getattr(lease, "_stream", None) is None
+        ):
+            raise RuntimeError("the startup data-root lease is not live")
+        api.set_data_root_lease(lease)
         try:
+            api.embedding_candidate_manager().recover_after_lock()
             # Once OS ownership proves the prior managed process is gone, old smart work
             # cannot still publish. Database/model work stays lazy and failures are retryable.
             api.recover_smart_refreshes_after_lock()
@@ -73,7 +82,9 @@ def create_app(
             yield
         finally:
             api.close()
-            lease.close()
+            api.set_data_root_lease(None)
+            if owns_lease:
+                lease.close()
 
     application = FastAPI(
         title="Photo Search",

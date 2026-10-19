@@ -759,6 +759,7 @@ def ensure_search_profile(
     generation_id: str,
     profile_id: str | None = None,
     now_ms: int | None = None,
+    activate_if_unset: bool = True,
 ) -> dict[str, Any]:
     """Create (once) and activate the search profile of one built generation.
 
@@ -829,6 +830,15 @@ def ensure_search_profile(
             )
         created = True
     activated_id = active_profile_id(catalog.connection)
+    if activated_id is None and not activate_if_unset:
+        return {
+            "profile_id": identifier,
+            "created": created,
+            "activated": False,
+            "readiness": None,
+            "reason": "CANDIDATE_ACTIVATION_DISABLED",
+            "active_profile_id": None,
+        }
     if activated_id is not None:
         activated_profile = load_profile(catalog, activated_id)
         served_space = None if activated_profile is None else str(activated_profile.space_id)

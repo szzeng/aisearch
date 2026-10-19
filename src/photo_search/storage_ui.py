@@ -9,7 +9,7 @@ import sqlite3
 import stat
 import time
 import uuid
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -68,6 +68,36 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def offline_request_lock(root: Path):
+    """Serialize creation/cancellation of offline model and storage requests."""
+    path = _state_path(root, "offline-request-schedule.lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+b") as stream:
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def _canonical(path: str | Path) -> Path:
@@ -285,24 +315,29 @@ def queue_maintenance(data_root: str | Path, operations: object, *, confirmed: b
     if not confirmed:
         raise ValueError("维护项目无效或未确认")
     selected = _normalize_operations(operations)
-    path = _state_path(root, "storage-maintenance-request.json")
-    existing = _read_json(path)
-    if existing and int(existing.get("expires_at_ms", 0)) > time.time_ns() // 1_000_000:
-        raise ValueError("已有一项待执行维护，请先取消")
-    request = {"request_id": uuid.uuid4().hex, "operations": selected, "created_at_ms": time.time_ns() // 1_000_000, "expires_at_ms": time.time_ns() // 1_000_000 + REQUEST_TTL_MS, "identity": _data_identity(root), "status": "pending"}
-    if len(selected) == 1:
-        request["operation"] = selected[0]  # Preserve compatibility with older one-action launchers.
-    _atomic_json(path, request)
+    with offline_request_lock(root):
+        transition = _read_json(_state_path(root, "embedding-offline-transition.json"))
+        if transition and int(transition.get("expires_at_ms", 0)) > time.time_ns() // 1_000_000:
+            raise ValueError("已有待执行的模型切换或旧索引隔离，不能同时安排存储维护")
+        path = _state_path(root, "storage-maintenance-request.json")
+        existing = _read_json(path)
+        if existing and int(existing.get("expires_at_ms", 0)) > time.time_ns() // 1_000_000:
+            raise ValueError("已有一项待执行维护，请先取消")
+        request = {"request_id": uuid.uuid4().hex, "operations": selected, "created_at_ms": time.time_ns() // 1_000_000, "expires_at_ms": time.time_ns() // 1_000_000 + REQUEST_TTL_MS, "identity": _data_identity(root), "status": "pending"}
+        if len(selected) == 1:
+            request["operation"] = selected[0]  # Preserve compatibility with older one-action launchers.
+        _atomic_json(path, request)
     return request
 
 
 def cancel_maintenance(data_root: str | Path) -> dict[str, Any]:
     root = resolve_data_root(data_root).resolve()
     path = _state_path(root, "storage-maintenance-request.json")
-    pending = _read_json(path)
-    if pending is None:
-        return {"status": "none"}
-    path.unlink(missing_ok=True)
+    with offline_request_lock(root):
+        pending = _read_json(path)
+        if pending is None:
+            return {"status": "none"}
+        path.unlink(missing_ok=True)
     return {"status": "cancelled", "request_id": pending.get("request_id")}
 
 

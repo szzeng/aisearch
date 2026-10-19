@@ -23,6 +23,7 @@ from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
 from photo_search.api.settings import ApiSettings, generate_session_token
 from photo_search.ingestion.service import CatalogService
+from photo_search.runtime.model_resource_gate import GatedEncoder, ModelResourceGate
 from photo_search.search.embedding import QueryEncoder
 from photo_search.search.sessions import SearchSessionStore
 
@@ -63,6 +64,7 @@ class ApiContext:
         self._photo_collection_sources_lock = threading.RLock()
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
+        self._gated_encoder: QueryEncoder | None = None
         self._encoder_resolved = False
         self._adapter_lock = threading.RLock()
         #: P2-06B: the optional reranker adapter, injected exactly like the query encoder.
@@ -92,6 +94,37 @@ class ApiContext:
         self._data_root_lease_acquired = False
         self._smart_refresh_recovery_complete = False
         self._smart_refresh_recovery_lock = threading.Lock()
+        self.model_resource_gate = ModelResourceGate()
+        self._data_root_lease: Any | None = None
+        self._embedding_candidate_manager: Any | None = None
+
+    def set_data_root_lease(self, lease: Any | None) -> None:
+        """Record the actual lifespan-owned data-root lease; booleans cannot stand in for it."""
+        self._data_root_lease = lease
+
+    @property
+    def data_root_lease_held(self) -> bool:
+        # The lifespan sets this only after it has acquired or validated the real lease. Keep
+        # this opaque here so instrumented lease proxies remain usable in lifecycle tests.
+        return self._data_root_lease is not None
+
+    def embedding_candidate_manager(self) -> Any:
+        if self._embedding_candidate_manager is None:
+            from photo_search.models.embedding.candidate_task import CandidateBuildManager
+
+            self._embedding_candidate_manager = CandidateBuildManager(self)
+        return self._embedding_candidate_manager
+
+    def release_query_encoder_for_candidate(self) -> None:
+        """Drop the old model while the caller owns the exclusive resource gate."""
+        with self._adapter_lock:
+            encoder = self._encoder
+            self._encoder = None
+            self._gated_encoder = None
+            self._encoder_resolved = False
+        stop = getattr(encoder, "close", None)
+        if callable(stop):
+            stop()
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -285,11 +318,19 @@ class ApiContext:
         reported honestly by ``GET /capabilities`` and turns a request that needs the
         semantic channel into a structured refusal instead of a silently text-only page.
         """
+        if self.model_resource_gate.reserved:
+            from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+
+            raise CatalogError(
+                RUNTIME_CAPABILITY_UNAVAILABLE,
+                "semantic model resources are reserved for candidate index work",
+                details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+            )
         with self._adapter_lock:
             if self._closed:
                 return None
             if self._encoder_resolved:
-                return self._encoder
+                return self._gated_encoder
             if self._encoder_factory is None:
                 self._encoder_resolved = True
                 return None
@@ -298,8 +339,11 @@ class ApiContext:
             except Exception:  # noqa: BLE001 - a broken adapter is reported, never raised here
                 logger.debug("building the query encoder failed", exc_info=True)
                 self._encoder = None
+                self._gated_encoder = None
             self._encoder_resolved = True
-            return self._encoder
+            if self._encoder is not None:
+                self._gated_encoder = GatedEncoder(self._encoder, self.model_resource_gate)
+            return self._gated_encoder
 
     def reranker(self) -> Any:
         """The reranker half of the ADR-0003 §7 boundary, or ``None`` when none is wired.
@@ -330,6 +374,13 @@ class ApiContext:
             self._closed = True
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
+        candidate_manager = self._embedding_candidate_manager
+        self._embedding_candidate_manager = None
+        if candidate_manager is not None:
+            try:
+                candidate_manager.close()
+            except Exception:  # pragma: no cover - shutdown must release the data-root lease.
+                logger.debug("stopping the embedding candidate builder failed", exc_info=True)
         refresher = self._refresher
         self._refresher = None
         if refresher is not None:
@@ -377,6 +428,7 @@ class ApiContext:
         with self._adapter_lock:
             encoder = self._encoder
             self._encoder = None
+            self._gated_encoder = None
         stop = getattr(encoder, "close", None)
         if callable(stop):
             try:

@@ -3081,6 +3081,25 @@
     );
   }
 
+  function loadActiveSearchModelLabel() {
+    var link = document.getElementById("current-search-model");
+    if (!link) return;
+    request("/embedding-management/status")
+      .then(function (result) {
+        var body = result.body || {};
+        var active = body.active_profile;
+        var provider = (body.providers || []).find(function (item) {
+          return active && item.processor_id === active.processor_id &&
+            item.space_id === active.space_id && item.generation &&
+            item.generation.generation_id === active.generation_id;
+        });
+        link.textContent = active
+          ? "当前：" + String(provider ? provider.display_name : active.provider_id)
+          : "当前：未选择模型";
+      })
+      .catch(function () { link.textContent = "当前：状态不可用"; });
+  }
+
   function renderSourceOptions() {
     var current = els.querySource.value;
     clear(els.querySource);
@@ -3586,6 +3605,7 @@
     updatePersonSelection();
     syncPersonControls();
     var capabilitiesPromise = loadCapabilities();
+    loadActiveSearchModelLabel();
     Promise.all([capabilitiesPromise, loadSources()]).then(restoreOrStartSearch);
   }
 

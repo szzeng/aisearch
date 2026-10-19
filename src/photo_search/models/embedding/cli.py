@@ -25,6 +25,7 @@ import argparse
 import json
 import shutil
 import sqlite3
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -349,6 +350,19 @@ def _same_content(left: Path, right: Path) -> bool:
 
 def _build_candidate(args: argparse.Namespace) -> dict[str, Any]:
     data_root = resolve_data_root(args.data_root)
+    try:
+        lease = acquire_data_root_lease(data_root)
+    except DataRootLeaseBusy as error:
+        raise CatalogError(
+            SELECTION_WRITER_ACTIVE,
+            "another managed process owns this data root; stop it before building a candidate",
+            details={"reason": "DATA_ROOT_LEASE_BUSY", "lease": str(error)},
+        ) from error
+    with lease:
+        return _build_candidate_under_lease(args, data_root)
+
+
+def _build_candidate_under_lease(args: argparse.Namespace, data_root: Path) -> dict[str, Any]:
     registry = registry_for(data_root)
     entry = registry.require_installed(str(args.provider))
     with Catalog.open(data_root=data_root) as catalog:
@@ -392,6 +406,7 @@ def _build_candidate(args: argparse.Namespace) -> dict[str, Any]:
                 spec,
                 space_id=str(entry.identity.space_id),
                 generation_id=str(payload["generation"]["generation_id"]),
+                activate_if_unset=False,
             )
         finally:
             stop = getattr(encoder, "close", None)
@@ -417,15 +432,24 @@ def _select_profile(args: argparse.Namespace) -> dict[str, Any]:
             "USAGE",
             "the selection requires --stopped: the service and every other writer must be closed",
         )
-    try:
-        lease = acquire_data_root_lease(data_root)
-    except DataRootLeaseBusy as error:
-        raise CatalogError(
-            SELECTION_WRITER_ACTIVE,
-            "another managed process owns this data root; stop it before selecting a profile",
-            details={"reason": "DATA_ROOT_LEASE_BUSY", "lease": str(error)},
-        ) from error
-    with lease, Catalog.open(data_root=data_root) as catalog:
+    supplied_lease = getattr(args, "_data_root_lease", None)
+    if supplied_lease is not None:
+        from photo_search.runtime.data_root_lease import DataRootLease
+
+        if not isinstance(supplied_lease, DataRootLease) or getattr(supplied_lease, "_stream", None) is None:
+            raise CatalogError(SELECTION_WRITER_ACTIVE, "an actual live data-root lease is required")
+        lease_context = nullcontext(supplied_lease)
+    else:
+        try:
+            supplied_lease = acquire_data_root_lease(data_root)
+        except DataRootLeaseBusy as error:
+            raise CatalogError(
+                SELECTION_WRITER_ACTIVE,
+                "another managed process owns this data root; stop it before selecting a profile",
+                details={"reason": "DATA_ROOT_LEASE_BUSY", "lease": str(error)},
+            ) from error
+        lease_context = supplied_lease
+    with lease_context, Catalog.open(data_root=data_root) as catalog:
         profile = profile_module.load_profile(catalog, str(args.profile))
         if profile is None:
             raise CatalogError(

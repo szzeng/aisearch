@@ -54,6 +54,13 @@
       <section id="view-sources" class="view gallery-management-page" hidden aria-labelledby="view-sources-title">
         <h2 id="view-sources-title">我的图库</h2>
         <p class="page-intro">先打开照片或继续建库、同步变化；完整扫描与来源管理按需展开。</p>
+        <section id="search-model-panel" class="search-model-panel" aria-labelledby="search-model-title">
+          <h3 id="search-model-title">搜索模型</h3>
+          <p id="active-search-model" class="state-block" role="status" aria-live="polite">读取当前搜索模型…</p>
+          <div id="embedding-provider-list" class="embedding-provider-list" aria-live="polite"></div>
+          <details class="embedding-other-config"><summary>其他配置</summary><div id="embedding-provider-other-list" class="embedding-provider-list"></div></details>
+          <p class="hint">覆盖率需要显式检查；建库候选不会自动切换当前搜索模型。</p>
+        </section>
         <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
         <p class="home-actions">
           <button type="button" id="view-all-galleries">查看全部图库照片</button>

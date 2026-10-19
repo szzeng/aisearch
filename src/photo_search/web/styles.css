@@ -832,6 +832,29 @@ main {
   margin: 0 0 1rem;
 }
 
+.search-model-panel {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: var(--surface);
+}
+.search-model-panel h3 { margin: 0 0 0.55rem; }
+.search-model-panel .state-block { margin: 0 0 0.65rem; }
+.embedding-provider-list { display: grid; gap: 0.5rem; }
+.embedding-provider-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+}
+.embedding-provider-card p { margin: 0; }
+.embedding-provider-card .hint { flex-basis: 100%; }
+
 .gallery-management-page .sources {
   margin-top: 0.75rem;
 }

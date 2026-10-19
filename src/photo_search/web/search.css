@@ -61,7 +61,8 @@ body.search-page .app-header.has-global-search { grid-template-columns: minmax(1
 body.search-page #search-form { flex-wrap: wrap; }
 body.search-page #search-form input[type="search"] { flex: 1 1 14rem; }
 body.search-page #search-form button { min-width: 0; }
-body.search-page .search-coverage-entry { grid-column: 3; grid-row: 1; white-space: nowrap; }
+body.search-page .search-header-actions { grid-column: 3; grid-row: 1; display: flex; align-items: center; gap: 0.65rem; white-space: nowrap; }
+body.search-page .search-model-link { font-size: 0.86rem; }
 
 body.search-page .search-tool-dialog {
   width: min(42rem, calc(100% - 2rem));
