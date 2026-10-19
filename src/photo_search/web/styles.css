@@ -1269,16 +1269,47 @@ body.app-shell {
   z-index: 2;
   inset-block-start: 0.5rem;
   inset-inline-end: 0.5rem;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
-  padding: 0.15rem;
-  border: 1px solid var(--line, #777);
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.95);
   border-radius: 999px;
-  background: var(--surface, #fff);
-  color: var(--accent, #ad7c00);
-  font-size: 1.3rem;
-  line-height: 1;
+  background: rgba(18, 24, 32, 0.78);
+  color: #fff;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
   cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.favorite-star__icon { display: block; width: 1.35rem; height: 1.35rem; }
+.favorite-star[aria-pressed="true"] {
+  border-color: #fff3c4;
+  background: #ffc83d;
+  color: #382400;
+}
+.favorite-star[aria-pressed="true"]::after {
+  content: "✓";
+  position: absolute;
+  inset-inline-end: -0.18rem;
+  inset-block-end: -0.12rem;
+  display: grid;
+  place-items: center;
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #16834a;
+  color: #fff;
+  font: 700 0.62rem/1 system-ui, sans-serif;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+.favorite-star:hover:not(:disabled) { transform: scale(1.06); }
+.favorite-star:focus-visible { outline: 3px solid #59baff; outline-offset: 2px; }
+.favorite-star:disabled { cursor: default; }
+.favorite-star:disabled:not([aria-pressed="true"]) { opacity: 0.82; }
+@media (prefers-reduced-motion: reduce) {
+  .favorite-star { transition: none; }
 }
 .card-tile, #grid .tile, .album-photo, .photo-timeline__item { position: relative; }
 .photo-select-checkbox {

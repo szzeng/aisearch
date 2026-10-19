@@ -127,6 +127,10 @@ async function boundedStatusBatchProbe() {
   const requestedIds = requests.map((url) => Array.from(url.matchAll(/asset_ids=(\d+)/g), (match) => Number(match[1])));
   assert.deepEqual(requestedIds, [Array.from({ length: 100 }, (_, i) => i + 1), Array.from({ length: 100 }, (_, i) => i + 101), [201]]);
   root.children.forEach((button, index) => assert.equal(button.favoriteState, (index + 1) % 2 === 0));
+  assert.match(root.children[0].innerHTML, /favorite-star__icon/);
+  assert.equal(root.children[0].attributes["aria-pressed"], "false");
+  assert.match(root.children[1].innerHTML, /fill="currentColor"/);
+  assert.equal(root.children[1].attributes["aria-pressed"], "true");
 }
 
 (async () => {

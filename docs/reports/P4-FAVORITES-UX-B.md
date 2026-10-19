@@ -3,6 +3,13 @@
 日期：2026-10-19
 状态：PASS（受影响面验收；不代表全仓回归或容量验收）
 
+## 2026-10-19 缩略图收藏图标视觉跟进
+
+- 将原来仅用空心/实心字符区分的缩略图星标改为高对比状态：未收藏显示深色半透明圆底、白色描边星；已收藏显示琥珀色圆底、深色实心星及绿色勾选角标。按钮仍通过原 `aria-pressed`、`aria-label` 和 `title` 暴露状态与操作；键盘焦点、禁用态和减少动态效果均有样式处理。共享 helper 覆盖首页/收藏页/搜索/人物/地点/地图及时间轴，不改 viewer 独立收藏控件和写入流程。
+- 五个直接加载该 helper 的照片页面同步刷新 JS/CSS 资源版本。单测校验页面资源版本、两态 SVG/CSS 与 aria 状态；Node 行为探针对可见收藏/未收藏按钮逐项核验图标 markup 与 `aria-pressed`。
+- 验证：`pytest -q tests/unit/test_p4_favorites_ux_b_ui.py --junitxml=test-results/P4-FAVORITES-UX-B-icon-20261019.xml` 为 **4 passed**；`node --check`（helper/探针）、行为探针及 `git diff --check` 通过。JUnit 位于忽略目录。
+- 内置浏览器未能完成视觉检查。既有隔离 synthetic fixture 的浏览器服务启动时报告 `SCHEMA_INCONSISTENT`（fixture schema_version 36 与当前迁移状态不一致）。启动器更新了该 fixture 下的合成会话文件 `.tmp/P4-FAVORITES-UX-B/PhotoSearchData/runtime/session.json`；Catalog 未能通过 schema 检查，浏览器流程未继续。未访问真实图库或重建 fixture；页面截图/真实缩略图叠放观感仍 PENDING。
+
 ## 交付
 
 - 新增共享 `favorites-ui.js`，对当前根节点的照片星标批量读取状态，每批最多 100 个 ID；支持单张写入、同页状态更新、失效重读及新建缩略图沿用有效状态。异步响应只缓存仍连接在原页面根节点中的照片；DOM 回收时清除 revision 与值缓存。

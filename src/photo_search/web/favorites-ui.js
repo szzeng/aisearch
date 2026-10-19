@@ -21,10 +21,13 @@
       });
     });
   }
+  function starMarkup(favorited) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" class="favorite-star__icon"><path d="m12 2.75 2.83 5.74 6.34.92-4.59 4.47 1.08 6.31L12 17.21l-5.66 2.98 1.08-6.31-4.59-4.47 6.34-.92L12 2.75Z"' + (favorited ? ' fill="currentColor" stroke="currentColor"' : ' fill="none" stroke="currentColor"') + ' stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
+  }
   function paint(button, value, busy) {
     button.favoriteState = value;
     button.disabled = Boolean(busy) || value === null;
-    button.textContent = value === true ? "★" : "☆";
+    button.innerHTML = starMarkup(value === true);
     button.setAttribute("aria-pressed", value === true ? "true" : "false");
     button.setAttribute("aria-label", value === null ? "正在读取收藏状态" : value ? "取消收藏" : "收藏这张照片");
     button.title = value === true ? "取消收藏" : "收藏这张照片";
@@ -94,7 +97,7 @@
         }).catch(function () {
           ids.forEach(function (id) { state.buttons.forEach(function (button) {
             if (button.isConnected && button.dataset.favoriteId === id) {
-              button.disabled = false; button.textContent = "☆"; button.setAttribute("aria-label", "收藏状态读取失败，点击重试");
+              button.disabled = false; button.innerHTML = starMarkup(false); button.setAttribute("aria-label", "收藏状态读取失败，点击重试");
             }
           }); });
         }).finally(function () {

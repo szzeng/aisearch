@@ -26,13 +26,16 @@ def test_favorite_controls_are_loaded_only_on_photo_pages_and_status_reads_are_b
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         source = (web / page).read_text(encoding="utf-8")
-        assert 'favorites-ui.js?v=p4-favorites-ux-b-3' in source
-        expected_styles = "p4-photo-collection-a-1" if page in {"index.html", "search.html"} else "p4-favorites-ux-b-1"
-        assert f"styles.css?v={expected_styles}" in source
+        assert 'favorites-ui.js?v=p4-favorites-icon-20261019-1' in source
+        assert 'styles.css?v=p4-favorites-icon-20261019-1' in source
     index = (web / "index.html").read_text(encoding="utf-8")
     search = (web / "search.html").read_text(encoding="utf-8")
     timeline = (web / "photo-timeline.js").read_text(encoding="utf-8")
     helper = (web / "favorites-ui.js").read_text(encoding="utf-8")
+    styles = (web / "styles.css").read_text(encoding="utf-8")
+    assert 'class="favorite-star__icon"' in helper
+    assert '.favorite-star[aria-pressed="true"]' in styles
+    assert '.favorite-star[aria-pressed="true"]::after' in styles
     assert 'id="favorites-order"' in index and 'value="capture_desc"' in index
     assert 'id="photo-select-toggle"' in index and 'id="photo-select-add"' in index
     assert 'id="search-photo-select-toggle"' in search and 'id="search-photo-select-remove"' in search
