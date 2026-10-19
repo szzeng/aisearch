@@ -24,9 +24,11 @@ from httpx import ASGITransport, AsyncClient
 from photo_search.api.settings import ApiSettings
 from photo_search.app import create_app
 from photo_search.face import contract as face_contract
+from photo_search.face import service as face_service
 from photo_search.indexing import semantic
 from photo_search.ingestion.service import CatalogService
 from photo_search.jobs import queue as jobs
+from photo_search.ocr import service as ocr_service
 from photo_search.refresh.cr2_recovery import (
     _published_document_matches,
     _rewind_once,
@@ -781,6 +783,7 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
         "SELECT 1 FROM cr2_job_recoveries WHERE job_id=?", (job_id,)
     ) is None
     assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "FAILED"
+
     with catalog.write() as connection:
         connection.execute("UPDATE assets SET sha256=? WHERE asset_id=?", (revision, asset_id))
 
@@ -818,6 +821,58 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     assert second["cr2_recovery_jobs"] == 0
     assert second["cr2_recovery_already_attempted"] == 1
     assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "FAILED"
+
+
+def test_asset_target_queries_and_face_job_lookup_are_bounded(env: RefreshEnv, monkeypatch) -> None:
+    catalog = env.service().catalog
+    asset_ids = [
+        int(row["asset_id"])
+        for row in catalog.read_all("SELECT asset_id FROM assets ORDER BY asset_id LIMIT 2")
+    ]
+    assert asset_ids
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+    original_read_all = catalog.read_all
+
+    def capture(sql: str, parameters: Sequence[Any] = ()):
+        calls.append((sql, tuple(parameters)))
+        return original_read_all(sql, parameters)
+
+    monkeypatch.setattr(catalog, "read_all", capture)
+    for targeter in (face_service.face_targets, ocr_service.ocr_targets):
+        selected = targeter(catalog, asset_ids=asset_ids)
+        assert [row["asset_id"] for row in selected] == asset_ids
+        sql, parameters = calls[-1]
+        assert "a.asset_id IN" in sql
+        assert tuple(asset_ids) == parameters[: len(asset_ids)]
+        assert "LIMIT" not in sql or "a.asset_id IN" in sql
+
+    assert face_service.face_targets(catalog, asset_ids=[]) == []
+    assert len(calls) == 2  # empty scopes issue no SQL
+
+    targets = [
+        {"asset_id": asset_ids[0], "input_revision": "a" * 64},
+        {"asset_id": asset_ids[1], "input_revision": "b" * 64},
+    ]
+    with catalog.write() as connection:
+        for target in targets:
+            jobs.enqueue(
+                connection,
+                subject_type="asset",
+                subject_id=str(target["asset_id"]),
+                input_revision=str(target["input_revision"]),
+                task_type=face_contract.FACE_TASK_TYPE,
+                processor_id=face_contract.FACE_PROCESSOR_ID,
+                now_ms=catalog.now_ms(),
+            )
+    found = face_service._job_ids_for_targets(
+        catalog,
+        targets,
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+    )
+    assert len(found) == 2
+    assert len(calls) == 3  # one batched lookup, not one read per asset
+    assert "subject_id IN" in calls[-1][0]
 
 
 def test_cr2_published_document_requires_matching_profile_identity() -> None:

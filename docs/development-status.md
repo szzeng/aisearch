@@ -4,6 +4,8 @@
 
 2026-10-19，按用户要求续做更新后的 [P4-MEDIA-CR2-A](tasks/P4-MEDIA-CR2-A.md)，报告：[执行报告](reports/P4-MEDIA-CR2-A.md)。新增显式 build 限定的一次性旧 `FORMAT_UNSUPPORTED` 人脸/OCR job 恢复、schema 0035 持久 marker、当前 SHA/来源/profile/CR2 头校验、有效发布产物跳过与 OCR active profile 页范围 drain。`DECODE_FAILED` 因缺乏旧故障证据暂保守保留。Luna High 首轮复核指出 payload profile 和 CAS 当前 SHA 两项 P2，均已修复并经跟进复核，无新增 finding；CR2 定向合成测试 2/2 通过。完整 unit/integration 原始运行 3212 项为 3152 passed、9 failed、51 skipped。迁移恢复 fixture 漏列新表，已补后定向复跑 1 passed；其余 8 项含并行 UI/favorites 的失败，原完整运行不记 PASS。Ruff、相关 `py_compile`、本任务涉及文件 diff-check 通过。D4 状态矩阵、内置浏览器、真实模型端到端及独立 DS-H 受影响面审查仍 PENDING；因此不标 `CR2 RECOVERY VERIFIED` / `SCOPED PASS`。未访问真实 `PhotoSearchData`。
 
+2026-10-19 第一阶段继续：修复 face/OCR 目标选择在传入 `asset_ids` 时扫描全库，以及 face job identity 逐资产查询；受影响组合 44 passed、14 skipped（均缺 pinned face/OCR 权重）、0 failed。合成零脸 build 重复执行不增加 executor 调用。独立只读审查指出真实人物 CR2 从显式 build 到实际结果及同一 CR2 第二次零推理仍未验证；本机模型权重缺失，且未获真实 `PhotoSearchData` 授权，缓存/job/profile 实库对照未进行。Ruff、py_compile、diff-check 通过；阶段结果和范围限制见原[任务卡](tasks/P4-MEDIA-CR2-A.md)与[报告](reports/P4-MEDIA-CR2-A.md)。仍为 IMPLEMENTATION PARTIAL / VALIDATION PENDING，不标阶段恢复验证或整卡 PASS。
+
 ## Earlier status record: P4-FAVORITES-UX-B — 收藏星标、批量收藏与拍摄时间排序
 
 2026-10-19，本任务状态：PASS（受影响面验收），详见[执行报告](reports/P4-FAVORITES-UX-B.md)与[任务卡](tasks/P4-FAVORITES-UX-B.md)。最终受影响组合 JUnit 40/40 通过（0 failures、0 errors、0 skipped）；Ruff、Node 语法、py_compile、diff-check 通过。Luna High 对完整变更面及最新探针独立复核无剩余 finding。隔离内置浏览器实测首页、搜索、收藏排序、viewer 回写、地图、人物照片页和地点相册星标；注入一次性 revision 写故障确认浏览器保留选择，并验证 Escape 优先关闭 viewer、否则退出选择。Node 行为探针确认选择集精确保留 500 项并拒绝第 501 项、DOM 回收后迟到响应不污染缓存、201 个 ID 按 100/100/1 无重无漏分批且全部按钮状态正确。未访问真实图库、未跑全仓/30万性能测试；并行 CR2 保持当前状态。

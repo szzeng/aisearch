@@ -51,3 +51,13 @@
 - **性能边界**：在来源现有分页内一次批量查询候选 jobs，并按候选批量查 artifact；只对匹配 SHA 的旧格式失败读 CR2 头。没有增加普通打开扫描或全库 SHA 重算。尚未实测稀疏/密集页 SQL、文件头和模型调用计数，也未证明第二次完整 build 的 0 推理。
 - **Luna High 独立复核及修正**：首轮发现两项 P2：published payload 自身 profile 校验不足；分类后到 CAS 前未再次核对 asset SHA。现已增加普通/自动详情 face 文档 profile 身份检查，并在恢复 marker INSERT 和 job UPDATE 的 CAS 谓词中复核 `assets.sha256 = jobs.input_revision`。补充测试覆盖 profile mismatch 和 SHA 在 CAS 前改变；CR2 定向测试 2 passed，JUnit `test-results/p4-cr2-recovery/luna-fix.xml`。Luna H 对修正的跟进复核未发现新问题。任务卡规定的独立 DS-H 审查仍待执行，Luna H 结果不代替该门槛。
 - **未完成**：D4 其他状态矩阵、来源重复/重启/取消、人工人脸事实与各类详情 profile、OCR active/retired 与模型缺件检查仍待测；未做内置浏览器流程、真实 CR2 人脸/OCR/语义模型端到端及独立 DS-H 全受影响面审查。故当前仍 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**，不记 `CR2 RECOVERY VERIFIED` 或 `SCOPED PASS`。未访问 `PhotoSearchData`。
+
+## 2026-10-19 第一阶段：CR2 人脸补建与批量 SQL 修复
+
+- **基线与根因分析**：在当前 `master` 检查了 `9adbad5`、本卡和上节报告。`9adbad5` 的一次性恢复只覆盖当前 SHA、选中来源、当前 task/processor、`FAILED/BLOCKED + FORMAT_UNSUPPORTED` 且文件头为 CR2 的 job；`DECODE_FAILED`、模型/权重缺件、其他失败码、身份变化、非当前 profile、成功零脸和有效已发布产物都应保留/跳过。`face_build_profile` 在来源范围持久化，普通 `image_face` 与自动详情 `image_face_detail_auto` 不是同一 job；显式 build 在模型权重验证失败时先跳过该阶段，不会把缺件误当成可恢复格式错误。因未获本次 `PhotoSearchData` 授权，无法归因到具体图库资产或比较其缩略图/预览缓存、Face Job、错误码、profile 和 PUBLISHED 文档；没有把这些代码路径推断写成该库的已证根因。
+- **已证代码缺陷**：有界 `_drain_scope` 每页调用 `face_targets(asset_ids=...)`/`ocr_targets(asset_ids=...)`，旧实现仍查询所有 PRESENT 资产再在 Python 中筛选；多页建库会反复扫描全库。修复为 SQL 中按 asset ID（以及可选来源）筛选，并将 limit 放入 SQL；空 asset 列表不发 SQL。`face.detect()` 还曾为每个目标单独读取 job ID，改为最多 800 个资产一批查询并按五字段身份过滤当前 revision。
+- **隔离验证**：新增测试检查两个 targeter 的参数化 `IN` 范围、空范围零 SQL、人脸 job 身份一次批量读取；追加已有 build profile/零脸夹具，确认第二次 build 对已 SUCCEEDED 项 `steps=0` 且 executor 调用数不增加。定向组合：`44 passed, 0 failed, 14 skipped`，JUnit `test-results/p4-cr2-first-stage-20261019-cr2-affected.xml`；14 项均因 pinned buffalo_l / PP-OCRv4 权重未安装而跳过。一次修复测试插入位置后产生的 fixture `NameError` 已修正并重跑通过；原始 JUnit `test-results/p4-cr2-first-stage-20261019-cr2-bounded.xml` 保留，不覆盖。
+- **模型与真实样片边界**：此前明确授权的 `D:\SZ\天空\100CANON` 中五个既有抽样位置仍存在（本轮只核对目录条目和权重能力，未运行人脸模型）。当前 pinned 人脸和 OCR 权重均未安装（对应测试 skip）；因此没有真实人物 CR2 的模型检测框、人脸产物或“继续建库”端到端结果。未读取 `PhotoSearchData`，未写入真实照片/缓存。此前五张样片的 RAW-only 画幅观察只作为历史证据，不等同于本轮缓存/job/profile 对照。
+- **检查**：Ruff、相关文件 `py_compile`、`git diff --check` 通过；未修改 schema 0035、未删除错误证据、未强制重跑人脸、未动人工归属。没有触发 30 万图库测量。
+- **独立只读代码审查**：审查未发现本次有界查询/job lookup 改动的直接回归；提出 P2：build 幂等用例是 JPEG+合成 executor，CR2 旧格式测试只调用恢复函数，缺少“真实人物 CR2→build→真实 face result”和同一 CR2 重建零推理。此项已纳入必需验收缺口。该审查不是卡片要求的 DeepSeek DS-H。
+- **尚未通过/待审**：真实人物 CR2 的实际模型及发布验证、真实缓存/job/profile 对照、内置浏览器继续建库与打开照片不触发任务、D4 余下恢复/人工保护/OCR profile 矩阵、独立 DS-H 全受影响面审查仍 PENDING。当前仅证明 SQL 工作量边界和合成零脸幂等；不得标 `CR2 RECOVERY VERIFIED` 或整卡 PASS。

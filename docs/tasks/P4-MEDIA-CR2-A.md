@@ -1,6 +1,6 @@
 # P4-MEDIA-CR2-A — 佳能 CR2 安全解码与历史人脸/OCR 补建
 
-**状态**：IMPLEMENTATION PARTIAL / VALIDATION PENDING。**执行日期**：2026-10-13。**原实施基线**：`0f34c0b`；**2026-10-19 续做设计基线**：当前 master（实施前仍须重新核对 HEAD、`docs/development-status.md`、工作区、processor/job 身份）。**续做主线**：先修复历史 CR2 人脸/OCR 批量补建，再视证据做内嵌预览加速。**验证**：隔离测试库与少量获授权的真实 CR2，按受影响面验证。**依赖**：`P4-LIBRARY-IMAGE-ONLY-A` 已 SCOPED PASS。
+**状态**：IMPLEMENTATION PARTIAL / VALIDATION PENDING。**执行日期**：2026-10-19（第一阶段续做）。**原实施基线**：`0f34c0b`；**续做基线**：`9adbad5`（origin/master，当前 `master` 含本地并行提交 `5cda4b5`）。**续做主线**：先修复历史 CR2 人脸/OCR 批量补建，再视证据做内嵌预览加速。**验证**：隔离测试库与少量获授权的真实 CR2，按受影响面验证。**依赖**：`P4-LIBRARY-IMAGE-ONLY-A` 已 SCOPED PASS。
 
 ## 一、目标和边界
 
@@ -141,3 +141,11 @@
 ### 样片续验（2026-10-13）
 
 用户已授权 `D:\SZ\天空\100CANON`。只读抽取 5 个分位 CR2 样片：全部为 6000×4000 JPEG 内嵌预览与 6024×4020 RAW 有效画幅，LibRaw `flip=0`。SIFT/RANSAC 几何诊断未能对全部样片证明稳定裁切映射，故继续统一使用 RAW，`cr2_preview_used=0`、`cr2_raw_fallback=5`、`cr2_decode_failed=0`；单张解码均值 1.130 秒，原文件 SHA/大小/mtime 未变化。共享人脸/OCR解码入口均返回 RAW 规范画幅；真实模型推理未运行。时间与子秒可读，但样片不含有效 GPS 坐标，未覆盖竖拍/有效 GPS。定向测试 **127 passed**（JUnit `test-results/junit-p4-media-cr2-a-validation.xml`），Ruff、`py_compile`、`uv lock --check`、`git diff --check`、PyInstaller rawpy collector smoke 均通过。活动模型文字搜索、实际续建幂等、旧人脸/OCR终态任务定向恢复及完整打包仍待验证；详见[执行报告](../reports/P4-MEDIA-CR2-A.md)。本卡保持 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**，不标 SCOPED PASS。
+
+### 第一阶段续做（2026-10-19）
+
+- 检查 `9adbad5`、本卡与报告后确认：已有 CR2 人脸缺口可能来自旧 job 的 `FORMAT_UNSUPPORTED`、当前 build profile 与旧 task 不一致、其他失败码/身份变化或模型能力缺失；有效 PUBLISHED（包括零脸）须跳过。没有读取真实 `PhotoSearchData`，无法判定其具体缺口类型或对照真实缩略图/预览缓存和 job/profile。
+- 修复 `face_targets()`、`ocr_targets()` 在 `asset_ids` 模式的全图库读取：ID/来源筛选及 limit 现在进入 SQL，空集合直接返回。修复 face 任务身份获取逐资产 `read_one` 为最多 800 个 asset IDs 一批的 SQL 查询，随后严格匹配 subject/revision/task/processor。
+- 受影响组合实际运行 **44 passed / 0 failed / 14 skipped**；14 个 skip 都是 pinned 人脸/OCR 权重缺件。JUnit、命令和根因分析在[执行报告](../reports/P4-MEDIA-CR2-A.md)。Ruff、`py_compile`、`git diff --check` 通过，无 30 万图库测量。
+- 合成 build profile 测试的第二次建库以已完成零脸 `.jpg` 验证 `steps=0` 和无新增 executor 调用；这不是 CR2 实际模型闭环。独立只读代码审查未发现查询改动直接回归，但指出仍缺“真实人物 CR2→显式 build→真实 face result”和同一 CR2 第二次 build 零推理的端到端证据。此审查不替代任务规定的 DeepSeek DS-H。
+- 本机 pinned 人脸/OCR 权重均未安装。真实人物 CR2 模型推理与结果发布、当前图库缓存/job/profile 对照、完整 D4、浏览器验证及任务卡要求的独立 DS-H 审查仍 PENDING。保留 schema 0035 一次性恢复和旧错误证据，不重跑所有人脸、不改人工归属。当前阶段不标 `CR2 RECOVERY VERIFIED`，整卡仍不是 PASS。

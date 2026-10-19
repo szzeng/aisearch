@@ -59,7 +59,7 @@ _TARGET_SQL = (
     "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256 "
     "FROM assets AS a "
     "JOIN file_locations AS f ON f.asset_id = a.asset_id AND f.availability = 'PRESENT' "
-    "{source_filter}"
+    "WHERE {filters} "
     "ORDER BY a.asset_id"
 )
 
@@ -72,20 +72,26 @@ def face_targets(
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """Every asset that currently has a readable original - the face work set."""
-    wanted = None if asset_ids is None else {int(value) for value in asset_ids}
-    source_filter = ""
-    parameters: tuple[Any, ...] = ()
+    wanted = None if asset_ids is None else sorted({int(value) for value in asset_ids})
+    if wanted == []:
+        return []
+    filters = ["f.availability = 'PRESENT'"]
+    parameters: list[Any] = []
+    if wanted is not None:
+        filters.append("a.asset_id IN (" + ",".join("?" for _ in wanted) + ")")
+        parameters.extend(wanted)
     if source_id is not None:
-        source_filter = "WHERE f.source_id = ? "
-        parameters = (int(source_id),)
-    rows = catalog.read_all(_TARGET_SQL.format(source_filter=source_filter), parameters)
+        filters.append("f.source_id = ?")
+        parameters.append(int(source_id))
+    sql = _TARGET_SQL.format(filters=" AND ".join(filters))
+    if limit is not None:
+        sql += " LIMIT ?"
+        parameters.append(max(0, int(limit)))
+    rows = catalog.read_all(sql, tuple(parameters))
     targets = [
         {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
         for row in rows
-        if wanted is None or int(row["asset_id"]) in wanted
     ]
-    if limit is not None:
-        targets = targets[: max(0, int(limit))]
     return targets
 
 
@@ -587,11 +593,9 @@ def detect(
         catalog, targets, now_ms=catalog.now_ms(), force=bool(force), device=str(device),
         task_type=task_type,
     )
-    selected_jobs = [int(catalog.read_one(
-        "SELECT job_id FROM jobs WHERE subject_type='asset' AND subject_id=? "
-        "AND input_revision=? AND task_type=? AND processor_id=?",
-        (str(target["asset_id"]), target["input_revision"], task_type, contract.FACE_PROCESSOR_ID),
-    )["job_id"]) for target in targets]
+    selected_jobs = _job_ids_for_targets(
+        catalog, targets, task_type=task_type, processor_id=contract.FACE_PROCESSOR_ID
+    )
     run = run_queue(
         catalog,
         data_root=data_root,
@@ -620,6 +624,37 @@ def detect(
         "index_after_association": published_again,
         "jobs": job_counts(catalog),
     }
+
+
+def _job_ids_for_targets(
+    catalog: Catalog,
+    targets: Sequence[dict[str, Any]],
+    *,
+    task_type: str,
+    processor_id: str,
+) -> list[int]:
+    """Fetch the exact current job identities for a target batch in bounded SQL calls."""
+    target_revisions = {
+        (str(int(target["asset_id"])), str(target["input_revision"])) for target in targets
+    }
+    if not target_revisions:
+        return []
+    asset_ids = sorted({int(asset_id) for asset_id, _ in target_revisions})
+    job_ids: dict[tuple[str, str], int] = {}
+    # Stay below SQLite's portable bind parameter ceiling while keeping one query per chunk.
+    for start in range(0, len(asset_ids), 800):
+        batch = asset_ids[start : start + 800]
+        slots = ",".join("?" for _ in batch)
+        rows = catalog.read_all(
+            "SELECT job_id,subject_id,input_revision FROM jobs WHERE subject_type='asset' "
+            f"AND subject_id IN ({slots}) AND task_type=? AND processor_id=? ORDER BY job_id",
+            (*tuple(str(asset_id) for asset_id in batch), str(task_type), str(processor_id)),
+        )
+        for row in rows:
+            key = (str(row["subject_id"]), str(row["input_revision"]))
+            if key in target_revisions:
+                job_ids[key] = int(row["job_id"])
+    return [job_ids[key] for key in sorted(target_revisions) if key in job_ids]
 
 
 def weights_report(data_root: str | Path | None = None) -> dict[str, Any]:

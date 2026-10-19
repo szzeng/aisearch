@@ -311,6 +311,7 @@ def test_late_human_anchor_hold_and_compatibility_gate(api_env, monkeypatch):
 
 def test_build_actual_face_stage_profiles_zero_faces_and_paused_job_isolation(api_env, monkeypatch):
     catalog = api_env.service.catalog
+    executor_calls = []
     library = seed_library(
         api_env, {"batch.jpg": [(40, 30, 120, 110)], "new.jpg": [], "light.jpg": []}
     )
@@ -319,7 +320,18 @@ def test_build_actual_face_stage_profiles_zero_faces_and_paused_job_isolation(ap
     batches.pause(catalog, batch["batch_id"])
     monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda *a: None)
     monkeypatch.setattr(faces, "record_runtime_evidence", synthetic_runtime)
-    monkeypatch.setattr(faces, "face_executor", synthetic_executor)
+    original_executor = synthetic_executor
+
+    def counting_executor(catalog, **options):
+        run = original_executor(catalog, **options)
+
+        def counted(request):
+            executor_calls.append((request["subject_id"], request["task_type"]))
+            return run(request)
+
+        return counted
+
+    monkeypatch.setattr(faces, "face_executor", counting_executor)
     for name, detail in (("new.jpg", True), ("light.jpg", False)):
         result = _face_stage(
             catalog, api_env.data_root, {library[name]["asset_id"]}, source_detail=detail
@@ -345,6 +357,12 @@ def test_build_actual_face_stage_profiles_zero_faces_and_paused_job_isolation(ap
         )[0]
         == 1
     )
+    assert len(executor_calls) == 2
+    second_build = _face_stage(
+        catalog, api_env.data_root, {library["new.jpg"]["asset_id"]}, source_detail=True
+    )
+    assert second_build["steps"] == 0
+    assert len(executor_calls) == 2
     assert (
         catalog.read_one(
             "SELECT COUNT(*) FROM faces WHERE asset_id=?", (library["new.jpg"]["asset_id"],)

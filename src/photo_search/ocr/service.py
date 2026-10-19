@@ -53,7 +53,7 @@ _TARGET_SQL = (
     "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256 "
     "FROM assets AS a "
     "JOIN file_locations AS f ON f.asset_id = a.asset_id AND f.availability = 'PRESENT' "
-    "{source_filter}"
+    "WHERE {filters} "
     "ORDER BY a.asset_id"
 )
 
@@ -70,20 +70,26 @@ def ocr_targets(
     An asset whose only positions are ``MISSING``/``SOURCE_OFFLINE`` is deliberately not a
     target: it cannot be recognised today, and queuing it would only add a blocked job.
     """
-    wanted = None if asset_ids is None else {int(value) for value in asset_ids}
-    source_filter = ""
-    parameters: tuple[Any, ...] = ()
+    wanted = None if asset_ids is None else sorted({int(value) for value in asset_ids})
+    if wanted == []:
+        return []
+    filters = ["f.availability = 'PRESENT'"]
+    parameters: list[Any] = []
+    if wanted is not None:
+        filters.append("a.asset_id IN (" + ",".join("?" for _ in wanted) + ")")
+        parameters.extend(wanted)
     if source_id is not None:
-        source_filter = "WHERE f.source_id = ? "
-        parameters = (int(source_id),)
-    rows = catalog.read_all(_TARGET_SQL.format(source_filter=source_filter), parameters)
+        filters.append("f.source_id = ?")
+        parameters.append(int(source_id))
+    sql = _TARGET_SQL.format(filters=" AND ".join(filters))
+    if limit is not None:
+        sql += " LIMIT ?"
+        parameters.append(max(0, int(limit)))
+    rows = catalog.read_all(sql, tuple(parameters))
     targets = [
         {"asset_id": int(row["asset_id"]), "input_revision": str(row["sha256"])}
         for row in rows
-        if wanted is None or int(row["asset_id"]) in wanted
     ]
-    if limit is not None:
-        targets = targets[: max(0, int(limit))]
     return targets
 
 
