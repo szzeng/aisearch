@@ -157,8 +157,9 @@ const ui=context.ui, flush=()=>new Promise(setImmediate);
   const preview=get("pa-preview"); preview.open=true;
   preview.fire("click",{target:get("pa-preview-image")}); assert.equal(preview.open,true,"clicks inside the person viewer do not dismiss it");
   preview.fire("click",{target:preview}); assert.equal(preview.open,false,"clicking the person viewer backdrop dismisses it");
-  assert.ok(calls.includes("/api/v1/persons/7"));
-  assert.ok(calls.some(url=>url.startsWith("/api/v1/persons/7/photos")));
+      assert.equal(calls.includes("/api/v1/persons/7"),false,"the photo-origin deep link does not make a redundant detail request");
+      assert.equal(calls.filter(url=>url==="/api/v1/persons/7/photos?limit=1").length,1,"the album summary provides the canonical person and effective avatar in one bounded request");
+      assert.ok(calls.some(url=>url.startsWith("/api/v1/persons/7/photos?limit=60")));
   get("pa-back").fire("click"); await flush();
   if(fromPhoto) { assert.equal(backCalls,1,"photo-origin people routes return through browser history"); return; }
   assert.equal(get("pa-library").hidden,false); assert.equal(get("pa-album").hidden,true);

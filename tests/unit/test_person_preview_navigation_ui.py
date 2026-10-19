@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["order", "failure", "search", "close", "stale_faces", "shared_write", "shared_write_keep", "shared_write_timeline", "shared_write_stale", "shared_write_avatar"])
+@pytest.mark.parametrize("scenario", ["order", "failure", "search", "close", "stale_faces", "shared_write", "shared_write_keep", "shared_write_timeline", "shared_write_stale", "shared_write_avatar", "deep_link", "deep_link_empty", "deep_link_error", "deep_link_404", "deep_link_network", "deep_link_stale"])
 def test_person_preview_navigation(scenario: str) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the personal preview interaction check"
@@ -38,7 +38,7 @@ const get = id => { if (!elements.has(id)) elements.set(id,new Element("div")); 
 let person = {person_id:7,name:"爸爸",revision:1,asset_count:4,thumbnail_url:null};
 const requests = [];
 const changeTokens=[]; let sharedOptions, sharedHandle, removedFromAlbum=false;
-let failPage = false, holdPage = false, releasePage, holdFace = false, releaseFace, holdPerson=false, releasePerson;
+let failPage = false, holdPage = false, releasePage, holdFace = false, releaseFace, holdPerson=false, releasePerson, releaseDeepLink;
 let timelineOptions, timelineResets=0, timelineRefreshes=0;
 const faceId = id => id.toString(16).padStart(64,"0");
 const result = data => ({ok:true,json:async () => data});
@@ -56,6 +56,16 @@ const context = {
       const snapshot=person;
       if(holdPerson) await new Promise(resolve=>{releasePerson=resolve;});
       return result({person:snapshot,assets:[],has_more:false});
+    }
+    if(url==="/api/v1/persons/8/photos?limit=1") {
+      if(process.argv[1]==="deep_link_stale") await new Promise(resolve=>{releaseDeepLink=resolve;});
+      if(process.argv[1]==="deep_link_network") throw new Error("synthetic network failure");
+      if(process.argv[1]==="deep_link_error") return {ok:false,status:401,json:async()=>({code:"SESSION_EXPIRED"})};
+      if(process.argv[1]==="deep_link_404") return {ok:false,status:404,json:async()=>({code:"HTTP_404"})};
+      const summary=process.argv[1]==="deep_link_empty"
+        ? {person_id:8,name:"空人物",revision:1,asset_count:0,face_count:0,thumbnail_url:null}
+        : {person_id:7,canonical_person_id:7,name:"规范人物",revision:3,asset_count:4,face_count:6,thumbnail_url:"/api/v1/faces/"+faceId(30)+"/thumbnail"};
+      return result({person:summary,assets:[{asset_id:888}],has_more:false});
     }
     if (url.includes("/face-review")) return result({groups:[],has_more:false});
     if (/^\/api\/v1\/assets\/\d+$/.test(url)) return result({asset_id:Number(url.split("/").pop()),locations:[]});
@@ -83,8 +93,9 @@ const context = {
 };
 let code = fs.readFileSync("src/photo_search/web/persons-albums.js","utf8");
 code = code.replace('  if (document.readyState === "loading")',
-  '  globalThis.ui = {state, boot, openAlbum, preview, loadPhotos};\n  if (document.readyState === "loading")');
-if (!context.window) context.window={location:{search:"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(key,value){changeTokens.push({key,value});}}};
+  '  globalThis.ui = {state, boot, openAlbum, openPersonById, preview, loadPhotos};\n  if (document.readyState === "loading")');
+const deepLink=process.argv[1].startsWith("deep_link");
+if (!context.window) context.window={location:{search:deepLink?"?person_id=8&from_photo=photo":"",hash:"",href:"http://local/persons"},scrollY:0,addEventListener(){},localStorage:{getItem(){return null;},setItem(key,value){changeTokens.push({key,value});}}};
 if(process.argv[1].startsWith("shared_write")) context.window.AIPhotoInfo={open(id,options){
   sharedOptions=options; sharedHandle={dialog:{open:true},assetId:id,setAsset(id){this.assetId=id;},setPosition(value){this.position=value;},setNavigationEnabled(previous,next){this.previous=previous;this.next=next;},close(){this.dialog.open=false;options.onClose();}};
   return sharedHandle;
@@ -94,6 +105,8 @@ if(["shared_write_timeline","shared_write_avatar"].includes(process.argv[1])) co
   timelineOptions=options; Promise.resolve().then(emitTimeline);
   return {reset(){timelineResets++;},refresh(){timelineRefreshes++;},setScope(){},append:async()=>null};
 }};
+let deepTimelineOptions;
+if(deepLink) context.window.PhotoTimeline={mount(options){deepTimelineOptions=options;return {reset(){},refresh(){},setScope(){},append:async()=>null};}};
 const viewerDom=require("./tests/unit/fixtures/shared_photo_viewer_dom.js");
 viewerDom.install(context,Element);
 vm.createContext(context);
@@ -118,6 +131,40 @@ function control(name) {
 
 const pages = () => requests.filter(r => r.url.includes("/photos") && r.url.includes("cursor="));
 (async () => {
+  if(deepLink) {
+    ui.boot(); await flush();
+    if(["deep_link_error","deep_link_404","deep_link_network"].includes(process.argv[1])) {
+      assert.equal(requests.filter(r=>r.url==="/api/v1/persons/8/photos?limit=1").length,1);
+      assert.equal(ui.state.person,null,"a failed summary does not open an empty album");
+      assert.equal(get("pa-library").hidden,false);
+      assert.match(get("pa-status").textContent,/无法打开人物照片/);
+      if(process.argv[1]==="deep_link_error") assert.match(get("pa-status").textContent,/会话已失效/);
+      if(process.argv[1]==="deep_link_404") assert.match(get("pa-status").textContent,/没有提供此接口/);
+      if(process.argv[1]==="deep_link_network") assert.match(get("pa-status").textContent,/无法连接本地服务/);
+      return;
+    }
+    if(process.argv[1]==="deep_link_stale") {
+      await ui.openPersonById(7); await flush(); releaseDeepLink(); await flush();
+      assert.equal(ui.state.person.person_id,7,"a late response from the prior deep link cannot replace the current person");
+      assert.equal(requests.filter(r=>r.url==="/api/v1/persons/8/photos?limit=1").length,1);
+      assert.equal(requests.filter(r=>r.url==="/api/v1/persons/7/photos?limit=1").length,1);
+      assert.equal(deepTimelineOptions.scope.person_id,7);
+      return;
+    }
+    assert.equal(requests.filter(r=>r.url==="/api/v1/persons/8/photos?limit=1").length,1,"deep link makes one bounded authoritative summary request");
+    assert.equal(requests.filter(r=>r.url==="/api/v1/persons/8").length,0,"deep link does not fetch raw details before the album summary");
+    assert.equal(ui.state.person.person_id,process.argv[1]==="deep_link_empty"?8:7,"summary canonical ID owns the album scope");
+    assert.equal(deepTimelineOptions.scope.person_id,ui.state.person.person_id);
+    assert.equal(ui.state.photoIds.length,0,"the one-photo summary side effect is not inserted into the timeline");
+    if(process.argv[1]==="deep_link_empty") assert.match(get("pa-album-avatar").textContent,/没有可用人脸/);
+    else {
+      const avatar=viewerDom.all(get("pa-album-avatar"),node=>node.tag==="img")[0];
+      assert.match(avatar.src,new RegExp(faceId(30)));
+      avatar.fire("error");
+      assert.match(get("pa-album-avatar").textContent,/头像暂时无法加载/);
+    }
+    return;
+  }
   if(process.argv[1]==="shared_write_avatar") person={...person,avatar_face_id:faceId(30),thumbnail_url:"/api/v1/faces/"+faceId(30)+"/thumbnail"};
   ui.boot(); ui.openAlbum(person); await flush();
   const scenario = process.argv[1];

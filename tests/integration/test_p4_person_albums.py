@@ -18,7 +18,7 @@ from p3_persons_page_fixtures import (
 )
 
 from photo_search.catalog.db import Catalog
-from photo_search.persons.albums import _inbox_group_cte, asset_faces, people_page
+from photo_search.persons.albums import _inbox_group_cte, asset_faces, people_page, photo_page
 from photo_search.persons.service import PersonService
 from photo_search.places.revision import read_filter_revision
 
@@ -1467,6 +1467,33 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
     add_link(catalog, data["left"], left_person)
     add_link(catalog, data["right"], right_person)
 
+    def select_count(call):
+        statements = []
+        catalog.connection.set_trace_callback(statements.append)
+        try:
+            result = call()
+        finally:
+            catalog.connection.set_trace_callback(None)
+        return result, sum(
+            statement.lstrip().upper().startswith(("SELECT", "WITH")) for statement in statements
+        ), statements
+
+    raw, detail_selects, _detail_sql = select_count(lambda: PersonService(catalog).get_person(left_person))
+    one_photo, summary_selects, summary_sql = select_count(
+        lambda: photo_page(catalog, api_env.service.media_cache(), person_id=left_person, limit=1, cursor=None)
+    )
+    print(f"bounded person read SQL SELECTs: detail={detail_selects}; one-photo summary={summary_selects}")
+    page_queries = [
+        statement for statement in summary_sql
+        if "FROM ASSETS AS A LEFT JOIN ASSET_METADATA AS M" in statement.upper()
+    ]
+    assert len(page_queries) == 1
+    plan = catalog.connection.execute("EXPLAIN QUERY PLAN " + page_queries[0]).fetchall()
+    print("one-photo page query plan: " + " | ".join(str(tuple(row)) for row in plan))
+    assert raw["avatar_face_id"] is None
+    assert one_photo["person"]["thumbnail_url"] == f"/api/v1/faces/{data['left']}/thumbnail"
+    assert len(one_photo["assets"]) == 1
+
     async def scenario(client):
         await api_env.authenticate(client)
         before = tuple(catalog.connection.iterdump())
@@ -1477,13 +1504,20 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
         assert cards[left_person]["avatar_face_id"] == data["left"]
         assert cards[right_person]["avatar_face_id"] == data["right"]
         assert empty not in cards
-        left_page = (await client.get(f"/api/v1/persons/{left_person}/photos")).json()
-        right_page = (await client.get(f"/api/v1/persons/{right_person}/photos")).json()
+        left_page = (await client.get(f"/api/v1/persons/{left_person}/photos", params={"limit": 1})).json()
+        right_page = (await client.get(f"/api/v1/persons/{right_person}/photos", params={"limit": 1})).json()
         assert [a["asset_id"] for a in left_page["assets"]] == [data["asset_id"]]
         assert [a["asset_id"] for a in right_page["assets"]] == [data["asset_id"]]
+        assert left_page["person"]["thumbnail_url"] == f"/api/v1/faces/{data['left']}/thumbnail"
+        assert right_page["person"]["thumbnail_url"] == f"/api/v1/faces/{data['right']}/thumbnail"
+        assert left_page["person"]["face_count"] == right_page["person"]["face_count"] == 1
         assert left_page["assets"][0]["person_faces"][0]["face_id"] == data["left"]
         assert right_page["assets"][0]["person_faces"][0]["face_id"] == data["right"]
         assert not left_page["assets"][0]["person_faces_has_more"]
+        empty_page = (await client.get(f"/api/v1/persons/{empty}/photos", params={"limit": 1})).json()
+        assert empty_page["assets"] == []
+        assert empty_page["person"]["face_count"] == 0
+        assert empty_page["person"]["thumbnail_url"] is None
         assert tuple(catalog.connection.iterdump()) == before
         assert "bbox" not in repr(left_page) and "vector" not in repr(left_page)
         first = await client.get(cards[left_person]["thumbnail_url"])
@@ -1507,5 +1541,7 @@ def test_missing_avatars_use_own_effective_face_and_shared_photo_identifies_each
         assert cards[right_person]["avatar_face_id"] == data["right"]
         page = (await client.get(f"/api/v1/persons/{left_person}/photos")).json()
         assert page["assets"] == []
+        assert page["person"]["face_count"] == 0
+        assert page["person"]["thumbnail_url"] is None
 
     api_env.scenario(scenario)

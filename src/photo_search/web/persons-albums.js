@@ -706,19 +706,14 @@
     state.deepLinked = true;
     $("list-note").textContent = "正在打开这个人的照片……";
     try {
-      const detail = await api("/persons/" + encodeURIComponent(personId));
+      // Read the existing bounded album projection once: it resolves aliases and
+      // supplies the effective display avatar without persisting an automatic cover.
+      const page = await api("/persons/" + encodeURIComponent(personId) + "/photos?limit=1");
       if (seq !== state.linkSeq) return;
-      const avatar = /^[a-f0-9]{64}$/.test(String(detail.avatar_face_id || ""))
-        ? "/api/v1/faces/" + detail.avatar_face_id + "/thumbnail"
-        : null;
-      openAlbum({
-        person_id: Number(detail.person_id || detail.canonical_person_id),
-        name: detail.name,
-        revision: detail.revision,
-        asset_count: detail.asset_count,
-        face_count: detail.face_count,
-        thumbnail_url: avatar,
-      });
+      if (!page || !page.person || !Number.isSafeInteger(Number(page.person.person_id)) || Number(page.person.person_id) <= 0) {
+        throw new Error("人物相册摘要无效");
+      }
+      openAlbum(page.person);
     } catch (error) {
       if (seq !== state.linkSeq) return;
       state.deepLinked = false;

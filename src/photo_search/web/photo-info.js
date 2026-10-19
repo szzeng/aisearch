@@ -618,7 +618,7 @@
       preview.scale = scale;
       image.style.width = Math.round(preview.naturalWidth * scale) + "px";
       image.style.height = Math.round(preview.naturalHeight * scale) + "px";
-      image.style.transform = "translate(" + Math.round(preview.x) + "px," + Math.round(preview.y) + "px)";
+      image.style.transform = "translate(-50%,-50%) translate(" + Math.round(preview.x) + "px," + Math.round(preview.y) + "px)";
       zoomLabel.textContent = Math.round(scale * 100) + "%";
       zoomOut.disabled = scale <= 0.1; zoomIn.disabled = scale >= 8;
       clampPan();
@@ -628,7 +628,7 @@
       var width = preview.naturalWidth * preview.scale, height = preview.naturalHeight * preview.scale;
       var maxX = Math.max(0, (width - stage.clientWidth) / 2), maxY = Math.max(0, (height - stage.clientHeight) / 2);
       preview.x = Math.max(-maxX, Math.min(maxX, preview.x)); preview.y = Math.max(-maxY, Math.min(maxY, preview.y));
-      image.style.transform = "translate(" + Math.round(preview.x) + "px," + Math.round(preview.y) + "px)";
+      image.style.transform = "translate(-50%,-50%) translate(" + Math.round(preview.x) + "px," + Math.round(preview.y) + "px)";
     }
     function fitPreview() {
       if (!preview.naturalWidth || !preview.naturalHeight) return;
@@ -640,23 +640,33 @@
     zoomIn.addEventListener("click", function () { preview.mode = "zoom"; applyScale(preview.scale * 1.25); });
     fit.addEventListener("click", fitPreview);
     actual.addEventListener("click", function () { preview.mode = "zoom"; preview.x = 0; preview.y = 0; applyScale(1); });
-    stage.addEventListener("dblclick", function (event) { if (event.target !== image) return; if (preview.mode === "fit") { preview.mode = "zoom"; applyScale(1); } else fitPreview(); });
+    stage.addEventListener("dblclick", function () { if (!preview.naturalWidth || !preview.naturalHeight) return; if (preview.mode === "fit") { preview.mode = "zoom"; applyScale(1); } else fitPreview(); });
     stage.addEventListener("wheel", function (event) {
       if (!event.ctrlKey || !preview.naturalWidth || event.target !== image) return;
       event.preventDefault(); var rect = stage.getBoundingClientRect();
       preview.mode = "zoom"; applyScale(preview.scale * (event.deltaY < 0 ? 1.25 : 1 / 1.25), event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
     }, { passive: false });
     var dragging = null;
+    function clearDrag(releaseCapture) {
+      var active = dragging; dragging = null;
+      if (releaseCapture && active && stage.releasePointerCapture) {
+        try { if (!stage.hasPointerCapture || stage.hasPointerCapture(active.id)) stage.releasePointerCapture(active.id); } catch (error) { /* capture may already be lost */ }
+      }
+    }
     stage.addEventListener("pointerdown", function (event) {
-      if (event.target !== image || !preview.naturalWidth || (preview.naturalWidth * preview.scale <= stage.clientWidth && preview.naturalHeight * preview.scale <= stage.clientHeight)) return;
+      if (event.target !== image || !preview.naturalWidth || event.isPrimary === false
+          || (event.pointerType === "mouse" && event.button !== undefined && event.button !== 0)
+          || (preview.naturalWidth * preview.scale <= stage.clientWidth && preview.naturalHeight * preview.scale <= stage.clientHeight)) return;
+      if (dragging) return;
       dragging = { id: event.pointerId, x: event.clientX, y: event.clientY, baseX: preview.x, baseY: preview.y };
       if (stage.setPointerCapture) stage.setPointerCapture(event.pointerId);
     });
     stage.addEventListener("pointermove", function (event) { if (dragging && dragging.id === event.pointerId) { preview.x = dragging.baseX + event.clientX - dragging.x; preview.y = dragging.baseY + event.clientY - dragging.y; clampPan(); } });
-    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (name) { stage.addEventListener(name, function () { dragging = null; }); });
-    var onWindowResize = function () { if (dialog.open && preview.mode === "fit") fitPreview(); };
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (name) { stage.addEventListener(name, function () { clearDrag(name !== "lostpointercapture"); }); });
+    var onWindowResize = function () { if (!dialog.open) return; if (preview.mode === "fit") fitPreview(); else clampPan(); };
     if (window.addEventListener) window.addEventListener("resize", onWindowResize);
     function setAsset(nextId, nextOptions) {
+      clearDrag(true);
       generation++; var thisGeneration = generation;
       currentAssetId = String(nextId); preview.naturalWidth = 0; preview.naturalHeight = 0; preview.scale = 1; preview.mode = "fit"; preview.x = 0; preview.y = 0;
       var isFavorite = false;
@@ -763,7 +773,7 @@
       setNavigationEnabled: function (previousEnabled, nextEnabled) { if (!options.navigation) return; controls.children[5].disabled = !previousEnabled; controls.children[7].disabled = !nextEnabled; },
       setNote: function (value) { imageNote.textContent = value || ""; } };
     if (options.navigation) { controls.children[5].addEventListener("click", function () { if (options.navigation.previous) options.navigation.previous(currentAssetId, handle); }); controls.children[7].addEventListener("click", function () { if (options.navigation.next) options.navigation.next(currentAssetId, handle); }); }
-    if (typeof ResizeObserver !== "undefined") { var observer = new ResizeObserver(function () { if (preview.mode === "fit" && dialog.open) fitPreview(); }); observer.observe(stage); observer.observe(panel); dialog.addEventListener("close", function () { observer.disconnect(); }); }
+    if (typeof ResizeObserver !== "undefined") { var observer = new ResizeObserver(function () { if (!dialog.open) return; if (preview.mode === "fit") fitPreview(); else clampPan(); }); observer.observe(stage); observer.observe(panel); dialog.addEventListener("close", function () { observer.disconnect(); }); }
     close.addEventListener("click", dismiss);
     dialog.addEventListener("cancel", function (event) { if (!canClose()) event.preventDefault(); });
     dialog.addEventListener("keydown", function (event) {
@@ -776,6 +786,7 @@
       if (action) action(currentAssetId, handle);
     });
     dialog.addEventListener("close", function () {
+      clearDrag(true);
       generation++;
       if (window.removeEventListener) { window.removeEventListener("resize", onWindowResize); if (historyOwned) window.removeEventListener("popstate", onPopState); }
       if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
