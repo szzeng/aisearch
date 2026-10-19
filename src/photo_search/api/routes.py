@@ -64,6 +64,7 @@ from photo_search.api.models import (
     AssetLocalActionRequest,
     AssetOrder,
     AssetPlaceResponse,
+    AssetQuerySessionValidationModel,
     CapabilitiesResponse,
     CreatePersonFromFaceRequest,
     CreatePersonFromFaceResponse,
@@ -148,6 +149,7 @@ from photo_search.api.models import (
     SessionResponse,
     SimilarAssetSearchRequestModel,
     SimilarAssetSearchResultModel,
+    SimilarAssetSearchSessionValidationRequestModel,
     SourceCreateRequest,
     SourceDeleteResponse,
     SourceDetail,
@@ -4671,8 +4673,24 @@ async def post_search_by_asset(
     )
 
 
+@router.post(
+    "/search/by-asset/validate",
+    response_model=AssetQuerySessionValidationModel,
+    summary="Validate a frozen asset-image search session without paging",
+)
+async def post_validate_search_by_asset(
+    request: Request, payload: SimilarAssetSearchSessionValidationRequestModel
+) -> dict[str, Any]:
+    context = context_of(request)
+    service = context.service()
+    return await run_catalog_search(
+        service.catalog, _validate_search_by_asset_worker, payload.model_dump(), context=context,
+    )
+
+
 def _search_by_asset_worker(
-    catalog: Any, payload: Mapping[str, Any], *, context: ApiContext
+    catalog: Any, payload: Mapping[str, Any], *, context: ApiContext,
+    validate_only: bool = False,
 ) -> dict[str, Any]:
     """Read one current confirmed embedding, then reuse the ordinary frozen search path."""
     asset_id = int(payload["asset_id"])
@@ -4744,7 +4762,7 @@ def _search_by_asset_worker(
         str(binding.space_id), str(profile.profile_id),
     )
     vector = None
-    if envelope.cursor is None:
+    if envelope.cursor is None and not validate_only:
         from photo_search.artifacts.store import ArtifactStore
 
         try:
@@ -4782,7 +4800,11 @@ def _search_by_asset_worker(
         additional_condition_sql="a.asset_id <> ?",
         additional_condition_parameters=(asset_id,),
         session_extra={"asset_query_id": asset_id, "asset_query_identity": identity},
+        validate_session_only=validate_only,
     )
+    if validate_only:
+        return {"valid": True, "asset_id": asset_id,
+                "search_session_id": envelope.search_session_id}
     relative_path = str(row["relative_path"] or "")
     filename = safe_display_filename(relative_path, f"asset-{asset_id}")
     cache = MediaCache.open(catalog.data_root)
@@ -4797,11 +4819,14 @@ def _search_by_asset_worker(
         "asset_id": asset_id,
         "filename": filename,
         "thumbnail_url": thumbnail_url,
-        "validation_cursor": context.search_sessions.encode_cursor(
-            str(result["search_session_id"]), 0
-        ),
     }
     return result
+
+
+def _validate_search_by_asset_worker(
+    catalog: Any, payload: Mapping[str, Any], *, context: ApiContext
+) -> dict[str, Any]:
+    return _search_by_asset_worker(catalog, payload, context=context, validate_only=True)
 
 
 def _search_image_worker(

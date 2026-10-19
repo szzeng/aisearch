@@ -830,7 +830,7 @@ def _render_page(
     return hits, next_offset, has_more, token
 
 
-def _continue_session(
+def _validate_search_session(
     catalog: Any,
     request: SearchRequest,
     *,
@@ -839,16 +839,11 @@ def _continue_session(
     profile: SearchProfile | None,
     binding: VectorBinding | None,
     digest: str,
+    session_id: str,
+    offset: int | None,
     album_scope_revision: Sequence[Any] | None = None,
-) -> dict[str, Any]:
-    """Serve the next page of one live session, or the identifiable expiry/staleness code."""
-    session_id, offset = sessions.decode_cursor(request.cursor)
-    if request.search_session_id != session_id:
-        raise _refuse(
-            INVALID_CURSOR,
-            "the cursor does not belong to the supplied search session",
-            field="cursor",
-        )
+) -> SearchSession:
+    """Validate a frozen session's identity and authority without reading a result page."""
     session = sessions.require(session_id)
     pinned_favorites_revision = session.extra.get("favorites_revision")
     if pinned_favorites_revision is not None:
@@ -873,7 +868,7 @@ def _continue_session(
             reason="PLACE_ALBUM_REVISION_CHANGED",
             search_session_id=session.session_id,
         )
-    if offset < 0 or offset >= len(session.entries):
+    if offset is not None and (offset < 0 or offset >= len(session.entries)):
         raise _refuse(
             INVALID_CURSOR,
             "the cursor points outside the cached candidate list",
@@ -931,6 +926,33 @@ def _continue_session(
             current_profile_id=current[0],
             current_generation_id=current[1],
         )
+    return session
+
+
+def _continue_session(
+    catalog: Any,
+    request: SearchRequest,
+    *,
+    sessions: SearchSessionStore,
+    scope: SearchScope,
+    profile: SearchProfile | None,
+    binding: VectorBinding | None,
+    digest: str,
+    album_scope_revision: Sequence[Any] | None = None,
+) -> dict[str, Any]:
+    """Serve the next page of one live session, or the identifiable expiry/staleness code."""
+    session_id, offset = sessions.decode_cursor(request.cursor)
+    if request.search_session_id != session_id:
+        raise _refuse(
+            INVALID_CURSOR,
+            "the cursor does not belong to the supplied search session",
+            field="cursor",
+        )
+    session = _validate_search_session(
+        catalog, request, sessions=sessions, scope=scope, profile=profile,
+        binding=binding, digest=digest, session_id=session_id, offset=offset,
+        album_scope_revision=album_scope_revision,
+    )
     hits, next_offset, has_more, token = _render_page(
         catalog,
         scope,
@@ -1017,6 +1039,7 @@ def search_request(
     additional_condition_parameters: Sequence[Any] = (),
     favorites_only: bool = False,
     session_extra: Mapping[str, Any] | None = None,
+    validate_session_only: bool = False,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1101,6 +1124,19 @@ def search_request(
         )
 
     digest = digest_of(scope)
+    if validate_session_only:
+        if request.cursor is not None or request.search_session_id is None:
+            raise _refuse(
+                INVALID_CURSOR,
+                "read-only session validation requires only a search_session_id",
+                field="search_session_id",
+            )
+        session = _validate_search_session(
+            catalog, request, sessions=sessions, scope=scope, profile=profile,
+            binding=binding, digest=digest, session_id=request.search_session_id,
+            offset=None, album_scope_revision=album_scope_revision,
+        )
+        return {"valid": True, "search_session_id": session.session_id}
     if request.cursor is not None:
         return _continue_session(
             catalog,

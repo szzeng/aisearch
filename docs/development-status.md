@@ -2,7 +2,7 @@
 
 ## P4-PHOTO-SIMILAR-SEARCH（2026-10-19）
 
-查看器一键相似搜索、已确认向量复用、TopK 前参考资产排除、会话身份/分页和搜索历史恢复已实现。受影响 JUnit 138/138，Ruff、编译、Node 与 diff-check 通过。用户指定的 Luna High 独立复核发现并修复快照配额/增长与超出 int64 的 asset_id 两项问题；最终复核通过、无新增 finding。隔离内置浏览器覆盖首页启动、相似结果返回和最终文字模式切换；切回文字模式后参考摘要/缩略图已清除。状态 **PASS（限定合成验收范围）**。Luna High 复核不标记为 DS-H；真实模型质量和大库容量不在本卡范围。详见[任务卡](tasks/P4-PHOTO-SIMILAR-SEARCH.md)与[执行报告](reports/P4-PHOTO-SIMILAR-SEARCH.md)。未访问真实照片库。
+查看器按钮桌面恢复 SVG+文字、窄屏紧凑显示；相似搜索 A→B→Back 现在验证并恢复快照，零候选使用只读会话验证，普通游标越界规则未放宽。原始功能受影响测试 138/138；本次修复定向 JUnit 10/10，Ruff、Node 与 diff-check 通过。内置隔离浏览器通过 1280×900 桌面、390×844 窄屏、相似搜索返回和普通照片返回检查；Luna High 限定复核无 blocker。状态 **PASS（限定合成验收范围）**。真实模型/图库、bfcache 专项与大库容量不在已验证范围；未访问真实照片库。详见[任务卡](tasks/P4-PHOTO-SIMILAR-SEARCH.md)与[执行报告](reports/P4-PHOTO-SIMILAR-SEARCH.md)。
 
 ## P4-UI2-SEARCH-TOOLS-PLACEMENT-A — 搜索辅助入口布局优化（2026-10-19）
 

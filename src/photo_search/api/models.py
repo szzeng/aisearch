@@ -1703,17 +1703,35 @@ class SimilarAssetSearchRequestModel(BaseModel):
     cursor: str | None = Field(default=None, min_length=1, max_length=512)
 
 
+class SimilarAssetSearchSessionValidationRequestModel(BaseModel):
+    """Read-only validation for a frozen asset-image result snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["p2-contracts.v1"] = "p2-contracts.v1"
+    request_id: str = Field(min_length=1, max_length=64)
+    asset_id: int = Field(ge=1, le=9_223_372_036_854_775_807)
+    top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=MAX_TOP_K)
+    page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE)
+    search_session_id: str = Field(min_length=1, max_length=128)
+
+
 class AssetQuerySummaryModel(BaseModel):
     asset_id: int
     filename: str
     thumbnail_url: str | None = None
-    validation_cursor: str
 
 
 class SimilarAssetSearchResultModel(SearchResultModel):
     """The ordinary frozen search page plus the catalog asset used as its query."""
 
     asset_query: AssetQuerySummaryModel
+
+
+class AssetQuerySessionValidationModel(BaseModel):
+    valid: Literal[True]
+    asset_id: int
+    search_session_id: str
 
 
 class SearchProfileActivateRequest(BaseModel):

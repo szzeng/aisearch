@@ -21,6 +21,9 @@
   var MIN_PAGE_SIZE = 1;
   var MAX_PAGE_SIZE = 100;
   var DEFAULT_PAGE_SIZE = 20;
+  // Keep aligned with search.retrieval.DEFAULT_TOP_K; legacy similar-search
+  // requests omitted this field and rely on the API's same default.
+  var DEFAULT_SIMILAR_TOP_K = 5000;
   var SEARCH_SNAPSHOT_KEY = "aisearch.search-return.v1";
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
   var backdropBoundDialogs = new WeakSet();
@@ -2069,6 +2072,16 @@
           : "相似搜索入口与文字查询或固定范围入口冲突，未执行查询。", "error");
         return;
       }
+      var historyState = window.history && window.history.state;
+      if (historyState && historyState.searchSnapshotToken) {
+        restoreSearchSnapshot(similar.assetId);
+        return;
+      }
+      if (historyState && historyState.searchSnapshotSaveFailed) {
+        clear(els.resultGrid);
+        setStatus(els.queryStatus, "这条历史相似搜索没有可恢复的快照，请重新启动相似搜索。", "error");
+        return;
+      }
       startSimilarAssetSearch(similar.assetId);
       return;
     }
@@ -2230,7 +2243,7 @@
     }
   }
 
-  function restoreSearchSnapshot() {
+  function restoreSearchSnapshot(expectedSimilarAssetId) {
     var saved;
     var restoreKey = snapshotStorageKey();
     try {
@@ -2248,6 +2261,21 @@
       }
       return;
     }
+    if (expectedSimilarAssetId !== undefined &&
+        (saved.mode !== "asset_image" || Number(saved.assetQueryId) !== Number(expectedSimilarAssetId))) {
+      clear(els.resultGrid);
+      clearSearchSnapshot();
+      setStatus(els.queryStatus, "历史相似搜索快照与当前参考照片不匹配，请重新搜索。", "error");
+      return;
+    }
+    var routeSimilarAsset = similarAssetFromUrl();
+    if (saved.mode === "asset_image" &&
+        (!routeSimilarAsset.valid || Number(routeSimilarAsset.assetId) !== Number(saved.assetQueryId))) {
+      clear(els.resultGrid);
+      clearSearchSnapshot();
+      setStatus(els.queryStatus, "历史相似搜索地址与快照不匹配，请重新搜索。", "error");
+      return;
+    }
     var restoreGeneration = state.search.requestGeneration;
     if (saved.mode === "asset_image" && Number(saved.assetQueryId) > 0) {
       state.search.mode = "asset_image";
@@ -2260,21 +2288,30 @@
       state.search.total = saved.total_candidates;
       state.search.lastRequestBody = saved.lastRequestBody || null;
       setSimilarQueryControls(true);
-      var assetValidationCursor = saved.assetQuery && saved.assetQuery.validation_cursor;
-      if (!assetValidationCursor) {
+      var savedTopK = saved.lastRequestBody && saved.lastRequestBody.top_k !== undefined
+        ? Number(saved.lastRequestBody.top_k) : DEFAULT_SIMILAR_TOP_K;
+      var savedPageSize = Number(saved.lastRequestBody && saved.lastRequestBody.page_size);
+      if (!saved.search_session_id || !saved.lastRequestBody ||
+          !Number.isInteger(savedTopK) || savedTopK < 1 ||
+          !Number.isInteger(savedPageSize) || savedPageSize < 1) {
         clearSearchSnapshot();
         setStatus(els.queryStatus, "相似搜索会话无法验证，请重新从照片启动搜索。", "error");
         return;
       }
-      request("/search/by-asset", { method: "POST", body: {
+      request("/search/by-asset/validate", { method: "POST", body: {
         contract_version: CONTRACT_VERSION,
         request_id: newRequestId("return-similar"),
         asset_id: Number(saved.assetQueryId),
-        page_size: Number(saved.form.pageSize) || DEFAULT_PAGE_SIZE,
+        top_k: savedTopK,
+        page_size: savedPageSize,
         search_session_id: saved.search_session_id,
-        cursor: assetValidationCursor,
-      }}).then(function () {
+      }}).then(function (result) {
         if (restoreGeneration !== state.search.requestGeneration) return;
+        var body = result.body || {};
+        if (body.valid !== true || Number(body.asset_id) !== Number(saved.assetQueryId) ||
+            body.search_session_id !== saved.search_session_id) {
+          throw { code: "SNAPSHOT_IDENTITY_MISMATCH" };
+        }
         restoreValidatedSearchSnapshot(saved);
       }).catch(function (failure) {
         if (restoreGeneration !== state.search.requestGeneration) return;

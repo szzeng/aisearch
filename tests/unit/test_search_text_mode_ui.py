@@ -47,17 +47,18 @@ function page(body,assetId,cursor="text-next"){
     search_scope:body.search_scope,channels:{fts:{engaged:true},vector:{engaged:false}},
     search_projection:{state:"SYNCED"},state:"OK"};
 }
-function harness(storage=new Map()){
+function harness(storage=new Map(),harnessOptions={}){
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-  const calls=[],viewers=[];let answer=body=>ok(page(body,body.cursor?202:201));
+  const calls=[],viewers=[],scrolls=[];let answer=body=>ok(page(body,body.cursor?202:201));
   for(const [id,value] of Object.entries({"query-retrieval-mode":"combined","query-availability":"any",
     "query-place-state":"any","query-descendants":"true","query-page-size":"1","query-person-match":"any"}))get(id).value=value;
   const context={URLSearchParams,URL,console,encodeURIComponent,isFinite,
     IntersectionObserver:class{observe(){}unobserve(){}disconnect(){}},
     document:{readyState:"loading",cookie:"ps_csrf=fixture-csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-    window:{location:{href:"http://127.0.0.1/search",origin:"http://127.0.0.1",pathname:"/search",search:"",hash:"",
+    window:{location:{href:"http://127.0.0.1/search",origin:"http://127.0.0.1",pathname:"/search",search:harnessOptions.search||"",hash:"",
       replace(path){this.href=new URL(path,this.href).href;}},scrollY:87,
-      requestAnimationFrame:fn=>fn(),scrollTo(){},
+      history:{state:harnessOptions.historyState||null,replaceState(value){this.state=value;}},
+      requestAnimationFrame:fn=>fn(),scrollTo(...args){scrolls.push(args);},
       sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)}},
     fetch:async(url,options)=>{
       calls.push({url,options,body:options&&options.body?JSON.parse(options.body):null});
@@ -65,6 +66,11 @@ function harness(storage=new Map()){
       if(url.endsWith("/sources/summary"))return ok({sources:[{source_id:3,display_name:"合成票据"}]});
       if(url.includes("/persons?"))return ok({persons:[],has_more:false});
       if(url.endsWith("/search/place-aware"))return answer(JSON.parse(options.body));
+      if(url.endsWith("/search/by-asset/validate")){
+        const body=JSON.parse(options.body);
+        if(harnessOptions.validationResponse)return ok(harnessOptions.validationResponse);
+        return ok({valid:true,asset_id:body.asset_id,search_session_id:body.search_session_id});
+      }
       if(url.includes("/search/sessions/")&&url.includes("/time?limit=1"))return ok({taken_time_rules_version:1});
       if(/^\/api\/v1\/assets\/\d+$/.test(url))return ok({asset_id:Number(url.split("/").pop()),format:"jpeg"});
       throw new Error("Unexpected request: "+url);
@@ -86,7 +92,7 @@ function harness(storage=new Map()){
   };
   vm.runInContext(code,context);
   context.ui.boot();
-  return {get,calls,storage,viewers,ui:context.ui,setAnswer:fn=>{answer=fn;},searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
+  return {get,calls,storage,viewers,scrolls,ui:context.ui,setAnswer:fn=>{answer=fn;},searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
 }
 function assertLiteral(request){
   assert.equal(request.retrieval_mode,"text");
@@ -172,6 +178,63 @@ function assertLiteral(request){
   assert.equal(returned.ui.state.search.cursor,null);
   assert.equal(returned.viewers[0].assetId,203,"next photo at the loaded boundary waits for successful continuation");
   assert.match(returned.viewers[0].position,/第 3 张/);
+
+  const similarHits=[
+    {asset_id:202,rank:1,hit_reason:"SEMANTIC",matched_by:{vector:1},matched_text:[]},
+    {asset_id:203,rank:2,hit_reason:"SEMANTIC",matched_by:{vector:2},matched_text:[]},
+  ];
+  const similarBody={...page({retrieval_mode:"combined",top_k:3,page_size:1},202,"asset-next"),
+    search_session_id:"asset-session-A",hits:similarHits,asset_query:{asset_id:101,filename:"ref.jpg",thumbnail_url:"/thumb/101"}};
+  const similarSnapshot={mode:"asset_image",assetQueryId:101,assetQuery:similarBody.asset_query,
+    form:{pageSize:"1"},hits:similarHits,windowOffset:0,recycledCount:0,spacerHeight:0,
+    search_session_id:"asset-session-A",next_cursor:"asset-next",count:2,total_candidates:3,
+    lastBody:similarBody,lastRequestBody:{asset_id:101,top_k:3,page_size:1},scrollY:347};
+  const token="return-token-A";
+  const similarReturn=harness(new Map([["aisearch.search-return.v1:"+token,JSON.stringify(similarSnapshot)]]),
+    {search:"?similar_asset=101",historyState:{searchSnapshotToken:token}});
+  await flush();
+  const validationCall=similarReturn.calls.find(call=>call.url.endsWith("/search/by-asset/validate"));
+  assert.ok(validationCall,"a historical similar entry validates its saved session");
+  assert.equal(validationCall.body.asset_id,101);
+  assert.equal(validationCall.body.search_session_id,"asset-session-A");
+  assert.equal(Object.hasOwn(validationCall.body,"cursor"),false,
+    "session validation is distinct from paging and does not construct an offset cursor");
+  assert.equal(similarReturn.calls.some(call=>call.url.endsWith("/search/by-asset")),false,
+    "return restores the frozen ranking without rerunning retrieval");
+  assert.equal(similarReturn.ui.state.search.mode,"asset_image");
+  assert.equal(similarReturn.ui.state.search.sessionId,"asset-session-A");
+  assert.equal(similarReturn.ui.state.search.cursor,"asset-next");
+  assert.deepEqual(Array.from(similarReturn.ui.state.search.hits,hit=>hit.asset_id),[202,203]);
+  assert.match(similarReturn.get("result-grid").textContent,/第 2 名/);
+  assert.deepEqual(similarReturn.scrolls.at(-1),[0,347],"history restore reinstates the scroll position");
+
+  const legacySnapshot=JSON.parse(JSON.stringify(similarSnapshot));
+  delete legacySnapshot.lastRequestBody.top_k;
+  const legacySimilarReturn=harness(new Map([[
+    "aisearch.search-return.v1:"+token,JSON.stringify(legacySnapshot)]]),
+    {search:"?similar_asset=101",historyState:{searchSnapshotToken:token}});
+  await flush();
+  const legacyValidation=legacySimilarReturn.calls.find(call=>call.url.endsWith("/search/by-asset/validate"));
+  assert.equal(legacyValidation.body.top_k,5000,
+    "legacy snapshots without top_k validate with the API's unchanged default");
+  assert.deepEqual(Array.from(legacySimilarReturn.ui.state.search.hits,hit=>hit.asset_id),[202,203]);
+
+  const wrongReference=harness(new Map([["aisearch.search-return.v1:"+token,JSON.stringify(similarSnapshot)]]),
+    {search:"?similar_asset=999",historyState:{searchSnapshotToken:token}});
+  await flush();
+  assert.equal(wrongReference.calls.some(call=>call.url.endsWith("/search/by-asset/validate")),false,
+    "a snapshot for another reference photo is never validated or rendered");
+  assert.equal(wrongReference.calls.some(call=>call.url.endsWith("/search/by-asset")),false);
+  assert.match(wrongReference.get("query-status").textContent,/与当前参考照片不匹配/);
+
+  const mismatchedSession=harness(new Map([[
+    "aisearch.search-return.v1:"+token,JSON.stringify(similarSnapshot)]]),
+    {search:"?similar_asset=101",historyState:{searchSnapshotToken:token},
+      validationResponse:{valid:true,asset_id:101,search_session_id:"different-session"}});
+  await flush();
+  assert.deepEqual(Array.from(mismatchedSession.ui.state.search.hits,hit=>hit.asset_id),[],
+    "a validation response for another session cannot restore the saved ranking");
+  assert.match(mismatchedSession.get("query-status").textContent,/会话已过期或参考向量已变化/);
 
   returned.ui.state.search.mode="image";const beforeImageSwitch=returned.searchCalls().length;
   returned.get("query-retrieval-mode").value="combined";returned.get("query-retrieval-mode").fire("change");await flush();
