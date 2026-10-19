@@ -729,7 +729,7 @@ def test_the_enrichment_stages_never_walk_the_whole_library(env: RefreshEnv) -> 
 
 
 def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
-    env: RefreshEnv,
+    env: RefreshEnv, monkeypatch,
 ) -> None:
     catalog = env.service().catalog
     asset = catalog.read_one(
@@ -787,6 +787,14 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     with catalog.write() as connection:
         connection.execute("UPDATE assets SET sha256=? WHERE asset_id=?", (revision, asset_id))
 
+    captured: list[tuple[str, tuple[Any, ...]]] = []
+    read_all = catalog.read_all
+
+    def capture(sql: str, parameters: Sequence[Any] = ()):
+        captured.append((sql, tuple(parameters)))
+        return read_all(sql, parameters)
+
+    monkeypatch.setattr(catalog, "read_all", capture)
     first = recover_cr2_format_failures(
         catalog,
         data_root=env.data_root,
@@ -797,6 +805,20 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
         artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
     )
     assert first["cr2_recovery_jobs"] == 1
+    candidate_query = next(sql for sql, _ in captured if "FROM jobs j JOIN assets a" in sql)
+    artifact_query = next(
+        sql for sql, _ in captured if "FROM artifacts INDEXED BY idx_artifacts_job" in sql
+    )
+    candidate_params = next(params for sql, params in captured if sql == candidate_query)
+    artifact_params = next(params for sql, params in captured if sql == artifact_query)
+    candidate_plan = read_all("EXPLAIN QUERY PLAN " + candidate_query, candidate_params)
+    artifact_plan = read_all("EXPLAIN QUERY PLAN " + artifact_query, artifact_params)
+    candidate_details = " ".join(str(row["detail"]) for row in candidate_plan)
+    artifact_details = " ".join(str(row["detail"]) for row in artifact_plan)
+    assert "idx_jobs_subject" in candidate_details
+    assert "SCAN j" not in candidate_details
+    assert "idx_artifacts_job" in artifact_details
+    assert "SCAN artifacts" not in artifact_details
     assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "QUEUED"
     saved = catalog.read_one("SELECT * FROM cr2_job_recoveries WHERE job_id=?", (job_id,))
     assert saved["source_error_code"] == "FORMAT_UNSUPPORTED"
@@ -821,6 +843,18 @@ def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     assert second["cr2_recovery_jobs"] == 0
     assert second["cr2_recovery_already_attempted"] == 1
     assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "FAILED"
+    before_empty_scope = len(captured)
+    empty_scope = recover_cr2_format_failures(
+        catalog,
+        data_root=env.data_root,
+        asset_ids=[asset_id],
+        source_ids=[],
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
+    assert empty_scope["cr2_recovery_candidates"] == 0
+    assert len(captured) == before_empty_scope
 
 
 def test_asset_target_queries_and_face_job_lookup_are_bounded(env: RefreshEnv, monkeypatch) -> None:

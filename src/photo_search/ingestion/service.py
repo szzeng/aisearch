@@ -362,6 +362,32 @@ class CatalogService:
             failure_limit=failure_limit,
         )
 
+    def generate_media_pair(
+        self,
+        *,
+        asset_ids: Sequence[int],
+        source_ids: Sequence[int | None] | None = None,
+        retry_failed_by_asset: dict[int, Sequence[str]] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        failure_limit: int = 20,
+    ) -> dict[str, Any]:
+        """Generate CR2 thumbnail and preview outputs for one explicit asset page."""
+        targets = select_targets(self.catalog, asset_ids=asset_ids) if asset_ids else []
+        generator = MediaGenerator(
+            self.catalog,
+            cache=self.media_cache(),
+            data_root=self.data_root,
+            disk_usage=self.disk_usage,
+            wall_clock_ms=self.wall_clock_ms,
+        )
+        return generator.run_cr2_pair(
+            targets,
+            retry_failed_by_asset=retry_failed_by_asset,
+            source_ids=source_ids,
+            cancel_check=cancel_check,
+            failure_limit=failure_limit,
+        )
+
     def generate_thumbnail(self, **options: Any) -> dict[str, Any]:
         return self.generate_media("thumbnail", **options)
 

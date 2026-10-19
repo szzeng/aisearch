@@ -232,6 +232,55 @@ def render_jpeg(image: Image.Image, *, long_edge: int, quality: int) -> bytes:
     return buffer.getvalue()
 
 
+def render_jpeg_from_source(
+    image: Image.Image, *, long_edge: int, quality: int
+) -> bytes:
+    """Render one size without mutating the canonical decoded frame.
+
+    This is used when one RAW decode feeds multiple media contracts. ``resize`` uses the
+    same aspect rounding, Lanczos resampling, and Pillow reducing gap as ``thumbnail``;
+    keeping the source intact lets each output be sampled directly from the canonical
+    orientation-normalised frame, without a full-resolution image copy or a preview-sized
+    intermediate.
+    """
+    prepared = prepare_output_mode(image)
+    target = _thumbnail_size(prepared.size, long_edge)
+    resized = target != prepared.size
+    output = (
+        prepared.resize(target, Image.Resampling.LANCZOS, reducing_gap=2.0)
+        if resized
+        else prepared
+    )
+    try:
+        buffer = io.BytesIO()
+        output.save(buffer, format="JPEG", quality=int(quality), optimize=False)
+        return buffer.getvalue()
+    finally:
+        if resized:
+            output.close()
+        if prepared is not image:
+            prepared.close()
+
+
+def _thumbnail_size(size: tuple[int, int], long_edge: int) -> tuple[int, int]:
+    """Pillow ``thumbnail``'s exact aspect-preserving target-size calculation."""
+    width, height = (int(value) for value in size)
+    bound = max(0, int(long_edge))
+    if width <= bound and height <= bound:
+        return width, height
+    aspect = width / height
+    x = y = bound
+    if x / y >= aspect:
+        value = y * aspect
+        low, high = int(value // 1), int(-(-value // 1))
+        x = max(min((low, high), key=lambda n: abs(aspect - n / y)), 1)
+    else:
+        value = x / aspect
+        low, high = int(value // 1), int(-(-value // 1))
+        y = max(min((low, high), key=lambda n: 0 if n == 0 else abs(aspect - x / n)), 1)
+    return x, y
+
+
 def prepare_output_mode(image: Image.Image) -> Image.Image:
     """Return an image whose mode JPEG can store, compositing transparency on white."""
     if image.mode in ("RGB", "L"):

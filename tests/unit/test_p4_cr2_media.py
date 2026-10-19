@@ -164,3 +164,68 @@ def test_continue_build_retries_only_cr2_format_unsupported_cache(tmp_path) -> N
         "thumbnail": [1],
         "preview": [],
     }
+
+
+def test_non_cr2_pair_fallback_stays_within_selected_source(tmp_path, monkeypatch) -> None:
+    from PIL import Image
+
+    from photo_search.media import pipeline
+    from photo_search.media.cache import MediaCache
+    from photo_search.media.pipeline import MediaGenerator, MediaTarget
+
+    selected_root = tmp_path / "selected"
+    other_root = tmp_path / "other"
+    selected_root.mkdir()
+    other_root.mkdir()
+    selected = selected_root / "impostor.cr2"
+    other = other_root / "actual.cr2"
+    selected.write_bytes(b"not a CR2 container")
+    _write_cr2_header(other)
+    stat = selected.stat()
+    selected_row = {
+        "location_id": 1,
+        "source_id": 7,
+        "relative_path": selected.name,
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+        "availability": "PRESENT",
+        "root_path": str(selected_root),
+    }
+
+    class Catalog:
+        queries = []
+
+        def read_all(self, sql, parameters=()):
+            self.queries.append((sql, tuple(parameters)))
+            assert "l.source_id IN (?)" in sql
+            assert tuple(parameters) == (31, 7)
+            return [selected_row]
+
+    catalog = Catalog()
+    decoded_paths = []
+
+    def fake_decode(path, *, long_edge):
+        decoded_paths.append(path)
+        return SimpleNamespace(
+            image=Image.new("RGB", (80, 60), (50, 100, 150)),
+            width=80,
+            height=60,
+            orientation=1,
+            source_format="JPEG",
+        )
+
+    monkeypatch.setattr(pipeline, "load_normalized", fake_decode)
+    generator = MediaGenerator(
+        catalog,
+        cache=MediaCache.open(tmp_path / "data"),
+        data_root=tmp_path / "data",
+        min_free_bytes=0,
+    )
+    result = generator.run_cr2_pair(
+        [MediaTarget(asset_id=31, sha256="a" * 64, byte_size=stat.st_size)],
+        source_ids=[7],
+    )
+    assert result["thumbnail"]["generated"] == 1
+    assert result["preview"]["generated"] == 1
+    assert decoded_paths == [selected, selected]
+    assert len(catalog.queries) == 3  # CR2 classification plus one scoped fallback per kind

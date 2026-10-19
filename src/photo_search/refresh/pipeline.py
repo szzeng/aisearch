@@ -1129,7 +1129,8 @@ def _enrichment_stages(
                 catalog,
                 scopes=scopes,
                 runner=lambda page: _thumbnail_stage(
-                    service, page, cancel_check, retry_cr2_failures=True
+                    service, page, cancel_check, retry_cr2_failures=True,
+                    source_ids=scopes,
                 ),
                 cancel_check=cancel_check,
             ),
@@ -1306,6 +1307,7 @@ def _thumbnail_stage(
     cancel_check: Callable[[], bool] | None,
     *,
     retry_cr2_failures: bool = False,
+    source_ids: Sequence[int | None] | None = None,
 ) -> dict[str, Any]:
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "assets": 0, "generated": 0}
@@ -1313,36 +1315,51 @@ def _thumbnail_stage(
     cr2_assets: list[int] = []
     retry_assets = {"thumbnail": [], "preview": []}
     if retry_cr2_failures:
-        cr2_assets, rows = _cr2_assets_in_page(service, targets)
+        cr2_assets, rows = _cr2_assets_in_page(service, targets, source_ids=source_ids)
         # Snapshot eligible historical failures before this page runs. A fresh failure
         # created below is reported for the next explicit build, not retried immediately.
         retry_assets = _registered_cr2_format_failures(service, targets, rows=rows)
-    summary = service.generate_media("thumbnail", asset_ids=targets, cancel_check=cancel_check)
-    cr2_retried = 0
-    cr2_previews = 0
     if retry_cr2_failures:
-        preview = service.generate_media(
-            "preview", asset_ids=cr2_assets, cancel_check=cancel_check
-        ) if cr2_assets else {"generated": 0}
-        cr2_previews = int(preview["generated"])
-        thumbnail_assets = retry_assets["thumbnail"]
-        preview_assets = retry_assets["preview"]
-        if thumbnail_assets:
-            retried = service.generate_media(
-                "thumbnail",
-                asset_ids=thumbnail_assets,
-                retry_failed=True,
-                cancel_check=cancel_check,
-            )
-            cr2_retried = int(retried["assets_considered"])
-        if preview_assets:
-            retried_preview = service.generate_media(
-                "preview",
-                asset_ids=preview_assets,
-                retry_failed=True,
-                cancel_check=cancel_check,
-            )
-            cr2_previews += int(retried_preview["generated"])
+        cr2_set = set(cr2_assets)
+        ordinary = service.generate_media(
+            "thumbnail", asset_ids=[asset_id for asset_id in targets if asset_id not in cr2_set],
+            cancel_check=cancel_check,
+        ) if len(cr2_set) < len(targets) else {
+            "assets_considered": 0, "generated": 0, "already_published": 0,
+            "failed": 0, "unsupported": 0, "source_missing": 0,
+        }
+        retry_by_asset: dict[int, list[str]] = {}
+        for kind, asset_ids in retry_assets.items():
+            for asset_id in asset_ids:
+                retry_by_asset.setdefault(asset_id, []).append(kind)
+        pair = service.generate_media_pair(
+            asset_ids=cr2_assets,
+            source_ids=source_ids,
+            retry_failed_by_asset=retry_by_asset,
+            cancel_check=cancel_check,
+        ) if cr2_assets else {
+            "thumbnail": {"generated": 0, "already_published": 0, "failed": 0,
+                          "unsupported": 0, "source_missing": 0},
+            "preview": {"generated": 0}, "decode_attempts": 0,
+        }
+        thumb_pair = pair["thumbnail"]
+        preview_pair = pair["preview"]
+        summary = {
+            "assets_considered": len(targets),
+            "generated": int(ordinary["generated"]) + int(thumb_pair["generated"]),
+            "already_published": int(ordinary["already_published"])
+            + int(thumb_pair["already_published"]),
+            "failed": int(ordinary["failed"]) + int(thumb_pair["failed"]),
+            "unsupported": int(ordinary["unsupported"]) + int(thumb_pair["unsupported"]),
+            "source_missing": int(ordinary["source_missing"])
+            + int(thumb_pair["source_missing"]),
+        }
+        cr2_retried = len({*retry_assets["thumbnail"]})
+        cr2_previews = int(preview_pair["generated"])
+    else:
+        summary = service.generate_media("thumbnail", asset_ids=targets, cancel_check=cancel_check)
+        cr2_retried = 0
+        cr2_previews = 0
     return {
         "state": STAGE_OK,
         "assets": int(summary["assets_considered"]),
@@ -1358,21 +1375,30 @@ def _thumbnail_stage(
 
 
 def _cr2_assets_in_page(
-    service: Any, asset_ids: Sequence[int]
+    service: Any, asset_ids: Sequence[int], *, source_ids: Sequence[int | None] | None = None
 ) -> tuple[list[int], list[Any]]:
     """Read CR2 candidate identity and locations with one bounded page query."""
     if not asset_ids:
         return [], []
     placeholders = ",".join("?" for _ in asset_ids)
-    rows = service.catalog.read_all(
+    sql = (
         "SELECT DISTINCT l.asset_id, a.sha256, l.relative_path, s.root_path "
         "FROM file_locations AS l "
         "JOIN source_roots AS s ON s.source_id = l.source_id "
         "JOIN assets AS a ON a.asset_id = l.asset_id "
         f"WHERE l.availability = 'PRESENT' AND l.asset_id IN ({placeholders}) "
-        "AND lower(l.relative_path) LIKE '%.cr2' ORDER BY l.asset_id, l.location_id",
-        tuple(int(value) for value in asset_ids),
+        "AND lower(l.relative_path) LIKE '%.cr2'"
     )
+    parameters: tuple[Any, ...] = tuple(int(value) for value in asset_ids)
+    if source_ids is not None and None not in source_ids:
+        selected_sources = sorted({int(value) for value in source_ids})
+        if not selected_sources:
+            return [], []
+        source_slots = ",".join("?" for _ in selected_sources)
+        sql += f" AND l.source_id IN ({source_slots})"
+        parameters += tuple(selected_sources)
+    sql += " ORDER BY l.asset_id, l.location_id"
+    rows = service.catalog.read_all(sql, parameters)
     return sorted({int(row["asset_id"]) for row in rows}), rows
 
 

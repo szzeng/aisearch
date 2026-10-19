@@ -34,7 +34,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import MediaSpec
-from photo_search.media.decode import load_normalized, render_jpeg
+from photo_search.media.decode import load_normalized, render_jpeg, render_jpeg_from_source
 
 #: Free space a media batch keeps in reserve before it publishes another artifact
 #: (architecture §12.4 item 10: stop and report, never delete data to recover space).
@@ -66,6 +66,25 @@ SELECT l.location_id, l.source_id, l.relative_path, l.size, l.mtime_ns, l.availa
  WHERE l.asset_id = ?
  ORDER BY CASE l.availability WHEN 'PRESENT' THEN 0 ELSE 1 END, l.location_id
 """
+
+
+def _location_query(
+    asset_id: int, source_ids: Sequence[int | None] | None
+) -> tuple[str, tuple[Any, ...]]:
+    """Return one asset's location query, optionally restricted to build sources."""
+    if source_ids is None or None in source_ids:
+        return _LOCATION_SQL, (int(asset_id),)
+    selected_sources = sorted({int(value) for value in source_ids})
+    if not selected_sources:
+        return (
+            _LOCATION_SQL.replace(" ORDER BY CASE", " AND 0 ORDER BY CASE"),
+            (int(asset_id),),
+        )
+    slots = ",".join("?" for _ in selected_sources)
+    sql = _LOCATION_SQL.replace(
+        " ORDER BY CASE", f" AND l.source_id IN ({slots}) ORDER BY CASE"
+    )
+    return sql, (int(asset_id), *selected_sources)
 
 
 class MediaInterrupted(Exception):
@@ -220,7 +239,12 @@ class MediaGenerator:
 
     # -------------------------------------------------------------------- one asset
     def build(
-        self, spec: MediaSpec, target: MediaTarget, *, retry_failed: bool = False
+        self,
+        spec: MediaSpec,
+        target: MediaTarget,
+        *,
+        retry_failed: bool = False,
+        source_ids: Sequence[int | None] | None = None,
     ) -> MediaAttempt:
         started = time.perf_counter()
         artifact = self.cache.artifact_path(spec=spec, sha256=target.sha256)
@@ -229,7 +253,8 @@ class MediaGenerator:
                 spec, target, STATE_PUBLISHED, started, artifact_path=str(artifact)
             )
 
-        rows = self.catalog.read_all(_LOCATION_SQL, (target.asset_id,))
+        location_sql, location_parameters = _location_query(target.asset_id, source_ids)
+        rows = self.catalog.read_all(location_sql, location_parameters)
         present = [row for row in rows if str(row["availability"]) == "PRESENT"]
         prior_failure = self.cache.read_failure(spec=spec, sha256=target.sha256)
         cached = None if retry_failed else prior_failure
@@ -321,6 +346,201 @@ class MediaGenerator:
             failure_recorded=recorded,
         )
 
+    def build_cr2_pair(
+        self,
+        target: MediaTarget,
+        *,
+        retry_failed_kinds: Sequence[str] = (),
+        source_ids: Sequence[int | None] | None = None,
+    ) -> tuple[dict[str, MediaAttempt], int]:
+        """Build missing CR2 thumbnail/preview outputs from one canonical RAW decode."""
+        from photo_search.media import raw_cr2
+        from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+
+        specs = (THUMBNAIL_SPEC, PREVIEW_SPEC)
+        retry_kinds = {str(kind) for kind in retry_failed_kinds}
+        started = {spec.kind: time.perf_counter() for spec in specs}
+        outcomes: dict[str, MediaAttempt] = {}
+        artifacts = {
+            spec.kind: self.cache.artifact_path(spec=spec, sha256=target.sha256)
+            for spec in specs
+        }
+        pending = []
+        for spec in specs:
+            if self.cache.is_published(artifacts[spec.kind]):
+                outcomes[spec.kind] = self._attempt(
+                    spec, target, STATE_PUBLISHED, started[spec.kind],
+                    artifact_path=str(artifacts[spec.kind]),
+                )
+            else:
+                pending.append(spec)
+        if not pending:
+            return outcomes, 0
+
+        location_sql, location_parameters = _location_query(target.asset_id, source_ids)
+        rows = self.catalog.read_all(location_sql, location_parameters)
+        present = [row for row in rows if str(row["availability"]) == "PRESENT"]
+        if not present:
+            for spec in pending:
+                outcomes[spec.kind] = self._attempt(
+                    spec, target, STATE_SOURCE_MISSING, started[spec.kind],
+                    code=SOURCE_FILE_MISSING,
+                    message="no available location holds this content",
+                )
+            return outcomes, 0
+
+        prior_failures = {
+            spec.kind: self.cache.read_failure(spec=spec, sha256=target.sha256)
+            for spec in pending
+        }
+        to_generate = []
+        for spec in pending:
+            prior = prior_failures[spec.kind]
+            if (
+                spec.kind not in retry_kinds
+                and prior is not None
+                and _cached_failure_applies(prior, present)
+            ):
+                outcomes[spec.kind] = self._attempt(
+                    spec, target, STATE_CACHED_FAILURE, started[spec.kind],
+                    code=_optional_text(prior.get("code")),
+                    message=_optional_text(prior.get("message")),
+                    source_format=_optional_text(prior.get("format")),
+                )
+            else:
+                to_generate.append(spec)
+        if not to_generate:
+            return outcomes, 0
+
+        cr2_paths = [
+            Path(str(row["root_path"])) / str(row["relative_path"])
+            for row in present
+            if raw_cr2.is_cr2(Path(str(row["root_path"])) / str(row["relative_path"]))
+        ]
+        if not cr2_paths:
+            # A `.cr2` path can still contain arbitrary bytes. Its extension never
+            # overrides the normal decoder's content-based format decision.
+            for spec in to_generate:
+                outcomes[spec.kind] = self.build(
+                    spec,
+                    target,
+                    retry_failed=spec.kind in retry_kinds,
+                    source_ids=source_ids,
+                )
+            return outcomes, 0
+
+        errors: dict[str, list[CatalogError]] = {spec.kind: [] for spec in to_generate}
+        still_pending = {spec.kind for spec in to_generate}
+        raw_decode_calls = 0
+        for row in present:
+            if not still_pending:
+                break
+            self._require_free_space()
+            absolute = Path(str(row["root_path"])) / str(row["relative_path"])
+            decoded = None
+            try:
+                _require_unchanged(absolute, row)
+                raw_decode_calls += 1
+                decoded = load_normalized(
+                    absolute, long_edge=max(spec.long_edge for spec in to_generate)
+                )
+                _require_unchanged(absolute, row)
+            except CatalogError as error:
+                if decoded is not None:
+                    decoded.image.close()
+                if error.code == DISK_SPACE_INSUFFICIENT:
+                    raise
+                for kind in still_pending:
+                    errors[kind].append(error)
+                continue
+            except Exception as error:  # isolate one broken location from its page
+                if decoded is not None:
+                    decoded.image.close()
+                wrapped = CatalogError(
+                    DECODE_FAILED,
+                    f"media pipeline failed for this input ({type(error).__name__}): {error}",
+                    details={"path": str(absolute)},
+                )
+                for kind in still_pending:
+                    errors[kind].append(wrapped)
+                continue
+
+            try:
+                for spec in to_generate:
+                    if spec.kind not in still_pending:
+                        continue
+                    try:
+                        payload = render_jpeg_from_source(
+                            decoded.image,
+                            long_edge=spec.long_edge,
+                            quality=spec.jpeg_quality,
+                        )
+                        self._require_free_space()
+                        published = self.cache.publish(artifacts[spec.kind], payload)
+                    except CatalogError as error:
+                        if error.code == DISK_SPACE_INSUFFICIENT:
+                            raise
+                        errors[spec.kind].append(error)
+                        continue
+                    except Exception as error:  # noqa: BLE001 - isolate output variants
+                        errors[spec.kind].append(
+                            CatalogError(
+                                DECODE_FAILED,
+                                f"media pipeline failed for this input ({type(error).__name__}): {error}",
+                                details={"path": str(absolute)},
+                            )
+                        )
+                        continue
+                    self.cache.clear_failure(spec=spec, sha256=target.sha256)
+                    outcomes[spec.kind] = self._attempt(
+                        spec, target, STATE_GENERATED, started[spec.kind],
+                        source_format=decoded.source_format,
+                        width=decoded.width,
+                        height=decoded.height,
+                        orientation=decoded.orientation,
+                        artifact_path=str(published.path),
+                        bytes_written=published.bytes_written,
+                        locations_tried=len(errors[spec.kind]) + 1,
+                    )
+                    still_pending.discard(spec.kind)
+            finally:
+                decoded.image.close()
+
+        for spec in to_generate:
+            if spec.kind in outcomes:
+                continue
+            error = (
+                _preferred_error(errors[spec.kind])
+                if errors[spec.kind]
+                else CatalogError(
+                    SOURCE_FILE_MISSING,
+                    "no present source location could be decoded",
+                )
+            )
+            state = _failure_state(error)
+            recorded = False
+            if state in (STATE_FAILED, STATE_UNSUPPORTED):
+                prior = prior_failures[spec.kind]
+                retry_origin = (
+                    prior
+                    if spec.kind in retry_kinds
+                    and prior is not None
+                    and prior.get("code") == FORMAT_UNSUPPORTED
+                    else None
+                )
+                recorded = self._record_failure(
+                    spec, target, error, present, state, cr2_retry_origin=retry_origin
+                )
+            outcomes[spec.kind] = self._attempt(
+                spec, target, state, started[spec.kind],
+                code=error.code,
+                message=error.message,
+                source_format=_optional_text(error.details.get("format")),
+                locations_tried=len(errors[spec.kind]),
+                failure_recorded=recorded,
+            )
+        return outcomes, raw_decode_calls
+
     # ------------------------------------------------------------------- whole batch
     def run(
         self,
@@ -357,6 +577,52 @@ class MediaGenerator:
             getattr(self.disk_usage(_existing(self.data_root)), "free", 0)
         )
         return summary
+
+    def run_cr2_pair(
+        self,
+        targets: Sequence[MediaTarget],
+        *,
+        retry_failed_by_asset: dict[int, Sequence[str]] | None = None,
+        source_ids: Sequence[int | None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        failure_limit: int = 20,
+    ) -> dict[str, Any]:
+        """Build thumbnail and preview for a bounded CR2 page, sharing each RAW decode."""
+        from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+
+        specs = (THUMBNAIL_SPEC, PREVIEW_SPEC)
+        summaries = {
+            spec.kind: self._empty_summary(spec, considered=len(targets)) for spec in specs
+        }
+        started = time.perf_counter()
+        decode_attempts = 0
+        retries = retry_failed_by_asset or {}
+        try:
+            for target in targets:
+                if cancel_check is not None and cancel_check():
+                    raise MediaInterrupted(
+                        "CR2 media batch cancelled",
+                        summary={**summaries, "decode_attempts": decode_attempts},
+                    )
+                outcomes, attempts = self.build_cr2_pair(
+                    target,
+                    retry_failed_kinds=retries.get(target.asset_id, ()),
+                    source_ids=source_ids,
+                )
+                decode_attempts += attempts
+                for spec in specs:
+                    _accumulate(summaries[spec.kind], outcomes[spec.kind], failure_limit=failure_limit)
+        except KeyboardInterrupt as error:
+            raise MediaInterrupted(
+                "CR2 media batch interrupted by the user",
+                summary={**summaries, "decode_attempts": decode_attempts},
+            ) from error
+        elapsed = _elapsed_ms(started)
+        free = int(getattr(self.disk_usage(_existing(self.data_root)), "free", 0))
+        for summary in summaries.values():
+            summary["elapsed_ms"] = elapsed
+            summary["disk_free_bytes"] = free
+        return {**summaries, "decode_attempts": decode_attempts}
 
     # ---------------------------------------------------------------------- helpers
     def _empty_summary(self, spec: MediaSpec, *, considered: int) -> dict[str, Any]:

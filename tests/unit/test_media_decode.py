@@ -42,6 +42,23 @@ def quadrants(width: int = 320, height: int = 200) -> Image.Image:
     return image
 
 
+@pytest.mark.parametrize("size", [(901, 601), (601, 901), (320, 321), (2048, 2048)])
+@pytest.mark.parametrize("long_edge", [320, 1600])
+def test_multi_size_jpeg_render_matches_existing_resize_without_mutating_source(
+    size: tuple[int, int], long_edge: int,
+) -> None:
+    source = quadrants(*size)
+    original_size = source.size
+    expected = decode.render_jpeg(
+        source.copy(), long_edge=long_edge, quality=86
+    )
+    actual = decode.render_jpeg_from_source(
+        source, long_edge=long_edge, quality=86
+    )
+    assert actual == expected
+    assert source.size == original_size
+
+
 def oriented_jpeg(path: Path, orientation: int, image: Image.Image | None = None) -> Path:
     exif = Image.Exif()
     exif[ExifBase.Orientation] = int(orientation)

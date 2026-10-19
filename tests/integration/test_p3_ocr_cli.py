@@ -132,6 +132,11 @@ def test_recognize_runs_the_whole_loop_for_the_library(
     assert payload["ocr"]["weights_present"] is True
     assert harness.text_hits(build_match("1280").expression) == [asset_id]
 
+    # Re-running the queue with the same successful asset must not execute OCR again.
+    repeated = harness.run_ocr()
+    assert repeated["steps"] == 0
+    assert repeated["jobs"] == {"SUCCEEDED": 1}
+
     # A forced run rewinds the same logical job instead of creating a second one.
     code, again = invoke(
         capsys, "enqueue", "--all", "--force", "--data-root", str(harness.data_root), "--json"

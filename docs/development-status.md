@@ -16,6 +16,8 @@
 
 2026-10-19 第二阶段继续：显式 build 的来源分页按页批量识别 CR2 并补建缺失 `catalog-preview@1`，复用已有 thumbnail/preview 内容寻址缓存；旧 `FORMAT_UNSUPPORTED` 缓存仅对真 CR2 且无产物进行一次重试，失败留下可审计 marker 并跳过后续重复重试。隔离 synthetic CR2 header + 假 decoder 的受影响组合 19/19 通过：首次 build stage 生成两种缓存、第二次零生成/零新增解码，首次 preview GET 无 RAW 解码。未验真实 CR2/LibRaw 解码、完整 build API 链和独立 DS-H；未访问 `PhotoSearchData`。详细报告见[任务卡](tasks/P4-MEDIA-CR2-A.md)及[执行报告](reports/P4-MEDIA-CR2-A.md)。整卡继续 IMPLEMENTATION PARTIAL / VALIDATION PENDING。
 
+2026-10-19 专项性能审查：修复 CR2 thumbnail/preview 缺失时两次完整 RAW decode，当前配对生成冷缓存解码 1 次、暖跑 0 次；缓存输出与既有 renderer 字节相同。历史恢复 SQL 从 profile/state job 扫描改为当前页 subject 索引探测，artifact lookup 走 job_id 索引。隔离 3k asset/15k job 对照中 100×8-ID 查询 230.26ms→4.14ms；synthetic 6000×4000 冷生成 253.62ms→217.03–227.70ms，非容量承诺。受影响组合 52 passed；OCR 权重缺件使重复 drain 测试 skipped。Luna High 首轮发现配对 fallback 的来源越界 P2，已修复并跟进复核关闭。真实 RAW/模型、浏览器和完整恢复面 DS-H 仍待验，整卡仍 IMPLEMENTATION PARTIAL / VALIDATION PENDING。详见[专项执行报告](reports/P4-MEDIA-CR2-A.md#2026-10-19-专项性能审查与最小优化)。
+
 ## Earlier status record: P4-FAVORITES-UX-B — 收藏星标、批量收藏与拍摄时间排序
 
 2026-10-19，本任务状态：PASS（受影响面验收），详见[执行报告](reports/P4-FAVORITES-UX-B.md)与[任务卡](tasks/P4-FAVORITES-UX-B.md)。最终受影响组合 JUnit 40/40 通过（0 failures、0 errors、0 skipped）；Ruff、Node 语法、py_compile、diff-check 通过。Luna High 对完整变更面及最新探针独立复核无剩余 finding。隔离内置浏览器实测首页、搜索、收藏排序、viewer 回写、地图、人物照片页和地点相册星标；注入一次性 revision 写故障确认浏览器保留选择，并验证 Escape 优先关闭 viewer、否则退出选择。Node 行为探针确认选择集精确保留 500 项并拒绝第 501 项、DOM 回收后迟到响应不污染缓存、201 个 ID 按 100/100/1 无重无漏分批且全部按钮状态正确。未访问真实图库、未跑全仓/30万性能测试；并行 CR2 保持当前状态。

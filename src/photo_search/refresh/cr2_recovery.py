@@ -44,11 +44,13 @@ def recover_cr2_format_failures(
     }
     if not ids:
         return result
+    if not source_ids:
+        return result
 
     placeholders = ",".join("?" for _ in ids)
     scope_clause = ""
     parameters: list[Any] = [str(task_type), str(processor_id), *ids]
-    if source_ids and None not in source_ids:
+    if None not in source_ids:
         selected = sorted({int(value) for value in source_ids})
         if not selected:
             return result
@@ -61,7 +63,8 @@ def recover_cr2_format_failures(
         "j.processor_id,j.state,j.last_error_code,j.last_error_message,a.sha256,"
         "l.relative_path,s.root_path,EXISTS(SELECT 1 FROM cr2_job_recoveries r "
         "WHERE r.job_id=j.job_id) AS recovered "
-        "FROM jobs j JOIN assets a ON a.asset_id=CAST(j.subject_id AS INTEGER) "
+        "FROM jobs j JOIN assets a ON j.subject_type='asset' "
+        "AND j.subject_id=CAST(a.asset_id AS TEXT) "
         "JOIN file_locations l ON l.asset_id=a.asset_id AND l.availability='PRESENT' "
         "JOIN source_roots s ON s.source_id=l.source_id "
         f"WHERE j.subject_type='asset' AND j.task_type=? AND j.processor_id=? "
@@ -106,21 +109,21 @@ def recover_cr2_format_failures(
     if not candidates:
         return result
 
-    revisions = sorted({str(row["input_revision"]) for row in candidates})
-    artifact_slots = ",".join("?" for _ in revisions)
+    candidate_job_ids = sorted({int(row["job_id"]) for row in candidates})
+    artifact_slots = ",".join("?" for _ in candidate_job_ids)
     artifact_rows = catalog.read_all(
-        "SELECT * FROM artifacts WHERE processor_id=? AND input_revision IN ("
+        "SELECT * FROM artifacts INDEXED BY idx_artifacts_job WHERE job_id IN ("
         + artifact_slots
-        + ") AND artifact_revision=? AND lifecycle_state='PUBLISHED'",
-        (str(processor_id), *revisions, str(artifact_revision)),
+        + ") AND processor_id=? AND artifact_revision=? AND lifecycle_state='PUBLISHED'",
+        (*candidate_job_ids, str(processor_id), str(artifact_revision)),
     )
-    artifact_by_revision: dict[str, list[Any]] = {}
+    artifact_by_job_id: dict[int, list[Any]] = {}
     for artifact in artifact_rows:
-        artifact_by_revision.setdefault(str(artifact["input_revision"]), []).append(artifact)
+        artifact_by_job_id.setdefault(int(artifact["job_id"]), []).append(artifact)
 
     store = ArtifactStore.open(data_root)
     for row in candidates:
-        artifacts = artifact_by_revision.get(str(row["input_revision"]), [])
+        artifacts = artifact_by_job_id.get(int(row["job_id"]), [])
         if artifacts:
             try:
                 for artifact in artifacts:

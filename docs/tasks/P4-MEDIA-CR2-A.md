@@ -156,3 +156,11 @@
 - 受影响组合实际运行 **44 passed / 0 failed / 14 skipped**；14 个 skip 都是 pinned 人脸/OCR 权重缺件。JUnit、命令和根因分析在[执行报告](../reports/P4-MEDIA-CR2-A.md)。Ruff、`py_compile`、`git diff --check` 通过，无 30 万图库测量。
 - 合成 build profile 测试的第二次建库以已完成零脸 `.jpg` 验证 `steps=0` 和无新增 executor 调用；这不是 CR2 实际模型闭环。独立只读代码审查未发现查询改动直接回归，但指出仍缺“真实人物 CR2→显式 build→真实 face result”和同一 CR2 第二次 build 零推理的端到端证据。此审查不替代任务规定的 DeepSeek DS-H。
 - 本机 pinned 人脸/OCR 权重均未安装。真实人物 CR2 模型推理与结果发布、当前图库缓存/job/profile 对照、完整 D4、浏览器验证及任务卡要求的独立 DS-H 审查仍 PENDING。保留 schema 0035 一次性恢复和旧错误证据，不重跑所有人脸、不改人工归属。当前阶段不标 `CR2 RECOVERY VERIFIED`，整卡仍不是 PASS。
+
+### 专项性能审查（2026-10-19）
+
+- 发现显式 build 缓存缺失时 CR2 thumbnail 和 preview 分别完整 RAW 解码；另发现恢复候选 join 按 profile/state 失败 job 后 CAST 资产 ID，artifact lookup 的 planner 可能选 lifecycle 索引。
+- 已实现当前来源页 CR2 缓存成对生成，一次规范 RAW decode 直接生成两种规格；已发布缓存不重算。恢复查询改用规范文本 Job subject identity，当前候选 artifact lookup 使用既有 job_id 索引；空来源保护直接返回。schema 0035、错误证据、Job identity/profile、人工人脸状态均未更动。
+- 合成 6000×4000 冷缓存计时 253.62ms→217.03–227.70ms，RAW 解码 2→1 次；暖跑 0.62–0.65ms、0 decode/0 新缓存。8-ID 历史恢复 SQL 重复 100 次共 800 行：230.26ms→4.14ms；EXPLAIN 验证索引。最终两种缓存仍都需要，磁盘占用没有减少；数据只代表本机合成对照。
+- 受影响组合 52 passed；OCR 重复 drain 因 pinned 权重缺件 skip。Luna High 首轮发现配对回退可能越过来源范围，现已在 `build()` 与非 CR2 fallback 传递 `source_ids` 并以合成用例覆盖；跟进复核确认 P2 关闭、无新增问题。此为本专项 Luna H 复核，不替代本任务卡要求的完整恢复面 DS-H。
+- 真实 RAW/LibRaw、真实人物/OCR 模型、完整来源续建、浏览器、30 万图库和独立 DS-H 仍未验；详细证据及报告链接见[专项执行报告](../reports/P4-MEDIA-CR2-A.md#2026-10-19-专项性能审查与最小优化)。整卡仍 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**。

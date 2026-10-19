@@ -195,6 +195,8 @@ def test_continue_build_backfills_cr2_preview_and_open_does_not_decode_raw(
     from types import SimpleNamespace
 
     from photo_search.media import pipeline as media_pipeline
+    from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+    from photo_search.media.decode import render_jpeg
     from photo_search.refresh.pipeline import _thumbnail_stage
 
     source = api_env.library / "historical.cr2"
@@ -202,28 +204,58 @@ def test_continue_build_backfills_cr2_preview_and_open_does_not_decode_raw(
     api_env.scan(api_env.register_source()["source_id"])
     asset_id = api_env.first_asset_id()
     calls: list[int] = []
+    canonical = Image.effect_noise((6000, 4000), 60).convert("RGB")
+    expected = {
+        THUMBNAIL_SPEC.kind: render_jpeg(
+            canonical.copy(), long_edge=THUMBNAIL_SPEC.long_edge,
+            quality=THUMBNAIL_SPEC.jpeg_quality,
+        ),
+        PREVIEW_SPEC.kind: render_jpeg(
+            canonical.copy(), long_edge=PREVIEW_SPEC.long_edge,
+            quality=PREVIEW_SPEC.jpeg_quality,
+        ),
+    }
 
     def decode(path: Path, *, long_edge: int):
         assert path == source
         calls.append(long_edge)
         return SimpleNamespace(
-            image=Image.new("RGB", (240, 160), (20, 90, 150)),
-            width=240,
-            height=160,
+            image=canonical.copy(),
+            width=6000,
+            height=4000,
             orientation=1,
             source_format="CR2",
         )
 
     monkeypatch.setattr(media_pipeline, "load_normalized", decode)
+    started = time.perf_counter()
     built = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    cold_ms = (time.perf_counter() - started) * 1000
     assert built["generated"] == 1
     assert built["cr2_previews_generated"] == 1
-    assert calls == [320, 1600]
+    assert calls == [1600]
+    cache = api_env.service.media_cache()
+    asset = api_env.service.catalog.read_one(
+        "SELECT sha256 FROM assets WHERE asset_id=?", (asset_id,)
+    )
+    assert asset is not None
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        artifact = cache.artifact_path(spec=spec, sha256=str(asset["sha256"]))
+        assert artifact.read_bytes() == expected[spec.kind]
 
+    started = time.perf_counter()
     second = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    warm_ms = (time.perf_counter() - started) * 1000
     assert second["generated"] == 0
     assert second["cr2_previews_generated"] == 0
-    assert calls == [320, 1600]
+    assert calls == [1600]
+    print(
+        "CR2 paired-cache synthetic evidence:",
+        {"cold_ms": round(cold_ms, 2), "warm_ms": round(warm_ms, 2),
+         "decode_calls_cold": 1, "decode_calls_added_warm": 0,
+         "artifacts_cold": 2, "artifacts_added_warm": 0,
+         "artifact_bytes": sum(len(payload) for payload in expected.values())},
+    )
 
     def forbidden_decode(*_args, **_kwargs):
         raise AssertionError("a cache-warmed first detail open must not decode the RAW")
@@ -234,7 +266,7 @@ def test_continue_build_backfills_cr2_preview_and_open_does_not_decode_raw(
         await api_env.authenticate(client)
         response = await client.get(f"/api/v1/assets/{asset_id}/preview")
         assert response.status_code == 200, response.text
-        assert _image_size(response.content) == (240, 160)
+        assert _image_size(response.content) == (1600, 1067)
 
     api_env.scenario(scenario)
 
@@ -280,7 +312,7 @@ def test_continue_build_spends_old_cr2_format_retry_once(api_env, monkeypatch) -
 
     monkeypatch.setattr(media_pipeline, "load_normalized", refused)
     first = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
-    assert calls == [320, 1600]
+    assert calls == [1600]
     for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
         failure = cache.read_failure(spec=spec, sha256=str(asset["sha256"]))
         assert failure["code"] == FORMAT_UNSUPPORTED
@@ -290,7 +322,7 @@ def test_continue_build_spends_old_cr2_format_retry_once(api_env, monkeypatch) -
         )
 
     second = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
-    assert calls == [320, 1600]
+    assert calls == [1600]
     assert second["cr2_retry_assets"] == 0
     assert first["cr2_retry_assets"] == 1
 
