@@ -264,6 +264,7 @@
 - 零候选：`/search/by-asset/validate` 提供只读会话验证，`offset=None` 不构造越界游标；普通分页的 cursor 越界检查保持严格。零候选、过期会话及参考向量版本改变仍被覆盖测试拒绝/接受。
 - 定向验证：`test-results/P4-PHOTO-SIMILAR-SEARCH-repair-r8.xml`，10 passed / 0 failed；Ruff、`search.js` Node 语法和 `git diff --check` 通过。内置浏览器在隔离合成图库验证桌面（1280×900）、窄屏（390×844）、A→B→Back 恢复 2 行结果及普通照片→相似搜索→一次 Back 回首页/关闭查看器。真实 bfcache 强制恢复、多页长列表滚动、全仓/30 万照片/真实图库未验证。
 - Luna High 对最终兼容修复和 mismatch 行为断言限定复核，无 blocker。详细证据见[执行报告](../reports/P4-PHOTO-SIMILAR-SEARCH.md)。未访问真实照片库；不推送。
+- 本次修复提交：`def7e3026f4a67507890e5d49388b37de1ada141`。
 
 **最终验收标准：点击一次「找相似照片」，直接复用有效向量显示正确的全图库相似结果；不会重新执行 AI 编码；分页、切图、错误状态和浏览器返回正确。**
 

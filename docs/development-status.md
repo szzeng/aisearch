@@ -2,7 +2,7 @@
 
 ## P4-PHOTO-SIMILAR-SEARCH（2026-10-19）
 
-查看器按钮桌面恢复 SVG+文字、窄屏紧凑显示；相似搜索 A→B→Back 现在验证并恢复快照，零候选使用只读会话验证，普通游标越界规则未放宽。原始功能受影响测试 138/138；本次修复定向 JUnit 10/10，Ruff、Node 与 diff-check 通过。内置隔离浏览器通过 1280×900 桌面、390×844 窄屏、相似搜索返回和普通照片返回检查；Luna High 限定复核无 blocker。状态 **PASS（限定合成验收范围）**。真实模型/图库、bfcache 专项与大库容量不在已验证范围；未访问真实照片库。详见[任务卡](tasks/P4-PHOTO-SIMILAR-SEARCH.md)与[执行报告](reports/P4-PHOTO-SIMILAR-SEARCH.md)。
+查看器按钮桌面恢复 SVG+文字、窄屏紧凑显示；相似搜索 A→B→Back 现在验证并恢复快照，零候选使用只读会话验证，普通游标越界规则未放宽。原始功能受影响测试 138/138；本次修复定向 JUnit 10/10，Ruff、Node 与 diff-check 通过。内置隔离浏览器通过 1280×900 桌面、390×844 窄屏、相似搜索返回和普通照片返回检查；Luna High 限定复核无 blocker。状态 **PASS（限定合成验收范围）**；修复提交 `def7e3026f4a67507890e5d49388b37de1ada141`。真实模型/图库、bfcache 专项与大库容量不在已验证范围；未访问真实照片库。详见[任务卡](tasks/P4-PHOTO-SIMILAR-SEARCH.md)与[执行报告](reports/P4-PHOTO-SIMILAR-SEARCH.md)。
 
 ## P4-UI2-SEARCH-TOOLS-PLACEMENT-A — 搜索辅助入口布局优化（2026-10-19）
 
