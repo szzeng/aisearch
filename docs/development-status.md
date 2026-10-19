@@ -1,6 +1,6 @@
 ## Current task: P4-EMBEDDING-MANAGEMENT-UI-A（2026-10-19）
 
-按用户指示实现搜索模型展示、候选分批建库、孤儿表隔离申请及停机切换。定向 pytest 66/66、Ruff、Node、diff-check 通过；Luna High 复核问题已修复。浏览器只验了隔离空库状态展示；模型缺失，建库/检查/切换动作、重启闭环、孤儿故障恢复矩阵和真实 Qwen/CUDA smoke 仍 PENDING。基线 7842b34；保留 api/models.py 用户修改；未触碰真实 PhotoSearchData；不提交。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-EMBEDDING-MANAGEMENT-UI-A.md)和[报告](reports/P4-EMBEDDING-MANAGEMENT-UI-A.md)。
+按用户指示实现搜索模型展示、候选分批建库、孤儿表隔离申请及停机切换。定向 pytest 66/66、Ruff、Node、diff-check 通过；Luna High 复核问题已修复。浏览器只验了隔离空库状态展示；模型缺失，建库/检查/切换动作、重启闭环、孤儿故障恢复矩阵和真实 Qwen/CUDA smoke 仍 PENDING。基线 7842b34；保留 api/models.py 用户修改；未触碰真实 PhotoSearchData。用户随后要求简单提交；实现提交 `885fde1e3b832f84e6bea3532ba444677d419a7e`，不推送。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-EMBEDDING-MANAGEMENT-UI-A.md)和[报告](reports/P4-EMBEDDING-MANAGEMENT-UI-A.md)。
 
 # Development status
 
