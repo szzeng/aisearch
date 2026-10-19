@@ -27,6 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from photo_search.api.errors import FAVORITES_REVISION_STALE
 from photo_search.catalog.errors import (
     CATALOG_FILTER_REVISION_STALE,
     FEEDBACK_IDEMPOTENCY_CONFLICT,
@@ -235,6 +236,7 @@ def search_assets(
     album_membership_parameters: Sequence[Any] = (),
     additional_condition_sql: str | None = None,
     additional_condition_parameters: Sequence[Any] = (),
+    favorites_only: bool = False,
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -274,6 +276,7 @@ def search_assets(
         album_membership_parameters=album_membership_parameters,
         additional_condition_sql=additional_condition_sql,
         additional_condition_parameters=additional_condition_parameters,
+        favorites_only=favorites_only,
     )
     match = build_match(text) if text is not None else None
     # The image path brings a vector instead of a text to encode: exactly one of the two
@@ -847,6 +850,20 @@ def _continue_session(
             field="cursor",
         )
     session = sessions.require(session_id)
+    pinned_favorites_revision = session.extra.get("favorites_revision")
+    if pinned_favorites_revision is not None:
+        from photo_search.favorites import _revision
+
+        current_favorites_revision = _revision(catalog.connection)
+        if int(pinned_favorites_revision) != current_favorites_revision:
+            raise _refuse(
+                FAVORITES_REVISION_STALE,
+                "收藏已变化，请重新搜索",
+                reason="FAVORITES_REVISION_CHANGED",
+                search_session_id=session.session_id,
+                favorites_revision=int(pinned_favorites_revision),
+                current_favorites_revision=current_favorites_revision,
+            )
     if "album_scope_revision" in session.extra and list(session.extra["album_scope_revision"]) != (
         None if album_scope_revision is None else list(album_scope_revision)
     ):
@@ -998,6 +1015,7 @@ def search_request(
     album_membership_parameters: Sequence[Any] = (),
     additional_condition_sql: str | None = None,
     additional_condition_parameters: Sequence[Any] = (),
+    favorites_only: bool = False,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1017,6 +1035,9 @@ def search_request(
     # echo and the digest cannot disagree about which people the request named - and cannot
     # mix two authority states either. The revision is the pre-binding of this new search.
     request.validate_retrieval_mode(image_query=query_vector is not None or query_identity is not None)
+    from photo_search.favorites import _revision
+
+    favorites_revision = _revision(catalog.connection) if favorites_only else None
     base = _person_authority_base(catalog, request)
     # ADR-0011 §6.5: the capture condition is part of the same AND set and the same digest.
     capture = request.capture_range
@@ -1037,6 +1058,7 @@ def search_request(
             album_membership_parameters=album_membership_parameters,
             additional_condition_sql=additional_condition_sql,
             additional_condition_parameters=additional_condition_parameters,
+            favorites_only=favorites_only,
         )
 
     scope = build_scope(base.canonical_person_ids)
@@ -1074,6 +1096,7 @@ def search_request(
             # place-aware entry to its resolved album membership.
             album_asset_ids=current.album_asset_ids,
             album_scope_revision=album_scope_revision,
+            favorites_only=favorites_only,
         )
 
     digest = digest_of(scope)
@@ -1147,6 +1170,7 @@ def search_request(
             album_membership_parameters=scope.album_membership_parameters,
             additional_condition_sql=scope.additional_condition_sql,
             additional_condition_parameters=scope.additional_condition_parameters,
+            favorites_only=scope.favorites_only,
         )
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a
@@ -1220,6 +1244,7 @@ def search_request(
                     {} if album_scope_revision is None
                     else {"album_scope_revision": list(album_scope_revision)}
                 ),
+                **({} if favorites_revision is None else {"favorites_revision": favorites_revision}),
             },
         )
         hits, next_offset, has_more, token = _render_page(
@@ -1238,6 +1263,8 @@ def search_request(
         # to publish). A pass here means every part of the page - canonical ids, echo, digest,
         # revision binding and the verified rows themselves - belongs to one catalog version.
         if _authority_drift(catalog, request, base) is not None:
+            return None
+        if favorites_revision is not None and _revision(catalog.connection) != favorites_revision:
             return None
         sessions.register(session)
         return _result_envelope(
@@ -1260,6 +1287,8 @@ def search_request(
         base = _person_authority_base(catalog, request)
         scope = build_scope(base.canonical_person_ids)
         digest = digest_of(scope)
+        if favorites_only:
+            favorites_revision = _revision(catalog.connection)
     raise _publication_refusal(catalog, request, base)
 
 

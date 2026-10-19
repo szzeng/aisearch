@@ -141,12 +141,17 @@ assert.equal(location.href,"/search?scope_entry=12345678-1234-1234-1234-12345678
 const key="aisearch.search-scope.v1:12345678-1234-1234-1234-123456789012";
 assert.deepEqual(JSON.parse(stored.get(key)),{version:2,scope:current,query:"海边",execute:true});
 current=null;button.fire("click");assert.equal(button.hidden,true,"a stale scope is hidden when its click-time identity is no longer valid");
+current={kind:"favorites"};input.value="";
+context.window.SearchScopeEntry.configure({button,input,getScope:()=>current})(current,"收藏");
+assert.equal(button.textContent,"搜索收藏","favorites has one clear action label");button.fire("click");
+assert.deepEqual(JSON.parse(stored.get(key)),{version:2,scope:current,query:"",execute:true},
+  "an empty favorites query is handed off as an explicit execution");
 
 const code=fs.readFileSync("src/photo_search/web/search.js","utf8").replace(
  '  if (document.readyState === "loading")',
  '  globalThis.ui={restoreOrStartSearch,renderIntentChips,setEls(value){els=value;},setSubmit(fn){submitSearch=fn;},getState(){return state;}};\n  if (document.readyState === "loading")');
 vm.runInContext(code,context);const ui=context.ui;
-const searchEls={queryText:new Element(),querySource:new Element(),searchSubmit:new Element(),resultIntentScope:new Element(),queryStatus:new Element()};
+const searchEls={queryText:new Element(),querySource:new Element(),searchSubmit:new Element(),resultIntentScope:new Element(),queryStatus:new Element(),queryFavoritesOnly:new Element()};
 ui.setEls(searchEls);let calls=0;ui.setSubmit(()=>{calls++;});
 stored.set(key,JSON.stringify({version:2,scope:{kind:"person",person_id:8,name:"阿姨"},query:"海边",execute:true}));
 location.search="?scope_entry=12345678-1234-1234-1234-123456789012";ui.restoreOrStartSearch();
@@ -157,12 +162,18 @@ assert.equal(calls,2,"an explicit empty-query handoff still executes exactly onc
 location.search="?scope_entry=12345678-1234-1234-1234-123456789012&q=海边";ui.restoreOrStartSearch();
 assert.equal(calls,2,"a missing token never falls back to the query as a full-library search");
 assert.match(searchEls.queryStatus.textContent,/未执行全库搜索/);
+stored.set(key,JSON.stringify({version:2,scope:{kind:"favorites"},query:"",execute:true}));
+location.search="?scope_entry=12345678-1234-1234-1234-123456789012";ui.restoreOrStartSearch();
+assert.equal(calls,3,"favorites handoff submits one FILTER_ONLY request");
+assert.equal(ui.getState().search.favoritesOnly,true);assert.equal(ui.getState().search.selectedScope,null,
+  "favorites remains an independent overlay and is not sent as search_scope");
+assert.equal(searchEls.queryFavoritesOnly.checked,true);
 
 const cancelEls={queryText:new Element(),querySource:new Element(),searchSubmit:new Element(),queryStatus:new Element(),
  resultIntentScope:new Element(),resultPlaceScope:new Element(),resultGrid:new Element(),loadMore:new Element(),
  queryActions:new Element(),candidateTimeToggle:new Element(),resultNotices:new Element()};
 ui.setEls(cancelEls);let cancelSearches=0;ui.setSubmit(()=>cancelSearches++);
-const search=ui.getState().search;search.selectedScope={kind:"place",place_kind:"city",place_key:"geo:tokyo",name:"东京"};
+const search=ui.getState().search;search.favoritesOnly=false;search.selectedScope={kind:"place",place_kind:"city",place_key:"geo:tokyo",name:"东京"};
 search.placeAware={place_kind:"city",place_key:"geo:tokyo",content_query:""};
 search.intentPlan={place_kind:"city",place_key:"geo:tokyo",original_query:"",content_query:""};
 search.hits=[{asset_id:1}];search.requestGeneration=10;search.loading=false;search.sessionId="old";search.cursor="old";

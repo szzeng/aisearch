@@ -25,7 +25,7 @@ class Element {
   querySelector(selector){
     const asset=selector.match(/^\[data-asset-id="(\d+)"\]$/);
     const matches=child=>asset?child.dataset.assetId===asset[1]:selector.startsWith(".")&&child.className===selector.slice(1);
-    for(const child of this.children){if(matches(child))return child;const nested=child.querySelector(selector);if(nested)return nested;}
+    for(const child of this.children){if(matches(child)){if(child.tag==="button")return child;const nested=child.querySelector(selector);if(nested)return nested;return child;}const nested=child.querySelector(selector);if(nested)return nested;}
     return null;
   }
   focus(){}
@@ -78,6 +78,7 @@ function harness(storage=new Map()){
     const viewer={assetId:id,dialog:{open:true},returnFocus:options.returnFocus,
       close(){this.dialog.open=false;options.onClose();},setAsset(value){this.assetId=value;},
       setPosition(value){this.position=value;},setNavigationEnabled(previous,next){this.previous=previous;this.next=next;},
+      favoriteChanged(result){options.onFavoriteChanged(id,result);},
       nextPhoto(){options.navigation.next();},
       openDetails(){options.onOpenFullDetails(this.assetId);this.close();}};
     viewers.push(viewer);return viewer;
@@ -175,6 +176,54 @@ function assertLiteral(request){
       "a missing semantic model must point to an available retrieval method");
     assert.doesNotMatch(unavailable.get("query-status").textContent,/筛选条件.*错误|Model unavailable/);
   }
+  const favorites=harness();await flush();
+  favorites.get("query-text").value="sunset";
+  favorites.get("query-favorites-only").checked=true;
+  const beforeToggle=favorites.searchCalls().length;
+  favorites.get("query-favorites-only").fire("change");
+  assert.equal(favorites.searchCalls().length,beforeToggle,"changing the favorites filter never searches automatically");
+  assert.equal(favorites.ui.state.search.favoritesOnly,true);
+  assert.match(favorites.get("result-intent-scope").textContent,/仅搜索收藏/);
+  favorites.get("search-form").fire("submit");await flush();
+  assert.equal(favorites.searchCalls().at(-1).body.favorites_only,true,
+    "the checkbox is sent on the next explicit text search");
+  favorites.get("query-favorites-only").checked=false;
+  const beforeCancel=favorites.searchCalls().length;
+  favorites.get("query-favorites-only").fire("change");
+  assert.equal(favorites.searchCalls().length,beforeCancel,"cancelling favorites does not auto-expand to all photos");
+  favorites.get("search-form").fire("submit");await flush();
+  assert.equal(favorites.searchCalls().at(-1).body.favorites_only,false);
+
+  const viewerFavorites=harness();await flush();
+  viewerFavorites.get("query-text").value="sunset";
+  viewerFavorites.get("query-favorites-only").checked=true;
+  viewerFavorites.get("query-favorites-only").fire("change");
+  viewerFavorites.get("search-form").fire("submit");await flush();
+  assert.equal(viewerFavorites.ui.state.search.sessionId,"session-combined");
+  assert.ok(viewerFavorites.ui.state.search.cursor);
+  viewerFavorites.get("result-grid").querySelector('[data-asset-id="201"]').fire("click");await flush();
+  viewerFavorites.viewers.at(-1).favoriteChanged({changed:1,is_favorite:false});
+  assert.equal(viewerFavorites.ui.state.search.sessionId,null,
+    "unfavoriting from the preview invalidates the active search session immediately");
+  assert.equal(viewerFavorites.ui.state.search.cursor,null);
+  assert.deepEqual(Array.from(viewerFavorites.ui.state.search.hits),[]);
+  assert.equal(viewerFavorites.get("result-grid").children.length,0);
+  assert.match(viewerFavorites.get("query-status").textContent,/旧收藏结果和分页已失效/);
+  assert.equal(viewerFavorites.searchCalls().length,1,"preview favorite changes do not launch a search automatically");
+
+  viewerFavorites.get("search-form").fire("submit");await flush();
+  const refreshedSession=viewerFavorites.ui.state.search.sessionId;
+  assert.ok(refreshedSession);
+  viewerFavorites.setAnswer(()=>({ok:false,status:409,headers:{get:()=>"application/json"},
+    json:async()=>({code:"FAVORITES_REVISION_STALE",message:"收藏已变化",details:{reason:"FAVORITES_REVISION_CHANGED"}})}));
+  await viewerFavorites.ui.sendSearch(true);await flush();
+  assert.equal(viewerFavorites.ui.state.search.sessionId,null,
+    "a revision conflict from another writer clears the stale session");
+  assert.equal(viewerFavorites.ui.state.search.cursor,null);
+  assert.equal(viewerFavorites.ui.state.search.hits.length,0);
+  assert.match(viewerFavorites.get("query-status").textContent,/旧收藏结果和分页已失效/);
+  assert.equal(viewerFavorites.get("query-actions").hidden,false,
+    "the user can explicitly rerun after a server revision conflict");
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     root = Path(__file__).resolve().parents[2]

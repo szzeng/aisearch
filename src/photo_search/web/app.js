@@ -1253,8 +1253,12 @@
   }
 
   function updateSearchScopeAction() {
-    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive || state.browse.scope === "favorites") {
+    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive) {
       if (els.setSearchScopeAction) els.setSearchScopeAction(null, "");
+      return;
+    }
+    if (state.browse.scope === "favorites") {
+      els.setSearchScopeAction({ kind: "favorites" }, "收藏");
       return;
     }
     var source = state.sources.find(function (item) {
@@ -3010,6 +3014,7 @@
       input: document.getElementById("global-search-query"),
       getScope: function () {
         if (els.views.browse.hidden || state.detailRouteActive || !state.sourcesLoaded) return null;
+        if (state.browse.scope === "favorites") return { kind: "favorites" };
         var source = state.sources.find(function (item) {
           return String(item.source_id) === String(state.browse.sourceId);
         });

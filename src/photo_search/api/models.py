@@ -1489,6 +1489,7 @@ class PlaceAwareSearchRequestModel(SearchRequestModel):
     #: Identity-only handoff from a selected album title. The API resolves the current
     #: members and revisions; clients never send asset IDs as the authority.
     search_scope: dict[str, Any] | None = None
+    favorites_only: StrictBool = False
 
 
 class SearchHitModel(BaseModel):

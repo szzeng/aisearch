@@ -12,9 +12,9 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" defer></script>
-    <script src="/web/search-scope-entry.js?v=p4-ui2-search-scope-unify-a-1" defer></script>
+    <script src="/web/search-scope-entry.js?v=p4-favorites-search-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-favorites-ux-b-2" defer></script>
+    <script src="/web/search.js?v=p4-favorites-search-a-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -73,6 +73,9 @@
           </p>
           <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <div id="result-intent-scope" class="wide" hidden aria-live="polite"></div>
+          <p class="wide favorite-search-filter">
+            <label><input id="query-favorites-only" type="checkbox" /> 仅搜索收藏</label>
+          </p>
           <details class="advanced-search-filter wide">
             <summary>高级筛选</summary>
           <p>

@@ -1,6 +1,10 @@
 # Development status
 
-## Current: P4-MEDIA-CR2-A — 历史 CR2 人脸/OCR 补建查漏
+## Current: P4-FAVORITES-SEARCH-A — 收藏范围搜索（组合过滤与独立版本保护）
+
+2026-10-19，按用户指定实施收藏范围搜索。服务端以 `asset_favorites` 在 FTS/向量 TopK 前限定，并以独立 favorites revision 保护排名会话、FILTER/地点游标与候选时间浏览；搜索 UI 提供收藏页一次性交接、checkbox/chip 和过期结果清理。受影响组合 160/160 通过；Ruff、py_compile、Node 语法和 diff-check 通过。用户指定 Luna High 子代理首轮 P2 已修复，跟进无新增 finding。内置浏览器覆盖收藏页交接、FILTER_ONLY/文字搜索、viewer 取消收藏后的旧结果失效及预览返回；高级地点筛选折叠区受浏览器交互工具限制未能展开，收藏与人物/地点控件组合闭环仍 PENDING，故状态为 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。SQL 计划仅合成验证，未测 30 万容量/延迟；语义模型未就绪，未访问真实图库。详见[任务卡](tasks/P4-FAVORITES-SEARCH-A.md)与[执行报告](reports/P4-FAVORITES-SEARCH-A.md)。
+
+## Earlier status record: P4-MEDIA-CR2-A — 历史 CR2 人脸/OCR 补建查漏
 
 2026-10-19，按用户要求续做更新后的 [P4-MEDIA-CR2-A](tasks/P4-MEDIA-CR2-A.md)，报告：[执行报告](reports/P4-MEDIA-CR2-A.md)。新增显式 build 限定的一次性旧 `FORMAT_UNSUPPORTED` 人脸/OCR job 恢复、schema 0035 持久 marker、当前 SHA/来源/profile/CR2 头校验、有效发布产物跳过与 OCR active profile 页范围 drain。`DECODE_FAILED` 因缺乏旧故障证据暂保守保留。Luna High 首轮复核指出 payload profile 和 CAS 当前 SHA 两项 P2，均已修复并经跟进复核，无新增 finding；CR2 定向合成测试 2/2 通过。完整 unit/integration 原始运行 3212 项为 3152 passed、9 failed、51 skipped。迁移恢复 fixture 漏列新表，已补后定向复跑 1 passed；其余 8 项含并行 UI/favorites 的失败，原完整运行不记 PASS。Ruff、相关 `py_compile`、本任务涉及文件 diff-check 通过。D4 状态矩阵、内置浏览器、真实模型端到端及独立 DS-H 受影响面审查仍 PENDING；因此不标 `CR2 RECOVERY VERIFIED` / `SCOPED PASS`。未访问真实 `PhotoSearchData`。
 

@@ -4,6 +4,7 @@
 
   function validScope(scope) {
     if (!scope || typeof scope !== "object") return false;
+    if (scope.kind === "favorites") return true;
     if (scope.kind === "person") return Number.isSafeInteger(Number(scope.person_id)) && Number(scope.person_id) > 0;
     if (scope.kind === "collection") return Number.isSafeInteger(Number(scope.collection_id)) && Number(scope.collection_id) > 0 &&
       Boolean(String(scope.instance_token || "")) && Number.isSafeInteger(Number(scope.revision)) && Number(scope.revision) >= 0;
@@ -48,7 +49,9 @@
     return function (scope, label) {
       active = validScope(scope);
       button.hidden = !active;
-      button.textContent = active ? "搜索此" + String(label || "相册") : "";
+      button.textContent = active
+        ? (scope && scope.kind === "favorites" ? "搜索收藏" : "搜索此" + String(label || "相册"))
+        : "";
     };
   }
 

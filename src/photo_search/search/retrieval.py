@@ -124,6 +124,7 @@ class SearchScope:
     album_membership_parameters: tuple[Any, ...] = ()
     additional_condition_sql: str | None = None
     additional_condition_parameters: tuple[Any, ...] = ()
+    favorites_only: bool = False
 
     @classmethod
     def build(
@@ -143,6 +144,7 @@ class SearchScope:
         album_membership_parameters: Sequence[Any] = (),
         additional_condition_sql: str | None = None,
         additional_condition_parameters: Sequence[Any] = (),
+        favorites_only: bool = False,
     ) -> SearchScope:
         value = str(availability or "any")
         if value not in AVAILABILITY_VALUES:
@@ -193,6 +195,7 @@ class SearchScope:
             album_membership_parameters=tuple(album_membership_parameters),
             additional_condition_sql=None if additional_condition_sql is None else str(additional_condition_sql),
             additional_condition_parameters=tuple(additional_condition_parameters),
+            favorites_only=bool(favorites_only),
         )
 
 
@@ -315,6 +318,16 @@ def scope_condition(
         )
         conditions.append(collection_sql)
         parameters.extend(collection_parameters)
+    if scope.favorites_only:
+        if bounded_candidates:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM asset_favorites AS favorite "
+                f"WHERE favorite.asset_id = {alias}.asset_id)"
+            )
+        else:
+            conditions.append(
+                f"{alias}.asset_id IN (SELECT favorite.asset_id FROM asset_favorites AS favorite)"
+            )
     if scope.source_id is not None:
         # Set membership instead of a correlated ``EXISTS``: P4-01B measured the correlated
         # form at 19.4 s for ONE block of a 20 000-row generation (and >60 s at 300 000),

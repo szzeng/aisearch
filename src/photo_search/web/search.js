@@ -101,6 +101,7 @@
       placeAware: null,
       intentPlan: null,
       selectedScope: null,
+      favoritesOnly: false,
       requestGeneration: 0,
       hits: [],
       windowOffset: 0,
@@ -859,6 +860,7 @@
       retrievalMode: state.search.mode === "image" ? "image" : textRetrievalMode(),
       source: filters.sourceId,
       fixedScope: state.search.selectedScope ? JSON.stringify(state.search.selectedScope) : null,
+      favoritesOnly: Boolean(state.search.favoritesOnly),
       availability: filters.availability,
       places: filters.placeIds,
       descendants: filters.includeDescendants,
@@ -1219,6 +1221,7 @@
     if (state.search.selectedScope && state.search.selectedScope.kind !== "source") {
       body.search_scope = state.search.selectedScope;
     }
+    body.favorites_only = Boolean(state.search.favoritesOnly);
     if (queryText) {
       body.text = queryText;
     }
@@ -1387,7 +1390,7 @@
     var hasPlan = Boolean(plan && (plan.collection_scope || plan.capture_from ||
       plan.capture_status || plan.library_from || plan.library_to_exclusive ||
       (plan.person_ids || []).length || plan.source_id != null)) || Boolean(activePlace);
-    if (!hasPlan && !state.search.selectedScope) {
+    if (!hasPlan && !state.search.selectedScope && !state.search.favoritesOnly) {
       els.resultIntentScope.hidden = true;
       return;
     }
@@ -1398,6 +1401,13 @@
       button.type = "button";
       button.addEventListener("click", remove);
       els.resultIntentScope.appendChild(button);
+    }
+    if (state.search.favoritesOnly) {
+      add("仅搜索收藏", function () {
+        state.search.favoritesOnly = false;
+        if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = false;
+        invalidateSearchForScopeChange("已取消收藏限制，点击搜索后按当前其它条件重新查询。");
+      });
     }
     function addActivePlaceChip() {
       if (!activePlace || samePlace(activePlace, fixedPlace)) return;
@@ -1569,6 +1579,36 @@
     }
   }
 
+  function invalidateSearchForScopeChange(message) {
+    state.search.requestGeneration += 1;
+    state.search.loading = false;
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.binding = null;
+    state.search.hits = [];
+    state.search.count = 0;
+    state.search.total = null;
+    state.search.lastBody = null;
+    state.search.lastRequestBody = null;
+    state.search.timeBrowse.active = false;
+    state.search.timeBrowse.cursor = null;
+    state.search.timeBrowse.previous = null;
+    clearSearchSnapshot();
+    invalidateSearchPreview();
+    releaseObjectUrls();
+    clear(els.resultGrid);
+    clear(els.resultPlaceScope);
+    els.resultPlaceScope.hidden = true;
+    els.loadMore.hidden = true;
+    els.queryActions.hidden = true;
+    els.candidateTimeToggle.hidden = true;
+    els.candidateTimeToggle.disabled = true;
+    if (state.search.pager) state.search.pager.reset();
+    renderIntentChips(state.search.intentPlan);
+    renderScopeControls();
+    setStatus(els.queryStatus, message, "success");
+  }
+
   function ordinaryContentAfterPlaceCancel(place) {
     var content = String(place.content_query || "").trim();
     if (content) return content;
@@ -1630,7 +1670,7 @@
   }
 
   function sendImageSearch(continuation, filters) {
-    if (state.search.selectedScope) {
+    if (state.search.selectedScope || state.search.favoritesOnly) {
       return Promise.reject({ code: "VALIDATION_ERROR", message: "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", request_id: "" });
     }
     var file = els.uploadFile.files && els.uploadFile.files.length ? els.uploadFile.files[0] : null;
@@ -1664,6 +1704,11 @@
   }
 
   function onSearchFailure(failure) {
+    if (failure.code === "FAVORITES_REVISION_STALE") {
+      invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
+      els.queryActions.hidden = false;
+      return;
+    }
     if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR") {
       state.search.sessionId = null;
       state.search.cursor = null;
@@ -1716,7 +1761,11 @@
     hits.forEach(function (hit) {
       els.resultGrid.appendChild(buildHit(hit, body.retrieval_mode));
     });
-    if (window.PhotoFavorites) window.PhotoFavorites.mount(els.resultGrid);
+    if (window.PhotoFavorites) window.PhotoFavorites.mount(els.resultGrid, function (change) {
+      if (state.search.favoritesOnly && Number(change.changed || 0) > 0) {
+        invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
+      }
+    });
     state.search.count += hits.length;
     state.search.hits = continuation ? state.search.hits.concat(hits) : hits.slice();
     var removedHits = window.PhotoScrollPager ? window.PhotoScrollPager.trimGrid(els.resultGrid, 500) : 0;
@@ -1866,7 +1915,13 @@
         return;
       }
       clearSearchSnapshot();
-      state.search.selectedScope = entry.scope;
+      if (entry.scope.kind === "favorites") {
+        state.search.selectedScope = null;
+        state.search.favoritesOnly = true;
+        if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = true;
+      } else {
+        state.search.selectedScope = entry.scope;
+      }
       var entryQuery = entry.query === null ? (query || "") : entry.query;
       els.queryText.value = entryQuery;
       if (entry.scope.kind === "source") els.querySource.value = String(entry.scope.source_id);
@@ -1930,6 +1985,7 @@
       pageSize: els.queryPageSize.value,
       personIds: selectedPersonIds(),
       personMatch: els.queryPersonMatch.value,
+      favoritesOnly: Boolean(state.search.favoritesOnly),
     };
   }
 
@@ -2012,6 +2068,9 @@
     state.search.placeAware = saved.placeAware || null;
     state.search.intentPlan = saved.intentPlan || null;
     state.search.selectedScope = saved.selectedScope || null;
+    state.search.favoritesOnly = Boolean(form.favoritesOnly ||
+      (saved.lastRequestBody && saved.lastRequestBody.favorites_only));
+    if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = state.search.favoritesOnly;
     state.search.binding = saved.binding || null;
     state.search.lastBody = null;
     state.search.lastRequestBody = saved.lastRequestBody || null;
@@ -2221,8 +2280,11 @@
         window.location.href = "/persons?person_id=" + encodeURIComponent(id) + "&from_photo=photo";
       },
       navigation: { previous: function () { moveSearchPreview(-1); }, next: function () { moveSearchPreview(1); } },
-      onFavoriteChanged: function () {
+      onFavoriteChanged: function (_id, result) {
         if (window.PhotoFavorites) window.PhotoFavorites.invalidate(els.resultGrid);
+        if (state.search.favoritesOnly && Number((result || {}).changed || 0) > 0) {
+          invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
+        }
       },
       onClose: function () {
         preview.seq += 1; preview.assetId = null; preview.handle = null;
@@ -2718,7 +2780,7 @@
     if (event) {
       event.preventDefault();
     }
-    if (state.search.selectedScope) {
+    if (state.search.selectedScope || state.search.favoritesOnly) {
       setStatus(els.uploadStatus, "当前范围仅支持文字/条件搜索，请取消范围后以图搜图。", "error");
       return;
     }
@@ -2832,6 +2894,7 @@
       searchForm: document.getElementById("search-form"),
       searchSubmit: document.getElementById("search-submit"),
       queryText: document.getElementById("query-text"),
+      queryFavoritesOnly: document.getElementById("query-favorites-only"),
       queryRetrievalMode: document.getElementById("query-retrieval-mode"),
       resultPlaceScope: document.getElementById("result-place-scope"),
       resultIntentScope: document.getElementById("result-intent-scope"),
@@ -2886,9 +2949,20 @@
       add: els.photoSelectAdd, remove: els.photoSelectRemove,
     }, function (body) {
       els.photoSelectionCount.textContent = (body.is_favorite ? "已加入收藏 " : "已取消收藏 ") + body.changed + " 张，" + body.unchanged + " 张已是目标状态。";
+      if (state.search.favoritesOnly && Number(body.changed || 0) > 0) {
+        invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
+      }
     });
 
     bindQuerySubmission();
+    if (els.queryFavoritesOnly) {
+      els.queryFavoritesOnly.addEventListener("change", function () {
+        state.search.favoritesOnly = Boolean(els.queryFavoritesOnly.checked);
+        invalidateSearchForScopeChange(state.search.favoritesOnly
+          ? "已启用收藏限制，点击搜索后生效；旧结果已清除。"
+          : "已取消收藏限制，点击搜索后按当前其它条件重新查询。未自动扩大范围。");
+      });
+    }
     els.queryRetrievalMode.addEventListener("change", function () {
       if (state.search.mode === "image") {
         setStatus(els.queryStatus, "搜索方式已选择，输入文字后搜索。上传搜图结果仍在下方。");

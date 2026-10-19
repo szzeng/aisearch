@@ -1,9 +1,9 @@
 # P4-FAVORITES-SEARCH-A — 收藏范围搜索（组合过滤与独立版本保护）
 
-- **状态**：READY / 任务卡已生成，尚未实施；本文件是实施说明，不代表功能已完成。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL；收藏限定搜索、受影响测试与用户指定 Luna High 独立复核已完成，浏览器中的“收藏 + 人物/地点控件 + 改词/取消”闭环仍 PENDING，故本卡不标 PASS。详见 [执行报告](../reports/P4-FAVORITES-SEARCH-A.md)。
 - **优先级**：P2；**推荐执行模型**：GPT-6 High（由用户在 Codex 手动选择）；共享检索协议/版本边界按 V3.1 §2.4 做独立 **DS-H 完整受影响面工程审查**，不因本卡而自动启动其它任务。
 - **设计基准**：`szzeng/aisearch`，`master @ 9adbad5bcc1a783025f2d8474fdb8956af403fb6`（2026-10-19）；仓库已有 `0034_asset_favorites.sql` 与 `0035_cr2_job_recovery.sql`。**实施前重新核对最新 HEAD、工作树、有关报告及实际测试结果**，不覆盖并行 CR2、viewer、合集和收藏 UX 修改。
-- **前置依赖**：`P4-FAVORITES-CORE-A` 已于 2026-10-19 标为 PASS（组合证据），**硬前置已满足**；`P4-FAVORITES-UX-B` 当前仍为 READY，建议先实施以取得完整星标/批量交互，但它**不是后端收藏搜索的硬依赖**。若 B 尚未实施，本卡只复用 A 已有收藏页/查看器，不抢做 B 的缩略图星标、批量收藏或拍摄时间排序。普通照片合集和智能照片合集均不是本卡前置依赖。
+- **前置依赖**：`P4-FAVORITES-CORE-A` 已于 2026-10-19 标为 PASS（组合证据），**硬前置已满足**；`P4-FAVORITES-UX-B` 已于 2026-10-19 标记 PASS；其星标/批量/排序仍属 B 的独立范围，本卡不重做这些功能。普通照片合集和智能照片合集均不是本卡前置依赖。
 - **阅读范围**：`AGENTS.md` → `docs/development-status.md` → `docs/testing.md`、`docs/performance.md` → 本卡 → `docs/tasks/P4-FAVORITES-CORE-A.md` 与报告、`P4-UI2-SEARCH-SCOPE-UNIFY-A` 与报告；按直接调用链阅读 `src/photo_search/{favorites.py,search/retrieval.py,search/service.py,search/sessions.py,search/contracts.py,api/models.py,api/routes.py,web/app.js,web/search.js,web/search-scope-entry.js}`。主架构仅查搜索/版本/性能相关章节、执行策略 V3.1 §2.4、§3.2/3.4、§4.2。
 
 ## 1. 用户目标与范围定义
@@ -123,3 +123,11 @@
 5. **做受影响测试、真实浏览器、SQL 路径核对和独立 DS-H 审查**：修复所有本卡必须闭合的 finding，保留真实失败及限制；报告清楚区分“专项功能 PASS”和“未做 30 万/模型/正式发布验收”。
 
 **交付产物（实施阶段）**：必要源码、定向/回归测试、`docs/reports/P4-FAVORITES-SEARCH-A.md`、精简 `docs/development-status.md` 更新；原始 JUnit/JSON/日志/截图留在项目忽略的 `test-results/` / `.tmp/`。不预占 migration，不新建照片合集/智能合集卡，不自动启动后续任务。**必需正确性、版本/恢复、受影响测试、浏览器及独审未完成时只能写 `IMPLEMENTED / VALIDATION PENDING`，不得标 PASS。**
+
+
+## 10. 2026-10-19 执行收口
+
+- 状态：**IMPLEMENTED / ACCEPTANCE PARTIAL**；实现、160 项受影响 pytest、Ruff/py_compile/Node/diff-check 均通过。最终 JUnit 与浏览器路径、限制、性能边界、Luna High 首轮及跟进复核见 [执行报告](../reports/P4-FAVORITES-SEARCH-A.md)。
+- 用户指定的 Luna High 子代理完成完整受影响面独立复核；初审 P2 已修复，跟进无新增 finding。该复核按用户要求记录，不冒称 DS-H。
+- 浏览器已验证收藏页交接、FILTER_ONLY/文字查询、viewer 取消收藏后的立即失效、预览返回；高级地点筛选折叠区无法由本轮内置浏览器自动化打开，导致收藏与人物/地点浏览器组合闭环仍 PENDING。未满足卡片 PASS 门槛。
+- 性能证据限于合成 SQL 计划检查，无 30 万延迟/容量结论；语义模型未就绪，真实图库未访问。

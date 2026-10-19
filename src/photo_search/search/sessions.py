@@ -60,6 +60,7 @@ def query_hash(
     capture_to_exclusive: str | None = None,
     album_asset_ids: Sequence[int] | None = None,
     album_scope_revision: Sequence[Any] | None = None,
+    favorites_only: bool = False,
     retrieval_mode: str = "combined",
 ) -> str:
     """A stable digest of the conditions that must stay identical across the pages.
@@ -80,6 +81,7 @@ def query_hash(
     """
     payload = {
         "retrieval_mode": str(retrieval_mode),
+        "favorites_only": bool(favorites_only),
         "text": None if text is None else str(text),
         "source_id": None if source_id is None else int(source_id),
         "availability": str(availability),

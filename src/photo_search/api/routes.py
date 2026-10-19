@@ -2476,6 +2476,18 @@ def _search_session_time_worker(
             "the search session is unknown or expired; run the query again",
             details={"reason": "SESSION_NOT_LIVE"},
         )
+    favorites_revision = session.extra.get("favorites_revision")
+    if favorites_revision is not None:
+        from photo_search.favorites import _revision
+
+        current_revision = _revision(catalog.connection)
+        if int(favorites_revision) != current_revision:
+            raise ApiError(
+                "FAVORITES_REVISION_STALE", "收藏已变化，请重新搜索", status=409,
+                details={"reason": "FAVORITES_REVISION_CHANGED",
+                         "favorites_revision": int(favorites_revision),
+                         "current_favorites_revision": current_revision},
+            )
     if session.query is None or not session.entries:
         raise CatalogError(
             INVALID_CURSOR,
@@ -2567,6 +2579,17 @@ def _search_session_time_worker(
                 details={"reason": "COLLECTION_REVISION_CHANGED"},
             )
     with catalog.read_snapshot() as conn:
+        if favorites_revision is not None:
+            from photo_search.favorites import _revision
+
+            snapshot_favorites_revision = _revision(conn)
+            if int(favorites_revision) != snapshot_favorites_revision:
+                raise ApiError(
+                    "FAVORITES_REVISION_STALE", "收藏已变化，请重新搜索", status=409,
+                    details={"reason": "FAVORITES_REVISION_CHANGED",
+                             "favorites_revision": int(favorites_revision),
+                             "current_favorites_revision": snapshot_favorites_revision},
+                )
         revision_row = conn.execute(
             "SELECT revision FROM catalog_filter_revision WHERE revision_id=1"
         ).fetchone()
@@ -2707,6 +2730,8 @@ def _place_aware_search_worker(
     catalog: Any, payload: PlaceAwareSearchRequestModel, *, context: ApiContext, data_root: Path,
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
+    favorites_only = bool(payload.favorites_only)
+    favorites_revision = _favorites_revision(catalog) if favorites_only else None
     original = payload.original_query
     text_mode = payload.retrieval_mode == "text"
     if text_mode:
@@ -3186,7 +3211,7 @@ def _place_aware_search_worker(
         )
         search_time_parameters += fixed_person_parameters
         search_time_identity += ("fixed_person", selected_person_id)
-    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope"})
+    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope", "favorites_only"})
     values["text"] = query_text
     if intent_plan is not None:
         for bound in ("capture_from", "capture_to_exclusive"):
@@ -3211,12 +3236,15 @@ def _place_aware_search_worker(
             additional_condition_sql=search_time_sql,
             additional_condition_parameters=search_time_parameters,
             time_identity=search_time_identity,
+            favorites_only=favorites_only,
         )
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = None if text_mode else intent_plan
         result["search_scope"] = resolved_search_scope
         _verify_person_collection(service.catalog, collection_scope)
         _verify_fixed_person_revision(service.catalog, fixed_person_revision)
+        _verify_favorites_revision(service.catalog, favorites_revision)
+        _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
         return result
     if execution_path == "filter_only":
         result = _filter_only_search_page(
@@ -3224,6 +3252,7 @@ def _place_aware_search_worker(
             additional_condition_sql=search_time_sql,
             additional_condition_parameters=search_time_parameters,
             time_identity=search_time_identity,
+            favorites_only=favorites_only,
         )
         result["original_query"] = original
         result["content_query"] = None
@@ -3234,6 +3263,8 @@ def _place_aware_search_worker(
         result["search_scope"] = resolved_search_scope
         _verify_person_collection(service.catalog, collection_scope)
         _verify_fixed_person_revision(service.catalog, fixed_person_revision)
+        _verify_favorites_revision(service.catalog, favorites_revision)
+        _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
         return result
     collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
     session_revision = tuple(revision or ()) + collection_revision + tuple(search_time_identity)
@@ -3248,6 +3279,7 @@ def _place_aware_search_worker(
         album_membership_parameters=place_membership_parameters,
         additional_condition_sql=search_time_sql,
         additional_condition_parameters=search_time_parameters,
+        favorites_only=favorites_only,
     )
     result["place_scope"] = place_block
     result["original_query"] = original
@@ -3256,6 +3288,7 @@ def _place_aware_search_worker(
     result["intent_plan"] = None if text_mode else intent_plan
     result["collection_scope"] = collection_scope
     result["search_scope"] = resolved_search_scope
+    _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
     if collection_scope is not None:
         result["filters"]["person_collection"] = dict(collection_scope)
     if kind is not None and key is not None:
@@ -3270,7 +3303,52 @@ def _place_aware_search_worker(
             raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place scope changed; restart the search", status=409)
     _verify_person_collection(service.catalog, collection_scope)
     _verify_fixed_person_revision(service.catalog, fixed_person_revision)
+    _verify_favorites_revision(service.catalog, favorites_revision)
     return result
+
+
+def _favorites_revision(catalog: Any) -> int:
+    from photo_search.favorites import _revision
+
+    return _revision(catalog.connection)
+
+
+def _verify_favorites_revision(catalog: Any, expected: int | None) -> None:
+    if expected is not None and _favorites_revision(catalog) != int(expected):
+        raise ApiError(
+            "FAVORITES_REVISION_STALE", "收藏已变化，请重新搜索", status=409,
+            details={"reason": "FAVORITES_REVISION_CHANGED", "favorites_revision": int(expected),
+                     "current_favorites_revision": _favorites_revision(catalog)},
+        )
+
+
+def _attach_favorites_echo(
+    result: dict[str, Any], *, favorites_only: bool, favorites_revision: int | None,
+) -> None:
+    result["favorites_only"] = bool(favorites_only)
+    if favorites_only:
+        result["favorites_revision"] = int(favorites_revision if favorites_revision is not None else 0)
+        result.setdefault("filters", {})["favorites_only"] = True
+        result["filters"]["favorites_revision"] = result["favorites_revision"]
+
+
+def _require_favorites_cursor_revision(cursor: str | None, expected: int | None) -> None:
+    """Give a changed favorites member set its own stale code before generic cursor checks."""
+    if cursor is None or expected is None:
+        return
+    try:
+        raw = base64.urlsafe_b64decode(str(cursor) + "=" * (-len(str(cursor)) % 4))
+        values = json.loads(raw)
+        token_revision = int(values[-1])
+    except (ValueError, TypeError, IndexError, json.JSONDecodeError):
+        return  # The normal cursor decoder returns the established invalid-cursor response.
+    if token_revision != int(expected):
+        raise ApiError(
+            "FAVORITES_REVISION_STALE", "收藏已变化，请重新搜索", status=409,
+            details={"reason": "FAVORITES_REVISION_CHANGED",
+                     "favorites_revision": token_revision,
+                     "current_favorites_revision": int(expected)},
+        )
 
 
 def _verify_fixed_person_revision(catalog: Any, expected_revision: int | None) -> None:
@@ -3336,7 +3414,7 @@ def _search_time_condition(catalog: Any, plan: dict[str, Any] | None) -> tuple[s
     return None, (), ()
 
 
-def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = ()) -> dict[str, Any]:
+def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False) -> dict[str, Any]:
     """Unbounded keyset pages for pure filters, without materializing IDs or sessions."""
     from photo_search.search.service import _person_authority_base
 
@@ -3350,6 +3428,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
         collection_id=None if collection_scope is None else collection_scope["collection_id"],
         additional_condition_sql=additional_condition_sql,
         additional_condition_parameters=additional_condition_parameters,
+        favorites_only=favorites_only,
     )
     fingerprint_payload = json.dumps({
         "retrieval_mode": request.retrieval_mode,
@@ -3360,15 +3439,18 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
         "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size,
         "person_collection": collection_scope,
         "time_identity": list(time_identity),
+        "favorites_only": bool(favorites_only),
     }, sort_keys=True, separators=(",", ":"))
     fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()
+    favorites_revision = _favorites_revision(catalog) if favorites_only else None
     revisions = (base.filter_revision, base.suggestion_revision, "filter-only", fingerprint,
                  None if collection_scope is None else collection_scope["instance_token"],
-                 None if collection_scope is None else collection_scope["revision"])
+                 None if collection_scope is None else collection_scope["revision"], favorites_revision)
     session_id = "filter-only"
     if request.cursor is not None:
         if request.search_session_id != session_id:
             raise ApiError(INVALID_CURSOR, "the filter cursor does not match this search")
+        _require_favorites_cursor_revision(request.cursor, favorites_revision)
         after = place_albums._decode(request.cursor, revisions)
     else:
         after = 0
@@ -3381,6 +3463,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     if (place_revision.read_filter_revision(catalog.connection),
         place_revision.read_suggestion_revision(catalog.connection)) != revisions[:2]:
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the filters changed; restart the search", status=409)
+    _verify_favorites_revision(catalog, favorites_revision)
     page = rows[: int(request.page_size)]
     ids = [int(row["asset_id"]) for row in page]
     offset = int(catalog.read_one(
@@ -3393,7 +3476,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
              "score": None, "matched_by": {"filter": offset + index + 1},
              "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False}
             for index, asset_id in enumerate(ids)]
-    return {
+    result = {
         "contract_version": "p2-contracts.v1", "request_id": request.request_id,
         "retrieval_mode": request.retrieval_mode,
         "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
@@ -3417,11 +3500,14 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
         "pending_semantic": None, "search_projection": _projection_block(catalog, match=None, catch_up=None),
         "rerank_state": "NOT_REQUESTED", "reranked": None, "state": "OK",
     }
+    _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
+    return result
 
 
-def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str, person_collection: dict[str, Any] | None = None, membership_sql: str | None = None, membership_parameters: tuple[Any, ...] = (), additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = ()) -> dict[str, Any]:
+def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str, person_collection: dict[str, Any] | None = None, membership_sql: str | None = None, membership_parameters: tuple[Any, ...] = (), additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False) -> dict[str, Any]:
     """Uncapped SQLite pages for a pure selected place; keeps album membership authoritative."""
     catalog = service.catalog
+    favorites_revision = _favorites_revision(catalog) if favorites_only else None
     base = _person_authority_base(catalog, request)
     scope = SearchScope.build(
         source_id=request.source_id,
@@ -3438,14 +3524,16 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         additional_condition_sql=additional_condition_sql,
         additional_condition_parameters=additional_condition_parameters,
         collection_id=None if person_collection is None else person_collection["collection_id"],
+        favorites_only=favorites_only,
     )
-    filter_payload = json.dumps({"retrieval_mode": request.retrieval_mode, "source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": request.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size, "person_collection": person_collection, "time_identity": list(time_identity)}, sort_keys=True, separators=(",", ":"))
+    filter_payload = json.dumps({"retrieval_mode": request.retrieval_mode, "source_id": request.source_id, "availability": request.availability, "place_ids": list(request.place_ids), "include_descendants": request.include_descendants, "place_state": request.place_state, "person_ids": list(scope.person_ids), "person_match": request.person_match, "capture_from": request.capture_from, "capture_to_exclusive": request.capture_to_exclusive, "page_size": request.page_size, "person_collection": person_collection, "time_identity": list(time_identity), "favorites_only": bool(favorites_only)}, sort_keys=True, separators=(",", ":"))
     filter_fingerprint = hashlib.sha256(filter_payload.encode("utf-8")).hexdigest()
-    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint, None if person_collection is None else person_collection["instance_token"], None if person_collection is None else person_collection["revision"])
+    revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint, None if person_collection is None else person_collection["instance_token"], None if person_collection is None else person_collection["revision"], favorites_revision)
     session_id = f"place-album:{kind}:{key}"
     if request.cursor is not None:
         if request.search_session_id != session_id:
             raise ApiError(INVALID_CURSOR, "the place album cursor does not match this search")
+        _require_favorites_cursor_revision(request.cursor, favorites_revision)
         start = place_albums._decode(request.cursor, revisions)
     else:
         start = 0
@@ -3471,13 +3559,14 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         current_revisions["package_revision"],
     ) != revisions[:3]:
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place album changed; reload the search", status=409)
+    _verify_favorites_revision(catalog, favorites_revision)
     page = rows[: int(request.page_size)]
     next_offset = int(page[-1]["asset_id"]) if page else start
     has_more = len(rows) > len(page)
     token = place_albums._token(next_offset, revisions) if has_more else None
     ids = [int(row["asset_id"]) for row in page]
     hits = [{"asset_id": asset_id, "rank": offset + index + 1, "score": None, "matched_by": {"filter": offset + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
-    return {
+    result = {
         "contract_version": "p2-contracts.v1", "request_id": request.request_id,
         "retrieval_mode": request.retrieval_mode,
         "search_session_id": session_id, "profile_id": None, "image_generation_id": None,
@@ -3505,6 +3594,8 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         "place_scope": place_block, "collection_scope": person_collection,
         "original_query": original_query, "content_query": None,
     }
+    _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
+    return result
 
 
 #: The multipart fields ``POST /search/image`` defines. ``text`` is deliberately absent: an
