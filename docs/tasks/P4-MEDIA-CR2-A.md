@@ -121,7 +121,16 @@
 - **整卡 `SCOPED PASS`**：历史恢复通过；至少有已授权真实 CR2 人脸、OCR、活动语义搜索的端到端验证；显示/方向/人脸框一致，JPEG/HEIC/MPO 不回退。A1 证据不足时维持 RAW-only 仍可按**安全 RAW 功能范围**收口，但必须写“内嵌 JPEG 加速未实现”，**不可声称预览优先已经完成**。无竖拍/GPS/完整 frozen 证据要明确限定未覆盖的能力与发行范围。
 - **停止点**：需要重写全局向量空间、冻结协议或破坏性数据库迁移时先停下说明；如果为一次性恢复确需最小加性记录/迁移，必须遵循 D1 的备份/兼容/回滚审查。不得抹除原失败证据、改变人工事实或声称已运行真实图库。
 
-**执行建议**：留在同一任务卡内先完成 D1～D4，无需另建 B 卡；本次仅改任务文档，不需要运行产品测试。
+**执行建议**：留在同一任务卡内先完成 D1～D4，无需另建 B 卡。历史恢复阶段需要产品实现和受影响面验证；只有文档整理才可按文档任务处理。
+
+### 2026-10-19 历史 CR2 人脸/OCR 恢复续做
+
+- 新增显式 build 专用的恢复入口：仅对当前页资产、所选来源中 `PRESENT` 的 `.cr2`，检查对应 face/OCR profile 的终态 `FORMAT_UNSUPPORTED` job；校验 job 输入 SHA 与当前 asset SHA 一致后才读取 CR2 文件头。日常 refresh 和普通页面读取不触发此恢复。无法证明旧 `DECODE_FAILED` 属于旧格式不兼容，故保守保留，不自动重放。
+- 新增 schema 0035 `cr2_job_recoveries` 持久记录；按五字段身份、原终态错误、无 lease 做事务 CAS，保留原失败证据并只允许一次重试。恢复后再失败不会循环。有效的当前 profile PUBLISHED artifact（含零脸/空 OCR）跳过；损坏或身份不一致单独计数，不把它伪装成格式失败。build 结果附加恢复分类计数，OCR 队列 drain 限定在本次 build 页资产和 active processor。
+- 定向 CR2 测试覆盖 FORMAT_UNSUPPORTED 精确恢复、原始错误留存、二次失败不重复恢复、当前 SHA 在 CAS 时变化则拒绝恢复，以及发布文档 profile 身份匹配：2 passed（JUnit `test-results/p4-cr2-recovery/luna-fix.xml`）。完整 unit/integration 原始结果：3212 项，3152 passed、9 failed、51 skipped（JUnit `test-results/p4-cr2-recovery/unit-integration-final-2.xml`）。其中迁移全量表 fixture 遗漏新加表名，已补后针对性重跑 1 passed（JUnit `test-results/p4-cr2-recovery/migration-final.xml`）；原完整运行不重写为 PASS。其他 8 项为 2 条人物页面缓存断言、搜索 UI harness、favorites API/UX、storage UI 与 timeline UI 断言。未发现 CR2 恢复用例失败。另一次无 `--basetemp` 的重跑在 pytest 清理共享 `.pytest-tmp` 时遇到 Windows `WinError 5`，已使用隔离 `--basetemp` 完成 CR2 定向用例；未改 ACL。
+- Ruff、相关 Python `py_compile`、`git diff --check` 通过。schema 0035 要求兼容性测试更新；geo 数据集 reviewed-through 更新到 35，0034 历史 schema fixture 固定到 34。工作区同期有 favorites/UI 改动，9 个回归失败不全属于本卡。
+- Luna High 子代理独立审查发现两个 P2：published payload 未验证文档自身 profile 身份，恢复 CAS 未在事务中复核当前 asset SHA。现已修正并补测试：普通/自动详情 face payload 要求与所选 task/profile 相符；INSERT marker 与 UPDATE job 均要求 `assets.sha256 = jobs.input_revision`。两个 CR2 定向测试通过（JUnit `test-results/p4-cr2-recovery/luna-fix.xml`），Ruff、py_compile 和本任务文件 diff-check 通过。Luna H 复核修正后无新增 finding。**此项只完成 Luna H 子代理复核，不替代卡片规定的 DS-H。**
+- **仍 PENDING**：D4 完整状态矩阵（成功/零脸/空 OCR、profile 和人工锚点、lease/重试/取消、双来源、重启、CPU/GPU/retired OCR、模型缺件）未全覆盖；内置浏览器来源继续建库/重复建库与“打开不触发任务”未验；真实 CR2 人脸/OCR/语义模型端到端未验；独立 DS-H 受影响面审查未执行。故不标 `CR2 RECOVERY VERIFIED`，本卡保持 IMPLEMENTATION PARTIAL / VALIDATION PENDING。
 
 ## 2026-10-13 执行记录
 

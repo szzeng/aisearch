@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
-from p4_time_fixtures import REAL_MIGRATIONS_DIR, migrations_upto
+from p4_time_fixtures import migrations_upto
 
 from photo_search.catalog import schema
 from photo_search.catalog.errors import MIGRATION_FAILED, SCHEMA_TOO_NEW, CatalogError
@@ -179,7 +179,7 @@ def test_0034_migration_is_additive_backed_up_and_refuses_older_build(tmp_path: 
         old.close()
 
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 34)
-    monkeypatch.setattr(schema, "MIGRATIONS_DIR", REAL_MIGRATIONS_DIR)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 34))
     migrated = migrate_database(path, data_root=root)
     assert migrated.applied == (34,) and migrated.backup_path is not None
     backup = open_readonly(migrated.backup_path)
@@ -216,7 +216,7 @@ def test_0034_migration_failure_rolls_back(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", v33)
     migrate_database(path, data_root=root)
     broken = tmp_path / "broken-migrations"
-    shutil.copytree(REAL_MIGRATIONS_DIR, broken)
+    shutil.copytree(migrations_upto(tmp_path, 34), broken)
     (broken / "0034_asset_favorites.sql").write_text("CREATE TABLE broken (", encoding="utf-8")
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 34)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken)

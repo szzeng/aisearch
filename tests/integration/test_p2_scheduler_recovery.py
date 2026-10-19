@@ -105,6 +105,8 @@ V6_TABLES = (
     "person_operation_items",
     "person_operations",
     "asset_favorites",
+    # P4-MEDIA-CR2-A: one-time, auditable recovery of legacy CR2 jobs.
+    "cr2_job_recoveries",
     # P3-08B: the reviewable old/new face mapping of one asset (ADR-0010). Additive to the
     # 0010/0011 tables; the tuple keeps its historical name as the *current* table set.
     "face_redetection_groups",

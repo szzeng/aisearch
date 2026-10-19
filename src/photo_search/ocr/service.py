@@ -661,11 +661,15 @@ def run_queue(
     cancel: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
+    asset_ids: Sequence[int] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable OCR jobs; bounded, single-threaded, no sleeping."""
     reconcile_retired_ocr_jobs(catalog, now_ms=catalog.now_ms())
     specs = (ocr_processor_spec("cpu"), ocr_processor_spec("gpu"))
     scheduler = scheduler_engine.Scheduler(catalog, specs, lease_seconds=catalog.lease_seconds)
+    selected_assets = None if asset_ids is None else tuple(sorted({int(value) for value in asset_ids}))
+    if selected_assets is not None:
+        scheduler.job_ids = _job_ids_for_assets(catalog, selected_assets)
     spec = next(item for item in specs if item.processor_id == contract.OCR_GPU_PROCESSOR_ID)
     cache = engine_cache or OcrEngineCache()
     # Creating the pinned sessions is the evidence for the "healthy" capability record.
@@ -689,6 +693,8 @@ def run_queue(
     steps = 0
     remaining = None if limit is None else max(0, int(limit))
     while remaining is None or steps < remaining:
+        if selected_assets is not None:
+            scheduler.job_ids = _job_ids_for_assets(catalog, selected_assets)
         if scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             steps += 1
             _coordinate_gpu_fallbacks(catalog, now_ms=catalog.now_ms())
@@ -719,6 +725,23 @@ def run_queue(
         "cpu_fallbacks": [dict(row) for row in fallbacks],
         **evidence,
     }
+
+
+def _job_ids_for_assets(catalog: Catalog, asset_ids: Sequence[int]) -> tuple[int, ...]:
+    """Limit a scoped build drain to selected assets while allowing same-asset CPU fallback."""
+    if not asset_ids:
+        return ()
+    asset_slots = ",".join("?" for _ in asset_ids)
+    processor_slots = ",".join("?" for _ in contract.OCR_ACTIVE_PROCESSOR_IDS)
+    rows = catalog.read_all(
+        "SELECT job_id FROM jobs WHERE subject_type='asset' AND subject_id IN ("
+        "SELECT CAST(asset_id AS TEXT) FROM assets WHERE asset_id IN (" + asset_slots + ")) "
+        "AND task_type=? AND processor_id IN (" + processor_slots + ") "
+        "AND state IN ('QUEUED','RETRY_WAIT','BLOCKED','RUNNING') ORDER BY job_id",
+        (*tuple(int(value) for value in asset_ids), contract.OCR_TASK_TYPE,
+         *contract.OCR_ACTIVE_PROCESSOR_IDS),
+    )
+    return tuple(int(row["job_id"]) for row in rows)
 
 
 def catch_up_projection(catalog: Catalog) -> dict[str, int | str]:

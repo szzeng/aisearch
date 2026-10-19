@@ -1115,9 +1115,13 @@ def _enrichment_stages(
         "place_resolver": lambda: _resolver_stage(catalog, service.data_root, content),
         "face": lambda: _face_stage(
             catalog, service.data_root, content, source_detail=face_profile == "source_detail",
-            engine_cache=face_cache,
+            engine_cache=face_cache, source_ids=scopes,
+            recover_cr2=mode == REFRESH_MODE_BUILD,
         ),
-        "ocr": lambda: _ocr_stage(catalog, service.data_root, content),
+        "ocr": lambda: _ocr_stage(
+            catalog, service.data_root, content, source_ids=scopes,
+            recover_cr2=mode == REFRESH_MODE_BUILD,
+        ),
     }
     if mode == REFRESH_MODE_BUILD:
         scoped: dict[str, Callable[[], dict[str, Any]]] = {
@@ -1154,13 +1158,17 @@ def _enrichment_stages(
                     catalog, service.data_root, page,
                     source_detail=face_profile == "source_detail",
                     engine_cache=face_cache,
+                    source_ids=scopes,
+                    recover_cr2=True,
                 ),
                 cancel_check=cancel_check,
             ),
             "ocr": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
-                runner=lambda page: _ocr_stage(catalog, service.data_root, page),
+                runner=lambda page: _ocr_stage(
+                    catalog, service.data_root, page, source_ids=scopes, recover_cr2=True
+                ),
                 cancel_check=cancel_check,
             ),
         }
@@ -1455,8 +1463,10 @@ def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str,
 
 def _face_stage(
     catalog: Any, data_root: Any, assets: set[int], *, source_detail: bool = True,
-    engine_cache: Any | None = None,
+    engine_cache: Any | None = None, source_ids: Sequence[int | None] = (None,),
+    recover_cr2: bool = False,
 ) -> dict[str, Any]:
+    from photo_search.face import contract as face_contract
     from photo_search.face import service as face_service
     from photo_search.face import weights as face_weights
 
@@ -1474,6 +1484,29 @@ def _face_stage(
             "targets": len(assets),
             "steps": 0,
         }
+    task_type = (
+        face_contract.FACE_DETAIL_AUTO_TASK_TYPE
+        if source_detail
+        else face_contract.FACE_TASK_TYPE
+    )
+    artifact_revision = (
+        face_contract.FACE_DETAIL_ARTIFACT_REVISION
+        if source_detail
+        else face_contract.FACE_ARTIFACT_REVISION
+    )
+    recovery: dict[str, int] = {}
+    if recover_cr2:
+        from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
+
+        recovery = recover_cr2_format_failures(
+            catalog,
+            data_root=data_root,
+            asset_ids=sorted(assets)[:ENRICH_LIMIT],
+            source_ids=source_ids,
+            task_type=task_type,
+            processor_id=face_contract.FACE_PROCESSOR_ID,
+            artifact_revision=artifact_revision,
+        )
     result = face_service.detect(
         catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT],
         source_detail=bool(source_detail),
@@ -1487,10 +1520,15 @@ def _face_stage(
         "association": int(result["association"].get("reconciled", 0))
         if isinstance(result.get("association"), dict)
         else 0,
+        **recovery,
     }
 
 
-def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]:
+def _ocr_stage(
+    catalog: Any, data_root: Any, assets: set[int], *,
+    source_ids: Sequence[int | None] = (None,), recover_cr2: bool = False,
+) -> dict[str, Any]:
+    from photo_search.ocr import contract as ocr_contract
     from photo_search.ocr import service as ocr_service
     from photo_search.ocr import weights as ocr_weights
 
@@ -1506,8 +1544,25 @@ def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]
             "steps": 0,
         }
     targets = ocr_service.ocr_targets(catalog, asset_ids=sorted(assets)[:ENRICH_LIMIT])
+    processor_id = ocr_service.processor_id_for_request("auto")
+    recovery: dict[str, int] = {}
+    if recover_cr2:
+        from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
+
+        recovery = recover_cr2_format_failures(
+            catalog,
+            data_root=data_root,
+            asset_ids=[int(target["asset_id"]) for target in targets],
+            source_ids=source_ids,
+            task_type=ocr_contract.OCR_TASK_TYPE,
+            processor_id=processor_id,
+            artifact_revision=ocr_contract.OCR_ARTIFACT_REVISION,
+        )
     enqueued = ocr_service.enqueue_targets(catalog, targets, now_ms=catalog.now_ms())
-    run = ocr_service.run_queue(catalog, data_root=data_root, worker_id="library-refresh")
+    run = ocr_service.run_queue(
+        catalog, data_root=data_root, worker_id="library-refresh",
+        asset_ids=[int(target["asset_id"]) for target in targets],
+    )
     return {
         "state": STAGE_OK,
         "targets": len(targets),
@@ -1515,6 +1570,7 @@ def _ocr_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]
         "steps": int(run["steps"]),
         "pending_jobs": int(run["pending_jobs"]),
         "cpu_fallbacks": list(run.get("cpu_fallbacks", [])),
+        **recovery,
     }
 
 

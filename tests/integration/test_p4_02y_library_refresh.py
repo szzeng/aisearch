@@ -23,8 +23,15 @@ from httpx import ASGITransport, AsyncClient
 
 from photo_search.api.settings import ApiSettings
 from photo_search.app import create_app
+from photo_search.face import contract as face_contract
 from photo_search.indexing import semantic
 from photo_search.ingestion.service import CatalogService
+from photo_search.jobs import queue as jobs
+from photo_search.refresh.cr2_recovery import (
+    _published_document_matches,
+    _rewind_once,
+    recover_cr2_format_failures,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
@@ -717,6 +724,132 @@ def test_the_enrichment_stages_never_walk_the_whole_library(env: RefreshEnv) -> 
     assert delta["stages"]["taken_time"]["targets"] == 1
     assert delta["stages"]["gps"]["targets"] == 1
     assert delta["stages"]["semantic"]["encoded"] == 1
+
+
+def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
+    env: RefreshEnv,
+) -> None:
+    catalog = env.service().catalog
+    asset = catalog.read_one(
+        "SELECT a.asset_id,l.location_id,l.relative_path FROM assets a "
+        "JOIN file_locations l ON l.asset_id=a.asset_id WHERE l.availability='PRESENT' "
+        "ORDER BY a.asset_id LIMIT 1"
+    )
+    assert asset is not None
+    asset_id = int(asset["asset_id"])
+    original = env.library / str(asset["relative_path"])
+    cr2_path = original.with_suffix(".cr2")
+    if cr2_path.exists():
+        cr2_path.unlink()
+    original.rename(cr2_path)
+    content = b"II*\x00\x08\x00\x00\x00CR\x02\x00synthetic-cr2"
+    cr2_path.write_bytes(content)
+    revision = hashlib.sha256(content).hexdigest()
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE assets SET sha256=?,byte_size=? WHERE asset_id=?",
+            (revision, len(content), asset_id),
+        )
+        relative = cr2_path.relative_to(env.library).as_posix()
+        connection.execute(
+            "UPDATE file_locations SET relative_path=?,path_key=? WHERE location_id=?",
+            (relative, relative.casefold(), int(asset["location_id"])),
+        )
+        job_id = jobs.enqueue(
+            connection,
+            subject_type="asset",
+            subject_id=str(asset_id),
+            input_revision=revision,
+            task_type=face_contract.FACE_TASK_TYPE,
+            processor_id=face_contract.FACE_PROCESSOR_ID,
+            now_ms=catalog.now_ms(),
+        )
+        connection.execute(
+            "UPDATE jobs SET state='FAILED',attempts=1,last_error_code='FORMAT_UNSUPPORTED',"
+            "last_error_message='legacy CR2 format unsupported' WHERE job_id=?",
+            (job_id,),
+        )
+
+    # A source revision can change after candidate classification. The transactional CAS
+    # must recheck the current asset SHA before writing a durable marker or requeueing.
+    stale_job = catalog.read_one("SELECT * FROM jobs WHERE job_id=?", (job_id,))
+    assert stale_job is not None
+    with catalog.write() as connection:
+        connection.execute("UPDATE assets SET sha256=? WHERE asset_id=?", ("f" * 64, asset_id))
+    assert _rewind_once(catalog, stale_job) is False
+    assert catalog.read_one(
+        "SELECT 1 FROM cr2_job_recoveries WHERE job_id=?", (job_id,)
+    ) is None
+    assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "FAILED"
+    with catalog.write() as connection:
+        connection.execute("UPDATE assets SET sha256=? WHERE asset_id=?", (revision, asset_id))
+
+    first = recover_cr2_format_failures(
+        catalog,
+        data_root=env.data_root,
+        asset_ids=[asset_id],
+        source_ids=[1],
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
+    assert first["cr2_recovery_jobs"] == 1
+    assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "QUEUED"
+    saved = catalog.read_one("SELECT * FROM cr2_job_recoveries WHERE job_id=?", (job_id,))
+    assert saved["source_error_code"] == "FORMAT_UNSUPPORTED"
+    assert saved["source_error_message"] == "legacy CR2 format unsupported"
+
+    # A later failure on the same logical job is not automatically resurrected again.
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE jobs SET state='FAILED',attempts=1,last_error_code='FORMAT_UNSUPPORTED',"
+            "last_error_message='still unsupported' WHERE job_id=?",
+            (job_id,),
+        )
+    second = recover_cr2_format_failures(
+        catalog,
+        data_root=env.data_root,
+        asset_ids=[asset_id],
+        source_ids=[1],
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
+    assert second["cr2_recovery_jobs"] == 0
+    assert second["cr2_recovery_already_attempted"] == 1
+    assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (job_id,))["state"] == "FAILED"
+
+
+def test_cr2_published_document_requires_matching_profile_identity() -> None:
+    face_doc = {
+        "processor_id": face_contract.FACE_PROCESSOR_ID,
+        "input_revision": "a" * 64,
+    }
+    assert _published_document_matches(
+        face_doc,
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        input_revision="a" * 64,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
+    assert not _published_document_matches(
+        {**face_doc, "processor_id": "other-face-profile"},
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        input_revision="a" * 64,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
+    assert not _published_document_matches(
+        {
+            **face_doc,
+            "spec_revision": face_contract.FACE_DETAIL_SPEC_REVISION,
+            "artifact_revision": face_contract.FACE_DETAIL_ARTIFACT_REVISION,
+        },
+        task_type=face_contract.FACE_TASK_TYPE,
+        processor_id=face_contract.FACE_PROCESSOR_ID,
+        input_revision="a" * 64,
+        artifact_revision=face_contract.FACE_ARTIFACT_REVISION,
+    )
 
 
 def test_a_failing_face_or_ocr_processor_never_blocks_search_ready(env: RefreshEnv) -> None:

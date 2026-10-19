@@ -32,6 +32,7 @@ CORE_TABLES = {
     # the library-level ``taken_time_rules_version`` key inside ``metadata``.
     "asset_metadata",
     "asset_favorites",
+    "cr2_job_recoveries",
     # P3-01: the current OCR document of every asset and its per-region metadata.
     "asset_ocr_regions",
     "asset_ocr_text",

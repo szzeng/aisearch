@@ -42,3 +42,12 @@
 - 未访问真实 `PhotoSearchData`，因此没有活动语义模型/provider 的 CR2 文字搜索证据，也没有真实目录建库/继续建库或第二次幂等证据。历史 `FORMAT_UNSUPPORTED` 媒体缓存的合成定向重试已有单测；CR2 旧终态人脸/OCR任务的定向恢复仍未实现/验证。
 
 **续验结论：仍为 IMPLEMENTATION PARTIAL / VALIDATION PENDING，不是 SCOPED PASS。** 未覆盖竖拍/不同预览尺寸/有效 GPS、真实人脸与 OCR 推理、活动模型搜图、续建幂等和完整 frozen package；内嵌预览几何证据不足以安全启用。
+
+## 2026-10-19 历史人脸/OCR 失败恢复续做
+
+- **实现范围**：仅显式 `build` 的分页阶段调用恢复分类；查询当前页所选来源的 `PRESENT` `.cr2`，限定当前 face/OCR task 与 processor profile、终态 `FAILED/BLOCKED` 和 `FORMAT_UNSUPPORTED`。校验 job `input_revision` 等于当前 asset SHA 后才检查 CR2 内容头。历史 `DECODE_FAILED` 暂不恢复，因为尚无证据可区分旧解码器不兼容与文件损坏。普通 refresh、打开照片和手动单张详情不启动批量恢复。
+- **一次性恢复与保留证据**：加性 schema 0035 表 `cr2_job_recoveries` 记录旧状态、错误、消息和五字段身份；事务内无 lease 条件 CAS，保留原错误并重置精确 job。相同 job 第二次失败时因持久 marker 不会再次自动回放。当前 profile 有效 PUBLISHED artifact 会跳过（零脸/空 OCR 同样算有效完成）；无效 artifact 计作完整性异常。恢复结果仅扩充现有 build 结果计数。OCR build drain 限定本页资产与 active CPU/GPU processor，不改变其他调用的默认行为。
+- **验证**：新增合成 CR2 集成用例覆盖 `FORMAT_UNSUPPORTED` 一次恢复、原错误留存、恢复任务再次失败后不再 rewind：1 passed，JUnit `test-results/p4-cr2-recovery/focused-final-2.xml`。受迁移影响的 unit/integration 原始组合为 3212 项：3152 passed、9 failed、51 skipped，JUnit `test-results/p4-cr2-recovery/unit-integration-final-2.xml`。其中迁移恢复 fixture 漏列新表，已补后针对性复跑 1 passed，JUnit `test-results/p4-cr2-recovery/migration-final.xml`；原始完整运行仍如实记录。其余 8 项失败为人物页面资源缓存断言 2 项、搜索 UI harness 1 项、favorites API/UX 2 项、storage UI 1 项、timeline UI 2 项；没有 CR2 恢复用例失败。Ruff、相关模块 `py_compile`、本任务涉及文件的 `git diff --check` 通过。一次未指定隔离 basetemp 的定向重跑触发共享 pytest temp 清理 `WinError 5`；改用隔离 `.pytest-tmp/p4-cr2-recovery/focused-final` 后通过，未改 Windows ACL。
+- **性能边界**：在来源现有分页内一次批量查询候选 jobs，并按候选批量查 artifact；只对匹配 SHA 的旧格式失败读 CR2 头。没有增加普通打开扫描或全库 SHA 重算。尚未实测稀疏/密集页 SQL、文件头和模型调用计数，也未证明第二次完整 build 的 0 推理。
+- **Luna High 独立复核及修正**：首轮发现两项 P2：published payload 自身 profile 校验不足；分类后到 CAS 前未再次核对 asset SHA。现已增加普通/自动详情 face 文档 profile 身份检查，并在恢复 marker INSERT 和 job UPDATE 的 CAS 谓词中复核 `assets.sha256 = jobs.input_revision`。补充测试覆盖 profile mismatch 和 SHA 在 CAS 前改变；CR2 定向测试 2 passed，JUnit `test-results/p4-cr2-recovery/luna-fix.xml`。Luna H 对修正的跟进复核未发现新问题。任务卡规定的独立 DS-H 审查仍待执行，Luna H 结果不代替该门槛。
+- **未完成**：D4 其他状态矩阵、来源重复/重启/取消、人工人脸事实与各类详情 profile、OCR active/retired 与模型缺件检查仍待测；未做内置浏览器流程、真实 CR2 人脸/OCR/语义模型端到端及独立 DS-H 全受影响面审查。故当前仍 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**，不记 `CR2 RECOVERY VERIFIED` 或 `SCOPED PASS`。未访问 `PhotoSearchData`。
