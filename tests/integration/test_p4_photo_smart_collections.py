@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 from p3_persons_page_fixtures import seed_library
 
@@ -72,6 +74,67 @@ def test_filter_search_creates_dynamic_smart_rule_and_exclusion_is_recoverable(a
         return collection
 
     api_env.scenario(scenario)
+
+
+def test_refresh_api_deduplicates_and_returns_retryable_busy(api_env, monkeypatch):
+    rule = {"version": 1, "execution_kind": "TEXT", "request": {"retrieval_mode": "text"},
+            "display_query": "合同", "content_query": "合同", "confirmed_scope": None,
+            "confirmed_place_scope": None, "confirmed_person_scope": None,
+            "confirmed_filter_revision": 0, "confirmed_suggestion_revision": 0,
+            "confirmed_favorites_revision": None}
+    collections = [photo_smart_collections.create_collection(
+        api_env.service.catalog, f"Refresh {index}", f"refresh-api-{index}", rule,
+        request_hash=f"refresh-api:{index}", auth_hash="auth", source_hash=f"source:{index}"
+    )["collection"] for index in range(4)]
+    runner = api_env.context.photo_smart_refresh_runner()
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_run(smart_id, _refresh_id, _rule_revision):
+        with runner._lock:
+            runner._tasks[smart_id]["status"] = "RUNNING"
+        entered.set()
+        release.wait(5)
+
+    monkeypatch.setattr(runner, "_run", blocked_run)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+
+        async def refresh(collection):
+            return await client.post(
+                f"/api/v1/photo-smart-collections/{collection['smart_id']}/refresh",
+                headers=headers,
+                json={"instance_token": collection["instance_token"], "manual": True},
+            )
+
+        first = await refresh(collections[0])
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "QUEUED"
+        assert entered.wait(2)
+        repeated = await refresh(collections[0])
+        assert repeated.status_code == 200, repeated.text
+        assert repeated.json()["status"] == "RUNNING"
+        assert repeated.json()["refresh_id"] == first.json()["refresh_id"]
+        second = await refresh(collections[1])
+        third = await refresh(collections[2])
+        busy = await refresh(collections[3])
+        assert second.json()["status"] == third.json()["status"] == "QUEUED"
+        assert busy.status_code == 200
+        assert busy.json() == {"status": "BUSY", "retryable": True,
+                               "queue_limit": 3, "queue_depth": 3}
+        assert api_env.service.catalog.read_one(
+            "SELECT refresh_status FROM photo_smart_cache_state WHERE smart_id=?",
+            (collections[3]["smart_id"],),
+        )[0] == "NO_CACHE"
+        return True
+
+    try:
+        assert api_env.scenario(scenario)
+    finally:
+        release.set()
+        runner.close()
 
 
 def test_filter_exclusions_are_applied_before_keyset_page_without_counts(api_env):

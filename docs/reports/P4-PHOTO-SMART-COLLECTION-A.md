@@ -146,3 +146,39 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
   ```
 
 - Ruff、相关 `py_compile`、`git diff --check` 通过。未运行真实图库、模型/GPU、浏览器或全量容量认证；本轮通过事务入口注入覆盖 smart revision 并发变化，已有 build CAS 合同未改变。
+
+## 2026-10-19 智能刷新可靠性与真实模型收口
+
+### 实施与安全边界
+
+- `SmartRefreshRunner` 保持 1 个执行、2 个等待；提交前验证合集实例 token，队列满返回 retryable BUSY。相同合集的重复请求返回当前任务状态。请求先取得应用内槽位，再写入 QUEUED，实际 worker 开始时才 CAS 获取数据库 lease；提交异常清理对应排队状态并释放槽位。Future 回调在释放队列锁后注册，关闭时取消等待任务并正常 join worker/heartbeat。
+- 运行任务用独立 60 秒心跳续租 600 秒 lease。renewal 短事务核对 owner、refresh id、RUNNING 状态、未过期 lease 和 rule revision；检索/模型计算不持 SQLite 写事务。发布继续核对有效 owner、请求及规则版本。失败、取消、旧 worker 迟到或规则替换不删旧 build/规则/人工排除；规则替换后的旧执行者可释放自身过期 lease，但不能发布或更改新 owner。
+- 获得数据根 OS 独占锁后，应用恢复数据库中遗留的 QUEUED/RUNNING 状态，清 lease 并留下可重试错误，不在启动时自动排队重算。Catalog 暂不可用保持延迟错误处理，不阻断启动。未改 schema/migration、候选上限或搜索语义。
+- 浏览器发现了“保留旧缓存时刷新失败提示被隐藏”的 UI 问题，已修复为展示错误码和重试提示，同时保留旧候选可浏览；前端回归覆盖错误/成功缓存文案。
+
+### 验证
+
+- 受影响套件命令：
+
+  ```powershell
+  $env:UV_CACHE_DIR='.uv-cache'; $env:TMP='D:\SZ\project\aisearch\.tmp\pytest-smart-refresh-final5'; $env:TEMP=$env:TMP
+  .\.venv\Scripts\python.exe -m pytest -q tests/unit/test_photo_smart_collections.py tests/integration/test_p4_photo_smart_collections.py tests/unit/test_photo_collections.py tests/integration/test_p4_photo_collections.py tests/unit/test_api_frontend.py tests/unit/test_smart_collection_frontend.py --junitxml=test-results/smart-refresh-closeout-final5.xml --basetemp=.pytest-tmp/smart-refresh-final5
+  ```
+
+- 最终 JUnit `test-results/smart-refresh-closeout-final5.xml`：171 passed、0 failed、0 errors、0 skipped。覆盖重复任务和错误 token、1+2 队列及 BUSY、排队无 lease、短 lease 长任务续租、旧 owner 拒绝续租/发布、提交异常、立即完成 Future、取消/关闭、检索异常保留缓存与重试、规则替换及旧 worker 迟到、OS 锁下子进程异常退出后的启动恢复，以及向量 generation revision 导致依赖签名变化。之前的初跑记录保存在各 `smart-refresh-closeout-final*.xml`，包括一次未预建临时目录造成的环境 IO 错误和一个测试夹具绑定不足断言；修正夹具断言后最终组合通过。
+- Ruff（所有本轮 Python 文件）、相关 `py_compile`、`node --check src/photo_search/web/app.js`、`git diff --check` exit 0。未运行全套 30 万、GTX 1660 或真实图库认证。
+- 隔离浏览器使用本地 127.0.0.1 app 和合成数据。打开“照片合集→智能合集→真实模型收口 · COMBINED”，手动刷新后候选出现，再次进入缓存不重复查询；查看合成照片，排除后重刷并确认消失。注入刷新失败后 UI 保留旧候选并显示 `PHOTO_SMART_REFRESH_FAILED` 和重试入口；恢复合成规则后点击重试成功。截图未保存：当前 CUA 浏览器工具未提供导出路径。未打开真实照片或生产数据。
+
+### 真实 COMBINED 模型闭环：PASS
+
+- 使用既有只读权重 `D:\SZ\project\PhotoSearchData\models\chinese_clip\vit-b-16` 及 `tools/prepare_models/manifests/chinese-clip-vit-b-16.json`，未下载或训练。身份：`OFA-Sys/chinese-clip-vit-base-patch16`；processor `chinese-clip-vit-b-16@36e679e65c2a`；space `chinese-clip-vit-b-16:c8ac42d3907c57b0`；dimension 512；profile `p4-smart-real-chinese-clip`；ONNX Runtime `onnxruntime-gpu@1.30.0`；执行设备 CUDA / `CUDAExecutionProvider`（可用 provider 还包括 TensorRT 和 CPU，未选用 TensorRT）。合成数据与索引均位于 `.tmp/p4-smart-real-20261019-r6` 独立数据根。
+- 首次中文 COMBINED 查询 `红色` 返回 200，真实向量渠道参与，`red.png` 为预期首位；查询编码器调用 1 次。真实图像编码经过 outbox 确认建立 READY generation `image-gen-5bcba729dfda4897a94974b7`，3 个已确认向量；创建的智能合集 pin 住 profile/space/generation。手动刷新实际执行查询并发布 3 个候选，build `c5676ee82deed5c7b29f7a2646bc2d39`，耗时 42.3 ms；热缓存打开读出 3 项且没有新增查询编码器调用。初始 COMBINED 搜索耗时 139.2 ms；SQL trace 458 条用于整次隔离诊断，不作为生产延迟保证。
+- 排除 `red.png` 后刷新不再出现；profile/model 状态变化返回 `MODEL_REBIND_REQUIRED`/DEFERRED 并保留旧缓存；真实检索后注入 retrieval exception 得到 `FAILED` / `PHOTO_SMART_REFRESH_FAILED`，旧 build 保留，随后真模型重试成功。被阻塞的真实搜索中再次请求同一合集返回同一 RUNNING refresh id，查询数未增加，证明 single-flight。
+- 原始完整记录：`test-results/p4-smart-real-20261019-r6.json`。合成环境 FTS projection capability 显示 LAGGING，页面显示“索引处理中”；向量 generation 本身 READY、无待确认向量事件且真实 vector channel 已参与。本验收只据此声称真实 COMBINED/向量及智能缓存闭环通过，不声称 FTS 投影追赶完成。
+
+### 复核和状态
+
+- Luna High 子代理对队列/租约/启动恢复和本轮整体影响面进行独立复核；首轮发现规则替换时旧 worker 不能清理自身 stale lease，已增加 CAS 清理及回归。末轮发现重复请求与 BUSY 快速返回发生在 token 校验前，现已改为快速返回前只读校验并增加非法 token 回归；最终受影响套件重跑通过。最终复核意见与提交前 diff 一并留在对话审查记录中。
+- **PASS**：本次 P4 refresh closeout 的有界队列、重复去重、活跃 lease 续租、OS 锁后的死亡实例恢复、异常/取消/版本冲突数据保留、真实 COMBINED 查询及创建/刷新/缓存命中、隔离浏览器失败重试，以及 171 项受影响 JUnit 与静态检查。
+- **PENDING（明确排除）**：全图库 30 万认证、GTX 1660 压测、正式 SLA、真实用户图库、截图文件导出；均不属于本轮退出条件。没有因这些项目扩大范围。
+- **已知限制**：合成 FTS projection capability 为 LAGGING，故页面显示索引处理中；CUDA 冷启动真实权重身份/实测见上。本轮不要求/声称 FTS 全量追赶或容量性能结论。

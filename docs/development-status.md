@@ -73,3 +73,7 @@
 ## P4-UI2-MAP-MINOR-FIX-A — 地图相册悬停标记与收藏按钮修复（2026-10-19）
 
 地图悬停 Marker 恢复绝对定位并提高局部层级；卡片操作按钮使用专用样式，避免覆盖共享收藏星标。定向悬停与收藏 UI JUnit 8/8 通过，Node 语法与 diff-check 通过。浏览器视觉与完整点击路线因一次性会话链接流程无法通过当前内置浏览器安全打开，保持 PENDING；状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-UI2-MAP-MINOR-FIX-A.md)与[执行报告](reports/P4-UI2-MAP-MINOR-FIX-A.md)。未访问真实图库。
+
+## P4-PHOTO-SMART-COLLECTION-REFRESH-CLOSEOUT — 刷新可靠性与真实 COMBINED 收口（2026-10-19）
+
+本轮收口范围 PASS：刷新队列为 1 执行 + 2 等待，重复请求去重，队列满可重试；活动 lease 可续租，取得数据根独占锁后能恢复上一进程遗留任务；真实 Chinese-CLIP COMBINED 查询、智能合集创建/刷新/缓存命中和隔离浏览器失败重试均验证。受影响 JUnit 171/171，Ruff、py_compile、Node 语法和 diff-check 通过。模型执行 CUDA / CUDAExecutionProvider，完整身份及候选、缓存、耗时和 FTS LAGGING 限制见[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)。原卡历史整卡 ACCEPTANCE PARTIAL 标记保留，不冒称真实 FTS 追赶、30 万、GTX 1660 或正式 SLA 通过。仅使用独立合成数据与开发机既有模型；未创建后续任务卡。

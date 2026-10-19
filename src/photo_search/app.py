@@ -64,6 +64,9 @@ def create_app(
         # The same OS lease is acquired by backup only after this service has stopped.
         lease = acquire_data_root_lease(api.settings.data_root)
         try:
+            # Once OS ownership proves the prior managed process is gone, old smart work
+            # cannot still publish. Database/model work stays lazy and failures are retryable.
+            api.recover_smart_refreshes_after_lock()
             # Warm only the first-screen covers in a separate daemon worker. The existing
             # thumbnail cache is reused and a cold cache never delays API startup.
             api.start_place_cover_warming()

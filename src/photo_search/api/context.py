@@ -89,6 +89,9 @@ class ApiContext:
         self._face_detail_runner: FaceDetailRunner | None = None
         self._face_detail_recovery_started = False
         self._photo_smart_refresh_runner: Any | None = None
+        self._data_root_lease_acquired = False
+        self._smart_refresh_recovery_complete = False
+        self._smart_refresh_recovery_lock = threading.Lock()
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -159,6 +162,8 @@ class ApiContext:
         """The catalog service of the request-handling thread (opened once)."""
         if self._service is None:
             self._service = self._service_factory()
+        if self._data_root_lease_acquired and not self._smart_refresh_recovery_complete:
+            self._recover_smart_refreshes(self._service)
         if not self._face_detail_recovery_started:
             try:
                 from photo_search.face.source_detail_batches import running_batches
@@ -169,6 +174,32 @@ class ApiContext:
             except Exception:  # noqa: BLE001 - app startup remains available if batch recovery fails
                 logger.exception("recovering source-detail face batches failed")
         return self._service
+
+    def recover_smart_refreshes_after_lock(self) -> bool:
+        """Confirm exclusive data-root ownership, then recover prior-process work."""
+        self._data_root_lease_acquired = True
+        try:
+            return self._recover_smart_refreshes(self.service())
+        except Exception:  # database startup remains delayed/retryable if it is unavailable
+            logger.info("smart refresh startup recovery deferred", exc_info=True)
+            return False
+
+    def _recover_smart_refreshes(self, service: Any) -> bool:
+        if self._smart_refresh_recovery_complete:
+            return True
+        if not self._smart_refresh_recovery_lock.acquire(blocking=False):
+            return False
+        try:
+            from photo_search.photo_smart_collections import recover_interrupted_refreshes
+
+            recover_interrupted_refreshes(service.catalog)
+            self._smart_refresh_recovery_complete = True
+            return True
+        except Exception:  # retry on the next service request; do not fail app startup
+            logger.info("smart refresh recovery deferred", exc_info=True)
+            return False
+        finally:
+            self._smart_refresh_recovery_lock.release()
 
     def runner(self) -> ScanRunner:
         """The single background scan executor; it opens its own service/connection."""

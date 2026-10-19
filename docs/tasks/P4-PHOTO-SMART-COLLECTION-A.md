@@ -2,6 +2,8 @@
 
 - **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。过期浏览、save-static、FILTER/地点排除排序分页已交付；联合受影响组 59/59、迁移/恢复/性能组 52/52 通过。本次修复 COMBINED active profile 缺失漏报、增加热缓存免检索和普通成员/收藏/智能排除隔离测试。真实 COMBINED 模型、活 worker 崩溃恢复、不同合集排队成本及 DS-H 全影响面审查仍未验。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
 - **优先级**：P2；**建议执行模型**：GPT-6 High（用户在 Codex 手动选择）。人工状态、迁移和并发提交须按 V3.1 §2.4 做符合风险的独立 DS-H 影响面工程审查。
+- **2026-10-19 收口目标（P4-PHOTO-SMART-COLLECTION-REFRESH-CLOSEOUT）**：只关闭智能刷新有界排队、运行中租约续期、已确认死亡实例的启动恢复及真实 COMBINED 模型闭环；不新增任务表/调度服务、不改变候选上限、检索语义或迁移版本。队列硬上限为 1 个运行、2 个等待；有旧有效缓存的任何失败、取消、接管或规则替换都保留旧 build 与人工排除。真实模型只用开发机既有权重和独立合成 PhotoSearchData。
+- **本轮性能设计（PERF-BOUNDED）**：链路与风险：refresh API → 本地队列 → COMBINED 检索 → 缓存原子发布，主要风险是无界排队、重复模型查询、排队先占租约及模型等待期间 SQLite 写锁/租约过期。做法与边界：应用内最多 1 执行 + 2 等待，实际启动才取得 600 秒可续 lease，心跳采用独立短事务，检索期间不持写锁；候选 K≤5000，沿用现有模型与索引。验证与停止：集中请求/立即完成/提交异常/取消/关停/长任务/进程退出测试，独立真实模型闭环与隔离浏览器刷新重试；确认队列、调用和恢复不变量后停止，不新增 30 万、GPU 压测或 SLA 结论。
 - **设计基准**：`szzeng/aisearch` / `master`；设计复核基准 `master @ d61e2fe3cdf60044f34132325298f4635be00dd8`（2026-10-19）；提交前远端 `master @ d5795b07a17e5a933ee0366ffe4d4acfb78e1462`；普通照片合集卡已提交为 [`d36c50d`](https://github.com/szzeng/aisearch/commit/d36c50d560bff9b1ef7e943ee0604ad72742d89b)，尚未实施。当前可见产品 Schema v33；**两张 Favorites 与普通照片合集均不能据任务卡存在而视为已实施**。实际开工必须检查最新 HEAD、工作树、已落地迁移、API、报告和活跃模型/索引合同。
 - **实施前置**：`P4-FAVORITES-CORE-A` → `P4-FAVORITES-UX-B` → `P4-PHOTO-COLLECTION-A` 均达到其自身必要验收并具备可信代码。本卡可提前审查，不提前占 migration 版本，不改上一卡已冻结的人工成员真值。
 - **必读**：`AGENTS.md` → `docs/development-status.md` → 本卡 → `docs/performance.md`、`docs/testing.md`、`docs/tasks/TASK-TEMPLATE.md`；V3.0 §9.2/9.3/9.5/§12、V3.1 §2.4/§3.2/§3.4/§4.2；上述三张前置卡与实测报告、`P4-SEARCH-QUALITY`、`P4-SEARCH-INTENT-UNIFIED-A`、`ADR-0005`、`ADR-0009`、`ADR-0011` 及直接受影响调用链。不可把文档假设当成最新真实接口。
@@ -201,3 +203,13 @@
 - **实施**：将公共 UI `ranked_assets_page` 与 save-static 专用 `ranked_assets_for_static_save` 分开，共用一套资格/排除/build/排序 SQL；另存读取上限由缓存容量限定为 5000，capture_desc 对整个候选集排序。原确认和事务 CAS/幂等路径不变，UI API 的 `limit=5000` 仍返回 422。
 - **验证**：新集成测试覆盖 TEXT/COMBINED × rank/capture_desc × 51/120/5000，共 12 项；逐页读回普通合集并按 oracle 比较顺序，覆盖重复/未知时间、人工排除、当前照片资格变化、50 页边界和同请求键重试。另测另存期间 smart revision 变化返回 409 且无部分合集。受影响 smart/ordinary 单元与集成组合 61/61 通过，JUnit 为 `test-results/smart-save-static-affected-final2.xml`；参数矩阵 JUnit 为 `test-results/smart-save-static-matrix-final.xml`。Ruff、py_compile、diff-check 通过。
 - **未验范围**：仅隔离合成 Catalog/API；没有真实图库、COMBINED 模型/GPU、全量容量或浏览器测试。既有整卡 PENDING 边界不因本次收口而关闭。
+
+## 16. 2026-10-19 智能刷新可靠性与真实模型收口
+
+- **收口状态**：`P4-PHOTO-SMART-COLLECTION-REFRESH-CLOSEOUT` 的验收范围 PASS。原卡仍保留历史整卡 `IMPLEMENTED / ACCEPTANCE PARTIAL` 标记；本轮关闭真实 COMBINED、活 worker 异常退出恢复及应用层有界队列缺口。完整证据见同一[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+- **实现**：runner 限制 1 active + 2 queued，提交前校验 instance token；重复合集返回现有状态，满队列返回 retryable BUSY；实际执行开始时才领取 lease。活动 lease 每 60 秒通过独立短事务续租 600 秒，按 owner/request/state/rule revision 核对。取得数据根 OS 独占权后恢复上一实例残留任务为可重试 FAILED，不启动 GPU 重算。异常、取消、规则替换和迟到 worker 保护旧 build、规则及人工排除。无数据库迁移。
+- **验证**：最终受影响组 171 passed / 0 failed / 0 skipped，JUnit `test-results/smart-refresh-closeout-final5.xml`；Ruff、相关 py_compile、Node 语法、diff-check 通过。子进程异常退出/重启恢复、长任务续租、旧 owner 拒绝续租/发布、Future 立即完成、提交失败、取消/关闭、重复与 BUSY、非法 instance token 和失败重试均有定向回归。
+- **真实模型**：使用开发机既有 Chinese-CLIP ViT-B-16 权重，CUDA / `CUDAExecutionProvider`，隔离合成图片建立真实 READY generation；真实 COMBINED 查询实际调用 query encoder 和向量检索。从真实结果创建并 pin 智能合集，刷新发布 3 候选，缓存重开无额外模型查询；人工排除、模型变化拒绝并保留缓存、检索异常保留缓存及重试、同合集并发请求 single-flight 均通过。详见报告和 `test-results/p4-smart-real-20261019-r6.json`。合成 FTS projection capability 显示 LAGGING，仅据此显示索引处理中，不声称 FTS 已追赶。
+- **浏览器**：隔离 loopback 内置浏览器完成智能合集打开→真实模型刷新→候选查看→排除/刷新；另注入刷新失败验证旧缓存可读、错误码提示及重试成功。当前 CUA 工具未提供截图文件导出路径，未保存截图。
+- **独立复核**：按用户指定由 Luna High 子代理复核。规则替换 stale lease 清理及快速返回前 instance token 授权检查均已修复并重跑最终受影响套件；最终意见记录在执行对话审查中。
+- **范围边界**：没有访问真实照片库、生产数据库或生产向量索引；未下载/训练模型。PENDING 仅为本轮明确排除的 30 万认证、GTX 1660 压测、正式 SLA、真实用户图库及截图导出。无后续优化任务卡。

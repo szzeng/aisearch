@@ -1155,22 +1155,9 @@ async def get_photo_smart_collection(request: Request, smart_id: int,
 async def post_photo_smart_refresh(payload: PhotoSmartRefreshRequest, request: Request,
                                    smart_id: int) -> dict[str, Any]:
     context = context_of(request)
-    catalog = context.service().catalog
-    claim = photo_smart_collections.request_refresh(catalog, smart_id,
-        instance_token=payload.instance_token, manual=payload.manual)
-    if claim["status"] == "QUEUED":
-        try:
-            context.photo_smart_refresh_runner().submit(
-                smart_id, owner=claim["lease_owner"], rule_revision=claim["rule_revision"])
-        except Exception as error:
-            with catalog.write() as connection:
-                connection.execute(
-                    "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code='PHOTO_SMART_WORKER_UNAVAILABLE',lease_owner=NULL,lease_until_ms=NULL WHERE smart_id=? AND lease_owner=?",
-                    (int(smart_id), claim["lease_owner"]))
-            raise ApiError("PHOTO_SMART_WORKER_UNAVAILABLE", "智能合集刷新暂不可用，请稍后重试", status=503) from error
-        return {"status": claim["status"], "refresh_id": claim["refresh_id"],
-                "lease_until_ms": claim["lease_until_ms"]}
-    return {key: value for key, value in claim.items() if key != "lease_owner"}
+    result = context.photo_smart_refresh_runner().submit(
+        smart_id, instance_token=payload.instance_token, manual=payload.manual)
+    return {key: value for key, value in result.items() if key != "lease_owner"}
 
 
 @router.patch("/photo-smart-collections/{smart_id}", summary="Rename a smart collection")

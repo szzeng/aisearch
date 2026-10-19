@@ -2941,6 +2941,20 @@
     }).catch(function (failure) { showCollectionFailure(failure, els.photoSmartCollectionsStatus); });
   }
 
+  function photoSmartRefreshStatus(collection, body) {
+    var refreshFailure = collection.last_error_code
+      ? "上次刷新失败（" + collection.last_error_code + "），可重试。 " : "";
+    var resultStatus = body.stale_label
+      ? body.stale_label +
+        (body.assets && body.assets.length ? "；照片已按当前范围和排除条件复核。" : "；当前没有可验证的旧候选。")
+      : (body.coverage === "INDEXING" ? "索引处理中；已发布候选仍可浏览并标记为待更新。" :
+        (body.coverage === "TRUNCATED" ? "候选已截断，当前仅显示已发布的最多 5000 张。" :
+          (collection.freshness === "MODEL_REBIND_REQUIRED" ? "搜索模型不可用，请用新搜索替换规则。" :
+            (body.assets && body.assets.length ? "显示当前动态筛选或已发布排名候选。" : "当前没有匹配结果。" +
+              (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。")))));
+    return refreshFailure + resultStatus;
+  }
+
   function loadPhotoSmartAssets(append) {
     var smartId = Number(state.photoSmart.smartId);
     if (!Number.isSafeInteger(smartId) || smartId < 1) return;
@@ -3012,14 +3026,7 @@
           els.photoSmartAssets.appendChild(tile);
         });
         els.photoSmartMore.hidden = !state.photoSmart.assetHasMore;
-        els.photoSmartDetailStatus.textContent = body.stale_label
-          ? body.stale_label + (collection.last_error_code ? "；上次刷新失败（" + collection.last_error_code + "），可重试。" : "") +
-            (body.assets && body.assets.length ? "；照片已按当前范围和排除条件复核。" : "；当前没有可验证的旧候选。")
-          : (body.coverage === "INDEXING" ? "索引处理中；已发布候选仍可浏览并标记为待更新。" :
-            (body.coverage === "TRUNCATED" ? "候选已截断，当前仅显示已发布的最多 5000 张。" :
-              (collection.freshness === "MODEL_REBIND_REQUIRED" ? "搜索模型不可用，请用新搜索替换规则。" :
-                (body.assets && body.assets.length ? "显示当前动态筛选或已发布排名候选。" : "当前没有匹配结果。" +
-                  (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。")))));
+        els.photoSmartDetailStatus.textContent = photoSmartRefreshStatus(collection, body);
       });
     }).catch(function (failure) { showCollectionFailure(failure, els.photoSmartDetailStatus); });
   }
@@ -3574,7 +3581,8 @@
           window.setTimeout(checkSmartRefresh, 800);
         } else {
           els.photoSmartDetailStatus.textContent = body.reason === "MODEL_REBIND_REQUIRED"
-            ? "搜索模型已变化，请用新搜索替换规则。" : (body.status === "ALREADY_CURRENT" ? "排名缓存已是最新。" : "刷新未启动：" + (body.status || "未知状态"));
+            ? "搜索模型已变化，请用新搜索替换规则。" : (body.status === "ALREADY_CURRENT" ? "排名缓存已是最新。"
+              : (body.status === "BUSY" ? "刷新队列已满，请稍后重试。" : "刷新未启动：" + (body.status || "未知状态")));
           els.photoSmartRefresh.disabled = false;
         }
       }).catch(function (failure) {

@@ -17,6 +17,9 @@ from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
 MAX_NAME = 80
 MAX_CANDIDATES = 5000
 MAX_PAGE = 50
+SMART_REFRESH_LEASE_MS = 600_000
+SMART_REFRESH_QUEUE_LIMIT = 3
+SMART_REFRESH_HEARTBEAT_SECONDS = 60
 SMART_RANKING_CONTRACT_VERSION = "photo-search-ranking-v1"
 SMART_QUERY_PLANNING_VERSION = "unified-query-plan-v1"
 
@@ -414,7 +417,8 @@ def replace_rule(catalog: Any, smart_id: int, *, instance_token: str, expected_r
 def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, signature: str,
                        truncated: bool = False, indexing: bool = False,
                        expected_rule_revision: int | None = None,
-                       lease_owner: str | None = None) -> dict[str, Any]:
+                       lease_owner: str | None = None,
+                       refresh_id: str | None = None) -> dict[str, Any]:
     """Atomically replace one bounded derived snapshot; no long computation holds this write."""
     if len(asset_ids) > MAX_CANDIDATES or len(set(asset_ids)) != len(asset_ids):
         raise _fail("智能合集候选快照超过 5000 或含重复照片", code="PHOTO_SMART_CACHE_INVALID")
@@ -444,6 +448,8 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
             state is None
             or str(state["lease_owner"] or "") != str(lease_owner)
             or int(state["lease_until_ms"] or 0) <= catalog.now_ms()
+            or state["refresh_status"] != "RUNNING"
+            or (refresh_id is not None and str(state["refresh_request_id"] or "") != refresh_id)
             or (expected_rule_revision is not None
                 and int(collection["rule_revision"]) != int(expected_rule_revision))
         ):
@@ -646,8 +652,7 @@ def ranked_assets_for_static_save(catalog: Any, cache: Any, smart_id: int, *, in
 
 def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,
                     manual: bool = False) -> dict[str, Any]:
-    """Claim one durable refresh lease in a short transaction."""
-    owner = secrets.token_hex(16)
+    """Check freshness and mark work QUEUED without leasing ahead of execution."""
     refresh_id = secrets.token_urlsafe(18)
     with catalog.write() as connection:
         collection = _get(catalog, smart_id, instance_token)
@@ -675,14 +680,74 @@ def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,
         if state is not None and state["lease_owner"] and int(state["lease_until_ms"] or 0) > now:
             return {"status": "RUNNING", "refresh_id": state["refresh_request_id"],
                     "lease_until_ms": int(state["lease_until_ms"])}
-        lease_until = now + 600_000
+        if (state is not None and state["refresh_status"] == "QUEUED"
+                and state["refresh_request_id"]):
+            return {"status": "QUEUED", "refresh_id": state["refresh_request_id"],
+                    "rule_revision": int(collection["rule_revision"])}
         connection.execute(
-            "UPDATE photo_smart_cache_state SET lease_owner=?,lease_until_ms=?,refresh_request_id=?,refresh_status='QUEUED',last_error_code=NULL WHERE smart_id=?",
-            (owner, lease_until, refresh_id, int(smart_id)),
+            "UPDATE photo_smart_cache_state SET lease_owner=NULL,lease_until_ms=NULL,refresh_request_id=?,refresh_status='QUEUED',last_error_code=NULL WHERE smart_id=?",
+            (refresh_id, int(smart_id)),
         )
-        return {"status": "QUEUED", "refresh_id": refresh_id, "lease_owner": owner,
-                "lease_until_ms": lease_until, "rule_revision": int(collection["rule_revision"]),
+        return {"status": "QUEUED", "refresh_id": refresh_id,
+                "rule_revision": int(collection["rule_revision"]),
                 "signature": signature}
+
+
+def claim_refresh_lease(catalog: Any, smart_id: int, *, refresh_id: str,
+                        rule_revision: int) -> dict[str, Any] | None:
+    """Claim only when queued work actually reaches the head of the local executor."""
+    owner = secrets.token_hex(16)
+    with catalog.write() as connection:
+        state = connection.execute(
+            "SELECT refresh_request_id,refresh_status FROM photo_smart_cache_state WHERE smart_id=?",
+            (int(smart_id),),
+        ).fetchone()
+        collection = connection.execute(
+            "SELECT rule_revision FROM photo_smart_collections WHERE smart_id=?", (int(smart_id),)
+        ).fetchone()
+        if (state is None or collection is None or state["refresh_status"] != "QUEUED"
+                or str(state["refresh_request_id"] or "") != refresh_id
+                or int(collection["rule_revision"]) != int(rule_revision)):
+            return None
+        now = catalog.now_ms()
+        lease_until = now + SMART_REFRESH_LEASE_MS
+        cursor = connection.execute(
+            "UPDATE photo_smart_cache_state SET lease_owner=?,lease_until_ms=?,refresh_status='RUNNING' "
+            "WHERE smart_id=? AND refresh_status='QUEUED' AND refresh_request_id=? "
+            "AND EXISTS(SELECT 1 FROM photo_smart_collections c WHERE c.smart_id=? AND c.rule_revision=?)",
+            (owner, lease_until, int(smart_id), refresh_id, int(smart_id), int(rule_revision)),
+        )
+        if cursor.rowcount != 1:
+            return None
+    return {"lease_owner": owner, "lease_until_ms": lease_until}
+
+
+def renew_refresh_lease(catalog: Any, smart_id: int, *, owner: str, refresh_id: str,
+                        rule_revision: int) -> bool:
+    """Extend only a still-live RUNNING lease for the same owner and frozen rule."""
+    now = catalog.now_ms()
+    with catalog.write() as connection:
+        cursor = connection.execute(
+            "UPDATE photo_smart_cache_state SET lease_until_ms=? "
+            "WHERE smart_id=? AND lease_owner=? AND refresh_request_id=? "
+            "AND refresh_status='RUNNING' AND lease_until_ms>? "
+            "AND EXISTS(SELECT 1 FROM photo_smart_collections c "
+            "WHERE c.smart_id=? AND c.rule_revision=?)",
+            (now + SMART_REFRESH_LEASE_MS, int(smart_id), owner, refresh_id, now,
+             int(smart_id), int(rule_revision)),
+        )
+        return cursor.rowcount == 1
+
+
+def recover_interrupted_refreshes(catalog: Any) -> int:
+    """Reset refreshes left by a prior process after the OS data-root lock is acquired."""
+    with catalog.write() as connection:
+        cursor = connection.execute(
+            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+            "last_error_code='PHOTO_SMART_REFRESH_INTERRUPTED',lease_owner=NULL,lease_until_ms=NULL "
+            "WHERE refresh_status IN ('QUEUED','RUNNING')"
+        )
+        return int(cursor.rowcount)
 
 
 class SmartRefreshRunner:
@@ -693,35 +758,108 @@ class SmartRefreshRunner:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="photo-smart-refresh")
         self._lock = threading.Lock()
         self._closed = False
-        self._futures: set[Future[Any]] = set()
+        self._tasks: dict[int, dict[str, Any]] = {}
 
-    def submit(self, smart_id: int, *, owner: str, rule_revision: int) -> None:
+    def submit(self, smart_id: int, *, instance_token: str, manual: bool = False) -> dict[str, Any]:
+        smart_id = int(smart_id)
+        catalog = self.context.service().catalog
+        # Validate ownership before exposing an existing task or queue saturation.
+        # The request is validated again inside request_refresh before state changes.
+        _get(catalog, smart_id, instance_token)
         with self._lock:
             if self._closed:
-                raise RuntimeError("smart refresh runner is closed")
-            future = self._executor.submit(self._run, int(smart_id), str(owner), int(rule_revision))
-            self._futures.add(future)
-            future.add_done_callback(self._finished)
+                return {"status": "BUSY", "retryable": True, "reason": "WORKER_CLOSED"}
+            existing = self._tasks.get(smart_id)
+            if existing is not None:
+                return {"status": existing["status"], "refresh_id": existing["refresh_id"]}
+            if len(self._tasks) >= SMART_REFRESH_QUEUE_LIMIT:
+                return {"status": "BUSY", "retryable": True,
+                        "queue_limit": SMART_REFRESH_QUEUE_LIMIT, "queue_depth": len(self._tasks)}
+            self._tasks[smart_id] = {"status": "RESERVING", "refresh_id": None, "future": None}
+            try:
+                claim = request_refresh(catalog, smart_id, instance_token=instance_token,
+                                        manual=manual)
+                if claim["status"] != "QUEUED":
+                    self._tasks.pop(smart_id, None)
+                    return claim
+                refresh_id = str(claim["refresh_id"])
+                rule_revision = int(claim["rule_revision"])
+                self._tasks[smart_id].update(status="QUEUED", refresh_id=refresh_id)
+                future = self._executor.submit(self._run, smart_id, refresh_id, rule_revision)
+                self._tasks[smart_id]["future"] = future
+            except Exception:
+                self._tasks.pop(smart_id, None)
+                refresh_id = locals().get("refresh_id")
+                if refresh_id:
+                    try:
+                        with catalog.write() as connection:
+                            connection.execute(
+                                "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+                                "last_error_code='PHOTO_SMART_WORKER_UNAVAILABLE',refresh_request_id=NULL "
+                                "WHERE smart_id=? AND refresh_request_id=? AND refresh_status='QUEUED'",
+                                (smart_id, refresh_id),
+                            )
+                    except Exception:
+                        pass
+                raise
+        # add_done_callback may invoke synchronously for an already-finished Future.
+        # Register only after dropping _lock so that this path cannot self-deadlock.
+        future.add_done_callback(lambda completed, sid=smart_id: self._finished(sid, completed))
+        return {"status": "QUEUED", "refresh_id": refresh_id}
 
-    def _finished(self, future: Future[Any]) -> None:
+    def _finished(self, smart_id: int, future: Future[Any]) -> None:
         with self._lock:
-            self._futures.discard(future)
+            task = self._tasks.get(smart_id)
+            if task is not None and task.get("future") is future:
+                self._tasks.pop(smart_id, None)
 
-    def _run(self, smart_id: int, owner: str, rule_revision: int) -> None:
+    def _run(self, smart_id: int, refresh_id: str, rule_revision: int) -> None:
         service = None
         catalog = None
         owns_service = False
+        owner: str | None = None
+        heartbeat_stop = threading.Event()
+        heartbeat_thread: threading.Thread | None = None
         try:
             service = self.context._service_factory()
             owns_service = True
             catalog = service.catalog
-            with catalog.write() as connection:
-                state = connection.execute("SELECT lease_owner,lease_until_ms FROM photo_smart_cache_state WHERE smart_id=?", (smart_id,)).fetchone()
-                if (state is None or str(state["lease_owner"] or "") != owner
-                        or int(state["lease_until_ms"] or 0) <= catalog.now_ms()):
-                    return
-                connection.execute("UPDATE photo_smart_cache_state SET refresh_status='RUNNING' WHERE smart_id=? AND lease_owner=?",
-                                   (smart_id, owner))
+            lease = claim_refresh_lease(catalog, smart_id, refresh_id=refresh_id,
+                                        rule_revision=rule_revision)
+            if lease is None:
+                with catalog.write() as connection:
+                    connection.execute(
+                        "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+                        "last_error_code='PHOTO_SMART_REFRESH_SUPERSEDED',refresh_request_id=NULL "
+                        "WHERE smart_id=? AND refresh_status='QUEUED' AND refresh_request_id=?",
+                        (smart_id, refresh_id),
+                    )
+                return
+            owner = str(lease["lease_owner"])
+            with self._lock:
+                task = self._tasks.get(smart_id)
+                if task is not None and task["refresh_id"] == refresh_id:
+                    task["status"] = "RUNNING"
+
+            def heartbeat() -> None:
+                while not heartbeat_stop.wait(SMART_REFRESH_HEARTBEAT_SECONDS):
+                    heartbeat_service = None
+                    try:
+                        heartbeat_service = self.context._service_factory()
+                        heartbeat_catalog = heartbeat_service.catalog
+                        if not renew_refresh_lease(heartbeat_catalog, smart_id, owner=owner,
+                                                   refresh_id=refresh_id, rule_revision=rule_revision):
+                            return
+                    except Exception:
+                        # Retry on the next interval; publish still checks the current lease.
+                        pass
+                    finally:
+                        if heartbeat_service is not None:
+                            heartbeat_service.close()
+
+            heartbeat_thread = threading.Thread(target=heartbeat,
+                name="photo-smart-refresh-lease", daemon=True)
+            heartbeat_thread.start()
             collection = _get(catalog, smart_id)
             if int(collection["rule_revision"]) != rule_revision:
                 raise _fail("智能合集规则已变化", status=409, code="PHOTO_SMART_RULE_CHANGED")
@@ -764,7 +902,8 @@ class SmartRefreshRunner:
             session_indexing, session_truncated = session_coverage(session)
             publish_candidates(catalog, smart_id, ids, signature=signature_before,
                                 truncated=session_truncated, indexing=bool(indexing or session_indexing),
-                                expected_rule_revision=rule_revision, lease_owner=owner)
+                                expected_rule_revision=rule_revision, lease_owner=owner,
+                                refresh_id=refresh_id)
         except Exception as error:  # keep the prior published build intact on every failure
             code = str(getattr(error, "code", "PHOTO_SMART_REFRESH_FAILED"))
             try:
@@ -775,17 +914,48 @@ class SmartRefreshRunner:
                     service = self.context.service()
                     catalog = service.catalog
                 with catalog.write() as connection:
-                    connection.execute(
-                        "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code=?,lease_owner=NULL,lease_until_ms=NULL "
-                        "WHERE smart_id=? AND lease_owner=? AND lease_until_ms>?",
-                        (code[:80], smart_id, owner, catalog.now_ms()))
+                    if owner is None:
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code=?,"
+                            "refresh_request_id=NULL WHERE smart_id=? AND refresh_request_id=? "
+                            "AND refresh_status='QUEUED'",
+                            (code[:80], smart_id, refresh_id),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',last_error_code=?,"
+                            "lease_owner=NULL,lease_until_ms=NULL WHERE smart_id=? AND lease_owner=? "
+                            "AND refresh_request_id=? AND refresh_status='RUNNING'",
+                            (code[:80], smart_id, owner, refresh_id),
+                        )
             except Exception:
                 pass
         finally:
+            heartbeat_stop.set()
+            if heartbeat_thread is not None:
+                heartbeat_thread.join(timeout=SMART_REFRESH_HEARTBEAT_SECONDS + 1)
             if service is not None and owns_service:
                 service.close()
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            pending = [(smart_id, dict(task)) for smart_id, task in self._tasks.items()
+                       if task.get("future") is not None]
+        # Future.cancel() can synchronously invoke callbacks. Never call it under _lock.
+        for smart_id, task in pending:
+            future = task["future"]
+            future.cancel()
+            if future.cancelled():
+                try:
+                    catalog = self.context.service().catalog
+                    with catalog.write() as connection:
+                        connection.execute(
+                            "UPDATE photo_smart_cache_state SET refresh_status='FAILED',"
+                            "last_error_code='PHOTO_SMART_REFRESH_CANCELLED',refresh_request_id=NULL "
+                            "WHERE smart_id=? AND refresh_request_id=? AND refresh_status='QUEUED'",
+                            (smart_id, task["refresh_id"]),
+                        )
+                except Exception:
+                    pass
         self._executor.shutdown(wait=True, cancel_futures=True)
