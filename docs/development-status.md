@@ -1,5 +1,9 @@
 # Development status
 
+## Search result card information simplification: P4-SEARCH-RESULT-INFO-SIMPLIFY-A (2026-10-19)
+
+结果卡片移除“语义就绪”和通道名次展示，保留总体排名及其他结果内容；不改搜索数据映射或请求逻辑。定向单测 99/99、收藏 UI 单测 4/4，Node 语法检查通过；按卡未执行浏览器/真实图库/规模性能。状态 PASS（限定范围），报告：[P4-SEARCH-RESULT-INFO-SIMPLIFY-A](reports/P4-SEARCH-RESULT-INFO-SIMPLIFY-A.md)。
+
 ## Current joint audit: P4-PHOTO-COLLECTION-A + P4-PHOTO-SMART-COLLECTION-A (2026-10-19)
 
 普通合集受影响测试与浏览器保存/查看/移出闭环通过；智能合集补测模型不可用状态、热缓存免重检索和人工状态隔离。智能/普通合集核心组合 **59 项**，迁移/备份恢复/性能计数组 **52 项**通过；独立 100/1000/5000 候选合成计时未显示有界路径异常。首次并行运行的临时目录错误经项目内目录预建后串行重跑通过。两卡继续保留 **IMPLEMENTED / ACCEPTANCE PARTIAL**：COMBINED 真实模型、刷新中进程退出后的租约自动恢复、不同 smart_id 无界排队及 DS-H 完整独审未验。具体证据与 pending 见两份任务卡和[执行报告](reports/P4-PHOTO-SMART-COLLECTION-A.md)、[普通合集执行报告](reports/P4-PHOTO-COLLECTION-A.md)。只使用隔离合成数据。

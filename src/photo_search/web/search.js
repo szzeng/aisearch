@@ -34,11 +34,6 @@
     "TEXT+SEMANTIC": "文本 + 图文向量命中",
     FILTER_ONLY: "仅筛选（本次没有查询文本，两条通道都没有参与排序）",
   };
-  var CHANNEL_TEXT = {
-    fts: "文本通道名次",
-    vector: "向量通道名次",
-    filter: "权威列表次序",
-  };
   var TEXT_FIELD_LABELS = {
     filename_text: "文件名", place_text: "地点名称", ocr_text: "图片文字",
     user_text: "备注", tag_text: "标签", caption_text: "图片描述",
@@ -1761,7 +1756,7 @@
       state.search.recycledCount = windowRestore ? Math.max(0, number(windowRestore.recycledCount)) : 0;
     }
     hits.forEach(function (hit) {
-      els.resultGrid.appendChild(buildHit(hit, body.retrieval_mode));
+      els.resultGrid.appendChild(buildHit(hit));
     });
     if (window.PhotoFavorites) window.PhotoFavorites.mount(els.resultGrid, function (change) {
       if (state.search.favoritesOnly && Number(change.changed || 0) > 0) {
@@ -2181,8 +2176,7 @@
   }
 
   // ----------------------------------------------------------------------- tiles
-  function buildHit(hit, retrievalMode) {
-    retrievalMode = retrievalMode || (state.search.lastBody || {}).retrieval_mode;
+  function buildHit(hit) {
     var tile = element("li", "card-tile");
     tile.dataset.assetId = String(hit.asset_id);
     var frame = element("button", "thumb-frame");
@@ -2202,25 +2196,9 @@
     caption.appendChild(
       element("span", "hit-reason", HIT_REASON_TEXT[hit.hit_reason] || String(hit.hit_reason))
     );
-    if (retrievalMode !== "text") caption.appendChild(
-      element(
-        "span",
-        "hit-evidence",
-        "语义就绪：" +
-          (hit.semantic_ready ? "是（该世代有已确认的向量条目）" : "否（本次没有已确认的向量条目）")
-      )
-    );
     if (hit.capture_time && hit.capture_time.taken_at) {
       caption.appendChild(element("span", "hit-evidence",
         "拍摄时间：" + String(hit.capture_time.taken_at).replace("T", " ")));
-    }
-    var channels = hit.matched_by || {};
-    var names = Object.keys(channels);
-    if (names.length && retrievalMode !== "text") {
-      var parts = names.map(function (name) {
-        return (CHANNEL_TEXT[name] || name) + " " + channels[name];
-      });
-      caption.appendChild(element("span", "hit-evidence", "通道名次：" + parts.join(" · ")));
     }
     if (hit.matched_text && hit.matched_text.length) {
       caption.appendChild(

@@ -98,6 +98,15 @@ function assertLiteral(request){
   assert.equal(request.capture_from,"2026-01-01");assert.equal(request.capture_to_exclusive,"2026-02-01");
 }
 (async()=>{
+  const ordinary=harness();await flush();
+  ordinary.setAnswer(body=>ok({...page(body,303,null),hits:[{asset_id:303,rank:33,
+    hit_reason:"SEMANTIC",semantic_ready:true,matched_by:{vector:33},matched_text:["ocr_text"]}]}));
+  ordinary.get("search-form").fire("submit");await flush();
+  assert.match(ordinary.get("result-grid").textContent,/第 33 名/,
+    "ordinary semantic results retain the overall ranking");
+  assert.match(ordinary.get("result-grid").textContent,/匹配位置：图片文字/);
+  assert.doesNotMatch(ordinary.get("result-grid").textContent,/语义就绪|通道名次|向量通道名次/);
+
   const h=harness();await flush();
   assert.equal(h.ui.state.capabilities.search.query_encoder_available,false);
   h.get("query-text").value="  深圳 票据 001  ";h.get("query-source").value="3";
