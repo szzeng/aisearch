@@ -1422,7 +1422,8 @@
     if (state.search.selectedScope) {
       var selected = state.search.selectedScope;
       var scopeLabel = selected.kind === "person" ? "固定相册：" + String(selected.name || "人物")
-        : selected.kind === "collection" ? "固定合集：" + String(selected.name || "合集")
+        : selected.kind === "photo_collection" ? "照片合集：" + String(selected.name || "合集")
+        : selected.kind === "collection" ? "固定人物合集：" + String(selected.name || "合集")
           : selected.kind === "source" ? "固定图库：" + String(selected.name || ("#" + selected.source_id))
             : "固定地点：" + String(selected.name || selected.place_key || "地点") +
               (selected.parent ? " · " + String(selected.parent) : "");
@@ -1783,6 +1784,16 @@
     state.search.cursor = body.next_cursor || null;
     updateSearchPreviewNavigation();
     state.search.total = body.total_candidates;
+    if (els.saveRankedCollection) {
+      els.saveRankedCollection.hidden = !body.photo_collection_source_token ||
+        body.photo_collection_source_mode !== "ranked_candidates";
+    }
+    if (els.saveAllFilterCollection) {
+      els.saveAllFilterCollection.hidden = !body.photo_collection_source_token ||
+        body.photo_collection_source_mode !== "all_filter_matches";
+    }
+    if (els.appendRankedCollection && els.saveRankedCollection) els.appendRankedCollection.hidden = els.saveRankedCollection.hidden;
+    if (els.appendAllFilterCollection && els.saveAllFilterCollection) els.appendAllFilterCollection.hidden = els.saveAllFilterCollection.hidden;
     els.loadMore.hidden = !body.has_more;
     if (els.gridSentinel) els.gridSentinel.hidden = !body.has_more;
     els.candidateTimeToggle.hidden = !(
@@ -2926,6 +2937,12 @@
       photoSelectClear: document.getElementById("search-photo-select-clear"),
       photoSelectAdd: document.getElementById("search-photo-select-add"),
       photoSelectRemove: document.getElementById("search-photo-select-remove"),
+      photoSaveCollection: document.getElementById("search-photo-save-collection"),
+      photoAppendCollection: document.getElementById("search-photo-append-collection"),
+      saveRankedCollection: document.getElementById("search-save-ranked-collection"),
+      saveAllFilterCollection: document.getElementById("search-save-all-filter-collection"),
+      appendRankedCollection: document.getElementById("search-append-ranked-collection"),
+      appendAllFilterCollection: document.getElementById("search-append-all-filter-collection"),
       gridSentinel: document.getElementById("search-grid-sentinel"),
       loadMore: document.getElementById("load-more"),
       candidateTimeToggle: document.getElementById("candidate-time-toggle"),
@@ -2952,6 +2969,125 @@
       if (state.search.favoritesOnly && Number(body.changed || 0) > 0) {
         invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
       }
+    });
+    if (els.photoSaveCollection) els.photoSaveCollection.addEventListener("click", function () {
+      var selected = photoSelection ? Array.from(photoSelection.selected, Number) : [];
+      if (!selected.length || selected.length > 500) return;
+      var name = window.prompt("为这 " + selected.length + " 张已选照片创建合集名称");
+      if (name === null || !name.trim()) return;
+      var requestId = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      els.photoSaveCollection.disabled = true;
+      request("/photo-collections", {method:"POST", body:{name:name, create_request_id:requestId, asset_ids:selected}})
+        .then(function (result) {
+          if (photoSelection) photoSelection.reset();
+          window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
+        }).catch(function (failure) {
+          setStatus(els.queryStatus, "保存照片合集失败：" + describe(failure), "error");
+        }).finally(function () { els.photoSaveCollection.disabled = false; });
+    });
+    function choosePhotoCollection() {
+      return request("/photo-collections?limit=50").then(function (result) {
+        var collections = (result.body || {}).collections || [];
+        if (!collections.length) throw {status:404, message:"还没有照片合集，请先创建一个合集。"};
+        var choice = window.prompt("输入目标合集序号（显示最近 50 个）：\n" + collections.map(function (item, index) {
+          return (index + 1) + ". " + item.name + "（" + item.member_count + " 张）";
+        }).join("\n"));
+        if (choice === null) return null;
+        var index = Number(choice) - 1;
+        if (!Number.isInteger(index) || index < 0 || index >= collections.length) return null;
+        return collections[index];
+      });
+    }
+    if (els.photoAppendCollection) els.photoAppendCollection.addEventListener("click", function () {
+      var selected = photoSelection ? Array.from(photoSelection.selected, Number) : [];
+      if (!selected.length || selected.length > 500) return;
+      els.photoAppendCollection.disabled = true;
+      choosePhotoCollection().then(function (collection) {
+        if (!collection) return;
+        return request("/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/batch", {
+          method:"POST", body:{action:"add", asset_ids:selected, instance_token:collection.instance_token,
+            expected_revision:Number(collection.revision)}
+        }).then(function (result) {
+          if (photoSelection) photoSelection.reset();
+          setStatus(els.queryStatus, "已加入「" + collection.name + "」：新增 " + result.body.changed + " 张，已有 " + result.body.unchanged + " 张。", "success");
+        });
+      }).catch(function (failure) {
+        setStatus(els.queryStatus, "加入照片合集失败：" + describe(failure), "error");
+      }).finally(function () { els.photoAppendCollection.disabled = false; });
+    });
+    function saveSearchSnapshot(mode, button) {
+      var body = state.search.lastBody || {};
+      if (!body.photo_collection_source_token || body.photo_collection_source_mode !== mode) return;
+      var name = window.prompt(mode === "ranked_candidates"
+        ? "为本次服务端排名候选创建合集名称（候选截断时会要求确认）"
+        : "为全部符合筛选条件的照片创建合集名称（上限 5000 张）");
+      if (name === null || !name.trim()) return;
+      var requestId = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+      var sourceToken = body.photo_collection_source_token;
+      button.disabled = true;
+      request("/photo-collections/from-search", {method:"POST", body:{
+        name:name, create_request_id:requestId, source_token:sourceToken,
+        mode:mode, confirm_truncated:false,
+      }}).catch(function (failure) {
+        if (failure.status === 409 && failure.code === "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED" &&
+            window.confirm("本次候选可能被截断，是否保存当前候选快照？")) {
+          return request("/photo-collections/from-search", {method:"POST", body:{
+            name:name, create_request_id:requestId, source_token:sourceToken,
+            mode:mode, confirm_truncated:true,
+          }});
+        }
+        throw failure;
+      }).then(function (result) {
+        if (!result || !result.body || !result.body.collection) return;
+        window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
+      }).catch(function (failure) {
+        setStatus(els.queryStatus, "保存搜索结果为照片合集失败：" + describe(failure), "error");
+      }).finally(function () { button.disabled = false; });
+    }
+    if (els.saveRankedCollection) els.saveRankedCollection.addEventListener("click", function () {
+      saveSearchSnapshot("ranked_candidates", els.saveRankedCollection);
+    });
+    if (els.saveAllFilterCollection) els.saveAllFilterCollection.addEventListener("click", function () {
+      saveSearchSnapshot("all_filter_matches", els.saveAllFilterCollection);
+    });
+    var pendingAppendRequestIds = Object.create(null);
+    function appendSearchSnapshot(mode, button) {
+      var body = state.search.lastBody || {};
+      if (!body.photo_collection_source_token || body.photo_collection_source_mode !== mode) return;
+      button.disabled = true;
+      choosePhotoCollection().then(function (collection) {
+        if (!collection) return;
+        var pendingKey = String(collection.collection_id) + ":" + String(body.request_id || "") + ":" + mode;
+        var requestId = pendingAppendRequestIds[pendingKey];
+        if (!requestId) {
+          requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID()
+            : "pc-append-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+          pendingAppendRequestIds[pendingKey] = requestId;
+        }
+        var requestBody = {request_id:requestId, source_token:body.photo_collection_source_token, mode:mode,
+          confirm_truncated:false, instance_token:collection.instance_token,
+          expected_revision:Number(collection.revision)};
+        var path = "/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/from-search";
+        return request(path, {method:"POST", body:requestBody}).catch(function (failure) {
+          if (failure.status !== 409 || failure.code !== "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED" ||
+              !window.confirm("本次排名候选可能被截断，是否追加当前候选快照？")) throw failure;
+          requestBody.confirm_truncated = true;
+          return request(path, {method:"POST", body:requestBody});
+        }).then(function (result) {
+          delete pendingAppendRequestIds[pendingKey];
+          setStatus(els.queryStatus, "已追加到「" + collection.name + "」：新增 " + result.body.changed + " 张，已有 " + result.body.unchanged + " 张。", "success");
+        });
+      }).catch(function (failure) {
+        setStatus(els.queryStatus, "追加搜索结果失败：" + describe(failure), "error");
+      }).finally(function () { button.disabled = false; });
+    }
+    if (els.appendRankedCollection) els.appendRankedCollection.addEventListener("click", function () {
+      appendSearchSnapshot("ranked_candidates", els.appendRankedCollection);
+    });
+    if (els.appendAllFilterCollection) els.appendAllFilterCollection.addEventListener("click", function () {
+      appendSearchSnapshot("all_filter_matches", els.appendAllFilterCollection);
     });
 
     bindQuerySubmission();

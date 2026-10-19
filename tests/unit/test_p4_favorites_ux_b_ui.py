@@ -27,7 +27,8 @@ def test_favorite_controls_are_loaded_only_on_photo_pages_and_status_reads_are_b
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         source = (web / page).read_text(encoding="utf-8")
         assert 'favorites-ui.js?v=p4-favorites-ux-b-3' in source
-        assert 'styles.css?v=p4-favorites-ux-b-1' in source
+        expected_styles = "p4-photo-collection-a-1" if page in {"index.html", "search.html"} else "p4-favorites-ux-b-1"
+        assert f"styles.css?v={expected_styles}" in source
     index = (web / "index.html").read_text(encoding="utf-8")
     search = (web / "search.html").read_text(encoding="utf-8")
     timeline = (web / "photo-timeline.js").read_text(encoding="utf-8")

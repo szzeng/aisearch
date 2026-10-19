@@ -36,7 +36,7 @@ def _exists(connection: sqlite3.Connection, table: str, where: str, args: tuple[
 def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[str]) -> bool:
     """Fail closed if a new table introduces asset/face links we do not understand."""
     recognized = {
-        "assets", "file_locations", "asset_metadata", "asset_favorites", "user_annotations", "asset_tags",
+        "assets", "file_locations", "asset_metadata", "asset_favorites", "photo_collection_members", "user_annotations", "asset_tags",
         "asset_geo_facts", "asset_ocr_text", "asset_ocr_regions", "asset_place_exclusions",
         "cn_admin_resolutions", "place_resolutions", "place_operation_items",
         "face_redetection_groups", "face_redetection_mappings", "face_detail_association_queue",
@@ -66,6 +66,8 @@ def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_
     checks: list[tuple[str, str, tuple[Any, ...], str]] = []
     if "asset_favorites" in tables:
         checks.append(("asset_favorites", "asset_id = ?", (asset_id,), "人工收藏"))
+    if "photo_collection_members" in tables:
+        checks.append(("photo_collection_members", "asset_id = ?", (asset_id,), "照片合集收录"))
     if "user_annotations" in tables:
         checks.append(("user_annotations", "asset_id = ?", (asset_id,), "人工备注或收藏"))
     if "asset_tags" in tables:

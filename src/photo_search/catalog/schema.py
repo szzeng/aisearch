@@ -77,8 +77,9 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # classifies per-face inbox ignores while preserving existing hidden rows as TEMPORARY.
 # 0032 adds soft-anchored face-level person collection membership.
 # 0033 adds ordered photo/source reads and pending-only generation readiness checks.
-# 0034 adds asset favorites; 0035 records one-shot recovery of legacy CR2 format failures.
-SUPPORTED_SCHEMA_VERSION = 35
+# 0034 adds asset favorites; 0035 records one-shot recovery of legacy CR2 format failures;
+# 0036 adds stable user-maintained ordinary photo collections.
+SUPPORTED_SCHEMA_VERSION = 36
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

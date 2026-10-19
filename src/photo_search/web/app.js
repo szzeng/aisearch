@@ -107,6 +107,9 @@
       timelineScope: "",
       timelineReturnAnchor: "",
     },
+    photoCollections: { cursor: null, hasMore: false, revision: null, requestVersion: 0,
+      collectionId: null, collection: null, memberCursor: null, memberHasMore: false,
+      timelineMount: null, timelineScope: null, detailMode: "list" },
     detailRouteActive: false,
     detailAssetId: null,
     detailReturnIntent: null,
@@ -203,6 +206,12 @@
   function clearNotice() {
     els.notice.hidden = true;
     text(els.notice, "");
+  }
+
+  function showCollectionFailure(failure, target) {
+    var message = describe(failure);
+    if (target) setStatus(target, message, "error");
+    else showNotice(message);
   }
 
   function noteSessionMissing() {
@@ -1253,7 +1262,17 @@
   }
 
   function updateSearchScopeAction() {
-    if (!els.searchScopeAction || !state.sourcesLoaded || !els.views || els.views.browse.hidden || state.detailRouteActive) {
+    if (!els.searchScopeAction || !els.views || state.detailRouteActive) {
+      if (els.setSearchScopeAction) els.setSearchScopeAction(null, "");
+      return;
+    }
+    if (els.views.photoCollection && !els.views.photoCollection.hidden && state.photoCollections.collection) {
+      var collection = state.photoCollections.collection;
+      els.setSearchScopeAction({kind:"photo_collection", photo_collection_id:Number(collection.collection_id),
+        instance_token:String(collection.instance_token), revision:Number(collection.revision), name:String(collection.name)}, "照片合集");
+      return;
+    }
+    if (!state.sourcesLoaded || els.views.browse.hidden) {
       if (els.setSearchScopeAction) els.setSearchScopeAction(null, "");
       return;
     }
@@ -2768,8 +2787,9 @@
       state.detailInfoMount = null;
       state.detailSeq = (state.detailSeq || 0) + 1;
     }
-    ["sources", "browse", "detail"].forEach(function (view) {
+    ["sources", "browse", "detail", "photoCollections", "photoCollection"].forEach(function (view) {
       var section = els.views[view];
+      if (!section) return;
       var active = view === name;
       section.hidden = !active;
     });
@@ -2778,7 +2798,9 @@
     });
     var shellLinks = document.querySelectorAll ? document.querySelectorAll("[data-shell-page]") : [];
     Array.prototype.forEach.call(shellLinks, function (link) {
-      var activePage = name === "sources" ? "management" : (name === "browse" && state.browse.scope === "favorites" ? "favorites" : "photos");
+      var activePage = name === "sources" ? "management" :
+        (name === "photoCollections" || name === "photoCollection" ? "photo-collections" :
+          (name === "browse" && state.browse.scope === "favorites" ? "favorites" : "photos"));
       if (link.dataset.shellPage === activePage) {
         link.setAttribute("aria-current", "page");
       } else {
@@ -2788,7 +2810,149 @@
     els.main.focus({ preventScroll: true });
     if (name === "browse") showBrowseMode(state.browse.mode);
     if (name === "sources") loadSourcePaths(false);
+    if (name === "photoCollections") loadPhotoCollections(false);
+    if (name === "photoCollection") loadPhotoCollectionAssets(false);
     updateSearchScopeAction();
+  }
+
+  function loadPhotoCollections(append) {
+    var version = ++state.photoCollections.requestVersion;
+    var path = "/photo-collections?limit=20" + (append && state.photoCollections.cursor
+      ? "&cursor=" + encodeURIComponent(state.photoCollections.cursor) : "");
+    request(path).then(function (result) {
+      if (version !== state.photoCollections.requestVersion) return;
+      var body = result.body || {};
+      state.photoCollections.cursor = body.next_cursor || null;
+      state.photoCollections.hasMore = Boolean(body.has_more);
+      state.photoCollections.revision = Number(body.photo_collections_revision);
+      if (!append) els.photoCollectionsList.replaceChildren();
+      (body.collections || []).forEach(function (item) {
+        var row = element("li", "source-card");
+        if (item.cover_asset_id) {
+          var cover = element("img", "collection-cover");
+          cover.src = API + "/assets/" + encodeURIComponent(item.cover_asset_id) + "/thumbnail";
+          cover.alt = "";
+          row.appendChild(cover);
+        }
+        var open = element("a", null, item.name + " · " + item.member_count + " 张");
+        open.href = "/?view=photo-collection&id=" + encodeURIComponent(item.collection_id);
+        row.appendChild(open);
+        var rename = element("button", null, "改名");
+        rename.type = "button";
+        rename.addEventListener("click", function () {
+          var next = window.prompt("照片合集名称", item.name);
+          if (next === null) return;
+          request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"PATCH", body:{
+            instance_token:item.instance_token, expected_revision:item.revision, name:next
+          }}).then(function () { loadPhotoCollections(false); }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+        });
+        row.appendChild(rename);
+        var remove = element("button", null, "删除");
+        remove.type = "button";
+        remove.addEventListener("click", function () {
+          if (!window.confirm("删除合集及其中的收录关系？照片文件不会删除。")) return;
+          request("/photo-collections/" + encodeURIComponent(item.collection_id), {method:"DELETE", body:{
+            instance_token:item.instance_token, expected_revision:item.revision
+          }}).then(function () { loadPhotoCollections(false); }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+        });
+        row.appendChild(remove);
+        els.photoCollectionsList.appendChild(row);
+      });
+      els.photoCollectionsMore.hidden = !state.photoCollections.hasMore;
+      els.photoCollectionsStatus.textContent = body.collections && body.collections.length
+        ? "共显示 " + els.photoCollectionsList.children.length + " 个照片合集。" : "还没有照片合集；可以创建空合集，或从搜索结果保存照片。";
+    }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+  }
+
+  function loadPhotoCollectionAssets(append) {
+    var cid = Number(state.photoCollections.collectionId);
+    if (!Number.isSafeInteger(cid) || cid < 1) return;
+    var version = ++state.photoCollections.requestVersion;
+    var detail = state.photoCollections.collection;
+    var ready = detail ? Promise.resolve({body:{collection:detail}}) : request("/photo-collections/" + cid);
+    ready.then(function (detailResult) {
+      var collection = detailResult.body.collection;
+      state.photoCollections.collection = collection;
+      updateSearchScopeAction();
+      var path = "/photo-collections/" + cid + "/assets?limit=50&instance_token=" + encodeURIComponent(collection.instance_token);
+      if (append && state.photoCollections.memberCursor) path += "&cursor=" + encodeURIComponent(state.photoCollections.memberCursor);
+      return request(path);
+    }).then(function (result) {
+      if (version !== state.photoCollections.requestVersion) return;
+      var body = result.body || {};
+      state.photoCollections.collection = body.collection;
+      state.photoCollections.memberCursor = body.next_cursor || null;
+      state.photoCollections.memberHasMore = Boolean(body.has_more);
+      els.photoCollectionTitle.textContent = body.collection.name + " · " + body.collection.member_count + " 张";
+      updateSearchScopeAction();
+      if (!append) els.photoCollectionAssets.replaceChildren();
+      (body.assets || []).forEach(function (asset) {
+        var tile = element("div", "card-tile");
+        tile.dataset.assetId = String(asset.asset_id);
+        var open = element("button", "collection-asset-open");
+        open.type = "button";
+        var thumb = element("img", "thumbnail");
+        thumb.src = API + "/assets/" + encodeURIComponent(asset.asset_id) + "/thumbnail";
+        thumb.alt = "照片 #" + asset.asset_id;
+        thumb.loading = "lazy";
+        open.appendChild(thumb);
+        open.appendChild(element("span", "tile-label", "第 " + asset.collection_position + " 张"));
+        open.addEventListener("click", function () {
+          if (window.AIPhotoInfo) window.AIPhotoInfo.open(String(asset.asset_id), {title:"查看照片", alt:"照片 #" + asset.asset_id});
+        });
+        tile.appendChild(open);
+        var remove = element("button", "collection-asset-remove", "移出合集");
+        remove.type = "button";
+        remove.addEventListener("click", function () {
+          var collection = state.photoCollections.collection;
+          request("/photo-collections/" + encodeURIComponent(cid) + "/members/batch", {method:"POST", body:{
+            action:"remove", asset_ids:[Number(asset.asset_id)], instance_token:collection.instance_token,
+            expected_revision:Number(collection.revision)
+          }}).then(function (change) {
+            state.photoCollections.collection = change.body.collection;
+            state.photoCollections.memberCursor = null;
+            loadPhotoCollectionAssets(false);
+          }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionDetailStatus); });
+        });
+        tile.appendChild(remove);
+        els.photoCollectionAssets.appendChild(tile);
+      });
+      els.photoCollectionMore.hidden = !state.photoCollections.memberHasMore;
+      els.photoCollectionDetailStatus.textContent = body.assets && body.assets.length
+        ? "按合集收录顺序显示。" : "这个合集还没有照片。";
+      if (state.photoCollections.detailMode === "timeline") showPhotoCollectionMode("timeline");
+    }).catch(function (failure) { showCollectionFailure(failure, els.photoCollectionDetailStatus); });
+  }
+
+  function showPhotoCollectionMode(mode) {
+    var timeline = mode === "timeline";
+    state.photoCollections.detailMode = timeline ? "timeline" : "list";
+    els.photoCollectionAssets.hidden = timeline;
+    els.photoCollectionMore.hidden = timeline || !state.photoCollections.memberHasMore;
+    els.photoCollectionTimeline.hidden = !timeline;
+    els.photoCollectionShowList.setAttribute("aria-pressed", String(!timeline));
+    els.photoCollectionShowTimeline.setAttribute("aria-pressed", String(timeline));
+    if (!timeline || !state.photoCollections.collection) return;
+    var collection = state.photoCollections.collection;
+    var scope = {kind:"photo_collection", photo_collection_id:Number(collection.collection_id),
+      photo_collection_instance:collection.instance_token, photo_collection_revision:Number(collection.revision)};
+    if (!window.PhotoTimeline) {
+      els.photoCollectionDetailStatus.textContent = "时间轴暂不可用，请刷新页面后重试。";
+      return;
+    }
+    if (!state.photoCollections.timelineMount) {
+      state.photoCollections.timelineMount = window.PhotoTimeline.mount({
+        host:els.photoCollectionTimeline, scope:scope,
+        adapter:{renderAsset:timelineRenderAsset, onOpen:function (item) {
+          if (window.AIPhotoInfo) window.AIPhotoInfo.open(String(item.asset_id),
+            {title:"查看合集照片", alt:"照片 #" + item.asset_id});
+        }},
+      });
+      state.photoCollections.timelineScope = JSON.stringify(scope);
+    } else if (state.photoCollections.timelineScope !== JSON.stringify(scope)) {
+      state.photoCollections.timelineScope = JSON.stringify(scope);
+      state.photoCollections.timelineMount.setScope(scope);
+    }
   }
 
   function handleHash() {
@@ -2875,7 +3039,18 @@
       } catch (_error) {}
     }
     setBrowseScope(params.get("view") === "favorites" ? "favorites" : "all");
-    showView(params.get("view") === "sources" ? "sources" : "browse");
+    var view = params.get("view");
+    if (view === "photo-collection") {
+      state.photoCollections.collectionId = params.get("id");
+      state.photoCollections.collection = null;
+      state.photoCollections.memberCursor = null;
+      showView("photoCollection");
+    } else if (view === "photo-collections") {
+      state.photoCollections.cursor = null;
+      showView("photoCollections");
+    } else {
+      showView(view === "sources" ? "sources" : "browse");
+    }
   }
 
   //: The person page is only offered when the read layer it needs really exists in this
@@ -2992,11 +3167,24 @@
       favoritesReload: document.getElementById("favorites-reload"),
       gridSentinel: document.getElementById("grid-sentinel"),
       detailBody: document.getElementById("detail-body"),
+      photoCollectionsList: document.getElementById("photo-collections-list"),
+      photoCollectionsStatus: document.getElementById("photo-collections-status"),
+      photoCollectionsMore: document.getElementById("photo-collections-more"),
+      photoCollectionTitle: document.getElementById("photo-collection-detail-title"),
+      photoCollectionDetailStatus: document.getElementById("photo-collection-detail-status"),
+      photoCollectionAssets: document.getElementById("photo-collection-assets"),
+      photoCollectionMore: document.getElementById("photo-collection-more"),
+      photoCollectionTimeline: document.getElementById("photo-collection-timeline"),
+      photoCollectionShowList: document.getElementById("photo-collection-show-list"),
+      photoCollectionShowTimeline: document.getElementById("photo-collection-show-timeline"),
+      photoCollectionSearch: document.getElementById("photo-collection-search"),
       navButtons: document.querySelectorAll(".nav-button"),
       views: {
         sources: document.getElementById("view-sources"),
         browse: document.getElementById("view-browse"),
         detail: document.getElementById("view-detail"),
+        photoCollections: document.getElementById("view-photo-collections"),
+        photoCollection: document.getElementById("view-photo-collection"),
       },
     };
 
@@ -3013,6 +3201,11 @@
       button: els.searchScopeAction,
       input: document.getElementById("global-search-query"),
       getScope: function () {
+        if (!els.views.photoCollection.hidden && state.photoCollections.collection) {
+          var collection = state.photoCollections.collection;
+          return {kind:"photo_collection", photo_collection_id:Number(collection.collection_id),
+            instance_token:String(collection.instance_token), revision:Number(collection.revision), name:String(collection.name)};
+        }
         if (els.views.browse.hidden || state.detailRouteActive || !state.sourcesLoaded) return null;
         if (state.browse.scope === "favorites") return { kind: "favorites" };
         var source = state.sources.find(function (item) {
@@ -3050,6 +3243,21 @@
       state.browse.loaded = false;
       showView("browse");
     });
+    document.getElementById("photo-collection-create").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var input = document.getElementById("photo-collection-name");
+      request("/photo-collections", {method:"POST", body:{name:input.value, create_request_id:window.crypto.randomUUID()}})
+        .then(function () { input.value = ""; loadPhotoCollections(false); })
+        .catch(function (failure) { showCollectionFailure(failure, els.photoCollectionsStatus); });
+    });
+    els.photoCollectionShowList.addEventListener("click", function () { showPhotoCollectionMode("list"); });
+    els.photoCollectionShowTimeline.addEventListener("click", function () { showPhotoCollectionMode("timeline"); });
+    els.photoCollectionSearch.addEventListener("click", function () {
+      updateSearchScopeAction();
+      if (!els.searchScopeAction.hidden) els.searchScopeAction.click();
+    });
+    els.photoCollectionsMore.addEventListener("click", function () { loadPhotoCollections(true); });
+    els.photoCollectionMore.addEventListener("click", function () { loadPhotoCollectionAssets(true); });
     document.getElementById("browse-reload").addEventListener("click", function () {
       loadBrowse(true);
     });

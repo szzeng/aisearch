@@ -7,8 +7,12 @@ or unreadable has to be re-checked on the next request instead of poisoning the 
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import secrets
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -55,6 +59,8 @@ class ApiContext:
         #: P2-06A: search sessions are process-local by design (architecture §9.5). A
         #: restart drops them, and a continuation token then answers SEARCH_SESSION_EXPIRED.
         self.search_sessions = SearchSessionStore()
+        self._photo_collection_sources: dict[str, dict[str, Any]] = {}
+        self._photo_collection_sources_lock = threading.RLock()
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
         self._encoder_resolved = False
@@ -85,6 +91,50 @@ class ApiContext:
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
+
+    def register_photo_collection_source(self, *, auth_session_id: str, payload: dict[str, Any],
+                                         result: dict[str, Any], mode: str) -> str | None:
+        if mode not in {"ranked_candidates", "all_filter_matches"}:
+            return None
+        if not result.get("search_session_id"):
+            return None
+        token = secrets.token_urlsafe(32)
+        now = time.time_ns() // 1_000_000
+        clean_payload = json.loads(json.dumps(payload, ensure_ascii=False))
+        value = {
+            "auth_session_hash": hashlib.sha256(str(auth_session_id).encode()).hexdigest(),
+            "expires_at_ms": now + 600_000,
+            "mode": mode,
+            "search_session_id": str(result["search_session_id"]),
+            "catalog_filter_revision": result.get("catalog_filter_revision"),
+            "suggestion_revision": result.get("suggestion_revision"),
+            "favorites_revision": result.get("favorites_revision"),
+            "search_scope": result.get("search_scope"),
+            "place_scope": result.get("place_scope"),
+            "collection_scope": result.get("collection_scope"),
+            "payload": clean_payload,
+        }
+        with self._photo_collection_sources_lock:
+            for key, item in list(self._photo_collection_sources.items()):
+                if int(item["expires_at_ms"]) < now:
+                    self._photo_collection_sources.pop(key, None)
+            if len(self._photo_collection_sources) >= 256:
+                oldest = min(self._photo_collection_sources, key=lambda key: self._photo_collection_sources[key]["expires_at_ms"])
+                self._photo_collection_sources.pop(oldest, None)
+            self._photo_collection_sources[token] = value
+        return token
+
+    def resolve_photo_collection_source(self, token: str, *, auth_session_id: str) -> dict[str, Any]:
+        now = time.time_ns() // 1_000_000
+        with self._photo_collection_sources_lock:
+            value = self._photo_collection_sources.get(str(token))
+            if value is None or int(value["expires_at_ms"]) < now:
+                self._photo_collection_sources.pop(str(token), None)
+                raise ValueError("搜索保存凭据已过期，请重新搜索后保存")
+            supplied = hashlib.sha256(str(auth_session_id).encode()).hexdigest()
+            if not secrets.compare_digest(str(value["auth_session_hash"]), supplied):
+                raise ValueError("搜索保存凭据不属于当前应用会话")
+            return dict(value)
 
     # ------------------------------------------------------------------ resources
     def service(self) -> CatalogService:

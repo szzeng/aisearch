@@ -104,6 +104,10 @@ CORE_TABLES = {
     "person_collections",
     "person_collection_members",
     "person_collection_face_members",
+    # P4-PHOTO-COLLECTION-A (0036): ordinary photo collection directory and static membership.
+    "photo_collections",
+    "photo_collection_members",
+    "photo_collection_search_appends",
     "person_operation_items",
     "person_operations",
     "person_operation_retention",

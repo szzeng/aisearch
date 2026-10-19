@@ -133,6 +133,10 @@ V6_TABLES = (
     "person_collections",
     # Official 0032: explicit soft anchors for archived individual faces.
     "person_collection_face_members",
+    # P4-PHOTO-COLLECTION-A (0036): persistent ordinary photo collections and their members.
+    "photo_collections",
+    "photo_collection_members",
+    "photo_collection_search_appends",
     "person_hidden",
     "person_operation_retention",
 )

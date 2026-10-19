@@ -122,7 +122,7 @@
     function scopeParams() {
       var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis,
         group_by: state.group, bucket: state.bucket, limit: String(PAGE_SIZE) });
-      ["source_id", "person_id", "collection_id", "place_kind", "place_key"].forEach(function (key) {
+      ["source_id", "person_id", "collection_id", "photo_collection_id", "photo_collection_instance", "photo_collection_revision", "place_kind", "place_key"].forEach(function (key) {
         if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
       });
       if (state.year !== null) params.set("year", String(state.year));
@@ -140,6 +140,7 @@
     function scopeKey(scope) {
       var value = scope || {};
       return [value.kind || "all", value.source_id || "", value.person_id || "", value.collection_id || "",
+        value.photo_collection_id || "", value.photo_collection_instance || "", value.photo_collection_revision || "",
         value.place_kind || "", value.place_key || ""].join(":");
     }
 
@@ -229,7 +230,7 @@
 
     function loadPeriods(selectedYear) {
       var params = new URLSearchParams({ kind: state.scope.kind || "all", time_basis: state.basis });
-      ["source_id", "person_id", "collection_id", "place_kind", "place_key"].forEach(function (key) {
+      ["source_id", "person_id", "collection_id", "photo_collection_id", "photo_collection_instance", "photo_collection_revision", "place_kind", "place_key"].forEach(function (key) {
         if (state.scope[key] !== undefined && state.scope[key] !== null) params.set(key, String(state.scope[key]));
       });
       if (selectedYear) params.set("year", String(selectedYear));

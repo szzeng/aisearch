@@ -34,7 +34,7 @@ UNKNOWN_SOURCES = ("EXIF_ROOT", "FILE_MTIME")
 BUCKETS = ("all", "capture", "unknown", "pending")
 BASES = ("capture", "library")
 GROUPS = ("day", "month", "year")
-SCOPES = ("all", "source", "person", "collection", "place")
+SCOPES = ("all", "source", "person", "collection", "photo_collection", "place")
 
 
 def _fail(message: str, *, field: str | None = None) -> ApiError:
@@ -52,13 +52,16 @@ def _limit(value: int | None) -> int:
 
 def _scope(catalog: Any, kind: str, source_id: int | None,
            person_id: int | None, collection_id: int | None,
+           photo_collection_id: int | None = None, photo_collection_instance: str | None = None,
+           photo_collection_revision: int | None = None,
            place_kind: str | None = None, place_key: str | None = None,
            data_root: Any = None) -> tuple[str, list[Any], dict[str, Any]]:
     if kind not in SCOPES:
         if kind == "place":
             raise ApiError("TIMELINE_SCOPE_DEFERRED", "地点时间轴由 P4-UI-PLACES-E 提供", status=501)
         raise _fail("unsupported timeline scope", field="kind")
-    expected = {"source": source_id, "person": person_id, "collection": collection_id}
+    expected = {"source": source_id, "person": person_id, "collection": collection_id,
+                "photo_collection": photo_collection_id}
     for required_kind, value in expected.items():
         if kind == required_kind and (value is None or int(value) < 1):
             raise _fail(f"{required_kind}_id is required and must be positive", field=f"{required_kind}_id")
@@ -68,6 +71,11 @@ def _scope(catalog: Any, kind: str, source_id: int | None,
         raise _fail("person_id is only valid for person scope", field="person_id")
     if kind != "collection" and collection_id is not None:
         raise _fail("collection_id is only valid for collection scope", field="collection_id")
+    if kind != "photo_collection" and any(value is not None for value in
+            (photo_collection_id, photo_collection_instance, photo_collection_revision)):
+        raise _fail("photo collection identity is only valid for photo_collection scope", field="photo_collection_id")
+    if kind == "photo_collection" and (not photo_collection_instance or photo_collection_revision is None):
+        raise _fail("photo collection scope requires instance and revision", field="photo_collection_instance")
     if kind == "place" and (not place_kind or not place_key):
         raise _fail("place_kind and place_key are required for place scope", field="place_key")
     if kind != "place" and (place_kind is not None or place_key is not None):
@@ -80,7 +88,9 @@ def _scope(catalog: Any, kind: str, source_id: int | None,
     params: list[Any] = list(photo_params)
     binding: dict[str, Any] = {"kind": kind, "source_id": None, "person_id": None,
                                "collection_id": None, "collection_instance": None,
-                               "collection_revision": None}
+                               "collection_revision": None,
+                               "photo_collection_id": None, "photo_collection_instance": None,
+                               "photo_collection_revision": None}
     if kind == "source":
         row = catalog.connection.execute(
             "SELECT source_id FROM source_roots WHERE source_id = ?", (int(source_id),)
@@ -107,6 +117,24 @@ def _scope(catalog: Any, kind: str, source_id: int | None,
         binding.update({"collection_id": int(collection_id),
                         "collection_instance": str(row["instance_token"]),
                         "collection_revision": int(row["revision"])})
+    elif kind == "photo_collection":
+        row = catalog.connection.execute(
+            "SELECT instance_token,revision FROM photo_collections WHERE collection_id=?",
+            (int(photo_collection_id),),
+        ).fetchone()
+        if row is None:
+            raise ApiError("PHOTO_COLLECTION_NOT_FOUND", "照片合集不存在", status=404)
+        current_instance, current_revision = str(row["instance_token"]), int(row["revision"])
+        if current_instance != str(photo_collection_instance) or current_revision != int(photo_collection_revision):
+            raise ApiError("PHOTO_COLLECTION_REVISION_STALE", "照片合集已变化，请重新搜索", status=409,
+                           details={"photo_collection_id": int(photo_collection_id),
+                                    "expected_revision": int(photo_collection_revision),
+                                    "current_revision": current_revision})
+        clauses.append("EXISTS (SELECT 1 FROM photo_collection_members pcm WHERE pcm.collection_id=? AND pcm.asset_id=a.asset_id)")
+        params.append(int(photo_collection_id))
+        binding.update({"photo_collection_id": int(photo_collection_id),
+                        "photo_collection_instance": current_instance,
+                        "photo_collection_revision": current_revision})
     elif kind == "place":
         place_sql, values, place_revisions = place_timeline.selected_members_sql(
             catalog, data_root, kind=str(place_kind), key=str(place_key)
@@ -279,7 +307,7 @@ def _seek_position(time_basis: str, year: int | None, month: int | None) -> list
 
 def _timeline_rows(connection: Any, where: str, params: list[Any], *, time_basis: str,
                    bucket: str, rules_match: bool, after: list[int] | None,
-                   inclusive: bool, size: int) -> list[dict[str, Any]]:
+                   inclusive: bool, size: int, photo_collection_id: int | None = None) -> list[dict[str, Any]]:
     """Seek each ordered bucket, then merge only the bounded capture-source candidates.
 
     The metadata index starts with time_source. Two equality seeks preserve the global
@@ -299,7 +327,10 @@ def _timeline_rows(connection: Any, where: str, params: list[Any], *, time_basis
         capture = time_basis == "capture" and rules_match and rank == 0
         sort_key = "m.taken_at_sort" if capture else "a.created_at"
         id_key = "m.asset_id" if capture else "a.asset_id"
-        if capture:
+        if photo_collection_id is not None:
+            source = "photo_collection_members AS pcm CROSS JOIN assets AS a"
+            source += " JOIN asset_metadata AS m ON m.asset_id=a.asset_id" if capture else " LEFT JOIN asset_metadata AS m ON m.asset_id=a.asset_id"
+        elif capture:
             source = "asset_metadata AS m JOIN assets AS a ON a.asset_id=m.asset_id"
         else:
             source = "assets AS a"
@@ -318,6 +349,9 @@ def _timeline_rows(connection: Any, where: str, params: list[Any], *, time_basis
         candidates: list[dict[str, Any]] = []
         for capture_source in CAPTURE_SOURCES if capture else (None,):
             conditions, values = [where], list(params)
+            if photo_collection_id is not None:
+                conditions.extend(("pcm.collection_id=?", "a.asset_id=pcm.asset_id"))
+                values.append(int(photo_collection_id))
             if capture:
                 conditions.append("m.time_source=? AND m.taken_at_sort IS NOT NULL")
                 values.append(capture_source)
@@ -364,6 +398,8 @@ def _timeline_rows(connection: Any, where: str, params: list[Any], *, time_basis
 
 def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = None,
                   person_id: int | None = None, collection_id: int | None = None,
+                  photo_collection_id: int | None = None, photo_collection_instance: str | None = None,
+                  photo_collection_revision: int | None = None,
                   place_kind: str | None = None, place_key: str | None = None,
                   data_root: Any = None,
                   time_basis: str = "capture", group_by: str = "day", bucket: str = "all",
@@ -378,6 +414,7 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
     page_limit = _limit(limit)
     with catalog.read_snapshot() as connection:
         where, params, scope = _scope(catalog, kind, source_id, person_id, collection_id,
+                                      photo_collection_id, photo_collection_instance, photo_collection_revision,
                                       place_kind, place_key, data_root)
         revision_value = revision.read_filter_revision(connection)
         cursor_revision = (place_timeline.cursor_revision(revision_value, scope["place_revisions"])
@@ -400,7 +437,8 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
                                          rules_match=rules_match, year=year, month=month)
         rows = _timeline_rows(connection, where, params, time_basis=time_basis, bucket=bucket,
                               rules_match=rules_match, after=after, inclusive=anchor is not None,
-                              size=page_limit + 1)
+                              size=page_limit + 1,
+                              photo_collection_id=int(photo_collection_id) if kind == "photo_collection" else None)
         page = list(rows[:page_limit])
         has_more = len(rows) > page_limit
         assets: list[dict[str, Any]] = []
@@ -465,6 +503,8 @@ def timeline_page(catalog: Any, *, kind: str = "all", source_id: int | None = No
 
 def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None = None,
                      person_id: int | None = None, collection_id: int | None = None,
+                     photo_collection_id: int | None = None, photo_collection_instance: str | None = None,
+                     photo_collection_revision: int | None = None,
                      place_kind: str | None = None, place_key: str | None = None,
                      data_root: Any = None,
                      time_basis: str = "capture", year: int | None = None) -> dict[str, Any]:
@@ -475,6 +515,7 @@ def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None =
         raise _fail("year is outside 0001..9999", field="year")
     with catalog.read_snapshot() as connection:
         base, params, scope = _scope(catalog, kind, source_id, person_id, collection_id,
+                                     photo_collection_id, photo_collection_instance, photo_collection_revision,
                                      place_kind, place_key, data_root)
         revision_value = revision.read_filter_revision(connection)
         rules = time_read.rules_version(connection)
@@ -505,10 +546,18 @@ def timeline_periods(catalog: Any, *, kind: str = "all", source_id: int | None =
             period_params = [f"{int(year):04d}"]
         # Counts and requested date facets share exactly one qualified membership scan.
         # NULL periods retain other years and untrusted rows in the global readiness counts.
+        if kind == "photo_collection":
+            source = "photo_collection_members AS pcm JOIN assets AS a ON a.asset_id=pcm.asset_id LEFT JOIN asset_metadata AS m ON m.asset_id=a.asset_id"
+            member_filter = " AND pcm.collection_id=?"
+            member_params: list[Any] = [int(photo_collection_id)]
+        else:
+            source = "assets AS a LEFT JOIN asset_metadata AS m ON m.asset_id=a.asset_id"
+            member_filter = ""
+            member_params = []
         rows = connection.execute(
             f"SELECT {rank_sql} AS date_rank,{period_sql} AS period,COUNT(*) AS count "
-            "FROM assets AS a LEFT JOIN asset_metadata AS m USING(asset_id) "
-            f"WHERE ({base}) GROUP BY date_rank,period", (*period_params, *params)
+            f"FROM {source} WHERE ({base}){member_filter} GROUP BY date_rank,period",
+            (*period_params, *params, *member_params)
         ).fetchall()
         totals = [0, 0, 0]
         periods: dict[int, int] = {}

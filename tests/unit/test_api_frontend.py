@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -209,7 +210,7 @@ def test_frontend_never_puts_a_credential_in_a_url_or_in_storage() -> None:
 
     assert "ps_csrf" in script
     assert "X-CSRF-Token" in script
-    assert "token=" not in script
+    assert re.search(r"[?&]token=", script) is None
     assert "csrf_token" not in script
     assert "document.cookie =" not in script  # read-only cookie access
     assert "localStorage" not in script

@@ -23,6 +23,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
+from photo_search import photo_collections
 from photo_search.api import timeline as timeline_queries
 from photo_search.api.catalog_reads import (
     run_catalog_projection,
@@ -109,6 +110,12 @@ from photo_search.api.models import (
     PersonUndoRequest,
     PersonVisibilityRequest,
     PersonVisibilityResponse,
+    PhotoCollectionAppendFromSearchRequest,
+    PhotoCollectionCreateRequest,
+    PhotoCollectionDeleteRequest,
+    PhotoCollectionFromSearchRequest,
+    PhotoCollectionMembersRequest,
+    PhotoCollectionRenameRequest,
     PlaceAssignmentRequest,
     PlaceAwareSearchRequestModel,
     PlaceBatchRequest,
@@ -949,6 +956,294 @@ async def batch_favorites(payload: FavoriteBatchRequest, request: Request) -> di
     return set_favorites_batch(service_of(request).catalog, payload.asset_ids, favorite=payload.is_favorite)
 
 
+@router.get("/photo-collections", summary="Paged ordinary photo collections")
+async def list_photo_collections(request: Request, limit: int = Query(default=20, ge=1, le=50),
+                                 cursor: str | None = Query(default=None, max_length=2048)) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, photo_collections.list_collections,
+                                  limit=limit, cursor=cursor)
+
+
+@router.post("/photo-collections", summary="Create an ordinary photo collection")
+async def create_photo_collection(payload: PhotoCollectionCreateRequest, request: Request) -> dict[str, Any]:
+    return photo_collections.create_collection(service_of(request).catalog, payload.name, payload.create_request_id,
+        asset_ids=payload.asset_ids)
+
+
+@router.get("/photo-collections/{collection_id}", summary="Read one ordinary photo collection")
+async def get_photo_collection(request: Request, collection_id: int,
+                               instance_token: str | None = Query(default=None, max_length=128)) -> dict[str, Any]:
+    return await run_catalog_read(service_of(request).catalog, photo_collections.collection_detail,
+                                  collection_id, instance_token=instance_token)
+
+
+@router.patch("/photo-collections/{collection_id}", summary="Rename an ordinary photo collection")
+async def patch_photo_collection(payload: PhotoCollectionRenameRequest, request: Request,
+                                 collection_id: int) -> dict[str, Any]:
+    return photo_collections.rename_collection(service_of(request).catalog, collection_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision, name=payload.name)
+
+
+@router.delete("/photo-collections/{collection_id}", summary="Delete an ordinary photo collection")
+async def delete_photo_collection(payload: PhotoCollectionDeleteRequest, request: Request,
+                                  collection_id: int) -> dict[str, Any]:
+    return photo_collections.delete_collection(service_of(request).catalog, collection_id,
+        instance_token=payload.instance_token, expected_revision=payload.expected_revision)
+
+
+@router.get("/photo-collections/{collection_id}/assets", summary="Page ordinary photo collection members")
+async def get_photo_collection_assets(request: Request, collection_id: int,
+        instance_token: str = Query(min_length=1, max_length=128),
+        limit: int = Query(default=50, ge=1, le=50), cursor: str | None = Query(default=None, max_length=2048)) -> dict[str, Any]:
+    service = service_of(request)
+    return await run_catalog_read(service.catalog, photo_collections.assets_page, service.media_cache(),
+        collection_id, instance_token=instance_token, limit=limit, cursor=cursor)
+
+
+@router.post("/photo-collections/{collection_id}/members/batch", summary="Edit ordinary photo collection members")
+async def edit_photo_collection_members(payload: PhotoCollectionMembersRequest, request: Request,
+                                       collection_id: int) -> dict[str, Any]:
+    return photo_collections.edit_members(service_of(request).catalog, collection_id, payload.asset_ids,
+        action=payload.action, instance_token=payload.instance_token, expected_revision=payload.expected_revision)
+
+
+@router.post("/photo-collections/from-search", summary="Save an authoritative search result in a new collection")
+async def create_photo_collection_from_search(payload: PhotoCollectionFromSearchRequest,
+                                              request: Request) -> dict[str, Any]:
+    context = context_of(request)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "application session is required", status=401)
+    replay = photo_collections.replay_search_create(
+        context.service().catalog, payload.create_request_id, payload.name,
+        payload.source_token, auth_session_id,
+    )
+    if replay is not None:
+        return replay
+    try:
+        source = context.resolve_photo_collection_source(payload.source_token, auth_session_id=auth_session_id)
+    except ValueError as error:
+        raise ApiError(INVALID_CURSOR, str(error), status=409) from error
+    if source["mode"] != payload.mode:
+        raise ApiError(INVALID_CURSOR, "保存模式与搜索来源不符，请重新搜索", status=409)
+    ids: list[int] = []
+    expected_catalog_revision = source.get("catalog_filter_revision")
+    place_scope = source.get("place_scope")
+    expected_place_scope = None if not isinstance(place_scope, dict) else (
+        int(place_scope["suggestion_revision"]), place_scope.get("package_revision")
+    )
+    expected_favorites_revision = source.get("favorites_revision")
+    expected_photo_collection = None
+    scope = source.get("search_scope")
+    if isinstance(scope, dict) and scope.get("kind") == "photo_collection":
+        expected_photo_collection = (int(scope["photo_collection_id"]), str(scope["instance_token"]), int(scope["revision"]))
+    collection_scope = source.get("collection_scope")
+    expected_person_collection = None if not isinstance(collection_scope, dict) else (
+        int(collection_scope["collection_id"]), str(collection_scope["instance_token"]), int(collection_scope["revision"])
+    )
+    if payload.mode == "ranked_candidates":
+        session = context.search_sessions.get(str(source["search_session_id"]))
+        if session is None:
+            raise ApiError(SEARCH_SESSION_EXPIRED, "搜索候选已过期，请重新搜索后保存", status=409)
+        if not session.entries:
+            raise ApiError("PHOTO_COLLECTION_EMPTY_SEARCH", "本次搜索没有可保存的候选照片", status=409)
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "搜索保存凭据与原始请求不匹配，请重新搜索", status=409) from error
+        validation_request = seed.model_copy(update={
+            "search_session_id": session.session_id,
+            "cursor": context.search_sessions.encode_cursor(session.session_id, 0),
+        })
+        # Re-enter the authoritative continuation path with a valid position-zero cursor.
+        # It checks profile/generation, catalog and suggestion revisions, and place/person/
+        # photo-collection scope bindings without running retrieval for another candidate set.
+        await run_catalog_search(service_of(request).catalog, _place_aware_search_worker,
+                                 validation_request, context=context,
+                                 data_root=context.service().data_root)
+        if bool(session.candidates_truncated) and not payload.confirm_truncated:
+            raise ApiError("PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED",
+                           "候选可能被截断；确认后将保存当前候选快照", status=409,
+                           details={"candidate_count": len(session.entries), "candidates_truncated": True})
+        ids = [int(entry.asset_id) for entry in session.entries]
+        expected_catalog_revision = int(session.catalog_filter_revision)
+        expected_favorites_revision = session.extra.get("favorites_revision")
+    else:
+        service = context.service()
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "保存搜索来源已损坏，请重新搜索", status=409) from error
+        cursor = None
+        search_session_id = str(source["search_session_id"])
+        first_page = True
+        while True:
+            page_payload = seed.model_copy(update={"cursor": cursor, "search_session_id": None if first_page else search_session_id})
+            page = await run_catalog_search(service.catalog, _place_aware_search_worker, page_payload,
+                                            context=context, data_root=service.data_root)
+            if page.get("catalog_filter_revision") != expected_catalog_revision:
+                raise ApiError(CATALOG_FILTER_REVISION_STALE, "搜索筛选已变化，请重新搜索后保存", status=409)
+            if not _photo_collection_source_scope_matches(source, page):
+                raise ApiError(CATALOG_FILTER_REVISION_STALE, "地点或人物合集搜索范围已变化，请重新搜索后保存", status=409)
+            ids.extend(int(hit["asset_id"]) for hit in page.get("hits", []))
+            if len(ids) > 5000 or int(page.get("total_candidates", len(ids))) > 5000:
+                raise ApiError("PHOTO_COLLECTION_FILTER_RESULT_TOO_LARGE",
+                               "全部筛选结果超过 5000 张，本次未创建合集；请细化筛选或分批选择", status=409,
+                               details={"limit": 5000, "observed_at_least": max(5001, len(ids))})
+            if not page.get("has_more"):
+                break
+            cursor = page.get("next_cursor")
+            if not cursor:
+                raise ApiError(INVALID_CURSOR, "筛选结果续页凭据缺失，请重新搜索", status=409)
+            first_page = False
+            expected_favorites_revision = page.get("favorites_revision", expected_favorites_revision)
+            if len(ids) + int(page.get("page_size", 0)) > 5000:
+                raise ApiError("PHOTO_COLLECTION_FILTER_RESULT_TOO_LARGE",
+                               "全部筛选结果超过 5000 张，本次未创建合集；请细化筛选或分批选择", status=409,
+                               details={"limit": 5000, "observed_at_least": 5001})
+        if not ids:
+            raise ApiError("PHOTO_COLLECTION_EMPTY_SEARCH", "本次搜索没有可保存的照片", status=409)
+    token_hash = hashlib.sha256(payload.source_token.encode()).hexdigest()
+    source_identity = hashlib.sha256(json.dumps(
+        ["photo_collection_search", token_hash], separators=(",", ":")
+    ).encode()).hexdigest()
+    return photo_collections.create_collection(
+        context.service().catalog, payload.name, payload.create_request_id,
+        source_hash=source_identity, asset_ids=ids,
+        request_payload_hash=photo_collections.create_request_payload_hash(payload.name, source_identity),
+        auth_session_hash=hashlib.sha256(auth_session_id.encode()).hexdigest(),
+        source_token_hash=token_hash,
+        expected_catalog_filter_revision=None if expected_catalog_revision is None else int(expected_catalog_revision),
+        expected_favorites_revision=None if expected_favorites_revision is None else int(expected_favorites_revision),
+        expected_photo_collection=expected_photo_collection,
+        expected_person_collection=expected_person_collection,
+        expected_place_scope=expected_place_scope,
+    )
+
+
+def _photo_collection_source_scope_matches(source: dict[str, Any], page: dict[str, Any]) -> bool:
+    """Compare every separately versioned search scope captured by the source token."""
+    for key in ("place_scope", "collection_scope"):
+        expected, current = source.get(key), page.get(key)
+        if expected is None or current is None:
+            if expected is not current:
+                return False
+            continue
+        if not isinstance(expected, dict) or not isinstance(current, dict):
+            return False
+        fields = ("kind", "key", "collection_id", "instance_token", "revision",
+                  "catalog_filter_revision", "suggestion_revision", "package_revision")
+        if any(expected.get(field) != current.get(field) for field in fields):
+            return False
+    return True
+
+
+@router.post("/photo-collections/{collection_id}/members/from-search",
+             summary="Append an authoritative search result to an existing photo collection")
+async def append_photo_collection_from_search(payload: PhotoCollectionAppendFromSearchRequest,
+                                             request: Request, collection_id: int) -> dict[str, Any]:
+    context = context_of(request)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "application session is required", status=401)
+    service = context.service()
+    replay = photo_collections.replay_search_append(
+        service.catalog, payload.request_id, collection_id=collection_id,
+        instance_token=payload.instance_token, source_token=payload.source_token,
+        mode=payload.mode, confirm_truncated=payload.confirm_truncated,
+        auth_session_id=auth_session_id,
+    )
+    if replay is not None:
+        return replay
+    try:
+        source = context.resolve_photo_collection_source(payload.source_token, auth_session_id=auth_session_id)
+    except ValueError as error:
+        raise ApiError(INVALID_CURSOR, str(error), status=409) from error
+    if source["mode"] != payload.mode:
+        raise ApiError(INVALID_CURSOR, "保存模式与搜索来源不符，请重新搜索", status=409)
+    scope = source.get("search_scope")
+    expected_photo_collection = None
+    if isinstance(scope, dict) and scope.get("kind") == "photo_collection":
+        expected_photo_collection = (int(scope["photo_collection_id"]), str(scope["instance_token"]), int(scope["revision"]))
+    expected_catalog_revision = source.get("catalog_filter_revision")
+    place_scope = source.get("place_scope")
+    expected_place_scope = None if not isinstance(place_scope, dict) else (
+        int(place_scope["suggestion_revision"]), place_scope.get("package_revision")
+    )
+    expected_favorites_revision = source.get("favorites_revision")
+    person_scope = source.get("collection_scope")
+    expected_person_collection = None if not isinstance(person_scope, dict) else (
+        int(person_scope["collection_id"]), str(person_scope["instance_token"]), int(person_scope["revision"])
+    )
+    ids: list[int] = []
+    if payload.mode == "ranked_candidates":
+        session = context.search_sessions.get(str(source["search_session_id"]))
+        if session is None:
+            raise ApiError(SEARCH_SESSION_EXPIRED, "搜索候选已过期，请重新搜索后保存", status=409)
+        if not session.entries:
+            raise ApiError("PHOTO_COLLECTION_EMPTY_SEARCH", "本次搜索没有可保存的候选照片", status=409)
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "搜索保存凭据与原始请求不匹配，请重新搜索", status=409) from error
+        validation_request = seed.model_copy(update={
+            "search_session_id": session.session_id,
+            "cursor": context.search_sessions.encode_cursor(session.session_id, 0),
+        })
+        await run_catalog_search(service.catalog, _place_aware_search_worker, validation_request,
+                                 context=context, data_root=service.data_root)
+        if bool(session.candidates_truncated) and not payload.confirm_truncated:
+            raise ApiError("PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED",
+                           "候选可能被截断；确认后将追加当前候选快照", status=409,
+                           details={"candidate_count": len(session.entries), "candidates_truncated": True})
+        ids = [int(entry.asset_id) for entry in session.entries]
+        expected_catalog_revision = int(session.catalog_filter_revision)
+        expected_favorites_revision = session.extra.get("favorites_revision")
+    else:
+        try:
+            seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
+        except Exception as error:
+            raise ApiError(INVALID_CURSOR, "保存搜索来源已损坏，请重新搜索", status=409) from error
+        cursor = None
+        first_page = True
+        while True:
+            page_payload = seed.model_copy(update={"cursor": cursor,
+                "search_session_id": None if first_page else str(source["search_session_id"])})
+            page = await run_catalog_search(service.catalog, _place_aware_search_worker, page_payload,
+                                            context=context, data_root=service.data_root)
+            if page.get("catalog_filter_revision") != expected_catalog_revision:
+                raise ApiError(CATALOG_FILTER_REVISION_STALE, "搜索筛选已变化，请重新搜索后保存", status=409)
+            if not _photo_collection_source_scope_matches(source, page):
+                raise ApiError(CATALOG_FILTER_REVISION_STALE, "地点或人物合集搜索范围已变化，请重新搜索后保存", status=409)
+            ids.extend(int(hit["asset_id"]) for hit in page.get("hits", []))
+            if len(ids) > 5000 or int(page.get("total_candidates", len(ids))) > 5000:
+                raise ApiError("PHOTO_COLLECTION_FILTER_RESULT_TOO_LARGE",
+                               "全部筛选结果超过 5000 张，本次未追加；请细化筛选或分批选择", status=409,
+                               details={"limit": 5000, "observed_at_least": max(5001, len(ids))})
+            if not page.get("has_more"):
+                break
+            cursor = page.get("next_cursor")
+            if not cursor:
+                raise ApiError(INVALID_CURSOR, "筛选结果续页凭据缺失，请重新搜索", status=409)
+            first_page = False
+            expected_favorites_revision = page.get("favorites_revision", expected_favorites_revision)
+    if not ids:
+        raise ApiError("PHOTO_COLLECTION_EMPTY_SEARCH", "本次搜索没有可追加的照片", status=409)
+    append_payload_hash = photo_collections.append_request_payload_hash(
+        collection_id, payload.instance_token, payload.source_token,
+        payload.mode, payload.confirm_truncated,
+    )
+    return photo_collections.edit_members(
+        service.catalog, collection_id, ids, action="add", instance_token=payload.instance_token,
+        expected_revision=payload.expected_revision, max_batch=5000,
+        expected_catalog_filter_revision=None if expected_catalog_revision is None else int(expected_catalog_revision),
+        expected_favorites_revision=None if expected_favorites_revision is None else int(expected_favorites_revision),
+        expected_photo_collection=expected_photo_collection,
+        expected_person_collection=expected_person_collection,
+        expected_place_scope=expected_place_scope,
+        idempotency=(payload.request_id, hashlib.sha256(auth_session_id.encode()).hexdigest(), append_payload_hash),
+    )
+
+
 @router.get(
     "/assets",
     response_model=AssetListResponse,
@@ -1008,6 +1303,9 @@ async def list_timeline_assets(
     source_id: int | None = Query(default=None, ge=1),
     person_id: int | None = Query(default=None, ge=1),
     collection_id: int | None = Query(default=None, ge=1),
+    photo_collection_id: int | None = Query(default=None, ge=1),
+    photo_collection_instance: str | None = Query(default=None, min_length=1, max_length=128),
+    photo_collection_revision: int | None = Query(default=None, ge=1),
     place_kind: Literal["city", "province", "district", "country"] | None = None,
     place_key: str | None = Query(default=None, min_length=1, max_length=256),
     time_basis: Literal["capture", "library"] = "capture",
@@ -1028,6 +1326,9 @@ async def list_timeline_assets(
         source_id=source_id,
         person_id=person_id,
         collection_id=collection_id,
+        photo_collection_id=photo_collection_id,
+        photo_collection_instance=photo_collection_instance,
+        photo_collection_revision=photo_collection_revision,
         place_kind=place_kind,
         place_key=place_key,
         data_root=service.data_root,
@@ -1051,6 +1352,9 @@ async def get_timeline_periods(
     source_id: int | None = Query(default=None, ge=1),
     person_id: int | None = Query(default=None, ge=1),
     collection_id: int | None = Query(default=None, ge=1),
+    photo_collection_id: int | None = Query(default=None, ge=1),
+    photo_collection_instance: str | None = Query(default=None, min_length=1, max_length=128),
+    photo_collection_revision: int | None = Query(default=None, ge=1),
     place_kind: Literal["city", "province", "district", "country"] | None = None,
     place_key: str | None = Query(default=None, min_length=1, max_length=256),
     time_basis: Literal["capture", "library"] = "capture",
@@ -1063,6 +1367,9 @@ async def get_timeline_periods(
         source_id=source_id,
         person_id=person_id,
         collection_id=collection_id,
+        photo_collection_id=photo_collection_id,
+        photo_collection_instance=photo_collection_instance,
+        photo_collection_revision=photo_collection_revision,
         place_kind=place_kind,
         place_key=place_key,
         data_root=service.data_root,
@@ -2578,6 +2885,21 @@ def _search_session_time_worker(
                 "the selected collection changed after this search started",
                 details={"reason": "COLLECTION_REVISION_CHANGED"},
             )
+    try:
+        photo_marker = album_scope_revision.index("photo_collection")
+        expected_photo_collection = album_scope_revision[photo_marker + 1 : photo_marker + 4]
+    except ValueError:
+        expected_photo_collection = ()
+    if expected_photo_collection:
+        current_photo_collection = catalog.read_one(
+            "SELECT instance_token,revision FROM photo_collections WHERE collection_id=?",
+            (int(expected_photo_collection[0]),),
+        )
+        if (len(expected_photo_collection) != 3 or current_photo_collection is None
+                or str(current_photo_collection["instance_token"]) != str(expected_photo_collection[1])
+                or int(current_photo_collection["revision"]) != int(expected_photo_collection[2])):
+            raise ApiError("PHOTO_COLLECTION_REVISION_STALE", "照片合集已变化，请重新搜索", status=409,
+                           details={"reason": "PHOTO_COLLECTION_REVISION_CHANGED"})
     with catalog.read_snapshot() as conn:
         if favorites_revision is not None:
             from photo_search.favorites import _revision
@@ -2720,10 +3042,21 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
     """Additive entry that resolves place intent before reusing the existing search/session service."""
     context = context_of(request)
     service = context.service()
-    return await run_catalog_search(
+    result = await run_catalog_search(
         service.catalog, _place_aware_search_worker, payload,
         context=context, data_root=service.data_root,
     )
+    source_mode = result.pop("photo_collection_source_mode", None)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if source_mode and auth_session_id and payload.cursor is None:
+        source_token = context.register_photo_collection_source(
+            auth_session_id=auth_session_id, payload=payload.model_dump(mode="json"),
+            result=result, mode=str(source_mode),
+        )
+        if source_token:
+            result["photo_collection_source_token"] = source_token
+            result["photo_collection_source_mode"] = source_mode
+    return result
 
 
 def _place_aware_search_worker(
@@ -2760,7 +3093,7 @@ def _place_aware_search_worker(
             if kind is not None and (kind != selected_place_kind or str(key) != selected_place_key):
                 raise ApiError(INVALID_CURSOR, "固定地点范围与查询条件冲突，请重新搜索", status=409)
             kind, key = selected_place_kind, selected_place_key
-        elif selected_kind not in {"person", "collection"}:
+        elif selected_kind not in {"person", "collection", "photo_collection"}:
             raise ApiError(INVALID_CURSOR, "搜索范围无效，请重新选择", status=409)
     parse_notice = None
     intent_plan = payload.intent_plan
@@ -3127,6 +3460,9 @@ def _place_aware_search_worker(
     fixed_person_sql = None
     fixed_person_parameters: tuple[Any, ...] = ()
     fixed_person_revision = None
+    photo_collection_scope = None
+    photo_collection_sql = None
+    photo_collection_parameters: tuple[Any, ...] = ()
     if selected_scope is not None:
         selected_kind = str(selected_scope.get("kind"))
         if selected_kind == "person":
@@ -3179,6 +3515,36 @@ def _place_aware_search_worker(
             intent_plan["collection_scope"] = current_collection_scope
             intent_plan["collection_query"] = str(intent_plan.get("content_query") or "")
             resolved_search_scope = {"kind": "collection", **current_collection_scope}
+        elif selected_kind == "photo_collection":
+            try:
+                selected_photo_collection_id = int(selected_scope.get("photo_collection_id", 0))
+                selected_photo_collection_revision = int(selected_scope.get("revision", -1))
+                selected_photo_collection_token = str(selected_scope.get("instance_token", ""))
+            except (TypeError, ValueError, OverflowError) as error:
+                raise ApiError(INVALID_CURSOR, "照片合集搜索范围无效，请重新选择", status=409) from error
+            if selected_photo_collection_id < 1 or selected_photo_collection_revision < 1 or len(selected_photo_collection_token) != 32:
+                raise ApiError(INVALID_CURSOR, "照片合集搜索范围无效，请重新选择", status=409)
+            current_photo_collection = service.catalog.read_one(
+                "SELECT collection_id,instance_token,revision,name FROM photo_collections WHERE collection_id=?",
+                (selected_photo_collection_id,),
+            )
+            if current_photo_collection is None:
+                raise ApiError("PHOTO_COLLECTION_NOT_FOUND", "照片合集不存在", status=404)
+            photo_collection_scope = {
+                "photo_collection_id": int(current_photo_collection["collection_id"]),
+                "instance_token": str(current_photo_collection["instance_token"]),
+                "revision": int(current_photo_collection["revision"]),
+                "name": str(current_photo_collection["name"]),
+            }
+            if (photo_collection_scope["instance_token"] != selected_photo_collection_token
+                    or photo_collection_scope["revision"] != selected_photo_collection_revision):
+                raise ApiError("PHOTO_COLLECTION_REVISION_STALE", "照片合集已变化，请重新搜索", status=409)
+            photo_collection_sql = (
+                "EXISTS (SELECT 1 FROM photo_collection_members pcm "
+                "WHERE pcm.collection_id=? AND pcm.asset_id=a.asset_id)"
+            )
+            photo_collection_parameters = (selected_photo_collection_id,)
+            resolved_search_scope = {"kind": "photo_collection", **photo_collection_scope}
         else:
             selected_choice = next((item for item in place_choices.choices(
                 service.catalog, data_root=service.data_root
@@ -3211,6 +3577,14 @@ def _place_aware_search_worker(
         )
         search_time_parameters += fixed_person_parameters
         search_time_identity += ("fixed_person", selected_person_id)
+    if photo_collection_sql is not None:
+        search_time_sql = (
+            f"({search_time_sql}) AND ({photo_collection_sql})" if search_time_sql is not None
+            else photo_collection_sql
+        )
+        search_time_parameters += photo_collection_parameters
+        search_time_identity += ("photo_collection", photo_collection_scope["photo_collection_id"],
+                                 photo_collection_scope["instance_token"], photo_collection_scope["revision"])
     values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope", "favorites_only"})
     values["text"] = query_text
     if intent_plan is not None:
@@ -3241,6 +3615,9 @@ def _place_aware_search_worker(
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = None if text_mode else intent_plan
         result["search_scope"] = resolved_search_scope
+        result["photo_collection_source_mode"] = (
+            "all_filter_matches" if not (envelope.text or "").strip() else None
+        )
         _verify_person_collection(service.catalog, collection_scope)
         _verify_fixed_person_revision(service.catalog, fixed_person_revision)
         _verify_favorites_revision(service.catalog, favorites_revision)
@@ -3261,6 +3638,9 @@ def _place_aware_search_worker(
         result["place_scope"] = None
         result["collection_scope"] = collection_scope
         result["search_scope"] = resolved_search_scope
+        result["photo_collection_source_mode"] = (
+            "all_filter_matches" if not (envelope.text or "").strip() else None
+        )
         _verify_person_collection(service.catalog, collection_scope)
         _verify_fixed_person_revision(service.catalog, fixed_person_revision)
         _verify_favorites_revision(service.catalog, favorites_revision)
@@ -3288,6 +3668,7 @@ def _place_aware_search_worker(
     result["intent_plan"] = None if text_mode else intent_plan
     result["collection_scope"] = collection_scope
     result["search_scope"] = resolved_search_scope
+    result["photo_collection_source_mode"] = "ranked_candidates"
     _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
     if collection_scope is not None:
         result["filters"]["person_collection"] = dict(collection_scope)

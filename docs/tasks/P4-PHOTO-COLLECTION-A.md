@@ -1,6 +1,6 @@
 # P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
 
-- **状态**：READY / 任务卡已提交，尚未实施；本卡仅为实施设计，不代表功能完成
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）；Favorites CORE/UX 依赖已核验 PASS；schema 35 → migration 0036。核心定向组合通过，但完整 unit/integration 为 3179 passed、5 failed、51 skipped；浏览器搜索保存受原生 prompt 工具限制未完成，且迁移故障/恢复、token/会话边界、限额与性能计划等验收仍待补；追加写入已加入事务回执和同页重放，刷新后的 UI 回恢复仍待验证/实现。详见[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。
 - **优先级**：P1；**推荐执行模型**：GPT-6 High（用户在 Codex 手动选择）
 - **设计基线**：`szzeng/aisearch`，`master @ cb9700acc35e54d2df9c8e43f5c0803b8740563b`（2026-10-19，复核时未发现更新）；`SUPPORTED_SCHEMA_VERSION=33`。实施前必须检查最新 HEAD、工作树、连续迁移、依赖卡的实际报告和 API，不得按本卡旧编号覆盖新迁移。
 - **前置依赖**：`P4-FAVORITES-CORE-A`、`P4-FAVORITES-UX-B` **实际实现且必要验收完成后才启动编码**。截至设计基线，两者仅有 READY 任务卡，不能假定收藏页、星标、批量选择 API 已存在。
@@ -89,11 +89,11 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 | `GET /api/v1/photo-collections/{id}/assets?limit=50&cursor=...` | 仅该合集成员，`position, asset_id` Keyset；结果批量读取摘要/位置/缩略图，不逐图请求 SQL |
 | `POST /api/v1/photo-collections/{id}/members/batch` | `{action:add\|remove, asset_ids:[...], instance_token, expected_revision}`；1～500 张，不重复且严格正整数，先校验整批，原子提交，幂等目标态 |
 | `POST /api/v1/photo-collections/from-search` | `{name, create_request_id, source_token, mode: ranked_candidates\|all_filter_matches}`；创建与导入**全成全败**；相同幂等键+相同载荷返回原结果，不重复创建 |
-| `POST /api/v1/photo-collections/{id}/members/from-search` | `{instance_token, expected_revision, source_token, mode}`；将本次受信结果追加至已有合集，原子去重，重复请求结果不明时以权威状态恢复 |
+| `POST /api/v1/photo-collections/{id}/members/from-search` | `{request_id, instance_token, expected_revision, source_token, mode}`；将本次受信结果追加至已有合集，原子去重；request_id 绑定目标实例、认证会话、来源 token 身份和模式，事务回执与成员变更同提交，已提交重试在验证临时来源前回放 |
 
 `GET /assets` 等旧 response schema、`POST /search` 冻结合同以及人物合集 API 保持不变。集合 ID、实例 token、修订号和游标不能跨合集复用；成员变更后旧游标返回 409 并引导重取第一页，不混合两个版本。
 
-批量 add/remove：未知照片、非 ACTIVE、非图片、非法 ID、越界、并发版本冲突必须整次拒绝；已存在/已移除属于 no-op，只有实际变化才增加合集 revision。**新增、删除与计算实际改变数量必须基于数据库真实变更结果，不用请求 ID 数代替**；同一事务中写成员、计数、修订与目录版本。读成员时保留已存在但暂不可读/离线的人工记录，不把“不能生成缩略图”当成删除理由。异常及未知写结果先读权威状态与成员关系，不盲目重放“切换”。`create_request_id + create_request_hash` 的幂等创建必须校验规范化载荷指纹（名称、保存模式、来源凭据身份）；**已提交过的同键同载荷重试先返回原结果**，即使原查询令牌随后过期也不再执行导入；同键不同载荷拒绝，网络重试不生成同名重复合集。
+批量 add/remove：未知照片、非 ACTIVE、非图片、非法 ID、越界、并发版本冲突必须整次拒绝；已存在/已移除属于 no-op，只有实际变化才增加合集 revision。**新增、删除与计算实际改变数量必须基于数据库真实变更结果，不用请求 ID 数代替**；同一事务中写成员、计数、修订与目录版本。读成员时保留已存在但暂不可读/离线的人工记录，不把“不能生成缩略图”当成删除理由。异常及未知写结果使用稳定幂等请求键并读回同事务回执，不盲目重放“切换”。搜索追加采用 `request_id` 回执；创建采用 `create_request_id + create_request_hash`，两者都校验载荷与认证会话（名称、保存模式、来源凭据身份）；**已提交过的同键同载荷重试先返回原结果**，即使原查询令牌随后过期也不再执行导入；同键不同载荷拒绝，网络重试不生成同名重复合集。
 
 ## 5. 搜索结果保存：服务端权威快照，不偷换范围
 
@@ -168,3 +168,8 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 4. **页面闭环**：复用导航、网格、弹窗、已有选择状态和目录；完成从搜索结果新建/追加、从照片加入/移除、详情返回。
 5. **时间轴/范围集成**：照片合集独立 scope，索引路径和版本正确，不碰旧人物合集检索契约。
 6. **受影响验收、浏览器、独审及报告**：先消除数据/查询不变量问题，再做必要 UI 回归。合格后收口，未覆盖的智能自动刷新明确留在本卡范围外。
+
+
+## 10. 本轮执行收口（2026-10-19）
+
+用户要求执行本卡，并在需要复核时使用 Luna High 子代理。实施代码、定向测试及多轮 Luna High 只读复核已完成；复核修复了地点 scope 最终写入版本校验和目录封面结果过量物化。当前状态保持 **IMPLEMENTED / ACCEPTANCE PARTIAL**：追加 API 已有事务回执及同页重试；UI 刷新后的 pending request ID 恢复与真实进程重启回放仍待验，另有封面稀疏/离线扫描计划、迁移故障回滚、备份/retention、token/会话边界、限额/并发边界及关键浏览器闭环未完成。报告：[P4-PHOTO-COLLECTION-A 执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。

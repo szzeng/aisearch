@@ -447,6 +447,67 @@ class FavoriteBatchResponse(BaseModel):
     favorites_revision: int
 
 
+class PhotoCollectionCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr = Field(min_length=1, max_length=80)
+    create_request_id: StrictStr = Field(min_length=1, max_length=128)
+    asset_ids: list[StrictInt] | None = Field(default=None, min_length=1, max_length=500)
+
+    @field_validator("asset_ids")
+    @classmethod
+    def valid_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is not None and (any(asset_id <= 0 for asset_id in value) or len(set(value)) != len(value)):
+            raise ValueError("asset_ids must be distinct positive integers")
+        return value
+
+
+class PhotoCollectionRenameRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+    name: StrictStr = Field(min_length=1, max_length=80)
+
+
+class PhotoCollectionDeleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+
+
+class PhotoCollectionMembersRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["add", "remove"]
+    asset_ids: list[StrictInt] = Field(min_length=1, max_length=500)
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+
+    @field_validator("asset_ids")
+    @classmethod
+    def valid_ids(cls, value: list[int]) -> list[int]:
+        if any(asset_id <= 0 for asset_id in value) or len(set(value)) != len(value):
+            raise ValueError("asset_ids must be distinct positive integers")
+        return value
+
+
+class PhotoCollectionFromSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: StrictStr = Field(min_length=1, max_length=80)
+    create_request_id: StrictStr = Field(min_length=1, max_length=128)
+    source_token: StrictStr = Field(min_length=16, max_length=256)
+    mode: Literal["ranked_candidates", "all_filter_matches"]
+    confirm_truncated: StrictBool = False
+
+
+class PhotoCollectionAppendFromSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: StrictStr = Field(min_length=1, max_length=128)
+    source_token: StrictStr = Field(min_length=16, max_length=256)
+    mode: Literal["ranked_candidates", "all_filter_matches"]
+    confirm_truncated: StrictBool = False
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: int = Field(ge=1)
+
+
 class ScanState(BaseModel):
     """The ``scan_runs`` projection a job listing may show."""
 

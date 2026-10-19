@@ -6,16 +6,16 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-ux-b-1" />
-    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-favorites-ux-b-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-collection-a-1" />
+    <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" />
     <script src="/web/favorites-ui.js?v=p4-favorites-ux-b-3" defer></script>
-    <script src="/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" defer></script>
-    <script src="/web/photo-timeline.js?v=p4-favorites-ux-b-1" defer></script>
-    <script src="/web/search-scope-entry.js?v=p4-favorites-search-a-1" defer></script>
+    <script src="/web/photo-info.js?v=p4-photo-collection-a-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
+    <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-favorites-search-a-1" defer></script>
+    <script src="/web/app.js?v=p4-photo-collection-a-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -26,6 +26,7 @@
       <nav class="app-nav" aria-label="主要导航">
         <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
         <a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
+        <a class="nav-link" data-shell-page="photo-collections" href="/?view=photo-collections"><span class="nav-icon" aria-hidden="true">▤</span>照片合集</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
         <a class="nav-link" data-shell-page="places" href="/places"><span class="nav-icon" aria-hidden="true">⌖</span>地点</a>
       </nav>
@@ -280,6 +281,29 @@
           <button type="button" id="detail-back">返回照片查看</button>
         </p>
         <div id="detail-body"></div>
+      </section>
+
+      <section id="view-photo-collections" class="view gallery-management-page" hidden aria-labelledby="view-photo-collections-title">
+        <h2 id="view-photo-collections-title">照片合集</h2>
+        <p class="page-intro">普通照片合集保存你确认的照片；新照片不会自动加入。</p>
+        <form id="photo-collection-create" class="home-actions">
+          <label for="photo-collection-name">新合集名称</label>
+          <input id="photo-collection-name" maxlength="80" required />
+          <button type="submit">创建空合集</button>
+        </form>
+        <div id="photo-collections-status" class="state-block" role="status" aria-live="polite"></div>
+        <ul id="photo-collections-list" class="sources"></ul>
+        <button id="photo-collections-more" type="button" hidden>加载更多</button>
+      </section>
+
+      <section id="view-photo-collection" class="view gallery-management-page" hidden aria-labelledby="photo-collection-detail-title">
+        <p><a href="/?view=photo-collections">返回照片合集</a></p>
+        <h2 id="photo-collection-detail-title">照片合集</h2>
+        <p class="home-actions"><button id="photo-collection-show-list" type="button" aria-pressed="true">按收录顺序</button><button id="photo-collection-show-timeline" type="button" aria-pressed="false">按时间轴</button><button id="photo-collection-search" type="button">搜索此合集</button></p>
+        <p id="photo-collection-detail-status" class="state-block" role="status" aria-live="polite"></p>
+        <div id="photo-collection-assets" class="grid" aria-label="照片合集照片"></div>
+        <button id="photo-collection-more" type="button" hidden>加载更多</button>
+        <div id="photo-collection-timeline" class="photo-timeline" hidden aria-label="照片合集时间轴"></div>
       </section>
     </main>
 </div><!-- .app-workspace -->

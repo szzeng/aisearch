@@ -575,7 +575,9 @@
     favoriteButton.disabled = true;
     favoriteButton.setAttribute("aria-pressed", "false");
     favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
+    var photoCollectionButton = node("button", "加入照片合集", "photo-viewer-collection"); photoCollectionButton.type = "button";
     headingActions.append(favoriteButton);
+    headingActions.append(photoCollectionButton);
     headingActions.append(fullDetails);
     var close = node("button", "关闭", "photo-viewer-close"); close.type = "button";
     close.setAttribute("aria-label", "关闭照片预览"); headingActions.append(close); heading.append(headingActions);
@@ -709,6 +711,8 @@
       currentAssetId = String(nextId); preview.naturalWidth = 0; preview.naturalHeight = 0; preview.scale = 1; preview.mode = "fit"; preview.x = 0; preview.y = 0;
       var isFavorite = false;
       favoriteButton.disabled = true; favoriteButton.textContent = "读取收藏…";
+      photoCollectionButton.disabled = false;
+      photoCollectionButton.textContent = "加入照片合集";
       favoriteButton.setAttribute("aria-pressed", "false");
       favoriteButton.setAttribute("aria-label", "正在读取收藏状态");
       [zoomOut, fit, actual, zoomIn].forEach(function (button) { button.disabled = true; }); zoomLabel.textContent = "读取尺寸中…";
@@ -773,6 +777,36 @@
               favoriteButton.setAttribute("aria-label", "收藏状态读取失败");
             });
           });
+      };
+      photoCollectionButton.onclick = function () {
+        if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+        photoCollectionButton.disabled = true;
+        photoCollectionButton.textContent = "读取合集…";
+        request("/photo-collections?limit=50").then(function (body) {
+          if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;
+          var collections = body.collections || [];
+          if (!collections.length) {
+            var name = window.prompt("还没有照片合集。输入名称创建并收录这张照片：");
+            if (name === null || !name.trim()) return;
+            var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID()
+              : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+            return writeRequest("/photo-collections", "POST", {name:name, create_request_id:requestId,
+              asset_ids:[Number(nextId)]}).then(function () { photoCollectionButton.textContent = "已加入新合集"; });
+          }
+          var choices = collections.map(function (item, index) { return (index + 1) + ". " + item.name + "（" + item.member_count + " 张）"; });
+          var selected = window.prompt("输入合集序号收录此照片：\n" + choices.join("\n"));
+          var index = Number(selected) - 1;
+          if (!Number.isInteger(index) || index < 0 || index >= collections.length) return;
+          var collection = collections[index];
+          return writeRequest("/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/batch", "POST", {
+            action:"add", asset_ids:[Number(nextId)], instance_token:collection.instance_token,
+            expected_revision:Number(collection.revision)
+          }).then(function () { photoCollectionButton.textContent = "已加入「" + collection.name + "」"; });
+        }).catch(function (error) {
+          if (thisGeneration === generation) photoCollectionButton.textContent = "加入失败：" + (error.message || "请重试");
+        }).finally(function () {
+          if (thisGeneration === generation && currentAssetId === String(nextId)) photoCollectionButton.disabled = false;
+        });
       };
       readFavoriteState().catch(function () {
         if (thisGeneration !== generation || currentAssetId !== String(nextId)) return;

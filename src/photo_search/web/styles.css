@@ -1294,3 +1294,6 @@ body.app-shell {
 .photo-timeline__item > .favorite-star { inset-block-start: 0.65rem; inset-inline-end: 0.65rem; }
 .photo-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
 .photo-selection [role="group"] { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.collection-cover { width: 4rem; height: 4rem; object-fit: cover; border-radius: 0.35rem; margin-inline-end: 0.75rem; }
+#photo-collection-assets .card-tile { display: grid; gap: 0.4rem; border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.4rem; background: var(--surface); cursor: pointer; }
+#photo-collection-assets img { width: 100%; aspect-ratio: 1; object-fit: cover; }

@@ -8,6 +8,8 @@
     if (scope.kind === "person") return Number.isSafeInteger(Number(scope.person_id)) && Number(scope.person_id) > 0;
     if (scope.kind === "collection") return Number.isSafeInteger(Number(scope.collection_id)) && Number(scope.collection_id) > 0 &&
       Boolean(String(scope.instance_token || "")) && Number.isSafeInteger(Number(scope.revision)) && Number(scope.revision) >= 0;
+    if (scope.kind === "photo_collection") return Number.isSafeInteger(Number(scope.photo_collection_id)) && Number(scope.photo_collection_id) > 0 &&
+      Boolean(String(scope.instance_token || "")) && Number.isSafeInteger(Number(scope.revision)) && Number(scope.revision) >= 1;
     if (scope.kind === "place") return Boolean(String(scope.place_kind || "")) && String(scope.place_key || "") !== "";
     if (scope.kind === "source") return Number.isSafeInteger(Number(scope.source_id)) && Number(scope.source_id) > 0;
     return false;

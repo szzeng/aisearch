@@ -1,6 +1,10 @@
 # Development status
 
-## Current: P4-FAVORITES-SEARCH-A — 收藏范围搜索（组合过滤与独立版本保护）
+## Current: P4-PHOTO-COLLECTION-A — 普通照片合集与搜索结果保存
+
+2026-10-19，按用户指令实施。新增 schema 0036、合集 CRUD/成员 API、搜索结果新建/追加保存、照片合集限定搜索与时间轴、导航/详情/viewer 入口，并更新 retention/恢复 fixture。Luna High 多轮复核发现的排名来源 freshness、追加 API、地点 scope 最终事务校验及封面结果物化问题已修复；追加 API 已在成员事务内写入幂等回执，source-token 内存表清空后可用同一请求键回放；UI 刷新后的 pending request ID 恢复及极端离线成员扫描计划待处理。合集及时间轴定向组 9/9、追加回放/合集/前端组合 105/105、共享相关组合 141/141 通过；unit/integration 全量基线 3235 项为 3179 passed、5 failed、51 skipped、0 errors；之后追加回执路由修复的 105 项受影响组合通过。失败为既有人物/地图资源版本与 capture digest 期望；这是基线加增量组合证据，不称单次最终全量 PASS。Ruff、py_compile、Node 语法与 diff-check 通过。隔离内置浏览器验证导航、空合集创建和详情；搜索选中保存受 `prompt()` 工具限制未完成。迁移故障回滚、备份/retention、token/会话攻击边界、限额/锁冲突、UI 刷新后的未知写结果恢复、封面 EXPLAIN/稀疏数据及其余浏览器流程待验，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库。详见[任务卡](tasks/P4-PHOTO-COLLECTION-A.md)与[执行报告](reports/P4-PHOTO-COLLECTION-A.md)。
+
+## Earlier status record: P4-FAVORITES-SEARCH-A — 收藏范围搜索（组合过滤与独立版本保护）
 
 2026-10-19，按用户指定实施收藏范围搜索。服务端以 `asset_favorites` 在 FTS/向量 TopK 前限定，并以独立 favorites revision 保护排名会话、FILTER/地点游标与候选时间浏览；搜索 UI 提供收藏页一次性交接、checkbox/chip 和过期结果清理。受影响组合 160/160 通过；Ruff、py_compile、Node 语法和 diff-check 通过。用户指定 Luna High 子代理首轮 P2 已修复，跟进无新增 finding。内置浏览器覆盖收藏页交接、FILTER_ONLY/文字搜索、viewer 取消收藏后的旧结果失效及预览返回；高级地点筛选折叠区受浏览器交互工具限制未能展开，收藏与人物/地点控件组合闭环仍 PENDING，故状态为 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。SQL 计划仅合成验证，未测 30 万容量/延迟；语义模型未就绪，未访问真实图库。详见[任务卡](tasks/P4-FAVORITES-SEARCH-A.md)与[执行报告](reports/P4-FAVORITES-SEARCH-A.md)。
 
