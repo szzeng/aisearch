@@ -125,3 +125,24 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
 - 实现确认 `SmartRefreshRunner` 实际 worker 数为 1、同 smart_id 由 lease 单飞，但不同 smart_id 的 executor 待处理队列无应用层上限；没有测量多合集长任务排队或 SQLite 写锁等待。因此“不会无限并发”由单 active worker 满足，“不会无界排队/长时间锁占”仍 **PENDING**，本轮不做无证据队列机制重构。
 - 进程在有效 lease 中途退出后，数据库重开会保留 lease；新请求在 600 秒租约到期前仍报告 RUNNING。已有恢复用例通过模拟到期完成 takeover，不等价于活进程崩溃/自动恢复。此流程 **PENDING**。
 - 真实 COMBINED 模型/GPU、不同 smart_id 排队成本、活 worker 崩溃恢复、完整跨进程规则替换压力，以及 V3.1 §2.4 的 DS-H 完整受影响面独立审查继续 **PENDING**。FILTER 和 TEXT 已验证路径可日常使用；因以上边界，整张智能合集卡继续 **IMPLEMENTED / ACCEPTANCE PARTIAL**。
+
+## 2026-10-19 save-static ranked 候选完整性修复
+
+### 复现与修复
+
+- 先新增隔离 API 集成回归：发布 51 个 TEXT 排名候选，确认合成环境索引未完成后调用 `save-static`。原实现返回创建成功，但普通合集读回只有 50 张，确认 `ranked_assets_page()` 的 50 上限被错误复用为服务端全量快照上限。
+- 抽出共享 SQL 核心 `_ranked_assets_query()`，公共 `ranked_assets_page()` 继续强制最多 50；新增明确的 `ranked_assets_for_static_save()`，一次读取最多 5000 个当前发布候选。两入口复用同一 build 身份、当前照片资格、智能排除、rank/capture_desc SQL 排序及稳定时间平局语义；save-static 仍经过现有 scope/smart revision CAS 和普通合集事务幂等创建。超过 helper 上限会拒绝，不会静默保存部分候选。
+- 端点集成矩阵覆盖 TEXT/COMBINED、rank/capture_desc、51/120/5000 候选；排序样本含重复可信 EXIF 时间与未知时间，另排除一张并将一张候选改为非照片路径，核对当前资格及完整分页顺序和同键重试。用 5000 的 UI assets 查询验证浏览 API 仍拒绝，未放宽 50 页限制；额外注入事务前 revision 改变，确认返回冲突且没有创建部分合集。
+
+### 验证
+
+- 复现 JUnit：`test-results/smart-save-static-repro.xml`，51 候选断言只读回 50，原始失败用于确认缺陷。
+- 新矩阵 JUnit：`test-results/smart-save-static-matrix-final.xml`，12/12 通过。
+- 受影响单元/集成组合：`test-results/smart-save-static-affected-final2.xml`，61 passed、0 failed、0 skipped，命令：
+
+  ```powershell
+  $env:TMP='D:\SZ\project\aisearch\.tmp\pytest-save-static-affected-final2'; $env:TEMP=$env:TMP
+  .\.venv\Scripts\python.exe -m pytest -q tests/unit/test_photo_smart_collections.py tests/integration/test_p4_photo_smart_collections.py tests/unit/test_photo_collections.py tests/integration/test_p4_photo_collections.py --junitxml=test-results\smart-save-static-affected-final2.xml --basetemp=.pytest-tmp\save-static-affected-final2
+  ```
+
+- Ruff、相关 `py_compile`、`git diff --check` 通过。未运行真实图库、模型/GPU、浏览器或全量容量认证；本轮通过事务入口注入覆盖 smart revision 并发变化，已有 build CAS 合同未改变。

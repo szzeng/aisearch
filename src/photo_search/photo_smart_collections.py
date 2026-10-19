@@ -525,13 +525,13 @@ def set_exclusion(catalog: Any, smart_id: int, asset_id: int, *, instance_token:
                 "exclusions_revision": int(current["exclusions_revision"])}
 
 
-def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_token: str,
-                       limit: int = 50, cursor: str | None = None,
-                       order: str = "rank", eligible_asset_ids: list[int] | None = None) -> dict[str, Any]:
+def _ranked_assets_query(catalog: Any, cache: Any, smart_id: int, *, instance_token: str,
+                         limit: int, cursor: str | None, order: str,
+                         eligible_asset_ids: list[int] | None, limit_ceiling: int) -> dict[str, Any]:
     from photo_search.api.queries import locations_by_asset, summarize_asset
     from photo_search.catalog.video import photo_asset_sql
 
-    limit = max(1, min(int(limit), MAX_PAGE))
+    limit = max(1, min(int(limit), int(limit_ceiling)))
     if order not in {"rank", "capture_desc"}:
         raise _fail("智能合集排序无效")
     with catalog.read_snapshot():
@@ -621,6 +621,27 @@ def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_toke
                 "has_more": more, "next_cursor": next_cursor,
                 "freshness": freshness,
                 "coverage": "INDEXING" if indexing else ("TRUNCATED" if state["truncated"] else "BOUNDED")}
+
+
+def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_token: str,
+                       limit: int = 50, cursor: str | None = None,
+                       order: str = "rank", eligible_asset_ids: list[int] | None = None) -> dict[str, Any]:
+    """Read one UI page; the public browsing contract is capped at 50 assets."""
+    return _ranked_assets_query(catalog, cache, smart_id, instance_token=instance_token,
+        limit=limit, cursor=cursor, order=order, eligible_asset_ids=eligible_asset_ids,
+        limit_ceiling=MAX_PAGE)
+
+
+def ranked_assets_for_static_save(catalog: Any, cache: Any, smart_id: int, *, instance_token: str,
+                                  order: str, eligible_asset_ids: list[int]) -> dict[str, Any]:
+    """Read one validated published snapshot for save-static, bounded by cache capacity."""
+    result = _ranked_assets_query(catalog, cache, smart_id, instance_token=instance_token,
+        limit=MAX_CANDIDATES, cursor=None, order=order, eligible_asset_ids=eligible_asset_ids,
+        limit_ceiling=MAX_CANDIDATES)
+    if result.get("has_more"):
+        raise _fail("智能合集候选超过可保存上限，请刷新后重试", status=409,
+                    code="PHOTO_SMART_STATIC_TOO_LARGE")
+    return result
 
 
 def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,

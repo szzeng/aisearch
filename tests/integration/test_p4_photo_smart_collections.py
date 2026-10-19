@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from p3_persons_page_fixtures import seed_library
 
-from photo_search import photo_smart_collections
+from photo_search import photo_collections, photo_smart_collections
 from photo_search.api.models import PlaceAwareSearchRequestModel
 
 
@@ -573,6 +574,174 @@ def test_stale_ranked_page_is_sql_qualified_and_requires_confirmation_to_save(ap
             f"?instance_token={smart['instance_token']}&limit=1&order=rank&cursor={body['next_cursor']}"
         )
         assert old_cursor.status_code == 409
+
+    api_env.scenario(scenario)
+
+
+@pytest.mark.parametrize("count", [51, 120, 5000])
+@pytest.mark.parametrize("order", ["rank", "capture_desc"])
+@pytest.mark.parametrize("execution_kind", ["TEXT", "COMBINED"])
+def test_ranked_save_static_copies_all_candidates_in_order(api_env, count, order, execution_kind):
+    seed_library(api_env, {"ranked-base.jpg": []})
+    ids = list(range(10_000, 10_000 + count))
+    with api_env.service.catalog.write() as connection:
+        source_id = int(connection.execute("SELECT source_id FROM source_roots LIMIT 1").fetchone()[0])
+        connection.executemany(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(?,?,8,?, 'ACTIVE')",
+            [(asset_id, f"{asset_id:064x}", asset_id) for asset_id in ids],
+        )
+        connection.executemany(
+            "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) "
+            "VALUES(?,?,?, ?,8,1,'PRESENT')",
+            [(source_id, f"{asset_id}.jpg", f"{asset_id}.jpg", asset_id) for asset_id in ids],
+        )
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) VALUES(?,?,?,?)",
+            [(asset_id, 1_700_000_000_000 + (offset // 3), "EXIF_ORIGINAL", "HIGH")
+             for offset, asset_id in enumerate(ids) if offset % 3 != 2],
+        )
+    payload = PlaceAwareSearchRequestModel.model_validate({
+        "request_id": f"smart-static-{count}-{order}-{execution_kind}", "retrieval_mode": "text",
+        "original_query": "needle", "text": "needle", "content_query": "needle",
+    })
+    rule = {"version": 1, "execution_kind": execution_kind, "request": payload.model_dump(
+        exclude={"request_id", "search_session_id", "cursor"}), "display_query": "needle",
+        "content_query": "needle", "confirmed_execution_mode": "ranked_candidates",
+        "confirmed_scope": None, "confirmed_place_scope": None, "confirmed_person_scope": None,
+        "confirmed_filter_revision": None, "confirmed_suggestion_revision": None,
+        "confirmed_favorites_revision": None, "search_binding": None}
+    with api_env.service.catalog.read_snapshot() as connection:
+        signature = photo_smart_collections.dependency_signature(connection, rule)[0]
+    smart = photo_smart_collections.create_collection(
+        api_env.service.catalog, f"Ranked {count} {order} {execution_kind}",
+        f"smart-static-{count}-{order}-{execution_kind}-create", rule,
+        request_hash=f"ranked-{count}-{order}-{execution_kind}", auth_hash="test-auth",
+        source_hash=f"ranked-{count}-{order}-{execution_kind}-source",
+    )["collection"]
+    photo_smart_collections.publish_candidates(api_env.service.catalog, smart["smart_id"], ids,
+                                                signature=signature)
+    excluded_id = ids[count // 2]
+    photo_smart_collections.set_exclusion(api_env.service.catalog, smart["smart_id"], excluded_id,
+        instance_token=smart["instance_token"], expected_revision=1, excluded=True)
+    expected_revision = 2
+    ineligible_id = ids[0]
+    with api_env.service.catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET relative_path='ineligible.mp4',path_key='ineligible.mp4' "
+            "WHERE asset_id=?", (ineligible_id,)
+        )
+    expected = list(ids)
+    if order == "capture_desc":
+        known = {asset_id: 1_700_000_000_000 + (offset // 3)
+                 for offset, asset_id in enumerate(ids) if offset % 3 != 2}
+        expected = sorted(known, key=lambda asset_id: (known[asset_id], asset_id), reverse=True)
+        expected.extend(sorted(set(ids) - set(known), reverse=True))
+    expected.remove(excluded_id)
+    expected.remove(ineligible_id)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        ui_wide_page = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets"
+            f"?instance_token={smart['instance_token']}&limit=5000&order={order}"
+        )
+        assert ui_wide_page.status_code == 422
+        response = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static",
+            headers=api_env.post_headers(csrf), json={
+                "instance_token": smart["instance_token"], "expected_revision": expected_revision,
+                "name": f"Ranked {count} saved {order} {execution_kind}",
+                "create_request_id": f"smart-static-{count}-{order}-{execution_kind}-save",
+                "order": order,
+                "confirm_indexing": True, "confirm_stale": True,
+            },
+        )
+        assert response.status_code == 200, response.text
+        collection = response.json()["collection"]
+        saved = await client.get(
+            f"/api/v1/photo-collections/{collection['collection_id']}/assets"
+            f"?instance_token={collection['instance_token']}&limit=50"
+        )
+        assert saved.status_code == 200, saved.text
+        actual = [int(item["asset_id"]) for item in saved.json()["assets"]]
+        cursor = saved.json()["next_cursor"]
+        assert len(actual) <= 50
+        while cursor:
+            saved = await client.get(
+                f"/api/v1/photo-collections/{collection['collection_id']}/assets"
+                f"?instance_token={collection['instance_token']}&limit=50&cursor={cursor}"
+            )
+            assert saved.status_code == 200, saved.text
+            assert len(saved.json()["assets"]) <= 50
+            actual.extend(int(item["asset_id"]) for item in saved.json()["assets"])
+            cursor = saved.json()["next_cursor"]
+        assert actual == expected, f"expected {len(expected)} ordered candidates, saved {len(actual)}"
+        retry = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static",
+            headers=api_env.post_headers(csrf), json={
+                "instance_token": smart["instance_token"], "expected_revision": expected_revision,
+                "name": f"Ranked {count} saved {order} {execution_kind}",
+                "create_request_id": f"smart-static-{count}-{order}-{execution_kind}-save",
+                "order": order, "confirm_indexing": True, "confirm_stale": True,
+            },
+        )
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["collection"]["collection_id"] == collection["collection_id"]
+
+    api_env.scenario(scenario)
+
+
+def test_ranked_save_static_rejects_concurrent_smart_revision_change(api_env, monkeypatch):
+    seeded = seed_library(api_env, {"ranked-concurrent.jpg": []})
+    asset_id = int(next(iter(seeded.values()))["asset_id"])
+    payload = PlaceAwareSearchRequestModel.model_validate({
+        "request_id": "smart-static-concurrent", "retrieval_mode": "text",
+        "original_query": "needle", "text": "needle", "content_query": "needle",
+    })
+    rule = {"version": 1, "execution_kind": "TEXT", "request": payload.model_dump(
+        exclude={"request_id", "search_session_id", "cursor"}), "display_query": "needle",
+        "content_query": "needle", "confirmed_execution_mode": "ranked_candidates",
+        "confirmed_scope": None, "confirmed_place_scope": None, "confirmed_person_scope": None,
+        "confirmed_filter_revision": None, "confirmed_suggestion_revision": None,
+        "confirmed_favorites_revision": None, "search_binding": None}
+    with api_env.service.catalog.read_snapshot() as connection:
+        signature = photo_smart_collections.dependency_signature(connection, rule)[0]
+    smart = photo_smart_collections.create_collection(
+        api_env.service.catalog, "Concurrent ranked", "smart-static-concurrent-create", rule,
+        request_hash="ranked-concurrent", auth_hash="test-auth", source_hash="ranked-concurrent-source",
+    )["collection"]
+    photo_smart_collections.publish_candidates(api_env.service.catalog, smart["smart_id"], [asset_id],
+                                                signature=signature)
+    original = photo_collections.create_collection
+
+    def mutate_before_transaction(*args, **kwargs):
+        with api_env.service.catalog.write() as connection:
+            connection.execute(
+                "UPDATE photo_smart_collections SET revision=revision+1 WHERE smart_id=?",
+                (smart["smart_id"],),
+            )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("photo_search.api.routes.photo_collections.create_collection", mutate_before_transaction)
+    before = int(api_env.service.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0])
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        response = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static",
+            headers=api_env.post_headers(csrf), json={
+                "instance_token": smart["instance_token"], "expected_revision": smart["revision"],
+                "name": "Concurrent save", "create_request_id": "smart-static-concurrent-save",
+                "confirm_indexing": True,
+            },
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["code"] == "PHOTO_SMART_REVISION_CONFLICT"
+        assert int(api_env.service.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0]) == before
+        assert int(api_env.service.catalog.read_one(
+            "SELECT COUNT(*) FROM photo_collection_members WHERE collection_id IN "
+            "(SELECT collection_id FROM photo_collections WHERE name='Concurrent save')"
+        )[0]) == 0
 
     api_env.scenario(scenario)
 

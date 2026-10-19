@@ -193,3 +193,11 @@
 - **隔离合成计时**：100/1000/5000 ranked 候选发布分别约 1.35/5.56/30.30 ms；所有 rank 页顺序浏览分别约 1.46/11.93/80.46 ms，capture_desc 分别约 1.26/30.92/517.35 ms（100 页全量串行浏览在 5000 样本，约 5.17 ms/页）。照片含 10% 可信 EXIF、重复时间，其余未知；每种排序都验证全量分页无漏重。是本机小型合成配对，不是容量/延迟保证。FILTER 的 0/50/95/100% 排除、50 张首续页正确性与 SQL COUNT=0 使用既有受影响 JUnit 证据；普通合集重复 COUNT 和时间轴/封面复用已有 300k EXPLAIN/计数/计时报告，本轮定向组重跑通过。
 - **并发及恢复边界**：代码将实际 runner worker 限为 1、同一 smart_id 由 lease 单飞；不同 smart_id 的 ThreadPoolExecutor 待处理队列没有应用层上限，也无排队时长/锁竞争对照，记 **PENDING / 风险**。进程在有效 lease 中途退出后，Catalog 重开会在最长 600 秒 lease 到期前继续报 RUNNING；本轮未做活进程崩溃恢复验证，记 **PENDING**。多智能合集集中刷新与长时间 SQLite 锁占用没有压测证据。
 - **浏览器及验收**：智能 stale→上次结果浏览→刷新、另存静态合集、排除→恢复及 viewer 返回沿用此前实际隔离浏览器记录；本轮补完成普通搜索→保存→详情/viewer→时间轴→移出→返回浏览器流程。真实 COMBINED 模型路径、活 worker 崩溃恢复、不同合集排队、完整跨进程规则替换和 DS-H 全受影响面审查均 **PENDING**。普通 FILTER/TEXT 和两类合集人工状态在已验证边界内可用，但整张智能合集卡保持 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标日常无条件可用。未访问真实 PhotoSearchData。
+
+## 15. 2026-10-19 save-static 完整候选修复
+
+- **PERF-BOUNDED 三行**：风险是另存 ranked 缓存被 UI 页大小静默限制，导致完整候选丢失；服务端另存最多读取当前已发布 5000 候选，UI 浏览仍固定每页最多 50；以 51/120/5000 合成候选的 rank/capture_desc、排除/资格/重试集成测试验证，不新增规模延迟结论。
+- **复现**：隔离 API 集成中发布 51 个 TEXT 候选并确认索引未完成后调用 save-static，普通合集创建成功但仅含 50 张；失败证据 `test-results/smart-save-static-repro.xml`。
+- **实施**：将公共 UI `ranked_assets_page` 与 save-static 专用 `ranked_assets_for_static_save` 分开，共用一套资格/排除/build/排序 SQL；另存读取上限由缓存容量限定为 5000，capture_desc 对整个候选集排序。原确认和事务 CAS/幂等路径不变，UI API 的 `limit=5000` 仍返回 422。
+- **验证**：新集成测试覆盖 TEXT/COMBINED × rank/capture_desc × 51/120/5000，共 12 项；逐页读回普通合集并按 oracle 比较顺序，覆盖重复/未知时间、人工排除、当前照片资格变化、50 页边界和同请求键重试。另测另存期间 smart revision 变化返回 409 且无部分合集。受影响 smart/ordinary 单元与集成组合 61/61 通过，JUnit 为 `test-results/smart-save-static-affected-final2.xml`；参数矩阵 JUnit 为 `test-results/smart-save-static-matrix-final.xml`。Ruff、py_compile、diff-check 通过。
+- **未验范围**：仅隔离合成 Catalog/API；没有真实图库、COMBINED 模型/GPU、全量容量或浏览器测试。既有整卡 PENDING 边界不因本次收口而关闭。

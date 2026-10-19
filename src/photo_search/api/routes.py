@@ -1364,8 +1364,8 @@ async def save_photo_smart_collection_static(payload: PhotoSmartSaveStaticReques
         validation_state = qualification
         eligible_ids = [int(hit["asset_id"]) for hit in qualification.get("hits", [])]
         ordered = await run_catalog_read(
-            service.catalog, photo_smart_collections.ranked_assets_page, service.media_cache(), smart_id,
-            instance_token=payload.instance_token, limit=photo_smart_collections.MAX_CANDIDATES,
+            service.catalog, photo_smart_collections.ranked_assets_for_static_save,
+            service.media_cache(), smart_id, instance_token=payload.instance_token,
             order=payload.order, eligible_asset_ids=eligible_ids,
         )
         eligible_ids = [int(asset["asset_id"]) for asset in ordered["assets"]]
