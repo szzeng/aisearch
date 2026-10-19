@@ -2785,6 +2785,8 @@
   }
 
   function showView(name) {
+    var previousView = state.currentView;
+    if (name === "sources") enterEmbeddingManagementView(previousView);
     state.currentView = name;
     if (name !== "sources") stopEmbeddingTaskPoll();
     if (name !== "detail" && state.detailInfoMount) {
@@ -2831,6 +2833,95 @@
   var embeddingTaskPollTimer = null;
   var embeddingTaskPollRequest = null;
   var embeddingChecks = Object.create(null);
+  var embeddingCheckSequence = 0;
+  var embeddingTaskSignature = null;
+  function embeddingProviderSnapshot(provider) {
+    var generation = provider.generation || {};
+    return {
+      provider_id: String(provider.provider_id || ""),
+      processor_id: String(provider.processor_id || ""),
+      space_id: String(provider.space_id || ""),
+      generation_id: String((generation.generation_id || provider.generation_id) || ""),
+      profile_id: String((generation.profile_id || provider.profile_id) || ""),
+      is_active: Boolean(provider.is_active),
+    };
+  }
+  function sameEmbeddingSnapshot(left, right) {
+    return Boolean(left && right && left.provider_id === right.provider_id &&
+      left.processor_id === right.processor_id && left.space_id === right.space_id &&
+      left.generation_id === right.generation_id && left.profile_id === right.profile_id &&
+      left.is_active === right.is_active);
+  }
+  function clearEmbeddingChecks(providerId) {
+    var keys = providerId ? [providerId] : Object.keys(embeddingChecks);
+    keys.forEach(function (key) {
+      var check = embeddingChecks[key];
+      if (check && check.state === "checking") check.obsolete = true;
+      else delete embeddingChecks[key];
+    });
+  }
+  function enterEmbeddingManagementView(previousView) {
+    if (previousView !== "sources") clearEmbeddingChecks();
+  }
+  function observeEmbeddingTask(task) {
+    var taskSignature = task
+      ? [task.task_id || "", task.provider_id || "", task.status || ""].join("|")
+      : "none";
+    if (embeddingTaskSignature !== null && embeddingTaskSignature !== taskSignature) clearEmbeddingChecks();
+    embeddingTaskSignature = taskSignature;
+  }
+  function safeEmbeddingCode(value) {
+    var code = String(value || "");
+    return /^[A-Za-z0-9_.:-]{1,80}$/.test(code) ? code : "检查详情";
+  }
+  function embeddingCoverageText(coverage) {
+    if (!coverage || typeof coverage !== "object") return "";
+    if (coverage.covered === null || coverage.covered === undefined || coverage.required === null || coverage.required === undefined) return "";
+    var covered = Number(coverage.covered);
+    var required = Number(coverage.required);
+    if (!isFinite(covered) || !isFinite(required)) return "";
+    var summary = "；图库覆盖：" + covered + "/" + required;
+    if (required > 0) {
+      var percent = coverage.percent === null || coverage.percent === undefined || coverage.percent === ""
+        ? NaN : Number(coverage.percent);
+      if (!isFinite(percent)) percent = covered * 100 / required;
+      summary += "（" + percent.toFixed(1) + "%）";
+    }
+    var labels = {missing: "缺失", offline_assets: "离线照片", pending_outbox: "待提交", pending_repair: "待修复",
+      stale_entries: "过期条目", unreadable_artifacts: "不可读产物"};
+    Object.keys(labels).forEach(function (key) {
+      var count = Number(coverage[key]);
+      if (isFinite(count) && count > 0) summary += "；" + labels[key] + " " + count;
+    });
+    return summary;
+  }
+  function embeddingCheckMessage(check) {
+    if (!check || check.state === "idle") return "点击检查以核验索引覆盖和切换资格。";
+    if (check.state === "checking" && check.obsolete) return "模型或建库状态已变化；本次结果将作废，正在等待检查请求结束…";
+    if (check.state === "checking") return "正在检查索引…（可能需要一些时间）";
+    if (check.state === "error") return "检查失败：" + String(check.message || "请求失败") + "（可重新检查）";
+    var body = check.body || {};
+    if (body.status === "not_ready" || body.reason === "NO_GENERATION") return "尚无可检查的索引，请先建库。";
+    var coverage = embeddingCoverageText(body.coverage);
+    if (check.state === "passed") return "最近一次检查通过，可以安排切换" + coverage + "。";
+    var selection = body.selection_error;
+    var code = selection && selection.code;
+    var reason = selection && selection.details && selection.details.reason;
+    code = code || reason || body.reason;
+    var message = "检查完成，暂不能切换" + coverage;
+    if (code) message += "；原因：" + safeEmbeddingCode(code);
+    if (body.coverage && Number(body.coverage.required) === 0) message += "；当前没有可核验资产，不能据此确认切换资格";
+    return message + "。可重新检查。";
+  }
+  function embeddingCheckIsCurrent(check, provider) {
+    if (!check || !sameEmbeddingSnapshot(check.snapshot, embeddingProviderSnapshot(provider))) return false;
+    if (check.state !== "passed") return true;
+    var body = check.body || {};
+    var snapshot = embeddingProviderSnapshot(provider);
+    return body.status === "ok" && body.switch_eligible === true && Boolean(body.profile_id) &&
+      body.provider_id === provider.provider_id && body.generation_id === snapshot.generation_id &&
+      body.profile_id === snapshot.profile_id;
+  }
   function stopEmbeddingTaskPoll() {
     if (embeddingTaskPollTimer !== null) window.clearTimeout(embeddingTaskPollTimer);
     embeddingTaskPollTimer = null;
@@ -2846,6 +2937,7 @@
     embeddingTaskPollRequest = request("/embedding-management/task-progress")
       .then(function (result) {
         var task = (result.body || {}).candidate_task;
+        observeEmbeddingTask(task);
         if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
           var activeEl = document.getElementById("active-search-model");
           if (activeEl) activeEl.textContent = activeEl.textContent.replace(/；候选建库：[^；]*/, "") +
@@ -2871,6 +2963,7 @@
     embeddingStatusRequest = request("/embedding-management/status")
       .then(function (result) {
         var body = result.body || {};
+        observeEmbeddingTask(body.candidate_task || null);
         var active = body.active_profile;
         var activeProvider = (body.providers || []).find(function (provider) {
           return active && provider.processor_id === active.processor_id &&
@@ -2898,24 +2991,81 @@
           detail.className = "hint";
           var generation = provider.generation;
           detail.textContent = "有效向量：" + (generation ? generation.confirmed : 0) +
-            "；图库覆盖：待检查；切换资格：" + (provider.switch_eligible ? "可切换" : "未核验");
-          card.append(title, state, detail);
+            "；图库覆盖：待检查；切换资格：未核验";
+          var checked = embeddingChecks[provider.provider_id];
+          if (checked && !embeddingCheckIsCurrent(checked, provider)) {
+            clearEmbeddingChecks(provider.provider_id);
+            checked = checked.state === "checking" ? embeddingChecks[provider.provider_id] : null;
+          }
+          if (checked && checked.state !== "idle" && checked.state !== "checking") {
+            detail.textContent = "有效向量：" + (generation ? generation.confirmed : 0) +
+              (checked.body ? embeddingCoverageText(checked.body.coverage) : "；图库覆盖：待检查");
+          }
+          var checkStatus = document.createElement("p");
+          checkStatus.className = "hint embedding-check-status";
+          checkStatus.setAttribute("role", "status");
+          checkStatus.setAttribute("aria-live", "polite");
+          checkStatus.textContent = checked && checked.state === "passed" && provider.is_active
+            ? "最近一次检查通过；当前模型正在使用" + embeddingCoverageText(checked.body && checked.body.coverage) + "。"
+            : embeddingCheckMessage(checked);
+          card.append(title, state, detail, checkStatus);
           var task = body.candidate_task;
           var activeTask = task && ["RUNNING", "PAUSE_REQUESTED", "PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0;
           if (provider.installed && provider.index_state !== "ORPHAN_TABLE") {
             var check = document.createElement("button");
             check.type = "button";
-            check.textContent = "检查";
+            check.textContent = checked && checked.state === "checking" ? "检查中…" :
+              (checked && checked.state !== "idle" ? "重新检查" : "检查");
+            check.disabled = Boolean(checked && checked.state === "checking");
             check.addEventListener("click", function () {
+              var current = embeddingChecks[provider.provider_id];
+              if (current && current.state === "checking") return;
+              var requestId = ++embeddingCheckSequence;
+              var snapshot = embeddingProviderSnapshot(provider);
+              embeddingChecks[provider.provider_id] = {id: requestId, state: "checking", snapshot: snapshot};
               check.disabled = true;
+              check.textContent = "检查中…";
+              checkStatus.textContent = embeddingCheckMessage(embeddingChecks[provider.provider_id]);
               request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/check", {method:"POST"})
-                .then(function (result) { embeddingChecks[provider.provider_id] = result.body || {}; return loadEmbeddingManagementStatus(); })
-                .catch(function (failure) { activeEl.textContent = describe(failure); })
-                .finally(function () { check.disabled = false; });
+                .then(function (result) {
+                  var currentCheck = embeddingChecks[provider.provider_id];
+                  if (!currentCheck || currentCheck.id !== requestId ||
+                      !sameEmbeddingSnapshot(currentCheck.snapshot, snapshot)) return;
+                  if (currentCheck.obsolete) {
+                    delete embeddingChecks[provider.provider_id];
+                    return loadEmbeddingManagementStatus();
+                  }
+                  var response = result.body || {};
+                  var required = response.coverage && Number(response.coverage.required);
+                  var eligible = response.status === "ok" && response.switch_eligible === true &&
+                    response.provider_id === snapshot.provider_id &&
+                    response.generation_id === snapshot.generation_id &&
+                    Boolean(snapshot.profile_id) && response.profile_id === snapshot.profile_id &&
+                    isFinite(required) && required > 0;
+                  embeddingChecks[provider.provider_id] = {
+                    id: requestId, state: eligible ? "passed" : "blocked", snapshot: snapshot, body: response,
+                  };
+                  return loadEmbeddingManagementStatus();
+                })
+                .catch(function (failure) {
+                  var currentCheck = embeddingChecks[provider.provider_id];
+                  if (!currentCheck || currentCheck.id !== requestId) return;
+                  if (currentCheck.obsolete) {
+                    delete embeddingChecks[provider.provider_id];
+                    return loadEmbeddingManagementStatus();
+                  }
+                  embeddingChecks[provider.provider_id] = {
+                    id: requestId, state: "error", snapshot: snapshot,
+                    message: "[" + safeEmbeddingCode(failure && failure.code || "NETWORK_ERROR") + "] 请求失败，请重试",
+                  };
+                  checkStatus.textContent = embeddingCheckMessage(embeddingChecks[provider.provider_id]);
+                  check.disabled = false;
+                  check.textContent = "重新检查";
+                  return loadEmbeddingManagementStatus();
+                });
             });
             card.appendChild(check);
-            var checked = embeddingChecks[provider.provider_id];
-            if (checked && checked.switch_eligible && provider.profile_id) {
+            if (checked && checked.state === "passed" && !provider.is_active) {
               var arrange = document.createElement("button");
               arrange.type = "button";
               arrange.textContent = "安排切换";

@@ -1,6 +1,10 @@
-## Current task: P4-EMBEDDING-DEFAULT-QWEN-A（2026-10-20）
+## Current task: P4-EMBEDDING-CHECK-UX-FIX（2026-10-20）
 
-新图库在没有活动 SearchProfile 时默认 EXIF v2 `qwen3-vl-embedding-2b-exif-v2`；既有活动 Profile 继续权威，普通版与 EXIF v2 共用 `models/qwen3_vl_embedding` 权重目录。普通首次建库在分类、入队及 source-built 标记前拒绝孤儿 Lance 表，并在同一阶段确认模型可用；缺权重/CUDA/encoder 时明确失败且无状态写入；补齐资源门禁包装器的单图编码接口。原定向组合 58 passed、Qwen/严格 CUDA 单测 1 passed；本次默认选择/wiring 定向测试 4 passed。Luna High 指出的孤儿/模型预检顺序问题均已修复并确认闭合。真实 Qwen/CUDA 建库与真实 PhotoSearchData 均未触及；未做大图库测试。原实现提交 `176d189`；EXIF v2 默认调整未提交。详见[任务卡](tasks/P4-EMBEDDING-DEFAULT-QWEN-A.md)和[执行报告](reports/P4-EMBEDDING-DEFAULT-QWEN-A.md)。
+搜索模型「检查」现在在卡片内即时显示 busy/通过/阻塞/失败结果；只使用显式检查响应和匹配的 provider/profile/generation 身份决定切换按钮。任务/身份变化会使结论失效，在途请求保留 busy 锁后丢弃过期响应。受影响 pytest 12 passed、1 skipped（symlink WinError 1314），Node 语法、diff-check 通过。隔离内置浏览器真实验证 `NO_GENERATION` 提示与无切换按钮；Luna High 跟进复核无遗留 finding。未加载模型、未访问真实图库、未验真实索引或重启切换。状态 **PASS（限定 UX 范围）**；已本地提交，未推送。详见[任务卡](tasks/P4-EMBEDDING-CHECK-UX-FIX.md)与[报告](reports/P4-EMBEDDING-CHECK-UX-FIX.md)。
+
+## Previous task: P4-EMBEDDING-DEFAULT-QWEN-A（2026-10-20）
+
+新图库在没有活动 SearchProfile 时默认 EXIF v2 `qwen3-vl-embedding-2b-exif-v2`；既有活动 Profile 继续权威，普通版与 EXIF v2 共用 `models/qwen3_vl_embedding` 权重目录。普通首次建库在分类、入队及 source-built 标记前拒绝孤儿 Lance 表，并在同一阶段确认模型可用；缺权重/CUDA/encoder 时明确失败且无状态写入；补齐资源门禁包装器的单图编码接口。原定向组合 58 passed、Qwen/严格 CUDA 单测 1 passed；EXIF v2 默认选择/wiring 定向测试 4 passed。Luna High 指出的孤儿/模型预检顺序问题均已修复并确认闭合。真实 Qwen/CUDA 建库与真实 PhotoSearchData 均未触及；未做大图库测试。原实现提交 `176d189`，EXIF v2 默认调整现位于 HEAD 的提交 `18631f7`。详见[任务卡](tasks/P4-EMBEDDING-DEFAULT-QWEN-A.md)和[执行报告](reports/P4-EMBEDDING-DEFAULT-QWEN-A.md)。
 
 ## Previous task: P4-EMBEDDING-MANAGEMENT-UI-FIX（2026-10-19）
 

@@ -1,6 +1,6 @@
 # P4-EMBEDDING-CHECK-UX-FIX — 搜索模型「检查」无反馈最小修复
 
-- **状态**：TODO / 待执行；创建日期：2026-10-20。
+- **状态**：PASS（限定在显式检查反馈与 UI 状态一致性）；创建日期：2026-10-20，完成日期：2026-10-20。
 - **优先级**：P1（直接阻碍用户判断 Qwen 候选索引能否切换）。
 - **建议执行模型**：GPT-6 Medium；若实际触及切换资格、安全门禁或模型身份契约，停止本卡并升级评审。
 - **仓库**：`szzeng/aisearch` / `master`；执行前对照最新 HEAD、`AGENTS.md` 和 `docs/development-status.md`。
@@ -51,8 +51,24 @@
 - 至少运行 `node --check src/photo_search/web/app.js` 与涉及到的最小测试。仅修改前端时不要求跑整套 Python 测试/Ruff。可用时进行一次**隔离**浏览器短验收，不能为了本卡读取或更改真实 `D:\SZ\project\PhotoSearchData`。
 - 不需 30 万图库压测、Qwen/CUDA 实机验收或全仓测试；不能将此前尚未完成的完整切换/索引正确性验收标为通过。
 
+## 性能设计与验收
+
+- **链路与风险**：检查本身为显式深度 I/O；本次 UI 状态读取只复用既有轻量 status 接口，不新增轮询或逐 provider 深检。
+- **做法与边界**：结果仅保存在当前页面内存，按 provider 身份与请求序号复用/失效；不增加数据库、模型加载或后台工作。
+- **验证与停止**：交互夹具确认重复点击仅一个检查请求、重绘不丢忙碌状态；不新增规模性能结论，相关行为通过后停止。
+
 ## 5. 完成标准与交付
 
 用户点「检查」后立即知道**正在检查**；结束后知道**通过/未通过/请求失败**、真实覆盖数和下一步该怎么做；只有当前检查结果支持且身份匹配时才出现「安排切换」。检查失败/结果过期时不误导用户，也不增加平时页面 SQL/GPU 负担。
 
 仅提交本修复所需代码、少量定向测试及简短报告。保护用户未提交改动；若需修改安全门禁/索引算法，先报告并将其另立任务，不借本卡扩大范围。
+
+## 6. 执行结果
+
+- `app.js` 为每个 provider 保存临时检查状态、请求序号及 provider/processor/space/generation/profile/活动状态快照；状态行使用 `role=status` 和 `aria-live`。只将明确的检查响应显示为覆盖与资格，不读取 status 接口默认 `switch_eligible=false` 作为检查结论。
+- 检查中立即更新卡片并阻止重复请求。身份、页面入口或候选任务状态变化会使旧结论失效；在途请求保留 busy 锁并标记作废，结束后丢弃响应并刷新。最近一次成功检查需与当前 generation/profile 一致、服务端资格为 true 且 `required>0` 才显示「安排切换」；活动模型不显示该操作。
+- 失败只展示安全错误码，不显示原始对象或异常路径；覆盖 `required=0` 显示真实 `0/0`，不计算百分比或放行切换。未改服务端检查/切换安全门禁、事务、模型加载或状态 API。
+- 定向 pytest **12 passed、1 skipped、0 failed**；跳过项是既有原生 symlink 用例遇到 Windows `WinError 1314`。`node --check src/photo_search/web/app.js` 与 `git diff --check` 通过。最终 JUnit：`test-results/p4-embedding-check-ux-final2.xml`。
+- 内置浏览器隔离短验收：访问 127.0.0.1 的合成图库管理页，点击合成 EXIF v2 provider「检查」，页面返回「尚无可检查的索引，请先建库」，无「安排切换」按钮；authenticated status/check API 均返回 200。夹具包含 5 个零字节占位模型文件，不加载模型、没有 generation/照片来源；未触及真实图库。完整 success/blocked/error/竞态交互由 Node DOM/fetch 行为测试覆盖。
+- Luna High 首轮发现任务状态变化时在途请求可能被重复触发；已改为 obsolete 锁并新增在途任务/generation 状态断言。跟进复核确认问题关闭、无新增 finding。未做 Qwen/CUDA、真实索引正确性、切换重启、30 万图库或全仓验收。
+- 报告：[P4-EMBEDDING-CHECK-UX-FIX](../reports/P4-EMBEDDING-CHECK-UX-FIX.md)。
