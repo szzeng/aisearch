@@ -231,7 +231,8 @@ class MediaGenerator:
 
         rows = self.catalog.read_all(_LOCATION_SQL, (target.asset_id,))
         present = [row for row in rows if str(row["availability"]) == "PRESENT"]
-        cached = None if retry_failed else self.cache.read_failure(spec=spec, sha256=target.sha256)
+        prior_failure = self.cache.read_failure(spec=spec, sha256=target.sha256)
+        cached = None if retry_failed else prior_failure
         if cached is not None and _cached_failure_applies(cached, present):
             return self._attempt(
                 spec,
@@ -296,7 +297,18 @@ class MediaGenerator:
         state = _failure_state(error)
         recorded = False
         if state in (STATE_FAILED, STATE_UNSUPPORTED):
-            recorded = self._record_failure(spec, target, error, present, state)
+            retry_origin = None
+            if retry_failed and prior_failure and prior_failure.get("code") == FORMAT_UNSUPPORTED:
+                from photo_search.media.raw_cr2 import is_cr2
+
+                if any(
+                    is_cr2(Path(str(row["root_path"])) / str(row["relative_path"]))
+                    for row in present
+                ):
+                    retry_origin = prior_failure
+            recorded = self._record_failure(
+                spec, target, error, present, state, cr2_retry_origin=retry_origin
+            )
         return self._attempt(
             spec,
             target,
@@ -394,6 +406,8 @@ class MediaGenerator:
         error: CatalogError,
         present: Sequence[Any],
         state: str,
+        *,
+        cr2_retry_origin: dict[str, Any] | None = None,
     ) -> bool:
         first = present[0] if present else None
         record: dict[str, Any] = {
@@ -413,6 +427,14 @@ class MediaGenerator:
             record["input_size"] = int(first["size"])
             record["input_mtime_ns"] = int(first["mtime_ns"])
             record["source_id"] = int(first["source_id"])
+        if cr2_retry_origin is not None:
+            record["cr2_format_retry"] = {
+                "attempted": True,
+                "attempted_at": int(self.wall_clock_ms()),
+                # Keep the original failure evidence even when the one permitted RAW
+                # decoder retry fails with the same code again.
+                "prior_failure": cr2_retry_origin,
+            }
         # A persisted record keeps only the projection that is already in the catalog (a
         # source-relative path at most). No absolute personal path, and never any image
         # content or decoded text, is written to the diagnostic record.

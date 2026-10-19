@@ -134,14 +134,17 @@ def test_continue_build_retries_only_cr2_format_unsupported_cache(tmp_path) -> N
     class Catalog:
         def read_all(self, *_):
             return [
-                {"asset_id": 1, "relative_path": "valid.cr2", "root_path": str(tmp_path)},
-                {"asset_id": 2, "relative_path": "impostor.cr2", "root_path": str(tmp_path)},
+                {"asset_id": 1, "sha256": "sha-1", "relative_path": "valid.cr2", "root_path": str(tmp_path)},
+                {"asset_id": 2, "sha256": "sha-2", "relative_path": "impostor.cr2", "root_path": str(tmp_path)},
             ]
 
-        def read_one(self, sql, params):
-            return {"sha256": f"sha-{params[0]}"}
-
     class Cache:
+        def artifact_path(self, *, spec, sha256):
+            return Path(f"{sha256}-{spec.kind}.jpg")
+
+        def is_published(self, _path):
+            return False
+
         def read_failure(self, *, spec, sha256):
             if sha256 == "sha-1" and spec.kind == "thumbnail":
                 return {"code": "FORMAT_UNSUPPORTED"}
@@ -149,6 +152,11 @@ def test_continue_build_retries_only_cr2_format_unsupported_cache(tmp_path) -> N
                 return {"code": "FORMAT_UNSUPPORTED"}
             if sha256 == "sha-1" and spec.kind == "preview":
                 return {"code": "DECODE_FAILED"}
+            if sha256 == "sha-2" and spec.kind == "thumbnail":
+                return {
+                    "code": "FORMAT_UNSUPPORTED",
+                    "cr2_format_retry": {"attempted": True},
+                }
             return None
 
     service = SimpleNamespace(catalog=Catalog(), media_cache=lambda: Cache())

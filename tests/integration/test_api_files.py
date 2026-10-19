@@ -188,6 +188,113 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     assert published == [f"{sha256}.jpg"]
 
 
+def test_continue_build_backfills_cr2_preview_and_open_does_not_decode_raw(
+    api_env, monkeypatch
+) -> None:
+    """The build page warms the 1600px cache; the detail request only reads it."""
+    from types import SimpleNamespace
+
+    from photo_search.media import pipeline as media_pipeline
+    from photo_search.refresh.pipeline import _thumbnail_stage
+
+    source = api_env.library / "historical.cr2"
+    source.write_bytes(b"II*\x00\x08\x00\x00\x00CR\x02\x00" + bytes(16))
+    api_env.scan(api_env.register_source()["source_id"])
+    asset_id = api_env.first_asset_id()
+    calls: list[int] = []
+
+    def decode(path: Path, *, long_edge: int):
+        assert path == source
+        calls.append(long_edge)
+        return SimpleNamespace(
+            image=Image.new("RGB", (240, 160), (20, 90, 150)),
+            width=240,
+            height=160,
+            orientation=1,
+            source_format="CR2",
+        )
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", decode)
+    built = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    assert built["generated"] == 1
+    assert built["cr2_previews_generated"] == 1
+    assert calls == [320, 1600]
+
+    second = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    assert second["generated"] == 0
+    assert second["cr2_previews_generated"] == 0
+    assert calls == [320, 1600]
+
+    def forbidden_decode(*_args, **_kwargs):
+        raise AssertionError("a cache-warmed first detail open must not decode the RAW")
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", forbidden_decode)
+
+    async def scenario(client: AsyncClient) -> None:
+        await api_env.authenticate(client)
+        response = await client.get(f"/api/v1/assets/{asset_id}/preview")
+        assert response.status_code == 200, response.text
+        assert _image_size(response.content) == (240, 160)
+
+    api_env.scenario(scenario)
+
+
+def test_continue_build_spends_old_cr2_format_retry_once(api_env, monkeypatch) -> None:
+    from photo_search.catalog.errors import FORMAT_UNSUPPORTED, CatalogError
+    from photo_search.media import pipeline as media_pipeline
+    from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+    from photo_search.refresh.pipeline import _thumbnail_stage
+
+    source = api_env.library / "old-failure.cr2"
+    source.write_bytes(b"II*\x00\x08\x00\x00\x00CR\x02\x00" + bytes(16))
+    api_env.scan(api_env.register_source()["source_id"])
+    asset_id = api_env.first_asset_id()
+    asset = api_env.service.catalog.read_one(
+        "SELECT sha256, byte_size FROM assets WHERE asset_id = ?", (asset_id,)
+    )
+    info = source.stat()
+    cache = api_env.service.media_cache()
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        cache.write_failure(
+            spec=spec,
+            sha256=str(asset["sha256"]),
+            record={
+                "schema": 1,
+                "kind": spec.kind,
+                "processor_id": spec.processor_id,
+                "sha256": str(asset["sha256"]),
+                "byte_size": int(asset["byte_size"]),
+                "state": "UNSUPPORTED",
+                "code": FORMAT_UNSUPPORTED,
+                "message": "synthetic historical decoder refusal",
+                "input_size": int(info.st_size),
+                "input_mtime_ns": int(info.st_mtime_ns),
+            },
+        )
+
+    calls: list[int] = []
+
+    def refused(_path: Path, *, long_edge: int):
+        calls.append(long_edge)
+        raise CatalogError(FORMAT_UNSUPPORTED, "synthetic decoder refusal")
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", refused)
+    first = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    assert calls == [320, 1600]
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        failure = cache.read_failure(spec=spec, sha256=str(asset["sha256"]))
+        assert failure["code"] == FORMAT_UNSUPPORTED
+        assert failure["cr2_format_retry"]["attempted"] is True
+        assert failure["cr2_format_retry"]["prior_failure"]["message"] == (
+            "synthetic historical decoder refusal"
+        )
+
+    second = _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True)
+    assert calls == [320, 1600]
+    assert second["cr2_retry_assets"] == 0
+    assert first["cr2_retry_assets"] == 1
+
+
 def test_cold_thumbnail_generation_does_not_block_other_async_requests(api_env, monkeypatch) -> None:
     api_env.add_photo("async-cover.jpg", size=(1200, 900), color=(20, 100, 180))
     api_env.scan(api_env.register_source()["source_id"])

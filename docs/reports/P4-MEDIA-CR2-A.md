@@ -61,3 +61,12 @@
 - **检查**：Ruff、相关文件 `py_compile`、`git diff --check` 通过；未修改 schema 0035、未删除错误证据、未强制重跑人脸、未动人工归属。没有触发 30 万图库测量。
 - **独立只读代码审查**：审查未发现本次有界查询/job lookup 改动的直接回归；提出 P2：build 幂等用例是 JPEG+合成 executor，CR2 旧格式测试只调用恢复函数，缺少“真实人物 CR2→build→真实 face result”和同一 CR2 重建零推理。此项已纳入必需验收缺口。该审查不是卡片要求的 DeepSeek DS-H。
 - **尚未通过/待审**：真实人物 CR2 的实际模型及发布验证、真实缓存/job/profile 对照、内置浏览器继续建库与打开照片不触发任务、D4 余下恢复/人工保护/OCR profile 矩阵、独立 DS-H 全受影响面审查仍 PENDING。当前仅证明 SQL 工作量边界和合成零脸幂等；不得标 `CR2 RECOVERY VERIFIED` 或整卡 PASS。
+
+## 2026-10-19 第二阶段：CR2 缩略图与预览缓存补建
+
+- **基线**：当前 HEAD `ca1e877` 包含第一阶段提交 `b44df10`；没有改回 schema 0035 的人脸/OCR 一次性恢复机制。
+- **实现**：显式 build 的 thumbnail 分页先一次性批量取本页 CR2 asset/SHA/location 身份；对本页 CR2 调用既有 `catalog-preview@1` pipeline 补缺失预览。已发布缓存仍由 `MediaGenerator` 命中并绕过 RAW 解码；按 SHA 内容寻址，当前 processor 版本失效时新路径自然补建。daily refresh 与前台媒体 GET 不运行来源批量工作。
+- **旧失败**：在页面媒体生成前快照旧 `FORMAT_UNSUPPORTED` 缓存；只对无有效 artifact、文件头验证为 CR2 的历史 thumbnail/preview failure retry。新失败不在同一页立即重试；失败重试写入 `cr2_format_retry.attempted` 和完整 prior failure，后续 build 跳过，避免无限重试且保留原证据。其他失败码不做自动恢复。
+- **隔离验证**：新增 synthetic CR2 header + monkeypatched decoder 的媒体/API 集成用例。首次 build stage 生成 thumbnail/preview 时 decoder 长边调用为 `[320, 1600]`；第二次 stage 两者新增生成均为 0、无新增 decoder 调用；随后第一次 `/preview` GET 在 decoder 被设置为“调用即失败”时仍返回 200。旧缓存 `FORMAT_UNSUPPORTED` 失败各被 retry 一次，失败 JSON 保留 prior message 与 attempted marker，第二次 build 不再 retry。受影响 `tests/unit/test_p4_cr2_media.py tests/integration/test_api_files.py`：**19 passed, 0 failed, 0 skipped**；最终 JUnit `test-results/p4-media-cr2-phase2-20261019/cr2-media-focused-final.xml`。Ruff、相关 `py_compile`、`git diff --check` 均通过。
+- **验证边界**：集成使用合成 CR2 头与假 decoder，调用 build 实际共用的 `_thumbnail_stage`，不是真实“继续建库”API整条流水，也未使用真实 CR2 RAW 数据/LibRaw 模型；因此 RAW-only 的真实 CR2 缓存补建和解码耗时仍待真实样片验证。没有触碰 `PhotoSearchData`、原始图片或人脸归属；没有启用内嵌 JPEG、全局搜索改动或 30 万性能测量。独立 DS-H 受影响面审查、真实 CR2 首开和重复建库证据仍 PENDING，整卡继续为 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**。
+- **复现**：`.venv\Scripts\python.exe -m pytest -q tests/unit/test_p4_cr2_media.py tests/integration/test_api_files.py --junitxml=test-results/p4-media-cr2-phase2-20261019/cr2-media-focused-final.xml --basetemp=.pytest-tmp/p4-media-cr2-phase2-final`。

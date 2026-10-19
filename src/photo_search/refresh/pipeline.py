@@ -1310,11 +1310,21 @@ def _thumbnail_stage(
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "assets": 0, "generated": 0}
     targets = sorted(assets)[:ENRICH_LIMIT]
+    cr2_assets: list[int] = []
+    retry_assets = {"thumbnail": [], "preview": []}
+    if retry_cr2_failures:
+        cr2_assets, rows = _cr2_assets_in_page(service, targets)
+        # Snapshot eligible historical failures before this page runs. A fresh failure
+        # created below is reported for the next explicit build, not retried immediately.
+        retry_assets = _registered_cr2_format_failures(service, targets, rows=rows)
     summary = service.generate_media("thumbnail", asset_ids=targets, cancel_check=cancel_check)
     cr2_retried = 0
     cr2_previews = 0
     if retry_cr2_failures:
-        retry_assets = _registered_cr2_format_failures(service, targets)
+        preview = service.generate_media(
+            "preview", asset_ids=cr2_assets, cancel_check=cancel_check
+        ) if cr2_assets else {"generated": 0}
+        cr2_previews = int(preview["generated"])
         thumbnail_assets = retry_assets["thumbnail"]
         preview_assets = retry_assets["preview"]
         if thumbnail_assets:
@@ -1326,13 +1336,13 @@ def _thumbnail_stage(
             )
             cr2_retried = int(retried["assets_considered"])
         if preview_assets:
-            preview = service.generate_media(
+            retried_preview = service.generate_media(
                 "preview",
                 asset_ids=preview_assets,
                 retry_failed=True,
                 cancel_check=cancel_check,
             )
-            cr2_previews = int(preview["generated"])
+            cr2_previews += int(retried_preview["generated"])
     return {
         "state": STAGE_OK,
         "assets": int(summary["assets_considered"]),
@@ -1347,39 +1357,63 @@ def _thumbnail_stage(
     }
 
 
-def _registered_cr2_format_failures(
+def _cr2_assets_in_page(
     service: Any, asset_ids: Sequence[int]
+) -> tuple[list[int], list[Any]]:
+    """Read CR2 candidate identity and locations with one bounded page query."""
+    if not asset_ids:
+        return [], []
+    placeholders = ",".join("?" for _ in asset_ids)
+    rows = service.catalog.read_all(
+        "SELECT DISTINCT l.asset_id, a.sha256, l.relative_path, s.root_path "
+        "FROM file_locations AS l "
+        "JOIN source_roots AS s ON s.source_id = l.source_id "
+        "JOIN assets AS a ON a.asset_id = l.asset_id "
+        f"WHERE l.availability = 'PRESENT' AND l.asset_id IN ({placeholders}) "
+        "AND lower(l.relative_path) LIKE '%.cr2' ORDER BY l.asset_id, l.location_id",
+        tuple(int(value) for value in asset_ids),
+    )
+    return sorted({int(row["asset_id"]) for row in rows}), rows
+
+
+def _registered_cr2_format_failures(
+    service: Any, asset_ids: Sequence[int], *, rows: Sequence[Any] | None = None
 ) -> dict[str, list[int]]:
-    """Select only header-verified CR2s with a FORMAT_UNSUPPORTED cache record."""
+    """Select CR2 FORMAT_UNSUPPORTED failures once; never replay a spent recovery."""
     from photo_search.media.contract import spec_for
     from photo_search.media.raw_cr2 import is_cr2
 
     result = {"thumbnail": [], "preview": []}
     if not asset_ids:
         return result
-    catalog = service.catalog
-    placeholders = ",".join("?" for _ in asset_ids)
-    rows = catalog.read_all(
-        "SELECT DISTINCT l.asset_id, l.relative_path, s.root_path "
-        "FROM file_locations AS l JOIN source_roots AS s ON s.source_id = l.source_id "
-        f"WHERE l.availability = 'PRESENT' AND l.asset_id IN ({placeholders}) "
-        "AND lower(l.relative_path) LIKE '%.cr2' ORDER BY l.asset_id, l.location_id",
-        tuple(int(value) for value in asset_ids),
-    )
-    verified: dict[int, str] = {}
+    if rows is None:
+        _, rows = _cr2_assets_in_page(service, asset_ids)
+    locations: dict[int, Any] = {}
     for row in rows:
         asset_id = int(row["asset_id"])
-        if asset_id not in verified and is_cr2(Path(str(row["root_path"])) / str(row["relative_path"])):
-            asset = catalog.read_one("SELECT sha256 FROM assets WHERE asset_id = ?", (asset_id,))
-            if asset is not None:
-                verified[asset_id] = str(asset["sha256"])
+        locations.setdefault(asset_id, row)
     cache = service.media_cache()
+    verified: dict[int, bool] = {}
     for kind in result:
         spec = spec_for(kind)
-        for asset_id, sha256 in verified.items():
+        for asset_id, row in locations.items():
+            sha256 = str(row["sha256"])
+            artifact = cache.artifact_path(spec=spec, sha256=sha256)
+            if cache.is_published(artifact):
+                continue
             failure = cache.read_failure(spec=spec, sha256=sha256)
-            if failure is not None and failure.get("code") == FORMAT_UNSUPPORTED:
-                result[kind].append(asset_id)
+            retry_note = failure.get("cr2_format_retry") if failure is not None else None
+            if (
+                failure is not None
+                and failure.get("code") == FORMAT_UNSUPPORTED
+                and not (isinstance(retry_note, dict) and retry_note.get("attempted"))
+            ):
+                if asset_id not in verified:
+                    verified[asset_id] = is_cr2(
+                        Path(str(row["root_path"])) / str(row["relative_path"])
+                    )
+                if verified[asset_id]:
+                    result[kind].append(asset_id)
     return result
 
 
