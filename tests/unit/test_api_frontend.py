@@ -634,6 +634,9 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "向量扫描未完整完成，本次结果可能不完整。" in script
     assert "高度匹配" in script
     assert "5000+ 张高度匹配" in script
+    assert 'if (vector.engaged && vector.strong_match_available !== false)' in script
+    assert '"约 " + number(vector.strong_match_count) + " 张高度匹配"' in script
+    assert "return isFinite(parsed) ? parsed : 0;" in script
 
 
 def test_the_search_page_keeps_the_p2_03_place_filter_semantics() -> None:

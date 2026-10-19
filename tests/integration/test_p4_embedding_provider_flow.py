@@ -40,8 +40,14 @@ from photo_search.search import profile as profile_module
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIP_MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+CLIP_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16-exif-v2.json"
+)
 QWEN_MANIFEST = (
     REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b.json"
+)
+QWEN_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-exif-v2.json"
 )
 DIMENSION = 512
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
@@ -1084,17 +1090,30 @@ def test_non_image_content_with_an_image_extension_never_blocks_the_selection(tm
         service.close()
 
 
+@pytest.mark.parametrize(
+    ("manifest", "provider_id"),
+    [
+        (CLIP_MANIFEST, "chinese-clip-vit-b-16"),
+        (CLIP_EXIF_V2_MANIFEST, "chinese-clip-vit-b-16-exif-v2"),
+        (QWEN_MANIFEST, "qwen3-vl-embedding-2b"),
+        (QWEN_EXIF_V2_MANIFEST, "qwen3-vl-embedding-2b-exif-v2"),
+    ],
+    ids=["clip", "clip-exif-v2", "qwen", "qwen-exif-v2"],
+)
 def test_the_selected_provider_serves_search_and_reports_the_strong_match_statistic(
-    tmp_path: Path,
+    tmp_path: Path, manifest: Path, provider_id: str
 ) -> None:
     import asyncio
 
     env = FlowEnv.build(tmp_path)
     service = env.service()
-    qwen_spec = semantic.semantic_spec(QWEN_MANIFEST, {})
+    qwen_spec = semantic.semantic_spec(manifest, {})
     try:
-        qwen = StubAdapter(qwen_spec, pytorch=True)
-        candidate = build_space(service, provider="qwen", adapter=qwen)
+        is_qwen = provider_id.startswith("qwen3-vl-")
+        qwen = StubAdapter(qwen_spec, pytorch=is_qwen)
+        candidate = build_space(
+            service, provider="qwen" if is_qwen else "clip", adapter=qwen, manifest=manifest
+        )
         activate_candidate(
             service.catalog, str(candidate["profile"]["profile_id"]), str(qwen_spec.envelope["space_id"])
         )
@@ -1108,7 +1127,7 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
         session_token=DEFAULT_SESSION_TOKEN,
         allowed_hosts=ALLOWED_HOSTS,
     )
-    adapter = StubAdapter(qwen_spec, pytorch=True)
+    adapter = StubAdapter(qwen_spec, pytorch=is_qwen)
     app = create_app(
         settings=settings,
         service_factory=env.service,
@@ -1137,8 +1156,8 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
 
     capabilities, body = asyncio.run(scenario())
     model = capabilities["search"]["active_embedding_model"]
-    assert model["provider_id"] == "qwen3-vl-embedding-2b"
-    assert model["adapter"] == "qwen3_vl"
+    assert model["provider_id"] == provider_id
+    assert model["adapter"] == ("qwen3_vl" if is_qwen else "chinese_clip_onnx")
     assert model["dimension"] == DIMENSION
     assert model["strong_match_available"] is True
     assert capabilities["search"]["active_image_generation_id"] == str(

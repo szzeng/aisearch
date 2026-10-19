@@ -49,8 +49,14 @@ from photo_search.workers.query_encoder import pinned_embedding_spec
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIP_MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+CLIP_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16-exif-v2.json"
+)
 QWEN_MANIFEST = (
     REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b.json"
+)
+QWEN_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-exif-v2.json"
 )
 
 #: The identity the historical Chinese-CLIP index was published under. These two strings are the
@@ -547,13 +553,23 @@ def test_a_candidate_of_another_space_never_moves_the_pointer(tmp_path: Path) ->
         library.close()
 
 
-def test_strong_match_uses_representation_specific_thresholds() -> None:
+def test_strong_match_uses_exact_manifest_provider_thresholds() -> None:
+    clip_exif_space = base.identity_of(read(CLIP_EXIF_V2_MANIFEST)).space_id
+    qwen_space = base.identity_of(read(QWEN_MANIFEST)).space_id
+    qwen_exif_space = base.identity_of(read(QWEN_EXIF_V2_MANIFEST)).space_id
+
     assert strong_match_policy(HISTORICAL_SPACE) is True
     assert strong_match_max_distance(HISTORICAL_SPACE) == 1.3
-    qwen_space = f"{QWEN_SPACE_PREFIX}abc"
+    assert strong_match_policy(clip_exif_space) is True
+    assert strong_match_max_distance(clip_exif_space) == 1.3
     assert strong_match_max_distance(qwen_space) == 1.5
     assert strong_match_policy(qwen_space) is True
+    assert strong_match_policy(qwen_exif_space) is True
+    assert strong_match_max_distance(qwen_exif_space) == 1.5
     assert strong_match_max_distance("unknown-space:abc") is None
+    assert strong_match_max_distance("qwen3-vl-embedding-2bx:abc") is None
+    assert strong_match_max_distance("chinese-clip-vit-b-16-exif-v20:abc") is None
+    assert strong_match_max_distance("") is None
     assert strong_match_policy(None) is False
     payload = {
         "channels": {
@@ -599,6 +615,77 @@ def test_strong_match_uses_representation_specific_thresholds() -> None:
     assert clip_summary["authoritative"] == qwen_summary["authoritative"]
     assert tuple(entry.asset_id for entry in _entries_of(payload)) == (1, 2, 3)
     assert [r["asset_id"] for r in payload["channels"]["vector"]] == [1, 2, 3]
+
+    clip_exif_summary = _channel_summary(
+        payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=clip_exif_space),
+        top_k=5000,
+    )
+    qwen_exif_summary = _channel_summary(
+        payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=qwen_exif_space),
+        top_k=5000,
+    )
+    assert clip_exif_summary["vector"]["strong_match_available"] is True
+    assert clip_exif_summary["vector"]["strong_match_count"] == 0
+    assert qwen_exif_summary["vector"]["strong_match_available"] is True
+    assert qwen_exif_summary["vector"]["strong_match_count"] == 2
+    assert tuple(entry.asset_id for entry in _entries_of(payload)) == (1, 2, 3)
+
+    clip_boundary_payload = {**payload, "channels": {**payload["channels"], "vector": [
+        {"asset_id": 10, "distance": 1.3},
+        {"asset_id": 11, "distance": 1.300001},
+    ]}}
+    clip_boundary = _channel_summary(
+        clip_boundary_payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=clip_exif_space),
+        top_k=5000,
+    )["vector"]
+    assert clip_boundary["strong_match_count"] == 1
+
+    no_vector_hits_payload = {
+        **payload,
+        "channels": {**payload["channels"], "vector": []},
+    }
+    empty_clip_summary = _channel_summary(
+        no_vector_hits_payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=clip_exif_space),
+        top_k=5000,
+    )["vector"]
+    assert empty_clip_summary["engaged"] is True
+    assert empty_clip_summary["strong_match_available"] is True
+    assert empty_clip_summary["strong_match_count"] == 0
+
+    qwen_boundary_payload = {**payload, "channels": {**payload["channels"], "vector": [
+        {"asset_id": 20, "distance": 1.5},
+        {"asset_id": 21, "distance": 1.500001},
+    ]}}
+    qwen_boundary = _channel_summary(
+        qwen_boundary_payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=qwen_exif_space),
+        top_k=5000,
+    )["vector"]
+    assert qwen_boundary["strong_match_count"] == 1
+
+    full_top_k_payload = {
+        **payload,
+        "channels": {**payload["channels"], "vector": [
+            {"asset_id": asset_id, "distance": 1.5} for asset_id in range(5000)
+        ]},
+    }
+    full_top_k = _channel_summary(
+        full_top_k_payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=qwen_exif_space),
+        top_k=5000,
+    )["vector"]
+    assert full_top_k["strong_match_count"] == 5000
+    assert full_top_k["strong_match_more_possible"] is True
 
 
 @pytest.fixture(params=[CLIP_MANIFEST, QWEN_MANIFEST], ids=["clip", "qwen"])

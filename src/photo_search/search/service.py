@@ -116,15 +116,23 @@ CLIP_STRONG_MATCH_MAX_DISTANCE = 1.3
 QWEN_STRONG_MATCH_MAX_DISTANCE = 1.5
 CLIP_SPACE_PREFIX = "chinese-clip-vit-b-16:"
 QWEN_SPACE_PREFIX = "qwen3-vl-embedding-2b:"
+CLIP_EXIF_V2_SPACE_PREFIX = "chinese-clip-vit-b-16-exif-v2:"
+QWEN_EXIF_V2_SPACE_PREFIX = "qwen3-vl-embedding-2b-exif-v2:"
+
+_STRONG_MATCH_THRESHOLDS = {
+    CLIP_SPACE_PREFIX: CLIP_STRONG_MATCH_MAX_DISTANCE,
+    CLIP_EXIF_V2_SPACE_PREFIX: CLIP_STRONG_MATCH_MAX_DISTANCE,
+    QWEN_SPACE_PREFIX: QWEN_STRONG_MATCH_MAX_DISTANCE,
+    QWEN_EXIF_V2_SPACE_PREFIX: QWEN_STRONG_MATCH_MAX_DISTANCE,
+}
 
 
 def strong_match_max_distance(space_id: str | None) -> float | None:
     """Return a display-statistic threshold; retrieval never consumes this value."""
     text = str(space_id or "")
-    if text.startswith(CLIP_SPACE_PREFIX):
-        return CLIP_STRONG_MATCH_MAX_DISTANCE
-    if text.startswith(QWEN_SPACE_PREFIX):
-        return QWEN_STRONG_MATCH_MAX_DISTANCE
+    for prefix, threshold in _STRONG_MATCH_THRESHOLDS.items():
+        if text.startswith(prefix):
+            return threshold
     return None
 
 
