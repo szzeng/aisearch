@@ -130,3 +130,82 @@ def test_favorite_batch_rolls_back_all_rows_when_revision_update_fails(api_env) 
         set_favorites_batch(catalog, [1, 2], favorite=True)
     assert catalog.read_one("SELECT COUNT(*) AS n FROM asset_favorites")["n"] == 0
     assert catalog.read_one("SELECT value FROM metadata WHERE key='favorites_revision'")["value"] == "0"
+
+
+def test_capture_desc_pages_merge_trusted_sources_unknown_tail_and_stale_filter_cursor(api_env) -> None:
+    source_path = api_env.tmp_path / "capture-pages"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("favorites-capture-pages", source_path)["source_id"])
+    first_id = 10_000
+    count = 173
+    trusted: dict[int, int] = {}
+    unknown: set[int] = set()
+    with api_env.service.catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(?,?,?,?, 'ACTIVE')",
+            [(asset_id, f"{asset_id:064x}", 8, asset_id) for asset_id in range(first_id, first_id + count)],
+        )
+        connection.executemany(
+            "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,last_seen_scan_id,availability) "
+            "VALUES(?,?,?,?,8,1,NULL,'PRESENT')",
+            [(source_id, f"{asset_id}.jpg", f"{asset_id}.jpg", asset_id)
+             for asset_id in range(first_id, first_id + count)],
+        )
+        metadata = []
+        for offset in range(count):
+            asset_id = first_id + offset
+            if offset % 7 == 0:
+                unknown.add(asset_id)  # No metadata row.
+            elif offset % 7 == 1:
+                unknown.add(asset_id)
+                metadata.append((asset_id, 20260101000000 + (offset % 3), "EXIF_ROOT", "LOW"))
+            elif offset % 7 == 2:
+                unknown.add(asset_id)
+                metadata.append((asset_id, None, "FILE_MTIME", "LOW"))
+            else:
+                sort_key = 20200101000000 + (offset // 4)  # Deliberate ties exercise asset_id ordering.
+                source = "EXIF_DIGITIZED" if offset % 2 else "EXIF_ORIGINAL"
+                trusted[asset_id] = sort_key
+                metadata.append((asset_id, sort_key, source, "MEDIUM"))
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) VALUES(?,?,?,?)",
+            metadata,
+        )
+    from photo_search.favorites import set_favorites_batch
+
+    set_favorites_batch(api_env.service.catalog, list(range(first_id, first_id + count)), favorite=True)
+    expected = sorted(trusted, key=lambda asset_id: (trusted[asset_id], asset_id), reverse=True)
+    expected.extend(sorted(unknown, reverse=True))
+
+    async def scenario(client: AsyncClient):
+        await api_env.authenticate(client)
+        pages = []
+        cursor = None
+        first_cursor = None
+        while True:
+            params = {"order": "capture_desc", "limit": 19}
+            if cursor is not None:
+                params["cursor"] = cursor
+            response = await client.get("/api/v1/favorites", params=params)
+            assert response.status_code == 200
+            payload = response.json()
+            pages.extend(item["asset_id"] for item in payload["assets"])
+            cursor = payload["next_cursor"]
+            if first_cursor is None:
+                first_cursor = cursor
+            if cursor is None:
+                break
+        from photo_search.places.revision import bump_filter_revision
+
+        with api_env.service.catalog.write() as connection:
+            bump_filter_revision(connection, cause="FAVORITES_CAPTURE_CURSOR_TEST", now_ms=1)
+        stale = await client.get(
+            "/api/v1/favorites",
+            params={"order": "capture_desc", "limit": 19, "cursor": first_cursor},
+        )
+        return pages, stale.status_code
+
+    actual, stale_status = api_env.scenario(scenario)
+    assert actual == expected
+    assert stale_status == 409
+    assert len(actual) == len(set(actual)) == count

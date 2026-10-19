@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import heapq
 import sqlite3
 from typing import Any
 
@@ -61,6 +62,110 @@ def _decode_cursor(cursor: str | None) -> tuple[str, tuple[int, ...], int, int] 
     return order, position, revision, catalog_revision
 
 
+_TRUSTED_CAPTURE_SQL = "(m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL)"
+
+
+def _capture_known_query(
+    source: str,
+    *,
+    photo_sql: str,
+    photo_params: list[int],
+    limit: int,
+    after: tuple[int, int] | None,
+) -> tuple[str, tuple[Any, ...]]:
+    conditions = [
+        "m.time_source=?",
+        "m.taken_at_sort IS NOT NULL",
+        "a.state='ACTIVE'",
+        photo_sql,
+    ]
+    params: list[Any] = [source, *photo_params]
+    if after is not None:
+        conditions.append("(m.taken_at_sort,m.asset_id) < (?,?)")
+        params.extend(after)
+    sql = (
+        "SELECT f.asset_id,f.added_at_ms,a.sha256,a.byte_size,a.created_at,"
+        "m.taken_at_sort AS capture_sort "
+        "FROM asset_metadata AS m INDEXED BY idx_asset_metadata_capture "
+        "CROSS JOIN asset_favorites AS f ON f.asset_id=m.asset_id "
+        "CROSS JOIN assets AS a ON a.asset_id=f.asset_id WHERE "
+        + " AND ".join(conditions)
+        + " ORDER BY m.taken_at_sort DESC,m.asset_id DESC LIMIT ?"
+    )
+    return sql, (*params, limit)
+
+
+def _capture_unknown_query(
+    *,
+    photo_sql: str,
+    photo_params: list[int],
+    limit: int,
+    after_asset_id: int | None,
+) -> tuple[str, tuple[Any, ...]]:
+    conditions = [
+        "a.state='ACTIVE'",
+        f"NOT {_TRUSTED_CAPTURE_SQL}",
+        photo_sql,
+    ]
+    params: list[Any] = list(photo_params)
+    if after_asset_id is not None:
+        conditions.append("f.asset_id < ?")
+        params.append(after_asset_id)
+    sql = (
+        "SELECT f.asset_id,f.added_at_ms,a.sha256,a.byte_size,a.created_at,"
+        "NULL AS capture_sort FROM asset_favorites AS f NOT INDEXED "
+        "CROSS JOIN assets AS a ON a.asset_id=f.asset_id "
+        "LEFT JOIN asset_metadata AS m ON m.asset_id=f.asset_id WHERE "
+        + " AND ".join(conditions)
+        + " ORDER BY f.asset_id DESC LIMIT ?"
+    )
+    return sql, (*params, limit)
+
+
+def _capture_favorite_rows(
+    connection: sqlite3.Connection,
+    *,
+    page_limit: int,
+    photo_sql: str,
+    photo_params: list[int],
+    position: tuple[int, ...] | None,
+) -> list[sqlite3.Row]:
+    """Read an ordered page from indexed EXIF streams, then the unknown-time tail."""
+    known_cursor = position is None or position[0] == 1
+    known_rows: list[sqlite3.Row] = []
+    if known_cursor:
+        after = None if position is None else (position[1], position[2])
+        streams = []
+        for source in ("EXIF_ORIGINAL", "EXIF_DIGITIZED"):
+            sql, params = _capture_known_query(
+                source,
+                photo_sql=photo_sql,
+                photo_params=photo_params,
+                limit=page_limit + 1,
+                after=after,
+            )
+            streams.append(connection.execute(sql, params).fetchall())
+        known_rows = list(
+            heapq.merge(
+                *streams,
+                key=lambda row: (-int(row["capture_sort"]), -int(row["asset_id"])),
+            )
+        )[: page_limit + 1]
+        if len(known_rows) > page_limit:
+            return known_rows
+
+    unknown_after = None if position is None or known_cursor else position[2]
+    unknown_limit = page_limit + 1 - len(known_rows)
+    sql, params = _capture_unknown_query(
+        photo_sql=photo_sql,
+        photo_params=photo_params,
+        limit=unknown_limit,
+        after_asset_id=unknown_after,
+    )
+    unknown_rows = connection.execute(sql, params).fetchall()
+    return known_rows + unknown_rows
+
+
 def list_favorites(catalog: Any, cache: Any, *, limit: int = DEFAULT_LIMIT, cursor: str | None = None,
                    order: str = "recent") -> dict[str, Any]:
     if order not in ("recent", "capture_desc"):
@@ -83,28 +188,22 @@ def list_favorites(catalog: Any, cache: Any, *, limit: int = DEFAULT_LIMIT, curs
                 conditions.append("(f.added_at_ms, f.asset_id) < (?, ?)")
                 params.extend(position[1])
             order_sql = "f.added_at_ms DESC, f.asset_id DESC"
-            joins = ""
             selection = "f.asset_id, f.added_at_ms, a.sha256, a.byte_size, a.created_at"
+            rows = connection.execute(
+                f"SELECT {selection} FROM asset_favorites AS f INDEXED BY idx_asset_favorites_recent "
+                "JOIN assets AS a ON a.asset_id=f.asset_id WHERE " + " AND ".join(conditions) +
+                f" ORDER BY {order_sql} LIMIT ?",
+                (*params, page_limit + 1),
+            ).fetchall()
         else:
-            joins = " LEFT JOIN asset_metadata AS m ON m.asset_id=f.asset_id"
-            trusted_capture = "(m.time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND m.taken_at_sort IS NOT NULL)"
-            selection = "f.asset_id, f.added_at_ms, a.sha256, a.byte_size, a.created_at, " + \
-                f"CASE WHEN {trusted_capture} THEN m.taken_at_sort END AS capture_sort"
-            if position is not None:
-                known, sort_key, asset_id = position[1]
-                if known:
-                    conditions.append(f"(({trusted_capture} AND (m.taken_at_sort < ? OR (m.taken_at_sort = ? AND f.asset_id < ?))) OR NOT {trusted_capture})")
-                    params.extend((sort_key, sort_key, asset_id))
-                else:
-                    conditions.append(f"NOT {trusted_capture} AND f.asset_id < ?")
-                    params.append(asset_id)
-            order_sql = f"(NOT {trusted_capture}), CASE WHEN {trusted_capture} THEN m.taken_at_sort END DESC, f.asset_id DESC"
-        rows = connection.execute(
-            f"SELECT {selection} FROM asset_favorites AS f INDEXED BY idx_asset_favorites_recent "
-            "JOIN assets AS a ON a.asset_id=f.asset_id" + joins + " WHERE " + " AND ".join(conditions) +
-            f" ORDER BY {order_sql} LIMIT ?",
-            (*params, page_limit + 1),
-        ).fetchall()
+            capture_position = None if position is None else position[1]
+            rows = _capture_favorite_rows(
+                connection,
+                page_limit=page_limit,
+                photo_sql=photo_sql,
+                photo_params=photo_params,
+                position=capture_position,
+            )
         has_more = len(rows) > page_limit
         page = rows[:page_limit]
         ids = [int(row["asset_id"]) for row in page]

@@ -52,3 +52,8 @@
 6. 按 `docs/testing.md` 选择受影响 unit/integration/API 和故障验证，隔离合成图库浏览器短测核心流程；无法做的项目记 `PENDING`。运行必要 Node 检查、Ruff/py_compile、diff-check。**不必运行真实图库、GPU、模型和 30 万图片完整压测，也不得以小样本宣称 30 万 PASS。**
 
 **交付**：源码、必要定向测试、`docs/reports/P4-FAVORITES-UX-B.md` 和简短状态更新；只在 B 实际验收后标为完成，不借此关闭其它任务的待验项。到此停止，不自动派生后续卡。
+
+## 2026-10-19 专项性能复核补记
+
+- 已确认原 `capture_desc` 在收藏候选上排序会形成 TEMP B-TREE；强制与不强制收藏最近索引都未消除它。改为从现有可信 EXIF 时间索引读取两条有界 keyset 流并归并，未知时间单独按 asset_id DESC 补尾；无新 migration/索引，recent 与写/搜索路径不变。
+- 性能证据、合成数据口径、候选部分索引成本、分页正确性、JUnit 命令及未验证范围见[专项报告](../reports/P4-FAVORITES-UX-B.md#2026-10-19-专项复核收藏拍摄时间分页性能)。F=2k/10k/50k、F/N=100%/10% 六种条件的第一页/第二页/深页与 oracle 一致；受影响 favorites integration 8/8 通过。未访问真实图库，未做 30 万容量承诺。
