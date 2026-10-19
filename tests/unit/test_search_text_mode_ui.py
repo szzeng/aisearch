@@ -106,6 +106,8 @@ function assertLiteral(request){
     "ordinary semantic results retain the overall ranking");
   assert.match(ordinary.get("result-grid").textContent,/匹配位置：图片文字/);
   assert.doesNotMatch(ordinary.get("result-grid").textContent,/语义就绪|通道名次|向量通道名次/);
+  assert.doesNotMatch(ordinary.get("result-grid").textContent,/查看详情/,
+    "result cards no longer render a separate detail button");
 
   const h=harness();await flush();
   assert.equal(h.ui.state.capabilities.search.query_encoder_available,false);
@@ -161,7 +163,7 @@ function assertLiteral(request){
   assert.equal(returned.searchCalls().length,0,"validated return does not rerun the query");
   assert.equal(returned.viewers.length,1,"returning from full details reopens the previous preview");
   assert.equal(returned.viewers[0].assetId,202);assert.equal(returned.viewers[0].dialog.open,true);
-  assert.equal(returned.viewers[0].returnFocus.className,"tile-link","restored viewer uses a real current result trigger");
+  assert.equal(returned.viewers[0].returnFocus.className,"thumb-frame","restored viewer uses the photo preview trigger");
   assert.match(returned.viewers[0].position,/第 2 张/);
   returned.setAnswer(body=>ok(page(body,203,null)));returned.viewers[0].nextPhoto();await flush();
   assertLiteral(returned.searchCalls()[0].body);assert.equal(returned.searchCalls()[0].body.cursor,"text-last");

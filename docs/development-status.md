@@ -2,7 +2,7 @@
 
 ## Search result card information simplification: P4-SEARCH-RESULT-INFO-SIMPLIFY-A (2026-10-19)
 
-结果卡片移除“语义就绪”和通道名次展示，保留总体排名及其他结果内容；不改搜索数据映射或请求逻辑。定向单测 99/99、收藏 UI 单测 4/4，Node 语法检查通过；按卡未执行浏览器/真实图库/规模性能。状态 PASS（限定范围），报告：[P4-SEARCH-RESULT-INFO-SIMPLIFY-A](reports/P4-SEARCH-RESULT-INFO-SIMPLIFY-A.md)。
+结果卡片移除“语义就绪”、通道名次和独立详情按钮，保留总体排名、缩略图预览与预览详情入口；不改搜索数据映射或请求逻辑。原定向单测 99/99、收藏 UI 单测 4/4；续改后搜索/前端单测 99/99，Node 语法检查通过；按卡未执行浏览器/真实图库/规模性能。状态 PASS（限定范围），报告：[P4-SEARCH-RESULT-INFO-SIMPLIFY-A](reports/P4-SEARCH-RESULT-INFO-SIMPLIFY-A.md)。
 
 ## Current joint audit: P4-PHOTO-COLLECTION-A + P4-PHOTO-SMART-COLLECTION-A (2026-10-19)
 

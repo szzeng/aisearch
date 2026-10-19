@@ -551,7 +551,7 @@ def test_search_page_validates_authority_before_restoring_results() -> None:
     assert "renderPage(body, false, {" in restore
     assert "window.scrollTo(0, Number(saved.scrollY) || 0);" in restore
     assert 'window.sessionStorage.setItem(SEARCH_RETURN_SOURCE_KEY, "search");' in script
-    assert 'openSearchPreview(hit.asset_id, open);' in script
+    assert 'frame.addEventListener("click", function () { openSearchPreview(hit.asset_id, frame); });' in script
     submit = script.split("function submitSearch()", 1)[1].split("function continueSearch()", 1)[0]
     reset = script.split("function resetFilters()", 1)[1].split("function clearCaptureRange()", 1)[0]
     assert "clearSearchSnapshot();" in submit and "clearSearchSnapshot();" in reset

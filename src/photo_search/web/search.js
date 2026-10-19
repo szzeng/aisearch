@@ -2207,10 +2207,6 @@
         }).join("、"))
       );
     }
-    var open = element("button", "tile-link", "查看详情");
-    open.type = "button";
-    open.addEventListener("click", function () { openSearchPreview(hit.asset_id, open); });
-    caption.appendChild(open);
     tile.appendChild(caption);
     return tile;
   }
@@ -2289,9 +2285,9 @@
 
   function findSearchPreviewTrigger(assetId) {
     var hit = state.search.hits.find(function (item) { return String(item.asset_id) === String(assetId); });
-    var frame = hit && els.resultGrid.querySelector('[data-asset-id="' + String(hit.asset_id).replace(/[^0-9]/g, "") + '"]');
-    var tile = frame && frame.parentNode;
-    return tile && (tile.querySelector(".tile-link") || frame);
+    var result = hit && els.resultGrid.querySelector('[data-asset-id="' + String(hit.asset_id).replace(/[^0-9]/g, "") + '"]');
+    if (!result) return null;
+    return result.className === "thumb-frame" ? result : result.querySelector(".thumb-frame");
   }
 
   function openSearchPreview(assetId, returnFocus) {
