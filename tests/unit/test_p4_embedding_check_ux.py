@@ -6,7 +6,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -29,16 +28,17 @@ const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());ret
 const identity=()=>({provider_id:"qwen",display_name:"Qwen",installed:true,index_state:"CHECK_REQUIRED",processor_id:"proc1",space_id:"space1",
  generation_id:"gen1",profile_id:"profile1",is_active:false,generation:{generation_id:"gen1",profile_id:"profile1",confirmed:4}});
 let status={active_profile:null,providers:[identity()],candidate_task:null,offline_transition:{}};
-let checks=0,nextCheck=null;
+let checks=0,switches=[],confirms=[],confirmResult=false,nextCheck=null;
 const response=body=>Promise.resolve({status:200,ok:true,headers:{get:()=>"application/json"},json:()=>Promise.resolve(body)});
 const fetch=(url,options)=>{
   if(url.endsWith("/embedding-management/status"))return response(status);
   if(url.endsWith("/qwen/check")){checks++;const result=nextCheck;nextCheck=null;return result.promise;}
+  if(url.endsWith("/qwen/switch")){switches.push(JSON.parse(options.body));return response({status:"scheduled"});}
   throw new Error("unexpected request "+url+" "+options.method);
 };
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const document={readyState:"loading",cookie:"",hidden:false,addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)};
-const window={clearTimeout(){},setTimeout(){return 1;},crypto:{randomUUID:()=>"request"},confirm:()=>false};
+const window={clearTimeout(){},setTimeout(){return 1;},crypto:{randomUUID:()=>"request"},confirm:message=>{confirms.push(message);return confirmResult;}};
 const context={document,window,fetch,Promise,Date,Math,Number,String,Boolean,Object,Array,JSON,RegExp,isFinite,encodeURIComponent,console};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8").replace(
   '  if (document.readyState === "loading")',
@@ -49,8 +49,8 @@ const card=()=>get("embedding-provider-list").children[0];
 const buttons=()=>card().findAll(node=>node.tag==="button");
 const statusText=()=>card().findAll(node=>node.className.split(/\s+/).includes("embedding-check-status"))[0].textContent;
 const checkButton=()=>buttons().find(button=>button.textContent==="检查"||button.textContent==="重新检查"||button.textContent==="检查中…");
-const checkBody=(eligible,covered=4,required=4)=>({status:"ok",provider_id:"qwen",generation_id:"gen1",profile_id:"profile1",switch_eligible:eligible,
- coverage:{covered,required,percent:required?covered*100/required:null,missing:required-covered},
+const checkBody=(eligible,covered=4,required=4,offline=0)=>({status:"ok",provider_id:"qwen",generation_id:"gen1",profile_id:"profile1",switch_eligible:eligible,
+ coverage:{covered,required,percent:required?covered*100/required:null,missing:required-covered,offline_assets:offline},
  selection_error:eligible?null:{code:"SELECTION_NOT_READY",details:{reason:"PENDING_REPAIR"}}});
 (async()=>{
   await ui.load();
@@ -61,9 +61,16 @@ const checkBody=(eligible,covered=4,required=4)=>({status:"ok",provider_id:"qwen
   assert.equal(checks,1);assert.equal(checkButton().disabled,true);assert.match(statusText(),/正在检查索引/);
   checkButton().fire("click");assert.equal(checks,1,"repeat click while pending sends no duplicate request");
   await ui.load();assert.equal(checkButton().disabled,true,"rerender preserves busy state");
-  pending.resolve({status:200,ok:true,headers:{get:()=>"application/json"},json:()=>Promise.resolve(checkBody(true))});
+  pending.resolve({status:200,ok:true,headers:{get:()=>"application/json"},json:()=>Promise.resolve(checkBody(true,4,4,2))});
   await flush();
-  assert.match(statusText(),/检查通过/);assert.match(statusText(),/4\/4/);assert.equal(buttons().filter(b=>b.textContent==="安排切换").length,1);
+  assert.match(statusText(),/检查通过/);assert.match(statusText(),/4\/4/);assert.match(statusText(),/2 条资产当前没有可用位置/);
+  assert.match(statusText(),/不计入上述在线覆盖率/);assert.match(statusText(),/恢复原图后需增量建库/);
+  assert.match(card().children[2].textContent,/在线可索引图片覆盖：4\/4/);
+  assert.equal(buttons().filter(b=>b.textContent==="安排切换").length,1);
+  buttons().find(button=>button.textContent==="安排切换").fire("click");
+  assert.match(confirms.at(-1),/2 条资产当前没有可用位置/);assert.equal(switches.length,0,"declining warning does not schedule a switch");
+  confirmResult=true;buttons().find(button=>button.textContent==="安排切换").fire("click");await flush();
+  assert.equal(switches.length,1);assert.equal(switches[0].profile_id,"profile1");assert.equal(switches[0].confirmed,true);
 
   nextCheck={promise:response(checkBody(false,3,4))};checkButton().fire("click");await flush();
   assert.match(statusText(),/暂不能切换/);assert.match(statusText(),/3\/4/);assert.match(statusText(),/SELECTION_NOT_READY/);

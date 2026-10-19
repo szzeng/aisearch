@@ -16,8 +16,10 @@ So this module computes the facts from the catalog itself:
   and 36 TIFFs; only 3182 files are indexable images);
 * an outbox event that is not ``CONFIRMED``, or an entry in ``PENDING_REPAIR``/``STALE``, means the
   generation is still moving and is refused;
-* an ``ACTIVE`` asset whose every location is ``MISSING`` is an explicit refusal too: the
-  selector never guesses that an offline file "probably still matches";
+* an ``ACTIVE`` asset with no ``PRESENT`` location is reported as offline history, but it is not
+  part of the current online image coverage denominator and does not alone block selection.
+  A location still marked ``PRESENT`` that cannot be read is reported as ``UNREADABLE`` and does
+  block selection; only catalog-confirmed absence is eligible for the offline-history rule;
 * every artifact row the generation references must be ``PUBLISHED`` and its stored content must
   still be readable (checked outside the transaction; the rows are re-read inside it).
 
@@ -123,7 +125,7 @@ class CoverageReport:
     generation_state: str | None
     #: The exact assets this index must cover (current, readable, indexable images).
     required_ids: tuple[int, ...]
-    #: Digest over ``(asset_id, sha256)`` of every readable current asset, indexable or not.
+    #: Digest over (asset_id, sha256) of every ACTIVE asset with a PRESENT catalog location.
     catalog_digest: str
     required: int
     covered: int
@@ -143,9 +145,15 @@ class CoverageReport:
 
     @property
     def complete(self) -> bool:
+        """Whether online, indexable coverage and its catalog-side readiness checks are complete.
+
+        ``offline_assets`` is an independent diagnostic count: those assets are not in
+        ``required_ids``. Their count must remain stable across selection preparation and commit,
+        but it does not make otherwise complete online coverage incomplete.
+        """
         return (
             self.missing == 0
-            and self.offline_assets == 0
+            and int(self.out_of_scope.get("UNREADABLE", 0)) == 0
             and self.pending_outbox == 0
             and self.pending_repair == 0
             and self.stale_entries == 0
@@ -200,7 +208,7 @@ def _value(row: Any, name: str, index: int) -> Any:
 
 @dataclass(frozen=True)
 class LibraryRequirements:
-    """What the searchable library currently is: exact ids plus a digest of their revisions."""
+    """Catalog-current assets with PRESENT locations and a digest of their revisions."""
 
     asset_ids: tuple[int, ...]
     sha256_by_asset: dict[int, str]
@@ -212,7 +220,10 @@ class LibraryRequirements:
 
 
 def catalog_requirements(target: Any) -> LibraryRequirements:
-    """Every current, readable asset with its current content revision (rows only, no I/O)."""
+    """Every current asset with a PRESENT location and its revision (rows only, no I/O).
+
+    File readability and media eligibility are classified separately by indexable_assets.
+    """
     connection = _connection_of(target)
     rows = connection.execute(_SEARCHABLE_SQL).fetchall()
     pairs: list[tuple[int, str]] = []
@@ -447,13 +458,14 @@ def require_selection_ready(report: CoverageReport, *, lance: Mapping[str, Any] 
             "the candidate generation holds no confirmed image",
             details={"reason": "EMPTY_GENERATION", "generation_id": report.generation_id},
         )
-    if report.offline_assets:
+    unreadable_present = int(report.out_of_scope.get("UNREADABLE", 0))
+    if unreadable_present:
         raise CatalogError(
             SELECTION_COVERAGE_INCOMPLETE,
-            "some current assets have no readable file location",
+            "some locations marked PRESENT could not be read during selection checking",
             details={
-                "reason": "OFFLINE_ASSETS_PRESENT",
-                "offline_assets": int(report.offline_assets),
+                "reason": "PRESENT_ASSET_UNREADABLE",
+                "unreadable_present_assets": unreadable_present,
                 "generation_id": report.generation_id,
             },
         )

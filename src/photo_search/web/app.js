@@ -2880,20 +2880,25 @@
     var covered = Number(coverage.covered);
     var required = Number(coverage.required);
     if (!isFinite(covered) || !isFinite(required)) return "";
-    var summary = "；图库覆盖：" + covered + "/" + required;
+    var summary = "；在线可索引图片覆盖：" + covered + "/" + required;
     if (required > 0) {
       var percent = coverage.percent === null || coverage.percent === undefined || coverage.percent === ""
         ? NaN : Number(coverage.percent);
       if (!isFinite(percent)) percent = covered * 100 / required;
       summary += "（" + percent.toFixed(1) + "%）";
     }
-    var labels = {missing: "缺失", offline_assets: "离线照片", pending_outbox: "待提交", pending_repair: "待修复",
+    var labels = {missing: "缺失", pending_outbox: "待提交", pending_repair: "待修复",
       stale_entries: "过期条目", unreadable_artifacts: "不可读产物"};
     Object.keys(labels).forEach(function (key) {
       var count = Number(coverage[key]);
       if (isFinite(count) && count > 0) summary += "；" + labels[key] + " " + count;
     });
     return summary;
+  }
+  function embeddingOfflineWarning(coverage) {
+    var count = Number(coverage && coverage.offline_assets);
+    if (!isFinite(count) || count <= 0) return "";
+    return "；另有 " + count + " 条资产当前没有可用位置，不计入上述在线覆盖率；切换后它们可能缺少新模型语义结果，恢复原图后需增量建库";
   }
   function embeddingCheckMessage(check) {
     if (!check || check.state === "idle") return "点击检查以核验索引覆盖和切换资格。";
@@ -2903,12 +2908,13 @@
     var body = check.body || {};
     if (body.status === "not_ready" || body.reason === "NO_GENERATION") return "尚无可检查的索引，请先建库。";
     var coverage = embeddingCoverageText(body.coverage);
-    if (check.state === "passed") return "最近一次检查通过，可以安排切换" + coverage + "。";
+    if (check.state === "passed") return "最近一次检查通过，可以安排切换" + coverage +
+      embeddingOfflineWarning(body.coverage) + "。";
     var selection = body.selection_error;
     var code = selection && selection.code;
     var reason = selection && selection.details && selection.details.reason;
     code = code || reason || body.reason;
-    var message = "检查完成，暂不能切换" + coverage;
+    var message = "检查完成，暂不能切换" + coverage + embeddingOfflineWarning(body.coverage);
     if (code) message += "；原因：" + safeEmbeddingCode(code);
     if (body.coverage && Number(body.coverage.required) === 0) message += "；当前没有可核验资产，不能据此确认切换资格";
     return message + "。可重新检查。";
@@ -3070,7 +3076,10 @@
               arrange.type = "button";
               arrange.textContent = "安排切换";
               arrange.addEventListener("click", function () {
-                if (!window.confirm("切换将在正常退出并重新打开应用时执行。确认安排？")) return;
+                var offlineWarning = embeddingOfflineWarning(checked.body && checked.body.coverage);
+                var message = "切换将在正常退出并重新打开应用时执行。" +
+                  (offlineWarning ? "\n\n注意：" + offlineWarning.slice(2) + "。" : "") + "\n\n确认安排？";
+                if (!window.confirm(message)) return;
                 var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
                 request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/switch", {
                   method:"POST", body:{profile_id:provider.profile_id,request_id:requestId,confirmed:true},

@@ -5127,6 +5127,7 @@ def _embedding_provider_check_sync(context: ApiContext, provider_id: str) -> dic
     from photo_search.config import catalog_db_path, vectors_dir
     from photo_search.indexing import selection as selection_module
     from photo_search.models.embedding.registry import registry_for
+    from photo_search.search import profile as profile_module
 
     data_root = context.settings.data_root
     entry = registry_for(data_root).require_installed(provider_id)
@@ -5158,10 +5159,39 @@ def _embedding_provider_check_sync(context: ApiContext, provider_id: str) -> dic
             except CatalogError as error:
                 gate_error = error.as_dict()
             profile = connection.execute(
-                "SELECT profile_id FROM search_profiles WHERE image_generation_id=? "
+                "SELECT * FROM search_profiles WHERE image_generation_id=? "
                 "ORDER BY created_at DESC LIMIT 1",
                 (generation_id,),
             ).fetchone()
+            profile_binding_error = None
+            if profile is not None:
+                bound_profile = profile_module.SearchProfile.from_row(profile)
+                if (
+                    str(bound_profile.space_id) != str(entry.identity.space_id)
+                    or str(bound_profile.embedding_processor_id)
+                    != str(entry.identity.processor_id)
+                ):
+                    profile_binding_error = CatalogError(
+                        "PROFILE_GENERATION_MISMATCH",
+                        "the candidate profile does not bind the installed provider generation",
+                        details={
+                            "reason": "CANDIDATE_PROFILE_BINDING_MISMATCH",
+                            "profile_id": str(bound_profile.profile_id),
+                            "profile_space_id": str(bound_profile.space_id),
+                            "candidate_space_id": str(entry.identity.space_id),
+                            "profile_processor_id": str(bound_profile.embedding_processor_id),
+                            "candidate_processor_id": str(entry.identity.processor_id),
+                        },
+                    ).as_dict()
+                else:
+                    try:
+                        profile_module.resolve_profile_binding(
+                            None, bound_profile, connection=connection
+                        )
+                    except CatalogError as error:
+                        profile_binding_error = error.as_dict()
+            if profile_binding_error is not None:
+                gate_error = profile_binding_error
             eligible = bool(entry.installed and profile and gate_error is None)
             return {
                 "status": "ok",
@@ -5204,10 +5234,16 @@ async def schedule_embedding_profile_switch(request: Request, provider_id: str) 
     check = await check_embedding_provider(request, provider_id)
     profile_id = str(payload.get("profile_id") or "")
     if not check.get("switch_eligible") or profile_id != str(check.get("profile_id") or ""):
+        selection_error = check.get("selection_error")
+        error_code = (
+            str(selection_error.get("code"))
+            if isinstance(selection_error, dict) and selection_error.get("code")
+            else "SELECTION_COVERAGE_INCOMPLETE"
+        )
         raise CatalogError(
-            "SELECTION_COVERAGE_INCOMPLETE",
+            error_code,
             "the candidate did not pass the current selection check",
-            details={"selection_error": check.get("selection_error"), "reason": check.get("reason")},
+            details={"selection_error": selection_error, "reason": check.get("reason")},
         )
     from photo_search.models.embedding.offline_transition import schedule_profile_switch
 

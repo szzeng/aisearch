@@ -1,4 +1,8 @@
-## Current task: P4-EMBEDDING-CHECK-UX-FIX（2026-10-20）
+## Current task: P4-EMBEDDING-OFFLINE-SELECTION-FIX（2026-10-20）
+
+修正离线历史资产阻止语义模型切换的问题：只要求在线可索引照片全覆盖，离线资产保留为独立诊断及风险提示；在线缺向量、PRESENT 文件不可读及原有 generation/outbox/repair/artifact/Lance 门禁仍拒绝。检查与停机 CLI 复核共享选择快照，恢复图片并重扫后仍拒绝不完整候选。API 同时核对 profile 与 provider generation 的 space/processor 绑定，错配时 `switch_eligible=false`，安排返回 `PROFILE_GENERATION_MISMATCH` 且不写 pending 请求。定向 JUnit **30 项（29 passed、0 failed、0 errors、1 skipped）**；Ruff、Python 编译、Node 语法、diff-check 通过。Luna High 跟进复核两项 finding 已关闭、无新增。内置浏览器中显式点击检查/确认安排仍 PENDING，故任务状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库、未加载模型、未执行真实停机切换或大库测试。详见[任务卡](tasks/P4-EMBEDDING-OFFLINE-SELECTION-FIX.md)与[执行报告](reports/P4-EMBEDDING-OFFLINE-SELECTION-FIX.md)。
+
+## Previous task: P4-EMBEDDING-CHECK-UX-FIX（2026-10-20）
 
 搜索模型「检查」现在在卡片内即时显示 busy/通过/阻塞/失败结果；只使用显式检查响应和匹配的 provider/profile/generation 身份决定切换按钮。任务/身份变化会使结论失效，在途请求保留 busy 锁后丢弃过期响应。受影响 pytest 12 passed、1 skipped（symlink WinError 1314），Node 语法、diff-check 通过。隔离内置浏览器真实验证 `NO_GENERATION` 提示与无切换按钮；Luna High 跟进复核无遗留 finding。未加载模型、未访问真实图库、未验真实索引或重启切换。状态 **PASS（限定 UX 范围）**；已本地提交，未推送。详见[任务卡](tasks/P4-EMBEDDING-CHECK-UX-FIX.md)与[报告](reports/P4-EMBEDDING-CHECK-UX-FIX.md)。
 

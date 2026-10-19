@@ -1,6 +1,6 @@
 # P4-EMBEDDING-OFFLINE-SELECTION-FIX — 离线历史资产不再无条件阻止搜索模型切换
 
-- **状态**：TODO / 待执行；创建日期：2026-10-20。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL；创建日期：2026-10-20；执行报告：[P4-EMBEDDING-OFFLINE-SELECTION-FIX](../reports/P4-EMBEDDING-OFFLINE-SELECTION-FIX.md)。
 - **优先级**：P1（当前 Qwen 候选覆盖齐全却无法切换）。
 - **建议模型**：GPT-6 High（涉及搜索 Profile 激活安全门禁）；按 `AGENTS.md` / V3.1 对完整受影响面进行独立高风险复核。个人项目只做定向合成验收，不做 30 万大库性能认证。
 - **仓库**：`szzeng/aisearch` / `master`；执行前先读 `AGENTS.md`、`docs/development-status.md` 和本卡，核对实际工作树与最新代码。与 `P4-EMBEDDING-CHECK-UX-FIX` 的界面修复并行时保留已有改动，避免覆盖。
@@ -65,3 +65,12 @@
 当在线可索引图片确实 100% 覆盖、候选 generation/artifacts/Lance/outbox/Profile 均健康时，**仅因无 PRESENT 位置的历史资产而产生的拒绝被消除**；用户可查看真实离线数量与风险说明并按既有停机流程切换。任何真正的在线索引缺口、破损或重启时目录变化仍被拒绝；没有数据迁移/删除或额外常态性能负担。
 
 **交付**：最小实现、受影响小测试、简短报告，明确哪些场景已通过/未测。此卡只创建任务，不代用户执行真实切换。
+
+## 6. 执行结果（2026-10-20）
+
+- 共享选择门禁、API 检查/安排、停机 CLI 复核与离线影响提示已实现；离线资产不再单独阻断在线 100% 覆盖的候选，其他覆盖和完整性门禁保持拒绝。
+- 补充 API profile/provider identity mismatch 检查：profile 的 space/processor 必须与候选 generation 相同，且 `resolve_profile_binding` 必须通过。错配会禁用切换资格；安排返回 `PROFILE_GENERATION_MISMATCH`，不写待执行请求。
+- 补充完整停机 CLI 重验：显式检查时存在离线图片；在 CLI 执行前恢复并 rescan 后，`_select_profile` 以 `COVERAGE_MISSING` 拒绝，活动 profile 保持不变。库未变化时原离线候选 CLI 合成激活用例通过。
+- 最终受影响 JUnit：`test-results/p4-embedding-offline-selection-fix-final-r2.xml`，30 项、29 passed、0 failed、0 errors、1 skipped（既有 Windows symlink `WinError 1314`）。Ruff、相关 Python 编译、Node 语法、`git diff --check` 通过。
+- Luna High 首轮两项 P2 均已修复；跟进复核无新增 finding。内置浏览器页面已加载且 status API 为 200，但当前 CUA 能力无法执行页面点击；检查→提示→安排确认的浏览器验收仍 **PENDING**，所以本卡保留 **IMPLEMENTED / ACCEPTANCE PARTIAL**。
+- 合成浏览器夹具留在 `.tmp/P4-EMBEDDING-OFFLINE-SELECTION-FIX/browser-synthetic`。未访问真实图库、未加载模型或 GPU、未执行真实停机切换，未做大库容量认证。
