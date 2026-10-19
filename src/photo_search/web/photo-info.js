@@ -640,16 +640,33 @@
     zoomIn.addEventListener("click", function () { preview.mode = "zoom"; applyScale(preview.scale * 1.25); });
     fit.addEventListener("click", fitPreview);
     actual.addEventListener("click", function () { preview.mode = "zoom"; preview.x = 0; preview.y = 0; applyScale(1); });
-    stage.addEventListener("dblclick", function () { if (!preview.naturalWidth || !preview.naturalHeight) return; if (preview.mode === "fit") { preview.mode = "zoom"; applyScale(1); } else fitPreview(); });
+    var draggedClickPending = false, previousClickDragged = false, suppressNextDoubleClick = false;
+    stage.addEventListener("click", function (event) {
+      var wasDrag = draggedClickPending; draggedClickPending = false;
+      var clickCount = Number(event.detail) || 0;
+      if (clickCount < 2) {
+        suppressNextDoubleClick = false;
+        previousClickDragged = wasDrag;
+        return;
+      }
+      if (clickCount === 2) suppressNextDoubleClick = wasDrag || previousClickDragged;
+      previousClickDragged = false;
+    });
+    stage.addEventListener("dblclick", function (event) {
+      var suppress = suppressNextDoubleClick; suppressNextDoubleClick = false;
+      if (suppress || event.target !== image || !preview.naturalWidth || !preview.naturalHeight) return;
+      if (preview.mode === "fit") { preview.mode = "zoom"; applyScale(1); } else fitPreview();
+    });
     stage.addEventListener("wheel", function (event) {
       if (!event.ctrlKey || !preview.naturalWidth || event.target !== image) return;
       event.preventDefault(); var rect = stage.getBoundingClientRect();
       preview.mode = "zoom"; applyScale(preview.scale * (event.deltaY < 0 ? 1.25 : 1 / 1.25), event.clientX - rect.left - rect.width / 2, event.clientY - rect.top - rect.height / 2);
     }, { passive: false });
     var dragging = null;
-    function clearDrag(releaseCapture) {
+    function clearDrag(releaseCapture, completed) {
       var active = dragging; dragging = null;
-      if (releaseCapture && active && stage.releasePointerCapture) {
+      if (active && active.active && completed) draggedClickPending = true;
+      if (releaseCapture && active && active.captured && stage.releasePointerCapture) {
         try { if (!stage.hasPointerCapture || stage.hasPointerCapture(active.id)) stage.releasePointerCapture(active.id); } catch (error) { /* capture may already be lost */ }
       }
     }
@@ -658,13 +675,34 @@
           || (event.pointerType === "mouse" && event.button !== undefined && event.button !== 0)
           || (preview.naturalWidth * preview.scale <= stage.clientWidth && preview.naturalHeight * preview.scale <= stage.clientHeight)) return;
       if (dragging) return;
-      dragging = { id: event.pointerId, x: event.clientX, y: event.clientY, baseX: preview.x, baseY: preview.y };
-      if (stage.setPointerCapture) stage.setPointerCapture(event.pointerId);
+      draggedClickPending = false;
+      dragging = { id: event.pointerId, x: event.clientX, y: event.clientY, baseX: preview.x, baseY: preview.y, active: false, captured: false };
     });
-    stage.addEventListener("pointermove", function (event) { if (dragging && dragging.id === event.pointerId) { preview.x = dragging.baseX + event.clientX - dragging.x; preview.y = dragging.baseY + event.clientY - dragging.y; clampPan(); } });
-    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (name) { stage.addEventListener(name, function () { clearDrag(name !== "lostpointercapture"); }); });
+    stage.addEventListener("pointermove", function (event) {
+      if (!dragging || dragging.id !== event.pointerId) return;
+      var deltaX = event.clientX - dragging.x, deltaY = event.clientY - dragging.y;
+      if (!dragging.active) {
+        if (deltaX * deltaX + deltaY * deltaY < 16) return;
+        dragging.active = true;
+        if (stage.setPointerCapture) { stage.setPointerCapture(event.pointerId); dragging.captured = true; }
+      }
+      preview.x = dragging.baseX + deltaX; preview.y = dragging.baseY + deltaY; clampPan();
+      if (event.preventDefault) event.preventDefault();
+    });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(function (name) {
+      stage.addEventListener(name, function () { clearDrag(name !== "lostpointercapture", name === "pointerup"); });
+    });
+    var onWindowPointerEnd = function (event) {
+      if (dragging && dragging.id === event.pointerId) clearDrag(true, event.type === "pointerup");
+    };
+    var onWindowBlur = function () { clearDrag(true, false); draggedClickPending = false; previousClickDragged = false; suppressNextDoubleClick = false; };
     var onWindowResize = function () { if (!dialog.open) return; if (preview.mode === "fit") fitPreview(); else clampPan(); };
-    if (window.addEventListener) window.addEventListener("resize", onWindowResize);
+    if (window.addEventListener) {
+      window.addEventListener("resize", onWindowResize);
+      window.addEventListener("pointerup", onWindowPointerEnd);
+      window.addEventListener("pointercancel", onWindowPointerEnd);
+      window.addEventListener("blur", onWindowBlur);
+    }
     function setAsset(nextId, nextOptions) {
       clearDrag(true);
       generation++; var thisGeneration = generation;
@@ -788,7 +826,13 @@
     dialog.addEventListener("close", function () {
       clearDrag(true);
       generation++;
-      if (window.removeEventListener) { window.removeEventListener("resize", onWindowResize); if (historyOwned) window.removeEventListener("popstate", onPopState); }
+      if (window.removeEventListener) {
+        window.removeEventListener("resize", onWindowResize);
+        window.removeEventListener("pointerup", onWindowPointerEnd);
+        window.removeEventListener("pointercancel", onWindowPointerEnd);
+        window.removeEventListener("blur", onWindowBlur);
+        if (historyOwned) window.removeEventListener("popstate", onPopState);
+      }
       if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
       if (mounted) mounted.dispose(); image.removeAttribute("src"); dialog.remove();
       if (options.onClose) options.onClose(currentAssetId, handle);

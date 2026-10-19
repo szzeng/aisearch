@@ -32,6 +32,11 @@ viewer 修复对齐 JS 的舞台中心数学基准，但没有真实浏览器 DO
 未访问真实照片库。未改变其他并行任务的暂存内容；未提交。
 
 
-## 补充修复：双击返回适窗（2026-10-19）
 
-用户实测反馈此前双击回适窗无效。双击监听器原先只接受 `event.target === image`；现在舞台内事件统一切换，且确认预览尺寸已就绪。新增舞台命中目标回归断言，并将五个页面的 viewer JS/CSS cache key 升至 `p4-ui2-viewer-pan-avatar-fix-a-2`。简单验证：`tests/unit/test_photo_view_info_ui.py` 6 passed，exit 0；`node --check` 与 `git diff --check` 通过。JUnit：`test-results/P4-UI2-VIEWER-PAN-AVATAR-FIX-double-click-repair-20261019-final.xml`。未运行浏览器。
+## V08 更新：双击与 pointer capture（2026-10-19）
+
+更新后的任务卡指出 `pointerdown` 时立即对舞台调用 `setPointerCapture` 会使原生 click/dblclick 的目标转为 stage。此前为响应用户反馈而放宽 stage target 检查，违反了新增要求；现已改为：只有指针移动超过 4 CSS px 才开始拖动并捕获；dblclick 仍要求目标是当前图片；按原生 `click.detail` 与拖动状态阻止拖动形成的伪双击，正常双击继续交由浏览器原生 dblclick 处理。pointerup/cancel/lostpointercapture、窗口外 pointerup 与 blur 都会清理状态。viewer JS cache key 升到 `p4-ui2-viewer-pan-avatar-fix-a-3`。
+
+自动验证：`pytest -q tests/unit/test_photo_view_info_ui.py -k photo_info_renders --junitxml=test-results/P4-UI2-VIEWER-PAN-AVATAR-FIX-v08-final-20261019.xml`，1 passed、0 failed、exit 0；`node --check src/photo_search/web/photo-info.js` 与 `git diff --check` 通过。Node harness 依序模拟两组 pointerdown/up/click 后派发由点击目标决定的 dblclick，并覆盖 100% 按钮、图片目标、舞台空白目标、拖动越阈值/捕获/释放及拖动后误双击抑制。这仍是合成事件证据，不是浏览器原生事件验收。
+
+用户明确要求不运行浏览器，由用户自行测试。V08 浏览器闭环、V01/V04真实页面路径仍 PENDING；保持 `ACCEPTANCE PARTIAL`，不标最终 PASS。

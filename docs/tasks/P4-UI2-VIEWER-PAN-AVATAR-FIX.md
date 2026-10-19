@@ -116,6 +116,10 @@
 - 浏览器：按用户明确要求未运行；不声称浏览器通过。V01/V04 的浏览器关键路径仍待验，因此本卡不标最终 PASS。
 
 
-### 补充：双击返回适窗（2026-10-19）
 
-根据用户实测反馈修复舞台双击 target 过严导致的无响应：舞台内双击在预览已加载后均切换 fit/100%。增加舞台目标回归断言；定向单测 6 passed，exit 0。浏览器未运行。
+### V08 执行补充（2026-10-19）
+
+- 修正方向：新增卡片确认普通双击只应命中图片。根因在于原 `pointerdown` 立即对 stage 捕获指针，浏览器可能把之后 click/dblclick 的目标重定向为 stage；不能通过允许 stage 空白触发来绕过。现在只在移动超过 4 CSS px 后开始拖动及捕获，dblclick 目标继续校验当前图片，并用原生 click 计数结合拖动状态阻断拖动误触发。关闭、取消、失焦和舞台外 pointerup 清理拖动状态。
+- 合成序列验证：两组 pointerdown→pointerup→click 组成的双击均保持图片目标；适窗→100%→适窗、工具栏 100% 与其他缩放模式回适窗通过；舞台空白不切换；拖动越阈值后才捕获并在结束时释放；拖动 click 序列不切换，后续正常双击仍可用。
+- 定向 pytest：1 passed、0 failed、exit 0，JUnit：`test-results/P4-UI2-VIEWER-PAN-AVATAR-FIX-v08-final-20261019.xml`。Node 语法和 diff-check 通过。
+- 按用户要求未运行浏览器。合成模拟不能替代 V08 的真实原生浏览器闭环；由用户手测，V08 保持 PENDING。V01/V04浏览器范围也仍 PENDING，任务状态为 `IMPLEMENTED / ACCEPTANCE PARTIAL`。

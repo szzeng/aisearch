@@ -264,16 +264,46 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   all(dialog,n=>n.tagName==="button"&&n.textContent==="+")[0].fire("click");
   assert.equal(zoom.textContent,"63%","zoom buttons use the 1.25 step and report the actual scale");
   all(dialog,n=>n.tagName==="button"&&n.textContent==="适合窗口")[0].fire("click");
-  stage.fire("dblclick",{target:viewerImage}); assert.equal(zoom.textContent,"100%","double click switches from fit to preview-pixel scale");
-  stage.fire("dblclick",{target:viewerImage}); assert.equal(zoom.textContent,"50%","double click switches back to fit");
-  stage.fire("dblclick",{target:stage}); assert.equal(zoom.textContent,"100%","double click still zooms when the browser targets the stage");
-  stage.fire("dblclick",{target:stage}); assert.equal(zoom.textContent,"50%","a second stage-targeted double click returns to fit");
-  stage.fire("dblclick",{target:viewerImage});
+  function nativeDoubleClick(id, firstDetail=1) {
+    const clickTargets=[];
+    for (let click=0; click<2; click++) {
+      const pointerId=id+click;
+      stage.fire("pointerdown",{target:viewerImage,pointerId,pointerType:"mouse",button:0,isPrimary:true,clientX:400,clientY:300});
+      assert.equal(stage.hasPointerCapture(pointerId),false,"a click does not capture the pointer before a drag starts");
+      stage.fire("pointerup",{target:viewerImage,pointerId,type:"pointerup"});
+      const target=stage.hasPointerCapture(pointerId)?stage:viewerImage;
+      clickTargets.push(target);
+      stage.fire("click",{target,detail:firstDetail+click});
+    }
+    assert.equal(clickTargets[1],viewerImage,"the native second click remains targeted at the visible image");
+    stage.fire("dblclick",{target:clickTargets[1],detail:2});
+  }
+  all(dialog,n=>n.tagName==="button"&&n.textContent==="适合窗口")[0].fire("click");
+  nativeDoubleClick(20); assert.equal(zoom.textContent,"100%","two image click sequences switch fit to preview-pixel scale");
+  nativeDoubleClick(22); assert.equal(zoom.textContent,"50%","the next image double click returns to fit");
+  all(dialog,n=>n.tagName==="button"&&n.textContent==="预览 100%")[0].fire("click");
+  nativeDoubleClick(24); assert.equal(zoom.textContent,"50%","a click entered at 100 percent also returns to fit on double click");
+  stage.fire("dblclick",{target:stage,detail:2}); assert.equal(zoom.textContent,"50%","double clicking stage blank does not change zoom");
+  all(dialog,n=>n.tagName==="button"&&n.textContent==="预览 100%")[0].fire("click");
   stage.fire("wheel",{target:viewerImage,ctrlKey:true,deltaY:-100,clientX:600,clientY:300,preventDefault(){this.prevented=true;}});
   assert.equal(zoom.textContent,"125%","Ctrl-wheel zooms while the pointer is on the image stage");
-  stage.fire("pointerdown",{target:viewerImage,pointerId:1,clientX:100,clientY:100});
+  const dragStart={target:viewerImage,pointerId:1,pointerType:"mouse",button:0,isPrimary:true,clientX:100,clientY:100};
+  stage.fire("pointerdown",dragStart);
+  assert.equal(stage.hasPointerCapture(1),false,"pointer capture waits until movement crosses the drag threshold");
+  stage.fire("pointermove",{target:viewerImage,pointerId:1,clientX:102,clientY:100});
+  assert.equal(stage.hasPointerCapture(1),false,"sub-threshold movement stays a click");
   stage.fire("pointermove",{target:viewerImage,pointerId:1,clientX:1200,clientY:100});
+  assert.equal(stage.hasPointerCapture(1),true,"a real drag captures the pointer after crossing the threshold");
   assert.match(viewerImage.style.transform,/translate\(600px,0px\)/,"drag pan is clamped at the image boundary");
+  stage.fire("pointerup",{target:stage,pointerId:1,type:"pointerup"});
+  assert.equal(stage.hasPointerCapture(1),false,"pointer capture is released when dragging ends");
+  stage.fire("click",{target:stage,detail:1});
+  stage.fire("pointerdown",{target:viewerImage,pointerId:2,pointerType:"mouse",button:0,isPrimary:true,clientX:400,clientY:300});
+  stage.fire("pointerup",{target:viewerImage,pointerId:2,type:"pointerup"});
+  stage.fire("click",{target:viewerImage,detail:2});
+  stage.fire("dblclick",{target:stage,detail:2});
+  assert.equal(zoom.textContent,"125%","a drag followed by a click pair cannot synthesize a zoom toggle, even when capture retargets it to the stage");
+  nativeDoubleClick(30); assert.equal(zoom.textContent,"50%","a clean native double click works again after a drag");
   viewer.setNavigationEnabled(true,true);
   viewer.setPosition("第 2 张");
   assert.equal(viewer.controls.children[5].textContent,"← 上一张","setting position does not overwrite the previous button label");

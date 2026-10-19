@@ -27,7 +27,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-2" in document
+        assert "/web/photo-info.js?v=p4-ui2-viewer-pan-avatar-fix-a-3" in document
         assert "/web/photo-info.css?v=p4-ui2-viewer-pan-avatar-fix-a-2" in document
     assert "search.js?v=p4-search-text-mode-2" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
