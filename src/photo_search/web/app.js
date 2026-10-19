@@ -2953,9 +2953,11 @@
       state.photoSmart.collection = collection;
       state.photoSmart.rule = detail.body.rule || state.photoSmart.rule;
       els.photoSmartDetailTitle.textContent = collection.name + " · " + collection.execution_kind;
+      var freshnessLabel = ({CURRENT:"当前结果", STALE:"上次结果·待更新", REFRESHING:"上次结果·正在更新",
+        NO_CACHE:"尚无结果", MODEL_REBIND_REQUIRED:"搜索模型不可用"})[collection.freshness] || collection.freshness;
       els.photoSmartRuleSummary.textContent = (detail.body.rule.display_query || "纯条件筛选") +
-        " · " + collection.freshness + (detail.body.indexing ? " · 索引处理中" : "") +
-        (collection.truncated ? " · 最多 5000 个候选，可能还有其他照片" : "");
+        " · " + freshnessLabel + (detail.body.indexing || collection.indexing ? " · 索引处理中" : "") +
+        (collection.truncated ? " · 候选已截断（最多 5000 张）" : "");
       if (collection.execution_kind !== "FILTER" && collection.freshness !== "CURRENT" &&
           collection.freshness !== "REFRESHING" && !append && state.photoSmart.view === "results") {
         request("/photo-smart-collections/" + smartId + "/refresh", {method:"POST", body:{
@@ -3010,10 +3012,14 @@
           els.photoSmartAssets.appendChild(tile);
         });
         els.photoSmartMore.hidden = !state.photoSmart.assetHasMore;
-        els.photoSmartDetailStatus.textContent = body.refresh_required
-          ? "显示范围已变化，正在保留规则并等待刷新；暂不展示未经当前条件复核的旧结果。"
-          : (body.assets && body.assets.length ? "显示当前动态筛选或最近一次排名快照。" : "当前没有匹配结果。" +
-            (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。"));
+        els.photoSmartDetailStatus.textContent = body.stale_label
+          ? body.stale_label + (collection.last_error_code ? "；上次刷新失败（" + collection.last_error_code + "），可重试。" : "") +
+            (body.assets && body.assets.length ? "；照片已按当前范围和排除条件复核。" : "；当前没有可验证的旧候选。")
+          : (body.coverage === "INDEXING" ? "索引处理中；已发布候选仍可浏览并标记为待更新。" :
+            (body.coverage === "TRUNCATED" ? "候选已截断，当前仅显示已发布的最多 5000 张。" :
+              (collection.freshness === "MODEL_REBIND_REQUIRED" ? "搜索模型不可用，请用新搜索替换规则。" :
+                (body.assets && body.assets.length ? "显示当前动态筛选或已发布排名候选。" : "当前没有匹配结果。" +
+                  (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。")))));
       });
     }).catch(function (failure) { showCollectionFailure(failure, els.photoSmartDetailStatus); });
   }
@@ -3383,6 +3389,7 @@
       photoSmartAssets: document.getElementById("photo-smart-assets"),
       photoSmartMore: document.getElementById("photo-smart-more"),
       photoSmartRefresh: document.getElementById("photo-smart-refresh"),
+      photoSmartSaveStatic: document.getElementById("photo-smart-save-static"),
       photoSmartShowResults: document.getElementById("photo-smart-show-results"),
       photoSmartShowExclusions: document.getElementById("photo-smart-show-exclusions"),
       photoSmartOrder: document.getElementById("photo-smart-order"),
@@ -3500,6 +3507,42 @@
     els.photoSmartOrder.addEventListener("change", function () {
       state.photoSmart.order = els.photoSmartOrder.value === "capture_desc" ? "capture_desc" : "rank";
       state.photoSmart.assetCursor = null; loadPhotoSmartAssets(false);
+    });
+    els.photoSmartSaveStatic.addEventListener("click", function () {
+      var collection = state.photoSmart.collection;
+      if (!collection) return;
+      var confirmStale = false, confirmTruncated = false, confirmIndexing = false;
+      var mustConfirmStale = ["STALE", "REFRESHING"].indexOf(collection.freshness) >= 0;
+      var ask = function (needed, title, message) {
+        return needed ? window.AIPhotoInfo.actionDialog({kind:"confirm", title:title, message:message,
+          confirmLabel:"继续另存"}) : Promise.resolve(true);
+      };
+      ask(mustConfirmStale, "保存上次结果", "排名候选尚未更新。保存前会按当前筛选范围和排除记录复核。")
+        .then(function (ok) {
+          if (!ok) return false;
+          confirmStale = mustConfirmStale;
+          return ask(Boolean(collection.truncated), "保存可能截断的候选", "候选最多 5000 张且可能还有其他照片。")
+            .then(function (confirmed) { confirmTruncated = Boolean(collection.truncated && confirmed); return confirmed; });
+        }).then(function (ok) {
+          if (!ok) return false;
+          return ask(Boolean(collection.indexing), "索引仍在更新", "将保存当前已发布并经当前范围复核的候选。")
+            .then(function (confirmed) { confirmIndexing = Boolean(collection.indexing && confirmed); return confirmed; });
+        }).then(function (ok) {
+          if (!ok) return;
+          els.photoSmartSaveStatic.disabled = true;
+          return request("/photo-smart-collections/" + encodeURIComponent(collection.smart_id) + "/save-static", {
+            method:"POST", body:{instance_token:collection.instance_token,
+              expected_revision:Number(collection.revision), name:collection.name + "（静态副本）",
+              create_request_id:window.crypto.randomUUID(), order:state.photoSmart.order, confirm_stale:confirmStale,
+              confirm_truncated:confirmTruncated, confirm_indexing:confirmIndexing}
+          }).then(function (result) {
+            els.photoSmartDetailStatus.textContent = "已另存为普通合集；智能规则与排除记录保持不变。";
+            window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
+          });
+        }).catch(function (failure) {
+          showCollectionFailure(failure, els.photoSmartDetailStatus);
+          els.photoSmartSaveStatic.disabled = false;
+        });
     });
     els.photoSmartRefresh.addEventListener("click", function () {
       var collection = state.photoSmart.collection;

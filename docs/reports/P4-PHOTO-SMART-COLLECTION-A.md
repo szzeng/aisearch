@@ -61,3 +61,45 @@ Luna High 两轮只读复核。最终复核确认签名前后核对、事务内�
 第一轮列出的 FILTER 分页、规则分类、两种 `capture_desc`、worker factory lease 边界和发布 CAS 均已有定向证据。整卡仍为 **IMPLEMENTED / ACCEPTANCE PARTIAL**：用户明确排除的 stale ranked 缓存浏览和 `save-static` 留待后续；刷新浏览器/进程重启、真实向量模型、完整并发规则替换仍未验。根据 V3.1 §2.4，当前高风险改动需要独立 DS-H 全受影响面工程审查，本轮尚未执行该审查，因此不标 PASS。没有访问真实图库。
 
 本轮代码、回归测试和状态记录已组成单独本地 Git 提交；未推送。
+
+## 2026-10-19 地点纯筛选范围续修复
+
+### 复核发现与修复
+
+- 智能 FILTER 详情重放带地点身份的已确认计划时会进入 `place_album`。该分支之前没有消费智能排除、`capture_desc` 或 `filter_statistics=False`；因此地点范围内排除会失效、拍摄排序退回 asset_id 顺序/分页，智能详情仍执行 COUNT。
+- 最小修复把智能排除谓词合并进既有地点 `selected_members_sql` 范围，地点 `capture_desc` 复用 `_filter_capture_desc_rows` 的可信 EXIF 流及未知时间尾部 Keyset。保持地点身份与修订、照片资格，不先全库检索；智能读取关闭统计，普通地点默认行为不变。
+- 新增 `test_place_filter_smart_exclusion_capture_desc_continuation`：53 张隔离合成照片，排除排序首项，按 50 张首/续页与含相同拍摄时间和未知时间的 oracle 对照；断言 WHERE 同时保留地点范围与排除条件、无 COUNT，EXPLAIN 命中时间索引和排除主键。
+
+### 验证
+
+- 受影响组合 JUnit：**51 passed, 0 failed, 0 skipped**，`test-results/smart-place-affected-20261019-193234-761.xml`。地点范围/游标用隔离候选与成员谓词，真实地点实现的回归由同组 place integration 覆盖。
+- Ruff、`py_compile`、`git diff --check` 通过；未跑浏览器、真实模型、30 万库或真实图库。整卡仍 PARTIAL，等待本节后续交付与剩余审查。
+
+## 2026-10-19 stale 缓存浏览、save-static 与恢复续交付
+
+本节更新此前报告中“stale 缓存不可浏览、save-static 未实现、进程恢复未验”的历史状态；此前轮次记录保留原样。
+
+### 修复
+
+- TEXT/COMBINED 缓存 STALE 或 REFRESHING 时，先确认规则版本仍一致，再用冻结规则对应的可信 SearchScope 在 SQL 侧重新核对当前完整范围、照片资格和人工排除；不执行 FTS/向量检索。候选最多 5000，按发布顺序分页 50 张，返回“上次结果·待更新”。规则身份失效时不展示候选。游标绑定 build，发布新 build 后旧游标失效。
+- 新增 `POST /api/v1/photo-smart-collections/{smart_id}/save-static`。FILTER 当前权威范围最多读至 5001 并对超 5000 明确拒绝；ranked 只复制已发布候选并按当前完整 SQL 条件复核。STALE、TRUNCATED、INDEXING 缺少确认时返回所需确认项。普通合集创建事务接收 smart/scope revision CAS，幂等键重试复用已有合集；校验或写入失败不会改智能规则/排除或产生部分成员。
+- UI 增加普通合集另存入口与 freshness/coverage/刷新错误提示，刷新失败可重试，缓存存在时继续显示旧候选。原有排除、已排除恢复、viewer 和返回路径保留。
+- 新增 Catalog 重新打开后的 lease 恢复测试：过期 lease 可接管，旧 worker 和规则被替换后的旧发布均被拒绝，原 build 与人工状态不被失败清理覆盖。
+
+### 验证
+
+- 最终受影响 JUnit：**56 passed, 0 failed, 0 skipped**，`test-results/smart-followup-final-20261019.xml`。运行命令：
+
+  ```powershell
+  $env:TMP='D:\SZ\project\aisearch\.tmp\pytest-smart-followup'; $env:TEMP=$env:TMP
+  .\.venv\Scripts\python.exe -m pytest -q tests/unit/test_photo_smart_collections.py tests/integration/test_p4_photo_smart_collections.py tests/integration/test_p4_photo_collections.py tests/unit/test_photo_collections.py tests/integration/test_p4_storage_ui.py tests/unit/test_photo_view_info_ui.py --junitxml=test-results\smart-followup-final-20261019.xml --basetemp=.pytest-tmp\smart-followup-final-20261019
+  ```
+
+- 同组覆盖 stale SQL 资格复核且阻止 FTS/vector、排除后的有界候选页、旧 build 游标拒绝；另存幂等和普通合集成员顺序、FILTER 第 5001 个结果拒绝、STALE/TRUNCATED/INDEXING 确认、scope/smart revision 并发校验；lease 重新打开/接管及失败保留。
+- Ruff（8 个受影响 Python 文件）、py_compile、`node --check src/photo_search/web/app.js`、`git diff --check` 均 exit 0。
+- Codex 内置浏览器在 `127.0.0.1:8767` 的隔离合成图库实测 3 条流程：过期缓存浏览→刷新→新结果；另存普通合集并检查静态成员；排除→已排除→恢复，并经刷新与真实应用进程重启确认排除状态不丢失。另检查 excluded viewer 关闭后返回排除列表。TEXT 搜索不需要模型；未访问真实 `PhotoSearchData`，没有导出截图。
+
+### 剩余验收边界
+
+- COMBINED 真实向量模型路径、完整跨进程规则替换压力尚未验证；本轮不做 GPU/真实图库测试。
+- 高风险持久状态/并发改动的独立 DS-H 全受影响面工程审查仍 PENDING，因此整卡继续 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标 PASS。未推送。

@@ -272,11 +272,52 @@ def test_replaced_rule_rejects_old_worker_publish_and_preserves_previous_build(c
     assert state["build_id"] == previous["build_id"]
 
 
+def test_refresh_lease_recovers_after_catalog_reopen_and_rejects_pre_restart_owner(catalog, tmp_path):
+    rule = _rule("TEXT")
+    smart = create_collection(catalog, "Restart recovery", "restart-smart", rule,
+                              request_hash="restart", auth_hash="auth", source_hash="source")["collection"]
+    previous = publish_candidates(catalog, smart["smart_id"], [1], signature=_signature(catalog, rule))
+    old_claim = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"], manual=True)
+    reopened = Catalog.open(data_root=tmp_path / "data")
+    try:
+        still_owned = request_refresh(reopened, smart["smart_id"], instance_token=smart["instance_token"])
+        assert still_owned["status"] == "RUNNING"
+        with reopened.write() as connection:
+            connection.execute("UPDATE photo_smart_cache_state SET lease_until_ms=0 WHERE smart_id=?",
+                               (smart["smart_id"],))
+        recovered = request_refresh(reopened, smart["smart_id"], instance_token=smart["instance_token"])
+        assert recovered["status"] == "QUEUED"
+        with pytest.raises(ApiError) as error:
+            publish_candidates(reopened, smart["smart_id"], [2], signature=_signature(reopened, rule),
+                               expected_rule_revision=old_claim["rule_revision"],
+                               lease_owner=old_claim["lease_owner"])
+        assert error.value.code == "PHOTO_SMART_LEASE_EXPIRED"
+        fresh = publish_candidates(reopened, smart["smart_id"], [3], signature=_signature(reopened, rule),
+                                   expected_rule_revision=recovered["rule_revision"],
+                                   lease_owner=recovered["lease_owner"])
+        assert fresh["build_id"] != previous["build_id"]
+        assert reopened.read_all("SELECT asset_id FROM photo_smart_cache_entries WHERE smart_id=? AND build_id=?",
+                                 (smart["smart_id"], fresh["build_id"]))[0][0] == 3
+    finally:
+        reopened.close()
+
+
 def test_refresh_factory_failure_releases_only_its_lease_and_keeps_old_cache(catalog):
     rule = _rule("TEXT")
     smart = create_collection(catalog, "Factory failure", "text-create-factory", rule, request_hash="hf",
                               auth_hash="a", source_hash="sf")["collection"]
     published = publish_candidates(catalog, smart["smart_id"], [1], signature=_signature(catalog, rule))
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO photo_smart_exclusions(smart_id,asset_id,created_at_ms) VALUES(?,?,1)",
+            (smart["smart_id"], 1),
+        )
+        connection.execute(
+            "UPDATE photo_smart_collections SET exclusions_revision=exclusions_revision+1 WHERE smart_id=?",
+            (smart["smart_id"],),
+        )
+    rule_before = catalog.read_one("SELECT rule_json FROM photo_smart_collections WHERE smart_id=?",
+                                   (smart["smart_id"],))[0]
     claim = request_refresh(catalog, smart["smart_id"], instance_token=smart["instance_token"], manual=True)
 
     class Context:
@@ -296,3 +337,7 @@ def test_refresh_factory_failure_releases_only_its_lease_and_keeps_old_cache(cat
     assert state["build_id"] == published["build_id"]
     assert state["lease_owner"] is None
     assert state["refresh_status"] == "FAILED"
+    assert catalog.read_one("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=?",
+                            (smart["smart_id"],))[0] == 1
+    assert catalog.read_one("SELECT rule_json FROM photo_smart_collections WHERE smart_id=?",
+                            (smart["smart_id"],))[0] == rule_before

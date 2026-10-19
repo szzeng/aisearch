@@ -1,6 +1,6 @@
 # P4-PHOTO-SMART-COLLECTION-A — 动态智能照片合集与有界语义结果缓存
 
-- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。第一轮修复后，FILTER 排除与时间 Keyset、TEXT/COMBINED/FILTER 规则冻结、ranked 时间桶及刷新 lease 定向组合 41/41 通过；worker factory 异常释放租约问题已关闭。旧排名快照资格浏览与 `save-static` 按本轮边界继续后置，浏览器刷新/进程重启、真实模型及并发替换仍待验，当前轮 DS-H 独立影响面审查也未执行，因此不标 PASS。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
+- **状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-19）。第一轮、地点范围续修及本次 stale 浏览/save-static/重启续验已实施；最新受影响组合 56/56 通过，隔离浏览器验证过期浏览→刷新→另存、排除/恢复与真实进程重启状态保持。真实模型 COMBINED 刷新和独立 DS-H 全影响面审查仍未验，故不标整卡 PASS。详见[执行报告](../reports/P4-PHOTO-SMART-COLLECTION-A.md)。
 - **优先级**：P2；**建议执行模型**：GPT-6 High（用户在 Codex 手动选择）。人工状态、迁移和并发提交须按 V3.1 §2.4 做符合风险的独立 DS-H 影响面工程审查。
 - **设计基准**：`szzeng/aisearch` / `master`；设计复核基准 `master @ d61e2fe3cdf60044f34132325298f4635be00dd8`（2026-10-19）；提交前远端 `master @ d5795b07a17e5a933ee0366ffe4d4acfb78e1462`；普通照片合集卡已提交为 [`d36c50d`](https://github.com/szzeng/aisearch/commit/d36c50d560bff9b1ef7e943ee0604ad72742d89b)，尚未实施。当前可见产品 Schema v33；**两张 Favorites 与普通照片合集均不能据任务卡存在而视为已实施**。实际开工必须检查最新 HEAD、工作树、已落地迁移、API、报告和活跃模型/索引合同。
 - **实施前置**：`P4-FAVORITES-CORE-A` → `P4-FAVORITES-UX-B` → `P4-PHOTO-COLLECTION-A` 均达到其自身必要验收并具备可信代码。本卡可提前审查，不提前占 migration 版本，不改上一卡已冻结的人工成员真值。
@@ -165,3 +165,21 @@
 - **未关闭项**：本轮没有实现 stale ranked 快照资格浏览和 `save-static`；不声称浏览器 refresh/进程重启恢复、真实模型向量路径、完整并发规则替换及 5000 截断另存通过。上述持久状态/并发高风险改动还需按 V3.1 §2.4 完成独立 DS-H 影响面审查后，才可重新评估整卡验收状态。未访问真实图库。
 - **Luna High 独立复核**：检索前后依赖签名与发布事务重核、实际 search session coverage、缓存发布失败时持久 mutation 的显式成功响应均已补；没有发现本轮修复引入的新问题。旧 ranked 快照当前不可浏览、`save-static` 未实现是两项 P1；worker factory 异常时租约会等到期为 P2。刷新进程重启/模型真实路径、并发替换及候选另存仍 PENDING。
 - 本任务未提交/推送，未读取真实图库；并行 UI 改动原样保留。
+
+## 12. 2026-10-19 地点纯筛选范围续修复
+
+- **确认的问题**：智能 FILTER 详情重放地点纯条件时仍走 `place_album`。该路径未接收智能排除、排序和 `filter_statistics=False`，故排除可被忽略、`capture_desc` 退回 asset_id 分页、每次请求仍运行全量/offset COUNT。普通 `filter_only` 已由第 11 节修复；本续修复只补地点范围分支。
+- **性能三行**：地点智能合集详情/续页的风险是重复 COUNT、先分页后排序或范围外查询；复用现有 `selected_members_sql` 作为权威地点范围，将 `NOT EXISTS(photo_smart_exclusions)` 加入同一 SQL scope，并复用 `_filter_capture_desc_rows` 的可信 EXIF 双流及未知尾部 Keyset，智能读取关闭统计；验证跨页 oracle、调用次数及 EXPLAIN，不增加规模性能结论。
+- **实现边界**：不改地点身份/修订、照片资格、普通地点搜索默认统计/asset_id 排序，也不将范围改为全库搜索；capture 游标同时绑定原地点 revision/fingerprint 和外层 smart rule/exclusion revision。FILTER 仍不物化、不触发 FTS/向量。
+- **验证**：新增 `test_place_filter_smart_exclusion_capture_desc_continuation`，53 张隔离合成照片中排除排序第一张，按 50 张首/续页与含重复时间/未知时间 oracle 对照；断言两个分页调用均保留地点成员与排除 SQL、首续页 position、智能详情零资产 COUNT；EXPLAIN 命中拍摄时间索引和排除主键。完整受影响组合为 51 passed；Ruff、py_compile、diff-check 通过。JUnit 与命令见执行报告。
+- **范围外仍未验**：原卡的 stale ranked 快照浏览、`save-static`、浏览器刷新/进程重启、真实向量模型、完整并发替换和 DS-H 独立影响面审查仍未关闭；整卡继续 `IMPLEMENTED / ACCEPTANCE PARTIAL`。未访问真实图库。
+
+## 13. 2026-10-19 stale 浏览、save-static 与刷新恢复续交付
+
+- **PERF-BOUNDED 三行**：风险是旧 ranked 候选经规则或范围变更后越权展示、另存超出权威结果或部分创建；候选复用最多 5000，50 张页，按当前冻结规则 SQL 复核完整范围/照片资格/人工排除，FILTER 在原范围内最多探测 5001 并拒绝超限；验证以隔离合成 API/UI、事务重试及受影响 JUnit 为界，不推断真实模型或图库容量。
+- **过期浏览**：TEXT/COMBINED 的 STALE/REFRESHING 继续显示上次已发布候选，并在 SQL 中按当前规则、权威范围、照片资格和排除复核；返回“上次结果·待更新”，规则修订不一致时闭锁旧结果。游标绑定缓存 build，刷新发布新 build 后旧游标 409。
+- **另存普通合集**：新增 save-static。FILTER 使用完整当前服务端范围并在第 5001 个成员时拒绝；ranked 只复制已发布、身份/版本及资格核对后的候选。STale、TRUNCATED、INDEXING 返回必要确认项；使用普通合集事务、幂等请求键和事务内 smart/scope revision 检查，失败不留下半成品或修改源规则/排除。
+- **恢复与 UI**：详情显示 freshness/coverage、旧结果标签及刷新错误重试入口；另存按钮复用普通合集创建，原有 viewer、返回、排除及恢复入口保留。新增实际 Catalog 重新打开/租约过期后接管测试；过期旧 worker 和被接管 owner 的迟到发布拒绝。
+- **验证**：最新受影响 JUnit **56 passed, 0 failed, 0 skipped**：`test-results/smart-followup-final-20261019.xml`，覆盖智能合集单元/集成、普通合集、存储 UI 与 viewer UI；包括 stale SQL 资格复核（断言不调用 FTS/vector）、STALE/TRUNCATED/INDEXING 另存确认、FILTER >5000 明确拒绝、另存幂等及候选稳定、缓存 build 游标失效和进程重开/lease 接管。Ruff、py_compile、`node --check app.js`、`git diff --check` 均通过。
+- **隔离浏览器**：127.0.0.1 合成图库完成 3 条核心流程：缓存过期→旧候选显示“上次结果·待更新”→手动刷新→新候选；另存为普通合集并确认静态成员；排除→已排除列表→恢复，并在刷新及真实应用进程重启后核对人工状态。另检查排除照片查看器关闭后回到排除列表。TEXT 流程未调用模型；没有访问真实图库，浏览器未导出截图。
+- **未验项**：真实 COMBINED 向量模型刷新不可在当前合成环境验证；完整跨进程规则替换压力和 DS-H 独立全受影响面审查待做。整卡维持 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不据合成测试声称 30 万容量或模型可用性 PASS。

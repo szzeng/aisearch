@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from p3_persons_page_fixtures import seed_library
 
+from photo_search import photo_smart_collections
+from photo_search.api.models import PlaceAwareSearchRequestModel
+
 
 def test_filter_search_creates_dynamic_smart_rule_and_exclusion_is_recoverable(api_env):
     seeded = seed_library(api_env, {"one.jpg": [], "two.jpg": [], "three.jpg": []})
@@ -265,3 +268,310 @@ def test_filter_capture_desc_uses_global_trusted_time_order_and_keyset_pages(api
     seen, stale_status = api_env.scenario(scenario)
     assert seen == expected
     assert stale_status == 409
+
+
+def test_place_filter_smart_exclusion_capture_desc_continuation(api_env, monkeypatch):
+    seeded = seed_library(api_env, {f"place-{index:02}.jpg": [] for index in range(53)})
+    asset_ids = sorted(int(value["asset_id"]) for value in seeded.values())
+    from photo_search.api import routes
+    from photo_search.places import revision as place_revision
+
+    place_choice = {"kind": "city", "key": "42", "name": "杭州", "parent": "浙江省",
+                    "origin": None, "source": "synthetic", "aliases": ["杭州"]}
+    monkeypatch.setattr(routes.place_choices, "choices", lambda *args, **kwargs: [place_choice])
+    filter_revision = place_revision.read_filter_revision(api_env.service.catalog.connection)
+    suggestion_revision = place_revision.read_suggestion_revision(api_env.service.catalog.connection)
+    package_revision = routes.place_albums._index(api_env.service.catalog, api_env.data_root)[1]
+    monkeypatch.setattr(routes.place_albums, "album_member_ids", lambda *args, **kwargs: (
+        [],
+        {"albums": [{"key": "42", "name": "杭州", "parent": "浙江省", "origin": None}],
+         "catalog_filter_revision": filter_revision,
+         "suggestion_revision": suggestion_revision, "package_revision": package_revision},
+    ))
+    member_sql = "a.asset_id IN (" + ",".join("?" for _ in asset_ids) + ")"
+    # The worker imports selected_members_sql locally from the timeline module.
+    monkeypatch.setattr(
+        "photo_search.places.timeline.selected_members_sql",
+        lambda *_args, **_kwargs: (member_sql, tuple(asset_ids), {
+            "catalog_filter_revision": filter_revision,
+            "suggestion_revision": suggestion_revision,
+            "package_revision": package_revision,
+        }),
+    )
+    metadata = []
+    trusted: dict[int, int] = {}
+    for offset, asset_id in enumerate(asset_ids):
+        kind = offset % 5
+        if kind in (0, 1):
+            captured = 90000 - ((offset * 37) % 23)
+            source = "EXIF_ORIGINAL" if kind == 0 else "EXIF_DIGITIZED"
+            trusted[asset_id] = captured
+            metadata.append((asset_id, captured, source,
+                             "HIGH" if source == "EXIF_ORIGINAL" else "MEDIUM"))
+        elif kind == 2:
+            metadata.append((asset_id, 300000000000, "EXIF_ROOT", "LOW"))
+        elif kind == 3:
+            metadata.append((asset_id, None, "FILE_MTIME", "LOW"))
+    with api_env.service.catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) VALUES(?,?,?,?)",
+            metadata,
+        )
+    expected = sorted(trusted, key=lambda asset_id: (trusted[asset_id], asset_id), reverse=True)
+    expected.extend(sorted(set(asset_ids) - set(trusted), reverse=True))
+    excluded_id = expected[0]
+    expected.remove(excluded_id)
+    capture_calls = []
+    count_reads = []
+    original_capture_page = routes._filter_capture_desc_rows
+    catalog_type = type(api_env.service.catalog)
+    original_read_one = catalog_type.read_one
+
+    def capture_page(catalog, where, parameters, *, limit, position):
+        capture_calls.append((where, tuple(parameters), position, limit))
+        return original_capture_page(catalog, where, parameters, limit=limit, position=position)
+
+    def read_one(catalog, sql, parameters=()):
+        normalized = sql.casefold()
+        if "select count(" in normalized and "from assets as a" in normalized:
+            count_reads.append(sql)
+        return original_read_one(catalog, sql, parameters)
+
+    monkeypatch.setattr(routes, "_filter_capture_desc_rows", capture_page)
+    monkeypatch.setattr(catalog_type, "read_one", read_one)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        source = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "smart-place-capture-source", "original_query": "在杭州拍的照片",
+            "page_size": 50,
+        })
+        assert source.status_code == 200, source.text
+        assert source.json()["photo_collection_source_mode"] == "all_filter_matches"
+        assert source.json()["place_scope"]["kind"] == "city"
+        saved = await client.post("/api/v1/photo-smart-collections/from-search", headers=headers, json={
+            "name": "杭州智能筛选", "create_request_id": "smart-place-capture-create",
+            "source_token": source.json()["photo_collection_source_token"],
+        })
+        assert saved.status_code == 200, saved.text
+        collection = saved.json()["collection"]
+        excluded = await client.put(
+            f"/api/v1/photo-smart-collections/{collection['smart_id']}/exclusions/{excluded_id}",
+            headers=headers, json={"instance_token": collection["instance_token"], "expected_revision": 1},
+        )
+        assert excluded.status_code == 200, excluded.text
+        count_reads.clear()
+        seen = []
+        cursor = None
+        while True:
+            params = {"instance_token": collection["instance_token"], "limit": 50,
+                      "order": "capture_desc"}
+            if cursor is not None:
+                params["cursor"] = cursor
+            page = await client.get(
+                f"/api/v1/photo-smart-collections/{collection['smart_id']}/assets", params=params)
+            assert page.status_code == 200, page.text
+            body = page.json()
+            seen.extend(int(item["asset_id"]) for item in body["assets"])
+            cursor = body["next_cursor"]
+            if cursor is None:
+                break
+        assert len(capture_calls) == 2
+        assert capture_calls[0][2] is None and capture_calls[1][2] is not None
+        assert count_reads == []
+        assert all("photo_smart_exclusions" in where and "a.asset_id in (" in where.casefold()
+                   for where, _, _, _ in capture_calls)
+        return seen
+
+    assert api_env.scenario(scenario) == expected
+    where, parameters, _, limit = capture_calls[0]
+    plan = api_env.service.catalog.read_all(
+        "EXPLAIN QUERY PLAN SELECT a.asset_id,m.taken_at_sort FROM asset_metadata AS m "
+        "INDEXED BY idx_asset_metadata_capture CROSS JOIN assets AS a ON a.asset_id=m.asset_id "
+        f"WHERE m.time_source=? AND m.taken_at_sort IS NOT NULL AND ({where}) "
+        "ORDER BY m.taken_at_sort DESC,m.asset_id DESC LIMIT ?",
+        ("EXIF_ORIGINAL", *parameters, limit + 1),
+    )
+    details = " ".join(str(row["detail"]) for row in plan).casefold()
+    assert "idx_asset_metadata_capture" in details
+    assert "photo_smart_exclusions" in details and "search" in details
+
+
+def test_filter_smart_save_static_is_idempotent_and_keeps_member_order(api_env):
+    seeded = seed_library(api_env, {"one.jpg": [], "two.jpg": [], "three.jpg": []})
+    expected = [int(item["asset_id"]) for item in seeded.values()]
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        source = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "smart-static-filter-source", "retrieval_mode": "text",
+            "original_query": "", "page_size": 50,
+        })
+        assert source.status_code == 200, source.text
+        saved = await client.post("/api/v1/photo-smart-collections/from-search", headers=headers, json={
+            "name": "Static source", "create_request_id": "smart-static-filter-create",
+            "source_token": source.json()["photo_collection_source_token"],
+        })
+        assert saved.status_code == 200, saved.text
+        smart = saved.json()["collection"]
+        excluded = await client.put(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/exclusions/{expected[1]}",
+            headers=headers, json={"instance_token": smart["instance_token"], "expected_revision": 1},
+        )
+        assert excluded.status_code == 200, excluded.text
+        result = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": 2,
+                "name": "Saved static", "create_request_id": "smart-static-filter-save",
+            },
+        )
+        assert result.status_code == 200, result.text
+        static = result.json()["collection"]
+        page = await client.get(
+            f"/api/v1/photo-collections/{static['collection_id']}/assets"
+            f"?instance_token={static['instance_token']}&limit=50"
+        )
+        assert page.status_code == 200, page.text
+        assert [int(item["asset_id"]) for item in page.json()["assets"]] == [expected[0], expected[2]]
+        replay = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": 2,
+                "name": "Saved static", "create_request_id": "smart-static-filter-save",
+            },
+        )
+        assert replay.status_code == 200 and replay.json()["reused"] is True
+        assert replay.json()["collection"]["collection_id"] == static["collection_id"]
+        smart_after = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}?instance_token={smart['instance_token']}"
+        )
+        assert smart_after.status_code == 200
+        assert smart_after.json()["collection"]["revision"] == 2
+        return static["collection_id"]
+
+    assert api_env.scenario(scenario) > 0
+
+
+def test_filter_smart_save_static_rejects_more_than_5000(api_env):
+    seed_library(api_env, {"base.jpg": []})
+    with api_env.service.catalog.write() as connection:
+        source_id = int(connection.execute("SELECT source_id FROM source_roots LIMIT 1").fetchone()[0])
+        connection.executemany(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(?,?,8,?, 'ACTIVE')",
+            [(asset_id, f"{asset_id:064x}", asset_id) for asset_id in range(20_000, 25_000)],
+        )
+        connection.executemany(
+            "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) "
+            "VALUES(?,?,?, ?,8,1,'PRESENT')",
+            [(source_id, f"{asset_id}.jpg", f"{asset_id}.jpg", asset_id)
+             for asset_id in range(20_000, 25_000)],
+        )
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        source = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "smart-static-too-many-source", "retrieval_mode": "text",
+            "original_query": "", "page_size": 50,
+        })
+        saved = await client.post("/api/v1/photo-smart-collections/from-search", headers=headers, json={
+            "name": "Too many filter", "create_request_id": "smart-static-too-many-create",
+            "source_token": source.json()["photo_collection_source_token"],
+        })
+        smart = saved.json()["collection"]
+        before = int(api_env.service.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0])
+        response = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": smart["revision"],
+                "name": "Should reject", "create_request_id": "smart-static-too-many-save",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json()["code"] == "PHOTO_SMART_STATIC_TOO_LARGE"
+        assert int(api_env.service.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0]) == before
+
+    api_env.scenario(scenario)
+
+
+def test_stale_ranked_page_is_sql_qualified_and_requires_confirmation_to_save(api_env, monkeypatch):
+    def no_retrieval(*_args, **_kwargs):
+        raise AssertionError("stale candidate verification must not run FTS or vector retrieval")
+
+    monkeypatch.setattr("photo_search.api.routes.search_request", no_retrieval)
+    seeded = seed_library(api_env, {"one.jpg": [], "two.jpg": [], "three.jpg": []})
+    ids = [int(item["asset_id"]) for item in seeded.values()]
+    payload = PlaceAwareSearchRequestModel.model_validate({
+        "request_id": "smart-stale-rule", "retrieval_mode": "text",
+        "original_query": "needle", "text": "needle", "content_query": "needle",
+    })
+    rule = {"version": 1, "execution_kind": "TEXT", "request": payload.model_dump(
+        exclude={"request_id", "search_session_id", "cursor"}), "display_query": "needle",
+        "content_query": "needle", "confirmed_execution_mode": "ranked_candidates",
+        "confirmed_scope": None, "confirmed_place_scope": None, "confirmed_person_scope": None,
+        "confirmed_filter_revision": None, "confirmed_suggestion_revision": None,
+        "confirmed_favorites_revision": None, "search_binding": None}
+    with api_env.service.catalog.read_snapshot() as connection:
+        signature = photo_smart_collections.dependency_signature(connection, rule)[0]
+    smart = photo_smart_collections.create_collection(
+        api_env.service.catalog, "Stale ranked", "smart-stale-ranked-create", rule,
+        request_hash="stale-rank", auth_hash="test-auth", source_hash="stale-source",
+    )["collection"]
+    photo_smart_collections.publish_candidates(api_env.service.catalog, smart["smart_id"], ids,
+                                                signature=signature, truncated=True)
+    with api_env.service.catalog.write() as connection:
+        connection.execute(
+            "UPDATE photo_smart_cache_state SET dependency_signature='changed-dependency',refresh_status='FAILED' "
+            "WHERE smart_id=?", (smart["smart_id"],),
+        )
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        excluded = await client.put(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/exclusions/{ids[0]}", headers=headers,
+            json={"instance_token": smart["instance_token"], "expected_revision": 1},
+        )
+        assert excluded.status_code == 200, excluded.text
+        page = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets"
+            f"?instance_token={smart['instance_token']}&limit=1&order=rank"
+        )
+        assert page.status_code == 200, page.text
+        body = page.json()
+        assert body["freshness"] == "STALE"
+        assert body["stale_label"] == "上次结果·待更新"
+        assert [int(item["asset_id"]) for item in body["assets"]] == [ids[1]]
+        assert body["has_more"] is True
+        unconfirmed = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": 2,
+                "name": "Stale saved", "create_request_id": "smart-stale-static-save",
+            },
+        )
+        assert unconfirmed.status_code == 409
+        assert unconfirmed.json()["details"]["required_confirmations"]["confirm_stale"] is True
+        assert unconfirmed.json()["details"]["required_confirmations"]["confirm_truncated"] is True
+        confirmed = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": 2,
+                "name": "Stale saved", "create_request_id": "smart-stale-static-save",
+                "confirm_stale": True, "confirm_indexing": True, "confirm_truncated": True,
+            },
+        )
+        assert confirmed.status_code == 200, confirmed.text
+        saved = await client.get(
+            f"/api/v1/photo-collections/{confirmed.json()['collection']['collection_id']}/assets"
+            f"?instance_token={confirmed.json()['collection']['instance_token']}&limit=50"
+        )
+        assert saved.status_code == 200, saved.text
+        assert [int(item["asset_id"]) for item in saved.json()["assets"]] == ids[1:]
+        photo_smart_collections.publish_candidates(api_env.service.catalog, smart["smart_id"], ids,
+                                                    signature=signature)
+        old_cursor = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets"
+            f"?instance_token={smart['instance_token']}&limit=1&order=rank&cursor={body['next_cursor']}"
+        )
+        assert old_cursor.status_code == 409
+
+    api_env.scenario(scenario)

@@ -536,6 +536,18 @@ class PhotoSmartCollectionDeleteRequest(BaseModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
+class PhotoSmartSaveStaticRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_token: StrictStr = Field(min_length=1, max_length=128)
+    expected_revision: StrictInt = Field(ge=1)
+    name: StrictStr = Field(min_length=1, max_length=80)
+    create_request_id: StrictStr = Field(min_length=1, max_length=128)
+    order: Literal["rank", "capture_desc"] = "rank"
+    confirm_stale: StrictBool = False
+    confirm_truncated: StrictBool = False
+    confirm_indexing: StrictBool = False
+
+
 class PhotoSmartExclusionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     instance_token: StrictStr = Field(min_length=1, max_length=128)

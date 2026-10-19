@@ -147,7 +147,8 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
                      expected_favorites_revision: int | None = None,
                      expected_photo_collection: tuple[int, str, int] | None = None,
                      expected_person_collection: tuple[int, str, int] | None = None,
-                     expected_place_scope: tuple[int, str | None] | None = None) -> dict[str, Any]:
+                     expected_place_scope: tuple[int, str | None] | None = None,
+                     expected_smart_collection: tuple[int, str, int, int, int, str | None] | None = None) -> dict[str, Any]:
     display, key = _name(name)
     ids = list(asset_ids or [])
     if len(ids) > MAX_CREATE_IDS or any(type(value) is not int or value <= 0 for value in ids) or len(ids) != len(set(ids)):
@@ -168,6 +169,20 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
             if read_filter_revision(connection) != int(expected_catalog_filter_revision):
                 raise _fail("搜索范围已变化，请重新搜索后保存", status=409, code="CATALOG_FILTER_REVISION_STALE")
         _check_place_scope(connection, expected_place_scope)
+        if expected_smart_collection is not None:
+            smart_id, smart_token, smart_revision, rule_revision, exclusions_revision, build_id = expected_smart_collection
+            current_smart = connection.execute(
+                "SELECT c.instance_token,c.revision,c.rule_revision,c.exclusions_revision,s.build_id "
+                "FROM photo_smart_collections c JOIN photo_smart_cache_state s USING(smart_id) WHERE c.smart_id=?",
+                (int(smart_id),),
+            ).fetchone()
+            if (current_smart is None or str(current_smart["instance_token"]) != str(smart_token)
+                    or int(current_smart["revision"]) != int(smart_revision)
+                    or int(current_smart["rule_revision"]) != int(rule_revision)
+                    or int(current_smart["exclusions_revision"]) != int(exclusions_revision)
+                    or (build_id is not None and str(current_smart["build_id"] or "") != str(build_id))):
+                raise _fail("智能合集在另存期间已变化，请重新确认", status=409,
+                            code="PHOTO_SMART_REVISION_CONFLICT")
         if expected_favorites_revision is not None:
             from photo_search.favorites import _revision as favorite_revision
 
@@ -274,6 +289,18 @@ def replay_search_create(catalog: Any, request_id: str, name: Any, source_token:
     if (str(row["create_request_hash"]) != payload_hash
             or str(row["create_auth_hash"] or "") != auth_hash
             or str(row["create_source_token_hash"] or "") != token_hash):
+        raise _fail("同一创建请求键不能用于不同内容", status=409)
+    return {"collection": _summary(row), "reused": True}
+
+
+def replay_create_request(catalog: Any, request_id: str, *, payload_hash: str,
+                          auth_session_hash: str) -> dict[str, Any] | None:
+    """Replay an ordinary collection creation bound to an explicit request hash."""
+    row = catalog.read_one("SELECT * FROM photo_collections WHERE create_request_id=?", (str(request_id),))
+    if row is None:
+        return None
+    if (str(row["create_request_hash"]) != str(payload_hash)
+            or str(row["create_auth_hash"] or "") != str(auth_session_hash)):
         raise _fail("同一创建请求键不能用于不同内容", status=409)
     return {"collection": _summary(row), "reused": True}
 

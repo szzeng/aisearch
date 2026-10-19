@@ -217,12 +217,12 @@ def session_coverage(session: Any) -> tuple[bool, bool]:
 def _freshness(collection: Any, cache: Any, current_signature: str | None = None) -> str:
     if cache is None or not cache["build_id"]:
         return "NO_CACHE"
-    if cache["refresh_status"] in {"QUEUED", "RUNNING"}:
-        return "REFRESHING"
     if int(cache["cache_rule_revision"] or 0) != int(collection["rule_revision"]):
         return "STALE"
     if current_signature is not None and str(cache["dependency_signature"] or "") != current_signature:
         return "STALE"
+    if cache["refresh_status"] in {"QUEUED", "RUNNING"}:
+        return "REFRESHING"
     return "CURRENT"
 
 
@@ -526,7 +526,7 @@ def set_exclusion(catalog: Any, smart_id: int, asset_id: int, *, instance_token:
 
 def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_token: str,
                        limit: int = 50, cursor: str | None = None,
-                       order: str = "rank") -> dict[str, Any]:
+                       order: str = "rank", eligible_asset_ids: list[int] | None = None) -> dict[str, Any]:
     from photo_search.api.queries import locations_by_asset, summarize_asset
     from photo_search.catalog.video import photo_asset_sql
 
@@ -542,14 +542,18 @@ def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_toke
         rule = json.loads(collection["rule_json"])
         signature, indexing, _ = dependency_signature(catalog.connection, rule)
         freshness = _freshness(collection, state, signature)
-        if freshness != "CURRENT":
+        if freshness != "CURRENT" and eligible_asset_ids is None:
             return {"collection": _summary(collection, state, signature), "assets": [], "has_more": False,
                     "next_cursor": None, "freshness": freshness,
                     "coverage": "INDEXING" if indexing else ("TRUNCATED" if state["truncated"] else "BOUNDED"),
                     "refresh_required": True}
         build_id = str(state["build_id"])
+        eligible = None if eligible_asset_ids is None else sorted({int(value) for value in eligible_asset_ids})
+        eligible_hash = None if eligible is None else hashlib.sha256(
+            json.dumps(eligible, separators=(",", ":")).encode()
+        ).hexdigest()
         binding = [int(smart_id), str(instance_token), int(collection["rule_revision"]),
-                   int(collection["exclusions_revision"]), build_id, signature, order]
+                   int(collection["exclusions_revision"]), build_id, signature, order, eligible_hash]
         after = _cursor_decode(cursor, "psr1", binding)
         if after is not None and (not isinstance(after, list) or len(after) != (2 if order == "rank" else 4)):
             raise _fail("智能合集游标无效，请刷新", status=409, code=INVALID_CURSOR)
@@ -557,6 +561,12 @@ def ranked_assets_page(catalog: Any, cache: Any, smart_id: int, *, instance_toke
         where = ["e.smart_id=?", "e.build_id=?", "a.state='ACTIVE'", photo_sql,
                  "NOT EXISTS(SELECT 1 FROM photo_smart_exclusions x WHERE x.smart_id=e.smart_id AND x.asset_id=e.asset_id)"]
         params: list[Any] = [int(smart_id), build_id, *photo_params]
+        if eligible is not None:
+            if eligible:
+                where.append("e.asset_id IN (" + ",".join("?" for _ in eligible) + ")")
+                params.extend(eligible)
+            else:
+                where.append("0")
         if order == "rank":
             if after:
                 where.append("(e.rank>? OR (e.rank=? AND e.asset_id>?))")

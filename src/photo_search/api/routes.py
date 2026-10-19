@@ -17,6 +17,7 @@ import secrets
 import sqlite3
 import sys
 from collections.abc import Mapping
+from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any, Literal
@@ -123,6 +124,7 @@ from photo_search.api.models import (
     PhotoSmartExclusionRequest,
     PhotoSmartRefreshRequest,
     PhotoSmartRuleReplaceRequest,
+    PhotoSmartSaveStaticRequest,
     PlaceAssignmentRequest,
     PlaceAwareSearchRequestModel,
     PlaceBatchRequest,
@@ -1208,7 +1210,8 @@ async def get_photo_smart_assets(request: Request, smart_id: int,
                    int(collection["exclusions_revision"]), order]
         position = photo_smart_collections._cursor_decode(cursor, "psf1", binding)
         if position is not None and (not isinstance(position, list) or
-                                     len(position) != (10 if order == "capture_desc" else 2)):
+                                     (len(position) not in (10, 12) if order == "capture_desc" else
+                                      len(position) != 2)):
             raise ApiError(INVALID_CURSOR, "智能合集游标无效，请刷新", status=409)
         inner_session, inner_cursor = position if position and order == "rank" else [None, None]
         capture_position = position if position and order == "capture_desc" else None
@@ -1234,12 +1237,168 @@ async def get_photo_smart_assets(request: Request, smart_id: int,
                 "has_more": has_more, "next_cursor": photo_smart_collections._cursor_encode(
                     "psf1", binding, next_position) if has_more else None,
                 "freshness": "CURRENT", "coverage": "DYNAMIC"}
-    if info["collection"]["freshness"] != "CURRENT":
-        return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
-                "freshness": collection["freshness"], "coverage": "BOUNDED",
-                "refresh_required": True}
+    stale_browse = info["collection"]["freshness"] in {"STALE", "REFRESHING"}
+    if stale_browse:
+        if not info.get("build_id"):
+            return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
+                    "freshness": collection["freshness"], "coverage": "BOUNDED",
+                    "refresh_required": True}
+        cache_rule = service.catalog.read_one(
+            "SELECT cache_rule_revision FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),),
+        )
+        if cache_rule is None or int(cache_rule["cache_rule_revision"] or 0) != int(collection["rule_revision"]):
+            return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
+                    "freshness": "STALE", "coverage": "BOUNDED", "refresh_required": True,
+                    "rule_replaced": True}
+        try:
+            seed_values = dict(rule["request"])
+            seed_values["request_id"] = "smart-stale-seed-" + secrets.token_hex(8)
+            seed = PlaceAwareSearchRequestModel.model_validate(seed_values)
+        except Exception as error:
+            raise ApiError("PHOTO_SMART_SCOPE_UNVERIFIABLE", "无法验证当前智能合集范围，旧候选不可展示", status=409) from error
+        qualification = await run_catalog_search(
+            service.catalog, _place_aware_search_worker,
+            seed.model_copy(update={"request_id": "smart-stale-qualify-" + secrets.token_hex(8),
+                                    "cursor": None, "search_session_id": None}),
+            context=context, data_root=service.data_root,
+            ranked_candidate_build=(int(smart_id), str(info["build_id"])),
+        )
+        eligible_ids = [int(hit["asset_id"]) for hit in qualification.get("hits", [])]
+        page = await run_catalog_read(
+            service.catalog, photo_smart_collections.ranked_assets_page,
+            service.media_cache(), smart_id, instance_token=instance_token, limit=limit,
+            cursor=cursor, order=order, eligible_asset_ids=eligible_ids,
+        )
+        if page.get("freshness") != "CURRENT":
+            page["stale_label"] = "上次结果·待更新"
+        page["refresh_required"] = True
+        return page
     return await run_catalog_read(service.catalog, photo_smart_collections.ranked_assets_page,
         service.media_cache(), smart_id, instance_token=instance_token, limit=limit, cursor=cursor, order=order)
+
+
+@router.post("/photo-smart-collections/{smart_id}/save-static",
+             summary="Save a smart collection result as an ordinary collection")
+async def save_photo_smart_collection_static(payload: PhotoSmartSaveStaticRequest,
+                                             request: Request, smart_id: int) -> dict[str, Any]:
+    context = context_of(request)
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "application session is required", status=401)
+    service = context.service()
+    auth_hash = hashlib.sha256(auth_session_id.encode()).hexdigest()
+    display_name, _ = photo_collections._name(payload.name)
+    payload_hash = hashlib.sha256(json.dumps(
+        [display_name, int(smart_id), payload.instance_token, int(payload.expected_revision), payload.order,
+         bool(payload.confirm_stale), bool(payload.confirm_truncated), bool(payload.confirm_indexing)],
+        ensure_ascii=False, separators=(",", ":"),
+    ).encode()).hexdigest()
+    replay = photo_collections.replay_create_request(
+        service.catalog, payload.create_request_id, payload_hash=payload_hash, auth_session_hash=auth_hash,
+    )
+    if replay is not None:
+        return replay
+    info = await run_catalog_read(service.catalog, photo_smart_collections.detail, smart_id,
+                                  instance_token=payload.instance_token)
+    collection, rule = info["collection"], info["rule"]
+    if int(collection["revision"]) != int(payload.expected_revision):
+        raise ApiError("PHOTO_SMART_REVISION_CONFLICT", "智能合集已变化，请刷新后另存", status=409)
+    execution_kind = str(collection["execution_kind"])
+    eligible_ids: list[int]
+    validation_state: dict[str, Any] | None = None
+    if execution_kind == "FILTER":
+        try:
+            seed_values = dict(rule["request"])
+            seed_values["request_id"] = "smart-static-filter-seed-" + secrets.token_hex(8)
+            seed = PlaceAwareSearchRequestModel.model_validate(seed_values)
+        except Exception as error:
+            raise ApiError("PHOTO_SMART_SCOPE_UNVERIFIABLE", "无法验证当前筛选范围，不能另存", status=409) from error
+        current = await run_catalog_search(
+            service.catalog, _place_aware_search_worker,
+            seed.model_copy(update={"request_id": "smart-static-filter-" + secrets.token_hex(8),
+                                    "cursor": None, "search_session_id": None}),
+            context=context, data_root=service.data_root, filter_authoritative_all=int(smart_id),
+            filter_order="capture_desc" if payload.order == "capture_desc" else "asset_id",
+        )
+        validation_state = current
+        eligible_ids = [int(hit["asset_id"]) for hit in current.get("hits", [])]
+        if bool(current.get("has_more")) or len(eligible_ids) > photo_collections.MAX_CREATE_IDS:
+            raise ApiError("PHOTO_SMART_STATIC_TOO_LARGE", "当前筛选结果超过 5000 张，未创建普通合集", status=409,
+                           details={"limit": photo_collections.MAX_CREATE_IDS})
+    else:
+        freshness = str(collection["freshness"])
+        if freshness in {"NO_CACHE", "MODEL_REBIND_REQUIRED", "BLOCKED"} or not info.get("build_id"):
+            raise ApiError("PHOTO_SMART_STATIC_CACHE_UNAVAILABLE", "当前没有可验证的已发布结果，不能另存", status=409,
+                           details={"freshness": freshness})
+        cache_rule = service.catalog.read_one(
+            "SELECT cache_rule_revision FROM photo_smart_cache_state WHERE smart_id=?", (int(smart_id),),
+        )
+        if cache_rule is None or int(cache_rule["cache_rule_revision"] or 0) != int(collection["rule_revision"]):
+            raise ApiError("PHOTO_SMART_STATIC_CACHE_UNAVAILABLE", "规则已替换，旧排名候选不能另存", status=409,
+                           details={"freshness": freshness})
+        needs_stale = freshness in {"STALE", "REFRESHING"}
+        needs_truncated = bool(collection.get("truncated"))
+        needs_indexing = bool(collection.get("indexing")) or bool(info.get("indexing"))
+        required = {"confirm_stale": needs_stale, "confirm_truncated": needs_truncated,
+                    "confirm_indexing": needs_indexing}
+        if ((needs_stale and not payload.confirm_stale)
+                or (needs_truncated and not payload.confirm_truncated)
+                or (needs_indexing and not payload.confirm_indexing)):
+            raise ApiError("PHOTO_SMART_STATIC_CONFIRMATION_REQUIRED",
+                           "请确认要保存上次结果、可能截断的候选或索引未完成时的当前候选快照",
+                           status=409, details={"required_confirmations": required,
+                                                "candidate_count": int(collection["candidate_count"])})
+        try:
+            seed_values = dict(rule["request"])
+            seed_values["request_id"] = "smart-static-rank-seed-" + secrets.token_hex(8)
+            seed = PlaceAwareSearchRequestModel.model_validate(seed_values)
+        except Exception as error:
+            raise ApiError("PHOTO_SMART_SCOPE_UNVERIFIABLE", "无法验证当前智能合集范围，不能另存", status=409) from error
+        qualification = await run_catalog_search(
+            service.catalog, _place_aware_search_worker,
+            seed.model_copy(update={"request_id": "smart-static-rank-" + secrets.token_hex(8),
+                                    "cursor": None, "search_session_id": None}),
+            context=context, data_root=service.data_root,
+            ranked_candidate_build=(int(smart_id), str(info["build_id"])),
+        )
+        validation_state = qualification
+        eligible_ids = [int(hit["asset_id"]) for hit in qualification.get("hits", [])]
+        ordered = await run_catalog_read(
+            service.catalog, photo_smart_collections.ranked_assets_page, service.media_cache(), smart_id,
+            instance_token=payload.instance_token, limit=photo_smart_collections.MAX_CANDIDATES,
+            order=payload.order, eligible_asset_ids=eligible_ids,
+        )
+        eligible_ids = [int(asset["asset_id"]) for asset in ordered["assets"]]
+    source_hash = hashlib.sha256(json.dumps(
+        [int(smart_id), payload.instance_token, int(payload.expected_revision)], separators=(",", ":"),
+    ).encode()).hexdigest()
+    search_scope = None if validation_state is None else validation_state.get("search_scope")
+    person_scope = None if validation_state is None else validation_state.get("collection_scope")
+    place_scope = None if validation_state is None else validation_state.get("place_scope")
+    expected_photo_scope = None if not isinstance(search_scope, dict) or search_scope.get("kind") != "photo_collection" else (
+        int(search_scope["photo_collection_id"]), str(search_scope["instance_token"]), int(search_scope["revision"])
+    )
+    expected_person_scope = None if not isinstance(person_scope, dict) else (
+        int(person_scope["collection_id"]), str(person_scope["instance_token"]), int(person_scope["revision"])
+    )
+    expected_place_scope = None if not isinstance(place_scope, dict) else (
+        int(place_scope["suggestion_revision"]), place_scope.get("package_revision")
+    )
+    return photo_collections.create_collection(
+        service.catalog, payload.name, payload.create_request_id, source_hash=source_hash,
+        asset_ids=eligible_ids, request_payload_hash=payload_hash,
+        auth_session_hash=auth_hash,
+        expected_catalog_filter_revision=(None if validation_state is None else
+                                           validation_state.get("catalog_filter_revision")),
+        expected_favorites_revision=(None if validation_state is None else
+                                     validation_state.get("favorites_revision")),
+        expected_photo_collection=expected_photo_scope,
+        expected_person_collection=expected_person_scope,
+        expected_place_scope=expected_place_scope,
+        expected_smart_collection=(int(smart_id), payload.instance_token, int(payload.expected_revision),
+                                   int(collection["rule_revision"]), int(collection["exclusions_revision"]),
+                                   None if execution_kind == "FILTER" else str(info["build_id"])),
+    )
 
 
 def _photo_smart_summaries(service: Any, asset_ids: list[int]) -> list[dict[str, Any]]:
@@ -3356,6 +3515,8 @@ def _place_aware_search_worker(
     filter_exclusion_smart_id: int | None = None,
     filter_order: str = "asset_id",
     filter_capture_position: list[Any] | None = None,
+    ranked_candidate_build: tuple[int, str] | None = None,
+    filter_authoritative_all: int | None = None,
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
     favorites_only = bool(payload.favorites_only)
@@ -3896,6 +4057,51 @@ def _place_aware_search_worker(
         place_scope=kind is not None and key is not None,
         content_query=envelope.text,
     )
+    if ranked_candidate_build is not None or filter_authoritative_all is not None:
+        # Revalidate the bounded published candidate set against the exact saved,
+        # structured SQL scope. This path deliberately bypasses FTS and vector retrieval.
+        smart_id = int(ranked_candidate_build[0]) if ranked_candidate_build is not None else int(filter_authoritative_all)
+        if ranked_candidate_build is not None:
+            candidate_sql = (
+                "EXISTS (SELECT 1 FROM photo_smart_cache_entries AS pse "
+                "WHERE pse.smart_id=? AND pse.build_id=? AND pse.asset_id=a.asset_id)"
+            )
+            search_time_sql = f"({search_time_sql}) AND ({candidate_sql})" if search_time_sql else candidate_sql
+            search_time_parameters += (smart_id, str(ranked_candidate_build[1]))
+        exclusion_sql = (
+            "NOT EXISTS (SELECT 1 FROM photo_smart_exclusions AS pse "
+            "WHERE pse.smart_id=? AND pse.asset_id=a.asset_id)"
+        )
+        search_time_sql = f"({search_time_sql}) AND ({exclusion_sql})" if search_time_sql else exclusion_sql
+        search_time_parameters += (int(smart_id),)
+        bounded_envelope = replace(envelope, page_size=5001, cursor=None, search_session_id=None)
+        qualification_order = "capture_desc" if filter_order == "capture_desc" else "asset_id"
+        if kind is not None and key is not None:
+            page = _place_album_search_page(
+                service, bounded_envelope, kind=kind, key=str(key), album_ids=album_ids or [],
+                collection=collection, place_block=place_block, original_query=original,
+                person_collection=collection_scope, membership_sql=place_membership_sql,
+                membership_parameters=place_membership_parameters,
+                additional_condition_sql=search_time_sql,
+                additional_condition_parameters=search_time_parameters,
+                time_identity=search_time_identity, favorites_only=favorites_only,
+                include_statistics=False, order=qualification_order,
+            )
+        else:
+            page = _filter_only_search_page(
+                service, bounded_envelope, collection_scope=collection_scope,
+                additional_condition_sql=search_time_sql,
+                additional_condition_parameters=search_time_parameters,
+                time_identity=search_time_identity, favorites_only=favorites_only,
+                include_statistics=False, order=qualification_order,
+            )
+        _verify_person_collection(service.catalog, collection_scope)
+        _verify_fixed_person_revision(service.catalog, fixed_person_revision)
+        _verify_favorites_revision(service.catalog, favorites_revision)
+        return {**page, "hits": page.get("hits", []), "has_more": page.get("has_more", False),
+                "validated_current_scope": True, "search_scope": resolved_search_scope,
+                "collection_scope": collection_scope,
+                "place_scope": page.get("place_scope") or place_block}
     if execution_path == "place_album":
         result = _place_album_search_page(
             service, envelope, kind=kind, key=str(key), album_ids=album_ids or [],
@@ -3906,6 +4112,10 @@ def _place_aware_search_worker(
             additional_condition_parameters=search_time_parameters,
             time_identity=search_time_identity,
             favorites_only=favorites_only,
+            filter_exclusion_smart_id=filter_exclusion_smart_id,
+            include_statistics=filter_statistics,
+            order=filter_order,
+            capture_position=filter_capture_position,
         )
         result["place_parse_notice"] = parse_notice
         result["intent_plan"] = None if text_mode else intent_plan
@@ -4263,11 +4473,23 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     return result
 
 
-def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str, person_collection: dict[str, Any] | None = None, membership_sql: str | None = None, membership_parameters: tuple[Any, ...] = (), additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False) -> dict[str, Any]:
+def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str, key: str, album_ids: list[int], collection: dict[str, Any], place_block: dict[str, Any], original_query: str, person_collection: dict[str, Any] | None = None, membership_sql: str | None = None, membership_parameters: tuple[Any, ...] = (), additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False, filter_exclusion_smart_id: int | None = None, include_statistics: bool = True, order: str = "asset_id", capture_position: list[Any] | None = None) -> dict[str, Any]:
     """Uncapped SQLite pages for a pure selected place; keeps album membership authoritative."""
     catalog = service.catalog
     favorites_revision = _favorites_revision(catalog) if favorites_only else None
     base = _person_authority_base(catalog, request)
+    if filter_exclusion_smart_id is not None:
+        exclusion_sql = (
+            "NOT EXISTS (SELECT 1 FROM photo_smart_exclusions AS pse "
+            "WHERE pse.smart_id=? AND pse.asset_id=a.asset_id)"
+        )
+        if additional_condition_sql is None:
+            additional_condition_sql = exclusion_sql
+            additional_condition_parameters = (int(filter_exclusion_smart_id),)
+        else:
+            additional_condition_sql = f"({additional_condition_sql}) AND ({exclusion_sql})"
+            additional_condition_parameters += (int(filter_exclusion_smart_id),)
+        time_identity = (*time_identity, "smart_exclusions", int(filter_exclusion_smart_id))
     scope = SearchScope.build(
         source_id=request.source_id,
         availability=request.availability,
@@ -4289,7 +4511,24 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
     filter_fingerprint = hashlib.sha256(filter_payload.encode("utf-8")).hexdigest()
     revisions = (collection["catalog_filter_revision"], collection["suggestion_revision"], collection["package_revision"], kind, key, filter_fingerprint, None if person_collection is None else person_collection["instance_token"], None if person_collection is None else person_collection["revision"], favorites_revision)
     session_id = f"place-album:{kind}:{key}"
-    if request.cursor is not None:
+    if order not in {"asset_id", "capture_desc"}:
+        raise ApiError("VALIDATION_ERROR", "unsupported filter ordering")
+    capture_after = None
+    if order == "capture_desc":
+        if request.cursor is not None:
+            raise ApiError(INVALID_CURSOR, "the capture cursor does not match this search", status=409)
+        if capture_position is not None:
+            if (len(capture_position) != len(revisions) + 3
+                    or capture_position[:len(revisions)] != list(revisions)):
+                raise ApiError(CATALOG_FILTER_REVISION_STALE,
+                               "the place scope changed; restart the smart collection page", status=409)
+            capture_after = capture_position[len(revisions):]
+            if (any(isinstance(value, bool) or not isinstance(value, int) for value in capture_after)
+                    or capture_after[0] not in (0, 1) or capture_after[1] < 0
+                    or capture_after[2] < 1):
+                raise ApiError(INVALID_CURSOR, "the capture cursor does not match this search", status=409)
+        start = 0
+    elif request.cursor is not None:
         if request.search_session_id != session_id:
             raise ApiError(INVALID_CURSOR, "the place album cursor does not match this search")
         _require_favorites_cursor_revision(request.cursor, favorites_revision)
@@ -4297,16 +4536,19 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
     else:
         start = 0
     where, params = scope_condition(catalog.connection, scope)
-    total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
-    rows = catalog.read_all(
-        f"SELECT a.asset_id FROM assets AS a WHERE ({where}) AND a.asset_id>? "
-        "ORDER BY a.asset_id LIMIT ?",
-        (*params, int(start), int(request.page_size) + 1),
-    )
+    total = (int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+             if include_statistics else None)
+    rows = (_filter_capture_desc_rows(catalog, where, tuple(params), limit=int(request.page_size),
+                                      position=capture_after)
+            if order == "capture_desc" else catalog.read_all(
+                f"SELECT a.asset_id,NULL AS capture_sort FROM assets AS a WHERE ({where}) AND a.asset_id>? "
+                "ORDER BY a.asset_id LIMIT ?",
+                (*params, int(start), int(request.page_size) + 1),
+            ))
     offset = int(catalog.read_one(
         f"SELECT COUNT(*) AS n FROM assets AS a WHERE ({where}) AND a.asset_id<=?",
         (*params, int(start)),
-    )["n"]) if start else 0
+    )["n"]) if start and include_statistics and order == "asset_id" else 0
     from photo_search.places.timeline import selected_members_sql
 
     _, _, current_revisions = selected_members_sql(
@@ -4320,9 +4562,9 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place album changed; reload the search", status=409)
     _verify_favorites_revision(catalog, favorites_revision)
     page = rows[: int(request.page_size)]
-    next_offset = int(page[-1]["asset_id"]) if page else start
     has_more = len(rows) > len(page)
-    token = place_albums._token(next_offset, revisions) if has_more else None
+    next_offset = int(page[-1]["asset_id"]) if page else start
+    token = place_albums._token(next_offset, revisions) if has_more and order == "asset_id" else None
     ids = [int(row["asset_id"]) for row in page]
     hits = [{"asset_id": asset_id, "rank": offset + index + 1, "score": None, "matched_by": {"filter": offset + index + 1}, "hit_reason": "FILTER_ONLY", "matched_text": [], "semantic_ready": False} for index, asset_id in enumerate(ids)]
     result = {
@@ -4353,6 +4595,13 @@ def _place_album_search_page(service: Any, request: SearchRequest, *, kind: str,
         "place_scope": place_block, "collection_scope": person_collection,
         "original_query": original_query, "content_query": None,
     }
+    if order == "capture_desc":
+        last = rows[len(page) - 1] if page else None
+        result["smart_capture_position"] = (
+            [*revisions, int(last["capture_sort"] is not None), int(last["capture_sort"] or 0),
+             int(last["asset_id"])]
+            if has_more and last else None
+        )
     _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
     return result
 
