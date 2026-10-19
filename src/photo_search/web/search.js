@@ -943,6 +943,20 @@
       : state.search.selectedScope ? "搜索当前范围" : "全库搜索";
   }
 
+  function clearAssetQuerySummary() {
+    state.search.assetQueryId = null;
+    state.search.assetQuery = null;
+    if (!els.assetQuerySummary) return;
+    els.assetQuerySummary.hidden = true;
+    if (els.assetQueryImage) {
+      els.assetQueryImage.removeAttribute("src");
+      els.assetQueryImage.hidden = true;
+    }
+    text(els.assetQueryTitle, "");
+    text(els.assetQueryFilename, "");
+    text(els.assetQueryScope, "");
+  }
+
   function startSimilarAssetSearch(assetId) {
     state.search.mode = "asset_image";
     state.search.assetQueryId = Number(assetId);
@@ -976,6 +990,7 @@
       text(els.assetQueryTitle, "相似照片搜索");
       text(els.assetQueryFilename, "正在读取参考照片…");
       text(els.assetQueryScope, "搜索范围：全部图库");
+      els.assetQueryImage.removeAttribute("src");
       els.assetQueryImage.hidden = true;
       els.assetQuerySummary.hidden = false;
     }
@@ -1011,10 +1026,8 @@
 
   function submitSearch() {
     clearSimilarAssetUrl();
-    state.search.assetQueryId = null;
-    state.search.assetQuery = null;
+    clearAssetQuerySummary();
     setSimilarQueryControls(false);
-    if (els.assetQuerySummary) els.assetQuerySummary.hidden = true;
     state.search.imageFile = null;
     state.search.pendingImageFile = null;
     clearSearchSnapshot();
@@ -1888,11 +1901,8 @@
         els.assetQuerySummary.hidden = false;
       }
     } else {
-      state.search.assetQuery = null;
-      if (els.assetQuerySummary) {
-        els.assetQuerySummary.hidden = true;
-        if (els.assetQueryImage) els.assetQueryImage.removeAttribute("src");
-      }
+      clearSimilarAssetUrl();
+      clearAssetQuerySummary();
     }
     // Filter-only and place-album cursors keep every loaded page visible as users continue.
     var filterOnly = body.search_session_id === "filter-only" || String(body.search_session_id || "").indexOf("place-album:") === 0;

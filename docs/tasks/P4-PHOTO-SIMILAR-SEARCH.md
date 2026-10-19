@@ -266,6 +266,14 @@
 - Luna High 对最终兼容修复和 mismatch 行为断言限定复核，无 blocker。详细证据见[执行报告](../reports/P4-PHOTO-SIMILAR-SEARCH.md)。未访问真实照片库；不推送。
 - 本次修复提交：`def7e3026f4a67507890e5d49388b37de1ada141`。
 
+## 搜索模式切换残留修复（2026-10-19）
+
+- 样式：为 `.asset-query-summary[hidden]` 和内部隐藏缩略图增加显式 `display:none`，避免 flex 布局覆盖 `hidden`；搜索页 `search.css` 缓存版本更新为 `p4-photo-similar-search-3`。
+- 状态清理：提交文字搜索时同步隐藏参考栏、移除缩略图 `src`、清空标题/文件名/范围及 `assetQueryId`、`assetQuery`，并从 URL 清除 `similar_asset`；非相似结果渲染路径复用同一清理函数。新相似搜索仍重新填充参考信息。上传搜图失败恢复逻辑未改。
+- 定向验证：JUnit `test-results/P4-PHOTO-SIMILAR-SEARCH-text-clear-r4.xml`，3 passed / 0 failed；行为测试覆盖同步清理（请求挂起时）、文字查询成功或失败后仍隐藏，以及重新进入相似搜索显示新参考照片。`node --check src/photo_search/web/search.js` 与 `git diff --check` 通过。r1/r2/r3 初始运行的 harness 缺口/断言顺序问题已修正，最终以 r4 为通过证据。
+- 内置浏览器：隔离合成图库、127.0.0.1。普通搜索页无参考栏；照片进入相似搜索显示参考缩略图、文件名和全部图库范围；点击切换文字搜索后 URL 清除 `similar_asset`，参考栏立即从可访问树消失。浏览器仅检查本次桌面视口；窄屏及真实浏览器端延迟/失败注入未单独验。未访问真实图库。
+- 本次续修本地提交：待提交后补录 SHA；不推送。
+
 **最终验收标准：点击一次「找相似照片」，直接复用有效向量显示正确的全图库相似结果；不会重新执行 AI 编码；分页、切图、错误状态和浏览器返回正确。**
 
 不自动启动额外功能卡。

@@ -29,6 +29,7 @@ class Element {
     for(const child of this.children){if(matches(child)){if(child.tag==="button")return child;const nested=child.querySelector(selector);if(nested)return nested;return child;}const nested=child.querySelector(selector);if(nested)return nested;}
     return null;
   }
+  querySelectorAll(){return [];}
   focus(){}
   fire(name){for(const listener of this.events[name]||[])listener({preventDefault(){},target:this});}
 }
@@ -49,15 +50,15 @@ function page(body,assetId,cursor="text-next"){
 }
 function harness(storage=new Map(),harnessOptions={}){
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-  const calls=[],viewers=[],scrolls=[];let answer=body=>ok(page(body,body.cursor?202:201));
+  const calls=[],viewers=[],scrolls=[],historyWrites=[];let answer=body=>ok(page(body,body.cursor?202:201));
   for(const [id,value] of Object.entries({"query-retrieval-mode":"combined","query-availability":"any",
     "query-place-state":"any","query-descendants":"true","query-page-size":"1","query-person-match":"any"}))get(id).value=value;
   const context={URLSearchParams,URL,console,encodeURIComponent,isFinite,
     IntersectionObserver:class{observe(){}unobserve(){}disconnect(){}},
     document:{readyState:"loading",cookie:"ps_csrf=fixture-csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-    window:{location:{href:"http://127.0.0.1/search",origin:"http://127.0.0.1",pathname:"/search",search:harnessOptions.search||"",hash:"",
+    window:{location:{href:"http://127.0.0.1/search"+(harnessOptions.search||""),origin:"http://127.0.0.1",pathname:"/search",search:harnessOptions.search||"",hash:"",
       replace(path){this.href=new URL(path,this.href).href;}},scrollY:87,
-      history:{state:harnessOptions.historyState||null,replaceState(value){this.state=value;}},
+      history:{state:harnessOptions.historyState||null,replaceState(value,title,url){this.state=value;historyWrites.push(url);if(url){const next=new URL(url,"http://127.0.0.1");context.window.location.href=next.href;context.window.location.pathname=next.pathname;context.window.location.search=next.search;context.window.location.hash=next.hash;}}},
       requestAnimationFrame:fn=>fn(),scrollTo(...args){scrolls.push(args);},
       sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)}},
     fetch:async(url,options)=>{
@@ -66,6 +67,9 @@ function harness(storage=new Map(),harnessOptions={}){
       if(url.endsWith("/sources/summary"))return ok({sources:[{source_id:3,display_name:"合成票据"}]});
       if(url.includes("/persons?"))return ok({persons:[],has_more:false});
       if(url.endsWith("/search/place-aware"))return answer(JSON.parse(options.body));
+      if(url.endsWith("/search/by-asset"))return ok({search_session_id:"fresh-asset-session",next_cursor:null,
+        has_more:false,total_candidates:1,hits:[{asset_id:202,rank:1,hit_reason:"SEMANTIC",matched_by:{vector:1},matched_text:[]}],
+        asset_query:{asset_id:101,filename:"ref.jpg",thumbnail_url:"/thumb/101"}});
       if(url.endsWith("/search/by-asset/validate")){
         const body=JSON.parse(options.body);
         if(harnessOptions.validationResponse)return ok(harnessOptions.validationResponse);
@@ -92,7 +96,7 @@ function harness(storage=new Map(),harnessOptions={}){
   };
   vm.runInContext(code,context);
   context.ui.boot();
-  return {get,calls,storage,viewers,scrolls,ui:context.ui,setAnswer:fn=>{answer=fn;},searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
+  return {get,calls,storage,viewers,scrolls,historyWrites,ui:context.ui,setAnswer:fn=>{answer=fn;},searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
 }
 function assertLiteral(request){
   assert.equal(request.retrieval_mode,"text");
@@ -207,6 +211,33 @@ function assertLiteral(request){
   assert.deepEqual(Array.from(similarReturn.ui.state.search.hits,hit=>hit.asset_id),[202,203]);
   assert.match(similarReturn.get("result-grid").textContent,/第 2 名/);
   assert.deepEqual(similarReturn.scrolls.at(-1),[0,347],"history restore reinstates the scroll position");
+  assert.equal(similarReturn.get("asset-query-summary").hidden,false,"a restored similar search shows its reference summary");
+  similarReturn.get("asset-query-image").src="/thumb/101";
+  similarReturn.get("asset-query-image").hidden=false;
+  similarReturn.get("asset-query-filename").textContent="ref.jpg";
+  similarReturn.get("asset-query-scope").textContent="搜索范围：全部图库";
+  similarReturn.setAnswer(body=>new Promise(resolve=>{globalThis.releaseTextSearch=()=>resolve(ok(page(body,303,null)));}));
+  similarReturn.get("search-form").fire("submit");
+  assert.equal(similarReturn.get("asset-query-summary").hidden,true,"text-mode submit hides the reference summary synchronously");
+  assert.equal(similarReturn.get("asset-query-image").hidden,true);
+  assert.equal(similarReturn.get("asset-query-image").src,undefined,"text-mode submit removes the reference thumbnail source immediately");
+  assert.equal(similarReturn.get("asset-query-filename").textContent,"");
+  assert.equal(similarReturn.get("asset-query-scope").textContent,"");
+  assert.equal(similarReturn.ui.state.search.assetQueryId,null);
+  assert.equal(similarReturn.ui.state.search.assetQuery,null);
+  assert.equal(new URL("http://127.0.0.1"+similarReturn.historyWrites.at(-1)).searchParams.has("similar_asset"),false);
+  globalThis.releaseTextSearch();await flush();
+  assert.equal(similarReturn.get("asset-query-summary").hidden,true,"text results keep the reference summary cleared");
+
+  const freshSimilar=harness(new Map(),{search:"?similar_asset=101"});await flush();
+  assert.equal(freshSimilar.get("asset-query-summary").hidden,false,"starting a new similar search shows the new reference summary");
+  assert.equal(freshSimilar.get("asset-query-filename").textContent,"ref.jpg");
+  assert.equal(freshSimilar.get("asset-query-image").src,"/thumb/101");
+  freshSimilar.setAnswer(()=>({ok:false,status:503,headers:{get:()=>"application/json"},json:async()=>({code:"UNAVAILABLE",message:"synthetic failure"})}));
+  freshSimilar.get("search-form").fire("submit");
+  assert.equal(freshSimilar.get("asset-query-summary").hidden,true,"switching away from a fresh similar search hides its reference before a failed request");
+  await flush();
+  assert.equal(freshSimilar.get("asset-query-summary").hidden,true,"a failed text search does not restore stale reference details");
 
   const legacySnapshot=JSON.parse(JSON.stringify(similarSnapshot));
   delete legacySnapshot.lastRequestBody.top_k;
