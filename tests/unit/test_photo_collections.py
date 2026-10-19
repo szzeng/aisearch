@@ -88,6 +88,68 @@ def test_photo_collection_timeline_is_scope_bound_and_stale_refuses(catalog):
         timeline_page(catalog, **common)
 
 
+def test_photo_collection_capture_timeline_uses_time_and_member_indexes(catalog, monkeypatch):
+    collection = create_collection(catalog, "Capture order", "capture-order", asset_ids=[1, 2, 3])["collection"]
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) "
+            "VALUES(?,?,?,'MEDIUM')",
+            [(1, 3000, "EXIF_ORIGINAL"), (2, 3000, "EXIF_DIGITIZED"),
+             (3, 3000, "EXIF_ORIGINAL")],
+        )
+    monkeypatch.setattr("photo_search.api.timeline.PHOTO_COLLECTION_MEMBER_DRIVEN_MAX", 0)
+    statements: list[str] = []
+    catalog.connection.set_trace_callback(
+        lambda sql: statements.append(sql) if
+        "FROM asset_metadata AS m CROSS JOIN photo_collection_members AS pcm CROSS JOIN assets AS a" in sql
+        else None
+    )
+    common = dict(kind="photo_collection", photo_collection_id=collection["collection_id"],
+                  photo_collection_instance=collection["instance_token"],
+                  photo_collection_revision=collection["revision"], time_basis="capture",
+                  bucket="capture", limit=2)
+    try:
+        first = timeline_page(catalog, **common)
+        second = timeline_page(catalog, **common, cursor=first["next_cursor"])
+    finally:
+        catalog.connection.set_trace_callback(None)
+    assert [row["asset_id"] for row in first["assets"] + second["assets"]] == [3, 2, 1]
+    assert len(statements) >= 4
+    assert all("EXISTS (SELECT 1 FROM photo_collection_members pcm WHERE" not in sql for sql in statements)
+    plans = [[row["detail"] for row in catalog.read_all("EXPLAIN QUERY PLAN " + sql)]
+             for sql in statements]
+    assert all(any("idx_asset_metadata_capture" in step for step in plan) for plan in plans)
+    assert all(any("photo_collection_members" in step for step in plan) for plan in plans)
+    assert not any("TEMP B-TREE FOR ORDER BY" in step for plan in plans for step in plan)
+
+
+def test_photo_collection_capture_timeline_keeps_tiny_membership_bounded(catalog):
+    collection = create_collection(catalog, "Tiny capture scope", "tiny-capture", asset_ids=[1, 2, 3])["collection"]
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO asset_metadata(asset_id,taken_at_sort,time_source,time_confidence) "
+            "VALUES(?,?,'EXIF_ORIGINAL','MEDIUM')", [(1, 1000), (2, 3000), (3, 2000)],
+        )
+    statements: list[str] = []
+    catalog.connection.set_trace_callback(
+        lambda sql: statements.append(sql) if "FROM photo_collection_members AS pcm CROSS JOIN assets AS a" in sql
+        else None
+    )
+    try:
+        page = timeline_page(catalog, kind="photo_collection",
+            photo_collection_id=collection["collection_id"],
+            photo_collection_instance=collection["instance_token"],
+            photo_collection_revision=collection["revision"], time_basis="capture",
+            bucket="capture", limit=2)
+    finally:
+        catalog.connection.set_trace_callback(None)
+    assert [row["asset_id"] for row in page["assets"]] == [2, 3]
+    assert statements
+    plan = [row["detail"] for row in catalog.read_all("EXPLAIN QUERY PLAN " + statements[0])]
+    assert any("photo_collection_members" in step for step in plan)
+    assert not any("idx_asset_metadata_capture" in step for step in plan)
+
+
 
 def test_photo_collection_search_save_rechecks_place_revisions_inside_write(catalog):
     from photo_search.places import cn_facets

@@ -44,3 +44,28 @@ $env:PYTHONPATH='src;tests;.'
 .venv\Scripts\python.exe -m pytest -q tests\unit tests\integration --junitxml=test-results\P4-PHOTO-COLLECTION-A-unit-integration-final-r2.xml --basetemp=.pytest-tmp\p4-photo-collection-full-final-r2
 .venv\Scripts\python.exe -m pytest -q tests\integration\test_p4_photo_collections.py tests\unit\test_photo_collections.py tests\unit\test_catalog_migrations.py tests\unit\test_p4_ui_people_d.py --junitxml=test-results\P4-PHOTO-COLLECTION-A-remainder-final-r7.xml --basetemp=.pytest-tmp\p4-photo-collection-remainder-final-r7
 ```
+
+## 2026-10-19 性能收口：保存筛选、合集时间轴与封面
+
+本轮基于当前本地 `master` / `origin/master` `bd7f1af`（性能前测快照 `a63f0d4`；中间仅合入迁移保障文档及无关收藏图标提交，受测后端链路未改），只使用 `.tmp/p4-photo-perf-z71ua719/PhotoSearchData` 的隔离 300,000 资产合成 catalog，未访问真实图库。没有新增完整 30 万容量或产品延迟承诺。
+
+| 场景 | 数据/设备与口径 | 修改前 → 修改后 | 结论与边界 |
+|---|---|---|---|
+| 保存全部 FILTER_ONLY 结果 | 300k；保存 5,000 条、页 50，端到端旧实现实测 | 100 次全范围 COUNT + 99 次 offset COUNT；COUNT 分别累计 366.8/195.3 ms，保存 1.281 s → 定向路由测试确认新建和追加各只做 1 次首屏精确 COUNT、后续页 0 次全范围/offset COUNT | 去掉每续页重复统计；来源 token、revision、资格、顺序、累计 5000 上限及拒绝行为保留。新计数工作量由 120 条合成路由测试断言；未重复跑 5000 条端到端计时。 |
+| capture 时间轴首/续页 | 同一 300k DB；串行 5 次中位数，页 50 | 5,000 成员首/续页 11.15/8.93 ms → 7.74/8.06 ms；150,000 成员 371.20/2.25 ms → 1.82/1.53 ms | 首/续页分别捕获两个 EXIF 来源 SQL 的实际计划；大合集均由 `idx_asset_metadata_capture` 做 keyset，并通过反向成员索引验证成员，无 `TEMP B-TREE FOR ORDER BY`。不是对其它设备的延迟保证。 |
+| ultra-sparse capture 时间轴 | 同一 300k DB；100/1,000 成员，无/极少合格 capture；串行 5 次中位数 | 强制全库 capture 索引路径 189.50/40.73 ms → 成员有界路径 0.89/2.61 ms | 小合集阈值设为 1,000，驱动端为 `UNIQUE(collection_id,position)`；最多检查该小合集成员并排序，不扫全库时间索引。100 成员样例只有 34 张符合照片资格；续页无数据时低于 0.001 ms。阈值仅依据当前合成样本。 |
+| 大合集时间统计 | 同一 300k DB；精确 capture period 统计，中位数 3 次 | 稀疏：8.11 → 7.54 ms；150k：268.84 → 247.62 ms | 这是精确范围统计，仍随有效数据工作；本轮未重写统计、不宣称消除全局聚合成本。 |
+| 合集封面目录页 | 同一 300k DB；catalog 共 31 个合集，页面返回 20 个、首屏 92,200 个离线成员、5 次整页中位数 | 原快照：20 合集/100,000 离线成员约 22.33 ms；本轮：20 合集/92,200 离线成员约 17.71 ms，SQLite VM 步骤约 1,384,000 | 实际计划显示 `SCAN c` 遍历覆盖索引（夹具共 31 个合集），随后按成员位置索引检查候选及 asset/location 索引校验；没有 catalog 资产全表扫描。无封面时线性检查成员，成本随页合集及其成员数增长。当前实测没有显示需要改写的瓶颈，极大无界离线合集仍无延迟/容量保证。 |
+
+时间轴自适应是本轮唯一运行时修复：`_scope` 已读取的 `member_count` 仅作内部访问路径提示，不进入游标 fingerprint 或响应；小合集用成员驱动并显式固定 SQLite 连接顺序，大合集仍用全局时间序索引。成员内联 join 已替代重复的相关成员 EXISTS 探测。两路 EXIF capture 查询在 Python 中按 `(taken_at_sort, asset_id)` 合并，跨 `EXIF_ORIGINAL` / `EXIF_DIGITIZED` 同毫秒测试及续页结果为 `[3, 2, 1]`；成员集合、排序、scope/revision 游标与现有资格 SQL 未改变。FILTER_ONLY 保存改动只关闭非首屏统计计算。
+
+### 失败基线与捕获时间合同
+
+原 unit/integration JUnit 中 5 个失败已逐项对照：其中 `test_p4_ui_people_d::test_person_and_collection_albums_load_the_shared_timeline` 是本任务共用 timeline 静态资源版本随变更更新后已通过的断言；其余 4 个为既有人物页资源版本断言 2 项、地图资源版本断言 1 项，以及 `test_p4_time_contracts::test_the_continuation_digest_binds_normalized_capture_bounds_and_retrieval_mode` 的摘要参考值未包含既存 `favorites_only: false` 默认字段。未改这些无关断言。与本任务相关的 `test_capture_range_filter_save_keeps_the_frozen_capture_scope` 在本轮定向组通过，覆盖捕获范围保存；capture 时间轴补充了跨来源平局与 cursor 续页测试。
+
+### 本轮验证与未验边界
+
+- 本轮最终受影响 JUnit：`test-results/P4-PHOTO-COLLECTION-A-perf-final-r4.xml`，25 passed、0 failed、0 errors、0 skipped；覆盖搜索保存、捕获范围、revision、备份/retention/人工成员、写锁重试、限额边界和时间轴。0036 migration/refusal 的既有验收由 `test-results/P4-PHOTO-COLLECTION-A-remainder-final-r7.xml` 40/40 记录，本轮没有重跑。`ruff check`、相关文件 `py_compile`、`git diff --check` 通过。
+- 300k 合成前后原始摘要及真实 EXPLAIN/计时：`test-results/P4-PHOTO-COLLECTION-A-perf-baseline.json`、`test-results/P4-PHOTO-COLLECTION-A-perf-after.json`；复测命令为 `.venv\Scripts\python.exe .tmp\p4-photo-perf-z71ua719\measure_after.py`。只表示该隔离数据库和本机执行样本。封面时间为真实 `list_collections(limit=20)` 完整调用，不是单独 SQL 计时；SQL VM 工作步数按 1000 指令回调近似。
+- 该轮没有浏览器验证；本任务搜索结果保存的浏览器闭环仍受 `prompt()` 工具限制，按原报告保持 PENDING。未验证真实进程重启、刷新后的幂等恢复、超大无界稀疏合集容量、不同设备性能或 GPU/真实图库。
+- 智能合集前置接口仍可复用且本轮没有改变搜索/成员数据合同；本报告不把整卡升级为 PASS（仍 `IMPLEMENTED / ACCEPTANCE PARTIAL`），也不启动智能合集。

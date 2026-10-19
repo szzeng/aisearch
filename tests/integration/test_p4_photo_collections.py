@@ -7,6 +7,7 @@ from p2_search_api_fixtures import build_search_env
 from p3_persons_page_fixtures import mark_location_missing, seed_library
 
 from photo_search.backup import create_backup, restore_backup
+from photo_search.catalog.db import Catalog
 from photo_search.catalog.sqlite_io import open_readonly
 from photo_search.config import catalog_db_path
 from photo_search.library_retention import library_retention_preview
@@ -96,6 +97,65 @@ def test_filter_search_snapshot_and_photo_collection_search_scope(api_env):
         assert {int(item["asset_id"]) for item in assets.json()["assets"]} == expected_ids
         assert saved.json()["reused"] is False
         return collection
+
+    api_env.scenario(scenario)
+
+
+def test_filter_search_save_avoids_recounting_each_page(api_env, monkeypatch):
+    seeded = seed_library(api_env, {f"filter-page-{index:03}.jpg": [] for index in range(120)})
+    expected_ids = sorted(int(item["asset_id"]) for item in seeded.values())
+    original_read_one = Catalog.read_one
+    full_counts: list[str] = []
+    offset_counts: list[str] = []
+
+    def count_reads(self, sql, parameters=()):
+        normalized = " ".join(sql.lower().split())
+        if normalized.startswith("select count(*) as value from assets as a where"):
+            (offset_counts if "a.asset_id<=?" in normalized else full_counts).append(normalized)
+        return original_read_one(self, sql, parameters)
+
+    async def scenario(client):
+        csrf = await api_env.authenticate(client)
+        headers = api_env.post_headers(csrf)
+        source = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "filter-page-source", "retrieval_mode": "text",
+            "original_query": "", "page_size": 50,
+        })
+        assert source.status_code == 200, source.text
+        token = source.json()["photo_collection_source_token"]
+
+        monkeypatch.setattr(Catalog, "read_one", count_reads)
+        saved = await client.post("/api/v1/photo-collections/from-search", headers=headers, json={
+            "name": "Paged filter result", "create_request_id": "save-filter-pages",
+            "source_token": token, "mode": "all_filter_matches",
+        })
+        assert saved.status_code == 200, saved.text
+        assert len(full_counts) == 1
+        assert offset_counts == []
+        collection = saved.json()["collection"]
+        members = api_env.service.catalog.read_all(
+            "SELECT asset_id FROM photo_collection_members WHERE collection_id=? ORDER BY position",
+            (collection["collection_id"],),
+        )
+        assert [int(row["asset_id"]) for row in members] == expected_ids
+
+        full_counts.clear()
+        offset_counts.clear()
+        target = await client.post("/api/v1/photo-collections", headers=headers, json={
+            "name": "Paged append target", "create_request_id": "create-filter-page-target",
+        })
+        assert target.status_code == 200, target.text
+        target_collection = target.json()["collection"]
+        appended = await client.post(
+            f"/api/v1/photo-collections/{target_collection['collection_id']}/members/from-search",
+            headers=headers, json={"request_id": "append-filter-pages", "source_token": token,
+                "mode": "all_filter_matches", "instance_token": target_collection["instance_token"],
+                "expected_revision": target_collection["revision"]},
+        )
+        assert appended.status_code == 200, appended.text
+        assert appended.json()["changed"] == len(expected_ids)
+        assert len(full_counts) == 1
+        assert offset_counts == []
 
     api_env.scenario(scenario)
 

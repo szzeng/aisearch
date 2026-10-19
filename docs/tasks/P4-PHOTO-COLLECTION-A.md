@@ -173,3 +173,7 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 ## 10. 本轮执行收口（2026-10-19）
 
 用户要求完成本卡关键验收，复核使用 Luna High 子代理。除前序复核修复外，本轮保存 combined 服务端 `intent_plan` 并修正 token 准确到期判断。最终剩余验收组 40/40 通过（JUnit `test-results/P4-PHOTO-COLLECTION-A-remainder-final-r7.xml`），含 0036 回滚/旧版拒绝、恢复后成员读回与 retention、FILTER/TEXT/COMBINED、capture 范围、token/revision/profile、500/501、创建和追加 5000/5001、追加锁冲突恢复、稀疏封面 EXPLAIN；独立跟进未发现新代码问题。仍为 **IMPLEMENTED / ACCEPTANCE PARTIAL**：搜索→保存内置浏览器流程受 `prompt()` 限制，刷新/真实进程重启恢复、同身份 generation 变化及无界稀疏成员规模尚未闭合。历史全量基线保持 5 failures；其中本任务 timeline cache 断言已更新并通过，其余 4 个既有合同/资源版本失败有单独复跑记录。报告：[P4-PHOTO-COLLECTION-A 执行报告](../reports/P4-PHOTO-COLLECTION-A.md)。不启动智能合集。
+
+### 2026-10-19 性能收口续验
+
+最新本地 `master` 上补齐 FILTER_ONLY 后续页统计去重和照片合集 capture 时间轴自适应路径。300k 隔离合成对照确认 5,000 FILTER_ONLY 保存的全范围/offset COUNT 从 100/99 降为每次保存 1/0（受影响路由测试验证）；时间轴对 100/1,000 成员从成员位置索引出发，避免空/稀疏结果扫全局 capture 索引；5,000/150,000 成员由 capture 索引 keyset，真实首/续页计划无临时全局排序。capture period 仍需精确范围统计；封面查询对 20 个合集和 92,200 离线成员实际约 17.71ms，但没有无界合集容量保证。定向组合 25/25 通过（`test-results/P4-PHOTO-COLLECTION-A-perf-final-r4.xml`），Ruff、py_compile、diff-check 通过。封面无实测显示需改，保留其线性离线成员成本。前后证据见同一[执行报告](../reports/P4-PHOTO-COLLECTION-A.md)及忽略目录 performance JSON；仍 ACCEPTANCE PARTIAL，不启动智能合集、不提交。

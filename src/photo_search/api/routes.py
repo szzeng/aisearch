@@ -1370,13 +1370,15 @@ async def create_photo_collection_from_search(payload: PhotoCollectionFromSearch
         while True:
             page_payload = seed.model_copy(update={"cursor": cursor, "search_session_id": None if first_page else search_session_id})
             page = await run_catalog_search(service.catalog, _place_aware_search_worker, page_payload,
-                                            context=context, data_root=service.data_root)
+                                            context=context, data_root=service.data_root,
+                                            filter_statistics=first_page)
             if page.get("catalog_filter_revision") != expected_catalog_revision:
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "搜索筛选已变化，请重新搜索后保存", status=409)
             if not _photo_collection_source_scope_matches(source, page):
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "地点或人物合集搜索范围已变化，请重新搜索后保存", status=409)
             ids.extend(int(hit["asset_id"]) for hit in page.get("hits", []))
-            if len(ids) > 5000 or int(page.get("total_candidates", len(ids))) > 5000:
+            total_candidates = page.get("total_candidates")
+            if len(ids) > 5000 or (total_candidates is not None and int(total_candidates) > 5000):
                 raise ApiError("PHOTO_COLLECTION_FILTER_RESULT_TOO_LARGE",
                                "全部筛选结果超过 5000 张，本次未创建合集；请细化筛选或分批选择", status=409,
                                details={"limit": 5000, "observed_at_least": max(5001, len(ids))})
@@ -1500,13 +1502,15 @@ async def append_photo_collection_from_search(payload: PhotoCollectionAppendFrom
             page_payload = seed.model_copy(update={"cursor": cursor,
                 "search_session_id": None if first_page else str(source["search_session_id"])})
             page = await run_catalog_search(service.catalog, _place_aware_search_worker, page_payload,
-                                            context=context, data_root=service.data_root)
+                                            context=context, data_root=service.data_root,
+                                            filter_statistics=first_page)
             if page.get("catalog_filter_revision") != expected_catalog_revision:
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "搜索筛选已变化，请重新搜索后保存", status=409)
             if not _photo_collection_source_scope_matches(source, page):
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "地点或人物合集搜索范围已变化，请重新搜索后保存", status=409)
             ids.extend(int(hit["asset_id"]) for hit in page.get("hits", []))
-            if len(ids) > 5000 or int(page.get("total_candidates", len(ids))) > 5000:
+            total_candidates = page.get("total_candidates")
+            if len(ids) > 5000 or (total_candidates is not None and int(total_candidates) > 5000):
                 raise ApiError("PHOTO_COLLECTION_FILTER_RESULT_TOO_LARGE",
                                "全部筛选结果超过 5000 张，本次未追加；请细化筛选或分批选择", status=409,
                                details={"limit": 5000, "observed_at_least": max(5001, len(ids))})
@@ -3358,6 +3362,7 @@ async def post_place_aware_search(request: Request, payload: PlaceAwareSearchReq
 
 def _place_aware_search_worker(
     catalog: Any, payload: PlaceAwareSearchRequestModel, *, context: ApiContext, data_root: Path,
+    filter_statistics: bool = True,
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
     favorites_only = bool(payload.favorites_only)
@@ -3927,6 +3932,7 @@ def _place_aware_search_worker(
             additional_condition_parameters=search_time_parameters,
             time_identity=search_time_identity,
             favorites_only=favorites_only,
+            include_statistics=filter_statistics,
         )
         result["original_query"] = original
         result["content_query"] = None
@@ -4092,7 +4098,7 @@ def _search_time_condition(catalog: Any, plan: dict[str, Any] | None) -> tuple[s
     return None, (), ()
 
 
-def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False) -> dict[str, Any]:
+def _filter_only_search_page(service: Any, request: SearchRequest, *, collection_scope: dict[str, Any] | None = None, additional_condition_sql: str | None = None, additional_condition_parameters: tuple[Any, ...] = (), time_identity: tuple[Any, ...] = (), favorites_only: bool = False, include_statistics: bool = True) -> dict[str, Any]:
     """Unbounded keyset pages for pure filters, without materializing IDs or sessions."""
     from photo_search.search.service import _person_authority_base
 
@@ -4133,7 +4139,8 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     else:
         after = 0
     where, params = scope_condition(catalog.connection, scope)
-    total = int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+    total = (int(catalog.read_one(f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}", tuple(params))["value"])
+             if include_statistics else None)
     rows = catalog.read_all(
         f"SELECT a.asset_id FROM assets AS a WHERE ({where}) AND a.asset_id>? ORDER BY a.asset_id LIMIT ?",
         (*params, int(after), int(request.page_size) + 1),
@@ -4147,7 +4154,7 @@ def _filter_only_search_page(service: Any, request: SearchRequest, *, collection
     offset = int(catalog.read_one(
         f"SELECT COUNT(*) AS value FROM assets AS a WHERE ({where}) AND a.asset_id<=?",
         (*params, int(after)),
-    )["value"]) if after else 0
+    )["value"]) if after and include_statistics else 0
     has_more = len(rows) > len(page)
     token = place_albums._token(ids[-1], revisions) if has_more and ids else None
     hits = [{"asset_id": asset_id, "rank": offset + index + 1,
