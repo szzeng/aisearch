@@ -114,10 +114,6 @@
 
 补充 Chinese-CLIP / Qwen EXIF v2 高度匹配统计身份映射，复用现有阈值，普通版身份、候选、排名、分页及 5000 边界保持原语义。定向 pytest 39 passed；Ruff、Python 编译、Node 语法和 diff-check 通过。测试文件扩展组合中发现的既有前端静态断言与 Node harness 限制见[执行报告](reports/P4-SEARCH-STRONG-MATCH-EXIF-FIX.md)。未加载 EXIF v2 真实模型、未访问真实图库、未做真实浏览器验收；状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。任务卡：[P4-SEARCH-STRONG-MATCH-EXIF-FIX](tasks/P4-SEARCH-STRONG-MATCH-EXIF-FIX.md)。
 
-## P4-LIBRARY-RETENTION-C2-FIX（2026-10-20）
-
-一键清理现按点击事务持久化候选身份快照，按 20 张 keyset 批次执行实时复核；旧 schema 41 活动 run 可以从既有批次恢复并重建计数。目标 DELETE_VECTOR 走 IndexCoordinator 定向协议，单资产最多 100 个事件、最多 5 次 drain；手动/自动授权冲突明确拒绝。定向 pytest 51/51、Ruff、py_compile、Node 语法与 diff-check 通过；Luna H 两轮复核关闭了候选静默漏检 blocker。内置浏览器确认失效照片面板及合成统计可见，但原生确认框无法由当前浏览器控制完成，确认后的 T10 跨批/刷新/返回仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。报告：[P4-LIBRARY-RETENTION-C2-FIX](reports/P4-LIBRARY-RETENTION-C2-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-FIX](tasks/P4-LIBRARY-RETENTION-C2-FIX.md)。未访问真实照片库、未做全仓/30万/GPU 验收。
-
 ## P4-QWEN-SEARCH-PERF-DIAG-A（2026-10-20）
 
 只读检查定位到 8000 端口服务绑定 4727 条 assets，catalog 有 1941 条可行动 FTS projection queue（每次搜索追赶最多 800 条）、Qwen EXIF v2 512D READY generation，GPU 单次快照 0% 利用率/4306 MiB 显存；活动 profile、runtime health、搜索各阶段、20 次热搜索和浏览器 Network 均未确认。内置浏览器用当前启动凭据得到 `SESSION_INVALID`；未重启服务、未绕过认证、未发搜索请求。静态调用链显示 UI 默认走 `/api/v1/search/place-aware`，encoder/Worker/adapter 按进程复用，EXIF v2 方向修正只在图片路径。无已确认性能缺陷，暂不建修复任务；状态 **IMPLEMENTED / VALIDATION PENDING**。报告：[P4-QWEN-SEARCH-PERF-DIAG-A](reports/P4-QWEN-SEARCH-PERF-DIAG-A.md)，任务卡：[P4-QWEN-SEARCH-PERF-DIAG-A](tasks/P4-QWEN-SEARCH-PERF-DIAG-A.md)。原始脱敏材料：`test-results/p4-qwen-search-perf-diag-a.json`。本记录不替换上方仍在进行的 C2-F。
@@ -129,3 +125,12 @@
 2026-10-20 09:47 续测：8000 无监听；8117 仍绑定空 catalog（指纹 `23BE562F5E`、0 assets），不是目标图库。未发搜索请求、未启动服务或访问照片；实机验收继续 PENDING。 Luna High 本轮只读复核无 blocker；确认材料和静态源码判断一致，未补足实机测量。
 
 2026-10-20 诊断能力实现跟进：新增显式启用的多模型搜索性能诊断面板、搜索执行阶段与内部阶段计时与隐私受限 JSON 导出。定向诊断测试 11/11、文字分页检查 2/2；Ruff、Python 编译、Node 语法、diff-check 通过。隔离空合成库浏览器验证面板开关和搜索执行阶段计时，缺少活动模型的样本按绑定不匹配拒绝计入。额外旧回归 5 项失败（4 项地点 fixture manifest 版本不兼容，1 项 UI Node harness 缺既有 `window.addEventListener`），均保留记录。真实图库及四模型运行时、Worker/GPU、足量热样本仍待正常会话验收；当前为 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见同一[任务卡](tasks/P4-QWEN-SEARCH-PERF-DIAG-A.md)与[报告](reports/P4-QWEN-SEARCH-PERF-DIAG-A.md)。不访问真实照片，不覆盖并行 C2-F 当前记录。
+
+
+## P4-LIBRARY-RETENTION-C2-FIX（2026-10-20）
+
+一键清理现按点击事务持久化候选身份快照，按 20 张 keyset 批次执行实时复核；旧 schema 41 活动 run 可以从既有批次恢复并重建计数。目标 DELETE_VECTOR 走 IndexCoordinator 定向协议，单资产最多 100 个事件、最多 5 次 drain；手动/自动授权冲突明确拒绝。定向 pytest 51/51、Ruff、py_compile、Node 语法与 diff-check 通过；Luna H 两轮复核关闭了候选静默漏检 blocker。内置浏览器确认失效照片面板及合成统计可见，但原生确认框无法由当前浏览器控制完成，确认后的 T10 跨批/刷新/返回仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。报告：[P4-LIBRARY-RETENTION-C2-FIX](reports/P4-LIBRARY-RETENTION-C2-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-FIX](tasks/P4-LIBRARY-RETENTION-C2-FIX.md)。未访问真实照片库、未做全仓/30万/GPU 验收。
+
+## P4-LIBRARY-RETENTION-C2-RETRY-FIX（2026-10-20）
+
+共享未结算谓词收口 PARTIAL 创建互斥、启动恢复、worker 与进度显示；终结 run 保留历史统计并允许新点击创建新 run。ACTIVE barrier 重试重新校验当前 MANUAL/AUTOMATIC 授权、来源、扫描、副本和人工保护；人工保护变化会按既有协议撤销 barrier、清理旧 DELETE_VECTOR 并排入 UPSERT 修复，来源/证据阻断则保留待复核 barrier。受影响 retention + storage UI JUnit **40/40** 通过（`test-results/P4-LIBRARY-RETENTION-C2-RETRY-FIX-final-r4.xml`），Ruff、Python 编译、Node 语法、查询计划与 diff-check 通过。Luna H 独立复核确认人工保护 blocker 已关闭。隔离浏览器使用新会话确认 retention 页面/API 可用，但原生确认交互触发 CUA 焦点控制超时；catalog 复核为 65 assets、0 runs、0 ACTIVE barriers，确认未执行清理。T10 操作仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交。报告：[P4-LIBRARY-RETENTION-C2-RETRY-FIX](reports/P4-LIBRARY-RETENTION-C2-RETRY-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-RETRY-FIX](tasks/P4-LIBRARY-RETENTION-C2-RETRY-FIX.md)。

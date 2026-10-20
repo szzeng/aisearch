@@ -261,6 +261,49 @@ def library_retention_preview(catalog: Catalog, *, after_asset_id: int = 0, limi
         return _preview_snapshot(connection, catalog.db_path, after_asset_id=after_asset_id, limit=limit)
 
 
+def _partial_retention_unsettled_predicate(run_alias: str = "r") -> str:
+    """Cursor-bounded durable work required to resume a PARTIAL run."""
+    return (
+        "EXISTS (SELECT 1 FROM library_retention_run_items i WHERE i.run_id="
+        f"{run_alias}.run_id AND i.asset_id>{run_alias}.selection_after_asset_id) OR "
+        "EXISTS (SELECT 1 FROM library_retention_run_candidates c WHERE c.run_id="
+        f"{run_alias}.run_id AND c.asset_id>{run_alias}.selection_after_asset_id "
+        f"AND c.asset_id<={run_alias}.selection_max_asset_id)"
+    )
+
+
+def _unsettled_retention_predicate(run_alias: str = "r") -> str:
+    """The single authoritative active/resumable run predicate."""
+    return (
+        f"({run_alias}.state IN ('QUEUED','RUNNING') OR "
+        f"({run_alias}.state='PARTIAL' AND ({_partial_retention_unsettled_predicate(run_alias)})))"
+    )
+
+
+def _unsettled_retention_run(connection: sqlite3.Connection) -> sqlite3.Row | None:
+    """Find the one resumable run using cursor-bounded durable work, not stale summaries."""
+    active = connection.execute(
+        "SELECT * FROM library_retention_runs WHERE state IN ('QUEUED','RUNNING') "
+        "ORDER BY updated_at_ms DESC LIMIT 1"
+    ).fetchone()
+    if active is not None:
+        return active
+    return connection.execute(
+        "SELECT r.* FROM library_retention_runs r WHERE r.state='PARTIAL' AND "
+        + _partial_retention_unsettled_predicate()
+        + " LIMIT 1"
+    ).fetchone()
+
+
+def _run_has_unsettled_work(connection: sqlite3.Connection, run: sqlite3.Row) -> bool:
+    result = connection.execute(
+        "SELECT " + _unsettled_retention_predicate() +
+        " AS has_unsettled_work FROM library_retention_runs r WHERE r.run_id=?",
+        (str(run["run_id"]),),
+    ).fetchone()
+    return bool(result and result["has_unsettled_work"])
+
+
 def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, Any]:
     """Persist a click-time-fenced run; the worker selects at most 20 rows per batch."""
     normalized = str(mode).upper()
@@ -268,12 +311,7 @@ def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, An
         raise ValueError("mode must be MANUAL or AUTOMATIC")
     now = int(catalog.now_ms())
     with catalog.write() as connection:
-        active = connection.execute(
-            "SELECT run_id,state,mode FROM library_retention_runs r WHERE state IN ('QUEUED','RUNNING') "
-            "OR (state='PARTIAL' AND (has_more_candidates=1 OR EXISTS (SELECT 1 FROM "
-            "library_retention_run_items i WHERE i.run_id=r.run_id AND i.state IN ('QUEUED','RUNNING','FAILED'))) ) "
-            "ORDER BY CASE WHEN state IN ('QUEUED','RUNNING') THEN 0 ELSE 1 END,updated_at_ms DESC LIMIT 1"
-        ).fetchone()
+        active = _unsettled_retention_run(connection)
         if active is not None:
             if str(active["mode"]) != normalized:
                 return {
@@ -337,12 +375,14 @@ def library_retention_run_progress(catalog: Catalog, *, run_id: str | None = Non
             ).fetchone()
         if row is None:
             return None
+        has_unsettled_work = _run_has_unsettled_work(connection, row)
         items = connection.execute(
             "SELECT asset_id,state,stage,reason,logical_rows_removed,attempt_count,outcome_category "
             "FROM library_retention_run_items "
             "WHERE run_id=? ORDER BY asset_id LIMIT 20", (str(row["run_id"]),)
         ).fetchall()
-        return {"run": dict(row), "items": [dict(item) for item in items], "durable": True}
+        return {"run": dict(row), "items": [dict(item) for item in items],
+                "durable": True, "has_unsettled_work": has_unsettled_work}
 
 
 def _retention_run_candidate_ids(connection: sqlite3.Connection, run: sqlite3.Row, *, limit: int) -> list[int]:
@@ -688,16 +728,31 @@ def begin_asset_retention_cleanup(
         barrier = asset_retention_barrier(connection, asset_id=int(asset_id))
         if barrier is not None and str(barrier["state"]) == "COMPLETE":
             return {"asset_id": int(asset_id), "state": "COMPLETE", "delete_event_ids": []}
-        if barrier is None:
-            blockers = _cleanup_preflight(
-                connection, asset_id=int(asset_id), require_expired=not manual_early
+        blockers = _cleanup_preflight(
+            connection, asset_id=int(asset_id), require_expired=not manual_early
+        )
+        if blockers:
+            restored_copy = connection.execute(
+                "SELECT 1 FROM file_locations WHERE asset_id=? AND availability='PRESENT' LIMIT 1",
+                (int(asset_id),),
+            ).fetchone() is not None
+            if barrier is not None and restored_copy:
+                _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
+                return {"asset_id": int(asset_id), "state": "CANCELLED_RESTORED",
+                        "delete_event_ids": [], "blockers": blockers}
+            has_human_protection, _ = _human_or_protected(
+                connection, _tables(connection), int(asset_id), include_barrier=False
             )
-            if blockers:
-                raise CatalogError(
-                    ASSET_RETENTION_BLOCKED,
-                    "asset retention cleanup is not currently safe",
-                    details={"asset_id": int(asset_id), "blockers": blockers},
-                )
+            if barrier is not None and has_human_protection:
+                _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
+                return {"asset_id": int(asset_id), "state": "CANCELLED_PROTECTED",
+                        "delete_event_ids": [], "blockers": blockers}
+            raise CatalogError(
+                ASSET_RETENTION_BLOCKED,
+                "asset retention cleanup is not currently safe",
+                details={"asset_id": int(asset_id), "blockers": blockers,
+                         "barrier_state": None if barrier is None else str(barrier["state"])},
+            )
         barrier_id, event_ids = activate_asset_retention_cleanup(
             connection, asset_id=int(asset_id), now_ms=int(now_ms)
         )
@@ -771,7 +826,11 @@ def finalize_asset_retention_cleanup(
             return {"asset_id": int(asset_id), "state": "WAITING_FOR_VECTOR_DELETE", "machine_rows_removed": 0}
         blockers = _cleanup_preflight(connection, asset_id=int(asset_id), require_expired=False)
         if blockers:
-            _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
+            has_human_protection, _ = _human_or_protected(
+                connection, _tables(connection), int(asset_id), include_barrier=False
+            )
+            if has_human_protection:
+                _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
             return {"asset_id": int(asset_id), "state": "BLOCKED_RECHECK", "blockers": blockers, "machine_rows_removed": 0}
 
         asset_identity = connection.execute(

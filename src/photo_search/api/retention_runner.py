@@ -51,11 +51,13 @@ class RetentionCleanupRunner:
         try:
             service = self._service_factory()
             catalog = service.catalog
+            from photo_search.library_retention import _run_has_unsettled_work
+
             with catalog.write() as connection:
                 run = connection.execute(
-                    "SELECT mode,state FROM library_retention_runs WHERE run_id=?", (run_id,)
+                    "SELECT * FROM library_retention_runs WHERE run_id=?", (run_id,)
                 ).fetchone()
-                if run is None:
+                if run is None or not _run_has_unsettled_work(connection, run):
                     return
                 connection.execute(
                     "UPDATE library_retention_runs SET state='RUNNING',stage='资格复核',updated_at_ms=? "
@@ -107,7 +109,9 @@ class RetentionCleanupRunner:
                                 catalog, asset_id=asset_id, now_ms=stamp,
                                 manual_early=str(run["mode"]) == "MANUAL",
                             )
-                            if result.get("state") not in {"COMPLETE", "CANCELLED_RESTORED", "BLOCKED_RECHECK"}:
+                            if result.get("state") not in {
+                                "COMPLETE", "CANCELLED_RESTORED", "CANCELLED_PROTECTED", "BLOCKED_RECHECK"
+                            }:
                                 remaining_vector_events = MAX_VECTOR_EVENTS_PER_ASSET
                                 for _ in range(MAX_VECTOR_DELETE_DRAINS):
                                     if remaining_vector_events <= 0:

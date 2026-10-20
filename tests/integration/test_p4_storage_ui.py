@@ -97,11 +97,11 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert "storage-deep-check" in shell
     assert "storage-backup-create" in shell
     assert "失效照片与数据占用" in shell
-    assert "人工记录始终受保护；受管缓存需在应用停止后回收" in shell
+    assert "不会删除原图及受保护的人工记录。受管缓存需在应用停止后回收。" in shell
     assert 'id="library-retention-cleanup"' in shell
     assert 'id="library-retention-automatic"' in shell
     assert "storage-maintenance-confirm" in shell
-    assert '/web/app.js?v=p4-library-retention-c2-f-20261020-1' in shell
+    assert '/web/app.js?v=p4-library-retention-c2-retry-20261020-1' in shell
     assert shell.count('type="checkbox" name="storage-maintenance-operation"') == 6
     assert 'id="storage-maintenance-confirm" disabled' in shell
     assert 'body: { operations: operations, confirmed: true }' in script
@@ -112,6 +112,8 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert 'item.actual_bytes_freed !== undefined' in script
     assert 'item.actual_reclaimed_bytes !== undefined' in script
     assert 'request("/storage/library-retention"' in script
+    assert "本轮已结束，部分照片未清理" in script
+    assert "故障解除后可再次点击重新复核" in script
     assert '阶段实际释放 ' in script
     assert 'request("/storage/inspect", { method: "POST"' in script
     assert 'request("/storage/backup", { method: "POST"' in script

@@ -293,14 +293,10 @@ class ApiContext:
         service = None
         try:
             service = self._service_factory()
-            row = service.catalog.read_one(
-                "SELECT r.run_id,r.mode,r.state FROM library_retention_runs r "
-                "WHERE r.state IN ('QUEUED','RUNNING') OR (r.state='PARTIAL' AND (r.has_more_candidates=1 OR EXISTS "
-                "(SELECT 1 FROM library_retention_run_items i WHERE i.run_id=r.run_id "
-                "AND i.state IN ('QUEUED','RUNNING','FAILED')))) "
-                "ORDER BY CASE WHEN r.state IN ('QUEUED','RUNNING') THEN 0 ELSE 1 END, "
-                "r.created_at_ms LIMIT 1"
-            )
+            from photo_search.library_retention import _unsettled_retention_run
+
+            with service.catalog.read_snapshot() as connection:
+                row = _unsettled_retention_run(connection)
             if row is not None:
                 run_id = str(row["run_id"])
                 if str(row["state"]) == "PARTIAL":

@@ -764,7 +764,13 @@
 
   function renderRetentionRunLine(progress) {
     var run = progress.run || {};
-    return "清理任务 " + run.mode + " / " + run.state + "：已检查 " + (run.checked_assets || 0) +
+    var runLabel = "清理任务 " + (run.run_id || "") + " / " + run.mode + " / " + run.state;
+    var stateText = run.state === "PARTIAL" && progress.has_unsettled_work === false
+      ? runLabel + "：本轮已结束，部分照片未清理；故障解除后可再次点击重新复核"
+      : (run.state === "PARTIAL" && progress.has_unsettled_work
+        ? "仍有未结算任务，可点击继续恢复（" + runLabel + "）"
+        : runLabel);
+    return stateText + "：已检查 " + (run.checked_assets || 0) +
       "，已清理 " + (run.completed_assets || 0) + "，人工保护跳过 " + (run.skipped_human_assets || 0) +
       "，来源/扫描跳过 " + (run.skipped_source_assets || 0) + "，其他跳过 " + (run.skipped_other_assets || 0) +
       "，失败 " + (run.failed_assets || 0) + "；" + (run.has_more_candidates ? "仍有下一批" : "本轮候选已检查") +
