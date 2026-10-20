@@ -117,3 +117,15 @@
 ## P4-LIBRARY-RETENTION-C2-FIX（2026-10-20）
 
 一键清理现按点击事务持久化候选身份快照，按 20 张 keyset 批次执行实时复核；旧 schema 41 活动 run 可以从既有批次恢复并重建计数。目标 DELETE_VECTOR 走 IndexCoordinator 定向协议，单资产最多 100 个事件、最多 5 次 drain；手动/自动授权冲突明确拒绝。定向 pytest 51/51、Ruff、py_compile、Node 语法与 diff-check 通过；Luna H 两轮复核关闭了候选静默漏检 blocker。内置浏览器确认失效照片面板及合成统计可见，但原生确认框无法由当前浏览器控制完成，确认后的 T10 跨批/刷新/返回仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。报告：[P4-LIBRARY-RETENTION-C2-FIX](reports/P4-LIBRARY-RETENTION-C2-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-FIX](tasks/P4-LIBRARY-RETENTION-C2-FIX.md)。未访问真实照片库、未做全仓/30万/GPU 验收。
+
+## P4-QWEN-SEARCH-PERF-DIAG-A（2026-10-20）
+
+只读检查定位到 8000 端口服务绑定 4727 条 assets，catalog 有 1941 条可行动 FTS projection queue（每次搜索追赶最多 800 条）、Qwen EXIF v2 512D READY generation，GPU 单次快照 0% 利用率/4306 MiB 显存；活动 profile、runtime health、搜索各阶段、20 次热搜索和浏览器 Network 均未确认。内置浏览器用当前启动凭据得到 `SESSION_INVALID`；未重启服务、未绕过认证、未发搜索请求。静态调用链显示 UI 默认走 `/api/v1/search/place-aware`，encoder/Worker/adapter 按进程复用，EXIF v2 方向修正只在图片路径。无已确认性能缺陷，暂不建修复任务；状态 **IMPLEMENTED / VALIDATION PENDING**。报告：[P4-QWEN-SEARCH-PERF-DIAG-A](reports/P4-QWEN-SEARCH-PERF-DIAG-A.md)，任务卡：[P4-QWEN-SEARCH-PERF-DIAG-A](tasks/P4-QWEN-SEARCH-PERF-DIAG-A.md)。原始脱敏材料：`test-results/p4-qwen-search-perf-diag-a.json`。本记录不替换上方仍在进行的 C2-F。
+
+2026-10-20 续测复核：再次检查时 8000/8117 均无监听服务，内置浏览器无已认证会话；未启动指向不明数据根的服务，未发搜索请求。实测仍待目标应用按正常方式启动并生成新会话后继续。报告和 JSON 已记录本次阻塞事实；不替换仍进行中的 C2-F。
+
+2026-10-20 最新复核（本地 09:32）：8000 无监听；8117 有服务但只读确认绑定旧空 catalog（指纹 `23BE562F5E`、0 assets），未向其发搜索请求。内置浏览器无标签页/认证会话。目标图库实测仍待正常服务与新会话；详情见同一报告及 JSON `latest_recheck`。 Luna 子代理复核确认静态结论有源码支持，并已澄清初次服务与 FTS 队列快照时间；实机验收继续 PENDING。
+
+2026-10-20 09:47 续测：8000 无监听；8117 仍绑定空 catalog（指纹 `23BE562F5E`、0 assets），不是目标图库。未发搜索请求、未启动服务或访问照片；实机验收继续 PENDING。 Luna High 本轮只读复核无 blocker；确认材料和静态源码判断一致，未补足实机测量。
+
+2026-10-20 诊断能力实现跟进：新增显式启用的多模型搜索性能诊断面板、搜索执行阶段与内部阶段计时与隐私受限 JSON 导出。定向诊断测试 11/11、文字分页检查 2/2；Ruff、Python 编译、Node 语法、diff-check 通过。隔离空合成库浏览器验证面板开关和搜索执行阶段计时，缺少活动模型的样本按绑定不匹配拒绝计入。额外旧回归 5 项失败（4 项地点 fixture manifest 版本不兼容，1 项 UI Node harness 缺既有 `window.addEventListener`），均保留记录。真实图库及四模型运行时、Worker/GPU、足量热样本仍待正常会话验收；当前为 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见同一[任务卡](tasks/P4-QWEN-SEARCH-PERF-DIAG-A.md)与[报告](reports/P4-QWEN-SEARCH-PERF-DIAG-A.md)。不访问真实照片，不覆盖并行 C2-F 当前记录。

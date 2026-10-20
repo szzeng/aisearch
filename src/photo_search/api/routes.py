@@ -253,6 +253,7 @@ from photo_search.scheduler.projection import (
     search_profile_summary,
     search_projection_summary,
 )
+from photo_search.search import perf_diagnostics
 from photo_search.search.contracts import FeedbackRequest, SearchRequest
 from photo_search.search.contracts import fail as search_fail
 from photo_search.search.profile import activate_profile, profile_projection
@@ -3587,15 +3588,34 @@ def _place_aware_choices(service: Any) -> list[dict[str, Any]]:
     return place_choices.choices(service.catalog, data_root=service.data_root)
 
 
+@router.get("/search-perf/config", summary="Development-only search performance diagnostic switch")
+async def search_perf_config() -> dict[str, Any]:
+    return {"enabled": perf_diagnostics.enabled()}
+
+
 @router.post("/search/place-aware", summary="Personal local place plus content search")
-async def post_place_aware_search(request: Request, payload: PlaceAwareSearchRequestModel) -> dict[str, Any]:
+async def post_place_aware_search(
+    request: Request, payload: PlaceAwareSearchRequestModel, response: Response,
+) -> dict[str, Any]:
     """Additive entry that resolves place intent before reusing the existing search/session service."""
     context = context_of(request)
     service = context.service()
-    result = await run_catalog_search(
-        service.catalog, _place_aware_search_worker, payload,
-        context=context, data_root=service.data_root,
-    )
+    diagnostic = perf_diagnostics.enabled() and request.headers.get("x-search-perf") == "1" and payload.cursor is None
+    metrics: dict[str, Any] | None = {} if diagnostic else None
+    if metrics is not None:
+        metrics["page_size"] = int(payload.page_size)
+    search_execution_started = perf_diagnostics.started() if diagnostic else 0.0
+    try:
+        result = await run_catalog_search(
+            service.catalog, _place_aware_search_worker, payload,
+            context=context, data_root=service.data_root, perf_metrics=metrics,
+        )
+    finally:
+        if diagnostic and metrics is not None:
+            elapsed = perf_diagnostics.elapsed_ms(search_execution_started)
+            response.headers["Server-Timing"] = perf_diagnostics.server_timing(metrics, elapsed)
+            response.headers["X-Search-Perf-Meta"] = perf_diagnostics.encode_metrics(metrics)
+            response.headers["X-Search-Request-Id"] = payload.request_id
     source_mode = result.pop("photo_collection_source_mode", None)
     auth_session_id = request.cookies.get(SESSION_COOKIE)
     if source_mode and auth_session_id and payload.cursor is None:
@@ -3623,6 +3643,7 @@ def _place_aware_search_worker(
     filter_capture_position: list[Any] | None = None,
     ranked_candidate_build: tuple[int, str] | None = None,
     filter_authoritative_all: int | None = None,
+    perf_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
     favorites_only = bool(payload.favorites_only)
@@ -3667,7 +3688,10 @@ def _place_aware_search_worker(
     coordinator = PersonalSearchCoordinator(service.catalog, service.data_root)
     unified = None
     if not text_mode and payload.cursor is None and intent_plan is None:
+        intent_started = perf_diagnostics.started() if perf_metrics is not None else 0.0
         unified = coordinator.collect(original)
+        if perf_metrics is not None:
+            perf_metrics["intent_parse_ms"] = perf_diagnostics.elapsed_ms(intent_started)
         if (kind is not None and key is not None and unified.get("place_kind") is not None
                 and (kind != unified.get("place_kind") or str(key) != str(unified.get("place_key")))):
             raise ApiError(INVALID_CURSOR, "自动识别地点与手动地点条件冲突，请重新搜索", status=409)
@@ -4272,9 +4296,13 @@ def _place_aware_search_worker(
         return result
     collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
     session_revision = tuple(revision or ()) + collection_revision + tuple(search_time_identity)
+    encoder_started = perf_diagnostics.started() if perf_metrics is not None and not text_mode else 0.0
+    encoder = None if text_mode else context.query_encoder()
+    if perf_metrics is not None and not text_mode:
+        perf_metrics["encoder_resolve_ms"] = perf_diagnostics.elapsed_ms(encoder_started)
     result = search_request(
         service.catalog, envelope, sessions=context.search_sessions,
-        encoder=None if text_mode else context.query_encoder(),
+        encoder=encoder,
         reranker=None if text_mode else context.reranker(),
         album_asset_ids=None if place_membership_sql is not None else album_ids,
         album_scope_revision=session_revision or None,
@@ -4284,7 +4312,20 @@ def _place_aware_search_worker(
         additional_condition_sql=search_time_sql,
         additional_condition_parameters=search_time_parameters,
         favorites_only=favorites_only,
+        perf_metrics=perf_metrics,
     )
+    if perf_metrics is not None and encoder is not None:
+        try:
+            adapter = getattr(encoder, "_encoder", encoder)
+            client = getattr(adapter, "_client", None)
+            process = getattr(client, "_process", None)
+            perf_metrics["worker_pid"] = getattr(process, "pid", None)
+            perf_metrics["worker_started_for_request"] = (
+                not bool(perf_metrics.get("worker_started_before_request"))
+                and bool(getattr(client, "_started", False))
+            )
+        except Exception:  # noqa: BLE001 - diagnostics are observational only
+            perf_metrics["worker_pid"] = None
     result["place_scope"] = place_block
     result["original_query"] = original
     result["content_query"] = query_text

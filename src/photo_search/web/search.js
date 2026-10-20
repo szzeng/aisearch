@@ -132,6 +132,7 @@
       reason: "",
     },
   };
+  var perfDiag = { enabled: false, runId: null, samples: [], active: null, model: null, count: 0 };
   var smartReplaceTarget = null;
 
   var els = {};
@@ -239,6 +240,7 @@
     if (settings.body !== undefined) {
       headers["Content-Type"] = "application/json";
     }
+    if (settings.perfDiag && perfDiag.enabled) headers["X-Search-Perf"] = "1";
     if (method !== "GET" && method !== "HEAD") {
       var csrf = cookieValue("ps_csrf");
       if (csrf) {
@@ -257,12 +259,21 @@
     } else if (settings.body !== undefined) {
       init.body = JSON.stringify(settings.body);
     }
+    var requestStarted = settings.perfDiag ? performance.now() : 0;
+    if (settings.perfDiag && perfDiag.active) {
+      perfDiag.active.request_started = requestStarted;
+      perfDiag.active.request_ms = requestStarted - perfDiag.active.click_started;
+    }
     return fetch(API + path, init).then(function (response) {
       var status = response.status;
       var contentType = response.headers.get("Content-Type") || "";
       if (status === 204 || contentType.indexOf("application/json") < 0) {
         if (response.ok) {
-          return { status: status, body: null };
+            return { status: status, body: null, perf: settings.perfDiag ? {
+              requestToResponseMs: performance.now() - requestStarted,
+              serverTiming: response.headers.get("Server-Timing") || "",
+              perfMeta: response.headers.get("X-Search-Perf-Meta") || "",
+            } : null };
         }
         var plain = {
           status: status,
@@ -282,7 +293,11 @@
         })
         .then(function (payload) {
           if (response.ok) {
-            return { status: status, body: payload };
+            return { status: status, body: payload, perf: settings.perfDiag ? {
+              requestToResponseMs: performance.now() - requestStarted,
+              serverTiming: response.headers.get("Server-Timing") || "",
+              perfMeta: response.headers.get("X-Search-Perf-Meta") || "",
+            } : null };
           }
           var failure = failureFrom(response, payload);
           if (status === 401) {
@@ -291,6 +306,223 @@
           throw failure;
         });
     });
+  }
+
+  function perfIdentityFromCapabilities() {
+    var search = state.capabilities && state.capabilities.search || {};
+    var model = search.active_embedding_model || {};
+    if (!model.provider_id) return null;
+    return { active_profile_id: search.profile_id || null,
+      active_image_generation_id: search.image_generation_id || search.active_image_generation_id || null,
+      provider_id: model.provider_id, space_id: model.space_id || null,
+      dimension: model.dimension || null, encoder_identity: model.provider_id };
+  }
+
+  function perfProviderName(provider) {
+    return ({ "chinese-clip-vit-b-16": "Chinese-CLIP",
+      "chinese-clip-vit-b-16-exif-v2": "Chinese-CLIP EXIF v2",
+      "qwen3-vl-embedding-2b": "Qwen3-VL-Embedding-2B",
+      "qwen3-vl-embedding-2b-exif-v2": "Qwen3-VL-Embedding-2B EXIF v2" })[provider] || "模型未确认";
+  }
+
+  function perfUpdateSummary() {
+    var summary = document.getElementById("search-perf-summary");
+    if (!summary) return;
+    var latest = perfDiag.samples.length ? perfDiag.samples[perfDiag.samples.length - 1] : null;
+    var api = latest && latest.server && latest.server.search_execution_ms;
+    var first = latest && latest.click_to_first_image_decode_ready_ms;
+    var ready = latest && latest.click_to_viewport_ready_ms;
+    summary.textContent = "已记录 " + perfDiag.samples.length + " 次；最近搜索执行 " +
+      (api == null ? "未测" : api.toFixed(1) + " ms") + "；首张图片解码就绪 " +
+      (first == null ? "未测" : first.toFixed(1) + " ms") + "；视口就绪 " +
+      (ready == null ? "未测" : ready.toFixed(1) + " ms") +
+      (latest && latest.valid === false ? "；最近样本无效：" + (latest.invalid_reason || "绑定未确认") : "");
+  }
+
+  function perfParseServerTiming(header) {
+    var metrics = {};
+    String(header || "").split(",").forEach(function (part) {
+      var match = part.trim().match(/^([a-z0-9_]+);dur=([0-9.]+)/i);
+      if (match) metrics[match[1]] = Number(match[2]);
+    });
+    return metrics;
+  }
+
+  function perfBegin(requestId, pageSize) {
+    if (!perfDiag.enabled) return null;
+    var caseText = String(document.getElementById("search-perf-case").value || "").trim().slice(0, 64);
+    caseText = caseText.replace(/[^A-Za-z0-9._-]/g, "-");
+    var sample = { run_id: perfDiag.runId, request_id: requestId, test_case_id: caseText || null,
+      started_at: new Date().toISOString(), page_size: pageSize,
+      retrieval_mode: textRetrievalMode(),
+      search_scope: state.search.selectedScope && state.search.selectedScope.kind || "all",
+      sample_type: perfDiag.count === 0 ? "first_observed" : perfDiag.count <= 2 ? "warmup" : "hot",
+      valid: true, continuation: false, click_started: performance.now(),
+      thumbnail_success: 0, thumbnail_failed: 0, thumbnail_timeout: 0,
+      viewport_asset_ids: [], settled_asset_ids: [], server: {},
+      model_before: perfDiag.model ? Object.assign({}, perfDiag.model) : null };
+    perfDiag.active = sample;
+    perfDiag.count += 1;
+    return sample;
+  }
+
+  function perfRecordFailure(requestId, failure) {
+    var sample = perfDiag.active;
+    if (!sample || sample.request_id !== requestId) return;
+    sample.sample_type = "failure";
+    sample.valid = false;
+    sample.invalid_reason = String((failure || {}).code || "SEARCH_FAILED");
+    sample.click_to_request_ms = sample.request_ms || 0;
+    sample.request_to_response_ms = performance.now() - sample.request_started;
+    perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
+  }
+
+  function perfResponse(requestId, result) {
+    var sample = perfDiag.active;
+    if (!sample || sample.request_id !== requestId) return;
+    var perf = result.perf || {};
+    sample.request_to_response_ms = perf.requestToResponseMs;
+    sample.click_to_request_ms = sample.request_ms || 0;
+    sample.server = perfParseServerTiming(perf.serverTiming);
+    try { sample.server_meta = JSON.parse(perf.perfMeta || "{}"); } catch (_error) { sample.server_meta = {}; }
+    sample.model_identity = sample.server_meta.model_identity || null;
+    sample.search_execution_ms = sample.server.search_execution_ms;
+    if (!result.body || !result.body.search_session_id) {
+      sample.valid = false; sample.invalid_reason = "SEARCH_SESSION_NOT_CREATED";
+      perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary(); return;
+    }
+    var before = sample.model_before, actual = sample.model_identity;
+    if (!actual || !before || before.provider_id !== actual.provider_id ||
+        before.space_id !== actual.space_id || before.dimension !== actual.dimension ||
+        before.active_image_generation_id !== actual.active_image_generation_id ||
+        sample.server_meta.model_binding_mismatch === true) {
+      sample.valid = false; sample.invalid_reason = "MODEL_BINDING_MISMATCH";
+    }
+    sample.top_k = sample.server_meta.top_k || null;
+    sample.scanned_assets = sample.server_meta.scanned_assets;
+    sample.vector_blocks = sample.server_meta.vector_blocks;
+    sample.returned_candidates = sample.server_meta.returned_candidates;
+    sample.first_page_hits = sample.server_meta.first_page_hits;
+    sample.worker_pid = sample.server_meta.worker_pid == null ? null : sample.server_meta.worker_pid;
+    sample.worker_started_for_request = sample.server_meta.worker_started_for_request == null
+      ? null : sample.server_meta.worker_started_for_request;
+    if (sample.worker_started_for_request === true) sample.sample_type = "worker_cold";
+    sample.model_binding_mismatch = sample.server_meta.model_binding_mismatch;
+    sample.encoder_identity = sample.server_meta.encoder_identity || null;
+    sample.search_publish_attempts = sample.server_meta.search_publish_attempts || null;
+    sample.background_task_wait = "not_measured";
+  }
+
+  function perfAfterRender(requestId, body) {
+    var sample = perfDiag.active;
+    if (!sample || sample.request_id !== requestId) return;
+    sample.click_to_results_dom_ms = performance.now() - sample.click_started;
+    var viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    var frames = Array.prototype.slice.call(document.querySelectorAll("#result-grid .thumb-frame")).filter(function (frame) {
+      var rect = frame.getBoundingClientRect(); return rect.bottom > 0 && rect.top < viewportHeight && rect.right > 0 && rect.left < window.innerWidth;
+    });
+    sample.viewport_asset_ids = frames.map(function (frame) { return frame.dataset.assetId; });
+    if (!frames.length) {
+      sample.click_to_viewport_ready_ms = performance.now() - sample.click_started;
+      perfFinish(sample); return;
+    }
+    sample.viewport_deadline = window.setTimeout(function () {
+      if (perfDiag.active !== sample) return;
+      frames.forEach(function (frame) {
+        var id = frame.dataset.assetId;
+        if (sample.settled_asset_ids.indexOf(id) >= 0) return;
+        sample.thumbnail_timeout += 1; sample.settled_asset_ids.push(id);
+      });
+      perfMaybeFinish(sample);
+    }, 10000);
+    window.requestAnimationFrame(function () { window.requestAnimationFrame(function () {
+      if (perfDiag.active !== sample) return;
+      sample.click_to_results_dom_ms = performance.now() - sample.click_started;
+      frames.forEach(function (frame) {
+        if (frame.dataset.perfImageState === "ready") perfThumb(frame.dataset.assetId, true);
+        else if (frame.dataset.perfImageState === "failed" || frame.dataset.state === "failed") perfThumb(frame.dataset.assetId, false);
+      });
+      perfUpdateSummary();
+    }); });
+  }
+
+  function perfThumb(assetId, ok) {
+    var sample = perfDiag.active;
+    if (!sample || sample.viewport_asset_ids.indexOf(String(assetId)) < 0 || sample.settled_asset_ids.indexOf(String(assetId)) >= 0) return;
+    sample.settled_asset_ids.push(String(assetId));
+    if (ok) {
+      sample.thumbnail_success += 1;
+      if (sample.click_to_first_image_decode_ready_ms == null) {
+        sample.click_to_first_image_decode_ready_ms = performance.now() - sample.click_started;
+      }
+    } else sample.thumbnail_failed += 1;
+    perfMaybeFinish(sample);
+  }
+
+  function perfMaybeFinish(sample) {
+    if (sample.settled_asset_ids.length < sample.viewport_asset_ids.length) return;
+    window.clearTimeout(sample.viewport_deadline);
+    sample.click_to_viewport_ready_ms = performance.now() - sample.click_started;
+    perfFinish(sample);
+  }
+
+  function perfFinish(sample) {
+    if (perfDiag.active !== sample) return;
+    sample.thumbnail_timeout = sample.thumbnail_timeout || 0;
+    sample.environment = { app_version: state.capabilities && state.capabilities.app_version || null,
+      catalog_assets: null, valid_vector_assets: null, online_photos: null, offline_photos: null,
+      gpu: null, runtime_device_config: sample.server_meta.encoder_identity || null,
+      actual_runtime_device: "not_measured", background_tasks: "not_measured",
+      thumbnail_cache: "unknown" };
+    perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
+  }
+
+  function perfPercentile(samples, key, p) {
+    var values = samples.map(function (sample) { return Number(sample[key]); }).filter(Number.isFinite).sort(function (a, b) { return a - b; });
+    if (!values.length) return { value: null, n: 0 };
+    return { value: values[Math.max(0, Math.ceil(p * values.length) - 1)], n: values.length };
+  }
+
+  function perfExport() {
+    var validHot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.sample_type === "hot"; });
+    var report = { format: "photo-search-perf", format_version: 1, run_id: perfDiag.runId,
+      generated_at: new Date().toISOString(), model_identity: perfDiag.model,
+      environment: { app_version: state.capabilities && state.capabilities.app_version || null,
+        catalog_assets: null, valid_vector_assets: null, online_photos: null, offline_photos: null,
+        gpu: null, actual_runtime_device: "not_measured", thumbnail_cache: "unknown",
+        background_tasks: "not_measured" },
+      samples: perfDiag.samples.map(function (sample) {
+        var copy = Object.assign({}, sample); delete copy.click_started; delete copy.request_started;
+        delete copy.viewport_deadline; delete copy.settled_asset_ids; delete copy.viewport_asset_ids;
+        delete copy.model_before; return copy;
+      }),
+      hot_search_execution_ms: { p50: perfPercentile(validHot, "search_execution_ms", .5), p95: perfPercentile(validHot, "search_execution_ms", .95) },
+      first_image_decode_ready_ms: { p50: perfPercentile(validHot, "click_to_first_image_decode_ready_ms", .5), p95: perfPercentile(validHot, "click_to_first_image_decode_ready_ms", .95) },
+      viewport_ready_ms: { p50: perfPercentile(validHot, "click_to_viewport_ready_ms", .5), p95: perfPercentile(validHot, "click_to_viewport_ready_ms", .95) },
+      p95_reliability: validHot.length < 20 ? "LOW_SAMPLE_COUNT" : "SAMPLE_COUNT_RECORDED",
+      not_measured_stages: ["page_ms", "worker_infer_ms", "worker_reload_count", "background_wait_ms"],
+      note: "P95 是样本内 nearest-rank 值；样本数不足 20 时仅作本轮描述，不代表长期性能。" };
+    report.samples.forEach(function (sample) { sample.search_execution_ms = sample.server && sample.server.search_execution_ms; });
+    var blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    var link = document.createElement("a"), url = URL.createObjectURL(blob);
+    var provider = perfDiag.model && perfDiag.model.provider_id || "unconfirmed";
+    var date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    link.href = url; link.download = "photo-search-perf-" + provider + "-" + date + ".json";
+    link.click(); window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function initPerfDiagnostics() {
+    if (new URLSearchParams(window.location.search).get("perf") !== "1") return;
+    request("/search-perf/config").then(function (result) {
+      if (!result.body || result.body.enabled !== true) return;
+      perfDiag.enabled = true;
+      perfDiag.runId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+      perfDiag.model = perfIdentityFromCapabilities();
+      var panel = document.getElementById("search-perf-panel"); panel.hidden = false;
+      document.getElementById("search-perf-model").textContent = "当前模型：" + perfProviderName(perfDiag.model && perfDiag.model.provider_id);
+      document.getElementById("search-perf-clear").addEventListener("click", function () { perfDiag.samples = []; perfDiag.count = 0; perfDiag.active = null; perfUpdateSummary(); });
+      document.getElementById("search-perf-export").addEventListener("click", perfExport);
+    }).catch(function () {});
   }
 
   function releaseObjectUrls() {
@@ -1326,11 +1558,13 @@
 
   function sendTextSearch(continuation, filters) {
     var queryText = els.queryText.value.trim();
+    var requestId = newRequestId("text");
+    var perfSample = !continuation ? perfBegin(requestId, Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE) : null;
     var literalText = textRetrievalMode() === "text";
     var placeAware = literalText ? null : state.search.placeAware;
     var body = {
       contract_version: CONTRACT_VERSION,
-      request_id: newRequestId("text"),
+      request_id: requestId,
       availability: filters.availability,
       place_state: filters.placeState,
       include_descendants: filters.includeDescendants,
@@ -1385,8 +1619,16 @@
     } else {
       state.search.lastRequestBody = JSON.parse(JSON.stringify(body));
     }
-    return request("/search/place-aware", { method: "POST", body: body }).then(function (result) {
-      return result.body || {};
+    return request("/search/place-aware", { method: "POST", body: body, perfDiag: Boolean(perfSample) }).then(function (result) {
+      var answer = result.body || {};
+      if (perfSample) {
+        perfResponse(requestId, result);
+        answer.__searchPerfRequestId = requestId;
+      }
+      return answer;
+    }).catch(function (failure) {
+      if (perfSample) perfRecordFailure(requestId, failure);
+      throw failure;
     });
   }
 
@@ -2010,6 +2252,7 @@
     }
     if (state.search.pager) state.search.pager.update();
     saveSearchSnapshot();
+    if (body.__searchPerfRequestId) perfAfterRender(body.__searchPerfRequestId, body);
   }
 
   function clearSearchSnapshot() {
@@ -2720,7 +2963,18 @@
           image.addEventListener("error", function () {
             clearFrame(frame);
             frame.dataset.state = "failed";
+            frame.dataset.perfImageState = "failed";
+            perfThumb(assetId, false);
             noteInFrame(frame, "tile-note", "缩略图无法显示（IMAGE_UNREADABLE）");
+          });
+          image.addEventListener("load", function () {
+            Promise.resolve(typeof image.decode === "function" ? image.decode() : undefined).then(function () {
+              frame.dataset.perfImageState = "ready";
+              perfThumb(assetId, true);
+            }).catch(function () {
+              frame.dataset.perfImageState = "failed";
+              perfThumb(assetId, false);
+            });
           });
           image.src = result.url;
           frame.appendChild(image);
@@ -2736,10 +2990,14 @@
           "tile-note",
           "缩略图不可用：" + result.code + "（请求编号 " + (result.request_id || "无") + "）"
         );
+        frame.dataset.perfImageState = "failed";
+        perfThumb(assetId, false);
       })
       .catch(function () {
         clearFrame(frame);
         frame.dataset.state = "failed";
+        frame.dataset.perfImageState = "failed";
+        perfThumb(assetId, false);
         noteInFrame(frame, "tile-note", "缩略图请求失败（NETWORK_ERROR）");
       });
   }
@@ -3630,7 +3888,10 @@
     syncPersonControls();
     var capabilitiesPromise = loadCapabilities();
     loadActiveSearchModelLabel();
-    Promise.all([capabilitiesPromise, loadSources()]).then(restoreOrStartSearch);
+    Promise.all([capabilitiesPromise, loadSources()]).then(function () {
+      initPerfDiagnostics();
+      restoreOrStartSearch();
+    });
   }
 
   if (document.readyState === "loading") {

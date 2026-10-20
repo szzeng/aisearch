@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -245,6 +246,7 @@ def search_assets(
     additional_condition_sql: str | None = None,
     additional_condition_parameters: Sequence[Any] = (),
     favorites_only: bool = False,
+    perf_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One fused retrieval over the authoritative candidate scope.
 
@@ -314,6 +316,7 @@ def search_assets(
             space_id=str(space_id),
             dimension=int(dimension),
         )
+        encode_started = time.perf_counter() if perf_metrics is not None else 0.0
         vector = (
             encode_query(encoder, str(text), space_id=str(space_id), dimension=int(dimension))
             if query_vector is None
@@ -321,10 +324,19 @@ def search_assets(
             # trusts a vector it did not see validated, whatever produced it.
             else checked_query_vector(query_vector, dimension=int(dimension))
         )
+        if perf_metrics is not None and query_vector is None:
+            perf_metrics["query_encode_ms"] = (time.perf_counter() - encode_started) * 1000
 
+    catch_started = time.perf_counter() if perf_metrics is not None and match is not None else 0.0
     catch_up = search_documents.catch_up(catalog) if match is not None else None
+    if perf_metrics is not None and match is not None:
+        perf_metrics["projection_catch_up_ms"] = (time.perf_counter() - catch_started) * 1000
+    fts_started = time.perf_counter() if perf_metrics is not None and match is not None else 0.0
     text_hits = fts_channel(catalog, match, scope, top_k=limit) if match is not None else []
+    if perf_metrics is not None and match is not None:
+        perf_metrics["fts_ms"] = (time.perf_counter() - fts_started) * 1000
     vector_block: dict[str, Any] | None = None
+    vector_started = time.perf_counter() if perf_metrics is not None and binding is not None and vector is not None else 0.0
     if binding is not None and vector is not None:
         index = vector_index if vector_index is not None else default_vector_index(catalog)
         vector_block = vector_channel(
@@ -335,19 +347,27 @@ def search_assets(
             scope=scope,
             top_k=limit,
         )
+    if perf_metrics is not None and binding is not None and vector is not None:
+        perf_metrics["vector_ms"] = (time.perf_counter() - vector_started) * 1000
     vector_hits = [] if vector_block is None else list(vector_block["hits"])
 
     channels = {
         FTS_CHANNEL: [int(row["asset_id"]) for row in text_hits],
         VECTOR_CHANNEL: [int(row["asset_id"]) for row in vector_hits],
     }
+    fusion_started = time.perf_counter() if perf_metrics is not None else 0.0
     fused = reciprocal_rank_fusion(channels)
+    if perf_metrics is not None:
+        perf_metrics["fusion_ms"] = (time.perf_counter() - fusion_started) * 1000
     if not fused and match is None and vector is None:
         # A pure filter query: the authoritative list *is* the answer (architecture §9.2
         # "纯筛选查询走 SQLite 分页，无须生成文本向量"). An image query never takes this
         # branch: when its vector channel finds nothing, the honest answer is "no candidate
         # is semantically close", not an arbitrary list of authoritative assets.
+        authority_started = time.perf_counter() if perf_metrics is not None else 0.0
         authority = authoritative_page(catalog, scope, limit=AUTHORITY_PAGE_LIMIT)
+        if perf_metrics is not None:
+            perf_metrics["authority_ms"] = (time.perf_counter() - authority_started) * 1000
         hits = [
             {
                 "asset_id": asset_id,
@@ -361,6 +381,7 @@ def search_assets(
             for rank, asset_id in enumerate(authority["asset_ids"], start=1)
         ]
     else:
+        authority_started = time.perf_counter() if perf_metrics is not None else 0.0
         authority = authoritative_page(catalog, scope, limit=AUTHORITY_PAGE_LIMIT)
         still_authoritative = _verified_ids(
             catalog, scope, [hit.asset_id for hit in fused]
@@ -379,12 +400,23 @@ def search_assets(
             for hit in fused
             if hit.asset_id in still_authoritative
         ]
+        if perf_metrics is not None:
+            perf_metrics["authority_ms"] = (time.perf_counter() - authority_started) * 1000
 
+    pending_started = time.perf_counter() if perf_metrics is not None and binding is not None else 0.0
     topup = (
         pending_projection_page(catalog, binding=binding, scope=scope, match=match)
         if binding is not None
         else None
     )
+    if perf_metrics is not None and binding is not None:
+        perf_metrics["pending_ms"] = (time.perf_counter() - pending_started) * 1000
+    if perf_metrics is not None:
+        perf_metrics["top_k"] = limit
+        perf_metrics["vector_blocks"] = None if vector_block is None else int(vector_block["blocks"])
+        perf_metrics["scanned_assets"] = None if vector_block is None else int(vector_block["scanned_assets"])
+        perf_metrics["returned_candidates"] = len(hits)
+        perf_metrics["first_page_hits"] = len(hits)
     ranked = {int(row["asset_id"]) for row in hits}
     if topup is not None:
         for entry in topup["entries"]:
@@ -1048,6 +1080,7 @@ def search_request(
     favorites_only: bool = False,
     session_extra: Mapping[str, Any] | None = None,
     validate_session_only: bool = False,
+    perf_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One protocol-level search: resolve, bind, run once, cache and answer one page.
 
@@ -1097,6 +1130,33 @@ def search_request(
     match = build_match(request.text) if request.text is not None else None
     profile = None if request.retrieval_mode == "text" else _resolve_profile(catalog, request)
     binding = None if request.retrieval_mode == "text" else _resolve_binding(catalog, request, profile)
+    if perf_metrics is not None:
+        perf_metrics["binding"] = None if binding is None else {
+            **binding.to_dict(), "profile_id": None if profile is None else profile.profile_id,
+        }
+        if encoder is not None:
+            try:
+                adapter = getattr(encoder, "_encoder", encoder)
+                spec = adapter.spec()
+                spec_data = spec.to_envelope() if hasattr(spec, "to_envelope") else {}
+                perf_metrics["encoder_identity"] = {
+                    "processor_id": spec_data.get("processor_id"),
+                    "space_id": spec_data.get("space_id"),
+                    "dimension": spec_data.get("dimension"),
+                    "runtime_backend": spec_data.get("runtime_backend"),
+                    "device_policy": spec_data.get("device_policy"),
+                }
+                from photo_search.search.perf_diagnostics import binding_mismatch
+
+                perf_metrics["model_binding_mismatch"] = binding_mismatch(
+                    None if binding is None else binding.to_dict(), spec_data,
+                )
+                client = getattr(adapter, "_client", None)
+                process = getattr(client, "_process", None)
+                perf_metrics["worker_pid"] = getattr(process, "pid", None)
+                perf_metrics["worker_started_before_request"] = bool(getattr(client, "_started", False))
+            except Exception:  # diagnostics must never change the search outcome
+                perf_metrics["model_binding_mismatch"] = None
     if query_vector is not None and binding is None:
         # An image query has no text to fall back on, so it must be bound to one space.
         raise fail(
@@ -1216,6 +1276,7 @@ def search_request(
             additional_condition_sql=scope.additional_condition_sql,
             additional_condition_parameters=scope.additional_condition_parameters,
             favorites_only=scope.favorites_only,
+            perf_metrics=perf_metrics,
         )
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a
@@ -1325,6 +1386,8 @@ def search_request(
         )
 
     for attempt in range(SEARCH_PUBLISH_ATTEMPTS):
+        if perf_metrics is not None:
+            perf_metrics["search_publish_attempts"] = attempt + 1
         page = publish_once()
         if page is not None:
             return page
