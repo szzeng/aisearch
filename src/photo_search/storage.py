@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from photo_search.catalog.sqlite_io import open_readonly
+from photo_search.catalog.sqlite_io import connect_rw, open_readonly
 from photo_search.config import catalog_db_path, resolve_data_root
 from photo_search.media.contract import PREVIEW_PROCESSOR_ID, THUMBNAIL_PROCESSOR_ID
 
@@ -252,6 +252,457 @@ def _is_media_candidate(path: Path, root: Path, now_ms: int) -> Candidate | None
         and rel[1] != PREVIEW_PROCESSOR_ID and _MEDIA_FILE.fullmatch(rel[4]) and rel[2] == rel[4][:2] and rel[3] == rel[4][2:4]):
         return Candidate(path, "media-cache", FileIdentity.from_stat(safe))
     return None
+
+
+def _retention_media_candidates(
+    root: Path, *, sha256: str, face_crop_keys: list[str]
+) -> tuple[list[Candidate], bool]:
+    """Resolve exact managed cache paths recorded before retention removed their owner rows."""
+    if not re.fullmatch(r"[0-9a-f]{64}", str(sha256)):
+        return [], True
+    digests = [(str(sha256), "media")]
+    for key in face_crop_keys:
+        if not re.fullmatch(r"[0-9a-f]{64}", str(key)):
+            return [], True
+        digests.append((str(key), "face-crop"))
+    candidates: list[Candidate] = []
+    uncertain = False
+    for digest, kind in digests:
+        bases: list[Path] = []
+        if kind == "media":
+            for directory, prefix in ((root / "thumbnails", "catalog-thumbnail@"), (root / "previews", "catalog-preview@")):
+                if not directory.exists():
+                    continue
+                if not _safe_directory(directory, root):
+                    uncertain = True
+                    continue
+                try:
+                    processors = list(directory.iterdir())
+                except OSError:
+                    uncertain = True
+                    continue
+                for processor in processors:
+                    if not processor.name.startswith(prefix) or not _MEDIA_VERSION.fullmatch(processor.name):
+                        continue
+                    if not _safe_directory(processor, root):
+                        uncertain = True
+                        continue
+                    bases.append(processor)
+            failure_root = root / "cache" / "media"
+            if failure_root.exists():
+                if not _safe_directory(failure_root, root):
+                    uncertain = True
+                else:
+                    try:
+                        processors = list(failure_root.iterdir())
+                    except OSError:
+                        uncertain = True
+                        processors = []
+                    for processor in processors:
+                        if not _MEDIA_VERSION.fullmatch(processor.name):
+                            continue
+                        if not _safe_directory(processor, root):
+                            uncertain = True
+                            continue
+                        bases.append(processor)
+        else:
+            face_root = root / "cache" / "face-crops" / "face-crop@2"
+            if face_root.exists():
+                if _safe_directory(face_root, root):
+                    bases.append(face_root)
+                else:
+                    uncertain = True
+        suffix = ".jpg" if kind == "face-crop" else ".json"
+        if kind == "media":
+            # Published thumbnails and previews use JPEG; failure records use JSON.
+            paths = [base / digest[:2] / digest[2:4] / f"{digest}.jpg" for base in bases if base.parent.name in {"thumbnails", "previews"}]
+            paths.extend(base / digest[:2] / digest[2:4] / f"{digest}.json" for base in bases if base.parent.name == "media")
+        else:
+            paths = [base / digest[:2] / digest[2:4] / f"{digest}{suffix}" for base in bases]
+        for path in paths:
+            if not path.exists():
+                continue
+            info = _safe_file(path, root)
+            if info is None:
+                uncertain = True
+                continue
+            candidates.append(Candidate(path, "retention-media", FileIdentity.from_stat(info)))
+    # A prior cache generation can contain temporary siblings for this exact digest. They
+    # are considered only while stopped and only in the validated target's shard directory.
+    deduplicated = {str(item.path): item for item in candidates}
+    return list(deduplicated.values()), uncertain
+
+
+def storage_clean_retention_media(
+    data_root: str | Path | None,
+    *,
+    apply: bool = False,
+    stopped: bool = False,
+    now_ms: int | None = None,
+    asset_limit: int = 20,
+    file_limit: int = DELETE_BATCH_SIZE,
+) -> dict[str, Any]:
+    """Collect only cache files whose exact identities were persisted by retention cleanup."""
+    root = resolve_data_root(data_root).resolve()
+    bounded_assets = min(20, max(1, int(asset_limit)))
+    bounded_files = min(DELETE_BATCH_SIZE, max(1, int(file_limit)))
+    db_path = catalog_db_path(root)
+    if apply and not stopped:
+        return {"status": "error", "code": "STOPPED_CONFIRMATION_REQUIRED", "deleted_files": 0, "freed_bytes": 0}
+
+    def preview(connection: sqlite3.Connection) -> tuple[list[sqlite3.Row], dict[int, list[Candidate]], set[int]]:
+        rows = connection.execute(
+            "SELECT b.asset_id,b.media_sha256,b.face_crop_keys_json FROM asset_retention_barriers b "
+            "WHERE b.state='COMPLETE' AND b.media_sha256 IS NOT NULL AND b.media_cleaned_at_ms IS NULL "
+            "AND b.artifact_metadata_cleaned_at_ms IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.asset_id=b.asset_id) "
+            "AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.sha256=b.media_sha256) "
+            "ORDER BY b.asset_id LIMIT ?",
+            (bounded_assets,),
+        ).fetchall()
+        candidates_by_asset: dict[int, list[Candidate]] = {}
+        uncertain_asset_ids: set[int] = set()
+        for row in rows:
+            try:
+                keys = json.loads(str(row["face_crop_keys_json"]))
+                if not isinstance(keys, list) or not all(isinstance(value, str) for value in keys):
+                    raise ValueError("invalid face crop key list")
+            except (ValueError, json.JSONDecodeError):
+                keys = []
+                uncertain_asset_ids.add(int(row["asset_id"]))
+            candidates, uncertain = _retention_media_candidates(
+                root, sha256=str(row["media_sha256"]), face_crop_keys=keys
+            )
+            candidates_by_asset[int(row["asset_id"])] = candidates
+            if uncertain:
+                uncertain_asset_ids.add(int(row["asset_id"]))
+        return rows, candidates_by_asset, uncertain_asset_ids
+
+    if not apply:
+        try:
+            connection = open_readonly(db_path)
+        except Exception as error:  # noqa: BLE001 - unknown catalog state must not imply candidates.
+            return {"status": "error", "code": "CATALOG_UNAVAILABLE", "reason": type(error).__name__}
+        try:
+            rows, grouped, uncertain_ids = preview(connection)
+            items = sum(grouped.values(), [])
+            return {
+                "status": "preview",
+                "eligible_assets": len(rows),
+                "eligible_files": len(items),
+                "eligible_bytes": sum(item.identity.size for item in items),
+                "uncertain_assets": len(uncertain_ids),
+                "batch_assets": bounded_assets,
+                "batch_files": bounded_files,
+            }
+        finally:
+            connection.close()
+
+    from photo_search.runtime.data_root_lease import DataRootLeaseBusy, acquire_data_root_lease
+
+    try:
+        lease = acquire_data_root_lease(root)
+    except DataRootLeaseBusy:
+        return {"status": "error", "code": "DATA_ROOT_BUSY", "deleted_files": 0, "freed_bytes": 0}
+    scan_stream = _try_scan_lock(root)
+    if scan_stream is None:
+        lease.close()
+        return {"status": "error", "code": "STORAGE_SCAN_BUSY", "deleted_files": 0, "freed_bytes": 0}
+    try:
+        try:
+            _checkpoint_stopped_catalog(root)
+            connection = connect_rw(db_path, create=False)
+        except Exception as error:  # noqa: BLE001 - cannot prove offline catalog safety.
+            return {"status": "error", "code": "CATALOG_UNAVAILABLE", "reason": type(error).__name__}
+        deleted = freed = skipped = failed = completed = 0
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            rows, grouped, uncertain_ids = preview(connection)
+            for row in rows:
+                asset_id = int(row["asset_id"])
+                if asset_id in uncertain_ids:
+                    skipped += 1
+                    continue
+                candidates = grouped.get(asset_id, [])
+                if deleted + len(candidates) > bounded_files and deleted:
+                    break
+                asset_failed = False
+                asset_deleted = asset_freed = 0
+                for candidate in candidates:
+                    if deleted >= bounded_files:
+                        asset_failed = True
+                        break
+                    if not _identity_matches(candidate.path, root, candidate.identity):
+                        skipped += 1
+                        asset_failed = True
+                        continue
+                    try:
+                        candidate.path.unlink()
+                        deleted += 1
+                        freed += candidate.identity.size
+                        asset_deleted += 1
+                        asset_freed += candidate.identity.size
+                    except OSError:
+                        failed += 1
+                        asset_failed = True
+                if asset_failed or any(
+                    candidate.path.exists() for candidate in candidates
+                ):
+                    continue
+                connection.execute(
+                    "UPDATE asset_retention_barriers SET media_cleaned_at_ms=?,"
+                    "media_deleted_files=media_deleted_files+?,media_freed_bytes=media_freed_bytes+? "
+                    "WHERE asset_id=? AND state='COMPLETE' AND media_cleaned_at_ms IS NULL",
+                    (int(now_ms if now_ms is not None else time.time_ns() // 1_000_000), asset_deleted, asset_freed, asset_id),
+                )
+                completed += 1
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return {
+            "status": "ok",
+            "eligible_assets": len(rows),
+            "completed_assets": completed,
+            "deleted_files": deleted,
+            "freed_bytes": freed,
+            "skipped_changed_or_unsafe": skipped + len(uncertain_ids),
+            "failed_files": failed,
+            "partial": bool(skipped or failed or uncertain_ids or completed < len(rows)),
+        }
+    finally:
+        lease.close()
+        _release_scan_lock(scan_stream)
+
+
+def storage_clean_retention_artifact_metadata(
+    data_root: str | Path | None,
+    *,
+    apply: bool = False,
+    stopped: bool = False,
+    now_ms: int | None = None,
+    asset_limit: int = 20,
+) -> dict[str, Any]:
+    """Drop only terminal jobs and Artifact metadata owned by already-cleaned assets."""
+    root = resolve_data_root(data_root).resolve()
+    bounded_assets = min(20, max(1, int(asset_limit)))
+    if apply and not stopped:
+        return {"status": "error", "code": "STOPPED_CONFIRMATION_REQUIRED", "deleted_artifacts": 0, "deleted_jobs": 0}
+    db_path = catalog_db_path(root)
+    from photo_search.runtime.data_root_lease import DataRootLeaseBusy, acquire_data_root_lease
+
+    try:
+        lease = acquire_data_root_lease(root) if apply else None
+    except DataRootLeaseBusy:
+        return {"status": "error", "code": "DATA_ROOT_BUSY", "deleted_artifacts": 0, "deleted_jobs": 0}
+    scan_stream = _try_scan_lock(root) if apply else None
+    if apply and scan_stream is None:
+        if lease is not None:
+            lease.close()
+        return {"status": "error", "code": "STORAGE_SCAN_BUSY", "deleted_artifacts": 0, "deleted_jobs": 0}
+    connection: sqlite3.Connection | None = None
+    try:
+        if apply:
+            try:
+                _checkpoint_stopped_catalog(root)
+                connection = connect_rw(db_path, create=False)
+            except Exception as error:  # noqa: BLE001 - unknown state prevents deletion.
+                return {"status": "error", "code": "CATALOG_UNAVAILABLE", "reason": type(error).__name__}
+        else:
+            try:
+                connection = open_readonly(db_path)
+            except Exception as error:  # noqa: BLE001
+                return {"status": "error", "code": "CATALOG_UNAVAILABLE", "reason": type(error).__name__}
+        rows = connection.execute(
+            "SELECT b.asset_id FROM asset_retention_barriers b "
+            "WHERE b.state='COMPLETE' AND b.media_sha256 IS NOT NULL "
+            "AND b.artifact_metadata_cleaned_at_ms IS NULL "
+            "AND NOT EXISTS (SELECT 1 FROM assets a WHERE a.asset_id=b.asset_id) "
+            "ORDER BY b.asset_id LIMIT ?",
+            (bounded_assets,),
+        ).fetchall()
+        if not apply:
+            return {"status": "preview", "eligible_assets": len(rows), "batch_assets": bounded_assets}
+
+        connection.execute("BEGIN IMMEDIATE")
+        tables = {
+            str(row[0])
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        deleted_artifacts = deleted_jobs = completed = blocked = 0
+        stamp = int(now_ms if now_ms is not None else time.time_ns() // 1_000_000)
+        for row in rows:
+            asset_id = int(row["asset_id"])
+            if connection.execute("SELECT 1 FROM assets WHERE asset_id=?", (asset_id,)).fetchone():
+                blocked += 1
+                continue
+            job_rows = connection.execute(
+                "SELECT job_id,state FROM jobs WHERE subject_type='asset' AND subject_id=? ORDER BY job_id",
+                (str(asset_id),),
+            ).fetchall()
+            if any(str(job["state"]) in {"QUEUED", "RUNNING", "RETRY_WAIT", "BLOCKED"} for job in job_rows):
+                blocked += 1
+                continue
+            job_ids = [int(job["job_id"]) for job in job_rows]
+            artifact_rows: list[sqlite3.Row] = []
+            if job_ids:
+                marks = ",".join("?" for _ in job_ids)
+                artifact_rows = connection.execute(
+                    f"SELECT artifact_id FROM artifacts WHERE job_id IN ({marks}) ORDER BY artifact_id",
+                    tuple(job_ids),
+                ).fetchall()
+            artifact_ids = [str(item["artifact_id"]) for item in artifact_rows]
+            if not artifact_ids and not job_ids:
+                connection.execute(
+                    "UPDATE asset_retention_barriers SET artifact_metadata_cleaned_at_ms=? "
+                    "WHERE asset_id=? AND artifact_metadata_cleaned_at_ms IS NULL",
+                    (stamp, asset_id),
+                )
+                completed += 1
+                continue
+
+            safe = True
+            artifact_marks = ",".join("?" for _ in artifact_ids)
+            job_marks = ",".join("?" for _ in job_ids)
+            for table in tables:
+                if table in {"artifacts", "jobs", "sqlite_sequence"}:
+                    continue
+                columns = {str(info[1]) for info in connection.execute(f'PRAGMA table_info("{table}")')}
+                job_reference_columns = {
+                    column for column in columns
+                    if column == "job_id" or column.endswith("_job_id")
+                }
+                if job_ids and job_reference_columns and table not in {
+                    "cr2_job_recoveries", "face_detail_batch_assets"
+                }:
+                    # Artifact rows are handled separately above. Any other job-like
+                    # schema is not an understood recovery/history consumer, even if it
+                    # omitted a foreign key, so preserve the entire asset cleanup batch.
+                    safe = False
+                    break
+                if artifact_ids and "artifact_id" in columns:
+                    refs = connection.execute(
+                        f'SELECT 1 FROM "{table}" WHERE artifact_id IN ({artifact_marks}) LIMIT 1',
+                        tuple(artifact_ids),
+                    ).fetchone()
+                    if refs is not None and table != "face_detail_coordinate_frames":
+                        safe = False
+                        break
+                for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{table}")'):
+                    if str(foreign_key["table"]) == "artifacts":
+                        column = str(foreign_key["from"])
+                        if artifact_ids and connection.execute(
+                            f'SELECT 1 FROM "{table}" WHERE "{column}" IN ({artifact_marks}) LIMIT 1',
+                            tuple(artifact_ids),
+                        ).fetchone() is not None and table != "face_detail_coordinate_frames":
+                            safe = False
+                            break
+                    if str(foreign_key["table"]) == "jobs":
+                        column = str(foreign_key["from"])
+                        if job_ids and connection.execute(
+                            f'SELECT 1 FROM "{table}" WHERE "{column}" IN ({job_marks}) LIMIT 1',
+                            tuple(job_ids),
+                        ).fetchone() is not None and table != "cr2_job_recoveries":
+                            safe = False
+                            break
+                if not safe:
+                    break
+            if not safe:
+                blocked += 1
+                continue
+            if job_ids and "cr2_job_recoveries" in tables:
+                connection.execute(
+                    f"DELETE FROM cr2_job_recoveries WHERE job_id IN ({job_marks})", tuple(job_ids)
+                )
+            if artifact_ids and "face_detail_coordinate_frames" in tables:
+                connection.execute(
+                    f"DELETE FROM face_detail_coordinate_frames WHERE artifact_id IN ({artifact_marks})",
+                    tuple(artifact_ids),
+                )
+            if artifact_ids:
+                connection.execute(
+                    f"DELETE FROM artifacts WHERE artifact_id IN ({artifact_marks})", tuple(artifact_ids)
+                )
+            if job_ids:
+                connection.execute(f"DELETE FROM jobs WHERE job_id IN ({job_marks})", tuple(job_ids))
+            deleted_artifacts += len(artifact_ids)
+            deleted_jobs += len(job_ids)
+            connection.execute(
+                "UPDATE asset_retention_barriers SET artifact_metadata_cleaned_at_ms=?,"
+                "artifact_rows_deleted=artifact_rows_deleted+?,jobs_deleted=jobs_deleted+? "
+                "WHERE asset_id=? AND artifact_metadata_cleaned_at_ms IS NULL",
+                (stamp, len(artifact_ids), len(job_ids), asset_id),
+            )
+            completed += 1
+        fk_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
+        if fk_errors:
+            raise sqlite3.IntegrityError("foreign_key_check failed after retention artifact cleanup")
+        connection.commit()
+        return {
+            "status": "ok",
+            "eligible_assets": len(rows),
+            "completed_assets": completed,
+            "blocked_assets": blocked,
+            "deleted_artifacts": deleted_artifacts,
+            "deleted_jobs": deleted_jobs,
+            "partial": bool(blocked or completed < len(rows)),
+        }
+    except BaseException:
+        if connection is not None and apply:
+            connection.rollback()
+        raise
+    finally:
+        if connection is not None:
+            connection.close()
+        if lease is not None:
+            lease.close()
+        if scan_stream is not None:
+            _release_scan_lock(scan_stream)
+
+
+def storage_clean_retention(
+    data_root: str | Path | None,
+    *,
+    apply: bool = False,
+    stopped: bool = False,
+    now_ms: int | None = None,
+) -> dict[str, Any]:
+    """Run retention-owned metadata cleanup and the existing conservative file GC scopes."""
+    metadata = storage_clean_retention_artifact_metadata(
+        data_root, apply=apply, stopped=stopped, now_ms=now_ms
+    )
+    if metadata.get("status") == "error":
+        return {"status": "error", "phase": "artifact_metadata", "metadata": metadata}
+    artifacts = storage_clean(
+        data_root, scopes=("artifacts",), apply=apply, stopped=stopped, now_ms=now_ms
+    )
+    media = storage_clean_retention_media(
+        data_root, apply=apply, stopped=stopped, now_ms=now_ms
+    )
+    if artifacts.get("status") == "error" or media.get("status") == "error":
+        return {
+            "status": "error",
+            "phase": "file_gc",
+            "metadata": metadata,
+            "artifacts": artifacts,
+            "media": media,
+        }
+    return {
+        "status": "ok" if apply else "preview",
+        "metadata": metadata,
+        "artifacts": artifacts,
+        "media": media,
+        "deleted_files": int(artifacts.get("deleted_files", 0)) + int(media.get("deleted_files", 0)),
+        "freed_bytes": int(artifacts.get("freed_bytes", 0)) + int(media.get("freed_bytes", 0)),
+        "partial": bool(
+            metadata.get("partial")
+            or artifacts.get("partial")
+            or media.get("partial")
+        ),
+        "bytes_basis": "deleted regular-file st_size; filesystem allocation and total free-space changes may differ",
+    }
 
 
 def _walk(root: Path, *, max_files: int = MAX_SCAN_FILES, progress: Callable[[int], None] | None = None):

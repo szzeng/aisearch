@@ -175,6 +175,8 @@ class FaceIndexCoordinator:
             event = connection.execute(
                 "SELECT * FROM face_index_outbox WHERE state IN ('PENDING', 'IN_FLIGHT') "
                 f"AND generation_id IN ({marks}) "
+                "AND NOT EXISTS (SELECT 1 FROM faces f JOIN asset_retention_barriers b "
+                "ON b.asset_id=f.asset_id WHERE f.face_id=face_index_outbox.face_id) "
                 "ORDER BY created_at, event_id LIMIT 1"
                 , tuple(accepted_generations)
             ).fetchone()
@@ -330,6 +332,9 @@ class FaceIndexCoordinator:
             raise CatalogError(SPACE_MISMATCH, "the canonical face vector has another dimension")
         representative = 1 if self._is_representative(face) else 0
         with self.catalog.write() as connection:
+            from photo_search.retention import assert_asset_retention_unblocked
+
+            assert_asset_retention_unblocked(connection, asset_id=int(face["asset_id"]))
             connection.execute(
                 "INSERT INTO face_candidates(generation_id, face_id, is_representative, "
                 "quality_state, vector_blob, vector_sha256, published_at) "

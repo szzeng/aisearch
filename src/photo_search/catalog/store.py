@@ -676,6 +676,20 @@ def delete_source(connection: sqlite3.Connection, *, source_id: int) -> dict[str
                 "reason": "SCAN_IN_PROGRESS",
             },
         )
+    unresolved_retention = connection.execute(
+        "SELECT scan_id FROM retention_source_anomalies "
+        "WHERE source_id=? AND state='NEEDS_REVIEW' LIMIT 1",
+        (source_id,),
+    ).fetchone() if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='retention_source_anomalies'"
+    ).fetchone() else None
+    if unresolved_retention is not None:
+        raise CatalogError(
+            INVALID_STATE_TRANSITION,
+            f"source {source_id} has an unresolved bulk-missing retention review",
+            details={"source_id": source_id, "scan_id": int(unresolved_retention["scan_id"]),
+                     "reason": "RETENTION_ANOMALY_NEEDS_REVIEW"},
+        )
     scan_ids = [
         int(item["scan_id"])
         for item in connection.execute(
@@ -696,6 +710,24 @@ def delete_source(connection: sqlite3.Connection, *, source_id: int) -> dict[str
             "SELECT COUNT(*) FROM file_locations WHERE source_id = ?", (source_id,)
         ).fetchone()[0]
     )
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='asset_retention_state'"
+    ).fetchone():
+        connection.execute(
+            "DELETE FROM asset_retention_state WHERE asset_id IN "
+            "(SELECT asset_id FROM file_locations WHERE source_id=? AND asset_id IS NOT NULL)",
+            (source_id,),
+        )
+        connection.execute(
+            "DELETE FROM asset_retention_source_evidence WHERE source_id=? OR scan_id IN "
+            "(SELECT scan_id FROM scan_runs WHERE source_id=?) OR asset_id IN "
+            "(SELECT asset_id FROM file_locations WHERE source_id=? AND asset_id IS NOT NULL)",
+            (source_id, source_id, source_id),
+        )
+        connection.execute(
+            "DELETE FROM retention_source_anomalies WHERE source_id=? AND state='CLEARED'",
+            (source_id,),
+        )
     # Three derived fact tables point at the *observation* they were produced from with
     # ``ON DELETE RESTRICT`` (ADR-0005/ADR-0009/ADR-0010): the GPS fact of an asset, its OCR
     # document and its faces. Losing the position must not destroy a fact that may belong to

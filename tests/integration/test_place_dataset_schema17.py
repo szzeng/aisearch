@@ -123,6 +123,12 @@ def test_schema16_package_recovers_into_empty_schema17_catalog(tmp_path):
         (18, 18, 34, True),
         (5, 33, 34, True),
         (5, 34, 34, True),
+        (5, 37, 38, True),
+        (5, 38, 38, True),
+        (5, 37, 39, True),
+        (5, 38, 39, True),
+        (5, 39, 39, True),
+        (5, 38, 40, False),
     ],
 )
 def test_schema_bridge_is_explicit_and_bounded(tmp_path, minimum, maximum, supported, accepted):

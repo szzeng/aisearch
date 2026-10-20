@@ -38,12 +38,12 @@ PACKAGE = "onnxruntime-cpu@test"
 DIMENSION = 3
 
 
-def embedding_spec(*, space_id: str = SPACE) -> ProcessorSpec:
+def embedding_spec(*, space_id: str = SPACE, processor_id: str = PROCESSOR) -> ProcessorSpec:
     return ProcessorSpec.from_envelope(
         {
             "contract_version": CONTRACT_VERSION,
             "spec_revision": "test-embedding-v1",
-            "processor_id": PROCESSOR,
+            "processor_id": processor_id,
             "processor_kind": "embedding_model",
             "task_type": "image_embedding",
             "config_hash": SHA,
@@ -255,6 +255,53 @@ def submit_embedding(catalog: Catalog, *, artifact_id: str = "embedding-1") -> t
     return scheduler, asset_id
 
 
+def mark_asset_retention_eligible(catalog: Catalog, *, asset_id: int, now_ms: int) -> None:
+    from photo_search.retention import OBSERVATION_MS
+
+    first_missing = int(now_ms) - OBSERVATION_MS - 1_000
+    with catalog.write() as connection:
+        location = connection.execute(
+            "SELECT source_id FROM file_locations WHERE asset_id=?", (asset_id,)
+        ).fetchone()
+        if location is None:
+            source = connection.execute(
+                "INSERT INTO source_roots(display_name,root_path,status) "
+                "VALUES('retention-test','D:/synthetic-retention-source','ONLINE')"
+            )
+            source_id = int(source.lastrowid)
+            connection.execute(
+                "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,"
+                "last_seen_scan_id,availability) VALUES(?,?,?, ?,1,1,NULL,'MISSING')",
+                (source_id, f"retention-{asset_id}.jpg", f"retention-{asset_id}.jpg", asset_id),
+            )
+            location = {"source_id": source_id}
+        assert location is not None
+        source_id = int(location["source_id"])
+        connection.execute(
+            "UPDATE file_locations SET availability='MISSING' WHERE asset_id=?", (asset_id,)
+        )
+        scan = connection.execute(
+            "INSERT INTO scan_runs(source_id,started_at,finished_at,state,error) "
+            "VALUES(?,?,?,'SUCCEEDED',NULL)",
+            (source_id, first_missing + OBSERVATION_MS, now_ms),
+        )
+        scan_id = int(scan.lastrowid)
+        connection.execute(
+            "UPDATE source_roots SET last_successful_scan=? WHERE source_id=?",
+            (scan_id, source_id),
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_source_evidence(asset_id,source_id,scan_id,"
+            "missing_confirmed_at_ms) VALUES(?,?,?,?)",
+            (asset_id, source_id, scan_id, now_ms),
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_state(asset_id,first_missing_at_ms,last_qualified_at_ms,"
+            "state,updated_at_ms) VALUES(?,?,?,'ELIGIBLE',?)",
+            (asset_id, first_missing, now_ms, now_ms),
+        )
+
+
 def test_sqlite_commit_creates_one_published_artifact_one_outbox_and_no_ready(catalog: Catalog) -> None:
     _, asset_id = submit_embedding(catalog)
     artifact = catalog.read_one("SELECT * FROM artifacts")
@@ -325,6 +372,226 @@ def test_lance_persisted_before_sqlite_confirmation_replays_without_duplicates(c
         generation_id=generation, dimension=DIMENSION, space_id=SPACE
     ) == 1
     assert catalog.read_one("SELECT COUNT(*) FROM index_entries")[0] == 1
+
+
+@pytest.mark.parametrize("batch", [False, True], ids=["single", "batch"])
+def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
+    catalog: Catalog, batch: bool
+) -> None:
+    from photo_search.retention import activate_asset_retention_cleanup
+
+    _, asset_id = submit_embedding(catalog, artifact_id=f"retention-delete-{batch}")
+    coordinator = IndexCoordinator(catalog)
+    first_generation = generation_id_for(SPACE, PROCESSOR)
+    assert coordinator.process_next(now_ms=2_000) is True
+    first_rows = coordinator.index.rows(
+        generation_id=first_generation, dimension=DIMENSION
+    )
+    assert len(first_rows) == 1
+
+    # A second generation has its own real Lance table and identity for this same asset.
+    second_processor = "test-embedding-legacy@1"
+    second_generation = generation_id_for(SPACE, second_processor)
+    artifact_id = str(catalog.read_one("SELECT artifact_id FROM artifacts")[0])
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO index_generations(generation_id,space_id,processor_id,dimension,state,"
+            "is_active,created_at,updated_at) VALUES(?,?,?,?,'READY',0,1,1)",
+            (second_generation, SPACE, second_processor, DIMENSION),
+        )
+        connection.execute(
+            "INSERT INTO index_entries(space_id,asset_id,generation_id,artifact_id,"
+            "confirmation_revision,confirmed_at,state) VALUES(?,?,?,?,0,2000,'CONFIRMED')",
+            (SPACE, asset_id, second_generation, artifact_id),
+        )
+    second_record = dict(first_rows[0])
+    second_record.update(
+        record_id=f"{second_generation}:{asset_id}", generation_id=second_generation
+    )
+    coordinator.index.upsert(
+        generation={
+            "generation_id": second_generation,
+            "space_id": SPACE,
+            "dimension": DIMENSION,
+        },
+        record=second_record,
+    )
+    assert coordinator.index.count(
+        generation_id=second_generation, dimension=DIMENSION, space_id=SPACE
+    ) == 1
+
+    # One asset may also have a generation in another vector space. It must be independently
+    # scheduled and deleted without touching either same-space generation's record identity.
+    second_space = "test-space:b2"
+    second_space_processor = "test-embedding-space-b@1"
+    second_space_spec = embedding_spec(
+        space_id=second_space, processor_id=second_space_processor
+    )
+    second_space_scheduler = configured_scheduler(catalog, [second_space_spec])
+    second_space_request = enqueue_and_claim(
+        catalog, second_space_scheduler, second_space_spec, asset_id=asset_id
+    )
+    second_space_scheduler.submit(
+        result(
+            second_space_request,
+            [embedding_artifact("retention-delete-space-b", space_id=second_space)],
+        ),
+        now_ms=2_500,
+    )
+    second_space_generation = generation_id_for(second_space, second_space_processor)
+    second_space_coordinator = IndexCoordinator(catalog)
+    assert second_space_coordinator.process_next(now_ms=2_600) is True
+    assert second_space_coordinator.index.count(
+        generation_id=second_space_generation, dimension=DIMENSION, space_id=second_space
+    ) == 1
+
+    with catalog.write() as connection:
+        _, scheduled = activate_asset_retention_cleanup(
+            connection, asset_id=asset_id, now_ms=3_000
+        )
+        assert len(scheduled) == 3
+        assert activate_asset_retention_cleanup(
+            connection, asset_id=asset_id, now_ms=3_001
+        ) == (str(connection.execute(
+            "SELECT barrier_id FROM asset_retention_barriers WHERE asset_id=?", (asset_id,)
+        ).fetchone()[0]), scheduled)
+        # A stale ordinary event remains durable but is not claimable under the tombstone.
+        connection.execute(
+            "UPDATE index_outbox SET state='PENDING' WHERE asset_id=? AND event_type='UPSERT_VECTOR'",
+            (asset_id,),
+        )
+        assert connection.execute(
+            "SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR'",
+            (asset_id,),
+        ).fetchone()[0] == 3
+
+    if batch:
+        with pytest.raises(RuntimeError, match="after_vector_delete"):
+            coordinator.process_batch(
+                now_ms=3_100, max_events=10, failpoint="after_vector_delete"
+            )
+        assert coordinator.index.count(
+            generation_id=first_generation, dimension=DIMENSION, space_id=SPACE
+        ) == 0
+        assert coordinator.index.count(
+            generation_id=second_generation, dimension=DIMENSION, space_id=SPACE
+        ) == 0
+        assert coordinator.index.count(
+            generation_id=second_space_generation,
+            dimension=DIMENSION,
+            space_id=second_space,
+        ) == 0
+        restarted = IndexCoordinator(catalog)
+        assert restarted.process_batch(now_ms=3_200, max_events=10) == 3
+        assert restarted.process_batch(now_ms=3_300, max_events=10) == 0
+    else:
+        with pytest.raises(RuntimeError, match="after_vector_delete"):
+            coordinator.process_next(now_ms=3_100, failpoint="after_vector_delete")
+        after_first = {
+            first_generation: coordinator.index.count(
+                generation_id=first_generation, dimension=DIMENSION, space_id=SPACE
+            ),
+            second_generation: coordinator.index.count(
+                generation_id=second_generation, dimension=DIMENSION, space_id=SPACE
+            ),
+        }
+        after_first[second_space_generation] = coordinator.index.count(
+            generation_id=second_space_generation,
+            dimension=DIMENSION,
+            space_id=second_space,
+        )
+        assert sum(after_first.values()) == 2
+        restarted = IndexCoordinator(catalog)
+        assert restarted.process_next(now_ms=3_200) is True  # replay delete after external success
+        assert restarted.process_next(now_ms=3_300) is True
+        assert restarted.process_next(now_ms=3_400) is True
+        assert restarted.process_next(now_ms=3_500) is False
+
+    for generation_id, space_id in (
+        (first_generation, SPACE),
+        (second_generation, SPACE),
+        (second_space_generation, second_space),
+    ):
+        assert restarted.index.count(
+            generation_id=generation_id, dimension=DIMENSION, space_id=space_id
+        ) == 0
+        assert restarted.semantic_ready(
+            space_id=space_id, asset_id=asset_id, generation_id=generation_id
+        ) is False
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR' "
+        "AND state='CONFIRMED'",
+        (asset_id,),
+    )[0] == 3
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='UPSERT_VECTOR' "
+        "AND state='PENDING'",
+        (asset_id,),
+    )[0] == 2
+    from photo_search.photo_smart_collections import dependency_signature
+
+    with catalog.read_snapshot() as connection:
+        _, pending_projection, _ = dependency_signature(
+            connection,
+            {
+                "execution_kind": "COMBINED",
+                "search_binding": {"image_generation_id": first_generation},
+            },
+        )
+    assert pending_projection is False  # blocked old UPSERTs do not hold smart caches stale
+    with catalog.write() as connection:
+        assert activate_asset_retention_cleanup(
+            connection, asset_id=asset_id, now_ms=3_600
+        ) == (str(connection.execute(
+            "SELECT barrier_id FROM asset_retention_barriers WHERE asset_id=?", (asset_id,)
+        ).fetchone()[0]), scheduled)
+
+
+def test_retention_cleanup_service_waits_for_lance_then_cancels_on_restore(catalog: Catalog) -> None:
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+    )
+
+    _, asset_id = submit_embedding(catalog, artifact_id="retention-finalize-restore")
+    coordinator = IndexCoordinator(catalog)
+    assert coordinator.process_next(now_ms=2_000) is True
+    generation = generation_id_for(SPACE, PROCESSOR)
+    assert coordinator.index.count(
+        generation_id=generation, dimension=DIMENSION, space_id=SPACE
+    ) == 1
+    mark_asset_retention_eligible(catalog, asset_id=asset_id, now_ms=100_000_000_000)
+    started = begin_asset_retention_cleanup(
+        catalog, asset_id=asset_id, now_ms=100_000_000_001
+    )
+    assert started["state"] == "WAITING_FOR_VECTOR_DELETE"
+    assert finalize_asset_retention_cleanup(
+        catalog, asset_id=asset_id, now_ms=100_000_000_002
+    )["state"] == "WAITING_FOR_VECTOR_DELETE"
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=?", (asset_id,)) is not None
+
+    # The vector delete has committed, but a subsequent source recovery invalidates the
+    # pending cleanup. The barrier is removed and an UPSERT is durably scheduled to restore it.
+    assert coordinator.process_next(now_ms=100_000_000_003) is True
+    assert coordinator.index.count(
+        generation_id=generation, dimension=DIMENSION, space_id=SPACE
+    ) == 0
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET availability='PRESENT' WHERE asset_id=?", (asset_id,)
+        )
+    result_state = finalize_asset_retention_cleanup(
+        catalog, asset_id=asset_id, now_ms=100_000_000_004
+    )
+    assert result_state["state"] == "CANCELLED_RESTORED"
+    assert catalog.read_one("SELECT 1 FROM asset_retention_barriers WHERE asset_id=?", (asset_id,)) is None
+    assert coordinator.process_next(now_ms=100_000_000_005) is True
+    assert coordinator.index.count(
+        generation_id=generation, dimension=DIMENSION, space_id=SPACE
+    ) == 1
+    assert coordinator.semantic_ready(
+        space_id=SPACE, asset_id=asset_id, generation_id=generation
+    ) is True
 
 
 def test_late_old_projection_event_reads_latest_state_and_cannot_rollback(catalog: Catalog) -> None:

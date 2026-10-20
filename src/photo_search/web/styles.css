@@ -563,6 +563,7 @@ main {
 
 .storage-inline-actions,
 .storage-backup-form,
+.storage-retention-actions,
 .storage-maintenance-actions {
   display: flex;
   flex-wrap: wrap;

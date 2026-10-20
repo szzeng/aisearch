@@ -161,9 +161,13 @@ def search_projection_summary(db_path: str | Path) -> dict[str, Any] | None:
             "COUNT(DISTINCT tokenizer_version || ':' || fts_generation_id) AS generations "
             "FROM search_documents"
         ).fetchone()
-        queued = int(
-            connection.execute("SELECT COUNT(*) FROM search_projection_queue").fetchone()[0]
+        queued_sql = (
+            "SELECT COUNT(*) FROM search_projection_queue q WHERE NOT EXISTS ("
+            "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id)"
+            if "asset_retention_barriers" in tables
+            else "SELECT COUNT(*) FROM search_projection_queue"
         )
+        queued = int(connection.execute(queued_sql).fetchone()[0])
         generation = connection.execute(
             "SELECT tokenizer_version, fts_generation_id FROM search_documents "
             "ORDER BY updated_at DESC, asset_id DESC LIMIT 1"
@@ -233,9 +237,16 @@ def ocr_summary(
         }
         projection_queued = 0
         if "search_projection_queue" in tables:
+            projection_sql = (
+                "SELECT COUNT(*) AS total FROM search_projection_queue q WHERE cause = ? "
+                "AND NOT EXISTS (SELECT 1 FROM asset_retention_barriers b "
+                "WHERE b.asset_id=q.asset_id)"
+                if "asset_retention_barriers" in tables
+                else "SELECT COUNT(*) AS total FROM search_projection_queue WHERE cause = ?"
+            )
             projection_queued = int(
                 connection.execute(
-                    "SELECT COUNT(*) AS total FROM search_projection_queue WHERE cause = ?",
+                    projection_sql,
                     ("OCR_TEXT_CHANGED",),
                 ).fetchone()["total"]
             )

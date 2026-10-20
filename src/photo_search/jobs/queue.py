@@ -85,6 +85,20 @@ JOB_FIELDS = (
 )
 JOB_COLUMNS = ", ".join(JOB_FIELDS)
 
+
+def _numeric_asset_subject(subject_type: str, subject_id: str) -> int | None:
+    if str(subject_type) != "asset":
+        return None
+    try:
+        asset_id = int(subject_id)
+    except (TypeError, ValueError):
+        # Scheduler clients may use opaque subjects. They are outside the catalog
+        # asset-id namespace and therefore cannot match a retention tombstone.
+        return None
+    # Use one canonical representation in both Python and SQL. In particular, SQLite's
+    # CAST('123abc' AS INTEGER) and CAST('00123' AS INTEGER) would alias asset 123.
+    return asset_id if asset_id > 0 and str(asset_id) == str(subject_id) else None
+
 MAX_ERROR_MESSAGE_CHARS = 500
 
 
@@ -171,6 +185,11 @@ def enqueue(
     requested_device: str = "auto",
 ) -> int:
     """Create the logical job once; the five-field unique key makes this idempotent."""
+    from photo_search.retention import assert_subject_retention_unblocked
+
+    assert_subject_retention_unblocked(
+        connection, subject_type=str(subject_type), subject_id=str(subject_id)
+    )
     if requested_device not in ("auto", "cpu", "gpu"):
         raise CatalogError(
             INVALID_STATE_TRANSITION,
@@ -224,9 +243,14 @@ def _claimable_row(
     task_type: str | None,
 ) -> sqlite3.Row | None:
     task_filter = "" if task_type is None else " AND task_type = ?"
+    retention_filter = (
+        " AND NOT (subject_type='asset' AND EXISTS (SELECT 1 FROM asset_retention_barriers b "
+        "WHERE CAST(b.asset_id AS TEXT)=jobs.subject_id))"
+    )
     parameters: tuple = (now_ms,) if task_type is None else (now_ms, task_type)
     row = connection.execute(
-        f"SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'QUEUED' AND run_after <= ?{task_filter} "
+        f"SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'QUEUED' AND run_after <= ?{task_filter}"
+        f"{retention_filter} "
         "ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1",
         parameters,
     ).fetchone()
@@ -234,7 +258,8 @@ def _claimable_row(
         return row
     parameters = (now_ms,) if task_type is None else (now_ms, task_type)
     return connection.execute(
-        f"SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'RUNNING' AND lease_expires_at <= ?{task_filter} "
+        f"SELECT {JOB_COLUMNS} FROM jobs WHERE state = 'RUNNING' AND lease_expires_at <= ?{task_filter}"
+        f"{retention_filter} "
         "ORDER BY priority DESC, created_at ASC, job_id ASC LIMIT 1",
         parameters,
     ).fetchone()
@@ -266,6 +291,10 @@ def requeue_due_retries(
     fact and never a sleep: a caller that runs earlier simply finds nothing runnable.
     """
     filter_sql, parameters = _processor_filter(processor_ids)
+    filter_sql += (
+        " AND NOT (subject_type='asset' AND EXISTS (SELECT 1 FROM asset_retention_barriers b "
+        "WHERE CAST(b.asset_id AS TEXT)=jobs.subject_id))"
+    )
     cursor = connection.execute(
         "UPDATE jobs SET state = ?, updated_at = ? WHERE state = ? AND run_after <= ?"
         f"{filter_sql}",
@@ -363,6 +392,10 @@ def claimable_candidates(
     window = max(int(aging_window_ms), 1)
     bound = max(int(limit), 1)
     filter_sql, parameters = _processor_filter(processor_ids)
+    filter_sql += (
+        " AND NOT (subject_type='asset' AND EXISTS (SELECT 1 FROM asset_retention_barriers b "
+        "WHERE CAST(b.asset_id AS TEXT)=jobs.subject_id))"
+    )
     for column, values in (("task_type", task_types), ("job_id", job_ids)):
         if values is not None:
             if not values:
@@ -497,6 +530,11 @@ def claim_job(
 ) -> Job:
     """Claim one specific logical job, or atomically take over its expired lease."""
     job = get_job(connection, job_id)
+    from photo_search.retention import assert_subject_retention_unblocked
+
+    assert_subject_retention_unblocked(
+        connection, subject_type=job.subject_type, subject_id=job.subject_id
+    )
     if job.state == STATE_RETRY_WAIT:
         if job.run_after > now_ms:
             raise CatalogError(
@@ -750,6 +788,11 @@ def validate_submission(
             f"job {job_id} was created for processor {job.processor_id}",
             details={"job_id": job_id, "processor_id": processor_id},
         )
+    from photo_search.retention import assert_subject_retention_unblocked
+
+    assert_subject_retention_unblocked(
+        connection, subject_type=job.subject_type, subject_id=job.subject_id
+    )
     return job
 
 

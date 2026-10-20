@@ -156,10 +156,17 @@ def dependency_signature(connection: Any, rule: dict[str, Any]) -> tuple[str, bo
         (generation,),
     ).fetchone()[0])
     pending_vectors = False if not generation else bool(connection.execute(
-        "SELECT EXISTS(SELECT 1 FROM index_outbox WHERE generation_id=? AND state<>'CONFIRMED')",
+        "SELECT EXISTS(SELECT 1 FROM index_outbox o WHERE generation_id=? AND state<>'CONFIRMED' "
+        "AND NOT (event_type='UPSERT_VECTOR' AND EXISTS ("
+        "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=o.asset_id)))",
         (generation,),
     ).fetchone()[0])
-    pending_text = bool(connection.execute("SELECT EXISTS(SELECT 1 FROM search_projection_queue)").fetchone()[0])
+    pending_text = bool(
+        connection.execute(
+            "SELECT EXISTS(SELECT 1 FROM search_projection_queue q WHERE NOT EXISTS ("
+            "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id))"
+        ).fetchone()[0]
+    )
     fts_revision = int(connection.execute(
         "SELECT value FROM metadata WHERE key='photo_smart_fts_publish_revision'"
     ).fetchone()[0])
@@ -438,6 +445,19 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
         indexing = bool(indexing or current_indexing)
         if asset_ids:
             marks = ",".join("?" for _ in asset_ids)
+            blocked = {
+                int(row[0])
+                for row in connection.execute(
+                    f"SELECT asset_id FROM asset_retention_barriers WHERE asset_id IN ({marks})",
+                    tuple(asset_ids),
+                )
+            }
+            if blocked:
+                raise _fail(
+                    "清理屏障中的照片不能发布到智能合集缓存",
+                    status=409,
+                    code="ASSET_RETENTION_BLOCKED",
+                )
             valid = {int(row[0]) for row in connection.execute(
                 f"SELECT a.asset_id FROM assets a WHERE a.asset_id IN ({marks}) AND a.state='ACTIVE' AND {photo_sql}",
                 (*asset_ids, *photo_params))}

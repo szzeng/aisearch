@@ -37,7 +37,7 @@ from photo_search.runtime.data_root_lease import (
     acquire_data_root_lease,
 )
 from photo_search.runtime.device import DevicePolicy
-from photo_search.storage import storage_clean, storage_inspect
+from photo_search.storage import storage_clean, storage_clean_retention, storage_inspect
 from photo_search.storage_maintenance import storage_optimize_vectors, storage_vacuum
 from photo_search.workers.client import AiWorkerClient
 from photo_search.workers.query_encoder import (
@@ -379,6 +379,13 @@ def main() -> None:
     storage_clean_parser.add_argument("--stopped", action="store_true", help="confirm all data-root writers are stopped")
     storage_clean_parser.add_argument("--apply", action="store_true", help="execute the fresh eligibility check; without this flag only preview")
     storage_clean_parser.add_argument("--json", action="store_true")
+    retention_clean_parser = storage_commands.add_parser(
+        "clean-retained", help="clean derived artifacts and media for completed retention tombstones"
+    )
+    retention_clean_parser.add_argument("--data-root", type=Path, required=True)
+    retention_clean_parser.add_argument("--stopped", action="store_true", help="confirm all data-root writers are stopped")
+    retention_clean_parser.add_argument("--apply", action="store_true", help="execute a fresh identity-checked cleanup; without this flag only preview")
+    retention_clean_parser.add_argument("--json", action="store_true")
     for name, help_text in (
         ("optimize-vectors", "inspect or maintain active LanceDB vectors (stopped service only)"),
         ("vacuum", "inspect or compact SQLite free pages (stopped service only)"),
@@ -469,6 +476,12 @@ def main() -> None:
                 payload = storage_clean(
                     args.data_root,
                     scopes=(args.scope,),
+                    apply=args.apply,
+                    stopped=args.stopped,
+                )
+            elif args.storage_command == "clean-retained":
+                payload = storage_clean_retention(
+                    args.data_root,
                     apply=args.apply,
                     stopped=args.stopped,
                 )

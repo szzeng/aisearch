@@ -127,6 +127,7 @@
     observer: null,
     storageBackupLoaded: false,
       libraryRetention: { cursor: 0, overview: null, items: [] },
+      libraryRetentionRunId: null,
   };
 
   var els = {};
@@ -724,6 +725,17 @@
       var counts = model.overview.counts || {};
       lines.push("按数据库计数：MISSING 位置 " + (counts.missing_locations || 0) + "；无 PRESENT 位置的唯一资产 " + (counts.assets_without_present || 0) + "；零位置资产 " + (counts.zero_location_assets || 0) + "；有 PRESENT 副本的资产 " + (counts.assets_with_present_copy || 0) + "。这些数字有交集，不可相加。 ");
       lines.push(model.overview.retention_time_evidence || "首次失效时间未知，不具备清理资格。");
+      var states = model.overview.retention_counts || {};
+      lines.push("资格状态：观察中 " + (states.OBSERVING || 0) + "；到期且复核 " + (states.ELIGIBLE || 0) + "；受阻 " + (states.BLOCKED || 0) + "；来源批量异常待核实 " + (model.overview.unresolved_source_anomalies || 0) + "。一键操作会重新复核资格；人工记录不会删除。");
+      var protectedLoaded = model.items.filter(function (item) { return item.has_human_or_protected_references; }).length;
+      var scanLoaded = model.items.filter(function (item) { return item.unresolved_source_anomaly || item.retention_state === "UNKNOWN"; }).length;
+      lines.push("已读取列表 " + model.items.length + " 张：含人工/受保护引用 " + protectedLoaded + "；观察起点未知、来源需复核或待扫描 " + scanLoaded + "。这只是已加载列表统计，不是全库数量。");
+      var automatic = model.overview.automatic || {};
+      if (els.libraryRetentionAutomatic && els.libraryRetentionAutomatic.checked !== Boolean(automatic.automatic_enabled)) {
+        els.libraryRetentionAutomatic.checked = Boolean(automatic.automatic_enabled);
+      }
+      var runProgress = model.overview.latest_run;
+      if (runProgress && runProgress.run) lines.push(renderRetentionRunLine(runProgress));
       var storage = model.overview.storage || {};
       lines.push("SQLite：catalog 文件 " + (storage.sqlite_catalog_file_bytes == null ? "无法准确估计" : formatBytes(storage.sqlite_catalog_file_bytes)) + "；逻辑页 " + (storage.sqlite_logical_page_bytes == null ? "无法准确估计" : formatBytes(storage.sqlite_logical_page_bytes)) + "；可回收量无法准确估计。LanceDB 逻辑行数与物理可回收量无法准确估计。");
     }
@@ -732,8 +744,88 @@
     });
     if (!model.items.length && model.overview) lines.push("当前页没有失效位置或零位置资产。");
     text(els.libraryRetentionStatus, lines.join("\n"));
+    els.libraryRetentionAnomalies.replaceChildren();
+    ((model.overview && model.overview.source_anomalies) || []).forEach(function (anomaly) {
+      var row = document.createElement("div");
+      var detail = document.createElement("span");
+      detail.textContent = "来源 " + anomaly.source_id + " 的扫描 " + anomaly.scan_id + "：新增失效 " + anomaly.newly_missing_assets + "/扫描前有效资产 " + anomaly.baseline_present_assets + "，需要人工核查。";
+      var button = document.createElement("button");
+      button.type = "button";
+      button.dataset.retentionAnomaly = "resolve";
+      button.dataset.sourceId = String(anomaly.source_id);
+      button.dataset.scanId = String(anomaly.scan_id);
+      button.textContent = "已核查，解除本批保护";
+      row.append(detail, button);
+      els.libraryRetentionAnomalies.appendChild(row);
+    });
     els.libraryRetentionMore.hidden = !model.overview || model.overview.next_cursor == null;
     els.libraryRetentionMore.disabled = state.libraryRetentionLoading === true;
+  }
+
+  function renderRetentionRunLine(progress) {
+    var run = progress.run || {};
+    return "清理任务 " + run.mode + " / " + run.state + "：" + (run.completed_assets || 0) + "/" + (run.total_assets || 0) +
+      " 完成，跳过 " + (run.skipped_assets || 0) + "，失败 " + (run.failed_assets || 0) + "；阶段：" + (run.stage || "未知") +
+      "。逻辑清理完成后，受管缓存仍需停止应用并运行 storage clean-retained。";
+  }
+
+  function pollLibraryRetentionRun(runId) {
+    return request("/storage/library-retention/runs/" + encodeURIComponent(runId)).then(function (result) {
+      var progress = result.body || {};
+      var run = progress.run || {};
+      setStatus(els.libraryRetentionStatus, renderRetentionRunLine(progress));
+      if (run.state === "QUEUED" || run.state === "RUNNING") {
+        window.setTimeout(function () { pollLibraryRetentionRun(runId); }, 1200);
+      } else {
+        state.libraryRetentionRunId = null;
+        els.libraryRetentionCleanup.disabled = false;
+        loadLibraryRetention(true);
+      }
+    }).catch(function (failure) {
+      state.libraryRetentionRunId = null;
+      els.libraryRetentionCleanup.disabled = false;
+      setStatus(els.libraryRetentionStatus, "读取清理进度失败：" + describe(failure), "error");
+    });
+  }
+
+  function startLibraryRetentionCleanup() {
+    var overview = state.libraryRetention.overview || {};
+    var counts = overview.retention_counts || {};
+    var preview = "当前统计：到期且复核 " + (counts.ELIGIBLE || 0) + "，观察中 " + (counts.OBSERVING || 0) +
+      "，来源异常 " + (overview.unresolved_source_anomalies || 0) + "。本次最多处理 20 张，逐张重新核验；实际可清理数可能更少。";
+    if (!window.confirm(preview + "\n\n将清除 PhotoSearch 中通过复核的失效照片派生数据。不会删除磁盘原图或人工记录；手动确认不等待 30 天。缓存和 Artifact 文件需应用停止后另行回收。预计释放空间无法准确估计。继续吗？")) return;
+    els.libraryRetentionCleanup.disabled = true;
+    setStatus(els.libraryRetentionStatus, "正在创建清理任务…");
+    request("/storage/library-retention/cleanup", { method: "POST", body: { confirmed: true } }).then(function (result) {
+      var body = result.body || {};
+      state.libraryRetentionRunId = body.run_id || null;
+      if (body.run_id) {
+        pollLibraryRetentionRun(body.run_id);
+      } else {
+        els.libraryRetentionCleanup.disabled = false;
+        loadLibraryRetention(true);
+      }
+    }).catch(function (failure) {
+      els.libraryRetentionCleanup.disabled = false;
+      setStatus(els.libraryRetentionStatus, "启动清理失败：" + describe(failure), "error");
+    });
+  }
+
+  function setLibraryRetentionAutomatic() {
+    var enabled = els.libraryRetentionAutomatic.checked;
+    els.libraryRetentionAutomatic.disabled = true;
+    request("/storage/library-retention/automatic", { method: "POST", body: { enabled: enabled } }).then(function (result) {
+      var run = result.body && result.body.run && result.body.run.run;
+      if (run && (run.state === "QUEUED" || run.state === "RUNNING")) {
+        state.libraryRetentionRunId = run.run_id;
+        pollLibraryRetentionRun(run.run_id);
+      } else {
+        return loadLibraryRetention(true);
+      }
+    }).catch(function (failure) {
+      els.libraryRetentionAutomatic.checked = !enabled;
+      setStatus(els.libraryRetentionStatus, "更新自动清理设置失败：" + describe(failure), "error");
+    }).then(function () { els.libraryRetentionAutomatic.disabled = false; });
   }
 
   function loadLibraryRetention(reset) {
@@ -3690,7 +3782,10 @@
       storageBackupDirectory: document.getElementById("storage-backup-directory"),
       storageBackupStatus: document.getElementById("storage-backup-status"),
       libraryRetentionStatus: document.getElementById("library-retention-status"),
+      libraryRetentionAnomalies: document.getElementById("library-retention-anomalies"),
       libraryRetentionMore: document.getElementById("library-retention-more"),
+      libraryRetentionAutomatic: document.getElementById("library-retention-automatic"),
+      libraryRetentionCleanup: document.getElementById("library-retention-cleanup"),
       faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
@@ -4028,6 +4123,15 @@
     document.getElementById("storage-backup-save").addEventListener("click", saveStorageBackupDirectory);
     document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);
     document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
+    els.libraryRetentionCleanup.addEventListener("click", startLibraryRetentionCleanup);
+    els.libraryRetentionAutomatic.addEventListener("change", setLibraryRetentionAutomatic);
+    els.libraryRetentionAnomalies.addEventListener("click", function (event) {
+      var button = event.target.closest('[data-retention-anomaly="resolve"]');
+      if (!button || !window.confirm("确认已经检查该来源扫描结果？解除保护不会清理任何数据；之后仍需该来源和其他相关来源重新成功扫描，观察期从重新确认时开始。")) return;
+      request("/storage/library-retention/anomalies/" + encodeURIComponent(button.dataset.sourceId) + "/" + encodeURIComponent(button.dataset.scanId) + "/resolve", { method: "POST", body: {} })
+        .then(function () { return loadLibraryRetention(true); })
+        .catch(function (failure) { setStatus(els.libraryRetentionStatus, "确认来源异常失败：" + describe(failure), "error"); });
+    });
     els.libraryRetentionMore.addEventListener("click", function () { loadLibraryRetention(false); });
     document.querySelectorAll("[data-storage-tab]").forEach(function (button) {
       button.addEventListener("click", function () { activateStorageTab(button.dataset.storageTab); });

@@ -35,6 +35,7 @@ RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
 INPUT_UNSTABLE = "INPUT_UNSTABLE"
 LEASE_EXPIRED = "LEASE_EXPIRED"
 SCAN_INTERRUPTED = "SCAN_INTERRUPTED"
+ASSET_RETENTION_BLOCKED = "ASSET_RETENTION_BLOCKED"
 
 #: P1-03 derived-media codes. ``SOURCE_FILE_MISSING`` and ``DISK_SPACE_INSUFFICIENT`` are
 #: deliberately reused from the frozen scan set; the rest have no honest equivalent there.

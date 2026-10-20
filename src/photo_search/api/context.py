@@ -90,6 +90,7 @@ class ApiContext:
         self._refresh_enrich = bool(refresh_enrich)
         self._refresher: LibraryRefresher | None = None
         self._face_detail_runner: FaceDetailRunner | None = None
+        self._retention_cleanup_runner: Any | None = None
         self._face_detail_recovery_started = False
         self._photo_smart_refresh_runner: Any | None = None
         self._data_root_lease_acquired = False
@@ -257,6 +258,66 @@ class ApiContext:
 
                 self._place_cover_warmer = PlaceCoverWarmer(self._service_factory)
             self._place_cover_warmer.request()
+        self.start_automatic_retention_cleanup()
+
+    def start_automatic_retention_cleanup(self) -> None:
+        """Check the persisted opt-in policy at startup and after a successful scan."""
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+        service = None
+        try:
+            service = self._service_factory()
+            from photo_search.library_retention import (
+                create_library_retention_run,
+                library_retention_automatic_settings,
+            )
+
+            if not library_retention_automatic_settings(service.catalog)["automatic_enabled"]:
+                return
+            run = create_library_retention_run(service.catalog, mode="AUTOMATIC")
+            if int(run.get("total_assets", 0)) > 0:
+                self.retention_cleanup_runner().start(str(run["run_id"]))
+        except Exception:  # noqa: BLE001 - automatic cleanup failures stay visible in durable run state.
+            import logging
+
+            logging.getLogger("photo_search.api.retention").exception(
+                "automatic retention check failed"
+            )
+        finally:
+            if service is not None:
+                service.close()
+
+    def resume_retention_cleanup_after_lock(self) -> None:
+        """Resume the single durable in-flight run after this process owns the data root."""
+        service = None
+        try:
+            service = self._service_factory()
+            row = service.catalog.read_one(
+                "SELECT r.run_id,r.mode,r.state FROM library_retention_runs r "
+                "WHERE r.state IN ('QUEUED','RUNNING') OR (r.state='PARTIAL' AND EXISTS "
+                "(SELECT 1 FROM library_retention_run_items i WHERE i.run_id=r.run_id "
+                "AND i.state IN ('QUEUED','RUNNING','FAILED'))) "
+                "ORDER BY CASE WHEN r.state IN ('QUEUED','RUNNING') THEN 0 ELSE 1 END, "
+                "r.created_at_ms LIMIT 1"
+            )
+            if row is not None:
+                run_id = str(row["run_id"])
+                if str(row["state"]) == "PARTIAL":
+                    from photo_search.library_retention import create_library_retention_run
+
+                    resumed = create_library_retention_run(service.catalog, mode=str(row["mode"]))
+                    run_id = str(resumed["run_id"])
+                self.retention_cleanup_runner().start(run_id)
+        except Exception:  # noqa: BLE001 - recovery remains retryable and data stays protected.
+            import logging
+
+            logging.getLogger("photo_search.api.retention").exception(
+                "resuming retention cleanup after lock failed"
+            )
+        finally:
+            if service is not None:
+                service.close()
 
     def refresher(self) -> LibraryRefresher:
         """The single background library refresh; one active refresh per process."""
@@ -276,6 +337,7 @@ class ApiContext:
                 ),
                 enrich=self._refresh_enrich,
                 executor=self._refresher_executor,
+                on_success=self.start_automatic_retention_cleanup,
             )
         return self._refresher
 
@@ -300,6 +362,14 @@ class ApiContext:
         if self._face_detail_runner is None:
             self._face_detail_runner = FaceDetailRunner(self._service_factory)
         return self._face_detail_runner
+
+    def retention_cleanup_runner(self) -> Any:
+        """Return the one process-local runner for durable retention cleanup runs."""
+        if self._retention_cleanup_runner is None:
+            from photo_search.api.retention_runner import RetentionCleanupRunner
+
+            self._retention_cleanup_runner = RetentionCleanupRunner(self._service_factory)
+        return self._retention_cleanup_runner
 
     def photo_smart_refresh_runner(self) -> Any:
         """One bounded smart-search worker; its durable lease coordinates app instances."""
@@ -398,6 +468,13 @@ class ApiContext:
                 face_detail_runner.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("stopping the source-detail face runner failed", exc_info=True)
+        retention_runner = self._retention_cleanup_runner
+        self._retention_cleanup_runner = None
+        if retention_runner is not None:
+            try:
+                retention_runner.close()
+            except Exception:  # pragma: no cover - shutdown must not raise
+                logger.debug("stopping the retention cleanup runner failed", exc_info=True)
         smart_runner = self._photo_smart_refresh_runner
         self._photo_smart_refresh_runner = None
         if smart_runner is not None:

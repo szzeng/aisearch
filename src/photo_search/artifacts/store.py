@@ -232,6 +232,13 @@ class ArtifactStore:
         now_ms: int,
     ) -> None:
         """Publish files and write artifact/outbox/repair rows in the caller transaction."""
+        from photo_search.retention import assert_subject_retention_unblocked
+
+        assert_subject_retention_unblocked(
+            connection,
+            subject_type=str(job.subject_type),
+            subject_id=str(job.subject_id),
+        )
         for item in prepared:
             ref = item.ref
             existing = connection.execute(

@@ -61,6 +61,7 @@ class LibraryRefresher:
         executor: Callable[[Any, RefreshStatus, Sequence[int] | None], dict[str, Any]]
         | None = None,
         now_ms: Callable[[], int] | None = None,
+        on_success: Callable[[], None] | None = None,
         name: str = "photo-search-refresh",
     ) -> None:
         self._service_factory = service_factory
@@ -73,6 +74,7 @@ class LibraryRefresher:
         self._enrich = bool(enrich)
         self._executor = executor
         self._now_ms = now_ms or (lambda: time.time_ns() // 1_000_000)
+        self._on_success = on_success
         self._name = str(name)
         self._lock = threading.RLock()
         self._status: RefreshStatus | None = None
@@ -230,6 +232,11 @@ class LibraryRefresher:
                     service.close()
                 except Exception:  # pragma: no cover - shutdown must not raise
                     logger.debug("closing the refresh service failed", exc_info=True)
+            if self._on_success is not None and str(status.snapshot().get("state")) == "COMPLETE":
+                try:
+                    self._on_success()
+                except Exception:  # noqa: BLE001 - optional maintenance cannot change refresh result.
+                    logger.exception("post-refresh retention check failed")
 
     def _refresh(
         self, service: Any, status: RefreshStatus, source_ids: Sequence[int] | None,

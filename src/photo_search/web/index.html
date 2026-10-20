@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-library-retention-c2-f-20261020-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-similar-search-2" />
@@ -15,7 +15,7 @@
     <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-photo-smart-collection-a-5" defer></script>
+    <script src="/web/app.js?v=p4-library-retention-c2-f-20261020-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -113,8 +113,10 @@
                 <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
               </section>
               <section id="storage-panel-retention" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-retention" hidden>
-                <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">只读预览；不会删除原图、索引、机器识别或人工记录。30 天是未来可验证观察期，不是当前自动删除阈值。</p></div><button type="button" id="library-retention-refresh">读取失效照片统计</button></div>
+                <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">清理只删除 PhotoSearch 中已复核失效照片的派生数据，不会删除原始照片。人工记录始终受保护；受管缓存需在应用停止后回收。</p></div><button type="button" id="library-retention-refresh">重新检查</button></div>
+                <div class="storage-retention-actions"><label><input type="checkbox" id="library-retention-automatic" /> 开启 30 天后自动清理</label><button type="button" id="library-retention-cleanup">一键清除已确认失效照片（每批最多 20 张）</button></div>
                 <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
+                <div id="library-retention-anomalies" class="storage-retention-anomalies" aria-live="polite"></div>
                 <button type="button" id="library-retention-more" hidden>继续读取</button>
               </section>
               <section id="storage-panel-backup" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-backup" hidden>

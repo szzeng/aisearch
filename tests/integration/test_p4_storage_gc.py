@@ -5,6 +5,7 @@ Every path in these tests is a synthetic data root under pytest's isolated tmp d
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -17,7 +18,14 @@ from photo_search.config import catalog_db_path
 from photo_search.media.cache import MediaCache
 from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 from photo_search.runtime.data_root_lease import acquire_data_root_lease
-from photo_search.storage import quick_storage_summary, storage_clean, storage_inspect
+from photo_search.storage import (
+    quick_storage_summary,
+    storage_clean,
+    storage_clean_retention,
+    storage_clean_retention_artifact_metadata,
+    storage_clean_retention_media,
+    storage_inspect,
+)
 
 
 def _make_artifact(root: Path, *, age_ms: int, suffix: str = ".json", digest: str = "a" * 64) -> tuple[Path, str]:
@@ -175,6 +183,213 @@ def test_a3_physical_and_logical_accounting_and_media_cache_scopes(tmp_path: Pat
         return response.json()
 
     assert api_env.scenario(read_summary)["status"] == "ok"
+
+
+def test_retention_media_gc_deletes_only_persisted_cache_identities_and_records_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    digest = "e" * 64
+    crop_key = "f" * 64
+    targeted = [
+        root / "thumbnails" / THUMBNAIL_SPEC.processor_id / digest[:2] / digest[2:4] / f"{digest}.jpg",
+        root / "previews" / PREVIEW_SPEC.processor_id / digest[:2] / digest[2:4] / f"{digest}.jpg",
+        root / "cache" / "face-crops" / "face-crop@2" / crop_key[:2] / crop_key[2:4] / f"{crop_key}.jpg",
+    ]
+    unrelated = root / "previews" / PREVIEW_SPEC.processor_id / "aa" / "bb" / ("a" * 64 + ".jpg")
+    for path in [*targeted, unrelated]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"retention-cache")
+    expected_bytes = sum(path.stat().st_size for path in targeted)
+    _catalog(root)
+    with sqlite3.connect(catalog_db_path(root)) as connection:
+        connection.execute("CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, sha256 TEXT)")
+        connection.execute(
+            "CREATE TABLE asset_retention_barriers("
+            "asset_id INTEGER PRIMARY KEY,state TEXT,media_sha256 TEXT,face_crop_keys_json TEXT,"
+            "media_cleaned_at_ms INTEGER,artifact_metadata_cleaned_at_ms INTEGER,"
+            "media_deleted_files INTEGER DEFAULT 0,media_freed_bytes INTEGER DEFAULT 0)"
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256,face_crop_keys_json,artifact_metadata_cleaned_at_ms) "
+            "VALUES(1,'COMPLETE',?,?,1)",
+            (digest, json.dumps([crop_key])),
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256,face_crop_keys_json,artifact_metadata_cleaned_at_ms) "
+            "VALUES(2,'COMPLETE',?, '[]',1)",
+            ("d" * 64,),
+        )
+
+    preview = storage_clean_retention_media(root, apply=False)
+    assert preview["status"] == "preview" and preview["eligible_files"] == 3
+    assert all(path.exists() for path in [*targeted, unrelated])
+    denied = storage_clean_retention_media(root, apply=True, stopped=False)
+    assert denied["code"] == "STOPPED_CONFIRMATION_REQUIRED"
+
+    result = storage_clean_retention_media(root, apply=True, stopped=True, now_ms=1234)
+
+    assert result["status"] == "ok" and result["deleted_files"] == 3
+    assert result["freed_bytes"] == expected_bytes
+    assert all(not path.exists() for path in targeted)
+    assert unrelated.exists()
+    with sqlite3.connect(catalog_db_path(root)) as connection:
+        done = connection.execute(
+            "SELECT media_cleaned_at_ms,media_deleted_files,media_freed_bytes "
+            "FROM asset_retention_barriers WHERE asset_id=1"
+        ).fetchone()
+        assert done == (1234, 3, result["freed_bytes"])
+        assert connection.execute(
+            "SELECT media_cleaned_at_ms FROM asset_retention_barriers WHERE asset_id=2"
+        ).fetchone()[0] == 1234
+
+
+def test_retention_media_gc_keeps_barrier_pending_when_file_identity_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "data"
+    digest = "9" * 64
+    path = root / "previews" / PREVIEW_SPEC.processor_id / digest[:2] / digest[2:4] / f"{digest}.jpg"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"new file")
+    _catalog(root)
+    with sqlite3.connect(catalog_db_path(root)) as connection:
+        connection.execute("CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, sha256 TEXT)")
+        connection.execute(
+            "CREATE TABLE asset_retention_barriers("
+            "asset_id INTEGER PRIMARY KEY,state TEXT,media_sha256 TEXT,face_crop_keys_json TEXT,"
+            "media_cleaned_at_ms INTEGER,artifact_metadata_cleaned_at_ms INTEGER,"
+            "media_deleted_files INTEGER DEFAULT 0,media_freed_bytes INTEGER DEFAULT 0)"
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256,face_crop_keys_json,artifact_metadata_cleaned_at_ms) "
+            "VALUES(1,'COMPLETE',?,'[]',1)",
+            (digest,),
+        )
+    monkeypatch.setattr(storage_module, "_identity_matches", lambda *_args: False)
+
+    result = storage_clean_retention_media(root, apply=True, stopped=True)
+
+    assert result["deleted_files"] == 0 and result["partial"] is True
+    assert path.exists()
+    with sqlite3.connect(catalog_db_path(root)) as connection:
+        assert connection.execute(
+            "SELECT media_cleaned_at_ms FROM asset_retention_barriers WHERE asset_id=1"
+        ).fetchone()[0] is None
+
+
+def test_retention_artifact_metadata_gc_removes_only_unreferenced_terminal_work(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    path = catalog_db_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            "CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, sha256 TEXT);"
+            "CREATE TABLE asset_retention_barriers(asset_id INTEGER PRIMARY KEY,state TEXT,media_sha256 TEXT,"
+            "artifact_metadata_cleaned_at_ms INTEGER,artifact_rows_deleted INTEGER DEFAULT 0,jobs_deleted INTEGER DEFAULT 0);"
+            "CREATE TABLE jobs(job_id INTEGER PRIMARY KEY,subject_type TEXT,subject_id TEXT,state TEXT);"
+            "CREATE TABLE artifacts(artifact_id TEXT PRIMARY KEY,job_id INTEGER REFERENCES jobs(job_id) ON DELETE RESTRICT);"
+            "CREATE TABLE index_entries(artifact_id TEXT);"
+            "CREATE TABLE face_detail_coordinate_frames(artifact_id TEXT PRIMARY KEY);"
+        )
+        connection.executemany(
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256) VALUES(?,'COMPLETE',?)",
+            ((1, "1" * 64), (2, "2" * 64), (3, "3" * 64), (4, "4" * 64)),
+        )
+        connection.executemany(
+            "INSERT INTO jobs(job_id,subject_type,subject_id,state) VALUES(?, 'asset', ?, ?)",
+            ((11, "1", "CANCELLED"), (22, "2", "SUCCEEDED"), (33, "3", "RUNNING"),
+             (44, "4", "BLOCKED")),
+        )
+        connection.executemany(
+            "INSERT INTO artifacts(artifact_id,job_id) VALUES(?,?)",
+            (("artifact-safe", 11), ("artifact-referenced", 22), ("artifact-running", 33),
+             ("artifact-blocked", 44)),
+        )
+        connection.execute("INSERT INTO index_entries VALUES ('artifact-referenced')")
+        connection.execute("INSERT INTO face_detail_coordinate_frames VALUES ('artifact-safe')")
+    preview = storage_clean_retention_artifact_metadata(root, apply=False)
+    assert preview == {"status": "preview", "eligible_assets": 4, "batch_assets": 20}
+
+    result = storage_clean_retention_artifact_metadata(root, apply=True, stopped=True, now_ms=5678)
+
+    assert result["status"] == "ok" and result["completed_assets"] == 1
+    assert result["blocked_assets"] == 3 and result["deleted_artifacts"] == 1 and result["deleted_jobs"] == 1
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM artifacts WHERE artifact_id='artifact-safe'").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM jobs WHERE job_id=11").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM face_detail_coordinate_frames").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM artifacts WHERE artifact_id='artifact-referenced'").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM jobs WHERE job_id=33").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM jobs WHERE job_id=44").fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT artifact_metadata_cleaned_at_ms,artifact_rows_deleted,jobs_deleted "
+            "FROM asset_retention_barriers WHERE asset_id=1"
+        ).fetchone() == (5678, 1, 1)
+        assert connection.execute(
+            "SELECT artifact_metadata_cleaned_at_ms FROM asset_retention_barriers WHERE asset_id=2"
+        ).fetchone()[0] is None
+        connection.executescript(
+            "CREATE TABLE future_job_recovery(job_id INTEGER);"
+            "INSERT INTO jobs VALUES(55,'asset','5','CANCELLED');"
+            "INSERT INTO artifacts VALUES('artifact-unknown-job-ref',55);"
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256) VALUES(5,'COMPLETE','5555555555555555555555555555555555555555555555555555555555555555');"
+            "INSERT INTO future_job_recovery VALUES(55);"
+        )
+    unknown_result = storage_clean_retention_artifact_metadata(root, apply=True, stopped=True, now_ms=6789)
+    assert unknown_result["blocked_assets"] == 4 and unknown_result["completed_assets"] == 0
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM jobs WHERE job_id=55").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM future_job_recovery WHERE job_id=55").fetchone()[0] == 1
+
+
+def test_retention_clean_runs_terminal_metadata_then_existing_artifact_gc(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    digest = "a" * 64
+    processor = "1" * 16
+    relative_uri = f"artifacts/pending/{processor}/{digest[:2]}/{digest}-{processor}.json"
+    artifact_path = root / relative_uri
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_bytes(b"retention-owned-artifact")
+    old_ns = time.time_ns() - 10 * 24 * 60 * 60 * 1_000_000_000
+    os.utime(artifact_path, ns=(old_ns, old_ns))
+    path = catalog_db_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            "CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, sha256 TEXT);"
+            "CREATE TABLE asset_retention_barriers("
+            "asset_id INTEGER PRIMARY KEY,state TEXT,media_sha256 TEXT,face_crop_keys_json TEXT DEFAULT '[]',"
+            "media_cleaned_at_ms INTEGER,artifact_metadata_cleaned_at_ms INTEGER,"
+            "media_deleted_files INTEGER DEFAULT 0,media_freed_bytes INTEGER DEFAULT 0,"
+            "artifact_rows_deleted INTEGER DEFAULT 0,jobs_deleted INTEGER DEFAULT 0);"
+            "CREATE TABLE jobs(job_id INTEGER PRIMARY KEY,subject_type TEXT,subject_id TEXT,state TEXT);"
+            "CREATE TABLE artifacts(artifact_id TEXT PRIMARY KEY,job_id INTEGER REFERENCES jobs(job_id) ON DELETE RESTRICT,"
+            "storage_uri TEXT,lifecycle_state TEXT);"
+            "CREATE TABLE index_outbox(event_id TEXT,artifact_id TEXT,state TEXT);"
+            "CREATE TABLE index_entries(artifact_id TEXT);"
+        )
+        connection.execute(
+            "INSERT INTO asset_retention_barriers(asset_id,state,media_sha256) VALUES(1,'COMPLETE',?)",
+            (digest,),
+        )
+        connection.execute("INSERT INTO jobs VALUES(11,'asset','1','CANCELLED')")
+        connection.execute(
+            "INSERT INTO artifacts VALUES('artifact-1',11,?,'PUBLISHED')", (relative_uri,)
+        )
+
+    stamp = time.time_ns() // 1_000_000
+    result = storage_clean_retention(root, apply=True, stopped=True, now_ms=stamp)
+
+    assert result["status"] == "ok" and result["deleted_files"] == 1
+    assert result["freed_bytes"] == len(b"retention-owned-artifact")
+    assert not artifact_path.exists()
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        barrier = connection.execute(
+            "SELECT artifact_metadata_cleaned_at_ms,media_cleaned_at_ms,artifact_rows_deleted,jobs_deleted "
+            "FROM asset_retention_barriers WHERE asset_id=1"
+        ).fetchone()
+        assert barrier == (stamp, stamp, 1, 1)
 
 
 def test_a4_lease_identity_recheck_and_failed_delete_are_retryable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

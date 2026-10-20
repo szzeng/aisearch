@@ -1,16 +1,16 @@
-"""Conservative, read-only preview of unavailable library assets.
-
-This module intentionally does not delete or update catalog rows. Missing timestamps
-are not inferred from asset creation, EXIF, file mtime, or scan timestamps.
-"""
+"""Conservative preview and bounded execution helpers for unavailable library assets."""
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
 from photo_search.catalog.db import Catalog
+from photo_search.catalog.errors import ASSET_RETENTION_BLOCKED, CatalogError
+from photo_search.retention import OBSERVATION_MS
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 50
@@ -37,6 +37,9 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
     """Fail closed if a new table introduces asset/face links we do not understand."""
     recognized = {
         "assets", "file_locations", "asset_metadata", "asset_favorites", "photo_collection_members",
+        "asset_retention_source_evidence", "asset_retention_state", "retention_source_anomalies",
+        "asset_retention_barriers",
+        "library_retention_settings", "library_retention_runs", "library_retention_run_items",
         # Both smart references are understood: exclusions are human state and
         # protect an asset; cache entries are rebuildable and cascade on asset GC.
         "photo_smart_exclusions", "photo_smart_cache_entries", "user_annotations", "asset_tags",
@@ -66,6 +69,10 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
 
 def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_id: int) -> tuple[bool, list[str]]:
     """Return conservative human/reference protections for one bounded list row."""
+    if "asset_retention_barriers" in tables and _exists(
+        connection, "asset_retention_barriers", "asset_id = ?", (asset_id,)
+    ):
+        return True, ["已有清理屏障"]
     checks: list[tuple[str, str, tuple[Any, ...], str]] = []
     if "asset_favorites" in tables:
         checks.append(("asset_favorites", "asset_id = ?", (asset_id,), "人工收藏"))
@@ -179,6 +186,8 @@ def _classification(
     tables: set[str],
     row: sqlite3.Row,
     unknown_schema: bool,
+    retention_state: str | None = None,
+    unresolved_anomaly: bool = False,
 ) -> dict[str, Any]:
     asset_id = int(row["asset_id"])
     locations = int(row["location_count"] or 0)
@@ -221,7 +230,21 @@ def _classification(
         "reason": reason,
         "classification": category,
         "has_human_or_protected_references": has_refs,
-        "retention_eligibility": "不具备清理资格（观察期起点未知）" if not present else "受有效副本保护",
+        "retention_state": retention_state or "UNKNOWN",
+        "unresolved_source_anomaly": bool(unresolved_anomaly),
+        "retention_eligibility": (
+            "异常来源待人工核实；需重新成功扫描后开始观察"
+            if unresolved_anomaly
+            else (
+                {"OBSERVING": "30 天观察中；到期后仍需所有来源重新成功扫描",
+                 "ELIGIBLE": "观察期已满且来源已复核；本页仅预览、不执行清理",
+                 "BLOCKED": "资格已阻断；需重新成功扫描后重新计时"}.get(
+                    str(retention_state), "不具备清理资格（观察期起点未知）"
+                )
+                if not present
+                else "受有效副本保护"
+            )
+        ),
     }
 
 
@@ -229,6 +252,101 @@ def library_retention_preview(catalog: Catalog, *, after_asset_id: int = 0, limi
     """Return aggregate counts and one keyset page. All catalog work is read-only."""
     with catalog.read_snapshot() as connection:
         return _preview_snapshot(connection, catalog.db_path, after_asset_id=after_asset_id, limit=limit)
+
+
+def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, Any]:
+    """Persist one bounded user-authorized run; execution rechecks each asset."""
+    normalized = str(mode).upper()
+    if normalized not in {"MANUAL", "AUTOMATIC"}:
+        raise ValueError("mode must be MANUAL or AUTOMATIC")
+    now = int(catalog.now_ms())
+    with catalog.write() as connection:
+        active = connection.execute(
+            "SELECT run_id,state,mode FROM library_retention_runs WHERE state IN ('QUEUED','RUNNING') LIMIT 1"
+        ).fetchone()
+        if active is not None:
+            return {"run_id": str(active["run_id"]), "state": str(active["state"]), "reused": True}
+        resumable = connection.execute(
+            "SELECT r.run_id FROM library_retention_runs r WHERE r.mode=? AND r.state='PARTIAL' "
+            "AND EXISTS (SELECT 1 FROM library_retention_run_items i WHERE i.run_id=r.run_id "
+            "AND i.state IN ('QUEUED','RUNNING','FAILED')) ORDER BY r.updated_at_ms DESC LIMIT 1",
+            (normalized,),
+        ).fetchone()
+        if resumable is not None:
+            run_id = str(resumable["run_id"])
+            connection.execute(
+                "UPDATE library_retention_runs SET state='QUEUED',stage='等待安全重试',updated_at_ms=? "
+                "WHERE run_id=?",
+                (now, run_id),
+            )
+            connection.execute(
+                "UPDATE library_retention_run_items SET state='QUEUED',stage='等待安全重试',reason=NULL "
+                "WHERE run_id=? AND state IN ('RUNNING','FAILED')",
+                (run_id,),
+            )
+            return {"run_id": run_id, "state": "QUEUED", "reused": True}
+        result = _preview_snapshot(connection, catalog.db_path, after_asset_id=0, limit=MAX_LIMIT)
+        candidates = [
+            item for item in result["items"]
+            if item["location_count"] > 0
+            and not item["has_human_or_protected_references"]
+            and not item["unresolved_source_anomaly"]
+            and item["classification"] not in {"已有有效副本", "来源已取消登记/零位置"}
+            and (normalized == "MANUAL" or item["retention_state"] == "ELIGIBLE")
+        ][:20]
+        run_id = uuid.uuid4().hex
+        connection.execute(
+            "INSERT INTO library_retention_runs(run_id,mode,state,stage,total_assets,created_at_ms,updated_at_ms) "
+            "VALUES(?,?,?, ?,?,?,?)",
+            (run_id, normalized, "QUEUED" if candidates else "COMPLETE",
+             "等待执行" if candidates else "没有符合条件的候选", len(candidates), now, now),
+        )
+        connection.executemany(
+            "INSERT INTO library_retention_run_items(run_id,asset_id,state,stage) VALUES(?,?,'QUEUED','排队')",
+            ((run_id, int(item["asset_id"])) for item in candidates),
+        )
+        return {"run_id": run_id, "state": "QUEUED", "reused": False, "total_assets": len(candidates)}
+
+
+def library_retention_run_progress(catalog: Catalog, *, run_id: str | None = None) -> dict[str, Any] | None:
+    """Return persisted run summary and at most 20 item details."""
+    with catalog.read_snapshot() as connection:
+        if run_id is None:
+            row = connection.execute(
+                "SELECT * FROM library_retention_runs ORDER BY created_at_ms DESC,run_id DESC LIMIT 1"
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT * FROM library_retention_runs WHERE run_id=?", (str(run_id),)
+            ).fetchone()
+        if row is None:
+            return None
+        items = connection.execute(
+            "SELECT asset_id,state,stage,reason,logical_rows_removed FROM library_retention_run_items "
+            "WHERE run_id=? ORDER BY asset_id LIMIT 20", (str(row["run_id"]),)
+        ).fetchall()
+        return {"run": dict(row), "items": [dict(item) for item in items], "durable": True}
+
+
+def set_library_retention_automatic(catalog: Catalog, *, enabled: bool) -> dict[str, Any]:
+    now = int(catalog.now_ms())
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE library_retention_settings SET automatic_enabled=?,updated_at_ms=? WHERE singleton=1",
+            (int(bool(enabled)), now),
+        )
+        row = connection.execute(
+            "SELECT automatic_enabled,updated_at_ms FROM library_retention_settings WHERE singleton=1"
+        ).fetchone()
+        return {"automatic_enabled": bool(row["automatic_enabled"]), "updated_at_ms": int(row["updated_at_ms"])}
+
+
+def library_retention_automatic_settings(catalog: Catalog) -> dict[str, Any]:
+    with catalog.read_snapshot() as connection:
+        row = connection.execute(
+            "SELECT automatic_enabled,updated_at_ms FROM library_retention_settings WHERE singleton=1"
+        ).fetchone()
+        return {"automatic_enabled": bool(row["automatic_enabled"]), "updated_at_ms": int(row["updated_at_ms"])}
 
 
 def _preview_snapshot(
@@ -276,7 +394,32 @@ def _preview_snapshot(
     ).fetchall()
     has_more = len(rows) > bounded_limit
     page_rows = rows[:bounded_limit]
-    items = [_classification(connection, tables, row, unknown_schema) for row in page_rows]
+    page_ids = [int(row["asset_id"]) for row in page_rows]
+    retention_by_id: dict[int, tuple[str | None, bool]] = {}
+    if page_ids and {"asset_retention_state", "retention_source_anomalies"}.issubset(tables):
+        marks = ",".join("?" for _ in page_ids)
+        retention_rows = connection.execute(
+            "SELECT a.asset_id, r.state, EXISTS(SELECT 1 FROM file_locations l "
+            "JOIN retention_source_anomalies x USING(source_id) WHERE l.asset_id=a.asset_id "
+            "AND x.state='NEEDS_REVIEW') AS unresolved_anomaly FROM assets a "
+            "LEFT JOIN asset_retention_state r USING(asset_id) "
+            f"WHERE a.asset_id IN ({marks})",
+            tuple(page_ids),
+        ).fetchall()
+        retention_by_id = {
+            int(item["asset_id"]): (
+                None if item["state"] is None else str(item["state"]),
+                bool(item["unresolved_anomaly"]),
+            )
+            for item in retention_rows
+        }
+    items = [
+        _classification(
+            connection, tables, row, unknown_schema,
+            *retention_by_id.get(int(row["asset_id"]), (None, False)),
+        )
+        for row in page_rows
+    ]
     next_cursor = items[-1]["asset_id"] if has_more and items else None
     try:
         page_counts = connection.execute("PRAGMA page_count").fetchone()
@@ -296,6 +439,20 @@ def _preview_snapshot(
         "counts": {key: int(counts[key] or 0) for key in (
             "missing_locations", "assets_without_present", "zero_location_assets", "assets_with_present_copy"
         )},
+        "retention_counts": {
+            str(row["state"]): int(row["count"])
+            for row in connection.execute(
+                "SELECT state, COUNT(*) AS count FROM asset_retention_state GROUP BY state"
+            ).fetchall()
+        } if "asset_retention_state" in tables else {},
+        "unresolved_source_anomalies": int(connection.execute(
+            "SELECT COUNT(*) FROM retention_source_anomalies WHERE state='NEEDS_REVIEW'"
+        ).fetchone()[0]) if "retention_source_anomalies" in tables else 0,
+        "source_anomalies": [dict(row) for row in connection.execute(
+            "SELECT source_id, scan_id, baseline_present_assets, newly_missing_assets, created_at_ms "
+            "FROM retention_source_anomalies WHERE state='NEEDS_REVIEW' "
+            "ORDER BY created_at_ms, source_id, scan_id LIMIT 50"
+        ).fetchall()] if "retention_source_anomalies" in tables else [],
         "items": items,
         "limit": bounded_limit,
         "next_cursor": next_cursor,
@@ -314,3 +471,312 @@ def _preview_snapshot(
         "unknown_reference_schema": unknown_schema,
         "read_only": True,
     }
+
+
+def _cleanup_preflight(
+    connection: sqlite3.Connection, *, asset_id: int, require_expired: bool
+) -> list[str]:
+    """Return fail-closed blockers from current authority state, never from a stale preview."""
+    tables = _tables(connection)
+    blockers: list[str] = []
+    asset = connection.execute(
+        "SELECT asset_id FROM assets WHERE asset_id=?", (int(asset_id),)
+    ).fetchone()
+    if asset is None:
+        return ["资产已不存在"]
+    state = connection.execute(
+        "SELECT first_missing_at_ms,state FROM asset_retention_state WHERE asset_id=?",
+        (int(asset_id),),
+    ).fetchone()
+    if state is None or state["first_missing_at_ms"] is None:
+        blockers.append("缺少可信的首次失效时间")
+    elif require_expired and str(state["state"]) != "ELIGIBLE":
+        blockers.append("30 天观察期或到期后来源复核未完成")
+    elif not require_expired and str(state["state"]) not in {"OBSERVING", "ELIGIBLE"}:
+        blockers.append("失效观察状态未就绪")
+
+    location_rows = connection.execute(
+        "SELECT l.source_id,l.availability,s.status AS source_status "
+        "FROM file_locations l JOIN source_roots s USING(source_id) WHERE l.asset_id=?",
+        (int(asset_id),),
+    ).fetchall()
+    if not location_rows:
+        blockers.append("没有可验证的失效位置")
+    if any(str(row["availability"]) == "PRESENT" for row in location_rows):
+        blockers.append("发现有效副本")
+    if any(str(row["availability"]) != "MISSING" for row in location_rows):
+        blockers.append("存在非 MISSING 位置")
+    if any(str(row["source_status"]) != "ONLINE" for row in location_rows):
+        blockers.append("相关来源未全部在线")
+    source_ids = sorted({int(row["source_id"]) for row in location_rows})
+    evidence = connection.execute(
+        "SELECT e.source_id,e.missing_confirmed_at_ms,r.state AS scan_state "
+        "FROM asset_retention_source_evidence e JOIN scan_runs r "
+        "ON r.scan_id=e.scan_id AND r.source_id=e.source_id "
+        "WHERE e.asset_id=? ORDER BY e.source_id",
+        (int(asset_id),),
+    ).fetchall()
+    evidence_by_source = {int(row["source_id"]): row for row in evidence}
+    if source_ids != sorted(evidence_by_source):
+        blockers.append("来源缺少匹配的成功失效复核证据")
+    if any(str(row["scan_state"]) != "SUCCEEDED" for row in evidence):
+        blockers.append("存在非成功扫描证据")
+    if state is not None and state["first_missing_at_ms"] is not None:
+        threshold = int(state["first_missing_at_ms"]) + (OBSERVATION_MS if require_expired else 0)
+        if any(int(row["missing_confirmed_at_ms"]) < threshold for row in evidence):
+            blockers.append("来源复核证据早于清理资格时间")
+    if connection.execute(
+        "SELECT 1 FROM retention_source_anomalies x JOIN file_locations l USING(source_id) "
+        "WHERE l.asset_id=? AND x.state='NEEDS_REVIEW' LIMIT 1",
+        (int(asset_id),),
+    ).fetchone() is not None:
+        blockers.append("存在未解决的来源批量异常")
+    # Human, shared, and operation-history references remain protected by default.
+    direct_checks = (
+        ("asset_favorites", "asset_id=?", "人工收藏"),
+        ("photo_collection_members", "asset_id=?", "照片合集成员"),
+        ("photo_smart_exclusions", "asset_id=?", "智能合集人工排除"),
+        ("user_annotations", "asset_id=?", "人工备注"),
+        ("search_feedback", "asset_id=?", "搜索反馈历史"),
+        ("person_collection_face_members", "asset_id=?", "人物合集历史引用"),
+        ("asset_place_assignment_history", "asset_id=?", "地点归属历史"),
+        ("asset_place_exclusions", "asset_id=?", "地点人工排除"),
+        ("place_operation_items", "asset_id=?", "地点操作历史"),
+        ("upgrade_targets", "asset_id=?", "模型升级目标引用"),
+        ("face_redetection_groups", "asset_id=?", "人脸重检历史"),
+        ("face_redetection_mappings", "asset_id=?", "人脸映射历史"),
+    )
+    for table, predicate, label in direct_checks:
+        if table in tables and _exists(connection, table, predicate, (int(asset_id),)):
+            blockers.append(label)
+    if "asset_tags" in tables:
+        columns = _columns(connection, "asset_tags")
+        predicate = "asset_id=?" if "source" not in columns else "asset_id=? AND upper(source)='USER'"
+        if _exists(connection, "asset_tags", predicate, (int(asset_id),)):
+            blockers.append("人工标签")
+    if "asset_place_assignments" in tables and _exists(
+        connection,
+        "asset_place_assignments",
+        "asset_id=? AND (mode<>'AUTO_ALLOWED' OR origin<>'NONE' OR manual_lock<>0)",
+        (int(asset_id),),
+    ):
+        blockers.append("人工地点归属")
+
+    face_ids = [
+        str(row[0])
+        for row in connection.execute("SELECT face_id FROM faces WHERE asset_id=?", (int(asset_id),))
+    ] if "faces" in tables else []
+    if face_ids:
+        marks = ",".join("?" for _ in face_ids)
+        for table, label in (
+            ("face_person_links", "人物关联"),
+            ("face_assignment_controls", "人工人脸控制"),
+            ("face_exclusions", "人脸排除记录"),
+            ("face_inbox_hidden", "忽略的人脸记录"),
+        ):
+            if table in tables and connection.execute(
+                f"SELECT 1 FROM {table} WHERE face_id IN ({marks}) LIMIT 1", tuple(face_ids)
+            ).fetchone() is not None:
+                blockers.append(label)
+    if _unknown_asset_reference_schema(connection, tables):
+        blockers.append("存在无法解释的资产引用类型")
+    return list(dict.fromkeys(blockers))
+
+
+def begin_asset_retention_cleanup(
+    catalog: Catalog, *, asset_id: int, now_ms: int, manual_early: bool = False
+) -> dict[str, Any]:
+    """Revalidate one asset and atomically activate its barrier plus vector tombstones.
+
+    ``manual_early`` is a future user-confirmed authorization to skip only the age threshold;
+    it never skips current scan/source checks or human-reference protections.
+    """
+    from photo_search.retention import (
+        activate_asset_retention_cleanup,
+        asset_retention_barrier,
+    )
+
+    with catalog.write() as connection:
+        barrier = asset_retention_barrier(connection, asset_id=int(asset_id))
+        if barrier is not None and str(barrier["state"]) == "COMPLETE":
+            return {"asset_id": int(asset_id), "state": "COMPLETE", "delete_event_ids": []}
+        if barrier is None:
+            blockers = _cleanup_preflight(
+                connection, asset_id=int(asset_id), require_expired=not manual_early
+            )
+            if blockers:
+                raise CatalogError(
+                    ASSET_RETENTION_BLOCKED,
+                    "asset retention cleanup is not currently safe",
+                    details={"asset_id": int(asset_id), "blockers": blockers},
+                )
+        barrier_id, event_ids = activate_asset_retention_cleanup(
+            connection, asset_id=int(asset_id), now_ms=int(now_ms)
+        )
+        return {
+            "asset_id": int(asset_id),
+            "barrier_id": barrier_id,
+            "state": "WAITING_FOR_VECTOR_DELETE" if event_ids else "READY_TO_FINALIZE",
+            "delete_event_ids": event_ids,
+        }
+
+
+def _abort_restored_asset_cleanup(
+    connection: sqlite3.Connection, *, asset_id: int, now_ms: int
+) -> None:
+    """Drop the temporary barrier and schedule vector repair after a copy is restored."""
+    from photo_search.indexing.store import IndexCoordinator
+
+    coordinator = IndexCoordinator  # static scheduling helpers; no Lance handle is opened.
+    connection.execute(
+        "DELETE FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR'",
+        (int(asset_id),),
+    )
+    connection.execute(
+        "DELETE FROM asset_retention_barriers WHERE asset_id=? AND state='ACTIVE'",
+        (int(asset_id),),
+    )
+    rows = connection.execute(
+        "SELECT e.space_id,e.generation_id,e.artifact_id,a.*,g.generation_id AS g_generation_id "
+        "FROM index_entries e JOIN artifacts a USING(artifact_id) "
+        "JOIN index_generations g USING(generation_id) "
+        "WHERE e.asset_id=? ORDER BY e.space_id,e.generation_id",
+        (int(asset_id),),
+    ).fetchall()
+    for row in rows:
+        coordinator._schedule_existing(
+            connection,
+            artifact=row,
+            generation={"generation_id": row["g_generation_id"]},
+            asset_id=int(asset_id),
+            now_ms=int(now_ms),
+        )
+
+
+def finalize_asset_retention_cleanup(
+    catalog: Catalog, *, asset_id: int, now_ms: int
+) -> dict[str, Any]:
+    """Delete safe machine rows after all image-vector tombstones are confirmed."""
+    from photo_search.places import revision as place_revision
+    from photo_search.retention import asset_retention_barrier, complete_asset_retention_barrier
+
+    with catalog.write() as connection:
+        barrier = asset_retention_barrier(connection, asset_id=int(asset_id))
+        if barrier is None:
+            raise CatalogError(
+                ASSET_RETENTION_BLOCKED, "asset has no active retention cleanup barrier"
+            )
+        if str(barrier["state"]) == "COMPLETE":
+            return {"asset_id": int(asset_id), "state": "COMPLETE", "machine_rows_removed": 0}
+        if connection.execute(
+            "SELECT 1 FROM file_locations WHERE asset_id=? AND availability='PRESENT' LIMIT 1",
+            (int(asset_id),),
+        ).fetchone() is not None:
+            _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
+            return {"asset_id": int(asset_id), "state": "CANCELLED_RESTORED", "machine_rows_removed": 0}
+        pending = connection.execute(
+            "SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR' "
+            "AND state<>'CONFIRMED'",
+            (int(asset_id),),
+        ).fetchone()[0]
+        if int(pending):
+            return {"asset_id": int(asset_id), "state": "WAITING_FOR_VECTOR_DELETE", "machine_rows_removed": 0}
+        blockers = _cleanup_preflight(connection, asset_id=int(asset_id), require_expired=False)
+        if blockers:
+            return {"asset_id": int(asset_id), "state": "BLOCKED_RECHECK", "blockers": blockers, "machine_rows_removed": 0}
+
+        asset_identity = connection.execute(
+            "SELECT sha256 FROM assets WHERE asset_id=?", (int(asset_id),)
+        ).fetchone()
+        if asset_identity is None:
+            raise CatalogError(ASSET_RETENTION_BLOCKED, "asset identity disappeared during cleanup")
+        face_rows = connection.execute(
+            "SELECT face_id,bbox_json,artifact_id FROM faces WHERE asset_id=?", (int(asset_id),)
+        ).fetchall()
+        face_ids = [str(row["face_id"]) for row in face_rows]
+        face_crop_keys: list[str] = []
+        from photo_search.media.face_crop import crop_key, parse_bbox
+
+        for face in face_rows:
+            try:
+                face_crop_keys.append(
+                    crop_key(
+                        face_id=str(face["face_id"]),
+                        box=parse_bbox(str(face["bbox_json"])),
+                        sha256=str(asset_identity["sha256"]),
+                    )
+                )
+            except (CatalogError, TypeError, ValueError):
+                # Invalid face geometry cannot establish a cache identity; leave that crop
+                # outside the cleanup set rather than guessing which file belongs to it.
+                continue
+        connection.execute(
+            "UPDATE asset_retention_barriers SET media_sha256=?,face_crop_keys_json=? "
+            "WHERE asset_id=? AND state='ACTIVE'",
+            (str(asset_identity["sha256"]), json.dumps(sorted(set(face_crop_keys))), int(asset_id)),
+        )
+        if face_ids:
+            marks = ",".join("?" for _ in face_ids)
+            values = tuple(face_ids)
+            face_artifact_ids = [str(row["artifact_id"]) for row in face_rows]
+            if face_artifact_ids and "face_detail_coordinate_frames" in _tables(connection):
+                artifact_marks = ",".join("?" for _ in face_artifact_ids)
+                connection.execute(
+                    f"DELETE FROM face_detail_coordinate_frames WHERE artifact_id IN ({artifact_marks})",
+                    tuple(face_artifact_ids),
+                )
+            for table in (
+                "face_candidates", "face_index_entries", "face_index_outbox", "face_embeddings",
+                "face_assignment_controls", "face_exclusions",
+            ):
+                connection.execute(f"DELETE FROM {table} WHERE face_id IN ({marks})", values)
+            connection.execute(f"DELETE FROM face_person_links WHERE face_id IN ({marks})", values)
+            connection.execute(f"DELETE FROM faces WHERE face_id IN ({marks})", values)
+        for table in (
+            "face_association_queue", "face_detail_association_queue",
+            "face_detail_auto_assets", "face_detail_batch_assets",
+        ):
+            connection.execute(f"DELETE FROM {table} WHERE asset_id=?", (int(asset_id),))
+
+        # Delete only known machine-derived rows. Human place history/exclusions and all
+        # unsupported asset references were rejected by _cleanup_preflight above.
+        for table in (
+            "asset_geo_facts", "asset_ocr_text", "asset_ocr_regions", "cn_admin_resolutions",
+            "place_resolutions", "asset_metadata", "search_projection_queue",
+            "asset_retention_source_evidence", "asset_retention_state",
+        ):
+            connection.execute(f"DELETE FROM {table} WHERE asset_id=?", (int(asset_id),))
+        if "asset_tags" in _tables(connection):
+            columns = _columns(connection, "asset_tags")
+            predicate = "asset_id=?" if "source" not in columns else "asset_id=? AND upper(source)<>'USER'"
+            connection.execute(f"DELETE FROM asset_tags WHERE {predicate}", (int(asset_id),))
+        connection.execute(
+            "DELETE FROM asset_place_assignments WHERE asset_id=? AND mode='AUTO_ALLOWED' "
+            "AND origin='NONE' AND manual_lock=0",
+            (int(asset_id),),
+        )
+        connection.execute(
+            "DELETE FROM photo_smart_cache_entries WHERE asset_id=?", (int(asset_id),)
+        )
+        connection.execute(
+            "DELETE FROM search_documents WHERE asset_id=?", (int(asset_id),)
+        )
+        connection.execute(
+            "DELETE FROM file_locations WHERE asset_id=?", (int(asset_id),)
+        )
+        # Keep processor artifacts/jobs for the later C2-E physical GC pass. Remove their
+        # vector references only after every DELETE_VECTOR receipt is durable.
+        connection.execute("DELETE FROM index_outbox WHERE asset_id=?", (int(asset_id),))
+        connection.execute("DELETE FROM index_entries WHERE asset_id=?", (int(asset_id),))
+        connection.execute("DELETE FROM assets WHERE asset_id=?", (int(asset_id),))
+        place_revision.bump_filter_revision(
+            connection,
+            cause=place_revision.CAUSE_ASSET_CONTENT_DETACHED,
+            now_ms=int(now_ms),
+            asset_ids=[int(asset_id)],
+        )
+        if not complete_asset_retention_barrier(
+            connection, asset_id=int(asset_id), now_ms=int(now_ms)
+        ):
+            raise CatalogError(ASSET_RETENTION_BLOCKED, "asset retention barrier was lost")
+        return {"asset_id": int(asset_id), "state": "COMPLETE", "machine_rows_removed": 1}

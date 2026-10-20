@@ -32,6 +32,12 @@ CORE_TABLES = {
     # the library-level ``taken_time_rules_version`` key inside ``metadata``.
     "asset_metadata",
     "asset_favorites",
+    "asset_retention_source_evidence",
+    "asset_retention_state",
+    "asset_retention_barriers",
+    "library_retention_settings",
+    "library_retention_runs",
+    "library_retention_run_items",
     "cr2_job_recoveries",
     # P3-01: the current OCR document of every asset and its per-region metadata.
     "asset_ocr_regions",
@@ -130,6 +136,7 @@ CORE_TABLES = {
     "persons",
     "runtime_capabilities",
     "runtime_qualification_evidence",
+    "retention_source_anomalies",
     "scan_runs",
     "scheduler_state",
     "source_roots",
@@ -205,6 +212,10 @@ def test_fresh_database_migrates_to_the_supported_version(tmp_path: Path) -> Non
     connection = open_readonly(db_path)
     try:
         assert set(schema.business_tables(connection)) == CORE_TABLES
+        barrier_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(asset_retention_barriers)")
+        }
+        assert {"media_sha256", "face_crop_keys_json", "media_cleaned_at_ms"} <= barrier_columns
         schema.verify_schema(connection, SUPPORTED)
     finally:
         connection.close()
@@ -602,7 +613,7 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
                         "src/photo_search/catalog/migrations")
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert migrated.previous_version == 35
-    assert migrated.applied == (36, 37)
+    assert migrated.applied == (36, 37, 38, 39, 40, 41)
     assert migrated.backup_path is not None
     old_build_backup = open_readonly(migrated.backup_path)
     try:
@@ -616,6 +627,231 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
     with pytest.raises(CatalogError) as refused:
         inspect_database(db_path)
     assert refused.value.code == SCHEMA_TOO_NEW
+
+
+def test_retention_0038_migration_failure_rolls_back_without_losing_human_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 37)
+    connection = connect_rw(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(1,?,1,1,'ACTIVE')",
+            ("a" * 64,),
+        )
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(1,10)")
+    finally:
+        connection.close()
+    broken_migrations = tmp_path / "migrations-0038-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken_migrations)
+    migration = broken_migrations / "0038_library_retention_evidence.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT retention_migration_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken_migrations)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 37
+    rolled_back = open_readonly(db_path)
+    try:
+        tables = set(schema.business_tables(rolled_back))
+        assert not {
+            "asset_retention_source_evidence", "asset_retention_state", "retention_source_anomalies"
+        } & tables
+        assert rolled_back.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=1").fetchone()[0] == 1
+        assert rolled_back.execute("SELECT COUNT(*) FROM assets WHERE asset_id=1").fetchone()[0] == 1
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+
+
+def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_preserves_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 38)
+    connection = connect_rw(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(7,?,1,1,'ACTIVE')",
+            ("b" * 64,),
+        )
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(7,10)")
+    finally:
+        connection.close()
+
+    broken_migrations = tmp_path / "migrations-0039-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken_migrations)
+    migration = broken_migrations / "0039_library_retention_barrier.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT retention_barrier_migration_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken_migrations)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 38
+    rolled_back = open_readonly(db_path)
+    try:
+        assert "asset_retention_barriers" not in schema.business_tables(rolled_back)
+        assert rolled_back.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert rolled_back.execute("SELECT COUNT(*) FROM assets WHERE asset_id=7").fetchone()[0] == 1
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+
+    monkeypatch.setattr(
+        schema,
+        "MIGRATIONS_DIR",
+        Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations",
+    )
+    upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert upgraded.previous_version == 38
+    assert upgraded.applied == (39, 40, 41)
+    assert upgraded.backup_path is not None
+    backup = open_readonly(upgraded.backup_path)
+    try:
+        assert schema.read_schema_version(backup) == 38
+        assert "asset_retention_barriers" not in schema.business_tables(backup)
+        assert backup.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+    finally:
+        backup.close()
+    live = open_readonly(db_path)
+    try:
+        assert schema.read_schema_version(live) == 41
+        assert "asset_retention_barriers" in schema.business_tables(live)
+        assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+    finally:
+        live.close()
+
+
+def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 39)
+    connection = connect_rw(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO asset_retention_barriers(asset_id,barrier_id,state,created_at_ms,updated_at_ms) "
+            "VALUES(7,?,'COMPLETE',10,10)",
+            ("7" * 32,),
+        )
+        connection.execute(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(7,?,1,1,'ACTIVE')",
+            ("c" * 64,),
+        )
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(7,10)")
+    finally:
+        connection.close()
+
+    broken_migrations = tmp_path / "migrations-0040-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken_migrations)
+    migration = broken_migrations / "0040_retention_media_identity.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT retention_media_identity_migration_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken_migrations)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 39
+    rolled_back = open_readonly(db_path)
+    try:
+        columns = {str(row[1]) for row in rolled_back.execute("PRAGMA table_info(asset_retention_barriers)")}
+        assert "media_sha256" not in columns
+        assert rolled_back.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+
+    monkeypatch.setattr(
+        schema,
+        "MIGRATIONS_DIR",
+        Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations",
+    )
+    upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert upgraded.previous_version == 39
+    assert upgraded.applied == (40, 41)
+    assert upgraded.backup_path is not None
+    backup = open_readonly(upgraded.backup_path)
+    try:
+        assert schema.read_schema_version(backup) == 39
+        old_columns = {str(row[1]) for row in backup.execute("PRAGMA table_info(asset_retention_barriers)")}
+        assert "media_sha256" not in old_columns
+    finally:
+        backup.close()
+    live = open_readonly(db_path)
+    try:
+        assert schema.read_schema_version(live) == 41
+        columns = {str(row[1]) for row in live.execute("PRAGMA table_info(asset_retention_barriers)")}
+        assert {"media_sha256", "face_crop_keys_json", "media_cleaned_at_ms"} <= columns
+        row = live.execute(
+            "SELECT media_sha256,face_crop_keys_json,media_cleaned_at_ms FROM asset_retention_barriers WHERE asset_id=7"
+        ).fetchone()
+        assert tuple(row) == (None, "[]", None)
+        assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert list(live.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        live.close()
+
+
+def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 40)
+    connection = connect_rw(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) VALUES(7,?,1,1,'ACTIVE')",
+            ("d" * 64,),
+        )
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(7,10)")
+    finally:
+        connection.close()
+
+    broken = tmp_path / "migrations-0041-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken)
+    migration = broken / "0041_retention_cleanup_runs.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT retention_runs_migration_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 40
+    rolled_back = open_readonly(db_path)
+    try:
+        tables = set(schema.business_tables(rolled_back))
+        assert not {"library_retention_settings", "library_retention_runs", "library_retention_run_items"} & tables
+        assert rolled_back.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+
+    monkeypatch.setattr(
+        schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
+    )
+    upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert upgraded.previous_version == 40 and upgraded.applied == (41,)
+    live = open_readonly(db_path)
+    try:
+        assert schema.read_schema_version(live) == 41
+        assert live.execute(
+            "SELECT automatic_enabled FROM library_retention_settings WHERE singleton=1"
+        ).fetchone()[0] == 0
+        assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert list(live.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        live.close()
 
 
 def test_upgrade_creates_a_consistent_backup_first(

@@ -212,6 +212,67 @@ def test_scan_records_identity_for_hard_fixtures(harness: Harness, tmp_path: Pat
         os.chmod(read_only, stat.S_IWRITE | stat.S_IREAD)
 
 
+def test_retention_evidence_commits_with_scan_and_resets_on_offline_failure(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search import retention
+
+    root = tmp_path / "retention-source"
+    photo = _write(root / "a.jpg", b"RETENTION")
+    source_id = harness.service.register_source(display_name="retention", root_path=root)["source_id"]
+    assert harness.service.run_scan(source_id)["state"] == "SUCCEEDED"
+    asset_id = _asset_id(harness, "a.jpg")
+    assert asset_id is not None
+    photo.unlink()
+
+    def fail_evidence_write(*args, **kwargs):
+        raise RuntimeError("injected retention write failure")
+
+    monkeypatch.setattr(retention, "record_successful_source_scan", fail_evidence_write)
+    with pytest.raises(RuntimeError, match="injected retention write failure"):
+        harness.service.run_scan(source_id)
+
+    # Reconciliation, scan success and retention evidence share one transaction.
+    assert _locations(harness)[0]["availability"] == "PRESENT"
+    assert _scan_row(harness, 2)["state"] == "RUNNING"
+    assert harness.service.catalog.read_one(
+        "SELECT 1 FROM asset_retention_source_evidence WHERE asset_id=?", (asset_id,)
+    ) is None
+
+    monkeypatch.undo()
+    # The interrupted final transaction leaves the job RUNNING; let its normal lease expire
+    # before exercising the production takeover/retry path.
+    harness.clock.advance(60_001)
+    assert harness.service.run_scan(source_id)["state"] == "SUCCEEDED"
+    with harness.service.catalog.read_snapshot() as connection:
+        evidence = connection.execute(
+            "SELECT scan_id FROM asset_retention_source_evidence WHERE asset_id=? AND source_id=?",
+            (asset_id, source_id),
+        ).fetchone()
+        state = connection.execute(
+            "SELECT state, first_missing_at_ms FROM asset_retention_state WHERE asset_id=?",
+            (asset_id,),
+        ).fetchone()
+    assert evidence["scan_id"] == 2
+    assert state["state"] == "OBSERVING"
+
+    moved = tmp_path / "retention-source-offline"
+    os.replace(root, moved)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id)
+    assert error.value.code == SOURCE_OFFLINE
+    with harness.service.catalog.read_snapshot() as connection:
+        blocked = connection.execute(
+            "SELECT state, first_missing_at_ms FROM asset_retention_state WHERE asset_id=?",
+            (asset_id,),
+        ).fetchone()
+        evidence_count = connection.execute(
+            "SELECT COUNT(*) FROM asset_retention_source_evidence WHERE asset_id=?", (asset_id,)
+        ).fetchone()[0]
+    assert tuple(blocked) == ("BLOCKED", None)
+    assert evidence_count == 0
+
+
 def test_source_registration_rejects_overlap_and_the_data_root(
     harness: Harness, tmp_path: Path
 ) -> None:

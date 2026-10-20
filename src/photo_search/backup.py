@@ -179,9 +179,17 @@ def _consistency_snapshot(root: Path) -> dict[str, object]:
                     "SELECT COUNT(*) FROM index_outbox WHERE state <> 'CONFIRMED'"
                 ).fetchone()[0]
             )
-            pending_projection = int(
-                connection.execute("SELECT COUNT(*) FROM search_projection_queue").fetchone()[0]
+            has_retention_barriers = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' "
+                "AND name='asset_retention_barriers'"
+            ).fetchone() is not None
+            pending_projection_sql = (
+                "SELECT COUNT(*) FROM search_projection_queue q WHERE NOT EXISTS ("
+                "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id)"
+                if has_retention_barriers
+                else "SELECT COUNT(*) FROM search_projection_queue"
             )
+            pending_projection = int(connection.execute(pending_projection_sql).fetchone()[0])
     except sqlite3.Error as error:
         raise _fail(
             "BACKUP_INVALID", "backup catalog failed consistency snapshot", cause=type(error).__name__

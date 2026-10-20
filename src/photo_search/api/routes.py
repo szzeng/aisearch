@@ -639,7 +639,97 @@ async def storage_library_retention(
     """Summarize missing locations without inferring deletion or changing the catalog."""
     from photo_search.library_retention import library_retention_preview
 
-    return library_retention_preview(service_of(request).catalog, after_asset_id=after_asset_id, limit=limit)
+    catalog = service_of(request).catalog
+    result = library_retention_preview(catalog, after_asset_id=after_asset_id, limit=limit)
+    from photo_search.library_retention import (
+        library_retention_automatic_settings,
+        library_retention_run_progress,
+    )
+
+    result["automatic"] = library_retention_automatic_settings(catalog)
+    result["latest_run"] = library_retention_run_progress(catalog)
+    return result
+
+
+@router.post("/storage/library-retention/cleanup", summary="Start confirmed unavailable-photo cleanup")
+async def storage_library_retention_cleanup(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if payload.get("confirmed") is not True:
+        raise ApiError("INVALID_REQUEST", "explicit cleanup confirmation is required", status=400)
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        library_retention_run_progress,
+    )
+
+    context = context_of(request)
+    created = create_library_retention_run(service_of(request).catalog, mode="MANUAL")
+    if created.get("state") in {"QUEUED", "RUNNING"} and int(created.get("total_assets", 1)) > 0:
+        context.retention_cleanup_runner().start(str(created["run_id"]))
+    progress = library_retention_run_progress(service_of(request).catalog, run_id=str(created["run_id"]))
+    return {**created, "progress": progress, "physical_reclaim": "需要应用停止后运行 storage clean-retained"}
+
+
+@router.post("/storage/library-retention/automatic", summary="Set automatic unavailable-photo cleanup")
+async def storage_library_retention_automatic(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    enabled = payload.get("enabled")
+    if not isinstance(enabled, bool):
+        raise ApiError("INVALID_REQUEST", "enabled must be a boolean", status=400)
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        library_retention_run_progress,
+        set_library_retention_automatic,
+    )
+
+    context = context_of(request)
+    catalog = service_of(request).catalog
+    setting = set_library_retention_automatic(catalog, enabled=enabled)
+    created = None
+    if enabled:
+        created = create_library_retention_run(catalog, mode="AUTOMATIC")
+        if created.get("state") in {"QUEUED", "RUNNING"} and int(created.get("total_assets", 1)) > 0:
+            context.retention_cleanup_runner().start(str(created["run_id"]))
+    return {
+        **setting,
+        "run": None if not created else library_retention_run_progress(catalog, run_id=str(created["run_id"])),
+    }
+
+
+@router.get("/storage/library-retention/runs/{run_id}", summary="Read durable unavailable-photo cleanup progress")
+async def storage_library_retention_run(request: Request, run_id: str) -> dict[str, Any]:
+    from photo_search.library_retention import library_retention_run_progress
+
+    progress = library_retention_run_progress(service_of(request).catalog, run_id=run_id)
+    if progress is None:
+        raise ApiError("NOT_FOUND", "retention cleanup run was not found", status=404)
+    return progress
+
+
+@router.post(
+    "/storage/library-retention/anomalies/{source_id}/{scan_id}/resolve",
+    summary="Acknowledge a reviewed bulk-missing source scan",
+)
+async def storage_resolve_retention_anomaly(
+    request: Request,
+    source_id: int,
+    scan_id: int,
+) -> dict[str, Any]:
+    """Clear only the reviewed hold; a later full scan must restart observation."""
+    from photo_search.retention import resolve_source_anomaly
+
+    catalog = service_of(request).catalog
+    with catalog.write() as connection:
+        resolved = resolve_source_anomaly(
+            connection,
+            source_id=source_id,
+            scan_id=scan_id,
+            now_ms=catalog.now_ms(),
+        )
+    return {
+        "source_id": int(source_id),
+        "scan_id": int(scan_id),
+        "resolved": resolved,
+        "requires_new_successful_scan": resolved,
+        "deletes_data": False,
+    }
 
 
 @router.post("/storage/inspect", summary="Run a bounded storage scan")

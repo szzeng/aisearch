@@ -81,10 +81,12 @@ PLACE_LEGACY_MAX_FLOOR = 16
 # place tables, GeoNames bytes, projection semantics or the CN addon contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
 # Schemas 34–36 add favorite and ordinary photo collection state; 0037 adds
-# independent smart-collection rules and rebuildable cache tables. None changes
-# place tables, GeoNames bytes, projection semantics or the CN addon contract.
+# independent smart-collection rules and rebuildable cache tables; 0038 adds
+# independent retention evidence/source-anomaly tables and 0039 adds retention
+# tombstones. None changes place tables, GeoNames bytes, projection semantics or
+# the CN addon contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
-PLACE_COMPAT_REVIEWED_THROUGH = 37
+PLACE_COMPAT_REVIEWED_THROUGH = 39
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

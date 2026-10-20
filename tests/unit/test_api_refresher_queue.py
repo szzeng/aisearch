@@ -446,3 +446,27 @@ def test_global_build_keeps_all_65_sources_out_of_the_request_id_list() -> None:
         assert scopes == [(65, None)]
     finally:
         refresher.close()
+
+
+def test_retention_on_success_callback_runs_only_after_complete_refresh() -> None:
+    callbacks = []
+
+    class Service:
+        def close(self):
+            pass
+
+    def executor(_service, status, source_ids):
+        status.finish(state="COMPLETE" if source_ids is None else "FAILED", elapsed_ms=0)
+
+    refresher = LibraryRefresher(
+        Service, executor=executor, on_success=lambda: callbacks.append("checked")
+    )
+    try:
+        refresher.start(None, mode="refresh")
+        assert refresher.wait_idle(timeout=5)
+        assert callbacks == ["checked"]
+        refresher.start([7], mode="refresh")
+        assert refresher.wait_idle(timeout=5)
+        assert callbacks == ["checked"]
+    finally:
+        refresher.close()

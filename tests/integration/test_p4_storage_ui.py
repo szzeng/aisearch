@@ -97,9 +97,11 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert "storage-deep-check" in shell
     assert "storage-backup-create" in shell
     assert "失效照片与数据占用" in shell
-    assert "只读预览；不会删除原图、索引、机器识别或人工记录" in shell
+    assert "人工记录始终受保护；受管缓存需在应用停止后回收" in shell
+    assert 'id="library-retention-cleanup"' in shell
+    assert 'id="library-retention-automatic"' in shell
     assert "storage-maintenance-confirm" in shell
-    assert '/web/app.js?v=p4-photo-smart-collection-a-5' in shell
+    assert '/web/app.js?v=p4-library-retention-c2-f-20261020-1' in shell
     assert shell.count('type="checkbox" name="storage-maintenance-operation"') == 6
     assert 'id="storage-maintenance-confirm" disabled' in shell
     assert 'body: { operations: operations, confirmed: true }' in script

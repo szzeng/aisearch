@@ -76,6 +76,8 @@ def create_app(
             # Once OS ownership proves the prior managed process is gone, old smart work
             # cannot still publish. Database/model work stays lazy and failures are retryable.
             api.recover_smart_refreshes_after_lock()
+            api.resume_retention_cleanup_after_lock()
+            api.start_automatic_retention_cleanup()
             # Warm only the first-screen covers in a separate daemon worker. The existing
             # thumbnail cache is reused and a cold cache never delays API startup.
             api.start_place_cover_warming()

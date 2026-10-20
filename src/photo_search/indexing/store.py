@@ -49,9 +49,13 @@ from photo_search.config import resolve_data_root, vectors_dir
 #: with a structured ``ARTIFACT_MISSING``; that refusal is what tells the operator to run the
 #: repair audit, and the isolation only starts once the audit has recorded ``RECLAIMED``.
 CLAIMABLE_EVENT_PREDICATE = (
-    "state IN ('PENDING', 'IN_FLIGHT') AND NOT EXISTS ("
+    "state IN ('PENDING', 'IN_FLIGHT') AND ("
+    "(event_type='DELETE_VECTOR' AND EXISTS (SELECT 1 FROM asset_retention_barriers AS b "
+    "WHERE b.asset_id = index_outbox.asset_id)) OR "
+    "(event_type='UPSERT_VECTOR' AND NOT EXISTS (SELECT 1 FROM asset_retention_barriers AS b "
+    "WHERE b.asset_id = index_outbox.asset_id))) AND (event_type='DELETE_VECTOR' OR NOT EXISTS ("
     "SELECT 1 FROM artifacts AS a WHERE a.artifact_id = index_outbox.artifact_id "
-    "AND a.lifecycle_state = 'RECLAIMED')"
+    "AND a.lifecycle_state = 'RECLAIMED'))"
 )
 
 
@@ -216,6 +220,37 @@ class LanceVectorIndex:
             )
         )
         return len(records)
+
+    def delete(self, *, generation_id: str, dimension: int, asset_id: int) -> bool:
+        """Idempotently delete one asset row from exactly one generation's Lance table."""
+        table = self._table(
+            generation_id=str(generation_id), dimension=int(dimension), create=False
+        )
+        if table is None:
+            return False
+        record_id = f"{generation_id}:{int(asset_id)}"
+        existed = int(table.count_rows(filter=f"record_id = {_lance_literal(record_id)}")) > 0
+        table.delete(f"record_id = {_lance_literal(record_id)}")
+        return existed
+
+    def delete_batch(
+        self, *, generation_id: str, dimension: int, asset_ids: Sequence[int]
+    ) -> int:
+        """Delete a bounded set of exact logical record IDs from one generation."""
+        ids = sorted({int(value) for value in asset_ids})
+        if not ids:
+            return 0
+        table = self._table(
+            generation_id=str(generation_id), dimension=int(dimension), create=False
+        )
+        if table is None:
+            return 0
+        predicates = " OR ".join(
+            f"record_id = {_lance_literal(f'{generation_id}:{asset_id}')}" for asset_id in ids
+        )
+        existed = int(table.count_rows(filter=predicates))
+        table.delete(predicates)
+        return existed
 
     def rows(self, *, generation_id: str, dimension: int) -> list[dict[str, Any]]:
         table = self._table(generation_id=generation_id, dimension=dimension, create=False)
@@ -595,6 +630,118 @@ class IndexCoordinator:
         #: finding an event already ``CONFIRMED`` by somebody else is not one of ours.
         self.applied_events = 0
 
+    @staticmethod
+    def schedule_retention_vector_deletes(
+        connection: sqlite3.Connection, *, asset_id: int, now_ms: int
+    ) -> list[str]:
+        """Persist one idempotent DELETE_VECTOR event for each known generation.
+
+        Call inside ``Catalog.write()`` after the retention barrier exists. The source set
+        includes both index_entries and every historical UPSERT outbox generation: the latter
+        covers the crash window where Lance accepted an upsert but SQLite never confirmed it.
+        """
+        import hashlib
+        import json
+
+        from photo_search.retention import asset_retention_barrier
+
+        asset_id = int(asset_id)
+        barrier = asset_retention_barrier(connection, asset_id=asset_id)
+        if barrier is None:
+            raise CatalogError(
+                INDEX_SUBMISSION_FAILED,
+                "DELETE_VECTOR requires a persistent asset retention barrier",
+                details={"asset_id": asset_id},
+            )
+        known: dict[tuple[str, str], tuple[str, int]] = {}
+        rows = connection.execute(
+            "SELECT space_id,generation_id,artifact_id,projection_revision FROM index_outbox "
+            "WHERE asset_id=? AND event_type='UPSERT_VECTOR' "
+            "UNION ALL "
+            "SELECT space_id,generation_id,artifact_id,confirmation_revision "
+            "FROM index_entries WHERE asset_id=?",
+            (asset_id, asset_id),
+        ).fetchall()
+        for row in rows:
+            key = (str(row["space_id"]), str(row["generation_id"]))
+            current = known.get(key)
+            revision = int(row["projection_revision"])
+            if current is None or revision > current[1]:
+                known[key] = (str(row["artifact_id"]), revision)
+
+        scheduled: list[str] = []
+        for (space_id, generation_id), (artifact_id, _) in sorted(known.items()):
+            existing_delete = connection.execute(
+                "SELECT event_id FROM index_outbox WHERE space_id=? AND asset_id=? "
+                "AND generation_id=? AND event_type='DELETE_VECTOR' LIMIT 1",
+                (space_id, asset_id, generation_id),
+            ).fetchone()
+            if existing_delete is not None:
+                scheduled.append(str(existing_delete["event_id"]))
+                continue
+            artifact = connection.execute(
+                "SELECT space_id FROM artifacts WHERE artifact_id=?", (artifact_id,)
+            ).fetchone()
+            generation = connection.execute(
+                "SELECT space_id FROM index_generations WHERE generation_id=?",
+                (generation_id,),
+            ).fetchone()
+            if (
+                artifact is None
+                or generation is None
+                or str(artifact["space_id"]) != space_id
+                or str(generation["space_id"]) != space_id
+            ):
+                raise CatalogError(
+                    INDEX_SUBMISSION_FAILED,
+                    "cannot schedule a retention delete for an inconsistent generation",
+                    details={"asset_id": asset_id, "generation_id": generation_id},
+                )
+            latest_revision = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(projection_revision),0) FROM index_outbox "
+                    "WHERE space_id=? AND asset_id=? AND generation_id=?",
+                    (space_id, asset_id, generation_id),
+                ).fetchone()[0]
+            )
+            projection_revision = latest_revision + 1
+            payload = {
+                "artifact_id": artifact_id,
+                "asset_id": asset_id,
+                "generation_id": generation_id,
+                "projection_revision": projection_revision,
+                "space_id": space_id,
+            }
+            payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            event_id = "evt-retention-delete-" + hashlib.sha256(
+                f"{barrier['barrier_id']}\0{generation_id}\0{projection_revision}".encode("utf-8")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO index_outbox(event_id,event_type,artifact_id,space_id,asset_id,"
+                "generation_id,projection_revision,payload_json,payload_checksum,state,attempts,"
+                "last_error_code,created_at,updated_at) VALUES(?,'DELETE_VECTOR',?,?,?,?,?,?,?,"
+                "'PENDING',0,NULL,?,?)",
+                (
+                    event_id,
+                    artifact_id,
+                    space_id,
+                    asset_id,
+                    generation_id,
+                    projection_revision,
+                    payload_json,
+                    hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+                    int(now_ms),
+                    int(now_ms),
+                ),
+            )
+            connection.execute(
+                "UPDATE index_entries SET confirmation_revision=?,confirmed_at=NULL,"
+                "state='PENDING_REPAIR' WHERE space_id=? AND asset_id=? AND generation_id=?",
+                (projection_revision, space_id, asset_id, generation_id),
+            )
+            scheduled.append(event_id)
+        return scheduled
+
     @contextmanager
     def _timed_write(self, phase: str) -> Iterator[sqlite3.Connection]:
         """One catalog write transaction of the drain path, timed for maintenance.
@@ -689,6 +836,20 @@ class IndexCoordinator:
                 event = self.catalog.read_one(
                     "SELECT * FROM index_outbox WHERE event_id = ?", (event_id,)
                 )
+                from photo_search.retention import (
+                    assert_asset_retention_unblocked,
+                    asset_retention_barrier,
+                )
+
+                event_type = str(event["event_type"])
+                if event_type == "DELETE_VECTOR":
+                    if asset_retention_barrier(connection, asset_id=int(event["asset_id"])) is None:
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED,
+                            "DELETE_VECTOR lost its persistent retention barrier",
+                        )
+                else:
+                    assert_asset_retention_unblocked(connection, asset_id=int(event["asset_id"]))
                 artifact = self.catalog.read_one(
                     "SELECT * FROM artifacts WHERE artifact_id = ?", (event["artifact_id"],)
                 )
@@ -713,16 +874,29 @@ class IndexCoordinator:
                     )
                     self.applied_events += 1
                     return True
-                record = self._record(event, artifact, generation)
-                self.index.upsert(generation=generation, record=record)
-                if failpoint == "after_lance":
-                    raise _InjectedCrash("after_lance")
+                if event_type == "DELETE_VECTOR":
+                    self.index.delete(
+                        generation_id=str(event["generation_id"]),
+                        dimension=int(generation["dimension"]),
+                        asset_id=int(event["asset_id"]),
+                    )
+                else:
+                    record = self._record(event, artifact, generation)
+                    self.index.upsert(generation=generation, record=record)
+                if failpoint == "after_lance" or (
+                    event_type == "DELETE_VECTOR" and failpoint == "after_vector_delete"
+                ):
+                    raise _InjectedCrash(failpoint)
                 entry = connection.execute(
                     "SELECT artifact_id FROM index_entries WHERE space_id = ? AND asset_id = ? "
                     "AND generation_id = ?",
                     (event["space_id"], event["asset_id"], event["generation_id"]),
                 ).fetchone()
-                if entry is not None and str(entry["artifact_id"]) == str(event["artifact_id"]):
+                if (
+                    event_type == "UPSERT_VECTOR"
+                    and entry is not None
+                    and str(entry["artifact_id"]) == str(event["artifact_id"])
+                ):
                     connection.execute(
                         "UPDATE index_entries SET confirmation_revision = ?, confirmed_at = ?, "
                         "state = 'CONFIRMED' WHERE space_id = ? AND asset_id = ? AND generation_id = ?",
@@ -861,6 +1035,7 @@ class IndexCoordinator:
                     if str(event["event_id"]) in ours
                 ]
                 writable: dict[str, list[dict[str, Any]]] = {}
+                delete_assets: dict[str, list[int]] = {}
                 writable_ids: set[str] = set()
                 touched: set[str] = set()
                 for event in events:
@@ -878,13 +1053,36 @@ class IndexCoordinator:
                         )
                     self._validate_event_payload(event)
                     self._validate_space(event, artifact, generation)
+                    from photo_search.retention import (
+                        assert_asset_retention_unblocked,
+                        asset_retention_barrier,
+                    )
+
+                    event_type = str(event["event_type"])
+                    if event_type == "DELETE_VECTOR":
+                        if asset_retention_barrier(
+                            connection, asset_id=int(event["asset_id"])
+                        ) is None:
+                            raise CatalogError(
+                                INDEX_SUBMISSION_FAILED,
+                                "DELETE_VECTOR lost its persistent retention barrier",
+                            )
+                    else:
+                        assert_asset_retention_unblocked(
+                            connection, asset_id=int(event["asset_id"])
+                        )
                     touched.add(str(event["generation_id"]))
                     if self._is_superseded(event):
                         continue
                     writable_ids.add(str(event["event_id"]))
-                    writable.setdefault(str(event["generation_id"]), []).append(
-                        self._record(event, artifact, generation)
-                    )
+                    if event_type == "DELETE_VECTOR":
+                        delete_assets.setdefault(str(event["generation_id"]), []).append(
+                            int(event["asset_id"])
+                        )
+                    else:
+                        writable.setdefault(str(event["generation_id"]), []).append(
+                            self._record(event, artifact, generation)
+                        )
                 for generation_id, records in writable.items():
                     generation = self.catalog.read_one(
                         "SELECT * FROM index_generations WHERE generation_id = ?",
@@ -895,8 +1093,24 @@ class IndexCoordinator:
                             INDEX_SUBMISSION_FAILED, "outbox references are incomplete"
                         )
                     self.index.upsert_batch(generation=generation, records=records)
-                if failpoint == "after_lance":
-                    raise _InjectedCrash("after_lance")
+                for generation_id, asset_ids in delete_assets.items():
+                    generation = self.catalog.read_one(
+                        "SELECT * FROM index_generations WHERE generation_id = ?",
+                        (generation_id,),
+                    )
+                    if generation is None:
+                        raise CatalogError(
+                            INDEX_SUBMISSION_FAILED, "outbox references incomplete generation"
+                        )
+                    self.index.delete_batch(
+                        generation_id=generation_id,
+                        dimension=int(generation["dimension"]),
+                        asset_ids=asset_ids,
+                    )
+                if failpoint == "after_lance" or (
+                    delete_assets and failpoint == "after_vector_delete"
+                ):
+                    raise _InjectedCrash(failpoint)
                 for event in events:
                     event_id = str(event["event_id"])
                     current = connection.execute(
@@ -918,8 +1132,12 @@ class IndexCoordinator:
                         "AND asset_id = ? AND generation_id = ?",
                         (event["space_id"], event["asset_id"], event["generation_id"]),
                     ).fetchone()
-                    if entry is not None and str(entry["artifact_id"]) == str(
+                    if (
+                        str(event["event_type"]) == "UPSERT_VECTOR"
+                        and entry is not None
+                        and str(entry["artifact_id"]) == str(
                         event["artifact_id"]
+                        )
                     ):
                         connection.execute(
                             "UPDATE index_entries SET confirmation_revision = ?, "
@@ -939,7 +1157,7 @@ class IndexCoordinator:
                         (now_ms, event_id),
                     )
                 for generation_id in sorted(touched):
-                    if generation_id in writable:
+                    if generation_id in writable or generation_id in delete_assets:
                         self._bump_smart_vector_revision(connection, generation_id)
                     self._make_generation_ready(connection, generation_id, now_ms)
             self.applied_events += len(events)
@@ -1038,8 +1256,10 @@ class IndexCoordinator:
     @staticmethod
     def _make_generation_ready(connection: sqlite3.Connection, generation_id: str, now_ms: int) -> None:
         pending = connection.execute(
-            "SELECT EXISTS(SELECT 1 FROM index_outbox "
-            "WHERE generation_id = ? AND state <> 'CONFIRMED')",
+            "SELECT EXISTS(SELECT 1 FROM index_outbox o "
+            "WHERE generation_id = ? AND state <> 'CONFIRMED' AND NOT ("
+            "event_type='UPSERT_VECTOR' AND EXISTS (SELECT 1 FROM asset_retention_barriers b "
+            "WHERE b.asset_id=o.asset_id)))",
             (generation_id,),
         ).fetchone()[0]
         if int(pending):
@@ -1148,6 +1368,11 @@ class IndexCoordinator:
             if generation is None or str(artifact["subject_type"]) != "asset":
                 continue
             asset_id = int(artifact["subject_id"])
+            if self.catalog.read_one(
+                "SELECT 1 FROM asset_retention_barriers WHERE asset_id=?", (asset_id,)
+            ) is not None:
+                # A retention tombstone is a durable delete instruction, not a repair case.
+                continue
             key = (str(artifact["space_id"]), asset_id, str(generation["generation_id"]))
             item = {"artifact": artifact, "generation": generation, "asset_id": asset_id}
             triples.setdefault(key, []).append(item)
@@ -1222,6 +1447,10 @@ class IndexCoordinator:
         """
         created = 0
         for asset_id in sorted(set(int(value) for value in asset_ids)):
+            from photo_search.retention import asset_retention_barrier
+
+            if asset_retention_barrier(connection, asset_id=asset_id) is not None:
+                continue
             rows = connection.execute(
                 "SELECT a.*, g.generation_id, g.dimension AS generation_dimension, "
                 "g.space_id AS generation_space_id, g.processor_id AS generation_processor_id, "
@@ -1289,6 +1518,11 @@ class IndexCoordinator:
         nothing and cannot enlarge the backlog.
         """
         import hashlib
+
+        from photo_search.retention import asset_retention_barrier
+
+        if asset_retention_barrier(connection, asset_id=int(asset_id)) is not None:
+            return False
 
         revision: int
         if projection_revision is not None:

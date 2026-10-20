@@ -551,6 +551,11 @@ def execute_scan(
                 "scan cannot succeed while a seen position still needs content confirmation",
                 details={"source_id": source_id, "scan_id": scan_id, "pending_content": pending},
             )
+        from photo_search.retention import scan_missing_counts
+
+        retention_baseline, retention_newly_missing = scan_missing_counts(
+            connection, source_id=source_id, scan_id=scan_id
+        )
         reconciled = store.reconcile_missing_detail(
             connection, source_id=source_id, scan_id=scan_id, sample_limit=DELTA_LIMIT
         )
@@ -559,6 +564,16 @@ def execute_scan(
         store.set_scan_state(connection, scan_id=scan_id, state="SUCCEEDED", now_ms=now_ms)
         store.set_last_successful_scan(
             connection, source_id=source_id, scan_id=scan_id, status="ONLINE"
+        )
+        from photo_search.retention import record_successful_source_scan
+
+        record_successful_source_scan(
+            connection,
+            source_id=source_id,
+            scan_id=scan_id,
+            now_ms=now_ms,
+            baseline_present_assets=retention_baseline,
+            newly_missing_assets=retention_newly_missing,
         )
         jobs.finish(
             connection,
@@ -1147,6 +1162,11 @@ def _requeue(
     now_ms = catalog.now_ms()
     terminal: CatalogError | None = None
     with catalog.write() as connection:
+        from photo_search.retention import invalidate_source_retention_evidence
+
+        invalidate_source_retention_evidence(
+            connection, source_id=source_id, now_ms=now_ms
+        )
         finished = jobs.finish(
             connection,
             job_id=job.job_id,
@@ -1189,6 +1209,11 @@ def _block(
     """Persist a BLOCKED scan/job pair (no negative facts, no finished_at)."""
     now_ms = catalog.now_ms()
     with catalog.write() as connection:
+        from photo_search.retention import invalidate_source_retention_evidence
+
+        invalidate_source_retention_evidence(
+            connection, source_id=source_id, now_ms=now_ms
+        )
         store.set_source_status(connection, source_id=source_id, status=source_status)
         store.set_scan_state(
             connection, scan_id=scan_id, state="BLOCKED", now_ms=now_ms, error_text=error.error_json
@@ -1217,6 +1242,11 @@ def _fail(
     """Persist a FAILED scan/job pair; existing identities and annotations stay untouched."""
     now_ms = catalog.now_ms()
     with catalog.write() as connection:
+        from photo_search.retention import invalidate_source_retention_evidence
+
+        invalidate_source_retention_evidence(
+            connection, source_id=source_id, now_ms=now_ms
+        )
         store.set_scan_state(
             connection, scan_id=scan_id, state="FAILED", now_ms=now_ms, error_text=error.error_json
         )

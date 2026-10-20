@@ -145,6 +145,14 @@ V6_TABLES = (
     "photo_smart_vector_publish_revisions",
     "person_hidden",
     "person_operation_retention",
+    # P4-LIBRARY-RETENTION-C2-A (0038): observations and reviewed source anomalies.
+    "asset_retention_source_evidence",
+    "asset_retention_state",
+    "retention_source_anomalies",
+    "asset_retention_barriers",
+    "library_retention_settings",
+    "library_retention_runs",
+    "library_retention_run_items",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

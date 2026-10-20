@@ -180,6 +180,10 @@ def sync_document(connection: sqlite3.Connection, asset_id: int, *, now_ms: int)
     Running it twice with unchanged authority produces no second row and no second FTS
     entry; running it after an interrupted batch is therefore always safe.
     """
+    from photo_search.retention import asset_retention_barrier
+
+    if asset_retention_barrier(connection, asset_id=int(asset_id)) is not None:
+        return "blocked"
     source = document_source(connection, int(asset_id))
     if source is None:
         cursor = connection.execute(
@@ -246,7 +250,13 @@ def delete_document(connection: sqlite3.Connection, asset_id: int) -> bool:
 
 
 def queue_depth(connection: sqlite3.Connection) -> int:
-    return int(connection.execute("SELECT COUNT(*) FROM search_projection_queue").fetchone()[0])
+    """Count actionable projection work; barriered assets cannot be drained by design."""
+    return int(
+        connection.execute(
+            "SELECT COUNT(*) FROM search_projection_queue q WHERE NOT EXISTS ("
+            "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id)"
+        ).fetchone()[0]
+    )
 
 
 def drain_queue(
@@ -254,7 +264,9 @@ def drain_queue(
 ) -> dict[str, int]:
     """Re-derive up to ``limit`` queued assets inside the caller's transaction."""
     rows = connection.execute(
-        "SELECT asset_id FROM search_projection_queue ORDER BY queued_at, asset_id LIMIT ?",
+        "SELECT asset_id FROM search_projection_queue q WHERE NOT EXISTS ("
+        "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id) "
+        "ORDER BY queued_at, asset_id LIMIT ?",
         (int(limit),),
     ).fetchall()
     written = 0
@@ -357,7 +369,9 @@ def rebuild_all(catalog: Catalog, *, batch_size: int = DRAIN_BATCH_SIZE) -> dict
     while True:
         with catalog.write() as connection:
             rows = connection.execute(
-                "SELECT asset_id FROM assets WHERE asset_id > ? ORDER BY asset_id LIMIT ?",
+                "SELECT asset_id FROM assets a WHERE asset_id > ? AND NOT EXISTS ("
+                "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=a.asset_id) "
+                "ORDER BY asset_id LIMIT ?",
                 (int(after), int(batch_size)),
             ).fetchall()
             if not rows:
@@ -388,7 +402,8 @@ def projection_summary(connection: sqlite3.Connection) -> dict[str, Any]:
         "SELECT (SELECT COUNT(*) FROM search_documents), "
         "(SELECT COUNT(*) FROM search_documents WHERE tokenizer_version = ? "
         "AND fts_generation_id = ?), "
-        "(SELECT COUNT(*) FROM search_projection_queue)",
+        "(SELECT COUNT(*) FROM search_projection_queue q WHERE NOT EXISTS ("
+        "SELECT 1 FROM asset_retention_barriers b WHERE b.asset_id=q.asset_id))",
         (int(TOKENIZER_VERSION), FTS_GENERATION_ID),
     ).fetchone()
     documents = int(row[0])
