@@ -77,7 +77,6 @@ def encode_metrics(metrics: dict[str, Any]) -> str:
             "scanned_assets", "vector_blocks", "returned_candidates",
             "first_page_hits", "binding",
             "encoder_identity", "model_binding_mismatch", "worker_pid",
-            "worker_started_before_request", "worker_started_for_request",
             "search_publish_attempts",
         }
     }

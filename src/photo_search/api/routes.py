@@ -3602,7 +3602,7 @@ def _place_aware_choices(service: Any) -> list[dict[str, Any]]:
 
 @router.get("/search-perf/config", summary="Development-only search performance diagnostic switch")
 async def search_perf_config() -> dict[str, Any]:
-    return {"enabled": perf_diagnostics.enabled()}
+    return {"enabled": True}
 
 
 @router.post("/search/place-aware", summary="Personal local place plus content search")
@@ -3612,7 +3612,7 @@ async def post_place_aware_search(
     """Additive entry that resolves place intent before reusing the existing search/session service."""
     context = context_of(request)
     service = context.service()
-    diagnostic = perf_diagnostics.enabled() and request.headers.get("x-search-perf") == "1" and payload.cursor is None
+    diagnostic = request.headers.get("x-search-perf") == "1" and payload.cursor is None
     metrics: dict[str, Any] | None = {} if diagnostic else None
     if metrics is not None:
         metrics["page_size"] = int(payload.page_size)

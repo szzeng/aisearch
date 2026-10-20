@@ -540,7 +540,7 @@ def test_search_page_validates_authority_before_restoring_results() -> None:
     _, script, _ = _search_documents()
     assert "window.sessionStorage.setItem" in script
     assert "window.sessionStorage.getItem" in script
-    restore = script.split("function restoreSearchSnapshot()", 1)[1].split(
+    restore = script.split("function restoreSearchSnapshot(", 1)[1].split(
         "// ----------------------------------------------------------------------- tiles", 1
     )[0]
     assert "sendSearch(" not in restore

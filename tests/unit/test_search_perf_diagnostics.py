@@ -78,13 +78,15 @@ def test_server_gate_requires_explicit_environment_value(monkeypatch: pytest.Mon
     assert perf_diagnostics.enabled() is True
 
 
-def test_perf_config_endpoint_is_gated_by_server_environment(api_env, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_perf_config_endpoint_is_authenticated_and_independent_of_server_environment(api_env, monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario(client) -> None:
-        await api_env.authenticate(client)
         monkeypatch.delenv(perf_diagnostics.PERF_ENV, raising=False)
+        unauthenticated = await client.get("/api/v1/search-perf/config")
+        assert unauthenticated.status_code == 401
+        await api_env.authenticate(client)
         disabled = await client.get("/api/v1/search-perf/config")
         assert disabled.status_code == 200
-        assert disabled.json() == {"enabled": False}
+        assert disabled.json() == {"enabled": True}
         monkeypatch.setenv(perf_diagnostics.PERF_ENV, "1")
         enabled = await client.get("/api/v1/search-perf/config")
         assert enabled.status_code == 200
@@ -98,13 +100,14 @@ def test_place_aware_route_adds_diagnostic_headers_only_for_opted_in_requests(ap
         csrf = await api_env.authenticate(client)
         payload = {"request_id": "perf-diag-synthetic", "retrieval_mode": "text",
                    "text": "synthetic", "original_query": "synthetic"}
-        monkeypatch.setenv(perf_diagnostics.PERF_ENV, "1")
+        monkeypatch.delenv(perf_diagnostics.PERF_ENV, raising=False)
         headers = {**api_env.post_headers(csrf), "X-Search-Perf": "1"}
         measured = await client.post("/api/v1/search/place-aware", json=payload, headers=headers)
         assert measured.status_code == 200, measured.text
         assert "search_execution_ms;dur=" in measured.headers["Server-Timing"]
         meta = json.loads(measured.headers["X-Search-Perf-Meta"])
         assert meta["page_size"] == 20
+        assert meta["first_page_hits"] == 0
         assert "synthetic" not in measured.headers["X-Search-Perf-Meta"]
         assert measured.json()["request_id"] == payload["request_id"]
 
@@ -116,3 +119,23 @@ def test_place_aware_route_adds_diagnostic_headers_only_for_opted_in_requests(ap
         assert "Server-Timing" not in ordinary.headers
 
     api_env.scenario(scenario)
+
+
+def test_search_page_exposes_default_off_in_app_diagnostic_controls() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    html = (root / "src/photo_search/web/search.html").read_text(encoding="utf-8")
+    script = (root / "src/photo_search/web/search.js").read_text(encoding="utf-8")
+    assert 'id="search-perf-toggle" type="checkbox"' in html
+    assert 'id="search-perf-start"' in html and 'id="search-perf-stop"' in html
+    assert 'new URLSearchParams(window.location.search).get("perf")' not in script
+    assert 'Number(sample[key])' not in script
+    assert 'typeof value === "number" && Number.isFinite(value)' in script
+    assert 'perfThumb(requestId, assetId, ok)' in script
+    assert '"first_observed", "warmup", "warmup"' in script
+    assert 'i < 20' in script
+    assert 'sample.test_mode === "standard_auto" && sample.sample_type === "hot"' in script
+    assert 'perfDiag.samples.slice(runSamplesStart).filter' in script
+    assert 'validHotCount === 20' in script
+    assert '有效热样本仅 " + validHotCount + "/20；失败样本已保留且未重试' in script

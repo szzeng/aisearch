@@ -7,14 +7,14 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-qwen-search-perf-diag-a-1" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-perf-ux-fix-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-similar-search-2" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-similar-search-2" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-qwen-search-perf-diag-a-1" defer></script>
+    <script src="/web/search.js?v=p4-search-perf-ux-fix-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -46,6 +46,10 @@
       <div class="search-header-actions">
         <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
         <a id="current-search-model" class="search-model-link" href="/?view=sources#search-model-panel">当前：读取中…</a>
+        <details class="search-more-options">
+          <summary>更多选项</summary>
+          <label><input id="search-perf-toggle" type="checkbox" /> 搜索性能诊断</label>
+        </details>
       </div>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
     </header>
@@ -222,11 +226,14 @@
           <h3 id="search-perf-title">搜索性能诊断</h3>
           <p id="search-perf-model" class="hint">正在确认当前搜索模型…</p>
           <p id="search-perf-summary" class="hint" role="status" aria-live="polite">尚无记录</p>
-          <label for="search-perf-case">匿名测试标签（可选）</label>
-          <input id="search-perf-case" type="text" maxlength="64" autocomplete="off" placeholder="例如 sunset-01；不会记录搜索词" />
-          <div class="row-actions">
-            <button id="search-perf-clear" type="button">清空本次记录</button>
+          <p id="search-perf-test-summary" class="hint" role="status" aria-live="polite"></p>
+          <p class="row-actions">
+            <button id="search-perf-start" type="button">开始标准测试</button>
+            <button id="search-perf-stop" type="button" hidden>停止测试</button>
             <button id="search-perf-export" type="button">导出性能报告</button>
+          </p>
+          <div class="row-actions">
+            <button id="search-perf-clear" type="button" class="secondary">清空记录</button>
           </div>
         </section>
         <div id="asset-query-summary" class="asset-query-summary" hidden>

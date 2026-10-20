@@ -132,7 +132,8 @@
       reason: "",
     },
   };
-  var perfDiag = { enabled: false, runId: null, samples: [], active: null, model: null, count: 0 };
+  var perfDiag = { enabled: false, runId: null, samples: [], active: null, model: null, count: 0,
+    autoRunning: false, autoStop: false, nextSampleType: null };
   var smartReplaceTarget = null;
 
   var els = {};
@@ -312,10 +313,11 @@
     var search = state.capabilities && state.capabilities.search || {};
     var model = search.active_embedding_model || {};
     if (!model.provider_id) return null;
-    return { active_profile_id: search.profile_id || null,
-      active_image_generation_id: search.image_generation_id || search.active_image_generation_id || null,
+    return { active_profile_id: search.active_profile_id || null,
+      active_image_generation_id: search.active_image_generation_id || null,
       provider_id: model.provider_id, space_id: model.space_id || null,
-      dimension: model.dimension || null, encoder_identity: model.provider_id };
+      dimension: model.dimension || null, encoder_identity: model.provider_id,
+      processor_id: model.processor_id || null };
   }
 
   function perfProviderName(provider) {
@@ -332,7 +334,7 @@
     var api = latest && latest.server && latest.server.search_execution_ms;
     var first = latest && latest.click_to_first_image_decode_ready_ms;
     var ready = latest && latest.click_to_viewport_ready_ms;
-    summary.textContent = "已记录 " + perfDiag.samples.length + " 次；最近搜索执行 " +
+    summary.textContent = "已记录 " + perfDiag.samples.length + " 次；最近后端搜索执行 " +
       (api == null ? "未测" : api.toFixed(1) + " ms") + "；首张图片解码就绪 " +
       (first == null ? "未测" : first.toFixed(1) + " ms") + "；视口就绪 " +
       (ready == null ? "未测" : ready.toFixed(1) + " ms") +
@@ -350,17 +352,23 @@
 
   function perfBegin(requestId, pageSize) {
     if (!perfDiag.enabled) return null;
-    var caseText = String(document.getElementById("search-perf-case").value || "").trim().slice(0, 64);
-    caseText = caseText.replace(/[^A-Za-z0-9._-]/g, "-");
-    var sample = { run_id: perfDiag.runId, request_id: requestId, test_case_id: caseText || null,
+    if (perfDiag.active) {
+      var previous = perfDiag.active;
+      if (previous.viewport_deadline) window.clearTimeout(previous.viewport_deadline);
+      previous.valid = false; previous.sample_type = "interrupted"; previous.invalid_reason = "SUPERSEDED_BY_NEW_SEARCH";
+      perfDiag.samples.push(previous);
+    }
+    var sample = { run_id: perfDiag.runId, request_id: requestId,
       started_at: new Date().toISOString(), page_size: pageSize,
       retrieval_mode: textRetrievalMode(),
       search_scope: state.search.selectedScope && state.search.selectedScope.kind || "all",
-      sample_type: perfDiag.count === 0 ? "first_observed" : perfDiag.count <= 2 ? "warmup" : "hot",
+      sample_type: perfDiag.nextSampleType || (perfDiag.count === 0 ? "first_observed" : "manual"),
+      test_mode: perfDiag.autoRunning ? "standard_auto" : "manual",
       valid: true, continuation: false, click_started: performance.now(),
       thumbnail_success: 0, thumbnail_failed: 0, thumbnail_timeout: 0,
       viewport_asset_ids: [], settled_asset_ids: [], server: {},
       model_before: perfDiag.model ? Object.assign({}, perfDiag.model) : null };
+    perfDiag.nextSampleType = null;
     perfDiag.active = sample;
     perfDiag.count += 1;
     return sample;
@@ -373,7 +381,7 @@
     sample.valid = false;
     sample.invalid_reason = String((failure || {}).code || "SEARCH_FAILED");
     sample.click_to_request_ms = sample.request_ms || 0;
-    sample.request_to_response_ms = performance.now() - sample.request_started;
+    sample.request_to_response_ms = sample.request_started ? performance.now() - sample.request_started : null;
     perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
   }
 
@@ -393,8 +401,9 @@
     }
     var before = sample.model_before, actual = sample.model_identity;
     if (!actual || !before || before.provider_id !== actual.provider_id ||
-        before.space_id !== actual.space_id || before.dimension !== actual.dimension ||
+        before.active_profile_id !== actual.active_profile_id || before.space_id !== actual.space_id || before.dimension !== actual.dimension ||
         before.active_image_generation_id !== actual.active_image_generation_id ||
+        (before.processor_id && before.processor_id !== (sample.server_meta.encoder_identity || {}).processor_id) ||
         sample.server_meta.model_binding_mismatch === true) {
       sample.valid = false; sample.invalid_reason = "MODEL_BINDING_MISMATCH";
     }
@@ -406,7 +415,7 @@
     sample.worker_pid = sample.server_meta.worker_pid == null ? null : sample.server_meta.worker_pid;
     sample.worker_started_for_request = sample.server_meta.worker_started_for_request == null
       ? null : sample.server_meta.worker_started_for_request;
-    if (sample.worker_started_for_request === true) sample.sample_type = "worker_cold";
+    sample.worker_cold = sample.server_meta.worker_cold_observed === true ? true : "not_measured";
     sample.model_binding_mismatch = sample.server_meta.model_binding_mismatch;
     sample.encoder_identity = sample.server_meta.encoder_identity || null;
     sample.search_publish_attempts = sample.server_meta.search_publish_attempts || null;
@@ -423,7 +432,9 @@
     });
     sample.viewport_asset_ids = frames.map(function (frame) { return frame.dataset.assetId; });
     if (!frames.length) {
-      sample.click_to_viewport_ready_ms = performance.now() - sample.click_started;
+      if ((body.hits || []).length) {
+        sample.valid = false; sample.invalid_reason = "NO_VISIBLE_THUMBNAILS";
+      }
       perfFinish(sample); return;
     }
     sample.viewport_deadline = window.setTimeout(function () {
@@ -439,16 +450,17 @@
       if (perfDiag.active !== sample) return;
       sample.click_to_results_dom_ms = performance.now() - sample.click_started;
       frames.forEach(function (frame) {
-        if (frame.dataset.perfImageState === "ready") perfThumb(frame.dataset.assetId, true);
-        else if (frame.dataset.perfImageState === "failed" || frame.dataset.state === "failed") perfThumb(frame.dataset.assetId, false);
+        if (frame.dataset.perfRequestId !== sample.request_id) return;
+        if (frame.dataset.perfImageState === "ready") perfThumb(sample.request_id, frame.dataset.assetId, true);
+        else if (frame.dataset.perfImageState === "failed" || frame.dataset.state === "failed") perfThumb(sample.request_id, frame.dataset.assetId, false);
       });
       perfUpdateSummary();
     }); });
   }
 
-  function perfThumb(assetId, ok) {
+  function perfThumb(requestId, assetId, ok) {
     var sample = perfDiag.active;
-    if (!sample || sample.viewport_asset_ids.indexOf(String(assetId)) < 0 || sample.settled_asset_ids.indexOf(String(assetId)) >= 0) return;
+    if (!sample || sample.request_id !== requestId || sample.viewport_asset_ids.indexOf(String(assetId)) < 0 || sample.settled_asset_ids.indexOf(String(assetId)) >= 0) return;
     sample.settled_asset_ids.push(String(assetId));
     if (ok) {
       sample.thumbnail_success += 1;
@@ -462,7 +474,11 @@
   function perfMaybeFinish(sample) {
     if (sample.settled_asset_ids.length < sample.viewport_asset_ids.length) return;
     window.clearTimeout(sample.viewport_deadline);
-    sample.click_to_viewport_ready_ms = performance.now() - sample.click_started;
+    if (sample.thumbnail_timeout || sample.thumbnail_failed) {
+      sample.valid = false; sample.invalid_reason = sample.thumbnail_timeout ? "THUMBNAIL_TIMEOUT" : "THUMBNAIL_FAILED";
+    }
+    sample.click_to_viewport_ready_ms = (sample.thumbnail_timeout || sample.thumbnail_failed)
+      ? null : performance.now() - sample.click_started;
     perfFinish(sample);
   }
 
@@ -475,16 +491,19 @@
       actual_runtime_device: "not_measured", background_tasks: "not_measured",
       thumbnail_cache: "unknown" };
     perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
+    if (perfDiag.autoRunning) updatePerfTestSummary();
   }
 
   function perfPercentile(samples, key, p) {
-    var values = samples.map(function (sample) { return Number(sample[key]); }).filter(Number.isFinite).sort(function (a, b) { return a - b; });
+    var values = samples.map(function (sample) { return sample[key]; })
+      .filter(function (value) { return typeof value === "number" && Number.isFinite(value); })
+      .sort(function (a, b) { return a - b; });
     if (!values.length) return { value: null, n: 0 };
     return { value: values[Math.max(0, Math.ceil(p * values.length) - 1)], n: values.length };
   }
 
   function perfExport() {
-    var validHot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.sample_type === "hot"; });
+    var validHot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot"; });
     var report = { format: "photo-search-perf", format_version: 1, run_id: perfDiag.runId,
       generated_at: new Date().toISOString(), model_identity: perfDiag.model,
       environment: { app_version: state.capabilities && state.capabilities.app_version || null,
@@ -497,9 +516,17 @@
         delete copy.model_before; return copy;
       }),
       hot_search_execution_ms: { p50: perfPercentile(validHot, "search_execution_ms", .5), p95: perfPercentile(validHot, "search_execution_ms", .95) },
+      request_to_response_ms: { p50: perfPercentile(validHot, "request_to_response_ms", .5), p95: perfPercentile(validHot, "request_to_response_ms", .95) },
+      query_encode_ms: { p50: perfPercentile(validHot, "query_encode_ms", .5), n: perfPercentile(validHot, "query_encode_ms", .5).n },
+      vector_ms: { p50: perfPercentile(validHot, "vector_ms", .5), n: perfPercentile(validHot, "vector_ms", .5).n },
       first_image_decode_ready_ms: { p50: perfPercentile(validHot, "click_to_first_image_decode_ready_ms", .5), p95: perfPercentile(validHot, "click_to_first_image_decode_ready_ms", .95) },
       viewport_ready_ms: { p50: perfPercentile(validHot, "click_to_viewport_ready_ms", .5), p95: perfPercentile(validHot, "click_to_viewport_ready_ms", .95) },
       p95_reliability: validHot.length < 20 ? "LOW_SAMPLE_COUNT" : "SAMPLE_COUNT_RECORDED",
+      valid_hot_samples: validHot.length,
+      metric_definitions: { search_execution_ms: "后端搜索执行时间，不含完整 HTTP 响应序列化",
+        request_to_response_ms: "浏览器请求至响应及必要数据读取完成",
+        click_to_first_image_decode_ready_ms: "从搜索动作至首张缩略图解码就绪",
+        click_to_viewport_ready_ms: "从搜索动作至当前视口缩略图全部成功就绪" },
       not_measured_stages: ["page_ms", "worker_infer_ms", "worker_reload_count", "background_wait_ms"],
       note: "P95 是样本内 nearest-rank 值；样本数不足 20 时仅作本轮描述，不代表长期性能。" };
     report.samples.forEach(function (sample) { sample.search_execution_ms = sample.server && sample.server.search_execution_ms; });
@@ -512,17 +539,156 @@
   }
 
   function initPerfDiagnostics() {
-    if (new URLSearchParams(window.location.search).get("perf") !== "1") return;
-    request("/search-perf/config").then(function (result) {
-      if (!result.body || result.body.enabled !== true) return;
-      perfDiag.enabled = true;
-      perfDiag.runId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-      perfDiag.model = perfIdentityFromCapabilities();
-      var panel = document.getElementById("search-perf-panel"); panel.hidden = false;
-      document.getElementById("search-perf-model").textContent = "当前模型：" + perfProviderName(perfDiag.model && perfDiag.model.provider_id);
-      document.getElementById("search-perf-clear").addEventListener("click", function () { perfDiag.samples = []; perfDiag.count = 0; perfDiag.active = null; perfUpdateSummary(); });
-      document.getElementById("search-perf-export").addEventListener("click", perfExport);
-    }).catch(function () {});
+    var toggle = document.getElementById("search-perf-toggle");
+    var panel = document.getElementById("search-perf-panel");
+    if (!toggle || !panel) return;
+    toggle.checked = false;
+    toggle.addEventListener("change", function () {
+      perfDiag.enabled = toggle.checked; panel.hidden = !perfDiag.enabled;
+      if (perfDiag.enabled) {
+        perfDiag.runId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+        perfDiag.model = perfIdentityFromCapabilities();
+        document.getElementById("search-perf-model").textContent = perfDiag.model && perfDiag.model.active_profile_id && perfDiag.model.active_image_generation_id
+          ? "当前模型：" + perfProviderName(perfDiag.model.provider_id)
+          : "当前模型身份未确认（缺少活动 Profile 或 Generation）";
+      } else {
+        if (perfDiag.autoRunning) stopPerfTest("用户关闭了诊断");
+        else if (perfDiag.active) {
+          if (perfDiag.active.viewport_deadline) window.clearTimeout(perfDiag.active.viewport_deadline);
+          perfDiag.active.valid = false; perfDiag.active.sample_type = "interrupted";
+          perfDiag.active.invalid_reason = "DIAGNOSTICS_DISABLED";
+          perfDiag.samples.push(perfDiag.active); perfDiag.active = null; perfUpdateSummary();
+        }
+      }
+    });
+    document.getElementById("search-perf-start").addEventListener("click", startPerfTest);
+    document.getElementById("search-perf-stop").addEventListener("click", function () { stopPerfTest("用户停止"); });
+    document.getElementById("search-perf-clear").addEventListener("click", function () {
+      stopPerfTest("记录已清空");
+      if (perfDiag.active && perfDiag.active.viewport_deadline) window.clearTimeout(perfDiag.active.viewport_deadline);
+      perfDiag.active = null; perfDiag.samples = []; perfDiag.count = 0; perfUpdateSummary(); updatePerfTestSummary();
+    });
+    document.getElementById("search-perf-export").addEventListener("click", perfExport);
+    if (typeof window.addEventListener === "function") {
+      window.addEventListener("pagehide", function () { if (perfDiag.autoRunning) stopPerfTest("页面已离开"); });
+    }
+    perfDiag.model = perfIdentityFromCapabilities();
+  }
+
+  function updatePerfTestSummary(message) {
+    var target = document.getElementById("search-perf-test-summary");
+    if (!target) return;
+    var hot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot"; });
+    var exec = perfPercentile(hot, "search_execution_ms", .5), exec95 = perfPercentile(hot, "search_execution_ms", .95);
+    var enc = perfPercentile(hot, "query_encode_ms", .5), vector = perfPercentile(hot, "vector_ms", .5);
+    var first = perfPercentile(hot, "click_to_first_image_decode_ready_ms", .5);
+    var viewport = perfPercentile(hot, "click_to_viewport_ready_ms", .5), viewport95 = perfPercentile(hot, "click_to_viewport_ready_ms", .95);
+    function fmt(item) { return item.value == null ? "未测" : item.value.toFixed(1) + " ms"; }
+    target.textContent = (message ? message + " · " : "") + "有效热样本 " + hot.length +
+      "；搜索执行 P50/P95 " + fmt(exec) + "/" + fmt(exec95) + "；编码 P50 " + fmt(enc) +
+      "；LanceDB P50 " + fmt(vector) + "；首图 P50 " + fmt(first) + "；视口 P50/P95 " + fmt(viewport) + "/" + fmt(viewport95);
+  }
+
+  function perfConditionsSnapshot() {
+    return JSON.stringify({ query: els.queryText.value, filters: collectFilters(), mode: textRetrievalMode(),
+      scope: state.search.selectedScope, favorites: state.search.favoritesOnly, intent: state.search.intentPlan,
+      place: state.search.placeAware, pageSize: els.queryPageSize.value });
+  }
+
+  function freezePerfControls(frozen) {
+    var controls = document.querySelectorAll("#search-form input, #search-form select, #search-form button, #search-filter-controls input, #search-filter-controls select, #search-filter-controls button");
+    Array.prototype.forEach.call(controls, function (control) {
+      if (frozen) { control.dataset.perfWasDisabled = control.disabled ? "1" : "0"; control.disabled = true; }
+      else if (control.dataset.perfWasDisabled !== undefined) { control.disabled = control.dataset.perfWasDisabled === "1"; delete control.dataset.perfWasDisabled; }
+    });
+  }
+
+  function stopPerfTest(reason) {
+    if (!perfDiag.autoRunning) return;
+    perfDiag.autoStop = true;
+    if (perfDiag.active) {
+      var sample = perfDiag.active;
+      if (sample.viewport_deadline) window.clearTimeout(sample.viewport_deadline);
+      sample.valid = false; sample.sample_type = "interrupted"; sample.invalid_reason = reason;
+      perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
+    }
+    perfDiag.autoRunning = false; document.getElementById("search-perf-stop").hidden = true;
+    document.getElementById("search-perf-start").disabled = false; freezePerfControls(false); updatePerfTestSummary(reason);
+  }
+
+  function waitForPerfSample(sample, timeoutMs) {
+    var start = Date.now();
+    return new Promise(function (resolve) {
+      function check() {
+        if (perfDiag.active !== sample) return resolve(true);
+        if (Date.now() - start >= timeoutMs) {
+          if (sample.viewport_deadline) window.clearTimeout(sample.viewport_deadline);
+          sample.valid = false; sample.sample_type = "timeout"; sample.invalid_reason = "SAMPLE_TIMEOUT";
+          perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary(); return resolve(false);
+        }
+        window.setTimeout(check, 50);
+      }
+      check();
+    });
+  }
+
+  function startPerfTest() {
+    if (!perfDiag.enabled || perfDiag.autoRunning) return;
+    var model = perfIdentityFromCapabilities();
+    if (!String(els.queryText.value || "").trim()) { updatePerfTestSummary("请先输入搜索词"); return; }
+    if (!model || !model.active_profile_id || !model.active_image_generation_id ||
+        !state.capabilities.search || state.capabilities.search.query_encoder_available !== true) {
+      updatePerfTestSummary("当前模型或索引身份不可用；测试未启动"); return;
+    }
+    if (state.search.mode !== "text" || textRetrievalMode() !== "combined" || state.search.loading || perfDiag.active) {
+      updatePerfTestSummary("请等待当前搜索及视口图片观察结束，并使用综合搜索进行标准测试"); return;
+    }
+    perfDiag.model = model; perfDiag.autoRunning = true; perfDiag.autoStop = false;
+    var runSamplesStart = perfDiag.samples.length;
+    var frozen = perfConditionsSnapshot();
+    document.getElementById("search-perf-start").disabled = true; document.getElementById("search-perf-stop").hidden = false;
+    freezePerfControls(true); els.panelResults.scrollIntoView({ block: "start", behavior: "instant" });
+    var types = ["first_observed", "warmup", "warmup"];
+    for (var i = 0; i < 20; i += 1) types.push("hot");
+    function next(index) {
+      if (!perfDiag.autoRunning || perfDiag.autoStop) return Promise.resolve();
+      if (perfConditionsSnapshot() !== frozen) { stopPerfTest("搜索条件发生变化，测试已停止"); return Promise.resolve(); }
+      if (index >= types.length) {
+        perfDiag.autoRunning = false; document.getElementById("search-perf-stop").hidden = true;
+        document.getElementById("search-perf-start").disabled = false; freezePerfControls(false);
+        var validHotCount = perfDiag.samples.slice(runSamplesStart).filter(function (sample) {
+          return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot";
+        }).length;
+        updatePerfTestSummary(validHotCount === 20
+          ? "标准测试完成：1 次首次观察、2 次预热、20 个有效热样本"
+          : "测试轮次结束，但有效热样本仅 " + validHotCount + "/20；失败样本已保留且未重试");
+        return Promise.resolve();
+      }
+      perfDiag.nextSampleType = types[index];
+      var samplesBefore = perfDiag.samples.length;
+      return Promise.resolve(sendSearch(false)).then(function () {
+        var sample = perfDiag.active || (perfDiag.samples.length > samplesBefore
+          ? perfDiag.samples[perfDiag.samples.length - 1] : null);
+        if (!sample || sample.test_mode !== "standard_auto") { stopPerfTest("本轮搜索未生成可观察样本"); return; }
+        updatePerfTestSummary("正在执行第 " + (index + 1) + "/23 轮");
+        var observation = perfDiag.active === sample ? waitForPerfSample(sample, 15000) : Promise.resolve(true);
+        return observation.then(function (done) {
+          if (!done || sample.invalid_reason === "MODEL_BINDING_MISMATCH" || sample.invalid_reason === "MANUAL_SELECTION_REQUIRED") {
+            stopPerfTest(sample.invalid_reason || "本轮超时"); return;
+          }
+          return next(index + 1);
+        });
+      }).catch(function () { stopPerfTest("搜索失败，自动测试已停止"); });
+    }
+    next(0);
+  }
+
+  function abortPerfForChoice() {
+    if (perfDiag.active) {
+      var sample = perfDiag.active; sample.valid = false; sample.sample_type = "interrupted";
+      sample.invalid_reason = "MANUAL_SELECTION_REQUIRED"; perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
+    }
+    if (perfDiag.autoRunning) stopPerfTest("需要人工选择范围，测试已停止");
   }
 
   function releaseObjectUrls() {
@@ -1477,18 +1643,22 @@
         }
         state.search.loading = false;
         if (body && body.needs_place_choice) {
+          abortPerfForChoice();
           showPlaceChoices(body);
           return true;
         }
         if (body && body.needs_collection_choice) {
+          abortPerfForChoice();
           showCollectionChoices(body);
           return true;
         }
         if (body && body.needs_scope_choice) {
+          abortPerfForChoice();
           showScopeChoices(body);
           return true;
         }
         if (body && body.needs_person_choice) {
+          abortPerfForChoice();
           showPersonChoices(body);
           return true;
         }
@@ -2736,6 +2906,7 @@
     frame.setAttribute("aria-label", "查看照片，搜索结果第 " + number(hit.rank) + " 名");
     frame.addEventListener("click", function () { openSearchPreview(hit.asset_id, frame); });
     frame.dataset.assetId = String(hit.asset_id);
+    if (perfDiag.active) frame.dataset.perfRequestId = perfDiag.active.request_id;
     observeThumbnail(frame);
     tile.appendChild(frame);
     if (window.PhotoFavorites) tile.appendChild(window.PhotoFavorites.button(hit.asset_id));
@@ -2950,6 +3121,7 @@
     }
     frame.dataset.state = "loading";
     var assetId = frame.dataset.assetId;
+    var perfRequestId = frame.dataset.perfRequestId || "";
     noteInFrame(frame, "tile-note", "缩略图加载中…");
     fetchArtifact("/assets/" + encodeURIComponent(assetId) + "/thumbnail")
       .then(function (result) {
@@ -2964,16 +3136,16 @@
             clearFrame(frame);
             frame.dataset.state = "failed";
             frame.dataset.perfImageState = "failed";
-            perfThumb(assetId, false);
+            perfThumb(perfRequestId, assetId, false);
             noteInFrame(frame, "tile-note", "缩略图无法显示（IMAGE_UNREADABLE）");
           });
           image.addEventListener("load", function () {
             Promise.resolve(typeof image.decode === "function" ? image.decode() : undefined).then(function () {
               frame.dataset.perfImageState = "ready";
-              perfThumb(assetId, true);
+              perfThumb(perfRequestId, assetId, true);
             }).catch(function () {
               frame.dataset.perfImageState = "failed";
-              perfThumb(assetId, false);
+              perfThumb(perfRequestId, assetId, false);
             });
           });
           image.src = result.url;
@@ -2991,13 +3163,13 @@
           "缩略图不可用：" + result.code + "（请求编号 " + (result.request_id || "无") + "）"
         );
         frame.dataset.perfImageState = "failed";
-        perfThumb(assetId, false);
+        perfThumb(perfRequestId, assetId, false);
       })
       .catch(function () {
         clearFrame(frame);
         frame.dataset.state = "failed";
         frame.dataset.perfImageState = "failed";
-        perfThumb(assetId, false);
+        perfThumb(perfRequestId, assetId, false);
         noteInFrame(frame, "tile-note", "缩略图请求失败（NETWORK_ERROR）");
       });
   }

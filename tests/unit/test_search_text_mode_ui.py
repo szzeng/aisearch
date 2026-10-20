@@ -58,6 +58,7 @@ function harness(storage=new Map(),harnessOptions={}){
     document:{readyState:"loading",cookie:"ps_csrf=fixture-csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
     window:{location:{href:"http://127.0.0.1/search"+(harnessOptions.search||""),origin:"http://127.0.0.1",pathname:"/search",search:harnessOptions.search||"",hash:"",
       replace(path){this.href=new URL(path,this.href).href;}},scrollY:87,
+          addEventListener(){},
       history:{state:harnessOptions.historyState||null,replaceState(value,title,url){this.state=value;historyWrites.push(url);if(url){const next=new URL(url,"http://127.0.0.1");context.window.location.href=next.href;context.window.location.pathname=next.pathname;context.window.location.search=next.search;context.window.location.hash=next.hash;}}},
       requestAnimationFrame:fn=>fn(),scrollTo(...args){scrolls.push(args);},
       sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)}},

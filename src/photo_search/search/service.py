@@ -416,7 +416,9 @@ def search_assets(
         perf_metrics["vector_blocks"] = None if vector_block is None else int(vector_block["blocks"])
         perf_metrics["scanned_assets"] = None if vector_block is None else int(vector_block["scanned_assets"])
         perf_metrics["returned_candidates"] = len(hits)
-        perf_metrics["first_page_hits"] = len(hits)
+        # Count the actual photos returned on the first page, after the final
+        # search request pagination has been applied below.
+        perf_metrics["first_page_hits"] = None
     ranked = {int(row["asset_id"]) for row in hits}
     if topup is not None:
         for entry in topup["entries"]:
@@ -1374,6 +1376,8 @@ def search_request(
         if favorites_revision is not None and _revision(catalog.connection) != favorites_revision:
             return None
         sessions.register(session)
+        if perf_metrics is not None:
+            perf_metrics["first_page_hits"] = len(hits)
         return _result_envelope(
             request,
             session,
