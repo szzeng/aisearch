@@ -764,8 +764,11 @@
 
   function renderRetentionRunLine(progress) {
     var run = progress.run || {};
-    return "清理任务 " + run.mode + " / " + run.state + "：" + (run.completed_assets || 0) + "/" + (run.total_assets || 0) +
-      " 完成，跳过 " + (run.skipped_assets || 0) + "，失败 " + (run.failed_assets || 0) + "；阶段：" + (run.stage || "未知") +
+    return "清理任务 " + run.mode + " / " + run.state + "：已检查 " + (run.checked_assets || 0) +
+      "，已清理 " + (run.completed_assets || 0) + "，人工保护跳过 " + (run.skipped_human_assets || 0) +
+      "，来源/扫描跳过 " + (run.skipped_source_assets || 0) + "，其他跳过 " + (run.skipped_other_assets || 0) +
+      "，失败 " + (run.failed_assets || 0) + "；" + (run.has_more_candidates ? "仍有下一批" : "本轮候选已检查") +
+      "；阶段：" + (run.stage || "未知") +
       "。逻辑清理完成后，受管缓存仍需停止应用并运行 storage clean-retained。";
   }
 
@@ -792,7 +795,7 @@
     var overview = state.libraryRetention.overview || {};
     var counts = overview.retention_counts || {};
     var preview = "当前统计：到期且复核 " + (counts.ELIGIBLE || 0) + "，观察中 " + (counts.OBSERVING || 0) +
-      "，来源异常 " + (overview.unresolved_source_anomalies || 0) + "。本次最多处理 20 张，逐张重新核验；实际可清理数可能更少。";
+      "，来源异常 " + (overview.unresolved_source_anomalies || 0) + "。一次操作会分批检查本次候选范围内的照片；每批最多 20 张，逐张重新核验，实际可清理数可能更少。";
     if (!window.confirm(preview + "\n\n将清除 PhotoSearch 中通过复核的失效照片派生数据。不会删除磁盘原图或人工记录；手动确认不等待 30 天。缓存和 Artifact 文件需应用停止后另行回收。预计释放空间无法准确估计。继续吗？")) return;
     els.libraryRetentionCleanup.disabled = true;
     setStatus(els.libraryRetentionStatus, "正在创建清理任务…");
@@ -815,6 +818,11 @@
     var enabled = els.libraryRetentionAutomatic.checked;
     els.libraryRetentionAutomatic.disabled = true;
     request("/storage/library-retention/automatic", { method: "POST", body: { enabled: enabled } }).then(function (result) {
+      var conflict = result.body && result.body.run_conflict;
+      if (conflict) {
+        setStatus(els.libraryRetentionStatus, "另一授权模式的清理任务仍在执行（" + conflict.mode + " / " + conflict.state + "），本次未启动新的自动任务。", "error");
+        return loadLibraryRetention(true);
+      }
       var run = result.body && result.body.run && result.body.run.run;
       if (run && (run.state === "QUEUED" || run.state === "RUNNING")) {
         state.libraryRetentionRunId = run.run_id;

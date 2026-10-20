@@ -388,6 +388,7 @@ def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
         generation_id=first_generation, dimension=DIMENSION
     )
     assert len(first_rows) == 1
+    unrelated_assets = []
 
     # A second generation has its own real Lance table and identity for this same asset.
     second_processor = "test-embedding-legacy@1"
@@ -445,6 +446,19 @@ def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
         generation_id=second_space_generation, dimension=DIMENSION, space_id=second_space
     ) == 1
 
+    if batch:
+        artifact_id = str(catalog.read_one("SELECT artifact_id FROM artifacts WHERE job_id IS NOT NULL LIMIT 1")[0])
+        checksum = hashlib.sha256(b"{}").hexdigest()
+        unrelated_assets = [seed_asset(catalog, suffix=f"backlog-{batch}-{index}") for index in range(6)]
+        with catalog.write() as connection:
+            connection.executemany(
+                "INSERT INTO index_outbox(event_id,event_type,artifact_id,space_id,asset_id,generation_id,"
+                "projection_revision,payload_json,payload_checksum,state,attempts,created_at,updated_at) "
+                "VALUES(?,'UPSERT_VECTOR',?,?,?,?,1,'{}',?,'PENDING',0,1100,1100)",
+                ((f"retention-backlog-{index}", artifact_id, SPACE, other_asset, first_generation, checksum)
+                 for index, other_asset in enumerate(unrelated_assets)),
+            )
+
     with catalog.write() as connection:
         _, scheduled = activate_asset_retention_cleanup(
             connection, asset_id=asset_id, now_ms=3_000
@@ -467,8 +481,8 @@ def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
 
     if batch:
         with pytest.raises(RuntimeError, match="after_vector_delete"):
-            coordinator.process_batch(
-                now_ms=3_100, max_events=10, failpoint="after_vector_delete"
+            coordinator.process_retention_deletes(
+                asset_id=asset_id, now_ms=3_100, limit=10, failpoint="after_vector_delete"
             )
         assert coordinator.index.count(
             generation_id=first_generation, dimension=DIMENSION, space_id=SPACE
@@ -482,8 +496,17 @@ def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
             space_id=second_space,
         ) == 0
         restarted = IndexCoordinator(catalog)
-        assert restarted.process_batch(now_ms=3_200, max_events=10) == 3
-        assert restarted.process_batch(now_ms=3_300, max_events=10) == 0
+        assert restarted.process_retention_deletes(asset_id=asset_id, now_ms=3_200, limit=10) == 3
+        assert restarted.process_retention_deletes(asset_id=asset_id, now_ms=3_300, limit=10) == 0
+        assert catalog.read_one(
+            "SELECT COUNT(*) FROM index_outbox WHERE asset_id IN (" + ",".join("?" for _ in unrelated_assets) +
+            ") AND event_type='UPSERT_VECTOR' AND state='PENDING'", tuple(unrelated_assets),
+        )[0] == len(unrelated_assets)
+        with catalog.write() as connection:
+            connection.execute(
+                "DELETE FROM index_outbox WHERE asset_id IN (" + ",".join("?" for _ in unrelated_assets) + ")",
+                tuple(unrelated_assets),
+            )
     else:
         with pytest.raises(RuntimeError, match="after_vector_delete"):
             coordinator.process_next(now_ms=3_100, failpoint="after_vector_delete")

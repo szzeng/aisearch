@@ -963,7 +963,8 @@ class IndexCoordinator:
         return report
 
     def process_batch(
-        self, *, now_ms: int, max_events: int, failpoint: str | None = None
+        self, *, now_ms: int, max_events: int, failpoint: str | None = None,
+        asset_ids: Sequence[int] | None = None, event_type: str | None = None,
     ) -> int:
         """Apply up to ``max_events`` events with one engine write per generation.
 
@@ -996,11 +997,25 @@ class IndexCoordinator:
         claimed = int(max_events)
         if claimed < 1:
             return 0
+        predicates = [CLAIMABLE_EVENT_PREDICATE]
+        params: list[Any] = []
+        if asset_ids is not None:
+            selected_assets = sorted({int(asset_id) for asset_id in asset_ids})
+            if not selected_assets:
+                return 0
+            predicates.append("asset_id IN (" + ",".join("?" for _ in selected_assets) + ")")
+            params.extend(selected_assets)
+        if event_type is not None:
+            if str(event_type) != "DELETE_VECTOR":
+                raise ValueError("targeted maintenance only supports DELETE_VECTOR")
+            predicates.append("event_type=?")
+            params.append(str(event_type))
+        claim_where = " AND ".join(f"({predicate})" for predicate in predicates)
         with self._timed_write("claim") as connection:
             rows = connection.execute(
-                f"SELECT event_id FROM index_outbox WHERE {CLAIMABLE_EVENT_PREDICATE} "
+                f"SELECT event_id FROM index_outbox WHERE {claim_where} "
                 "ORDER BY created_at, event_id LIMIT ?",
-                (claimed,),
+                (*params, claimed),
             ).fetchall()
             if not rows:
                 return 0
@@ -1178,6 +1193,15 @@ class IndexCoordinator:
                 "derived index submission failed",
                 details={"reason": type(error).__name__},
             ) from error
+
+    def process_retention_deletes(
+        self, *, asset_id: int, now_ms: int, limit: int = 100, failpoint: str | None = None
+    ) -> int:
+        """Drain only this barriered asset's DELETE_VECTOR events through the normal protocol."""
+        return self.process_batch(
+            now_ms=int(now_ms), max_events=max(1, min(int(limit), 100)),
+            asset_ids=(int(asset_id),), event_type="DELETE_VECTOR", failpoint=failpoint,
+        )
 
     @staticmethod
     def _validate_event_payload(event: Any) -> None:

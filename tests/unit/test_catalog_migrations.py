@@ -38,6 +38,7 @@ CORE_TABLES = {
     "library_retention_settings",
     "library_retention_runs",
     "library_retention_run_items",
+    "library_retention_run_candidates",
     "cr2_job_recoveries",
     # P3-01: the current OCR document of every asset and its per-region metadata.
     "asset_ocr_regions",
@@ -613,7 +614,7 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
                         "src/photo_search/catalog/migrations")
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert migrated.previous_version == 35
-    assert migrated.applied == (36, 37, 38, 39, 40, 41)
+    assert migrated.applied == (36, 37, 38, 39, 40, 41, 42)
     assert migrated.backup_path is not None
     old_build_backup = open_readonly(migrated.backup_path)
     try:
@@ -711,7 +712,7 @@ def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_pre
     )
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 38
-    assert upgraded.applied == (39, 40, 41)
+    assert upgraded.applied == (39, 40, 41, 42)
     assert upgraded.backup_path is not None
     backup = open_readonly(upgraded.backup_path)
     try:
@@ -722,7 +723,7 @@ def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_pre
         backup.close()
     live = open_readonly(db_path)
     try:
-        assert schema.read_schema_version(live) == 41
+        assert schema.read_schema_version(live) == 42
         assert "asset_retention_barriers" in schema.business_tables(live)
         assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
     finally:
@@ -777,7 +778,7 @@ def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollbac
     )
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 39
-    assert upgraded.applied == (40, 41)
+    assert upgraded.applied == (40, 41, 42)
     assert upgraded.backup_path is not None
     backup = open_readonly(upgraded.backup_path)
     try:
@@ -788,7 +789,7 @@ def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollbac
         backup.close()
     live = open_readonly(db_path)
     try:
-        assert schema.read_schema_version(live) == 41
+        assert schema.read_schema_version(live) == 42
         columns = {str(row[1]) for row in live.execute("PRAGMA table_info(asset_retention_barriers)")}
         assert {"media_sha256", "face_crop_keys_json", "media_cleaned_at_ms"} <= columns
         row = live.execute(
@@ -817,7 +818,9 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
         connection.close()
 
     broken = tmp_path / "migrations-0041-broken"
-    shutil.copytree(schema.MIGRATIONS_DIR, broken)
+    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
+    (broken / "0042_retention_cleanup_run_fences.sql").unlink()
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     migration = broken / "0041_retention_cleanup_runs.sql"
     migration.write_text(
         migration.read_text(encoding="utf-8") + "\nSELECT retention_runs_migration_fault;\n",
@@ -837,9 +840,11 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
     finally:
         rolled_back.close()
 
-    monkeypatch.setattr(
-        schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
-    )
+    migrations_41 = tmp_path / "migrations-through-0041"
+    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
+    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 40 and upgraded.applied == (41,)
     live = open_readonly(db_path)
@@ -849,6 +854,74 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
             "SELECT automatic_enabled FROM library_retention_settings WHERE singleton=1"
         ).fetchone()[0] == 0
         assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
+        assert list(live.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        live.close()
+
+
+def test_retention_0042_run_fence_migration_upgrade_and_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = _db_path(tmp_path)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
+    migrations_41 = tmp_path / "migrations-through-0041"
+    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
+    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
+    migrate_database(db_path, data_root=_data_root(tmp_path))
+    seeded = connect_rw(db_path)
+    try:
+        seeded.execute(
+            "INSERT INTO library_retention_runs(run_id,mode,state,stage,total_assets,completed_assets,"
+            "skipped_assets,failed_assets,created_at_ms,updated_at_ms) "
+            "VALUES('legacy-active','MANUAL','PARTIAL','旧批次',2,1,0,1,100,200)"
+        )
+        seeded.executemany(
+            "INSERT INTO library_retention_run_items(run_id,asset_id,state,stage) VALUES('legacy-active',?,?,?)",
+            [(123, "COMPLETE", "已清理"), (124, "FAILED", "可恢复失败")],
+        )
+        seeded.commit()
+    finally:
+        seeded.close()
+    broken = tmp_path / "migrations-0042-broken"
+    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
+    migration = broken / "0042_retention_cleanup_run_fences.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT retention_0042_fault;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken)
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 41
+    rolled_back = open_readonly(db_path)
+    try:
+        run_columns = {str(row[1]) for row in rolled_back.execute("PRAGMA table_info(library_retention_runs)")}
+        assert "selection_max_asset_id" not in run_columns
+        assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        rolled_back.close()
+    monkeypatch.setattr(
+        schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
+    )
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
+    upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert upgraded.previous_version == 41 and upgraded.applied == (42,)
+    live = open_readonly(db_path)
+    try:
+        assert schema.read_schema_version(live) == 42
+        columns = {str(row[1]) for row in live.execute("PRAGMA table_info(library_retention_runs)")}
+        assert {"selection_max_asset_id", "selection_cutoff_at_ms", "selection_after_asset_id", "checked_assets"} <= columns
+        legacy = live.execute(
+            "SELECT selection_max_asset_id,selection_after_asset_id,total_assets,completed_assets,"
+            "failed_assets,has_more_candidates FROM library_retention_runs WHERE run_id='legacy-active'"
+        ).fetchone()
+        assert tuple(legacy) == (124, 0, 0, 0, 0, 1)
+        assert [int(row[0]) for row in live.execute(
+            "SELECT asset_id FROM library_retention_run_candidates WHERE run_id='legacy-active' ORDER BY asset_id"
+        )] == [123, 124]
         assert list(live.execute("PRAGMA foreign_key_check")) == []
     finally:
         live.close()

@@ -113,3 +113,7 @@
 ## P4-SEARCH-STRONG-MATCH-EXIF-FIX（2026-10-20）
 
 补充 Chinese-CLIP / Qwen EXIF v2 高度匹配统计身份映射，复用现有阈值，普通版身份、候选、排名、分页及 5000 边界保持原语义。定向 pytest 39 passed；Ruff、Python 编译、Node 语法和 diff-check 通过。测试文件扩展组合中发现的既有前端静态断言与 Node harness 限制见[执行报告](reports/P4-SEARCH-STRONG-MATCH-EXIF-FIX.md)。未加载 EXIF v2 真实模型、未访问真实图库、未做真实浏览器验收；状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。任务卡：[P4-SEARCH-STRONG-MATCH-EXIF-FIX](tasks/P4-SEARCH-STRONG-MATCH-EXIF-FIX.md)。
+
+## P4-LIBRARY-RETENTION-C2-FIX（2026-10-20）
+
+一键清理现按点击事务持久化候选身份快照，按 20 张 keyset 批次执行实时复核；旧 schema 41 活动 run 可以从既有批次恢复并重建计数。目标 DELETE_VECTOR 走 IndexCoordinator 定向协议，单资产最多 100 个事件、最多 5 次 drain；手动/自动授权冲突明确拒绝。定向 pytest 51/51、Ruff、py_compile、Node 语法与 diff-check 通过；Luna H 两轮复核关闭了候选静默漏检 blocker。内置浏览器确认失效照片面板及合成统计可见，但原生确认框无法由当前浏览器控制完成，确认后的 T10 跨批/刷新/返回仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。报告：[P4-LIBRARY-RETENTION-C2-FIX](reports/P4-LIBRARY-RETENTION-C2-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-FIX](tasks/P4-LIBRARY-RETENTION-C2-FIX.md)。未访问真实照片库、未做全仓/30万/GPU 验收。

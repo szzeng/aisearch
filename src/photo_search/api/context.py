@@ -276,7 +276,7 @@ class ApiContext:
             if not library_retention_automatic_settings(service.catalog)["automatic_enabled"]:
                 return
             run = create_library_retention_run(service.catalog, mode="AUTOMATIC")
-            if int(run.get("total_assets", 0)) > 0:
+            if not run.get("conflict") and run.get("state") in {"QUEUED", "RUNNING"}:
                 self.retention_cleanup_runner().start(str(run["run_id"]))
         except Exception:  # noqa: BLE001 - automatic cleanup failures stay visible in durable run state.
             import logging
@@ -295,9 +295,9 @@ class ApiContext:
             service = self._service_factory()
             row = service.catalog.read_one(
                 "SELECT r.run_id,r.mode,r.state FROM library_retention_runs r "
-                "WHERE r.state IN ('QUEUED','RUNNING') OR (r.state='PARTIAL' AND EXISTS "
+                "WHERE r.state IN ('QUEUED','RUNNING') OR (r.state='PARTIAL' AND (r.has_more_candidates=1 OR EXISTS "
                 "(SELECT 1 FROM library_retention_run_items i WHERE i.run_id=r.run_id "
-                "AND i.state IN ('QUEUED','RUNNING','FAILED'))) "
+                "AND i.state IN ('QUEUED','RUNNING','FAILED')))) "
                 "ORDER BY CASE WHEN r.state IN ('QUEUED','RUNNING') THEN 0 ELSE 1 END, "
                 "r.created_at_ms LIMIT 1"
             )

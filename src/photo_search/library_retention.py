@@ -40,6 +40,7 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
         "asset_retention_source_evidence", "asset_retention_state", "retention_source_anomalies",
         "asset_retention_barriers",
         "library_retention_settings", "library_retention_runs", "library_retention_run_items",
+        "library_retention_run_candidates",
         # Both smart references are understood: exclusions are human state and
         # protect an asset; cache entries are rebuildable and cascade on asset GC.
         "photo_smart_exclusions", "photo_smart_cache_entries", "user_annotations", "asset_tags",
@@ -67,9 +68,11 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
     return False
 
 
-def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_id: int) -> tuple[bool, list[str]]:
+def _human_or_protected(
+    connection: sqlite3.Connection, tables: set[str], asset_id: int, *, include_barrier: bool = True
+) -> tuple[bool, list[str]]:
     """Return conservative human/reference protections for one bounded list row."""
-    if "asset_retention_barriers" in tables and _exists(
+    if include_barrier and "asset_retention_barriers" in tables and _exists(
         connection, "asset_retention_barriers", "asset_id = ?", (asset_id,)
     ):
         return True, ["已有清理屏障"]
@@ -97,36 +100,61 @@ def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_
         # asset anchor remains a human reference even without a current face.
         checks.append(("person_collection_face_members", "asset_id = ?", (asset_id,), "人脸合集收录"))
 
-    has_faces = "faces" in tables and _exists(connection, "faces", "asset_id = ?", (asset_id,))
+    face_ids = [
+        str(row[0]) for row in connection.execute(
+            "SELECT face_id FROM faces WHERE asset_id=?", (asset_id,)
+        )
+    ] if "faces" in tables else []
+    has_faces = bool(face_ids)
     if has_faces:
         face_filter = "face_id IN (SELECT face_id FROM faces WHERE asset_id = ?)"
         if "face_person_links" in tables:
-            if _exists(connection, "face_person_links", f"{face_filter} AND (assignment_kind = 'MANUAL' OR decision = 'CONFIRMED')", (asset_id,)):
+            if _exists(connection, "face_person_links", f"{face_filter} AND (assignment_kind = 'MANUAL' OR last_operation_id IS NOT NULL)", (asset_id,)):
                 checks.append(("face_person_links", "1=1", (), "人物归属或人工纠错"))
-                # A mapped person may belong to an explicit user collection.
-                if "person_collection_members" in tables and _exists(
-                    connection,
-                    "person_collection_members",
-                    "person_id IN (SELECT person_id FROM face_person_links WHERE " + face_filter + ")",
-                    (asset_id,),
-                ):
-                    checks.append(("person_collection_members", "1=1", (), "人物合集"))
-                if "person_operations" in tables:
-                    checks.append(("person_operations", "1=1", (), "人物操作历史"))
-                if "person_hidden" in tables and _exists(
-                    connection,
-                    "person_hidden",
-                    "person_id IN (SELECT person_id FROM face_person_links WHERE " + face_filter + ")",
-                    (asset_id,),
-                ):
-                    checks.append(("person_hidden", "1=1", (), "隐藏人物记录"))
-        if "face_assignment_controls" in tables and _exists(connection, "face_assignment_controls", f"{face_filter} AND mode <> 'AUTO_ALLOWED'", (asset_id,)):
+            # An automatically linked face may still point into a user-maintained shared
+            # person collection or hidden-person state. Preserve the person and its anchors.
+            if "person_collection_members" in tables and _exists(
+                connection,
+                "person_collection_members",
+                "person_id IN (SELECT person_id FROM face_person_links WHERE " + face_filter + ")",
+                (asset_id,),
+            ):
+                checks.append(("person_collection_members", "1=1", (), "人物合集"))
+            if "person_hidden" in tables and _exists(
+                connection,
+                "person_hidden",
+                "person_id IN (SELECT person_id FROM face_person_links WHERE " + face_filter + ")",
+                (asset_id,),
+            ):
+                checks.append(("person_hidden", "1=1", (), "隐藏人物记录"))
+        if "person_operation_items" in tables and face_ids:
+            face_marks = ",".join("?" for _ in face_ids)
+            if _exists(
+                connection, "person_operation_items",
+                f"entity_type IN ('FACE_CONTROL','FACE_MAPPING_GROUP') AND entity_key IN ({face_marks})",
+                tuple(face_ids),
+            ):
+                checks.append(("person_operation_items", "1=1", (), "人物操作历史"))
+        if "face_redetection_groups" in tables and _exists(
+            connection, "face_redetection_groups",
+            "asset_id=? AND (state='OPEN' OR last_operation_id IS NOT NULL)", (asset_id,),
+        ):
+            checks.append(("face_redetection_groups", "1=1", (), "人脸重检待处理或人工历史"))
+        if "face_redetection_mappings" in tables and _exists(
+            connection, "face_redetection_mappings",
+            "asset_id=? AND (last_operation_id IS NOT NULL OR state IN ('CONFIRMED','REJECTED'))",
+            (asset_id,),
+        ):
+            checks.append(("face_redetection_mappings", "1=1", (), "人脸映射人工操作历史"))
+        if "face_assignment_controls" in tables and _exists(
+            connection, "face_assignment_controls",
+            f"{face_filter} AND (mode <> 'AUTO_ALLOWED' OR last_operation_id IS NOT NULL)", (asset_id,),
+        ):
             checks.append(("face_assignment_controls", "1=1", (), "人工人脸控制"))
         if "face_exclusions" in tables and _exists(connection, "face_exclusions", f"{face_filter} AND active = 1", (asset_id,)):
             checks.append(("face_exclusions", "1=1", (), "人物排除记录"))
         if "face_inbox_hidden" in tables and _exists(connection, "face_inbox_hidden", face_filter, (asset_id,)):
             checks.append(("face_inbox_hidden", "1=1", (), "忽略的人脸记录"))
-        checks.append(("faces", "asset_id = ?", (asset_id,), "人脸识别记录"))
 
     if "jobs" in tables:
         states = ",".join("?" for _ in ACTIVE_JOB_STATES)
@@ -140,42 +168,21 @@ def _human_or_protected(connection: sqlite3.Connection, tables: set[str], asset_
             (str(asset_id), asset_id, asset_id, *ACTIVE_JOB_STATES),
         ):
             checks.append(("jobs", "1=1", (), "活动任务"))
-    if "artifacts" in tables:
-        # Even RECLAIMED rows may still be referenced by an index or recovery path.
-        checks.append(("artifacts", "job_id IN (SELECT job_id FROM jobs WHERE "
-                       "(subject_type='asset' AND subject_id=?) OR "
-                       "(subject_type='face' AND subject_id IN (SELECT face_id FROM faces WHERE asset_id=?)) OR "
-                       "(subject_type='location' AND subject_id IN (SELECT CAST(location_id AS TEXT) FROM file_locations WHERE asset_id=?)))",
-                       (str(asset_id), asset_id, asset_id), "处理产物引用"))
     for table, where, args, label in checks:
         if where == "1=1" or _exists(connection, table, where, args):
             return True, [label]
 
     protected_tables = (
-        ("index_outbox", "asset_id = ?", (asset_id,), "索引待办/历史引用"),
-        ("index_entries", "asset_id = ?", (asset_id,), "索引世代引用"),
-        ("upgrade_targets", "asset_id = ?", (asset_id,), "升级目标引用"),
-        ("face_index_outbox", "face_id IN (SELECT face_id FROM faces WHERE asset_id = ?)", (asset_id,), "人脸索引待办"),
-        ("face_index_entries", "face_id IN (SELECT face_id FROM faces WHERE asset_id = ?)", (asset_id,), "人脸索引世代引用"),
-        ("face_candidates", "face_id IN (SELECT face_id FROM faces WHERE asset_id = ?)", (asset_id,), "人脸候选索引引用"),
-        ("face_association_queue", "asset_id = ?", (asset_id,), "人脸关联任务"),
-        ("face_detail_association_queue", "asset_id = ?", (asset_id,), "人脸详情关联任务"),
-        ("face_detail_auto_assets", "asset_id = ?", (asset_id,), "人脸详情处理引用"),
-        ("face_detail_batch_assets", "asset_id = ?", (asset_id,), "人脸详情批次引用"),
-        ("asset_geo_facts", "asset_id = ?", (asset_id,), "GPS 事实引用"),
-        ("asset_ocr_text", "asset_id = ?", (asset_id,), "OCR 文本引用"),
-        ("asset_ocr_regions", "asset_id = ?", (asset_id,), "OCR 区域引用"),
         ("asset_place_exclusions", "asset_id = ?", (asset_id,), "地点排除记录"),
-        ("cn_admin_resolutions", "asset_id = ?", (asset_id,), "地点解析记录"),
-        ("place_resolutions", "asset_id = ?", (asset_id,), "地点候选引用"),
         ("place_operation_items", "asset_id = ?", (asset_id,), "地点操作历史"),
-        ("face_redetection_groups", "asset_id = ?", (asset_id,), "人脸重检映射引用"),
-        ("face_redetection_mappings", "asset_id = ?", (asset_id,), "人脸重检映射历史"),
-        ("asset_metadata", "asset_id = ?", (asset_id,), "元数据事实引用"),
-        ("search_projection_queue", "asset_id = ?", (asset_id,), "搜索投影待办"),
-        ("ocr_documents", "asset_id = ?", (asset_id,), "OCR 记录"),
     )
     for table, where, args, label in protected_tables:
+        if table in tables and _exists(connection, table, where, args):
+            return True, [label]
+    for table, where, args, label in (
+        ("upgrade_targets", "asset_id=? AND state IN ('PLANNED','IN_FLIGHT')", (asset_id,), "模型升级任务进行中"),
+        ("face_detail_batch_assets", "asset_id=? AND state IN ('QUEUED','RUNNING')", (asset_id,), "人脸详情批次进行中"),
+    ):
         if table in tables and _exists(connection, table, where, args):
             return True, [label]
     return False, []
@@ -237,7 +244,7 @@ def _classification(
             if unresolved_anomaly
             else (
                 {"OBSERVING": "30 天观察中；到期后仍需所有来源重新成功扫描",
-                 "ELIGIBLE": "观察期已满且来源已复核；本页仅预览、不执行清理",
+                 "ELIGIBLE": "观察期已满且来源已复核；执行时仍会逐资产复核",
                  "BLOCKED": "资格已阻断；需重新成功扫描后重新计时"}.get(
                     str(retention_state), "不具备清理资格（观察期起点未知）"
                 )
@@ -255,57 +262,66 @@ def library_retention_preview(catalog: Catalog, *, after_asset_id: int = 0, limi
 
 
 def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, Any]:
-    """Persist one bounded user-authorized run; execution rechecks each asset."""
+    """Persist a click-time-fenced run; the worker selects at most 20 rows per batch."""
     normalized = str(mode).upper()
     if normalized not in {"MANUAL", "AUTOMATIC"}:
         raise ValueError("mode must be MANUAL or AUTOMATIC")
     now = int(catalog.now_ms())
     with catalog.write() as connection:
         active = connection.execute(
-            "SELECT run_id,state,mode FROM library_retention_runs WHERE state IN ('QUEUED','RUNNING') LIMIT 1"
+            "SELECT run_id,state,mode FROM library_retention_runs r WHERE state IN ('QUEUED','RUNNING') "
+            "OR (state='PARTIAL' AND (has_more_candidates=1 OR EXISTS (SELECT 1 FROM "
+            "library_retention_run_items i WHERE i.run_id=r.run_id AND i.state IN ('QUEUED','RUNNING','FAILED'))) ) "
+            "ORDER BY CASE WHEN state IN ('QUEUED','RUNNING') THEN 0 ELSE 1 END,updated_at_ms DESC LIMIT 1"
         ).fetchone()
         if active is not None:
-            return {"run_id": str(active["run_id"]), "state": str(active["state"]), "reused": True}
-        resumable = connection.execute(
-            "SELECT r.run_id FROM library_retention_runs r WHERE r.mode=? AND r.state='PARTIAL' "
-            "AND EXISTS (SELECT 1 FROM library_retention_run_items i WHERE i.run_id=r.run_id "
-            "AND i.state IN ('QUEUED','RUNNING','FAILED')) ORDER BY r.updated_at_ms DESC LIMIT 1",
-            (normalized,),
-        ).fetchone()
-        if resumable is not None:
-            run_id = str(resumable["run_id"])
-            connection.execute(
-                "UPDATE library_retention_runs SET state='QUEUED',stage='等待安全重试',updated_at_ms=? "
-                "WHERE run_id=?",
-                (now, run_id),
-            )
-            connection.execute(
-                "UPDATE library_retention_run_items SET state='QUEUED',stage='等待安全重试',reason=NULL "
-                "WHERE run_id=? AND state IN ('RUNNING','FAILED')",
-                (run_id,),
-            )
-            return {"run_id": run_id, "state": "QUEUED", "reused": True}
-        result = _preview_snapshot(connection, catalog.db_path, after_asset_id=0, limit=MAX_LIMIT)
-        candidates = [
-            item for item in result["items"]
-            if item["location_count"] > 0
-            and not item["has_human_or_protected_references"]
-            and not item["unresolved_source_anomaly"]
-            and item["classification"] not in {"已有有效副本", "来源已取消登记/零位置"}
-            and (normalized == "MANUAL" or item["retention_state"] == "ELIGIBLE")
-        ][:20]
+            if str(active["mode"]) != normalized:
+                return {
+                    "conflict": True,
+                    "code": "RUN_IN_PROGRESS",
+                    "run_id": str(active["run_id"]),
+                    "mode": str(active["mode"]),
+                    "state": str(active["state"]),
+                }
+            run_id = str(active["run_id"])
+            if str(active["state"]) == "PARTIAL":
+                connection.execute(
+                    "UPDATE library_retention_runs SET state='QUEUED',stage='等待安全续做',updated_at_ms=? "
+                    "WHERE run_id=?", (now, run_id),
+                )
+                connection.execute(
+                    "UPDATE library_retention_run_items SET state='QUEUED',stage='等待安全重试',reason=NULL "
+                    "WHERE run_id=? AND state='RUNNING'", (run_id,),
+                )
+            return {"run_id": run_id, "state": "QUEUED" if str(active["state"]) == "PARTIAL" else str(active["state"]), "reused": True}
+
+        states = ("ELIGIBLE",) if normalized == "AUTOMATIC" else ("OBSERVING", "ELIGIBLE")
+        marks = ",".join("?" for _ in states)
         run_id = uuid.uuid4().hex
         connection.execute(
-            "INSERT INTO library_retention_runs(run_id,mode,state,stage,total_assets,created_at_ms,updated_at_ms) "
-            "VALUES(?,?,?, ?,?,?,?)",
-            (run_id, normalized, "QUEUED" if candidates else "COMPLETE",
-             "等待执行" if candidates else "没有符合条件的候选", len(candidates), now, now),
+            "INSERT INTO library_retention_runs(run_id,mode,state,stage,total_assets,created_at_ms,updated_at_ms,"
+            "selection_cutoff_at_ms) VALUES(?,?, 'QUEUED','候选范围快照',0,?,?,?)",
+            (run_id, normalized, now, now, now),
         )
-        connection.executemany(
-            "INSERT INTO library_retention_run_items(run_id,asset_id,state,stage) VALUES(?,?,'QUEUED','排队')",
-            ((run_id, int(item["asset_id"])) for item in candidates),
+        connection.execute(
+            f"INSERT INTO library_retention_run_candidates(run_id,asset_id) "
+            f"SELECT ?,r.asset_id FROM asset_retention_state r JOIN assets a USING(asset_id) "
+            f"WHERE r.state IN ({marks}) AND r.updated_at_ms<=? ORDER BY r.asset_id",
+            (run_id, *states, now),
         )
-        return {"run_id": run_id, "state": "QUEUED", "reused": False, "total_assets": len(candidates)}
+        selection_max = int(connection.execute(
+            "SELECT COALESCE(MAX(asset_id),0) FROM library_retention_run_candidates WHERE run_id=?",
+            (run_id,),
+        ).fetchone()[0])
+        initial_state = "QUEUED" if selection_max else "COMPLETE"
+        initial_stage = "等待执行" if selection_max else "没有符合条件的候选"
+        connection.execute(
+            "UPDATE library_retention_runs SET state=?,stage=?,selection_max_asset_id=?,"
+            "selection_cutoff_at_ms=?,has_more_candidates=? WHERE run_id=?",
+            (initial_state, initial_stage, selection_max, now, int(bool(selection_max)), run_id),
+        )
+        return {"run_id": run_id, "state": initial_state,
+                "reused": False, "total_assets": 0, "has_more_candidates": bool(selection_max)}
 
 
 def library_retention_run_progress(catalog: Catalog, *, run_id: str | None = None) -> dict[str, Any] | None:
@@ -322,10 +338,111 @@ def library_retention_run_progress(catalog: Catalog, *, run_id: str | None = Non
         if row is None:
             return None
         items = connection.execute(
-            "SELECT asset_id,state,stage,reason,logical_rows_removed FROM library_retention_run_items "
+            "SELECT asset_id,state,stage,reason,logical_rows_removed,attempt_count,outcome_category "
+            "FROM library_retention_run_items "
             "WHERE run_id=? ORDER BY asset_id LIMIT 20", (str(row["run_id"]),)
         ).fetchall()
         return {"run": dict(row), "items": [dict(item) for item in items], "durable": True}
+
+
+def _retention_run_candidate_ids(connection: sqlite3.Connection, run: sqlite3.Row, *, limit: int) -> list[int]:
+    rows = connection.execute(
+        "SELECT asset_id FROM library_retention_run_candidates "
+        "WHERE run_id=? AND asset_id>? AND asset_id<=? ORDER BY asset_id LIMIT ?",
+        (str(run["run_id"]), int(run["selection_after_asset_id"]),
+         int(run["selection_max_asset_id"]), int(limit)),
+    ).fetchall()
+    return [int(row["asset_id"]) for row in rows]
+
+
+def prepare_library_retention_run_batch(catalog: Catalog, *, run_id: str, batch_size: int = 20) -> dict[str, Any]:
+    """Load/prepare one bounded keyset batch, or durably finish an exhausted run."""
+    limit = max(1, min(int(batch_size), 20))
+    now = int(catalog.now_ms())
+    with catalog.write() as connection:
+        run = connection.execute(
+            "SELECT * FROM library_retention_runs WHERE run_id=?", (str(run_id),)
+        ).fetchone()
+        if run is None:
+            return {"assets": [], "done": True}
+        cursor = int(run["selection_after_asset_id"])
+        current = connection.execute(
+            "SELECT asset_id,state,attempt_count FROM library_retention_run_items "
+            "WHERE run_id=? AND asset_id>? ORDER BY asset_id LIMIT 21",
+            (str(run_id), cursor),
+        ).fetchall()
+        if current:
+            return {"assets": [dict(row) for row in current], "done": False,
+                    "has_more": bool(run["has_more_candidates"])}
+
+        selected = _retention_run_candidate_ids(connection, run, limit=limit + 1)
+        if not selected:
+            terminal = "PARTIAL" if int(run["failed_assets"]) or int(run["skipped_assets"]) else "COMPLETE"
+            stage = "已检查全部候选；含失败或跳过" if terminal == "PARTIAL" else "已检查全部候选"
+            connection.execute(
+                "UPDATE library_retention_runs SET state=?,stage=?,has_more_candidates=0,updated_at_ms=? "
+                "WHERE run_id=?", (terminal, stage, now, str(run_id)),
+            )
+            return {"assets": [], "done": True, "state": terminal}
+        # Keep the most recent bounded batch visible for progress/recovery. Replace it
+        # only when another batch is actually available.
+        connection.execute("DELETE FROM library_retention_run_items WHERE run_id=?", (str(run_id),))
+        has_more = len(selected) > limit
+        batch = selected[:limit]
+        connection.executemany(
+            "INSERT INTO library_retention_run_items(run_id,asset_id,state,stage,outcome_category) "
+            "VALUES(?,?,'QUEUED','排队','OTHER')",
+            ((str(run_id), asset_id) for asset_id in batch),
+        )
+        connection.execute(
+            "UPDATE library_retention_runs SET state='RUNNING',stage='检查当前批次',"
+            "has_more_candidates=?,updated_at_ms=? WHERE run_id=?",
+            (int(has_more), now, str(run_id)),
+        )
+        rows = connection.execute(
+            "SELECT asset_id,state,attempt_count FROM library_retention_run_items "
+            "WHERE run_id=? ORDER BY asset_id LIMIT ?", (str(run_id), limit),
+        ).fetchall()
+        return {"assets": [dict(row) for row in rows], "done": False, "has_more": has_more}
+
+
+def settle_library_retention_run_batch(catalog: Catalog, *, run_id: str) -> bool:
+    """Atomically advance the cursor and aggregate one fully terminal batch exactly once."""
+    now = int(catalog.now_ms())
+    with catalog.write() as connection:
+        run = connection.execute(
+            "SELECT selection_after_asset_id FROM library_retention_runs WHERE run_id=?",
+            (str(run_id),),
+        ).fetchone()
+        if run is None:
+            return False
+        rows = connection.execute(
+            "SELECT asset_id,state,outcome_category FROM library_retention_run_items "
+            "WHERE run_id=? AND asset_id>? ORDER BY asset_id",
+            (str(run_id), int(run["selection_after_asset_id"])),
+        ).fetchall()
+        if not rows or any(str(row["state"]) in {"QUEUED", "RUNNING"} for row in rows):
+            return False
+        counts = {state: sum(str(row["state"]) == state for row in rows)
+                  for state in ("COMPLETE", "SKIPPED", "FAILED")}
+        skipped_human = sum(str(row["state"]) == "SKIPPED" and str(row["outcome_category"]) == "HUMAN" for row in rows)
+        skipped_source = sum(str(row["state"]) == "SKIPPED" and str(row["outcome_category"]) == "SOURCE" for row in rows)
+        skipped_other = counts["SKIPPED"] - skipped_human - skipped_source
+        after = max(int(row["asset_id"]) for row in rows)
+        connection.execute(
+            "UPDATE library_retention_runs SET selection_after_asset_id=?,checked_assets=checked_assets+?,"
+            "total_assets=total_assets+?,completed_assets=completed_assets+?,skipped_assets=skipped_assets+?,"
+            "failed_assets=failed_assets+?,skipped_human_assets=skipped_human_assets+?,"
+            "skipped_source_assets=skipped_source_assets+?,skipped_other_assets=skipped_other_assets+?,"
+            "stage='准备下一批',updated_at_ms=? WHERE run_id=?",
+            (after, len(rows), len(rows), counts["COMPLETE"], counts["SKIPPED"], counts["FAILED"],
+             skipped_human, skipped_source, skipped_other, now, str(run_id)),
+        )
+        connection.execute(
+            "DELETE FROM library_retention_run_candidates WHERE run_id=? AND asset_id<=?",
+            (str(run_id), after),
+        )
+        return True
 
 
 def set_library_retention_automatic(catalog: Catalog, *, enabled: bool) -> dict[str, Any]:
@@ -435,6 +552,14 @@ def _preview_snapshot(
 
     db_bytes = physical_size(db_path)
     wal_bytes = physical_size(Path(str(db_path) + "-wal"))
+    retention_time_evidence = connection.execute(
+        "SELECT "
+        "SUM(CASE WHEN first_missing_at_ms IS NOT NULL AND state IN ('OBSERVING','ELIGIBLE') THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN first_missing_at_ms IS NULL OR state IN ('UNKNOWN','BLOCKED') THEN 1 ELSE 0 END) "
+        "FROM asset_retention_state"
+    ).fetchone()
+    trusted_timed = int(retention_time_evidence[0] or 0)
+    unknown_timed = int(retention_time_evidence[1] or 0)
     return {
         "counts": {key: int(counts[key] or 0) for key in (
             "missing_locations", "assets_without_present", "zero_location_assets", "assets_with_present_copy"
@@ -457,7 +582,11 @@ def _preview_snapshot(
         "limit": bounded_limit,
         "next_cursor": next_cursor,
         "observation_period_days": 30,
-        "retention_time_evidence": "首次确认 MISSING 时间在现有数据中不可可靠推导；历史记录均为时间未知，不具备清理资格。",
+        "retention_time_evidence": (
+            f"已有可信观察时间的资产 {trusted_timed} 张；仍有 {unknown_timed} 张历史或受阻资产没有可用资格时间。"
+            if trusted_timed or unknown_timed
+            else "尚无可信失效观察记录；历史 MISSING 时间不会从文件或数据库旧时间猜测。"
+        ),
         "storage": {
             "sqlite_logical_page_bytes": sqlite_logical_bytes,
             "sqlite_catalog_file_bytes": db_bytes,
@@ -531,53 +660,12 @@ def _cleanup_preflight(
         (int(asset_id),),
     ).fetchone() is not None:
         blockers.append("存在未解决的来源批量异常")
-    # Human, shared, and operation-history references remain protected by default.
-    direct_checks = (
-        ("asset_favorites", "asset_id=?", "人工收藏"),
-        ("photo_collection_members", "asset_id=?", "照片合集成员"),
-        ("photo_smart_exclusions", "asset_id=?", "智能合集人工排除"),
-        ("user_annotations", "asset_id=?", "人工备注"),
-        ("search_feedback", "asset_id=?", "搜索反馈历史"),
-        ("person_collection_face_members", "asset_id=?", "人物合集历史引用"),
-        ("asset_place_assignment_history", "asset_id=?", "地点归属历史"),
-        ("asset_place_exclusions", "asset_id=?", "地点人工排除"),
-        ("place_operation_items", "asset_id=?", "地点操作历史"),
-        ("upgrade_targets", "asset_id=?", "模型升级目标引用"),
-        ("face_redetection_groups", "asset_id=?", "人脸重检历史"),
-        ("face_redetection_mappings", "asset_id=?", "人脸映射历史"),
+    # One shared human/reference classifier drives both preview and final authority.
+    has_human_references, human_reasons = _human_or_protected(
+        connection, tables, int(asset_id), include_barrier=False
     )
-    for table, predicate, label in direct_checks:
-        if table in tables and _exists(connection, table, predicate, (int(asset_id),)):
-            blockers.append(label)
-    if "asset_tags" in tables:
-        columns = _columns(connection, "asset_tags")
-        predicate = "asset_id=?" if "source" not in columns else "asset_id=? AND upper(source)='USER'"
-        if _exists(connection, "asset_tags", predicate, (int(asset_id),)):
-            blockers.append("人工标签")
-    if "asset_place_assignments" in tables and _exists(
-        connection,
-        "asset_place_assignments",
-        "asset_id=? AND (mode<>'AUTO_ALLOWED' OR origin<>'NONE' OR manual_lock<>0)",
-        (int(asset_id),),
-    ):
-        blockers.append("人工地点归属")
-
-    face_ids = [
-        str(row[0])
-        for row in connection.execute("SELECT face_id FROM faces WHERE asset_id=?", (int(asset_id),))
-    ] if "faces" in tables else []
-    if face_ids:
-        marks = ",".join("?" for _ in face_ids)
-        for table, label in (
-            ("face_person_links", "人物关联"),
-            ("face_assignment_controls", "人工人脸控制"),
-            ("face_exclusions", "人脸排除记录"),
-            ("face_inbox_hidden", "忽略的人脸记录"),
-        ):
-            if table in tables and connection.execute(
-                f"SELECT 1 FROM {table} WHERE face_id IN ({marks}) LIMIT 1", tuple(face_ids)
-            ).fetchone() is not None:
-                blockers.append(label)
+    if has_human_references:
+        blockers.extend(human_reasons)
     if _unknown_asset_reference_schema(connection, tables):
         blockers.append("存在无法解释的资产引用类型")
     return list(dict.fromkeys(blockers))
@@ -683,6 +771,7 @@ def finalize_asset_retention_cleanup(
             return {"asset_id": int(asset_id), "state": "WAITING_FOR_VECTOR_DELETE", "machine_rows_removed": 0}
         blockers = _cleanup_preflight(connection, asset_id=int(asset_id), require_expired=False)
         if blockers:
+            _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
             return {"asset_id": int(asset_id), "state": "BLOCKED_RECHECK", "blockers": blockers, "machine_rows_removed": 0}
 
         asset_identity = connection.execute(
@@ -715,6 +804,14 @@ def finalize_asset_retention_cleanup(
             "WHERE asset_id=? AND state='ACTIVE'",
             (str(asset_identity["sha256"]), json.dumps(sorted(set(face_crop_keys))), int(asset_id)),
         )
+        for table in (
+            "face_redetection_mappings", "face_redetection_groups",
+            "face_detail_batch_assets", "face_detail_auto_assets",
+        ):
+            if table in _tables(connection):
+                connection.execute(f"DELETE FROM {table} WHERE asset_id=?", (int(asset_id),))
+        if "upgrade_targets" in _tables(connection):
+            connection.execute("DELETE FROM upgrade_targets WHERE asset_id=?", (int(asset_id),))
         if face_ids:
             marks = ",".join("?" for _ in face_ids)
             values = tuple(face_ids)

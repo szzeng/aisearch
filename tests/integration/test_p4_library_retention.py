@@ -61,6 +61,144 @@ def _seed_retention_eligible(catalog, asset_id: int, source_id: int, *, now_ms: 
         )
 
 
+def _run_retention_to_terminal(api_env, run_id: str) -> dict:
+    import time
+
+    for _ in range(2_000):
+        row = api_env.service.catalog.read_one(
+            "SELECT * FROM library_retention_runs WHERE run_id=?", (run_id,)
+        )
+        if row["state"] not in {"QUEUED", "RUNNING"}:
+            return dict(row)
+        time.sleep(0.01)
+    raise AssertionError(f"retention run did not reach a terminal state: {run_id}")
+
+
+def test_retention_one_click_scans_past_first_preview_page(api_env) -> None:
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-many"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("many", source_path)["source_id"])
+    now = int(catalog.now_ms())
+    for asset_id in range(1, 151):
+        _seed_retention_eligible(catalog, asset_id, source_id, now_ms=now)
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(?,?)",
+            ((asset_id, now) for asset_id in range(1, 51)),
+        )
+
+    created = create_library_retention_run(catalog, mode="MANUAL")
+    assert created["state"] == "QUEUED"
+    assert api_env.context.retention_cleanup_runner().start(created["run_id"])
+    run = _run_retention_to_terminal(api_env, created["run_id"])
+    assert run["state"] == "PARTIAL"
+    assert run["checked_assets"] == 150
+    assert run["completed_assets"] == 100
+    assert run["skipped_human_assets"] == 50
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM library_retention_run_items WHERE run_id=?", (created["run_id"],)
+    )[0] <= 20
+
+
+def test_retention_one_click_processes_more_than_one_batch(api_env) -> None:
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-sixty-five"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("sixty-five", source_path)["source_id"])
+    now = int(catalog.now_ms())
+    for asset_id in range(1, 66):
+        _seed_retention_eligible(catalog, asset_id, source_id, now_ms=now)
+
+    created = create_library_retention_run(catalog, mode="MANUAL")
+    assert api_env.context.retention_cleanup_runner().start(created["run_id"])
+    run = _run_retention_to_terminal(api_env, created["run_id"])
+    assert run["state"] == "COMPLETE"
+    assert run["checked_assets"] == 65
+    assert run["total_assets"] == 65
+    assert run["completed_assets"] == 65
+    assert run["has_more_candidates"] == 0
+
+
+def test_retention_runs_reject_cross_mode_reuse_including_partial(api_env) -> None:
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    automatic = create_library_retention_run(catalog, mode="AUTOMATIC")
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE library_retention_runs SET state='PARTIAL',has_more_candidates=1 WHERE run_id=?",
+            (automatic["run_id"],),
+        )
+    conflict = create_library_retention_run(catalog, mode="MANUAL")
+    assert conflict["conflict"] is True
+    assert conflict["code"] == "RUN_IN_PROGRESS"
+    assert conflict["run_id"] == automatic["run_id"]
+    resumed = create_library_retention_run(catalog, mode="AUTOMATIC")
+    assert resumed["run_id"] == automatic["run_id"]
+    assert resumed["reused"] is True
+    assert resumed["state"] == "QUEUED"
+
+
+def test_retention_candidate_cursor_uses_asset_primary_key(api_env) -> None:
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-plan"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("plan", source_path)["source_id"])
+    now = int(catalog.now_ms())
+    _seed_retention_eligible(catalog, 22, source_id, now_ms=now)
+    run = create_library_retention_run(catalog, mode="MANUAL")
+    persisted = catalog.read_one(
+        "SELECT selection_max_asset_id,selection_cutoff_at_ms FROM library_retention_runs WHERE run_id=?",
+        (run["run_id"],),
+    )
+    plan = catalog.read_all(
+        "EXPLAIN QUERY PLAN SELECT asset_id FROM library_retention_run_candidates "
+        "WHERE run_id=? AND asset_id>? AND asset_id<=? ORDER BY asset_id LIMIT ?",
+        (run["run_id"], 0, persisted["selection_max_asset_id"], 21),
+    )
+    detail = " ".join(str(row["detail"]) for row in plan).upper()
+    assert "COVERING INDEX" in detail and "ASSET_ID>?" in detail
+
+
+def test_retention_click_time_candidates_are_rechecked_after_state_changes(api_env) -> None:
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-changed-after-click"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("changed-after-click", source_path)["source_id"])
+    now = int(catalog.now_ms())
+    _seed_retention_eligible(catalog, 77, source_id, now_ms=now)
+    created = create_library_retention_run(catalog, mode="MANUAL")
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM library_retention_run_candidates WHERE run_id=? AND asset_id=77",
+        (created["run_id"],),
+    )[0] == 1
+    with catalog.write() as connection:
+        connection.execute("UPDATE source_roots SET status='OFFLINE' WHERE source_id=?", (source_id,))
+        connection.execute(
+            "UPDATE asset_retention_state SET state='BLOCKED',updated_at_ms=? WHERE asset_id=77",
+            (now + 1,),
+        )
+
+    assert api_env.context.retention_cleanup_runner().start(created["run_id"])
+    run = _run_retention_to_terminal(api_env, created["run_id"])
+    assert run["state"] == "PARTIAL"
+    assert run["checked_assets"] == 1
+    assert run["skipped_assets"] == 1
+    assert catalog.read_one(
+        "SELECT state FROM library_retention_run_items WHERE run_id=? AND asset_id=77",
+        (created["run_id"],),
+    )[0] == "SKIPPED"
+
+
 def test_library_retention_preview_is_bounded_read_only_and_keyset_paged(api_env) -> None:
     catalog = api_env.service.catalog
     path_a, path_b = api_env.tmp_path / "source-a", api_env.tmp_path / "source-b"
@@ -108,7 +246,7 @@ def test_library_retention_preview_is_bounded_read_only_and_keyset_paged(api_env
     assert len({row["asset_id"] for row in rows}) == 54
     by_id = {row["asset_id"]: row for row in rows}
     assert by_id[1]["classification"] == "已有有效副本"
-    assert by_id[1]["has_human_or_protected_references"] is True
+    assert by_id[1]["has_human_or_protected_references"] is False
     assert by_id[2]["classification"] == "全局无可用位置但证据不足"
     assert "观察期起点未知" in by_id[2]["retention_eligibility"]
     assert by_id[3]["classification"] == "包含人工信息或受保护引用"
@@ -158,9 +296,9 @@ def test_library_retention_worker_persists_revalidated_skip(api_env) -> None:
     source_path = api_env.tmp_path / "source-worker"
     source_path.mkdir()
     source = api_env.register_source("worker", source_path)
-    _seed_asset(catalog, 17, locations=((int(source["source_id"]), "MISSING"),))
+    _seed_retention_eligible(catalog, 17, int(source["source_id"]), now_ms=int(catalog.now_ms()))
     with catalog.write() as connection:
-        connection.execute("DELETE FROM search_projection_queue WHERE asset_id=17")
+        connection.execute("UPDATE source_roots SET status='OFFLINE' WHERE source_id=?", (int(source["source_id"]),))
 
     async def scenario(client: AsyncClient) -> dict:
         await api_env.authenticate(client)
@@ -169,7 +307,7 @@ def test_library_retention_worker_persists_revalidated_skip(api_env) -> None:
             "/api/v1/storage/library-retention/cleanup", json={"confirmed": True}, headers=headers
         )
         assert started.status_code == 200, started.text
-        assert started.json().get("total_assets") == 1, started.json()
+        assert started.json().get("state") in {"QUEUED", "RUNNING", "PARTIAL", "COMPLETE"}, started.json()
         run_id = started.json()["run_id"]
         progress = None
         for _ in range(80):
@@ -184,9 +322,10 @@ def test_library_retention_worker_persists_revalidated_skip(api_env) -> None:
     progress = result["progress"]
     assert progress["durable"] is True
     assert progress["run"]["state"] == "PARTIAL", progress
+    assert progress["run"]["checked_assets"] == 1
     assert progress["run"]["skipped_assets"] == 1
     assert progress["items"][0]["state"] == "SKIPPED"
-    assert "来源缺少匹配的成功失效复核证据" in progress["items"][0]["reason"]
+    assert "相关来源未全部在线" in progress["items"][0]["reason"]
 
 
 def test_library_retention_resumes_partial_run_after_lock(api_env, monkeypatch) -> None:
@@ -557,8 +696,8 @@ def test_library_retention_protects_index_outbox_and_offline_sources(api_env) ->
     from photo_search.library_retention import library_retention_preview
     result = library_retention_preview(catalog)
     by_id = {row["asset_id"]: row for row in result["items"]}
-    assert by_id[1]["classification"] == "包含人工信息或受保护引用"
-    assert by_id[1]["has_human_or_protected_references"] is True
+    assert by_id[1]["classification"] == "全局无可用位置但证据不足"
+    assert by_id[1]["has_human_or_protected_references"] is False
     assert by_id[2]["classification"] == "全局无可用位置但证据不足"
     assert "离线" in by_id[2]["reason"]
 
@@ -886,6 +1025,14 @@ def test_retention_cleanup_waits_for_vectors_then_removes_machine_rows(api_env) 
             "'{}',?, 'PENDING',0,1,1)",
             (face_id, hashlib.sha256(b"{}").hexdigest()),
         )
+        person_id = int(connection.execute(
+            "INSERT INTO persons(name,name_key,revision,created_at,updated_at) VALUES(NULL,NULL,1,1,1)"
+        ).lastrowid)
+        connection.execute(
+            "INSERT INTO face_person_links(face_id,person_id,assignment_kind,decision,confidence,"
+            "revision,created_at,updated_at) VALUES(?,?,'AUTO','CONFIRMED',0.9,1,1,1)",
+            (face_id, person_id),
+        )
 
     started = begin_asset_retention_cleanup(catalog, asset_id=905, now_ms=100_000_000_001)
     assert started["state"] == "READY_TO_FINALIZE"
@@ -896,6 +1043,7 @@ def test_retention_cleanup_waits_for_vectors_then_removes_machine_rows(api_env) 
         assert connection.execute("SELECT 1 FROM file_locations WHERE asset_id=905").fetchone() is None
         assert connection.execute("SELECT 1 FROM asset_metadata WHERE asset_id=905").fetchone() is None
         assert connection.execute("SELECT 1 FROM faces WHERE asset_id=905").fetchone() is None
+        assert connection.execute("SELECT 1 FROM face_person_links WHERE face_id=?", (face_id,)).fetchone() is None
         assert connection.execute("SELECT 1 FROM face_embeddings WHERE face_id=?", (face_id,)).fetchone() is None
         assert connection.execute("SELECT 1 FROM face_candidates WHERE face_id=?", (face_id,)).fetchone() is None
         assert connection.execute("SELECT 1 FROM face_index_outbox WHERE face_id=?", (face_id,)).fetchone() is None
@@ -909,6 +1057,28 @@ def test_retention_cleanup_waits_for_vectors_then_removes_machine_rows(api_env) 
             crop_key(face_id=face_id, box=parse_bbox("[10,10,40,40]"), sha256=barrier[1])
         ]
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_retention_releases_barrier_if_human_data_appears_during_cleanup(api_env) -> None:
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "cleanup-human-race"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("human-race", source_path)["source_id"])
+    _seed_retention_eligible(catalog, 908, source_id, now_ms=100_000_000_000)
+    begin_asset_retention_cleanup(catalog, asset_id=908, now_ms=100_000_000_001, manual_early=True)
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(908,100000000002)")
+    result = finalize_asset_retention_cleanup(catalog, asset_id=908, now_ms=100_000_000_003)
+    assert result["state"] == "BLOCKED_RECHECK"
+    assert "人工收藏" in result["blockers"]
+    assert catalog.read_one(
+        "SELECT COUNT(*) FROM asset_retention_barriers WHERE asset_id=908 AND state='ACTIVE'"
+    )[0] == 0
 
 
 def test_retention_cleanup_allows_explicit_early_confirmation_but_keeps_human_data(api_env) -> None:

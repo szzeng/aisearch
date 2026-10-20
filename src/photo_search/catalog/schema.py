@@ -83,8 +83,9 @@ from photo_search.catalog.errors import SCHEMA_INCONSISTENT, CatalogError
 # 0038 adds trustworthy per-source missing evidence and persistent bulk-disappearance holds;
 # 0039 adds asset tombstone barriers that survive the asset row's later removal.
 # 0040 preserves exact media-cache identities for safe post-cleanup GC; 0041 stores
-# retention authorization policy and restart-visible cleanup runs/items.
-SUPPORTED_SCHEMA_VERSION = 41
+# retention authorization policy and restart-visible cleanup runs/items; 0042 adds the
+# bounded keyset fence, cross-batch counters, and retry budget for cleanup runs.
+SUPPORTED_SCHEMA_VERSION = 42
 SCHEMA_VERSION_KEY = "schema_version"
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"

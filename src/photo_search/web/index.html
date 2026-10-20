@@ -113,8 +113,8 @@
                 <pre id="storage-summary" class="state-block" role="status" aria-live="polite"></pre>
               </section>
               <section id="storage-panel-retention" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-retention" hidden>
-                <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">清理只删除 PhotoSearch 中已复核失效照片的派生数据，不会删除原始照片。人工记录始终受保护；受管缓存需在应用停止后回收。</p></div><button type="button" id="library-retention-refresh">重新检查</button></div>
-                <div class="storage-retention-actions"><label><input type="checkbox" id="library-retention-automatic" /> 开启 30 天后自动清理</label><button type="button" id="library-retention-cleanup">一键清除已确认失效照片（每批最多 20 张）</button></div>
+                <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">自动分批清除所有符合条件的失效照片，每批最多 20 张。手动清理可跳过 30 天等待，但仍需可靠扫描确认。不会删除原图及受保护的人工记录。受管缓存需在应用停止后回收。</p></div><button type="button" id="library-retention-refresh">重新检查</button></div>
+                <div class="storage-retention-actions"><label><input type="checkbox" id="library-retention-automatic" /> 开启 30 天后自动清理</label><button type="button" id="library-retention-cleanup">一键清除失效照片</button></div>
                 <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
                 <div id="library-retention-anomalies" class="storage-retention-anomalies" aria-live="polite"></div>
                 <button type="button" id="library-retention-more" hidden>继续读取</button>

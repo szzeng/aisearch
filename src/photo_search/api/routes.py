@@ -662,7 +662,12 @@ async def storage_library_retention_cleanup(request: Request, payload: dict[str,
 
     context = context_of(request)
     created = create_library_retention_run(service_of(request).catalog, mode="MANUAL")
-    if created.get("state") in {"QUEUED", "RUNNING"} and int(created.get("total_assets", 1)) > 0:
+    if created.get("conflict"):
+        raise ApiError(
+            "RUN_IN_PROGRESS", "另一授权模式的清理任务仍在执行，请待其结束后重试。",
+            status=409, details=created,
+        )
+    if created.get("state") in {"QUEUED", "RUNNING"}:
         context.retention_cleanup_runner().start(str(created["run_id"]))
     progress = library_retention_run_progress(service_of(request).catalog, run_id=str(created["run_id"]))
     return {**created, "progress": progress, "physical_reclaim": "需要应用停止后运行 storage clean-retained"}
@@ -685,11 +690,12 @@ async def storage_library_retention_automatic(request: Request, payload: dict[st
     created = None
     if enabled:
         created = create_library_retention_run(catalog, mode="AUTOMATIC")
-        if created.get("state") in {"QUEUED", "RUNNING"} and int(created.get("total_assets", 1)) > 0:
+        if not created.get("conflict") and created.get("state") in {"QUEUED", "RUNNING"}:
             context.retention_cleanup_runner().start(str(created["run_id"]))
     return {
         **setting,
-        "run": None if not created else library_retention_run_progress(catalog, run_id=str(created["run_id"])),
+        "run": None if not created or created.get("conflict") else library_retention_run_progress(catalog, run_id=str(created["run_id"])),
+        "run_conflict": created if created and created.get("conflict") else None,
     }
 
 
