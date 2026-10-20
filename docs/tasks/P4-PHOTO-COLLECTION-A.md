@@ -184,3 +184,13 @@ INSERT INTO metadata(key, value) VALUES ('photo_collections_revision', '0');
 - **验证**：联合智能/普通合集及共享 UI JUnit `test-results/joint-smart-combined-20261019.xml` 为 59/59；迁移、备份恢复、保存 COUNT、搜索范围和时间轴组合 `test-results/joint-data-20261019-rerun.xml` 为 52/52。Ruff、相关 py_compile、app.js `node --check`、diff-check exit 0。首次并行跑因项目 `.tmp` 父目录未预建发生 SQLite/Lance 临时目录错误；预建后串行重跑全部通过。
 - **浏览器**：隔离 3 照片图库，在 127.0.0.1 实测按文字搜索→保存普通合集→详情查看→viewer 开/关→切换时间轴→移出照片→返回合集目录；所有步骤显示期望状态。由本轮浏览器实际完成，覆盖旧报告中受 prompt 对话框限制留下的保存缺口。智能缓存刷新、另存、排除/恢复流程沿用此前未变代码的内置浏览器记录，详情见智能合集卡/报告。
 - **结论与待验**：普通合集成员顺序与收藏/智能排除隔离的联合测试通过。未完成普通合集 UI pending-request 进程重启恢复、同身份 generation 专测和超大无界稀疏成员容量；高风险人工数据变更的 DS-H 完整独审仍 PENDING。整卡维持 IMPLEMENTED / ACCEPTANCE PARTIAL。没有访问真实图库。
+
+
+## 12. 2026-10-20 搜索选择保存命名跟进
+
+搜索页“保存已选照片为合集”对话框在有已确认搜索时默认取确认结果中的 `query.text`，去首尾空白并按 80 个 Unicode 字符截断；没有已确认关键词（例如从其他选择上下文进入）时保持空白。用户仍可编辑名称并自行确认；不改变被选资产、普通合集 API、保存/追加合同或搜索行为。
+
+- **性能三行**：流/风险：搜索结果多选后创建普通合集，对话框默认名可能与本次结果脱节。
+- 做法/边界：仅从已有内存中的确认查询提取字符串并做常数上限截断，不增加搜索、SQL、网络或模型请求。
+- 验证/停止：定向 Node 前端交互断言（关键词/空值/80 字 Unicode 边界）与隔离合成浏览器取消流程；不启动数据库/模型/容量测试。
+- **验证与边界**：最终 `P4-PHOTO-COLLECTION-A-selected-name-r5.xml` 为 1 passed、0 failed/errors/skipped；Ruff、`node --check src/photo_search/web/search.js`、`git diff --check` 退出码 0。Codex 内置浏览器使用本地隔离合成图库按文字找 `p520`，选择照片后打开对话框显示预填 `p520`，取消而未创建合集。r1-r3 是测试 harness 选择状态设置/初始化时机错误，已调整为搜索完成后选择并用 getter 暴露运行时状态；失败 XML 原样保留。状态不改变本卡原有 `IMPLEMENTED / ACCEPTANCE PARTIAL`；未访问真实图库或运行全仓/GPU/大库测试。

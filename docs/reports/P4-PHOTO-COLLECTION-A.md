@@ -87,3 +87,13 @@ $env:PYTHONPATH='src;tests;.'
 ### 状态
 
 普通合集已通过本轮要求的保存/浏览/移出/返回代表性流程，可在已验证功能范围内进入日常使用。整卡仍 `IMPLEMENTED / ACCEPTANCE PARTIAL`：UI pending-request 跨进程恢复、同 profile 下 generation 变化、极大无界稀疏成员容量和独立 DS-H 全受影响面审查仍未验。既有 300k 合成证据仍是本项目唯一大库对照，不构成其它设备或无界容量承诺。
+
+
+## 2026-10-20 搜索选择保存名称默认值
+
+搜索页“保存已选照片为合集”现默认预填当前已确认搜索的 `query.text`，去除首尾空白并最多保留 80 个完整 Unicode 字符；没有已确认关键词则为空。只传入命名对话框初值，用户仍编辑/确认后才创建。未修改选中照片、搜索、服务端 API、数据库或保存合同。
+
+- 定向命令 `uv run pytest -q tests/unit/test_search_text_mode_ui.py --junitxml=test-results/P4-PHOTO-COLLECTION-A-selected-name-r5.xml --basetemp=.pytest-tmp-p4-photo-collection-selected-name-r5`：退出码 0，JUnit 1 passed、0 failed/errors/skipped，覆盖普通关键词、无确认关键词空白、80 字 Unicode 边界。
+- `uv run ruff check tests/unit/test_search_text_mode_ui.py`、`node --check src/photo_search/web/search.js`、`git diff --check`：退出码均为 0。r1-r3 为测试 harness 初始化/选择状态时序问题；修正后 r4 通过，r5 增加 Unicode 上限后通过。失败 XML 保留。
+- Codex 内置浏览器打开隔离合成库搜索页，按文字找 `p520` 命中一个文件名结果；进入选择、选中该照片、打开“保存已选照片为合集”，实际看到命名框为 `p520`，随后取消，未执行创建请求。合成数据在任务既有隔离 PhotoSearchData 中；未访问真实图库。
+- 未做全仓回归、模型/GPU 或大图库认证；该补充只覆盖命名初值，不变更 P4-PHOTO-COLLECTION-A 原有部分验收状态。

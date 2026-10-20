@@ -67,6 +67,7 @@ function harness(storage=new Map(),harnessOptions={}){
           addEventListener(){},
       history:{state:harnessOptions.historyState||null,replaceState(value,title,url){this.state=value;historyWrites.push(url);if(url){const next=new URL(url,"http://127.0.0.1");context.window.location.href=next.href;context.window.location.pathname=next.pathname;context.window.location.search=next.search;context.window.location.hash=next.hash;}}},
       requestAnimationFrame:fn=>fn(),scrollTo(...args){scrolls.push(args);},
+      PhotoBatchSelect:{create(){return {selected:new Set(harnessOptions.selectedAssets||[]),reset(){this.selected.clear();}};}},
       sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)}},
     fetch:async(url,options)=>{
       calls.push({url,options,body:options&&options.body?JSON.parse(options.body):null});
@@ -89,7 +90,7 @@ function harness(storage=new Map(),harnessOptions={}){
     }};
   let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
   code=code.replace('  if (document.readyState === "loading")',
-    '  globalThis.ui={state,boot,sendSearch,continueSearch,toggleCandidateTimeBrowse,saveSearchSnapshot};\n  if (document.readyState === "loading")');
+    '  globalThis.ui={state,boot,sendSearch,continueSearch,toggleCandidateTimeBrowse,saveSearchSnapshot,get photoSelection(){return photoSelection;}};\n  if (document.readyState === "loading")');
   vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
   // The shared viewer owns its DOM; this test exercises the real search-page
   // callbacks and the shared full-detail navigation/storage helper.
@@ -560,6 +561,35 @@ function assertLiteral(request){
   assert.equal(favorites.searchCalls().length,beforeCancel,"cancelling favorites does not auto-expand to all photos");
   favorites.get("search-form").fire("submit");await flush();
   assert.equal(favorites.searchCalls().at(-1).body.favorites_only,false);
+
+  const selectedCollectionName=harness();await flush();
+  selectedCollectionName.get("query-text").value="西湖 夜景";
+  selectedCollectionName.setAnswer(body=>ok({...page(body,301,null),photo_collection_source_token:"confirmed-search-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  selectedCollectionName.get("search-form").fire("submit");await flush();
+  selectedCollectionName.ui.photoSelection.selected.add(201);
+  selectedCollectionName.setDialogAnswer(()=>Promise.resolve(null));
+  selectedCollectionName.get("search-photo-save-collection").fire("click");await flush();
+  assert.equal(selectedCollectionName.dialogs.at(-1).value,"西湖 夜景",
+    "saving selected photos defaults to the confirmed search keyword");
+
+  const selectedCollectionLong=harness();await flush();
+  const selectedLongKeyword="山🌄".repeat(45);
+  selectedCollectionLong.get("query-text").value=selectedLongKeyword;
+  selectedCollectionLong.setAnswer(body=>ok({...page(body,304,null),photo_collection_source_token:"confirmed-search-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  selectedCollectionLong.get("search-form").fire("submit");await flush();
+  selectedCollectionLong.ui.photoSelection.selected.add(201);
+  selectedCollectionLong.setDialogAnswer(()=>Promise.resolve(null));
+  selectedCollectionLong.get("search-photo-save-collection").fire("click");await flush();
+  assert.equal(selectedCollectionLong.dialogs.at(-1).value,Array.from(selectedLongKeyword).slice(0,80).join(""),
+    "a long selected-collection default is truncated at 80 complete Unicode characters");
+
+  const selectedCollectionNoKeyword=harness();await flush();selectedCollectionNoKeyword.ui.photoSelection.selected.add(201);
+  selectedCollectionNoKeyword.setDialogAnswer(()=>Promise.resolve(null));
+  selectedCollectionNoKeyword.get("search-photo-save-collection").fire("click");await flush();
+  assert.equal(selectedCollectionNoKeyword.dialogs.at(-1).value,"",
+    "saving selected photos without a confirmed search keyword keeps the name blank");
 
   const smartName=harness();await flush();
   smartName.get("query-text").value="西湖 夜景";

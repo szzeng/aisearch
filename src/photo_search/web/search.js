@@ -4105,7 +4105,11 @@
       var selected = photoSelection ? Array.from(photoSelection.selected, Number) : [];
       if (!selected.length || selected.length > 500) return;
       els.photoSaveCollection.disabled = true;
-      window.AIPhotoInfo.actionDialog({kind:"text", title:"保存为照片合集", message:"为已选的 " + selected.length + " 张照片创建合集。", label:"合集名称"})
+      var confirmed = state.search.confirmedSearch;
+      var query = confirmed && confirmed.query;
+      var keyword = query && typeof query === "object" ? query.text : query;
+      var suggestedName = Array.from(String(keyword || "").trim()).slice(0, 80).join("");
+      window.AIPhotoInfo.actionDialog({kind:"text", title:"保存为照片合集", message:"为已选的 " + selected.length + " 张照片创建合集。", label:"合集名称", value:suggestedName})
         .then(function (name) {
           if (name === null || !name.trim()) return null;
           var requestId = window.crypto && window.crypto.randomUUID
