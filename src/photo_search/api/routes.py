@@ -161,6 +161,9 @@ from photo_search.api.models import (
     StatsResponse,
 )
 from photo_search.api.queries import (
+    OCR_TEXT_MAX_BYTES,
+    _ocr_text_recheck,
+    _ocr_text_snapshot,
     asset_detail,
     clamp_limit,
     job_detail,
@@ -290,6 +293,7 @@ ARTIFACT_CACHE_CONTROL = "private, no-cache, must-revalidate"
 ORIGINAL_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
 router = APIRouter(prefix="/api/v1", tags=["photo-search"])
+_OCR_ARTIFACT_READ_SLOTS = asyncio.Semaphore(2)
 _embedding_provider_check_tasks: dict[tuple[int, str, str], asyncio.Task[dict[str, Any]]] = {}
 
 
@@ -1971,6 +1975,92 @@ async def get_asset(request: Request, asset_id: int) -> dict[str, Any]:
             if dimensions is not None:
                 detail["width"], detail["height"] = dimensions
     return detail
+
+
+def _read_ocr_artifact(data_root: Any, metadata: dict[str, Any], expected: dict[str, Any]) -> str:
+    """Read and validate one bounded OCR document outside the Catalog worker pool."""
+    import json
+
+    from photo_search.artifacts.store import ArtifactStore
+    from photo_search.ocr.processor import validate_payload
+
+    row = metadata
+    payload_bytes = ArtifactStore(data_root).read(row)
+    payload = json.loads(payload_bytes.decode("utf-8"))
+    validate_payload(payload)
+    if (
+        not isinstance(payload, dict)
+        or str(payload.get("processor_id")) != str(expected["processor_id"])
+        or str(payload.get("input_revision")) != str(expected["input_revision"])
+        or int(payload.get("region_count", -1)) != int(expected["region_count"])
+        or not isinstance(payload.get("original_text"), str)
+    ):
+        raise ValueError("OCR document identity does not match its current pointer")
+    return payload["original_text"]
+
+
+def _bounded_ocr_text(text: str) -> tuple[str, bool]:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= OCR_TEXT_MAX_BYTES:
+        return text, False
+    return encoded[:OCR_TEXT_MAX_BYTES].decode("utf-8", errors="ignore"), True
+
+
+async def _read_ocr_artifact_bounded(
+    data_root: Any, metadata: dict[str, Any], expected: dict[str, Any]
+) -> str:
+    async with _OCR_ARTIFACT_READ_SLOTS:
+        operation = asyncio.create_task(asyncio.to_thread(
+            _read_ocr_artifact, data_root, metadata, expected,
+        ))
+        try:
+            return await asyncio.shield(operation)
+        except asyncio.CancelledError:
+            # A cancelled HTTP request must not release its slot while the thread still reads.
+            try:
+                await operation
+            finally:
+                raise
+
+
+@router.get("/assets/{asset_id}/ocr-text", summary="Read saved OCR original text")
+async def get_asset_ocr_text(request: Request, asset_id: int) -> dict[str, Any]:
+    service = context_of(request).service()
+    snapshot = await run_catalog_read(service.catalog, _ocr_text_snapshot, int(asset_id))
+    if snapshot["state"] == "none":
+        return {"status": "none", "text": "", "truncated": False}
+    if snapshot["state"] == "unavailable":
+        return {"status": "unavailable", "text": "", "truncated": False}
+    expected = snapshot["value"]
+    metadata = expected["artifact"]
+    from photo_search.artifacts.store import MAX_ARTIFACT_BYTES
+    from photo_search.ocr import contract
+
+    if (
+        metadata["artifact_id"] != expected["artifact_id"]
+        or metadata["processor_id"] != expected["processor_id"]
+        or metadata["input_revision"] != expected["input_revision"]
+        or metadata["artifact_type"] != "structured"
+        or metadata["artifact_revision"] != contract.OCR_ARTIFACT_REVISION
+        or metadata["media_type"] != contract.OCR_MEDIA_TYPE
+        or metadata["lifecycle_state"] != "PUBLISHED"
+        or int(metadata["byte_size"]) > MAX_ARTIFACT_BYTES
+        or expected["processor_id"] not in contract.OCR_READABLE_PROCESSOR_IDS
+    ):
+        return {"status": "unavailable", "text": "", "truncated": False}
+    try:
+        original_text = await _read_ocr_artifact_bounded(service.data_root, metadata, expected)
+    except (CatalogError, UnicodeDecodeError, ValueError, TypeError, KeyError, OverflowError):
+        return {"status": "unavailable", "text": "", "truncated": False}
+    if not original_text.strip():
+        return {"status": "none", "text": "", "truncated": False}
+    state = await run_catalog_read(
+        service.catalog, _ocr_text_recheck, int(asset_id), expected,
+    )
+    if state != "available":
+        return {"status": state, "text": "", "truncated": False}
+    text, truncated = _bounded_ocr_text(original_text)
+    return {"status": "available", "text": text, "truncated": truncated}
 
 
 @router.get("/assets/{asset_id}/thumbnail", summary="Grid thumbnail (generated on demand)")

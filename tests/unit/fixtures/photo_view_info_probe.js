@@ -24,14 +24,14 @@ class Element {
   showModal() { this.open=true; }
   close() { this.open=false; this.fire("close"); }
 }
-const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
+const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),createElementNS:(_ns,t)=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
 class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;const summary={attributes:{},setAttribute(key,value){this.attributes[key]=String(value);}};const control={open:true,attributes:{open:""},attributionButton:summary,classList:{classes:new Set(["maplibregl-compact","maplibregl-compact-show"]),remove(name){this.classes.delete(name);}},querySelector(selector){return selector===".maplibregl-ctrl-attrib-button"?summary:null;},setAttribute(key,value){this.attributes[key]=String(value);},removeAttribute(name){delete this.attributes[name];}};this.options.container.attributionControl=control;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
 const resizeObservers=[];
 class FakeResizeObserver { constructor(callback){this.callback=callback;this.disconnected=false;resizeObservers.push(this);} observe(){} disconnect(){this.disconnected=true;} }
 const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
-const fetches=[]; const faceWrites=[]; const changeTokens=[]; let releaseDetail,releaseFavoriteState,faceWriteStatus=200;
+const fetches=[]; const faceWrites=[]; const changeTokens=[]; let releaseDetail,releaseFavoriteState,releaseOcr,faceWriteStatus=200;
 window.localStorage={setItem:(key,value)=>changeTokens.push({key,value}),getItem:()=>null};
 const ok=body=>({ok:true,status:200,json:async()=>body});
 const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height:800,format:"jpeg",availability:"present",taken_time:{label:"file_time",taken_at:"2020-01-02T03:04:05.000",camera:"Camera X"},locations:[
@@ -55,6 +55,11 @@ const context={document,window,navigator:{clipboard:{writeText:()=>Promise.rejec
   }
   fetches.push(url);
   if(url==="/api/v1/assets/201") { await new Promise(r=>{releaseDetail=r;}); return ok(detail(201)); }
+  if(/\/api\/v1\/assets\/\d+\/ocr-text$/.test(url)) {
+    const id=Number(url.split("/").at(-2));
+    if(id===901) return new Promise(resolve=>{releaseOcr=()=>resolve(ok({status:"available",text:"late OCR leak",truncated:false}));});
+    return ok(id===101?{status:"available",text:"发票 1280 元\n<script>alert(1)</script>",truncated:false}:{status:"none",text:"",truncated:false});
+  }
   if(/^\/api\/v1\/assets\/\d+$/.test(url)) return ok(detail(Number(url.split("/").pop())));
   if(url.includes("/sources/1")) return ok({root_path:"D:\\相册\\旅行"});
   if(url.includes("/sources/2")) return ok({root_path:"\\\\server\\share\\archive"});
@@ -86,6 +91,14 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   let first=context.window.AIPhotoInfo.render(host,101,{onPerson:id=>{chosen=id;}});
   await flush(); await flush();
   assert.match(host.textContent,/分辨率1200 × 800 像素/,"photo facts show source pixel resolution");
+  assert.equal(fetches.filter(url=>url==="/api/v1/assets/101/ocr-text").length,1,"the shared photo-info panel requests OCR once for the viewed asset");
+  const ocrSection=all(host,n=>n.className==="photo-info-ocr")[0];
+  assert.ok(ocrSection,"non-empty OCR is shown in the shared information panel");
+  const ocrText=all(ocrSection,n=>n.className==="photo-info-ocr-text")[0];
+  assert.equal(ocrText.textContent,"发票 1280 元\n<script>alert(1)</script>","OCR preserves line breaks and treats markup as plain text");
+  const ocrCopy=all(ocrSection,n=>n.tagName==="button"&&n.textContent==="复制文字")[0];
+  ocrCopy.fire("click"); await flush(); await flush();
+  assert.equal(all(ocrSection,n=>n.className==="photo-info-copy-fallback")[0].value,"发票 1280 元\n<script>alert(1)</script>","clipboard fallback selects the exact returned OCR string");
   assert.equal(all(host,n=>n.tagName==="details"&&n.className==="photo-info-details").length,1,"the information panel can be folded without removing its contents");
   assert.equal(all(host,n=>n.tagName==="summary"&&n.textContent==="照片信息").length,1);
   assert.match(host.textContent,/D:\\相册\\旅行\\照片\\海边\.jpg/);
@@ -120,12 +133,18 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(postCalls[0].options.headers["X-CSRF-Token"],"synthetic-token");
   assert.deepEqual(JSON.parse(postCalls[0].options.body),{action:"open",location_id:11});
   const copy=all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径")[0]; copy.fire("click"); await flush();
-  assert.ok(all(host,n=>n.tagName==="textarea"&&n.selected).length===1);
+  assert.ok(all(host,n=>n.tagName==="textarea"&&n.selected&&n.attributes["aria-label"]==="选择并复制完整路径").length===1);
   all(host,n=>n.tagName==="button"&&n.className==="photo-info-person")[0].fire("click"); assert.equal(chosen,7);
   assert.equal(all(host,n=>n.className==="photo-info-person").length,1,"different person IDs merged to one canonical ID render once");
   assert.equal((fetches.filter(url=>url.endsWith("/faces"))).length,1,"the face list is fetched once");
   assert.equal(fetches.filter(url=>/\/persons\/\d+$/.test(url)).length,0,"canonical person names and avatars do not trigger per-person requests");
   first.dispose(); assert.equal(maps[0].removed,true);
+  const ocrRaceHost=new Element("aside"); document.body.append(ocrRaceHost);
+  context.window.AIPhotoInfo.render(ocrRaceHost,901); await flush(); await flush();
+  assert.equal(typeof releaseOcr,"function","the first photo's OCR response is pending after its base information loads");
+  context.window.AIPhotoInfo.render(ocrRaceHost,902); await flush(); await flush();
+  releaseOcr(); await flush(); await flush();
+  assert.ok(!ocrRaceHost.textContent.includes("late OCR leak"),"a late OCR response cannot cross a photo switch");
 
   let sharedFacePage=null; const changedFaces=[];
   const manager=context.window.AIPhotoInfo.open(501,{people:false,onFaces:(id,page)=>{sharedFacePage={id,page};},onFacesChanged:(id,result)=>changedFaces.push({id,result})}); await flush(); await flush();

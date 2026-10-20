@@ -1,3 +1,7 @@
+## Current task: P4-PHOTO-OCR-DISPLAY-A（2026-10-20）
+
+共享照片查看弹窗与完整详情已接入同一 OCR 原文区；新增同源只读 API，短 SQL 快照/复核与最多 2 路独立文件读取，Artifact 元数据先拒绝超过 16 MiB，正文最多返回 128 KiB。定向 API/UI JUnit **13/13** 通过；Ruff、py_compile、Node 语法及 diff-check 通过。隔离合成浏览器验证首页查看器与完整详情显示保存的历史 OCR 文本。Luna High 首轮发现的 Artifact 读取上限已修复并经跟进复核关闭。任务卡其余失效元数据矩阵、真实读取期间指针竞态、并发池隔离实测、长文本布局与完整回归闭环尚未全覆盖，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库或运行 OCR/GPU，未提交、未推送。详见[任务卡](tasks/P4-PHOTO-OCR-DISPLAY-A.md)与[执行报告](reports/P4-PHOTO-OCR-DISPLAY-A.md)。
+
 ## Current task: P4-SEARCH-PLACE-LEXICON-FAST-PATH（2026-10-20）
 
 文本地点查询先在 SQLite 按活动 GeoNames 包预筛主名/别名，再构造命中地点；完整目录和来源身份/回退语义保持一致。四种合成命中形状（含完整 45,217 ID 有效 INDEX）与 814ffa1 基线结果签名一致，Python 返回行数 123,255→6,848–7,048；热 P50 约 83–88ms（五样本本机微基准）。定向 JUnit 86/86、Ruff、py_compile、diff-check 通过；Luna High 跟进无代码 blocker。SQLite 子串查询仍扫描活动包范围，诊断额外开销约 11–18ms；真实 EXIF v2 1+2+20 复测 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-SEARCH-PLACE-LEXICON-FAST-PATH.md)与[报告](reports/P4-SEARCH-PLACE-LEXICON-FAST-PATH.md)。

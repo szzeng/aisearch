@@ -558,6 +558,55 @@
         pathSection.append(row);
       });
       pathSection.append(status); content.append(pathSection);
+      var ocrSection = null, ocrRequestSeq = 0;
+      function loadOcrText() {
+        var requestSeq = ++ocrRequestSeq;
+        request("/assets/" + encodeURIComponent(assetId) + "/ocr-text").then(function (result) {
+          if (!current() || requestSeq !== ocrRequestSeq) return;
+          if (result.status === "none") {
+            if (ocrSection) { ocrSection.remove(); ocrSection = null; }
+            return;
+          }
+          if (!ocrSection) ocrSection = node("section", undefined, "photo-info-ocr");
+          ocrSection.replaceChildren(node("h3", "识别文字"));
+          if (result.status !== "available" || typeof result.text !== "string" || !result.text.trim()) {
+            ocrSection.append(node("p", "识别文字暂时无法读取。", "hint"));
+            var retry = node("button", "重试"); retry.type = "button";
+            retry.addEventListener("click", loadOcrText); ocrSection.append(retry);
+            if (!ocrSection.isConnected) content.append(ocrSection);
+            return;
+          }
+          var originalText = result.text;
+          var body = node("pre", originalText, "photo-info-ocr-text");
+          ocrSection.append(body);
+          if (result.truncated) ocrSection.append(node("p", "识别文字较长，仅显示部分。", "hint"));
+          var copyStatus = node("p", "", "hint"); copyStatus.setAttribute("role", "status");
+          var copy = node("button", result.truncated ? "复制已返回文字" : "复制文字"); copy.type = "button";
+          function fallbackCopy() {
+            if (!current() || requestSeq !== ocrRequestSeq) return;
+            var input = node("textarea", undefined, "photo-info-copy-fallback");
+            input.value = originalText; input.setAttribute("aria-label", "选择并复制识别文字");
+            copy.after(input); input.focus(); input.select(); copyStatus.textContent = "自动复制失败，请手动复制选中的文字。";
+          }
+          copy.addEventListener("click", function () {
+            if (!current() || requestSeq !== ocrRequestSeq) return;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(originalText).then(function () {
+                if (current() && requestSeq === ocrRequestSeq) copyStatus.textContent = "识别文字已复制。";
+              }).catch(fallbackCopy);
+            } else fallbackCopy();
+          });
+          ocrSection.append(copy, copyStatus);
+          if (!ocrSection.isConnected) content.append(ocrSection);
+        }).catch(function () {
+          if (!current() || requestSeq !== ocrRequestSeq) return;
+          if (!ocrSection) ocrSection = node("section", undefined, "photo-info-ocr");
+          ocrSection.replaceChildren(node("h3", "识别文字"), node("p", "识别文字暂时无法读取。", "hint"));
+          var retry = node("button", "重试"); retry.type = "button";
+          retry.addEventListener("click", loadOcrText); ocrSection.append(retry);
+          if (!ocrSection.isConnected) content.append(ocrSection);
+        });
+      }
       {
         var people = node("section", undefined, "photo-info-people"); people.append(node("h3", "照片中的人物"));
         var peopleRows = node("div", undefined, "photo-info-people-list"); people.append(peopleRows); content.append(people);
@@ -600,6 +649,7 @@
           showMap(content, { latitude: lat, longitude: lon }, assetId, state);
         });
       }).catch(function () { if (current()) content.append(node("p", "GPS 信息暂时无法读取。", "hint")); });
+      loadOcrText();
     }).catch(function (error) { if (current()) content.replaceChildren(node("p", "照片信息暂时无法读取。" + (error.status === 401 ? "请重新打开本机应用。" : ""), "error")); });
     var mount = { dispose: function () {
       state.active = false; state.seq++; disposeMap(state);

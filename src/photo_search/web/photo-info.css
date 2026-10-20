@@ -16,6 +16,8 @@
 .photo-info-local-action:disabled { cursor: wait; opacity: .65; }
 .photo-info-full-path { user-select: all; font-family: ui-monospace, Consolas, monospace; font-size: .8rem; }
 .photo-info-copy-fallback { display: block; width: 100%; min-height: 3rem; margin-top: .35rem; font: inherit; overflow-wrap: anywhere; }
+.photo-info-ocr { min-width: 0; margin-top: .65rem; }
+.photo-info-ocr-text { max-height: 12rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .photo-info-people-list { display: flex; flex-wrap: wrap; gap: .4rem; }
 .photo-info-person { display: inline-flex; align-items: center; gap: .4rem; text-align: left; }
 .photo-info-person img { width: 2.6rem; height: 2.6rem; border-radius: 50%; object-fit: cover; }

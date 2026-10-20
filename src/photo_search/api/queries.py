@@ -695,6 +695,64 @@ def asset_detail(
     }
 
 
+OCR_TEXT_MAX_BYTES = 128 * 1024
+_OCR_POINTER_FIELDS = (
+    "ocr_document_id", "text_revision", "processor_id", "input_revision", "artifact_id",
+)
+
+
+def _ocr_text_snapshot(catalog: Any, asset_id: int) -> dict[str, Any]:
+    """Copy one asset's current OCR pointer and published artifact metadata."""
+    with catalog.read_snapshot():
+        asset = catalog.read_one(
+            "SELECT sha256 FROM assets WHERE asset_id = ?", (int(asset_id),)
+        )
+        if asset is None:
+            raise ApiError(
+                ASSET_NOT_FOUND, f"asset {int(asset_id)} does not exist",
+                details={"asset_id": int(asset_id)},
+            )
+        pointer = catalog.read_one(
+            "SELECT ocr_document_id, text_revision, processor_id, input_revision, artifact_id, "
+            "region_count FROM asset_ocr_text WHERE asset_id = ?", (int(asset_id),)
+        )
+        if pointer is None or str(pointer["input_revision"]) != str(asset["sha256"]):
+            return {"state": "none"}
+        value = {key: pointer[key] for key in _OCR_POINTER_FIELDS}
+        value["region_count"] = int(pointer["region_count"])
+        value["sha256"] = str(asset["sha256"])
+        if value["region_count"] == 0:
+            return {"state": "none"}
+        artifact = catalog.read_one(
+            "SELECT artifact_id, processor_id, input_revision, artifact_type, "
+            "artifact_revision, media_type, checksum_sha256, byte_size, storage_uri, "
+            "lifecycle_state FROM artifacts WHERE artifact_id = ?", (str(value["artifact_id"]),)
+        )
+        if artifact is None:
+            return {"state": "unavailable"}
+        value["artifact"] = dict(artifact)
+        return {"state": "candidate", "value": value}
+
+
+def _ocr_text_recheck(catalog: Any, asset_id: int, expected: dict[str, Any]) -> str:
+    """Recheck document identity and publication after file I/O."""
+    with catalog.read_snapshot():
+        row = catalog.read_one(
+            "SELECT a.sha256, t.ocr_document_id, t.text_revision, t.processor_id, "
+            "t.input_revision, t.artifact_id, t.region_count, r.lifecycle_state "
+            "FROM assets AS a JOIN asset_ocr_text AS t ON t.asset_id = a.asset_id "
+            "LEFT JOIN artifacts AS r ON r.artifact_id = t.artifact_id "
+            "WHERE a.asset_id = ?", (int(asset_id),)
+        )
+        if row is None or str(row["sha256"]) != str(expected["sha256"]):
+            return "none"
+        if any(str(row[field]) != str(expected[field]) for field in _OCR_POINTER_FIELDS):
+            return "none"
+        if int(row["region_count"]) != int(expected["region_count"]):
+            return "none"
+        return "available" if row["lifecycle_state"] == "PUBLISHED" else "unavailable"
+
+
 def _record_message(record: Any, redactor: Any) -> str | None:
     """A recorded failure message, with any registered root replaced by a placeholder."""
     if record is None:
