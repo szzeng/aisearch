@@ -163,23 +163,29 @@ const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 function make(scrollTop=600){
   const timers=[];
   const document={readyState:"loading",documentElement:{scrollTop},addEventListener(){}};
-  const window={scrollY:scrollTop,setTimeout(fn,delay){const timer={fn,delay,canceled:false};timers.push(timer);return timer;},
+  const window={scrollY:scrollTop,AbortController,setTimeout(fn,delay){const timer={fn,delay,canceled:false};timers.push(timer);return timer;},
     clearTimeout(timer){if(timer)timer.canceled=true;}};
   let source=fs.readFileSync("src/photo_search/web/app.js","utf8");
   source=source.replace("function request(path, options) {","function request(path, options) { if(window.__request) return window.__request(path, options);");
   source=source.replace('  if (document.readyState === "loading")',
-    '  globalThis.ui={observePhotoSmartRefresh,requestPhotoSmartRefresh,resetPhotoSmartView,enterPhotoSmartCollection,photoSmartAuthorityKey,state,els};\n  if (document.readyState === "loading")');
+    '  globalThis.ui={observePhotoSmartRefresh,requestPhotoSmartRefresh,resetPhotoSmartView,enterPhotoSmartCollection,stopPhotoSmartRefreshObserver,photoSmartAuthorityKey,state,els};\n  if (document.readyState === "loading")');
   const context={document,window};vm.createContext(context);vm.runInContext(source,context);
   const ui=context.ui;
   ui.els.photoSmartRefresh={disabled:false};
   ui.els.photoSmartReloadResults={hidden:true};
   ui.els.photoSmartDetailStatus={textContent:""};
+  ui.els.photoSmartAssets={children:[],replaceChildren(){this.children=[];},appendChild(node){this.children.push(node);}};
+  ui.els.photoSmartMore={hidden:true};
   Object.assign(ui.state,{currentView:"photoSmartCollection",detailRouteActive:false});
   ui.state.photoSmart.smartId="5";
   const pending=timers;
   return {ui,window,pending,async tick(){
-    const timer=pending.find(item=>!item.canceled);
+    const timer=pending.find(item=>!item.canceled && item.delay!==8000);
     assert.ok(timer,"a poll timer should be scheduled");timer.canceled=true;timer.fn();
+    await new Promise(resolve=>setImmediate(resolve));
+  },async timeout(){
+    const timer=pending.find(item=>!item.canceled && item.delay===8000);
+    assert.ok(timer,"a single status GET timeout should be scheduled");timer.canceled=true;timer.fn();
     await new Promise(resolve=>setImmediate(resolve));
   }};
 }
@@ -247,6 +253,39 @@ const collection={smart_id:5,instance_token:"instance-5",rule_revision:3,build_i
   assert.equal(network.ui.els.photoSmartRefresh.disabled,false,"poll exhaustion releases the refresh button");
   assert.match(network.ui.els.photoSmartDetailStatus.textContent,/无法确认/);
 
+  const timeouts=make();let timedOutCalls=0,abortedCalls=0;
+  timeouts.window.__request=(path,options)=>{
+    timedOutCalls+=1;
+    return new Promise((resolve,reject)=>options.signal.addEventListener("abort",()=>{abortedCalls+=1;reject({code:"ABORTED"});}));
+  };
+  timeouts.ui.state.photoSmart.collection=collection;
+  key=timeouts.ui.photoSmartAuthorityKey(collection);timeouts.ui.observePhotoSmartRefresh(collection,key,0);
+  await timeouts.tick();await timeouts.timeout();
+  assert.equal(timedOutCalls,1,"one hung status request is bounded by its own timeout");
+  assert.equal(abortedCalls,1,"timed-out status GET is aborted before the next attempt");
+  assert.equal(timeouts.ui.state.photoSmart.refreshObserverKey,key,"one timeout consumes an attempt and observation retries within budget");
+  for(let index=1;index<60;index+=1){await timeouts.tick();await timeouts.timeout();}
+  assert.equal(timedOutCalls,60,"consecutive timeouts stop at the existing 60-attempt budget");
+  assert.equal(timeouts.ui.state.photoSmart.refreshObserverKey,null);
+  assert.equal(timeouts.ui.state.photoSmart.refreshTimer,null);
+  assert.equal(timeouts.ui.state.photoSmart.refreshRequest,null);
+  assert.equal(timeouts.ui.els.photoSmartRefresh.disabled,false);
+  assert.match(timeouts.ui.els.photoSmartDetailStatus.textContent,/无法确认/);
+  assert.doesNotMatch(timeouts.ui.els.photoSmartDetailStatus.textContent,/新缓存已发布|刷新成功/);
+
+  const left=make();let resolveLate;
+  left.window.__request=()=>new Promise(resolve=>{resolveLate=resolve;});
+  left.ui.state.photoSmart.collection=collection;
+  key=left.ui.photoSmartAuthorityKey(collection);left.ui.observePhotoSmartRefresh(collection,key,0);
+  await left.tick();
+  left.ui.stopPhotoSmartRefreshObserver();
+  left.ui.els.photoSmartDetailStatus.textContent="其他页面状态";
+  resolveLate({body:{collection:{...collection,refresh_status:"NO_CACHE"},build_id:"build-b"}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(left.ui.els.photoSmartDetailStatus.textContent,"其他页面状态","a response arriving after observer cancellation cannot update the page");
+  assert.equal(left.ui.state.photoSmart.refreshRequest,null);
+  assert.equal(left.ui.state.photoSmart.refreshObserverKey,null);
+
   const sameVisit=make();sameVisit.ui.state.photoSmart.collection=collection;
   const sameVisitKey=sameVisit.ui.photoSmartAuthorityKey(collection);
   sameVisit.ui.observePhotoSmartRefresh(collection,sameVisitKey,0);
@@ -304,9 +343,9 @@ window.__request=path=>{
   assert.equal(await ui.loadPhotoSmartAssets(false),true,"initial published page should load");
   const previous=ui.els.photoSmartAssets.children[0];
   assert.ok(previous,"initial published card should be rendered");
-  let failAssets=false;
+  let failAssets=false,reportedCollection=collection;
   window.__request=path=>{
-    if(path.includes("/photo-smart-collections/5?instance_token=")) return Promise.resolve({body:{collection:nextCollection,build_id:"build-b",rule:{display_query:"trip"}}});
+    if(path.includes("/photo-smart-collections/5?instance_token=")) return Promise.resolve({body:{collection:reportedCollection,build_id:reportedCollection.build_id,rule:{display_query:"trip"}}});
     assert.match(path,/\/assets\?/);
     return failAssets ? Promise.reject({status:503,code:"TEMPORARY_FAILURE"})
       : Promise.resolve({body:{assets:[{asset_id:"old-photo"}],has_more:false,collection}});
@@ -321,6 +360,11 @@ window.__request=path=>{
   assert.deepEqual(opened,["old-photo"],"cards from the retained snapshot remain interactive after reload failure");
   assert.equal(ui.state.photoSmart.pageInFlight,false,"failed reload releases the page lock");
   assert.equal(ui.state.photoSmart.pageNeedsReload,true,"failed reload keeps the stale-page guard active");
+  reportedCollection=nextCollection;
+  assert.equal(await ui.loadPhotoSmartAssets(false,true),false,"a different snapshot that fails to load must not masquerade as the old page");
+  assert.equal(ui.els.photoSmartAssets.children.length,0,"a known new snapshot clears cards from the previous snapshot");
+  assert.equal(ui.state.photoSmart.collection.build_id,"build-b");
+  assert.equal(ui.els.photoSmartReloadResults.hidden,false,"failed new snapshot exposes an explicit retry entry");
   failAssets=false;
   window.__request=path=>{
     if(path.includes("/photo-smart-collections/5?instance_token=")) return Promise.resolve({body:{collection:nextCollection,build_id:"build-b",rule:{display_query:"trip"}}});
@@ -332,6 +376,104 @@ window.__request=path=>{
   assert.equal(ui.state.photoSmart.pageNeedsReload,false,"a verified first page clears the stale-page guard");
   assert.equal(ui.els.photoSmartAssets.children.length,1);
   assert.equal(ui.els.photoSmartAssets.children[0].dataset.assetId,"new-photo","verified new snapshot replaces old cards");
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_smart_collection_switches_clear_prior_lists_and_ignore_late_responses() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for smart collection view-switch checks"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Node {constructor(tag){this.tagName=tag;this.children=[];this.dataset={};this.hidden=false;this.options=tag==="select"?[]:undefined;}
+  appendChild(node){this.children.push(node);return node;} replaceChildren(){this.children=[];} addEventListener(name,fn){this["on"+name]=fn;}
+  setAttribute(){} querySelectorAll(){return this.children.flatMap(x=>[...(x.dataset.assetId?[x]:[]),...x.querySelectorAll()]);}}
+const document={readyState:"loading",addEventListener(){},querySelector(){return null;},createElement(tag){return new Node(tag);}};
+const window={setTimeout(){return 1;},clearTimeout(){}};
+let source=fs.readFileSync("src/photo_search/web/app.js","utf8");
+source=source.replace("function request(path, options) {","function request(path, options) { if(window.__request) return window.__request(path, options);");
+source=source.replace('  if (document.readyState === "loading")',
+  '  globalThis.ui={loadPhotoSmartAssets,resetPhotoSmartView,state,els};\n  if (document.readyState === "loading")');
+const context={document,window};vm.createContext(context);vm.runInContext(source,context);
+const ui=context.ui,collection={smart_id:5,instance_token:"instance-5",revision:2,rule_revision:3,exclusions_revision:7,
+  build_id:"build-a",freshness:"CURRENT",execution_kind:"TEXT",refresh_status:"IDLE",name:"Trip"};
+Object.assign(ui.state,{currentView:"photoSmartCollection",detailRouteActive:false});
+Object.assign(ui.state.photoSmart,{smartId:"5",collection,view:"results",order:"rank"});
+for(const id of ["photoSmartAssets","photoSmartMore","photoSmartReloadResults","photoSmartDetailStatus",
+  "photoSmartDetailTitle","photoSmartRuleSummary"]) ui.els[id]=new Node("div");
+ui.els.photoSmartOrder=new Node("select");
+let mode="ok";
+window.__request=path=>{
+  if(path.includes("/exclusions")) {
+    if(mode==="excluded-fail") return Promise.reject({status:503,code:"TEMPORARY_FAILURE"});
+    return Promise.resolve({body:{assets:[{asset_id:20}],has_more:false,collection}});
+  }
+  if(path.includes("/assets")) {
+    if(mode==="results-fail") return Promise.reject({status:503,code:"TEMPORARY_FAILURE"});
+    return Promise.resolve({body:{assets:[{asset_id:10}],has_more:false,collection}});
+  }
+  throw new Error("unexpected request: "+path);
+};
+(async()=>{
+  assert.equal(await ui.loadPhotoSmartAssets(false),true);
+  assert.equal(ui.els.photoSmartAssets.children[0].dataset.assetId,"10");
+  mode="excluded-fail";
+  ui.resetPhotoSmartView("excluded","rank");
+  assert.equal(ui.els.photoSmartAssets.children.length,0,"switching tabs immediately removes result cards");
+  assert.equal(await ui.loadPhotoSmartAssets(false),false);
+  assert.equal(ui.els.photoSmartAssets.children.length,0,"failed exclusions request cannot display result cards");
+  assert.equal(ui.els.photoSmartReloadResults.hidden,false,"failed tab load exposes retry");
+  assert.match(ui.els.photoSmartReloadResults.textContent,/重试/);
+  mode="ok";
+  assert.equal(await ui.loadPhotoSmartAssets(false),true);
+  assert.equal(ui.els.photoSmartAssets.children[0].dataset.assetId,"20");
+  mode="results-fail";
+  ui.resetPhotoSmartView("results","rank");
+  assert.equal(ui.els.photoSmartAssets.children.length,0,"switching back removes excluded cards");
+  assert.equal(await ui.loadPhotoSmartAssets(false),false);
+  assert.equal(ui.els.photoSmartAssets.children.length,0,"failed results request cannot display excluded cards");
+  assert.equal(ui.els.photoSmartReloadResults.hidden,false,"failed return to results also exposes retry");
+
+  let resolveOldResult,resolveNewSort;
+  mode="deferred-sort";
+  window.__request=path=>{
+    if(path.includes("order=capture_desc")) return new Promise(resolve=>{resolveNewSort=resolve;});
+    if(path.includes("/assets")) return new Promise(resolve=>{resolveOldResult=resolve;});
+    throw new Error("unexpected request: "+path);
+  };
+  const oldSort=ui.loadPhotoSmartAssets(false);
+  await Promise.resolve();
+  await Promise.resolve();
+  ui.resetPhotoSmartView("results","capture_desc");
+  assert.equal(ui.state.photoSmart.pageInFlight,false,"sort change releases the stale request lock");
+  const currentSort=ui.loadPhotoSmartAssets(false);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(typeof resolveNewSort,"function","new sort request starts before the old request resolves");
+  resolveNewSort({body:{assets:[{asset_id:41}],has_more:false,collection}});
+  assert.equal(await currentSort,true);
+  resolveOldResult({body:{assets:[{asset_id:40}],has_more:false,collection}});
+  assert.equal(await oldSort,false,"late response from the old sort is discarded");
+  assert.deepEqual(ui.els.photoSmartAssets.children.map(tile=>tile.dataset.assetId),["41"]);
+
+  let resolveOldTab,resolveNewTab;
+  window.__request=path=>path.includes("/exclusions")
+    ? new Promise(resolve=>{resolveNewTab=resolve;})
+    : new Promise(resolve=>{resolveOldTab=resolve;});
+  ui.resetPhotoSmartView("results","capture_desc");
+  const oldTab=ui.loadPhotoSmartAssets(false);
+  await Promise.resolve();
+  ui.resetPhotoSmartView("excluded","capture_desc");
+  const newTab=ui.loadPhotoSmartAssets(false);
+  await Promise.resolve();
+  assert.equal(typeof resolveNewTab,"function","rapid tab switch starts the new list while old GET is pending");
+  resolveNewTab({body:{assets:[{asset_id:51}],has_more:false,collection}});
+  assert.equal(await newTab,true);
+  resolveOldTab({body:{assets:[{asset_id:50}],has_more:false,collection}});
+  assert.equal(await oldTab,false,"late result response cannot replace exclusions");
+  assert.deepEqual(ui.els.photoSmartAssets.children.map(tile=>tile.dataset.assetId),["51"]);
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run([node, "-e", script], capture_output=True, text=True, check=False)

@@ -2,7 +2,7 @@
 
 **日期：** 2026-10-20
 **状态：** IMPLEMENTED / ACCEPTANCE PARTIAL
-**边界：** 本地未提交；仅使用隔离 synthetic 数据，未访问真实图库；未改后端/schema/依赖。
+**边界：** 已按用户要求本地提交，未推送；仅使用隔离 synthetic 数据，未访问真实图库；未改后端/schema/依赖。
 
 ## 目的与改动
 
@@ -54,3 +54,20 @@ Codex 内置浏览器通过新鲜一次性本地会话访问 `127.0.0.1`，使�
 - Luna High 独立有界复核与新增测试跟进完成，均无阻断 finding；确认 epoch 重置后的互斥锁释放及回归测试，并确认同规则刷新幂等、503 失败保留卡片、无 IntersectionObserver 手动重试均有覆盖。复核提示“请求失败且 epoch 同时变化”没有单独用例覆盖，虽共用同一收尾链，仍记作未单独验证的分支。
 
 未运行全仓回归、GPU/模型、真实照片库、30 万数据或正式性能基准；这些不作为本卡的声称证据。
+
+## 最终补修与增量复核（2026-10-20）
+
+本轮基于用户指定的 `99bc2042395c0b75a998f33e10668bc3891eb1e0` 核对；执行时 HEAD 为其后续提交 `01b151c`。仅新增 `app.js` 与智能合集前端定向测试差异。切换标签/排序时清空旧卡、释放分页锁并使用 view epoch/request version 拒绝迟到结果；失败提供重试。仅同视图、排序及快照失败首屏重读保留旧卡及其点击身份；已知新 build 或返回身份变化则不显示旧卡。每次刷新状态 GET 局部 8 秒 timeout 并尽力 abort，timeout 计入既有 60 次预算；停止、离页和超限路径清理观察 timer/请求状态并恢复按钮。全局 `request` 只透传显式传入的 `AbortSignal`，现有调用未改变。
+
+增量命令：
+
+```powershell
+uv run pytest -q tests/unit/test_smart_collection_frontend.py --junitxml=test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-closeout-r2.xml --basetemp=.pytest-tmp-smart-closeout-r2
+uv run ruff check tests/unit/test_smart_collection_frontend.py
+node --check src/photo_search/web/app.js
+git diff --check
+```
+
+真实结果：JUnit **6 passed / 0 failed / 0 errors / 0 skipped**，退出码 0；Ruff、Node 语法、diff-check 各退出码 0。JUnit 覆盖标签切换两方向失败、待完成标签/排序请求迟到、切换时解除锁、同快照失败保留旧照片并可操作、新快照失败清理旧卡、8 秒状态请求超时/AbortController、连续 60 次超时后观察状态与刷新按钮清理、停止观察后迟到成功响应不更新页面。原受影响组合 `affected-r12.xml`（77/77）复用为未修改服务端/列表合同的既有证据，本轮称增量定向验证，不称全套重跑。
+
+内置隔离浏览器使用一次性本地会话与当前任务合成 FILTER 库：打开合集，确认结果/排除标签切换后各自显示正确内容或空状态，再切回结果确认列表恢复。由于合成库没有有效 TEXT/COMBINED 模型，没有在浏览器直接注入网络故障或执行排名刷新成功/失败。CR2/离线缩略图、真实 TEXT/COMBINED 刷新流程依然 PENDING；未访问真实图库、未做 GPU/模型、全仓、30 万图库或正式性能认证。独立复核：Luna High 最终有界复核无 blocker/non-blocker finding，确认结果与测试证据一致。当前仍为 **IMPLEMENTED / ACCEPTANCE PARTIAL**。

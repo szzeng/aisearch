@@ -135,3 +135,15 @@
 - **运行边界**：仅使用 `.tmp/P4-PHOTO-SMART-COLLECTION-UX-FIX-20261020` 下当前任务合成源与应用数据；合成输入共 521 个 JPEG，当前合成 PhotoSearchData 约 10.8 MB。该夹具保留在 ignored `.tmp` 供复测，完整重建可用相同的 fixture 生成流程；不影响用户真实照片。未改后端/schema，不提交或推送。
 - **刷新生命周期复核补修（2026-10-20）**：本轮仅按用户指定补修 `app.js` 与前端测试，未新建任务卡；刷新观察身份改为一次合集进入＋合集实例/规则身份，不随分页 epoch、排序或结果/排除标签切换失效。仅 `QUEUED/RUNNING` 继续轮询；`FAILED` 明确报错；只有 `NO_CACHE` 且详情 `build_id` 确认变化才提示新缓存；其他终态及轮询网络错误/到达 60 次上限显示状态无法确认、保留现有照片并释放按钮/timer。实际重新进入时清空 `autoRefreshKeys`，同访问重试自动 POST 仍受限。第一页完成响应校验前不清空照片，保持旧快照交互身份；获取新第一页成功后才替换并清除重载保护。
 - **补修验证**：最终 `refresh-r10.xml` 定向 JUnit 5 passed、0 failed/errors/skipped（见 `test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-refresh-r10.xml`）。覆盖 `RUNNING→FAILED`、新 build 发布、未知终态、60 次网络错误清理、标签/排序保留观察、真实重入重置自动刷新、首次进入时刷新 POST 在 state.collection 尚空时仍能启动观察，以及新 build 首屏失败时旧卡片可交互、旧快照及 stale guard 保留，之后成功第一页才替换并清除 guard。r8 有 1 项测试断言失败（测试未先建立 stale guard 状态），r9 通过但 Luna 指出该断言赋值顺序未覆盖失败路径；移至请求前后 r10 通过。`node --check src/photo_search/web/app.js`、Ruff（测试文件）和 `git diff --check` 通过。真实浏览器仅以隔离合成 FILTER 合集验证详情加载、结果/已排除切换和目录返回重入；该夹具没有 TEXT/COMBINED 有效模型，因此未在浏览器直接触发排名刷新成功/失败，仍 PENDING。Luna High 已确认首屏 POST 竞态修复无新增产品 finding；stale guard 测试顺序修正的最终复核待回执。
+
+
+## 八、最终补修复核（2026-10-20）
+
+- **基线/范围**：用户指定检查基线 `master @ 99bc2042395c0b75a998f33e10668bc3891eb1e0`；执行时本地 HEAD 已前进至 `01b151c`（地点词典优化提交），本轮只修改本卡 `app.js` 与 `test_smart_collection_frontend.py`，未触碰并行改动。无数据库、搜索模型、分页协议或后台刷新改动。
+- **性能段更新**：受影响流为合集结果/排除视图切换、排序及刷新状态观察；本地控制器只持有一条状态 GET，单次最多 8 秒，沿用原有最多 60 次观察预算，不增加轮询频率、分页（仍 50 张）或模型/SQL 请求；用可控延迟/挂起 Node 请求与隔离合成浏览器检查，未知边界保持待验即停止。
+- **修复**：重置标签/排序时立即清空旧列表、释放旧分页互斥状态，按新视图开请求；epoch/version 校验丢弃迟到响应。首次页失败明确显示错误和重试。只有同视图/排序/快照的失败重读保留可操作旧卡；已确认新 build 或响应不一致时旧卡清空。状态观察单个 GET 超时即 abort；超时计入 60 次预算，网络错误/超时在预算结束后释放 timer、请求状态和按钮。离页停止会取消/abort 在途状态请求，晚响应无权更新页面。为局部取消能力，仅给共享 `request` 增加可选 `signal` 透传；其他调用默认不变。
+- **增量验证**：`uv run pytest -q tests/unit/test_smart_collection_frontend.py --junitxml=test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-closeout-r2.xml --basetemp=.pytest-tmp-smart-closeout-r2`，退出码 0，6 passed、0 failed/errors/skipped。用例覆盖双向标签切换失败、排序/标签迟到请求、锁释放、同快照旧卡操作、新快照失败清空及重试、单次及连续状态 GET 超时/abort/60 次上限/按钮释放、离页后晚响应无 UI 写入。`uv run ruff check tests/unit/test_smart_collection_frontend.py`、`node --check src/photo_search/web/app.js`、`git diff --check` 均退出码 0。此前完整受影响组合 `affected-r12.xml` 77/77 为基线复用证据；本轮增量结果不表述为全套重跑。
+- **浏览器**：Codex 内置浏览器在新鲜一次性会话及 `.tmp/P4-PHOTO-SMART-COLLECTION-UX-FIX-20261020/PhotoSearchData 数据` 合成库上打开 FILTER 合集；匹配结果→已排除显示空状态→返回匹配结果恢复正确卡片，排除操作按钮保持可见。该夹具没有有效 TEXT/COMBINED 模型，浏览器故障注入、真实排名刷新失败/成功流程未测，保留 PENDING；CR2/离线缩略图也未测。未导出截图。
+- **审查/状态**：Luna High 最终独立复核未发现 blocker 或 non-blocker 代码 finding；确认测试覆盖与 JUnit 6/6 记录相符。TEXT/COMBINED 浏览器直验仍为 PENDING，任务保持 `IMPLEMENTED / ACCEPTANCE PARTIAL`。未访问真实图库，未做全仓、GPU/模型、30 万图库或正式性能认证。
+
+- **提交**：按用户后续“简单提交”要求，本次仅提交本卡代码、定向测试、任务卡、报告和开发状态；不推送。

@@ -115,7 +115,7 @@
       collection: null, rule: null, assetCursor: null, assetHasMore: false,
       exclusionCursor: null, exclusionHasMore: false, view: "results", order: "rank",
       pageInFlight: false, pageRequestVersion: 0, pendingReload: false, pageNeedsReload: false, mutationInFlight: false, autoRefreshKeys: Object.create(null),
-      pager: null, refreshTimer: null, refreshObserverKey: null },
+      pager: null, refreshTimer: null, refreshRequest: null, refreshObserverKey: null },
     detailRouteActive: false,
     detailAssetId: null,
     detailReturnIntent: null,
@@ -265,6 +265,7 @@
       credentials: "same-origin",
       cache: "no-store",
     };
+    if (settings.signal) init.signal = settings.signal;
     if (settings.body !== undefined) {
       init.body = JSON.stringify(settings.body);
     }
@@ -3468,12 +3469,18 @@
     smart.smartId = smartId;
     smart.collection = null;
     smart.rule = null;
+    smart.pageInFlight = false;
+    smart.pageRequestVersion = 0;
+    smart.pendingReload = false;
     smart.assetCursor = null;
     smart.exclusionCursor = null;
     smart.assetHasMore = smart.exclusionHasMore = false;
     smart.pageNeedsReload = false;
     smart.view = "results";
     smart.order = "rank";
+    els.photoSmartAssets.replaceChildren();
+    els.photoSmartMore.hidden = true;
+    els.photoSmartReloadResults.hidden = true;
   }
 
   function photoSmartPageKey(collection, epoch, view, order) {
@@ -3485,6 +3492,13 @@
   function stopPhotoSmartRefreshObserver() {
     if (state.photoSmart.refreshTimer !== null) window.clearTimeout(state.photoSmart.refreshTimer);
     state.photoSmart.refreshTimer = null;
+    var refreshRequest = state.photoSmart.refreshRequest;
+    state.photoSmart.refreshRequest = null;
+    if (refreshRequest) {
+      if (refreshRequest.timer !== null) window.clearTimeout(refreshRequest.timer);
+      if (refreshRequest.cancel) refreshRequest.cancel({status:0, code:"PHOTO_SMART_REFRESH_STATUS_CANCELLED"});
+      if (refreshRequest.controller) refreshRequest.controller.abort();
+    }
     state.photoSmart.refreshObserverKey = null;
     if (els.photoSmartRefresh) els.photoSmartRefresh.disabled = false;
   }
@@ -3508,6 +3522,9 @@
     var smart = state.photoSmart;
     smart.viewEpoch += 1;
     smart.requestVersion += 1;
+    smart.pageInFlight = false;
+    smart.pageRequestVersion = 0;
+    smart.pendingReload = false;
     smart.view = view || smart.view;
     if (order) smart.order = order;
     smart.assetCursor = null;
@@ -3516,6 +3533,10 @@
     smart.exclusionHasMore = false;
     smart.pageNeedsReload = false;
     if (smart.pager) smart.pager.reset();
+    els.photoSmartAssets.replaceChildren();
+    els.photoSmartMore.hidden = true;
+    els.photoSmartReloadResults.hidden = true;
+    els.photoSmartDetailStatus.textContent = smart.view === "excluded" ? "正在加载已排除照片…" : "正在加载匹配结果…";
     updatePhotoSmartPager();
   }
 
@@ -3602,8 +3623,41 @@
     var count = attempts || 0;
     var initialBuildId = collection.build_id || null;
     var maxAttempts = 60;
+    var statusTimeoutMs = 8000;
     function currentAuthorityKey() {
       return photoSmartAuthorityKey(state.photoSmart.collection || collection);
+    }
+    function requestStatus(path) {
+      var controller = typeof window.AbortController === "function" ? new window.AbortController() : null;
+      var rejectTimeout;
+      var timeoutPromise = new Promise(function (_, reject) { rejectTimeout = reject; });
+      var active = {controller:controller, timer:null, cancel:function (reason) { rejectTimeout(reason); }};
+      function clearActive() {
+        if (active.timer !== null) window.clearTimeout(active.timer);
+        active.timer = null;
+        if (state.photoSmart.refreshRequest === active) state.photoSmart.refreshRequest = null;
+      }
+      state.photoSmart.refreshRequest = active;
+      active.timer = window.setTimeout(function () {
+        if (state.photoSmart.refreshRequest !== active) return;
+        active.timer = null;
+        state.photoSmart.refreshRequest = null;
+        rejectTimeout({status:0, code:"PHOTO_SMART_REFRESH_STATUS_TIMEOUT"});
+        if (controller) controller.abort();
+      }, statusTimeoutMs);
+      var operation;
+      try {
+        operation = request(path, controller ? {signal:controller.signal} : undefined);
+      } catch (failure) {
+        operation = Promise.reject(failure);
+      }
+      return Promise.race([operation, timeoutPromise]).then(function (result) {
+        clearActive();
+        return result;
+      }, function (failure) {
+        clearActive();
+        throw failure;
+      });
     }
     function finish(message) {
       if (state.photoSmart.refreshObserverKey !== contextKey) return;
@@ -3631,7 +3685,7 @@
         return;
       }
       count += 1;
-      request("/photo-smart-collections/" + encodeURIComponent(collection.smart_id) +
+      requestStatus("/photo-smart-collections/" + encodeURIComponent(collection.smart_id) +
         "?instance_token=" + encodeURIComponent(collection.instance_token)).then(function (detail) {
         if (state.photoSmart.refreshObserverKey !== contextKey) return;
         if (contextKey !== currentAuthorityKey() || state.currentView !== "photoSmartCollection") {
@@ -3754,6 +3808,15 @@
       if (!isContextLive()) return false;
       var collection = detail.body.collection;
       if (detail.body.build_id) collection.build_id = detail.body.build_id;
+      if (!append && smart.collection &&
+          photoSmartPageKey(smart.collection, epoch, view, order) !== photoSmartPageKey(collection, epoch, view, order)) {
+        els.photoSmartAssets.replaceChildren();
+        smart.assetCursor = smart.exclusionCursor = null;
+        smart.assetHasMore = smart.exclusionHasMore = false;
+        smart.pageNeedsReload = false;
+        smart.collection = collection;
+        smart.rule = detail.body.rule || smart.rule;
+      }
       if (append && photoSmartPageKey(collection, epoch, view, order) !== photoSmartPageKey(smart.collection, epoch, view, order)) {
         smart.pageNeedsReload = true;
         smart.assetCursor = smart.exclusionCursor = null;
@@ -3794,6 +3857,7 @@
           smart.pageNeedsReload = true;
           smart.assetCursor = smart.exclusionCursor = null;
           els.photoSmartDetailStatus.textContent = "分页游标无效或未前进，请重新读取合集。";
+          els.photoSmartReloadResults.textContent = "合集结果已变化，点击重新加载";
           els.photoSmartReloadResults.hidden = false;
           return false;
         }
@@ -3808,9 +3872,16 @@
           responseCollection = Object.assign({}, responseCollection, {build_id:collection.build_id});
         }
         if (photoSmartPageKey(responseCollection, epoch, view, order) !== pageKey) {
+          if (!append) {
+            els.photoSmartAssets.replaceChildren();
+            smart.assetCursor = smart.exclusionCursor = null;
+            smart.assetHasMore = smart.exclusionHasMore = false;
+            smart.collection = responseCollection;
+          }
           smart.pageNeedsReload = true;
           smart.assetCursor = smart.exclusionCursor = null;
           els.photoSmartReloadResults.hidden = false;
+          els.photoSmartReloadResults.textContent = "合集结果已变化，点击重新加载";
           els.photoSmartDetailStatus.textContent = "合集结果已变化，点击重新加载。已显示的照片仍保留。";
           return false;
         }
@@ -3830,6 +3901,7 @@
             smart.assetCursor = smart.exclusionCursor = null;
             els.photoSmartDetailStatus.textContent = "续页与已显示照片重复，已停止自动拼接；请重新读取合集。";
             els.photoSmartReloadResults.hidden = false;
+            els.photoSmartReloadResults.textContent = "合集结果已变化，点击重新加载";
             return false;
           }
         }
@@ -3839,6 +3911,7 @@
         if (!append) {
           smart.pageNeedsReload = false;
           els.photoSmartReloadResults.hidden = true;
+          els.photoSmartReloadResults.textContent = "合集结果已变化，点击重新加载";
         }
         if (view === "excluded") { smart.exclusionCursor = nextCursor; smart.exclusionHasMore = hasMore; }
         else { smart.assetCursor = nextCursor; smart.assetHasMore = hasMore; }
@@ -3856,9 +3929,16 @@
         smart.pageNeedsReload = true;
         smart.assetCursor = smart.exclusionCursor = null;
         els.photoSmartReloadResults.hidden = false;
+        els.photoSmartReloadResults.textContent = "合集结果已变化，点击重新加载";
         els.photoSmartDetailStatus.textContent = "合集结果已变化，点击重新加载。已显示的照片仍保留。";
         updatePhotoSmartPager();
-      } else showCollectionFailure(failure, els.photoSmartDetailStatus);
+      } else {
+        if (!append) {
+          els.photoSmartReloadResults.hidden = false;
+          els.photoSmartReloadResults.textContent = "当前列表加载失败，点击重试";
+        }
+        showCollectionFailure(failure, els.photoSmartDetailStatus);
+      }
       return false;
     }).then(function (ok) {
       if (version === smart.pageRequestVersion) {
