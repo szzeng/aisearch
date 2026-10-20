@@ -224,11 +224,12 @@
         <h2 id="results-title">结果</h2>
         <section id="search-perf-panel" class="search-perf-panel" aria-labelledby="search-perf-title" hidden>
           <h3 id="search-perf-title">搜索性能诊断</h3>
-          <p id="search-perf-model" class="hint">正在确认当前搜索模型…</p>
+          <p id="search-perf-model" class="hint">开启诊断后读取当前模型身份。</p>
+          <button id="search-perf-identity-retry" type="button" class="secondary" hidden>重试读取模型身份</button>
           <p id="search-perf-summary" class="hint" role="status" aria-live="polite">尚无记录</p>
           <p id="search-perf-test-summary" class="hint" role="status" aria-live="polite"></p>
           <p class="row-actions">
-            <button id="search-perf-start" type="button">开始标准测试</button>
+            <button id="search-perf-start" type="button" disabled>开始标准测试</button>
             <button id="search-perf-stop" type="button" hidden>停止测试</button>
             <button id="search-perf-export" type="button">导出性能报告</button>
           </p>

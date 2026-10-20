@@ -135,7 +135,8 @@
     },
   };
   var perfDiag = { enabled: false, runId: null, samples: [], active: null, model: null, count: 0,
-    autoRunning: false, autoStop: false, nextSampleType: null };
+    autoRunning: false, autoStop: false, nextSampleType: null, identitySeq: 0,
+    identityChecking: false, autoConditions: null, autoSemantic: null, runSamplesStart: 0 };
   var smartReplaceTarget = null;
 
   var els = {};
@@ -311,15 +312,72 @@
     });
   }
 
-  function perfIdentityFromCapabilities() {
-    var search = state.capabilities && state.capabilities.search || {};
-    var model = search.active_embedding_model || {};
-    if (!model.provider_id) return null;
-    return { active_profile_id: search.active_profile_id || null,
-      active_image_generation_id: search.active_image_generation_id || null,
-      provider_id: model.provider_id, space_id: model.space_id || null,
-      dimension: model.dimension || null, encoder_identity: model.provider_id,
-      processor_id: model.processor_id || null };
+  function perfIdentityFromResponse(body) {
+    if (!body || body.identity_confirmed !== true || body.binding_consistent !== true ||
+        body.generation_status !== "READY" || !body.active_profile_id ||
+        !body.active_image_generation_id || !body.provider_id || perfProviderName(body.provider_id) === "模型未确认" || !body.processor_id ||
+        !body.space_id || typeof body.dimension !== "number" || !Number.isFinite(body.dimension)) return null;
+    return { active_profile_id: body.active_profile_id,
+      active_image_generation_id: body.active_image_generation_id,
+      provider_id: body.provider_id, processor_id: body.processor_id,
+      space_id: body.space_id, dimension: body.dimension,
+      encoder_identity: body.provider_id };
+  }
+
+  function perfIdentityReason(body) {
+    var messages = { NO_ACTIVE_PROFILE: "没有活动搜索 Profile；请先在模型管理中激活模型。",
+      ACTIVE_PROFILE_POINTER_MISSING: "图库缺少活动 Profile 指针。",
+      ACTIVE_PROFILE_NOT_FOUND: "活动 Profile 指向不存在的配置。",
+      ACTIVE_GENERATION_NOT_FOUND: "活动 Profile 绑定的 Generation 不存在。",
+      PROFILE_GENERATION_MISMATCH: "活动 Profile 与 Generation 的空间或处理器绑定不一致。",
+      GENERATION_NOT_READY: "活动 Profile 对应的 Generation 尚未就绪。",
+      PROFILE_SCHEMA_UNAVAILABLE: "当前图库没有可读取的搜索 Profile / Generation 结构。",
+      PROVIDER_ID_UNAVAILABLE: "无法从活动 Generation 确认模型提供方。",
+      CATALOG_UNAVAILABLE: "当前图库数据库不可用。" };
+    var reason = body && body.reason || "IDENTITY_UNCONFIRMED";
+    if (reason === "GENERATION_NOT_READY" && body && body.generation_status) {
+      return messages[reason] + " 当前状态：" + body.generation_status + "。";
+    }
+    return messages[reason] || "模型身份未确认（" + reason + "）。";
+  }
+
+  function perfRefreshIdentity() {
+    if (!perfDiag.enabled || perfDiag.identityChecking) return Promise.resolve(null);
+    var sequence = ++perfDiag.identitySeq;
+    var target = document.getElementById("search-perf-model");
+    var retry = document.getElementById("search-perf-identity-retry");
+    var start = document.getElementById("search-perf-start");
+    perfDiag.identityChecking = true;
+    perfDiag.model = null;
+    start.disabled = true;
+    retry.hidden = true;
+    target.textContent = "正在确认当前模型…";
+    return request("/search-perf/identity").then(function (result) {
+      if (!perfDiag.enabled || sequence !== perfDiag.identitySeq) return null;
+      var body = result.body || {};
+      var identity = perfIdentityFromResponse(body);
+      if (!identity) {
+        target.textContent = perfIdentityReason(body);
+        retry.hidden = false;
+        return null;
+      }
+      perfDiag.model = identity;
+      target.textContent = "当前模型：" + perfProviderName(identity.provider_id) +
+        " · Generation " + identity.generation_status;
+      return identity;
+    }).catch(function (failure) {
+      if (!perfDiag.enabled || sequence !== perfDiag.identitySeq) return null;
+      perfDiag.model = null;
+      target.textContent = "读取活动模型身份失败（" + String(failure && failure.code || "IDENTITY_READ_FAILED") + "）。";
+      retry.hidden = false;
+      return null;
+    }).then(function (identity) {
+      if (sequence === perfDiag.identitySeq) {
+        perfDiag.identityChecking = false;
+        start.disabled = !perfDiag.enabled || !identity || perfDiag.autoRunning;
+      }
+      return identity;
+    });
   }
 
   function perfProviderName(provider) {
@@ -403,6 +461,7 @@
     }
     var before = sample.model_before, actual = sample.model_identity;
     if (!actual || !before || before.provider_id !== actual.provider_id ||
+        before.processor_id !== actual.processor_id ||
         before.active_profile_id !== actual.active_profile_id || before.space_id !== actual.space_id || before.dimension !== actual.dimension ||
         before.active_image_generation_id !== actual.active_image_generation_id ||
         (before.processor_id && before.processor_id !== (sample.server_meta.encoder_identity || {}).processor_id) ||
@@ -427,6 +486,14 @@
   function perfAfterRender(requestId, body) {
     var sample = perfDiag.active;
     if (!sample || sample.request_id !== requestId) return;
+    if (perfDiag.autoRunning) {
+      var semantic = perfSemanticSnapshot();
+      if (perfDiag.autoSemantic === null) perfDiag.autoSemantic = semantic;
+      else if (perfDiag.autoSemantic !== semantic) {
+        stopPerfTest("服务端解析出的搜索条件发生变化，标准测试已停止");
+        return;
+      }
+    }
     sample.click_to_results_dom_ms = performance.now() - sample.click_started;
     var viewportHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     var frames = Array.prototype.slice.call(document.querySelectorAll("#result-grid .thumb-frame")).filter(function (frame) {
@@ -496,8 +563,24 @@
     if (perfDiag.autoRunning) updatePerfTestSummary();
   }
 
+  function perfSampleMatchesCurrentIdentity(sample) {
+    var actual = sample && sample.model_identity, expected = perfDiag.model;
+    return Boolean(actual && expected && actual.active_profile_id === expected.active_profile_id &&
+      actual.active_image_generation_id === expected.active_image_generation_id &&
+      actual.provider_id === expected.provider_id && actual.processor_id === expected.processor_id &&
+      actual.space_id === expected.space_id && actual.dimension === expected.dimension);
+  }
+
+  function perfCurrentRunSamples() {
+    return perfDiag.samples.slice(perfDiag.runSamplesStart || 0);
+  }
+
   function perfPercentile(samples, key, p) {
-    var values = samples.map(function (sample) { return sample[key]; })
+    var values = samples.map(function (sample) {
+      var value = sample && sample[key];
+      if (typeof value !== "number" && sample && sample.server) value = sample.server[key];
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    })
       .filter(function (value) { return typeof value === "number" && Number.isFinite(value); })
       .sort(function (a, b) { return a - b; });
     if (!values.length) return { value: null, n: 0 };
@@ -505,7 +588,10 @@
   }
 
   function perfExport() {
-    var validHot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot"; });
+    var validHot = perfCurrentRunSamples().filter(function (sample) {
+      return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot" &&
+        perfSampleMatchesCurrentIdentity(sample);
+    });
     var report = { format: "photo-search-perf", format_version: 1, run_id: perfDiag.runId,
       generated_at: new Date().toISOString(), model_identity: perfDiag.model,
       environment: { app_version: state.capabilities && state.capabilities.app_version || null,
@@ -549,11 +635,13 @@
       perfDiag.enabled = toggle.checked; panel.hidden = !perfDiag.enabled;
       if (perfDiag.enabled) {
         perfDiag.runId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-        perfDiag.model = perfIdentityFromCapabilities();
-        document.getElementById("search-perf-model").textContent = perfDiag.model && perfDiag.model.active_profile_id && perfDiag.model.active_image_generation_id
-          ? "当前模型：" + perfProviderName(perfDiag.model.provider_id)
-          : "当前模型身份未确认（缺少活动 Profile 或 Generation）";
+        perfRefreshIdentity();
       } else {
+        perfDiag.identitySeq += 1;
+        perfDiag.identityChecking = false;
+        perfDiag.model = null;
+        document.getElementById("search-perf-start").disabled = true;
+        document.getElementById("search-perf-identity-retry").hidden = true;
         if (perfDiag.autoRunning) stopPerfTest("用户关闭了诊断");
         else if (perfDiag.active) {
           if (perfDiag.active.viewport_deadline) window.clearTimeout(perfDiag.active.viewport_deadline);
@@ -563,38 +651,49 @@
         }
       }
     });
+    document.getElementById("search-perf-identity-retry").addEventListener("click", perfRefreshIdentity);
     document.getElementById("search-perf-start").addEventListener("click", startPerfTest);
     document.getElementById("search-perf-stop").addEventListener("click", function () { stopPerfTest("用户停止"); });
     document.getElementById("search-perf-clear").addEventListener("click", function () {
       stopPerfTest("记录已清空");
       if (perfDiag.active && perfDiag.active.viewport_deadline) window.clearTimeout(perfDiag.active.viewport_deadline);
-      perfDiag.active = null; perfDiag.samples = []; perfDiag.count = 0; perfUpdateSummary(); updatePerfTestSummary();
+      perfDiag.active = null; perfDiag.samples = []; perfDiag.count = 0; perfDiag.runSamplesStart = 0; perfUpdateSummary(); updatePerfTestSummary();
     });
     document.getElementById("search-perf-export").addEventListener("click", perfExport);
     if (typeof window.addEventListener === "function") {
       window.addEventListener("pagehide", function () { if (perfDiag.autoRunning) stopPerfTest("页面已离开"); });
     }
-    perfDiag.model = perfIdentityFromCapabilities();
   }
 
   function updatePerfTestSummary(message) {
     var target = document.getElementById("search-perf-test-summary");
     if (!target) return;
-    var hot = perfDiag.samples.filter(function (sample) { return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot"; });
+    var hot = perfCurrentRunSamples().filter(function (sample) {
+      return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot" &&
+        perfSampleMatchesCurrentIdentity(sample);
+    });
     var exec = perfPercentile(hot, "search_execution_ms", .5), exec95 = perfPercentile(hot, "search_execution_ms", .95);
     var enc = perfPercentile(hot, "query_encode_ms", .5), vector = perfPercentile(hot, "vector_ms", .5);
     var first = perfPercentile(hot, "click_to_first_image_decode_ready_ms", .5);
     var viewport = perfPercentile(hot, "click_to_viewport_ready_ms", .5), viewport95 = perfPercentile(hot, "click_to_viewport_ready_ms", .95);
     function fmt(item) { return item.value == null ? "未测" : item.value.toFixed(1) + " ms"; }
     target.textContent = (message ? message + " · " : "") + "有效热样本 " + hot.length +
-      "；搜索执行 P50/P95 " + fmt(exec) + "/" + fmt(exec95) + "；编码 P50 " + fmt(enc) +
-      "；LanceDB P50 " + fmt(vector) + "；首图 P50 " + fmt(first) + "；视口 P50/P95 " + fmt(viewport) + "/" + fmt(viewport95);
+      "；搜索执行 P50/P95 " + fmt(exec) + "/" + fmt(exec95) + "；编码 P50 " + fmt(enc) + " (n=" + enc.n + ")" +
+      "；LanceDB P50 " + fmt(vector) + " (n=" + vector.n + ")" +
+      "；首图 P50 " + fmt(first) + "；视口 P50/P95 " + fmt(viewport) + "/" + fmt(viewport95);
   }
 
   function perfConditionsSnapshot() {
-    return JSON.stringify({ query: els.queryText.value, filters: collectFilters(), mode: textRetrievalMode(),
-      scope: state.search.selectedScope, favorites: state.search.favoritesOnly, intent: state.search.intentPlan,
-      place: state.search.placeAware, pageSize: els.queryPageSize.value });
+    return JSON.stringify({ query: els.queryText.value.trim(), filters: collectFilters(), mode: textRetrievalMode(),
+      favorites: Boolean(state.search.favoritesOnly), pageSize: els.queryPageSize.value });
+  }
+
+  function perfSemanticSnapshot() {
+    return JSON.stringify({ intentPlan: state.search.intentPlan,
+      placeAware: state.search.placeAware && { original_query: state.search.placeAware.original_query,
+        content_query: state.search.placeAware.content_query, place_kind: state.search.placeAware.place_kind,
+        place_key: state.search.placeAware.place_key, place_cancelled: Boolean(state.search.placeAware.place_cancelled) },
+      selectedScope: state.search.selectedScope });
   }
 
   function freezePerfControls(frozen) {
@@ -615,7 +714,8 @@
       perfDiag.samples.push(sample); perfDiag.active = null; perfUpdateSummary();
     }
     perfDiag.autoRunning = false; document.getElementById("search-perf-stop").hidden = true;
-    document.getElementById("search-perf-start").disabled = false; freezePerfControls(false); updatePerfTestSummary(reason);
+    document.getElementById("search-perf-start").disabled = !perfDiag.enabled || !perfDiag.model;
+    freezePerfControls(false); updatePerfTestSummary(reason);
   }
 
   function waitForPerfSample(sample, timeoutMs) {
@@ -635,19 +735,36 @@
   }
 
   function startPerfTest() {
-    if (!perfDiag.enabled || perfDiag.autoRunning) return;
-    var model = perfIdentityFromCapabilities();
+    if (!perfDiag.enabled || perfDiag.autoRunning || perfDiag.identityChecking) return;
     if (!String(els.queryText.value || "").trim()) { updatePerfTestSummary("请先输入搜索词"); return; }
-    if (!model || !model.active_profile_id || !model.active_image_generation_id ||
-        !state.capabilities.search || state.capabilities.search.query_encoder_available !== true) {
-      updatePerfTestSummary("当前模型或索引身份不可用；测试未启动"); return;
-    }
     if (state.search.mode !== "text" || textRetrievalMode() !== "combined" || state.search.loading || perfDiag.active) {
       updatePerfTestSummary("请等待当前搜索及视口图片观察结束，并使用综合搜索进行标准测试"); return;
     }
+    var conditions = perfConditionsSnapshot();
+    var selectedScopeBeforeIdentityCheck = JSON.stringify(state.search.selectedScope);
+    updatePerfTestSummary("开始前重新确认当前模型身份…");
+    perfRefreshIdentity().then(function (model) {
+      if (!model || !perfDiag.enabled || perfDiag.autoRunning) return;
+      if (conditions !== perfConditionsSnapshot() ||
+          selectedScopeBeforeIdentityCheck !== JSON.stringify(state.search.selectedScope)) {
+        updatePerfTestSummary("身份确认期间搜索条件发生变化；测试未启动"); return;
+      }
+      startPerfTestWithIdentity(model, conditions);
+    });
+  }
+
+  function startPerfTestWithIdentity(model, conditions) {
+    if (!perfDiag.enabled || perfDiag.autoRunning || !model) return;
+    if (state.search.mode !== "text" || textRetrievalMode() !== "combined" || state.search.loading || perfDiag.active) {
+      updatePerfTestSummary("请等待当前搜索及视口图片观察结束，并使用综合搜索进行标准测试"); return;
+    }
+    var currentQuery = els.queryText.value.trim();
+    if (state.search.intentPlan && state.search.intentPlan.original_query !== currentQuery) state.search.intentPlan = null;
+    if (state.search.placeAware && state.search.placeAware.original_query !== currentQuery) state.search.placeAware = null;
     perfDiag.model = model; perfDiag.autoRunning = true; perfDiag.autoStop = false;
-    var runSamplesStart = perfDiag.samples.length;
-    var frozen = perfConditionsSnapshot();
+    perfDiag.autoConditions = conditions; perfDiag.autoSemantic = null;
+    perfDiag.runSamplesStart = perfDiag.samples.length;
+    var frozen = conditions;
     document.getElementById("search-perf-start").disabled = true; document.getElementById("search-perf-stop").hidden = false;
     freezePerfControls(true); els.panelResults.scrollIntoView({ block: "start", behavior: "instant" });
     var types = ["first_observed", "warmup", "warmup"];
@@ -655,11 +772,15 @@
     function next(index) {
       if (!perfDiag.autoRunning || perfDiag.autoStop) return Promise.resolve();
       if (perfConditionsSnapshot() !== frozen) { stopPerfTest("搜索条件发生变化，测试已停止"); return Promise.resolve(); }
+      if (perfDiag.autoSemantic !== null && perfSemanticSnapshot() !== perfDiag.autoSemantic) {
+        stopPerfTest("服务端解析出的有效搜索条件发生变化，标准测试已停止"); return Promise.resolve();
+      }
       if (index >= types.length) {
         perfDiag.autoRunning = false; document.getElementById("search-perf-stop").hidden = true;
         document.getElementById("search-perf-start").disabled = false; freezePerfControls(false);
-        var validHotCount = perfDiag.samples.slice(runSamplesStart).filter(function (sample) {
-          return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot";
+        var validHotCount = perfCurrentRunSamples().filter(function (sample) {
+          return sample.valid && sample.test_mode === "standard_auto" && sample.sample_type === "hot" &&
+            perfSampleMatchesCurrentIdentity(sample);
         }).length;
         updatePerfTestSummary(validHotCount === 20
           ? "标准测试完成：1 次首次观察、2 次预热、20 个有效热样本"
@@ -680,7 +801,10 @@
           }
           return next(index + 1);
         });
-      }).catch(function () { stopPerfTest("搜索失败，自动测试已停止"); });
+      }).catch(function (failure) {
+        var code = failure && failure.code || "SEARCH_FAILED";
+        stopPerfTest("搜索请求失败（" + String(code) + "），自动测试已停止");
+      });
     }
     next(0);
   }

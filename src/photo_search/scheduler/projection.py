@@ -862,3 +862,83 @@ def search_profile_summary(db_path: str | Path) -> dict[str, Any] | None:
         }
     finally:
         connection.close()
+
+
+def search_perf_identity_summary(db_path: str | Path) -> dict[str, Any]:
+    """Read only the active profile and the exact generation it names for perf diagnostics."""
+    path = Path(db_path)
+    unavailable = {
+        "identity_confirmed": False,
+        "reason": "CATALOG_UNAVAILABLE",
+        "active_profile_id": None,
+        "active_image_generation_id": None,
+        "provider_id": None,
+        "processor_id": None,
+        "space_id": None,
+        "dimension": None,
+        "generation_status": None,
+        "binding_consistent": False,
+    }
+    if not path.exists():
+        return unavailable
+    connection = open_readonly(path)
+    try:
+        tables = _table_names(connection)
+        if not {"search_profiles", "active_search_profile", "index_generations"}.issubset(tables):
+            return {**unavailable, "reason": "PROFILE_SCHEMA_UNAVAILABLE"}
+        pointer = connection.execute(
+            "SELECT profile_id FROM active_search_profile WHERE state_id = 1"
+        ).fetchone()
+        if pointer is None:
+            return {**unavailable, "reason": "ACTIVE_PROFILE_POINTER_MISSING"}
+        profile_id = pointer["profile_id"]
+        if profile_id is None:
+            return {**unavailable, "reason": "NO_ACTIVE_PROFILE"}
+        profile = connection.execute(
+            "SELECT profile_id, space_id, image_generation_id, embedding_processor_id "
+            "FROM search_profiles WHERE profile_id = ?",
+            (str(profile_id),),
+        ).fetchone()
+        if profile is None:
+            return {**unavailable, "reason": "ACTIVE_PROFILE_NOT_FOUND",
+                    "active_profile_id": str(profile_id)}
+        generation_id = str(profile["image_generation_id"])
+        generation = connection.execute(
+            "SELECT generation_id, space_id, dimension, processor_id, state "
+            "FROM index_generations WHERE generation_id = ?",
+            (generation_id,),
+        ).fetchone()
+        profile_space = str(profile["space_id"])
+        profile_processor = str(profile["embedding_processor_id"])
+        if generation is None:
+            return {**unavailable, "reason": "ACTIVE_GENERATION_NOT_FOUND",
+                    "active_profile_id": str(profile["profile_id"]),
+                    "active_image_generation_id": generation_id,
+                    "space_id": profile_space,
+                    "processor_id": profile_processor}
+        space_id = str(generation["space_id"])
+        processor_id = str(generation["processor_id"])
+        provider_id = space_id.split(":", 1)[0] if ":" in space_id else None
+        consistent = profile_space == space_id and profile_processor == processor_id
+        status = str(generation["state"])
+        reason = None
+        if not consistent:
+            reason = "PROFILE_GENERATION_MISMATCH"
+        elif status != "READY":
+            reason = "GENERATION_NOT_READY"
+        elif not provider_id:
+            reason = "PROVIDER_ID_UNAVAILABLE"
+        return {
+            "identity_confirmed": reason is None,
+            "reason": reason,
+            "active_profile_id": str(profile["profile_id"]),
+            "active_image_generation_id": generation_id,
+            "provider_id": provider_id,
+            "processor_id": processor_id,
+            "space_id": space_id,
+            "dimension": int(generation["dimension"]),
+            "generation_status": status,
+            "binding_consistent": consistent,
+        }
+    finally:
+        connection.close()

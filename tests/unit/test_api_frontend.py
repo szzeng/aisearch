@@ -635,8 +635,8 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "向量扫描未完整完成，本次结果可能不完整。" in script
     assert "高度匹配" in script
     assert "5000+ 张高度匹配" in script
-    assert 'if (vector.engaged && vector.strong_match_available !== false)' in script
-    assert '"约 " + number(vector.strong_match_count) + " 张高度匹配"' in script
+    assert 'vector.engaged && vector.strong_match_available !== false' in script
+    assert 'strongMatch.count' in script
     assert "return isFinite(parsed) ? parsed : 0;" in script
 
 
@@ -706,7 +706,7 @@ def test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy(
 def test_search_tools_fit_the_sticky_header_and_narrow_layout() -> None:
     shell, _, style = _search_documents()
     assert 'class="search-coverage-entry"' in shell
-    assert ".search-coverage-entry { grid-column: 3; grid-row: 1;" in style
+    assert "body.search-page .app-header.has-global-search > .search-coverage-entry" in style
     assert "@media (max-width: 760px)" in style
     assert "grid-template-columns: minmax(0, 1fr);" in style
 
@@ -1130,7 +1130,7 @@ def test_the_search_page_distinguishes_an_empty_page_from_an_unextracted_library
     assert "function captureNotice(block, hits)" in script
     assert "taken_time" in script
     assert "这一页为空说明拍摄时间还没跟上，不代表这些照片不存在。" in script
-    assert "这一页没有命中的行（拍摄时间已抽取完成，这个范围内确实没有命中）" in script
+    assert 'state.search.statusEmptyNote = "（拍摄时间已抽取完成，这个范围内确实没有命中）"' in script
     assert "拍摄时间范围不被接受：只支持 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS[.毫秒] 的墙上时间写法" in script
     for state in ("PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"):
         assert state + ":" in script, state

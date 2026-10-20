@@ -250,6 +250,7 @@ from photo_search.scheduler.projection import (
     index_summary,
     ocr_summary,
     scheduler_summary,
+    search_perf_identity_summary,
     search_profile_summary,
     search_projection_summary,
 )
@@ -3603,6 +3604,12 @@ def _place_aware_choices(service: Any) -> list[dict[str, Any]]:
 @router.get("/search-perf/config", summary="Development-only search performance diagnostic switch")
 async def search_perf_config() -> dict[str, Any]:
     return {"enabled": True}
+
+
+@router.get("/search-perf/identity", summary="Read the active search profile and bound generation")
+def search_perf_identity(request: Request) -> dict[str, Any]:
+    """Return the active profile binding from a read-only catalog query; never resolve a model."""
+    return search_perf_identity_summary(catalog_db_path(context_of(request).settings.data_root))
 
 
 @router.post("/search/place-aware", summary="Personal local place plus content search")

@@ -132,6 +132,7 @@ def safe_identity(binding: dict[str, Any] | None) -> dict[str, Any] | None:
         "active_profile_id": binding.get("profile_id"),
         "active_image_generation_id": binding.get("generation_id"),
         "provider_id": provider_id,
+        "processor_id": binding.get("processor_id"),
         "space_id": space_id,
         "dimension": binding.get("dimension"),
         "encoder_identity": provider_id,

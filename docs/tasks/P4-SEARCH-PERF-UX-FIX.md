@@ -352,3 +352,24 @@
 - Ruff、py_compile、Node `--check`、diff-check 通过。隔离内置浏览器确认开关默认关闭、无需环境变量可打开，且无活动模型时拒绝启动标准测试。
 - Luna High 独立复核两项 P2 均已关闭：有效热样本必须满 20 个才报告完成，且只统计本轮新增样本；复核未运行浏览器。
 - 真实模型 23 轮、缩略图成功/失败/超时/空视口组合、重复运行浏览器路径及真实图库最终测量仍 **PENDING**。未运行全量 pytest、30 万图库测试或访问 `PhotoSearchData`。详见[执行报告](../reports/P4-SEARCH-PERF-UX-FIX.md)。
+
+
+## FIX2 执行记录（2026-10-20）
+
+**状态：** IMPLEMENTED / ACCEPTANCE PARTIAL
+
+### 性能设计（PERF-BOUNDED）
+
+- 链路与风险：诊断开关的活动身份读取与后续搜索；错误绑定会污染性能样本。
+- 做法与边界：身份端点只读活动 Profile 和其精确绑定 Generation，不解析 encoder、不加载模型、不扫描图库；标准测试仍最多 23 次串行搜索。
+- 验证与停止：使用隔离 SQLite 身份夹具和定向 UI/统计测试；没有真实模型/图库时停止于实机验收前，不宣称 23 轮性能 PASS。
+
+### 修复与验证
+
+- 新增只读 `GET /api/v1/search-perf/identity`，从活动 Profile 指针读取对应 Generation，核对 Processor/Space；不存在、缺失或未就绪时提供具体原因。前端开诊断即异步确认、提供重试，开始测试前再确认；过期响应不能覆盖新状态。
+- 自动测试将用户查询与手工条件和服务端解析语义分开处理，固定用户输入；后续服务端有效语义变化、手工选择或模型绑定不一致时停止。仅统计当前测试轮新增且身份匹配的有效 hot 样本，摘要、导出及完成提示均限定本轮；必须有 20 个才报告完成。
+- 编码和 LanceDB 统计从 `sample.server` 读取有限数值，并显示有效样本数；缺项保持“未测”。面板与 JSON 共用统计函数并维持 JSON v1。
+- 定向诊断/文字搜索 UI JUnit **21 passed**，相关页面认证断言 **1 passed**；Ruff、py_compile、Node 语法及 diff-check 通过。新增轮次隔离断言首次因错误预期 nearest-rank P50 而失败（断言期望最大值，算法正确返回首个排序值），修正期望后最终组合测试全通过。JUnit：`test-results/P4-SEARCH-PERF-UX-FIX2-focused.xml`、`test-results/P4-SEARCH-PERF-UX-FIX2-frontend.xml`。
+- 身份 API 测试用失败桩保证 `context.query_encoder` 未被调用；代码路径为 SQLite readonly 查询，没有 AI Worker 初始化、图库扫描或数据写入。未实测真实 Worker 生命周期。
+- Luna H 独立复核发现同身份历史轮次混入摘要/导出，已用当前轮切片修复；跟进复核确认 P2 已关闭且无新增问题。复核未运行测试或浏览器。
+- 真实模型 1+2+20 轮、真实首图/视口统计仍 **PENDING**。未访问真实图库、未跑全量 pytest/规模认证。详见[FIX2 报告](../reports/P4-SEARCH-PERF-UX-FIX2.md)。
