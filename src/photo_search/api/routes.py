@@ -669,7 +669,13 @@ async def storage_library_retention_cleanup(request: Request, payload: dict[str,
             status=409, details=created,
         )
     if created.get("state") in {"QUEUED", "RUNNING"}:
-        context.retention_cleanup_runner().start(str(created["run_id"]))
+        if not context.retention_cleanup_runner().start(str(created["run_id"])):
+            raise ApiError(
+                "RETENTION_RUNNER_CLOSED",
+                "清理任务已持久保存，但当前后台 runner 已关闭；请在应用恢复后继续。",
+                status=503,
+                details={"run_id": str(created["run_id"]), "state": str(created["state"])},
+            )
     progress = library_retention_run_progress(service_of(request).catalog, run_id=str(created["run_id"]))
     return {**created, "progress": progress, "physical_reclaim": "需要应用停止后运行 storage clean-retained"}
 
@@ -692,7 +698,13 @@ async def storage_library_retention_automatic(request: Request, payload: dict[st
     if enabled:
         created = create_library_retention_run(catalog, mode="AUTOMATIC")
         if not created.get("conflict") and created.get("state") in {"QUEUED", "RUNNING"}:
-            context.retention_cleanup_runner().start(str(created["run_id"]))
+            if not context.retention_cleanup_runner().start(str(created["run_id"])):
+                raise ApiError(
+                    "RETENTION_RUNNER_CLOSED",
+                    "自动清理任务已持久保存，但当前后台 runner 已关闭；请在应用恢复后继续。",
+                    status=503,
+                    details={"run_id": str(created["run_id"]), "state": str(created["state"])},
+                )
     return {
         **setting,
         "run": None if not created or created.get("conflict") else library_retention_run_progress(catalog, run_id=str(created["run_id"])),

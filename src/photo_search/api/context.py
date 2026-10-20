@@ -277,10 +277,12 @@ class ApiContext:
                 return
             run = create_library_retention_run(service.catalog, mode="AUTOMATIC")
             if not run.get("conflict") and run.get("state") in {"QUEUED", "RUNNING"}:
-                self.retention_cleanup_runner().start(str(run["run_id"]))
+                if not self.retention_cleanup_runner().start(str(run["run_id"])):
+                    logging.getLogger("photo_search.api.retention").warning(
+                        "automatic retention run remains durable but runner is closed",
+                        extra={"run_id": str(run["run_id"]), "state": str(run["state"])},
+                    )
         except Exception:  # noqa: BLE001 - automatic cleanup failures stay visible in durable run state.
-            import logging
-
             logging.getLogger("photo_search.api.retention").exception(
                 "automatic retention check failed"
             )
@@ -304,10 +306,12 @@ class ApiContext:
 
                     resumed = create_library_retention_run(service.catalog, mode=str(row["mode"]))
                     run_id = str(resumed["run_id"])
-                self.retention_cleanup_runner().start(run_id)
+                if not self.retention_cleanup_runner().start(run_id):
+                    logging.getLogger("photo_search.api.retention").warning(
+                        "retention recovery remains durable but runner is closed",
+                        extra={"run_id": run_id, "state": str(row["state"])},
+                    )
         except Exception:  # noqa: BLE001 - recovery remains retryable and data stays protected.
-            import logging
-
             logging.getLogger("photo_search.api.retention").exception(
                 "resuming retention cleanup after lock failed"
             )

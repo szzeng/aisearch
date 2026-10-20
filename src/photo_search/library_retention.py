@@ -327,10 +327,6 @@ def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, An
                     "UPDATE library_retention_runs SET state='QUEUED',stage='等待安全续做',updated_at_ms=? "
                     "WHERE run_id=?", (now, run_id),
                 )
-                connection.execute(
-                    "UPDATE library_retention_run_items SET state='QUEUED',stage='等待安全重试',reason=NULL "
-                    "WHERE run_id=? AND state='RUNNING'", (run_id,),
-                )
             return {"run_id": run_id, "state": "QUEUED" if str(active["state"]) == "PARTIAL" else str(active["state"]), "reused": True}
 
         states = ("ELIGIBLE",) if normalized == "AUTOMATIC" else ("OBSERVING", "ELIGIBLE")
@@ -407,12 +403,24 @@ def prepare_library_retention_run_batch(catalog: Catalog, *, run_id: str, batch_
             return {"assets": [], "done": True}
         cursor = int(run["selection_after_asset_id"])
         current = connection.execute(
-            "SELECT asset_id,state,attempt_count FROM library_retention_run_items "
+            "SELECT asset_id,state,attempt_count,reason FROM library_retention_run_items "
             "WHERE run_id=? AND asset_id>? ORDER BY asset_id LIMIT 21",
             (str(run_id), cursor),
         ).fetchall()
         if current:
-            return {"assets": [dict(row) for row in current], "done": False,
+            connection.execute(
+                "UPDATE library_retention_run_items SET state='FAILED',stage='尝试耗尽',"
+                "reason=COALESCE(NULLIF(reason,''),'尝试次数已耗尽，执行中断'),"
+                "completed_at_ms=COALESCE(completed_at_ms,?) "
+                "WHERE run_id=? AND asset_id>? AND state IN ('QUEUED','RUNNING') AND attempt_count>=3",
+                (now, str(run_id), cursor),
+            )
+            recovered = connection.execute(
+                "SELECT asset_id,state,attempt_count FROM library_retention_run_items "
+                "WHERE run_id=? AND asset_id>? ORDER BY asset_id LIMIT 21",
+                (str(run_id), cursor),
+            ).fetchall()
+            return {"assets": [dict(row) for row in recovered], "done": False,
                     "has_more": bool(run["has_more_candidates"])}
 
         selected = _retention_run_candidate_ids(connection, run, limit=limit + 1)

@@ -24,16 +24,27 @@ class RetentionCleanupRunner:
         self._service_factory = service_factory
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._active_run_id: str | None = None
+        self._pending_run_id: str | None = None
         self._closed = False
         self._stop_requested = threading.Event()
 
     def start(self, run_id: str) -> bool:
+        requested = str(run_id)
         with self._lock:
-            if self._closed or (self._thread is not None and self._thread.is_alive()):
+            if self._closed:
                 return False
+            if self._thread is not None and self._thread.is_alive():
+                if requested == self._pending_run_id:
+                    return True
+                if self._pending_run_id is not None:
+                    return False
+                self._pending_run_id = requested
+                return True
             self._thread = threading.Thread(
-                target=self._run, args=(str(run_id),), name="photo-search-retention", daemon=True
+                target=self._run, args=(requested,), name="photo-search-retention", daemon=True
             )
+            self._active_run_id = requested
             self._stop_requested.clear()
             self._thread.start()
             return True
@@ -47,6 +58,24 @@ class RetentionCleanupRunner:
             thread.join()
 
     def _run(self, run_id: str) -> None:
+        current = str(run_id)
+        while True:
+            self._run_one(current)
+            with self._lock:
+                if self._closed or self._stop_requested.is_set():
+                    self._active_run_id = None
+                    self._pending_run_id = None
+                    return
+                pending = self._pending_run_id
+                self._pending_run_id = None
+                if pending is None:
+                    self._active_run_id = None
+                    self._thread = None
+                    return
+                current = pending
+                self._active_run_id = pending
+
+    def _run_one(self, run_id: str) -> None:
         service = None
         try:
             service = self._service_factory()

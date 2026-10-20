@@ -223,6 +223,241 @@ def test_exhausted_partial_batch_settles_once_and_is_not_retried_on_startup(api_
     assert create_library_retention_run(catalog, mode="MANUAL")["run_id"] != run["run_id"]
 
 
+def test_crashed_third_running_attempt_recovers_as_failed(api_env) -> None:
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        prepare_library_retention_run_batch,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-crashed-third-attempt"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("crashed-third-attempt", source_path)["source_id"])
+    _seed_retention_eligible(catalog, 51, source_id, now_ms=int(catalog.now_ms()))
+    run = create_library_retention_run(catalog, mode="MANUAL")
+    prepare_library_retention_run_batch(catalog, run_id=run["run_id"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE library_retention_run_items SET state='RUNNING',stage='资格复核',"
+            "attempt_count=3,reason='third attempt interrupted' WHERE run_id=? AND asset_id=51",
+            (run["run_id"],),
+        )
+
+    assert api_env.context.retention_cleanup_runner().start(run["run_id"])
+    settled = _run_retention_to_terminal(api_env, run["run_id"])
+    item = catalog.read_one(
+        "SELECT state,attempt_count,reason FROM library_retention_run_items WHERE run_id=? AND asset_id=51",
+        (run["run_id"],),
+    )
+    assert settled["state"] == "PARTIAL"
+    assert settled["checked_assets"] == settled["failed_assets"] == 1
+    assert tuple(item) == ("FAILED", 3, "third attempt interrupted")
+    assert settled["selection_after_asset_id"] == 51
+
+
+def test_running_item_below_attempt_limit_recovers_normally(api_env) -> None:
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        prepare_library_retention_run_batch,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-running-recovery"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("running-recovery", source_path)["source_id"])
+    _seed_retention_eligible(catalog, 55, source_id, now_ms=int(catalog.now_ms()))
+    run = create_library_retention_run(catalog, mode="MANUAL")
+    prepare_library_retention_run_batch(catalog, run_id=run["run_id"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE library_retention_run_items SET state='RUNNING',stage='资格复核',"
+            "attempt_count=2,reason='previous retry' WHERE run_id=? AND asset_id=55",
+            (run["run_id"],),
+        )
+
+    assert api_env.context.retention_cleanup_runner().start(run["run_id"])
+    settled = _run_retention_to_terminal(api_env, run["run_id"])
+    assert settled["state"] == "COMPLETE"
+    assert settled["completed_assets"] == 1
+    assert tuple(catalog.read_one(
+        "SELECT state,attempt_count FROM library_retention_run_items WHERE run_id=? AND asset_id=55",
+        (run["run_id"],),
+    )) == ("COMPLETE", 3)
+
+
+def test_exhausted_crashed_item_does_not_block_later_asset(api_env) -> None:
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        prepare_library_retention_run_batch,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-crashed-batch"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("crashed-batch", source_path)["source_id"])
+    now = int(catalog.now_ms())
+    _seed_retention_eligible(catalog, 61, source_id, now_ms=now)
+    _seed_retention_eligible(catalog, 62, source_id, now_ms=now)
+    run = create_library_retention_run(catalog, mode="MANUAL")
+    prepare_library_retention_run_batch(catalog, run_id=run["run_id"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE library_retention_run_items SET state='RUNNING',stage='资格复核',"
+            "attempt_count=3 WHERE run_id=? AND asset_id=61", (run["run_id"],),
+        )
+
+    assert api_env.context.retention_cleanup_runner().start(run["run_id"])
+    settled = _run_retention_to_terminal(api_env, run["run_id"])
+    assert settled["state"] == "PARTIAL"
+    assert (settled["checked_assets"], settled["failed_assets"], settled["completed_assets"]) == (2, 1, 1)
+    exhausted = catalog.read_one(
+        "SELECT state,attempt_count,reason FROM library_retention_run_items WHERE run_id=? AND asset_id=61",
+        (run["run_id"],),
+    )
+    assert tuple(exhausted[:2]) == ("FAILED", 3)
+    assert exhausted["reason"] == "尝试次数已耗尽，执行中断"
+    assert tuple(catalog.read_one(
+        "SELECT state,attempt_count FROM library_retention_run_items WHERE run_id=? AND asset_id=62",
+        (run["run_id"],),
+    )) == ("COMPLETE", 1)
+
+
+def test_exhausted_failure_is_not_repeated_or_counted_twice(api_env) -> None:
+    import time
+
+    from photo_search.library_retention import create_library_retention_run
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-exhausted-count-once"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("exhausted-count-once", source_path)["source_id"])
+    _seed_retention_eligible(catalog, 71, source_id, now_ms=int(catalog.now_ms()))
+    run = create_library_retention_run(catalog, mode="MANUAL")
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO library_retention_run_items(run_id,asset_id,state,stage,attempt_count) "
+            "VALUES(?,71,'QUEUED','重启恢复',3)", (run["run_id"],),
+        )
+
+    runner = api_env.context.retention_cleanup_runner()
+    assert runner.start(run["run_id"])
+    first = _run_retention_to_terminal(api_env, run["run_id"])
+    assert runner.start(run["run_id"])
+    time.sleep(0.05)
+    second = catalog.read_one(
+        "SELECT checked_assets,failed_assets,completed_assets,state FROM library_retention_runs WHERE run_id=?",
+        (run["run_id"],),
+    )
+    assert tuple(second) == (
+        first["checked_assets"], first["failed_assets"], first["completed_assets"], first["state"]
+    )
+    assert catalog.read_one(
+        "SELECT attempt_count,state FROM library_retention_run_items WHERE run_id=? AND asset_id=71",
+        (run["run_id"],),
+    )[:] == (3, "FAILED")
+
+
+def test_retention_runner_queues_successor_while_current_worker_finishes() -> None:
+    import threading
+    import time
+
+    from photo_search.api.retention_runner import RetentionCleanupRunner
+
+    entered = threading.Event()
+    release = threading.Event()
+    second_started = threading.Event()
+    order: list[str] = []
+    active = 0
+    max_active = 0
+    guard = threading.Lock()
+    runner = RetentionCleanupRunner(lambda: None)
+
+    def run_one(run_id: str) -> None:
+        nonlocal active, max_active
+        with guard:
+            active += 1
+            max_active = max(max_active, active)
+            order.append(run_id)
+        if run_id == "first":
+            entered.set()
+            assert release.wait(2)
+        else:
+            second_started.set()
+        with guard:
+            active -= 1
+
+    runner._run_one = run_one
+    assert runner.start("first")
+    assert entered.wait(2)
+    assert runner.start("successor")
+    assert runner.start("successor")
+    release.set()
+    assert second_started.wait(2)
+    for _ in range(200):
+        with runner._lock:
+            if runner._thread is None:
+                break
+        time.sleep(0.005)
+    runner.close()
+    assert order == ["first", "successor"]
+    assert max_active == 1
+    assert runner.start("after-close") is False
+
+
+def test_concurrent_retention_start_requests_keep_one_worker() -> None:
+    import threading
+    import time
+
+    from photo_search.api.retention_runner import RetentionCleanupRunner
+
+    caller_barrier = threading.Barrier(9)
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+    active = 0
+    max_active = 0
+    guard = threading.Lock()
+    runner = RetentionCleanupRunner(lambda: None)
+
+    def run_one(run_id: str) -> None:
+        nonlocal active, max_active
+        with guard:
+            active += 1
+            max_active = max(max_active, active)
+            calls.append(run_id)
+        entered.set()
+        assert release.wait(2)
+        with guard:
+            active -= 1
+
+    runner._run_one = run_one
+    results: list[bool] = []
+
+    def start() -> None:
+        caller_barrier.wait()
+        results.append(runner.start("same-run"))
+
+    callers = [threading.Thread(target=start) for _ in range(8)]
+    for caller in callers:
+        caller.start()
+    caller_barrier.wait()
+    for caller in callers:
+        caller.join(2)
+    assert all(not caller.is_alive() for caller in callers)
+    assert entered.wait(2)
+    release.set()
+    for _ in range(200):
+        with runner._lock:
+            if runner._thread is None:
+                break
+        time.sleep(0.005)
+    runner.close()
+    assert len(results) == 8 and all(results)
+    assert calls == ["same-run", "same-run"]
+    assert max_active == 1
+    assert runner.start("after-close") is False
+
+
 def test_three_failed_attempts_finish_partial_and_next_click_retries_only_safe_failure(api_env, monkeypatch) -> None:
     from photo_search.catalog.errors import CatalogError
     from photo_search.library_retention import create_library_retention_run
@@ -433,6 +668,36 @@ def test_library_retention_cleanup_authorization_and_progress_are_persisted(api_
     assert result["progress"].json()["run"]["state"] in {"QUEUED", "RUNNING", "PARTIAL", "COMPLETE"}
     assert result["progress"].json()["durable"] is True
     assert result["denied"].status_code in {400, 422}
+
+
+def test_cleanup_api_reports_closed_runner_and_preserves_queued_run(api_env, monkeypatch) -> None:
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "retention-closed-runner-api"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("closed-runner-api", source_path)["source_id"])
+    _seed_retention_eligible(catalog, 89, source_id, now_ms=int(catalog.now_ms()))
+
+    class ClosedRunner:
+        def start(self, _run_id: str) -> bool:
+            return False
+
+    monkeypatch.setattr(api_env.context, "retention_cleanup_runner", lambda: ClosedRunner())
+
+    async def scenario(client: AsyncClient):
+        await api_env.authenticate(client)
+        return await client.post(
+            "/api/v1/storage/library-retention/cleanup", json={"confirmed": True},
+            headers=api_env.post_headers(api_env.csrf_token),
+        )
+
+    response = api_env.scenario(scenario)
+    assert response.status_code == 503
+    assert response.json()["code"] == "RETENTION_RUNNER_CLOSED"
+    run = catalog.read_one(
+        "SELECT run_id,state FROM library_retention_runs ORDER BY created_at_ms DESC LIMIT 1"
+    )
+    assert run["state"] == "QUEUED"
+    assert response.json()["details"] == {"run_id": run["run_id"], "state": "QUEUED"}
 
 
 def test_library_retention_worker_persists_revalidated_skip(api_env) -> None:
