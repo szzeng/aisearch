@@ -3625,6 +3625,8 @@ async def post_place_aware_search(
     finally:
         if diagnostic and metrics is not None:
             elapsed = perf_diagnostics.elapsed_ms(search_execution_started)
+            metrics["search_execution_ms"] = elapsed
+            metrics["phase_tree"] = perf_diagnostics.phase_tree(metrics, elapsed)
             response.headers["Server-Timing"] = perf_diagnostics.server_timing(metrics, elapsed)
             response.headers["X-Search-Perf-Meta"] = perf_diagnostics.encode_metrics(metrics)
             response.headers["X-Search-Request-Id"] = payload.request_id
@@ -3657,6 +3659,9 @@ def _place_aware_search_worker(
     filter_authoritative_all: int | None = None,
     perf_metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    place_aware_prepare_started = (
+        perf_diagnostics.started() if perf_metrics is not None else 0.0
+    )
     service = CatalogService(catalog, data_root=data_root)
     favorites_only = bool(payload.favorites_only)
     favorites_revision = _favorites_revision(catalog) if favorites_only else None
@@ -3701,7 +3706,10 @@ def _place_aware_search_worker(
     unified = None
     if not text_mode and payload.cursor is None and intent_plan is None:
         intent_started = perf_diagnostics.started() if perf_metrics is not None else 0.0
-        unified = coordinator.collect(original)
+        unified = perf_diagnostics.timed_call(
+            perf_metrics, "intent_collect_ms", coordinator.collect, original,
+            perf_metrics=perf_metrics,
+        )
         if perf_metrics is not None:
             perf_metrics["intent_parse_ms"] = perf_diagnostics.elapsed_ms(intent_started)
         if (kind is not None and key is not None and unified.get("place_kind") is not None
@@ -3864,6 +3872,7 @@ def _place_aware_search_worker(
             intent_plan = coordinator.validate(
                 intent_plan, original_query=original, parsed=unified,
                 continuation=payload.cursor is not None,
+                perf_metrics=perf_metrics,
             )
         except ValueError as error:
             code = CATALOG_FILTER_REVISION_STALE if "已变化" in str(error) else INVALID_CURSOR
@@ -3934,6 +3943,7 @@ def _place_aware_search_worker(
             place_choices.choices(
                 service.catalog, text=query_source, data_root=service.data_root,
                 include_parent_identity=True,
+                perf_metrics=perf_metrics,
             ),
         )
         if plan["state"] == "ambiguous":
@@ -3987,7 +3997,9 @@ def _place_aware_search_worker(
             place_selection.get("kind") != kind or str(place_selection.get("key")) != str(key)
         ):
             source_choice = next(
-                (item for item in place_choices.choices(service.catalog, data_root=service.data_root)
+                (item for item in place_choices.choices(
+                    service.catalog, data_root=service.data_root, perf_metrics=perf_metrics,
+                )
                  if item["kind"] == kind and str(item["key"]) == str(key)),
                 None,
             )
@@ -3999,7 +4011,10 @@ def _place_aware_search_worker(
     if not text_mode and payload.cursor is None and intent_plan is None:
         from photo_search.search.natural_intent import parse_natural_intent
 
-        natural = parse_natural_intent(query_text or "", connection=service.catalog.connection)
+        natural = perf_diagnostics.timed_call(
+            perf_metrics, "natural_intent_ms", parse_natural_intent,
+            query_text or "", connection=service.catalog.connection,
+        )
         if parse_notice and natural["state"] != "ambiguous" and not natural["choices"] and not natural["capture_from"]:
             # Keep unknown/negative/multi-place phrases intact unless another condition is
             # positively grounded in the active catalog or capture-time syntax.
@@ -4145,7 +4160,7 @@ def _place_aware_search_worker(
             resolved_search_scope = {"kind": "photo_collection", **photo_collection_scope}
         else:
             selected_choice = next((item for item in place_choices.choices(
-                service.catalog, data_root=service.data_root
+                service.catalog, data_root=service.data_root, perf_metrics=perf_metrics,
             ) if item.get("kind") == kind and str(item.get("key")) == str(key)), None)
             if selected_choice is None:
                 raise ApiError(CATALOG_FILTER_REVISION_STALE, "地点身份已变化，请重新选择", status=409)
@@ -4312,6 +4327,10 @@ def _place_aware_search_worker(
     encoder = None if text_mode else context.query_encoder()
     if perf_metrics is not None and not text_mode:
         perf_metrics["encoder_resolve_ms"] = perf_diagnostics.elapsed_ms(encoder_started)
+    if perf_metrics is not None:
+        perf_metrics["place_aware_prepare_ms"] = perf_diagnostics.elapsed_ms(
+            place_aware_prepare_started,
+        )
     result = search_request(
         service.catalog, envelope, sessions=context.search_sessions,
         encoder=encoder,
@@ -4325,6 +4344,9 @@ def _place_aware_search_worker(
         additional_condition_parameters=search_time_parameters,
         favorites_only=favorites_only,
         perf_metrics=perf_metrics,
+    )
+    place_aware_finalize_started = (
+        perf_diagnostics.started() if perf_metrics is not None else 0.0
     )
     if perf_metrics is not None and encoder is not None:
         try:
@@ -4362,6 +4384,10 @@ def _place_aware_search_worker(
     _verify_person_collection(service.catalog, collection_scope)
     _verify_fixed_person_revision(service.catalog, fixed_person_revision)
     _verify_favorites_revision(service.catalog, favorites_revision)
+    if perf_metrics is not None:
+        perf_metrics["place_aware_finalize_ms"] = perf_diagnostics.elapsed_ms(
+            place_aware_finalize_started,
+        )
     return result
 
 

@@ -44,6 +44,7 @@ from photo_search.persons.identity import resolve_canonical_person_id
 from photo_search.places import revision as place_revision
 from photo_search.scheduler.contracts import CONTRACT_VERSION
 from photo_search.search import documents as search_documents
+from photo_search.search import perf_diagnostics
 from photo_search.search import retrieval as retrieval_module
 from photo_search.search.contracts import (
     DEFAULT_FEEDBACK_PAGE_SIZE,
@@ -1101,6 +1102,8 @@ def search_request(
     # anchored to are read in ONE snapshot, before the scope exists, so the predicate, the
     # echo and the digest cannot disagree about which people the request named - and cannot
     # mix two authority states either. The revision is the pre-binding of this new search.
+    diagnostic_started = time.perf_counter() if perf_metrics is not None else 0.0
+    search_prepare_recorded = False
     request.validate_retrieval_mode(image_query=query_vector is not None or query_identity is not None)
     from photo_search.favorites import _revision
 
@@ -1241,7 +1244,9 @@ def search_request(
 
     def run_retrieval() -> dict[str, Any]:
         """One retrieval over the scope the attempt currently holds."""
-        return search_assets(
+        retrieval_started = time.perf_counter() if perf_metrics is not None else 0.0
+        try:
+            return search_assets(
             catalog,
             text=request.text,
             encoder=encoder if match is not None and uses_vector_channel else None,
@@ -1278,8 +1283,14 @@ def search_request(
             additional_condition_sql=scope.additional_condition_sql,
             additional_condition_parameters=scope.additional_condition_parameters,
             favorites_only=scope.favorites_only,
-            perf_metrics=perf_metrics,
-        )
+                perf_metrics=perf_metrics,
+            )
+        finally:
+            if perf_metrics is not None:
+                perf_diagnostics.add_duration(
+                    perf_metrics, "retrieval_total_ms", (time.perf_counter() - retrieval_started) * 1000,
+                )
+                perf_metrics["retrieval_calls"] = int(perf_metrics.get("retrieval_calls", 0)) + 1
 
     # ADR-0005 §10 / ADR-0009 §4.2: a new search must not answer with a page that straddles a
     # committed authority change. The anchor (canonical ids + revisions) was read in one
@@ -1291,11 +1302,17 @@ def search_request(
     # bounded and end in a structured refusal, never in a mixed page.
     def publish_once() -> dict[str, Any] | None:
         """Build and render one first page, or ``None`` if it straddled an authority change."""
+        nonlocal search_prepare_recorded
+        if perf_metrics is not None and not search_prepare_recorded:
+            perf_metrics["search_prepare_ms"] = round(
+                (time.perf_counter() - diagnostic_started) * 1000, 3
+            )
+            search_prepare_recorded = True
         candidate = run_retrieval()
         if int(candidate["catalog_filter_revision"]) != base.filter_revision:
             return None  # the cheap early discard: nothing is built or rendered
-        entries = _entries_of(candidate)
-        outcome = _rerank_outcome(
+        entries = perf_diagnostics.timed_call(perf_metrics, "entries_build_ms", _entries_of, candidate)
+        outcome = perf_diagnostics.timed_call(perf_metrics, "rerank_ms", _rerank_outcome,
             catalog,
             request,
             profile=profile,
@@ -1307,7 +1324,7 @@ def search_request(
         # Prepared, *not* published: a session may only exist once its page is known to be an
         # answer about one catalog version, so a discarded attempt cannot leak (or evict) one.
         filters_echo = _filters_echo(candidate, binding)
-        session = sessions.build_session(
+        session = perf_diagnostics.timed_call(perf_metrics, "session_build_ms", sessions.build_session,
             query_hash=digest,
             entries=entries,
             profile_id=None if profile is None else profile.profile_id,
@@ -1356,7 +1373,8 @@ def search_request(
                 **({} if session_extra is None else dict(session_extra)),
             },
         )
-        hits, next_offset, has_more, token = _render_page(
+        hits, next_offset, has_more, token = perf_diagnostics.timed_call(
+            perf_metrics, "page_render_ms", _render_page,
             catalog,
             scope,
             session,
@@ -1371,14 +1389,26 @@ def search_request(
         # the last authoritative read of this response (it re-verifies every row it is about
         # to publish). A pass here means every part of the page - canonical ids, echo, digest,
         # revision binding and the verified rows themselves - belongs to one catalog version.
-        if _authority_drift(catalog, request, base) is not None:
-            return None
-        if favorites_revision is not None and _revision(catalog.connection) != favorites_revision:
-            return None
+        publication_started = time.perf_counter() if perf_metrics is not None else 0.0
+        try:
+            if _authority_drift(catalog, request, base) is not None:
+                return None
+            if favorites_revision is not None and _revision(catalog.connection) != favorites_revision:
+                return None
+        finally:
+            if perf_metrics is not None:
+                perf_diagnostics.add_duration(
+                    perf_metrics, "publication_check_ms", (time.perf_counter() - publication_started) * 1000,
+                )
+        register_started = time.perf_counter() if perf_metrics is not None else 0.0
         sessions.register(session)
         if perf_metrics is not None:
+            perf_diagnostics.add_duration(
+                perf_metrics, "session_register_ms", (time.perf_counter() - register_started) * 1000,
+            )
+        if perf_metrics is not None:
             perf_metrics["first_page_hits"] = len(hits)
-        return _result_envelope(
+        return perf_diagnostics.timed_call(perf_metrics, "response_build_ms", _result_envelope,
             request,
             session,
             hits=hits,

@@ -7,6 +7,7 @@ from typing import Any
 
 from photo_search.persons import collections as person_collections
 from photo_search.places import choices as place_choices
+from photo_search.search import perf_diagnostics
 from photo_search.search.intent_plan import validate_plan_shape
 from photo_search.search.unified_intent import parse_unified_intent
 
@@ -27,10 +28,13 @@ class PersonalSearchCoordinator:
             return "filter_only"
         return "semantic"
 
-    def collect(self, original_query: str, *, today: date | None = None) -> dict[str, Any]:
+    def collect(
+        self, original_query: str, *, today: date | None = None,
+        perf_metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         choices = place_choices.choices(
             self.catalog, text=original_query, data_root=self.data_root,
-            include_parent_identity=True,
+            include_parent_identity=True, perf_metrics=perf_metrics,
         )
         return parse_unified_intent(
             original_query, connection=self.catalog.connection,
@@ -52,12 +56,25 @@ class PersonalSearchCoordinator:
 
     def validate(
         self, plan: Any, *, original_query: str, parsed: dict[str, Any] | None = None,
-        continuation: bool = False,
+        continuation: bool = False, perf_metrics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return perf_diagnostics.timed_call(
+            perf_metrics, "intent_validate_ms", self._validate, plan,
+            original_query=original_query, parsed=parsed, continuation=continuation,
+            perf_metrics=perf_metrics,
+        )
+
+    def _validate(
+        self, plan: Any, *, original_query: str, parsed: dict[str, Any] | None = None,
+        continuation: bool = False, perf_metrics: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Validate a client plan against server-parsed candidates and catalog identities."""
         value = dict(validate_plan_shape(plan, original_query=original_query))
         if parsed is None and not continuation:
-            parsed = self.collect(original_query)
+            parsed = perf_diagnostics.timed_call(
+                perf_metrics, "intent_collect_ms", self.collect, original_query,
+                perf_metrics=perf_metrics,
+            )
         scope = value.get("collection_scope")
         parsed_place_candidates: list[dict[str, Any]] | None = None
         if scope is not None and not isinstance(scope, dict):
@@ -175,7 +192,9 @@ class PersonalSearchCoordinator:
                 raise ValueError("搜索计划中的地点身份无效")
             current_places = parsed_place_candidates
             if parsed is None:
-                current_places = place_choices.choices(self.catalog, data_root=self.data_root)
+                current_places = place_choices.choices(
+                    self.catalog, data_root=self.data_root, perf_metrics=perf_metrics,
+                )
             current = next((item for item in current_places
                             if item.get("kind") == place_kind and str(item.get("key")) == str(place_key)), None)
             bound_keys = ("source", "source_id", "selection_ref", "dataset_id", "dataset_version")

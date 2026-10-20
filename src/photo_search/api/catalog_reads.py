@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
@@ -12,6 +13,7 @@ from typing import Any
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CATALOG_UNREADABLE, CatalogError
 from photo_search.catalog.sqlite_io import connect_rw, open_readonly
+from photo_search.search import perf_diagnostics
 
 _CACHE_INIT_LOCK = threading.Lock()
 _POOL_INIT_LOCK = threading.Lock()
@@ -90,7 +92,11 @@ class _CatalogWorkers:
         with self._lock:
             if self._closed:
                 raise CatalogError(CATALOG_UNREADABLE, "catalog workers are closed")
-            future = self._executor.submit(self._run, request, query, args, kwargs, projection)
+            metrics = kwargs.get("perf_metrics")
+            submitted_at = time.perf_counter() if isinstance(metrics, dict) else None
+            future = self._executor.submit(
+                self._run, request, query, args, kwargs, projection, submitted_at,
+            )
             self._requests[future] = request
             future.add_done_callback(self._finished)
         return future, request
@@ -100,15 +106,23 @@ class _CatalogWorkers:
             self._requests.pop(future, None)
 
     def _run(self, request: _Request, query: Callable[..., Any], args: tuple[Any, ...],
-             kwargs: dict[str, Any], projection: bool) -> Any:
+             kwargs: dict[str, Any], projection: bool,
+             submitted_at: float | None = None) -> Any:
         if request.cancelled.is_set():
             raise CancelledError()
+        metrics = kwargs.get("perf_metrics")
+        if isinstance(metrics, dict) and submitted_at is not None:
+            perf_diagnostics.add_duration(
+                metrics, "catalog_queue_ms", (time.perf_counter() - submitted_at) * 1000,
+            )
         # No migration or journal-mode change in a request worker. Live readers
         # must observe WAL commits even if no WAL existed at submission time.
-        connection = (connect_rw(self.path, create=False) if projection
-                      else open_readonly(self.path, immutable=False))
+        connection = None
         worker = None
+        open_started = time.perf_counter() if isinstance(metrics, dict) else 0.0
         try:
+            connection = (connect_rw(self.path, create=False) if projection
+                          else open_readonly(self.path, immutable=False))
             with request.lock:
                 request.connection = connection
                 if request.cancelled.is_set():
@@ -120,17 +134,32 @@ class _CatalogWorkers:
                 clock=self.clock, lease_seconds=self.lease_seconds,
             )
             worker._map_count_cache = self.count_cache
+            if isinstance(metrics, dict):
+                connection.set_trace_callback(perf_diagnostics.sql_trace_callback(metrics))
+                perf_diagnostics.add_duration(
+                    metrics, "catalog_open_ms", (time.perf_counter() - open_started) * 1000,
+                )
             return query(worker, *args, **kwargs)
         finally:
+            if isinstance(metrics, dict):
+                if connection is not None:
+                    metrics["catalog_connection_count"] = int(
+                        metrics.get("catalog_connection_count", 0)
+                    ) + 1
+            close_started = time.perf_counter() if isinstance(metrics, dict) else 0.0
             with request.lock:
                 try:
                     # Closing also rolls back an unfinished projection transaction.
-                    if worker is None:
+                    if worker is None and connection is not None:
                         connection.close()
-                    else:
+                    elif worker is not None:
                         worker.close()
                 finally:
                     request.connection = None
+            if isinstance(metrics, dict):
+                perf_diagnostics.add_duration(
+                    metrics, "catalog_close_ms", (time.perf_counter() - close_started) * 1000,
+                )
 
     def close(self) -> None:
         with self._lock:

@@ -69,6 +69,24 @@ def test_server_timing_contains_only_numeric_stage_values() -> None:
     assert "bad_ms" not in value
 
 
+def test_phase_tree_accounts_non_overlapping_stages_and_keeps_nested_detail() -> None:
+    tree = perf_diagnostics.phase_tree({
+        "place_aware_prepare_ms": 30.0,
+        "intent_collect_ms": 20.0,
+        "place_choices_ms": 10.0,
+        "search_prepare_ms": 5.0,
+        "retrieval_total_ms": 40.0,
+        "query_encode_ms": 4.0,
+        "page_render_ms": 10.0,
+    }, 100.0)
+
+    assert tree["preparation"]["intent_collect_ms"] == 20.0
+    assert tree["retrieval"]["query_encode_ms"] == 4.0
+    assert tree["accounting"]["non_overlapping_ms"] == 85.0
+    assert tree["accounting"]["unaccounted_ms"] == 15.0
+    assert tree["accounting"]["coverage_ratio"] == 0.85
+
+
 def test_server_gate_requires_explicit_environment_value(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(perf_diagnostics.PERF_ENV, raising=False)
     assert perf_diagnostics.enabled() is False
@@ -108,6 +126,13 @@ def test_place_aware_route_adds_diagnostic_headers_only_for_opted_in_requests(ap
         meta = json.loads(measured.headers["X-Search-Perf-Meta"])
         assert meta["page_size"] == 20
         assert meta["first_page_hits"] == 0
+        assert meta["phase_tree"]["accounting"]["unaccounted_ms"] >= 0
+        assert meta["search_execution_ms"] == meta["phase_tree"]["total_ms"]
+        assert isinstance(meta["catalog_queue_ms"], (int, float))
+        assert isinstance(meta["catalog_open_ms"], (int, float))
+        assert isinstance(meta["search_prepare_ms"], (int, float))
+        assert isinstance(meta["retrieval_total_ms"], (int, float))
+        assert isinstance(meta["page_render_ms"], (int, float))
         assert "synthetic" not in measured.headers["X-Search-Perf-Meta"]
         assert measured.json()["request_id"] == payload["request_id"]
 

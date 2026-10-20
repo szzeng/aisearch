@@ -7,6 +7,7 @@ the older provider-wide external-ref table is not accepted as proof after a pack
 
 from __future__ import annotations
 
+import time
 import unicodedata
 from typing import Any
 
@@ -26,9 +27,23 @@ def _active_dataset(catalog: Any) -> Any | None:
     return row
 
 
+def _read_index(catalog: Any, data_root: Any) -> tuple[dict[str, Any], str | None, str | None, bool]:
+    started = time.perf_counter() if isinstance(catalog, _PlaceMetricsCatalog) else 0.0
+    try:
+        return albums._index(catalog, data_root)
+    finally:
+        if isinstance(catalog, _PlaceMetricsCatalog):
+            metrics = catalog._metrics
+            metrics["place_index_ms"] = round(
+                float(metrics.get("place_index_ms", 0.0))
+                + (time.perf_counter() - started) * 1000, 3
+            )
+            metrics["place_index_calls"] = int(metrics.get("place_index_calls", 0)) + 1
+
+
 def verified_geo_source_ids(catalog: Any, data_root: Any) -> set[str]:
     """Return source IDs listed by the active package's checksum-verified INDEX."""
-    index, _, _, available = albums._index(catalog, data_root)
+    index, _, _, available = _read_index(catalog, data_root)
     if not available:
         return set()
     return set(map(str, index.get("city_to_admin1", {}).keys()))
@@ -37,17 +52,109 @@ def verified_geo_source_ids(catalog: Any, data_root: Any) -> set[str]:
 def choices(
     catalog: Any, text: str | None = None, *, data_root: Any = None,
     include_parent_identity: bool = False,
+    perf_metrics: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """List source-proven candidates, optionally restricting to spellings in ``text``."""
+    if perf_metrics is None:
+        return _choices_impl(catalog, text, data_root=data_root,
+                             include_parent_identity=include_parent_identity)
+    started = time.perf_counter()
+    measured = _PlaceMetricsCatalog(catalog, perf_metrics)
+    perf_metrics["place_choices_calls"] = int(perf_metrics.get("place_choices_calls", 0)) + 1
+    result: list[dict[str, Any]] = []
+    try:
+        result = _choices_impl(measured, text, data_root=data_root,
+                               include_parent_identity=include_parent_identity)
+        return result
+    finally:
+        elapsed = round((time.perf_counter() - started) * 1000, 3)
+        perf_metrics["place_choices_ms"] = round(
+            float(perf_metrics.get("place_choices_ms", 0.0)) + elapsed, 3
+        )
+        perf_metrics["place_full_candidates"] = max(
+            int(perf_metrics.get("place_full_candidates", 0)), measured.full_candidates
+        )
+        perf_metrics["place_matched_candidates"] = len(result)
+        runs = perf_metrics.setdefault("place_choice_runs", [])
+        if isinstance(runs, list) and len(runs) < 8:
+            runs.append({
+                "full_candidates": measured.full_candidates,
+                "matched_candidates": len(result),
+                "elapsed_ms": elapsed,
+            })
+
+
+class _PlaceMetricsCatalog:
+    """Request-local timing/counting proxy; never stores SQL text or row values."""
+
+    def __init__(self, catalog: Any, metrics: dict[str, Any]) -> None:
+        self._catalog = catalog
+        self._metrics = metrics
+        self.full_candidates = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._catalog, name)
+
+    def _read(self, method: str, sql: str, parameters: Any = ()) -> Any:
+        started = time.perf_counter()
+        result = getattr(self._catalog, method)(sql, parameters)
+        metrics = self._metrics
+        metrics["place_sql_ms"] = round(
+            float(metrics.get("place_sql_ms", 0.0)) + (time.perf_counter() - started) * 1000, 3
+        )
+        metrics["place_sql_queries"] = int(metrics.get("place_sql_queries", 0)) + 1
+        row_count = len(result) if method == "read_all" else int(result is not None)
+        metrics["place_sql_rows"] = int(metrics.get("place_sql_rows", 0)) + row_count
+        normalized = sql.casefold()
+        if "place_aliases" in normalized:
+            metrics["place_alias_queries"] = int(metrics.get("place_alias_queries", 0)) + 1
+            metrics["place_alias_rows"] = int(metrics.get("place_alias_rows", 0)) + row_count
+        if "cn_admin_place_refs" in normalized:
+            metrics["place_mapping_queries"] = int(metrics.get("place_mapping_queries", 0)) + 1
+        if "cn_admin_ids" in normalized:
+            metrics["place_admin_rows"] = int(metrics.get("place_admin_rows", 0)) + row_count
+        if "geo_dataset_place_refs" in normalized or "place_external_refs" in normalized:
+            metrics["place_geonames_rows"] = int(metrics.get("place_geonames_rows", 0)) + row_count
+        if "cn_legacy_links" in normalized:
+            metrics["place_link_rows"] = int(metrics.get("place_link_rows", 0)) + row_count
+        return result
+
+    def read_one(self, sql: str, parameters: Any = ()) -> Any:
+        return self._read("read_one", sql, parameters)
+
+    def read_all(self, sql: str, parameters: Any = ()) -> Any:
+        return self._read("read_all", sql, parameters)
+
+
+def _choices_impl(
+    catalog: Any, text: str | None, *, data_root: Any,
+    include_parent_identity: bool,
+) -> list[dict[str, Any]]:
     active = _active_dataset(catalog)
     if active is None:
         return []
     package_id = str(active["dataset_id"])
     osm = cn_facets.choices(catalog)
+    if isinstance(catalog, _PlaceMetricsCatalog):
+        catalog._metrics["place_osm_rows"] = (
+            int(catalog._metrics.get("place_osm_rows", 0)) + len(osm)
+        )
     admin_ids = {
         int(row["admin_id"]): str(row["external_id"])
         for row in catalog.read_all("SELECT admin_id,external_id FROM cn_admin_ids")
     }
+    admin_place_ids: dict[int, int] = {}
+    osm_admin_ids = [int(str(item["key"])[3:]) for item in osm]
+    for offset in range(0, len(osm_admin_ids), 400):
+        chunk = osm_admin_ids[offset:offset + 400]
+        if not chunk:
+            continue
+        placeholders = ",".join("?" for _ in chunk)
+        rows = catalog.read_all(
+            f"SELECT admin_id,place_id FROM cn_admin_place_refs WHERE admin_id IN ({placeholders})",
+            tuple(chunk),
+        )
+        admin_place_ids.update({int(row["admin_id"]): int(row["place_id"]) for row in rows})
     for item in osm:
         admin_id = int(str(item["key"])[3:])
         item.update(
@@ -57,7 +164,7 @@ def choices(
                 "dataset_id": package_id,
                 "dataset_version": str(active["package_version"]),
                 "selection_ref": f"osm|{package_id}|{admin_ids[admin_id]}",
-                "place_id": _mapped_admin_place(catalog, admin_id),
+                "place_id": admin_place_ids.get(admin_id),
             }
         )
 
@@ -78,7 +185,7 @@ def choices(
     # package-scoped bridge existed. Its immutable INDEX is verified by _index; use it
     # to recover exact current source membership without mutating the catalog.
     if data_root is not None:
-        index, _, _, available = albums._index(catalog, data_root)
+        index, _, _, available = _read_index(catalog, data_root)
         if available:
             source_ids = set(map(str, index.get("city_to_admin1", {}).keys())) - known_refs
             fallback = catalog.read_all(
@@ -90,15 +197,23 @@ def choices(
                 (str(active["provider"]),),
             )
             refs = [*refs, *(row for row in fallback if str(row["external_id"]) in source_ids)]
+    aliases_by_place: dict[int, list[str]] = {}
+    geo_place_ids = [int(row["place_id"]) for row in refs]
+    for offset in range(0, len(geo_place_ids), 400):
+        chunk = geo_place_ids[offset:offset + 400]
+        if not chunk:
+            continue
+        placeholders = ",".join("?" for _ in chunk)
+        alias_rows = catalog.read_all(
+            "SELECT place_id,text FROM place_aliases WHERE place_id IN (" + placeholders
+            + ") AND lifecycle='ACTIVE' ORDER BY place_id,alias_id",
+            tuple(chunk),
+        )
+        for alias in alias_rows:
+            aliases_by_place.setdefault(int(alias["place_id"]), []).append(str(alias["text"]))
     for row in refs:
         place_id = int(row["place_id"])
-        aliases = [
-            str(alias["text"])
-            for alias in catalog.read_all(
-                "SELECT text FROM place_aliases WHERE place_id=? AND lifecycle='ACTIVE' ORDER BY alias_id",
-                (place_id,),
-            )
-        ]
+        aliases = aliases_by_place.get(place_id, [])
         item = {
             "kind": str(row["kind"]),
             "key": str(place_id),
@@ -139,6 +254,8 @@ def choices(
         target["aliases"] = list(dict.fromkeys([*target["aliases"], *spellings]))
 
     candidates = [*osm, *(item for item in geo if item["place_id"] not in linked_local)]
+    if hasattr(catalog, "full_candidates"):
+        catalog.full_candidates = len(candidates)
     if text is not None:
         needle = _compact(text)
         if needle:
