@@ -4,7 +4,7 @@
 - **优先级**：P1（照片显示、分页/异步状态正确性）；P2（目录紧凑化、交互精简）。**一张卡完成，不预设 B/C。**
 - **执行模型**：GPT-6 High；用户在 Codex 手动选择，实施、修复与定向验收尽量在同一会话完成。
 - **代码审查基线**：`szzeng/aisearch` / `master @ 41eec95c56a7136eb74771071b2a4b182d8d0c74`。这是设计参考而非冻结实施版本；开工先核对最新 HEAD、工作区及是否已有同类修复，避免重复或覆盖其他工作。
-- **必读**：`AGENTS.md` → `docs/development-status.md` → 本卡；按需读 `docs/performance.md`、`docs/testing.md`、V3.0 §9.2/§12 与 V3.1 §2.4/§3.2/§3.4。相关文件：`src/photo_search/web/{app.js,index.html,styles.css,scroll-pager.js}`、`src/photo_search/api/routes.py`、`src/photo_search/photo_smart_collections.py` 和直接受影响测试。
+- **必读**：`AGENTS.md` → `docs/development-status.md` → 本卡；按需读 `docs/performance.md`、`docs/testing.md`、V3.0 §9.2/§12 与 V3.1 §2.4/§3.2/§3.4。相关文件：`src/photo_search/web/{app.js,index.html,search.js,search.html,styles.css,scroll-pager.js}`、`src/photo_search/api/routes.py`、`src/photo_search/photo_smart_collections.py` 和直接受影响测试。
 
 ## 一、目标、事实与范围
 
@@ -14,6 +14,7 @@
 2. 智能合集目录更紧凑，名称突出，操作和技术文案不过度占空间。
 3. 合集内照片向下滚动自动加载，通常不用点“加载更多”；失败时仍有明确的手动重试入口。
 4. 切换合集、排序、匹配结果/已排除、刷新或模型状态时，照片与提示不串页、不重复、不遗漏。
+5. 从确认搜索结果新建智能合集时，命名框默认填入本次搜索关键词；用户可以修改。替换已有智能合集规则时仍默认保留原合集名称。
 
 **源码确认的事实**：
 
@@ -63,6 +64,14 @@
 4. 区分加载中、实际零匹配、尚无排名缓存、索引处理中、上次结果、刷新失败、模型不兼容、续页出错。旧刷新请求的状态文字不能覆盖当前照片页状态。错误后可手动重试；没有无限轮询或自动重排队。
 5. 纯 `FILTER` 合集默认展示**拍摄时间倒序**（后台已支持 `capture_desc`），或使用明确的非相关度默认顺序；不得声称存在语义相关度。建议 UI 根据 execution kind 初始化：`TEXT/COMBINED` 可选“相关度/拍摄时间”，`FILTER` 仅提供真实适用排序。**只改变 UI 默认选择和文案，不改后台同一 order 的排序真值。**
 6. 排除/恢复使用当前有效 `expected_revision`；409 冲突时给出更新提示，不静默覆盖，不自动重复有副作用的写操作。成功后刷新本列表与标记，能保留合理的用户位置或明确提示列表已更新。
+7. 刷新观察须区分 `QUEUED/RUNNING`、明确 `FAILED`、`build_id` 变化后的已发布缓存和无法确认的终态；仅新缓存发布可提示“有新结果”。失败、未知状态和轮询网络错误不得清除旧照片或伪报新结果；轮询在有界尝试后停止并释放 timer、观察身份及刷新按钮。
+8. 观察身份绑定本次合集进入与规则身份，不绑定排序、结果/排除标签或分页 epoch；这些视图切换保留同一个观察者。同一合集访问期间自动 POST 幂等，真正离开后再次进入可重新检查；同合集第一页失败时保留原照片，成功取得完整的新第一页后才替换。
+
+### E. 搜索关键词作为智能合集名称默认值（P2）
+
+1. 搜索页“保存为智能合集”仅在新建时，从当前仍有效的已确认搜索快照提取关键词填入命名框；最多 80 个 Unicode 字符，允许用户直接编辑。
+2. 没有搜索关键词时保留空名称；替换已有智能合集规则继续预填原名称。不得从已编辑但尚未确认的输入框读取旧快照之外的关键词。
+3. 只改变命名框初始值，不新增搜索、保存请求或后台工作。
 
 ## 三、保持不变的合同
 
@@ -84,6 +93,7 @@
 | --- | --- |
 | 照片展示 | 隔离真实浏览器中横图、竖图、可用 CR2 内嵌预览/模拟 CR2、离线/缩略图失败，卡片不溢出、占位可理解、viewer 可打开/返回；若无法构造 CR2 则如实标待验 |
 | 紧凑目录 | 宽屏多列、窄屏单列，长名称不撑破页面；改名/删除入口可见可用，`CHECK_ON_OPEN` 文案不误导，不影响来源与普通合集目录 |
+| 智能合集命名 | 新建时命名框默认显示当前确认搜索关键词且可编辑；无关键词时为空；替换规则仍预填原合集名 |
 | 自动分页 | 50、51、120 张分别正确；结果与已排除可下滚续页；网络失败可手动重试；连续触底无重入、无重复/漏图；没有 IO 时按钮可用 |
 | 资源/回看 | 500+ 张连续滚动无明显请求风暴与异常卡顿；上滚可看到已浏览照片。若采用节点回收，必须测试回收后恢复与锚点正确；不要求凭单个样本宣称大库性能通过 |
 | 切换竞态 | 在详情 metadata、照片页、刷新轮询尚未完成时快速切换合集、标签、排序和离开视图，旧响应不能覆盖新页面；若响应顺序无法稳定复现，用可控延迟的前端测试覆盖 |
@@ -93,7 +103,7 @@
 
 **验证方式**：
 
-1. `tests/unit/test_smart_collection_frontend.py` 当前主要覆盖刷新失败文案，需补最小 Node/前端可控响应顺序测试：分页单飞及失败布尔返回、view epoch/旧响应抛弃、自动刷新幂等、无 IO 回退和 409 停机。可直接扩现有用例，不要求建立大型测试框架。
+1. `tests/unit/test_smart_collection_frontend.py` 使用最小 Node/前端可控响应顺序测试覆盖：分页单飞及失败布尔返回、view epoch/旧响应抛弃、自动刷新幂等、刷新观察状态与终止清理、无 IO 回退和 409 停机，以及首屏加载失败保留旧照片。不要求建立大型测试框架。
 2. 保留并运行受影响 `tests/unit/test_photo_smart_collections.py`、`tests/integration/test_p4_photo_smart_collections.py` 及实际改到的普通合集/viewer/公共 pager 测试；如未改 Python/服务端 SQL，可不重跑无关的后端大套件。
 3. 通过 Codex 内置浏览器访问 `127.0.0.1` 隔离合成库（不使用真实图库），完成**2～3 条关键流程**：照片/目录视觉与 viewer；自动翻页/失败重试；刷新/排除/切换。必要时用可控网络延迟配合前端测试，不因浏览器工具局限反复无效操作。截图能导出则保存在忽略目录，不能导出如实说明。
 4. 使用 `node --check` 检查改过的 JS；如有 Python 改动执行对应 Ruff/`py_compile`；执行 `git diff --check`。pytest 输出独立 JUnit XML、真实退出码与失败复跑说明，不通过跳过断言换取 PASS。按真实 diff 决定是否触发更大范围回归，**默认不跑全仓 3000+ 用例**。
@@ -117,7 +127,11 @@
 - **实现**：详情卡片/缩略图与目录局部布局、内外网格占位、API 缩略图路径规范化、结果与排除独立游标、单飞分页/409 停机/重读、刷新请求身份与轮询、FILTER 拍摄时间默认、紧凑文案及候选数状态限制。修复排除/恢复成功后 epoch 重置使 `mutationInFlight` 永久保持的状态缺陷，并加入回归测试。
 - **回归**：最终受影响 JUnit `test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-affected-r12.xml` 为 77 passed、0 failed、0 errors、0 skipped；前端专项 `...-frontend-r11.xml` 为 3/3。新增覆盖同规则刷新幂等、503 续页失败保留卡片及无 IntersectionObserver 的手动重试。Ruff、`node --check`（app.js、scroll-pager.js）与 `git diff --check` 通过。早期 XML 保留为中间失败记录，测试 harness 调整后最终通过。
 - **浏览器**：Codex 内置浏览器，隔离合成库，521 个 JPEG，宽松 466×740 窄屏。验证目录显隐、NO_CACHE 文案、FILTER 拍摄时间排序、缩略图框、viewer 查看/关闭返回、下滚续页（达到 500 项后仍可继续上滚查看）、排除/恢复闭环；用 API 同步合成源后目录有 521 个文件位置、854 个唯一资产。用户环境模型不可用，FILTER 流程不依赖模型。未能导出截图。
-- **独立复核**：用户指定 Luna High 对所有实际改动文件及 r12/前端 JUnit 进行只读有界复核，无阻断 finding；新增失败/回退测试后的跟进复核也无新 finding。指出失败请求与 epoch 同时变化没有单独用例，尽管复用相同 finally 收尾链；作为未单测分支保留。
+- **独立复核**：用户指定 Luna High 对所有实际改动文件及 r12/前端 JUnit 进行只读有界复核，无阻断 finding；新增失败/回退测试后的跟进复核也无新 finding；本轮命名默认值跟进复核无 blocker，80 字边界断言的追加跟进已确认无新 finding。指出失败请求与 epoch 同时变化没有单独用例，尽管复用相同 finally 收尾链；作为未单测分支保留。
 - **后续验收（2026-10-20）**：在 Codex 内置浏览器 viewport capability 中设置 1280×900，隔离库临时增加 2 张同规则智能合集卡片，真实目录显示三列；在 466×740 检查为单列。再将一张临时名称设为 80 字，宽/窄屏均截断且无水平溢出。已用服务函数删除临时卡片，确认隔离库恢复为原有 1 个合集，并重置 viewport。截图未导出。
+- **命名默认值跟进（2026-10-20）**：新建智能合集的命名框从当前已确认搜索快照读取 `query.text`，去除首尾空白并按 80 个 Unicode 字符截断；无关键词时留空，替换规则继续使用原名称。新增 Node 前端交互断言，覆盖普通关键词、80 个 Unicode 码点边界和替换保留原名；Codex 内置浏览器在隔离合成库以“按文字找”搜索 `p520`，打开“保存为智能合集”后看到命名框默认值 `p520`，取消对话框，未创建合集。
+- **跟进验证**：`test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-name-focused-r3.xml` 1 passed；Node 语法、Ruff、diff-check 通过。扩展运行 `test_search_text_mode_ui.py` 与 `test_photo_view_info_ui.py` 的 JUnit `...-name-r1.xml` 有 5 passed、2 failed：查看器探针测试桩缺少 `document.createElementNS`；共享查看器 HTML 断言先在未修改页面的旧资源版本预期失败。这两项是相邻查看器测试问题，不属于关键词填充交互；保留原始 XML，未改共享查看器。
 - **未完成验收**：CR2 内嵌预览、离线/缩略图失败、浏览器级网络失败重试/无 IO 回退、受控刷新延迟竞态、活动 DOM 具体计数/请求风暴指标仍未完成直接证明；相关有限状态由前端测试部分覆盖。合成滚动未观察到明显卡顿，但不作容量保证。失败请求与 epoch 同时变化的分支仍没有单独用例。整卡维持 ACCEPTANCE PARTIAL。
 - **运行边界**：仅使用 `.tmp/P4-PHOTO-SMART-COLLECTION-UX-FIX-20261020` 下当前任务合成源与应用数据；合成输入共 521 个 JPEG，当前合成 PhotoSearchData 约 10.8 MB。该夹具保留在 ignored `.tmp` 供复测，完整重建可用相同的 fixture 生成流程；不影响用户真实照片。未改后端/schema，不提交或推送。
+- **刷新生命周期复核补修（2026-10-20）**：本轮仅按用户指定补修 `app.js` 与前端测试，未新建任务卡；刷新观察身份改为一次合集进入＋合集实例/规则身份，不随分页 epoch、排序或结果/排除标签切换失效。仅 `QUEUED/RUNNING` 继续轮询；`FAILED` 明确报错；只有 `NO_CACHE` 且详情 `build_id` 确认变化才提示新缓存；其他终态及轮询网络错误/到达 60 次上限显示状态无法确认、保留现有照片并释放按钮/timer。实际重新进入时清空 `autoRefreshKeys`，同访问重试自动 POST 仍受限。第一页完成响应校验前不清空照片，保持旧快照交互身份；获取新第一页成功后才替换并清除重载保护。
+- **补修验证**：最终 `refresh-r10.xml` 定向 JUnit 5 passed、0 failed/errors/skipped（见 `test-results/P4-PHOTO-SMART-COLLECTION-UX-FIX-refresh-r10.xml`）。覆盖 `RUNNING→FAILED`、新 build 发布、未知终态、60 次网络错误清理、标签/排序保留观察、真实重入重置自动刷新、首次进入时刷新 POST 在 state.collection 尚空时仍能启动观察，以及新 build 首屏失败时旧卡片可交互、旧快照及 stale guard 保留，之后成功第一页才替换并清除 guard。r8 有 1 项测试断言失败（测试未先建立 stale guard 状态），r9 通过但 Luna 指出该断言赋值顺序未覆盖失败路径；移至请求前后 r10 通过。`node --check src/photo_search/web/app.js`、Ruff（测试文件）和 `git diff --check` 通过。真实浏览器仅以隔离合成 FILTER 合集验证详情加载、结果/已排除切换和目录返回重入；该夹具没有 TEXT/COMBINED 有效模型，因此未在浏览器直接触发排名刷新成功/失败，仍 PENDING。Luna High 已确认首屏 POST 竞态修复无新增产品 finding；stale guard 测试顺序修正的最终复核待回执。

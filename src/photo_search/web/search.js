@@ -4212,8 +4212,12 @@
           ? "保存本次综合或文字排名规则；候选缓存有上限，之后可手动刷新。"
           : "保存已确认的筛选条件；新照片会在下次读取时按条件出现。");
       if (state.search.timeBrowse.active) message += " 时间查看只是本次候选的临时排序；保存的仍是原始搜索规则。";
+      var query = confirmed && confirmed.query;
+      var keyword = query && typeof query === "object" ? query.text : query;
+      var suggestedName = replace ? String(replace.name || "")
+        : Array.from(String(keyword || "").trim()).slice(0, 80).join("");
       window.AIPhotoInfo.actionDialog({kind:"text", title:replace ? "替换智能合集规则" : "保存为智能合集",
-        message:message, label:"智能合集名称", value:replace ? String(replace.name || "") : ""})
+        message:message, label:"智能合集名称", value:suggestedName})
         .then(function (name) {
           if (name === null || !name.trim()) return null;
           if (!confirmedSearchIsCurrent(confirmed)) return null;

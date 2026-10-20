@@ -10,6 +10,8 @@ from pathlib import Path
 def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tmp_path: Path) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
+    search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
+    assert '/web/search.js?v=p4-search-smart-collection-name-1' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
@@ -50,7 +52,7 @@ function page(body,assetId,cursor="text-next"){
 }
 function harness(storage=new Map(),harnessOptions={}){
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-  const calls=[],viewers=[],scrolls=[],historyWrites=[];let answer=harnessOptions.answer||(body=>ok(page(body,body.cursor?202:201)));
+  const calls=[],viewers=[],scrolls=[],historyWrites=[],dialogs=[];let answer=harnessOptions.answer||(body=>ok(page(body,body.cursor?202:201)));
   let collectionSaveAnswer=()=>ok({collection:{smart_id:1}});
   let dialogAnswer=()=>Promise.resolve("合成智能合集");
   let timeAnswer=()=>ok({assets:[{asset_id:404,semantic_rank:1}],next_cursor:"time-next",
@@ -100,10 +102,10 @@ function harness(storage=new Map(),harnessOptions={}){
       openDetails(){options.onOpenFullDetails(this.assetId);this.close();}};
     viewers.push(viewer);return viewer;
   };
-  context.window.AIPhotoInfo.actionDialog=options=>dialogAnswer(options);
+  context.window.AIPhotoInfo.actionDialog=options=>{dialogs.push(options);return dialogAnswer(options);};
   vm.runInContext(code,context);
   context.ui.boot();
-  return {get,calls,storage,viewers,scrolls,historyWrites,ui:context.ui,setAnswer:fn=>{answer=fn;},
+  return {get,calls,storage,viewers,scrolls,historyWrites,dialogs,ui:context.ui,setAnswer:fn=>{answer=fn;},
     setTimeAnswer:fn=>{timeAnswer=fn;},setCollectionSaveAnswer:fn=>{collectionSaveAnswer=fn;},
     setDialogAnswer:fn=>{dialogAnswer=fn;},
     searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
@@ -558,6 +560,37 @@ function assertLiteral(request){
   assert.equal(favorites.searchCalls().length,beforeCancel,"cancelling favorites does not auto-expand to all photos");
   favorites.get("search-form").fire("submit");await flush();
   assert.equal(favorites.searchCalls().at(-1).body.favorites_only,false);
+
+  const smartName=harness();await flush();
+  smartName.get("query-text").value="西湖 夜景";
+  smartName.setAnswer(body=>ok({...page(body,301),photo_collection_source_token:"confirmed-search-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  smartName.get("search-form").fire("submit");await flush();
+  smartName.setDialogAnswer(()=>Promise.resolve(null));
+  smartName.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(smartName.dialogs.at(-1).value,"西湖 夜景",
+    "a new smart collection name defaults to the confirmed search keyword");
+  const longKeyword="山🌄".repeat(45);
+  const smartNameLong=harness();await flush();
+  smartNameLong.get("query-text").value=longKeyword;
+  smartNameLong.setAnswer(body=>ok({...page(body,303),photo_collection_source_token:"confirmed-search-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  smartNameLong.get("search-form").fire("submit");await flush();
+  smartNameLong.setDialogAnswer(()=>Promise.resolve(null));
+  smartNameLong.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(smartNameLong.dialogs.at(-1).value,Array.from(longKeyword).slice(0,80).join(""),
+    "a long keyword is truncated at 80 complete Unicode characters");
+  const replaceStorage=new Map([["photo-smart-replace-target",JSON.stringify({smart_id:8,
+    instance_token:"replace-instance",expected_revision:4,name:"已有合集名称"})]]);
+  const smartReplace=harness(replaceStorage);await flush();
+  smartReplace.get("query-text").value="雪山";
+  smartReplace.setAnswer(body=>ok({...page(body,302),photo_collection_source_token:"confirmed-search-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  smartReplace.get("search-form").fire("submit");await flush();
+  smartReplace.setDialogAnswer(()=>Promise.resolve(null));
+  smartReplace.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(smartReplace.dialogs.at(-1).value,"已有合集名称",
+    "replacing an existing smart collection keeps its current name as the default");
 
   const viewerFavorites=harness();await flush();
   viewerFavorites.get("query-text").value="sunset";
