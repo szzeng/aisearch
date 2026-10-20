@@ -1,7 +1,7 @@
 # P4-RELEASE-050 — 0.5.0 发布执行报告
 
 日期：2026-10-20
-状态：**READY FOR PERSONAL SOURCE BETA**；验证已收口，待执行 Tag/Release 发布
+状态：**PUBLISHED — PERSONAL SOURCE BETA**（GitHub Pre-release）
 基线：`5bf53eb5377e62a1d3c2bbc075080b102a0861a9`
 
 依据就绪报告补齐当前 schema 数据安全、retention 浏览器操作和智能合集独立审查，再冻结并发布个人源码测试版。GitHub 已通过有权限账号核对：已有 0.4.0 正式 Release，尚无 0.5.0 tag/release。原始测试、审查和浏览器材料存入忽略的 `test-results/P4-RELEASE-050/`。
@@ -65,4 +65,9 @@ Luna High 完整智能合集主审覆盖所有直接变更、调用链、schema�
 
 ## 发布记录
 
-验证与证据对照已完成。下一步提交冻结候选、推送 master、创建 annotated `0.5.0` Tag，并发布 GitHub prerelease；既有 0.4.0 Tag/Release 保留。发布成功后在同一报告登记 URL 与准确候选 SHA，再以独立文档提交记录发布回执。
+已发布：[Photo Search 0.5.0 — Personal Beta](https://github.com/szzeng/aisearch/releases/tag/0.5.0)。GitHub 回读确认 `isDraft=false`、`isPrerelease=true`，发布时间为 2026-10-20 20:04（Asia/Shanghai）。提供 GitHub 自动源码归档，无 Windows 安装包附件。
+
+- 冻结提交：`a669340c89df63d136a827f61f7b6ac9f6bc9556`，已推送 origin/master。
+- Annotated Tag：`0.5.0`；Tag 对象 `3789f6f87f2321a8adfa57669034f335488b05f6`；远端 peeled SHA 与冻结提交相同。
+- 既有 0.4.0 Tag/Release 未覆盖。此发布回执以单独文档提交跟在冻结提交之后，Tag 保持准确候选，不移动到回执提交。
+- 后续进入个人试用与问题反馈；没有自动启动容量、最低设备、打包或新优化任务。

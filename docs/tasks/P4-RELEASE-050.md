@@ -1,7 +1,7 @@
 # P4-RELEASE-050 — 0.5.0 个人源码测试版发布
 
 日期：2026-10-20
-状态：READY FOR PERSONAL SOURCE BETA；验证收口，待发布
+状态：PUBLISHED — PERSONAL SOURCE BETA（GitHub Pre-release）
 基线：`5bf53eb5377e62a1d3c2bbc075080b102a0861a9`，master 与 origin/master 一致。
 用户目标：依照 P4-RELEASE-040-READINESS 逐项落实必要准备，允许说明轻微问题后放行，并发布 0.5.0。用户明确允许 Luna High 子代理。
 
@@ -43,3 +43,5 @@
 当前 schema41→42→备份恢复、人工事实/真实小型 Lance/产物/原图 hash，以及智能排除保护通过；关键 retention 跨批/刷新返回/新 run 重试、TEXT/COMBINED 成功失败及搜索立即保存/viewer 返回有真实合成浏览器证据。原生确认取消仍 PENDING，按用户明确的个人测试版范围接受该工具限制。Luna High 完整独审与地点兼容修复复核无代码 blocker。
 
 完整原始基线为 3330 passed / 76 failed / 52 skipped（exit1）；受影响增量分别为59、56、81、37、216、66 passed（均exit0，有重叠不能相加）。逐节点核对关闭75项失败，仅范围外30万场景未重跑，不能称最终单次全仓全绿。Ruff、源码编译、共享Node fixture语法、lock-check、diff-check通过。详情及复现见唯一[执行报告](../reports/P4-RELEASE-050.md)。发布后仅交接个人试用和反馈，不自动启动容量、打包或新优化任务。
+
+已完成发布：冻结提交 `a669340c89df63d136a827f61f7b6ac9f6bc9556` 已推送，远端 annotated `0.5.0` peeled SHA 一致；[GitHub Release](https://github.com/szzeng/aisearch/releases/tag/0.5.0) 回读为已发布的非草稿 Pre-release。发布回执作为后续文档提交，不移动 Tag。任务结束，交接个人试用反馈。
