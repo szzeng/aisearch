@@ -66,7 +66,9 @@ def phase_tree(metrics: dict[str, Any], total_ms: float) -> dict[str, Any]:
         key: metrics.get(key) for key in
         ("place_aware_prepare_ms", "search_prepare_ms", "intent_collect_ms",
          "intent_validate_ms", "natural_intent_ms", "place_choices_ms", "place_index_ms",
-         "place_sql_ms")
+         "place_sql_ms", "place_index_exclusive_ms", "place_link_merge_ms",
+         "place_name_normalize_ms", "place_stored_key_prepare_ms",
+         "place_name_match_ms", "place_candidate_construct_ms", "place_python_other_ms")
         if isinstance(metrics.get(key), (int, float))
     }
     retrieval = {
@@ -167,7 +169,12 @@ def encode_metrics(metrics: dict[str, Any]) -> str:
             "place_aware_prepare_ms", "place_aware_finalize_ms", "intent_collect_ms",
             "intent_validate_ms", "natural_intent_ms", "place_choices_ms",
             "place_choices_call_ms", "place_choices_calls", "place_index_ms",
-            "place_index_calls", "place_sql_ms", "place_sql_queries", "place_sql_rows",
+            "place_index_calls", "place_index_exclusive_ms", "place_sql_ms",
+            "place_sql_queries", "place_sql_rows", "place_link_merge_ms",
+            "place_name_normalize_ms", "place_stored_key_prepare_ms",
+            "place_name_match_ms", "place_candidate_construct_ms", "place_python_other_ms",
+            "place_spellings_normalized", "place_spellings_reused_normalized",
+            "place_geo_candidate_objects",
             "place_alias_queries", "place_alias_rows", "place_mapping_queries",
             "place_admin_rows", "place_osm_rows", "place_geonames_rows",
             "place_link_rows", "place_full_candidates", "place_matched_candidates",

@@ -1,3 +1,7 @@
+## Current task: P4-SEARCH-PLACE-CHOICES-PERF-FIX（2026-10-20）
+
+地点关联查找由重复线性扫描改为保留首条记录的 `place_id` 映射；文本查询改为用已存正规化 GeoNames 名称/别名先筛，再构造命中候选，`text=None` 完整目录保持不变。新增 opt-in 地点子阶段计时和对象/正规化计数已接入既有诊断 JSON 与 preparation 明细。合成 3,013 OSM、45,217 GeoNames、274 links 验证完整候选及无命中结果一致；无命中构造 0 个 GeoNames 对象。FIX-1 单样本执行 1,159.912→854.046 ms；FIX-2 单样本端到端没有证明改善，SQL 保持 126 次且未进一步改写。定向 JUnit 80/80、Ruff、py_compile、diff-check 通过；7 项地点 integration 在旧 manifest schema 兼容检查阶段受阻。Luna High 跟进复核无新 blocker。真实图库 1+2+20 及性能显著性仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**；未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-SEARCH-PLACE-CHOICES-PERF-FIX.md)和[执行报告](reports/P4-SEARCH-PLACE-CHOICES-PERF-FIX.md)。
+
 ## Current task: P4-SEARCH-PIPELINE-PERF-A（2026-10-20）
 
 搜索请求新增 opt-in 阶段树、Worker/SQLite/地点候选统计和未拆分耗时；地点别名及 OSM 映射查询根据合成 400+5000 候选基线做 400 项分批，查询数 5,404→18，候选构造中位数 529.861→24.265ms。受影响 JUnit 127 passed、1 skipped，Ruff、py_compile、Node 语法、diff-check 通过。合成阶段树烟测通过；真实图库原始阶段 JSON 未取得，无法归因真实 1,396ms 或宣称实机提速，需用户复测 1+2+20；DS-H 独立受影响面审查 PENDING，故状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库；本地提交不推送。详见[任务卡](tasks/P4-SEARCH-PIPELINE-PERF-A.md)与[报告](reports/P4-SEARCH-PIPELINE-PERF-A.md)。

@@ -51,6 +51,11 @@ def test_diagnostic_export_metadata_is_allow_listed_and_query_free() -> None:
                     "space_id": "chinese-clip-vit-b-16:space", "dimension": 512},
         "query_encode_ms": 12.5,
         "worker_pid": 123,
+        "place_link_merge_ms": 3.5,
+        "place_name_match_ms": 4.5,
+        "place_candidate_construct_ms": 5.5,
+        "place_python_other_ms": 6.5,
+        "place_spellings_reused_normalized": 42,
         "original_query": "private beach search",
         "local_path": "D:/private/photo.jpg",
     })
@@ -59,6 +64,11 @@ def test_diagnostic_export_metadata_is_allow_listed_and_query_free() -> None:
     assert payload["model_identity"]["provider_id"] == "chinese-clip-vit-b-16"
     assert payload["query_encode_ms"] == 12.5
     assert payload["worker_pid"] == 123
+    assert payload["place_link_merge_ms"] == 3.5
+    assert payload["place_name_match_ms"] == 4.5
+    assert payload["place_candidate_construct_ms"] == 5.5
+    assert payload["place_python_other_ms"] == 6.5
+    assert payload["place_spellings_reused_normalized"] == 42
     assert "original_query" not in payload
     assert "local_path" not in payload
     assert "private beach search" not in encoded
@@ -77,6 +87,10 @@ def test_phase_tree_accounts_non_overlapping_stages_and_keeps_nested_detail() ->
         "place_aware_prepare_ms": 30.0,
         "intent_collect_ms": 20.0,
         "place_choices_ms": 10.0,
+        "place_link_merge_ms": 2.0,
+        "place_name_match_ms": 3.0,
+        "place_candidate_construct_ms": 1.0,
+        "place_python_other_ms": 4.0,
         "search_prepare_ms": 5.0,
         "retrieval_total_ms": 40.0,
         "query_encode_ms": 4.0,
@@ -84,6 +98,10 @@ def test_phase_tree_accounts_non_overlapping_stages_and_keeps_nested_detail() ->
     }, 100.0)
 
     assert tree["preparation"]["intent_collect_ms"] == 20.0
+    assert tree["preparation"]["place_link_merge_ms"] == 2.0
+    assert tree["preparation"]["place_name_match_ms"] == 3.0
+    assert tree["preparation"]["place_candidate_construct_ms"] == 1.0
+    assert tree["preparation"]["place_python_other_ms"] == 4.0
     assert tree["retrieval"]["query_encode_ms"] == 4.0
     assert tree["accounting"]["non_overlapping_ms"] == 85.0
     assert tree["accounting"]["unaccounted_ms"] == 15.0
