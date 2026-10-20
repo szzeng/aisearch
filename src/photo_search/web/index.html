@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-library-retention-c2-f-20261020-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-smart-collection-ux-fix-1" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-similar-search-2" />
@@ -15,7 +15,7 @@
     <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-library-retention-c2-retry-20261020-1" defer></script>
+    <script src="/web/app.js?v=p4-photo-smart-collection-ux-fix-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -310,7 +310,7 @@
         <div id="photo-smart-collections-panel" hidden>
           <p class="hint">智能合集按已确认的筛选或搜索规则动态更新；文字和综合搜索最多保留 5000 个候选。</p>
           <div id="photo-smart-collections-status" class="state-block" role="status" aria-live="polite"></div>
-          <ul id="photo-smart-collections-list" class="sources"></ul>
+          <ul id="photo-smart-collections-list" class="smart-collection-list"></ul>
           <button id="photo-smart-collections-more" type="button" hidden>加载更多</button>
         </div>
       </section>
@@ -340,7 +340,9 @@
           <button id="photo-smart-delete" type="button">删除智能合集</button>
         </p>
         <p id="photo-smart-detail-status" class="state-block" role="status" aria-live="polite"></p>
-        <div id="photo-smart-assets" class="grid" aria-label="智能合集照片"></div>
+        <div id="photo-smart-assets" class="grid smart-collection-assets" aria-label="智能合集照片"></div>
+        <div id="photo-smart-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
+        <button id="photo-smart-reload-results" type="button" hidden>合集结果已变化，点击重新加载</button>
         <button id="photo-smart-more" type="button" hidden>加载更多</button>
       </section>
     </main>

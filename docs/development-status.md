@@ -1,3 +1,7 @@
+## Current task: P4-PHOTO-SMART-COLLECTION-UX-FIX（2026-10-20）
+
+智能合集目录/详情 UI、缩略图、分页和异步视图身份已实现；修复排除成功后 epoch 重置遗留互斥锁的问题。受影响 JUnit 77/77，Ruff、Node 语法及 diff-check 通过。隔离内置浏览器验证窄屏目录、FILTER 排序、viewer 返回、500+滚动与排除恢复。Luna High 有界独立复核及新增测试跟进均无阻断 finding；失败请求与 epoch 同时变化的分支未单测。后续隔离浏览器在 1280×900 三张卡片验证宽屏三列、466×740 验证单列，并验证 80 字名称无溢出；临时卡片已清理。CR2/离线缩略图和受控刷新竞态仍待验，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。只用合成数据，未访问真实图库，未提交/推送。详见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-UX-FIX.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-UX-FIX.md)。
+
 ## Current task: P4-SEARCH-PLACE-CHOICES-PERF-FIX（2026-10-20）
 
 地点关联查找由重复线性扫描改为保留首条记录的 `place_id` 映射；文本查询改为用已存正规化 GeoNames 名称/别名先筛，再构造命中候选，`text=None` 完整目录保持不变。新增 opt-in 地点子阶段计时和对象/正规化计数已接入既有诊断 JSON 与 preparation 明细。合成 3,013 OSM、45,217 GeoNames、274 links 验证完整候选及无命中结果一致；无命中构造 0 个 GeoNames 对象。FIX-1 单样本执行 1,159.912→854.046 ms；FIX-2 单样本端到端没有证明改善，SQL 保持 126 次且未进一步改写。定向 JUnit 80/80、Ruff、py_compile、diff-check 通过；7 项地点 integration 在旧 manifest schema 兼容检查阶段受阻。Luna High 跟进复核无新 blocker。真实图库 1+2+20 及性能显著性仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**；未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-SEARCH-PLACE-CHOICES-PERF-FIX.md)和[执行报告](reports/P4-SEARCH-PLACE-CHOICES-PERF-FIX.md)。

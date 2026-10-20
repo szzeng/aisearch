@@ -900,6 +900,89 @@ main {
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 11rem), 1fr));
 }
 
+/* Smart collections own their denser directory and predictable thumbnail frames. */
+#photo-smart-collections-list.smart-collection-list {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 20rem));
+  justify-content: start;
+  gap: 0.75rem;
+}
+
+#view-photo-collections.smart-collections-active #photo-collection-create {
+  display: none;
+}
+#photo-smart-collections-list .smart-collection-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-width: 0;
+  gap: 0.45rem;
+  padding: 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+}
+#photo-smart-collections-list .smart-collection-card h3 { margin: 0; min-width: 0; }
+#photo-smart-collections-list .smart-collection-card h3 a {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#photo-smart-collections-list .smart-collection-meta { margin: 0; color: var(--fg-muted); overflow-wrap: anywhere; }
+#photo-smart-collections-list .smart-collection-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+#photo-smart-assets.smart-collection-assets {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 14rem));
+  justify-content: start;
+}
+#photo-smart-assets .smart-collection-tile { min-width: 0; overflow: hidden; }
+#photo-smart-assets .collection-asset-open {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius);
+  background: rgb(127 127 127 / 12%);
+  color: inherit;
+  cursor: pointer;
+}
+#photo-smart-assets .smart-thumbnail-frame {
+  position: relative;
+  display: grid;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  background: rgb(127 127 127 / 12%);
+}
+#photo-smart-assets .smart-thumbnail-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+#photo-smart-assets .smart-thumbnail-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  padding: 0.75rem;
+  place-items: center;
+  color: var(--fg-muted);
+  text-align: center;
+}
+#photo-smart-assets .smart-thumbnail-frame img[hidden],
+#photo-smart-assets .smart-thumbnail-placeholder[hidden] { display: none; }
+#photo-smart-assets .smart-collection-tile .tile-label { overflow-wrap: anywhere; }
+#photo-smart-assets .collection-asset-remove { align-self: flex-start; min-height: 2.4rem; }
+#photo-smart-assets .collection-asset-open:focus-visible,
+#photo-smart-assets .collection-asset-remove:focus-visible,
+#photo-smart-reload-results:focus-visible { outline: 3px solid #59baff; outline-offset: 2px; }
+#photo-smart-assets .smart-collection-tile[hidden] { display: none; }
+@media (max-width: 36rem) {
+  #photo-smart-collections-list.smart-collection-list,
+  #photo-smart-assets.smart-collection-assets { grid-template-columns: minmax(0, 1fr); }
+}
+
 .card-tile {
   background: var(--panel);
   border: 1px solid var(--line);
