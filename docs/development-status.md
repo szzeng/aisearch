@@ -1,3 +1,7 @@
+## Current task: P4-SEARCH-PLACE-LEXICON-FAST-PATH（2026-10-20）
+
+文本地点查询先在 SQLite 按活动 GeoNames 包预筛主名/别名，再构造命中地点；完整目录和来源身份/回退语义保持一致。四种合成命中形状（含完整 45,217 ID 有效 INDEX）与 814ffa1 基线结果签名一致，Python 返回行数 123,255→6,848–7,048；热 P50 约 83–88ms（五样本本机微基准）。定向 JUnit 86/86、Ruff、py_compile、diff-check 通过；Luna High 跟进无代码 blocker。SQLite 子串查询仍扫描活动包范围，诊断额外开销约 11–18ms；真实 EXIF v2 1+2+20 复测 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-SEARCH-PLACE-LEXICON-FAST-PATH.md)与[报告](reports/P4-SEARCH-PLACE-LEXICON-FAST-PATH.md)。
+
 ## Current task: P4-PHOTO-SMART-COLLECTION-UX-FIX（2026-10-20）
 
 智能合集目录/详情 UI、缩略图、分页和异步视图身份已实现；修复排除成功后 epoch 重置遗留互斥锁的问题。受影响 JUnit 77/77，Ruff、Node 语法及 diff-check 通过。隔离内置浏览器验证窄屏目录、FILTER 排序、viewer 返回、500+滚动与排除恢复。Luna High 有界独立复核及新增测试跟进均无阻断 finding；失败请求与 epoch 同时变化的分支未单测。后续隔离浏览器在 1280×900 三张卡片验证宽屏三列、466×740 验证单列，并验证 80 字名称无溢出；临时卡片已清理；新建智能合集的命名框默认带入已确认关键词，替换规则保留原名，隔离浏览器以 `p520` 确认预填。命名交互定向 JUnit 1/1 通过（含 80 字 Unicode 边界和脚本版本断言，focused-r3）；Luna High 复核无 blocker；相邻共享查看器扩展 JUnit 有 2 项既有测试设施/版本预期失败并已记录。刷新生命周期补修最终定向 JUnit 5/5（refresh-r10）通过，覆盖失败/新缓存/未知、有界清理、访问身份、首次进入时自动 POST 早于首屏及新 build 首屏失败后旧卡片仍可用、成功后替换。Luna High 确认旧卡片身份问题、首次进入 POST 竞态及 stale guard 测试覆盖缺口均已关闭。CR2/离线缩略图及真实 TEXT/COMBINED 浏览器刷新流程仍待验，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。只用合成数据，未访问真实图库，未提交/推送。详见[任务卡](tasks/P4-PHOTO-SMART-COLLECTION-UX-FIX.md)与[执行报告](reports/P4-PHOTO-SMART-COLLECTION-UX-FIX.md)。

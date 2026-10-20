@@ -59,6 +59,7 @@ def _synthetic_catalog(osm_count: int, geo_count: int) -> Catalog:
         "CREATE TABLE places(place_id INTEGER,kind TEXT,canonical_name TEXT,normalized_name TEXT,parent_place_id INTEGER,lifecycle TEXT);"
         "CREATE TABLE place_aliases(alias_id INTEGER,place_id INTEGER,text TEXT,normalized TEXT,lifecycle TEXT);"
         "CREATE TABLE cn_legacy_links(place_id INTEGER,city_id INTEGER,province_id INTEGER,dataset_id TEXT);"
+        "CREATE TABLE place_external_refs(provider TEXT,external_id TEXT,place_id INTEGER);"
         "INSERT INTO geo_datasets VALUES('synthetic','geonames','test-v1','ACTIVE');"
         "INSERT INTO active_geo_dataset VALUES(1,'synthetic');"
     )
@@ -220,8 +221,171 @@ def test_text_choices_preserve_all_same_name_geo_candidates(monkeypatch) -> None
     catalog.close()
 
 
-def test_stored_place_normalization_matches_compact_search_semantics() -> None:
+def test_stored_place_normalization_matches_compact_search_semantics(monkeypatch) -> None:
     spellings = [" Ａ  B  C ", "Straße", "İstanbul", "西湖\t风景区"]
     for spelling in spellings:
         normalized = normalize_name(spelling)
         assert place_choices._compact(spelling) == normalized.replace(" ", "")
+
+    catalog = _synthetic_catalog(0, len(spellings))
+    for index, spelling in enumerate(spellings, start=1):
+        catalog.connection.execute(
+            "UPDATE places SET canonical_name=?,normalized_name=? WHERE place_id=?",
+            (spelling, normalize_name(spelling), index),
+        )
+    monkeypatch.setattr(place_choices.cn_facets, "choices", lambda _catalog: [])
+    for index, spelling in enumerate(spellings, start=1):
+        query = f"trip photos from {spelling}"
+        rows = place_choices.choices(catalog, text=query)
+        assert [row["source_id"] for row in rows] == [f"geo:{index}"]
+    catalog.close()
+
+
+def test_text_prefilter_returns_only_matches_and_diagnostics_do_not_change_results(monkeypatch) -> None:
+    catalog = _synthetic_catalog(3, 100)
+    catalog.connection.executemany(
+        "INSERT INTO place_aliases VALUES(?,?,?,?, 'ACTIVE')",
+        [(10_000 + index, 4 + index, "Many Match City", "many match city")
+         for index in range(100)],
+    )
+    monkeypatch.setattr(
+        place_choices.cn_facets,
+        "choices",
+        lambda _catalog: [
+            {"kind": "city", "key": f"cn:{i}", "name": f"OSM City {i}", "aliases": []}
+            for i in range(1, 4)
+        ],
+    )
+    plain = place_choices.choices(catalog, text="many match city")
+    metrics: dict[str, Any] = {}
+    diagnosed = place_choices.choices(catalog, text="many match city", perf_metrics=metrics)
+
+    assert [(row["key"], row["aliases"]) for row in diagnosed] == [
+        (row["key"], row["aliases"]) for row in plain
+    ]
+    assert len(plain) == 100
+    assert metrics["place_geonames_rows"] == 100
+    assert metrics["place_sql_rows"] < 700
+    assert metrics["place_sql_queries"] < 15
+    catalog.close()
+
+
+def test_text_prefilter_preserves_legacy_alias_and_suppresses_geo_duplicate(monkeypatch) -> None:
+    catalog = _synthetic_catalog(2, 2)
+    catalog.connection.execute("INSERT INTO cn_dataset_regions VALUES('synthetic',1)")
+    catalog.connection.execute("INSERT INTO cn_legacy_links VALUES(3,1,NULL,'synthetic')")
+    monkeypatch.setattr(
+        place_choices.cn_facets,
+        "choices",
+        lambda _catalog: [
+            {"kind": "city", "key": f"cn:{i}", "name": f"OSM City {i}", "aliases": []}
+            for i in (1, 2)
+        ],
+    )
+
+    matches = place_choices.choices(catalog, text="sunset")
+    assert [item["key"] for item in matches] == ["cn:1"]
+    assert matches[0]["aliases"] == ["City 1", "sunset"]
+    assert place_choices.choices(catalog, text="  ") == place_choices.choices(catalog)
+    catalog.close()
+
+
+def test_text_prefilter_uses_only_index_verified_historical_fallback(monkeypatch) -> None:
+    catalog = _synthetic_catalog(0, 1)
+    catalog.connection.execute("DELETE FROM geo_dataset_place_refs WHERE external_id='geo:1'")
+    catalog.connection.execute(
+        "INSERT INTO place_external_refs VALUES('geonames','geo:1',1)"
+    )
+    monkeypatch.setattr(place_choices.cn_facets, "choices", lambda _catalog: [])
+    monkeypatch.setattr(
+        place_choices,
+        "_read_index",
+        lambda *_args: ({"city_to_admin1": {"geo:1": "admin:1"}}, "stamp", "geonames", True),
+    )
+
+    verified = place_choices.choices(catalog, text="geo city 1", data_root=object())
+    assert [item["source_id"] for item in verified] == ["geo:1"]
+
+    monkeypatch.setattr(
+        place_choices,
+        "_read_index",
+        lambda *_args: ({"city_to_admin1": {}}, "stamp", "geonames", True),
+    )
+    assert place_choices.choices(catalog, text="geo city 1", data_root=object()) == []
+    catalog.close()
+
+
+def test_text_prefilter_keeps_verified_fallback_link_alias(monkeypatch) -> None:
+    catalog = _synthetic_catalog(2, 2)
+    catalog.connection.execute("DELETE FROM geo_dataset_place_refs WHERE place_id=3")
+    catalog.connection.execute(
+        "INSERT INTO place_external_refs VALUES('geonames','geo:1',3)"
+    )
+    catalog.connection.execute("INSERT INTO cn_dataset_regions VALUES('synthetic',1)")
+    catalog.connection.execute("INSERT INTO cn_legacy_links VALUES(3,1,NULL,'synthetic')")
+    monkeypatch.setattr(place_choices.cn_facets, "choices", lambda _catalog: [
+        {"kind": "city", "key": "cn:1", "name": "OSM City 1", "aliases": []},
+    ])
+    monkeypatch.setattr(
+        place_choices,
+        "_read_index",
+        lambda *_args: ({"city_to_admin1": {"geo:1": "admin:1"}}, "stamp", "geonames", True),
+    )
+
+    matches = place_choices.choices(catalog, text="sunset", data_root=object())
+    assert [item["key"] for item in matches] == ["cn:1"]
+    assert matches[0]["aliases"] == ["City 1", "sunset"]
+    catalog.close()
+
+
+def test_diagnostic_candidate_count_excludes_each_duplicate_linked_fallback_ref(monkeypatch) -> None:
+    catalog = _synthetic_catalog(1, 1)
+    catalog.connection.execute("DELETE FROM geo_dataset_place_refs WHERE place_id=2")
+    catalog.connection.executemany(
+        "INSERT INTO place_external_refs VALUES('geonames',?,2)",
+        [("geo:1",), ("geo:1-alt",)],
+    )
+    catalog.connection.execute("INSERT INTO cn_dataset_regions VALUES('synthetic',1)")
+    catalog.connection.execute("INSERT INTO cn_legacy_links VALUES(2,1,NULL,'synthetic')")
+    monkeypatch.setattr(place_choices.cn_facets, "choices", lambda _catalog: [
+        {"kind": "city", "key": "cn:1", "name": "OSM City 1", "aliases": []},
+    ])
+    monkeypatch.setattr(
+        place_choices,
+        "_read_index",
+        lambda *_args: ({"city_to_admin1": {"geo:1": "admin:1", "geo:1-alt": "admin:1"}},
+                        "stamp", "geonames", True),
+    )
+
+    metrics = {}
+    results = place_choices.choices(catalog, text="sunset", data_root=object(), perf_metrics=metrics)
+
+    assert [item["key"] for item in results] == ["cn:1"]
+    assert metrics["place_full_candidates"] == 1
+    catalog.close()
+
+
+def test_text_prefilter_observes_alias_edits_and_active_dataset_switch(monkeypatch) -> None:
+    catalog = _synthetic_catalog(0, 2)
+    monkeypatch.setattr(place_choices.cn_facets, "choices", lambda _catalog: [])
+    assert [row["source_id"] for row in place_choices.choices(catalog, text="sunset")] == ["geo:1"]
+
+    catalog.connection.execute(
+        "UPDATE place_aliases SET text='dusk',normalized='dusk' WHERE place_id=1"
+    )
+    assert place_choices.choices(catalog, text="sunset") == []
+    assert [row["source_id"] for row in place_choices.choices(catalog, text="dusk")] == ["geo:1"]
+
+    catalog.connection.execute(
+        "INSERT INTO geo_datasets VALUES('next','geonames','next-v1','ACTIVE')"
+    )
+    catalog.connection.execute("UPDATE active_geo_dataset SET dataset_id='next'")
+    catalog.connection.execute(
+        "INSERT INTO places VALUES(3,'city','New Kyoto','new kyoto',NULL,'ACTIVE')"
+    )
+    catalog.connection.execute(
+        "INSERT INTO geo_dataset_place_refs VALUES('next','geo:new',3,'geonames')"
+    )
+    assert [row["source_id"] for row in place_choices.choices(catalog, text="new kyoto")] == ["geo:new"]
+    assert place_choices.choices(catalog, text="dusk") == []
+    catalog.close()

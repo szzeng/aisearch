@@ -33,6 +33,122 @@ def _stored_name_match(normalized_name: Any, normalized_aliases: list[str], need
     return any(str(alias).replace(" ", "") in needle for alias in normalized_aliases)
 
 
+def _matching_geo_refs_sql(*, include_fallback: bool) -> tuple[str, str | None]:
+    current = """SELECT x.external_id,x.place_id,p.kind,p.canonical_name,p.normalized_name,
+                      p.parent_place_id,parent.canonical_name AS parent_name
+                 FROM geo_dataset_place_refs x
+                 JOIN active_geo_dataset a ON a.singleton=1 AND a.dataset_id=x.dataset_id
+                 JOIN places p ON p.place_id=x.place_id AND p.lifecycle='ACTIVE'
+                 LEFT JOIN places parent ON parent.place_id=p.parent_place_id
+                WHERE x.dataset_id=? AND x.provider=? AND p.kind IN ('city','country')
+                  AND (instr(?,replace(p.normalized_name,' ',''))>0 OR EXISTS(
+                       SELECT 1 FROM place_aliases pa WHERE pa.place_id=p.place_id
+                         AND pa.lifecycle='ACTIVE'
+                         AND instr(?,replace(pa.normalized,' ',''))>0))
+             ORDER BY length(p.canonical_name) DESC,p.place_id"""
+    if not include_fallback:
+        return current, None
+    fallback = """SELECT e.external_id,e.place_id,p.kind,p.canonical_name,p.normalized_name,
+                        p.parent_place_id,parent.canonical_name AS parent_name
+                 FROM place_external_refs e
+                 JOIN places p ON p.place_id=e.place_id AND p.lifecycle='ACTIVE'
+                 LEFT JOIN places parent ON parent.place_id=p.parent_place_id
+                WHERE e.provider=? AND p.kind IN ('city','country')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM geo_dataset_place_refs x
+                      JOIN places current_place ON current_place.place_id=x.place_id
+                         AND current_place.lifecycle='ACTIVE'
+                      WHERE x.dataset_id=? AND x.provider=? AND x.external_id=e.external_id
+                        AND current_place.kind IN ('city','country'))
+                  AND (instr(?,replace(p.normalized_name,' ',''))>0 OR EXISTS(
+                       SELECT 1 FROM place_aliases pa WHERE pa.place_id=p.place_id
+                         AND pa.lifecycle='ACTIVE'
+                         AND instr(?,replace(pa.normalized,' ',''))>0))
+             ORDER BY p.place_id"""
+    return current, fallback
+
+
+def _verified_link_place_ids(
+    catalog: Any,
+    package_id: str,
+    provider: str,
+    links: list[Any],
+    verified_source_ids: set[str],
+) -> set[int]:
+    place_ids = list(dict.fromkeys(int(row["place_id"]) for row in links))
+    if not place_ids:
+        return set()
+    valid: set[int] = set()
+    for offset in range(0, len(place_ids), 400):
+        chunk = place_ids[offset:offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = catalog.read_all(
+            "SELECT place_id FROM geo_dataset_place_refs WHERE dataset_id=? AND provider=? "
+            f"AND place_id IN ({placeholders})",
+            (package_id, provider, *chunk),
+        )
+        valid.update(int(row["place_id"]) for row in rows)
+    remaining = [place_id for place_id in place_ids if place_id not in valid]
+    if not remaining or not verified_source_ids:
+        return valid
+    indexed_refs: list[Any] = []
+    for offset in range(0, len(remaining), 400):
+        chunk = remaining[offset:offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        indexed_refs.extend(catalog.read_all(
+            "SELECT place_id,external_id FROM place_external_refs "
+            f"WHERE provider=? AND place_id IN ({placeholders})",
+            (provider, *chunk),
+        ))
+    fallback_ids = {str(row["external_id"]) for row in indexed_refs
+                    if str(row["external_id"]) in verified_source_ids}
+    if not fallback_ids:
+        return valid
+    current_ids: set[str] = set()
+    fallback_list = sorted(fallback_ids)
+    for offset in range(0, len(fallback_list), 400):
+        chunk = fallback_list[offset:offset + 400]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = catalog.read_all(
+            "SELECT x.external_id FROM geo_dataset_place_refs x "
+            "JOIN places p ON p.place_id=x.place_id AND p.lifecycle='ACTIVE' "
+            "WHERE x.dataset_id=? AND x.provider=? AND p.kind IN ('city','country') "
+            f"AND x.external_id IN ({placeholders})",
+            (package_id, provider, *chunk),
+        )
+        current_ids.update(str(row["external_id"]) for row in rows)
+    valid.update(int(row["place_id"]) for row in indexed_refs
+                 if str(row["external_id"]) in fallback_ids - current_ids)
+    return valid
+
+
+def _count_active_geo_refs(
+    catalog: Any,
+    package_id: str,
+    provider: str,
+    excluded_place_ids: set[int],
+) -> int:
+    exclusion = ""
+    excluded_parameters: tuple[int, ...] = ()
+    if excluded_place_ids:
+        placeholders = ",".join("?" for _ in excluded_place_ids)
+        exclusion = f" AND x.place_id NOT IN ({placeholders})"
+        excluded_parameters = tuple(sorted(excluded_place_ids))
+    row = catalog.read_one(
+        f"""SELECT COUNT(*) AS count FROM geo_dataset_place_refs x
+             JOIN active_geo_dataset a ON a.singleton=1 AND a.dataset_id=x.dataset_id
+             JOIN places p ON p.place_id=x.place_id AND p.lifecycle='ACTIVE'
+            WHERE x.dataset_id=? AND x.provider=? AND p.kind IN ('city','country')
+              {exclusion}""",
+        (package_id, provider, *excluded_parameters),
+    )
+    count = int(row["count"])
+    # Diagnostics count the current package's full catalog. Historical verified
+    # fallbacks remain in result semantics but are deliberately excluded here so
+    # opt-in measurement never scans the provider-wide legacy reference table.
+    return count
+
+
 def _active_dataset(catalog: Any) -> Any | None:
     row = catalog.read_one(
         "SELECT g.* FROM geo_datasets g JOIN active_geo_dataset a "
@@ -156,7 +272,8 @@ class _PlaceMetricsCatalog:
             metrics["place_mapping_queries"] = int(metrics.get("place_mapping_queries", 0)) + 1
         if "cn_admin_ids" in normalized:
             metrics["place_admin_rows"] = int(metrics.get("place_admin_rows", 0)) + row_count
-        if "geo_dataset_place_refs" in normalized or "place_external_refs" in normalized:
+        if ("geo_dataset_place_refs" in normalized or "place_external_refs" in normalized) \
+                and "canonical_name" in normalized:
             metrics["place_geonames_rows"] = int(metrics.get("place_geonames_rows", 0)) + row_count
         if "cn_legacy_links" in normalized:
             metrics["place_link_rows"] = int(metrics.get("place_link_rows", 0)) + row_count
@@ -219,37 +336,55 @@ def _choices_impl(
             }
         )
 
-    geo_rows: list[Any] = []
-    refs = catalog.read_all(
-        """SELECT x.external_id,x.place_id,p.kind,p.canonical_name,p.normalized_name,p.parent_place_id,
-                  parent.canonical_name AS parent_name
-             FROM geo_dataset_place_refs x
-             JOIN active_geo_dataset a ON a.singleton=1 AND a.dataset_id=x.dataset_id
-             JOIN places p ON p.place_id=x.place_id AND p.lifecycle='ACTIVE'
-             LEFT JOIN places parent ON parent.place_id=p.parent_place_id
-            WHERE x.dataset_id=? AND x.provider=? AND p.kind IN ('city','country')
-            ORDER BY length(p.canonical_name) DESC,p.place_id""",
-        (package_id, str(active["provider"])),
-    )
-    known_refs = {str(row["external_id"]) for row in refs}
-    # A schema-20 catalog may already have a validated active package before this
-    # package-scoped bridge existed. Its immutable INDEX is verified by _index; use it
-    # to recover exact current source membership without mutating the catalog.
+    provider = str(active["provider"])
+    text_needle = _compact(text) if text is not None else ""
+    filtered = text is not None and bool(text_needle)
+    index: dict[str, Any] = {}
+    index_available = False
     if data_root is not None:
-        index, _, _, available = _read_index(catalog, data_root)
-        if available:
-            source_ids = set(map(str, index.get("city_to_admin1", {}).keys())) - known_refs
+        index, _, _, index_available = _read_index(catalog, data_root)
+    verified_source_ids = (
+        set(map(str, index.get("city_to_admin1", {}).keys())) if index_available else set()
+    )
+
+    full_refs_sql = """SELECT x.external_id,x.place_id,p.kind,p.canonical_name,p.normalized_name,
+                              p.parent_place_id,parent.canonical_name AS parent_name
+                         FROM geo_dataset_place_refs x
+                         JOIN active_geo_dataset a ON a.singleton=1 AND a.dataset_id=x.dataset_id
+                         JOIN places p ON p.place_id=x.place_id AND p.lifecycle='ACTIVE'
+                         LEFT JOIN places parent ON parent.place_id=p.parent_place_id
+                        WHERE x.dataset_id=? AND x.provider=? AND p.kind IN ('city','country')
+                        ORDER BY length(p.canonical_name) DESC,p.place_id"""
+    if filtered:
+        current_sql, fallback_sql = _matching_geo_refs_sql(
+            include_fallback=bool(verified_source_ids)
+        )
+        refs = catalog.read_all(current_sql, (package_id, provider, text_needle, text_needle))
+        if fallback_sql is not None:
             fallback = catalog.read_all(
-                """SELECT e.external_id,e.place_id,p.kind,p.canonical_name,p.normalized_name,p.parent_place_id,
-                          parent.canonical_name AS parent_name
+                fallback_sql,
+                (provider, package_id, provider, text_needle, text_needle),
+            )
+            refs.extend(row for row in fallback
+                        if str(row["external_id"]) in verified_source_ids)
+        current_ref_count = len(refs)
+    else:
+        refs = catalog.read_all(full_refs_sql, (package_id, provider))
+        current_ref_count = len(refs)
+        known_refs = {str(row["external_id"]) for row in refs}
+        # Historical fallback is admitted only by the verified immutable package INDEX.
+        if verified_source_ids:
+            fallback = catalog.read_all(
+                """SELECT e.external_id,e.place_id,p.kind,p.canonical_name,p.normalized_name,
+                          p.parent_place_id,parent.canonical_name AS parent_name
                      FROM place_external_refs e JOIN places p ON p.place_id=e.place_id
                        AND p.lifecycle='ACTIVE' LEFT JOIN places parent ON parent.place_id=p.parent_place_id
                     WHERE e.provider=? AND p.kind IN ('city','country') ORDER BY p.place_id""",
-                (str(active["provider"]),),
+                (provider,),
             )
+            source_ids = verified_source_ids - known_refs
             refs = [*refs, *(row for row in fallback if str(row["external_id"]) in source_ids)]
     aliases_by_place: dict[int, list[str]] = {}
-    normalized_aliases_by_place: dict[int, list[str]] = {}
     geo_place_ids = [int(row["place_id"]) for row in refs]
     for offset in range(0, len(geo_place_ids), 400):
         chunk = geo_place_ids[offset:offset + 400]
@@ -257,14 +392,13 @@ def _choices_impl(
             continue
         placeholders = ",".join("?" for _ in chunk)
         alias_rows = catalog.read_all(
-            "SELECT place_id,text,normalized FROM place_aliases WHERE place_id IN (" + placeholders
+            "SELECT place_id,text FROM place_aliases WHERE place_id IN (" + placeholders
             + ") AND lifecycle='ACTIVE' ORDER BY place_id,alias_id",
             tuple(chunk),
         )
         for alias in alias_rows:
             place_id = int(alias["place_id"])
             aliases_by_place.setdefault(place_id, []).append(str(alias["text"]))
-            normalized_aliases_by_place.setdefault(place_id, []).append(str(alias["normalized"]))
     geo_rows = [(row, aliases_by_place.get(int(row["place_id"]), [])) for row in refs]
     phase_done("place_candidate_data_prepare_ms", phase_started)
     phase_started = time.perf_counter() if measured else 0.0
@@ -272,11 +406,14 @@ def _choices_impl(
     # Only package-generated cn_legacy_links prove identity. Names are retained as
     # searchable spellings only after the link itself has mapped this exact GeoNames row.
     linked = catalog.read_all(
-        """SELECT l.place_id,l.city_id,l.province_id,r.admin_id
+        """SELECT l.place_id,l.city_id,l.province_id,r.admin_id,
+                  p.kind,p.canonical_name
              FROM cn_legacy_links l
              JOIN active_geo_dataset a ON a.singleton=1 AND a.dataset_id=l.dataset_id
              JOIN cn_dataset_regions r ON r.dataset_id=l.dataset_id
                 AND r.admin_id=COALESCE(l.city_id,l.province_id)
+             JOIN places p ON p.place_id=l.place_id AND p.lifecycle='ACTIVE'
+                AND p.kind IN ('city','country')
             WHERE l.dataset_id=?""",
         (package_id,),
     )
@@ -286,84 +423,93 @@ def _choices_impl(
     geo_by_place: dict[int, tuple[Any, list[str]]] = {}
     for record in geo_rows:
         geo_by_place.setdefault(int(record[0]["place_id"]), record)
+    linked_aliases: dict[int, list[str]] = {}
+    valid_link_place_ids = set(geo_by_place)
+    if filtered:
+        valid_link_place_ids = _verified_link_place_ids(
+            catalog, package_id, provider, linked, verified_source_ids
+        )
+        linked_ids = sorted(valid_link_place_ids)
+        for offset in range(0, len(linked_ids), 400):
+            chunk = linked_ids[offset:offset + 400]
+            if not chunk:
+                continue
+            placeholders = ",".join("?" for _ in chunk)
+            alias_rows = catalog.read_all(
+                "SELECT place_id,text FROM place_aliases WHERE place_id IN (" + placeholders
+                + ") AND lifecycle='ACTIVE' ORDER BY place_id,alias_id",
+                tuple(chunk),
+            )
+            for alias in alias_rows:
+                linked_aliases.setdefault(int(alias["place_id"]), []).append(str(alias["text"]))
     for link in linked:
         target = osm_by_admin.get(int(link["admin_id"]))
-        legacy = geo_by_place.get(int(link["place_id"]))
-        if target is None or legacy is None or target["kind"] != "city":
+        place_id = int(link["place_id"])
+        if (target is None or place_id not in valid_link_place_ids
+                or target["kind"] != "city"):
             continue
-        linked_local.add(int(link["place_id"]))
-        legacy_row, legacy_aliases = legacy
-        spellings = [str(legacy_row["canonical_name"]), *legacy_aliases]
+        linked_local.add(place_id)
+        legacy = geo_by_place.get(place_id)
+        legacy_aliases = (
+            linked_aliases.get(place_id, []) if filtered
+            else aliases_by_place.get(place_id, [])
+        )
+        legacy_name = link["canonical_name"]
+        if legacy is not None:
+            legacy_name = legacy[0]["canonical_name"]
+        spellings = [str(legacy_name), *legacy_aliases]
         target["aliases"] = list(dict.fromkeys([*target["aliases"], *spellings]))
 
     phase_done("place_link_merge_ms", phase_started)
-    candidate_count = len(osm) + sum(int(row["place_id"]) not in linked_local for row, _ in geo_rows)
+    if filtered and measured:
+        candidate_count = len(osm) + _count_active_geo_refs(
+            catalog, package_id, provider, linked_local
+        )
+    else:
+        candidate_count = len(osm) + sum(
+            int(row["place_id"]) not in linked_local
+            for row, _ in geo_rows[:current_ref_count]
+        )
     if hasattr(catalog, "full_candidates"):
         catalog.full_candidates = candidate_count
-    if text is not None:
-        needle = _compact(text)
-        if needle:
-            if not measured:
-                matched_osm = [
-                    item for item in osm if _text_match(item["name"], item["aliases"], needle)
-                ]
-                matched_geo_indexes = {
-                    index
-                    for index, (row, aliases) in enumerate(geo_rows)
-                    if int(row["place_id"]) not in linked_local
-                    and _stored_name_match(
-                        row["normalized_name"],
-                        normalized_aliases_by_place.get(int(row["place_id"]), []),
-                        needle,
-                    )
-                }
-                geo = [
-                    _geo_choice(row, aliases_by_place, package_id, active, include_parent_identity)
-                    for index, row in enumerate(refs) if index in matched_geo_indexes
-                ]
-                return [*matched_osm, *geo]
-            normalize_started = time.perf_counter() if measured else 0.0
-            normalized_osm = [
-                (item, [_compact(str(spelling)) for spelling in [item["name"], *item["aliases"]]])
-                for item in osm
-            ]
-            phase_done("place_name_normalize_ms", normalize_started)
-            stored_key_started = time.perf_counter()
-            normalized_geo = [
-                (index, [
-                    str(spelling).replace(" ", "")
-                    for spelling in [
-                        row["normalized_name"],
-                        *normalized_aliases_by_place.get(int(row["place_id"]), []),
-                    ]
-                ])
-                for index, (row, aliases) in enumerate(geo_rows)
-                if int(row["place_id"]) not in linked_local
-            ]
-            phase_done("place_stored_key_prepare_ms", stored_key_started)
-            if measured:
-                catalog._metrics["place_spellings_normalized"] = int(
-                    catalog._metrics.get("place_spellings_normalized", 0)
-                ) + sum(len(spellings) for _, spellings in normalized_osm)
-                catalog._metrics["place_spellings_reused_normalized"] = (
-                    int(catalog._metrics.get("place_spellings_reused_normalized", 0))
-                    + sum(len(spellings) for _, spellings in normalized_geo)
-                )
-            match_started = time.perf_counter() if measured else 0.0
-            matched_osm = [item for item, spellings in normalized_osm
-                           if any(spelling in needle for spelling in spellings)]
-            matched_geo_indexes = {index for index, spellings in normalized_geo
-                                   if any(spelling in needle for spelling in spellings)}
-            phase_done("place_name_match_ms", match_started)
-            build_started = time.perf_counter() if measured else 0.0
-            geo = [_geo_choice(row, aliases_by_place, package_id, active, include_parent_identity)
-                   for index, row in enumerate(refs) if index in matched_geo_indexes]
-            if measured:
-                catalog._metrics["place_geo_candidate_objects"] = (
-                    int(catalog._metrics.get("place_geo_candidate_objects", 0)) + len(geo)
-                )
-            phase_done("place_candidate_construct_ms", build_started)
-            return [*matched_osm, *geo]
+    if filtered:
+        matched_osm: list[dict[str, Any]] = []
+        matched_spellings = 0
+        normalize_ms = 0.0
+        match_started = time.perf_counter() if measured else 0.0
+        for item in osm:
+            for spelling in [item["name"], *item["aliases"]]:
+                normalize_started = time.perf_counter() if measured else 0.0
+                normalized = _compact(str(spelling))
+                if measured:
+                    normalize_ms += (time.perf_counter() - normalize_started) * 1000
+                    matched_spellings += 1
+                if normalized in text_needle:
+                    matched_osm.append(item)
+                    break
+        if measured:
+            catalog._metrics["place_name_normalize_ms"] = round(
+                float(catalog._metrics.get("place_name_normalize_ms", 0.0)) + normalize_ms, 3
+            )
+            catalog._metrics["place_name_match_ms"] = round(
+                float(catalog._metrics.get("place_name_match_ms", 0.0))
+                + max(0.0, (time.perf_counter() - match_started) * 1000 - normalize_ms), 3
+            )
+            catalog._metrics["place_spellings_normalized"] = int(
+                catalog._metrics.get("place_spellings_normalized", 0)
+            ) + matched_spellings
+            catalog._metrics["place_spellings_reused_normalized"] = int(
+                catalog._metrics.get("place_spellings_reused_normalized", 0)
+            ) + sum(1 + len(aliases_by_place.get(int(row["place_id"]), [])) for row, _ in geo_rows)
+        build_started = time.perf_counter() if measured else 0.0
+        geo = [_geo_choice(row, aliases_by_place, package_id, active, include_parent_identity)
+               for row in refs if int(row["place_id"]) not in linked_local]
+        if measured:
+            catalog._metrics["place_geo_candidate_objects"] = (
+                int(catalog._metrics.get("place_geo_candidate_objects", 0)) + len(geo)
+            )
+        phase_done("place_candidate_construct_ms", build_started)
+        return [*matched_osm, *geo]
 
     build_started = time.perf_counter() if measured else 0.0
     geo = [_geo_choice(row, aliases_by_place, package_id, active, include_parent_identity)
