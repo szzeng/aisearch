@@ -392,7 +392,12 @@ def test_published_face_profile_can_render_a_cold_avatar(api_env, source_detail,
     )
     store = ArtifactStore(catalog.data_root)
     prepared = [store.prepare(ArtifactRef.from_envelope(artifact_ref(payload)))]
-    job = SimpleNamespace(job_id=job_id, subject_id=str(asset["asset_id"]), task_type=task_type)
+    job = SimpleNamespace(
+        job_id=job_id,
+        subject_type="asset",
+        subject_id=str(asset["asset_id"]),
+        task_type=task_type,
+    )
     result = SimpleNamespace(input_revision=str(asset["sha256"]))
     with catalog.write() as connection:
         store.persist_result(

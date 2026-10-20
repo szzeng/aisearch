@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,10 +31,11 @@ def test_five_pages_share_the_working_transition_navigation() -> None:
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
     assert "#main:focus-visible {\n  outline: none;\n}" in styles
     assert ":focus-visible {\n  outline: 3px solid var(--accent);" in styles
-    map_script = (WEB / "map.js").read_text(encoding="utf-8")
     map_page = (WEB / "map.html").read_text(encoding="utf-8")
-    assert "map.js?v=p4-ui2-map-photo-hover-a-1" in map_page
-    assert "map.css?v=p4-ui2-shell-sticky-a-1" in map_page
+    assert re.search(r'map\.js\?v=[^"\'&#]+', map_page)
+    assert re.search(r'map\.css\?v=[^"\'&#]+', map_page)
+    map_script = (WEB / "map.js").read_text(encoding="utf-8")
+    assert (WEB / "map.css").read_text(encoding="utf-8").strip()
     map_styles = (WEB / "map.css").read_text(encoding="utf-8")
     assert "height: auto;\n  min-height: 0;" in map_styles
     assert ".map-page-main > section::-webkit-scrollbar-track {\n  background: var(--bg);\n}" in map_styles
@@ -125,7 +127,8 @@ def test_sticky_shell_keeps_window_scroll_and_map_layout() -> None:
     for page in pages:
         document = (WEB / page).read_text(encoding="utf-8")
         assert document.count('class="app-workspace"') == 1
-        assert 'src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1"' in document
+        assert re.search(r'shell-sticky\.js\?v=[^"\'&#]+', document)
+        assert (WEB / "shell-sticky.js").read_text(encoding="utf-8").strip()
         assert document.index('<div class="app-workspace">') < document.index('<header class="app-header')
         assert document.index('<div class="app-workspace">') < document.index('<main id="main"')
         assert document.index('</main>') < document.index('</div><!-- .app-workspace -->')

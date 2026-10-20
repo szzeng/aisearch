@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -25,9 +26,10 @@ def test_favorite_batch_request_limits_and_requires_distinct_strict_ids() -> Non
 def test_favorite_controls_are_loaded_only_on_photo_pages_and_status_reads_are_batched() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
-        source = (web / page).read_text(encoding="utf-8")
-        assert 'favorites-ui.js?v=p4-favorites-icon-20261019-1' in source
-        assert 'styles.css?v=p4-favorites-icon-20261019-1' in source
+        page_path = web / page
+        source = page_path.read_text(encoding="utf-8")
+        assert re.search(r'favorites-ui\.js\?v=[^"\'&#]+', source), f"{page} must load a versioned favorites script"
+        assert re.search(r'styles\.css\?v=[^"\'&#]+', source), f"{page} must load versioned styles"
     index = (web / "index.html").read_text(encoding="utf-8")
     search = (web / "search.html").read_text(encoding="utf-8")
     timeline = (web / "photo-timeline.js").read_text(encoding="utf-8")

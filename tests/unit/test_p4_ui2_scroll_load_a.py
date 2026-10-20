@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -118,8 +119,9 @@ def test_scroll_load_is_wired_to_search_and_plain_browse_with_bounded_grids() ->
     assert 'windowRestore.spacerHeight !== undefined' in search
     assert 'id="grid-sentinel"' in home_html
     assert 'id="search-grid-sentinel"' in search_html
-    assert 'scroll-pager.js?v=p4-ui2-scroll-load-a-4' in home_html
-    assert 'scroll-pager.js?v=p4-ui2-scroll-load-a-4' in search_html
+    assert re.search(r'scroll-pager\.js\?v=[^"\'&#]+', home_html)
+    assert re.search(r'scroll-pager\.js\?v=[^"\'&#]+', search_html)
+    assert (WEB / "scroll-pager.js").read_text(encoding="utf-8").strip()
 
 
 def test_grid_window_releases_old_cards_and_holds_a_height_placeholder() -> None:
@@ -197,7 +199,7 @@ const context = {
   URLSearchParams, encodeURIComponent, isFinite, Number, Object, Array, String, Math, Promise, WeakSet, console,
   document: { readyState: "loading", cookie: "", addEventListener() {}, getElementById: get, createElement: () => new Element() },
   fetch: () => pendingFetch,
-  window: { location: { href: "http://localhost/search", search: "", pathname: "/search", hash: "" },
+  window: { addEventListener() {}, location: { href: "http://localhost/search", search: "", pathname: "/search", hash: "" },
     sessionStorage: { setItem() {}, getItem() { return null; }, removeItem() {} },
     requestAnimationFrame(fn) { fn(); }, PhotoScrollPager: { getSpacerHeight() { return 0; }, setSpacerHeight() {} } },
 };
@@ -214,7 +216,7 @@ state.timeBrowse.previous = { hits: [], cursor: "rank-cursor", count: 20, total:
   windowOffset: 0, recycledCount: 0, spacerHeight: 0 };
 state.pager = { reset() { pagerCalls.push("reset"); }, update() { pagerCalls.push("update"); } };
 ui.setEls({ loadMore: get("loadMore"), gridSentinel: get("gridSentinel"), queryPageSize: get("queryPageSize"), resultGrid: get("resultGrid"),
-  candidateTimeToggle: get("candidateTimeToggle") });
+  candidateTimeToggle: get("candidateTimeToggle"), queryStatus: get("queryStatus") });
 const page = ui.loadCandidateTimeBrowse(true);
 assert.equal(state.loading, true);
 ui.toggleCandidateTimeBrowse();

@@ -27,7 +27,7 @@ const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Eleme
 const storage=new Map();
 const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
  document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
- window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
+ window:{addEventListener(){},sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
  fetch:async()=>({ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({})})};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderPage,renderIntentChips,submitSearch,loadCandidateTimeBrowse,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
@@ -51,7 +51,8 @@ for(const session of ["filter-only","place-album:test"]){
   assert.equal(snapshot.hits.length,loaded,"return snapshot must retain all loaded result pages");
  }
  assert.equal(ui.state.search.count,205);assert.equal(ui.state.search.cursor,null);
- assert.match(els.queryStatus.textContent,/符合条件共 205 张/);assert.match(els.queryStatus.textContent,/已加载 205 张/);
+ assert.match(els.queryStatus.textContent,/\u5df2\u663e\u793a 205 \u884c/);
+ assert.match(els.queryStatus.textContent,/\u5019\u9009\u5171 205 \u4e2a/);
 }
 const semantic=makePage(0,true,"semantic-session");semantic.query={text:"coast"};
 ui.renderPage(semantic,false);
@@ -99,7 +100,7 @@ const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Eleme
 const storage=new Map();
 const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
  document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
- window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
+ window:{addEventListener(){},sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
  fetch:()=>new Promise(()=>{})};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")','  globalThis.ui={state,renderIntentChips,submitSearch,setElements(value){els=value;}};\n  if (document.readyState === "loading")');
@@ -155,7 +156,7 @@ const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Eleme
 const storage=new Map(),pending=[],rendered=[],failures=[];
 const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
  document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
- window:{sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
+ window:{addEventListener(){},sessionStorage:{setItem(k,v){storage.set(k,String(v));},getItem(k){return storage.get(k)||null;},removeItem(k){storage.delete(k);}},scrollY:0,location:{href:"/search",search:""},requestAnimationFrame(fn){fn();},scrollTo(){}},
  fetch:(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}))};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
@@ -221,7 +222,7 @@ class Element {
 const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
 const context={URLSearchParams,encodeURIComponent,isFinite,console,
  document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
- window:{location:{href:"/search",search:""}}};
+ window:{addEventListener(){},location:{href:"/search",search:""}}};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
  '  globalThis.ui={state,showScopeChoices,setElements(value){els=value;}};\n  if (document.readyState === "loading")');

@@ -9,6 +9,11 @@ function install(context, Element) {
   }
   const create = document.createElement, get = document.getElementById;
   document.createElement = tag => enhance(create(tag));
+  document.createElementNS = (namespace, tag) => {
+    const element = enhance(create(tag));
+    element.namespaceURI = namespace;
+    return element;
+  };
   document.getElementById = id => enhance(get(id));
   document.body = document.createElement("body"); document.head = document.createElement("head");
   document.querySelector = selector => selector === "dialog[open]"

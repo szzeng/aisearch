@@ -576,6 +576,7 @@ def capture_digest(
     person_match: str,
     capture_from: str | None,
     capture_to_exclusive: str | None,
+    favorites_only: bool = False,
     retrieval_mode: str = "combined",
 ) -> str:
     """Capture bounds remain canonical within each explicit retrieval mode."""
@@ -592,6 +593,7 @@ def capture_digest(
             raise BoundRefused("capture_range_not_ascending", "capture_from")
     payload = {
         "retrieval_mode": retrieval_mode,
+        "favorites_only": bool(favorites_only),
         "text": text,
         "source_id": source_id,
         "availability": availability,

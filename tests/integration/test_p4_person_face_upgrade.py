@@ -64,7 +64,7 @@ def test_old_and_new_artifacts_coexist_and_no_face_publication_retires_machine_i
                 "INSERT INTO jobs(subject_type, subject_id, input_revision, task_type, processor_id, state, run_after, created_at, updated_at, dispatch_spec_revision) VALUES ('asset', ?, ?, ?, ?, 'SUCCEEDED', 1, 1, 1, 'face-buffalo-l-scrfd-arcface-v1')",
                 (str(asset), revision, contract.FACE_TASK_TYPE, contract.FACE_PROCESSOR_ID),
             ).lastrowid
-        job = SimpleNamespace(job_id=job_id, subject_id=str(asset))
+        job = SimpleNamespace(job_id=job_id, subject_type="asset", subject_id=str(asset))
         result = SimpleNamespace(input_revision=revision)
         spec = SimpleNamespace(processor_id=contract.FACE_PROCESSOR_ID)
         store = ArtifactStore(harness.catalog.data_root)

@@ -212,7 +212,7 @@ const elements=new Map(), get=id=>{ if(!elements.has(id)) elements.set(id,new El
 const sent=[];
 const context={URLSearchParams,encodeURIComponent,isFinite,console,
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
-  window:{location:{href:"/search",search:""},sessionStorage:{removeItem(){},setItem(){},getItem(){return null;}}},
+  window:{addEventListener(){},location:{href:"/search",search:""},sessionStorage:{removeItem(){},setItem(){},getItem(){return null;}}},
   fetch:async(_url,options)=>{if(options&&options.body) sent.push(JSON.parse(options.body)); return {ok:true,status:200,headers:{get:()=>"application/json"},json:async()=>({unsupported_intent:true,notice:"test"})};}};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',

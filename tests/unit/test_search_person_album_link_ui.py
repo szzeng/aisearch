@@ -41,7 +41,7 @@ const context = {
   URLSearchParams, encodeURIComponent, isFinite,
   document:{readyState:"loading",cookie:"ps_csrf=synthetic",addEventListener() {},getElementById:get,
     createElement:tag => new Element(tag)},
-  window:{location},
+  window:{addEventListener(){},location},
   fetch:async url => {
     calls.push(url);
     if (url === "/api/v1/assets/15/faces") return response({has_more:process.argv[1] === "no_assigned_people_more",faces:

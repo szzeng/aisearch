@@ -172,15 +172,18 @@ def test_ready_waits_for_every_nonconfirmed_state(pending_state: str) -> None:
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
     connection.executescript(
-        "CREATE TABLE index_outbox(generation_id TEXT, state TEXT);"
+        "CREATE TABLE index_outbox(generation_id TEXT, state TEXT, event_type TEXT, asset_id INTEGER);"
+        "CREATE TABLE asset_retention_barriers(asset_id INTEGER PRIMARY KEY, state TEXT NOT NULL);"
         "CREATE TABLE index_generations(generation_id TEXT, space_id TEXT, state TEXT, "
         "is_active INTEGER, updated_at INTEGER);"
         "INSERT INTO index_generations VALUES ('g', 'space', 'PENDING', 0, 0);"
     )
     try:
         connection.executemany(
-            "INSERT INTO index_outbox VALUES (?, ?)",
-            [("other", "PENDING"), ("g", "CONFIRMED"), ("g", pending_state)],
+            "INSERT INTO index_outbox(generation_id,state,event_type,asset_id) VALUES (?, ?, ?, ?)",
+            [("other", "PENDING", "UPSERT_VECTOR", 1),
+             ("g", "CONFIRMED", "UPSERT_VECTOR", 2),
+             ("g", pending_state, "UPSERT_VECTOR", 3)],
         )
         IndexCoordinator._make_generation_ready(connection, "g", 1)
         assert connection.execute("SELECT state FROM index_generations").fetchone()[0] == "PENDING"

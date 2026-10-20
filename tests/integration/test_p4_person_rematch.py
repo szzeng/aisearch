@@ -188,7 +188,9 @@ def test_rematch_does_not_process_superseded_or_foreign_faces_in_an_old_queue(tm
             ).lastrowid
             store.persist_result(
                 connection,
-                job=SimpleNamespace(job_id=job_id, subject_id=str(old_asset)),
+                job=SimpleNamespace(
+                    job_id=job_id, subject_type="asset", subject_id=str(old_asset)
+                ),
                 result=SimpleNamespace(input_revision=revision),
                 spec=SimpleNamespace(processor_id=contract.FACE_PROCESSOR_ID),
                 prepared=prepared,

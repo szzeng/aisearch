@@ -70,7 +70,12 @@ def publish(catalog, asset_id, records, *, source=False, automatic=False, frame=
     )
     store = ArtifactStore(catalog.data_root)
     prepared = [store.prepare(ArtifactRef.from_envelope(artifact_ref(payload)))]
-    job = SimpleNamespace(job_id=job_id, subject_id=str(asset_id), task_type=task_type)
+    job = SimpleNamespace(
+        job_id=job_id,
+        subject_type="asset",
+        subject_id=str(asset_id),
+        task_type=task_type,
+    )
     result = SimpleNamespace(input_revision=revision)
     with catalog.write() as connection:
         store.persist_result(

@@ -15,7 +15,7 @@ def test_similar_asset_entry_validation_and_request_body() -> None:
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 const location={search:"",pathname:"/search",hash:"",href:"http://127.0.0.1/search"};
-const window={location,crypto:{randomUUID:()=>"test-request-id"},history:{state:null,replaceState(){}}};
+const window={addEventListener(){},location,crypto:{randomUUID:()=>"test-request-id"},history:{state:null,replaceState(){}}};
 const document={readyState:"loading",addEventListener(){}};
 const context={window,document,URLSearchParams,URL,WeakSet,Set,Map,Date,Math,Number,String,Boolean,
   Array,Object,JSON,Promise,RegExp,isFinite,encodeURIComponent,decodeURIComponent,console};

@@ -1,6 +1,6 @@
-## P4-RELEASE-040-READINESS — 个人源码测试版就绪审查（2026-10-20）
+## Current task: P4-RELEASE-050 — 0.5.0 个人源码测试版（2026-10-20）
 
-基于 `e64c06420cc06d18e3f8c8bb43c5e68788ebc6b3` 完成只读证据审查，结论 **REVIEW COMPLETE / HOLD**。本次拟用 Tag 按用户要求改为 `0.5.0`；现存远端 `0.4.0` Tag 指向旧提交。项目版本仍为 0.3.0，冻结任务需协调版本元数据。G0 缺口：当前 Schema 42 备份恢复后的人工事实核对、Retention T10 合成浏览器操作，以及智能合集状态改动要求的 DS-H 全受影响面独立审查。没有复现数据损坏；因关键安全证据不足不建议启动发布冻结。后续顺序及六领域矩阵见[就绪审查报告](reports/P4-RELEASE-040-READINESS.md)。未运行测试或访问真实图库。
+**READY FOR PERSONAL SOURCE BETA，待 Tag/Release。** 当前 Schema 42 备份恢复及人工事实核对、清理跨批/保护/新 run 重试、TEXT/COMBINED 合成刷新成功失败和搜索立即保存/viewer 返回均有证据；用户已接受 Luna High 完整独审替代模型路由，审查无代码 blocker。应用/API/包版本统一0.5.0，Schema42/API v1；修复有效旧地点包在40–42误拒绝的兼容上限。原始全仓基线3330通过/76失败/52跳过，增量真实复测关闭75项失败，剩余30万场景在本版范围外未重跑；不称单次全仓全绿。原生确认取消及正式容量/最低设备/安装包仍未认证，不阻断本次个人源码版。未访问真实图库。详见[任务卡](tasks/P4-RELEASE-050.md)与[发布报告](reports/P4-RELEASE-050.md)。
 ## Current task: P4-PHOTO-OCR-DISPLAY-A（2026-10-20）
 
 共享照片查看弹窗与完整详情已接入同一 OCR 原文区；新增同源只读 API，短 SQL 快照/复核与最多 2 路独立文件读取，Artifact 元数据先拒绝超过 16 MiB，正文最多返回 128 KiB。定向 API/UI JUnit **13/13** 通过；Ruff、py_compile、Node 语法及 diff-check 通过。隔离合成浏览器验证首页查看器与完整详情显示保存的历史 OCR 文本。Luna High 首轮发现的 Artifact 读取上限已修复并经跟进复核关闭。任务卡其余失效元数据矩阵、真实读取期间指针竞态、并发池隔离实测、长文本布局与完整回归闭环尚未全覆盖，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库或运行 OCR/GPU，未提交、未推送。详见[任务卡](tasks/P4-PHOTO-OCR-DISPLAY-A.md)与[执行报告](reports/P4-PHOTO-OCR-DISPLAY-A.md)。

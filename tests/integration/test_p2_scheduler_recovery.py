@@ -153,6 +153,7 @@ V6_TABLES = (
     "library_retention_settings",
     "library_retention_runs",
     "library_retention_run_items",
+    "library_retention_run_candidates",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

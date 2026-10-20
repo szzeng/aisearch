@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,8 +11,10 @@ from pathlib import Path
 def test_people_and_inbox_refresh_preserve_loaded_extent_and_position() -> None:
     node = shutil.which("node")
     assert node, "Node is required for the personal-page behavior check"
-    page = Path(__file__).resolve().parents[2] / "src/photo_search/web/persons.html"
-    assert 'persons-albums.js?v=p4-photo-face-manage-a-refresh-3' in page.read_text(encoding="utf-8")
+    web = Path(__file__).resolve().parents[2] / "src/photo_search/web"
+    page = web / "persons.html"
+    assert re.search(r'persons-albums\.js\?v=[^"\'&#]+', page.read_text(encoding="utf-8"))
+    assert (web / "persons-albums.js").read_text(encoding="utf-8").strip()
     script = r"""
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 class HTMLCollectionMock extends Array { static get [Symbol.species](){return Array;} constructor(...items){super(...items);this.find=undefined;this.some=undefined;} }

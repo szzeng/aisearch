@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 
 from httpx import AsyncClient
@@ -86,7 +87,10 @@ def test_reviewed_maintenance_api_batch_reaches_startup_consumer(api_env, monkey
 def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_controls(api_env) -> None:
     async def scenario(client: AsyncClient) -> dict:
         shell = await client.get("/")
-        script = await client.get("/web/app.js")
+        script_path = re.search(r'<script[^>]+src="(/web/app\.js\?v=[^"]+)"', shell.text)
+        assert script_path is not None, "the shell must load a versioned application script"
+        script = await client.get(script_path.group(1))
+        assert script.status_code == 200
         summary = await client.get("/api/v1/storage/summary")
         return {"shell": shell, "script": script, "summary": summary}
 
@@ -101,7 +105,6 @@ def test_storage_panel_exposes_separate_read_check_backup_and_maintenance_contro
     assert 'id="library-retention-cleanup"' in shell
     assert 'id="library-retention-automatic"' in shell
     assert "storage-maintenance-confirm" in shell
-    assert '/web/app.js?v=p4-library-retention-c2-retry-20261020-1' in shell
     assert shell.count('type="checkbox" name="storage-maintenance-operation"') == 6
     assert 'id="storage-maintenance-confirm" disabled' in shell
     assert 'body: { operations: operations, confirmed: true }' in script

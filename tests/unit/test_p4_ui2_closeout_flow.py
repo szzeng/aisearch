@@ -11,11 +11,11 @@ def test_filter_only_return_requeries_authoritative_first_page() -> None:
         / "web"
         / "search.js"
     ).read_text(encoding="utf-8")
-    save = source.split("function saveSearchSnapshot()", 1)[1].split(
-        "function restoreSearchSnapshot()", 1
+    save = source.split("function saveSearchSnapshot(", 1)[1].split(
+        "function restoreSearchSnapshot(", 1
     )[0]
-    restore = source.split("function restoreSearchSnapshot()", 1)[1].split(
-        "function restoreValidatedSearchSnapshot()", 1
+    restore = source.split("function restoreSearchSnapshot(", 1)[1].split(
+        "function restoreValidatedSearchSnapshot(", 1
     )[0]
 
     assert "!state.search.hits.length" not in save

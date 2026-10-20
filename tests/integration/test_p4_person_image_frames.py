@@ -79,7 +79,9 @@ def publish_draft_face(env, *, rotated=False):
         ).lastrowid
     store = ArtifactStore(catalog.data_root)
     prepared = [store.prepare(ArtifactRef.from_envelope(artifact_ref(payload)))]
-    job = SimpleNamespace(job_id=job_id, subject_id=str(asset["asset_id"]))
+    job = SimpleNamespace(
+        job_id=job_id, subject_type="asset", subject_id=str(asset["asset_id"])
+    )
     result = SimpleNamespace(input_revision=str(asset["sha256"]))
     spec = SimpleNamespace(processor_id=contract.FACE_PROCESSOR_ID)
     with catalog.write() as connection:

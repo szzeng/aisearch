@@ -8,6 +8,7 @@ import pytest
 
 from photo_search.api.context import ApiContext
 from photo_search.api.settings import ApiSettings
+from photo_search.runtime.model_resource_gate import GatedEncoder
 
 
 @pytest.mark.parametrize("kind", ["encoder", "reranker"])
@@ -39,10 +40,16 @@ def test_parallel_resolution_waits_for_one_complete_factory(tmp_path, kind):
                 other.result(timeout=0.05)
         finally:
             release.set()
-        assert first.result(timeout=3) is instance
-        assert other.result(timeout=3) is instance
+        first_adapter = first.result(timeout=3)
+        second_adapter = other.result(timeout=3)
+        assert second_adapter is first_adapter
+        if kind == "encoder":
+            assert isinstance(first_adapter, GatedEncoder)
+            assert first_adapter._encoder is instance
+        else:
+            assert first_adapter is instance
     assert len(calls) == 1
-    assert resolve() is instance
+    assert resolve() is first_adapter
     context.close()
     assert resolve() is None
 

@@ -85,8 +85,10 @@ PLACE_LEGACY_MAX_FLOOR = 16
 # independent retention evidence/source-anomaly tables and 0039 adds retention
 # tombstones. None changes place tables, GeoNames bytes, projection semantics or
 # the CN addon contract.
+# Schemas 0040-0042 only extend retention media identities and cleanup run
+# settings/items/candidate fences. They do not change the place package contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
-PLACE_COMPAT_REVIEWED_THROUGH = 39
+PLACE_COMPAT_REVIEWED_THROUGH = 42
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

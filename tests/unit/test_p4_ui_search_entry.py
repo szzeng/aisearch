@@ -72,7 +72,7 @@ const location={search:"?keep=1&q=%E5%BC%A0%E4%B8%89%E5%B9%B4%E7%85%A7%E7%89%87"
 const replacements=[];
 const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
  document:{readyState:"loading",cookie:"",addEventListener(){},getElementById(){return new Element();},createElement(){return new Element();}},
- window:{location,history:{state:{k:1},replaceState(...args){replacements.push(args);}},sessionStorage:{getItem(k){return store.get(k)||null;},removeItem(k){store.delete(k);},setItem(k,v){store.set(k,String(v));}}}};
+ window:{addEventListener(){},location,history:{state:{k:1},replaceState(...args){replacements.push(args);}},sessionStorage:{getItem(k){return store.get(k)||null;},removeItem(k){store.delete(k);},setItem(k,v){store.set(k,String(v));}}}};
 let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui={consumeEntryQuery,restoreOrStartSearch,bindQuerySubmission,resetFilters,setEls(value){els=value;},getState(){return state;},setState(value){state=value;},setSubmit(fn){submitSearch=fn;},setRestore(fn){restoreSearchSnapshot=fn;}};\n  if (document.readyState === "loading")');
@@ -129,7 +129,7 @@ const stored=new Map(),els=new Map(),get=id=>{if(!els.has(id))els.set(id,new Ele
 const location={href:"",search:"",pathname:"/search",hash:""};
 const context={URLSearchParams,encodeURIComponent,isFinite,console,URL:{revokeObjectURL(){}},
  document:{readyState:"loading",cookie:"",addEventListener(){},getElementById:get,createElement:()=>new Element()},
- window:{crypto:{randomUUID:()=>"12345678-1234-1234-1234-123456789012"},location,
+ window:{addEventListener(){},crypto:{randomUUID:()=>"12345678-1234-1234-1234-123456789012"},location,
   history:{state:null,replaceState(_state,_title,url){location.search=url.includes("?")?url.slice(url.indexOf("?"),url.indexOf("#")<0?undefined:url.indexOf("#")):"";}},
   sessionStorage:{setItem(k,v){stored.set(k,String(v));},getItem(k){return stored.get(k)||null;},removeItem(k){stored.delete(k);}},
   SearchScopeEntry:{validScope(scope){return Boolean(scope&&scope.kind==="person"&&Number(scope.person_id)>0);}}}};
