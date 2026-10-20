@@ -629,7 +629,8 @@ def test_the_search_page_states_every_non_success_state_instead_of_downgrading_i
     assert "search_projection" in script
     assert "文本投影仍在追赶" in script
     assert "candidates_truncated" in script
-    assert "仅对本次搜索结果排序，不代表完整图库时间轴" in script
+    assert "按拍摄时间查看当前候选" in script
+    assert "原始语义搜索" in script
     assert "truncated" in script
     assert "向量扫描未完整完成，本次结果可能不完整。" in script
     assert "高度匹配" in script

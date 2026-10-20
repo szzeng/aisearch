@@ -80,6 +80,24 @@ body.search-page .search-tool-heading { display: flex; justify-content: space-be
 body.search-page .search-tool-heading h2 { margin: 0; font-size: 1.1rem; }
 body.search-page #panel-results { scroll-margin-top: 7rem; }
 
+body.search-page .search-result-operations {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0.75rem 0;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 55%, var(--panel));
+}
+body.search-page .search-result-operations[hidden],
+body.search-page .search-more-result-operations[hidden],
+body.search-page .search-result-operations button[hidden] { display: none; }
+body.search-page .search-more-result-operations > summary { color: var(--accent); cursor: pointer; font-weight: 600; }
+body.search-page .search-more-result-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+body.search-page .search-result-operations > .hint { flex: 1 1 100%; margin: 0; }
+
 body.search-page .filters > p,
 body.search-page .capture-controls > p,
 body.search-page .person-controls > p {

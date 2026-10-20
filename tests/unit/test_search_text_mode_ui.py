@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 
-def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract() -> None:
+def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tmp_path: Path) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     script = r"""
@@ -50,7 +50,11 @@ function page(body,assetId,cursor="text-next"){
 }
 function harness(storage=new Map(),harnessOptions={}){
   const elements=new Map(),get=id=>{if(!elements.has(id))elements.set(id,new Element("div"));return elements.get(id);};
-  const calls=[],viewers=[],scrolls=[],historyWrites=[];let answer=body=>ok(page(body,body.cursor?202:201));
+  const calls=[],viewers=[],scrolls=[],historyWrites=[];let answer=harnessOptions.answer||(body=>ok(page(body,body.cursor?202:201)));
+  let collectionSaveAnswer=()=>ok({collection:{smart_id:1}});
+  let dialogAnswer=()=>Promise.resolve("合成智能合集");
+  let timeAnswer=()=>ok({assets:[{asset_id:404,semantic_rank:1}],next_cursor:"time-next",
+    total_candidates:2,candidates_truncated:false,taken_time_rules_version:1});
   for(const [id,value] of Object.entries({"query-retrieval-mode":"combined","query-availability":"any",
     "query-place-state":"any","query-descendants":"true","query-page-size":"1","query-person-match":"any"}))get(id).value=value;
   const context={URLSearchParams,URL,console,encodeURIComponent,isFinite,
@@ -76,13 +80,14 @@ function harness(storage=new Map(),harnessOptions={}){
         if(harnessOptions.validationResponse)return ok(harnessOptions.validationResponse);
         return ok({valid:true,asset_id:body.asset_id,search_session_id:body.search_session_id});
       }
-      if(url.includes("/search/sessions/")&&url.includes("/time?limit=1"))return ok({taken_time_rules_version:1});
+      if(url.endsWith("/photo-smart-collections/from-search"))return collectionSaveAnswer(url,options);
+      if(url.includes("/search/sessions/")&&url.includes("/time?"))return timeAnswer(url,options);
       if(/^\/api\/v1\/assets\/\d+$/.test(url))return ok({asset_id:Number(url.split("/").pop()),format:"jpeg"});
       throw new Error("Unexpected request: "+url);
     }};
   let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
   code=code.replace('  if (document.readyState === "loading")',
-    '  globalThis.ui={state,boot,sendSearch};\n  if (document.readyState === "loading")');
+    '  globalThis.ui={state,boot,sendSearch,continueSearch,toggleCandidateTimeBrowse,saveSearchSnapshot};\n  if (document.readyState === "loading")');
   vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
   // The shared viewer owns its DOM; this test exercises the real search-page
   // callbacks and the shared full-detail navigation/storage helper.
@@ -95,9 +100,13 @@ function harness(storage=new Map(),harnessOptions={}){
       openDetails(){options.onOpenFullDetails(this.assetId);this.close();}};
     viewers.push(viewer);return viewer;
   };
+  context.window.AIPhotoInfo.actionDialog=options=>dialogAnswer(options);
   vm.runInContext(code,context);
   context.ui.boot();
-  return {get,calls,storage,viewers,scrolls,historyWrites,ui:context.ui,setAnswer:fn=>{answer=fn;},searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
+  return {get,calls,storage,viewers,scrolls,historyWrites,ui:context.ui,setAnswer:fn=>{answer=fn;},
+    setTimeAnswer:fn=>{timeAnswer=fn;},setCollectionSaveAnswer:fn=>{collectionSaveAnswer=fn;},
+    setDialogAnswer:fn=>{dialogAnswer=fn;},
+    searchCalls:()=>calls.filter(call=>call.url.endsWith("/search/place-aware"))};
 }
 function assertLiteral(request){
   assert.equal(request.retrieval_mode,"text");
@@ -120,6 +129,255 @@ function assertLiteral(request){
   assert.doesNotMatch(ordinary.get("result-grid").textContent,/语义就绪|通道名次|向量通道名次/);
   assert.doesNotMatch(ordinary.get("result-grid").textContent,/查看详情/,
     "result cards no longer render a separate detail button");
+
+  const reproduced=harness();await flush();reproduced.get("query-text").value="新鲜查询";
+  reproduced.setAnswer(body=>ok({...page(body,400,null),profile_id:"response-profile",
+    image_generation_id:"response-generation",photo_collection_source_token:"fresh-server-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  reproduced.get("search-form").fire("submit");await flush();
+  assert.equal(reproduced.ui.state.capabilities.search.active_profile_id,undefined);
+  assert.equal(reproduced.ui.state.search.confirmedSearch.sourceToken,"fresh-server-token");
+  assert.equal(reproduced.get("search-save-smart-collection").disabled,false,
+    "a cached capability omission does not invalidate a freshly issued server token");
+  reproduced.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(reproduced.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search"))[0].body.source_token,
+    "fresh-server-token","the save request uses the token from this confirmed search");
+
+  const confirmed=harness();await flush();
+  confirmed.get("query-text").value="海边";
+  confirmed.setAnswer(body=>ok({...page(body,401,"page-2"),
+    photo_collection_source_token:"first-search-token",photo_collection_source_mode:"ranked_candidates",
+    channels:{fts:{engaged:true},vector:{engaged:true,strong_match_available:true,strong_match_count:17,
+      strong_match_more_possible:false}}}));
+  confirmed.get("search-form").fire("submit");await flush();
+  assert.equal(confirmed.get("search-save-smart-collection").hidden,false,
+    "a successful eligible first page exposes smart collection save outside photo selection");
+  assert.equal(confirmed.get("search-photo-selection-toolbar").children.some(node=>node.id==="search-save-smart-collection"),false);
+  assert.match(confirmed.get("query-status").textContent,/约 17 张高度匹配/);
+  confirmed.setAnswer(body=>ok(page(body,402,null)));
+  await confirmed.ui.sendSearch(true);
+  assert.equal(confirmed.get("search-save-smart-collection").hidden,false,
+    "paging does not remove the stable first-search save credential");
+  assert.equal(confirmed.ui.state.search.confirmedSearch.sourceToken,"first-search-token");
+  assert.match(confirmed.get("query-status").textContent,/约 17 张高度匹配/,
+    "paging preserves the first page semantic statistic");
+  confirmed.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(confirmed.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search"))[0].body.source_token,
+    "first-search-token","automatic paging does not replace the first-page save credential");
+  confirmed.ui.toggleCandidateTimeBrowse();await flush();
+  assert.match(confirmed.get("query-status").textContent,/按拍摄时间查看当前候选/);
+  assert.match(confirmed.get("query-status").textContent,/原始语义搜索/);
+  confirmed.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(confirmed.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search"))[0].body.source_token,
+    "first-search-token","time browsing saves the source token for the original search rules");
+  confirmed.ui.toggleCandidateTimeBrowse();
+  assert.match(confirmed.get("query-status").textContent,/约 17 张高度匹配/,
+    "return to relevance restores the confirmed statistic without retrieval");
+  assert.equal(confirmed.searchCalls().length,2,"sorting switches do not rerun semantic retrieval");
+
+  const timeRetry=harness();await flush();timeRetry.get("query-text").value="时间重试";
+  timeRetry.setAnswer(body=>ok({...page(body,405,null),channels:{vector:{engaged:true,
+    strong_match_available:true,strong_match_count:6,strong_match_more_possible:false}}}));
+  timeRetry.get("search-form").fire("submit");await flush();
+  timeRetry.ui.toggleCandidateTimeBrowse();await flush();
+  assert.equal(timeRetry.ui.state.search.timeBrowse.cursor,"time-next");
+  timeRetry.setTimeAnswer(()=>Promise.reject(new Error("synthetic time-page failure")));
+  await timeRetry.ui.continueSearch();
+  assert.equal(timeRetry.ui.state.search.timeBrowse.retryCursor,"time-next");
+  assert.equal(timeRetry.ui.state.search.timeBrowse.cursor,null);
+  await timeRetry.ui.continueSearch();
+  assert.equal(timeRetry.ui.state.search.timeBrowse.retryCursor,"time-next",
+    "a second failed attempt keeps the actual time cursor available for retry");
+  assert.equal(timeRetry.calls.filter(call=>call.url.includes("time-next")).length,2,
+    JSON.stringify(timeRetry.calls.map(call=>call.url)));
+  const timeSnapshotSaved=timeRetry.ui.saveSearchSnapshot();assert.equal(timeSnapshotSaved,true);
+  const timeSnapshot=JSON.parse(timeRetry.storage.get("aisearch.search-return.v1"));
+  timeSnapshot.cursor=null;timeSnapshot.hasMore=false;
+  const timeReturn=harness(new Map([["aisearch.search-return.v1",JSON.stringify(timeSnapshot)]]));await flush();
+  assert.equal(timeReturn.get("load-more").hidden,false,
+    "time snapshot cursor controls the more-results affordance independently of relevance pagination");
+  assert.equal(timeReturn.ui.state.search.timeBrowse.retryCursor,"time-next");
+  timeReturn.setTimeAnswer(()=>Promise.reject(new Error("synthetic time-page failure")));
+  await timeReturn.ui.continueSearch();
+  assert.equal(timeReturn.calls.filter(call=>call.url.includes("time-next")).length,1,
+    "restored time mode retries its own cursor rather than the relevance cursor");
+  timeReturn.ui.toggleCandidateTimeBrowse();
+  assert.equal(timeReturn.get("load-more").hidden,true,
+    "leaving time mode hides its temporary paging affordance when relevance has no next page");
+
+  confirmed.get("query-text").value="新查询";
+  confirmed.get("search-form").fire("input");
+  assert.equal(confirmed.get("search-save-smart-collection").disabled,true,
+    "edited but unsubmitted conditions cannot use the old source token");
+
+  confirmed.get("query-text").value="海边";
+  const snapshotSaved=confirmed.ui.saveSearchSnapshot();
+  assert.equal(snapshotSaved,true);
+  const confirmedSnapshot=JSON.parse(confirmed.storage.get("aisearch.search-return.v1"));
+  assert.equal(confirmedSnapshot.confirmedSearch.sourceToken,"first-search-token");
+  const confirmedReturn=harness(new Map([["aisearch.search-return.v1",JSON.stringify(confirmedSnapshot)]]));await flush();
+  assert.equal(confirmedReturn.get("search-save-smart-collection").hidden,false,
+    "validated return preserves the result operation area");
+  assert.equal(confirmedReturn.get("search-save-smart-collection").disabled,true,
+    "snapshot return does not treat a cached token as server-validated");
+  assert.match(confirmedReturn.get("search-result-operation-hint").textContent,/请重新搜索确认后保存/);
+
+  const filterSnapshotSource=harness();await flush();
+  filterSnapshotSource.setAnswer(body=>ok({...page(body,412,null),search_session_id:"filter-only",
+    retrieval_mode:"filter_only",photo_collection_source_token:"old-filter-token",
+    photo_collection_source_mode:"all_filter_matches"}));
+  filterSnapshotSource.get("search-form").fire("submit");await flush();
+  assert.equal(filterSnapshotSource.ui.saveSearchSnapshot(),true);
+  const filterSnapshot=JSON.parse(filterSnapshotSource.storage.get("aisearch.search-return.v1"));
+  const filterReturn=harness(new Map([["aisearch.search-return.v1",JSON.stringify(filterSnapshot)]]),{
+    answer:body=>ok({...page(body,413,null),search_session_id:"filter-only",
+      retrieval_mode:"filter_only",photo_collection_source_token:"fresh-after-return",
+      photo_collection_source_mode:"all_filter_matches"})});
+  await flush();
+  assert.equal(filterReturn.ui.state.search.confirmedSearch.sourceToken,"fresh-after-return");
+  assert.equal(filterReturn.ui.state.search.saveReconfirmRequired,false,
+    "a new server-confirmed filter search clears the snapshot reconfirmation gate");
+  assert.equal(filterReturn.get("search-save-smart-collection").disabled,false,
+    "a refreshed filter snapshot can save using its newly issued credential");
+
+  const expiredSave=harness();await flush();expiredSave.get("query-text").value="过期凭据";
+  expiredSave.setAnswer(body=>ok({...page(body,406,null),photo_collection_source_token:"expired-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  expiredSave.get("search-form").fire("submit");await flush();
+  expiredSave.setCollectionSaveAnswer(()=>({ok:false,status:409,headers:{get:()=>"application/json"},
+    json:async()=>({code:"INVALID_CURSOR",message:"保存凭据已过期或不属于当前应用会话"})}));
+  expiredSave.get("search-save-smart-collection").fire("click");await flush();
+  const rejectedSaveCalls=expiredSave.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search"));
+  assert.equal(rejectedSaveCalls.length,1,"an expired credential is rejected once without an automatic retry");
+  assert.equal(rejectedSaveCalls[0].body.source_token,"expired-token");
+  assert.equal(expiredSave.ui.state.search.confirmedSearch,null);
+  assert.equal(expiredSave.get("search-save-smart-collection").disabled,true,
+    "an expired token disables later attempts until the user reruns the search");
+  assert.match(expiredSave.get("search-result-operation-hint").textContent,/请重新搜索确认后保存/);
+  expiredSave.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(expiredSave.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search")).length,1);
+
+  const invalidSession=harness();await flush();invalidSession.get("query-text").value="会话失效";
+  invalidSession.setAnswer(body=>ok({...page(body,409,null),photo_collection_source_token:"session-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  invalidSession.get("search-form").fire("submit");await flush();
+  invalidSession.setCollectionSaveAnswer(()=>({ok:false,status:401,headers:{get:()=>"application/json"},
+    json:async()=>({code:"SESSION_INVALID",message:"应用会话已失效"})}));
+  invalidSession.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(invalidSession.ui.state.search.confirmedSearch,null);
+  assert.equal(invalidSession.get("search-save-smart-collection").hidden,true);
+  assert.match(invalidSession.get("notice").textContent,/重新打开启动器/);
+  invalidSession.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(invalidSession.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search")).length,1,
+    "an invalid app session cannot reuse the cached source token");
+
+  const delayedSave=harness();await flush();delayedSave.get("query-text").value="等待中的凭据";
+  delayedSave.setAnswer(body=>ok({...page(body,407,null),photo_collection_source_token:"delayed-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  delayedSave.get("search-form").fire("submit");await flush();
+  let releaseSaveName;
+  delayedSave.setDialogAnswer(()=>new Promise(resolve=>{releaseSaveName=resolve;}));
+  delayedSave.get("search-save-smart-collection").fire("click");await flush();
+  delayedSave.ui.state.search.sessionId="different-session";
+  releaseSaveName("不应保存");await flush();
+  assert.equal(delayedSave.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search")).length,0,
+    "the captured token is not sent after the active search session changes while the dialog is open");
+  assert.match(delayedSave.get("query-status").textContent,/当前保存凭据已过期或搜索条件\/模型已变化/);
+
+  const expiredSnapshot=JSON.parse(JSON.stringify(confirmedSnapshot));
+  const expiredReturn=harness(new Map([["aisearch.search-return.v1",JSON.stringify(expiredSnapshot)]]));await flush();
+  assert.equal(expiredReturn.get("search-save-smart-collection").disabled,true,
+    "a stored token older than the server lifetime cannot become usable on return");
+
+  const failedNew=harness();await flush();
+  failedNew.get("query-text").value="旧查询";
+  failedNew.setAnswer(body=>ok({...page(body,420,null),photo_collection_source_token:"old-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  failedNew.get("search-form").fire("submit");await flush();
+  failedNew.setAnswer(()=>({ok:false,status:503,headers:{get:()=>"application/json"},json:async()=>({code:"UNAVAILABLE",message:"synthetic failure"})}));
+  failedNew.get("query-text").value="新查询";
+  failedNew.get("search-form").fire("submit");await flush();
+  assert.equal(failedNew.get("search-save-smart-collection").hidden,true,
+    "a failed new search cannot keep the previous search token visible");
+
+  for(const [model,index] of [["chinese-clip",1],["chinese-clip-exif-v2",2],
+      ["qwen3-vl-embedding-2b",3],["qwen3-vl-embedding-2b-exif-v2",4]]){
+    const modelCase=harness();await flush();modelCase.get("query-text").value="模型统计";
+    modelCase.setAnswer(body=>ok({...page(body,430+index,null),profile_id:model,image_generation_id:"generation-"+index,
+      channels:{vector:{engaged:true,strong_match_available:true,strong_match_count:index,
+        strong_match_more_possible:false}}}));
+    modelCase.get("search-form").fire("submit");await flush();
+    assert.equal(modelCase.ui.state.search.confirmedSearch.profileId,model);
+    assert.equal(modelCase.ui.state.search.confirmedSearch.generationId,"generation-"+index);
+    assert.match(modelCase.get("query-status").textContent,new RegExp("约 "+index+" 张高度匹配"));
+  }
+
+  for(const lostIdentity of ["profile","generation"]){
+    const identityCase=harness();await flush();identityCase.get("query-text").value="身份失效";
+    identityCase.ui.state.capabilities.search.active_profile_id="profile-bound";
+    identityCase.ui.state.capabilities.search.active_image_generation_id="generation-bound";
+    identityCase.setAnswer(body=>ok({...page(body,408,null),profile_id:"profile-bound",
+      image_generation_id:"generation-bound",photo_collection_source_token:"identity-token",
+      photo_collection_source_mode:"ranked_candidates"}));
+    identityCase.get("search-form").fire("submit");await flush();
+    assert.equal(identityCase.get("search-save-smart-collection").disabled,false);
+    if(lostIdentity==="profile")identityCase.ui.state.capabilities.search.active_profile_id=null;
+    else identityCase.ui.state.capabilities.search.active_image_generation_id=null;
+    identityCase.get("search-form").fire("input");
+    assert.equal(identityCase.get("search-save-smart-collection").disabled,false,
+      "missing cached profile or generation data is not an authoritative token rejection");
+    identityCase.setCollectionSaveAnswer(()=>({ok:false,status:409,headers:{get:()=>"application/json"},
+      json:async()=>({code:"PROFILE_GENERATION_MISMATCH",message:"活动搜索模型已变化，请重新搜索"})}));
+    identityCase.get("search-save-smart-collection").fire("click");await flush();
+    assert.equal(identityCase.calls.some(call=>call.url.endsWith("/photo-smart-collections/from-search")),true,
+      "the server makes the authoritative model-binding decision");
+    assert.equal(identityCase.ui.state.search.confirmedSearch,null);
+  }
+
+  const smartDependencyChanged=harness();await flush();smartDependencyChanged.get("query-text").value="智能规则变化";
+  smartDependencyChanged.setAnswer(body=>ok({...page(body,414,null),photo_collection_source_token:"dependency-token",
+    photo_collection_source_mode:"ranked_candidates"}));
+  smartDependencyChanged.get("search-form").fire("submit");await flush();
+  smartDependencyChanged.setCollectionSaveAnswer(()=>({ok:false,status:409,headers:{get:()=>"application/json"},
+    json:async()=>({code:"PHOTO_SMART_DEPENDENCY_CHANGED",message:"搜索依赖规则已变化，请重新搜索确认"})}));
+  smartDependencyChanged.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(smartDependencyChanged.ui.state.search.confirmedSearch,null,
+    "a changed smart dependency invalidates the source credential");
+  assert.equal(smartDependencyChanged.get("search-save-smart-collection").disabled,true);
+  assert.match(smartDependencyChanged.get("search-result-operation-hint").textContent,/请重新搜索确认后保存/);
+
+  const staleSessionWhileBrowsing=harness();await flush();staleSessionWhileBrowsing.get("query-text").value="时间会话失效";
+  staleSessionWhileBrowsing.setAnswer(body=>ok({...page(body,415,"relevance-next"),
+    photo_collection_source_token:"time-session-token",photo_collection_source_mode:"ranked_candidates"}));
+  staleSessionWhileBrowsing.get("search-form").fire("submit");await flush();
+  staleSessionWhileBrowsing.ui.toggleCandidateTimeBrowse();await flush();
+  assert.equal(staleSessionWhileBrowsing.ui.state.search.timeBrowse.previous.cursor,"relevance-next");
+  staleSessionWhileBrowsing.setCollectionSaveAnswer(()=>({ok:false,status:409,headers:{get:()=>"application/json"},
+    json:async()=>({code:"SEARCH_SESSION_EXPIRED",message:"搜索会话已过期"})}));
+  staleSessionWhileBrowsing.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(staleSessionWhileBrowsing.ui.state.search.timeBrowse.previous.cursor,null,
+    "session invalidation clears the saved relevance cursor too");
+  staleSessionWhileBrowsing.ui.toggleCandidateTimeBrowse();
+  assert.equal(staleSessionWhileBrowsing.get("load-more").hidden,true,
+    "returning to relevance cannot expose a cursor from an expired search session");
+  assert.equal(staleSessionWhileBrowsing.ui.state.search.sessionId,null);
+
+  const truncated=harness();await flush();
+  truncated.get("query-text").value="城市";
+  truncated.setAnswer(body=>ok({...page(body,410,null),photo_collection_source_token:"token-5000",
+    photo_collection_source_mode:"ranked_candidates",candidates_truncated:true,
+    channels:{vector:{engaged:true,strong_match_available:true,strong_match_count:5000,strong_match_more_possible:true}}}));
+  truncated.get("search-form").fire("submit");await flush();
+  assert.match(truncated.get("query-status").textContent,/5000\+ 张高度匹配/);
+  assert.match(truncated.get("query-status").textContent,/候选可能已截断/);
+
+  const unavailableStats=harness();await flush();
+  unavailableStats.get("query-text").value="树";
+  unavailableStats.setAnswer(body=>ok({...page(body,411,null),
+    channels:{vector:{engaged:true,strong_match_available:false}}}));
+  unavailableStats.get("search-form").fire("submit");await flush();
+  assert.match(unavailableStats.get("query-status").textContent,/高度匹配统计不可用/);
+  assert.doesNotMatch(unavailableStats.get("query-status").textContent,/0 张高度匹配/);
 
   const h=harness();await flush();
   assert.equal(h.ui.state.capabilities.search.query_encoder_available,false);
@@ -334,8 +592,10 @@ function assertLiteral(request){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     root = Path(__file__).resolve().parents[2]
+    script_path = tmp_path / "search-ui-harness.js"
+    script_path.write_text(script, encoding="utf-8")
     result = subprocess.run(
-        [node, "-e", script], cwd=root, capture_output=True, text=True,
+        [node, str(script_path)], cwd=root, capture_output=True, text=True,
         encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr

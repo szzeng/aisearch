@@ -110,8 +110,10 @@
       recycledCount: 0,
       pager: null,
       lastBody: null,
+      confirmedSearch: null,
+      saveReconfirmRequired: false,
       lastRequestBody: null,
-      timeBrowse: { active: false, cursor: null, previous: null, rulesVersion: null, requestSeq: 0 },
+      timeBrowse: { active: false, cursor: null, retryCursor: null, previous: null, rulesVersion: null, requestSeq: 0, total:null, truncated:false },
       preview: { assetId: null, listVersion: 0, seq: 0, moving: false, handle: null },
     },
     requestCounter: 0,
@@ -1364,6 +1366,7 @@
     state.search.placeAware = null;
     state.search.intentPlan = null;
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
     state.search.lastRequestBody = null;
     state.search.sessionId = null;
     state.search.cursor = null;
@@ -1433,6 +1436,7 @@
     state.search.windowOffset = 0;
     state.search.recycledCount = 0;
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
     state.search.lastRequestBody = null;
     state.search.placeAware = null;
     state.search.intentPlan = null;
@@ -1468,6 +1472,7 @@
     if (browse.active) {
       browse.active = false;
       browse.cursor = null;
+      browse.retryCursor = null;
       browse.requestSeq += 1;
       state.search.loading = false;
       els.loadMore.disabled = false;
@@ -1493,15 +1498,19 @@
         state.search.pager.reset();
         state.search.pager.update();
       }
+      renderSearchStatus();
       return;
     }
-    if (!state.search.sessionId || !state.search.lastBody || !state.search.lastBody.query) return;
+    if (!state.search.sessionId || !state.search.confirmedSearch || !state.search.confirmedSearch.query) return;
     browse.previous = { hits: state.search.hits.slice(), cursor: state.search.cursor,
       count: state.search.count, total: state.search.total, windowOffset: state.search.windowOffset,
       recycledCount: state.search.recycledCount,
       spacerHeight: window.PhotoScrollPager ? window.PhotoScrollPager.getSpacerHeight(els.resultGrid) : 0 };
     browse.active = true;
     browse.cursor = null;
+    browse.retryCursor = null;
+    browse.total = state.search.confirmedSearch.total;
+    browse.truncated = state.search.confirmedSearch.truncated;
     browse.rulesVersion = null;
     state.search.count = 0;
     state.search.hits = [];
@@ -1512,17 +1521,20 @@
     clear(els.resultGrid);
     invalidateSearchPreview();
     els.candidateTimeToggle.textContent = "返回相关度排序";
+    renderSearchStatus();
     loadCandidateTimeBrowse(false);
   }
 
   function loadCandidateTimeBrowse(continuation) {
     var browse = state.search.timeBrowse;
-    if (state.search.loading || !state.search.sessionId || (continuation && !browse.cursor)) return Promise.resolve(false);
+    if (state.search.loading || !state.search.sessionId || (continuation && !(browse.cursor || browse.retryCursor))) return Promise.resolve(false);
     state.search.loading = true;
     var sessionId = state.search.sessionId;
+    var requestCursor = continuation ? (browse.cursor || browse.retryCursor) : null;
     var pageSize = Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE;
     var query = new URLSearchParams({ limit: String(Math.max(1, Math.min(100, pageSize))) });
-    if (continuation) query.set("cursor", browse.cursor);
+    if (requestCursor) query.set("cursor", requestCursor);
+    browse.retryCursor = null;
     var generation = state.search.requestGeneration;
     var requestSeq = ++browse.requestSeq;
     els.loadMore.disabled = true;
@@ -1554,6 +1566,7 @@
       }
       state.search.total = body.total_candidates;
       browse.cursor = body.next_cursor || null;
+      browse.retryCursor = null;
       browse.rulesVersion = body.taken_time_rules_version;
       state.search.cursor = browse.cursor;
       els.loadMore.hidden = !browse.cursor;
@@ -1562,18 +1575,21 @@
       state.search.loading = false;
       if (state.search.pager) state.search.pager.update();
       updateSearchPreviewNavigation();
-      var note = body.candidates_truncated
-        ? "候选达到检索上限，当前最多浏览 " + number(body.candidate_limit || 5000) + " 条，可能还有更多匹配"
-        : "仅对本次搜索结果排序，不代表完整图库时间轴";
-      if (state.search.recycledCount) note += "；已回收较早的 " + state.search.recycledCount + " 张候选";
-      setStatus(els.queryStatus, "按拍摄时间整理当前搜索结果 · 已显示 " +
-        number(state.search.count) + " / " + number(body.total_candidates) + " · " + note);
+      browse.total = body.total_candidates;
+      browse.truncated = Boolean(body.candidates_truncated);
+      renderSearchStatus();
       return true;
     }).catch(function (failure) {
       if (!browse.active || requestSeq !== browse.requestSeq ||
           generation !== state.search.requestGeneration || sessionId !== state.search.sessionId) return true;
       state.search.loading = false;
       els.loadMore.disabled = false;
+      if (continuation) {
+        browse.retryCursor = requestCursor;
+        browse.cursor = null;
+        els.loadMore.hidden = !browse.retryCursor;
+        if (els.gridSentinel) els.gridSentinel.hidden = true;
+      }
       onSearchFailure(failure);
       return false;
     });
@@ -1590,11 +1606,15 @@
     }
     if (!continuation) {
       state.search.requestGeneration += 1;
+      state.search.confirmedSearch = null;
+      state.search.saveReconfirmRequired = false;
+      renderResultOperations();
       state.search.loading = false;
       els.loadMore.disabled = false;
       if (state.search.pager) state.search.pager.reset();
       state.search.timeBrowse.active = false;
       state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.retryCursor = null;
       state.search.timeBrowse.previous = null;
       if (els.candidateTimeToggle) {
         els.candidateTimeToggle.hidden = true;
@@ -2029,6 +2049,8 @@
         state.search.loading = false;
         state.search.hits = [];
         state.search.lastBody = null;
+        state.search.confirmedSearch = null;
+        renderResultOperations();
         state.search.lastRequestBody = null;
         state.search.count = 0;
         state.search.total = null;
@@ -2136,9 +2158,12 @@
     state.search.count = 0;
     state.search.total = null;
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
+    renderResultOperations();
     state.search.lastRequestBody = null;
     state.search.timeBrowse.active = false;
     state.search.timeBrowse.cursor = null;
+    state.search.timeBrowse.retryCursor = null;
     state.search.timeBrowse.previous = null;
     clearSearchSnapshot();
     invalidateSearchPreview();
@@ -2199,6 +2224,8 @@
     state.search.count = 0;
     state.search.total = null;
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
+    renderResultOperations();
     state.search.lastRequestBody = null;
     clearSearchSnapshot();
     invalidateSearchPreview();
@@ -2257,16 +2284,23 @@
       els.queryActions.hidden = false;
       return;
     }
-    if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR") {
+    if (failure.code === "SEARCH_SESSION_EXPIRED" || failure.code === "INVALID_CURSOR" ||
+        failure.code === "PROFILE_GENERATION_MISMATCH") {
+      state.search.confirmedSearch = null;
+      renderResultOperations();
       state.search.sessionId = null;
       state.search.cursor = null;
       state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.retryCursor = null;
       els.loadMore.hidden = true;
     }
     if (failure.code === "CATALOG_FILTER_REVISION_STALE") {
+      state.search.confirmedSearch = null;
+      renderResultOperations();
       state.search.sessionId = null;
       state.search.cursor = null;
       state.search.timeBrowse.cursor = null;
+      state.search.timeBrowse.retryCursor = null;
       clear(els.resultGrid);
       state.search.hits = [];
       state.search.count = 0;
@@ -2346,26 +2380,36 @@
       window.PhotoScrollPager.setSpacerHeight(els.resultGrid, windowRestore.spacerHeight);
     }
     state.search.lastBody = body;
-    state.search.sessionId = body.search_session_id || null;
+    if (!continuation) state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
     updateSearchPreviewNavigation();
-    state.search.total = body.total_candidates;
-    if (els.saveRankedCollection) {
-      els.saveRankedCollection.hidden = !body.photo_collection_source_token ||
-        body.photo_collection_source_mode !== "ranked_candidates";
+    if (!continuation) state.search.total = body.total_candidates;
+    if (!continuation && body.search_session_id && (body.query || body.photo_collection_source_token) && !windowRestore) {
+      var vector = (body.channels || {}).vector || {};
+      state.search.confirmedSearch = {
+        sessionId: body.search_session_id,
+        fingerprint: conditionFingerprint(collectFilters()),
+        query: body.query || null,
+        retrievalMode: body.retrieval_mode || textRetrievalMode(),
+        profileId: body.active_profile_id || body.profile_id ||
+          (state.capabilities && state.capabilities.search && state.capabilities.search.active_profile_id) || null,
+        generationId: body.active_image_generation_id || body.image_generation_id || body.generation_id || null,
+        sourceToken: body.photo_collection_source_token || null,
+        sourceMode: body.photo_collection_source_mode || null,
+        strongMatch: vector.engaged && vector.strong_match_available !== false
+          ? { available:true, count:vector.strong_match_count, more:Boolean(vector.strong_match_more_possible) }
+          : { available:false, unavailable:Boolean(vector.engaged && vector.strong_match_available === false) },
+        total: body.total_candidates,
+        truncated: Boolean(body.candidates_truncated),
+        candidateLimit: body.candidate_limit || 5000,
+      };
     }
-    if (els.saveAllFilterCollection) {
-      els.saveAllFilterCollection.hidden = !body.photo_collection_source_token ||
-        body.photo_collection_source_mode !== "all_filter_matches";
-    }
-    if (els.saveSmartCollection) {
-      els.saveSmartCollection.hidden = !body.photo_collection_source_token;
-      els.saveSmartCollection.textContent = smartReplaceTarget ? "用本次搜索替换智能规则" : "保存为智能合集";
-    }
-    if (els.appendRankedCollection && els.saveRankedCollection) els.appendRankedCollection.hidden = els.saveRankedCollection.hidden;
-    if (els.appendAllFilterCollection && els.saveAllFilterCollection) els.appendAllFilterCollection.hidden = els.saveAllFilterCollection.hidden;
-    els.loadMore.hidden = !body.has_more;
-    if (els.gridSentinel) els.gridSentinel.hidden = !body.has_more;
+    renderResultOperations();
+    var hasMore = state.search.timeBrowse.active
+      ? Boolean(state.search.timeBrowse.cursor || state.search.timeBrowse.retryCursor)
+      : Boolean(body.has_more);
+    els.loadMore.hidden = !hasMore;
+    if (els.gridSentinel) els.gridSentinel.hidden = !hasMore;
     els.candidateTimeToggle.hidden = !(
       body.query && body.search_session_id && hits.length && state.search.mode === "text"
     );
@@ -2386,43 +2430,119 @@
     renderNotices(els.resultNotices, notices);
     renderPersonEcho(body.filters, state.search.mode);
     renderCaptureEcho(body.filters, state.search.mode);
-    var parts = filterOnly
-      ? ["符合条件共 " + number(body.total_candidates) + " 张",
-         "已加载 " + number(state.search.count) + " 张",
-         body.has_more ? "还有下一页" : "已到末尾"]
-      : ["已显示 " + state.search.count + " 行",
-         "候选共 " + number(body.total_candidates) + " 个",
-         body.has_more ? "还有下一页" : "已到末尾"];
-    var vector = (body.channels || {}).vector || {};
-    // This is a read-only count computed from retrieved vector distances. Availability and
-    // threshold are representation-space specific; neither changes the returned hits or order.
-    if (vector.engaged && vector.strong_match_available !== false) {
-      parts.unshift(
-        vector.strong_match_more_possible
-          ? "5000+ 张高度匹配"
-          : "约 " + number(vector.strong_match_count) + " 张高度匹配"
-      );
-    }
+    state.search.statusFilterOnly = filterOnly;
+    state.search.statusHasMore = Boolean(body.has_more);
+    state.search.statusEmpty = !hits.length;
+    state.search.statusEmptyNote = "";
     if (!hits.length) {
       var capture = captureCondition(body);
       if (capture.present && capture.block && capture.block.state !== "READY") {
-        parts.push("这一页没有命中的行（拍摄时间状态见上方说明，不代表没有这些照片）");
+        state.search.statusEmptyNote = "（拍摄时间状态见上方说明，不代表没有这些照片）";
       } else if (capture.present) {
-        parts.push("这一页没有命中的行（拍摄时间已抽取完成，这个范围内确实没有命中）");
+        state.search.statusEmptyNote = "（拍摄时间已抽取完成，这个范围内确实没有命中）";
       } else if (body.place_scope) {
-        parts.push("当前地点范围内没有匹配照片；可取消地点条件或修改查询。没有自动扩大范围。");
-      } else {
-        parts.push("这一页没有命中的行");
+        state.search.statusEmptyNote = "当前地点范围内没有匹配照片；可取消地点条件或修改查询。没有自动扩大范围。";
       }
     }
-    setStatus(els.queryStatus, parts.join(" · "));
-    if (state.search.recycledCount) {
-      setStatus(els.queryStatus, parts.join(" · ") + " · 当前保留最近 " + state.search.hits.length +
-        " 张；前 " + state.search.recycledCount + " 张已回收，回到列表顶部可按当前条件重新搜索。");
-    }
+    renderSearchStatus();
     if (state.search.pager) state.search.pager.update();
     saveSearchSnapshot();
     if (body.__searchPerfRequestId) perfAfterRender(body.__searchPerfRequestId, body);
+  }
+
+  function confirmedSearchCanSave(search) {
+    if (!search || !search.sourceToken || search.sessionId !== state.search.sessionId) return false;
+    if (search.fingerprint !== conditionFingerprint(collectFilters())) return false;
+    // Capabilities are a cached UI snapshot and may be absent or stale. The issued token
+    // carries the authoritative session/profile/generation binding; the save endpoint
+    // confirms those bindings and the server TTL on every operation.
+    return true;
+  }
+
+  function confirmedSearchIsCurrent(search) {
+    if (!state.search.saveReconfirmRequired && state.search.confirmedSearch === search &&
+        confirmedSearchCanSave(search)) return true;
+    renderResultOperations();
+    setStatus(els.queryStatus, "当前保存凭据已过期或搜索条件/模型已变化；请重新搜索后保存。", "error");
+    return false;
+  }
+
+  function renderResultOperations() {
+    var confirmed = state.search.confirmedSearch;
+    var valid = confirmedSearchCanSave(confirmed);
+    var needsReconfirm = Boolean(state.search.saveReconfirmRequired);
+    if (els.resultOperations) els.resultOperations.hidden = !needsReconfirm && (!confirmed || !confirmed.sourceToken);
+    if (els.saveSmartCollection) {
+      els.saveSmartCollection.hidden = !needsReconfirm && (!confirmed || !confirmed.sourceToken);
+      els.saveSmartCollection.disabled = needsReconfirm || Boolean(confirmed && confirmed.sourceToken && !valid);
+      els.saveSmartCollection.textContent = smartReplaceTarget ? "用本次搜索替换智能规则" : "保存为智能合集";
+    }
+    var ranked = valid && confirmed.sourceMode === "ranked_candidates";
+    var filtered = valid && confirmed.sourceMode === "all_filter_matches";
+    if (els.saveRankedCollection) els.saveRankedCollection.hidden = !ranked;
+    if (els.saveAllFilterCollection) els.saveAllFilterCollection.hidden = !filtered;
+    if (els.appendRankedCollection) els.appendRankedCollection.hidden = !ranked;
+    if (els.appendAllFilterCollection) els.appendAllFilterCollection.hidden = !filtered;
+    if (els.moreResultOperations) els.moreResultOperations.hidden = !(ranked || filtered);
+    if (els.resultOperationHint) {
+      els.resultOperationHint.hidden = !needsReconfirm && (!confirmed || !confirmed.sourceToken || valid);
+      if (!els.resultOperationHint.hidden) text(els.resultOperationHint, "当前结果仍可查看，但保存凭据已失效；请重新搜索确认后保存。");
+    }
+    if (els.smartTimeBrowseHint) els.smartTimeBrowseHint.hidden = !state.search.timeBrowse.active;
+  }
+
+  function invalidateConfirmedSearchOnSaveFailure(failure) {
+    var code = failure && failure.code;
+    var message = String(failure && failure.message || "");
+    var tokenExpired = /保存凭据.*过期|凭据.*不属于当前应用会话/.test(message);
+    var applicationSessionInvalid = Boolean(failure && failure.status === 401) || code === "SESSION_INVALID";
+    var sessionInvalid = applicationSessionInvalid || code === "SEARCH_SESSION_EXPIRED" || code === "INVALID_CURSOR" ||
+        code === "CATALOG_FILTER_REVISION_STALE" || code === "PROFILE_GENERATION_MISMATCH" ||
+        code === "PHOTO_COLLECTION_REVISION_STALE" || code === "PHOTO_SMART_DEPENDENCY_CHANGED";
+    if (sessionInvalid || tokenExpired) {
+      state.search.confirmedSearch = null;
+      state.search.saveReconfirmRequired = Boolean(!applicationSessionInvalid && (tokenExpired || sessionInvalid));
+      if (sessionInvalid) {
+        state.search.sessionId = null;
+        state.search.cursor = null;
+        state.search.timeBrowse.cursor = null;
+        state.search.timeBrowse.retryCursor = null;
+        if (state.search.timeBrowse.previous) state.search.timeBrowse.previous.cursor = null;
+        els.loadMore.hidden = true;
+        if (els.gridSentinel) els.gridSentinel.hidden = true;
+      }
+      renderResultOperations();
+    }
+  }
+
+  function renderSearchStatus() {
+    var confirmed = state.search.confirmedSearch;
+    var parts = [];
+    if (state.search.timeBrowse.active) {
+      var timeTotal = state.search.timeBrowse.total;
+      parts.push("按拍摄时间查看当前候选 · 已显示 " + number(state.search.count) + "/" + number(timeTotal) + " 张");
+      if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
+        parts.push((confirmed.strongMatch.more ? "高度匹配统计来自原始语义搜索（5000+ 张）" :
+          "高度匹配统计来自原始语义搜索（约 " + number(confirmed.strongMatch.count) + " 张）"));
+      } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
+        parts.push("原始语义搜索的高度匹配统计不可用");
+      }
+      if (state.search.timeBrowse.truncated) parts.push("候选可能已截断（最多 " + number(confirmed && confirmed.candidateLimit || 5000) + " 个）");
+    } else {
+      if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
+        parts.push(confirmed.strongMatch.more ? "5000+ 张高度匹配" : "约 " + number(confirmed.strongMatch.count) + " 张高度匹配");
+      } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
+        parts.push("高度匹配统计不可用");
+      }
+      parts.push("已显示 " + number(state.search.count) + " 行");
+      parts.push("候选共 " + number(confirmed ? confirmed.total : state.search.total) + " 个");
+      if (confirmed && confirmed.truncated) parts.push("候选可能已截断（最多 " + number(confirmed.candidateLimit) + " 个）");
+    }
+    if (state.search.recycledCount) parts.push("当前保留最近 " + state.search.hits.length + " 张；前 " + state.search.recycledCount + " 张已回收");
+    if (state.search.statusEmpty) parts.push("这一页没有命中的行");
+    if (state.search.statusEmptyNote) parts.push(state.search.statusEmptyNote);
+    setStatus(els.queryStatus, parts.join(" · "));
+    renderResultOperations();
   }
 
   function clearSearchSnapshot() {
@@ -2649,6 +2769,11 @@
       timeBrowseCursor: state.search.timeBrowse.cursor,
       timeBrowsePrevious: state.search.timeBrowse.previous,
       timeBrowseRulesVersion: state.search.timeBrowse.rulesVersion,
+      confirmedSearch: state.search.confirmedSearch,
+      saveReconfirmRequired: state.search.saveReconfirmRequired,
+      timeBrowseTotal: state.search.timeBrowse.total,
+      timeBrowseTruncated: state.search.timeBrowse.truncated,
+      timeBrowseRetryCursor: state.search.timeBrowse.retryCursor,
       scrollY: window.scrollY || 0,
     });
     try {
@@ -2783,11 +2908,36 @@
     if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = state.search.favoritesOnly;
     state.search.binding = saved.binding || null;
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
     state.search.lastRequestBody = saved.lastRequestBody || null;
     state.search.timeBrowse.active = Boolean(saved.timeBrowseActive);
     state.search.timeBrowse.cursor = saved.timeBrowseCursor || null;
     state.search.timeBrowse.previous = saved.timeBrowsePrevious || null;
     state.search.timeBrowse.rulesVersion = saved.timeBrowseRulesVersion;
+    state.search.timeBrowse.total = saved.timeBrowseTotal;
+    state.search.timeBrowse.truncated = Boolean(saved.timeBrowseTruncated);
+    state.search.timeBrowse.retryCursor = saved.timeBrowseRetryCursor || null;
+    var restoredConfirmed = saved.confirmedSearch || null;
+    if (!restoredConfirmed && saved.lastBody && saved.lastBody.photo_collection_source_token) {
+      var restoredVector = (saved.lastBody.channels || {}).vector || {};
+      restoredConfirmed = {
+        sessionId:saved.search_session_id, fingerprint:saved.binding || "",
+        query:saved.lastBody.query || null, retrievalMode:saved.lastBody.retrieval_mode || "combined",
+        profileId:saved.lastBody.profile_id || null, generationId:saved.lastBody.image_generation_id || null,
+        sourceToken:saved.lastBody.photo_collection_source_token,
+        sourceMode:saved.lastBody.photo_collection_source_mode,
+        strongMatch:restoredVector.engaged && restoredVector.strong_match_available !== false
+          ? {available:true,count:restoredVector.strong_match_count,more:Boolean(restoredVector.strong_match_more_possible)}
+          : {available:false,unavailable:Boolean(restoredVector.engaged && restoredVector.strong_match_available === false)},
+        total:saved.total_candidates, truncated:Boolean(saved.lastBody.candidates_truncated),
+        candidateLimit:saved.lastBody.candidate_limit || 5000,
+      };
+    }
+    state.search.confirmedSearch = restoredConfirmed;
+    // Snapshot validation confirms the search session, not the cached source token.
+    // Keep the results visible, but require a fresh search before enabling save actions.
+    state.search.saveReconfirmRequired = Boolean(saved.saveReconfirmRequired ||
+      (restoredConfirmed && restoredConfirmed.sourceToken));
     var filterOnlySnapshot = saved.search_session_id === "filter-only" ||
       String(saved.search_session_id || "").indexOf("place-album:") === 0;
     var canRefreshFilterOnly = filterOnlySnapshot && saved.lastRequestBody &&
@@ -2816,6 +2966,7 @@
       }
       if (result.refreshed) {
         state.search.lastRequestBody = result.requestBody;
+        state.search.saveReconfirmRequired = false;
         state.search.timeBrowse.active = false;
         state.search.timeBrowse.cursor = null;
         state.search.timeBrowse.previous = null;
@@ -2831,6 +2982,8 @@
       state.search.sessionId = null;
       state.search.cursor = null;
       state.search.lastBody = null;
+      state.search.confirmedSearch = null;
+      renderResultOperations();
       state.search.lastRequestBody = null;
       state.search.hits = [];
       state.search.timeBrowse.active = false;
@@ -2846,6 +2999,9 @@
   }
 
   function restoreValidatedSearchSnapshot(saved) {
+    state.search.timeBrowse.total = saved.timeBrowseTotal;
+    state.search.timeBrowse.truncated = Boolean(saved.timeBrowseTruncated);
+    state.search.timeBrowse.retryCursor = saved.timeBrowseRetryCursor || null;
     var body = Object.assign({}, saved.lastBody, {
       hits: saved.hits,
       search_session_id: saved.search_session_id,
@@ -3672,6 +3828,8 @@
       clearSearchSnapshot();
       state.search.hits = [];
       state.search.lastBody = null;
+      state.search.confirmedSearch = null;
+      renderResultOperations();
       state.search.sessionId = null;
       state.search.cursor = null;
       state.search.binding = null;
@@ -3703,6 +3861,8 @@
     state.search.total = null;
     state.search.hits = [];
     state.search.lastBody = null;
+    state.search.confirmedSearch = null;
+    renderResultOperations();
     state.search.binding = null;
     releaseObjectUrls();
     clear(els.resultGrid);
@@ -3767,6 +3927,10 @@
       saveRankedCollection: document.getElementById("search-save-ranked-collection"),
       saveAllFilterCollection: document.getElementById("search-save-all-filter-collection"),
       saveSmartCollection: document.getElementById("search-save-smart-collection"),
+      resultOperations: document.getElementById("search-result-operations"),
+      moreResultOperations: document.getElementById("search-more-result-operations"),
+      resultOperationHint: document.getElementById("search-result-operation-hint"),
+      smartTimeBrowseHint: document.getElementById("search-smart-time-browse-hint"),
       appendRankedCollection: document.getElementById("search-append-ranked-collection"),
       appendAllFilterCollection: document.getElementById("search-append-all-filter-collection"),
       gridSentinel: document.getElementById("search-grid-sentinel"),
@@ -3861,24 +4025,25 @@
       }).finally(function () { els.photoAppendCollection.disabled = false; });
     });
     function saveSearchSnapshot(mode, button) {
-      var body = state.search.lastBody || {};
-      if (!body.photo_collection_source_token || body.photo_collection_source_mode !== mode) return;
+      var confirmed = state.search.confirmedSearch;
+      if (!confirmedSearchIsCurrent(confirmed) || confirmed.sourceMode !== mode) return;
       button.disabled = true;
       window.AIPhotoInfo.actionDialog({kind:"text", title:"保存搜索结果为照片合集",
         message:mode === "ranked_candidates" ? "按本次服务端排名候选保存；若候选可能被截断，会再次确认。" : "保存全部符合筛选条件的照片，上限 5000 张。",
         label:"合集名称"}).then(function (name) {
         if (name === null || !name.trim()) return null;
+        if (!confirmedSearchIsCurrent(confirmed)) return null;
         var requestId = window.crypto && window.crypto.randomUUID
           ? window.crypto.randomUUID() : "pc-" + Date.now() + "-" + Math.random().toString(36).slice(2);
-        var sourceToken = body.photo_collection_source_token;
+        var sourceToken = confirmed.sourceToken;
         return request("/photo-collections/from-search", {method:"POST", body:{
           name:name, create_request_id:requestId, source_token:sourceToken,
           mode:mode, confirm_truncated:false,
         }}).catch(function (failure) {
           if (failure.status === 409 && failure.code === "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED") {
             return window.AIPhotoInfo.actionDialog({kind:"confirm", title:"候选结果可能不完整",
-              message:"本次候选可能被截断。是否保存当前候选快照？", confirmLabel:"保存当前候选"}).then(function (confirmed) {
-              if (!confirmed) return null;
+              message:"本次候选可能被截断。是否保存当前候选快照？", confirmLabel:"保存当前候选"}).then(function (shouldConfirm) {
+              if (!shouldConfirm || !confirmedSearchIsCurrent(confirmed)) return null;
               return request("/photo-collections/from-search", {method:"POST", body:{
                 name:name, create_request_id:requestId, source_token:sourceToken,
                 mode:mode, confirm_truncated:true,
@@ -3891,8 +4056,9 @@
         if (!result || !result.body || !result.body.collection) return;
         window.location.href = "/?view=photo-collection&id=" + encodeURIComponent(result.body.collection.collection_id);
       }).catch(function (failure) {
+        invalidateConfirmedSearchOnSaveFailure(failure);
         setStatus(els.queryStatus, "保存搜索结果为照片合集失败：" + describe(failure), "error");
-      }).finally(function () { button.disabled = false; });
+      }).finally(function () { renderResultOperations(); });
     }
     if (els.saveRankedCollection) els.saveRankedCollection.addEventListener("click", function () {
       saveSearchSnapshot("ranked_candidates", els.saveRankedCollection);
@@ -3909,29 +4075,34 @@
       }
     } catch (_error) { smartReplaceTarget = null; }
     if (els.saveSmartCollection) els.saveSmartCollection.addEventListener("click", function () {
-      var body = state.search.lastBody || {};
-      if (!body.photo_collection_source_token) return;
+      var confirmed = state.search.confirmedSearch;
+      if (!confirmedSearchIsCurrent(confirmed)) {
+        renderResultOperations();
+        return;
+      }
       els.saveSmartCollection.disabled = true;
       var replace = smartReplaceTarget;
       var message = replace
         ? "将“" + String(replace.name || "智能合集") + "”切换为本次已确认的规则；原有人工排除会保留。"
-        : (body.photo_collection_source_mode === "ranked_candidates"
+        : (confirmed.sourceMode === "ranked_candidates"
           ? "保存本次综合或文字排名规则；候选缓存有上限，之后可手动刷新。"
           : "保存已确认的筛选条件；新照片会在下次读取时按条件出现。");
+      if (state.search.timeBrowse.active) message += " 时间查看只是本次候选的临时排序；保存的仍是原始搜索规则。";
       window.AIPhotoInfo.actionDialog({kind:"text", title:replace ? "替换智能合集规则" : "保存为智能合集",
         message:message, label:"智能合集名称", value:replace ? String(replace.name || "") : ""})
         .then(function (name) {
           if (name === null || !name.trim()) return null;
+          if (!confirmedSearchIsCurrent(confirmed)) return null;
           var requestId = window.crypto && window.crypto.randomUUID
             ? window.crypto.randomUUID() : "smart-" + Date.now() + "-" + Math.random().toString(36).slice(2);
           var path, requestBody;
           if (replace) {
             path = "/photo-smart-collections/" + encodeURIComponent(replace.smart_id) + "/replace-rule";
             requestBody = {instance_token:replace.instance_token, expected_revision:Number(replace.expected_revision),
-              request_id:requestId, source_token:body.photo_collection_source_token};
+              request_id:requestId, source_token:confirmed.sourceToken};
           } else {
             path = "/photo-smart-collections/from-search";
-            requestBody = {name:name, create_request_id:requestId, source_token:body.photo_collection_source_token};
+            requestBody = {name:name, create_request_id:requestId, source_token:confirmed.sourceToken};
           }
           return request(path, {method:"POST", body:requestBody});
         }).then(function (result) {
@@ -3940,32 +4111,34 @@
           var collection = result.body.collection;
           window.location.href = "/?view=photo-smart-collection&id=" + encodeURIComponent(collection.smart_id);
         }).catch(function (failure) {
+          invalidateConfirmedSearchOnSaveFailure(failure);
           setStatus(els.queryStatus, "保存智能合集失败：" + describe(failure), "error");
-        }).finally(function () { els.saveSmartCollection.disabled = false; });
+        }).finally(function () { renderResultOperations(); });
     });
     var pendingAppendRequestIds = Object.create(null);
     function appendSearchSnapshot(mode, button) {
-      var body = state.search.lastBody || {};
-      if (!body.photo_collection_source_token || body.photo_collection_source_mode !== mode) return;
+      var confirmed = state.search.confirmedSearch;
+      if (!confirmedSearchIsCurrent(confirmed) || confirmed.sourceMode !== mode) return;
       button.disabled = true;
       choosePhotoCollection().then(function (collection) {
         if (!collection) return;
-        var pendingKey = String(collection.collection_id) + ":" + String(body.request_id || "") + ":" + mode;
+        if (!confirmedSearchIsCurrent(confirmed)) return null;
+        var pendingKey = String(collection.collection_id) + ":" + String(confirmed.sessionId || "") + ":" + mode;
         var requestId = pendingAppendRequestIds[pendingKey];
         if (!requestId) {
           requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID()
             : "pc-append-" + Date.now() + "-" + Math.random().toString(36).slice(2);
           pendingAppendRequestIds[pendingKey] = requestId;
         }
-        var requestBody = {request_id:requestId, source_token:body.photo_collection_source_token, mode:mode,
+        var requestBody = {request_id:requestId, source_token:confirmed.sourceToken, mode:mode,
           confirm_truncated:false, instance_token:collection.instance_token,
           expected_revision:Number(collection.revision)};
         var path = "/photo-collections/" + encodeURIComponent(collection.collection_id) + "/members/from-search";
         return request(path, {method:"POST", body:requestBody}).catch(function (failure) {
           if (failure.status !== 409 || failure.code !== "PHOTO_COLLECTION_TRUNCATION_CONFIRMATION_REQUIRED") throw failure;
           return window.AIPhotoInfo.actionDialog({kind:"confirm", title:"候选结果可能不完整",
-            message:"本次排名候选可能被截断。是否追加当前候选快照？", confirmLabel:"追加当前候选"}).then(function (confirmed) {
-            if (!confirmed) return null;
+            message:"本次排名候选可能被截断。是否追加当前候选快照？", confirmLabel:"追加当前候选"}).then(function (shouldConfirm) {
+            if (!shouldConfirm || !confirmedSearchIsCurrent(confirmed)) return null;
             requestBody.confirm_truncated = true;
             return request(path, {method:"POST", body:requestBody});
           });
@@ -3975,8 +4148,9 @@
           setStatus(els.queryStatus, "已追加到「" + collection.name + "」：新增 " + result.body.changed + " 张，已有 " + result.body.unchanged + " 张。", "success");
         });
       }).catch(function (failure) {
+        invalidateConfirmedSearchOnSaveFailure(failure);
         setStatus(els.queryStatus, "追加搜索结果失败：" + describe(failure), "error");
-      }).finally(function () { button.disabled = false; });
+      }).finally(function () { renderResultOperations(); });
     }
     if (els.appendRankedCollection) els.appendRankedCollection.addEventListener("click", function () {
       appendSearchSnapshot("ranked_candidates", els.appendRankedCollection);
@@ -3986,6 +4160,8 @@
     });
 
     bindQuerySubmission();
+    els.searchForm.addEventListener("input", function () { renderResultOperations(); });
+    els.searchForm.addEventListener("change", function () { renderResultOperations(); });
     if (els.queryFavoritesOnly) {
       els.queryFavoritesOnly.addEventListener("change", function () {
         state.search.favoritesOnly = Boolean(els.queryFavoritesOnly.checked);
@@ -4012,7 +4188,8 @@
       loadLabel: "加载下一页",
       retryLabel: "重试加载",
       canLoad: function () {
-        var cursor = state.search.timeBrowse.active ? state.search.timeBrowse.cursor : state.search.cursor;
+        var cursor = state.search.timeBrowse.active
+          ? (state.search.timeBrowse.cursor || state.search.timeBrowse.retryCursor) : state.search.cursor;
         var previewOpen = state.search.preview.handle && state.search.preview.handle.dialog.open;
         return document.visibilityState !== "hidden" && !state.search.loading && !previewOpen &&
           Boolean(state.search.sessionId && cursor);

@@ -7,14 +7,14 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-perf-ux-fix-1" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-search-state-ux-fix-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-similar-search-2" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-similar-search-2" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-search-perf-ux-fix-1" defer></script>
+    <script src="/web/search.js?v=p4-search-state-ux-fix-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -257,12 +257,21 @@
             <button type="button" id="search-photo-select-remove" disabled>取消收藏</button>
             <button type="button" id="search-photo-save-collection">保存已选照片为合集</button>
             <button type="button" id="search-photo-append-collection">已选照片加入已有合集</button>
-            <button type="button" id="search-save-ranked-collection" hidden>保存本次排名候选</button>
-            <button type="button" id="search-save-all-filter-collection" hidden>保存全部筛选结果</button>
-            <button type="button" id="search-save-smart-collection" hidden>保存为智能合集</button>
-            <button type="button" id="search-append-ranked-collection" hidden>排名候选加入已有合集</button>
-            <button type="button" id="search-append-all-filter-collection" hidden>全部筛选结果加入已有合集</button>
           </div>
+        </div>
+        <div id="search-result-operations" class="search-result-operations" hidden>
+          <button type="button" id="search-save-smart-collection" hidden>保存为智能合集</button>
+          <details id="search-more-result-operations" class="search-more-result-operations" hidden>
+            <summary>更多结果操作</summary>
+            <div class="search-more-result-buttons">
+              <button type="button" id="search-save-ranked-collection" hidden>保存本次排名候选</button>
+              <button type="button" id="search-save-all-filter-collection" hidden>保存全部筛选结果</button>
+              <button type="button" id="search-append-ranked-collection" hidden>排名候选加入已有合集</button>
+              <button type="button" id="search-append-all-filter-collection" hidden>全部筛选结果加入已有合集</button>
+            </div>
+          </details>
+          <p id="search-result-operation-hint" class="hint" hidden></p>
+          <p id="search-smart-time-browse-hint" class="hint" hidden>按时间查看时保存的仍是原始搜索规则，不会保存临时时间排序。</p>
         </div>
         <ol id="result-grid" class="grid" aria-label="搜索结果"></ol>
         <div id="search-grid-sentinel" class="sentinel" hidden></div>

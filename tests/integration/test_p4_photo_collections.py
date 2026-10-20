@@ -208,6 +208,18 @@ def test_ranked_search_save_preserves_text_candidate_order(api_env):
         assert source["retrieval_mode"] == "text"
         assert source["photo_collection_source_mode"] == "ranked_candidates"
         assert source["photo_collection_source_token"]
+        assert source["has_more"] is True
+        continued = await client.post("/api/v1/search/place-aware", headers=headers, json={
+            "request_id": "text-ranked-source-page-two", "retrieval_mode": "text",
+            "original_query": "sunset", "text": "sunset", "page_size": 1,
+            "search_session_id": source["search_session_id"], "cursor": source["next_cursor"],
+        })
+        assert continued.status_code == 200, continued.text
+        assert "photo_collection_source_token" not in continued.json(), "tokens are issued only on the first page"
+        time_page = await client.get(
+            f"/api/v1/search/sessions/{source['search_session_id']}/time?limit=1"
+        )
+        assert time_page.status_code == 200, time_page.text
         session = api_env.context.search_sessions.get(source["search_session_id"])
         assert session is not None
         expected = [int(entry.asset_id) for entry in session.entries]
