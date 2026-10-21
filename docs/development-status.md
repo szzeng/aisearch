@@ -1,3 +1,7 @@
+## Current task: P4-WEMM-QUALITY-PILOT — 只读质量归因与模型对照（2026-10-20）
+
+已同步 `900028d`，按用户授权完成40图smoke及500张公开COCO对照，未访问私人图库。Qwen512/2048/WeMM512平均AP为80.23/84.83/86.82%，猫前50均100%；WeMM图像编码中位耗时为Qwen的2.81倍，正式接入判断 **INCONCLUSIVE**，[Provider 卡](tasks/P4-WEMM-PROVIDER.md)不启动。验证采用冻结源码GPU＋独立CPU复算＋I/O修复增量；核心/CLI51、catalog30、准备器17项JUnit通过，独审闭合。Qwen一次文件写入失败保留exit2，同身份恢复exit0；不称单次全套通过。事后1024维对照平均AP83.68%，保留约75%的2048维增益；不改默认配置。未验私图库、大原图与8GB/1660；生产依赖/活动模型未改。2026-10-21用户授权将评测工具、测试和结论提交推送到实验分支 `codex/upstream-quality-20261020`。详见[试验卡](tasks/P4-WEMM-QUALITY-PILOT.md)与[报告](reports/P4-WEMM-QUALITY-PILOT.md)。
+
 ## Current task: P4-RELEASE-050 — 0.5.0 个人源码测试版（2026-10-20）
 
 **已发布 [0.5.0 个人源码测试版](https://github.com/szzeng/aisearch/releases/tag/0.5.0)**（GitHub Pre-release），Tag 精确指向 `a669340c89df63d136a827f61f7b6ac9f6bc9556`；版本0.5.0 / Schema42 / API v1。当前 Schema 备份恢复、人工事实、清理保护/重试和关键合集浏览器流程通过，Luna High 完整独审无代码 blocker；修复旧地点包在40–42误拒绝。原始全仓3330通过/76失败/52跳过，增量复测关闭75项失败，剩余范围外30万场景未重跑，不称单次全仓全绿。确认取消的工具限制、容量/最低设备/安装包等仍未认证。未访问真实图库；后续进入个人试用反馈。详见[任务卡](tasks/P4-RELEASE-050.md)与[发布报告](reports/P4-RELEASE-050.md)。

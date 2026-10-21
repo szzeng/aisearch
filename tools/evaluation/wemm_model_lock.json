@@ -1,0 +1,43 @@
+{
+  "model_id": "tencent/WeMM-Embedding-2B",
+  "revision": "bbd6cd4bf52cfc6716f752a2df80b2706720bd95",
+  "source_revision": "e8175bbff1071b580b3a6df8ec2c106e8383a361",
+  "files": {
+    "config.json": {
+      "sha256": "f6e5925cba6a907adedb9c86ab61f336947c4010eee3bf8583086cb90067eec2",
+      "bytes": 2853
+    },
+    "processor_config.json": {
+      "sha256": "d601e2fe0de1bc11852de3aa843f01a1677ca84f4dc743916c9ce4b8d30fb384",
+      "bytes": 1192
+    },
+    "tokenizer_config.json": {
+      "sha256": "35db43580d8c551641a5fe1d1daafb10e73d0a1243db18ff7bc00413a6152ff5",
+      "bytes": 1148
+    },
+    "tokenizer.json": {
+      "sha256": "40e444c744512f423da4c8443c47c21e22ff76056ba4e9796a81c04c13a9daf0",
+      "bytes": 19990378
+    },
+    "chat_template.jinja": {
+      "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+      "bytes": 7755
+    },
+    "modeling_wemm_embedding.py": {
+      "sha256": "ac255e1fad459cc3e68891d6c3327f4486922aed02fb3c5c13fb53277ba8e94f",
+      "bytes": 1205
+    },
+    "LICENSE": {
+      "sha256": "e87f02efc35e9bdde65c8cd5cfa26fbd3a8dcb209c5b82ed91b274b2ff643b53",
+      "bytes": 24546
+    },
+    "README.md": {
+      "sha256": "c194dcd545e03e2b0806ffbc25a05cccdd176964fe851a04713a177cc64fc968",
+      "bytes": 7993
+    },
+    "model.safetensors": {
+      "sha256": "e1a1ad752808c26965aa97d37bf4a9bca71d838513f41e83790cb1e71cac6e59",
+      "bytes": 5441695216
+    }
+  }
+}

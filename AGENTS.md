@@ -23,8 +23,9 @@
 
 ### Project Location
 
-- All project files must remain under:
-  `D:\SZ\projects\aisearch` (the current repository location, explicitly authorized by the user on 2026-10-18)
+- All project files must remain under the current repository workspace root.
+  Resolve it from the active workspace or Git; do not hard-code a developer-specific drive/path.
+  Explicit user-provided data roots may be read or modified only within their authorized scope.
 
 - Do not create or modify project files outside the project directory unless explicitly requested.
 
