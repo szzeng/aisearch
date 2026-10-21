@@ -1,3 +1,7 @@
+## Current task: P4-UI2-SHELL-COLLECTION-NAV-A（2026-10-21）
+
+修复人物、地点、搜索、地图等独立页面侧栏漏掉“照片合集”入口的问题；五个 shell 页面现共用同一 `/?view=photo-collections` 入口。定向 JUnit **4/4** 通过；隔离内置浏览器及用户实测均确认人物和地点页可进入合集目录。Luna H 有界独立复核 **PASS**。状态 **IMPLEMENTED / SCOPED PASS**。未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-UI2-SHELL-COLLECTION-NAV-A.md)与[报告](reports/P4-UI2-SHELL-COLLECTION-NAV-A.md)。
+
 ## Current task: P4-PHOTO-SMART-STRONG-MATCH（2026-10-21）
 
 COMBINED 智能合集按同一搜索 Session 的向量距离与绑定阈值收录，并保留融合排名顺序；schema 0043 为缓存增加策略身份，旧策略结果在刷新完成前不浏览、不另存。打开合集目录错误已修复：显式 SQL 投影补入 `cache_policy_identity`，缺列旧投影安全进入重建状态；跟进定向 JUnit **6/6**、Ruff、py_compile、diff-check 通过，重启本地应用加载修复。原任务受影响组合 JUnit **256/256**，合成浏览器完成关键流程，Luna H 跟进复核 PASS、无 blocker 或缓存泄露风险。完整 unit/integration 初始 3493 项有 30 失败/52 跳过，复验相关模块后剩余一项工作树既有的 Qwen 页面资源版本断言不一致；不称单次全量通过。状态 **IMPLEMENTED / SCOPED PASS**。未访问真实图库或模型/GPU，未提交、未推送。详见[任务卡](tasks/P4-PHOTO-SMART-STRONG-MATCH.md)与[报告](reports/P4-PHOTO-SMART-STRONG-MATCH.md)。
