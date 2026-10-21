@@ -1202,11 +1202,14 @@ async def create_photo_smart_collection_from_search(payload: PhotoSmartCollectio
     if source["mode"] == "ranked_candidates" and not result["reused"]:
         session = context.search_sessions.get(str(source["search_session_id"]))
         ids = [int(entry.asset_id) for entry in session.entries]
+        if str(rule.get("execution_kind")) == "COMBINED":
+            ids = photo_smart_collections.select_strong_match_candidates(session)
         indexing, truncated = photo_smart_collections.session_coverage(session)
         try:
             result["initial_cache"] = photo_smart_collections.publish_candidates(
                 context.service().catalog, int(result["collection"]["smart_id"]), ids,
-                signature=dependency_signature_before, truncated=truncated, indexing=indexing)
+                signature=dependency_signature_before, truncated=truncated, indexing=indexing,
+                match_session=session if str(rule.get("execution_kind")) == "COMBINED" else None)
         except ApiError as error:
             # The rule is already committed. Report that durable success and let the UI
             # queue a safe refresh instead of returning an error that invites a duplicate.
@@ -1268,11 +1271,15 @@ async def replace_photo_smart_rule(payload: PhotoSmartRuleReplaceRequest, reques
         rule=rule, request_id=payload.request_id, auth_hash=auth_hash, request_hash=request_hash)
     if result["changed"] and session is not None:
         indexing, truncated = photo_smart_collections.session_coverage(session)
+        ids = [int(entry.asset_id) for entry in session.entries]
+        if str(rule.get("execution_kind")) == "COMBINED":
+            ids = photo_smart_collections.select_strong_match_candidates(session)
         try:
             result["initial_cache"] = photo_smart_collections.publish_candidates(
-                context.service().catalog, smart_id, [int(entry.asset_id) for entry in session.entries],
+                context.service().catalog, smart_id, ids,
                 signature=dependency_signature_before, truncated=truncated, indexing=indexing,
-                expected_rule_revision=int(result["collection"]["rule_revision"]))
+                expected_rule_revision=int(result["collection"]["rule_revision"]),
+                match_session=session if str(rule.get("execution_kind")) == "COMBINED" else None)
         except ApiError as error:
             # Rule replacement is durable even if the old search snapshot can no longer
             # seed its cache; detail/refresh will present the new rule with no valid cache.
@@ -1329,6 +1336,10 @@ async def get_photo_smart_assets(request: Request, smart_id: int,
     info = await run_catalog_read(service.catalog, photo_smart_collections.detail, smart_id,
                                   instance_token=instance_token)
     collection, rule = info["collection"], info["rule"]
+    if collection.get("strong_match_rebuild_required"):
+        return {"collection": collection, "assets": [], "has_more": False, "next_cursor": None,
+                "freshness": collection["freshness"], "coverage": "BOUNDED",
+                "refresh_required": True}
     if collection["execution_kind"] == "FILTER":
         binding = [int(smart_id), str(instance_token), int(collection["rule_revision"]),
                    int(collection["exclusions_revision"]), order]
@@ -1428,6 +1439,9 @@ async def save_photo_smart_collection_static(payload: PhotoSmartSaveStaticReques
     if int(collection["revision"]) != int(payload.expected_revision):
         raise ApiError("PHOTO_SMART_REVISION_CONFLICT", "智能合集已变化，请刷新后另存", status=409)
     execution_kind = str(collection["execution_kind"])
+    if collection.get("strong_match_rebuild_required"):
+        raise ApiError("PHOTO_SMART_STRONG_MATCH_REBUILD_REQUIRED",
+                       "需要重新生成高度匹配结果后才能另存", status=409)
     eligible_ids: list[int]
     validation_state: dict[str, Any] | None = None
     if execution_kind == "FILTER":

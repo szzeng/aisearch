@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import shutil
 import sqlite3
+import uuid
 from pathlib import Path
 
 import pytest
@@ -191,6 +192,16 @@ def _create_historical_catalog(path: Path, version: int) -> None:
         schema.verify_schema(connection, version)
     finally:
         connection.close()
+
+
+def _migration_directory_through(tmp_path: Path, version: int) -> Path:
+    directory = tmp_path / f"migrations-through-{version}-{uuid.uuid4().hex}"
+    source = Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
+    shutil.copytree(source, directory)
+    for migration in directory.glob("[0-9][0-9][0-9][0-9]_*.sql"):
+        if int(migration.name[:4]) > version:
+            migration.unlink()
+    return directory
 
 
 class _Usage:
@@ -610,8 +621,8 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
     finally:
         rolled_back.close()
 
-    monkeypatch.setattr(schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] /
-                        "src/photo_search/catalog/migrations")
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", _migration_directory_through(tmp_path, 42))
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert migrated.previous_version == 35
     assert migrated.applied == (36, 37, 38, 39, 40, 41, 42)
@@ -708,8 +719,9 @@ def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_pre
     monkeypatch.setattr(
         schema,
         "MIGRATIONS_DIR",
-        Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations",
+        _migration_directory_through(tmp_path, 42),
     )
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 38
     assert upgraded.applied == (39, 40, 41, 42)
@@ -774,8 +786,9 @@ def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollbac
     monkeypatch.setattr(
         schema,
         "MIGRATIONS_DIR",
-        Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations",
+        _migration_directory_through(tmp_path, 42),
     )
+    monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 39
     assert upgraded.applied == (40, 41, 42)
@@ -818,8 +831,9 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
         connection.close()
 
     broken = tmp_path / "migrations-0041-broken"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
+    shutil.copytree(_migration_directory_through(tmp_path, 43), broken)
     (broken / "0042_retention_cleanup_run_fences.sql").unlink()
+    (broken / "0043_photo_smart_match_policy.sql").unlink()
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     migration = broken / "0041_retention_cleanup_runs.sql"
     migration.write_text(
@@ -840,9 +854,7 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
     finally:
         rolled_back.close()
 
-    migrations_41 = tmp_path / "migrations-through-0041"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
-    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    migrations_41 = _migration_directory_through(tmp_path, 41)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
@@ -864,9 +876,7 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
 ) -> None:
     db_path = _db_path(tmp_path)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
-    migrations_41 = tmp_path / "migrations-through-0041"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
-    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    migrations_41 = _migration_directory_through(tmp_path, 41)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
     migrate_database(db_path, data_root=_data_root(tmp_path))
     seeded = connect_rw(db_path)
@@ -884,7 +894,7 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
     finally:
         seeded.close()
     broken = tmp_path / "migrations-0042-broken"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
+    shutil.copytree(_migration_directory_through(tmp_path, 42), broken)
     migration = broken / "0042_retention_cleanup_run_fences.sql"
     migration.write_text(
         migration.read_text(encoding="utf-8") + "\nSELECT retention_0042_fault;\n",
@@ -903,9 +913,7 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
         assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
     finally:
         rolled_back.close()
-    monkeypatch.setattr(
-        schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
-    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", _migration_directory_through(tmp_path, 42))
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 41 and upgraded.applied == (42,)
@@ -963,6 +971,104 @@ def test_upgrade_creates_a_consistent_backup_first(
         assert "probe_table" in schema.business_tables(live)
     finally:
         live.close()
+
+
+def _seed_legacy_smart_cache(db_path: Path) -> None:
+    connection = connect_rw(db_path)
+    try:
+        connection.execute(
+            "INSERT INTO assets(asset_id,sha256,byte_size,created_at,state) "
+            "VALUES(7,?,10,100,'ACTIVE')", ("7" * 64,),
+        )
+        cursor = connection.execute(
+            "INSERT INTO photo_smart_collections(instance_token,name,name_key,rule_version,rule_json,rule_hash,"
+            "execution_kind,create_request_id,create_request_hash,create_auth_hash,create_source_hash,"
+            "created_at_ms,updated_at_ms) VALUES('legacy-token','Legacy','legacy',1,'{}','old-hash','COMBINED',"
+            "'legacy-create','request-hash','auth-hash','source-hash',1,2)"
+        )
+        smart_id = int(cursor.lastrowid)
+        connection.execute(
+            "INSERT INTO photo_smart_cache_state(smart_id,build_id,dependency_signature,cache_rule_revision,"
+            "candidate_count,refreshed_at_ms,refresh_status) VALUES(?,?,?,?,?,?,?)",
+            (smart_id, "legacy-build", "legacy-signature", 1, 1, 2, "NO_CACHE"),
+        )
+        connection.execute(
+            "INSERT INTO photo_smart_cache_entries(smart_id,build_id,rank,asset_id) VALUES(?,?,1,7)",
+            (smart_id, "legacy-build"),
+        )
+        connection.execute(
+            "INSERT INTO photo_smart_exclusions(smart_id,asset_id,created_at_ms) VALUES(?,?,3)",
+            (smart_id, 7),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def test_photo_smart_policy_migration_creates_nullable_identity_in_new_catalog(tmp_path: Path) -> None:
+    db_path = _db_path(tmp_path)
+    migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert migrated.schema_version == 43
+    connection = open_readonly(db_path)
+    try:
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(photo_smart_cache_state)")}
+        assert "cache_policy_identity" in columns
+        assert list(connection.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        connection.close()
+
+
+def test_photo_smart_policy_migration_preserves_legacy_rule_exclusions_and_cache(
+    tmp_path: Path,
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 42)
+    _seed_legacy_smart_cache(db_path)
+    migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert migrated.previous_version == 42 and migrated.applied == (43,)
+    connection = open_readonly(db_path)
+    try:
+        cache = connection.execute(
+            "SELECT build_id,cache_policy_identity,candidate_count FROM photo_smart_cache_state WHERE smart_id=1"
+        ).fetchone()
+        assert tuple(cache) == ("legacy-build", None, 1)
+        assert connection.execute(
+            "SELECT execution_kind,rule_json FROM photo_smart_collections WHERE smart_id=1"
+        ).fetchone()[0] == "COMBINED"
+        assert connection.execute("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=1").fetchone()[0] == 1
+        assert connection.execute("SELECT asset_id FROM photo_smart_cache_entries WHERE smart_id=1").fetchone()[0] == 7
+        assert list(connection.execute("PRAGMA foreign_key_check")) == []
+    finally:
+        connection.close()
+
+
+def test_photo_smart_policy_migration_failure_rolls_back_column_and_preserves_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 42)
+    _seed_legacy_smart_cache(db_path)
+    broken = tmp_path / "migrations-0043-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken)
+    migration = broken / "0043_photo_smart_match_policy.sql"
+    migration.write_text(
+        migration.read_text(encoding="utf-8") + "\nSELECT photo_smart_policy_fault;\n", encoding="utf-8",
+    )
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", broken)
+    with pytest.raises(CatalogError) as failed:
+        migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert failed.value.code == MIGRATION_FAILED
+    assert inspect_database(db_path) == 42
+    connection = open_readonly(db_path)
+    try:
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(photo_smart_cache_state)")}
+        assert "cache_policy_identity" not in columns
+        assert connection.execute(
+            "SELECT build_id FROM photo_smart_cache_state WHERE smart_id=1"
+        ).fetchone()[0] == "legacy-build"
+        assert connection.execute("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=1").fetchone()[0] == 1
+    finally:
+        connection.close()
 
 
 def test_insufficient_disk_space_blocks_a_new_database(tmp_path: Path) -> None:

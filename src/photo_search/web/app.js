@@ -3393,7 +3393,10 @@
         var heading = element("h3"); heading.appendChild(open); row.appendChild(heading);
         var kind = ({FILTER:"条件筛选", TEXT:"文字检索", COMBINED:"综合搜索"})[item.execution_kind] || "智能合集";
         var freshness = ({CHECK_ON_OPEN:"打开后检查", CURRENT:"已缓存", STALE:"待更新",
-          REFRESHING:"更新中", NO_CACHE:"尚无缓存", MODEL_REBIND_REQUIRED:"模型需重新绑定"})[item.freshness] || "状态待检查";
+          REFRESHING:"更新中", NO_CACHE:"尚无缓存", MODEL_REBIND_REQUIRED:"模型需重新绑定",
+          STRONG_MATCH_REBUILD_REQUIRED:"需要重新生成高度匹配结果"})[item.freshness] || "状态待检查";
+        if (item.execution_kind === "COMBINED") kind += " · 仅高度匹配";
+        if (item.freshness === "STRONG_MATCH_REBUILD_REQUIRED") item.last_error_code = null;
         if (item.last_error_code) freshness = "更新失败 · " + item.last_error_code;
         row.appendChild(element("p", "smart-collection-meta", kind + " · " + freshness));
         var candidateCount = Number(item.candidate_count);
@@ -3447,9 +3450,11 @@
 
   function photoSmartCollectionStateLabel(collection) {
     var value = collection || {};
+    if (value.freshness === "STRONG_MATCH_REBUILD_REQUIRED") return "需要重新生成高度匹配结果";
     if (value.last_error_code) return "更新失败（" + value.last_error_code + "），可重试";
     return ({CHECK_ON_OPEN:"打开后检查", CURRENT:"已缓存", STALE:"待更新", REFRESHING:"更新中",
-      NO_CACHE:"尚无缓存", MODEL_REBIND_REQUIRED:"模型需重新绑定"})[value.freshness] || "状态待检查";
+      NO_CACHE:"尚无缓存", MODEL_REBIND_REQUIRED:"模型需重新绑定",
+      STRONG_MATCH_REBUILD_REQUIRED:"需要重新生成高度匹配结果"})[value.freshness] || "状态待检查";
   }
 
   function photoSmartThumbUrl(path, assetId) {
@@ -3786,14 +3791,17 @@
     var refreshFailure = collection.last_error_code
       ? "上次刷新失败（" + collection.last_error_code + "），可重试。 " : "";
     var resultStatus;
-    if (body.stale_label) resultStatus = body.stale_label +
+    if (collection.freshness === "STRONG_MATCH_REBUILD_REQUIRED") resultStatus = "需要重新生成高度匹配结果；旧缓存不可浏览或另存。";
+    else if (body.stale_label) resultStatus = body.stale_label +
       (body.assets && body.assets.length ? "；照片已按当前范围和排除条件复核。" : "；当前没有可验证的旧候选。");
     else if (body.coverage === "INDEXING") resultStatus = "索引处理中；已发布候选仍可浏览并标记为待更新。";
     else if (body.coverage === "TRUNCATED") resultStatus = "候选已截断，当前仅显示已发布的最多 5000 个候选。";
     else if (collection.freshness === "MODEL_REBIND_REQUIRED") resultStatus = "搜索模型需重新绑定，请用新搜索替换规则。";
     else if (collection.freshness === "NO_CACHE") resultStatus = "尚无排名缓存，正在检查是否可以生成。";
+    else if (collection.freshness === "REFRESHING") resultStatus = "正在更新高度匹配照片。";
     else resultStatus = body.assets && body.assets.length ? "显示当前动态筛选或已发布排名候选。"
-      : "当前没有匹配结果。" + (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。");
+      : (collection.execution_kind === "COMBINED" ? "暂无高度匹配照片。 可手动刷新高度匹配结果。"
+        : "当前没有匹配结果。" + (collection.execution_kind === "FILTER" ? "" : " 可手动刷新排名缓存。"));
     return refreshFailure + resultStatus;
   }
 
@@ -3836,7 +3844,9 @@
         updatePhotoSmartPager();
         return false;
       }
-      els.photoSmartDetailTitle.textContent = collection.name + " · " + photoSmartKindLabel(collection.execution_kind);
+      var countLabel = collection.execution_kind === "COMBINED" && collection.candidate_count !== null &&
+        collection.candidate_count !== undefined ? " · 高度匹配 · " + Number(collection.candidate_count) + " 张" : "";
+      els.photoSmartDetailTitle.textContent = collection.name + " · " + photoSmartKindLabel(collection.execution_kind) + countLabel;
       var freshnessLabel = photoSmartCollectionStateLabel(collection);
       els.photoSmartRuleSummary.textContent = ((detail.body.rule && detail.body.rule.display_query) || "纯条件筛选") +
         " · " + freshnessLabel + (detail.body.indexing || collection.indexing ? " · 索引处理中" : "") +

@@ -171,6 +171,139 @@ def test_strong_match_annotation_does_not_change_search_order_or_candidate_count
     assert above_vector["strong_match_count"] == above_vector["candidates"]
 
 
+def test_combined_search_freezes_server_only_strong_match_session_evidence(
+    search_env: SearchEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario(client: Any) -> dict[str, Any]:
+        csrf = await search_env.authenticate(client)
+        headers = SearchEnv.post_headers(csrf)
+        monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: 1.5)
+        request_body = {
+            "request_id":"smart-strong-search", "retrieval_mode":"combined",
+            "original_query":"sunset", "text":"sunset", **search_env.explicit_binding(),
+        }
+        response = await client.post("/api/v1/search/place-aware", json=request_body, headers=headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        session = search_env.context.search_sessions.get(body["search_session_id"])
+        assert session is not None
+        evidence = session.extra["strong_match_evidence"]
+        assert evidence["session_id"] == session.session_id
+        assert evidence["profile_id"] == session.profile_id
+        assert evidence["generation_id"] == session.image_generation_id
+        assert evidence["space_id"] == session.space_id
+        assert evidence["dimension"] == session.dimension
+        assert evidence["threshold"] == 1.5
+        assert set(evidence["asset_ids"]).issubset({int(entry.asset_id) for entry in session.entries})
+        return {
+            "ids": evidence["asset_ids"],
+            "count": body["channels"]["vector"]["strong_match_count"],
+            "session_ids": [int(entry.asset_id) for entry in session.entries],
+        }
+
+    result = search_env.scenario(scenario)
+    assert len(result["ids"]) == result["count"]
+    assert result["ids"] == [asset_id for asset_id in result["session_ids"] if asset_id in set(result["ids"])]
+
+
+def test_smart_collection_creation_publishes_only_strong_vector_matches(
+    search_env: SearchEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario(client: Any) -> list[int]:
+        csrf = await search_env.authenticate(client)
+        headers = SearchEnv.post_headers(csrf)
+        monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: 0.0)
+        response = await client.post("/api/v1/search/place-aware", json={
+            "request_id":"smart-strong-search", "retrieval_mode":"combined",
+            "original_query":"sunset", "text":"sunset", **search_env.explicit_binding(),
+        }, headers=headers)
+        assert response.status_code == 200, response.text
+        search = response.json()
+        assert search["total_candidates"] > search["channels"]["vector"]["strong_match_count"]
+        saved = await client.post("/api/v1/photo-smart-collections/from-search", headers=headers, json={
+            "name":"Only strong match", "create_request_id":"smart-strong-create",
+            "source_token":search["photo_collection_source_token"],
+        })
+        assert saved.status_code == 200, saved.text
+        smart = saved.json()["collection"]
+        assert saved.json()["initial_cache"]["candidate_count"] == 1
+        page = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets",
+            params={"instance_token":smart["instance_token"], "limit":50},
+        )
+        assert page.status_code == 200, page.text
+        assert page.json()["freshness"] == "CURRENT"
+        return [int(asset["asset_id"]) for asset in page.json()["assets"]]
+
+    visible = search_env.scenario(scenario)
+    assert visible == [search_env.assets["beach sunset.jpg"]]
+
+
+def test_legacy_strong_match_cache_refreshing_is_not_browsed_or_saved(
+    search_env: SearchEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    search_env.create_profile("profile-1")
+    activate_profile(search_env.catalog, profile_id="profile-1")
+
+    async def scenario(client: Any) -> None:
+        csrf = await search_env.authenticate(client)
+        headers = SearchEnv.post_headers(csrf)
+        monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: 0.0)
+        response = await client.post("/api/v1/search/place-aware", json={
+            "request_id": "smart-strong-rebuild-search", "retrieval_mode": "combined",
+            "original_query": "sunset", "text": "sunset", **search_env.explicit_binding(),
+        }, headers=headers)
+        assert response.status_code == 200, response.text
+        created = await client.post("/api/v1/photo-smart-collections/from-search", headers=headers, json={
+            "name": "Legacy strong cache", "create_request_id": "smart-strong-rebuild-create",
+            "source_token": response.json()["photo_collection_source_token"],
+        })
+        assert created.status_code == 200, created.text
+        smart = created.json()["collection"]
+        with search_env.catalog.write() as connection:
+            connection.execute(
+                "UPDATE photo_smart_cache_state SET cache_policy_identity='legacy-policy',refresh_status='RUNNING' "
+                "WHERE smart_id=?", (smart["smart_id"],),
+            )
+
+        search_calls: list[str] = []
+
+        async def unexpected_search(*_args: Any, **_kwargs: Any) -> Any:
+            search_calls.append("called")
+            raise AssertionError("a policy-mismatched cache must not trigger a qualifying search")
+
+        monkeypatch.setattr("photo_search.api.routes.run_catalog_search", unexpected_search)
+        detail = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}",
+            params={"instance_token": smart["instance_token"]},
+        )
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["collection"]["freshness"] == "REFRESHING"
+        assert detail.json()["collection"]["strong_match_rebuild_required"] is True
+        page = await client.get(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/assets",
+            params={"instance_token": smart["instance_token"], "limit": 50},
+        )
+        assert page.status_code == 200, page.text
+        assert page.json()["freshness"] == "REFRESHING"
+        assert page.json()["assets"] == []
+        assert page.json()["refresh_required"] is True
+        before = int(search_env.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0])
+        saved = await client.post(
+            f"/api/v1/photo-smart-collections/{smart['smart_id']}/save-static", headers=headers, json={
+                "instance_token": smart["instance_token"], "expected_revision": smart["revision"],
+                "name": "Must not save", "create_request_id": "smart-strong-rebuild-save",
+                "confirm_stale": True, "confirm_indexing": True, "confirm_truncated": True,
+            },
+        )
+        assert saved.status_code == 409, saved.text
+        assert saved.json()["code"] == "PHOTO_SMART_STRONG_MATCH_REBUILD_REQUIRED"
+        assert int(search_env.catalog.read_one("SELECT COUNT(*) FROM photo_collections")[0]) == before
+        assert search_calls == []
+
+    search_env.scenario(scenario)
+
+
 @pytest.mark.parametrize(
     "overrides",
     [

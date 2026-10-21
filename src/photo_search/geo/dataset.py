@@ -88,7 +88,7 @@ PLACE_LEGACY_MAX_FLOOR = 16
 # Schemas 0040-0042 only extend retention media identities and cleanup run
 # settings/items/candidate fences. They do not change the place package contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
-PLACE_COMPAT_REVIEWED_THROUGH = 42
+PLACE_COMPAT_REVIEWED_THROUGH = 43
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

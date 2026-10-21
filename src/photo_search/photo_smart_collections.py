@@ -22,6 +22,8 @@ SMART_REFRESH_QUEUE_LIMIT = 3
 SMART_REFRESH_HEARTBEAT_SECONDS = 60
 SMART_RANKING_CONTRACT_VERSION = "photo-search-ranking-v1"
 SMART_QUERY_PLANNING_VERSION = "unified-query-plan-v1"
+SMART_STRONG_MATCH_POLICY_VERSION = "photo-smart-strong-match-v1"
+STRONG_MATCH_REBUILD_REQUIRED = "STRONG_MATCH_REBUILD_REQUIRED"
 
 
 def _fail(message: str, *, status: int = 422, code: str = VALIDATION_ERROR) -> ApiError:
@@ -135,6 +137,57 @@ def _directory_revision(connection: Any) -> int:
     return int(row[0])
 
 
+def strong_match_policy_identity(rule: dict[str, Any]) -> str | None:
+    """Identity of the existing model-bound cutoff used by COMBINED caches."""
+    if str(rule.get("execution_kind") or "") != "COMBINED":
+        return None
+    binding = rule.get("search_binding")
+    if not isinstance(binding, dict):
+        return None
+    space_id = binding.get("space_id")
+    from photo_search.search.service import strong_match_max_distance
+
+    threshold = strong_match_max_distance(space_id)
+    if threshold is None:
+        return None
+    return f"{SMART_STRONG_MATCH_POLICY_VERSION}:{space_id}:{float(threshold):.12g}"
+
+
+def select_strong_match_candidates(session: Any) -> list[int]:
+    """Validate same-search vector-distance evidence and retain fused order."""
+    evidence = (getattr(session, "extra", None) or {}).get("strong_match_evidence")
+    if not isinstance(evidence, dict):
+        raise _fail("高度匹配距离证据不可用，请重新搜索", status=409,
+                    code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE")
+    from photo_search.search.service import strong_match_max_distance
+
+    threshold = strong_match_max_distance(getattr(session, "space_id", None))
+    try:
+        evidence_threshold = float(evidence.get("threshold", -1))
+    except (TypeError, ValueError):
+        evidence_threshold = -1.0
+    if (
+        threshold is None
+        or evidence.get("session_id") != getattr(session, "session_id", None)
+        or evidence.get("profile_id") != getattr(session, "profile_id", None)
+        or evidence.get("generation_id") != getattr(session, "image_generation_id", None)
+        or evidence.get("space_id") != getattr(session, "space_id", None)
+        or evidence.get("dimension") != getattr(session, "dimension", None)
+        or evidence_threshold != float(threshold)
+    ):
+        raise _fail("高度匹配模型身份或阈值证据已变化，请重新搜索", status=409,
+                    code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE")
+    try:
+        matches = {int(asset_id) for asset_id in evidence.get("asset_ids", [])}
+    except (TypeError, ValueError) as error:
+        raise _fail("高度匹配距离证据无效，请重新搜索", status=409,
+                    code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE") from error
+    if len(matches) > MAX_CANDIDATES or len(session.entries) > MAX_CANDIDATES:
+        raise _fail("高度匹配候选超过 5000 上限", status=409,
+                    code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE")
+    return [int(entry.asset_id) for entry in session.entries if int(entry.asset_id) in matches]
+
+
 def dependency_signature(connection: Any, rule: dict[str, Any]) -> tuple[str, bool, dict[str, Any] | None]:
     from photo_search.places.revision import read_filter_revision, read_suggestion_revision
     from photo_search.search.tokens import FTS_GENERATION_ID, TOKENIZER_VERSION
@@ -202,7 +255,7 @@ def dependency_signature(connection: Any, rule: dict[str, Any]) -> tuple[str, bo
                 binding if kind == "COMBINED" else None,
                 active_binding if kind == "COMBINED" else None,
                 text_profile_semantics if kind == "TEXT" else None, taken_revision,
-                place_identity, rule.get("execution_kind")]
+                place_identity, strong_match_policy_identity(rule), rule.get("execution_kind")]
     signature = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return signature, bool((pending_text if kind in {"TEXT", "COMBINED"} else False) or
                            (pending_vectors if kind == "COMBINED" else False)), active_binding
@@ -236,7 +289,23 @@ def _freshness(collection: Any, cache: Any, current_signature: str | None = None
     return "CURRENT"
 
 
+def _strong_match_rebuild_required(collection: Any, cache: Any) -> bool:
+    if (str(collection["execution_kind"]) != "COMBINED" or cache is None
+            or not cache["build_id"]):
+        return False
+    rule = json.loads(collection["rule_json"])
+    required = strong_match_policy_identity(rule)
+    columns = cache.keys() if hasattr(cache, "keys") else ()
+    stored = cache["cache_policy_identity"] if "cache_policy_identity" in columns else None
+    return required is None or str(stored or "") != required
+
+
 def _summary(collection: Any, cache: Any, current_signature: str | None = None) -> dict[str, Any]:
+    freshness = _freshness(collection, cache, current_signature)
+    policy_mismatch = _strong_match_rebuild_required(collection, cache)
+    if policy_mismatch:
+        freshness = ("REFRESHING" if cache["refresh_status"] in {"QUEUED", "RUNNING"}
+                     else STRONG_MATCH_REBUILD_REQUIRED)
     return {
         "smart_id": int(collection["smart_id"]),
         "instance_token": str(collection["instance_token"]),
@@ -246,13 +315,17 @@ def _summary(collection: Any, cache: Any, current_signature: str | None = None) 
         "rule_revision": int(collection["rule_revision"]),
         "exclusions_revision": int(collection["exclusions_revision"]),
         "rule_summary": str(json.loads(collection["rule_json"]).get("display_query") or "筛选条件"),
-        "candidate_count": 0 if cache is None else int(cache["candidate_count"]),
+        "candidate_count": (None if policy_mismatch else
+                            0 if cache is None else int(cache["candidate_count"])),
         "truncated": False if cache is None else bool(cache["truncated"]),
         "indexing": False if cache is None else bool(cache["indexing"]),
         "refreshed_at_ms": None if cache is None or cache["refreshed_at_ms"] is None else int(cache["refreshed_at_ms"]),
-        "freshness": _freshness(collection, cache, current_signature),
+        "freshness": freshness,
+        "strong_match_rebuild_required": policy_mismatch,
         "refresh_status": "NO_CACHE" if cache is None else str(cache["refresh_status"]),
-        "last_error_code": None if cache is None else cache["last_error_code"],
+        "last_error_code": ("PHOTO_SMART_STRONG_MATCH_REBUILD_REQUIRED"
+                             if policy_mismatch and freshness == STRONG_MATCH_REBUILD_REQUIRED else
+                             None if cache is None else cache["last_error_code"]),
     }
 
 
@@ -279,7 +352,8 @@ def list_collections(catalog: Any, *, limit: int = 20, cursor: str | None = None
         where = "WHERE c.updated_at_ms < ? OR (c.updated_at_ms=? AND c.smart_id<?)" if after else ""
         params = (*([int(after[0]), int(after[0]), int(after[1])] if after else []), limit + 1)
         rows = catalog.read_all(
-            "SELECT c.*,s.build_id,s.dependency_signature,s.cache_rule_revision,s.candidate_count,"
+            "SELECT c.*,s.build_id,s.dependency_signature,s.cache_rule_revision,s.cache_policy_identity,"
+            "s.candidate_count,"
             "s.truncated,s.indexing,s.refreshed_at_ms,s.last_error_code,s.refresh_status "
             "FROM photo_smart_collections c LEFT JOIN photo_smart_cache_state s USING(smart_id) "
             + where + " ORDER BY c.updated_at_ms DESC,c.smart_id DESC LIMIT ?", params
@@ -425,7 +499,8 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
                        truncated: bool = False, indexing: bool = False,
                        expected_rule_revision: int | None = None,
                        lease_owner: str | None = None,
-                       refresh_id: str | None = None) -> dict[str, Any]:
+                       refresh_id: str | None = None,
+                       match_session: Any | None = None) -> dict[str, Any]:
     """Atomically replace one bounded derived snapshot; no long computation holds this write."""
     if len(asset_ids) > MAX_CANDIDATES or len(set(asset_ids)) != len(asset_ids):
         raise _fail("智能合集候选快照超过 5000 或含重复照片", code="PHOTO_SMART_CACHE_INVALID")
@@ -435,10 +510,30 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
     photo_sql, photo_params = photo_asset_sql(asset_alias="a")
     with catalog.write() as connection:
         collection = _get(catalog, smart_id)
+        rule = json.loads(collection["rule_json"])
+        cache_policy_identity = strong_match_policy_identity(rule)
+        if str(collection["execution_kind"]) == "COMBINED" and cache_policy_identity is None:
+            raise _fail("当前模型没有可用的高度匹配阈值，结果未发布", status=409,
+                        code="PHOTO_SMART_MATCH_POLICY_UNAVAILABLE")
+        if str(collection["execution_kind"]) == "COMBINED":
+            if match_session is None:
+                raise _fail("综合搜索缓存缺少已确认的距离证据，结果未发布", status=409,
+                            code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE")
+            pinned = rule.get("search_binding") or {}
+            session_binding = {
+                "profile_id": getattr(match_session, "profile_id", None),
+                "space_id": getattr(match_session, "space_id", None),
+                "image_generation_id": getattr(match_session, "image_generation_id", None),
+                "dimension": getattr(match_session, "dimension", None),
+            }
+            selected = select_strong_match_candidates(match_session)
+            if any(pinned.get(key) != value for key, value in session_binding.items()) or selected != asset_ids:
+                raise _fail("综合搜索缓存候选与已确认的高度匹配证据不一致", status=409,
+                            code="PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE")
         if expected_rule_revision is not None and int(collection["rule_revision"]) != int(expected_rule_revision):
             raise _fail("智能合集规则在刷新期间已变化，旧结果未发布", status=409,
                         code="PHOTO_SMART_RULE_CHANGED")
-        current_signature, current_indexing, _ = dependency_signature(connection, json.loads(collection["rule_json"]))
+        current_signature, current_indexing, _ = dependency_signature(connection, rule)
         if current_signature != signature:
             raise _fail("搜索依赖在刷新期间已变化，旧结果未发布", status=409,
                         code="PHOTO_SMART_DEPENDENCY_CHANGED")
@@ -480,11 +575,16 @@ def publish_candidates(catalog: Any, smart_id: int, asset_ids: list[int], *, sig
             [(int(smart_id), build_id, rank, int(asset_id)) for rank, asset_id in enumerate(asset_ids, 1)],
         )
         connection.execute(
-            "UPDATE photo_smart_cache_state SET build_id=?,dependency_signature=?,cache_rule_revision=?,candidate_count=?,truncated=?,indexing=?,refreshed_at_ms=?,last_error_code=NULL,lease_owner=NULL,lease_until_ms=NULL,refresh_status='NO_CACHE' WHERE smart_id=?",
-            (build_id, signature, int(collection["rule_revision"]), len(asset_ids), int(truncated), int(indexing), catalog.now_ms(), int(smart_id)),
+            "UPDATE photo_smart_cache_state SET build_id=?,dependency_signature=?,cache_rule_revision=?,"
+            "cache_policy_identity=?,candidate_count=?,truncated=?,indexing=?,refreshed_at_ms=?,"
+            "last_error_code=NULL,lease_owner=NULL,lease_until_ms=NULL,refresh_status='NO_CACHE' "
+            "WHERE smart_id=?",
+            (build_id, signature, int(collection["rule_revision"]), cache_policy_identity,
+             len(asset_ids), int(truncated), int(indexing), catalog.now_ms(), int(smart_id)),
         )
         return {"build_id": build_id, "candidate_count": len(asset_ids), "truncated": bool(truncated),
-                "indexing": bool(indexing), "previous_build_id": None if state is None else state["build_id"]}
+                "indexing": bool(indexing), "cache_policy_identity": cache_policy_identity,
+                "previous_build_id": None if state is None else state["build_id"]}
 
 
 def exclusions_page(catalog: Any, smart_id: int, *, instance_token: str, limit: int = 50,
@@ -569,6 +669,11 @@ def _ranked_assets_query(catalog: Any, cache: Any, smart_id: int, *, instance_to
         rule = json.loads(collection["rule_json"])
         signature, indexing, _ = dependency_signature(catalog.connection, rule)
         freshness = _freshness(collection, state, signature)
+        if _strong_match_rebuild_required(collection, state):
+            return {"collection": _summary(collection, state, signature), "assets": [],
+                    "has_more": False, "next_cursor": None,
+                    "freshness": STRONG_MATCH_REBUILD_REQUIRED, "coverage": "BOUNDED",
+                    "refresh_required": True}
         if freshness != "CURRENT" and eligible_asset_ids is None:
             return {"collection": _summary(collection, state, signature), "assets": [], "has_more": False,
                     "next_cursor": None, "freshness": freshness,
@@ -681,6 +786,9 @@ def request_refresh(catalog: Any, smart_id: int, *, instance_token: str,
         rule = json.loads(collection["rule_json"])
         signature, indexing, active = dependency_signature(connection, rule)
         if str(collection["execution_kind"]) == "COMBINED":
+            if strong_match_policy_identity(rule) is None:
+                raise _fail("当前模型没有可用的高度匹配阈值，不能刷新", status=409,
+                            code="PHOTO_SMART_MATCH_POLICY_UNAVAILABLE")
             pinned = rule.get("search_binding")
             if pinned and (active is None or any(
                     pinned.get(key) != active.get(key) for key in
@@ -949,6 +1057,8 @@ class SmartRefreshRunner:
             ids = [] if session is None else [int(entry.asset_id) for entry in session.entries]
             if session is None or len(ids) > MAX_CANDIDATES:
                 raise _fail("检索没有返回可发布的候选快照", status=409, code="PHOTO_SMART_REFRESH_EMPTY")
+            if str(collection["execution_kind"]) == "COMBINED":
+                ids = select_strong_match_candidates(session)
             with catalog.read_snapshot() as connection:
                 signature_after, indexing, _ = dependency_signature(connection, rule)
             if signature_after != signature_before:
@@ -958,7 +1068,8 @@ class SmartRefreshRunner:
             publish_candidates(catalog, smart_id, ids, signature=signature_before,
                                 truncated=session_truncated, indexing=bool(indexing or session_indexing),
                                 expected_rule_revision=rule_revision, lease_owner=owner,
-                                refresh_id=refresh_id)
+                                refresh_id=refresh_id,
+                                match_session=session if str(collection["execution_kind"]) == "COMBINED" else None)
         except Exception as error:  # keep the prior published build intact on every failure
             code = str(getattr(error, "code", "PHOTO_SMART_REFRESH_FAILED"))
             try:

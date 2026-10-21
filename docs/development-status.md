@@ -1,3 +1,6 @@
+## Current task: P4-PHOTO-SMART-STRONG-MATCH（2026-10-21）
+
+COMBINED 智能合集按同一搜索 Session 的向量距离与绑定阈值收录，并保留融合排名顺序；schema 0043 为缓存增加策略身份，旧策略结果在刷新完成前不浏览、不另存。打开合集目录错误已修复：显式 SQL 投影补入 `cache_policy_identity`，缺列旧投影安全进入重建状态；跟进定向 JUnit **6/6**、Ruff、py_compile、diff-check 通过，重启本地应用加载修复。原任务受影响组合 JUnit **256/256**，合成浏览器完成关键流程，Luna H 跟进复核 PASS、无 blocker 或缓存泄露风险。完整 unit/integration 初始 3493 项有 30 失败/52 跳过，复验相关模块后剩余一项工作树既有的 Qwen 页面资源版本断言不一致；不称单次全量通过。状态 **IMPLEMENTED / SCOPED PASS**。未访问真实图库或模型/GPU，未提交、未推送。详见[任务卡](tasks/P4-PHOTO-SMART-STRONG-MATCH.md)与[报告](reports/P4-PHOTO-SMART-STRONG-MATCH.md)。
 ## Current task: P4-QWEN-1024D-TRIAL（2026-10-21）
 
 新增独立 Qwen 1024D EXIF v2 Provider，共享标准 512D 权重；Registry 拒绝同 ID 本地清单的 revision/hash/dimension/config 偏差，只允许自定义展示名。默认仍为 Qwen 512D；按用户要求将 1024D 高度匹配计数恢复为初始阈值 squared-L2 ≤1.50（归一化向量 cosine ≥0.25），仅计已召回候选，不改变排序/召回。回退定向 JUnit 59/59 通过，Ruff 与 diff-check 通过；该值尚未用真实图库相关性标签单独校准。真实图库建库/切换仍未验证，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-QWEN-1024D-TRIAL.md)与[报告](reports/P4-QWEN-1024D-TRIAL.md)。

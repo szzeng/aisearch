@@ -1377,6 +1377,23 @@ def search_request(
                 **({} if session_extra is None else dict(session_extra)),
             },
         )
+        if request.retrieval_mode == "combined" and binding is not None:
+            threshold = strong_match_max_distance(binding.space_id)
+            if threshold is not None:
+                vector_rows = candidate["channels"][VECTOR_CHANNEL]
+                session.extra["strong_match_evidence"] = {
+                    "session_id": session.session_id,
+                    "profile_id": session.profile_id,
+                    "generation_id": session.image_generation_id,
+                    "space_id": session.space_id,
+                    "dimension": session.dimension,
+                    "threshold": float(threshold),
+                    "asset_ids": [
+                        int(row["asset_id"])
+                        for row in vector_rows
+                        if float(row["distance"]) <= threshold
+                    ],
+                }
         hits, next_offset, has_more, token = perf_diagnostics.timed_call(
             perf_metrics, "page_render_ms", _render_page,
             catalog,

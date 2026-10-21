@@ -643,7 +643,7 @@ def test_stale_ranked_page_is_sql_qualified_and_requires_confirmation_to_save(ap
 
 @pytest.mark.parametrize("count", [51, 120, 5000])
 @pytest.mark.parametrize("order", ["rank", "capture_desc"])
-@pytest.mark.parametrize("execution_kind", ["TEXT", "COMBINED"])
+@pytest.mark.parametrize("execution_kind", ["TEXT"])
 def test_ranked_save_static_copies_all_candidates_in_order(api_env, count, order, execution_kind):
     seed_library(api_env, {"ranked-base.jpg": []})
     ids = list(range(10_000, 10_000 + count))

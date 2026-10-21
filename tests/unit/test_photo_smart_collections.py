@@ -27,6 +27,7 @@ from photo_search.photo_smart_collections import (
     replace_rule,
     request_refresh,
     rule_from_search,
+    select_strong_match_candidates,
     session_coverage,
     set_exclusion,
 )
@@ -69,10 +70,10 @@ def _signature(catalog, rule=None):
 
 def _install_test_search_profiles(catalog):
     profiles = {
-        "clip": {"profile_id": "test-chinese-clip", "space_id": "test-clip-space",
+        "clip": {"profile_id": "test-chinese-clip", "space_id": "chinese-clip-vit-b-16:test-clip-space",
                  "image_generation_id": "test-clip-generation", "dimension": 512,
                  "processor_id": "chinese-clip-vit-b-16"},
-        "qwen": {"profile_id": "test-qwen", "space_id": "test-qwen-space",
+        "qwen": {"profile_id": "test-qwen", "space_id": "qwen3-vl-embedding-2b:test-qwen-space",
                  "image_generation_id": "test-qwen-generation", "dimension": 2048,
                  "processor_id": "qwen3-vl-embedding-2b"},
     }
@@ -119,6 +120,28 @@ def _combined_profile_rule(profile):
     return rule
 
 
+def _synthetic_match_session(rule, asset_ids):
+    binding = rule["search_binding"]
+    session_id = "unit-strong-match-session"
+    return SimpleNamespace(
+        session_id=session_id,
+        profile_id=binding["profile_id"],
+        image_generation_id=binding["image_generation_id"],
+        space_id=binding["space_id"],
+        dimension=binding["dimension"],
+        entries=[SimpleNamespace(asset_id=int(value)) for value in asset_ids],
+        extra={"strong_match_evidence": {
+            "session_id":session_id,
+            "profile_id":binding["profile_id"],
+            "generation_id":binding["image_generation_id"],
+            "space_id":binding["space_id"],
+            "dimension":binding["dimension"],
+            "threshold":1.3 if str(binding["space_id"]).startswith("chinese-clip-vit-b-16:") else 1.5,
+            "asset_ids":[int(value) for value in asset_ids],
+        }},
+    )
+
+
 def test_smart_collection_rule_is_server_structured_and_mode_is_explicit():
     text_rule = rule_from_search({"mode": "ranked_candidates", "confirmed_execution": {
         "mode": "ranked_candidates", "retrieval_mode": "text", "content_query": None,
@@ -151,6 +174,93 @@ def test_smart_collection_rule_is_server_structured_and_mode_is_explicit():
     assert filter_rule["request"]["intent_plan"]["person_ids"] == [7]
     with pytest.raises(ApiError):
         rule_from_search({"mode": "ranked_candidates", "payload": {"retrieval_mode": "text"}})
+
+
+def test_strong_match_selection_uses_bound_distance_evidence_and_fused_order(monkeypatch):
+    from photo_search.search import service as search_service
+
+    monkeypatch.setattr(search_service, "strong_match_max_distance", lambda _space_id: 1.5)
+    session = SimpleNamespace(
+        session_id="session-1", profile_id="profile-qwen", image_generation_id="generation-qwen",
+        space_id="qwen3-vl-embedding-2b-exif-v2:weights", dimension=512,
+        entries=[SimpleNamespace(asset_id=value) for value in (7, 2, 9, 4)],
+        extra={"strong_match_evidence": {
+            "session_id": "session-1", "profile_id": "profile-qwen",
+            "generation_id": "generation-qwen", "space_id":"qwen3-vl-embedding-2b-exif-v2:weights",
+            "dimension":512, "threshold":1.5, "asset_ids":[4, 7, 404],
+        }},
+    )
+    assert select_strong_match_candidates(session) == [7, 4]
+    session.extra["strong_match_evidence"]["session_id"] = "another-session"
+    with pytest.raises(ApiError) as error:
+        select_strong_match_candidates(session)
+    assert error.value.code == "PHOTO_SMART_MATCH_EVIDENCE_UNAVAILABLE"
+
+
+def test_legacy_combined_cache_requires_rebuild_and_cannot_be_browsed(catalog):
+    profiles = _install_test_search_profiles(catalog)
+    _set_test_active_profile(catalog, profiles["clip"])
+    filtered = _create(catalog, name="Legacy candidate cache", request_id="legacy-cache")['collection']
+    published = publish_candidates(catalog, filtered["smart_id"], [1, 2], signature=_signature(catalog))
+    rule = _combined_profile_rule(profiles["clip"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE photo_smart_collections SET execution_kind='COMBINED',rule_json=? WHERE smart_id=?",
+            (__import__("json").dumps(rule), filtered["smart_id"]),
+        )
+    summary = detail(catalog, filtered["smart_id"], instance_token=filtered["instance_token"])
+    assert summary["collection"]["freshness"] == "STRONG_MATCH_REBUILD_REQUIRED"
+    assert summary["collection"]["candidate_count"] is None
+    page = ranked_assets_page(catalog, None, filtered["smart_id"], instance_token=filtered["instance_token"],
+                              order="capture_desc")
+    assert page["freshness"] == "STRONG_MATCH_REBUILD_REQUIRED"
+    assert page["assets"] == []
+    assert catalog.read_one("SELECT build_id FROM photo_smart_cache_state WHERE smart_id=?",
+                             (filtered["smart_id"],))[0] == published["build_id"]
+
+
+def test_legacy_schema_cache_projection_without_policy_column_requires_rebuild(catalog):
+    from photo_search import photo_smart_collections
+
+    profiles = _install_test_search_profiles(catalog)
+    _set_test_active_profile(catalog, profiles["clip"])
+    smart = _create(catalog, name="Schema 42 cache projection", request_id="schema42-cache")["collection"]
+    publish_candidates(catalog, smart["smart_id"], [1, 2], signature=_signature(catalog))
+    rule = _combined_profile_rule(profiles["clip"])
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE photo_smart_collections SET execution_kind='COMBINED',rule_json=? WHERE smart_id=?",
+            (__import__("json").dumps(rule), smart["smart_id"]),
+        )
+    collection = catalog.read_one(
+        "SELECT * FROM photo_smart_collections WHERE smart_id=?", (smart["smart_id"],)
+    )
+    legacy_cache = catalog.read_one(
+        "SELECT build_id,dependency_signature,cache_rule_revision,candidate_count,truncated,indexing,"
+        "refreshed_at_ms,refresh_status,last_error_code FROM photo_smart_cache_state WHERE smart_id=?",
+        (smart["smart_id"],),
+    )
+    summary = photo_smart_collections._summary(collection, legacy_cache)
+    assert "cache_policy_identity" not in legacy_cache.keys()
+    assert summary["freshness"] == "STRONG_MATCH_REBUILD_REQUIRED"
+    assert summary["strong_match_rebuild_required"] is True
+    assert summary["candidate_count"] is None
+
+
+def test_directory_projection_includes_policy_identity_for_current_combined_cache(catalog):
+    profiles = _install_test_search_profiles(catalog)
+    _set_test_active_profile(catalog, profiles["clip"])
+    rule = _combined_profile_rule(profiles["clip"])
+    smart = create_collection(catalog, "Current combined cache", "current-combined-cache", rule,
+                              request_hash="current-combined-cache", auth_hash="a",
+                              source_hash="s")["collection"]
+    publish_candidates(catalog, smart["smart_id"], [1, 2], signature=_signature(catalog, rule),
+                       match_session=_synthetic_match_session(rule, [1, 2]))
+
+    listed = list_collections(catalog)["collections"][0]
+
+    assert listed["strong_match_rebuild_required"] is False
+    assert listed["candidate_count"] == 2
 
 
 def test_smart_collection_create_idempotent_rename_delete_and_directory_cursor(catalog):
@@ -310,14 +420,15 @@ def test_refresh_lease_is_single_flight_and_expired_owner_cannot_publish(catalog
 
 def test_combined_missing_active_profile_is_reported_and_refresh_is_deferred(catalog):
     rule = {**_rule("COMBINED"), "search_binding": {
-        "profile_id": "pinned-profile", "space_id": "space-a",
-        "image_generation_id": "image-a", "dimension": 3,
+        "profile_id": "pinned-profile", "space_id": "chinese-clip-vit-b-16:space-a",
+        "image_generation_id": "image-a", "dimension": 512,
     }}
     smart = create_collection(catalog, "Unavailable model", "missing-profile", rule,
                               request_hash="missing-profile", auth_hash="auth",
                               source_hash="source")['collection']
     published = publish_candidates(catalog, smart["smart_id"], [1, 2],
-                                   signature=_signature(catalog, rule))
+                                   signature=_signature(catalog, rule),
+                                   match_session=_synthetic_match_session(rule, [1, 2]))
     with catalog.read_snapshot() as connection:
         current_signature, indexing, current_profile = dependency_signature(connection, rule)
     assert isinstance(indexing, bool)
@@ -350,7 +461,8 @@ def test_model_switch_during_refresh_releases_its_lease_and_allows_retry(catalog
     smart = create_collection(catalog, "Model switch", "model-switch", rule,
                               request_hash="model-switch", auth_hash="a", source_hash="s")["collection"]
     original_build = publish_candidates(catalog, smart["smart_id"], [1, 3],
-                                        signature=_signature(catalog, rule))
+                                        signature=_signature(catalog, rule),
+                                        match_session=_synthetic_match_session(rule, [1, 3]))
     set_exclusion(catalog, smart["smart_id"], 2, instance_token=smart["instance_token"],
                   expected_revision=1, excluded=True)
     rule_before = catalog.read_one(
@@ -370,8 +482,18 @@ def test_model_switch_during_refresh_releases_its_lease_and_allows_retry(catalog
     release = threading.Event()
     calls = 0
     session = SimpleNamespace(
+        session_id="model-switch-session",
+        profile_id=profiles["clip"]["profile_id"],
+        image_generation_id=profiles["clip"]["image_generation_id"],
+        space_id=profiles["clip"]["space_id"], dimension=profiles["clip"]["dimension"],
         entries=[SimpleNamespace(asset_id=3)], channels={}, search_projection={"state": "SYNCED"},
         pending_semantic=None, candidates_truncated=False,
+        extra={"strong_match_evidence": {
+            "session_id":"model-switch-session", "profile_id":profiles["clip"]["profile_id"],
+            "generation_id":profiles["clip"]["image_generation_id"],
+            "space_id":profiles["clip"]["space_id"], "dimension":profiles["clip"]["dimension"],
+            "threshold":1.3, "asset_ids":[3],
+        }},
     )
 
     def fake_search(*_args, **_kwargs):
@@ -496,7 +618,8 @@ def test_model_switch_while_queued_preserves_queued_request(catalog):
                               request_hash="queued-model-switch", auth_hash="a",
                               source_hash="s")["collection"]
     original_build = publish_candidates(catalog, smart["smart_id"], [1],
-                                        signature=_signature(catalog, rule))
+                                        signature=_signature(catalog, rule),
+                                        match_session=_synthetic_match_session(rule, [1]))
     queued = request_refresh(catalog, smart["smart_id"],
                              instance_token=smart["instance_token"], manual=True)
     assert queued["status"] == "QUEUED"
@@ -521,7 +644,8 @@ def test_model_switch_while_queued_preserves_queued_request(catalog):
     assert publish_candidates(catalog, smart["smart_id"], [3], signature=_signature(catalog, rule),
                               expected_rule_revision=queued["rule_revision"],
                               lease_owner=claimed["lease_owner"],
-                              refresh_id=queued["refresh_id"])["candidate_count"] == 1
+                              refresh_id=queued["refresh_id"],
+                              match_session=_synthetic_match_session(rule, [3]))["candidate_count"] == 1
 
 
 def test_model_rebind_clears_legacy_failed_state_lease(catalog):
@@ -531,7 +655,8 @@ def test_model_rebind_clears_legacy_failed_state_lease(catalog):
                               request_hash="legacy-model-lease", auth_hash="a",
                               source_hash="s")["collection"]
     published = publish_candidates(catalog, smart["smart_id"], [1],
-                                    signature=_signature(catalog, rule))
+                                    signature=_signature(catalog, rule),
+                                    match_session=_synthetic_match_session(rule, [1]))
     queued = request_refresh(catalog, smart["smart_id"],
                              instance_token=smart["instance_token"], manual=True)
     lease = claim_refresh_lease(catalog, smart["smart_id"], refresh_id=queued["refresh_id"],
@@ -563,13 +688,14 @@ def test_model_rebind_clears_legacy_failed_state_lease(catalog):
 
 def test_combined_cache_invalidates_when_pinned_vector_generation_publishes(catalog):
     rule = {**_rule("COMBINED"), "search_binding": {
-        "profile_id": "pinned-profile", "space_id": "space-a",
-        "image_generation_id": "image-a", "dimension": 3,
+        "profile_id": "pinned-profile", "space_id": "chinese-clip-vit-b-16:space-a",
+        "image_generation_id": "image-a", "dimension": 512,
     }}
     smart = create_collection(catalog, "Vector revision", "vector-revision", rule,
                               request_hash="vector-revision", auth_hash="a", source_hash="v1")['collection']
     signature_before = _signature(catalog, rule)
-    published = publish_candidates(catalog, smart["smart_id"], [1], signature=signature_before)
+    published = publish_candidates(catalog, smart["smart_id"], [1], signature=signature_before,
+                                   match_session=_synthetic_match_session(rule, [1]))
     with catalog.write() as connection:
         connection.execute(
             "INSERT INTO photo_smart_vector_publish_revisions(generation_id,revision) VALUES('image-a',1)"
