@@ -13,6 +13,7 @@ SUPPORTED_PROVIDERS = frozenset({
     "chinese-clip-vit-b-16-exif-v2",
     "qwen3-vl-embedding-2b",
     "qwen3-vl-embedding-2b-exif-v2",
+    "qwen3-vl-embedding-2b-1024d-exif-v2",
 })
 
 

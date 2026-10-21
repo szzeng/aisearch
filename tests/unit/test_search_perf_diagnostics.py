@@ -10,12 +10,13 @@ from photo_search.search import perf_diagnostics
 
 @pytest.mark.parametrize("provider", sorted(perf_diagnostics.SUPPORTED_PROVIDERS))
 def test_perf_identity_uses_bound_space_for_all_supported_models(provider: str) -> None:
+    dimension = 1024 if provider == "qwen3-vl-embedding-2b-1024d-exif-v2" else 512
     identity = perf_diagnostics.safe_identity({
         "profile_id": "active-profile",
         "generation_id": "generation-1",
         "space_id": provider + ":space-1",
         "processor_id": provider + "@processor-v1",
-        "dimension": 512,
+        "dimension": dimension,
     })
 
     assert identity == {
@@ -24,7 +25,7 @@ def test_perf_identity_uses_bound_space_for_all_supported_models(provider: str) 
         "provider_id": provider,
         "processor_id": provider + "@processor-v1",
         "space_id": provider + ":space-1",
-        "dimension": 512,
+        "dimension": dimension,
         "encoder_identity": provider,
     }
 
@@ -138,6 +139,7 @@ def test_perf_config_endpoint_is_authenticated_and_independent_of_server_environ
 def test_search_perf_identity_reads_only_the_active_profile_generation(api_env, monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     processor = provider + "@processor-v1"
     target_space = provider + ":target-space"
+    dimension = 1024 if provider == "qwen3-vl-embedding-2b-1024d-exif-v2" else 512
     other_space = "qwen3-vl-embedding-2b:other-space"
     with api_env.service.catalog.write() as connection:
         connection.execute(
@@ -148,7 +150,7 @@ def test_search_perf_identity_reads_only_the_active_profile_generation(api_env, 
         connection.execute(
             "INSERT INTO index_generations(generation_id,space_id,processor_id,dimension,state,"
             "is_active,created_at,updated_at) VALUES(?,?,?,?, 'READY',0,1,1)",
-            ("zzz-profile-generation", target_space, processor, 512),
+            ("zzz-profile-generation", target_space, processor, dimension),
         )
         connection.execute(
             "INSERT INTO search_profiles(profile_id,embedding_processor_id,space_id,"
@@ -181,7 +183,7 @@ def test_search_perf_identity_reads_only_the_active_profile_generation(api_env, 
             "provider_id": provider,
             "processor_id": processor,
             "space_id": target_space,
-            "dimension": 512,
+            "dimension": dimension,
             "generation_status": "READY",
             "binding_consistent": True,
         }
@@ -292,7 +294,9 @@ var perfDiag={enabled:true,identitySeq:0,identityChecking:false,model:null,autoR
 var pending=[],target={textContent:"",},retry={hidden:true},startButton={disabled:true};
 var document={getElementById:function(id){return {"search-perf-model":target,"search-perf-identity-retry":retry,"search-perf-start":startButton}[id];}};
 function request(){return new Promise(function(resolve){pending.push(resolve);});}
-function perfProviderName(id){return id==="qwen3-vl-embedding-2b"?"Qwen3-VL-Embedding-2B":"Chinese-CLIP";}
+function perfProviderName(id){return ({"qwen3-vl-embedding-2b":"Qwen3-VL-Embedding-2B",
+ "qwen3-vl-embedding-2b-1024d-exif-v2":"Qwen 1024D EXIF v2"})[id]||"Chinese-CLIP";}
+if(perfProviderName("qwen3-vl-embedding-2b-1024d-exif-v2")!=="Qwen 1024D EXIF v2")throw new Error("trial provider name missing");
 function identity(profile){return {body:{identity_confirmed:true,binding_consistent:true,generation_status:"READY",
   active_profile_id:profile,active_image_generation_id:"generation-"+profile,provider_id:"qwen3-vl-embedding-2b",
   processor_id:"qwen@1",space_id:"qwen3-vl-embedding-2b:space",dimension:2048}};}

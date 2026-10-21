@@ -384,7 +384,8 @@
     return ({ "chinese-clip-vit-b-16": "Chinese-CLIP",
       "chinese-clip-vit-b-16-exif-v2": "Chinese-CLIP EXIF v2",
       "qwen3-vl-embedding-2b": "Qwen3-VL-Embedding-2B",
-      "qwen3-vl-embedding-2b-exif-v2": "Qwen3-VL-Embedding-2B EXIF v2" })[provider] || "模型未确认";
+      "qwen3-vl-embedding-2b-exif-v2": "Qwen3-VL-Embedding-2B EXIF v2",
+      "qwen3-vl-embedding-2b-1024d-exif-v2": "Qwen 1024D EXIF v2" })[provider] || "模型未确认";
   }
 
   function perfUpdateSummary() {
@@ -2649,14 +2650,14 @@
         parts.push((confirmed.strongMatch.more ? "高度匹配统计来自原始语义搜索（5000+ 张）" :
           "高度匹配统计来自原始语义搜索（约 " + number(confirmed.strongMatch.count) + " 张）"));
       } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
-        parts.push("原始语义搜索的高度匹配统计不可用");
+        parts.push("高度匹配：未标定");
       }
       if (state.search.timeBrowse.truncated) parts.push("候选可能已截断（最多 " + number(confirmed && confirmed.candidateLimit || 5000) + " 个）");
     } else {
       if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
         parts.push(confirmed.strongMatch.more ? "5000+ 张高度匹配" : "约 " + number(confirmed.strongMatch.count) + " 张高度匹配");
       } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
-        parts.push("高度匹配统计不可用");
+        parts.push("高度匹配：未标定");
       }
       parts.push("已显示 " + number(state.search.count) + " 行");
       parts.push("候选共 " + number(confirmed ? confirmed.total : state.search.total) + " 个");

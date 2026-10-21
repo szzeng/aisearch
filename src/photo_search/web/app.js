@@ -3105,6 +3105,12 @@
           var strong = document.createElement("strong");
           strong.textContent = String(provider.display_name || provider.provider_id);
           title.appendChild(strong);
+          if (provider.provider_id === "qwen3-vl-embedding-2b-1024d-exif-v2") {
+            var trial = document.createElement("span");
+            trial.className = "hint embedding-trial-label";
+            trial.textContent = "（试用配置）";
+            title.appendChild(trial);
+          }
           var state = document.createElement("p");
           state.textContent = provider.is_active ? "正在使用" :
             (!provider.installed ? "未安装" :
@@ -3259,8 +3265,13 @@
           });
         }
         var providers = body.providers || [];
-        renderProviders(listEl, providers.filter(function (item) { return !/EXIF v2/i.test(String(item.display_name || "")); }));
-        if (otherListEl) renderProviders(otherListEl, providers.filter(function (item) { return /EXIF v2/i.test(String(item.display_name || "")); }));
+        var easyToFindQwen = ["qwen3-vl-embedding-2b-exif-v2", "qwen3-vl-embedding-2b-1024d-exif-v2"];
+        renderProviders(listEl, providers.filter(function (item) {
+          return !/EXIF v2/i.test(String(item.display_name || "")) || easyToFindQwen.indexOf(item.provider_id) >= 0;
+        }));
+        if (otherListEl) renderProviders(otherListEl, providers.filter(function (item) {
+          return /EXIF v2/i.test(String(item.display_name || "")) && easyToFindQwen.indexOf(item.provider_id) < 0;
+        }));
         var transition = body.offline_transition || {};
         var pendingTransition = transition.pending;
         if (pendingTransition) {

@@ -112,20 +112,24 @@ from photo_search.search.upload import checked_query_vector
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
 
-# Squared-L2 thresholds are representation-space specific. Qwen currently uses cosine >= 0.25;
+# Squared-L2 thresholds are representation-space specific. Qwen 512D uses cosine >= 0.25;
 # Chinese-CLIP retains cosine >= 0.35, with separate constants for independent tuning.
 CLIP_STRONG_MATCH_MAX_DISTANCE = 1.3
 QWEN_STRONG_MATCH_MAX_DISTANCE = 1.5
+# Provider-specific trial setting: cosine >= 0.25, without prefix inheritance.
+QWEN_1024D_EXIF_V2_STRONG_MATCH_MAX_DISTANCE = 1.5
 CLIP_SPACE_PREFIX = "chinese-clip-vit-b-16:"
 QWEN_SPACE_PREFIX = "qwen3-vl-embedding-2b:"
 CLIP_EXIF_V2_SPACE_PREFIX = "chinese-clip-vit-b-16-exif-v2:"
 QWEN_EXIF_V2_SPACE_PREFIX = "qwen3-vl-embedding-2b-exif-v2:"
+QWEN_1024D_EXIF_V2_SPACE_PREFIX = "qwen3-vl-embedding-2b-1024d-exif-v2:"
 
 _STRONG_MATCH_THRESHOLDS = {
     CLIP_SPACE_PREFIX: CLIP_STRONG_MATCH_MAX_DISTANCE,
     CLIP_EXIF_V2_SPACE_PREFIX: CLIP_STRONG_MATCH_MAX_DISTANCE,
     QWEN_SPACE_PREFIX: QWEN_STRONG_MATCH_MAX_DISTANCE,
     QWEN_EXIF_V2_SPACE_PREFIX: QWEN_STRONG_MATCH_MAX_DISTANCE,
+    QWEN_1024D_EXIF_V2_SPACE_PREFIX: QWEN_1024D_EXIF_V2_STRONG_MATCH_MAX_DISTANCE,
 }
 
 

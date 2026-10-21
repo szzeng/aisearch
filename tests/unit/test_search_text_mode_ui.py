@@ -11,7 +11,7 @@ def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tm
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
-    assert '/web/search.js?v=p4-search-smart-collection-name-1' in search_page.read_text(encoding="utf-8")
+    assert '/web/search.js?v=p4-qwen-1024d-trial-3' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
@@ -379,8 +379,15 @@ function assertLiteral(request){
   unavailableStats.setAnswer(body=>ok({...page(body,411,null),
     channels:{vector:{engaged:true,strong_match_available:false}}}));
   unavailableStats.get("search-form").fire("submit");await flush();
-  assert.match(unavailableStats.get("query-status").textContent,/高度匹配统计不可用/);
-  assert.doesNotMatch(unavailableStats.get("query-status").textContent,/0 张高度匹配/);
+  assert.match(unavailableStats.get("query-status").textContent,/高度匹配：未标定/,
+    "spaces without a calibrated threshold retain a visible high-match label");
+  assert.doesNotMatch(unavailableStats.get("query-status").textContent,/统计不可用|0 张高度匹配/,
+    "an uncalibrated space does not show an error or fabricate a count");
+  unavailableStats.ui.toggleCandidateTimeBrowse();await flush();
+  assert.match(unavailableStats.get("query-status").textContent,/按拍摄时间查看当前候选/);
+  assert.match(unavailableStats.get("query-status").textContent,/高度匹配：未标定/,
+    "time-browse status retains the same visible high-match label");
+  assert.doesNotMatch(unavailableStats.get("query-status").textContent,/统计不可用|0 张高度匹配/);
 
   const h=harness();await flush();
   assert.equal(h.ui.state.capabilities.search.query_encoder_available,false);

@@ -49,6 +49,9 @@ QWEN_MANIFEST = (
 QWEN_EXIF_V2_MANIFEST = (
     REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-exif-v2.json"
 )
+QWEN_1024D_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-1024d-exif-v2.json"
+)
 DIMENSION = 512
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]", "testserver"})
 
@@ -108,6 +111,9 @@ class StubAdapter:
         vector = [0.0] * dimension
         vector[int.from_bytes(digest[:4], "big") % dimension] = 1.0
         return vector
+
+    def encode_images(self, asset_inputs: Sequence[Any], cancellation: Any = None) -> list[list[float]]:
+        return [self.encode_image(str(item)) for item in asset_inputs]
 
     def encode_queries(self, texts: Sequence[str], cancellation: Any = None) -> list[list[float]]:
         dimension = int(self._spec.envelope["dimension"])
@@ -304,6 +310,73 @@ def test_a_candidate_build_never_moves_the_pointer_and_the_selection_does(tmp_pa
         active = profile_module.active_profile(reopened)
         assert active is not None
         assert active.space_id == str(qwen_spec.envelope["space_id"])
+
+
+def test_qwen_1024d_trial_is_an_independent_candidate_and_safe_to_return_to_512d(tmp_path: Path) -> None:
+    env = FlowEnv.build(tmp_path)
+    service = env.service()
+    try:
+        old_spec = semantic.semantic_spec(QWEN_EXIF_V2_MANIFEST, {})
+        old = build_space(
+            service,
+            provider="qwen",
+            manifest=QWEN_EXIF_V2_MANIFEST,
+            adapter=StubAdapter(old_spec, pytorch=True),
+        )
+        old_active = profile_module.active_profile(service.catalog)
+        assert old_active is not None and old_active.space_id == old_spec.envelope["space_id"]
+
+        trial_spec = semantic.semantic_spec(QWEN_1024D_EXIF_V2_MANIFEST, {})
+        assert trial_spec.envelope["dimension"] == 1024
+        assert trial_spec.processor_id != old_spec.processor_id
+        assert trial_spec.envelope["space_id"] != old_spec.envelope["space_id"]
+        trial = build_space(
+            service,
+            provider="qwen",
+            manifest=QWEN_1024D_EXIF_V2_MANIFEST,
+            adapter=StubAdapter(trial_spec, pytorch=True),
+        )
+        assert trial["build"]["model"]["dimension"] == 1024
+        assert trial["build"]["generation"]["generation_id"] != old["build"]["generation"]["generation_id"]
+        assert trial["profile"]["profile_id"] != old["profile"]["profile_id"]
+        assert trial["profile"]["activated"] is False
+        assert profile_module.active_profile(service.catalog) == old_active
+
+        activate_candidate(
+            service.catalog,
+            str(trial["profile"]["profile_id"]),
+            str(trial_spec.envelope["space_id"]),
+        )
+        assert profile_module.active_profile(service.catalog).space_id == trial_spec.envelope["space_id"]
+
+        env.add_photo("photo-after-trial.jpg", noise=43)
+        env.rescan(service)
+        with pytest.raises(CatalogError) as refused:
+            activate_candidate(
+                service.catalog,
+                str(old["profile"]["profile_id"]),
+                str(old_spec.envelope["space_id"]),
+            )
+        assert refused.value.code == SELECTION_COVERAGE_INCOMPLETE
+        assert profile_module.active_profile(service.catalog).space_id == trial_spec.envelope["space_id"]
+
+        refreshed = build_space(
+            service,
+            provider="qwen",
+            manifest=QWEN_EXIF_V2_MANIFEST,
+            adapter=StubAdapter(old_spec, pytorch=True),
+        )
+        activate_candidate(
+            service.catalog,
+            str(refreshed["profile"]["profile_id"]),
+            str(old_spec.envelope["space_id"]),
+        )
+        assert profile_module.active_profile(service.catalog).space_id == old_spec.envelope["space_id"]
+    finally:
+        service.close()
+    with env.open_catalog() as reopened:
+        active = profile_module.active_profile(reopened)
+        assert active is not None and active.space_id == old_spec.envelope["space_id"]
 
 
 @pytest.mark.parametrize("manifest", [CLIP_MANIFEST, QWEN_MANIFEST])
@@ -1097,8 +1170,9 @@ def test_non_image_content_with_an_image_extension_never_blocks_the_selection(tm
         (CLIP_EXIF_V2_MANIFEST, "chinese-clip-vit-b-16-exif-v2"),
         (QWEN_MANIFEST, "qwen3-vl-embedding-2b"),
         (QWEN_EXIF_V2_MANIFEST, "qwen3-vl-embedding-2b-exif-v2"),
+        (QWEN_1024D_EXIF_V2_MANIFEST, "qwen3-vl-embedding-2b-1024d-exif-v2"),
     ],
-    ids=["clip", "clip-exif-v2", "qwen", "qwen-exif-v2"],
+    ids=["clip", "clip-exif-v2", "qwen", "qwen-exif-v2", "qwen-1024d-exif-v2"],
 )
 def test_the_selected_provider_serves_search_and_reports_the_strong_match_statistic(
     tmp_path: Path, manifest: Path, provider_id: str
@@ -1134,7 +1208,7 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
         encoder_factory=lambda: adapter,
     )
 
-    async def scenario() -> tuple[dict[str, Any], dict[str, Any]]:
+    async def scenario() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://127.0.0.1"
         ) as client:
@@ -1152,19 +1226,31 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
                 headers=headers,
             )
             assert search.status_code == 200, search.text
-            return capabilities.json(), search.json()
+            image_search = await client.post(
+                "/api/v1/search/image",
+                data={"request_id": "p4-embedding-image-query"},
+                files={"image": ("synthetic.jpg", (env.library / "photo-000.jpg").read_bytes(), "image/jpeg")},
+                headers=headers,
+            )
+            assert image_search.status_code == 200, image_search.text
+            return capabilities.json(), search.json(), image_search.json()
 
-    capabilities, body = asyncio.run(scenario())
+    capabilities, body, image_body = asyncio.run(scenario())
     model = capabilities["search"]["active_embedding_model"]
     assert model["provider_id"] == provider_id
     assert model["adapter"] == ("qwen3_vl" if is_qwen else "chinese_clip_onnx")
-    assert model["dimension"] == DIMENSION
-    assert model["strong_match_available"] is True
+    expected_dimension = int(qwen_spec.envelope["dimension"])
+    expected_strong_match = True
+    assert model["dimension"] == expected_dimension
+    assert model["strong_match_available"] is expected_strong_match
     assert capabilities["search"]["active_image_generation_id"] == str(
         candidate["build"]["generation"]["generation_id"]
     )
     vector = body["channels"]["vector"]
     assert vector["engaged"] is True
-    assert vector["strong_match_available"] is True
+    assert vector["strong_match_available"] is expected_strong_match
     assert 0 <= vector["strong_match_count"] <= vector["candidates"]
+    assert image_body["space_id"] == qwen_spec.envelope["space_id"]
+    assert image_body["image_generation_id"] == candidate["build"]["generation"]["generation_id"]
+    assert image_body["channels"]["vector"]["strong_match_available"] is expected_strong_match
     app.state.api.close()

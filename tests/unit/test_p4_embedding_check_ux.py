@@ -122,3 +122,38 @@ const checkBody=(eligible,covered=4,required=4,offline=0)=>({status:"ok",provide
         [node, "-e", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=20
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_qwen_exif_providers_are_discoverable_and_trial_is_labeled() -> None:
+    node = shutil.which("node")
+    assert node is not None, "Node is required for the embedding-provider list check"
+    script = r"""
+const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
+class Element {constructor(tag="div"){this.tag=tag;this.children=[];this.handlers={};this.attributes={};this.textContent="";this.className="";}
+ appendChild(node){this.children.push(node);return node;} append(...nodes){nodes.forEach(n=>this.appendChild(n));}
+ replaceChildren(){this.children=[];} addEventListener(name,fn){this.handlers[name]=fn;} setAttribute(name,value){this.attributes[name]=String(value);}}
+const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);};
+const providers=[
+ {provider_id:"qwen3-vl-embedding-2b-exif-v2",display_name:"Qwen3-VL-Embedding-2B (512D, EXIF v2)",installed:true,index_state:"NO_GENERATION"},
+ {provider_id:"qwen3-vl-embedding-2b-1024d-exif-v2",display_name:"Qwen3-VL-Embedding-2B (1024D, EXIF v2)",installed:true,index_state:"NO_GENERATION"},
+ {provider_id:"chinese-clip-vit-b-16-exif-v2",display_name:"Chinese-CLIP EXIF v2",installed:true,index_state:"NO_GENERATION"}
+];
+const document={readyState:"loading",cookie:"",hidden:false,addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)};
+const window={clearTimeout(){},setTimeout(){return 1;}};
+const context={document,window,fetch:()=>Promise.resolve({ok:true,status:200,headers:{get:()=>"application/json"},json:()=>Promise.resolve({providers,active_profile:null,candidate_task:null,offline_transition:{}})}),
+ Promise,Date,Math,Number,String,Boolean,Object,Array,JSON,RegExp,isFinite,encodeURIComponent,console};
+let code=fs.readFileSync("src/photo_search/web/app.js","utf8").replace('  if (document.readyState === "loading")',
+ '  globalThis.testUi={load:loadEmbeddingManagementStatus};\n  if (document.readyState === "loading")');
+vm.createContext(context);vm.runInContext(code,context);
+context.testUi.load().then(()=>{
+ const main=get("embedding-provider-list").children;
+ assert.equal(main.length,2,"both Qwen dimensions must be visible without expanding Other configurations");
+ const trial=main.find(card=>card.children[0].children.some(node=>node.textContent==="（试用配置）"));
+ assert.ok(trial,"1024D is explicitly labeled as a trial configuration");
+ assert.equal(get("embedding-provider-other-list").children.length,1,"unrelated EXIF configurations remain in Other configurations");
+}).catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run(
+        [node, "-e", script], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", timeout=20
+    )
+    assert result.returncode == 0, result.stderr

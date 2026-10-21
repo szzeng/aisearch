@@ -1,0 +1,117 @@
+{
+  "schema_version": 2,
+  "provider": {
+    "provider_id": "qwen3-vl-embedding-2b-1024d-exif-v2",
+    "display_name": "Qwen3-VL-Embedding-2B (1024D, EXIF v2)",
+    "adapter": "qwen3_vl",
+    "model_dir": "models/qwen3_vl_embedding",
+    "device_policy": "gpu_required"
+  },
+  "model": {
+    "id": "Qwen/Qwen3-VL-Embedding-2B",
+    "name": "Qwen3-VL-Embedding-2B",
+    "requested_revision": "main",
+    "resolved_revision": "9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda",
+    "source_url": "https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B"
+  },
+  "license": {
+    "spdx": "Apache-2.0",
+    "source_url": "https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B/blob/main/LICENSE"
+  },
+  "reference": {
+    "repository": "https://github.com/QwenLM/Qwen3-VL-Embedding",
+    "path": "scripts/qwen3_vl_embedding.py",
+    "sha256": "8ffa74a1a6bb759610c57865ea416fd4daf9936cb787520e1112a3e1d547f36a",
+    "license": "Apache-2.0",
+    "note": "Reference for the model shell, last-token pooling, default instruction and pixel budget. The product adapter reimplements the shell and never imports a file from the data root."
+  },
+  "embedding": {
+    "dimension": 1024,
+    "native_dimension": 2048,
+    "metric": "cosine",
+    "normalization": "L2",
+    "mrl": "prefix-truncate-then-renormalize-v1"
+  },
+  "instruction": {
+    "text": "Represent the user's input.",
+    "image": "Represent the user's input.",
+    "query": "Represent the user's input."
+  },
+  "preprocessing": {
+    "channel_order": "RGB",
+    "min_pixels": 4096,
+    "max_pixels": 262144,
+    "patch_size": 16,
+    "merge_size": 2,
+    "temporal_patch_size": 2,
+    "resample": 3,
+    "do_resize": true,
+    "do_rescale": true,
+    "rescale_factor": 0.00392156862745098,
+    "do_normalize": true,
+    "image_mean": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "image_std": [
+      0.5,
+      0.5,
+      0.5
+    ],
+    "orientation": "exif-transpose-v1"
+  },
+  "tokenizer": {
+    "name": "Qwen3VLProcessor",
+    "padding_side": "right",
+    "max_length": 8192,
+    "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a"
+  },
+  "runtime": {
+    "backend": "pytorch",
+    "package": "torch",
+    "precision": "FP16",
+    "device_policy": "gpu_required",
+    "attention": "eager",
+    "pooling": "last-token-by-attention-mask",
+    "batch": 1,
+    "versions": {
+      "torch": "2.8.0+cu128",
+      "torchvision": "0.23.0+cu128",
+      "transformers": "4.57.0",
+      "qwen-vl-utils": "0.0.14"
+    }
+  },
+  "weights": [
+    {
+      "name": "model.safetensors",
+      "role": "weights",
+      "bytes": 4255140312,
+      "sha256": "c73fa9caeddeb3ff831d46c085a7a5708343248ca777e90f2d486964464509c1"
+    },
+    {
+      "name": "config.json",
+      "role": "config",
+      "bytes": 1570,
+      "sha256": "9172f55b0b9cce70b7f67b10c58a408ccf3ec15c587e6efd4d5f41631237fded"
+    },
+    {
+      "name": "preprocessor_config.json",
+      "role": "preprocessing",
+      "bytes": 783,
+      "sha256": "d75c1f9f474add87cb0188d43c4fbf5c232d2af64f156fcefc5311089049100d"
+    },
+    {
+      "name": "tokenizer.json",
+      "role": "tokenizer",
+      "bytes": 11423705,
+      "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a"
+    },
+    {
+      "name": "chat_template.jinja",
+      "role": "prompt-template",
+      "bytes": 5519,
+      "sha256": "a47e6afb389f86f45be7810f17d2686fd42b2bec7ba6e6958abf85845af258c5"
+    }
+  ]
+}

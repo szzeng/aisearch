@@ -1,3 +1,7 @@
+## Current task: P4-QWEN-1024D-TRIAL（2026-10-21）
+
+新增独立 Qwen 1024D EXIF v2 Provider，共享标准 512D 权重；Registry 拒绝同 ID 本地清单的 revision/hash/dimension/config 偏差，只允许自定义展示名。默认仍为 Qwen 512D；按用户要求将 1024D 高度匹配计数恢复为初始阈值 squared-L2 ≤1.50（归一化向量 cosine ≥0.25），仅计已召回候选，不改变排序/召回。回退定向 JUnit 59/59 通过，Ruff 与 diff-check 通过；该值尚未用真实图库相关性标签单独校准。真实图库建库/切换仍未验证，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-QWEN-1024D-TRIAL.md)与[报告](reports/P4-QWEN-1024D-TRIAL.md)。
+
 ## Current task: P4-RELEASE-050 — 0.5.0 个人源码测试版（2026-10-20）
 
 **已发布 [0.5.0 个人源码测试版](https://github.com/szzeng/aisearch/releases/tag/0.5.0)**（GitHub Pre-release），Tag 精确指向 `a669340c89df63d136a827f61f7b6ac9f6bc9556`；版本0.5.0 / Schema42 / API v1。当前 Schema 备份恢复、人工事实、清理保护/重试和关键合集浏览器流程通过，Luna High 完整独审无代码 blocker；修复旧地点包在40–42误拒绝。原始全仓3330通过/76失败/52跳过，增量复测关闭75项失败，剩余范围外30万场景未重跑，不称单次全仓全绿。确认取消的工具限制、容量/最低设备/安装包等仍未认证。未访问真实图库；后续进入个人试用反馈。详见[任务卡](tasks/P4-RELEASE-050.md)与[发布报告](reports/P4-RELEASE-050.md)。

@@ -39,6 +39,7 @@ from photo_search.models.embedding.base import (
 #: The data-root relative directories this registry knows about.
 MODELS_DIRNAME = "models"
 MANIFESTS_DIRNAME = "manifests"
+QWEN_1024D_TRIAL_PROVIDER_ID = "qwen3-vl-embedding-2b-1024d-exif-v2"
 
 
 def models_dir(data_root: str | Path) -> Path:
@@ -133,6 +134,8 @@ class EmbeddingRegistry:
         for directory, source in directories:
             for manifest_path in _manifest_files(directory):
                 try:
+                    if source == "data_root":
+                        _validate_qwen_1024d_trial_override(manifest_path)
                     entry = _entry_for(manifest_path, root, source=source)
                 except Exception:  # noqa: BLE001 - an unusable manifest is reported, not used
                     skipped.append(str(manifest_path))
@@ -224,6 +227,29 @@ def _manifest_files(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
     return sorted(path for path in directory.glob("*.json") if path.is_file())
+
+
+def _validate_qwen_1024d_trial_override(manifest_path: Path) -> None:
+    """Keep the trial provider pinned to its shipped weights and embedding identity.
+
+    A data-root manifest may customize its display name, but allowing it to redefine the
+    revision, hashes, dimension, or preprocessing would make the fixed trial provider id
+    describe a different model. Treat such an override as unusable; discovery then falls back
+    to the shipped manifest, whose pinned-file verification still gates model loading.
+    """
+    document = read_manifest(manifest_path)
+    provider = document.get("provider")
+    if not isinstance(provider, dict) or provider.get("provider_id") != QWEN_1024D_TRIAL_PROVIDER_ID:
+        return
+
+    shipped_path = shipped_manifest_dir() / f"{QWEN_1024D_TRIAL_PROVIDER_ID}.json"
+    shipped = read_manifest(shipped_path)
+    expected = dict(shipped)
+    expected_provider = dict(shipped["provider"])
+    expected_provider["display_name"] = provider.get("display_name")
+    expected["provider"] = expected_provider
+    if document != expected:
+        raise ValueError("the Qwen 1024D trial manifest may only override its display name")
 
 
 def _entry_for(manifest_path: Path, data_root: Path, *, source: str) -> ProviderEntry:

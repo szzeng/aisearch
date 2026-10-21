@@ -58,6 +58,9 @@ QWEN_MANIFEST = (
 QWEN_EXIF_V2_MANIFEST = (
     REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-exif-v2.json"
 )
+QWEN_1024D_EXIF_V2_MANIFEST = (
+    REPO_ROOT / "tools" / "prepare_models" / "manifests" / "qwen3-vl-embedding-2b-1024d-exif-v2.json"
+)
 
 #: The identity the historical Chinese-CLIP index was published under. These two strings are the
 #: compatibility contract of this task: an existing catalog references them by name.
@@ -274,6 +277,37 @@ def test_the_qwen_manifest_is_its_own_space_at_the_same_dimension() -> None:
     assert [item["name"] for item in spec.envelope["weights"]][0] == "model.safetensors"
 
 
+def test_qwen_1024d_trial_is_a_shared_weight_but_distinct_identity_configuration(tmp_path: Path) -> None:
+    old = read(QWEN_EXIF_V2_MANIFEST)
+    trial = read(QWEN_1024D_EXIF_V2_MANIFEST)
+    expected = json.loads(json.dumps(old))
+    expected["provider"]["provider_id"] = "qwen3-vl-embedding-2b-1024d-exif-v2"
+    expected["provider"]["display_name"] = "Qwen3-VL-Embedding-2B (1024D, EXIF v2)"
+    expected["embedding"]["dimension"] = 1024
+    assert trial == expected
+
+    old_identity = base.identity_of(old)
+    trial_identity = base.identity_of(trial)
+    assert trial_identity.provider_id == "qwen3-vl-embedding-2b-1024d-exif-v2"
+    assert trial_identity.dimension == 1024
+    assert trial_identity.weights == old_identity.weights
+    assert trial_identity.processor_id != old_identity.processor_id
+    assert trial_identity.space_id != old_identity.space_id
+
+    model_dir = tmp_path / "models" / "qwen3_vl_embedding"
+    model_dir.mkdir(parents=True)
+    for item in trial["weights"]:
+        (model_dir / item["name"]).write_bytes(b"isolated fixture; registry checks presence only")
+    registry = registry_for(tmp_path)
+    old_entry = registry.get("qwen3-vl-embedding-2b-exif-v2")
+    trial_entry = registry.get("qwen3-vl-embedding-2b-1024d-exif-v2")
+    assert old_entry.model_dir == trial_entry.model_dir
+    assert old_entry.installed and trial_entry.installed
+    assert old_entry.identity.processor_id != trial_entry.identity.processor_id
+    assert old_entry.identity.space_id != trial_entry.identity.space_id
+    assert registry.default().provider_id == "qwen3-vl-embedding-2b-exif-v2"
+
+
 @pytest.mark.parametrize(
     ("family", "mutate", "space_changes", "processor_changes"),
     [
@@ -375,6 +409,62 @@ def test_a_data_root_manifest_overrides_the_shipped_one(tmp_path: Path) -> None:
     assert entry.device_policy == "gpu_required"
 
 
+def test_a_data_root_qwen_1024d_manifest_overrides_the_shipped_trial(tmp_path: Path) -> None:
+    directory = tmp_path / "models" / "manifests"
+    directory.mkdir(parents=True)
+    document = read(QWEN_1024D_EXIF_V2_MANIFEST)
+    document["provider"]["display_name"] = "Local Qwen 1024D configuration"
+    (directory / "qwen3-vl-embedding-2b-1024d-exif-v2.json").write_text(
+        json.dumps(document), encoding="utf-8", newline="\n"
+    )
+    registry = registry_for(tmp_path)
+    entry = registry.get("qwen3-vl-embedding-2b-1024d-exif-v2")
+    assert entry.source == "data_root"
+    assert entry.display_name == "Local Qwen 1024D configuration"
+    assert registry.default().provider_id == "qwen3-vl-embedding-2b-exif-v2"
+
+
+@pytest.mark.parametrize("mismatch", ["revision", "weight_hash", "dimension"])
+def test_a_mismatched_data_root_qwen_1024d_manifest_is_skipped(
+    tmp_path: Path, mismatch: str
+) -> None:
+    directory = tmp_path / "models" / "manifests"
+    directory.mkdir(parents=True)
+    document = read(QWEN_1024D_EXIF_V2_MANIFEST)
+    if mismatch == "revision":
+        document["model"]["resolved_revision"] = "0" * 40
+    elif mismatch == "weight_hash":
+        document["weights"][0]["sha256"] = "0" * 64
+    else:
+        document["embedding"]["dimension"] = 512
+    local_path = directory / "qwen3-vl-embedding-2b-1024d-exif-v2.json"
+    local_path.write_text(json.dumps(document), encoding="utf-8", newline="\n")
+
+    registry = registry_for(tmp_path)
+    entry = registry.get("qwen3-vl-embedding-2b-1024d-exif-v2")
+
+    assert str(local_path) in registry.skipped
+    assert entry.source == "shipped"
+    assert entry.identity.dimension == 1024
+    assert entry.manifest_path == QWEN_1024D_EXIF_V2_MANIFEST
+
+
+def test_a_malformed_data_root_qwen_1024d_manifest_is_skipped_and_shipped_fallback_is_used(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "models" / "manifests"
+    directory.mkdir(parents=True)
+    local_path = directory / "qwen3-vl-embedding-2b-1024d-exif-v2.json"
+    local_path.write_text("{not-json", encoding="utf-8", newline="\n")
+
+    registry = registry_for(tmp_path)
+    entry = registry.get("qwen3-vl-embedding-2b-1024d-exif-v2")
+
+    assert str(local_path) in registry.skipped
+    assert entry.source == "shipped"
+    assert entry.manifest_path == QWEN_1024D_EXIF_V2_MANIFEST
+
+
 def test_a_strict_model_cannot_be_softened_into_a_cpu_run(tmp_path: Path) -> None:
     assert (
         base.effective_device_policy("gpu_required", DevicePolicy.CPU_ALLOWED)
@@ -435,10 +525,11 @@ def test_every_model_parameter_must_be_on_the_dispatch_device(tmp_path: Path) ->
     adapter._assert_placement()  # FP16 on the CUDA device is the pinned configuration
 
 
-def test_the_pinned_files_are_verified_before_any_load(tmp_path: Path) -> None:
+@pytest.mark.parametrize("manifest_path", [QWEN_MANIFEST, QWEN_1024D_EXIF_V2_MANIFEST])
+def test_the_pinned_files_are_verified_before_any_load(tmp_path: Path, manifest_path: Path) -> None:
     model_dir = tmp_path / "model"
     model_dir.mkdir()
-    document = read(QWEN_MANIFEST)
+    document = read(manifest_path)
     for item in document["weights"]:
         payload = f"fake-{item['name']}".encode("utf-8")
         (model_dir / item["name"]).write_bytes(payload)
@@ -557,6 +648,7 @@ def test_strong_match_uses_exact_manifest_provider_thresholds() -> None:
     clip_exif_space = base.identity_of(read(CLIP_EXIF_V2_MANIFEST)).space_id
     qwen_space = base.identity_of(read(QWEN_MANIFEST)).space_id
     qwen_exif_space = base.identity_of(read(QWEN_EXIF_V2_MANIFEST)).space_id
+    qwen_1024d_exif_space = base.identity_of(read(QWEN_1024D_EXIF_V2_MANIFEST)).space_id
 
     assert strong_match_policy(HISTORICAL_SPACE) is True
     assert strong_match_max_distance(HISTORICAL_SPACE) == 1.3
@@ -566,7 +658,10 @@ def test_strong_match_uses_exact_manifest_provider_thresholds() -> None:
     assert strong_match_policy(qwen_space) is True
     assert strong_match_policy(qwen_exif_space) is True
     assert strong_match_max_distance(qwen_exif_space) == 1.5
+    assert strong_match_policy(qwen_1024d_exif_space) is True
+    assert strong_match_max_distance(qwen_1024d_exif_space) == 1.5
     assert strong_match_max_distance("unknown-space:abc") is None
+    assert strong_match_max_distance("qwen3-vl-embedding-2b-1024dx-exif-v2:abc") is None
     assert strong_match_max_distance("qwen3-vl-embedding-2bx:abc") is None
     assert strong_match_max_distance("chinese-clip-vit-b-16-exif-v20:abc") is None
     assert strong_match_max_distance("") is None
@@ -600,6 +695,12 @@ def test_strong_match_uses_exact_manifest_provider_thresholds() -> None:
     qwen_summary = _channel_summary(
         payload, match=object(), binding=SimpleNamespace(space_id=qwen_space), top_k=5000
     )
+    qwen_1024d_summary = _channel_summary(
+        payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=qwen_1024d_exif_space),
+        top_k=5000,
+    )
     unknown_summary = _channel_summary(
         payload, match=object(), binding=SimpleNamespace(space_id="unknown-space:abc"), top_k=5000
     )
@@ -607,6 +708,26 @@ def test_strong_match_uses_exact_manifest_provider_thresholds() -> None:
     assert clip_summary["vector"]["strong_match_count"] == 0
     assert qwen_summary["vector"]["strong_match_available"] is True
     assert qwen_summary["vector"]["strong_match_count"] == 2
+    assert qwen_1024d_summary["vector"]["strong_match_available"] is True
+    assert qwen_1024d_summary["vector"]["strong_match_count"] == 2
+    qwen_1024d_boundary_payload = {
+        **payload,
+        "channels": {
+            **payload["channels"],
+            "vector": [
+                {"asset_id": 30, "distance": 1.49},
+                {"asset_id": 31, "distance": 1.5},
+                {"asset_id": 32, "distance": 1.500001},
+            ],
+        },
+    }
+    qwen_1024d_boundary = _channel_summary(
+        qwen_1024d_boundary_payload,
+        match=object(),
+        binding=SimpleNamespace(space_id=qwen_1024d_exif_space),
+        top_k=5000,
+    )["vector"]
+    assert qwen_1024d_boundary["strong_match_count"] == 2
     assert unknown_summary["vector"]["strong_match_available"] is False
     assert unknown_summary["vector"]["strong_match_count"] == 0
     assert clip_summary["vector"]["candidates"] == qwen_summary["vector"]["candidates"]
