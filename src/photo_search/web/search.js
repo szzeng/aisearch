@@ -28,7 +28,6 @@
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
   var activeSearchHistoryEntryId = null;
   var activeSearchHistoryForm = null;
-  var pendingSearchHistoryTransition = false;
   var backdropBoundDialogs = new WeakSet();
   //: One page of the person picker. The page never materialises the whole person list: the
   //: server's own keyset cursor drives "加载更多人物", so a large catalog stays a paged read.
@@ -1589,6 +1588,17 @@
     activeSearchHistoryForm = saved.form;
   }
 
+  function saveSearchHistoryScrollPosition() {
+    if (!window.history || typeof window.history.replaceState !== "function" || !activeSearchHistoryEntryId) return;
+    var current = window.history.state && typeof window.history.state === "object"
+      ? Object.assign({}, window.history.state) : {};
+    if (current.searchHistoryEntryId !== activeSearchHistoryEntryId) return;
+    var scrollY = Number(window.scrollY || window.pageYOffset || 0);
+    if (!isFinite(scrollY)) return;
+    current.searchScrollY = Math.max(0, scrollY);
+    window.history.replaceState(current, "", window.location.href);
+  }
+
   function saveCurrentSearchHistoryEntry(formOverride, selectedScopeOverride) {
     if (!activeSearchHistoryEntryId || !window.history || typeof window.history.replaceState !== "function") return false;
     var current = window.history.state && typeof window.history.state === "object"
@@ -1615,47 +1625,24 @@
   }
 
   function beginSearchHistoryEntry() {
-    if (!activeSearchHistoryEntryId || (!state.search.lastBody && !pendingSearchHistoryTransition) || !window.history ||
-        typeof window.history.pushState !== "function" || typeof window.history.replaceState !== "function") return;
+    if (!activeSearchHistoryEntryId || !window.history || typeof window.history.replaceState !== "function") return;
     var currentForm = searchFormSnapshot();
     var current = window.history.state && typeof window.history.state === "object"
       ? Object.assign({}, window.history.state) : {};
     if (current.searchHistoryEntryId !== activeSearchHistoryEntryId) return;
-    var previous = null;
     if (current.searchSnapshotToken) {
-      try { previous = JSON.parse(window.sessionStorage.getItem(SEARCH_SNAPSHOT_KEY + ":" + current.searchSnapshotToken) || "null"); }
-      catch (_error) { previous = null; }
+      try { window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY + ":" + current.searchSnapshotToken); }
+      catch (_error) { /* The entry is still updated if session storage is unavailable. */ }
     }
     var nextScope = state.search.selectedScope || null;
-    var scopeChanged = JSON.stringify(current.selectedScope || null) !== JSON.stringify(nextScope);
-    if (previous && JSON.stringify(previous.form) === JSON.stringify(currentForm) && !scopeChanged &&
-        !pendingSearchHistoryTransition) return;
-    var previousForm = activeSearchHistoryForm || current.searchForm || (previous && previous.form) || null;
-    var token = current.searchSnapshotToken || newRequestId("search-snapshot");
-    var saved = state.search.lastBody
-      ? saveSearchSnapshot(SEARCH_SNAPSHOT_KEY + ":" + token, previousForm)
-      : Boolean(current.searchSnapshotToken && previous);
     current.searchHistoryEntry = true;
-    current.searchForm = previousForm;
-    current.selectedScope = current.selectedScope || null;
-    if (saved) {
-      current.searchSnapshotToken = token;
-      delete current.searchSnapshotSaveFailed;
-    } else {
-      delete current.searchSnapshotToken;
-      current.searchSnapshotSaveFailed = true;
-    }
+    current.searchForm = currentForm;
+    current.selectedScope = nextScope;
+    delete current.searchSnapshotToken;
+    delete current.searchSnapshotSaveFailed;
     window.history.replaceState(current, "", window.location.href);
-    var next = {
-      searchHistoryEntry: true,
-      searchHistoryEntryId: newRequestId("search-entry"),
-      searchForm: currentForm,
-      selectedScope: nextScope,
-    };
-    window.history.pushState(next, "", window.location.href);
-    setSearchHistoryEntryId(next.searchHistoryEntryId);
+    setSearchHistoryEntryId(current.searchHistoryEntryId);
     activeSearchHistoryForm = currentForm;
-    pendingSearchHistoryTransition = false;
   }
 
   function applySearchHistoryForm(form, selectedScope) {
@@ -1690,7 +1677,6 @@
         target.searchHistoryEntryId === activeSearchHistoryEntryId) return;
     setSearchHistoryEntryId(target.searchHistoryEntryId);
     activeSearchHistoryForm = target.searchForm || null;
-    pendingSearchHistoryTransition = false;
     state.search.requestGeneration += 1;
     invalidateSearchPreview();
     state.search.loading = false;
@@ -1733,7 +1719,11 @@
   }
 
   function submitSearch() {
-    beginSearchHistoryEntry();
+    var filters = collectFilters();
+    if (filters.problem) {
+      setStatus(els.queryStatus, filters.problem, "error");
+      return Promise.resolve(false);
+    }
     clearSimilarAssetUrl();
     clearAssetQuerySummary();
     setSimilarQueryControls(false);
@@ -1940,6 +1930,7 @@
     if (continuation && (!state.search.sessionId || !state.search.cursor)) {
       return;
     }
+    if (!continuation) beginSearchHistoryEntry();
     if (!continuation) {
       invalidateSearchPreview();
     }
@@ -2370,7 +2361,6 @@
         state.search.timeBrowse.active = false;
         state.search.timeBrowse.cursor = null;
         state.search.timeBrowse.previous = null;
-        pendingSearchHistoryTransition = true;
         clearSearchSnapshot(true);
         invalidateSearchPreview();
         releaseObjectUrls();
@@ -2463,7 +2453,6 @@
   }
 
   function invalidateSearchForScopeChange(message) {
-    pendingSearchHistoryTransition = true;
     state.search.requestGeneration += 1;
     state.search.loading = false;
     state.search.sessionId = null;
@@ -2530,7 +2519,6 @@
       place_cancelled: true,
     };
     els.queryText.value = content;
-    pendingSearchHistoryTransition = true;
     state.search.requestGeneration += 1;
     state.search.loading = false;
     state.search.sessionId = null;
@@ -2867,6 +2855,13 @@
       var current = window.history && window.history.state;
       if (!preserveCurrentHistoryEntry || !current || !current.searchSnapshotToken) {
         window.sessionStorage.removeItem(snapshotStorageKey());
+      }
+      if (!preserveCurrentHistoryEntry && current && current.searchSnapshotToken) {
+        window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY + ":" + current.searchSnapshotToken);
+        var next = Object.assign({}, current);
+        delete next.searchSnapshotToken;
+        delete next.searchSnapshotSaveFailed;
+        window.history.replaceState(next, "", window.location.href);
       }
       window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY);
       window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
@@ -3322,6 +3317,12 @@
   }
 
   function restoreValidatedSearchSnapshot(saved) {
+    var currentHistoryState = window.history && window.history.state && typeof window.history.state === "object"
+      ? window.history.state : null;
+    if (currentHistoryState && currentHistoryState.searchHistoryEntryId === activeSearchHistoryEntryId &&
+        isFinite(Number(currentHistoryState.searchScrollY))) {
+      saved.scrollY = Math.max(0, Number(currentHistoryState.searchScrollY));
+    }
     state.search.timeBrowse.total = saved.timeBrowseTotal;
     state.search.timeBrowse.truncated = Boolean(saved.timeBrowseTruncated);
     state.search.timeBrowse.retryCursor = saved.timeBrowseRetryCursor || null;
@@ -4574,6 +4575,7 @@
       initPerfDiagnostics();
       ensureSearchHistoryEntry();
       if (window.addEventListener) window.addEventListener("popstate", handleSearchHistoryPopState);
+      if (window.addEventListener) window.addEventListener("pagehide", saveSearchHistoryScrollPosition);
       restoreOrStartSearch();
     });
   }

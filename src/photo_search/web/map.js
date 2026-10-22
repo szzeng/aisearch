@@ -1,6 +1,7 @@
 (function () {
   "use strict";
   var API = "/api/v1/map", PAGE = 48, version = null, cursor = null;
+  var MAP_RETURN_KEY = "aisearch.map-return.v1";
   var bbox = null, features = [], map = null, sequence = 0, timer = null;
   var orderMode = "asset_id_desc";
   var assetMode = true, sourceMode = null, summaryTotal = 0, gridAssets = [];
@@ -247,6 +248,22 @@
     $("map-order-capture").setAttribute("aria-pressed", String(orderMode === "capture_time_desc"));
     refresh();
   }
+  function saveMapReturnSnapshot() {
+    if (!map || version === null || !window.sessionStorage) return false;
+    var center = map.getCenter(), zoom = Number(map.getZoom());
+    var scroll = Number(window.scrollY || window.pageYOffset || 0);
+    var snapshot = {
+      version: version,
+      center: [Number(center.lng), Number(center.lat)],
+      zoom: zoom,
+      order: orderMode,
+      scroll: Math.max(0, isFinite(scroll) ? scroll : 0),
+      viewOnly: true,
+    };
+    if (!snapshot.center.every(isFinite) || !isFinite(zoom) || zoom < 0 || zoom > 19) return false;
+    try { window.sessionStorage.setItem(MAP_RETURN_KEY, JSON.stringify(snapshot)); return true; }
+    catch (_) { return false; }
+  }
   function drawGrid(data, reset) {
     var box = $("grid");
     if (reset) { clearPhotoHover(); box.textContent = ""; gridAssets = []; }
@@ -363,11 +380,16 @@
       }
       version = points.member_version; assetMode = points.mode === "photos";
       features = points.features || []; cursor = assets.next_cursor;
+      var restoreView = restoreState && restoreState.viewOnly && restoreState.version === version;
       var canRestore = restoreState && restoreState.version === version && sameBounds(restoreState.bbox, b);
       if (canRestore && restoreState.order === "capture_time_desc") {
         canRestore = cursorIsCurrent && (restoreState.cursor || sameCaptureAssets(restoreState.assets, assets.assets));
       }
-      if (canRestore) {
+      if (restoreView) {
+        drawGrid(assets, true);
+        window.scrollTo(0, Number(restoreState.scroll) || 0);
+        restoreState = null;
+      } else if (canRestore) {
         drawGrid({ assets: restoreState.assets || [], next_cursor: restoreState.cursor }, true);
         window.scrollTo(0, restoreState.scroll || 0); restoreState = null;
       } else {
@@ -417,7 +439,10 @@
     clearPhotoHover();
     if (window.AIPhotoInfo) {
       window.AIPhotoInfo.open(id, { title: "查看地图照片", alt: "地图照片 #" + id, returnFocus: document.activeElement,
-        onOpenFullDetails: function (assetId) { window.AIPhotoInfo.navigateToDetails(assetId, "map"); } });
+        onOpenFullDetails: function (assetId) {
+          saveMapReturnSnapshot();
+          window.AIPhotoInfo.navigateToDetails(assetId, "map");
+        } });
       return;
     }
     location.href = "/#/asset/" + encodeURIComponent(id);
@@ -523,9 +548,18 @@
         zoom = s.total === 1 ? 12 : Math.min(8, Math.max(2, Math.log2(360 / Math.max(1, fitSpan)) - 0.7));
       }
       var saved = null;
-      try { saved = JSON.parse(sessionStorage.getItem("aisearch.map-return.v1") || "null"); } catch (_) {}
-      if (saved && saved.version === s.member_version && saved.center) { center = saved.center; zoom = saved.zoom; restoreState = saved; }
-      if (saved && saved.version === s.member_version && saved.order) {
+      try { saved = JSON.parse(sessionStorage.getItem(MAP_RETURN_KEY) || "null"); } catch (_) {}
+      try { sessionStorage.removeItem(MAP_RETURN_KEY); } catch (_) {}
+      var savedCenter = saved && Array.isArray(saved.center) && saved.center.length >= 2
+        ? [Number(saved.center[0]), Number(saved.center[1])] : null;
+      var validSavedView = Boolean(saved && saved.version === s.member_version && savedCenter &&
+        savedCenter.every(isFinite) && savedCenter[0] >= -180 && savedCenter[0] <= 180 &&
+        savedCenter[1] >= -90 && savedCenter[1] <= 90 && isFinite(Number(saved.zoom)) &&
+        Number(saved.zoom) >= 0 && Number(saved.zoom) <= 19);
+      if (validSavedView) {
+        center = savedCenter; zoom = Number(saved.zoom); restoreState = saved;
+      }
+      if (validSavedView && saved.order) {
         orderMode = saved.order === "capture_time_desc" ? saved.order : "asset_id_desc";
         $("map-order-default").setAttribute("aria-pressed", String(orderMode === "asset_id_desc"));
         $("map-order-capture").setAttribute("aria-pressed", String(orderMode === "capture_time_desc"));

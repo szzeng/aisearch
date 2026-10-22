@@ -70,8 +70,17 @@
       catch (_) { /* The detail route remains usable without a return snapshot. */ }
       window.__aiPhotoDetailHandoff = { assetId: String(assetId), handoffKey: handoffKey };
     }
-    try { window.location.replace("/#/asset/" + encodeURIComponent(assetId) + "/details"); }
-    catch (error) { try { window.sessionStorage.removeItem(DETAIL_RETURN_KEY); } catch (_) {} throw error; }
+    var detailsUrl = "/#/asset/" + encodeURIComponent(assetId) + "/details";
+    try {
+      if (source === "home" && window.location.pathname === "/" && window.history && window.history.pushState &&
+          window.dispatchEvent && typeof Event !== "undefined") {
+        window.history.pushState({ photoDetailsRoute: true }, "", detailsUrl);
+        window.dispatchEvent(new Event("hashchange"));
+        return true;
+      }
+      window.location.assign(detailsUrl);
+    } catch (error) { try { window.sessionStorage.removeItem(DETAIL_RETURN_KEY); } catch (_) {} throw error; }
+    return false;
   }
   function consumeDetailReturn(assetId) {
     try {
@@ -949,16 +958,12 @@
       if (navigatingToDetails || !dialog.open || !canClose() || typeof options.onOpenFullDetails !== "function") return;
       navigatingToDetails = true;
       fullDetails.disabled = true;
-      if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
       try {
-        options.onOpenFullDetails(currentAssetId, handle);
-        if (dialog.open) dialog.close();
+        var sameDocumentRoute = options.onOpenFullDetails(currentAssetId, handle);
+        if (sameDocumentRoute === true && dialog.open) dialog.close();
       }
       catch (error) {
         navigatingToDetails = false; fullDetails.disabled = false;
-        if (options.history !== false && window.history && window.history.pushState && window.addEventListener) {
-          historyOwned = true; window.addEventListener("popstate", onPopState);
-        }
         if (typeof options.onDetailNavigationError === "function") options.onDetailNavigationError(error);
       }
     });
@@ -1002,8 +1007,7 @@
             if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
           },
           onOpenFullDetails: function (id, activeHandle) {
-            if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
-            if (typeof options.onOpenFullDetails === "function") options.onOpenFullDetails(id, activeHandle);
+            if (typeof options.onOpenFullDetails === "function") return options.onOpenFullDetails(id, activeHandle);
           },
           onFindSimilar: function (id, activeHandle) {
             if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
@@ -1044,7 +1048,7 @@
         window.removeEventListener("pointercancel", onWindowPointerEnd);
         window.removeEventListener("blur", onWindowBlur);
       }
-      if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
+      if (historyOwned && !closingFromHistory && !navigatingToDetails && window.history.back) window.history.back();
       if (mounted) mounted.dispose(); image.removeAttribute("src"); dialog.remove();
       if (options.onClose) options.onClose(currentAssetId, handle);
       if (options.returnFocus && options.returnFocus.isConnected) options.returnFocus.focus();

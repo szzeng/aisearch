@@ -117,6 +117,7 @@
       pageInFlight: false, pageRequestVersion: 0, pendingReload: false, pageNeedsReload: false, mutationInFlight: false, autoRefreshKeys: Object.create(null),
       pager: null, refreshTimer: null, refreshRequest: null, refreshObserverKey: null },
     detailRouteActive: false,
+    detailRouteTransition: false,
     detailAssetId: null,
     detailReturnIntent: null,
     detailReturnWarning: false,
@@ -2507,7 +2508,7 @@
         state.browse.returnAssetId = String(id);
         state.browse.returnAssetTop = returnTile ? returnTile.getBoundingClientRect().top : null;
         saveBrowseReturn(id);
-        window.AIPhotoInfo.navigateToDetails(id, "home");
+        return window.AIPhotoInfo.navigateToDetails(id, "home");
       },
       onFavoriteChanged: function (id, result) {
         if (state.browse.scope !== "favorites" && window.PhotoFavorites) {
@@ -2531,6 +2532,7 @@
       },
       onClose: function () {
         state.detailViewer = null;
+        if (state.detailRouteTransition) { state.detailRouteTransition = false; return; }
         if (state.browse.scope === "favorites" && returnTile && !returnTile.isConnected) {
           var nextTile = els.assetGrid.querySelector(".thumb-frame");
           if (nextTile) nextTile.focus();
@@ -2565,7 +2567,13 @@
     els.detailBody.textContent = "";
     var mapReturn = null;
     try { mapReturn = JSON.parse(sessionStorage.getItem("aisearch.map-return.v1") || "null"); } catch (_) {}
-    if (mapReturn) {
+    var mapReturnCenter = mapReturn && Array.isArray(mapReturn.center) ? mapReturn.center.map(Number) : [];
+    var hasValidMapReturn = Boolean(mapReturn && mapReturn.viewOnly === true && mapReturn.version !== undefined &&
+      mapReturn.version !== null && isFinite(Number(mapReturn.version)) &&
+      mapReturnCenter.length >= 2 && mapReturnCenter.every(isFinite) &&
+      mapReturnCenter[0] >= -180 && mapReturnCenter[0] <= 180 && mapReturnCenter[1] >= -90 && mapReturnCenter[1] <= 90 &&
+      isFinite(Number(mapReturn.zoom)) && Number(mapReturn.zoom) >= 0 && Number(mapReturn.zoom) <= 19);
+    if (hasValidMapReturn) {
       var mapBack = element("a", "nav-link", "返回地图相册");
       mapBack.href = "/map";
       els.detailBody.appendChild(mapBack);
@@ -4075,6 +4083,10 @@
   function handleHash() {
     var detailsMatch = /^#\/asset\/(\d+)\/details$/.exec(String(location.hash || ""));
     if (detailsMatch) {
+      if (state.detailViewer && state.detailViewer.dialog && state.detailViewer.dialog.open) {
+        state.detailRouteTransition = true;
+        state.detailViewer.close();
+      }
       var sameDetailsRoute = state.detailRouteActive && state.detailAssetId === detailsMatch[1];
       state.detailRouteActive = true;
       state.detailAssetId = detailsMatch[1];
@@ -4085,7 +4097,7 @@
         state.detailReturnWarning = Boolean(detailIntent && detailIntent.invalid);
         if (state.detailReturnWarning) showNotice("原来源状态已失效或不可用；仍可查看当前照片，关闭后会安全返回照片页。");
       }
-      if ((!state.detailReturnIntent || state.detailReturnIntent.requiresBackstop)
+      if (!state.detailReturnIntent
           && window.history && window.history.replaceState && window.history.pushState
           && !(window.history.state && window.history.state.photoDetailsRoute)) {
         window.history.replaceState({ photoDetailsSafeHome: true }, "", "/");
@@ -4106,10 +4118,11 @@
           history: false,
           onOpenFullDetails: function (id) {
             state.detailRouteActive = false;
-            window.AIPhotoInfo.navigateToDetails(id, "home", "/", true);
+            return window.AIPhotoInfo.navigateToDetails(id, "home", "/", true);
           },
           onClose: function () {
             state.detailViewer = null;
+            if (state.detailRouteTransition) { state.detailRouteTransition = false; return; }
             if (!state.detailRouteActive) return;
             state.detailRouteActive = false;
             var showedDetailReturnWarning = state.detailReturnWarning;
@@ -4136,6 +4149,10 @@
       state.detailRouteActive = false;
       state.detailReturnIntent = null;
       state.detailReturnWarning = false;
+      if (window.history && window.history.state && window.history.state.photoViewerKey) {
+        showView("browse");
+        return;
+      }
       if (state.detailViewer && state.detailViewer.dialog.open) { state.detailViewer.close(); return; }
       if (state.browse.returnContext) {
         state.browse.returnPending = true;

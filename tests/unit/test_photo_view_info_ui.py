@@ -27,14 +27,14 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
     for page in ("index.html", "search.html", "persons.html", "places.html", "map.html"):
         document = (web / page).read_text(encoding="utf-8")
-        assert "/web/photo-info.js?v=p4-ui2-overall-ux-polish-3" in document
+        assert "/web/photo-info.js?v=p4-ui2-overall-ux-polish-8" in document
         assert "/web/photo-info.css?v=p4-photo-ocr-display-a-1" in document
         assert 'data-shell-page="favorites" href="/?view=favorites"' in document
     assert "search.js?v=p4-ui2-overall-ux-polish-9" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "persons-albums.js?v=p4-ui2-overall-ux-polish-3" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
-    assert "/web/app.js?v=p4-ui2-overall-ux-polish-1" in (web / "index.html").read_text(encoding="utf-8")
+    assert "/web/app.js?v=p4-ui2-overall-ux-polish-6" in (web / "index.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
@@ -57,6 +57,58 @@ def test_return_snapshots_validate_map_bbox_and_search_revisions() -> None:
     assert '"/search/sessions/" + encodeURIComponent(saved.search_session_id) + "/time?limit=1"' in search_source
     assert "currentRulesVersion !== saved.timeBrowseRulesVersion" in search_source
     assert "返回时未恢复旧结果" in search_source
+
+
+def test_photo_details_navigation_keeps_viewer_as_the_browser_back_target() -> None:
+    web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
+    viewer = (web / "photo-info.js").read_text(encoding="utf-8")
+    app = (web / "app.js").read_text(encoding="utf-8")
+    navigate = viewer.split("function saveDetailReturn(", 1)[1].split(
+        "function consumeDetailReturn(", 1
+    )[0]
+    full_details_click = viewer.split('fullDetails.addEventListener("click", function () {', 1)[1].split(
+        'similarSearch.addEventListener("click", function () {', 1
+    )[0]
+    details_route = app.split("if (detailsMatch) {", 1)[1].split(
+        "var match = /^#\\/asset", 1
+    )[0]
+
+    assert 'window.history.pushState({ photoDetailsRoute: true }, "", detailsUrl)' in navigate
+    assert 'window.dispatchEvent(new Event("hashchange"))' in navigate
+    assert 'window.location.assign(detailsUrl)' in navigate
+    assert "return true;" in navigate
+    assert "window.location.replace" not in navigate
+    assert "window.removeEventListener(\"popstate\", onPopState)" not in full_details_click
+    assert "if (dialog.open) dialog.close()" not in full_details_click
+    assert "sameDocumentRoute === true && dialog.open" in full_details_click
+    assert "if (!state.detailReturnIntent" in details_route
+    assert "!(window.history.state && window.history.state.photoDetailsRoute)" in details_route
+
+
+def test_home_viewer_detail_back_and_forward_preserve_the_open_modal() -> None:
+    web = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web"
+    app = (web / "app.js").read_text(encoding="utf-8")
+    details_route = app.split("if (detailsMatch) {", 1)[1].split(
+        "var match = /^#\\/asset", 1
+    )[0]
+    returned_route = app.split("if (state.detailRouteActive) {", 1)[1].split(
+        "var params = new URLSearchParams", 1
+    )[0]
+    home_viewer = app.split("function showDetail(assetId) {", 1)[1].split(
+        "function drawDetail", 1
+    )[0]
+    hash_viewer_close = app.split('onClose: function () {', 1)[1].split(
+        'var fromSearch = false;', 1
+    )[0]
+
+    assert "state.detailRouteTransition = true;" in details_route
+    assert "state.detailViewer.close();" in details_route
+    assert "window.history.state.photoViewerKey" in returned_route
+    assert returned_route.index("window.history.state.photoViewerKey") < returned_route.index(
+        "state.detailViewer.close()"
+    )
+    assert "if (state.detailRouteTransition) { state.detailRouteTransition = false; return; }" in home_viewer
+    assert "if (state.detailRouteTransition) { state.detailRouteTransition = false; return; }" in hash_viewer_close
 
 
 def test_home_detail_back_restores_browse_and_source_filter() -> None:
@@ -91,8 +143,8 @@ window.AIPhotoInfo={consumeDetailReturn:id=>{consumedIntents++;const intent=pend
 timelineMounts.length=0;ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;
 pendingIntent={assetId:"123",value:{source:"home",path:"/",requiresBackstop:true}};location.hash="#/asset/123/details";ui.handleHash();
 assert.equal(consumedIntents,1,"a matching one-time intent is consumed when the explicit route is entered");
-assert.equal(timelineMounts.find(item=>item.historyReplace).historyReplace,"/","the history:false legacy viewer intent still creates a safe in-app Back predecessor");
-assert.equal(timelineMounts.find(item=>item.historyPush).historyPush,"/#/asset/123/details");
+assert.equal(timelineMounts.some(item=>item.historyReplace),false,"a trusted viewer transition keeps its previous viewer entry even when a backstop was requested");
+assert.equal(timelineMounts.some(item=>item.historyPush),false);
 timelineMounts.length=0;ui.state.detailRouteActive=false;ui.state.detailAssetId=null;ui.state.detailReturnIntent=null;
 pendingIntent={assetId:"123",value:{source:"search",path:"/search?q=old",requiresBackstop:false}};location.hash="#/asset/123/details";ui.handleHash();
 assert.equal(consumedIntents,2,"same-asset stale intent cannot remain available for a later direct route");
@@ -159,7 +211,7 @@ class Element {
   setAttribute(){} removeAttribute(){} focus(){} querySelector(){return null;}
 }
 function page(url,referrer=""){
-  const location={origin:"http://localhost",replace(next){const u=new URL(next,this.origin);Object.assign(this,{href:u.href,pathname:u.pathname,search:u.search,hash:u.hash});}};
+  const location={origin:"http://localhost",replace(next){const u=new URL(next,this.origin);Object.assign(this,{href:u.href,pathname:u.pathname,search:u.search,hash:u.hash});},assign(next){const u=new URL(next,this.origin);Object.assign(this,{href:u.href,pathname:u.pathname,search:u.search,hash:u.hash});}};
   location.replace(url);
   const sections={sources:new Element(),browse:new Element(),detail:new Element()};sections.browse.hidden=true;
   const controls={browseSource:new Element("select"),browseOrder:new Element("select"),browseCaptureFrom:new Element("input"),browseCaptureTo:new Element("input")};

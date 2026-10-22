@@ -11,7 +11,7 @@ def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tm
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
-    assert '/web/search.js?v=p4-qwen-1024d-trial-3' in search_page.read_text(encoding="utf-8")
+    assert '/web/search.js?v=p4-ui2-overall-ux-polish-9' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
@@ -63,7 +63,7 @@ function harness(storage=new Map(),harnessOptions={}){
     IntersectionObserver:class{observe(){}unobserve(){}disconnect(){}},
     document:{readyState:"loading",cookie:"ps_csrf=fixture-csrf",addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)},
     window:{location:{href:"http://127.0.0.1/search"+(harnessOptions.search||""),origin:"http://127.0.0.1",pathname:"/search",search:harnessOptions.search||"",hash:"",
-      replace(path){this.href=new URL(path,this.href).href;}},scrollY:87,
+          replace(path){this.href=new URL(path,this.href).href;},assign(path){this.href=new URL(path,this.href).href;}},scrollY:87,
           addEventListener(){},
       history:{state:harnessOptions.historyState||null,replaceState(value,title,url){this.state=value;historyWrites.push(url);if(url){const next=new URL(url,"http://127.0.0.1");context.window.location.href=next.href;context.window.location.pathname=next.pathname;context.window.location.search=next.search;context.window.location.hash=next.hash;}}},
       requestAnimationFrame:fn=>fn(),scrollTo(...args){scrolls.push(args);},
@@ -90,7 +90,7 @@ function harness(storage=new Map(),harnessOptions={}){
     }};
   let code=fs.readFileSync("src/photo_search/web/search.js","utf8");
   code=code.replace('  if (document.readyState === "loading")',
-    '  globalThis.ui={state,boot,sendSearch,continueSearch,toggleCandidateTimeBrowse,saveSearchSnapshot,get photoSelection(){return photoSelection;}};\n  if (document.readyState === "loading")');
+    '  globalThis.ui={state,boot,sendSearch,continueSearch,toggleCandidateTimeBrowse,saveSearchSnapshot,historyState:()=>window.history.state,get photoSelection(){return photoSelection;}};\n  if (document.readyState === "loading")');
   vm.createContext(context);vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
   // The shared viewer owns its DOM; this test exercises the real search-page
   // callbacks and the shared full-detail navigation/storage helper.
@@ -194,7 +194,9 @@ function assertLiteral(request){
   assert.equal(timeRetry.calls.filter(call=>call.url.includes("time-next")).length,2,
     JSON.stringify(timeRetry.calls.map(call=>call.url)));
   const timeSnapshotSaved=timeRetry.ui.saveSearchSnapshot();assert.equal(timeSnapshotSaved,true);
-  const timeSnapshot=JSON.parse(timeRetry.storage.get("aisearch.search-return.v1"));
+  const timeSnapshotKey=timeRetry.ui.historyState().searchSnapshotToken
+    ? "aisearch.search-return.v1:"+timeRetry.ui.historyState().searchSnapshotToken : "aisearch.search-return.v1";
+  const timeSnapshot=JSON.parse(timeRetry.storage.get(timeSnapshotKey));
   timeSnapshot.cursor=null;timeSnapshot.hasMore=false;
   const timeReturn=harness(new Map([["aisearch.search-return.v1",JSON.stringify(timeSnapshot)]]));await flush();
   assert.equal(timeReturn.get("load-more").hidden,false,
@@ -426,7 +428,9 @@ function assertLiteral(request){
   h.get("result-grid").querySelector('[data-asset-id="202"]').fire("click");await flush();
   assert.equal(h.viewers.at(-1).assetId,202);assert.equal(h.ui.state.search.preview.assetId,202);
   h.viewers.at(-1).openDetails();
-  const saved=JSON.parse(h.storage.get("aisearch.search-return.v1"));
+  const activeSnapshotToken=h.ui.historyState().searchSnapshotToken;
+  const activeSnapshotKey=activeSnapshotToken?"aisearch.search-return.v1:"+activeSnapshotToken:"aisearch.search-return.v1";
+  const saved=JSON.parse(h.storage.get(activeSnapshotKey));
   assert.equal(saved.previewAssetId,202,"full-detail navigation must save the currently previewed asset");
   assert.equal(JSON.parse(h.storage.get("aisearch.photo-detail-return.v1")).source,"search");
   assert.equal(saved.form.retrievalMode,"text");assert.equal(saved.hits.length,2);

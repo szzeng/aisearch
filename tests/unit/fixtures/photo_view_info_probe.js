@@ -347,7 +347,7 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.ok(!staleActionHost.textContent.includes("已请求资源管理器定位"),"a response after dispose cannot update the replacement panel");
 
   const savedValues=new Map(); let historyPushes=0, historyBacks=0; const replacements=[];
-  window.location={href:"http://localhost/search?q=lake",origin:"http://localhost",replace:path=>replacements.push(path)};
+  window.location={href:"http://localhost/search?q=lake",origin:"http://localhost",replace:path=>replacements.push(path),assign:path=>replacements.push(path)};
   window.sessionStorage={getItem:key=>savedValues.get(key)||null,setItem:(key,value)=>savedValues.set(key,value),removeItem:key=>savedValues.delete(key)};
   const historyStack=[{state:null}], popstateListeners=new Set(); let historyIndex=0;
   window.history={
@@ -394,9 +394,9 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   detailsButton.fire("click"); detailsButton.fire("click");
   assert.equal(historyBacks,detailNavigationBacks,"full-details navigation replaces the viewer marker without going Back");
   assert.deepEqual(navigated,["202"],"the details entry uses the live setAsset identity and rejects a second trigger");
-  assert.equal(changing.dialog.open,false,"successful details navigation releases the current modal");
+  assert.equal(changing.dialog.open,true,"successful details navigation keeps the viewer open as the browser Back target");
   assert.equal(historyPushes,3,"each viewer owns one modal history entry");
-  assert.deepEqual(replacements,["/#/asset/202/details"],"navigation replaces the modal entry with the explicit details route");
+  assert.deepEqual(replacements,["/#/asset/202/details"],"navigation pushes the explicit details route above the viewer entry");
   const returnIntent=context.window.AIPhotoInfo.consumeDetailReturn("202");
   assert.equal(returnIntent.source,"search"); assert.equal(returnIntent.path,"/search?q=lake","a one-time same-origin source path is available for safe return");
   assert.equal(returnIntent.requiresBackstop,false,"a viewer-owned history transition already has an in-app predecessor");
@@ -475,5 +475,7 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(savedValues.has("aisearch.photo-detail-return.v1"),false,"rejected stale intents are cleared once");
   window.sessionStorage={getItem(){throw new Error("storage unavailable");},removeItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}};
   assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202").invalid,true,"storage denial is distinguishable from a direct route with no source intent");
-  changing.dialog.close(); assert.equal(historyBacks,detailNavigationBacks,"details navigation does not leave a modal history callback behind");
+  assert.equal(changing.dialog.open,true,"the viewer remains available beneath the details route for Back");
+  assert.equal(popstateListeners.size,1,"the viewer retains its history listener so Back can restore it");
+  assert.equal(historyBacks,detailNavigationBacks,"entering details does not consume the viewer history entry");
 })().catch(error=>{console.error(error);process.exitCode=1;});
