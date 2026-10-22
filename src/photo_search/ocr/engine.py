@@ -6,10 +6,9 @@ Three decisions live here, and each of them is deliberate:
   and then, if it is still too large to hand to one detector pass, cut into overlapping
   slices. A 320/448 px raster is the *grid* contract of P1-03 and would erase exactly the
   small text P3-01 exists to find.
-* **Low-confidence regions stay.** The pinned engine's ``text_score`` default (0.5) would
-  drop them before anyone could see them; architecture §8.2 requires them to be visible and
-  queryable with their score, so the pinned config is overridden to ``0.0`` for this
-  processor only.
+* **Native confidence filter.** Active v4 uses RapidOCR 1.4.4's ``text_score=0.5`` filter;
+  surviving regions retain their raw score, while ``0.6`` is used only for statistics and
+  orientation retry.
 * **Conservative overlap handling.** Slice boxes are mapped back to source coordinates.
   Only compatible text on the same physical line is de-duplicated; an uncertain overlap
   keeps both readings. A fixed ordering makes postprocessing independent of tile order.

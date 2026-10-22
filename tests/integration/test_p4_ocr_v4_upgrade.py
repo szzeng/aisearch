@@ -17,6 +17,7 @@ from photo_search.jobs import queue as jobs
 from photo_search.ocr import contract
 from photo_search.ocr import processor as ocr_processor
 from photo_search.ocr import service as ocr_service
+from photo_search.ocr.engine import OcrDocument, OcrRegion
 from photo_search.scheduler.contracts import JobResult, canonical_json
 from photo_search.scheduler.projection import ocr_summary
 from photo_search.search import documents
@@ -54,11 +55,31 @@ def _seed_job(harness, asset_id, processor_id):
 
 
 def _seed_historical_current(harness, asset_id, processor_id):
-    """Install actual pre-v3 artifact bytes and matching current rows, never execute old code."""
-    payload = deepcopy(next(
-        sample["payload"] for sample in HISTORY["artifacts"]
-        if sample["processor_id"] == processor_id
-    ))
+    """Install actual pre-v4 artifact bytes and matching current rows, never execute old code."""
+    sample = next(
+        (sample for sample in HISTORY["artifacts"] if sample["processor_id"] == processor_id),
+        None,
+    )
+    if sample is not None:
+        payload = deepcopy(sample["payload"])
+    else:
+        region = OcrRegion(
+            index=0,
+            polygon=((4.0, 3.0), (80.0, 3.0), (80.0, 24.0), (4.0, 24.0)),
+            box=(4.0, 3.0, 80.0, 24.0),
+            text="historical-v3 text",
+            confidence=0.91,
+        )
+        payload = ocr_processor.build_payload(
+            input_revision=harness.sha_of(asset_id),
+            location_id=None,
+            document=OcrDocument(
+                original_size=(901, 501), working_size=(901, 501), scale=1.0,
+                slice_count=1, regions=(region,), elapsed_ms=1,
+            ),
+            decode_format="JPEG",
+            processor_id=processor_id,
+        )
     payload["input_revision"] = harness.sha_of(asset_id)
     payload["location_id"] = harness.catalog.read_one(
         "SELECT location_id FROM file_locations WHERE asset_id=?", (asset_id,),
@@ -73,7 +94,8 @@ def _seed_historical_current(harness, asset_id, processor_id):
     job_id = _seed_job(harness, asset_id, processor_id)
     spec_revision = (
         "ocr-text-ppocrv4-mobile-v1" if processor_id == "ocr-text@1"
-        else "ocr-text-ppocrv4-mobile-" + ("cpu" if "cpu" in processor_id else "cuda") + "-fp32-v2"
+        else "ocr-text-ppocrv4-mobile-" + ("cpu" if "cpu" in processor_id else "cuda")
+        + "-fp32-v" + ("3" if "@3" in processor_id else "2")
     )
     region = payload["regions"][0]
     with harness.catalog.write() as connection:
@@ -119,6 +141,117 @@ def _current_state(harness, asset_id):
             "SELECT * FROM search_projection_queue WHERE asset_id=? ORDER BY asset_id", (asset_id,),
         )],
     }
+
+
+def test_v4_reprocess_is_counted_despite_current_v3_and_repeated_enqueue_is_idempotent(
+    harness, monkeypatch,
+):
+    asset_id = make_asset(harness)
+    _seed_historical_current(harness, asset_id, contract.OCR_V3_CPU_PROCESSOR_ID)
+
+    first = enqueue(harness, asset_id, device="cpu")
+    assert first == {"targets": 1, "queued": 1, "rewound": 0, "live": 0}
+    job = jobs_for(harness, asset_id)[contract.OCR_CPU_PROCESSOR_ID]
+    assert job["state"] == "QUEUED"
+    assert ocr_service.pending_job_count(harness.catalog) == 1
+    summary = ocr_summary(harness.catalog.db_path)
+    assert summary["documents"] == 1
+    assert summary["current_results_by_processor"][contract.OCR_V3_CPU_PROCESSOR_ID] == 1
+    assert summary["pending_jobs"] == 1 and summary["state"] == "LAGGING"
+
+    repeated = enqueue(harness, asset_id, device="cpu")
+    assert repeated == {"targets": 1, "queued": 0, "rewound": 0, "live": 0}
+    assert len(jobs_for(harness, asset_id)) == 2
+
+    run_result = run(harness, monkeypatch, cache=FakeEngineCache())
+    assert run_result["steps"] == 1
+    assert ocr_service.pending_job_count(harness.catalog) == 0
+    current = harness.ocr_document(asset_id)
+    assert current["processor_id"] == contract.OCR_CPU_PROCESSOR_ID
+    ocr_service.catch_up_projection(harness.catalog)
+    assert ocr_summary(harness.catalog.db_path)["state"] == "SYNCED"
+
+    # A normal repeat keeps the successful @4 row intact; only explicit --force rewinds it.
+    repeated_success = enqueue(harness, asset_id, device="cpu")
+    assert repeated_success["queued"] == 0 and repeated_success["rewound"] == 0
+    assert run(harness, monkeypatch, cache=FakeEngineCache())["steps"] == 0
+    assert jobs_for(harness, asset_id)[contract.OCR_CPU_PROCESSOR_ID]["state"] == "SUCCEEDED"
+
+
+@pytest.mark.parametrize("unavailable_kind", ("source_offline", "location_missing"))
+def test_unavailable_original_is_skipped_and_keeps_current_ocr(harness, unavailable_kind):
+    asset_id = make_asset(harness)
+    _seed_historical_current(harness, asset_id, contract.OCR_V3_CPU_PROCESSOR_ID)
+    location = harness.catalog.read_one(
+        "SELECT location_id, source_id FROM file_locations WHERE asset_id=?", (asset_id,),
+    )
+    with harness.catalog.write() as connection:
+        if unavailable_kind == "source_offline":
+            connection.execute(
+                "UPDATE source_roots SET status='OFFLINE' WHERE source_id=?",
+                (location["source_id"],),
+            )
+        else:
+            connection.execute(
+                "UPDATE file_locations SET availability='MISSING' WHERE location_id=?",
+                (location["location_id"],),
+            )
+
+    targets = ocr_service.ocr_targets(harness.catalog)
+    assert targets == []
+    skipped = ocr_service.enqueue_targets(
+        harness.catalog, targets, now_ms=harness.clock(), requested_device="cpu",
+    )
+    assert skipped["queued"] == 0
+    assert harness.ocr_document(asset_id)["processor_id"] == contract.OCR_V3_CPU_PROCESSOR_ID
+    assert contract.OCR_CPU_PROCESSOR_ID not in jobs_for(harness, asset_id)
+    summary = ocr_summary(harness.catalog.db_path)
+    assert summary["documents"] == 1 and summary["unavailable_assets"] == 1
+
+
+def test_live_v3_lease_delays_v4_and_late_v3_submission_cannot_replace_v4(
+    harness, monkeypatch,
+):
+    monkeypatch.setattr(
+        "photo_search.scheduler.projection.time.time_ns",
+        lambda: harness.clock() * 1_000_000,
+    )
+    asset_id = make_asset(harness)
+    _seed_historical_current(harness, asset_id, contract.OCR_V3_CPU_PROCESSOR_ID)
+    old_job = harness.catalog.read_one(
+        "SELECT job_id FROM jobs WHERE subject_id=? AND processor_id=?",
+        (str(asset_id), contract.OCR_V3_CPU_PROCESSOR_ID),
+    )
+    with harness.catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='QUEUED' WHERE job_id=?", (old_job["job_id"],))
+        old_lease = jobs.claim_job(
+            connection, job_id=int(old_job["job_id"]), worker_id="old-v3-worker",
+            now_ms=harness.clock(), lease_seconds=60,
+        )
+
+    held = enqueue(harness, asset_id, device="cpu")
+    assert held == {"targets": 1, "queued": 0, "rewound": 0, "live": 1}
+    assert contract.OCR_CPU_PROCESSOR_ID not in jobs_for(harness, asset_id)
+    assert ocr_summary(harness.catalog.db_path)["retired_live_leases"] == 1
+
+    with harness.catalog.write() as connection:
+        connection.execute(
+            "UPDATE jobs SET lease_expires_at=? WHERE job_id=?",
+            (harness.clock() - 1, int(old_job["job_id"])),
+        )
+    assert enqueue(harness, asset_id, device="cpu")["queued"] == 1
+    run(harness, monkeypatch, cache=FakeEngineCache())
+    current_after_v4 = dict(harness.ocr_document(asset_id))
+    assert current_after_v4["processor_id"] == contract.OCR_CPU_PROCESSOR_ID
+
+    with pytest.raises(CatalogError):
+        with harness.catalog.write() as connection:
+            jobs.validate_submission(
+                connection, job_id=int(old_job["job_id"]), lease_token=old_lease.lease_token,
+                now_ms=harness.clock(), input_revision=harness.sha_of(asset_id),
+                processor_id=contract.OCR_V3_CPU_PROCESSOR_ID,
+            )
+    assert dict(harness.ocr_document(asset_id)) == current_after_v4
 
 
 @pytest.mark.parametrize("has_current_document", (False, True))
@@ -193,7 +326,7 @@ def test_real_v2_retirement_preserves_live_and_anomalous_leases_without_bulk_enq
             assert row["lease_token"] is row["lease_expires_at"] is row["worker_id"] is None
         for job_id, before in protected.items():
             assert dict(reopened.catalog.read_one("SELECT * FROM jobs WHERE job_id=?", (job_id,))) == before
-        assert reopened.catalog.read_one("SELECT count(*) AS n FROM jobs WHERE processor_id LIKE '%@3'")["n"] == 0
+        assert reopened.catalog.read_one("SELECT count(*) AS n FROM jobs WHERE processor_id LIKE '%@4'")["n"] == 0
     for asset_id in (asset_ids[3], asset_ids[5]):
         assert enqueue(harness, asset_id, device="cpu") == {
             "targets": 1, "queued": 0, "rewound": 0, "live": 1,
@@ -209,9 +342,12 @@ def test_real_v2_retirement_preserves_live_and_anomalous_leases_without_bulk_enq
     assert ocr_summary(harness.catalog.db_path)["retired_pending_jobs"] == 2
 
 
-@pytest.mark.parametrize("processor_id", ("ocr-text@1", "ocr-text-cpu-fp32@2", "ocr-text-cuda-fp32@2"))
+@pytest.mark.parametrize("processor_id", (
+    "ocr-text@1", "ocr-text-cpu-fp32@2", "ocr-text-cuda-fp32@2",
+    "ocr-text-cpu-fp32@3", "ocr-text-cuda-fp32@3",
+))
 @pytest.mark.parametrize("device", ("cpu", "gpu"))
-def test_historical_current_stays_searchable_until_successful_v3_replacement(harness, monkeypatch, processor_id, device):
+def test_historical_current_stays_searchable_until_successful_v4_replacement(harness, monkeypatch, processor_id, device):
     asset_id = make_asset(harness)
     old_artifact, old_bytes = _seed_historical_current(harness, asset_id, processor_id)
     before = _current_state(harness, asset_id)
@@ -228,12 +364,16 @@ def test_historical_current_stays_searchable_until_successful_v3_replacement(har
         assert _current_state(harness, asset_id) == before
         assert harness.text_hits(build_match("historical").expression) == [asset_id]
         assert jobs_for(harness, asset_id)[selected]["state"] == ("FAILED" if failure else "CANCELLED")
+        if failure:
+            summary = ocr_summary(harness.catalog.db_path)
+            assert summary["documents"] == 1
+            assert summary["failed_jobs"] == 1 and summary["state"] == "FAILED"
 
     enqueue(harness, asset_id, device=device, force=True)
     run(harness, monkeypatch, cache=FakeEngineCache())
     after = dict(harness.ocr_document(asset_id))
     assert after["processor_id"] == selected
-    assert after["spec_revision"].endswith("-v3")
+    assert after["spec_revision"].endswith("-v4")
     assert after["text_revision"] == before["current"]["text_revision"] + 1
     assert all(row["text_revision"] == after["text_revision"] for row in harness.ocr_regions(asset_id))
     assert harness.catalog.read_one("SELECT count(*) AS n FROM artifacts")["n"] == 2
@@ -251,7 +391,7 @@ def test_historical_current_stays_searchable_until_successful_v3_replacement(har
     assert current_payload["config_hash"] == ocr_processor.ocr_processor_spec(device).config_hash
 
 
-def test_failed_atomic_v3_publication_restores_historical_current_and_fts(harness, monkeypatch):
+def test_failed_atomic_v4_publication_restores_historical_current_and_fts(harness, monkeypatch):
     asset_id = make_asset(harness)
     old_artifact, old_bytes = _seed_historical_current(harness, asset_id, "ocr-text-cpu-fp32@2")
     before = _current_state(harness, asset_id)
@@ -260,7 +400,7 @@ def test_failed_atomic_v3_publication_restores_historical_current_and_fts(harnes
     scheduler = ocr_service.build_scheduler(harness.catalog)
     ocr_service.record_runtime_evidence(scheduler, scheduler.spec_for(contract.OCR_CPU_PROCESSOR_ID),
                                       FakeEngineCache(), now_ms=harness.clock())
-    request = scheduler.claim_next(worker_id="v3-publication", now_ms=harness.clock())
+    request = scheduler.claim_next(worker_id="v4-publication", now_ms=harness.clock())
     raw = ocr_processor.ocr_executor(harness.catalog, engine_cache=FakeEngineCache())(request.to_envelope())
     original_persist = ocr_processor.persist_ocr_document
 

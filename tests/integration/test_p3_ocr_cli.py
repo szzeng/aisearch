@@ -48,6 +48,15 @@ def test_weights_reports_the_pinned_identity(
     code, payload = invoke(capsys, "weights", "--data-root", str(harness.data_root), "--json")
     assert code == 0
     assert payload["status"] == "ok"
+    assert payload["processor_id"] == contract.OCR_GPU_PROCESSOR_ID
+    assert payload["processor_profiles"] == {
+        "cpu": contract.OCR_CPU_PROCESSOR_ID, "gpu": contract.OCR_GPU_PROCESSOR_ID,
+    }
+    assert payload["execution_config_hashes"] == {
+        "cpu": contract.OCR_CPU_CONFIG_HASH, "gpu": contract.OCR_GPU_CONFIG_HASH,
+    }
+    assert payload["min_text_score"] == 0.5
+    assert payload["low_confidence_threshold"] == 0.6
     assert payload["model_fingerprint"] == contract.MODEL_FINGERPRINT
     assert payload["config_hash"] == contract.CONFIG_HASH
     assert [item["role"] for item in payload["files"]] == list(contract.WEIGHT_ROLES)

@@ -1,3 +1,7 @@
+## Current task: P4-OCR-EVERYDAY-QUALITY (2026-10-22)
+
+OCR @4 uses RapidOCR text_score 0.5 with existing PP-OCRv4 Mobile weights; @3 config stays frozen at 0.0. Active CPU/GPU profiles have separate hashes. Historical OCR remains readable, v4 enqueue is idempotent, offline sources are skipped without removing text, and progress counts actual active-version task states. Affected OCR JUnit 183 passed / 19 skipped / 0 failed; Ruff, py_compile, diff-check and synthetic CPU model smoke passed. Actual read-only weights check verified all pinned files. Real-library processing and GPU smoke were not run. Luna H follow-up review PASS; the default-hash finding was fixed. Locally committed on user request; not pushed. See [task card](tasks/P4-OCR-EVERYDAY-QUALITY.md) and [report](reports/P4-OCR-EVERYDAY-QUALITY.md).
+
 ## Current task: P4-UI2-SHELL-COLLECTION-NAV-A（2026-10-21）
 
 修复人物、地点、搜索、地图等独立页面侧栏漏掉“照片合集”入口的问题；五个 shell 页面现共用同一 `/?view=photo-collections` 入口。定向 JUnit **4/4** 通过；隔离内置浏览器及用户实测均确认人物和地点页可进入合集目录。Luna H 有界独立复核 **PASS**。状态 **IMPLEMENTED / SCOPED PASS**。未访问真实图库，未提交、未推送。详见[任务卡](tasks/P4-UI2-SHELL-COLLECTION-NAV-A.md)与[报告](reports/P4-UI2-SHELL-COLLECTION-NAV-A.md)。

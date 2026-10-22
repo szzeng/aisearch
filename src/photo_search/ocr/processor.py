@@ -484,8 +484,10 @@ def _payload_profile(processor_id: str) -> tuple[str, dict[str, Any]]:
     profiles = {
         contract.OCR_V2_CPU_PROCESSOR_ID: ("cpu", 2, contract.OCR_V2_CPU_CONFIG_HASH),
         contract.OCR_V2_GPU_PROCESSOR_ID: ("gpu", 2, contract.OCR_V2_GPU_CONFIG_HASH),
-        contract.OCR_CPU_PROCESSOR_ID: ("cpu", 3, contract.OCR_CPU_CONFIG_HASH),
-        contract.OCR_GPU_PROCESSOR_ID: ("gpu", 3, contract.OCR_GPU_CONFIG_HASH),
+        contract.OCR_V3_CPU_PROCESSOR_ID: ("cpu", 3, contract.OCR_V3_CPU_CONFIG_HASH),
+        contract.OCR_V3_GPU_PROCESSOR_ID: ("gpu", 3, contract.OCR_V3_GPU_CONFIG_HASH),
+        contract.OCR_CPU_PROCESSOR_ID: ("cpu", 4, contract.OCR_CPU_CONFIG_HASH),
+        contract.OCR_GPU_PROCESSOR_ID: ("gpu", 4, contract.OCR_GPU_CONFIG_HASH),
     }
     if processor_id not in profiles:
         raise CatalogError(ARTIFACT_INVALID, "the OCR document was produced by another processor")
@@ -672,9 +674,12 @@ def persist_ocr_document(
             int(text_revision),
             str(job.processor_id),
             (
-                contract.OCR_CPU_SPEC_REVISION
-                if str(job.processor_id) == contract.OCR_CPU_PROCESSOR_ID
-                else contract.OCR_GPU_SPEC_REVISION
+                {
+                    contract.OCR_V3_CPU_PROCESSOR_ID: contract.OCR_V3_CPU_SPEC_REVISION,
+                    contract.OCR_V3_GPU_PROCESSOR_ID: contract.OCR_V3_GPU_SPEC_REVISION,
+                    contract.OCR_CPU_PROCESSOR_ID: contract.OCR_CPU_SPEC_REVISION,
+                    contract.OCR_GPU_PROCESSOR_ID: contract.OCR_GPU_SPEC_REVISION,
+                }[str(job.processor_id)]
             ),
             str(payload["model_fingerprint"]),
             str(item.ref.artifact_id),

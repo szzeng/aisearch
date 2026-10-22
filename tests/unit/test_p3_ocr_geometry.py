@@ -293,6 +293,37 @@ def test_the_engine_is_built_only_from_the_pinned_paths(tmp_path: Path, monkeypa
     assert engine.read(None) is None
 
 
+def test_rapidocr_native_text_score_filter_drops_below_threshold_and_keeps_normal_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Model RapidOCR 1.4.4's native score < text_score output filter."""
+    fake_pinned(tmp_path, monkeypatch)
+    box = [[2.0, 2.0], [100.0, 2.0], [100.0, 24.0], [2.0, 24.0]]
+    detected = [(box, "树纹误字", 0.49), (box, "中文招牌", 0.50), (box, "A12 路", 0.94)]
+
+    class NativeFilterRapidOCR:
+        def __init__(self, **options: Any) -> None:
+            self.options = options
+            provider = runtime_device.CPU_PROVIDER
+            def session() -> Any:
+                return SimpleNamespace(get_providers=lambda: [provider])
+            self.text_det = SimpleNamespace(infer=SimpleNamespace(session=session()))
+            self.text_cls = SimpleNamespace(infer=SimpleNamespace(session=session()))
+            self.text_rec = SimpleNamespace(session=SimpleNamespace(session=session()))
+
+        def __call__(self, _image: Any) -> tuple[list[Any], None]:
+            score_limit = self.options["text_score"]
+            return [row for row in detected if row[2] >= score_limit], None
+
+    engine = PinnedOcrEngine(
+        weights.verify(weights.resolve(tmp_path)), engine_factory=NativeFilterRapidOCR,
+    )
+    output = engine.read(None)
+    assert [row[1] for row in output] == ["中文招牌", "A12 路"]
+    assert contract.MIN_TEXT_SCORE == 0.5
+    assert contract.LOW_CONFIDENCE_THRESHOLD == 0.6
+
+
 def json_dump(payload: Any) -> str:
     import json
 

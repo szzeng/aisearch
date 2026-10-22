@@ -204,6 +204,7 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
     ocr = body["ocr"]
     assert ocr["processor_id"] == contract.OCR_PROCESSOR_ID
     assert ocr["documents"] == 1 and ocr["stale_documents"] == 0
+    assert ocr["unavailable_assets"] == 0
     assert ocr["regions"] == len(regions)
     assert ocr["weights_present"] is True
     assert ocr["state"] == "SYNCED"
@@ -226,6 +227,7 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
         "config_hash",
         "weights_present",
         "documents",
+        "unavailable_assets",
         "stale_documents",
         "regions",
         "low_confidence_regions",
@@ -239,11 +241,19 @@ def test_a_real_invoice_is_recognised_indexed_and_reported(harness: Harness) -> 
     }
     assert ocr["processor_profiles"] == {
         "legacy": contract.OCR_LEGACY_PROCESSOR_ID,
+        "cpu_v2": contract.OCR_V2_CPU_PROCESSOR_ID,
+        "gpu_v2": contract.OCR_V2_GPU_PROCESSOR_ID,
+        "cpu_v3": contract.OCR_V3_CPU_PROCESSOR_ID,
+        "gpu_v3": contract.OCR_V3_GPU_PROCESSOR_ID,
         "cpu": contract.OCR_CPU_PROCESSOR_ID,
         "gpu": contract.OCR_GPU_PROCESSOR_ID,
     }
     assert ocr["config_hashes"] == {
         "legacy": contract.CONFIG_HASH,
+        "cpu_v2": contract.OCR_V2_CPU_CONFIG_HASH,
+        "gpu_v2": contract.OCR_V2_GPU_CONFIG_HASH,
+        "cpu_v3": contract.OCR_V3_CPU_CONFIG_HASH,
+        "gpu_v3": contract.OCR_V3_GPU_CONFIG_HASH,
         "cpu": contract.OCR_CPU_CONFIG_HASH,
         "gpu": contract.OCR_GPU_CONFIG_HASH,
     }

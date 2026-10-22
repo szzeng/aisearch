@@ -217,6 +217,14 @@ def ocr_summary(
         stored = int(
             connection.execute("SELECT COUNT(*) AS total FROM asset_ocr_text").fetchone()["total"]
         )
+        unavailable_assets = int(
+            connection.execute(
+                "SELECT COUNT(*) AS total FROM assets AS a WHERE NOT EXISTS ("
+                "SELECT 1 FROM file_locations AS f JOIN source_roots AS s "
+                "ON s.source_id = f.source_id WHERE f.asset_id = a.asset_id "
+                "AND f.availability = 'PRESENT' AND s.status = 'ONLINE')"
+            ).fetchone()["total"]
+        )
         regions = int(
             connection.execute("SELECT COUNT(*) AS total FROM asset_ocr_regions").fetchone()[
                 "total"
@@ -257,9 +265,7 @@ def ocr_summary(
             "ON a.asset_id = CAST(j.subject_id AS INTEGER) WHERE j.subject_type = 'asset' "
             "AND j.task_type = ? AND j.processor_id IN (" + active_slots + ") "
             "AND j.input_revision = a.sha256 AND j.state IN "
-            "('QUEUED', 'RUNNING', 'RETRY_WAIT', 'BLOCKED', 'FAILED') "
-            "AND NOT EXISTS (SELECT 1 FROM asset_ocr_text AS t WHERE t.asset_id = a.asset_id "
-            "AND t.input_revision = a.sha256)",
+            "('QUEUED', 'RUNNING', 'RETRY_WAIT', 'BLOCKED', 'FAILED')",
             (str(ocr_contract.OCR_TASK_TYPE), *active_ids),
         ).fetchall()
         by_asset: dict[str, set[str]] = {}
@@ -282,7 +288,9 @@ def ocr_summary(
         current_profiles = {
             str(row["processor_id"]): int(row["count"])
             for row in connection.execute(
-                "SELECT processor_id, COUNT(*) AS count FROM asset_ocr_text GROUP BY processor_id"
+                "SELECT t.processor_id, COUNT(*) AS count FROM asset_ocr_text AS t "
+                "JOIN assets AS a ON a.asset_id = t.asset_id AND a.sha256 = t.input_revision "
+                "GROUP BY t.processor_id"
             )
         }
         retired_ids = tuple(ocr_contract.OCR_RETIRED_PROCESSOR_IDS)
@@ -351,12 +359,20 @@ def ocr_summary(
             "processor_id": ocr_contract.OCR_PROCESSOR_ID,
             "processor_profiles": {
                 "legacy": ocr_contract.OCR_LEGACY_PROCESSOR_ID,
+                "cpu_v2": ocr_contract.OCR_V2_CPU_PROCESSOR_ID,
+                "gpu_v2": ocr_contract.OCR_V2_GPU_PROCESSOR_ID,
+                "cpu_v3": ocr_contract.OCR_V3_CPU_PROCESSOR_ID,
+                "gpu_v3": ocr_contract.OCR_V3_GPU_PROCESSOR_ID,
                 "cpu": ocr_contract.OCR_CPU_PROCESSOR_ID,
                 "gpu": ocr_contract.OCR_GPU_PROCESSOR_ID,
             },
             "config_hashes": {
                 "cpu": ocr_contract.OCR_CPU_CONFIG_HASH,
                 "gpu": ocr_contract.OCR_GPU_CONFIG_HASH,
+                "cpu_v3": ocr_contract.OCR_V3_CPU_CONFIG_HASH,
+                "gpu_v3": ocr_contract.OCR_V3_GPU_CONFIG_HASH,
+                "cpu_v2": ocr_contract.OCR_V2_CPU_CONFIG_HASH,
+                "gpu_v2": ocr_contract.OCR_V2_GPU_CONFIG_HASH,
                 "legacy": ocr_contract.CONFIG_HASH,
             },
             "current_results_by_processor": current_profiles,
@@ -373,6 +389,7 @@ def ocr_summary(
             "config_hash": ocr_contract.OCR_GPU_CONFIG_HASH,
             "weights_present": weights_present,
             "documents": documents,
+            "unavailable_assets": unavailable_assets,
             "stale_documents": stale,
             "regions": regions,
             "low_confidence_regions": low,

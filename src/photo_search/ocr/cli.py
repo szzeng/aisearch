@@ -152,6 +152,17 @@ def _weights_payload(data_root: Path) -> dict[str, Any]:
     resolved = weights.resolve_and_verify(data_root)
     return {
         "status": "ok",
+        "processor_id": contract.OCR_PROCESSOR_ID,
+        "processor_profiles": {
+            "cpu": contract.OCR_CPU_PROCESSOR_ID,
+            "gpu": contract.OCR_GPU_PROCESSOR_ID,
+        },
+        "execution_config_hashes": {
+            "cpu": contract.OCR_CPU_CONFIG_HASH,
+            "gpu": contract.OCR_GPU_CONFIG_HASH,
+        },
+        "min_text_score": contract.MIN_TEXT_SCORE,
+        "low_confidence_threshold": contract.LOW_CONFIDENCE_THRESHOLD,
         "model_root": str(resolved.root),
         "model_fingerprint": resolved.fingerprint,
         "config_hash": resolved.config_hash,

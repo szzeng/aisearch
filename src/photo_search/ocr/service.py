@@ -53,6 +53,7 @@ _TARGET_SQL = (
     "SELECT DISTINCT a.asset_id AS asset_id, a.sha256 AS sha256 "
     "FROM assets AS a "
     "JOIN file_locations AS f ON f.asset_id = a.asset_id AND f.availability = 'PRESENT' "
+    "JOIN source_roots AS s ON s.source_id = f.source_id AND s.status = 'ONLINE' "
     "WHERE {filters} "
     "ORDER BY a.asset_id"
 )
@@ -272,6 +273,11 @@ def enqueue_targets(
             ):
                 rewound += 1
                 continue
+            existing = connection.execute(
+                "SELECT 1 FROM jobs WHERE subject_type = 'asset' AND subject_id = ? "
+                "AND input_revision = ? AND task_type = ? AND processor_id = ?",
+                (str(asset_id), revision, contract.OCR_TASK_TYPE, processor_id),
+            ).fetchone()
             jobs.enqueue(
                 connection,
                 subject_type="asset",
@@ -282,7 +288,7 @@ def enqueue_targets(
                 now_ms=int(now_ms),
                 requested_device=str(requested_device),
             )
-            queued += 1
+            queued += int(existing is None)
     return {"targets": len(targets), "queued": queued, "rewound": rewound, "live": live}
 
 
@@ -385,8 +391,7 @@ def pending_job_count(catalog: Catalog) -> int:
         "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
         "WHERE j.subject_type = 'asset' AND j.task_type = ? "
         f"AND j.processor_id IN ({slots}) AND j.state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT') "
-        "AND j.input_revision = a.sha256 AND NOT EXISTS (SELECT 1 FROM asset_ocr_text AS t "
-        "WHERE t.asset_id = a.asset_id AND t.input_revision = a.sha256)",
+        "AND j.input_revision = a.sha256",
         (contract.OCR_TASK_TYPE, *processors),
     )
     return int(row["total"])
