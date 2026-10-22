@@ -1360,7 +1360,12 @@ def search_request(
             # FTS stops at top_k. A full text batch may have more matches, even though
             # the session itself fits its bound; do not imply the snapshot is exhaustive.
             candidates_truncated=(
-                len(entries) > MAX_SESSION_IDS
+                (
+                    match is None
+                    and query_vector is None
+                    and bool(candidate["authoritative"].get("truncated", False))
+                )
+                or len(entries) > MAX_SESSION_IDS
                 or (request.retrieval_mode == "text" and match is not None
                     and len(candidate["channels"][FTS_CHANNEL]) >= int(request.top_k))
             ),

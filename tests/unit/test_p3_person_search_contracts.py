@@ -29,6 +29,7 @@ from photo_search.search.contracts import MAX_PERSON_IDS as REQUEST_MAX_PERSON_I
 from photo_search.search.contracts import SearchRequest
 from photo_search.search.retrieval import MAX_PERSON_IDS as RETRIEVAL_MAX_PERSON_IDS
 from photo_search.search.retrieval import SearchScope, scope_view
+from photo_search.search.sessions import MAX_SESSION_IDS
 from photo_search.search.sessions import SESSION_TTL_MS as SESSION_TTL_MS_IMPL
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +59,7 @@ CONTRACT_VERSION = "p3-person-search-contracts.v1"
 SEARCH_CONTRACT_VERSION = "p2-contracts.v1"
 MAX_PERSON_IDS = 100
 MAX_TOP_UP = 200
-MAX_AUTHORITY_PAGE = 1000
+MAX_AUTHORITY_PAGE = MAX_SESSION_IDS
 SESSION_TTL_MS = 600000
 
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))

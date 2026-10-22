@@ -14,7 +14,7 @@
     "ContractVersion": { "const": "p3-person-search-contracts.v1" },
     "SearchContractVersion": { "const": "p2-contracts.v1" },
     "MaxPersonFilterIds": { "const": 100 },
-    "MaxAuthorityPageAssets": { "const": 1000 },
+    "MaxAuthorityPageAssets": { "const": 5000 },
     "MaxTopUpEntries": { "const": 200 },
     "SessionTtlMs": { "const": 600000 },
     "PersonId": { "type": "integer", "minimum": 1 },

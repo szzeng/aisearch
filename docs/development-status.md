@@ -1,3 +1,7 @@
+## Current task: P4-SEARCH-AUTHORITY-LIMIT-FIX（2026-10-23）
+
+旧 session-backed 纯筛选搜索的权威候选列表与 `MAX_SESSION_IDS` 共用 5000 上限；4319 项隔离合成数据按页完整遍历无重复/遗漏/错序，5005 项正确截断并报告真实总数。文字、语义、图片通道与会话/契约定向回归 **114 passed / 0 failed / 0 errors / 0 skipped**；Ruff、Python 编译与 `git diff --check` 通过。未修改 JS，未访问真实图库，未运行全仓/规模测试，未推送。详见[任务卡](tasks/P4-SEARCH-AUTHORITY-LIMIT-FIX.md)与[报告](reports/P4-SEARCH-AUTHORITY-LIMIT-FIX.md)。
+
 ## Current task: P4-UI2-OVERALL-UX-POLISH（续做至 2026-10-23）
 
 P4-UI2-OVERALL-UX-POLISH 已完成共享查看器 Back/Forward、人物目录/相册和照片合集导航、旧默认搜索快照兼容、照片时间说明/人物空态文案，以及搜索 A/B/C 原位替换、快照 token 清理。此前 H01–H05、H08 与搜索 B→查看器→人物相册连续返回、刷新/深链/无效筛选路径已有隔离合成浏览器证据。本轮续做修复地图完整详情回返：只保存中心、缩放、排序、滚动和成员版本，返回后按最新版本重新获取点与照片；地图回返链接增加有效状态校验。主页照片查看器→完整详情使用同文档 History 项；Luna High 复现的 `popstate`→`hashchange` 关闭竞态已修复，合成浏览器确认详情→Back 查看器→Forward 详情→Back 查看器。Luna High 提出的普通 viewer 过渡标记残留也已修复并确认关闭。隔离数据补验地点相册返回和底部滚动恢复、地图缩放→查看照片完整详情→回地图恢复 5 个有效 GPS 成员、通过将临时 `map_member_revision` 96→97 验证过期回返快照被丢弃、独立照片深链刷新及无来源关闭回首页。窄视口 390×844 下 DOM 宽度 375/375，无横向溢出。搜索/图库管理布局检查未发现范围内可复现缺陷。最新受影响定向 JUnit **17/17**（`viewer-detail-transition-final-20261023.xml`），`node --check`（photo-info.js/app.js/search.js/map.js/persons-albums.js）与 `git diff --check` 通过。Luna High 独立跟进未发现 blocker 或新 finding；此前地图与快照复核无 blocker。损坏 JSON 快照现在在解析失败时仍会清理；由契约测试覆盖，浏览器评估接口不能写 sessionStorage，未直接注入畸形数据。地图瓦片因未配置天地图 Key 未验证；精确滚动锚点、固定范围重提交流程和原生 200% 缩放仍未验证。故原全站任务继续为 **IMPLEMENTED / ACCEPTANCE PARTIAL**，不标记完成。未访问真实图库/原图，未运行全仓、GPU 或规模性能验证；任务范围改动已本地提交 `5dfd2eb`，未推送。详见[任务卡](tasks/P4-UI2-OVERALL-UX-POLISH.md)与[报告](reports/P4-UI2-OVERALL-UX-POLISH.md)。

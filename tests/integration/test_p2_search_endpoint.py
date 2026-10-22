@@ -414,6 +414,90 @@ def test_paging_walks_one_frozen_order_without_repeats_or_gaps(search_env: Searc
     assert second["total_candidates"] == first["total_candidates"]
 
 
+@pytest.mark.parametrize("matching_count,expected_count,truncated", [(4319, 4319, False), (5005, 5000, True)])
+def test_filter_only_search_pages_through_session_bound_without_gaps(
+    search_env: SearchEnv, matching_count: int, expected_count: int, truncated: bool
+) -> None:
+    """The legacy session-backed filter route publishes its full bounded authority."""
+    with search_env.catalog.write() as connection:
+        source_id = int(
+            connection.execute(
+                "INSERT INTO source_roots(display_name, root_path, status) "
+                "VALUES ('synthetic authority', 'synthetic://authority', 'ONLINE')"
+            ).lastrowid
+        )
+        assets = [
+            (f"{index:064x}", 1, 1, 1, "JPEG", 1_700_000_000, "ACTIVE")
+            for index in range(matching_count)
+        ]
+        connection.executemany(
+            "INSERT INTO assets(sha256, byte_size, width, height, format, created_at, state) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            assets,
+        )
+        first_asset_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0]) - matching_count + 1
+        locations = [
+            (
+                source_id,
+                f"synthetic-{index:05d}.jpg",
+                f"synthetic-{index:05d}.jpg",
+                first_asset_id + index,
+                1,
+                1,
+                "PRESENT",
+            )
+            for index in range(matching_count)
+        ]
+        connection.executemany(
+            "INSERT INTO file_locations(source_id, relative_path, path_key, asset_id, size, "
+            "mtime_ns, availability) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            locations,
+        )
+
+    async def scenario(client: Any) -> list[dict[str, Any]]:
+        csrf = await search_env.authenticate(client)
+        payload = search_body(
+            search_env, text=None, source_id=source_id, page_size=100, request_id="filter-0"
+        )
+        pages: list[dict[str, Any]] = []
+        while True:
+            response = await post_search(client, payload, csrf)
+            assert response.status_code == 200, response.text
+            page = response.json()
+            pages.append(page)
+            if not page["has_more"]:
+                break
+            payload = search_body(
+                search_env,
+                text=None,
+                source_id=source_id,
+                page_size=100,
+                request_id=f"filter-{len(pages)}",
+                search_session_id=page["search_session_id"],
+                cursor=page["next_cursor"],
+            )
+        return pages
+
+    pages = search_env.scenario(scenario)
+    ids = [hit["asset_id"] for page in pages for hit in page["hits"]]
+    expected_ids = list(range(first_asset_id, first_asset_id + expected_count))
+    assert len(pages) == (expected_count + 99) // 100
+    assert ids == expected_ids
+    assert len(set(ids)) == expected_count
+    assert pages[0]["page_offset"] == 0
+    assert pages[-1]["has_more"] is False
+    assert pages[-1]["page_offset"] + len(pages[-1]["hits"]) == expected_count
+    for page in pages:
+        assert page["total_candidates"] == expected_count
+        assert page["candidates_truncated"] is truncated
+        assert page["channels"]["authoritative"] == {
+            "total": matching_count,
+            "listed": expected_count,
+            "truncated": truncated,
+            "order": "asset_id",
+        }
+
+
 def test_a_foreign_tampered_or_stale_cursor_is_never_reinterpreted(search_env: SearchEnv) -> None:
     async def scenario(client: Any) -> dict[str, Any]:
         csrf = await search_env.authenticate(client)

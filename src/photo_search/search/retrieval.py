@@ -40,6 +40,7 @@ from photo_search.persons.members import MEMBER_PREDICATE
 from photo_search.places.filter import place_condition, place_filter_summary
 from photo_search.search import query as search_query
 from photo_search.search.documents import TEXT_COLUMNS
+from photo_search.search.sessions import MAX_SESSION_IDS
 from photo_search.search.tokens import VALIDATION_ERROR, MatchQuery
 from photo_search.taken_time import contract as time_contract
 from photo_search.taken_time import read as time_read
@@ -69,9 +70,9 @@ MAX_TOP_K = 5000
 SCOPE_BLOCK_SIZE = 15000
 #: Safety valve for a runaway scan; an incomplete scan is reported, never hidden.
 MAX_VECTOR_BLOCKS = 1000
-#: How many ids the authoritative page publishes (architecture §9.5: at most 1000
-#: ordered ids per search session).
-AUTHORITY_PAGE_LIMIT = 1000
+#: A search session and its authoritative FILTER_ONLY candidate list share one bound. Keep
+#: the compatibility name because diagnostics and contract tests import it directly.
+AUTHORITY_PAGE_LIMIT = MAX_SESSION_IDS
 #: How many "semantic projection still pending" entries the response carries.
 TOPUP_LIMIT = 200
 #: The availability spellings the asset listing already accepts (P1-04).
