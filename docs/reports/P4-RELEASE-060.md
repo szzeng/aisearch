@@ -11,4 +11,4 @@
 
 ## Git 交付
 
-待本地提交与 tag 创建后补充目标 SHA 和状态。未授权推送或创建 GitHub Release。
+版本更新提交：`3a23852c58266b1a2a595bc39eeb167455418f8d`。本地 annotated tag `0.6.0` 已创建并指向该提交；未推送，也未创建 GitHub Release。原 HEAD 含一个先前未推送提交，另有 tag 回执文档提交，因此本地 master 相对 `origin/master` 超前三个提交。
