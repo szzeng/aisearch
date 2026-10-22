@@ -99,6 +99,7 @@ class ApiContext:
         self.model_resource_gate = ModelResourceGate()
         self._data_root_lease: Any | None = None
         self._embedding_candidate_manager: Any | None = None
+        self._tag_build_manager: Any | None = None
 
     def set_data_root_lease(self, lease: Any | None) -> None:
         """Record the actual lifespan-owned data-root lease; booleans cannot stand in for it."""
@@ -128,6 +129,16 @@ class ApiContext:
         stop = getattr(encoder, "close", None)
         if callable(stop):
             stop()
+
+    def tag_build_manager(self) -> Any:
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("the application is closing")
+            if self._tag_build_manager is None:
+                from photo_search.tagging.task import TagBuildManager
+
+                self._tag_build_manager = TagBuildManager(self)
+            return self._tag_build_manager
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -168,6 +179,7 @@ class ApiContext:
                 "content_query": result.get("content_query"),
                 "intent_plan": result.get("intent_plan"),
                 "filters": result.get("filters"),
+                "category_rank": result.get("category_rank"),
             },
             "payload": clean_payload,
         }
@@ -447,6 +459,10 @@ class ApiContext:
             self._closed = True
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
+            tag_manager = self._tag_build_manager
+            self._tag_build_manager = None
+        if tag_manager is not None:
+            tag_manager.close()
         candidate_manager = self._embedding_candidate_manager
         self._embedding_candidate_manager = None
         if candidate_manager is not None:

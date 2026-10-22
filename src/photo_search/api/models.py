@@ -1603,6 +1603,8 @@ class PlaceAwareSearchRequestModel(SearchRequestModel):
     #: members and revisions; clients never send asset IDs as the authority.
     search_scope: dict[str, Any] | None = None
     favorites_only: StrictBool = False
+    #: Explicit experiment; frozen ordinary /search and uploaded-image requests stay unchanged.
+    category_rank: Literal["off", "album-qwen512-v1", "ram-plus-v1"] = "off"
 
 
 class SearchHitModel(BaseModel):

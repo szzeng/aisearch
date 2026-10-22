@@ -25,6 +25,7 @@ import base64
 import binascii
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -577,6 +578,7 @@ def _channel_summary(
     top_k: int,
     image_query: bool = False,
     retrieval_mode: str = "combined",
+    category_query: bool = False,
 ) -> dict[str, Any]:
     """Post-retrieval per-channel metadata and the independent strong-match display count.
 
@@ -593,7 +595,7 @@ def _channel_summary(
     scan = payload["vector_scan"] or {}
     engaged = binding is not None and (match is not None or bool(image_query))
     scan_truncated = bool(scan.get("truncated"))
-    threshold = strong_match_max_distance(getattr(binding, "space_id", None))
+    threshold = None if category_query else strong_match_max_distance(getattr(binding, "space_id", None))
     strong_match_count = (
         sum(float(row["distance"]) <= threshold for row in vector_rows)
         if threshold is not None
@@ -1030,7 +1032,7 @@ def _result_envelope(
     taken_time: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One page as the frozen ``SearchResult`` envelope (the session carries the rest)."""
-    return SearchResult(
+    result = SearchResult(
         request_id=request.request_id,
         retrieval_mode=request.retrieval_mode,
         search_session_id=session.session_id,
@@ -1060,6 +1062,9 @@ def _result_envelope(
         taken_time=None if taken_time is None else dict(taken_time),
         state=str(session.state),
     ).to_envelope()
+    if "category_rank" in session.extra:
+        result["category_rank"] = dict(session.extra["category_rank"])
+    return result
 
 
 def search_request(
@@ -1073,6 +1078,8 @@ def search_request(
     rerank_timeout_ms: int = DEFAULT_RERANK_TIMEOUT_MS,
     query_vector: Sequence[float] | None = None,
     query_identity: str | None = None,
+    category_rank: str = "off",
+    category_data_root: Any = None,
     album_asset_ids: Sequence[int] | None = None,
     album_scope_revision: Sequence[Any] | None = None,
     collection_id: int | None = None,
@@ -1104,7 +1111,15 @@ def search_request(
     # mix two authority states either. The revision is the pre-binding of this new search.
     diagnostic_started = time.perf_counter() if perf_metrics is not None else 0.0
     search_prepare_recorded = False
-    request.validate_retrieval_mode(image_query=query_vector is not None or query_identity is not None)
+    image_query = query_vector is not None or query_identity is not None
+    request.validate_retrieval_mode(image_query=image_query)
+    from photo_search.search import category_rank as categories
+    from photo_search.tagging import search as tags
+
+    if category_rank != "off" and (
+            category_rank not in (categories.VERSION, tags.VERSION) or image_query
+            or request.retrieval_mode != "combined" or request.rerank):
+        raise categories.unavailable("INCOMPATIBLE_REQUEST")
     from photo_search.favorites import _revision
 
     favorites_revision = _revision(catalog.connection) if favorites_only else None
@@ -1135,6 +1150,18 @@ def search_request(
     match = build_match(request.text) if request.text is not None else None
     profile = None if request.retrieval_mode == "text" else _resolve_profile(catalog, request)
     binding = None if request.retrieval_mode == "text" else _resolve_binding(catalog, request, profile)
+    category_query = None
+    tag_query = None
+    if category_rank == tags.VERSION:
+        tag_query = tags.resolve_tag_query(
+            catalog, category_data_root or catalog.data_root, binding, request.text,
+        )
+        category_query = tag_query
+    elif category_rank != "off":
+        category_query = categories.resolve_category_query(
+            category_data_root or catalog.data_root, binding, request.text,
+        )
+        query_vector = category_query.vector
     if perf_metrics is not None:
         perf_metrics["binding"] = None if binding is None else {
             **binding.to_dict(), "profile_id": None if profile is None else profile.profile_id,
@@ -1194,6 +1221,8 @@ def search_request(
             album_asset_ids=current.album_asset_ids,
             album_scope_revision=album_scope_revision,
             favorites_only=favorites_only,
+            category_identity=(None if category_query is None else
+                               (category_rank, category_query.identity, category_query.class_id)),
         )
 
     digest = digest_of(scope)
@@ -1204,23 +1233,32 @@ def search_request(
                 "read-only session validation requires only a search_session_id",
                 field="search_session_id",
             )
-        session = _validate_search_session(
-            catalog, request, sessions=sessions, scope=scope, profile=profile,
-            binding=binding, digest=digest, session_id=request.search_session_id,
-            offset=None, album_scope_revision=album_scope_revision,
-        )
+        with catalog.read_snapshot() if tag_query is not None else nullcontext():
+            if tag_query is not None:
+                tags.require_current(catalog, tag_query)
+            session = _validate_search_session(
+                catalog, request, sessions=sessions, scope=scope, profile=profile,
+                binding=binding, digest=digest, session_id=request.search_session_id,
+                offset=None, album_scope_revision=album_scope_revision,
+            )
         return {"valid": True, "search_session_id": session.session_id}
     if request.cursor is not None:
-        return _continue_session(
-            catalog,
-            request,
-            sessions=sessions,
-            scope=scope,
-            profile=profile,
-            binding=binding,
-            digest=digest,
-            album_scope_revision=album_scope_revision,
-        )
+        # Only the bounded continuation reads share this snapshot, never model
+        # inference or retrieval. Its first read is the publication linearization
+        # point: a later tag commit can invalidate the next request, not mix this page.
+        with catalog.read_snapshot() if tag_query is not None else nullcontext():
+            if tag_query is not None:
+                tags.require_current(catalog, tag_query)
+            return _continue_session(
+                catalog,
+                request,
+                sessions=sessions,
+                scope=scope,
+                profile=profile,
+                binding=binding,
+                digest=digest,
+                album_scope_revision=album_scope_revision,
+            )
     if request.search_session_id is not None:
         raise _refuse(
             INVALID_CURSOR,
@@ -1312,6 +1350,15 @@ def search_request(
         if int(candidate["catalog_filter_revision"]) != base.filter_revision:
             return None  # the cheap early discard: nothing is built or rendered
         entries = perf_diagnostics.timed_call(perf_metrics, "entries_build_ms", _entries_of, candidate)
+        base_candidate_count = len(entries)
+        tag_coverage = {}
+        if tag_query is not None:
+            # Freeze the same bounded base candidate set as ordinary search before
+            # applying machine evidence. No extra recall or hidden membership filter.
+            entries, tag_coverage = perf_diagnostics.timed_call(
+                perf_metrics, "tag_rerank_ms", tags.rerank,
+                catalog, tag_query, entries[:MAX_SESSION_IDS],
+            )
         outcome = perf_diagnostics.timed_call(perf_metrics, "rerank_ms", _rerank_outcome,
             catalog,
             request,
@@ -1343,8 +1390,9 @@ def search_request(
                 match=match,
                 binding=binding,
                 top_k=int(request.top_k),
-                image_query=query_vector is not None,
+                image_query=image_query,
                 retrieval_mode=request.retrieval_mode,
+                category_query=category_query is not None,
             ),
             pending_semantic=candidate["pending_semantic"],
             search_projection=candidate["search_projection"],
@@ -1356,7 +1404,7 @@ def search_request(
             # FTS stops at top_k. A full text batch may have more matches, even though
             # the session itself fits its bound; do not imply the snapshot is exhaustive.
             candidates_truncated=(
-                len(entries) > MAX_SESSION_IDS
+                base_candidate_count > MAX_SESSION_IDS
                 or (request.retrieval_mode == "text" and match is not None
                     and len(candidate["channels"][FTS_CHANNEL]) >= int(request.top_k))
             ),
@@ -1365,6 +1413,8 @@ def search_request(
                 "requested_profile_id": request.profile_id,
                 "retrieval_mode": request.retrieval_mode,
                 "candidate_limit": min(int(request.top_k), MAX_SESSION_IDS),
+                **({} if category_query is None else
+                   {"category_rank": {**category_query.summary(applied=True), **tag_coverage}}),
                 **(
                     {} if album_scope_revision is None
                     else {"album_scope_revision": list(album_scope_revision)}
@@ -1395,6 +1445,8 @@ def search_request(
                 return None
             if favorites_revision is not None and _revision(catalog.connection) != favorites_revision:
                 return None
+            if tag_query is not None:
+                tags.require_current(catalog, tag_query)
         finally:
             if perf_metrics is not None:
                 perf_diagnostics.add_duration(

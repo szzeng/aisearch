@@ -324,6 +324,16 @@ def test_cuda_detector_explicitly_uses_mixed_providers_while_recognition_stays_s
     fake_pinned(tmp_path, monkeypatch)
     resolved = weights.verify(weights.resolve(tmp_path))
     calls: list[dict[str, Any]] = []
+    preload_calls: list[bool] = []
+    preload_report = {"loaded": True, "mode": "unit-test-stub"}
+
+    def preload() -> dict[str, Any]:
+        preload_calls.append(True)
+        return preload_report
+
+    # Fake model files and fake sessions must not load the machine's CUDA DLLs.
+    # Keep the CUDA setup ordering assertion while isolating native availability.
+    monkeypatch.setattr("photo_search.face.engine.preload_runtime_dlls", preload)
 
     class Session:
         def __init__(self, providers: list[Any]) -> None:
@@ -335,6 +345,7 @@ def test_cuda_detector_explicitly_uses_mixed_providers_while_recognition_stays_s
             return self._providers
 
     def factory(path: str, *, sess_options: Any, providers: list[Any]) -> Session:
+        assert preload_calls == [True]
         calls.append({"path": path, "options": sess_options, "providers": providers})
         return Session(providers)
 
@@ -346,6 +357,7 @@ def test_cuda_detector_explicitly_uses_mixed_providers_while_recognition_stays_s
     )
 
     detector, recognizer = calls
+    assert engine.dll_report is preload_report
     assert detector["providers"] == [(CUDA_PROVIDER, {"use_tf32": "0"}), CPU_PROVIDER]
     with pytest.raises(RuntimeError):
         detector["options"].get_session_config_entry(DISABLE_CPU_FALLBACK_KEY)

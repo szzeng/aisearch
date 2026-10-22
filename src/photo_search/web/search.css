@@ -369,7 +369,15 @@ body.search-page .search-preview-person img { width: 3rem; height: 3rem; border-
 
 @media (max-width: 760px) {
   body.search-page.app-shell .app-workspace > .app-header.has-global-search { grid-template-columns: minmax(0, 1fr); }
-  body.search-page .app-header.has-global-search > .search-coverage-entry { grid-column: 1; grid-row: 4; justify-self: start; }
+  body.search-page .app-header.has-global-search > .search-header-actions {
+    grid-column: 1;
+    grid-row: 4;
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  body.search-page .search-model-link { overflow-wrap: anywhere; }
   body.search-page .app-workspace > main { padding-top: 0.65rem; }
   body.search-page .panel { padding: 0.8rem; }
   body.search-page #result-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.6rem; }

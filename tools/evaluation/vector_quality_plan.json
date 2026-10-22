@@ -1,0 +1,97 @@
+{
+  "schema": "vector-quality-decision-plan-v1",
+  "created": "2026-10-21",
+  "phase": "Exploratory follow-up on a previously inspected public dataset; frozen before new intervention results, not an independent holdout.",
+  "performance": {
+    "flow_risk": "CPU-only independent scoring and diagnostic evaluation of 500 fixed public images; no library/database/model writes and no GPU use.",
+    "approach_bounds": "Reuse cached 2048D vectors, at most 500 images x 12 queries per scheme; evaluate each candidate once. No all-library scan, no model load, no label-guided crop.",
+    "validation_stop": "Verify all input hashes/identities, finite vectors and exact full-set rankings; stop on identity mismatch or malformed output. Report elapsed CPU analysis only, not application latency."
+  },
+  "sample": ".tmp/wemm-pilot/datasets/sample.json",
+  "labels": ".tmp/wemm-pilot/datasets/labels.json",
+  "queries": ".tmp/wemm-pilot/datasets/queries.json",
+  "baseline_schemes": [
+    "qwen512",
+    "qwen1024",
+    "qwen2048",
+    "wemm512"
+  ],
+  "primary_quality": [
+    "macro AP across the eight completely annotated categories",
+    "cat AP and relevant-item rank distribution over all 500 images"
+  ],
+  "secondary_quality": [
+    "P20",
+    "P50",
+    "P100",
+    "Recall20",
+    "Recall50",
+    "Recall100",
+    "Recall200",
+    "cat relevant rank P50/P90/P95/max",
+    "first COCO-unannotated cat result rank"
+  ],
+  "subsets": [
+    "all500",
+    "random250",
+    "targeted250"
+  ],
+  "subset_policy": "Filter full scores/rankings to the fixed subset, then recompute metrics. Do not substitute different samples or remove failures.",
+  "area_groups": [
+    {
+      "name": "tiny_le_1pct",
+      "lower_exclusive": 0,
+      "upper_inclusive": 0.01
+    },
+    {
+      "name": "small_1_to_5pct",
+      "lower_exclusive": 0.01,
+      "upper_inclusive": 0.05
+    },
+    {
+      "name": "medium_5_to_20pct",
+      "lower_exclusive": 0.05,
+      "upper_inclusive": 0.2
+    },
+    {
+      "name": "large_gt_20pct",
+      "lower_exclusive": 0.2,
+      "upper_inclusive": 1.0
+    }
+  ],
+  "area_policy": "Use sample category_max_area_fraction, the largest COCO annotated instance area divided by image area. Diagnostic recall and positive rank over the unchanged full candidate pool only; do not count positives in other area groups as negatives or feed annotations into preprocessing. Zero/unknown separately reported; no subgroup AP claims.",
+  "tradeoff_policy": "Keep per-category AP/precision/recall and all seven non-cat regressions. Compare quality against encoding/query wall time, VRAM, index size and whether an index rebuild is required. No single-score winner or automatic production default change.",
+  "candidate_bound": "Query wording/ensemble, image pixel budget, deterministic label-free crops and bounded reranking are exploratory configurations with separate identities. No tuning to individual asset IDs or ground-truth boxes.",
+  "limits": [
+    "Labels describe COCO object presence, not dominant subject; incomplete annotations and cat depictions are possible.",
+    "The four quantity/color/action/relation queries lack complete labels and receive no AP/precision/recall claims.",
+    "Top100 on a 500-image subset is not recall in a 300k private library.",
+    "All sample images are at most 640 pixels per side; higher input pixel experiments here cannot establish behavior on full-resolution phone originals.",
+    "No data-independent statistical significance or real-library quality is claimed; random and targeted strata stay separately visible."
+  ],
+  "reranker_sensitivity": {
+    "schema": "vector-quality-reranker-sensitivity-v1",
+    "frozen": "2026-10-21 before full 800-pair run result analysis",
+    "baseline": "Qwen2048 original Chinese category words",
+    "candidate_counts": [
+      20,
+      50,
+      100
+    ],
+    "method": "Reuse the same independent query-image scores from the frozen 8x100 experiment. For each K, rerank only the original top K by descending raw yes-minus-no logit, then ascending numeric asset ID for exact ties; append baseline ranks K+1..500 unchanged.",
+    "required_invariants": [
+      "top-K asset membership unchanged",
+      "tail order unchanged",
+      "no missing or duplicate candidates",
+      "Recall@K and Precision@K unchanged by reranking the same K",
+      "all 8 categories reported, including regressions"
+    ],
+    "cost": "Sum actual per-pair total_ms for the original top K, per query, plus separately reported model loading; subset sums are an observed component-cost estimate, not a separately executed end-to-end request or concurrency guarantee.",
+    "limits": [
+      "Top20 reranking cannot improve P20, only ordering inside it",
+      "Top100 cannot rescue a relevant photo originally ranked beyond100",
+      "sigmoid values are model scores, not calibrated relevance probabilities",
+      "no extra GPU pairs and no change to the original Top100 plan"
+    ]
+  }
+}

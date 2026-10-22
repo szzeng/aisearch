@@ -1022,7 +1022,15 @@ async def request_library_refresh(
     source_ids = None if payload is None else payload.source_ids
     mode = "refresh" if payload is None else str(payload.mode)
     face_profile = None if payload is None else payload.face_profile
-    return context_of(request).refresher().start(
+    context = context_of(request)
+    tag_task = context.tag_build_manager().status()
+    if context.model_resource_gate.reserved or (
+            tag_task and tag_task.get("status") in {"RUNNING", "PAUSE_REQUESTED"}):
+        raise CatalogError(
+            "RUNTIME_CAPABILITY_UNAVAILABLE", "请先暂停物体识别或等待模型任务完成，再更新图库",
+            details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+        )
+    return context.refresher().start(
         source_ids, mode=mode, face_profile=face_profile
     )
 
@@ -1590,6 +1598,7 @@ async def create_photo_collection_from_search(payload: PhotoCollectionFromSearch
     if source["mode"] != payload.mode:
         raise ApiError(INVALID_CURSOR, "保存模式与搜索来源不符，请重新搜索", status=409)
     ids: list[int] = []
+    expected_tag_revision = None
     expected_catalog_revision = source.get("catalog_filter_revision")
     place_scope = source.get("place_scope")
     expected_place_scope = None if not isinstance(place_scope, dict) else (
@@ -1631,6 +1640,9 @@ async def create_photo_collection_from_search(payload: PhotoCollectionFromSearch
         ids = [int(entry.asset_id) for entry in session.entries]
         expected_catalog_revision = int(session.catalog_filter_revision)
         expected_favorites_revision = session.extra.get("favorites_revision")
+        from photo_search.tagging.search import revision_binding
+
+        expected_tag_revision = revision_binding(session.extra.get("category_rank"))
     else:
         service = context.service()
         try:
@@ -1683,6 +1695,7 @@ async def create_photo_collection_from_search(payload: PhotoCollectionFromSearch
         expected_photo_collection=expected_photo_collection,
         expected_person_collection=expected_person_collection,
         expected_place_scope=expected_place_scope,
+        expected_tag_revision=expected_tag_revision,
     )
 
 
@@ -1741,6 +1754,7 @@ async def append_photo_collection_from_search(payload: PhotoCollectionAppendFrom
         int(person_scope["collection_id"]), str(person_scope["instance_token"]), int(person_scope["revision"])
     )
     ids: list[int] = []
+    expected_tag_revision = None
     if payload.mode == "ranked_candidates":
         session = context.search_sessions.get(str(source["search_session_id"]))
         if session is None:
@@ -1764,6 +1778,9 @@ async def append_photo_collection_from_search(payload: PhotoCollectionAppendFrom
         ids = [int(entry.asset_id) for entry in session.entries]
         expected_catalog_revision = int(session.catalog_filter_revision)
         expected_favorites_revision = session.extra.get("favorites_revision")
+        from photo_search.tagging.search import revision_binding
+
+        expected_tag_revision = revision_binding(session.extra.get("category_rank"))
     else:
         try:
             seed = PlaceAwareSearchRequestModel.model_validate(source["payload"])
@@ -1808,6 +1825,7 @@ async def append_photo_collection_from_search(payload: PhotoCollectionAppendFrom
         expected_photo_collection=expected_photo_collection,
         expected_person_collection=expected_person_collection,
         expected_place_scope=expected_place_scope,
+        expected_tag_revision=expected_tag_revision,
         idempotency=(payload.request_id, hashlib.sha256(auth_session_id.encode()).hexdigest(), append_payload_hash),
     )
 
@@ -3478,6 +3496,24 @@ def _search_session_time_worker(
             "this page belongs to a different search profile or index generation",
             details={"reason": "SESSION_BINDING_CHANGED", "search_session_id": session.session_id},
         )
+    category_summary = session.extra.get("category_rank")
+    tag_query = None
+    if category_summary is not None:
+        from photo_search.search.category_rank import resolve_category_query
+        from photo_search.tagging import search as tags
+
+        current_category = (
+            tags.resolve_tag_query(catalog, data_root, current_binding, session.query.get("text"))
+            if category_summary.get("requested") == tags.VERSION else
+            resolve_category_query(data_root, current_binding, session.query.get("text"))
+        )
+        current_summary = current_category.summary(applied=True)
+        if category_summary.get("requested") == tags.VERSION:
+            tag_query = current_category
+        if any(current_summary.get(key) != category_summary.get(key)
+               for key in ("requested", "identity", "class_id")):
+            raise CatalogError(INVALID_CURSOR, "类别排序配置已变化，请重新搜索",
+                               details={"reason": "CATEGORY_RANK_CHANGED"})
     search_scope = session.extra.get("search_scope")
     if not isinstance(search_scope, SearchScope):
         raise CatalogError(
@@ -3555,6 +3591,10 @@ def _search_session_time_worker(
             raise ApiError("PHOTO_COLLECTION_REVISION_STALE", "照片合集已变化，请重新搜索", status=409,
                            details={"reason": "PHOTO_COLLECTION_REVISION_CHANGED"})
     with catalog.read_snapshot() as conn:
+        if tag_query is not None:
+            # Bind tag identity to the same snapshot as membership/time reads.
+            # No model work or whole-library lock is held by this bounded page.
+            tags.require_current(catalog, tag_query)
         if favorites_revision is not None:
             from photo_search.favorites import _revision
 
@@ -3681,6 +3721,7 @@ def _search_session_time_worker(
             ),
             "catalog_filter_revision": revision,
             "taken_time_rules_version": time_rules_version,
+            **({} if category_summary is None else {"category_rank": dict(category_summary)}),
             "assets": assets,
             "next_cursor": next_cursor,
         }
@@ -3764,6 +3805,15 @@ def _place_aware_search_worker(
     favorites_revision = _favorites_revision(catalog) if favorites_only else None
     original = payload.original_query
     text_mode = payload.retrieval_mode == "text"
+    from photo_search.search import category_rank as categories
+    from photo_search.tagging import search as tags
+
+    category_enabled = payload.category_rank != "off"
+    if category_enabled and (
+            text_mode or payload.rerank or
+            (payload.category_rank == categories.VERSION and original.strip() not in categories.ALIASES)):
+        raise categories.unavailable("UNSUPPORTED_QUERY" if not text_mode and not payload.rerank
+                                     else "INCOMPATIBLE_REQUEST")
     if text_mode:
         SearchRequest(
             request_id=payload.request_id, retrieval_mode="text", profile_id=payload.profile_id,
@@ -4112,6 +4162,9 @@ def _place_aware_search_worker(
             perf_metrics, "natural_intent_ms", parse_natural_intent,
             query_text or "", connection=service.catalog.connection,
         )
+        if natural["state"] == "unsupported":
+            return {"unsupported_intent": True, "original_query": original,
+                    "notice": natural["notice"]}
         if parse_notice and natural["state"] != "ambiguous" and not natural["choices"] and not natural["capture_from"]:
             # Keep unknown/negative/multi-place phrases intact unless another condition is
             # positively grounded in the active catalog or capture-time syntax.
@@ -4295,7 +4348,9 @@ def _place_aware_search_worker(
         search_time_parameters += photo_collection_parameters
         search_time_identity += ("photo_collection", photo_collection_scope["photo_collection_id"],
                                  photo_collection_scope["instance_token"], photo_collection_scope["revision"])
-    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope", "favorites_only"})
+    if category_enabled and (query_text or "").strip() != original.strip():
+        raise categories.unavailable("UNSUPPORTED_QUERY")
+    values = payload.model_dump(exclude={"original_query", "content_query", "place_kind", "place_key", "place_cancelled", "intent_plan", "search_scope", "favorites_only", "category_rank"})
     values["text"] = query_text
     if intent_plan is not None:
         for bound in ("capture_from", "capture_to_exclusive"):
@@ -4421,7 +4476,7 @@ def _place_aware_search_worker(
     collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
     session_revision = tuple(revision or ()) + collection_revision + tuple(search_time_identity)
     encoder_started = perf_diagnostics.started() if perf_metrics is not None and not text_mode else 0.0
-    encoder = None if text_mode else context.query_encoder()
+    encoder = None if text_mode or payload.category_rank == categories.VERSION else context.query_encoder()
     if perf_metrics is not None and not text_mode:
         perf_metrics["encoder_resolve_ms"] = perf_diagnostics.elapsed_ms(encoder_started)
     if perf_metrics is not None:
@@ -4431,7 +4486,7 @@ def _place_aware_search_worker(
     result = search_request(
         service.catalog, envelope, sessions=context.search_sessions,
         encoder=encoder,
-        reranker=None if text_mode else context.reranker(),
+        reranker=None if text_mode or category_enabled else context.reranker(),
         album_asset_ids=None if place_membership_sql is not None else album_ids,
         album_scope_revision=session_revision or None,
         collection_id=None if collection_scope is None else collection_scope["collection_id"],
@@ -4440,6 +4495,8 @@ def _place_aware_search_worker(
         additional_condition_sql=search_time_sql,
         additional_condition_parameters=search_time_parameters,
         favorites_only=favorites_only,
+        category_rank=payload.category_rank,
+        category_data_root=data_root,
         perf_metrics=perf_metrics,
     )
     place_aware_finalize_started = (
@@ -4465,6 +4522,25 @@ def _place_aware_search_worker(
     result["collection_scope"] = collection_scope
     result["search_scope"] = resolved_search_scope
     result["photo_collection_source_mode"] = "ranked_candidates"
+    if not category_enabled:
+        # Read bounded metadata only. A missing optional RAM package never loads a model
+        # or changes ordinary results; the existing eight-category head remains a fallback.
+        eligible_text = (query_text if not text_mode and original.strip() == (query_text or "").strip()
+                         else None)
+        if eligible_text:
+            from photo_search.search.retrieval import resolve_binding
+
+            candidate_binding = None if result.get("image_generation_id") is None else resolve_binding(
+                service.catalog, generation_id=result["image_generation_id"],
+                space_id=result["space_id"], dimension=result["dimension"],
+            )
+            result["category_rank"] = tags.availability(
+                service.catalog, data_root, candidate_binding, eligible_text,
+            )
+            if not result["category_rank"]["available"]:
+                result["category_rank"] = categories.availability(data_root, candidate_binding, eligible_text)
+        else:
+            result["category_rank"] = categories.availability(data_root, None, None)
     _attach_favorites_echo(result, favorites_only=favorites_only, favorites_revision=favorites_revision)
     if collection_scope is not None:
         result["filters"]["person_collection"] = dict(collection_scope)
@@ -5348,6 +5424,75 @@ async def get_embedding_task_progress(request: Request) -> dict[str, Any]:
     """Return persisted task progress without aggregating catalog entries."""
     task = context_of(request).embedding_candidate_manager().status(refresh_counts=False)
     return {"candidate_task": task}
+
+
+@router.get("/tagging/status", summary="Read optional object recognition readiness and progress")
+async def get_tagging_status(request: Request) -> dict[str, Any]:
+    from photo_search.tagging import store
+    from photo_search.tagging.model import read_model
+    from photo_search.tagging.policy import POLICY_ID
+
+    context = context_of(request)
+    task = context.tag_build_manager().status()
+    try:
+        model = read_model(context.settings.data_root)
+    except CatalogError as error:
+        return {"installed": False, "reason": error.code, "task": task, "coverage": None}
+    processor = store.processor_id_for(model.model_id, POLICY_ID)
+    coverage = store.status(service_of(request).catalog.connection, processor)
+    return {"installed": True, "reason": None, "class_count": len(model.classes),
+            "task": task, "coverage": None if coverage is None else {
+                "completed_count": coverage["completed_count"],
+                "revision": coverage["revision"], "job_counts": coverage["job_counts"],
+            }}
+
+
+@router.post("/tagging/build", summary="Start an explicit, resumable object recognition batch")
+async def start_tagging_build(request: Request) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ApiError("VALIDATION_ERROR", "request body must be JSON") from error
+    if not isinstance(payload, dict):
+        raise ApiError("VALIDATION_ERROR", "request body must be an object")
+    if not isinstance(payload.get("request_id"), str):
+        raise ApiError("VALIDATION_ERROR", "request_id must be text")
+    try:
+        return context_of(request).tag_build_manager().start(
+            payload["request_id"],
+            exclusive_confirmed=payload.get("exclusive_model_use_confirmed") is True,
+            replace_task_id=payload.get("replace_task_id"),
+        )
+    except CatalogError as error:
+        if error.code == "USAGE":
+            raise ApiError("VALIDATION_ERROR", error.message) from error
+        raise
+
+
+@router.post("/tagging/tasks/{task_id}/pause")
+async def pause_tagging_build(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        return context_of(request).tag_build_manager().pause(task_id)
+    except CatalogError as error:
+        if error.code == "USAGE":
+            raise ApiError("VALIDATION_ERROR", error.message) from error
+        raise
+
+
+@router.post("/tagging/tasks/{task_id}/resume")
+async def resume_tagging_build(request: Request, task_id: str) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ApiError("VALIDATION_ERROR", "request body must be JSON") from error
+    if not isinstance(payload, dict) or payload.get("exclusive_model_use_confirmed") is not True:
+        raise ApiError("VALIDATION_ERROR", "继续识别前请确认暂时占用搜索模型资源")
+    try:
+        return context_of(request).tag_build_manager().resume(task_id)
+    except CatalogError as error:
+        if error.code == "USAGE":
+            raise ApiError("VALIDATION_ERROR", error.message) from error
+        raise
 
 
 @router.post("/embedding-management/providers/{provider_id}/candidate-build")

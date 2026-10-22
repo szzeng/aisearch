@@ -73,6 +73,7 @@ def create_app(
         api.set_data_root_lease(lease)
         try:
             api.embedding_candidate_manager().recover_after_lock()
+            api.tag_build_manager().recover_after_lock()
             # Once OS ownership proves the prior managed process is gone, old smart work
             # cannot still publish. Database/model work stays lazy and failures are retryable.
             api.recover_smart_refreshes_after_lock()

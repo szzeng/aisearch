@@ -94,6 +94,8 @@
       total: null,
       loading: false,
       mode: "text",
+      categoryRank: "off",
+      categoryInfo: null,
       assetQueryId: null,
       assetQuery: null,
       imageFile: null,
@@ -1387,6 +1389,7 @@
     return JSON.stringify({
       text: els.queryText.value.trim(),
       retrievalMode: state.search.mode === "image" ? "image" : textRetrievalMode(),
+      categoryRank: categoryRankMode(),
       source: filters.sourceId,
       fixedScope: state.search.selectedScope ? JSON.stringify(state.search.selectedScope) : null,
       favoritesOnly: Boolean(state.search.favoritesOnly),
@@ -1432,6 +1435,51 @@
   // ---------------------------------------------------------------------- search
   function textRetrievalMode() {
     return els.queryRetrievalMode && els.queryRetrievalMode.value === "text" ? "text" : "combined";
+  }
+
+  function categoryRankMode() {
+    return state.search.mode === "text" && textRetrievalMode() === "combined" &&
+      ["album-qwen512-v1", "ram-plus-v1"].indexOf(state.search.categoryRank) >= 0 ? state.search.categoryRank : "off";
+  }
+
+  function renderCategoryRanking() {
+    if (!els.categoryRankControl || !els.categoryRankToggle) return;
+    var active = categoryRankMode() !== "off";
+    var info = state.search.categoryInfo;
+    var unchanged = state.search.binding === conditionFingerprint(collectFilters());
+    var offered = state.search.mode === "text" && textRetrievalMode() === "combined" &&
+      info && info.available === true && unchanged;
+    els.categoryRankControl.hidden = !active && !offered;
+    els.categoryRankToggle.disabled = Boolean(state.search.loading);
+    els.categoryRankToggle.setAttribute("aria-pressed", active ? "true" : "false");
+    text(els.categoryRankToggle, active ? "切回普通搜索" : "试试类别优先");
+    if ((info && info.mode === "ram-plus-v1") || categoryRankMode() === "ram-plus-v1") {
+      text(els.categoryRankToggle, active ? "切回普通搜索" : "试试物体与场景辅助");
+      var coverage = info && typeof info.covered_candidates === "number"
+        ? " 本次候选中已识别 " + info.covered_candidates + " 张，未识别 " + info.unprocessed_candidates + " 张。" : "";
+      text(els.categoryRankHint, (active
+        ? "使用本机识别结果辅助排序，不保证每张都属于该类。未识别照片保持原位置，可切回普通搜索比较。"
+        : "已为“" + (info.category_name || "此类别") + "”准备辅助排序；只调整当前候选，不隐藏低分照片。") +
+        coverage + " 可保存为普通合集；智能合集请使用普通搜索。");
+      return;
+    }
+    text(els.categoryRankHint, active
+      ? "类别优先（试用）仅调整排序，不保证每张都属于该类；小主体可能更靠后。可保存本次候选为普通合集；智能合集请先切回普通搜索。"
+      : "适用于猫、狗、鸟、汽车、自行车、人、椅子、玩具熊。会改变排序，小主体可能更靠后；可随时切回普通搜索。");
+  }
+
+  function toggleCategoryRanking() {
+    if (state.search.loading) return;
+    if (state.search.binding !== conditionFingerprint(collectFilters())) {
+      submitSearch();
+      return;
+    }
+    var active = categoryRankMode() !== "off";
+    if (!active && !(state.search.categoryInfo && state.search.categoryInfo.available === true)) return;
+    state.search.categoryRank = active ? "off" :
+      (state.search.categoryInfo.mode === "ram-plus-v1" ? "ram-plus-v1" : "album-qwen512-v1");
+    invalidateSearchForScopeChange("正在按所选方式重新搜索…");
+    sendSearch(false);
   }
 
   function candidateTimeLabel() {
@@ -1550,6 +1598,8 @@
   }
 
   function submitSearch() {
+    state.search.categoryRank = "off";
+    state.search.categoryInfo = null;
     clearSimilarAssetUrl();
     clearAssetQuerySummary();
     setSimilarQueryControls(false);
@@ -1653,6 +1703,7 @@
     var browse = state.search.timeBrowse;
     if (state.search.loading || !state.search.sessionId || (continuation && !(browse.cursor || browse.retryCursor))) return Promise.resolve(false);
     state.search.loading = true;
+    renderCategoryRanking();
     var sessionId = state.search.sessionId;
     var requestCursor = continuation ? (browse.cursor || browse.retryCursor) : null;
     var pageSize = Number(els.queryPageSize.value) || DEFAULT_PAGE_SIZE;
@@ -1775,6 +1826,7 @@
     }
     state.search.loading = true;
     setStatus(els.queryStatus, continuation ? "正在加载下一页…" : "正在搜索…");
+    renderCategoryRanking();
     var promise = state.search.mode === "image"
       ? sendImageSearch(continuation, filters)
       : state.search.mode === "asset_image"
@@ -1786,6 +1838,7 @@
           return true;
         }
         state.search.loading = false;
+        renderCategoryRanking();
         if (body && body.needs_place_choice) {
           abortPerfForChoice();
           showPlaceChoices(body);
@@ -1886,6 +1939,7 @@
       original_query: placeAware ? placeAware.original_query : queryText,
     };
     if (literalText) body.retrieval_mode = "text";
+    if (!literalText && categoryRankMode() !== "off") body.category_rank = categoryRankMode();
     if (placeAware) {
       body.content_query = placeAware.content_query;
       if (placeAware.place_cancelled) {
@@ -2403,6 +2457,7 @@
   }
 
   function onSearchFailure(failure) {
+    renderCategoryRanking();
     if (failure.code === "FAVORITES_REVISION_STALE") {
       invalidateSearchForScopeChange("收藏已变化，请点击搜索重新搜索；旧收藏结果和分页已失效。");
       els.queryActions.hidden = false;
@@ -2504,6 +2559,7 @@
       window.PhotoScrollPager.setSpacerHeight(els.resultGrid, windowRestore.spacerHeight);
     }
     state.search.lastBody = body;
+    if (!continuation) state.search.categoryInfo = body.category_rank || null;
     if (!continuation) state.search.sessionId = body.search_session_id || null;
     state.search.cursor = body.next_cursor || null;
     updateSearchPreviewNavigation();
@@ -2520,6 +2576,8 @@
         generationId: body.active_image_generation_id || body.image_generation_id || body.generation_id || null,
         sourceToken: body.photo_collection_source_token || null,
         sourceMode: body.photo_collection_source_mode || null,
+        categoryRank: body.category_rank && body.category_rank.applied === true
+          ? body.category_rank : null,
         strongMatch: vector.engaged && vector.strong_match_available !== false
           ? { available:true, count:vector.strong_match_count, more:Boolean(vector.strong_match_more_possible) }
           : { available:false, unavailable:Boolean(vector.engaged && vector.strong_match_available === false) },
@@ -2597,7 +2655,8 @@
     var needsReconfirm = Boolean(state.search.saveReconfirmRequired);
     if (els.resultOperations) els.resultOperations.hidden = !needsReconfirm && (!confirmed || !confirmed.sourceToken);
     if (els.saveSmartCollection) {
-      els.saveSmartCollection.hidden = !needsReconfirm && (!confirmed || !confirmed.sourceToken);
+      els.saveSmartCollection.hidden = Boolean(confirmed && confirmed.categoryRank) ||
+        (!needsReconfirm && (!confirmed || !confirmed.sourceToken));
       els.saveSmartCollection.disabled = needsReconfirm || Boolean(confirmed && confirmed.sourceToken && !valid);
       els.saveSmartCollection.textContent = smartReplaceTarget ? "用本次搜索替换智能规则" : "保存为智能合集";
     }
@@ -2613,6 +2672,7 @@
       if (!els.resultOperationHint.hidden) text(els.resultOperationHint, "当前结果仍可查看，但保存凭据已失效；请重新搜索确认后保存。");
     }
     if (els.smartTimeBrowseHint) els.smartTimeBrowseHint.hidden = !state.search.timeBrowse.active;
+    renderCategoryRanking();
   }
 
   function invalidateConfirmedSearchOnSaveFailure(failure) {
@@ -2642,20 +2702,22 @@
   function renderSearchStatus() {
     var confirmed = state.search.confirmedSearch;
     var parts = [];
+    var categoryApplied = Boolean(confirmed && confirmed.categoryRank);
+    if (categoryApplied) parts.push(confirmed.categoryRank.label || "类别优先（试用）");
     if (state.search.timeBrowse.active) {
       var timeTotal = state.search.timeBrowse.total;
       parts.push("按拍摄时间查看当前候选 · 已显示 " + number(state.search.count) + "/" + number(timeTotal) + " 张");
       if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
         parts.push((confirmed.strongMatch.more ? "高度匹配统计来自原始语义搜索（5000+ 张）" :
           "高度匹配统计来自原始语义搜索（约 " + number(confirmed.strongMatch.count) + " 张）"));
-      } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
+      } else if (!categoryApplied && confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
         parts.push("原始语义搜索的高度匹配统计不可用");
       }
       if (state.search.timeBrowse.truncated) parts.push("候选可能已截断（最多 " + number(confirmed && confirmed.candidateLimit || 5000) + " 个）");
     } else {
       if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
         parts.push(confirmed.strongMatch.more ? "5000+ 张高度匹配" : "约 " + number(confirmed.strongMatch.count) + " 张高度匹配");
-      } else if (confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
+      } else if (!categoryApplied && confirmed && confirmed.strongMatch && confirmed.strongMatch.unavailable) {
         parts.push("高度匹配统计不可用");
       }
       parts.push("已显示 " + number(state.search.count) + " 行");
@@ -2663,6 +2725,9 @@
       if (confirmed && confirmed.truncated) parts.push("候选可能已截断（最多 " + number(confirmed.candidateLimit) + " 个）");
     }
     if (state.search.recycledCount) parts.push("当前保留最近 " + state.search.hits.length + " 张；前 " + state.search.recycledCount + " 张已回收");
+    if (confirmed && confirmed.strongMatch && confirmed.strongMatch.available) {
+      parts.push("高度匹配仅为相似度参考，可能包含无关照片");
+    }
     if (state.search.statusEmpty) parts.push("这一页没有命中的行");
     if (state.search.statusEmptyNote) parts.push(state.search.statusEmptyNote);
     setStatus(els.queryStatus, parts.join(" · "));
@@ -2804,6 +2869,7 @@
 
   function bindQuerySubmission() {
     var composingQuery = false;
+    els.queryText.addEventListener("input", renderCategoryRanking);
     els.queryText.addEventListener("compositionstart", function () {
       composingQuery = true;
     });
@@ -2825,6 +2891,7 @@
     return {
       queryText: els.queryText.value,
       retrievalMode: textRetrievalMode(),
+      categoryRank: categoryRankMode(),
       source: els.querySource.value,
       availability: els.queryAvailability.value,
       placeState: els.queryPlaceState.value,
@@ -2998,6 +3065,8 @@
     var form = saved.form;
     els.queryText.value = form.queryText || "";
     if (els.queryRetrievalMode) els.queryRetrievalMode.value = form.retrievalMode === "text" ? "text" : "combined";
+    state.search.categoryRank = ["album-qwen512-v1", "ram-plus-v1"].indexOf(form.categoryRank) >= 0 ? form.categoryRank : "off";
+    state.search.categoryInfo = saved.lastBody.category_rank || null;
     els.querySource.value = form.source || "";
     els.queryAvailability.value = form.availability || "any";
     els.queryPlaceState.value = form.placeState || "any";
@@ -3050,6 +3119,8 @@
         profileId:saved.lastBody.profile_id || null, generationId:saved.lastBody.image_generation_id || null,
         sourceToken:saved.lastBody.photo_collection_source_token,
         sourceMode:saved.lastBody.photo_collection_source_mode,
+        categoryRank:saved.lastBody.category_rank && saved.lastBody.category_rank.applied === true
+          ? saved.lastBody.category_rank : null,
         strongMatch:restoredVector.engaged && restoredVector.strong_match_available !== false
           ? {available:true,count:restoredVector.strong_match_count,more:Boolean(restoredVector.strong_match_more_possible)}
           : {available:false,unavailable:Boolean(restoredVector.engaged && restoredVector.strong_match_available === false)},
@@ -4016,6 +4087,9 @@
       queryText: document.getElementById("query-text"),
       queryFavoritesOnly: document.getElementById("query-favorites-only"),
       queryRetrievalMode: document.getElementById("query-retrieval-mode"),
+      categoryRankControl: document.getElementById("category-rank-control"),
+      categoryRankToggle: document.getElementById("category-rank-toggle"),
+      categoryRankHint: document.getElementById("category-rank-hint"),
       resultPlaceScope: document.getElementById("result-place-scope"),
       resultIntentScope: document.getElementById("result-intent-scope"),
       querySource: document.getElementById("query-source"),
@@ -4204,6 +4278,10 @@
     } catch (_error) { smartReplaceTarget = null; }
     if (els.saveSmartCollection) els.saveSmartCollection.addEventListener("click", function () {
       var confirmed = state.search.confirmedSearch;
+      if (confirmed && confirmed.categoryRank) {
+        setStatus(els.queryStatus, "类别优先暂不支持智能合集；可保存本次排名候选，或切回普通搜索。", "error");
+        return;
+      }
       if (!confirmedSearchIsCurrent(confirmed)) {
         renderResultOperations();
         return;
@@ -4303,6 +4381,9 @@
       });
     }
     els.queryRetrievalMode.addEventListener("change", function () {
+      state.search.categoryRank = "off";
+      state.search.categoryInfo = null;
+      renderCategoryRanking();
       if (state.search.mode === "image") {
         setStatus(els.queryStatus, "搜索方式已选择，输入文字后搜索。上传搜图结果仍在下方。");
       } else if (els.queryText.value.trim() || state.search.lastBody || state.search.loading) {
@@ -4329,6 +4410,7 @@
       load: continueSearch,
     }) : null;
     els.candidateTimeToggle.addEventListener("click", toggleCandidateTimeBrowse);
+    if (els.categoryRankToggle) els.categoryRankToggle.addEventListener("click", toggleCategoryRanking);
     els.personMore.addEventListener("click", function () {
       loadPersons(false);
     });

@@ -92,6 +92,9 @@ CORE_TABLES = {
     "geo_dataset_files",
     "geo_datasets",
     "jobs",
+    "machine_tag_models",
+    "machine_tag_results",
+    "machine_tag_job_counts",
     "index_entries",
     "index_generations",
     "index_outbox",
@@ -191,6 +194,15 @@ def _create_historical_catalog(path: Path, version: int) -> None:
         schema.verify_schema(connection, version)
     finally:
         connection.close()
+
+
+def _copy_migration_prefix(target: Path, version: int) -> None:
+    """Pin a historical build's real script prefix without assuming today's last version."""
+    target.mkdir()
+    source = Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
+    for path in source.glob("[0-9][0-9][0-9][0-9]_*.sql"):
+        if int(path.name.split("_", 1)[0]) <= version:
+            shutil.copy2(path, target / path.name)
 
 
 class _Usage:
@@ -614,7 +626,7 @@ def test_photo_collection_0036_failure_rolls_back_and_old_build_refuses_new_sche
                         "src/photo_search/catalog/migrations")
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert migrated.previous_version == 35
-    assert migrated.applied == (36, 37, 38, 39, 40, 41, 42)
+    assert migrated.applied == tuple(range(36, SUPPORTED + 1))
     assert migrated.backup_path is not None
     old_build_backup = open_readonly(migrated.backup_path)
     try:
@@ -712,7 +724,7 @@ def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_pre
     )
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 38
-    assert upgraded.applied == (39, 40, 41, 42)
+    assert upgraded.applied == tuple(range(39, SUPPORTED + 1))
     assert upgraded.backup_path is not None
     backup = open_readonly(upgraded.backup_path)
     try:
@@ -723,7 +735,7 @@ def test_retention_0039_barrier_migration_failure_rolls_back_and_old_upgrade_pre
         backup.close()
     live = open_readonly(db_path)
     try:
-        assert schema.read_schema_version(live) == 42
+        assert schema.read_schema_version(live) == SUPPORTED
         assert "asset_retention_barriers" in schema.business_tables(live)
         assert live.execute("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=7").fetchone()[0] == 1
     finally:
@@ -778,7 +790,7 @@ def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollbac
     )
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 39
-    assert upgraded.applied == (40, 41, 42)
+    assert upgraded.applied == tuple(range(40, SUPPORTED + 1))
     assert upgraded.backup_path is not None
     backup = open_readonly(upgraded.backup_path)
     try:
@@ -789,7 +801,7 @@ def test_retention_0040_media_identity_migration_new_upgrade_and_failure_rollbac
         backup.close()
     live = open_readonly(db_path)
     try:
-        assert schema.read_schema_version(live) == 42
+        assert schema.read_schema_version(live) == SUPPORTED
         columns = {str(row[1]) for row in live.execute("PRAGMA table_info(asset_retention_barriers)")}
         assert {"media_sha256", "face_crop_keys_json", "media_cleaned_at_ms"} <= columns
         row = live.execute(
@@ -818,8 +830,7 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
         connection.close()
 
     broken = tmp_path / "migrations-0041-broken"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
-    (broken / "0042_retention_cleanup_run_fences.sql").unlink()
+    _copy_migration_prefix(broken, 41)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     migration = broken / "0041_retention_cleanup_runs.sql"
     migration.write_text(
@@ -841,8 +852,7 @@ def test_retention_0041_progress_migration_upgrade_and_failed_rollback(
         rolled_back.close()
 
     migrations_41 = tmp_path / "migrations-through-0041"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
-    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    _copy_migration_prefix(migrations_41, 41)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
@@ -865,8 +875,7 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
     db_path = _db_path(tmp_path)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     migrations_41 = tmp_path / "migrations-through-0041"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", migrations_41)
-    (migrations_41 / "0042_retention_cleanup_run_fences.sql").unlink()
+    _copy_migration_prefix(migrations_41, 41)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_41)
     migrate_database(db_path, data_root=_data_root(tmp_path))
     seeded = connect_rw(db_path)
@@ -884,7 +893,7 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
     finally:
         seeded.close()
     broken = tmp_path / "migrations-0042-broken"
-    shutil.copytree(Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations", broken)
+    _copy_migration_prefix(broken, 42)
     migration = broken / "0042_retention_cleanup_run_fences.sql"
     migration.write_text(
         migration.read_text(encoding="utf-8") + "\nSELECT retention_0042_fault;\n",
@@ -903,9 +912,9 @@ def test_retention_0042_run_fence_migration_upgrade_and_rollback(
         assert list(rolled_back.execute("PRAGMA foreign_key_check")) == []
     finally:
         rolled_back.close()
-    monkeypatch.setattr(
-        schema, "MIGRATIONS_DIR", Path(__file__).resolve().parents[2] / "src/photo_search/catalog/migrations"
-    )
+    migrations_42 = tmp_path / "migrations-through-0042"
+    _copy_migration_prefix(migrations_42, 42)
+    monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_42)
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 42)
     upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
     assert upgraded.previous_version == 41 and upgraded.applied == (42,)

@@ -16,7 +16,7 @@ from photo_search.places.natural_search import parse_place_query
 from photo_search.search.intent_plan import MAX_CANDIDATES, PLAN_VERSION
 from photo_search.search.natural_intent import (
     _person_choices,
-    _take_date,
+    date_intent,
     parse_collection_intent,
     parse_natural_intent,
 )
@@ -160,21 +160,11 @@ def parse_unified_intent(
         return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw[:256],
                 "content_query": None, "candidates": [], "notice": "查询过长，请缩短后重试。"}
 
-    month_range = re.search(
-        r"(?P<year>(?:19|20)\d{2})年(?P<first>1[0-2]|0?[1-9])月到"
-        r"(?:(?P<last_year>(?:19|20)\d{2})年)?(?P<last>1[0-2]|0?[1-9])月",
-        raw,
-    )
-    supported_explicit_month_range = False
-    if month_range:
-        first_year = int(month_range.group("year"))
-        last_year = int(month_range.group("last_year") or first_year)
-        first_month, last_month = int(month_range.group("first")), int(month_range.group("last"))
-        if last_year != first_year or first_month > last_month:
-            return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw,
-                    "content_query": None, "candidates": [],
-                    "notice": "该月份区间暂不支持，请改用同一年内递增的月份范围。"}
-        supported_explicit_month_range = True
+    dates = date_intent(raw, today or date.today())
+    hit = dates.hit
+    if dates.notice:
+        return {"plan_version": PLAN_VERSION, "state": "unsupported", "original_query": raw,
+                "content_query": None, "candidates": [], "notice": dates.notice}
 
     candidates: list[dict[str, Any]] = []
     collection = parse_collection_intent(raw, connection=connection)
@@ -213,10 +203,8 @@ def parse_unified_intent(
                                    "name": str(item["name"]), "start": span[0], "end": span[1],
                                    "status": "needs_choice" if people["state"] == "ambiguous" else "confirmed"})
 
-    hit = _take_date(raw, today or date.today())
-    # A bare year embedded in quoted OCR/visual content is not a time constraint.
-    if hit and not re.search(r"(?:写着|写有|标着|编号|文字)[^，,。；;]*$", raw[:raw.find(hit[0])]):
-        span = _span(raw, hit[0])
+    if hit:
+        span = dates.span
         if span and (not re.fullmatch(r"20\d{2}年?", hit[0]) or re.search(r"(?:照片|图片|拍|的|年)$", raw[span[1]:]) or span[0] == 0):
             suffix = raw[span[1]:span[1] + 12]
             prefix = raw[max(0, span[0] - 12):span[0]]
@@ -351,16 +339,12 @@ def parse_unified_intent(
     unsupported = bool(re.search(r"(?:排除|不要|不是|不在).{0,12}(?:人物|地点|照片)", raw))
     unsupported = unsupported or (place.get("state") == "unresolved" and (
         (len(matched_place_ids) > 1 and bool(re.search(r"(?:或者|或|以及|和)", raw)))
-        or explicit_place_negative or not any(
+        or explicit_place_negative or not dates.content_only and not any(
             item["type"] in {"collection", "person", "source"} for item in candidates
         )
     ))
     time_candidates = [item for item in candidates if item["type"] == "time"]
-    explicit_times = list(re.finditer(r"(?<!\d)(?:19|20)\d{2}(?:年|-(?:1[0-2]|0?[1-9]))|(?:去年|前年|今年)(?:(?:春|夏|秋|冬)(?:天|季)?)?", raw))
-    multiple_explicit_times = len(explicit_times) > 1 and not (
-        supported_explicit_month_range and len(explicit_times) == 2
-    )
-    if len(time_candidates) > 1 or (multiple_explicit_times and not re.search(r"(?:写着|写有|标着|编号|文字)", raw)):
+    if len(time_candidates) > 1:
         unsupported = True
     confirmed = [item for item in candidates if item["status"] == "confirmed"]
     spans = [(int(item["start"]), int(item["end"])) for item in confirmed]
@@ -407,11 +391,6 @@ def parse_unified_intent(
     chosen_source = next((item for item in confirmed if item["type"] == "source"), None)
     chosen_time = next((item for item in confirmed if item["type"] == "time"), None)
     state = "unsupported" if unsupported else ("ready" if confirmed else "none")
-    if state == "unsupported":
-        # Multiple explicit years are a refused union, so never expose the first
-        # parsed year as if it were an executable single-year plan.
-        if multiple_explicit_times:
-            chosen_time = None
     return {"plan_version": PLAN_VERSION, "state": state, "original_query": raw,
             "content_query": None if state == "unsupported" else (raw if state == "none" else residual),
             "collection_scope": None if chosen_collection is None else {

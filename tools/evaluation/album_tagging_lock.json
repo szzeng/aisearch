@@ -1,0 +1,196 @@
+{
+  "schema": "album-ram-plus-lock-v1",
+  "source": {
+    "repository": "https://github.com/xinyu1205/recognize-anything",
+    "revision": "7cb804a8609e9f4b1a50b7f31436d2df40bb9481",
+    "files": {
+      "ram/__init__.py": {
+        "bytes": 119,
+        "sha256": "55b2ad62c9256892fe7c02376d922d393bf0f05dd20b9e761be6125ec4d616ff"
+      },
+      "ram/configs/finetune.yaml": {
+        "bytes": 359,
+        "sha256": "46d8c10b9962c78a4c7549c020e13e92e2bfa72a580bb710cd374c63b1271867"
+      },
+      "ram/configs/finetune_tag2text.yaml": {
+        "bytes": 359,
+        "sha256": "3a16a94f6aded0851a6d593d67a820444696a7b7337ae15678b8228611a8f239"
+      },
+      "ram/configs/med_config.json": {
+        "bytes": 544,
+        "sha256": "68e578b210a94be83300c1c1260b031538f0749d7799c09f1ce05a6259e4365e"
+      },
+      "ram/configs/pretrain.yaml": {
+        "bytes": 631,
+        "sha256": "da6c5fdcef508454d8d979338c8d89583f22e094e356093f0d86aed4c2e271d6"
+      },
+      "ram/configs/pretrain_tag2text.yaml": {
+        "bytes": 631,
+        "sha256": "294455b955a1c64bf33e3f2597f397d6724d7f5ffc9b467b8f34a93625d4c9be"
+      },
+      "ram/configs/q2l_config.json": {
+        "bytes": 578,
+        "sha256": "61936088a9159a01fc688f3149aaa62db80b30d71c86b1ac5953914705927642"
+      },
+      "ram/configs/swin/config_swinB_224.json": {
+        "bytes": 237,
+        "sha256": "121073ed02eedb02b4d53a522982652578b3fb3d9ed032720c3e8b519080929b"
+      },
+      "ram/configs/swin/config_swinB_384.json": {
+        "bytes": 238,
+        "sha256": "aa9545cc19325a1b521fe63cce93de2778df15941db75b016fa3576768bf3974"
+      },
+      "ram/configs/swin/config_swinL_224.json": {
+        "bytes": 241,
+        "sha256": "1d92fa50b51c8ceb2f7d27545c87c8199aa5394f92c10b9df0c6e2c10c5e320d"
+      },
+      "ram/configs/swin/config_swinL_384.json": {
+        "bytes": 241,
+        "sha256": "c13b70fe90395c1ed2039983326557c1da5f6a477a4623b35f831b57baaf310e"
+      },
+      "ram/data/__init__.py": {
+        "bytes": 3064,
+        "sha256": "41e4137418690430d6cef26441023bea964a6f42d7e6669234eeecf6ffcfb983"
+      },
+      "ram/data/dataset.py": {
+        "bytes": 3340,
+        "sha256": "ff2b36e96a0244e634d20f89ab4a926971aed497738b9e34938f20582c3a2a0b"
+      },
+      "ram/data/ram_tag_list.txt": {
+        "bytes": 46488,
+        "sha256": "1ce432a23770e6a8c908e36a085f3435b9bfa2dfe3bcae70537adcf3c50e3a7a"
+      },
+      "ram/data/ram_tag_list_chinese.txt": {
+        "bytes": 48766,
+        "sha256": "0518dffe8b97020a220c7e9ecb3970afb8a6a51ca2e78b7bd74c25ae9b668629"
+      },
+      "ram/data/ram_tag_list_threshold.txt": {
+        "bytes": 26601,
+        "sha256": "cc8ea160ef5e37940d31f0e4714aab498c50bba9c6af3a324a6d85ef519f3334"
+      },
+      "ram/data/randaugment.py": {
+        "bytes": 10124,
+        "sha256": "62bd61f9a6d3a82f34c0494dd44de9735bc2057efa8f9aea7fd751bb60f4811e"
+      },
+      "ram/data/tag2text_ori_tag_list.txt": {
+        "bytes": 32490,
+        "sha256": "ffbbb97fc14116d1c188010678fe505f799d860472cf55b8342d0083d096ce50"
+      },
+      "ram/data/tag_list.txt": {
+        "bytes": 32490,
+        "sha256": "ffbbb97fc14116d1c188010678fe505f799d860472cf55b8342d0083d096ce50"
+      },
+      "ram/data/utils.py": {
+        "bytes": 3560,
+        "sha256": "a5bf0f85107151ef252eb69e8c929da9188e1d9a81a26bd8de65a3c4a3b560b4"
+      },
+      "ram/inference.py": {
+        "bytes": 1369,
+        "sha256": "a82a63e937f5784ce83cf0601be4805340692242d2ef819918e6d7807fb61838"
+      },
+      "ram/models/__init__.py": {
+        "bytes": 86,
+        "sha256": "760a28147f09617fdfed517034409cc622aa2e183cfe64dbe72f42798a23094b"
+      },
+      "ram/models/bert.py": {
+        "bytes": 46165,
+        "sha256": "3694ba61811bbec37e7d862e4ec16031a552adebc602da4d93758791c6f8f5dc"
+      },
+      "ram/models/ram.py": {
+        "bytes": 17619,
+        "sha256": "5642608076aff58ddf27918eef82679f220bcc0273dbbb742978ee55e8ce0a11"
+      },
+      "ram/models/ram_plus.py": {
+        "bytes": 17579,
+        "sha256": "7e676f4ac9ea8dfbdb262de620607411859c5c0cfe8dd5aee8eef00133c5b69a"
+      },
+      "ram/models/swin_transformer.py": {
+        "bytes": 27480,
+        "sha256": "01fcb350304ac5d3061f561c695474f3f9093149aa6fcd31c3720743350c0d52"
+      },
+      "ram/models/tag2text.py": {
+        "bytes": 16119,
+        "sha256": "38990f0b7e5e84953bda894930ef5ff2906670bc00a9e33bcb3499cb5c409342"
+      },
+      "ram/models/utils.py": {
+        "bytes": 13339,
+        "sha256": "4b0e388d1f5ade71ce900c5f2e0c012f437357685b9e06a79d0deabaf9cc79d0"
+      },
+      "ram/models/vit.py": {
+        "bytes": 14544,
+        "sha256": "53ad148ba6550f4c179b21a842645f2e5b03beafc3235fe7fcc8f01745b4c288"
+      },
+      "ram/transform.py": {
+        "bytes": 369,
+        "sha256": "2b60a096dba747f3fafda1d5fc416bbc6a2dde1d81e1456db5c4698123de1d8b"
+      },
+      "ram/utils/__init__.py": {
+        "bytes": 131,
+        "sha256": "8c220f9befd4b8b3c1358236712f6eda1b9bb380825509537c30d7ca5c11dbcf"
+      },
+      "ram/utils/metrics.py": {
+        "bytes": 3324,
+        "sha256": "90e18acf4a2f94e72a1c57bf512a63f5f34e5c41bdb2b62eaaef2e260dd72bae"
+      },
+      "ram/utils/openset_utils.py": {
+        "bytes": 8748,
+        "sha256": "6c803e6aec4ce839d6461ef3059467b1c3a548547b545f8f0287263f0f6ff2f9"
+      }
+    }
+  },
+  "model": {
+    "repository": "xinyu1205/recognize-anything-plus-model",
+    "revision": "84d4aee3a0265c4e0df1f714f0572011d1bf2ec3",
+    "name": "ram_plus_swin_large_14m.pth",
+    "bytes": 3010210801,
+    "sha256": "497c178836ba66698ca226c7895317e6e800034be986452dbd2593298d50e87d"
+  },
+  "tokenizer": {
+    "repository": "google-bert/bert-base-uncased",
+    "revision": "86b5e0934494bd15c9632b12f734a8a67f723594",
+    "files": {
+      "config.json": {
+        "bytes": 570,
+        "sha256": "7160e1553ad2ca51d8c1cb066be533db31826e12d173824c1bb0cb1a4f187d20"
+      },
+      "tokenizer.json": {
+        "bytes": 466062,
+        "sha256": "ce64fce797c24f68df90b40a3f74f579b336a493db14bd583fd520ea0d8c9a98"
+      },
+      "tokenizer_config.json": {
+        "bytes": 48,
+        "sha256": "a025160ef0431f1a392f6f050c1310f4c5d9fb6f275932dbccba73c4d214bf10"
+      },
+      "vocab.txt": {
+        "bytes": 231508,
+        "sha256": "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3"
+      },
+      "LICENSE": {
+        "bytes": 11356,
+        "sha256": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"
+      }
+    }
+  },
+  "runtime": {
+    "python": "3.12.10",
+    "torch": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "transformers": "4.38.2",
+    "timm": "0.4.12",
+    "fairscale": "0.4.4",
+    "pillow": "11.3.0",
+    "pillow-heif": "1.8.0",
+    "numpy": "2.5.3"
+  },
+  "policy": {
+    "classes": 4585,
+    "image_size": 384,
+    "batch": 1,
+    "allowed_precision": [
+      "fp16",
+      "fp32"
+    ],
+    "threshold": "official per-class ram_tag_list_threshold.txt; no tuning",
+    "scores": "official sigmoid outputs, not calibrated probabilities"
+  }
+}

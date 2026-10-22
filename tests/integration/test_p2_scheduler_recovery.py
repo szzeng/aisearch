@@ -154,6 +154,10 @@ V6_TABLES = (
     "library_retention_runs",
     "library_retention_run_items",
     "library_retention_run_candidates",
+    # Schema43: optional machine-tag scores and their model/job progress state.
+    "machine_tag_models",
+    "machine_tag_results",
+    "machine_tag_job_counts",
 )
 
 SUPPORTED = int(schema.SUPPORTED_SCHEMA_VERSION)

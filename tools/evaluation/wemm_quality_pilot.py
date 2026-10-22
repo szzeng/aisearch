@@ -135,10 +135,13 @@ def _load_vector(directory: Path, record: dict) -> np.ndarray:
     return result
 
 
-def load_inputs(sample_file: Path, queries_file: Path, max_assets: int) -> tuple[dict, list[dict]]:
+def load_inputs(sample_file: Path, queries_file: Path, max_assets: int, *,
+                album_budget: bool = False) -> tuple[dict, list[dict]]:
     sample = read_json(sample_file)
     assets = sample.get("assets", [])
-    if type(max_assets) is not int or not 1 <= max_assets <= 1000 or not 1 <= len(assets) <= max_assets:
+    asset_cap, query_cap = (2000, 200) if album_budget else (1000, 20)
+    if (type(max_assets) is not int or not 1 <= max_assets <= asset_cap
+            or not 1 <= len(assets) <= max_assets):
         raise PilotError("FROZEN_SAMPLE_SIZE_OUTSIDE_BUDGET")
     ids, hashes = [], set()
     for row in assets:
@@ -157,8 +160,8 @@ def load_inputs(sample_file: Path, queries_file: Path, max_assets: int) -> tuple
     deterministic_rank(np.zeros(len(ids)), ids)
     raw_queries = read_json(queries_file)
     raw_queries = raw_queries.get("queries") if isinstance(raw_queries, dict) else raw_queries
-    if not isinstance(raw_queries, list) or not 1 <= len(raw_queries) <= 20:
-        raise PilotError("QUERIES_REQUIRE_ONE_TO_TWENTY_FROZEN_ITEMS")
+    if not isinstance(raw_queries, list) or not 1 <= len(raw_queries) <= query_cap:
+        raise PilotError(f"QUERIES_OUTSIDE_FROZEN_BUDGET:{query_cap}")
     queries = [{"query_id": f"q{index:02d}", "text": item} if isinstance(item, str)
                else item for index, item in enumerate(raw_queries)]
     for item in queries:

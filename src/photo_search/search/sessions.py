@@ -62,6 +62,7 @@ def query_hash(
     album_scope_revision: Sequence[Any] | None = None,
     favorites_only: bool = False,
     retrieval_mode: str = "combined",
+    category_identity: Sequence[str] | None = None,
 ) -> str:
     """A stable digest of the conditions that must stay identical across the pages.
 
@@ -101,6 +102,8 @@ def query_hash(
         payload["album_asset_ids"] = [int(value) for value in album_asset_ids]
     if album_scope_revision is not None:
         payload["album_scope_revision"] = list(album_scope_revision)
+    if category_identity is not None:
+        payload["category_identity"] = list(category_identity)
     rendered = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 

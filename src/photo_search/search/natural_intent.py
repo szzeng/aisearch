@@ -8,14 +8,20 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
 _DATE_PATTERNS = (
-    re.compile(r"(?P<year>(?:19|20)\d{2})年(?:(?P<month>1[0-2]|0?[1-9])月(?:(?P<day>3[01]|[12]\d|0?[1-9])日?)?)?"),
-    re.compile(r"(?P<year>(?:19|20)\d{2})-(?P<month>1[0-2]|0?[1-9])(?:-(?P<day>3[01]|[12]\d|0?[1-9]))?"),
+    # Consume the whole numeric token first, then validate it. A regex restricted to
+    # 1..12 can backtrack from "2024-13" to the valid but wrong prefix "2024-1".
+    re.compile(r"(?<![\dA-Za-z])(?P<year>(?:19|20)\d{2})年(?:\s*(?P<month>\d+)月(?:\s*(?P<day>\d+)[日号]?)?)?"),
+    re.compile(r"(?<![\dA-Za-z/-])(?P<year>(?:19|20)\d{2})-(?P<month>\d+)(?:-(?P<day>\d+))?(?![\dA-Za-z/-])"),
 )
 _SEASONS = {"春": (3, 6), "夏": (6, 9), "秋": (9, 12)}
+_MONTH_NAMES = ("january", "february", "march", "april", "may", "june",
+                "july", "august", "september", "october", "november", "december")
+_MONTH_WORD = "(?:" + "|".join(_MONTH_NAMES) + ")"
 
 
 def parse_collection_intent(text: str, *, connection: Any) -> dict[str, Any]:
@@ -97,67 +103,129 @@ def _bounds(year: int, month: int | None = None, day: int | None = None) -> tupl
     return start.isoformat(), end.isoformat()
 
 
-def _take_date(text: str, today: date) -> tuple[str, str, str] | None:
-    # A fixed, consecutive month range has an unambiguous half-open interval.
-    month_range = re.search(
-        r"(?P<year>(?:19|20)\d{2})年(?P<first>1[0-2]|0?[1-9])月到"
-        r"(?:(?P<last_year>(?:19|20)\d{2})年)?(?P<last>1[0-2]|0?[1-9])月",
-        text,
-    )
-    if month_range:
-        year, first, last = map(int, (month_range.group("year"), month_range.group("first"), month_range.group("last")))
-        last_year = int(month_range.group("last_year") or year)
-        if last_year == year and first <= last:
-            start = date(year, first, 1)
-            end = date(year + (last == 12), last % 12 + 1, 1)
-            return month_range.group(0), start.isoformat(), end.isoformat()
-    match = re.search(r"(?P<year>(?:19|20)\d{2})年?(?P<season>春|夏|秋|冬)(?:天|季)?", text)
-    if match:
-        year = int(match.group("year"))
-        season = match.group("season")
-        if season == "冬":
-            start, end = date(year, 12, 1), date(year + 1, 3, 1)
-        else:
-            first, after = _SEASONS[season]
-            start, end = date(year, first, 1), date(year, after, 1)
-        return match.group(0), start.isoformat(), end.isoformat()
-    for word, delta in (("去年", -1), ("今年", 0), ("前年", -2)):
-        match = re.search(word + r"(?:(?P<month>1[0-2]|0?[1-9])月|(?P<season>春|夏|秋|冬)(?:天|季)?)?", text)
-        if match:
-            year = today.year + delta
-            month = int(match.group("month")) if match.group("month") else None
-            season = match.group("season")
-            if month is not None:
-                first, after = _bounds(year, month)
-                return match.group(0), first, after
-            if season == "冬":
-                start = date(year - 1, 12, 1) if delta == 0 and today.month < 3 else date(year, 12, 1)
-                end = date(start.year + 1, 3, 1)
-            elif season:
-                first, after = _SEASONS[season]
-                start, end = date(year, first, 1), date(year, after, 1)
-            else:
-                start, end = date(year, 1, 1), date(year + 1, 1, 1)
-            return match.group(0), start.isoformat(), end.isoformat()
-    match = re.search(r"上个月", text)
-    if match:
-        year, month = today.year, today.month - 1
-        if month == 0:
-            year, month = year - 1, 12
-        first, after = _bounds(year, month)
-        return match.group(0), first, after
-    matches = [match for pattern in _DATE_PATTERNS if (match := pattern.search(text))]
-    matches.sort(key=lambda item: (len(item.group(0)), item.start()), reverse=True)
-    for match in matches:
-        raw_year = int(match.group("year"))
-        month = int(match.group("month")) if match.group("month") else None
-        day = int(match.group("day")) if match.group("day") else None
+def _date_is_content(text: str, start: int, end: int) -> bool:
+    """A date printed inside a photo is content, not its capture timestamp."""
+    prefix = re.split(r"[，,。；;\n]", text[:start])[-1]
+    suffix = text[end:]
+    if re.search(r"写着|写有|标着|标有|标注|编号|文字|上写|印着|印有|"
+                 r"\b(?:text|written|reads|reading|labelled|labeled)\b", prefix, re.I):
+        return True
+    if re.match(r"\s*(?:的)?(?:字样|文字|编号)", suffix):
+        return True
+    for opening, closing in (("\"", "\""), ("'", "'"), ("“", "”"), ("‘", "’"), ("「", "」")):
+        left = text.rfind(opening, 0, start)
+        if left >= 0 and (opening == closing and text[:start].count(opening) % 2
+                          or opening != closing and text.rfind(closing, 0, start) < left):
+            if text.find(closing, end) >= end:
+                return True
+    return False
+
+
+@dataclass(frozen=True)
+class DateIntent:
+    hit: tuple[str, str, str] | None = None
+    notice: str | None = None
+    content_only: bool = False
+    span: tuple[int, int] | None = None
+
+
+def date_intent(text: str, today: date) -> DateIntent:
+    """One complete supported interval, no date, or an explicit refusal reason.
+
+    Both personal-search parsers use this bounded grammar. Longer tokens own their
+    component spans, so a malformed date/range can never fall back to its year.
+    """
+    if len(text) > 256:
+        return DateIntent(notice="查询过长，请缩短后重试。")
+    tokens: list[tuple[int, int, tuple[str, str] | None]] = []
+
+    def append(match: re.Match[str], bounds: tuple[str, str] | None) -> None:
+        tokens.append((match.start(), match.end(), bounds))
+
+    for pattern in _DATE_PATTERNS:
+        for match in pattern.finditer(text):
+            try:
+                parts = [match.group(field) for field in ("month", "day")]
+                if any(part and len(part) > 2 for part in parts):
+                    raise ValueError("oversized date component")
+                bounds = _bounds(int(match["year"]), *(int(part) if part else None for part in parts))
+            except ValueError:
+                bounds = None
+            append(match, bounds)
+    for match in re.finditer(
+        r"(?<![\dA-Za-z])(?P<year>(?:19|20)\d{2})年\s*(?P<first>\d+)月\s*到\s*"
+        r"(?:(?P<last_year>(?:19|20)\d{2})年\s*)?(?P<last>\d+)月", text,
+    ):
+        year, first, last = int(match["year"]), int(match["first"]), int(match["last"])
+        valid = (int(match["last_year"] or year) == year and 1 <= first <= last <= 12
+                 and len(match["first"]) <= 2 and len(match["last"]) <= 2)
+        append(match, (_bounds(year, first)[0], _bounds(year, last)[1]) if valid else None)
+
+    for match in re.finditer(
+        r"(?<![\dA-Za-z])(?P<year>(?:19|20)\d{2})年?(?P<season>春|夏|秋|冬)(?:天|季)?|"
+        r"(?P<relative>去年|今年|前年)(?:(?P<month>\d+)月(?:\s*(?P<day>\d+)[日号]?)?|"
+        r"(?P<relative_season>春|夏|秋|冬)(?:天|季)?)?|(?P<last_month>上个月)", text,
+    ):
+        year = int(match["year"]) if match["year"] else today.year + {"去年": -1, "前年": -2}.get(match["relative"], 0)
+        season = match["season"] or match["relative_season"]
         try:
-            first, after = _bounds(raw_year, month, day)
+            if match["last_month"]:
+                bounds = _bounds(today.year - (today.month == 1), (today.month - 2) % 12 + 1)
+            elif season:
+                if season == "冬":
+                    year -= int(match["relative"] == "今年" and today.month < 3)
+                    bounds = (date(year, 12, 1).isoformat(), date(year + 1, 3, 1).isoformat())
+                else:
+                    first, after = _SEASONS[season]
+                    bounds = (date(year, first, 1).isoformat(), date(year, after, 1).isoformat())
+            else:
+                parts = [match[field] for field in ("month", "day")]
+                if any(part and len(part) > 2 for part in parts):
+                    raise ValueError("oversized date component")
+                bounds = _bounds(year, *(int(part) if part else None for part in parts))
         except ValueError:
-            continue
-        return match.group(0), first, after
-    return None
+            bounds = None
+        append(match, bounds)
+
+    for pattern in (rf"\b(?P<month>{_MONTH_WORD})\s+(?P<year>(?:19|20)\d{{2}})\b",
+                    rf"\b(?P<year>(?:19|20)\d{{2}})\s+(?P<month>{_MONTH_WORD})\b"):
+        for match in re.finditer(pattern, text, re.I):
+            append(match, _bounds(int(match["year"]), _MONTH_NAMES.index(match["month"].lower()) + 1))
+    # English day expressions are deliberately outside this small month grammar.
+    for match in re.finditer(
+        rf"\b(?:\d{{1,2}}(?:st|nd|rd|th)?\s+{_MONTH_WORD}|{_MONTH_WORD}\s+\d{{1,2}}(?:st|nd|rd|th)?[,]?)\s+(?:19|20)\d{{2}}\b",
+        text, re.I,
+    ):
+        append(match, None)
+
+    tokens = [item for item in tokens if not any(
+        other[0] <= item[0] and other[1] >= item[1] and other[1] - other[0] > item[1] - item[0]
+        for other in tokens
+    )]
+    has_tokens = bool(tokens)
+    tokens = [item for item in tokens if not _date_is_content(text, item[0], item[1])]
+    if not tokens:
+        return DateIntent(content_only=has_tokens)
+    notice = "日期或时间关系暂不支持，请使用有效的单个日期、月份、年份或同一年内连续月份。"
+    if len(tokens) != 1 or tokens[0][2] is None:
+        return DateIntent(notice=notice)
+    start, end, bounds = tokens[0]
+    prefix, suffix = text[:start], text[end:]
+    if (re.search(r"(?:不(?:是)?在|不是|并非|排除|不要|除了?|除去|早于|晚于|截至|截止(?:到)?|直到|"
+                  r"\b(?:before|after|until|since|between|not|except)(?:\s+(?:in|during|from|for|the))?)\s*$", prefix, re.I)
+            or re.search(r"(?:\d+\s*月|" + _MONTH_WORD + r")\s*(?:到|至|和|或|以及|、|[-~～]|\b(?:to|and|or)\b)\s*$", prefix, re.I)
+            or re.match(r"\s*(?:之前|之后|以前|以后|以来|前|后|起|开始|为止|以外|到|至|"
+                        r"\b(?:to|through|until|onwards?)\b)", suffix, re.I)
+            or re.match(r"\s*(?:到|至|和|或|以及|、|[-~～]|\b(?:to|and|or)\b)\s*(?:\d|[一二三四五六七八九十]|" + _MONTH_WORD + ")", suffix, re.I)
+            or re.match(r"\s*(?:\d|[零〇一二三四五六七八九十廿卅]+[月日号])", suffix)):
+        return DateIntent(notice=notice)
+    assert bounds is not None
+    return DateIntent(hit=(text[start:end], *bounds), span=(start, end))
+
+
+def _take_date(text: str, today: date) -> tuple[str, str, str] | None:
+    """Compatibility helper; callers needing refusal details use ``date_intent``."""
+    return date_intent(text, today).hit
 
 
 def _person_choices(connection: Any) -> list[dict[str, Any]]:
@@ -192,10 +260,17 @@ def parse_natural_intent(text: str, *, connection: Any, today: date | None = Non
     remaining = raw
     current = today or date.today()
     capture_from = capture_to = None
-    date_hit = _take_date(remaining, current)
+    dates = date_intent(remaining, current)
+    date_hit = dates.hit
+    if dates.notice:
+        return {"state": "unsupported", "choices": [], "person_match": "any",
+                "capture_from": None, "capture_to_exclusive": None,
+                "content_query": None, "notice": dates.notice}
     if date_hit:
         spelling, capture_from, capture_to = date_hit
-        remaining = remaining.replace(spelling, " ", 1)
+        assert dates.span is not None
+        start, end = dates.span
+        remaining = remaining[:start] + " " + remaining[end:]
         remaining = re.sub(r"(?:的)?(?:照片|图片|拍摄|拍的)", " ", remaining, count=1)
 
     found: list[tuple[int, int, dict[str, Any], str]] = []

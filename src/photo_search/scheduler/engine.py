@@ -439,6 +439,12 @@ class Scheduler:
                         prepared=prepared,
                         now_ms=int(now_ms),
                     )
+                if spec.task_type == "image_tagging":
+                    from photo_search.tagging.store import persist_tag_result
+
+                    persist_tag_result(
+                        connection, job=job, result=result, prepared=prepared, now_ms=int(now_ms)
+                    )
                 run_after_ms: int | None = None
                 blocking_reason: str | None = None
                 error: CatalogError | None = None

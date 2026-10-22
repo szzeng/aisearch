@@ -57,6 +57,7 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
         "place_operation_items", "search_documents", "search_feedback",
         "search_projection_queue", "jobs", "artifacts", "index_outbox", "index_entries",
         "upgrade_targets", "ocr_documents", "ocr_texts", "ocr_results",
+        "machine_tag_results",
     }
     for table in tables - recognized:
         try:

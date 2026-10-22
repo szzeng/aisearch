@@ -1,4 +1,4 @@
-"""Current-schema release data safety: 41 -> 42 -> backup -> empty-root restore."""
+"""Current-schema data safety: frozen 41 -> current -> backup -> empty-root restore."""
 
 from __future__ import annotations
 
@@ -85,9 +85,10 @@ def _corrupt_restored_copy(_source: Path, target: Path) -> None:
     target.write_bytes(target.read_bytes() + b"injected restore validation corruption")
 
 
-def test_schema42_backup_restore_preserves_human_facts_vectors_and_originals(
+def test_current_schema_backup_restore_preserves_human_facts_vectors_and_originals(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    expected_schema = schema.SUPPORTED_SCHEMA_VERSION
     # Start from a real schema 41 database and scan only synthetic source photos.
     monkeypatch.setattr(schema, "SUPPORTED_SCHEMA_VERSION", 41)
     monkeypatch.setattr(schema, "MIGRATIONS_DIR", migrations_upto(tmp_path, 41))
@@ -100,15 +101,15 @@ def test_schema42_backup_restore_preserves_human_facts_vectors_and_originals(
     assert library.catalog.schema_version == 41
     library.close()
 
-    # Apply the production 0042 migration to the closed 41 catalog.
+    # Apply every production migration after 0041 to the closed historical catalog.
     monkeypatch.undo()
     migration = migrate_database(data_root=data_root)
     assert migration.previous_version == 41
-    assert migration.schema_version == 42
-    assert migration.applied == (42,)
+    assert migration.schema_version == expected_schema
+    assert migration.applied == tuple(range(42, expected_schema + 1))
 
     with Catalog.open(data_root=data_root) as catalog:
-        assert catalog.schema_version == 42
+        assert catalog.schema_version == expected_schema
         spec = embedding_spec()
         scheduler = configured_scheduler(catalog, [spec])
         index_vector(
@@ -169,7 +170,7 @@ def test_schema42_backup_restore_preserves_human_facts_vectors_and_originals(
         before_hits = deepcopy(query_before["hits"])
         assert any(int(row["asset_id"]) == asset_id for row in query_before["hits"])
 
-    bundle = tmp_path / "schema42-backup"
+    bundle = tmp_path / "current-schema-backup"
     create_backup(data_root=data_root, destination=bundle, stopped=True)
 
     # A copy failure after staging starts must leave no usable partial data root.
@@ -195,14 +196,14 @@ def test_schema42_backup_restore_preserves_human_facts_vectors_and_originals(
     assert rejected.value.code == "BACKUP_SCHEMA_MISMATCH"
     assert list(mismatch_target.iterdir()) == []
     assert not list(tmp_path.glob(".mismatch-restore-root.restore-staging-*"))
-    assert int(json.loads((bundle / MANIFEST_NAME).read_text(encoding="utf-8"))["schema_version"]) == 42
+    assert int(json.loads((bundle / MANIFEST_NAME).read_text(encoding="utf-8"))["schema_version"]) == expected_schema
 
     restored_root = tmp_path / "empty-restore-root"
     restored_root.mkdir()
     restored = restore_backup(bundle=bundle, data_root=restored_root)
-    assert restored["status"] == "ok" and restored["schema_version"] == 42
+    assert restored["status"] == "ok" and restored["schema_version"] == expected_schema
     with Catalog.open(data_root=restored_root) as catalog:
-        assert catalog.schema_version == 42
+        assert catalog.schema_version == expected_schema
         assert _human_facts(catalog, asset_id) == facts_before
         assert _vector_facts(catalog, asset_id) == vector_before
         query_after = search_assets(

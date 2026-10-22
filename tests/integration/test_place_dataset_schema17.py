@@ -129,12 +129,18 @@ def test_schema16_package_recovers_into_empty_schema17_catalog(tmp_path):
         (5, 38, 39, True),
         (5, 39, 39, True),
         (5, 38, 40, True),
-        # Schema 40-42 only add non-place retention, scheduler, and candidate metadata;
+        # Schema 40-43 only add non-place retention, scheduler, candidate and tag metadata;
         # immutable place packages remain covered by the reviewed compatibility bridge.
         (5, 16, 40, True),
         (5, 18, 41, True),
         (5, 39, 42, True),
-        (5, 39, 43, False),
+        (5, 16, 43, True),
+        (5, 18, 43, True),
+        (5, 39, 43, True),
+        (5, 42, 43, True),
+        (5, 39, 44, False),
+        (5, 15, 43, False),
+        (44, 44, 43, False),
         (43, 43, 42, False),
         (5, 15, 42, False),
     ],
@@ -151,12 +157,13 @@ def test_schema_bridge_is_explicit_and_bounded(tmp_path, minimum, maximum, suppo
 
 
 @pytest.mark.parametrize("maximum", [16, 18, 39])
-def test_reviewed_bridge_keeps_old_package_bytes_unchanged_at_schema42(tmp_path, maximum):
+@pytest.mark.parametrize("supported", [42, 43])
+def test_reviewed_bridge_keeps_old_package_bytes_unchanged(tmp_path, maximum, supported):
     package = tmp_path / f"package-{maximum}"
     build_package(package, compatible=(5, maximum))
     original = snapshot(package)
 
-    dataset.load_content(package, supported_schema_version=42)
+    dataset.load_content(package, supported_schema_version=supported)
 
     assert snapshot(package) == original
 
@@ -177,7 +184,7 @@ def test_future_schema_bridge_requires_review_ceiling_to_advance():
     )
 
 
-@pytest.mark.parametrize("supported", [17, 20, 21, 32, 33, 40, 41, 42])
+@pytest.mark.parametrize("supported", [17, 20, 21, 32, 33, 40, 41, 42, 43])
 def test_schema_bridge_still_rejects_corrupt_files(tmp_path, supported):
     package = tmp_path / "package"
     build_package(package, compatible=(5, 16))

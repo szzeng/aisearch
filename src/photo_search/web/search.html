@@ -7,14 +7,15 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-state-ux-fix-1" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-category-ranking-1" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-photo-ocr-display-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/search.js?v=p4-search-smart-collection-name-1" defer></script>
+    <script src="/web/search.js?v=p4-ram-ranking-1" defer></script>
+    <script src="/web/tagger-panel.js?v=p4-ram-ranking-2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell search-page">
@@ -62,6 +63,22 @@
         <summary>搜索条件与结果说明</summary>
         <p>综合搜索可以描述画面，例如“2023年张三在济南拍的日落”。识别到的时间、人物和地点会显示为可取消条件。按文字找适合文件名、票据文字和编号，查询中的姓名、地名和年份会保留为文字。</p>
         <p>两种方式都支持手动筛选。搜索最多保留5000条候选，达到上限时可缩小范围；只使用筛选、不输入文字时可以继续翻页到末尾。结果会说明匹配原因，排序分数不代表准确率。</p>
+        <p>“高度匹配”只是图像相似度参考，仍可能包含无关照片。搜索猫、狗等常见类别后，如果当前模型支持，可以试试类别优先，再切回普通搜索比较；画面中很小的目标可能排得更靠后。</p>
+      </details>
+
+      <details id="tagger-panel" class="search-explainer">
+        <summary>物体与场景识别（可选）</summary>
+        <p>先在本机识别照片，再搜索猫、花、建筑等类别时尝试辅助排序。识别覆盖4585个类别词；复杂描述仍使用普通搜索。自动识别可能有误，不会改动原图或人工整理。</p>
+        <p>识别期间会暂时占用搜索模型资源，综合搜索和以图搜图需等识别暂停后继续；浏览照片、筛选和按文字找仍可使用。可以随时暂停，重启后手动继续；新增照片可再次识别。</p>
+        <p id="tagger-status" role="status" aria-live="polite">展开后读取状态。</p>
+        <label><input id="tagger-exclusive" type="checkbox" /> 我了解识别期间综合搜索和以图搜图会暂停</label>
+        <p>
+          <button id="tagger-start" type="button" disabled>识别尚未处理的照片</button>
+          <button id="tagger-pause" type="button" hidden>暂停识别</button>
+          <button id="tagger-resume" type="button" hidden>继续识别</button>
+          <button id="tagger-refresh" type="button">刷新状态</button>
+        </p>
+        <p class="hint">未安装识别模型时不会自动下载或启动。安装方法见项目说明中的“物体与场景辅助搜索”。已有标签只在主动选择辅助排序时使用。</p>
       </details>
 
       <section id="panel-query" class="panel" aria-labelledby="query-title">
@@ -246,6 +263,10 @@
           </div>
         </div>
         <div id="result-notices" class="notices" role="status" aria-live="polite"></div>
+        <div id="category-rank-control" hidden>
+          <button type="button" id="category-rank-toggle" aria-pressed="false" aria-describedby="category-rank-hint">试试类别优先</button>
+          <p id="category-rank-hint" class="hint">适用于猫、狗、鸟、汽车、自行车、人、椅子、玩具熊。会改变排序，小主体可能更靠后；可随时切回普通搜索。</p>
+        </div>
         <p><button type="button" id="candidate-time-toggle" hidden>按时间查看当前语义候选</button></p>
         <div id="search-photo-selection" class="photo-selection">
           <button type="button" id="search-photo-select-toggle" aria-pressed="false">选择照片</button>

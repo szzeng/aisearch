@@ -705,10 +705,27 @@ def test_the_search_page_reports_coverage_by_category_and_never_as_one_accuracy(
 
 def test_search_tools_fit_the_sticky_header_and_narrow_layout() -> None:
     shell, _, style = _search_documents()
-    assert 'class="search-coverage-entry"' in shell
-    assert "body.search-page .app-header.has-global-search > .search-coverage-entry" in style
+    actions = re.search(r'<div class="search-header-actions">(.*?)</div>', shell, re.S)
+    assert actions is not None
+    assert 'class="search-coverage-entry"' in actions.group(1)
+    assert 'id="current-search-model"' in actions.group(1)
+    desktop = re.search(r"body\.search-page \.search-header-actions\s*\{([^}]+)\}", style)
+    assert desktop is not None
+    for rule in ("grid-column: 3;", "grid-row: 1;", "display: flex;"):
+        assert rule in desktop.group(1)
     assert "@media (max-width: 760px)" in style
-    assert "grid-template-columns: minmax(0, 1fr);" in style
+    narrow = style.split("@media (max-width: 760px)", 1)[1].split("@media", 1)[0]
+    assert "grid-template-columns: minmax(0, 1fr);" in narrow
+    mobile = re.search(
+        r"body\.search-page \.app-header\.has-global-search > \.search-header-actions\s*\{([^}]+)\}",
+        narrow,
+    )
+    assert mobile is not None
+    for rule in (
+        "grid-column: 1;", "grid-row: 4;", "min-width: 0;", "max-width: 100%;",
+        "flex-wrap: wrap;", "white-space: normal;",
+    ):
+        assert rule in mobile.group(1)
 
 
 def test_the_three_documents_navigate_to_each_other() -> None:

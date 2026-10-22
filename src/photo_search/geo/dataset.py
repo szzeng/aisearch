@@ -86,9 +86,11 @@ PLACE_LEGACY_MAX_FLOOR = 16
 # tombstones. None changes place tables, GeoNames bytes, projection semantics or
 # the CN addon contract.
 # Schemas 0040-0042 only extend retention media identities and cleanup run
-# settings/items/candidate fences. They do not change the place package contract.
+# settings/items/candidate fences. Schema 0043 adds independent machine-tag results
+# and job-progress counters; it does not change place tables, resolver inputs,
+# projection semantics, GeoNames bytes or the CN addon contract.
 # Keep this explicit: a future catalog version still needs a compatibility review.
-PLACE_COMPAT_REVIEWED_THROUGH = 42
+PLACE_COMPAT_REVIEWED_THROUGH = 43
 
 #: Earth radius used by the deterministic haversine distance, in metres.
 EARTH_RADIUS_M = 6371008.8

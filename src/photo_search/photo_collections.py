@@ -148,6 +148,7 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
                      expected_photo_collection: tuple[int, str, int] | None = None,
                      expected_person_collection: tuple[int, str, int] | None = None,
                      expected_place_scope: tuple[int, str | None] | None = None,
+                     expected_tag_revision: tuple[str, int] | None = None,
                      expected_smart_collection: tuple[int, str, int, int, int, str | None] | None = None) -> dict[str, Any]:
     display, key = _name(name)
     ids = list(asset_ids or [])
@@ -163,6 +164,10 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
             if old["create_request_hash"] != payload_hash:
                 raise _fail("同一创建请求键不能用于不同内容", status=409)
             return {"collection": _summary(old), "reused": True}
+        if expected_tag_revision is not None:
+            from photo_search.tagging.store import require_revision
+
+            require_revision(connection, expected_tag_revision)
         if expected_catalog_filter_revision is not None:
             from photo_search.places.revision import read_filter_revision
 
@@ -347,6 +352,7 @@ def edit_members(catalog: Any, collection_id: int, asset_ids: list[int], *, acti
                  expected_photo_collection: tuple[int, str, int] | None = None,
                  expected_person_collection: tuple[int, str, int] | None = None,
                  expected_place_scope: tuple[int, str | None] | None = None,
+                 expected_tag_revision: tuple[str, int] | None = None,
                  idempotency: tuple[str, str, str] | None = None) -> dict[str, Any]:
     if action not in {"add", "remove"} or not 1 <= len(asset_ids) <= int(max_batch):
         raise _fail(f"操作必须为 add/remove 且每批为 1～{int(max_batch)} 张")
@@ -371,6 +377,10 @@ def edit_members(catalog: Any, collection_id: int, asset_ids: list[int], *, acti
                 replayed = json.loads(str(old["result_json"]))
                 replayed["reused"] = True
                 return replayed
+        if expected_tag_revision is not None:
+            from photo_search.tagging.store import require_revision
+
+            require_revision(connection, expected_tag_revision)
         if int(row["revision"]) != int(expected_revision):
             raise _fail("照片合集已变化，请刷新", status=409, code="PHOTO_COLLECTION_REVISION_STALE")
         if expected_catalog_filter_revision is not None:

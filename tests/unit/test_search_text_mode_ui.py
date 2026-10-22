@@ -11,7 +11,7 @@ def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tm
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
-    assert '/web/search.js?v=p4-search-smart-collection-name-1' in search_page.read_text(encoding="utf-8")
+    assert '/web/search.js?v=p4-ram-ranking-1' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
@@ -55,8 +55,8 @@ function harness(storage=new Map(),harnessOptions={}){
   const calls=[],viewers=[],scrolls=[],historyWrites=[],dialogs=[];let answer=harnessOptions.answer||(body=>ok(page(body,body.cursor?202:201)));
   let collectionSaveAnswer=()=>ok({collection:{smart_id:1}});
   let dialogAnswer=()=>Promise.resolve("合成智能合集");
-  let timeAnswer=()=>ok({assets:[{asset_id:404,semantic_rank:1}],next_cursor:"time-next",
-    total_candidates:2,candidates_truncated:false,taken_time_rules_version:1});
+  let timeAnswer=harnessOptions.timeAnswer||(()=>ok({assets:[{asset_id:404,semantic_rank:1}],next_cursor:"time-next",
+    total_candidates:2,candidates_truncated:false,taken_time_rules_version:1}));
   for(const [id,value] of Object.entries({"query-retrieval-mode":"combined","query-availability":"any",
     "query-place-state":"any","query-descendants":"true","query-page-size":"1","query-person-match":"any"}))get(id).value=value;
   const context={URLSearchParams,URL,console,encodeURIComponent,isFinite,
@@ -122,6 +122,100 @@ function assertLiteral(request){
   assert.equal(request.capture_from,"2026-01-01");assert.equal(request.capture_to_exclusive,"2026-02-01");
 }
 (async()=>{
+  const category=harness();await flush();category.get("query-text").value="猫";
+  const categoryPage=body=>({...page(body,body.cursor?502:501,"category-next"),
+    search_session_id:body.category_rank?"category-session":"ordinary-session",
+    photo_collection_source_token:body.category_rank?"category-token":"ordinary-token",
+    photo_collection_source_mode:"ranked_candidates",
+    category_rank:{requested:body.category_rank||"off",applied:Boolean(body.category_rank),
+      available:true,identity:body.category_rank?"head-sha":null,class_id:"cat"},
+    channels:{vector:{engaged:true,strong_match_available:!body.category_rank,strong_match_count:2}}});
+  category.setAnswer(body=>ok(categoryPage(body)));
+  category.get("search-form").fire("submit");await flush();
+  assert.equal(category.searchCalls()[0].body.category_rank,undefined,"ordinary search stays the default");
+  assert.equal(category.get("category-rank-control").hidden,false);
+  assert.match(category.get("query-status").textContent,/相似度参考/);
+  category.get("category-rank-toggle").fire("click");await flush();
+  assert.equal(category.searchCalls().at(-1).body.category_rank,"album-qwen512-v1");
+  assert.equal(category.searchCalls().at(-1).body.search_session_id,undefined,"mode switch starts a new session");
+  assert.equal(category.ui.state.search.confirmedSearch.sourceToken,"category-token");
+  assert.equal(category.get("search-save-smart-collection").hidden,true);
+  assert.match(category.get("query-status").textContent,/类别优先/);
+  assert.doesNotMatch(category.get("query-status").textContent,/高度匹配/);
+  category.get("search-save-smart-collection").fire("click");await flush();
+  assert.equal(category.calls.filter(call=>call.url.endsWith("/photo-smart-collections/from-search")).length,0);
+  await category.ui.sendSearch(true);
+  assert.equal(category.searchCalls().at(-1).body.search_session_id,"category-session");
+  assert.equal(category.searchCalls().at(-1).body.category_rank,"album-qwen512-v1");
+  category.ui.toggleCandidateTimeBrowse();await flush();
+  assert.match(category.get("query-status").textContent,/类别优先/);
+  assert.equal(category.get("search-save-smart-collection").hidden,true);
+  category.ui.toggleCandidateTimeBrowse();await flush();
+  assert.equal(category.ui.saveSearchSnapshot(),true);
+  const categoryReturn=harness(new Map(category.storage),{answer:body=>ok(categoryPage(body))});await flush();
+  assert.equal(categoryReturn.ui.state.search.categoryRank,"album-qwen512-v1");
+  assert.equal(categoryReturn.get("search-save-smart-collection").hidden,true);
+  assert.match(categoryReturn.get("category-rank-toggle").textContent,/切回普通搜索/);
+  categoryReturn.get("category-rank-toggle").fire("click");await flush();
+  assert.equal(categoryReturn.searchCalls().at(-1).body.category_rank,undefined);
+  assert.equal(categoryReturn.searchCalls().at(-1).body.search_session_id,undefined);
+  assert.equal(categoryReturn.get("search-save-smart-collection").hidden,false);
+  category.get("category-rank-toggle").fire("click");await flush();
+  category.setAnswer(()=>Promise.reject({code:"CATEGORY_RANK_UNAVAILABLE",message:"类别包不可用"}));
+  category.get("category-rank-toggle").fire("click");await flush();
+  assert.match(category.get("query-status").textContent,/没有成功/);
+  assert.equal(category.get("category-rank-toggle").disabled,false,"failed optional mode can be switched off");
+  category.setAnswer(body=>ok(categoryPage(body)));
+  category.get("category-rank-toggle").fire("click");await flush();
+  assert.equal(category.searchCalls().at(-1).body.category_rank,undefined);
+  category.get("query-text").value="海边";category.get("query-text").fire("input");
+  assert.equal(category.get("category-rank-control").hidden,true,"edited query cannot reuse the category offer");
+  category.get("query-retrieval-mode").value="text";category.get("query-retrieval-mode").fire("change");
+  assert.equal(category.ui.state.search.categoryRank,"off");
+  category.get("search-form").fire("submit");await flush();
+  assert.equal(category.searchCalls().at(-1).body.category_rank,undefined);
+
+  // A new ordinary query may supersede an optional category request, a time page,
+  // or a return-snapshot validation. None of those old responses may restore results.
+  const categoryRace=harness();await flush();categoryRace.get("query-text").value="猫";
+  categoryRace.setAnswer(body=>ok(categoryPage(body)));
+  categoryRace.get("search-form").fire("submit");await flush();
+  let finishOldCategory;
+  categoryRace.setAnswer(body=>new Promise(resolve=>{finishOldCategory=()=>resolve(ok(categoryPage(body)));}));
+  categoryRace.get("category-rank-toggle").fire("click");await flush();
+  assert.equal(categoryRace.get("result-grid").children.length,0);
+  assert.equal(categoryRace.ui.state.search.confirmedSearch,null);
+  assert.equal(categoryRace.get("category-rank-toggle").disabled,true);
+  categoryRace.get("query-text").value="海边";
+  categoryRace.setAnswer(body=>ok({...categoryPage(body),hits:[{asset_id:703,rank:1}]}));
+  categoryRace.get("search-form").fire("submit");await flush();
+  finishOldCategory();await flush();
+  assert.equal(categoryRace.ui.state.search.hits[0].asset_id,703);
+  assert.equal(categoryRace.ui.state.search.categoryRank,"off");
+  assert.equal(categoryRace.ui.state.search.confirmedSearch.sourceToken,"ordinary-token");
+  categoryRace.get("query-text").value="猫";categoryRace.get("search-form").fire("submit");await flush();
+  categoryRace.get("category-rank-toggle").fire("click");await flush();
+  let finishOldCategoryTime;
+  categoryRace.setTimeAnswer(()=>new Promise(resolve=>{finishOldCategoryTime=()=>resolve(ok({
+    assets:[{asset_id:704,semantic_rank:1}],total_candidates:1,taken_time_rules_version:1}));}));
+  categoryRace.ui.toggleCandidateTimeBrowse();await flush();
+  categoryRace.get("query-text").value="狗";
+  categoryRace.setAnswer(body=>ok({...categoryPage(body),hits:[{asset_id:705,rank:1}]}));
+  categoryRace.get("search-form").fire("submit");await flush();
+  finishOldCategoryTime();await flush();
+  assert.equal(categoryRace.ui.state.search.hits[0].asset_id,705);
+  assert.equal(categoryRace.ui.state.search.timeBrowse.active,false);
+  let finishOldCategoryReturn;
+  const categoryRaceReturn=harness(new Map(categoryRace.storage),{
+    answer:body=>ok({...categoryPage(body),hits:[{asset_id:706,rank:1}]}),
+    timeAnswer:()=>new Promise(resolve=>{finishOldCategoryReturn=()=>resolve(ok({
+      assets:[],total_candidates:1,taken_time_rules_version:1}));})});
+  await flush();assert.equal(typeof finishOldCategoryReturn,"function");
+  categoryRaceReturn.get("query-text").value="新查询";
+  categoryRaceReturn.get("search-form").fire("submit");await flush();
+  finishOldCategoryReturn();await flush();
+  assert.equal(categoryRaceReturn.ui.state.search.hits[0].asset_id,706);
+
   const ordinary=harness();await flush();
   ordinary.setAnswer(body=>ok({...page(body,303,null),hits:[{asset_id:303,rank:33,
     hit_reason:"SEMANTIC",semantic_ready:true,matched_by:{vector:33},matched_text:["ocr_text"]}]}));

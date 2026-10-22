@@ -1,3 +1,19 @@
+## Current task: P4-SEARCH-QUALITY-PRODUCT — 搜索改进产品接入（2026-10-21）
+
+PASS（本轮产品接入范围，组合证据）：RAM++广类别可选辅助已接入，支持后台暂停续做、坏图跳过、版本化稀疏标签与最多5000候选重排；schema43及模型包已准备。正式1927图对照、300k标签存储、32图真实浏览器与独审通过。完整基线4246项（4164通过/33失败/49既有skip），33项均经修复增量闭合，不称单次全套全绿。未访问私人图库；2026-10-22按用户授权以草稿PR交付 `codex/upstream-quality-20261020`。主干 `2dece3c` 已有另一项schema43迁移，当前快照尚未整合，合并前必须处理迁移与搜索/智能合集交叉改动并重验；未认证1660/30万端到端。见[报告](reports/P4-SEARCH-QUALITY-PRODUCT.md)、[任务卡](tasks/P4-SEARCH-QUALITY-PRODUCT.md)，原始验证汇总位于忽略目录 `test-results/p4-search-quality-product/tag-final-verification.json`。
+
+## Current task: P4-ALBUM-PARETO — 相册场景的整体体验取舍（2026-10-21）
+
+离线研究 COMPLETE：独立COCO800/320/480、完整PhotoBench1047图/100组中英查询，对照小分类头、区域、日期和1000对重排。Qwen512头AP83.88→92.02%但小主体/置信退步；FG相册质量与资源较优、日期仅2组获益；区域收益小，重排约19.09s且首结果可能退步，不默认采用，拒绝统一余弦阈值隐藏结果。最终530项定向单测、Ruff和完整测量面独审通过，保留原始失败及组合证据。生产代码/依赖/活动空间未改，实际5070Ti，未认证1660或30万端到端；未提交推送。见[任务卡](tasks/P4-ALBUM-PARETO.md)与[报告](reports/P4-ALBUM-PARETO.md)。
+
+## Current task: P4-6GB-SEARCH-QUALITY — 6GB显卡与30万图库研究（2026-10-21）
+
+离线研究 COMPLETE：新400图＋旧500图比较Qwen/SigLIP2/FG-CLIP2/Gemma、检测和固定RRF。FG动态预算猫狗AP99.05/99.61%，但旧8类80.55%低于Qwen2048的84.83%；双模型仅小幅均值改善且有类别退步，不默认替换。30万向量27组精确Top5000顺序一致，大候选单扫、小候选分块各优；本次IVF_PQ配置漏召回，拒绝采用。139项定向单测、Ruff/diff-check、独立测量面审查通过，失败与组合证据保留。实际5070Ti，不认证1660/真实混合图库/HTTP；生产代码和依赖未改、未提交推送。见[任务卡](tasks/P4-6GB-SEARCH-QUALITY.md)与[报告](reports/P4-6GB-SEARCH-QUALITY.md)。
+
+## Current task: P4-VECTOR-QUALITY-TUNING — 纯向量质量与成本探索（2026-10-21）
+
+公开数据离线实验 COMPLETE：500图＋800对真实CUDA重排，参考Immich/PhotoPrism/LibrePhotos/Ente工程。Qwen2048整图/五视图max/重排Top50/100平均AP84.83/85.88/87.75/89.28%；五视图可救小主体但编码约4.5倍，重排额外候选处理约3.29/6.61秒每query；不默认扩写、加像素或切WeMM。76项定向单测、独立原始向量/评分复算及有界审查通过；保留失败与组合证据。建议更高维候选空间＋可选精细搜索，离线标签/区域检测待独立数据验证。生产代码/依赖/活动模型未改，未验私人图库/30万/HTTP/双模型并驻，未提交推送。见[任务卡](tasks/P4-VECTOR-QUALITY-TUNING.md)与[报告](reports/P4-VECTOR-QUALITY-TUNING.md)。
+
 ## Current task: P4-WEMM-QUALITY-PILOT — 只读质量归因与模型对照（2026-10-20）
 
 已同步 `900028d`，按用户授权完成40图smoke及500张公开COCO对照，未访问私人图库。Qwen512/2048/WeMM512平均AP为80.23/84.83/86.82%，猫前50均100%；WeMM图像编码中位耗时为Qwen的2.81倍，正式接入判断 **INCONCLUSIVE**，[Provider 卡](tasks/P4-WEMM-PROVIDER.md)不启动。验证采用冻结源码GPU＋独立CPU复算＋I/O修复增量；核心/CLI51、catalog30、准备器17项JUnit通过，独审闭合。Qwen一次文件写入失败保留exit2，同身份恢复exit0；不称单次全套通过。事后1024维对照平均AP83.68%，保留约75%的2048维增益；不改默认配置。未验私图库、大原图与8GB/1660；生产依赖/活动模型未改。2026-10-21用户授权将评测工具、测试和结论提交推送到实验分支 `codex/upstream-quality-20261020`。详见[试验卡](tasks/P4-WEMM-QUALITY-PILOT.md)与[报告](reports/P4-WEMM-QUALITY-PILOT.md)。

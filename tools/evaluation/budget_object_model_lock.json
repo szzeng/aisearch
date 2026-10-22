@@ -1,0 +1,20 @@
+{
+  "model_id": "PekingU/rtdetr_v2_r18vd",
+  "revision": "5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "license": "Apache-2.0",
+  "training_data": "COCO train2017",
+  "files": {
+    "config.json": {
+      "bytes": 5437,
+      "sha256": "ed051ec77cb41c5d9d5e3af21a979b1e890599dfd68434d7636ff82ded4c1527"
+    },
+    "preprocessor_config.json": {
+      "bytes": 444,
+      "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1"
+    },
+    "model.safetensors": {
+      "bytes": 80904640,
+      "sha256": "d18309d0d7ea57048138885c4c6ecfcb1e24506fc6153b94ad484f8ab62c7115"
+    }
+  }
+}

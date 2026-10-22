@@ -65,6 +65,9 @@ def rule_from_search(source: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(submitted, dict) or not isinstance(confirmed, dict):
         raise _fail("无法恢复服务端确认的搜索规则，请重新搜索后保存", code="PHOTO_SMART_RULE_UNRECOVERABLE")
     payload = PlaceAwareSearchRequestModel.model_validate(submitted)
+    if payload.category_rank != "off" or (confirmed.get("category_rank") or {}).get("applied"):
+        raise _fail("类别优先试用结果暂不能保存为智能合集；可以保存为普通合集，或关闭类别优先后重试",
+                    code="PHOTO_SMART_CATEGORY_RANK_UNSUPPORTED")
     execution_mode = confirmed.get("mode")
     retrieval_mode = confirmed.get("retrieval_mode")
     confirmed_plan = confirmed.get("intent_plan")
