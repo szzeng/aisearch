@@ -5,6 +5,7 @@
   var sourceRoots = new Map();
   var serial = 0;
   var mounts = new WeakMap();
+  var activeHistoryOwner = null;
   var DETAIL_RETURN_KEY = "aisearch.photo-detail-return.v1";
   var DETAIL_RETURN_PATHS = { home: "/", search: "/search", persons: "/persons", places: "/places", map: "/map" };
 
@@ -722,7 +723,13 @@
     dialog.setAttribute("aria-labelledby", title.id);
     dialog.append(heading, layout, extension); document.body.append(dialog);
     var mounted = null, generation = 0, currentAssetId = null, historyOwned = false, closingFromHistory = false, navigatingToDetails = false, navigatingToSimilar = false;
-    var historyKey = "photo-viewer-" + serial;
+    var historyKey = options.historyEntryKey || "photo-viewer-" + serial;
+    function viewerHistoryState() {
+      var current = window.history.state && typeof window.history.state === "object"
+        ? Object.assign({}, window.history.state) : {};
+      current.photoViewerKey = historyKey;
+      return current;
+    }
     var preview = { image: image, naturalWidth: 0, naturalHeight: 0, scale: 1, mode: "fit", x: 0, y: 0 };
     function applyScale(value, anchorX, anchorY) {
       if (!preview.naturalWidth || !preview.naturalHeight) return;
@@ -974,8 +981,41 @@
       }
     });
     var onPopState = function (event) {
-      if (!historyOwned || !dialog.open) return;
-      if (!canClose()) { window.history.pushState({ photoViewerKey: historyKey }, "", window.location.href); return; }
+      if (!historyOwned) return;
+      if (event && event.state && event.state.photoViewerKey === historyKey) {
+        if (dialog.open) return;
+        closingFromHistory = false;
+        var restoreHandle = null;
+        var restoreOptions = Object.assign({}, options, {
+          history: false,
+          onAssetChange: function (id, activeHandle) {
+            currentAssetId = String(id);
+            handle.dialog = activeHandle.dialog; handle.image = activeHandle.image; handle.panel = activeHandle.panel;
+            handle.extension = activeHandle.extension; handle.controls = activeHandle.controls; handle.title = activeHandle.title;
+            handle.close = activeHandle.close; handle.setAsset = activeHandle.setAsset; handle.setPosition = activeHandle.setPosition;
+            handle.setNavigationEnabled = activeHandle.setNavigationEnabled; handle.setNote = activeHandle.setNote;
+            if (typeof options.onAssetChange === "function") options.onAssetChange(id, handle);
+          },
+          onClose: function (id) {
+            currentAssetId = String(id);
+            if (typeof options.onClose === "function") options.onClose(id, handle);
+            if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
+          },
+          onOpenFullDetails: function (id, activeHandle) {
+            if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
+            if (typeof options.onOpenFullDetails === "function") options.onOpenFullDetails(id, activeHandle);
+          },
+          onFindSimilar: function (id, activeHandle) {
+            if (historyOwned && window.removeEventListener) { window.removeEventListener("popstate", onPopState); historyOwned = false; }
+            if (typeof options.onFindSimilar === "function") options.onFindSimilar(id, activeHandle);
+          },
+        });
+        restoreHandle = open(currentAssetId, restoreOptions);
+        dialog = restoreHandle.dialog;
+        return;
+      }
+      if (!dialog.open) return;
+      if (!canClose()) { window.history.pushState(viewerHistoryState(), "", window.location.href); return; }
       closingFromHistory = true; dismiss();
     };
     var handle = { dialog: dialog, image: image, panel: panel, extension: extension, controls: controls, title: title,
@@ -1003,7 +1043,6 @@
         window.removeEventListener("pointerup", onWindowPointerEnd);
         window.removeEventListener("pointercancel", onWindowPointerEnd);
         window.removeEventListener("blur", onWindowBlur);
-        if (historyOwned) window.removeEventListener("popstate", onPopState);
       }
       if (historyOwned && !closingFromHistory && window.history.back) window.history.back();
       if (mounted) mounted.dispose(); image.removeAttribute("src"); dialog.remove();
@@ -1014,8 +1053,16 @@
     dialog.addEventListener("keydown", function (event) { if (event.key === "Escape" && dialog.open) { event.preventDefault(); dismiss(); } });
     dialog.showModal();
     if (options.history !== false && window.history && window.history.pushState && window.addEventListener) {
-      window.history.pushState({ photoViewerKey: historyKey }, "", window.location.href);
+      if (activeHistoryOwner && activeHistoryOwner.listener !== onPopState && !activeHistoryOwner.isOpen()) {
+        window.removeEventListener("popstate", activeHistoryOwner.listener);
+        activeHistoryOwner = null;
+      }
+      var currentHistoryState = window.history.state;
+      if (!(currentHistoryState && currentHistoryState.photoViewerKey === historyKey)) {
+        window.history.pushState(viewerHistoryState(), "", window.location.href);
+      }
       historyOwned = true; window.addEventListener("popstate", onPopState);
+      activeHistoryOwner = { listener: onPopState, isOpen: function () { return dialog.open; } };
     }
     close.focus();
     setAsset(assetId);

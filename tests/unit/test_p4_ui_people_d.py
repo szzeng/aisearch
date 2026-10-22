@@ -46,3 +46,17 @@ def test_people_search_and_curation_actions_keep_their_existing_paths() -> None:
     assert 'person_ids: [state.person.person_id]' in script
     assert '"/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo"' in script
     assert 'operation.operation_type !== "CREATE_PERSON_FROM_FACE"' in script
+    assert "可切换到‘待整理’查看未命名人物" in script
+    assert "当前筛选下没有找到未命名人物" in script
+    assert "可切换到‘待整理’给熟悉的人取名" in script
+
+
+def test_person_directory_album_uses_browser_history_and_restores_on_forward() -> None:
+    script = (WEB / "persons-albums.js").read_text(encoding="utf-8")
+
+    assert "openAlbum(card.latestPerson, { pushHistory: true })" in script
+    assert "current.personAlbumHistoryEntryId = entryId" in script
+    assert "current.personAlbumPersonId = Number(person.person_id)" in script
+    assert "if (target && target.photoViewerKey) return" in script
+    assert 'state.albumHistoryEntryId && !$("album").hidden' in script
+    assert "openPersonById(Number(target.personAlbumPersonId), { historyEntryId: target.personAlbumHistoryEntryId })" in script

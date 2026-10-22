@@ -1,3 +1,7 @@
+## Current task: P4-UI2-OVERALL-UX-POLISH（2026-10-22）
+
+P4-UI2-OVERALL-UX-POLISH 修复共享查看器 Back/Forward 和保留搜索历史状态、搜索 A→B 快照恢复、人物目录/相册 Back/Forward、旧默认搜索快照兼容，以及照片时间说明/人物空态文案。最终定向 JUnit **23/23**、4 个受影响脚本 Node 语法、diff-check 通过；隔离合成浏览器验证 H01–H05、H08 的已覆盖路径，并确认 H03 连续 Back 回到预览再回到搜索结果、Forward 重开预览。按用户要求由 Luna High 进行完整改动面复查，Luna High 复查发现的“请求中编辑草稿与结果历史错配”已修复：历史条目与快照共用请求开始时捕获的表单/范围，定向断言覆盖序列化；Luna High 跟进复查已确认该 finding 关闭，无新回归。固定范围取消→重提交及 H06–H07、H09–H10、U04 仍待浏览器验收，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交或推送。详见[任务卡](tasks/P4-UI2-OVERALL-UX-POLISH.md)与[报告](reports/P4-UI2-OVERALL-UX-POLISH.md)。
+
 ## Current task: P4-RELEASE-060 — 0.6.0 版本标记更新（2026-10-22）
 
 **0.6.0 个人源码测试版已发布为 GitHub Pre-release**：[Photo Search 0.6.0 — Personal Beta](https://github.com/szzeng/aisearch/releases/tag/0.6.0)。应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新；Catalog Schema 43、API v1。Annotated tag `0.6.0` 指向候选 `e9a3892`；master/tag 已推送。按用户要求，本次未重新运行验证；真实图库、Qwen 1024D 建库/切换、Windows 安装包与容量/性能认证未包含在本次验证范围。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。

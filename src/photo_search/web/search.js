@@ -26,6 +26,9 @@
   var DEFAULT_SIMILAR_TOP_K = 5000;
   var SEARCH_SNAPSHOT_KEY = "aisearch.search-return.v1";
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
+  var activeSearchHistoryEntryId = null;
+  var activeSearchHistoryForm = null;
+  var pendingSearchHistoryTransition = false;
   var backdropBoundDialogs = new WeakSet();
   //: One page of the person picker. The page never materialises the whole person list: the
   //: server's own keyset cursor drives "加载更多人物", so a large catalog stays a paged read.
@@ -1550,7 +1553,187 @@
     return Boolean(search.active_profile_id) && search.query_encoder_available === true;
   }
 
+  function setSearchHistoryEntryId(id) {
+    activeSearchHistoryEntryId = typeof id === "string" && id ? id : null;
+  }
+
+  function ensureSearchHistoryEntry() {
+    if (!window.history || typeof window.history.replaceState !== "function") return;
+    var current = window.history.state && typeof window.history.state === "object"
+      ? Object.assign({}, window.history.state) : {};
+    if (!current.searchHistoryEntryId) {
+      current.searchHistoryEntryId = newRequestId("search-entry");
+      current.searchHistoryEntry = true;
+      window.history.replaceState(current, "", window.location.href);
+    }
+    setSearchHistoryEntryId(current.searchHistoryEntryId);
+  }
+
+  function seedSearchHistoryEntryFromSnapshot(saved, restoreKey) {
+    if (restoreKey !== SEARCH_SNAPSHOT_KEY || !saved || !saved.form || !activeSearchHistoryEntryId ||
+        !window.history || typeof window.history.replaceState !== "function") return;
+    var current = window.history.state && typeof window.history.state === "object"
+      ? Object.assign({}, window.history.state) : {};
+    if (current.searchHistoryEntryId !== activeSearchHistoryEntryId || current.searchSnapshotToken) return;
+    var token = newRequestId("search-snapshot");
+    try {
+      window.sessionStorage.setItem(SEARCH_SNAPSHOT_KEY + ":" + token, JSON.stringify(saved));
+    } catch (_error) {
+      return;
+    }
+    current.searchHistoryEntry = true;
+    current.searchSnapshotToken = token;
+    current.searchForm = saved.form;
+    current.selectedScope = saved.selectedScope || null;
+    window.history.replaceState(current, "", window.location.href);
+    activeSearchHistoryForm = saved.form;
+  }
+
+  function saveCurrentSearchHistoryEntry(formOverride, selectedScopeOverride) {
+    if (!activeSearchHistoryEntryId || !window.history || typeof window.history.replaceState !== "function") return false;
+    var current = window.history.state && typeof window.history.state === "object"
+      ? Object.assign({}, window.history.state) : {};
+    if (current.searchHistoryEntryId !== activeSearchHistoryEntryId) return false;
+    var token = current.searchSnapshotToken || newRequestId("search-snapshot");
+    var committedForm = formOverride || activeSearchHistoryForm || current.searchForm || searchFormSnapshot();
+    var committedScope = selectedScopeOverride !== undefined
+      ? selectedScopeOverride : (current.selectedScope !== undefined ? current.selectedScope : (state.search.selectedScope || null));
+    var saved = saveSearchSnapshot(SEARCH_SNAPSHOT_KEY + ":" + token, committedForm, committedScope);
+    current.searchHistoryEntry = true;
+    current.searchForm = committedForm;
+    activeSearchHistoryForm = current.searchForm;
+    current.selectedScope = committedScope;
+    if (saved) {
+      current.searchSnapshotToken = token;
+      delete current.searchSnapshotSaveFailed;
+    } else {
+      delete current.searchSnapshotToken;
+      current.searchSnapshotSaveFailed = true;
+    }
+    window.history.replaceState(current, "", window.location.href);
+    return saved;
+  }
+
+  function beginSearchHistoryEntry() {
+    if (!activeSearchHistoryEntryId || (!state.search.lastBody && !pendingSearchHistoryTransition) || !window.history ||
+        typeof window.history.pushState !== "function" || typeof window.history.replaceState !== "function") return;
+    var currentForm = searchFormSnapshot();
+    var current = window.history.state && typeof window.history.state === "object"
+      ? Object.assign({}, window.history.state) : {};
+    if (current.searchHistoryEntryId !== activeSearchHistoryEntryId) return;
+    var previous = null;
+    if (current.searchSnapshotToken) {
+      try { previous = JSON.parse(window.sessionStorage.getItem(SEARCH_SNAPSHOT_KEY + ":" + current.searchSnapshotToken) || "null"); }
+      catch (_error) { previous = null; }
+    }
+    var nextScope = state.search.selectedScope || null;
+    var scopeChanged = JSON.stringify(current.selectedScope || null) !== JSON.stringify(nextScope);
+    if (previous && JSON.stringify(previous.form) === JSON.stringify(currentForm) && !scopeChanged &&
+        !pendingSearchHistoryTransition) return;
+    var previousForm = activeSearchHistoryForm || current.searchForm || (previous && previous.form) || null;
+    var token = current.searchSnapshotToken || newRequestId("search-snapshot");
+    var saved = state.search.lastBody
+      ? saveSearchSnapshot(SEARCH_SNAPSHOT_KEY + ":" + token, previousForm)
+      : Boolean(current.searchSnapshotToken && previous);
+    current.searchHistoryEntry = true;
+    current.searchForm = previousForm;
+    current.selectedScope = current.selectedScope || null;
+    if (saved) {
+      current.searchSnapshotToken = token;
+      delete current.searchSnapshotSaveFailed;
+    } else {
+      delete current.searchSnapshotToken;
+      current.searchSnapshotSaveFailed = true;
+    }
+    window.history.replaceState(current, "", window.location.href);
+    var next = {
+      searchHistoryEntry: true,
+      searchHistoryEntryId: newRequestId("search-entry"),
+      searchForm: currentForm,
+      selectedScope: nextScope,
+    };
+    window.history.pushState(next, "", window.location.href);
+    setSearchHistoryEntryId(next.searchHistoryEntryId);
+    activeSearchHistoryForm = currentForm;
+    pendingSearchHistoryTransition = false;
+  }
+
+  function applySearchHistoryForm(form, selectedScope) {
+    if (!form) return;
+    els.queryText.value = form.queryText || "";
+    if (els.queryRetrievalMode) els.queryRetrievalMode.value = form.retrievalMode === "text" ? "text" : "combined";
+    if (els.querySource) els.querySource.value = form.source || "";
+    if (els.queryAvailability) els.queryAvailability.value = form.availability || "any";
+    if (els.queryPlaceState) els.queryPlaceState.value = form.placeState || "any";
+    if (els.queryPlaceIds) els.queryPlaceIds.value = form.placeIds || "";
+    if (els.queryDescendants) els.queryDescendants.value = form.descendants || "true";
+    if (els.queryCaptureFrom) els.queryCaptureFrom.value = form.captureFrom || "";
+    if (els.queryCaptureTo) els.queryCaptureTo.value = form.captureTo || "";
+    if (els.queryPageSize) els.queryPageSize.value = form.pageSize || String(DEFAULT_PAGE_SIZE);
+    if (els.queryPersonMatch) els.queryPersonMatch.value = form.personMatch === "all" ? "all" : "any";
+    state.person.selected = {};
+    (form.personIds || []).forEach(function (personId) {
+      var id = Number(personId);
+      if (isFinite(id) && id > 0 && Math.floor(id) === id) state.person.selected[personKey(id)] = { person_id: id, name: null };
+    });
+    if (els.queryFavoritesOnly) els.queryFavoritesOnly.checked = Boolean(form.favoritesOnly);
+    state.search.favoritesOnly = Boolean(form.favoritesOnly);
+    state.search.selectedScope = selectedScope || null;
+    updatePersonSelection();
+    renderScopeControls();
+    renderIntentChips(null);
+  }
+
+  function handleSearchHistoryPopState(event) {
+    var target = event && event.state;
+    if (!target || target.searchHistoryEntry !== true || !target.searchHistoryEntryId ||
+        target.searchHistoryEntryId === activeSearchHistoryEntryId) return;
+    setSearchHistoryEntryId(target.searchHistoryEntryId);
+    activeSearchHistoryForm = target.searchForm || null;
+    pendingSearchHistoryTransition = false;
+    state.search.requestGeneration += 1;
+    invalidateSearchPreview();
+    state.search.loading = false;
+    state.search.mode = "text";
+    state.search.assetQueryId = null;
+    state.search.assetQuery = null;
+    state.search.hits = [];
+    state.search.sessionId = null;
+    state.search.cursor = null;
+    state.search.count = 0;
+    state.search.windowOffset = 0;
+    state.search.recycledCount = 0;
+    state.search.lastBody = null;
+    state.search.confirmedSearch = null;
+    state.search.lastRequestBody = null;
+    state.search.total = null;
+    state.search.binding = null;
+    state.search.placeAware = null;
+    state.search.intentPlan = null;
+    state.search.saveReconfirmRequired = false;
+    state.search.favoritesOnly = false;
+    state.search.timeBrowse.active = false;
+    state.search.timeBrowse.cursor = null;
+    state.search.timeBrowse.previous = null;
+    state.search.timeBrowse.rulesVersion = null;
+    state.search.timeBrowse.total = null;
+    state.search.timeBrowse.truncated = false;
+    state.search.timeBrowse.retryCursor = null;
+    clear(els.resultGrid);
+    els.loadMore.hidden = true;
+    if (els.gridSentinel) els.gridSentinel.hidden = true;
+    if (state.search.pager) state.search.pager.reset();
+    applySearchHistoryForm(target.searchForm, target.selectedScope);
+    if (target.searchSnapshotToken || target.searchSnapshotSaveFailed) {
+      restoreSearchSnapshot();
+    } else {
+      renderResultOperations();
+      setStatus(els.queryStatus, "已恢复这次搜索的条件；结果尚未完成或快照不可用，请重新搜索。", "error");
+    }
+  }
+
   function submitSearch() {
+    beginSearchHistoryEntry();
     clearSimilarAssetUrl();
     clearAssetQuerySummary();
     setSimilarQueryControls(false);
@@ -1721,6 +1904,8 @@
   }
 
   function sendSearch(continuation) {
+    var requestSearchForm = continuation ? null : searchFormSnapshot();
+    var requestSearchScope = continuation ? undefined : (state.search.selectedScope || null);
     if (state.search.mode !== "asset_image") {
       state.search.assetQuery = null;
       if (els.assetQuerySummary) els.assetQuerySummary.hidden = true;
@@ -1843,6 +2028,9 @@
         }
         state.search.pendingImageFile = null;
         renderPage(body, continuation);
+        var responseSearchScope = requestSearchScope;
+        if (body && body.search_scope) responseSearchScope = body.search_scope;
+        saveCurrentSearchHistoryEntry(requestSearchForm, responseSearchScope);
         return true;
       },
       function (failure) {
@@ -2182,7 +2370,8 @@
         state.search.timeBrowse.active = false;
         state.search.timeBrowse.cursor = null;
         state.search.timeBrowse.previous = null;
-        clearSearchSnapshot();
+        pendingSearchHistoryTransition = true;
+        clearSearchSnapshot(true);
         invalidateSearchPreview();
         releaseObjectUrls();
         clear(els.resultGrid);
@@ -2274,6 +2463,7 @@
   }
 
   function invalidateSearchForScopeChange(message) {
+    pendingSearchHistoryTransition = true;
     state.search.requestGeneration += 1;
     state.search.loading = false;
     state.search.sessionId = null;
@@ -2290,7 +2480,7 @@
     state.search.timeBrowse.cursor = null;
     state.search.timeBrowse.retryCursor = null;
     state.search.timeBrowse.previous = null;
-    clearSearchSnapshot();
+    clearSearchSnapshot(true);
     invalidateSearchPreview();
     releaseObjectUrls();
     clear(els.resultGrid);
@@ -2340,6 +2530,7 @@
       place_cancelled: true,
     };
     els.queryText.value = content;
+    pendingSearchHistoryTransition = true;
     state.search.requestGeneration += 1;
     state.search.loading = false;
     state.search.sessionId = null;
@@ -2352,6 +2543,7 @@
     state.search.confirmedSearch = null;
     renderResultOperations();
     state.search.lastRequestBody = null;
+    beginSearchHistoryEntry();
     clearSearchSnapshot();
     invalidateSearchPreview();
     releaseObjectUrls();
@@ -2670,9 +2862,12 @@
     renderResultOperations();
   }
 
-  function clearSearchSnapshot() {
+  function clearSearchSnapshot(preserveCurrentHistoryEntry) {
     try {
-      window.sessionStorage.removeItem(snapshotStorageKey());
+      var current = window.history && window.history.state;
+      if (!preserveCurrentHistoryEntry || !current || !current.searchSnapshotToken) {
+        window.sessionStorage.removeItem(snapshotStorageKey());
+      }
       window.sessionStorage.removeItem(SEARCH_SNAPSHOT_KEY);
       window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
     } catch (_error) {
@@ -2864,7 +3059,7 @@
     while (keys.length > keepCount) storage.removeItem(keys.shift().key);
   }
 
-  function saveSearchSnapshot(keyOverride) {
+  function saveSearchSnapshot(keyOverride, formOverride, selectedScopeOverride) {
     if (!state.search.lastBody || (state.search.mode !== "text" && state.search.mode !== "asset_image")) {
       return false;
     }
@@ -2874,7 +3069,7 @@
       mode: state.search.mode,
       assetQueryId: state.search.assetQueryId,
       assetQuery: state.search.assetQuery,
-      form: searchFormSnapshot(),
+      form: formOverride || searchFormSnapshot(),
       hits: state.search.hits,
       windowOffset: state.search.windowOffset,
       recycledCount: state.search.recycledCount,
@@ -2885,7 +3080,7 @@
       total_candidates: state.search.total,
       placeAware: state.search.placeAware,
       intentPlan: state.search.intentPlan,
-      selectedScope: state.search.selectedScope,
+      selectedScope: selectedScopeOverride !== undefined ? selectedScopeOverride : state.search.selectedScope,
       binding: state.search.binding,
       lastBody: state.search.lastBody,
       lastRequestBody: state.search.lastRequestBody,
@@ -2924,6 +3119,7 @@
       window.sessionStorage.removeItem(SEARCH_RETURN_SOURCE_KEY);
     } catch (_error) {
       clearSearchSnapshot();
+      setStatus(els.queryStatus, "历史搜索快照不可用；已保留搜索条件，请重新搜索恢复结果。", "error");
       return;
     }
     if (!saved || !saved.form || !Array.isArray(saved.hits) || !saved.lastBody) {
@@ -3097,9 +3293,11 @@
         state.search.timeBrowse.previous = null;
         state.search.timeBrowse.rulesVersion = null;
         renderPage(result.body, false);
+        seedSearchHistoryEntryFromSnapshot(saved, restoreKey);
         window.requestAnimationFrame(function () { window.scrollTo(0, 0); });
       } else {
         restoreValidatedSearchSnapshot(saved);
+        seedSearchHistoryEntryFromSnapshot(saved, restoreKey);
       }
     }).catch(function (failure) {
       if (restoreGeneration !== state.search.requestGeneration) return;
@@ -3263,8 +3461,10 @@
     var note = element("p", "hint", ""); note.setAttribute("role", "status"); extension.append(info, note);
     els.searchPreviewInfo = info; els.searchPreviewNote = note;
     var preview = state.search.preview;
+    var currentHistoryState = window.history && window.history.state;
     preview.handle = window.AIPhotoInfo.open(assetId, {
       title: "搜索结果照片", alt: "搜索结果照片", extension: extension, people: false, returnFocus: returnFocus,
+      historyEntryKey: currentHistoryState && currentHistoryState.photoViewerKey,
       onFindSimilar: function (id) {
         prepareSearchSimilarReturn();
         window.location.assign("/search?similar_asset=" + encodeURIComponent(id));
@@ -4372,6 +4572,8 @@
     loadActiveSearchModelLabel();
     Promise.all([capabilitiesPromise, loadSources()]).then(function () {
       initPerfDiagnostics();
+      ensureSearchHistoryEntry();
+      if (window.addEventListener) window.addEventListener("popstate", handleSearchHistoryPopState);
       restoreOrStartSearch();
     });
   }

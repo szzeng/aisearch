@@ -21,6 +21,8 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
     assert 'id="browse-show-timeline" aria-pressed="true" hidden' in html
     assert 'id="browse-list-filters" hidden' in html
     assert 'id="browse-list-time-hint" class="hint" hidden' in html
+    assert 'id="browse-time-policy" class="browse-time-policy hint"' in html
+    assert 'if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites;' in app
     assert ".browse-controls #browse-list-filters[hidden] {\n  display: none;\n}" in timeline_styles
     assert 'photo-timeline.css?v=p4-photo-collection-a-1' in html
     assert 'class="view gallery-management-page"' in html

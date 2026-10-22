@@ -1435,8 +1435,9 @@
     var favorites = next === "favorites";
     if (els.browseTitle) text(els.browseTitle, favorites ? "我的收藏" : "全部照片");
     if (els.browseIntro) {
-      text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "“加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。\n“拍摄时间”只来自文件自身声明的时间；文件系统修改时间与 EXIF 根时间不参与拍摄时间范围筛选。");
+      text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "拍摄时间只采用照片文件自身声明的时间；文件系统时间不会用于拍摄日期筛选。");
     }
+    if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites;
     if (els.browseModeControls) els.browseModeControls.hidden = favorites;
     if (els.favoritesOrderLabel) els.favoritesOrderLabel.hidden = !favorites;
     if (els.favoritesOrder) { els.favoritesOrder.hidden = !favorites; els.favoritesOrder.value = state.browse.favoritesOrder; }
@@ -4262,6 +4263,7 @@
       browseShowList: document.getElementById("browse-show-list"),
       browseTitle: document.getElementById("view-browse-title"),
       browseIntro: document.getElementById("browse-intro"),
+      browseTimePolicy: document.getElementById("browse-time-policy"),
       browseModeControls: document.getElementById("browse-mode-controls"),
       browseControls: document.getElementById("browse-controls"),
       browseListFilters: document.getElementById("browse-list-filters"),

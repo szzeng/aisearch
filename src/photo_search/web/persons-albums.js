@@ -5,7 +5,7 @@
   const inboxFaceSnapshots = new Map();
   const backdropBoundDialogs = new WeakSet();
   let setSearchScopeAction = function () {};
-  const state = { libraryView: "people", lastOrganizeView: "unnamed", ignoredObject: "faces", libraryNavigationReady: false, directorySnapshots: new Map(), peopleRestore: null, organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
+  const state = { libraryView: "people", lastOrganizeView: "unnamed", ignoredObject: "faces", libraryNavigationReady: false, directorySnapshots: new Map(), peopleRestore: null, organize: false, qualityView: "clean", hiddenView: false, ignoreState: "TEMPORARY", batchMode: false, inboxBatchMode: false, hiddenBatchMode: false, collectionPeopleManage: false, collectionFacesManage: false, collectionPeopleBusy: false, collectionActionBusy: false, collectionRemoveUnknown: false, collectionPeopleStale: false, collectionFacesStale: false, selectedCollectionFaces: new Set(), collectionFaceLoadedIds: [], collectionFaceCursor: null, collectionFaceHasMore: false, selectedPeople: new Set(), selectedPeopleSnapshots: new Map(), pendingWrite: null, collectionSelectedPeople: new Set(), collectionById: new Map(), selectedInboxFaces: new Set(), selectedHiddenFaces: new Set(), selectAnchors: new Map(), visibilityBusy: false, faceVisibilityBusy: false, inboxHiddenVisible: false, inboxHiddenCursor: null, person: null, collection: null, albumHistoryEntryId: null, collectionMode: "photos", collectionCursor: null, collectionPeopleCursor: null, collectionListCursor: null, collectionListSeq: 0, collectionSeq: 0, listCursor: null, inboxCursor: null,
     photoCursor: null, photoHasMore: false, photoPager: null, photoIds: [], photoListSeq: 0, previewAssetId: null, previewListSeq: 0, previewHandle: null, previewUI: null,
     previewMoving: false, listSeq: 0, inboxSeq: 0, inboxFilterSeq: 0, photoSeq: 0, previewSeq: 0, editSeq: 0,
     choiceSeq: 0, choiceCursor: null, choiceQuery: "", rematchAfter: 0, rematchRestartAfter: null, hiddenFaceSeq: 0, edit: null, chosen: null,
@@ -451,7 +451,7 @@
   }
   function createPersonCard(person, index) {
     const card = node("div", undefined, "pa-person-card"); card.tabIndex = 0; card.setAttribute("role", "button");
-    const activate = (event) => { if (state.visibilityBusy || state.writing) return; if (state.batchMode) { if (!choosePersonRange(card, event)) togglePersonSelection(card.personId); } else openAlbum(card.latestPerson); };
+    const activate = (event) => { if (state.visibilityBusy || state.writing) return; if (state.batchMode) { if (!choosePersonRange(card, event)) togglePersonSelection(card.personId); } else openAlbum(card.latestPerson, { pushHistory: true }); };
     card.addEventListener("click", activate);
     card.addEventListener("keydown", (event) => { if (event.target === card && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); } });
     card.selectionBox = node("input"); card.selectionBox.type = "checkbox"; card.selectionBox.className = "pt-person-checkbox";
@@ -701,9 +701,10 @@
     const search = typeof window !== "undefined" && window.location ? window.location.search : "";
     return new URLSearchParams(search || "").get("from_photo") === "photo";
   }
-  async function openPersonById(personId) {
+  async function openPersonById(personId, options) {
+    options = options || {};
     const seq = ++state.linkSeq;
-    state.deepLinked = true;
+    state.deepLinked = !options.historyEntryId;
     $("list-note").textContent = "正在打开这个人的照片……";
     try {
       // Read the existing bounded album projection once: it resolves aliases and
@@ -713,7 +714,7 @@
       if (!page || !page.person || !Number.isSafeInteger(Number(page.person.person_id)) || Number(page.person.person_id) <= 0) {
         throw new Error("人物相册摘要无效");
       }
-      openAlbum(page.person);
+      openAlbum(page.person, { historyEntryId: options.historyEntryId });
     } catch (error) {
       if (seq !== state.linkSeq) return;
       state.deepLinked = false;
@@ -775,7 +776,7 @@
       }
       syncPeopleCards();
       state.listCursor = page.next_cursor; state.peopleHasMore = Boolean(page.has_more && page.next_cursor); $("more").hidden = !state.peopleHasMore;
-      $("list-note").textContent = $("cards").children.length ? (resetDeepPosition ? "列表已刷新到可信首屏；继续向下滚动浏览后续人物。" : state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "明确排除的人物；不会参与人物推荐，可多选后恢复。" : "暂时忽略的人物；可多选后恢复。") : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? "没有找到这个名字，试试“整理一下”。" : state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "没有明确排除的人物。" : "没有暂时忽略的人物。") : state.organize ? "未命名分组已整理完。" : "还没有命名的人，点“整理一下”给熟悉的人取名。导入新照片后，请先完成人脸分析。" );
+      $("list-note").textContent = $("cards").children.length ? (resetDeepPosition ? "列表已刷新到可信首屏；继续向下滚动浏览后续人物。" : state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "明确排除的人物；不会参与人物推荐，可多选后恢复。" : "暂时忽略的人物；可多选后恢复。") : state.organize ? "未命名的人：点开看看，给熟悉的人取名。" : "点一个人，查看全部照片。") : (values.collection_state === "none" ? "当前没有尚未加入合集的人物" : values.q ? (state.organize ? "当前筛选下没有找到未命名人物。" : "没有找到这个名字；可切换到‘待整理’查看未命名人物。") : state.hiddenView ? (state.ignoreState === "EXCLUDED" ? "没有明确排除的人物。" : "没有暂时忽略的人物。") : state.organize ? "未命名分组已整理完。" : "还没有命名的人。导入照片并完成人脸分析后，可切换到‘待整理’给熟悉的人取名。" );
       restoreLibraryPosition(position); syncDirectoryPagers(); return true;
     } catch (error) { if (seq === state.listSeq) { $("list-note").textContent = "人物列表加载失败：" + errorText(error); $("people-retry").hidden = false; } return false; }
     finally { if (seq === state.listSeq) { state.busy.delete("people"); $("more").disabled = false; }
@@ -1953,8 +1954,24 @@
     refreshSearchScopeAction();
     $("album-note").textContent = state.person.asset_count + " 张照片 · 合照可出现在不同人的相册，下面的小头像标出这次看的是谁";
   }
-  function openAlbum(person) {
+  function openAlbum(person, options) {
+    options = options || {};
     if (state.writing || state.pendingWrite || state.collectionActionBusy || state.collectionPeopleBusy) return;
+    if (options.historyEntryId) {
+      state.albumHistoryEntryId = options.historyEntryId;
+    } else if (options.pushHistory && window.history && window.history.pushState) {
+      const entryId = requestId();
+      const current = window.history.state && typeof window.history.state === "object" ? Object.assign({}, window.history.state) : {};
+      current.personAlbumHistoryEntryId = entryId;
+      current.personAlbumPersonId = Number(person.person_id);
+      const url = new URL(window.location.href);
+      url.searchParams.set("person_id", String(person.person_id));
+      url.searchParams.delete("from_photo");
+      window.history.pushState(current, "", url.pathname + url.search + url.hash);
+      state.albumHistoryEntryId = entryId;
+    } else {
+      state.albumHistoryEntryId = null;
+    }
     state.albumViewSeq = (state.albumViewSeq || 0) + 1;
     if (!$("library").hidden) state.libraryPosition = captureLibraryPosition();
     if (typeof window !== "undefined" && window.AIPersonTools) window.AIPersonTools.hideFaces();
@@ -2646,7 +2663,22 @@
     $("ignored-object-people").addEventListener("click", () => setIgnoredObject("people"));
     $("ignored-temporary").addEventListener("click", () => setIgnoreState("TEMPORARY"));
     $("ignored-excluded").addEventListener("click", () => setIgnoreState("EXCLUDED"));
-    window.addEventListener("popstate", () => {
+    window.addEventListener("popstate", (event) => {
+      const target = event && event.state;
+      if (target && target.photoViewerKey) return;
+      if (target && target.personAlbumHistoryEntryId && Number.isSafeInteger(Number(target.personAlbumPersonId))) {
+        if (target.personAlbumHistoryEntryId === state.albumHistoryEntryId && !$("album").hidden) return;
+        if (directoryNavigationBusy()) { if (window.history.forward) window.history.forward(); return; }
+        openPersonById(Number(target.personAlbumPersonId), { historyEntryId: target.personAlbumHistoryEntryId });
+        return;
+      }
+      // The list entry below an in-page person album owns its pre-album state.
+      if (state.albumHistoryEntryId && !$("album").hidden) {
+        if (directoryNavigationBusy()) { if (window.history.forward) window.history.forward(); return; }
+        state.albumHistoryEntryId = null;
+        backToLibrary();
+        return;
+      }
       if (requestedPersonId()) return;
       // Shared photo viewers own same-URL history entries. Dismissing one must
       // leave its underlying album, filters, timeline and scroll position intact.
@@ -2740,6 +2772,8 @@
     const photoReturn = photoReturnRequested();
     if (photoReturn) $("back").textContent = "← 返回查看照片";
     $("back").addEventListener("click", () => {
+      const historyState = window.history && window.history.state;
+      if (state.albumHistoryEntryId && historyState && historyState.personAlbumHistoryEntryId === state.albumHistoryEntryId) { window.history.back(); return; }
       if (photoReturn && window.history && window.history.length > 1) { window.history.back(); return; }
       const deepLinked = state.deepLinked;
       if (deepLinked) { state.deepLinked = false; state.linkSeq++; clearPersonRoute(); }
@@ -2848,7 +2882,10 @@
     });
     window.addEventListener("pageshow", syncDirectoryPagers);
     const linkedPersonId = requestedPersonId();
-    if (linkedPersonId) openPersonById(linkedPersonId);
+    if (linkedPersonId) {
+      const historyState = window.history && window.history.state;
+      openPersonById(linkedPersonId, { historyEntryId: historyState && historyState.personAlbumHistoryEntryId });
+    }
     else { loadLibraryView(); }
     const assetId = Number(new URLSearchParams(typeof window !== "undefined" ? window.location.search : "").get("asset_id"));
     if (Number.isSafeInteger(assetId) && assetId > 0 && window.location.hash !== "#panel-mappings") preview(assetId);

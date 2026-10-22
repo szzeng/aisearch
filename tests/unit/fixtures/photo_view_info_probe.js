@@ -349,22 +349,53 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   const savedValues=new Map(); let historyPushes=0, historyBacks=0; const replacements=[];
   window.location={href:"http://localhost/search?q=lake",origin:"http://localhost",replace:path=>replacements.push(path)};
   window.sessionStorage={getItem:key=>savedValues.get(key)||null,setItem:(key,value)=>savedValues.set(key,value),removeItem:key=>savedValues.delete(key)};
-  window.history={pushState(){historyPushes++;},back(){historyBacks++;}};
-  window.addEventListener=()=>{}; window.removeEventListener=()=>{};
+  const historyStack=[{state:null}], popstateListeners=new Set(); let historyIndex=0;
+  window.history={
+    get state(){return historyStack[historyIndex].state;},
+    pushState(state){historyPushes++;historyStack.splice(historyIndex+1);historyStack.push({state});historyIndex++;},
+    back(){historyBacks++;if(historyIndex){historyIndex--;popstateListeners.forEach(listener=>listener({state:this.state}));}},
+    forward(){if(historyIndex+1<historyStack.length){historyIndex++;popstateListeners.forEach(listener=>listener({state:this.state}));}},
+  };
+  window.addEventListener=(name,listener)=>{if(name==="popstate")popstateListeners.add(listener);};
+  window.removeEventListener=(name,listener)=>{if(name==="popstate")popstateListeners.delete(listener);};
   const blocked=context.window.AIPhotoInfo.open(101,{beforeClose:()=>false,onOpenFullDetails:()=>assert.fail("busy viewer must not navigate")});
   const blockedDetails=all(blocked.dialog,n=>n.className==="photo-viewer-details")[0];
   blockedDetails.fire("click"); assert.equal(replacements.length,0,"beforeClose blocks full-details navigation");
   blocked.close(); assert.equal(historyBacks,0,"a rejected close preserves its owned history entry");
   blocked.dialog.close(); await flush();
   assert.equal(historyBacks,1,"ordinary close keeps the viewer's existing history behavior");
+  historyStack[historyIndex].state={searchHistoryEntry:true,searchHistoryEntryId:"search-entry-test",searchSnapshotToken:"search-snapshot-test"};
+  const backForwardViewer=context.window.AIPhotoInfo.open(105);
+  assert.equal(window.history.state.searchHistoryEntryId,"search-entry-test","the viewer marker preserves the owning search history entry");
+  assert.equal(window.history.state.searchSnapshotToken,"search-snapshot-test","the viewer marker preserves the owning search snapshot");
+  assert.equal(popstateListeners.size,1,"opening a new viewer releases the closed viewer listener whose Forward entry was replaced");
+  window.history.back();
+  assert.equal(backForwardViewer.dialog.open,false,"Back closes the viewer and returns to its prior page state");
+  window.history.forward();
+  assert.equal(backForwardViewer.dialog.open,true,"Forward reopens the viewer state without adding another history entry");
+  assert.equal(historyPushes,2,"restoring a viewer through Forward reuses its existing history entry");
+  backForwardViewer.close();
+  assert.equal(historyBacks,3,"closing a Forward-restored viewer returns to its prior page state");
+  historyStack.splice(historyIndex+1); historyStack.push({state:{searchHistoryEntry:true,searchHistoryEntryId:"search-entry-restored",searchSnapshotToken:"search-snapshot-restored",photoViewerKey:"restored-search-viewer"}}); historyIndex++;
+  const beforeRestoredViewerPushes=historyPushes;
+  const restoredSearchViewer=context.window.AIPhotoInfo.open(106,{historyEntryKey:"restored-search-viewer"});
+  assert.equal(historyPushes,beforeRestoredViewerPushes,"restoring a viewer from a browser history entry reuses its marker");
+  window.history.back();
+  assert.equal(restoredSearchViewer.dialog.open,false,"Back from a restored viewer closes it to the saved search state");
+  window.history.forward();
+  assert.equal(restoredSearchViewer.dialog.open,true,"Forward reopens the restored viewer from the same history marker");
+  assert.equal(historyPushes,beforeRestoredViewerPushes,"reopening the restored viewer does not add a duplicate history entry");
+  restoredSearchViewer.close();
+  const detailNavigationBacks=historyBacks;
   const navigated=[];
   const changing=context.window.AIPhotoInfo.open(101,{onOpenFullDetails:id=>{navigated.push(id);context.window.AIPhotoInfo.navigateToDetails(id,"search");}});
   changing.setAsset(202);
   const detailsButton=all(changing.dialog,n=>n.className==="photo-viewer-details")[0];
   detailsButton.fire("click"); detailsButton.fire("click");
+  assert.equal(historyBacks,detailNavigationBacks,"full-details navigation replaces the viewer marker without going Back");
   assert.deepEqual(navigated,["202"],"the details entry uses the live setAsset identity and rejects a second trigger");
   assert.equal(changing.dialog.open,false,"successful details navigation releases the current modal");
-  assert.equal(historyPushes,2,"each viewer owns one modal history entry");
+  assert.equal(historyPushes,3,"each viewer owns one modal history entry");
   assert.deepEqual(replacements,["/#/asset/202/details"],"navigation replaces the modal entry with the explicit details route");
   const returnIntent=context.window.AIPhotoInfo.consumeDetailReturn("202");
   assert.equal(returnIntent.source,"search"); assert.equal(returnIntent.path,"/search?q=lake","a one-time same-origin source path is available for safe return");
@@ -444,5 +475,5 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.equal(savedValues.has("aisearch.photo-detail-return.v1"),false,"rejected stale intents are cleared once");
   window.sessionStorage={getItem(){throw new Error("storage unavailable");},removeItem(){throw new Error("storage unavailable");},setItem(){throw new Error("storage unavailable");}};
   assert.equal(context.window.AIPhotoInfo.consumeDetailReturn("202").invalid,true,"storage denial is distinguishable from a direct route with no source intent");
-  changing.dialog.close(); assert.equal(historyBacks,1,"details navigation does not leave a modal history callback behind");
+  changing.dialog.close(); assert.equal(historyBacks,detailNavigationBacks,"details navigation does not leave a modal history callback behind");
 })().catch(error=>{console.error(error);process.exitCode=1;});

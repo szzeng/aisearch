@@ -11,11 +11,11 @@
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
-    <script src="/web/photo-info.js?v=p4-photo-ocr-display-a-1" defer></script>
+    <script src="/web/photo-info.js?v=p4-ui2-overall-ux-polish-3" defer></script>
     <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-qwen-1024d-trial-1" defer></script>
+    <script src="/web/app.js?v=p4-ui2-overall-ux-polish-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -196,10 +196,15 @@
           </div>
         </div>
         <p id="browse-intro" class="hint">
-          “加入时间”是这张图片进入本机图库的时间，来自图库记录，不是 EXIF 拍摄时间。
-          「拍摄时间」只来自文件自身声明的时间（EXIF 原始/数字化时间）；文件系统修改时间
-          与 EXIF 根时间一律显示为「文件时间」，不参与拍摄时间范围筛选，也绝不被伪装成拍摄时间。
+          拍摄时间只采用照片文件自身声明的时间；文件系统时间不会用于拍摄日期筛选。
         </p>
+        <details id="browse-time-policy" class="browse-time-policy hint">
+          <summary>时间字段说明</summary>
+          <p>
+            “加入时间”是照片进入本机图库的时间，来自图库记录；“拍摄时间”只来自文件自身声明的时间（EXIF 原始/数字化时间）。
+            文件系统修改时间与 EXIF 根时间显示为“文件时间”，不参与拍摄时间范围筛选。
+          </p>
+        </details>
         <div id="browse-controls" class="browse-controls">
           <label for="browse-source">图库筛选</label>
           <select id="browse-source">
