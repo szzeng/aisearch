@@ -1,3 +1,7 @@
+## Current task: P4-RELEASE-060 — 0.6.0 版本标记更新（2026-10-22）
+
+应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新为 0.6.0；Catalog Schema 42、API v1 保持不变。按用户明确要求未运行验证，状态 **VERSIONED / VALIDATION SKIPPED AT USER REQUEST**。仅创建本地提交与 annotated tag，不推送、不创建 GitHub Release。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。
+
 ## Current task: P4-OCR-EVERYDAY-QUALITY (2026-10-22)
 
 OCR @4 uses RapidOCR text_score 0.5 with existing PP-OCRv4 Mobile weights; @3 config stays frozen at 0.0. Active CPU/GPU profiles have separate hashes. Historical OCR remains readable, v4 enqueue is idempotent, offline sources are skipped without removing text, and progress counts actual active-version task states. Affected OCR JUnit 183 passed / 19 skipped / 0 failed; Ruff, py_compile, diff-check and synthetic CPU model smoke passed. Actual read-only weights check verified all pinned files. Real-library processing and GPU smoke were not run. Luna H follow-up review PASS; the default-hash finding was fixed. Locally committed on user request; not pushed. See [task card](tasks/P4-OCR-EVERYDAY-QUALITY.md) and [report](reports/P4-OCR-EVERYDAY-QUALITY.md).

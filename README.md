@@ -7,8 +7,8 @@
 [`日常测试`](docs/testing.md)、[`搜索质量与本地产品改进`](docs/reports/P4-SEARCH-QUALITY.md)。
 当前代码和验证仍在迭代，完整验收范围与未完成项以状态页和对应报告为准。
 
-当前个人源码测试版为 **0.5.0**（Catalog Schema 42，API v1）。更新说明和已知限制见
-[`CHANGELOG`](CHANGELOG.md) 与 [`发布报告`](docs/reports/P4-RELEASE-050.md)。升级前停止应用，
+当前个人源码测试版为 **0.6.0**（Catalog Schema 42，API v1）。更新说明和已知限制见
+[`CHANGELOG`](CHANGELOG.md) 与 [`版本更新记录`](docs/reports/P4-RELEASE-060.md)。升级前停止应用，
 备份已有数据根，并另行备份原图和模型权重；升级后的数据库不保证可供旧版程序使用。
 
 ## 安装与启动（Windows 源码版）
