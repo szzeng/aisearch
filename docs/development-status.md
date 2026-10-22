@@ -1,6 +1,6 @@
 ## Current task: P4-RELEASE-060 — 0.6.0 版本标记更新（2026-10-22）
 
-应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新为 0.6.0；Catalog Schema 42、API v1 保持不变。版本更新提交 `3a23852` 与指向它的本地 annotated `0.6.0` tag 已创建。按用户明确要求未运行验证，状态 **VERSIONED / VALIDATION SKIPPED AT USER REQUEST**；未推送、未创建 GitHub Release。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。
+应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新为 0.6.0；Catalog Schema 43、API v1 保持不变。GitHub master/tag 已推送；版本更新未新增验证（用户明确要求跳过）。GitHub Release 正在按 Personal Beta prerelease 更新。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。
 
 ## Current task: P4-OCR-EVERYDAY-QUALITY (2026-10-22)
 

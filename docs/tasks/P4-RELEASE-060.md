@@ -8,7 +8,7 @@
 
 ## 范围
 
-仅统一版本元数据与版本展示：`pyproject.toml`、`APP_VERSION`/OpenAPI、`uv.lock` 本地项目项、直接版本断言、README 与 CHANGELOG。Catalog Schema 42、API v1 和第三方依赖保持不变。不新增功能或推断本版本功能验收。
+统一版本元数据与版本展示：`pyproject.toml`、`APP_VERSION`/OpenAPI、`uv.lock` 本地项目项、直接版本断言、README 与 CHANGELOG。0.6.0 Release notes 概括从 0.5.0 tag 到当前版本提交之间已合入的功能，不推断额外功能验收。Catalog Schema 43、API v1 和第三方依赖保持现状。
 
 ## 性能（PERF-N/A）
 
@@ -18,4 +18,4 @@
 
 ## 交付与验证
 
-更新主报告与开发状态摘要。按用户要求跳过所有验证。版本更新提交 `3a23852c58266b1a2a595bc39eeb167455418f8d` 已完成，本地 annotated `0.6.0` tag 指向该提交；不推送、不创建 GitHub Release。该 tag 的远端状态未检查。
+更新主报告与开发状态摘要。按用户要求不为本次版本更新新增验证。提交版本标记更新并创建 annotated `0.6.0` tag；用户后续授权推送 master 与 tag，并要求发布 GitHub Release。最终 Release 状态、目标 SHA 与已知边界记录在报告中。
