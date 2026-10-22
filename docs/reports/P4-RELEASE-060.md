@@ -1,7 +1,7 @@
 # P4-RELEASE-060 — 0.6.0 版本更新记录
 
 日期：2026-10-22  
-状态：**VERSIONED / VALIDATION SKIPPED AT USER REQUEST**
+状态：**PUBLISHED — PERSONAL SOURCE BETA / VALIDATION SKIPPED AT USER REQUEST**
 
 ## 更新内容
 
@@ -17,4 +17,4 @@
 
 ## Git 交付
 
-版本更新提交：`3a23852c58266b1a2a595bc39eeb167455418f8d`。在修正 Schema 版本与 Release notes 后，0.6.0 tag 将指向最终候选提交；GitHub Release 为 Personal Beta prerelease。具体远端 tag、release URL、master 状态与后续回执以本文最终记录为准。
+版本标记更新提交：`3a23852c58266b1a2a595bc39eeb167455418f8d`。修正 Schema 版本与 Release notes 的候选提交：`e9a3892c1af102919b309bd9e55c615a1f8da0cf`。Annotated tag `0.6.0`（tag object `2562d9562f6e28e99c5625caa5fef847f5f2a869`）peel 到该候选提交。GitHub Release [Photo Search 0.6.0 — Personal Beta](https://github.com/szzeng/aisearch/releases/tag/0.6.0) 已回读确认为 `isDraft=false`、`isPrerelease=true`。master 与 tag 已推送；发布回执提交跟在 tag 后，不移动 tag。

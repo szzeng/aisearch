@@ -1,7 +1,7 @@
 # P4-RELEASE-060 — 0.6.0 版本标记更新
 
 日期：2026-10-22  
-状态：**VERSIONED / VALIDATION SKIPPED AT USER REQUEST**  
+状态：**PUBLISHED — PERSONAL SOURCE BETA / VALIDATION SKIPPED AT USER REQUEST**  
 基线：`8718b605f9560953b749a3adb53e4089e3d02d46`
 
 用户要求简单升级到 0.6.0、更新 tag，并明确表示不需要验证。
@@ -18,4 +18,4 @@
 
 ## 交付与验证
 
-更新主报告与开发状态摘要。按用户要求不为本次版本更新新增验证。提交版本标记更新并创建 annotated `0.6.0` tag；用户后续授权推送 master 与 tag，并要求发布 GitHub Release。最终 Release 状态、目标 SHA 与已知边界记录在报告中。
+更新主报告与开发状态摘要。按用户要求不为本次版本更新新增验证。annotated `0.6.0` tag 已推送并用于 GitHub Pre-release；用户明确授权推送 master、tag 与 Release。最终 Release 状态、目标 SHA 与已知边界记录在报告中。

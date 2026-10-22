@@ -1,6 +1,6 @@
 ## Current task: P4-RELEASE-060 — 0.6.0 版本标记更新（2026-10-22）
 
-应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新为 0.6.0；Catalog Schema 43、API v1 保持不变。GitHub master/tag 已推送；版本更新未新增验证（用户明确要求跳过）。GitHub Release 正在按 Personal Beta prerelease 更新。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。
+**0.6.0 个人源码测试版已发布为 GitHub Pre-release**：[Photo Search 0.6.0 — Personal Beta](https://github.com/szzeng/aisearch/releases/tag/0.6.0)。应用、API/OpenAPI、包、uv.lock 本地项目项、直接版本断言、README 与 CHANGELOG 已更新；Catalog Schema 43、API v1。Annotated tag `0.6.0` 指向候选 `e9a3892`；master/tag 已推送。按用户要求，本次未重新运行验证；真实图库、Qwen 1024D 建库/切换、Windows 安装包与容量/性能认证未包含在本次验证范围。详见[任务卡](tasks/P4-RELEASE-060.md)与[更新记录](reports/P4-RELEASE-060.md)。
 
 ## Current task: P4-OCR-EVERYDAY-QUALITY (2026-10-22)
 
