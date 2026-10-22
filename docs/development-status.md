@@ -13,6 +13,9 @@ COMBINED 智能合集按同一搜索 Session 的向量距离与绑定阈值收�
 
 新增独立 Qwen 1024D EXIF v2 Provider，共享标准 512D 权重；Registry 拒绝同 ID 本地清单的 revision/hash/dimension/config 偏差，只允许自定义展示名。默认仍为 Qwen 512D；按用户要求将 1024D 高度匹配计数恢复为初始阈值 squared-L2 ≤1.50（归一化向量 cosine ≥0.25），仅计已召回候选，不改变排序/召回。回退定向 JUnit 59/59 通过，Ruff 与 diff-check 通过；该值尚未用真实图库相关性标签单独校准。真实图库建库/切换仍未验证，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[任务卡](tasks/P4-QWEN-1024D-TRIAL.md)与[报告](reports/P4-QWEN-1024D-TRIAL.md)。
 
+## Current task: P4-WEMM-QUALITY-PILOT（2026-10-20）
+
+A 阶段合成 BF16 GPU smoke 已通过：固定 revision WeMM 在 RTX 4060 Laptop `cuda:0` 全模型驻留；中文与严格 image-only 合成 JPEG 均产生有限2048D输出，并成功派生512D归一化前缀，重复输出一致。R3 首次图像调用峰值约5.49GB allocated / 5.61GB reserved；该合成输入不代表质量或真实图库性能。任务已按用户指示暂停：A 合成 BF16 GPU smoke 已完成；B 真实图片对照未开始，C 未启动。只读 preflight 合成安全测试8/8、Ruff与此前diff-check通过；GPU smoke R3 exit 0。未运行真实图片、Qwen对照、排名或HTML报告，未启动Provider。详见[报告](reports/P4-WEMM-QUALITY-PILOT.md)与[任务卡](tasks/P4-WEMM-QUALITY-PILOT.md)。
 ## Current task: P4-RELEASE-050 — 0.5.0 个人源码测试版（2026-10-20）
 
 **已发布 [0.5.0 个人源码测试版](https://github.com/szzeng/aisearch/releases/tag/0.5.0)**（GitHub Pre-release），Tag 精确指向 `a669340c89df63d136a827f61f7b6ac9f6bc9556`；版本0.5.0 / Schema42 / API v1。当前 Schema 备份恢复、人工事实、清理保护/重试和关键合集浏览器流程通过，Luna High 完整独审无代码 blocker；修复旧地点包在40–42误拒绝。原始全仓3330通过/76失败/52跳过，增量复测关闭75项失败，剩余范围外30万场景未重跑，不称单次全仓全绿。确认取消的工具限制、容量/最低设备/安装包等仍未认证。未访问真实图库；后续进入个人试用反馈。详见[任务卡](tasks/P4-RELEASE-050.md)与[发布报告](reports/P4-RELEASE-050.md)。
