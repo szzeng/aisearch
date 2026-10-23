@@ -15,7 +15,7 @@
     <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-ui2-overall-ux-polish-6" defer></script>
+    <script src="/web/app.js?v=p4-ui2-ux-phase3-a2" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -192,7 +192,7 @@
           </div>
         </div>
         <p id="browse-intro" class="hint">
-          拍摄时间只采用照片文件自身声明的时间；文件系统时间不会用于拍摄日期筛选。
+          拍摄时间只读取照片文件声明。
         </p>
         <details id="browse-time-policy" class="browse-time-policy hint">
           <summary>时间字段说明</summary>
@@ -309,7 +309,7 @@
         <ul id="photo-collections-list" class="sources"></ul>
         <button id="photo-collections-more" type="button" hidden>加载更多</button>
         <div id="photo-smart-collections-panel" hidden>
-          <p class="hint">智能合集按已确认的筛选或搜索规则动态更新；文字和综合搜索最多保留 5000 个候选。</p>
+          <p class="hint">文字与综合搜索候选上限 5,000。</p>
           <div id="photo-smart-collections-status" class="state-block" role="status" aria-live="polite"></div>
           <ul id="photo-smart-collections-list" class="smart-collection-list"></ul>
           <button id="photo-smart-collections-more" type="button" hidden>加载更多</button>

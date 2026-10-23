@@ -1436,7 +1436,7 @@
     var favorites = next === "favorites";
     if (els.browseTitle) text(els.browseTitle, favorites ? "我的收藏" : "全部照片");
     if (els.browseIntro) {
-      text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "拍摄时间只采用照片文件自身声明的时间；文件系统时间不会用于拍摄日期筛选。");
+      text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "拍摄时间只读取照片文件声明。");
     }
     if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites;
     if (els.browseModeControls) els.browseModeControls.hidden = favorites;
@@ -3382,7 +3382,7 @@
     if (els.photoCollectionCreate) els.photoCollectionCreate.hidden = true;
     if (els.photoCollectionsList) els.photoCollectionsList.hidden = true;
     if (els.photoCollectionsMore) els.photoCollectionsMore.hidden = true;
-    if (els.photoCollectionsIntro) els.photoCollectionsIntro.textContent = "智能合集根据已确认的搜索规则动态筛选或刷新排名候选。";
+    if (els.photoCollectionsIntro) els.photoCollectionsIntro.textContent = "按已确认的规则动态筛选或更新排名。";
     if (els.photoCollectionsTabOrdinary) els.photoCollectionsTabOrdinary.setAttribute("aria-pressed", "false");
     if (els.photoCollectionsTabSmart) els.photoCollectionsTabSmart.setAttribute("aria-pressed", "true");
     var version = ++state.photoSmart.requestVersion;

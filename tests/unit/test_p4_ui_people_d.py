@@ -37,12 +37,15 @@ def test_person_and_collection_albums_load_the_shared_timeline() -> None:
 def test_people_search_and_curation_actions_keep_their_existing_paths() -> None:
     document = (WEB / "persons.html").read_text(encoding="utf-8")
     script = (WEB / "persons-albums.js").read_text(encoding="utf-8")
+    styles = (WEB / "persons.css").read_text(encoding="utf-8")
 
     assert 'id="pa-search-photos"' in document
     assert 'id="pa-photo-query"' in document
     assert 'id="pa-cover"' in document
     assert 'id="pa-merge"' in document
     assert 'id="pt-organize"' in document
+    assert ".pa-library-heading > .pa-mode-switch { width: auto; }" in styles
+    assert ".pa-library-heading > .pa-mode-switch button { flex: 0 0 auto; }" in styles
     assert 'person_ids: [state.person.person_id]' in script
     assert '"/person-operations/" + encodeURIComponent(operation.operation_id) + "/undo"' in script
     assert 'operation.operation_type !== "CREATE_PERSON_FROM_FACE"' in script

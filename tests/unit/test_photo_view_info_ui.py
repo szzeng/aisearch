@@ -34,7 +34,7 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "persons-albums.js?v=p4-ui2-overall-ux-polish-3" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
-    assert "/web/app.js?v=p4-ui2-overall-ux-polish-6" in (web / "index.html").read_text(encoding="utf-8")
+    assert "/web/app.js?v=p4-ui2-ux-phase3-a2" in (web / "index.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")

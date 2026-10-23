@@ -61,4 +61,4 @@ def test_map_hover_marker_and_photo_actions_keep_local_styles():
     assert 'button.className = "map-photo-action"' in js
     assert "window.PhotoFavorites.button(a.asset_id)" in js
     assert "map.css?v=p4-ui2-map-minor-fix-a-1" in html
-    assert "map.js?v=p4-ui2-map-minor-fix-a-1" in html
+    assert "map.js?v=p4-ui2-map-minor-fix-a-2" in html

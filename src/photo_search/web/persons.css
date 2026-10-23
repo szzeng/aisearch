@@ -129,6 +129,8 @@ button.pa-person-card[aria-pressed="true"] { border-color: var(--accent); outlin
   .pa-library-heading > div:first-child, .pa-album-identity { width: 100%; }
   .pa-mode-switch { width: 100%; }
   .pa-mode-switch button { flex: 1 1 auto; }
+  .pa-library-heading > .pa-mode-switch { width: auto; }
+  .pa-library-heading > .pa-mode-switch button { flex: 0 0 auto; }
   .pa-section-heading { align-items: flex-start; }
   .pa-album-actions { width: 100%; justify-content: flex-start; }
   .pa-collection-toolbar { align-items: flex-start; }
