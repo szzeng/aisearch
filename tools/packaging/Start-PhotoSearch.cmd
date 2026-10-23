@@ -1,4 +1,4 @@
 @echo off
 setlocal
-"%~dp0PhotoSearch.exe" --open-browser %*
-endlocal
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Select-PhotoSearchDataRoot.ps1" -Mode Start %*
+exit /b %ERRORLEVEL%
