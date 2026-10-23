@@ -173,11 +173,11 @@ try {
     $zipOutput = Join-Path $releases $zipName
     $shaOutput = Join-Path $releases $shaName
     $reportOutput = Join-Path $releases $reportName
-    Move-Item -LiteralPath $shaPart -Destination $shaOutput -NoClobber
+    [IO.File]::Move($shaPart, $shaOutput)
     $published.Add($shaOutput)
-    Move-Item -LiteralPath $reportPart -Destination $reportOutput -NoClobber
+    [IO.File]::Move($reportPart, $reportOutput)
     $published.Add($reportOutput)
-    Move-Item -LiteralPath $zipPart -Destination $zipOutput -NoClobber
+    [IO.File]::Move($zipPart, $zipOutput)
     $published.Add($zipOutput)
     Assert-OwnedStageDirectory $stage $releases
     Remove-Item -LiteralPath $stage -Recurse -Force

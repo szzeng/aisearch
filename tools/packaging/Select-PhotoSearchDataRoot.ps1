@@ -46,7 +46,7 @@ function Save-Root([string]$Root) {
     $temporary = Join-Path $script:ConfigDirectory ('portable-data-root-' + [Guid]::NewGuid().ToString('N') + '.tmp')
     try {
         [IO.File]::WriteAllText($temporary, $Root + "`r`n", [Text.UTF8Encoding]::new($true))
-        Move-Item -LiteralPath $temporary -Destination $script:ConfigPath -Force
+        Move-Item -LiteralPath $temporary -Destination $script:ConfigPath -Force | Out-Null
     } finally {
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
     }

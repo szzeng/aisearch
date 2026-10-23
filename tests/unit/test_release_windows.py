@@ -174,4 +174,14 @@ def test_portable_launchers_share_selected_root() -> None:
     assert "-Mode Download" in download
     assert "portable-data-root.txt" in selector
     assert "'--data-root', $selected" in selector
+    assert "Move-Item -LiteralPath $temporary -Destination $script:ConfigPath -Force | Out-Null" in selector
     assert "Read-Host" in selector
+
+
+def test_release_script_publishes_without_overwriting() -> None:
+    packaging = Path(__file__).resolve().parents[2] / "tools" / "packaging"
+    script = (packaging / "release_windows.ps1").read_text(encoding="utf-8")
+    assert "[IO.File]::Move($shaPart, $shaOutput)" in script
+    assert "[IO.File]::Move($reportPart, $reportOutput)" in script
+    assert "[IO.File]::Move($zipPart, $zipOutput)" in script
+    assert "-NoClobber" not in script
