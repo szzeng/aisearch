@@ -13,7 +13,7 @@ def test_person_and_collection_albums_load_the_shared_timeline() -> None:
     script = (WEB / "persons-albums.js").read_text(encoding="utf-8")
 
     assert 'id="pa-timeline"' in document
-    assert 'src="/web/photo-timeline.js?v=p4-photo-collection-a-1"' in document
+    assert 'src="/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1"' in document
     assert 'href="/web/photo-timeline.css?v=p4-favorites-ux-b-1"' in document
     assert 'kind: "person", person_id:' in script
     assert 'kind: "collection", collection_id:' in script

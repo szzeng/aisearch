@@ -28,7 +28,7 @@ def test_homepage_timeline_assets_and_basic_browse(api_env: ApiEnv) -> None:
             assert 'id="browse-show-timeline"' in page.text
             assert 'id="browse-timeline"' in page.text
             assert 'id="browse-show-list" aria-pressed="false"' in page.text
-            assert "/web/photo-timeline.js?v=p4-photo-collection-a-1" in page.text
+            assert "/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" in page.text
             assert "/web/photo-timeline.css?v=p4-photo-collection-a-1" in page.text
 
             script = await client.get("/web/photo-timeline.js")
@@ -100,7 +100,7 @@ def test_place_timeline_api_keeps_place_identity_and_shared_date_queries(api_env
             await api_env.authenticate(client)
             places_page = await client.get("/places")
             assert places_page.status_code == 200
-            assert "/web/photo-timeline.js?v=p4-photo-collection-a-1" in places_page.text
+            assert "/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" in places_page.text
             assert "/web/photo-timeline.css?v=p4-favorites-ux-b-1" in places_page.text
             first = await client.get(
                 "/api/v1/timeline/assets",

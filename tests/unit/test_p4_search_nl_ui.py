@@ -52,7 +52,7 @@ for(const session of ["filter-only","place-album:test"]){
  }
  assert.equal(ui.state.search.count,205);assert.equal(ui.state.search.cursor,null);
  assert.match(els.queryStatus.textContent,/\u5df2\u663e\u793a 205 \u884c/);
- assert.match(els.queryStatus.textContent,/\u5019\u9009\u5171 205 \u4e2a/);
+ assert.match(els.queryStatus.textContent,/\u5019\u9009\u7167\u7247 205 \u5f20/);
 }
 const semantic=makePage(0,true,"semantic-session");semantic.query={text:"coast"};
 ui.renderPage(semantic,false);

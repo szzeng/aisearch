@@ -132,28 +132,28 @@
 
   function errorText(code) {
     if (code === "CATALOG_FILTER_REVISION_STALE") {
-      return "目录已变化，需重新加载";
+      return "目录已更新，请重新加载";
     }
     if (code === "PLACE_SUGGESTION_REVISION_STALE") {
-      return "建议集合已变化，需重新加载";
+      return "识别建议已更新，请重新加载";
     }
     if (code === "PLACE_ASSIGNMENT_CONFLICT") {
-      return "revision 已过期";
+      return "这张照片的地点归属已变化，请重新加载后再试";
     }
     if (code === "PLACE_OPERATION_NOT_UNDOABLE") {
-      return "该操作已被后续编辑改变，不能整批撤销";
+      return "相关地点后来再次变化，无法撤销这项操作";
     }
     if (code === "PLACE_IDEMPOTENCY_CONFLICT") {
-      return "request_id 已绑定不同的请求内容";
+      return "这次操作与已有记录不一致，请先重新加载并核对状态";
     }
     if (code === "PLACE_BATCH_TOO_LARGE") {
-      return "单批超过 500 项，请拆分";
+      return "每次最多处理 500 张照片，请减少所选数量";
     }
     if (code === "PLACE_DATASET_MISSING") {
-      return "缺少可用的地名包，新解析被阻塞";
+      return "没有可用的地名包，当前无法生成地点建议";
     }
     if (code === "PLACE_DATASET_INVALID") {
-      return "地名包校验失败，新解析被阻塞";
+      return "地名包检查失败，当前无法生成地点建议";
     }
     if (code === "PLACE_PARENT_CYCLE") {
       return "父级非法（类型不允许或会形成环）";
@@ -171,11 +171,8 @@
   }
 
   function describe(failure) {
-    var base = "[" + failure.code + "] " + failure.message;
     var hint = errorText(failure.code);
-    if (hint) {
-      base += "（" + hint + "）";
-    }
+    var base = hint || ("[" + failure.code + "] " + safeText(failure.message));
     return failure.request_id ? base + "（请求编号 " + failure.request_id + "）" : base;
   }
 
@@ -676,6 +673,10 @@
           state.placeIndex[String(parent.place_id)] = parent;
           paintChain(node, place);
         }
+      }).catch(function (failure) {
+        var retry = "上级地点暂时无法读取，请重新打开地点管理。";
+        if (failure.request_id) retry += "（请求编号 " + failure.request_id + "）";
+        text(node, "祖先链：" + parts.join(" › ") + suffix + " · " + retry);
       });
     }
   }
@@ -703,9 +704,6 @@
         });
         state.placeIndex[key] = found;
         return found;
-      })
-      .catch(function () {
-        return state.placeIndex[key] || null;
       });
   }
   // ----------------------------------------------------------------------- create
@@ -773,7 +771,7 @@
     fetchPlaceById(target).then(function (place) {
       if (!place) {
         els.editForm.hidden = true;
-        setError(els.editError, "没有找到 place_id #" + target + "（PLACE_NOT_FOUND）。");
+        setError(els.editError, "未找到编号为 " + target + " 的地点，请重新确认编号。");
         return;
       }
       state.edit.place = place;
@@ -783,6 +781,11 @@
       els.editRevision.value = String(place.revision);
       paintEditHeading(place);
       els.editForm.scrollIntoView({ block: "nearest" });
+    }).catch(function (failure) {
+      els.editForm.hidden = true;
+      var message = "读取地点失败，请重新加载地点列表后重试。";
+      if (failure.request_id) message += "（请求编号 " + failure.request_id + "）";
+      setError(els.editError, message);
     });
   }
 
@@ -991,7 +994,7 @@
       showAssetPlace(holder, assetId);
     });
     actions.appendChild(expand);
-    var confirmOne = element("button", null, "确认第一条建议（origin=CONFIRMED_SUGGESTION）");
+    var confirmOne = element("button", null, "确认第一条地点建议");
     confirmOne.type = "button";
     confirmOne.addEventListener("click", function () {
       confirmSingleSuggestion(assetId, holder);
@@ -1175,15 +1178,13 @@
       })
       .then(function (outcome) {
         var message =
-          "已确认建议：资产 #" +
+          "已确认照片 #" +
           assetId +
-          " → place #" +
+          " 的地点归属（地点编号 #" +
           outcome.target +
-          "，operation " +
+          "）；操作记录 #" +
           String(outcome.result.operation_id) +
-          "（origin=CONFIRMED_SUGGESTION，operation_revision " +
-          String(outcome.result.operation_revision) +
-          "）。该资产应已离开建议列表。";
+          " 已保存，该照片已从待确认建议中移除。";
         clear(holder);
         holder.appendChild(element("p", "state-block", message));
         // The suggestion list is reloaded right away, so the same result is also kept in the
@@ -1213,7 +1214,7 @@
   function updateSelectionSummary() {
     var ids = selectedIds();
     var frozen = state.suggested.frozen;
-    var line = "已选择 " + ids.length + " 个资产";
+    var line = "已选择 " + ids.length + " 张照片";
     if (frozen) {
       line += "（冻结快照 " + frozen.length + " 个）";
     }
@@ -1327,7 +1328,7 @@
         return ids;
       });
     }
-    setStatus(els.suggestedStatus, "正在冻结建议结果快照…");
+    setStatus(els.suggestedStatus, "正在固定当前全部建议清单…");
     step(null)
       .then(function (frozen) {
         state.suggested.frozen = frozen;
@@ -1338,12 +1339,10 @@
         });
         setStatus(
           els.suggestedStatus,
-          "已冻结 " +
+          "已固定 " +
             frozen.length +
-            " 个 asset_id 快照（suggestion_revision #" +
-            state.suggested.revision +
-            "）。提交时按这批 id 分批，不会重跑动态查询。" +
-            (frozen.length >= SNAPSHOT_CAP ? "（已达本页上限 " + SNAPSHOT_CAP + "）" : "")
+            " 条待确认建议。提交时会按这份清单操作，不会重新查询。" +
+            (frozen.length >= SNAPSHOT_CAP ? "（已达清单上限 " + SNAPSHOT_CAP + " 条）" : "")
         );
         updateSelectionSummary();
       })
@@ -1351,8 +1350,8 @@
         setStatus(
           els.suggestedStatus,
           (failure.code === "PLACE_SUGGESTION_REVISION_STALE"
-            ? "建议集合已变化，需重新加载："
-            : "冻结快照失败：") + describe(failure),
+            ? "建议清单已更新，请重新加载后再操作："
+            : "固定建议清单失败：") + describe(failure),
           "error"
         );
       });
@@ -1362,7 +1361,7 @@
     setError(els.batchError, "");
     var ids = selectedIds();
     if (!ids.length) {
-      setError(els.batchError, "请先勾选资产（或用「全选已加载」/「冻结全部结果快照」）。");
+      setError(els.batchError, "请先勾选照片（或用“全选已加载”/“固定全部待确认建议”）。");
       return;
     }
     var target = null;
@@ -1374,7 +1373,7 @@
       }
     }
     clear(els.batchLog);
-    setStatus(els.suggestedStatus, "正在读取所选资产的 revision…");
+    setStatus(els.suggestedStatus, "正在核对所选照片是否有更新…");
     collectItemRevisions(ids)
       .then(function (states) {
         var chunks = [];
@@ -1383,11 +1382,11 @@
         }
         setStatus(
           els.suggestedStatus,
-          "已冻结 " +
+          "已固定 " +
             states.length +
-            " 个资产；按每批 ≤" +
+            " 张照片，按每批最多 " +
             MAX_BATCH +
-            " 项提交，共 " +
+            " 张依次保存，共 " +
             chunks.length +
             " 批。"
         );
@@ -1419,14 +1418,8 @@
                 appendBatchLog(
                   chunkIndex + 1,
                   chunk.length,
-                  "已提交 " +
-                    String(body.operation_type) +
-                    " · operation " +
-                    String(body.operation_id) +
-                    " · changed " +
-                    (body.changed ? "是" : "否") +
-                    " · 重放 " +
-                    (body.replayed ? "是" : "否"),
+                  (action === "assign" ? "已确认地点归属" : action === "unassign" ? "已取消地点归属" : "已恢复自动判断") +
+                    (body.changed ? "。" : "；照片状态没有变化。"),
                   false
                 );
                 return false;
@@ -1567,11 +1560,7 @@
 
   function undoOperation(operation) {
     appendUndoLog(
-      "正在撤销 " +
-        String(operation.operation_id) +
-        "（expected_operation_revision " +
-        operation.operation_revision +
-        "）…",
+      "正在撤销操作记录 #" + String(operation.operation_id) + "…",
       false
     );
     request("/place-operations/" + encodeURIComponent(operation.operation_id) + "/undo", {
@@ -1584,15 +1573,8 @@
       .then(function (result) {
         var body = result.body || {};
         appendUndoLog(
-          "撤销成功：新操作 " +
-            String(body.operation_id) +
-            "（" +
-            String(body.operation_type) +
-            "）补偿了 " +
-            String(operation.operation_id) +
-            "，changed " +
-            (body.changed ? "是" : "否") +
-            "。",
+          "已撤销操作记录 #" + String(operation.operation_id) +
+            "；新记录 #" + String(body.operation_id) + " 已保存。",
           false
         );
         loadDirectory(true);
@@ -1603,15 +1585,15 @@
         appendUndoLog("撤销失败：" + describe(failure), true);
         if (failure.code === "PLACE_OPERATION_NOT_UNDOABLE") {
           appendUndoLog(
-            "该操作已被撤销，或它的目标已被后续编辑改变，整批都不再可撤销；" +
-              "旧日志不会被删除，也不会覆盖新状态。已刷新目录与建议。",
+            "该操作已被撤销，或相关地点后来再次变化，因此不能重复撤销。旧记录保留，" +
+              "不会覆盖新状态。已刷新目录与建议。",
             true
           );
           loadDirectory(true);
           loadSuggested(true, false);
         } else if (failure.code === "PLACE_IDEMPOTENCY_CONFLICT") {
           appendUndoLog(
-            "本次 request_id 已绑定不同的请求内容，请重新点击撤销（会生成新的 request_id）。",
+            "这次撤销请求与已有记录不一致，请重新点击撤销。",
             true
           );
         }

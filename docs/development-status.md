@@ -1,3 +1,7 @@
+## Current task: P4-UI2-COPY-DAILY-UX（2026-10-23）
+
+已修正空图库入口、浏览状态区分、照片节点回收提示、搜索筛选/候选摘要、地点操作反馈和地图底图降级说明；用户文案原则已加入视觉规范。Luna High 完整及增量只读复核均通过、无 blocker，并促成地点友好错误、路径脱敏覆盖、地点空状态和读取失败/无结果的正确区分。定向 JUnit **56 passed**，5 个相关 JS 语法检查与 `git diff --check` 通过。内置浏览器用隔离合成图库及独立空图库检查照片筛选、搜索、地点只读状态、地图无 Key 降级和图库来源入口；没有执行写入。模型、人物维护、OCR故障及维护触发状态未逐项浏览器验证，故状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交/推送/发布。详见[任务卡](tasks/P4-UI2-COPY-DAILY-UX.md)与[报告](reports/P4-UI2-COPY-DAILY-UX.md)。
+
 ## P4-UI2 版本信息文案统一（2026-10-23）
 
 人物页此前未填充 `#app-meta`，现已补上 capabilities 版本探测；并按本轮反馈将首页、搜索、人物、地点页统一为“版本 · 图库格式”，移除容易误解的访问/整理说明。隔离内置浏览器四页复核通过；前端文案定向断言 **2/2**、四个受影响 JS 的 `node --check` 与 `git diff --check` 通过。合成服务已停止，未访问真实图库；原全站任务仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**。详见[主报告](reports/P4-UI2-OVERALL-UX-POLISH.md)。

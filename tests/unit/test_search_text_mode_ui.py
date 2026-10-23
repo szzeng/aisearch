@@ -36,7 +36,7 @@ def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tm
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
-    assert '/web/search.js?v=p4-ui2-overall-ux-polish-9' in search_page.read_text(encoding="utf-8")
+    assert '/web/search.js?v=p4-ui2-copy-daily-ux-1' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {

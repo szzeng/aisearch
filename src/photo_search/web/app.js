@@ -911,7 +911,7 @@
     if (!state.sources.length) {
       updateGlobalRefreshActions();
       els.sourcesList.appendChild(
-        element("li", "hint", "还没有登记图库。展开“图库管理与分析明细”添加一个图库。")
+        element("li", "hint", "还没有添加图库。请打开“图库管理”，展开“添加图库来源”，填写照片文件夹路径后开始建库。")
       );
       return;
     }
@@ -1510,7 +1510,7 @@
 
   function refreshLibrary(sourceIds, mode) {
     if (!sourceIds && !state.sources.length) {
-      setStatus(els.refreshStatus, "还没有登记图库，不能启动全部建库或同步。", "error");
+      setStatus(els.refreshStatus, "还没有添加图库来源，暂时无法开始全部建库或同步。请先填写照片文件夹路径。", "error");
       updateGlobalRefreshActions();
       return;
     }
@@ -1933,11 +1933,19 @@
     }) : null;
     var message;
     if (state.sourcesLoadFailed) {
-      message = "图库状态读取失败，请在图库管理中重试；当前无法判断照片是否已建库。";
+      message = "图库状态读取失败，请在图库管理中重新读取；当前无法判断照片是否已建库。";
     } else if (!state.sources.length) {
-      message = "还没有登记图库。请到“图库管理”添加来源并开始建库。";
+      message = "还没有添加图库。请打开“图库管理”，展开“添加图库来源”，填写照片文件夹路径后开始建库。";
+    } else if (
+      state.refreshRunning &&
+      (!sourceId || !Array.isArray(state.refreshStatus.source_ids) ||
+        state.refreshStatus.source_ids.indexOf(Number(sourceId)) >= 0)
+    ) {
+      message = state.refreshStatus.mode === "build"
+        ? "正在为图库建库，完成后即可查看扫描结果。"
+        : "图库正在刷新，完成后即可查看最新结果。";
     } else if (source && source.last_successful_scan == null) {
-      message = "这个图库尚未建库。请到“图库管理”点击“开始建库”；现在还没有可浏览的扫描结果。";
+      message = "这个图库目前没有可浏览的扫描结果。若正在扫描或建库，请等待完成；否则可在图库管理中点击“开始建库”。";
     } else if (params.year || params.month || params.seek_year || params.seek_month) {
       message = "这个年月在当前图库范围内没有匹配照片。可以清除年月筛选或直接定位其他年月。";
     } else if (params.bucket === "unknown") {
@@ -1947,7 +1955,7 @@
     } else if (params.time_basis === "capture" && params.bucket !== "all") {
       message = "当前没有可信拍摄日期的照片。可打开“日期未知”“日期待就绪”或切换到加入图库时间浏览。";
     } else {
-      message = "当前图库范围还没有可浏览的照片。若来源尚未完成扫描，请先在图库管理中建库或同步变化。";
+      message = "当前图库范围还没有可浏览的照片。若来源尚未完成扫描，可在图库管理中建库或同步变化。";
     }
     status.textContent = message;
   }
@@ -2222,11 +2230,11 @@
     var to = payload.capture_to_exclusive === undefined ? null : payload.capture_to_exclusive;
     if (from !== null || to !== null) {
       lines.push(
-        "服务端回显（规范化墙上时间，左闭右开）：capture_from=" +
-          (from === null ? "null" : safeText(from)) +
-          "，capture_to_exclusive=" +
-          (to === null ? "null" : safeText(to)) +
-          "。"
+        "实际生效的拍摄时间范围：" +
+          (from === null ? "开始不限" : safeText(from)) +
+          " 至 " +
+          (to === null ? "结束不限" : safeText(to)) +
+          "（含开始，不含结束）。"
       );
     }
     if (block) {
@@ -2273,9 +2281,7 @@
         );
       }
       return (
-        "图库在这个筛选下还没有图片（" +
-        orderText +
-        "）。先在“来源与扫描”里注册来源并扫描。"
+        "当前条件下没有找到照片，可以调整或清除筛选（" + orderText + "）。"
       );
     }
     return (
@@ -2285,7 +2291,7 @@
       orderText +
       "）" +
       (state.browse.hasMore ? "，还有更多。" : "，已经到底。") +
-      (state.browse.recycledCount ? " 更早的 " + state.browse.recycledCount + " 张已回收；回到列表顶部可刷新重新定位。" : "")
+      (state.browse.recycledCount ? " 为保持浏览流畅，较早的 " + state.browse.recycledCount + " 张照片已从当前页面暂时移除，原照片没有删除。" : "")
     );
   }
 
@@ -3411,7 +3417,7 @@
         var candidateCount = Number(item.candidate_count);
         if (item.candidate_count !== null && item.candidate_count !== undefined && Number.isFinite(candidateCount) &&
             (candidateCount > 0 || ["CURRENT", "STALE", "REFRESHING", "CHECK_ON_OPEN"].indexOf(item.freshness) >= 0)) {
-          row.appendChild(element("p", "smart-collection-meta", "候选数：" + candidateCount));
+          row.appendChild(element("p", "smart-collection-meta", "规则候选照片：" + candidateCount + " 张"));
         }
         var actions = element("div", "smart-collection-actions");
         var listIsCurrent = function () { return version === state.photoSmart.requestVersion &&
@@ -3445,7 +3451,7 @@
       });
       els.photoSmartCollectionsMore.hidden = !state.photoSmart.hasMore;
       els.photoSmartCollectionsStatus.textContent = body.collections && body.collections.length
-        ? "共显示 " + els.photoSmartCollectionsList.children.length + " 个智能合集。候选数不代表排除复核后的匹配照片数。"
+        ? "共显示 " + els.photoSmartCollectionsList.children.length + " 个智能合集。规则候选照片经排除项复核后，实际可浏览数量可能不同。"
         : "还没有智能合集；请从已完成的搜索结果保存规则。";
     }).catch(function (failure) {
       if (version === state.photoSmart.requestVersion && state.currentView === "photoCollections" && state.photoCollectionKind === "smart")

@@ -320,7 +320,7 @@
         });
       }
       page.section.className = "photo-timeline__spacer";
-      page.section.setAttribute("aria-label", "照片节点已回收；选择可按日期锚点重新定位");
+      page.section.setAttribute("aria-label", "较早的照片已从当前页面暂时移除，原照片没有删除；选择日期可重新定位");
       var restore = element("button", "photo-timeline__restore", "重新定位此时间段");
       restore.type = "button";
       restore.addEventListener("click", function () { if (page.firstAnchor) reset(page.firstAnchor); });

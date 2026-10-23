@@ -37,7 +37,7 @@
     TEXT: "文字匹配",
     SEMANTIC: "图文向量命中",
     "TEXT+SEMANTIC": "文本 + 图文向量命中",
-    FILTER_ONLY: "仅筛选（本次没有查询文本，两条通道都没有参与排序）",
+    FILTER_ONLY: "按筛选条件匹配（本次没有搜索词，不按相关性排序）",
   };
   var TEXT_FIELD_LABELS = {
     filename_text: "文件名", place_text: "地点名称", ocr_text: "图片文字",
@@ -886,9 +886,9 @@
       lines.push({
         kind: "",
         text:
-          "文本投影仍在追赶：还有 " +
+          "文字搜索索引仍在更新：还有 " +
           number(projection.queued_assets) +
-          " 个资产等待重新派生文本索引（本次结果已按图库权威记录逐行复核）。",
+          " 张照片的信息尚未处理；本次结果已按图库记录核对。",
       });
     }
     var pending = body.pending_semantic;
@@ -937,9 +937,7 @@
     if (!body.asset_query && !body.query && !body.image_query) {
       lines.push({
         kind: "informational",
-        text:
-          "本次没有查询文本：没有生成任何查询向量，结果由图库权威列表给出" +
-          "（hit_reason=FILTER_ONLY）。",
+        text: "本次没有填写搜索词，结果按筛选条件列出，未按内容相关性排序。",
       });
     }
     if (body.image_query) {
@@ -1203,10 +1201,10 @@
       ids.length
         ? "已选择 " +
             ids.length +
-            " 个人物（canonical）：" +
+            " 个人物：" +
             parts.join("、") +
-            "。同名人物各按 #person_id 计，请求按 person_id 升序去重；以服务端回显为准。"
-        : "未选择人物：普通搜索不会发送 person_ids，也不会发送 person_match=all。"
+            "。同名人物可按编号区分。"
+        : "未选择人物，当前普通搜索不限制人物。"
     );
     syncPersonControls();
   }
@@ -1338,11 +1336,11 @@
           els.personStatus,
           rows.length === 0
             ? reset
-              ? "这个图库还没有 active canonical 人物（是空列表，不是读取失败）。"
+              ? "这个图库还没有可供筛选的人物。"
               : "没有更多人物。"
             : "本页 " +
                 rows.length +
-                " 个人物（active canonical）" +
+                " 个人物" +
                 (body.has_more ? " · 还有更多" : " · 已到末尾")
         );
         updatePersonSelection();
@@ -1366,18 +1364,16 @@
     var match = body.person_match === "all" ? "all" : "any";
     var lines = [];
     if (mode === "image") {
-      lines.push(
-        "上传搜图不携带人物条件：服务端的回显是 person_ids=[]、person_match=any" +
-          "（人物筛选只作用于普通搜索）。"
-      );
+      lines.push("以图搜图暂不支持人物筛选。");
     } else if (!ids.length) {
-      lines.push("后端回显：person_ids=[]、person_match=any（本次查询没有人物条件）。");
+      lines.push("本次搜索未限制人物。");
     } else {
       lines.push(
-        "后端回显（canonical）：person_ids=[" + ids.join(", ") + "]、person_match=" + match + "。"
+        "实际生效的人物筛选：" + ids.length + " 人，" +
+          (match === "all" ? "所有所选人物都出现在同一张照片中。" : "照片中出现任意一人即可。")
       );
       if (!sameIdList(ids, selectedPersonIds())) {
-        lines.push("服务端把提交的 id 解析并折叠成了上面的 canonical 人物；本页照回显显示。");
+        lines.push("人物归属已变化，实际筛选范围以本次搜索为准。");
       }
     }
     text(els.personEcho, lines.join(" "));
@@ -1414,21 +1410,21 @@
     if (mode === "image") {
       text(
         els.captureEcho,
-        "上传搜图不携带拍摄时间条件：服务端 multipart 闭集里没有 capture_from / capture_to_exclusive。"
+        "以图搜图暂不支持拍摄时间筛选。"
       );
       return;
     }
     if (from === null && to === null) {
-      text(els.captureEcho, "后端回显：本次查询没有拍摄时间条件（两个键都为 null）。");
+      text(els.captureEcho, "本次搜索未限制拍摄时间。");
       return;
     }
     text(
       els.captureEcho,
-      "后端回显（规范化墙上时间，左闭右开）：capture_from=" +
-        (from === null ? "null" : safeText(from)) +
-        "，capture_to_exclusive=" +
-        (to === null ? "null" : safeText(to)) +
-        "。"
+      "实际生效的拍摄时间范围：" +
+        (from === null ? "开始不限" : safeText(from)) +
+        " 至 " +
+        (to === null ? "结束不限" : safeText(to)) +
+        "（含开始，不含结束）。"
     );
   }
 
@@ -2840,10 +2836,10 @@
         parts.push("高度匹配：未标定");
       }
       parts.push("已显示 " + number(state.search.count) + " 行");
-      parts.push("候选共 " + number(confirmed ? confirmed.total : state.search.total) + " 个");
+      parts.push("候选照片 " + number(confirmed ? confirmed.total : state.search.total) + " 张");
       if (confirmed && confirmed.truncated) parts.push("候选可能已截断（最多 " + number(confirmed.candidateLimit) + " 个）");
     }
-    if (state.search.recycledCount) parts.push("当前保留最近 " + state.search.hits.length + " 张；前 " + state.search.recycledCount + " 张已回收");
+    if (state.search.recycledCount) parts.push("为保持浏览流畅，较早的 " + state.search.recycledCount + " 张照片已从当前页面暂时移除，原照片没有删除");
     if (state.search.statusEmpty) parts.push("这一页没有命中的行");
     if (state.search.statusEmptyNote) parts.push(state.search.statusEmptyNote);
     setStatus(els.queryStatus, parts.join(" · "));

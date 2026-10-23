@@ -431,7 +431,7 @@
     $("more").disabled = false;
     fetchSnapshot(id, b, 0).catch(function () {
       if (id !== sequence) return;
-      $("notice").textContent = "地图暂不可用；当前范围照片仍可分页浏览。";
+      $("notice").textContent = "地图底图暂不可用，仍可通过照片列表浏览。";
       fallbackGrid(id, b);
     });
   }
@@ -511,7 +511,7 @@
   }
   function fallback(id) {
     clearPhotoHover();
-    map = null; $("notice").textContent = "地图暂不可用；照片仍可通过列表浏览。";
+    map = null; $("notice").textContent = "地图底图暂不可用，仍可通过照片列表浏览。";
     bbox = null; fallbackGrid(id, null);
   }
   function revealPersonsNav(body) {
@@ -527,10 +527,10 @@
     var sourceId = event && event.sourceId;
     if (sourceId && sourceId.indexOf("td-") === 0) {
       $("map-connection-status").textContent = "底图瓦片不可用；可能是 Key、来源限制、网络或配额，请检查。";
-      $("notice").textContent = "底图暂不可用；照片仍可浏览。";
+      $("notice").textContent = "地图底图暂不可用，仍可通过照片列表浏览。";
     } else if (map && !map.isStyleLoaded()) {
       clearPhotoHover();
-      var failedId = sequence; $("notice").textContent = "地图暂不可用；照片列表仍可分页浏览。"; fallbackGrid(failedId, bbox);
+      var failedId = sequence; $("notice").textContent = "地图底图暂不可用，仍可通过照片列表浏览。"; fallbackGrid(failedId, bbox);
     }
   }
   function init() {
@@ -585,7 +585,15 @@
         });
         map.on("load", function () {
           if (runtimeConfig.status === "CONFIGURED") installBasemap(runtimeConfig);
-          else $("notice").textContent = runtimeConfig.status === "CONFIG_UNREADABLE" ? "地图配置无法读取；照片列表仍可用。" : runtimeConfig.status === "RUNTIME_UNAVAILABLE" ? "地图服务暂不可用；照片列表仍可用。" : "未配置天地图；照片列表仍可用。";
+          else {
+            var nextStep = runtimeConfig.status === "NOT_CONFIGURED"
+              ? "请在地图设置中配置天地图 Key。"
+              : runtimeConfig.status === "CONFIG_UNREADABLE" || runtimeConfig.status === "RUNTIME_UNAVAILABLE"
+                ? "请检查本机地图服务配置。"
+                : "";
+            $("notice").textContent = "地图底图暂不可用，仍可通过照片列表浏览。" +
+              (nextStep ? " " + nextStep : "");
+          }
           refresh();
         });
         map.on("movestart", clearPhotoHover);

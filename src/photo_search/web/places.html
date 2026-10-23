@@ -13,10 +13,10 @@
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-overall-ux-polish-8" defer></script>
-    <script src="/web/photo-timeline.js?v=p4-photo-collection-a-1" defer></script>
+    <script src="/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/places-albums.js?v=p4-ui2-photo-detail-entry-a-1" defer></script>
-    <script src="/web/places.js?v=p4-ui2-header-meta-1" defer></script>
+    <script src="/web/places.js?v=p4-ui2-copy-daily-ux-3" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
   <body class="app-shell">
@@ -84,7 +84,7 @@
           <button type="button" data-place-panel="panel-operations">历史与撤销</button>
         </nav>
         <p class="hint" id="place-intro">
-          机器识别结果需要在建议中确认后才会成为人工归属。整理操作由你主动提交；地点更正会检查当前 revision，并显示冲突或失败原因。
+          机器识别结果只有经你确认后才会成为人工地点归属。整理操作由你主动提交；若地点信息已更新，页面会提醒重新读取。
         </p>
         <div id="place-advanced-tools" class="place-advanced-tools" hidden>
           <h3>高级维护</h3>
@@ -210,7 +210,7 @@
       <section id="panel-edit" class="panel" aria-labelledby="edit-title" hidden>
         <h2 id="edit-title">重命名 / 编辑别名</h2>
         <p class="hint">
-          改名与别名编辑必须携带读到的 revision；冲突时会给出当前 revision，请重新载入后再改。
+          改名与别名编辑会先检查当前地点信息是否仍是最新；如已变化，页面会提示重新读取后再编辑。
           编辑别名会替换该地点的整组启用别名（含来自数据包的别名），请确认后再提交。
         </p>
         <form id="edit-load" class="card" novalidate>
@@ -245,8 +245,7 @@
       <section id="panel-suggestions" class="panel" aria-labelledby="suggestions-title">
         <h2 id="suggestions-title">建议与批量整理</h2>
         <p class="hint">
-          列表绑定 suggestion revision：只有当前活动地名包产生、且未被排除的候选才算「待确认建议」。
-          revision 过期时必须重新加载，不会把两版候选拼在一起。
+          待确认建议只包含当前地名包生成、且未被排除的识别结果。结果更新后请重新加载，避免按过期建议提交。
         </p>
         <div class="filters">
           <p>
@@ -258,9 +257,9 @@
             </select>
           </p>
           <p class="filter-actions">
-            <button type="button" id="suggested-load">加载 / 重新加载（取最新 revision）</button>
-            <button type="button" id="suggested-more" disabled>加载更多（沿用已绑定 revision）</button>
-            <button type="button" id="suggested-freeze">冻结全部结果快照</button>
+            <button type="button" id="suggested-load">加载 / 重新加载建议</button>
+            <button type="button" id="suggested-more" disabled>加载更多建议</button>
+            <button type="button" id="suggested-freeze">固定全部待确认建议</button>
           </p>
         </div>
         <div id="suggested-status" class="state-block" role="status" aria-live="polite"></div>
@@ -270,10 +269,10 @@
           <button type="button" id="suggested-clear">清空选择</button>
           <span class="hint" id="selection-summary"></span>
         </p>
-        <p class="hint">按住 Shift 连选，仅限已加载的建议；冻结全部结果快照会单独固定当时的 asset_id 集合。</p>
+        <p class="hint">按住 Shift 连选，仅限已加载的建议；固定全部待确认建议会保留当前完整清单，提交时不会重新查询。</p>
         <ul id="suggested-list" class="place-list" aria-label="待确认建议"></ul>
 
-        <h3>批量动作</h3>
+        <h3>批量操作</h3>
         <form id="batch-form" class="card" novalidate>
           <p>
             <label for="target-place-id">已选目标地点</label>
@@ -288,13 +287,13 @@
             <ul id="picker-results" class="place-list" aria-label="地点搜索结果"></ul>
           </div>
           <p>
-            <button type="button" id="batch-assign">批量确认归属（assign）</button>
-            <button type="button" id="batch-unassign">批量取消归属（unassign）</button>
-            <button type="button" id="batch-restore">批量恢复自动（restore_auto）</button>
+            <button type="button" id="batch-assign">确认所选照片的地点</button>
+            <button type="button" id="batch-unassign">取消所选照片的地点归属</button>
+            <button type="button" id="batch-restore">恢复所选照片的自动判断</button>
           </p>
           <p class="hint">
-            批量接口按 ≤500 项分批、每批一个 request_id、整批原子；批量确认记录的 origin 是
-            MANUAL。单条确认（下方每条建议的「确认」按钮）会记录 origin=CONFIRMED_SUGGESTION。
+            每批最多处理 500 张照片，单批保存；某一批失败时会停止后续批次。批量确认按人工操作记录，
+            单条确认会保留“来自识别建议”的记录来源。
           </p>
           <p class="error" id="batch-error" role="alert" hidden></p>
         </form>
@@ -305,7 +304,7 @@
       <section id="panel-operations" class="panel" aria-labelledby="operations-title">
         <h2 id="operations-title">操作日志与撤销</h2>
         <p class="hint">
-          操作日志按 operation revision 升序只追加、不删除（最新的一条在最下方）；撤销是新的补偿操作。
+          操作日志只追加、不删除；撤销会新增一条补偿记录，最新记录显示在最下方。
           操作已被撤销、或它的目标已被后续编辑时，整批返回 PLACE_OPERATION_NOT_UNDOABLE，不会覆盖新状态。
         </p>
         <p>
