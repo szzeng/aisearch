@@ -20,6 +20,8 @@ def make_bundle(root: Path) -> Path:
         "PhotoSearch.exe",
         "Start-PhotoSearch.cmd",
         "Download-Qwen.cmd",
+        "Select-PhotoSearchDataRoot.ps1",
+        "Set-PhotoSearch-Data.cmd",
         "README-PORTABLE.txt",
         "NEW-PC-QUICK-START.txt",
     ):
@@ -69,7 +71,7 @@ def test_archive_is_zip64_readable_and_refuses_overwrite(tmp_path: Path) -> None
     bundle = make_bundle(tmp_path)
     part = tmp_path / "release.zip.part"
     details = release.create_zip(bundle, part)
-    assert details["entries"] == 8
+    assert details["entries"] == 10
     assert len(details["sha256"]) == 64
     with zipfile.ZipFile(part) as archive:
         assert archive.testzip() is None
@@ -159,3 +161,17 @@ def test_gpu_summary_requires_cuda_and_normalized_synthetic_vectors(tmp_path: Pa
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(ValueError, match="CUDA/normalization"):
         release.summarize_gpu_smoke(report_path)
+
+
+def test_portable_launchers_share_selected_root() -> None:
+    packaging = Path(__file__).resolve().parents[2] / "tools" / "packaging"
+    start = (packaging / "Start-PhotoSearch.cmd").read_text(encoding="utf-8")
+    download = (packaging / "Download-Qwen.cmd").read_text(encoding="utf-8")
+    selector = (packaging / "Select-PhotoSearchDataRoot.ps1").read_text(encoding="utf-8-sig")
+    assert "Select-PhotoSearchDataRoot.ps1" in start
+    assert "-Mode Start" in start
+    assert "Select-PhotoSearchDataRoot.ps1" in download
+    assert "-Mode Download" in download
+    assert "portable-data-root.txt" in selector
+    assert "--data-root $selected" in selector
+    assert "Read-Host" in selector
