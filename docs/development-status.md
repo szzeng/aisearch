@@ -4,7 +4,9 @@
 
 ## P4-WINDOWS-RELEASE-ONE-CLICK（2026-10-23）
 
-新增 tools/packaging/release_windows.ps1 一键个人便携 ZIP 编排、ZIP64/SHA helper、打包 smoke 原地执行模式和 docs/windows-release.md。定向 JUnit 8/8、Ruff、Python 编译、PowerShell AST 与 git diff --check 通过；Luna High 有界独立复核无 blocker。状态 IMPLEMENTED / VALIDATION PENDING：首轮构建及 bundle 校验成功；冻结 smoke 的 3 项旧断言已修正，同一包复跑 exit 0、problems=[]。从干净 checkout 重跑正式入口时，D: 仅 21.80 GiB，低于 25.61 GiB 预检门槛，未开始新构建/ZIP。任务失败 staging 共 10.93 GiB，自动删除策略拒绝，保留原始失败报告与 warnings。R1 新构建/ZIP 与 R3 GPU 仍 pending。任务代码已本地提交，未推送/tag/发布。详见[任务卡](tasks/P4-WINDOWS-RELEASE-ONE-CLICK.md)与[报告](reports/P4-WINDOWS-RELEASE-ONE-CLICK.md)。
+2026-10-23 发行脚本修复与完整复验：根因为 PowerShell `Move-Item` 不支持 `-NoClobber`。改用同卷 `IO.File.Move` 后，提交 `64a9353` 上完整构建、冻结 API smoke、ZIP CRC/SHA 与最终文件落盘通过；JUnit 11/11。个人候选 ZIP 为 16,041 项、5,966,987,843 bytes，SHA-256 `B69E9F42265F307AD16B274CFEFC9359E9E7B5BEADA7FB566523F19F9C741E35`，`Get-FileHash` 一致。仍未验证 GPU/第二台干净 Windows，未上传 Release；详情见同一卡与报告。
+
+新增 tools/packaging/release_windows.ps1 一键个人便携 ZIP 编排。历史首轮空间预检停止及后续发布错误已在同一卡续验关闭；当前本机包验证通过，GPU 与跨电脑仍 pending。详见[任务卡](tasks/P4-WINDOWS-RELEASE-ONE-CLICK.md)与[报告](reports/P4-WINDOWS-RELEASE-ONE-CLICK.md)。
 
 ## P4-WINDOWS-NEW-PC-READY 续验（2026-10-23，冻结包收尾）
 

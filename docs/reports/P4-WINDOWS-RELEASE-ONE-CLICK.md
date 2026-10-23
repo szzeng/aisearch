@@ -1,8 +1,16 @@
 # P4-WINDOWS-RELEASE-ONE-CLICK 执行报告
 
-**当前状态：IMPLEMENTED / VALIDATION PENDING**（2026-10-23）。实现了一键 Windows x64 ZIP 编排、版本/工作树/空间预检、任务专属新构建、原地冻结 API smoke、ZIP64/CRC/SHA 和简明 JSON 摘要。任务代码已本地提交，不推送或发布。续验已确认冻结 smoke 的三项旧断言并非包启动问题；修正后同一已有包通过，但因磁盘空间不足未能从修正提交完成新构建和 ZIP，故没有交付发布 ZIP。
+**当前状态：LOCAL PACKAGE PASS / GPU NOT TESTED**（2026-10-23）。修复提交 `64a9353` 上发行入口完成 Windows x64 冻结构建、原地 API smoke、ZIP64/CRC/SHA 和最终产物发布。GPU、第二台干净 Windows 与分享资格仍未验证；本地 ZIP 是个人候选包，未推送或公开发布。
 
 基线复核：开始时本地 HEAD `542d8aa0c21ccd3cc98a8e8f3c1b56747990e012` 超前于 origin/master `f73becda4bafea73947d78549dfca65c28eaa938`；收尾时 origin/master 已前进到 `542d8aa0c21ccd3cc98a8e8f3c1b56747990e012`，与 HEAD 一致。工作树仍有其它未提交改动。
+
+## 2026-10-23 发行文件发布失败修复与复验
+
+用户提供的 PowerShell 错误为：`Write-Error: 找不到与参数名称 'NoClobber' 匹配的参数。` 上一轮日志证明冻结构建、API smoke 和 ZIP 创建/完整性校验已经成功，失败发生在最后发布文件时。`Move-Item` 不支持该参数；将三个文件的移交改为同卷 `[IO.File]::Move(source, destination)`，在目标已存在时抛错且不会覆盖。
+
+复验提交 `64a935314da817650f0152b6b0cdc957133e733f`：再次运行 `tools/packaging/release_windows.ps1` 完整成功。PyInstaller exit 0（177.2 秒）；冻结 API smoke `status=ok`、`problems=[]`；ZIP 16,041 项、5,966,987,843 bytes，CRC/成员验证成功。SHA-256 `B69E9F42265F307AD16B274CFEFC9359E9E7B5BEADA7FB566523F19F9C741E35`，PowerShell `Get-FileHash` 与 `.sha256` 文件一致。定向 JUnit 11/11；发行和目录选择脚本 PowerShell AST、`git diff --check` 通过。
+
+产物状态 `LOCAL_PACKAGE_PASS_GPU_NOT_TESTED`，报告保留 `suitable_for_sharing=false`。未做 GPU smoke、第二台干净 Windows 验证、公开上传或 license 审查。首轮失败 staging 原样保留，成功复跑 staging 由脚本清理。
 
 ## 实施
 
@@ -14,9 +22,9 @@
 
 ## 验收结果
 
-- R1：**PENDING**。2026-10-23 续查 D: 有 32.84 GiB 可用，超过约 27 GiB 估算；但当前 Git 工作树仍有本任务和并行未提交/未跟踪改动，入口先拒绝脏树，没有启动大构建或删除数据腾空间。
+- R1：**PASS（本机个人候选包）**。修复提交 `64a9353` 上正式入口完成新构建、冻结 smoke 和 ZIP 产出，SHA 与 Windows `Get-FileHash` 一致；详见 2026-10-23 发行脚本续验记录。
 - R2：**PASS（轻量失败保护）**。最终定向 JUnit `test-results/P4-WINDOWS-RELEASE-ONE-CLICK/focused.xml` 为 8/8；覆盖版本不一致、缺少 EXE/manifest、同名覆盖、空间不足、非零构建退出、ZIP 路径穿越/绝对路径/重复/私密权重和 CRC 损坏、SHA/ZIP64 成功路径及 GPU 状态筛选。实际从仓库外调用脚本时发现工作目录假设；修正为固定切到仓库根目录后，重跑 `uv lock --check --offline` 与版本检查成功，随后按设计因脏工作树退出 1。没有创建 `releases/` 或启动 PyInstaller。PowerShell AST 解析、Python `py_compile`、Ruff 与 `git diff --check` 通过。
-- R3：**PENDING / GPU_NOT_TESTED**。没有本任务新构建的冻结 EXE；不沿用旧版本作为本任务通过证据，不下载模型。
+- R3：**PENDING / GPU_NOT_TESTED**。本轮未提供模型目录，也未运行冻结 CUDA smoke。
 - R4：版本来源与同名文件拒绝有 helper 测试覆盖；实际同版本拒绝依赖 release outputs 预检，PowerShell 端到端复用尚待 R1 条件满足。
 
 ## 独立复核
@@ -40,12 +48,6 @@ Luna High 对本卡完整新增面做了有界只读复核；一次关于正式�
 - 失败 staging 精确路径为 D:\SZ\project\aisearch\.tmp\P4-WINDOWS-RELEASE-ONE-CLICK\clean-source-7682b28\releases\.release-0d445441447549db82833d218fd64ab0，共 10.93 GiB，其中冻结 bundle 10.71 GiB。这是本任务生成、可重建的发布暂存；为释放重建空间尝试递归删除时，桌面执行策略返回 blocked by policy，所以未删除，也没有用其他方式绕过。清理该精确 staging 后，应从干净、已提交 checkout 重跑唯一发布命令完成新构建、冻结 smoke、ZIP64/CRC/SHA 和 Get-FileHash 对照。
 - Luna High 对 smoke 断言调整及本卡发布流程续审：PASS，无 blocker。确认页面标记、OCR processor ID 与新 smoke 断言相符；其复核不覆盖未执行的 R1 新构建/ZIP 或 R3 CUDA。
 
-## 下一步唯一命令
+## 剩余验收
 
-清理上述任务失败 staging、确保 D: 达到当前脚本空间估算后，在干净、已提交的 Windows x64 checkout 从仓库根目录运行：
-
-```powershell
-.\tools\packaging\release_windows.ps1
-```
-
-预期产物 `releases/PhotoSearch-v<pyproject版本>-win-x64.zip`、同名 `.sha256` 和 `-report.json`。本轮未生成任何这些文件。公开再分发仍需单独 license 审核；报告的 GPU 状态在未实测时必须保持 `GPU_NOT_TESTED`。
+R3 需在用户明确指定只读模型目录后运行可选 Qwen CUDA smoke；R4 的 PowerShell 同版本产物拒绝路径仍待端到端检查。当前产物 `releases/PhotoSearch-v0.6.0-win-x64.zip` 已完成本机打包验收。公开再分发仍需单独 license 审核；报告的 GPU 状态保持 `GPU_NOT_TESTED`。
