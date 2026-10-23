@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-random-browse-4" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-windows-new-pc-2" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
@@ -64,6 +64,16 @@
             <p id="active-search-model" class="state-block" role="status" aria-live="polite">读取当前搜索模型…</p>
           </section>
         </div>
+        <section id="first-use-guide" class="first-use-guide" aria-labelledby="first-use-guide-title" hidden>
+          <h3 id="first-use-guide-title">新电脑首次使用</h3>
+          <ol>
+            <li><strong>运行环境：</strong>Qwen 语义搜索需要兼容的 NVIDIA 显卡和驱动；本应用不会把 Qwen 静默切换到 CPU。无模型时仍可先浏览已登记照片。</li>
+            <li><strong>准备模型：</strong>模型状态只说明固定清单是否已导入，不代表权重 SHA 或 GPU 已通过运行检查。用随包命令导入已有模型目录：<code>PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source &lt;模型目录&gt;</code>。官方模型下载入口尚未包含在此版本中。</li>
+            <li><strong>选择照片目录：</strong>展开“添加图库来源”，手动填写照片文件夹路径；应用不会自动扫描硬盘，原照片保持只读。</li>
+            <li><strong>新建图库：</strong>登记后点“开始建库”，等待现有任务完成；关闭应用后重新启动可继续使用已发布的索引。</li>
+          </ol>
+          <p class="hint">512D 与 1024D 配置共用一份 Qwen 权重。导入模型不等于已生成照片索引。</p>
+        </section>
         <section id="gallery-sources-panel" class="gallery-sources-panel" aria-labelledby="gallery-sources-title">
           <div class="management-section-heading">
             <div>

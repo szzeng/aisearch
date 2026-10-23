@@ -468,6 +468,7 @@
         state.sources = (result.body && result.body.sources) || [];
         state.sourcesLoaded = true;
         state.sourcesLoadFailed = false;
+        updateFirstUseGuide();
         updateGlobalRefreshActions();
         if (
           state.browse.sourceId &&
@@ -1474,6 +1475,21 @@
       .catch(function (failure) {
         setStatus(els.sourcesStatus, "扫描请求失败：" + describe(failure), "error");
       });
+  }
+
+  function updateFirstUseGuide() {
+    var guide = document.getElementById("first-use-guide");
+    if (!guide) return;
+    if (!state.sourcesLoaded || !state.embeddingManagementStatus) {
+      guide.hidden = true;
+      return;
+    }
+    var qwen = (state.embeddingManagementStatus.providers || []).find(function (provider) {
+      return provider.provider_id === "qwen3-vl-embedding-2b-exif-v2";
+    });
+    // Hide only after the default provider is installed and has an active published profile.
+    // Manifest/file presence alone is deliberately never presented as hash/GPU proof.
+    guide.hidden = Boolean(state.sources.length && qwen && qwen.installed && qwen.is_active);
   }
 
   // -------------------------------------------------------------------- refresh
@@ -3454,6 +3470,8 @@
     embeddingStatusRequest = request("/embedding-management/status")
       .then(function (result) {
         var body = result.body || {};
+        state.embeddingManagementStatus = body;
+        updateFirstUseGuide();
         observeEmbeddingTask(body.candidate_task || null);
         var active = body.active_profile;
         var activeProvider = (body.providers || []).find(function (provider) {

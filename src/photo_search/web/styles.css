@@ -851,6 +851,17 @@ main {
   gap: 0.75rem;
   margin: 0 0 1rem;
 }
+.gallery-management-page .first-use-guide {
+  margin: 0 0 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border, #cbd5e1);
+  border-radius: 0.75rem;
+  background: var(--tint);
+}
+.gallery-management-page .first-use-guide h3 { margin: 0 0 0.5rem; }
+.gallery-management-page .first-use-guide ol { margin: 0; padding-left: 1.4rem; }
+.gallery-management-page .first-use-guide li { margin: 0.45rem 0; line-height: 1.55; }
+.gallery-management-page .first-use-guide code { overflow-wrap: anywhere; }
 .gallery-management-page .management-overview-item,
 .gallery-management-page .gallery-sources-panel {
   min-width: 0;
