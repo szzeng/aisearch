@@ -13,6 +13,11 @@ def test_search_layout_keeps_one_search_form_and_groups_common_filters() -> None
     styles = (root / "src" / "photo_search" / "web" / "search.css").read_text(encoding="utf-8")
 
     assert html.count('id="search-form"') == 1
+    header_tools = html.index('class="search-header-toolbar"')
+    model_link = html.index('id="current-search-model"')
+    more_menu = html.index('class="search-more-options-menu"')
+    app_meta = html.index('id="app-meta"')
+    assert header_tools < model_link < more_menu < app_meta
     common = html.index('class="search-common-controls"')
     advanced = html.index('class="advanced-search-filter wide"')
     results = html.index('id="panel-results"')
@@ -21,6 +26,10 @@ def test_search_layout_keeps_one_search_form_and_groups_common_filters() -> None
         assert html.index(f'id="{control_id}"') < advanced
     assert 'id="open-coverage"' in html and 'class="search-more-options"' in html
     assert ".advanced-filter-grid" in styles and "@media (max-width: 40rem)" in styles
+    assert ".search-header-toolbar" in styles and ".search-more-options-menu" in styles
+    assert "position: absolute" in styles and "@media (max-width: 760px)" in styles
+    assert "app-header.has-global-search > #search-form { grid-column: 1; grid-row: 1;" in styles
+    assert "app-header.has-global-search > h1 { grid-column: 1; grid-row: 2;" in styles
 
 
 def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tmp_path: Path) -> None:

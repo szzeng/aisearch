@@ -7,7 +7,7 @@
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-overall-ux-polish-7" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-ui2-overall-ux-polish-2" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-ui2-search-header-2" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
@@ -44,12 +44,14 @@
         <button id="search-submit" type="submit">全库搜索</button>
         <button id="open-upload" type="button">以图搜图</button>
       </form>
-      <div class="search-header-actions">
+      <div class="search-header-toolbar" role="group" aria-label="搜索工具">
         <a id="current-search-model" class="search-model-link" href="/?view=sources#search-model-panel">当前：读取中…</a>
         <details class="search-more-options">
           <summary>更多选项</summary>
-          <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
-          <label><input id="search-perf-toggle" type="checkbox" /> 搜索性能诊断</label>
+          <div class="search-more-options-menu">
+            <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
+            <label><input id="search-perf-toggle" type="checkbox" /> 搜索性能诊断</label>
+          </div>
         </details>
       </div>
       <p class="app-meta" id="app-meta" role="status" aria-live="polite"></p>
