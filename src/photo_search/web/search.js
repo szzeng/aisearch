@@ -3969,16 +3969,7 @@
           body.schema_version === null || body.schema_version === undefined
             ? "尚未初始化"
             : "v" + body.schema_version;
-        text(
-          els.appMeta,
-          "版本 " +
-            body.app_version +
-            " · 图库 schema " +
-            schema +
-            "（" +
-            body.schema_status +
-            "） · 只读受控访问"
-        );
+        text(els.appMeta, "版本 " + body.app_version + " · 图库格式 " + schema);
         text(els.bindingHint, "搜索配置将在搜索时确认；分项覆盖率可按需查看。");
       },
       function (failure) {

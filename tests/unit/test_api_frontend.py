@@ -783,6 +783,25 @@ def test_the_persons_page_has_no_external_reference_credential_or_html_sink() ->
     assert 'result.message' not in script
 
 
+def test_the_persons_page_reports_application_and_catalog_versions() -> None:
+    shell, script, _ = _persons_documents()
+
+    assert 'id="app-meta"' in shell
+    assert 'api("/capabilities").then((body) =>' in script
+    assert '"版本 " + body.app_version' in script
+    assert '" · 图库格式 " + schema' in script
+    assert "只读受控访问" not in script
+    assert "本机人物整理" not in script
+
+
+def test_shell_version_metadata_uses_consistent_user_facing_copy() -> None:
+    for asset in ("app.js", "search.js", "places.js", "persons-albums.js"):
+        script = (read_static(asset) or b"").decode("utf-8")
+        assert " · 图库格式 " in script, asset
+        assert "只读受控访问" not in script, asset
+        assert "本机人工整理" not in script, asset
+
+
 def test_the_persons_page_reaches_data_only_through_the_protected_api() -> None:
     _, script, _ = _persons_documents()
     # Writes use the CSRF-aware client; the shared timeline has one read-only adapter.

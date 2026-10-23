@@ -363,3 +363,15 @@
 - 主页查看器打开完整详情时，在当前页面历史栈追加详情路由并关闭查看器弹层，同时保留原查看器历史标记。Back 重开原照片查看器，Forward 回详情后再 Back 仍可重开；详情页已有标记时不重复插入安全回退步骤。搜索/人物/地点/地图等其他独立页继续使用原整页导航和来源上下文校验。
 - 隔离合成图库浏览器实测主页 Back、Forward、再次 Back；JUnit **17/17**（`viewer-detail-transition-final-20261023.xml`），受影响 JavaScript 语法检查和 `git diff --check` 通过。Luna High 跟进确认竞态与普通查看器 transition 标记清理 finding 均关闭，未运行测试。
 - 本轮只直接浏览器验证主页来源；其他 viewer 来源仍由共享查看器/路由单测覆盖，未逐页重跑浏览器组合。整体原任务保持 **IMPLEMENTED / ACCEPTANCE PARTIAL**，此前地图瓦片、原生 200%、固定范围入口和精确滚动锚点等未验证项不变。任务范围已本地提交 `5dfd2eb`，未推送。
+
+### 人物页版本信息补齐（2026-10-23）
+
+- 隔离浏览器核对发现 `persons.html` 的 `#app-meta` 没有填充脚本：人物页加载独立 `persons-albums.js`，而共享 `app.js` 的版本探测不在此页执行。地点页由 `places.js` 自行探测并正常显示，首页亦正常。
+- 人物页复用受保护 `/api/v1/capabilities` 填充版本、schema 状态和“只读受控访问 + 本机人物整理”提示；更新脚本缓存版本。定向断言 **1/1**、`node --check persons-albums.js` 和 `git diff --check` 通过。
+- Codex 内置浏览器使用隔离合成图库验证修复前后人物页及地点/首页对照；修复后版本行在头部右侧显示，人物列表正常。真实图库未访问，截图未导出到项目，隔离服务已停止。总体任务状态仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**。
+
+### 页头版本信息文案精简（2026-10-23）
+
+- 首页、搜索、人物、地点四页统一显示“版本 · 图库格式”，删除“只读受控访问”及人物/地点整理说明；保留 API 提供的版本号和图库 schema 版本值。
+- 隔离内置浏览器四页复查显示一致，相关搜索/人物/地点内容正常。定向前端断言 **2/2**、四个受影响 JS `node --check` 与 `git diff --check` 通过；服务已停止、未访问真实图库。截图未能导出到项目目录。
+- 本项 **SCOPED PASS**；全站原任务仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**，其余未验证项不变。

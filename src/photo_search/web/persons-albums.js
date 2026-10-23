@@ -127,6 +127,15 @@
     }
     return result;
   }
+  function loadAppMeta() {
+    const appMeta = document.getElementById("app-meta");
+    if (!appMeta) return;
+    api("/capabilities").then((body) => {
+      const schema = body.schema_version === null || body.schema_version === undefined
+        ? "尚未初始化" : "v" + body.schema_version;
+      appMeta.textContent = "版本 " + body.app_version + " · 图库格式 " + schema;
+    }).catch(() => { appMeta.textContent = ""; });
+  }
   function message(value, transient) {
     clearTimeout(state.messageTimer); state.messageTimer = null;
     $("status").textContent = value; $("status").hidden = !value;
@@ -2625,6 +2634,7 @@
     finally { $("undo").disabled = false; }
   }
   function boot() {
+    loadAppMeta();
     state.libraryNavigationReady = true; state.libraryView = requestedLibraryView();
     state.organize = state.libraryView === "unnamed" || state.libraryView === "faces";
     if (state.organize) state.lastOrganizeView = state.libraryView;

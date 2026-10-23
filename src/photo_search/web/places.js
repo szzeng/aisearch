@@ -373,16 +373,7 @@
           body.schema_version === null || body.schema_version === undefined
             ? "尚未初始化"
             : "v" + body.schema_version;
-        text(
-          els.appMeta,
-          "版本 " +
-            body.app_version +
-            " · 图库 schema " +
-            schema +
-            "（" +
-            body.schema_status +
-            "） · 只读受控访问 + 本机人工整理"
-        );
+        text(els.appMeta, "版本 " + body.app_version + " · 图库格式 " + schema);
       })
       .catch(function (failure) {
         if (failure.code === "SCHEMA_TOO_NEW") {
