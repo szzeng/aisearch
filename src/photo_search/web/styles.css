@@ -821,6 +821,8 @@ main {
   gap: 0.5rem 0.75rem;
   align-items: center;
 }
+.browse-random-controls input { width: 5.5rem; }
+.browse-random-controls { margin-top: 0.35rem; }
 .browse-controls[hidden],
 .browse-mode-controls[hidden] { display: none; }
 
@@ -900,6 +902,7 @@ main {
 
 .photos-page .browse-mode-controls {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   margin: 0 0 0.4rem;
 }
@@ -915,6 +918,11 @@ main {
 
 .photos-page-heading h2 {
   margin: 0;
+}
+
+@media (max-width: 40rem) {
+  .photos-page .browse-mode-controls { justify-content: flex-start; }
+  .photos-page-heading { align-items: flex-start; flex-wrap: wrap; }
 }
 
 .photos-page #browse-timeline {
@@ -1465,6 +1473,7 @@ body.app-shell {
 .photo-selecting > [data-selected="true"] { outline: 3px solid var(--accent, #2766a8); outline-offset: 2px; }
 .photo-timeline__item > .favorite-star { inset-block-start: 0.65rem; inset-inline-end: 0.65rem; }
 .photo-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-block: 0.5rem; }
+.photo-selection[hidden] { display: none; }
 .photo-selection [role="group"] { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 .collection-cover { width: 4rem; height: 4rem; object-fit: cover; border-radius: 0.35rem; margin-inline-end: 0.75rem; }
 #photo-collection-assets .card-tile { display: grid; gap: 0.4rem; border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.4rem; background: var(--surface); cursor: pointer; }

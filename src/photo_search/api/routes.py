@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 
 from photo_search import photo_collections, photo_smart_collections
+from photo_search.api import random_browse
 from photo_search.api import timeline as timeline_queries
 from photo_search.api.catalog_reads import (
     run_catalog_projection,
@@ -170,6 +171,7 @@ from photo_search.api.queries import (
     job_page,
     media_state,
     prepare_asset_page,
+    random_asset_summaries,
     read_asset_page,
     source_list,
 )
@@ -1876,6 +1878,48 @@ async def list_assets(
         service.catalog, read_asset_page, service.media_cache(),
         projection=projection, **parameters,
     )
+
+
+@router.post("/photo-random-sample", summary="Read one bounded random photo batch")
+async def sample_random_photos(
+    request: Request, payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "a browser session is required", status=401)
+    source_id = payload.get("source_id")
+    if source_id is not None and (isinstance(source_id, bool) or not str(source_id).isdigit() or int(source_id) < 1):
+        raise ApiError(random_browse.RANDOM_SAMPLE_INVALID, "图库范围参数无效", status=422)
+    count = payload.get("count", 300)
+    if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= random_browse.MAX_BATCH_SIZE:
+        raise ApiError(random_browse.RANDOM_SAMPLE_INVALID, "随机数量必须在 1 到 1000 之间", status=422)
+    recent_ids = random_browse.validate_ids(
+        payload.get("recent_ids", []), limit=random_browse.MAX_RECENT_IDS,
+    )
+    service = service_of(request)
+    return await run_catalog_read(
+        service.catalog, random_browse.sample_asset_ids,
+        source_id=None if source_id is None else int(source_id), count=count, recent_ids=recent_ids,
+    )
+
+
+@router.post("/photo-random-summaries", summary="Read one bounded random photo page")
+async def read_random_photo_summaries(
+    request: Request, payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    auth_session_id = request.cookies.get(SESSION_COOKIE)
+    if not auth_session_id:
+        raise ApiError(SESSION_INVALID, "a browser session is required", status=401)
+    source_id = payload.get("source_id")
+    if source_id is not None and (isinstance(source_id, bool) or not str(source_id).isdigit() or int(source_id) < 1):
+        raise ApiError(random_browse.RANDOM_SAMPLE_INVALID, "图库范围参数无效", status=422)
+    asset_ids = random_browse.validate_ids(payload.get("asset_ids", []), limit=50)
+    service = service_of(request)
+    assets = await run_catalog_read(
+        service.catalog, random_asset_summaries, service.media_cache(), asset_ids,
+        source_id=None if source_id is None else int(source_id),
+    )
+    return {"assets": assets, "requested_count": len(asset_ids), "skipped_count": len(asset_ids) - len(assets)}
 
 
 @router.get("/timeline/assets", summary="Read-only, scope-bound timeline page")

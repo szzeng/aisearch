@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-overall-ux-polish-7" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-random-browse-4" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
@@ -15,7 +15,7 @@
     <script src="/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-ui2-copy-daily-ux-2" defer></script>
+    <script src="/web/app.js?v=p4-photo-random-browse-6" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -187,8 +187,9 @@
         <div class="photos-page-heading">
           <h2 id="view-browse-title">全部照片</h2>
           <div id="browse-mode-controls" class="browse-mode-controls" role="group" aria-label="照片浏览方式">
-            <button type="button" id="browse-show-timeline" aria-pressed="true" hidden>时间轴</button>
+            <button type="button" id="browse-show-timeline" aria-pressed="true">时间轴</button>
             <button type="button" id="browse-show-list" aria-pressed="false">列表与高级日期条件</button>
+            <button type="button" id="browse-show-random" aria-pressed="false">随机浏览</button>
           </div>
         </div>
         <p id="browse-intro" class="hint">
@@ -243,6 +244,12 @@
             <option value="capture_desc">按拍摄时间（未知时间置尾）</option>
           </select>
         </div>
+        <div id="browse-random-controls" class="browse-controls browse-random-controls" hidden>
+          <label for="browse-random-size">每批数量</label>
+          <input id="browse-random-size" type="number" min="1" max="1000" step="1" value="300" inputmode="numeric" />
+          <button type="button" id="browse-random-next">下一批</button>
+        </div>
+        <p id="browse-random-state" class="state-block" role="status" aria-live="polite" hidden></p>
         <p id="browse-scope" class="state-block browse-scope" role="status" aria-live="polite" hidden>
           <span id="browse-scope-name"></span>
           <button type="button" id="clear-browse-source">查看全部图库</button>

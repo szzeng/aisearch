@@ -51,6 +51,7 @@ ORDER_CAPTURE_DESC = "capture_desc"
 ORDERS = (ORDER_ASSET_ID, ORDER_TIME_DESC, ORDER_CAPTURE_DESC)
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
+MAX_RANDOM_PAGE_SIZE = 50
 #: How many asset rows one chunk examines; keeps memory bounded while still letting a
 #: physical-cache filter (``has_thumbnail``) fill a page in a few round trips.
 ASSET_CHUNK_SIZE = 128
@@ -212,6 +213,68 @@ def summarize_asset(
             else {"source_id": current["source_id"], "relative_path": current["relative_path"]}
         ),
     }
+
+
+def eligible_random_ids(catalog: Any, asset_ids: list[int], *, source_id: int | None) -> list[int]:
+    """Recheck a bounded candidate set with the shared photo and PRESENT predicates."""
+    if not asset_ids:
+        return []
+    if len(asset_ids) > 1000:
+        raise ValueError("random browse candidate chunk exceeds its bounded size")
+    photo_sql, photo_parameters = photo_asset_sql(source_id=source_id)
+    placeholders = ",".join("?" for _ in asset_ids)
+    if source_id is None:
+        present_sql = (
+            "EXISTS (SELECT 1 FROM file_locations AS p INDEXED BY "
+            "idx_file_locations_present_asset WHERE p.asset_id=a.asset_id "
+            "AND p.availability='PRESENT')"
+        )
+        parameters: tuple[Any, ...] = (*asset_ids, *photo_parameters)
+    else:
+        present_sql = (
+            "EXISTS (SELECT 1 FROM file_locations AS p INDEXED BY "
+            "idx_file_locations_present_source_asset WHERE p.source_id=? "
+            "AND p.asset_id=a.asset_id AND p.availability='PRESENT')"
+        )
+        parameters = (*asset_ids, *photo_parameters, int(source_id))
+    rows = catalog.read_all(
+        "SELECT a.asset_id FROM assets AS a "
+        f"WHERE a.asset_id IN ({placeholders}) AND ({photo_sql}) AND {present_sql}",
+        parameters,
+    )
+    found = {int(row["asset_id"]) for row in rows}
+    return [int(asset_id) for asset_id in asset_ids if int(asset_id) in found]
+
+
+def random_asset_summaries(
+    catalog: Any, cache: MediaCache, asset_ids: list[int], *, source_id: int | None
+) -> list[dict[str, Any]]:
+    """Recheck one bounded random page and publish the existing browse summary shape."""
+    if not asset_ids:
+        return []
+    if len(asset_ids) > MAX_RANDOM_PAGE_SIZE:
+        raise ValueError("random browse page exceeds its bounded size")
+    asset_ids = list(dict.fromkeys(int(asset_id) for asset_id in asset_ids))
+    with catalog.read_snapshot():
+        ordered_ids = eligible_random_ids(catalog, asset_ids, source_id=source_id)
+        placeholders = ",".join("?" for _ in ordered_ids)
+        rows = catalog.read_all(
+            f"SELECT asset_id,sha256,byte_size,created_at FROM assets WHERE asset_id IN ({placeholders})",
+            tuple(ordered_ids),
+        ) if ordered_ids else []
+        found = {int(row["asset_id"]): row for row in rows}
+        locations = locations_by_asset(catalog, ordered_ids)
+        return [
+            summarize_asset(
+                cache,
+                asset_id=asset_id,
+                sha256=str(found[asset_id]["sha256"]),
+                byte_size=int(found[asset_id]["byte_size"]),
+                created_at=int(found[asset_id]["created_at"]),
+                locations=locations.get(asset_id, []),
+            )
+            for asset_id in ordered_ids
+        ]
 
 
 def _published(cache: MediaCache, spec: Any, sha256: str) -> bool:

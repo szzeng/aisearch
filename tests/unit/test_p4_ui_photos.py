@@ -18,14 +18,15 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
 
     assert 'class="view photos-page"' in html
     assert 'id="browse-show-list" aria-pressed="false"' in html
-    assert 'id="browse-show-timeline" aria-pressed="true" hidden' in html
+    assert 'id="browse-show-timeline" aria-pressed="true"' in html
+    assert 'id="browse-show-random" aria-pressed="false">随机浏览</button>' in html
     assert 'id="browse-list-filters" hidden' in html
     assert 'id="browse-list-time-hint" class="hint" hidden' in html
     assert 'id="browse-time-policy" class="browse-time-policy hint"' in html
     assert "拍摄时间只读取照片文件声明。" in html
     assert "文件系统修改时间与 EXIF 根时间显示为“文件时间”，不参与拍摄时间范围筛选。" in html
     assert "时间轴使用独立的年月定位与时间分组" in html
-    assert 'if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites;' in app
+    assert 'if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites || state.browse.mode === "random";' in app
     assert ".browse-controls #browse-list-filters[hidden] {\n  display: none;\n}" in timeline_styles
     assert 'photo-timeline.css?v=p4-photo-collection-a-1' in html
     assert 'class="view gallery-management-page"' in html

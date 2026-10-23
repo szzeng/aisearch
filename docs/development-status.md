@@ -1,3 +1,7 @@
+## P4-PHOTO-RANDOM-BROWSE（2026-10-23）
+
+随机照片模式、只读抽样/摘要 API 已实现：默认每批 300 张，可调 1–1000，50 张滚动页和显式下一批；12 个环形索引窗口、最多 12,000 候选，近期 1,200 ID 尽量避重，图库较小允许重复。sessionStorage 恢复当前批及滚动位置；pending 摘要失败可恢复当前批并重试相同 ID。定向 JUnit **18/18**、Ruff、py_compile、Node 语法和 diff-check 通过；Luna High 跟进无 blocker。隔离 65 张图库内置浏览器验证窄屏/主要流程并且控制台无错误；桌面宽视口未能在面板中确认，故 **IMPLEMENTED / VALIDATION PENDING**。30 万 fixture 不可用，未访问真实图库/模型，已本地提交、未推送。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE.md)与[执行报告](reports/P4-PHOTO-RANDOM-BROWSE.md)。
+
 ## Current task: P4-UI2-COPY-DAILY-UX（2026-10-23）
 
 已修正空图库入口、浏览状态区分、照片节点回收提示、搜索筛选/候选摘要、地点操作反馈和地图底图降级说明；用户文案原则已加入视觉规范。Luna High 完整及增量只读复核均通过、无 blocker，并促成地点友好错误、路径脱敏覆盖、地点空状态和读取失败/无结果的正确区分。定向 JUnit **56 passed**，5 个相关 JS 语法检查与 `git diff --check` 通过。内置浏览器用隔离合成图库及独立空图库检查照片筛选、搜索、地点只读状态、地图无 Key 降级和图库来源入口；没有执行写入。模型、人物维护、OCR故障及维护触发状态未逐项浏览器验证，故状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交/推送/发布。详见[任务卡](tasks/P4-UI2-COPY-DAILY-UX.md)与[报告](reports/P4-UI2-COPY-DAILY-UX.md)。

@@ -15,6 +15,7 @@
   var API = "/api/v1";
   var SEARCH_RETURN_SOURCE_KEY = "aisearch.search-return-source.v1";
   var BROWSE_RETURN_KEY = "aisearch.home-browse-return.v1";
+  var RANDOM_BROWSE_KEY = "aisearch.home-random-browse.v1";
   var PAGE_SIZE = 50;
   var POLL_INTERVAL_MS = 700;
   var JOB_SCAN_LIMIT = 200;
@@ -106,6 +107,9 @@
       timelineMount: null,
       timelineScope: "",
       timelineReturnAnchor: "",
+      random: { sourceId: "", batchIds: [], recentIds: [], batchSize: 300, loadedPages: 0,
+        hasMore: false, loading: false, requestVersion: 0, nextInFlight: false,
+        pendingBatch: null, assets: [], skippedCount: 0, scrollY: 0, statusError: "" },
     },
     photoCollections: { cursor: null, hasMore: false, revision: null, requestVersion: 0,
       collectionId: null, collection: null, memberCursor: null, memberHasMore: false,
@@ -1437,8 +1441,9 @@
     if (els.browseTitle) text(els.browseTitle, favorites ? "我的收藏" : "全部照片");
     if (els.browseIntro) {
       text(els.browseIntro, favorites ? "按最近收藏排列。收藏绑定照片内容；原图暂时离线时仍保留收藏记录。" : "拍摄时间只读取照片文件声明。");
+      els.browseIntro.hidden = !favorites && state.browse.mode === "random";
     }
-    if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites;
+    if (els.browseTimePolicy) els.browseTimePolicy.hidden = favorites || state.browse.mode === "random";
     if (els.browseModeControls) els.browseModeControls.hidden = favorites;
     if (els.favoritesOrderLabel) els.favoritesOrderLabel.hidden = !favorites;
     if (els.favoritesOrder) { els.favoritesOrder.hidden = !favorites; els.favoritesOrder.value = state.browse.favoritesOrder; }
@@ -1446,9 +1451,9 @@
     if (els.favoritesReload) els.favoritesReload.hidden = !favorites;
     if (els.browseControls) els.browseControls.hidden = favorites;
     if (els.browseScope) els.browseScope.hidden = favorites;
-    if (els.browseListTimeHint) els.browseListTimeHint.hidden = favorites || state.browse.mode === "timeline";
+    if (els.browseListTimeHint) els.browseListTimeHint.hidden = favorites || state.browse.mode === "timeline" || state.browse.mode === "random";
     if (els.browseTimelineNote) els.browseTimelineNote.hidden = favorites || state.browse.mode !== "timeline";
-    if (els.browseCaptureState) els.browseCaptureState.hidden = favorites || state.browse.mode === "timeline";
+    if (els.browseCaptureState) els.browseCaptureState.hidden = favorites || state.browse.mode === "timeline" || state.browse.mode === "random";
     if (els.browseTimeline) els.browseTimeline.hidden = favorites || state.browse.mode !== "timeline";
     if (els.browseListView) els.browseListView.hidden = false;
     if (state.browse.pager) state.browse.pager.setEnabled(!favorites && state.browse.mode === "list");
@@ -1904,6 +1909,313 @@
     });
   }
 
+  function persistRandomBrowse() {
+    var random = state.browse.random;
+    if (!random.batchIds.length && !random.recentIds.length) {
+      try { window.sessionStorage.removeItem(RANDOM_BROWSE_KEY); } catch (_error) {}
+      return;
+    }
+    var saved = {
+      sourceId: random.sourceId,
+      batchSize: random.batchSize,
+      batchIds: random.batchIds.slice(0, 1000),
+      recentIds: random.recentIds.slice(0, 1200),
+      loadedPages: Math.min(20, random.loadedPages),
+      scrollY: random.scrollY,
+      pendingBatch: random.pendingBatch ? {
+        sourceId: random.pendingBatch.sourceId,
+        requestedCount: random.pendingBatch.requestedCount,
+        underfilled: Boolean(random.pendingBatch.underfilled),
+        assetIds: random.pendingBatch.assetIds.slice(0, 1000),
+      } : null,
+      savedAt: Date.now(),
+    };
+    try { window.sessionStorage.setItem(RANDOM_BROWSE_KEY, JSON.stringify(saved)); } catch (_error) {}
+  }
+
+  function readRandomBrowse() {
+    try {
+      var saved = JSON.parse(window.sessionStorage.getItem(RANDOM_BROWSE_KEY) || "null");
+      if (!saved || Date.now() - Number(saved.savedAt || 0) > 30 * 60 * 1000 ||
+          !Array.isArray(saved.batchIds) || saved.batchIds.length > 1000 ||
+          !Array.isArray(saved.recentIds) || saved.recentIds.length > 1200) return null;
+      return saved;
+    } catch (_error) { return null; }
+  }
+
+  function restoreRandomSnapshot(saved) {
+    if (!saved || !Array.isArray(saved.batchIds) || !Array.isArray(saved.recentIds)) return false;
+    var random = state.browse.random;
+    random.sourceId = String(saved.sourceId || "");
+    random.batchSize = Math.max(1, Math.min(1000, Number(saved.batchSize) || 300));
+    random.batchIds = saved.batchIds.map(Number).filter(function (id) { return Number.isSafeInteger(id) && id > 0; }).slice(0, 1000);
+    random.recentIds = saved.recentIds.map(Number).filter(function (id) { return Number.isSafeInteger(id) && id > 0; }).slice(0, 1200);
+    random.loadedPages = Math.min(20, Math.max(0, Number(saved.loadedPages) || 0));
+    random.scrollY = Math.max(0, Number(saved.scrollY) || 0);
+    random.pendingBatch = saved.pendingBatch && Array.isArray(saved.pendingBatch.assetIds) &&
+      saved.pendingBatch.assetIds.length <= 1000 ? {
+        sourceId: String(saved.pendingBatch.sourceId || ""),
+        requestedCount: Math.max(1, Math.min(1000, Number(saved.pendingBatch.requestedCount) || random.batchSize)),
+        underfilled: Boolean(saved.pendingBatch.underfilled),
+        assetIds: saved.pendingBatch.assetIds.map(Number).filter(function (id) { return Number.isSafeInteger(id) && id > 0; }),
+      } : null;
+    random.assets = [];
+    random.hasMore = random.loadedPages * PAGE_SIZE < random.batchIds.length;
+    state.browse.sourceId = random.sourceId;
+    if (els && els.browseSource) els.browseSource.value = random.sourceId;
+    return true;
+  }
+
+  function updateRandomStatus(message, isError) {
+    var random = state.browse.random;
+    if (message) random.statusError = isError ? message : "";
+    var status = random.statusError || message || (random.batchIds.length
+      ? "随机展示 " + Math.max(0, random.batchIds.length - random.skippedCount) + " 张照片"
+      : "当前图库范围没有抽取到可浏览的照片。");
+    text(els.browseRandomState, status);
+    els.browseRandomState.classList.toggle("is-error", Boolean(random.statusError));
+    els.browseRandomNext.disabled = random.loading || random.nextInFlight;
+    els.browseRandomNext.textContent = random.pendingBatch ? "重试下一批" : "下一批";
+    els.browseRandomSize.disabled = random.loading || random.nextInFlight || Boolean(random.pendingBatch);
+  }
+
+  function activateRandomBrowse() {
+    var random = state.browse.random;
+    els.browseRandomSize.value = String(random.batchSize || 300);
+    if (String(random.sourceId || "") !== String(state.browse.sourceId || "")) {
+      resetRandomForSource();
+      startRandomBatch(false);
+      return;
+    }
+    if (!random.batchIds.length) {
+      els.assetGrid.textContent = "";
+      if (window.PhotoScrollPager) window.PhotoScrollPager.setSpacerHeight(els.assetGrid, 0);
+      startRandomBatch(false);
+      return;
+    }
+    if (random.assets.length) {
+      renderRandomAssets();
+      updateRandomStatus();
+      if (random.scrollY) window.requestAnimationFrame(function () { window.scrollTo(0, random.scrollY); });
+      if (state.browse.pager) state.browse.pager.update();
+      return;
+    }
+    random.restorePagesTarget = Math.max(1, random.loadedPages || 1);
+    random.loadedPages = 0;
+    random.hasMore = true;
+    loadRandomPage(true);
+  }
+
+  function resetRandomForSource() {
+    var random = state.browse.random;
+    random.requestVersion += 1;
+    random.sourceId = String(state.browse.sourceId || "");
+    random.batchIds = [];
+    random.recentIds = [];
+    random.loadedPages = 0;
+    random.hasMore = false;
+    random.assets = [];
+    random.skippedCount = 0;
+    random.pendingBatch = null;
+    random.statusError = "";
+    random.loading = false;
+    random.nextInFlight = false;
+    random.scrollY = 0;
+    els.assetGrid.textContent = "";
+    if (window.PhotoScrollPager) window.PhotoScrollPager.setSpacerHeight(els.assetGrid, 0);
+    persistRandomBrowse();
+  }
+
+  function startRandomBatch(_explicitRestart) {
+    var random = state.browse.random;
+    if (random.loading || random.nextInFlight) return Promise.resolve(false);
+    var version = ++random.requestVersion;
+    state.browse.requestVersion += 1;
+    state.browse.owed = false;
+    random.sourceId = String(state.browse.sourceId || "");
+    random.batchSize = Math.max(1, Math.min(1000, Math.floor(Number(els.browseRandomSize.value) || 300)));
+    var requestedCount = random.batchSize;
+    random.loading = true;
+    random.nextInFlight = true;
+    updateRandomStatus("正在抽取照片…");
+    return request("/photo-random-sample", { method: "POST", body: {
+      source_id: random.sourceId ? Number(random.sourceId) : null,
+      count: requestedCount,
+      recent_ids: random.recentIds.slice(0, 1200),
+    } }).then(function (result) {
+      if (version !== random.requestVersion || state.browse.mode !== "random") return false;
+      var body = result.body || {};
+      var ids = Array.isArray(body.asset_ids) ? body.asset_ids.map(Number).filter(function (id) {
+        return Number.isSafeInteger(id) && id > 0;
+      }) : [];
+      ids = Array.from(new Set(ids)).slice(0, 1000);
+      random.pendingBatch = { sourceId: random.sourceId, requestedCount: requestedCount,
+        underfilled: Boolean(body.underfilled), assetIds: ids };
+      if (!ids.length) {
+        random.batchIds = [];
+        random.assets = [];
+        random.loadedPages = 0;
+        random.hasMore = false;
+        random.skippedCount = 0;
+        random.pendingBatch = null;
+        els.assetGrid.textContent = "";
+        random.loading = false;
+        random.nextInFlight = false;
+        updateRandomStatus("当前图库范围没有抽取到可浏览的照片。");
+        persistRandomBrowse();
+        return true;
+      }
+      return readRandomPage(0, true, version);
+    }).catch(function (failure) {
+      if (version !== random.requestVersion || state.browse.mode !== "random") return false;
+      random.loading = false;
+      random.nextInFlight = false;
+      updateRandomStatus("抽取失败：" + describe(failure) + "。当前批次已保留，可重试。", true);
+      return false;
+    }).finally(function () {
+      if (version === random.requestVersion) {
+        random.loading = false;
+        random.nextInFlight = false;
+        updateRandomStatus();
+      }
+    });
+  }
+
+  function renderRandomAssets() {
+    var random = state.browse.random;
+    els.assetGrid.textContent = "";
+    random.assets.forEach(function (asset) { els.assetGrid.appendChild(buildTile(asset)); });
+    if (window.PhotoFavorites) window.PhotoFavorites.mount(els.assetGrid);
+    if (window.PhotoScrollPager) state.browse.recycledCount += window.PhotoScrollPager.trimGrid(els.assetGrid, 500);
+    random.hasMore = random.loadedPages * PAGE_SIZE < random.batchIds.length;
+    els.loadMore.hidden = !random.hasMore;
+    els.gridSentinel.hidden = !random.hasMore;
+  }
+
+  function readRandomPage(pageIndex, replaceBatch, requestVersion) {
+    var random = state.browse.random;
+    var version = requestVersion == null ? random.requestVersion : requestVersion;
+    if (version !== random.requestVersion || random.loading && !replaceBatch) return Promise.resolve(false);
+    var ids = replaceBatch && random.pendingBatch ? random.pendingBatch.assetIds : random.batchIds;
+    var scope = replaceBatch && random.pendingBatch ? random.pendingBatch.sourceId : random.sourceId;
+    var start = Math.max(0, pageIndex) * PAGE_SIZE;
+    var pageIds = ids.slice(start, start + PAGE_SIZE);
+    if (!pageIds.length) return Promise.resolve(false);
+    random.loading = true;
+    state.browse.loading = true;
+    updateRandomStatus("正在读取照片…");
+    return request("/photo-random-summaries", { method: "POST", body: {
+      source_id: scope ? Number(scope) : null, asset_ids: pageIds,
+    } }).then(function (result) {
+      if (version !== random.requestVersion || state.browse.mode !== "random") return false;
+      var body = result.body || {};
+      var assets = Array.isArray(body.assets) ? body.assets : [];
+      if (replaceBatch) {
+        // A failed or stale first page never clears the old visible batch.
+        random.batchIds = ids.slice(0, 1000);
+        random.sourceId = scope;
+        random.assets = [];
+        random.loadedPages = 0;
+        random.skippedCount = 0;
+        random.pendingBatch = null;
+        random.scrollY = 0;
+        state.browse.returnScrollY = 0;
+        els.assetGrid.textContent = "";
+        if (window.PhotoScrollPager) window.PhotoScrollPager.setSpacerHeight(els.assetGrid, 0);
+        random.recentIds = Array.from(new Set(random.batchIds.concat(random.recentIds))).slice(0, 1200);
+        window.scrollTo(0, 0);
+      }
+      var existing = new Set(random.assets.map(function (asset) { return Number(asset.asset_id); }));
+      assets.forEach(function (asset) {
+        var id = Number(asset.asset_id);
+        if (!existing.has(id)) { existing.add(id); random.assets.push(asset); }
+      });
+      random.skippedCount += Math.max(0, pageIds.length - assets.length);
+      random.loadedPages = pageIndex + 1;
+      random.loading = false;
+      state.browse.loading = false;
+      renderRandomAssets();
+      updateRandomStatus();
+      persistRandomBrowse();
+      random.restorePagesTarget = Number(random.restorePagesTarget) || 0;
+      if (random.restorePagesTarget > random.loadedPages && random.hasMore) return loadRandomPage(true);
+      if (random.restorePagesTarget && random.loadedPages >= random.restorePagesTarget) {
+        random.restorePagesTarget = 0;
+        if (random.scrollY) window.requestAnimationFrame(function () { window.scrollTo(0, random.scrollY); });
+      }
+      if (state.browse.pager) state.browse.pager.update();
+      return true;
+    }).catch(function (failure) {
+      if (version !== random.requestVersion) return false;
+      random.loading = false;
+      state.browse.loading = false;
+      updateRandomStatus("读取失败：" + describe(failure) + "。当前批次已保留，可重试。", true);
+      if (state.browse.pager) state.browse.pager.update();
+      return false;
+    }).finally(function () {
+      if (version === random.requestVersion) {
+        random.loading = false;
+        state.browse.loading = false;
+        if (random.nextInFlight) random.nextInFlight = false;
+        if (state.browse.mode === "random") updateRandomStatus();
+      }
+    });
+  }
+
+  function loadRandomPage(_fromRestore) {
+    var random = state.browse.random;
+    if (!random.hasMore || random.loading) return Promise.resolve(false);
+    return readRandomPage(random.loadedPages, false, random.requestVersion);
+  }
+
+  function requestNextRandomBatch() {
+    var random = state.browse.random;
+    if (random.loading || random.nextInFlight) return Promise.resolve(false);
+    random.nextInFlight = true;
+    random.batchSize = Math.max(1, Math.min(1000, Math.floor(Number(els.browseRandomSize.value) || 300)));
+    var requestedCount = random.batchSize;
+    var version = ++random.requestVersion;
+    updateRandomStatus("正在抽取下一批…");
+    var sampled = random.pendingBatch ? Promise.resolve(null) : request("/photo-random-sample", {
+      method: "POST", body: {
+        source_id: random.sourceId ? Number(random.sourceId) : null,
+        count: requestedCount,
+        recent_ids: random.recentIds.slice(0, 1200),
+      },
+    });
+    return sampled.then(function (result) {
+      if (version !== random.requestVersion || state.browse.mode !== "random") return false;
+      if (result) {
+        var body = result.body || {};
+        var ids = Array.isArray(body.asset_ids) ? body.asset_ids.map(Number).filter(function (id) {
+          return Number.isSafeInteger(id) && id > 0;
+        }) : [];
+        random.pendingBatch = { sourceId: random.sourceId, requestedCount: requestedCount,
+          underfilled: Boolean(body.underfilled), assetIds: Array.from(new Set(ids)).slice(0, 1000) };
+      }
+      if (!random.pendingBatch || !random.pendingBatch.assetIds.length) {
+        random.nextInFlight = false;
+        random.loading = false;
+        updateRandomStatus("当前图库范围没有抽取到可浏览的照片。", true);
+        return false;
+      }
+      persistRandomBrowse();
+      return readRandomPage(0, true, version);
+    }).catch(function (failure) {
+      if (version !== random.requestVersion || state.browse.mode !== "random") return false;
+      random.loading = false;
+      random.nextInFlight = false;
+      updateRandomStatus("换批失败：" + describe(failure) + "。当前批次已保留，可重试。", true);
+      return false;
+    }).finally(function () {
+      if (version === random.requestVersion) {
+        random.loading = false;
+        random.nextInFlight = false;
+        updateRandomStatus();
+      }
+    });
+  }
+
   function timelineRenderAsset(item) {
     var card = element("button", "photo-timeline__card");
     card.type = "button";
@@ -1962,23 +2274,46 @@
 
   function showBrowseMode(mode) {
     if (state.browse.scope === "favorites") mode = "list";
+    if (mode !== "timeline" && mode !== "list" && mode !== "random") mode = "list";
+    var previousMode = state.browse.mode;
     var useTimeline = mode === "timeline";
+    var useRandom = mode === "random";
     if (useTimeline && state.browse.photoSelection) state.browse.photoSelection.reset();
-    state.browse.mode = useTimeline ? "timeline" : "list";
+    if (state.browse.mode === "random" && !useRandom) {
+      state.browse.random.requestVersion += 1;
+      state.browse.random.loading = false;
+      state.browse.random.nextInFlight = false;
+      state.browse.loading = false;
+      state.browse.random.scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+      persistRandomBrowse();
+    }
+    state.browse.mode = mode;
+    if (els.browseStatus) els.browseStatus.hidden = useRandom;
+    if (els.browseIntro) els.browseIntro.hidden = useRandom;
+    if (els.browseTimePolicy) els.browseTimePolicy.hidden = useRandom || state.browse.scope === "favorites";
+    if (els.assetGrid) els.assetGrid.setAttribute("aria-label", useRandom ? "随机照片" : "按加入时间排列的图片");
     els.browseTimeline.hidden = !useTimeline;
     els.browseListView.hidden = useTimeline;
-    els.browseShowTimeline.hidden = useTimeline;
-    els.browseShowList.hidden = !useTimeline;
+    els.browseShowTimeline.hidden = state.browse.scope === "favorites";
+    els.browseShowList.hidden = state.browse.scope === "favorites";
+    els.browseShowRandom.hidden = state.browse.scope === "favorites";
     els.browseShowTimeline.setAttribute("aria-pressed", useTimeline ? "true" : "false");
-    els.browseShowList.setAttribute("aria-pressed", useTimeline ? "true" : "false");
-    els.browseCaptureState.hidden = useTimeline;
-    els.browseListFilters.hidden = useTimeline;
-    if (els.photoSelectionWrap) els.photoSelectionWrap.hidden = state.browse.scope !== "favorites" && useTimeline;
-    els.browseListTimeHint.hidden = state.browse.scope === "favorites" || useTimeline;
+    els.browseShowList.setAttribute("aria-pressed", mode === "list" ? "true" : "false");
+    els.browseShowRandom.setAttribute("aria-pressed", useRandom ? "true" : "false");
+    els.browseCaptureState.hidden = useTimeline || useRandom;
+    els.browseListFilters.hidden = useTimeline || useRandom;
+    els.browseRandomControls.hidden = !useRandom;
+    els.browseRandomState.hidden = !useRandom;
+    if (els.photoSelectionWrap) els.photoSelectionWrap.hidden = state.browse.scope !== "favorites" && (useTimeline || useRandom);
+    els.browseListTimeHint.hidden = state.browse.scope === "favorites" || useTimeline || useRandom;
     els.browseTimelineNote.hidden = !useTimeline;
     if (!useTimeline) {
       if (state.browse.pager) state.browse.pager.setEnabled(true);
-      if (!state.browse.loaded || state.browse.binding !== browseFingerprint()) loadBrowse(true);
+      if (useRandom) {
+        activateRandomBrowse();
+        return;
+      }
+      if (previousMode === "random" || !state.browse.loaded || state.browse.binding !== browseFingerprint()) loadBrowse(true);
       return;
     }
     if (state.browse.pager) state.browse.pager.setEnabled(false);
@@ -2358,7 +2693,7 @@
     tile.dataset.assetId = String(asset.asset_id);
     var frame = element("button", "thumb-frame");
     frame.type = "button";
-    frame.setAttribute("aria-label", "查看照片 " + asset.asset_id);
+    frame.setAttribute("aria-label", state.browse.mode === "random" ? "查看照片" : "查看照片 " + asset.asset_id);
     frame.addEventListener("click", function () { showDetail(asset.asset_id); });
     frame.dataset.assetId = String(asset.asset_id);
     frame.dataset.relativeLabel = relativeLabel(asset);
@@ -2382,19 +2717,11 @@
       locationLine += " · 另有 " + String(Number(asset.location_count) - 1) + " 个位置";
     }
     caption.appendChild(element("span", null, locationLine));
-    var meta = element(
-      "span",
-      "meta",
-      "资产 #" +
-        asset.asset_id +
-        " · 加入时间 " +
-        formatMoment(asset.created_at) +
-        " · " +
-        asset.location_count +
-        " 个位置"
-    );
+    var meta = element("span", "meta", state.browse.mode === "random"
+      ? "加入时间 " + formatMoment(asset.created_at) + " · " + asset.location_count + " 个位置"
+      : "资产 #" + asset.asset_id + " · 加入时间 " + formatMoment(asset.created_at) + " · " + asset.location_count + " 个位置");
     caption.appendChild(meta);
-    if (captureConditionActive()) {
+    if (state.browse.mode !== "random" && captureConditionActive()) {
       // ADR-0011 §8.1: the list carries the honesty block, not a per-row time projection, so
       // the per-row sentence comes from the closed detail object of that same asset. It is
       // fetched lazily for the tiles the user actually looks at.
@@ -2415,6 +2742,10 @@
 
   // --------------------------------------------------------------------- detail
   function saveBrowseReturn(assetId) {
+    if (state.browse.mode === "random") {
+      state.browse.random.scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+      persistRandomBrowse();
+    }
     var snapshot = {
       assetId: String(assetId),
       scope: state.browse.scope,
@@ -2429,6 +2760,7 @@
       savedAt: Date.now(),
       mode: state.browse.mode,
       timelineReturnAnchor: state.browse.timelineReturnAnchor,
+      random: state.browse.mode === "random" ? readRandomBrowse() : null,
     };
     state.browse.returnContext = snapshot;
     try { window.sessionStorage.setItem(BROWSE_RETURN_KEY, JSON.stringify(snapshot)); } catch (_error) {}
@@ -2443,7 +2775,8 @@
     state.browse.order = String(snapshot.order || "time_desc");
     state.browse.captureFrom = String(snapshot.captureFrom || "");
     state.browse.captureTo = String(snapshot.captureTo || "");
-    state.browse.mode = snapshot.mode === "timeline" ? "timeline" : "list";
+    if (snapshot.random) restoreRandomSnapshot(snapshot.random);
+    state.browse.mode = snapshot.mode === "timeline" ? "timeline" : (snapshot.mode === "random" ? "random" : "list");
     state.browse.timelineReturnAnchor = String(snapshot.timelineReturnAnchor || "");
     state.browse.returnScrollY = Math.max(0, Number(snapshot.scrollY) || 0);
     state.browse.returnAssetId = String(snapshot.returnAssetId || assetId);
@@ -2471,6 +2804,20 @@
 
   function restoreBrowsePosition() {
     if (!state.browse.returnPending) return;
+    if (state.browse.mode === "random") {
+      var random = state.browse.random;
+      if (!random.batchIds.length) {
+        state.browse.returnPending = false;
+        return;
+      }
+      random.restorePagesTarget = Math.max(1, random.loadedPages || 1);
+      random.loadedPages = 0;
+      random.assets = [];
+      random.hasMore = true;
+      state.browse.returnPending = false;
+      loadRandomPage(true);
+      return;
+    }
     if (state.browse.mode === "timeline") {
       state.browse.returnTargetCount = 0;
       state.browse.returnPending = false;
@@ -2502,12 +2849,16 @@
   }
 
   function showDetail(assetId) {
+    if (state.browse.mode === "random") {
+      state.browse.random.scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+      persistRandomBrowse();
+    }
     var returnTile = (state.browse.mode === "timeline" ? els.browseTimeline : els.assetGrid)
       .querySelector('[data-asset-id="' + String(assetId) + '"]');
     if (!window.AIPhotoInfo) { location.hash = "#/asset/" + encodeURIComponent(assetId); return; }
     if (state.detailViewer && state.detailViewer.dialog.open) state.detailViewer.close();
     state.detailViewer = window.AIPhotoInfo.open(assetId, {
-      title: "查看照片", alt: "照片 #" + assetId,
+      title: "查看照片", alt: state.browse.mode === "random" ? "照片" : "照片 #" + assetId,
       returnFocus: returnTile && returnTile.querySelector("button"),
       onOpenFullDetails: function (id) {
         state.browse.returnScrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
@@ -4180,6 +4531,10 @@
     }
     setBrowseScope(params.get("view") === "favorites" ? "favorites" : "all");
     var view = params.get("view");
+    if (!location.hash && !view && state.browse.scope === "all") {
+      var savedRandom = readRandomBrowse();
+      if (savedRandom && restoreRandomSnapshot(savedRandom)) state.browse.mode = "random";
+    }
     if (view === "photo-collection") {
       state.photoCollections.collectionId = params.get("id");
       state.photoCollections.collection = null;
@@ -4275,6 +4630,11 @@
       browseListView: document.getElementById("browse-list-view"),
       browseShowTimeline: document.getElementById("browse-show-timeline"),
       browseShowList: document.getElementById("browse-show-list"),
+      browseShowRandom: document.getElementById("browse-show-random"),
+      browseRandomControls: document.getElementById("browse-random-controls"),
+      browseRandomSize: document.getElementById("browse-random-size"),
+      browseRandomNext: document.getElementById("browse-random-next"),
+      browseRandomState: document.getElementById("browse-random-state"),
       browseTitle: document.getElementById("view-browse-title"),
       browseIntro: document.getElementById("browse-intro"),
       browseTimePolicy: document.getElementById("browse-time-policy"),
@@ -4530,10 +4890,24 @@
     });
     els.browseShowTimeline.addEventListener("click", function () { showBrowseMode("timeline"); });
     els.browseShowList.addEventListener("click", function () { showBrowseMode("list"); });
+    els.browseShowRandom.addEventListener("click", function () { showBrowseMode("random"); });
+    els.browseRandomSize.addEventListener("change", function () {
+      var size = Math.floor(Number(els.browseRandomSize.value));
+      if (!Number.isFinite(size)) size = 300;
+      size = Math.max(1, Math.min(1000, size));
+      els.browseRandomSize.value = String(size);
+      state.browse.random.batchSize = size;
+      persistRandomBrowse();
+    });
+    els.browseRandomNext.addEventListener("click", function () { requestNextRandomBatch(); });
     els.browseSource.addEventListener("change", function () {
       state.browse.sourceId = els.browseSource.value;
       updateSearchScopeAction();
       if (state.browse.mode === "timeline") showBrowseMode("timeline");
+      else if (state.browse.mode === "random") {
+        resetRandomForSource();
+        startRandomBatch(false);
+      }
       else loadBrowse(true);
     });
     document.getElementById("clear-browse-source").addEventListener("click", function () {
@@ -4541,6 +4915,10 @@
       els.browseSource.value = "";
       updateSearchScopeAction();
       if (state.browse.mode === "timeline") showBrowseMode("timeline");
+      else if (state.browse.mode === "random") {
+        resetRandomForSource();
+        startRandomBatch(false);
+      }
       else loadBrowse(true);
     });
     els.browseOrder.addEventListener("change", function () {
@@ -4562,12 +4940,13 @@
       retryLabel: "重试加载",
       canLoad: function () {
         return !els.views.browse.hidden && !els.browseListView.hidden &&
-          state.browse.mode === "list" && !state.detailRouteActive &&
+          (state.browse.mode === "list" || state.browse.mode === "random") && !state.detailRouteActive &&
           !(state.detailViewer && state.detailViewer.dialog && state.detailViewer.dialog.open) &&
-          document.visibilityState !== "hidden" && !state.browse.loading &&
-          state.browse.hasMore && Boolean(state.browse.cursor);
+          document.visibilityState !== "hidden" && !state.browse.loading && !state.browse.random.loading &&
+          (state.browse.mode === "random" ? state.browse.random.hasMore :
+            (state.browse.hasMore && Boolean(state.browse.cursor)));
       },
-      load: function () { return loadBrowse(false); },
+      load: function () { return state.browse.mode === "random" ? loadRandomPage(false) : loadBrowse(false); },
     }) : null;
     if (state.browse.pager) state.browse.pager.setEnabled(false);
     els.sourceForm.addEventListener("submit", submitSource);
