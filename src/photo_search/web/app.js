@@ -486,7 +486,7 @@
         els.browseOrder.value = state.browse.order;
         els.browseCaptureFrom.value = state.browse.captureFrom;
         els.browseCaptureTo.value = state.browse.captureTo;
-        setStatus(els.sourcesStatus, "");
+        setStatus(els.sourcesStatus, "已登记 " + state.sources.length + " 个图库来源。");
       })
       .catch(function (failure) {
         if (requestVersion !== state.sourcesRequestVersion) {

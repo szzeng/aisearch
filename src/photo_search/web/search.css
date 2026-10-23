@@ -57,6 +57,45 @@ body.search-page .filters {
   align-items: flex-end;
 }
 
+body.search-page .search-common-controls {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1.4fr) repeat(2, minmax(10rem, 1fr));
+  gap: 0.75rem 1rem;
+  align-items: end;
+  width: 100%;
+}
+body.search-page .search-common-controls > p {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+}
+body.search-page .search-common-controls .favorite-search-filter {
+  align-self: center;
+  padding-top: 1.35rem;
+}
+body.search-page .search-common-controls .favorite-search-filter label {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--fg);
+  font-size: 0.9rem;
+}
+body.search-page #retrieval-mode-hint { margin: 0; }
+body.search-page .advanced-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 0.75rem 1rem;
+}
+body.search-page .advanced-filter-grid > p { min-width: 0; margin: 0; }
+body.search-page .advanced-filter-grid > fieldset,
+body.search-page .advanced-filter-grid > .wide,
+body.search-page .advanced-filter-grid > .filter-actions { grid-column: 1 / -1; }
+body.search-page .advanced-filter-grid > .filter-actions { margin-top: 0.2rem; }
+
 body.search-page .app-header.has-global-search { grid-template-columns: minmax(10rem, 12rem) minmax(0, 1fr) auto; }
 body.search-page #search-form { flex-wrap: wrap; }
 body.search-page #search-form input[type="search"] { flex: 1 1 14rem; }
@@ -369,7 +408,14 @@ body.search-page .search-preview-person img { width: 3rem; height: 3rem; border-
 
 @media (max-width: 760px) {
   body.search-page.app-shell .app-workspace > .app-header.has-global-search { grid-template-columns: minmax(0, 1fr); }
-  body.search-page .app-header.has-global-search > .search-coverage-entry { grid-column: 1; grid-row: 4; justify-self: start; }
+  body.search-page .app-header.has-global-search > .search-header-actions {
+    grid-column: 1;
+    grid-row: 4;
+    justify-self: start;
+    min-width: 0;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
   body.search-page .app-workspace > main { padding-top: 0.65rem; }
   body.search-page .panel { padding: 0.8rem; }
   body.search-page #result-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 10rem), 1fr)); gap: 0.6rem; }
@@ -380,6 +426,14 @@ body.search-page .search-preview-person img { width: 3rem; height: 3rem; border-
 }
 
 @media (max-width: 40rem) {
+  body.search-page .search-common-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body.search-page .search-common-controls > p:first-child { grid-column: 1 / -1; }
+  body.search-page .search-common-controls .favorite-search-filter { padding-top: 0; }
+  body.search-page .advanced-filter-grid { grid-template-columns: minmax(0, 1fr); }
+  body.search-page .advanced-filter-grid > p,
+  body.search-page .advanced-filter-grid > fieldset,
+  body.search-page .advanced-filter-grid > .wide,
+  body.search-page .advanced-filter-grid > .filter-actions { grid-column: 1; }
   body.search-page .filters > p,
   body.search-page .filters > p.wide,
   body.search-page .person-controls > p,

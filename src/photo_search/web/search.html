@@ -6,8 +6,8 @@
     <meta name="color-scheme" content="light dark" />
     <title>搜索图片</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-favorites-icon-20261019-1" />
-    <link rel="stylesheet" href="/web/search.css?v=p4-search-state-ux-fix-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-overall-ux-polish-7" />
+    <link rel="stylesheet" href="/web/search.css?v=p4-ui2-overall-ux-polish-2" />
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
     <script src="/web/map-config.js" defer></script>
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
@@ -45,10 +45,10 @@
         <button id="open-upload" type="button">以图搜图</button>
       </form>
       <div class="search-header-actions">
-        <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
         <a id="current-search-model" class="search-model-link" href="/?view=sources#search-model-panel">当前：读取中…</a>
         <details class="search-more-options">
           <summary>更多选项</summary>
+          <button id="open-coverage" class="search-coverage-entry" type="button">索引状态</button>
           <label><input id="search-perf-toggle" type="checkbox" /> 搜索性能诊断</label>
         </details>
       </div>
@@ -66,70 +66,73 @@
       </details>
 
       <section id="panel-query" class="panel" aria-labelledby="query-title">
-        <h2 id="query-title">查询与筛选</h2>
+        <h2 id="query-title">常用条件</h2>
         <div id="search-filter-controls" class="filters">
-          <p class="wide">
-            <label for="query-retrieval-mode">搜索方式</label>
-            <select id="query-retrieval-mode" aria-describedby="retrieval-mode-hint">
-              <option value="combined">综合搜索</option>
-              <option value="text">按文字找</option>
-            </select>
-            <span class="hint" id="retrieval-mode-hint">综合搜索理解画面和条件；按文字找匹配文件名、已归属地点名称和已识别文字，适合截图、票据、编号。图片文字须先完成识别。</span>
-          </p>
+          <div class="search-common-controls" aria-label="常用搜索条件">
+            <p>
+              <label for="query-retrieval-mode">搜索方式</label>
+              <select id="query-retrieval-mode" aria-describedby="retrieval-mode-hint">
+                <option value="combined">综合搜索</option>
+                <option value="text">按文字找</option>
+              </select>
+              <span class="hint" id="retrieval-mode-hint">综合搜索理解画面和条件；按文字找文件名、地点名与已识别文字。</span>
+            </p>
+            <p class="favorite-search-filter">
+              <label for="query-favorites-only"><input id="query-favorites-only" type="checkbox" /> 仅搜索收藏</label>
+            </p>
+            <p>
+              <label for="query-availability">照片可用性</label>
+              <select id="query-availability">
+                <option value="any">全部</option>
+                <option value="present">在库</option>
+                <option value="missing">原文件不可用</option>
+              </select>
+            </p>
+          </div>
           <div id="result-place-scope" class="wide" hidden aria-live="polite"></div>
           <div id="result-intent-scope" class="wide" hidden aria-live="polite"></div>
-          <p class="wide favorite-search-filter">
-            <label><input id="query-favorites-only" type="checkbox" /> 仅搜索收藏</label>
-          </p>
           <details class="advanced-search-filter wide">
-            <summary>高级筛选</summary>
-          <p>
-            <label for="query-source">来源</label>
-            <select id="query-source">
-              <option value="">全部来源</option>
-            </select>
-          </p>
-          <p>
-            <label for="query-availability">可用性</label>
-            <select id="query-availability">
-              <option value="any">全部</option>
-              <option value="present">在库</option>
-              <option value="missing">原文件不可用</option>
-            </select>
-          </p>
-          <details class="advanced-place-filter wide">
-            <summary>高级地点条件</summary>
-            <div class="filters">
+            <summary>高级筛选 · 来源、日期、人物、地点</summary>
+            <div class="advanced-filter-grid">
               <p>
-                <label for="query-place-state">地点状态</label>
-                <select id="query-place-state">
-                  <option value="any">不限</option>
-                  <option value="assigned">已归类</option>
-                  <option value="unassigned">未归类</option>
-                  <option value="manual_unassigned">人工未归类</option>
-                  <option value="suggested">待确认建议</option>
+                <label for="query-source">来源</label>
+                <select id="query-source">
+                  <option value="">全部来源</option>
                 </select>
               </p>
-              <p>
-                <label for="query-place-ids">地点 place_id</label>
-                <input
-                  id="query-place-ids"
-                  type="text"
-                  inputmode="numeric"
-                  maxlength="200"
-                  autocomplete="off"
-                  placeholder="多个用逗号分隔，例如 3,4"
-                />
-              </p>
-              <p>
-                <label for="query-descendants">包含后代地点</label>
-                <select id="query-descendants">
-                  <option value="true">是</option>
-                  <option value="false">否</option>
-                </select>
-              </p>
-            </div>
-          </details>
+              <fieldset class="advanced-place-filter">
+                <legend>地点</legend>
+                <div class="filters">
+                  <p>
+                    <label for="query-place-state">地点状态</label>
+                    <select id="query-place-state">
+                      <option value="any">不限</option>
+                      <option value="assigned">已归类</option>
+                      <option value="unassigned">未归类</option>
+                      <option value="manual_unassigned">人工未归类</option>
+                      <option value="suggested">待确认建议</option>
+                    </select>
+                  </p>
+                  <p>
+                    <label for="query-place-ids">地点 place_id</label>
+                    <input
+                      id="query-place-ids"
+                      type="text"
+                      inputmode="numeric"
+                      maxlength="200"
+                      autocomplete="off"
+                      placeholder="多个用逗号分隔，例如 3,4"
+                    />
+                  </p>
+                  <p>
+                    <label for="query-descendants">包含后代地点</label>
+                    <select id="query-descendants">
+                      <option value="true">是</option>
+                      <option value="false">否</option>
+                    </select>
+                  </p>
+                </div>
+              </fieldset>
           <fieldset id="capture-filter" class="capture-filter wide">
             <legend>拍摄时间范围（只作用于普通搜索）</legend>
             <p class="hint" id="capture-hint">
@@ -201,15 +204,16 @@
             <p class="hint" id="person-echo"></p>
             <p class="state-block" id="person-status" role="status" aria-live="polite"></p>
           </fieldset>
+              <p>
+                <label for="query-page-size">每页数量</label>
+                <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />
+              </p>
+              <p class="filter-actions">
+                <button id="query-apply-filters" type="submit" form="search-form">应用高级筛选</button>
+                <button type="button" id="query-reset">清除高级筛选</button>
+              </p>
+            </div>
           </details>
-          <p>
-            <label for="query-page-size">每页数量</label>
-            <input id="query-page-size" type="number" min="1" max="100" step="1" value="20" />
-          </p>
-          <p class="filter-actions">
-            <button id="query-apply-filters" type="submit" form="search-form">应用高级筛选</button>
-            <button type="button" id="query-reset">清除高级筛选</button>
-          </p>
         </div>
         <p class="hint" id="binding-hint"></p>
         <p class="hint">

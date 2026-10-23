@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>本机图片搜索</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="/web/styles.css?v=p4-photo-smart-collection-ux-fix-1" />
+    <link rel="stylesheet" href="/web/styles.css?v=p4-ui2-overall-ux-polish-7" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
@@ -52,22 +52,75 @@
 
     <main id="main" tabindex="-1">
       <section id="view-sources" class="view gallery-management-page" hidden aria-labelledby="view-sources-title">
-        <h2 id="view-sources-title">我的图库</h2>
-        <p class="page-intro">先打开照片或继续建库、同步变化；完整扫描与来源管理按需展开。</p>
-        <section id="search-model-panel" class="search-model-panel" aria-labelledby="search-model-title">
-          <h3 id="search-model-title">搜索模型</h3>
-          <p id="active-search-model" class="state-block" role="status" aria-live="polite">读取当前搜索模型…</p>
-          <div id="embedding-provider-list" class="embedding-provider-list" aria-live="polite"></div>
-          <details class="embedding-other-config"><summary>其他配置</summary><div id="embedding-provider-other-list" class="embedding-provider-list"></div></details>
-          <p class="hint">覆盖率需要显式检查；建库候选不会自动切换当前搜索模型。</p>
-        </section>
-        <div id="sources-status" class="state-block" role="status" aria-live="polite"></div>
+        <h2 id="view-sources-title">图库管理</h2>
+        <p class="page-intro">管理图库来源、搜索模型与本地空间维护。</p>
+        <div id="management-overview" class="management-overview" aria-label="页面概况">
+          <section class="management-overview-item" aria-labelledby="gallery-overview-title">
+            <h3 id="gallery-overview-title">图库概况</h3>
+            <p id="sources-status" class="state-block" role="status" aria-live="polite">正在读取图库…</p>
+          </section>
+          <section class="management-overview-item" aria-labelledby="active-model-overview-title">
+            <h3 id="active-model-overview-title">当前搜索模型</h3>
+            <p id="active-search-model" class="state-block" role="status" aria-live="polite">读取当前搜索模型…</p>
+          </section>
+        </div>
+        <section id="gallery-sources-panel" class="gallery-sources-panel" aria-labelledby="gallery-sources-title">
+          <div class="management-section-heading">
+            <div>
+              <h3 id="gallery-sources-title">图库来源</h3>
+              <p class="hint">查看已登记来源，按图库开始建库或同步变化。</p>
+            </div>
+          </div>
         <p class="home-actions">
           <button type="button" id="view-all-galleries">查看全部图库照片</button>
         </p>
         <ul id="sources-list" class="sources"></ul>
-        <details class="management-panel">
-          <summary>图库管理与分析明细</summary>
+          <div class="library-actions">
+            <button type="button" id="build-all-library" disabled>继续全部建库</button>
+            <button type="button" id="refresh-library" disabled>同步全部变化</button>
+            <div id="refresh-status" class="hint" role="status" aria-live="polite"></div>
+          </div>
+          <details id="source-create-panel" class="management-panel source-create-panel">
+            <summary>添加图库来源</summary>
+            <form id="source-form" class="card" novalidate>
+              <h4>登记新来源</h4>
+              <p class="hint">粘贴照片目录的完整路径。本页面不会枚举本机文件系统，只有你填写的路径会提交给本机服务。</p>
+              <p>
+                <label for="source-name">显示名</label>
+                <input id="source-name" name="display_name" type="text" maxlength="200" required autocomplete="off" />
+              </p>
+              <p>
+                <label for="source-root">来源根目录</label>
+                <input id="source-root" name="root_path" type="text" maxlength="4096" required autocomplete="off" spellcheck="false" />
+              </p>
+              <p><button type="submit">注册来源</button></p>
+              <p class="error" id="source-form-error" role="alert" hidden></p>
+            </form>
+          </details>
+          <details class="management-panel gallery-guidance">
+            <summary>建库选项与来源说明</summary>
+            <p>
+              <label for="face-profile">人脸处理</label>
+              <select id="face-profile">
+                <option value="" selected>沿用已选模式（新图库默认原图裁脸）</option>
+                <option value="source_detail">原图裁脸</option>
+                <option value="lightweight">轻量模式</option>
+              </select>
+            </p>
+            <p class="hint">该选项只影响之后发起的建库或刷新，不会自动重跑旧图库。原图裁脸提高已检测人脸的识别细节，不会补出检测器完全漏掉的人脸。</p>
+            <p class="hint">
+              新登记的来源显示「未建库」；点「开始建库」会一次完成扫描、搜索投影与语义索引，再在后台继续缩略图、拍摄时间、地点与人脸/文字识别。日常点击「同步变化」只处理新增、删除、移动或改写的文件。完整校验扫描与删除来源位于单个图库的更多操作中；删除来源只移除 Photo Search 中的记录，不会删除、移动或修改文件夹中的照片。
+            </p>
+          </details>
+        </section>
+        <section id="search-model-panel" class="search-model-panel" aria-labelledby="search-model-title">
+          <h3 id="search-model-title">搜索模型管理</h3>
+          <div id="embedding-provider-list" class="embedding-provider-list" aria-live="polite"></div>
+          <details class="embedding-other-config"><summary>其他配置</summary><div id="embedding-provider-other-list" class="embedding-provider-list"></div></details>
+          <p class="hint">检查索引覆盖与切换资格后再选择模型；建库候选不会自动切换当前搜索模型。</p>
+        </section>
+        <details class="management-panel maintenance-management-panel">
+          <summary>空间与维护</summary>
           <section id="storage-management-details" class="storage-management" aria-labelledby="storage-tools-title">
             <div class="storage-workspace">
               <div class="storage-tools-heading"><div><h3 id="storage-tools-title">图库工具</h3><p class="hint">按功能分区查看维护状态、空间占用和数据保护工具。</p></div></div>
@@ -127,63 +180,6 @@
               </section>
             </div>
           </section>
-          <div class="library-actions">
-          <button type="button" id="build-all-library" disabled>继续全部建库</button>
-          <button type="button" id="refresh-library" disabled>同步全部变化</button>
-          <div id="refresh-status" class="hint" role="status" aria-live="polite"></div>
-          </div>
-          <p>
-            <label for="face-profile">人脸处理</label>
-            <select id="face-profile">
-              <option value="" selected>沿用已选模式（新图库默认原图裁脸）</option>
-              <option value="source_detail">原图裁脸</option>
-              <option value="lightweight">轻量模式</option>
-            </select>
-          </p>
-          <p class="hint">该选项只影响之后发起的建库或刷新；不会自动重跑旧图库。原图裁脸提高已检测人脸的识别细节，不会补出检测器完全漏掉的人脸。</p>
-          <p class="hint">
-          新登记的来源显示「未建库」，点「开始建库」会一次完成扫描、搜索投影与语义索引，
-          再在后台继续缩略图、拍摄时间、地点与人脸/文字识别；语义索引进度由图库记录推导，
-          完整覆盖后才会显示「✓ 可以语义搜索」。日常点击「同步变化」即可，
-          它只处理变化。「继续全部建库」会继续处理点击执行时已登记来源的建库任务；
-          「同步全部变化」只处理新增、删除、移动或改写的文件。「完整校验扫描」与删除来源
-          位于单个图库的更多操作中。「删除来源」只移除 PhotoSearch 中的记录，
-          不会删除、移动或修改文件夹中的照片。
-          </p>
-          <form id="source-form" class="card" novalidate>
-          <h3>新增来源</h3>
-          <p class="hint">
-            把照片目录的完整路径粘贴到下面的输入框。本页面不会枚举本机文件系统，
-            只有你亲手填写的路径会提交给本机服务。
-          </p>
-          <p>
-            <label for="source-name">显示名</label>
-            <input
-              id="source-name"
-              name="display_name"
-              type="text"
-              maxlength="200"
-              required
-              autocomplete="off"
-            />
-          </p>
-          <p>
-            <label for="source-root">来源根目录</label>
-            <input
-              id="source-root"
-              name="root_path"
-              type="text"
-              maxlength="4096"
-              required
-              autocomplete="off"
-              spellcheck="false"
-            />
-          </p>
-          <p>
-            <button type="submit">注册来源</button>
-          </p>
-          <p class="error" id="source-form-error" role="alert" hidden></p>
-          </form>
         </details>
       </section>
 

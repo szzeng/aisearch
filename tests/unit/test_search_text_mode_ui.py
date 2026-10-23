@@ -7,6 +7,22 @@ import subprocess
 from pathlib import Path
 
 
+def test_search_layout_keeps_one_search_form_and_groups_common_filters() -> None:
+    root = Path(__file__).resolve().parents[2]
+    html = (root / "src" / "photo_search" / "web" / "search.html").read_text(encoding="utf-8")
+    styles = (root / "src" / "photo_search" / "web" / "search.css").read_text(encoding="utf-8")
+
+    assert html.count('id="search-form"') == 1
+    common = html.index('class="search-common-controls"')
+    advanced = html.index('class="advanced-search-filter wide"')
+    results = html.index('id="panel-results"')
+    assert common < advanced < results
+    for control_id in ("query-retrieval-mode", "query-favorites-only", "query-availability"):
+        assert html.index(f'id="{control_id}"') < advanced
+    assert 'id="open-coverage"' in html and 'class="search-more-options"' in html
+    assert ".advanced-filter-grid" in styles and "@media (max-width: 40rem)" in styles
+
+
 def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tmp_path: Path) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"

@@ -49,6 +49,26 @@ def test_photos_default_to_timeline_and_keep_list_and_management_actions() -> No
     assert "按加入图库日期" in (WEB / "photo-timeline.js").read_text(encoding="utf-8")
 
 
+def test_gallery_management_sections_keep_existing_controls_and_order() -> None:
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+
+    overview = html.index('id="management-overview"')
+    sources = html.index('id="gallery-sources-panel"')
+    model = html.index('id="search-model-panel"')
+    maintenance = html.index('class="management-panel maintenance-management-panel"')
+    assert overview < sources < model < maintenance
+    for element_id in (
+        "sources-status", "active-search-model", "sources-list", "view-all-galleries",
+        "source-form", "source-name", "source-root", "build-all-library", "refresh-library",
+        "embedding-provider-list", "storage-management-details",
+    ):
+        assert f'id="{element_id}"' in html
+    assert '已登记 " + state.sources.length + " 个图库来源。' in app
+    assert ".management-overview" in styles and ".gallery-sources-panel" in styles
+
+
 def test_timeline_preferences_are_global_and_date_state_stays_with_source_scope() -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for the synthetic timeline behavior check"

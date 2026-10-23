@@ -843,6 +843,34 @@ main {
 .search-model-panel h3 { margin: 0 0 0.55rem; }
 .search-model-panel .state-block { margin: 0 0 0.65rem; }
 .embedding-provider-list { display: grid; gap: 0.5rem; }
+.gallery-management-page .management-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+.gallery-management-page .management-overview-item,
+.gallery-management-page .gallery-sources-panel {
+  min-width: 0;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-soft);
+}
+.gallery-management-page .management-overview-item h3,
+.gallery-management-page .management-section-heading h3 { margin: 0 0 0.4rem; }
+.gallery-management-page .management-overview-item .state-block { margin: 0; overflow-wrap: anywhere; }
+.gallery-management-page .gallery-sources-panel { margin: 0 0 1rem; }
+.gallery-management-page .management-section-heading { margin: 0 0 0.5rem; }
+.gallery-management-page .management-section-heading .hint { margin: 0; }
+.gallery-management-page .library-actions { margin: 0.75rem 0; }
+.gallery-management-page .source-create-panel { margin: 0.75rem 0; }
+.gallery-management-page .source-create-panel .card { margin: 0.75rem 0 0; }
+.gallery-management-page .source-create-panel form h4 { margin: 0 0 0.45rem; }
+.gallery-management-page .gallery-guidance { margin: 0.75rem 0 0; }
+.gallery-management-page .maintenance-management-panel { margin: 0 0 1rem; }
+.gallery-management-page .search-model-panel { margin-top: 0; }
 .embedding-provider-card {
   display: flex;
   flex-wrap: wrap;
@@ -855,6 +883,12 @@ main {
 }
 .embedding-provider-card p { margin: 0; }
 .embedding-provider-card .hint { flex-basis: 100%; }
+
+@media (max-width: 40rem) {
+  .gallery-management-page .management-overview { grid-template-columns: minmax(0, 1fr); }
+  .gallery-management-page .management-overview-item,
+  .gallery-management-page .gallery-sources-panel { padding: 0.8rem; }
+}
 
 .gallery-management-page .sources {
   margin-top: 0.75rem;
