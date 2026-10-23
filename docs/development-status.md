@@ -1,3 +1,9 @@
+## P4-UI2 三阶段最终验收对齐（2026-10-23）
+
+使用新建隔离合成数据根 `.tmp/P4-UI2-final-acceptance-20261023/PhotoSearchData` 实际浏览器验证固定人物范围（2 项）和固定合集范围（4 项）取消后旧结果清空；页面提示需显式重搜，点击“全库搜索”后才呈现无范围的 12 项结果。另验证照片列表滚至底部→照片 2→完整详情；Back 依次回查看器和保留底部滚动视口的列表，Forward 依次恢复查看器和详情。无范围/结果错配、静默扩大或重复压入历史，无本轮复现的实际 blocker。
+
+阶段结论：全站基础导航/历史中已验路径 **SCOPED PASS**、整体仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**；搜索与图库管理展示阶段 **SCOPED PASS（UI）**；照片/相册 PH3-01～03 文案/CSS 范围 **SCOPED PASS（限定 UI）**、阶段整体仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**。工具限制：浏览器不能注入/枚举 sessionStorage、不能验证原生 200% 缩放；环境限制：无智能排名模型/缓存和地图瓦片 Key；覆盖限制：中间 CSS 断点、所有滚动采样时机/来源组合仍待验。未验证项不是本轮实际阻断或通过证据。更新：[主任务卡](tasks/P4-UI2-OVERALL-UX-POLISH.md)、[主报告](reports/P4-UI2-OVERALL-UX-POLISH.md)、[PHASE3卡](tasks/P4-UI2-UX-PHASE3.md)和[PHASE3报告](reports/P4-UI2-UX-PHASE3.md)。本轮仅更新文档，未重跑自动化/Node；`git diff --check` **通过**。未触碰真实图库/原图，未提交、推送或发布。
+
 ## Current task: P4-UI2-UX-PHASE3（2026-10-23）
 
 照片/合集相关页面完成局部视觉收口：缩短照片时间说明与智能合集引导，保留完整时间字段政策和 5,000 候选上限；修复人物页窄屏刷新控件拉伸。追加搜索页头工具行：模型入口移至搜索框下方，索引状态/性能诊断归入右侧浮层；1265px 与约 320px 隔离浏览器观察通过，4 项定向 UI JUnit 通过。中等宽度 Codex 面板曾见横向滚动，CSS 断点浏览器测量仍 PENDING。此前基于隔离合成图库检查照片、人物、普通/智能合集、地点、地图和 viewer 的桌面/470×740 页面与关键返回流；未导出截图。定向 JUnit **75/75**、Node 语法、`git diff --check` 通过。已追加验证合集分页（20→22 项并耗尽）、人物批量模式进入/选择/清空/退出、viewer 放大至 125%/重置 100%/适窗/信息栏折叠展开，以及地图聚类后开关 viewer 并保留 8 张范围。Luna High 独立只读复核未发现实现 blocker。已补入 1600×900 横图与 900×1600 竖图的桌面/470×740 fit、100% 与信息栏观察；智能排名缓存/排序结果（合成规则为 FILTER 且无模型缓存）及地图底图仍 PENDING，故不标 PASS。状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**，未提交/推送；未访问真实图库，未启动模型或后台刷新。详见[任务卡](tasks/P4-UI2-UX-PHASE3.md)与[报告](reports/P4-UI2-UX-PHASE3.md)。
@@ -6,6 +12,8 @@
 旧 session-backed 纯筛选搜索的权威候选列表与 `MAX_SESSION_IDS` 共用 5000 上限；4319 项隔离合成数据按页完整遍历无重复/遗漏/错序，5005 项正确截断并报告真实总数。文字、语义、图片通道与会话/契约定向回归 **114 passed / 0 failed / 0 errors / 0 skipped**；Ruff、Python 编译与 `git diff --check` 通过。未修改 JS，未访问真实图库，未运行全仓/规模测试，未推送。详见[任务卡](tasks/P4-SEARCH-AUTHORITY-LIMIT-FIX.md)与[报告](reports/P4-SEARCH-AUTHORITY-LIMIT-FIX.md)。
 
 ## Current task: P4-UI2-OVERALL-UX-POLISH（续做至 2026-10-23）
+
+状态校正（2026-10-23）：本节下方先前记录的“固定范围重提交待验”已由本页顶部最新最终收尾记录关闭；人物与合集范围取消后均须显式点击全库搜索。原生 200%、浏览器直接注入损坏快照、地图瓦片及其它未覆盖项仍待验证。
 
 P4-UI2-OVERALL-UX-POLISH 已完成共享查看器 Back/Forward、人物/地点/合集导航、搜索历史与快照修复，以及前述定向浏览器验收。任务二按已确认映射完成搜索高频条件/高级筛选重排和图库管理“概况→来源→搜索模型→空间与维护”分区；窄屏 header 复核发现的定位问题已修正。根 AGENTS.md 浏览器验收章节已并入长期 UI 2.0 规则，视觉 tokens 文档补充精简验收与控件选择规则。任务二 Codex 内置浏览器实测桌面 1280×900、窄屏 450×900，检查搜索筛选/12 项网格/错误状态、图库来源/模型/维护，以及照片查看器 Back 返回和相邻地点页；**UI 视觉 SCOPED PASS**。真实模型检查/切换与有效地点数据筛选因隔离图库无模型/地点样本未验证，截图工具不能导出到项目目录。定向 JUnit **11/11**（`task2-focused-final.xml`），`node --check`（app.js、search.js）及 `git diff --check` 通过。原全站任务仍 **IMPLEMENTED / ACCEPTANCE PARTIAL**，原有地图瓦片、损坏快照浏览器注入、精确滚动采样、固定范围重提交及原生 200% 缩放等边界保留。未访问真实图库/原图，未运行全仓、GPU 或规模性能验证；未提交、未推送、未发布。详见[任务卡](tasks/P4-UI2-OVERALL-UX-POLISH.md)与[报告](reports/P4-UI2-OVERALL-UX-POLISH.md)。
 

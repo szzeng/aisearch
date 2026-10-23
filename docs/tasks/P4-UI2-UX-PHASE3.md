@@ -1,6 +1,6 @@
 # P4-UI2-UX-PHASE3 — 全站照片与相册界面体验收口
 
-**状态**：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-23）；智能合集排名结果/相关度排序、地图底图仍 PENDING；分页、人物批量选择、viewer 横竖合成比例/缩放/信息栏和地图标记返回范围已补验。
+**PH3-01～03 展示/UI 范围：SCOPED PASS（限定视口与定向测试）；阶段整体：IMPLEMENTED / ACCEPTANCE PARTIAL（2026-10-23）。智能合集排名结果/相关度排序、地图底图和中等宽度面板测量仍 PENDING；分页、人物批量选择、viewer 横竖合成比例/缩放/信息栏和地图标记返回范围已补验。**
 **优先级**：P1
 **执行模型建议**：GPT-6 High
 **独立复核**：Luna High（如可用，使用与实施不同的审查上下文）
