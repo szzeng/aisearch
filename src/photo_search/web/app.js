@@ -2730,12 +2730,14 @@
       caption.appendChild(timeLine);
       paintCaptureTime(asset.asset_id, timeLine);
     }
-    var open = element("button", "tile-link", asset.availability === "missing" ? "查看离线详情" : "查看详情");
-    open.type = "button";
-    open.addEventListener("click", function () {
-      showDetail(asset.asset_id);
-    });
-    caption.appendChild(open);
+    if (state.browse.mode !== "random") {
+      var open = element("button", "tile-link", asset.availability === "missing" ? "查看离线详情" : "查看详情");
+      open.type = "button";
+      open.addEventListener("click", function () {
+        showDetail(asset.asset_id);
+      });
+      caption.appendChild(open);
+    }
     tile.appendChild(caption);
     return tile;
   }
