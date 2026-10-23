@@ -25,6 +25,7 @@ test-results/
 # Build output
 build/
 dist/
+/releases/
 # Generated root-level PyInstaller specs; checked-in packaging specs remain visible.
 /*.spec
 

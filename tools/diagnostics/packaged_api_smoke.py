@@ -390,7 +390,12 @@ def heif_expected_kinds(
 
 
 def run_smoke(
-    bundle: Path, work_dir: Path, *, timeout: float, heif_degraded: str | None = None
+    bundle: Path,
+    work_dir: Path,
+    *,
+    timeout: float,
+    heif_degraded: str | None = None,
+    in_place: bool = False,
 ) -> dict[str, Any]:
     report: dict[str, Any] = {"bundle": str(bundle), "work_dir": str(work_dir), "checks": {}}
     checks: dict[str, Any] = report["checks"]
@@ -399,14 +404,16 @@ def run_smoke(
     # *expectations* differ, so the degraded bundle is checked by the same code path.
     checks["heif_degraded_mode"] = heif_degraded
 
-    installation = work_dir / "PhotoSearch 中文 空格"
-    if installation.exists():
-        shutil.rmtree(installation)
     work_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(bundle, installation)
+    installation = bundle if in_place else work_dir / "PhotoSearch 中文 空格"
+    if not in_place:
+        if installation.exists():
+            shutil.rmtree(installation)
+        shutil.copytree(bundle, installation)
     executable = installation / "PhotoSearch.exe"
     checks["bundled_executable_bytes"] = executable.stat().st_size
-    checks["installed_under_non_ascii_path"] = True
+    checks["installed_under_non_ascii_path"] = not in_place
+    checks["in_place_frozen_run"] = in_place
     bundled_components = heif_components(installation / "_internal")
     import pillow_heif
 
@@ -544,9 +551,10 @@ def run_smoke(
                 for needle in (str(work_dir), str(data_root), str(library))
             )
             checks["persons_page_links_back_to_shell"] = 'href="/"' in persons_page.text
-            checks["persons_page_links_to_search_and_places"] = (
-                'href="/search"' in persons_page.text and 'href="/places"' in persons_page.text
+            checks["persons_page_has_global_search_form"] = (
+                'class="global-search-form" action="/search"' in persons_page.text
             )
+            checks["persons_page_links_to_places"] = 'href="/places"' in persons_page.text
             persons_script = client.get("/web/persons.js")
             checks["persons_script_status"] = persons_script.status_code
             checks["persons_script_content_type"] = persons_script.headers.get("Content-Type")
@@ -579,8 +587,12 @@ def run_smoke(
                 "http://" not in search_script.text and "https://" not in search_script.text
             )
             checks["search_style_status"] = client.get("/web/search.css").status_code
-            checks["shell_links_to_search"] = 'href="/search"' in shell.text
-            checks["places_page_links_to_search"] = 'href="/search"' in places_page.text
+            checks["shell_has_global_search_form"] = (
+                'class="global-search-form" action="/search"' in shell.text
+            )
+            checks["places_page_has_global_search_form"] = (
+                'class="global-search-form" action="/search"' in places_page.text
+            )
             # P3-06: all three documents offer the person page (hidden until
             # /capabilities proves the catalog carries the person read layer).
             checks["nav_offers_persons"] = all(
@@ -1274,8 +1286,14 @@ def summarize(report: dict[str, Any]) -> list[str]:
         "search_page_links_to_places"
     ):
         problems.append("search page navigation")
-    if not checks.get("shell_links_to_search") or not checks.get("places_page_links_to_search"):
-        problems.append("shell/places link to the search page")
+    if not all(
+        checks.get(key)
+        for key in (
+            "shell_has_global_search_form",
+            "places_page_has_global_search_form",
+        )
+    ):
+        problems.append("shell/places global search form route")
     if checks.get("search_script_status") != 200 or "javascript" not in str(
         checks.get("search_script_content_type")
     ):
@@ -1303,8 +1321,10 @@ def summarize(report: dict[str, Any]) -> list[str]:
         problems.append("persons page external references")
     if not checks.get("persons_page_has_no_local_path"):
         problems.append("persons page local paths")
-    if not checks.get("persons_page_links_back_to_shell") or not checks.get(
-        "persons_page_links_to_search_and_places"
+    if (
+        not checks.get("persons_page_links_back_to_shell")
+        or not checks.get("persons_page_has_global_search_form")
+        or not checks.get("persons_page_links_to_places")
     ):
         problems.append("persons page navigation")
     if checks.get("persons_script_status") != 200 or "javascript" not in str(
@@ -1578,8 +1598,8 @@ def summarize(report: dict[str, Any]) -> list[str]:
     ) != 1:
         problems.append("packaged GPS facts")
     ocr_block = checks.get("coverage_ocr_block") or {}
-    if ocr_block.get("processor_id") != "ocr-text@1":
-        problems.append("packaged capabilities has no OCR block")
+    if ocr_block.get("processor_id") != "ocr-text-cuda-fp32@4":
+        problems.append("packaged capabilities has no current OCR block")
     if ocr_block.get("state") != "NOT_RUN":
         problems.append("packaged OCR block is not a fresh NOT_RUN state")
     if not isinstance(ocr_block.get("weights_present"), bool):
@@ -1619,6 +1639,11 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=START_TIMEOUT_SECONDS)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
+        "--in-place",
+        action="store_true",
+        help="run the frozen executable from its build directory without copying the onedir",
+    )
+    parser.add_argument(
         "--heif-degraded",
         choices=("libheif", "extension", "both"),
         default=None,
@@ -1641,6 +1666,7 @@ def main() -> int:
         args.work_dir.resolve(),
         timeout=args.timeout,
         heif_degraded=args.heif_degraded,
+        in_place=args.in_place,
     )
     problems = summarize(report)
     report["problems"] = problems

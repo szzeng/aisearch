@@ -1,3 +1,7 @@
+## P4-WINDOWS-RELEASE-ONE-CLICK（2026-10-23）
+
+新增 tools/packaging/release_windows.ps1 一键个人便携 ZIP 编排、ZIP64/SHA helper、打包 smoke 原地执行模式和 docs/windows-release.md。定向 JUnit 8/8、Ruff、Python 编译、PowerShell AST 与 git diff --check 通过；Luna High 有界独立复核无 blocker。状态 IMPLEMENTED / VALIDATION PENDING：首轮构建及 bundle 校验成功；冻结 smoke 的 3 项旧断言已修正，同一包复跑 exit 0、problems=[]。从干净 checkout 重跑正式入口时，D: 仅 21.80 GiB，低于 25.61 GiB 预检门槛，未开始新构建/ZIP。任务失败 staging 共 10.93 GiB，自动删除策略拒绝，保留原始失败报告与 warnings。R1 新构建/ZIP 与 R3 GPU 仍 pending。任务代码已本地提交，未推送/tag/发布。详见[任务卡](tasks/P4-WINDOWS-RELEASE-ONE-CLICK.md)与[报告](reports/P4-WINDOWS-RELEASE-ONE-CLICK.md)。
+
 ## P4-WINDOWS-NEW-PC-READY 续验（2026-10-23，冻结包收尾）
 
 本机新电脑首次使用闭环 **SCOPED PASS**：按当前工作树重建 onedir/ZIP（PyInstaller exit 0；ZIP SHA-256 118614121DF2FD5BB4EA33F502A9EC822A786DB53DD552FFFD799E018B6BE8B7），冻结 API smoke exit 0；隔离空根 UI、固定权重导入、Qwen CUDA、3 张合成照片建库/浏览/文字和图片搜索、正常关闭/重启后持久化与再次搜索通过。N1–N7 本机范围 PASS；N6 为源码合成 OCR 实际推理 1/1，便携包不含 OCR 资源；N8 CLEAN_HOST_PENDING 按任务卡不阻挡本机交付。安全模拟 8/8，未下载官方 4GB 模型（OFFICIAL_4GB_DOWNLOAD_PENDING）。仅清可重建 .uv-cache 和 packaged smoke 创建的临时 onedir 副本，保留旧包、证据、`.tmp`、`test-results` 与 .venv；最终 D: 余约 1.78GB。未触碰真实照片/catalog、未修改授权模型目录，未提交/推送/发布或开始下一卡。详见[任务卡](tasks/P4-WINDOWS-NEW-PC-READY.md)与[执行报告](reports/P4-WINDOWS-NEW-PC-READY.md)。
