@@ -8,7 +8,7 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
-import pytes
+import pytest
 
 from photo_search.api import random_browse
 from photo_search.api.errors import ApiError

@@ -26,7 +26,7 @@
 
 ## P4-WINDOWS-PORTABLE-RELEASE-A 执行状态（2026-10-23 续验）
 
-既有 onedir/ZIP 15,869 项，11,499,324,195 / 6,258,093,080 bytes，SHA-256 `c84c9605ec36767b6d60e5ed0cc9b23f3e91d76bf40e03c9418e6481e3bef84b`。冻结 Qwen spawn Worker CUDA 512D/1024D、隔离合成建库/文字与图片搜索/重启查询：V4 **PASS**。V1 PASS、V2 LOCAL_ISOLATION_PASS；V3（无权重 UI 错误详情浏览）与 V5（3,544 项全回归 21 项范围外失败；追加 packaged smoke 退出 1，唯一差异为冻结包早于当前工作树的 memories.css/js 资源）PARTIAL；V6 CLEAN_HOST_PENDING。受影响 Provider/Worker/Manifest 68/68 通过。状态 **IMPLEMENTED / VALIDATION PENDING**，未提交/推送/发布。未读取照片/catalog，模型目录只读。详见[任务卡](tasks/P4-WINDOWS-PORTABLE-RELEASE-A.md)与[报告](reports/P4-WINDOWS-PORTABLE-RELEASE-A.md)。
+既有 onedir/ZIP 为 15,869 项、11,499,324,195 / 6,258,093,080 bytes，SHA-256 c84c9605…；冻结 Qwen spawn Worker CUDA 512D/1024D、隔离合成建库/图文搜索/重启查询：V4 PASS。V1 PASS、V2 LOCAL_ISOLATION_PASS、V3/V5 PARTIAL、V6 CLEAN_HOST_PENDING；全量回归 3,544 项有 21 项范围外失败、52 跳过，受影响 Provider/Worker/Manifest 68/68 通过。续修将 PersonService facade 改为惰性导入以避免 API 查询导入循环，补 frozen manifest root 与导入顺序测试，并修正 random-browse 测试导入拼写；两项新增检查已包含在 68/68 结果中。状态仍为 IMPLEMENTED / VALIDATION PENDING。按用户要求本地提交，未推送/发布。未访问真实照片/catalog。详见[任务卡](tasks/P4-WINDOWS-PORTABLE-RELEASE-A.md)与[报告](reports/P4-WINDOWS-PORTABLE-RELEASE-A.md)。
 
 ## Current task: P4-UI2-COPY-DAILY-UX（2026-10-23）
 

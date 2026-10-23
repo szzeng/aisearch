@@ -882,3 +882,42 @@ def test_prepare_local_rejects_corrupt_source_before_touching_installed_model(
         embedding_cli._prepare_local(args)
     assert refused.value.code == EMBEDDING_WEIGHTS_HASH_MISMATCH
     assert (manifest.read_bytes(), embedding_cli._file_sha256(destination)) == before
+
+
+def test_shipped_manifest_dir_uses_frozen_bundle_root(tmp_path, monkeypatch) -> None:
+    import sys
+
+    from photo_search.models.embedding.registry import shipped_manifest_dir
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    expected = tmp_path / "tools" / "prepare_models" / "manifests"
+    expected.mkdir(parents=True)
+
+    assert shipped_manifest_dir() == expected
+
+
+def test_api_queries_import_does_not_eagerly_reenter_person_service() -> None:
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(root / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import photo_search.api.queries; "
+            "from photo_search.persons import PersonService; "
+            "assert PersonService.__name__ == 'PersonService'",
+        ],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr

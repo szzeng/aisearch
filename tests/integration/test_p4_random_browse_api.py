@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from starlette.testclient import TestClien
+from starlette.testclient import TestClient
 
 from photo_search.api.settings import ApiSettings
 from photo_search.app import create_app
