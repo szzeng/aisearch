@@ -96,6 +96,10 @@ def test_archive_allows_dependency_package_named_models(tmp_path: Path) -> None:
     stub.write_text("class Model: ...\n", encoding="utf-8")
     entries = release.archive_entries(bundle)
     assert any(name.endswith("_internal/tokenizers/models/__init__.pyi") for _, name in entries)
+    weight = stub.parent / "weights.safetensors"
+    weight.write_bytes(b"private model weight")
+    with pytest.raises(ValueError, match="private configuration"):
+        release.archive_entries(bundle)
 
 
 def test_preflight_guards_for_space_outputs_and_build_exit(tmp_path: Path) -> None:

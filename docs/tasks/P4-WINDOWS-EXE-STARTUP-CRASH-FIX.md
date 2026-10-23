@@ -1,6 +1,6 @@
 # P4-WINDOWS-EXE-STARTUP-CRASH-FIX — 冻结 EXE 启动崩溃
 
-> 日期：2026-10-23。状态：**IMPLEMENTED / NEW BUNDLE PENDING**。用户已授权本地简单提交；不推送、不发布。执行规格来自用户提供的 `D:/download/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md`；本卡记录仓库内执行结果。
+> 日期：2026-10-23。状态：**LOCAL PACKAGE PASS / GPU NOT TESTED**。用户已授权本地简单提交；不推送、不发布。执行规格来自用户提供的 `D:/download/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md`；本卡记录仓库内执行结果。
 
 ## 目标与边界
 
@@ -11,8 +11,8 @@
 ## 性能设计与验收
 
 - 链路与风险：冻结包启动及一次 onedir 构建；错误 CRT 会让 EXE 在 Python 输出前崩溃，完整构建/压缩有高磁盘峰值。
-- 做法与边界：仅复用现有 onedir 做限时启动诊断；只在 PyInstaller 子进程 PATH 前置 Windows System32；不复制包、不触发新构建。
-- 验证与停止：测量现有 EXE `--help` 时间并运行小型进程假体；新冻结 EXE 与 in-place HTTP smoke 要在干净提交基线上单次构建。本轮按最新授权仅本地提交；构建作为后续独立步骤，仍须核对干净工作树和空间。
+- 做法与边界：只在 PyInstaller 子进程 PATH 前置 Windows System32；限时诊断后，在干净提交基线上完成一次新构建及 in-place smoke。归档误报修复后，仅复用 smoke 通过的同一 onedir 续跑归档，不重复构建。
+- 验证与停止：测量现有 EXE `--help` 时间并运行小型进程假体；新包 `--help`、真实 in-place HTTP smoke、ZIP 完整性和 SHA 全部有实际结果。GPU inference 与第二台干净 Windows 机器留作未验证项。
 
 ## 诊断与实现
 
@@ -23,10 +23,10 @@
 
 ## 验证与验收状态
 
-- 定向 `tests/unit/test_packaged_startup_diagnostics.py`：最终 **7/7 passed**；覆盖 PATH 解析、早退、无 URL、成功 URL、超时和子进程清理、token 脱敏/输出上限及无效 bootstrap 分支脱敏。首轮 1 项脱敏测试失败，修复后重跑通过；各轮 JUnit 保存在 `test-results/P4-WINDOWS-EXE-STARTUP-CRASH-FIX/`。
-- Ruff、`py_compile`、`git diff --check` 通过。更新后的 smoke 对旧包快速报告实际 `-1073741819 (0xC0000005)`，未输出凭据。
-- F1 崩溃定性：**PASS**（事件日志与构建来源支持错误 CRT 收集路径）。F2 最小修复：**IMPLEMENTED**，新包因未构建仍待因果复验。F3 失败可诊断：**PASS**。F4 新包 `--help` 与真实 in-place API smoke：**PENDING**；无新 ZIP/SHA。
-- 有界独立打包代码复核：**PASS，无 blocker**；确认 resolver 路径证据与诊断边界，未运行新构建，不替代新包验收。完整冻结构建未运行；后续正式入口要求干净已提交工作树，当前仅获本地提交授权，未获推送/发布授权。
+- 定向 `tests/unit/test_packaged_startup_diagnostics.py` **7/7**；`tests/unit/test_release_windows.py` **9/9**；JUnit 在 `test-results/P4-WINDOWS-EXE-STARTUP-CRASH-FIX/`。Ruff、`py_compile`、`git diff --check` 通过。旧包诊断准确报告 `-1073741819 (0xC0000005)`。
+- 单次正式构建（应用源提交 `e7becd6`）成功；`validate-bundle` 为 `valid: true`，in-place API smoke `status: ok`、`problems: []`。新包 `--help` exit 0，stdout 2295 字节、stderr 0。原脚本归档时将合法 `_internal/tokenizers/models/__init__.pyi` 误报；修复后仅 bundle 顶层用户 `models/` 目录被拒绝，权重扩展名/私密配置/PhotoSearchData 检查仍生效。对同一 bundle 续跑 archive helper，全量 CRC/成员验证通过：16039 项、5966983954 字节、SHA-256 `B31AB115D02698CE5493C36C3C8D05D9144CCCC02C74DA80EBECC399C7D5E366`。没有第二次构建。
+- F1 崩溃定性：**PASS**（事件日志与收集路径证据支持旧 CRT 根因）。F2 最小修复：**PASS**（新 EXE 启动成功）。F3 失败可诊断：**PASS**。F4 新包 CLI 与真实 in-place API smoke：**PASS**。ZIP/SHA：**PASS**；整体 **LOCAL PACKAGE PASS / GPU NOT TESTED**。
+- 有界独立复核对启动诊断/resolver 与归档过滤器窄修复均 **PASS，无 blocker**。评审建议独立覆盖嵌套 `models/*.safetensors`，已补断言并复跑 `tests/unit/test_release_windows.py` **9/9**。Qwen GPU 推理与第二台干净 Windows 机器未验证，机器报告 `suitable_for_sharing=false`。候选 ZIP、SHA、JSON 报告见执行报告；保留原构建 staging 与诊断材料。不推送、不发布。
 
 ## 交付
 

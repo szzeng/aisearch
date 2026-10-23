@@ -1,6 +1,6 @@
 ## Current task: P4-WINDOWS-EXE-STARTUP-CRASH-FIX（2026-10-23）
 
-冻结 EXE `--help` 与子命令 help 复现 `0xC0000005`；Application Error 1000 指向包内 `MSVCP140.dll`。PyInstaller 收集来源是 PATH 前置的 VanDyke 14.32 VC runtime，而 System32/libheif 为 14.51。构建脚本现仅在 PyInstaller 子进程优先 Windows System32；启动 smoke 补早退退出码、监听、脱敏输出和子进程清理。定向 JUnit 7/7、Ruff、py_compile、diff-check 通过；有限范围独立打包代码复核 PASS。新包尚未构建，F4 PENDING；用户授权本地简单提交后，本轮仅提交、不推送。详见[任务卡](tasks/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)与[报告](reports/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)。未访问真实图库/模型，未读取 dump，未改系统环境。
+冻结 EXE 启动崩溃定位为 PATH 先命中 VanDyke 14.32 VC runtime；新构建仅为 PyInstaller 子进程优先 Windows System32。单次冻结构建后，bundle 校验通过，in-place API smoke `ok`，新包 `--help` exit 0。归档器曾将依赖 `tokenizers/models` 误报，窄修后复用同一 bundle 生成并全量校验 ZIP（16039 项），SHA-256 `B31AB115D02698CE5493C36C3C8D05D9144CCCC02C74DA80EBECC399C7D5E366`。JUnit 7/7 + 9/9、Ruff、py_compile、diff-check 通过。状态 **LOCAL PACKAGE PASS / GPU NOT TESTED**；GPU推理、第二台干净 Windows 未验证，报告 `suitable_for_sharing=false`。应用源提交 `e7becd6`，归档修复 `a221f79`；不推送、不发布。未访问真实图库/模型、未读 dump、未改系统环境。详见[任务卡](tasks/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)、[报告](reports/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)与[ZIP](../releases/PhotoSearch-v0.6.0-win-x64.zip)。
 
 ## P4-WINDOWS-RELEASE-ONE-CLICK（2026-10-23）
 
