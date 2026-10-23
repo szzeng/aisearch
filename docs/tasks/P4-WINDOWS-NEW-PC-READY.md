@@ -1,6 +1,13 @@
 # P4-WINDOWS-NEW-PC-READY — Windows 新电脑首次使用：模型准备与新建图库
 
-> **状态**：IN PROGRESS / ACCEPTANCE PARTIAL / 未提交；A 的冻结 Qwen GPU 前置已通过，本卡继续验证。
+> **状态（2026-10-23 最新）**：本机首次使用闭环 **SCOPED PASS** / 未提交。N1–N7 本机验收均通过（N6 为源码实际 OCR；便携包未捆绑 OCR 资源），N8 `CLEAN_HOST_PENDING` 不阻挡本机交付。真实官方 4GB 下载为 `OFFICIAL_4GB_DOWNLOAD_PENDING`。最终产物、真实命令和限制见同一执行报告。
+
+## 0.3 2026-10-23 新冻结包验收收尾
+
+按用户许可清理可重建 `.uv-cache` 后，在当前工作树重新构建 onedir/ZIP，构建 exit 0；ZIP 16,039 项、6,258,907,314 bytes，SHA-256 `118614121DF2FD5BB4EA33F502A9EC822A786DB53DD552FFFD799E018B6BE8B7`。冻结 packaged API smoke exit 0。新 EXE 在 GPU 上完成 Qwen 512D 合成推理；隔离图库从空根经冻结 UI 登记/建库/浏览/文字和图片搜索，关闭并重启后数据保留且再次搜索成功。冻结模型导入 pinned SHA exit 0；下载门、无 CUDA 对照均按预期拒绝。小文件下载模拟 8/8，合成照片 OCR 实际识别 1/1。N1–N7 本机闭环通过；N8 `CLEAN_HOST_PENDING`；4GB 公网下载未进行。D: 最终余约 1.78GB。旧 A 产物及验证证据保留；仅清可重建 `.uv-cache` 和 smoke 创建的临时包副本。未访问真实照片/catalog、未改授权模型目录、未提交/推送/发布、未开始下一卡。完整命令和退出码见[续验报告](../reports/P4-WINDOWS-NEW-PC-READY.md)。
+
+## 0. 2026-10-23 续验记录
+
 > **前置条件**：A 已证明 ZIP/onedir 的冻结 `PhotoSearch.exe` 在本机脱离源码运行，Qwen GPU Worker、模型清单、网页与本地会话链路可用。A 尚未通过时，先修复 A，不能在本卡重复造打包方案。
 > **参考基线**：`szzeng/aisearch` `master @ 3d717bb1ae03e33d48273c6736e324234f82d093`（2026-10-23）；实施时重新检查 HEAD、未提交改动与 A 报告。
 > **模型建议**：**C1 / GPT-5.6 Terra Medium**（Windows、冻结运行时、模型下载/导入与集成）；按 V3.1 §2.4 进行有界独立工程复核。若确实改动共享身份、事务/数据迁移语义，再按仓库规则扩大审查；不默认要求 Sol 或 DS-MAX。模型切换由用户手动操作。
@@ -107,3 +114,8 @@
 > 在 `P4-WINDOWS-PORTABLE-RELEASE-A` 的冻结 EXE/Qwen GPU 闭环通过后，执行 `docs/tasks/P4-WINDOWS-NEW-PC-READY.md`，以最新 master 为准。**本卡场景是新电脑没有任何 PhotoSearch 旧库，完全重新建库**：绝不实施旧图库备份/恢复、source-remap 或索引迁移。继续使用已验收的 ZIP，最小化改动，在现有图库管理页给出首次运行环境、Qwen 模型准备、登记照片目录和启动建库的清晰引导；复用固定 manifest/`prepare-local`/候选建库状态。用户确认后可从官方固定 revision 下载 Qwen，或导入本地权重；512D/1024D 共用同一份，下载以合成 HTTP 小文件做失败测试，不自动下载 4GB，除非我额外授权。OCR 尽量复用包内模型；人脸按原许可证提供可选手动准备说明，不扩大到模型商店。用隔离空数据根与合成照片、真实冻结 EXE 完成 N1–N7，保留真实退出码与受影响回归；不能把本机通过说成另一台干净 Windows 已验证。只更新本卡、一份简短报告和状态记录，不提交、不推送、不自动开始新任务。
 
 - 2026-10-23 之后追加 A packaged smoke：退出码 1，唯一失败为 frozen package data 与当前工作树不一致（并行未提交的 `web/memories.css/js` 不在冻结包）；结构化无模型搜索错误为 409 `RUNTIME_CAPABILITY_UNAVAILABLE` / `QUERY_ENCODER_UNAVAILABLE`。完整 smoke JSON 和复制包已保留；D: 现余约 1.99 GB，无法重建或再次复制冻结包。
+
+
+## 0.3 2026-10-23 最终续验状态
+
+A 构建差异、下载/模拟和 OCR 证据以及空间阻断的逐项记录见同一份[续验报告](../reports/P4-WINDOWS-NEW-PC-READY.md)顶部。N1 BLOCKED（新冻结包）、N2 PASS（A 本机无 CUDA 模拟）、N3 PASS（本地下载保护模拟；冻结命令待打包）、N4 PASS（A 固定权重与身份）、N5 BLOCKED（完整冻结 UI 主流程）、N6 PASS（源码 OCR 推理；新冻结包待验）、N7 BLOCKED（源码主流程/宽屏可读和说明通过，冻结包/窄屏待验）、N8 CLEAN_HOST_PENDING。D: 仅余 14,136,778,752 bytes；既有 onedir 11,499,324,195 bytes 且既有 ZIP/证据保留，因此未运行新构建。用户明确要求保留工作树并禁止自动提交/推送/发布/开启下一卡；本次遵守。

@@ -18,6 +18,7 @@ Resolution order is deliberately narrow:
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -53,7 +54,10 @@ def model_manifests_dir(data_root: str | Path) -> Path:
 
 
 def shipped_manifest_dir() -> Path:
-    """The repository manifests shipped next to the prepare tools (frozen, read-only)."""
+    """The read-only model templates in the source tree or frozen package root."""
+    if getattr(sys, "frozen", False):
+        bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[3]))
+        return bundle_root / "tools" / "prepare_models" / "manifests"
     return Path(__file__).resolve().parents[4] / "tools" / "prepare_models" / "manifests"
 
 

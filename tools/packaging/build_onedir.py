@@ -10,6 +10,8 @@ registers it before the CUDA session is created.
 
 from __future__ import annotations
 
+import argparse
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,8 +42,17 @@ def nvidia_runtime_dlls(site_packages: Path) -> list[Path]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Build the frozen PhotoSearch onedir bundle")
+    parser.add_argument(
+        "--distpath",
+        type=Path,
+        default=Path("dist"),
+        help="PyInstaller output root (use a task-local path to preserve an existing bundle)",
+    )
+    parser.add_argument("--workpath", type=Path, default=Path("build"))
+    args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    manifest = root / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
+    manifest_dir = root / "tools" / "prepare_models" / "manifests"
     dlls = nvidia_runtime_dlls(site_packages_directory())
     if not dlls:
         raise SystemExit(
@@ -50,7 +61,9 @@ def main() -> int:
         )
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--name", "PhotoSearch",
-        "--paths", str(root / "src"), "--add-data", f"{manifest};tools/prepare_models/manifests",
+        "--distpath", str(args.distpath.resolve()), "--workpath", str(args.workpath.resolve()),
+        "--specpath", str(args.workpath.resolve()),
+        "--paths", str(root / "src"), "--add-data", f"{manifest_dir};tools/prepare_models/manifests",
         "--collect-binaries", "onnxruntime", "--collect-data", "tokenizers",
         # ``pillow_heif`` is imported only after the media capability probe.  PyInstaller
         # cannot see that dynamic import, and the wheel has both a top-level extension and
@@ -60,16 +73,38 @@ def main() -> int:
         # LibRaw is loaded at the CR2 adapter boundary rather than as a top-level import;
         # collect its extension and sibling runtime binaries explicitly.
         "--collect-all", "rawpy",
-        "--exclude-module", "torch", "--exclude-module", "torchvision",
-        # The catalog migrations are ``.sql`` data files inside the package: without them a
-        # frozen build would start with no schema at all (P1-04 report §6.1).
-        "--collect-data", "photo_search",
+        # Qwen is loaded dynamically by the manifest-selected adapter in a spawned worker.
+        # Collect its framework/runtime packages explicitly, plus the one Transformers model
+        # family and helper used by that adapter; do not collect unrelated model families.
+        "--collect-all", "torch", "--collect-all", "torchvision",
+        "--collect-submodules", "transformers.models.qwen3_vl",
+        "--collect-submodules", "qwen_vl_utils",
+        "--collect-all", "huggingface_hub",
+        "--copy-metadata", "torch", "--copy-metadata", "torchvision",
+        "--copy-metadata", "transformers", "--copy-metadata", "tokenizers",
+        "--copy-metadata", "safetensors", "--copy-metadata", "qwen-vl-utils",
+        "--copy-metadata", "huggingface-hub",
+        # Collect resources from this checkout directly. ``--collect-data photo_search``
+        # can resolve an editable install in the build environment and silently package
+        # different web files than the source tree used for the build.
+        "--add-data", f"{root / 'src' / 'photo_search' / 'catalog' / 'migrations'};photo_search/catalog/migrations",
+        "--add-data", f"{root / 'src' / 'photo_search' / 'web'};photo_search/web",
     ]
     for dll in dlls:
         command += ["--add-binary", f"{dll};{DLL_TARGET_DIRECTORY}"]
     command.append(str(root / "src" / "photo_search" / "__main__.py"))
     print(f"bundling {len(dlls)} NVIDIA runtime DLLs into {DLL_TARGET_DIRECTORY}/")
-    return subprocess.run(command, cwd=root, check=False).returncode
+    result = subprocess.run(command, cwd=root, check=False).returncode
+    if result == 0:
+        bundle = args.distpath.resolve() / "PhotoSearch"
+        for filename in (
+            "README-PORTABLE.txt",
+            "NEW-PC-QUICK-START.txt",
+            "Download-Qwen.cmd",
+            "Start-PhotoSearch.cmd",
+        ):
+            shutil.copy2(root / "tools" / "packaging" / filename, bundle / filename)
+    return result
 
 
 if __name__ == "__main__":

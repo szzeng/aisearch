@@ -1,11 +1,28 @@
+## P4-WINDOWS-NEW-PC-READY 续验（2026-10-23，冻结包收尾）
+
+本机新电脑首次使用闭环 **SCOPED PASS**：按当前工作树重建 onedir/ZIP（PyInstaller exit 0；ZIP SHA-256 118614121DF2FD5BB4EA33F502A9EC822A786DB53DD552FFFD799E018B6BE8B7），冻结 API smoke exit 0；隔离空根 UI、固定权重导入、Qwen CUDA、3 张合成照片建库/浏览/文字和图片搜索、正常关闭/重启后持久化与再次搜索通过。N1–N7 本机范围 PASS；N6 为源码合成 OCR 实际推理 1/1，便携包不含 OCR 资源；N8 CLEAN_HOST_PENDING 按任务卡不阻挡本机交付。安全模拟 8/8，未下载官方 4GB 模型（OFFICIAL_4GB_DOWNLOAD_PENDING）。仅清可重建 .uv-cache 和 packaged smoke 创建的临时 onedir 副本，保留旧包、证据、`.tmp`、`test-results` 与 .venv；最终 D: 余约 1.78GB。未触碰真实照片/catalog、未修改授权模型目录，未提交/推送/发布或开始下一卡。详见[任务卡](tasks/P4-WINDOWS-NEW-PC-READY.md)与[执行报告](reports/P4-WINDOWS-NEW-PC-READY.md)。
+
+## P4-PHOTO-MEMORIES-UX-A（2026-10-23）
+
+回忆页已调整为“往年今日 / 那年这个月”两个独立分类路由；修复分类详情跳转时旧缩略图残留，切换目标后立即清空旧图并显示目标月份/年份加载态；回忆浏览器 Back 会使待完成预览请求失效。隔离合成图库浏览器已验证 2025→2024 月份切换、加载期间旧图清空、正确精选展示、月份详情直接冷加载及 Back/Forward；Luna High 定向复核通过。未改查询/API。“往年今日”详情直接冷加载等未测范围仍 PENDING，状态 IMPLEMENTED / VALIDATION PENDING。已本地提交，未推送；详见[任务卡](tasks/P4-PHOTO-MEMORIES-UX-A.md)与[报告](reports/P4-PHOTO-MEMORIES-UX-A.md)。
+
 ## P4-PHOTO-MEMORIES-A（2026-10-23）
 
 智能回忆第一版已实现：首次进入后启动单只读后台线程，按年渐进发现；日查询按4时段限240候选，月查询按日/来源采样，单SQL 75ms预算，精选最多24，卡片缓存最多32。最终受影响 JUnit **48/48**（回忆、普通合集、拍摄日期提取集成），Ruff/py_compile/Node/diff-check 通过；日期补提取会递增共享图库修订且同结果重放幂等。Luna High 最终只读复核 **PASS，无代码 blocker**。隔离内置浏览器验证主要卡片、月份精选/全部日期、Viewer/详情 Back/Forward、保存合集、1440×900及约450px面板；30万合成元数据检查索引计划及前后台浏览延迟，另对30万全失效路径候选验证75ms预算的未完成状态、手动重试和活动 SQLite 取消。无整库扫描/无界队列；均为定向样本，不是容量认证。本卡功能与资源边界验收 **SCOPED PASS**；所有日期抽取错误/重试组合、原生200%缩放及冷缓存/其他硬件仍未验证，不构成正式容量认证。未访问真实图库/原图/模型，已本地提交，未推送。详见[任务卡](tasks/P4-PHOTO-MEMORIES-A.md)与[执行报告](reports/P4-PHOTO-MEMORIES-A.md)。
 
 2026-10-23 状态恢复续修：修复离开页面取消覆盖目录终态、以及 MORE/CANCELLED/STALE 被误报为空结果；回忆单元/API **16/16**，内置浏览器隔离合成数据验证离开/返回恢复轮询、MORE 提示与月份卡片，Luna High 子代理独立复核 PASS。无真实图库/额外规模测试；未提交或推送。详见同一执行报告。
+
+## P4-WINDOWS-NEW-PC-READY 续验（2026-10-23，主流程范围）
+
+用户选择先验主流程。本轮内置浏览器从当前源码图库管理 UI 登记 3 张隔离合成 JPEG，点击建库至 Qwen 512D EXIF v2 语义索引 3/3，浏览三张照片并完成文字搜索 3/3；重启同一隔离数据根后来源仍为 1 个，再次搜索仍返回 3/3。A 冻结 EXE 已有 GPU 建库、图文搜索与重启证据，组合证据不等于冻结包包含本轮 UI。N1/N2/N4 既有结果复用。N3 下载保护、N6 OCR、N7 窄屏和 frozen-UI 完整复验、N8 干净主机继续 PENDING；不作为本轮主流程已执行项。另在图库管理首次使用页发现并修正暗色主题下的低对比卡片底色，浏览器当前宽视口复看通过。D: 本轮可用约 14.2 GB。未触碰真实照片/catalog，Qwen 指定目录只读；主流程服务与 Worker 已停止，隔离数据/日志保留。总体 **IN PROGRESS / ACCEPTANCE PARTIAL**。详见[续验报告](reports/P4-WINDOWS-NEW-PC-READY.md)与[任务卡](tasks/P4-WINDOWS-NEW-PC-READY.md)。
+
 ## P4-PHOTO-RANDOM-BROWSE（2026-10-23）
 
 随机照片模式、只读抽样/摘要 API 已实现：默认每批 300 张，可调 1–1000，50 张滚动页和显式下一批；12 个环形索引窗口、最多 12,000 候选，近期 1,200 ID 尽量避重，图库较小允许重复。sessionStorage 恢复当前批及滚动位置；pending 摘要失败可恢复当前批并重试相同 ID。定向 JUnit **18/18**、Ruff、py_compile、Node 语法和 diff-check 通过；Luna High 跟进无 blocker。隔离 65 张图库内置浏览器验证窄屏/主要流程并且控制台无错误；桌面宽视口未能在面板中确认，故 **IMPLEMENTED / VALIDATION PENDING**。30 万 fixture 不可用，未访问真实图库/模型，已本地提交、未推送。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE.md)与[执行报告](reports/P4-PHOTO-RANDOM-BROWSE.md)。
+
+## P4-WINDOWS-PORTABLE-RELEASE-A 执行状态（2026-10-23 续验）
+
+既有 onedir/ZIP 15,869 项，11,499,324,195 / 6,258,093,080 bytes，SHA-256 `c84c9605ec36767b6d60e5ed0cc9b23f3e91d76bf40e03c9418e6481e3bef84b`。冻结 Qwen spawn Worker CUDA 512D/1024D、隔离合成建库/文字与图片搜索/重启查询：V4 **PASS**。V1 PASS、V2 LOCAL_ISOLATION_PASS；V3（无权重 UI 错误详情浏览）与 V5（3,544 项全回归 21 项范围外失败；追加 packaged smoke 退出 1，唯一差异为冻结包早于当前工作树的 memories.css/js 资源）PARTIAL；V6 CLEAN_HOST_PENDING。受影响 Provider/Worker/Manifest 68/68 通过。状态 **IMPLEMENTED / VALIDATION PENDING**，未提交/推送/发布。未读取照片/catalog，模型目录只读。详见[任务卡](tasks/P4-WINDOWS-PORTABLE-RELEASE-A.md)与[报告](reports/P4-WINDOWS-PORTABLE-RELEASE-A.md)。
 
 ## Current task: P4-UI2-COPY-DAILY-UX（2026-10-23）
 

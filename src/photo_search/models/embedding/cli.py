@@ -70,6 +70,17 @@ def add_embedding_parser(subparsers: Any) -> None:
     )
     commands = parser.add_subparsers(dest="embedding_command")
 
+    download = commands.add_parser(
+        "download-qwen", help="download the fixed Qwen revision after explicit confirmation"
+    )
+    download.add_argument(
+        "--confirm-large-download",
+        action="store_true",
+        help="confirm the fixed approximately 4.3 GB download and staging/publish disk use",
+    )
+    download.add_argument("--data-root", type=Path, default=None)
+    download.add_argument("--json", action="store_true")
+
     listing = commands.add_parser("list", help="show installed providers and the active profile")
     listing.add_argument("--data-root", type=Path, default=None)
     listing.add_argument("--json", action="store_true", help="emit one JSON document")
@@ -121,6 +132,7 @@ def add_embedding_parser(subparsers: Any) -> None:
 def run_embedding_command(args: argparse.Namespace) -> int:
     """Dispatch one ``embedding`` subcommand; returns the process exit code."""
     handlers = {
+        "download-qwen": _download_qwen,
         "list": _list_providers,
         "prepare-local": _prepare_local,
         "build-candidate": _build_candidate,
@@ -137,13 +149,22 @@ def run_embedding_command(args: argparse.Namespace) -> int:
         code = 0
     except CatalogError as error:
         payload = {"status": "error", "error": error.as_dict()}
-        code = 1
+        code = 130 if str(error.code) == "MODEL_DOWNLOAD_CANCELLED" else 1
     print(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
         if getattr(args, "json", False)
         else json.dumps(payload, ensure_ascii=False, sort_keys=True)
     )
     return code
+
+
+def _download_qwen(args: argparse.Namespace) -> dict[str, Any]:
+    from photo_search.models.embedding.download import download_qwen
+
+    return download_qwen(
+        args.data_root,
+        confirmed=bool(args.confirm_large_download),
+    )
 
 
 def _list_providers(args: argparse.Namespace) -> dict[str, Any]:

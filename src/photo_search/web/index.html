@@ -71,7 +71,7 @@
           <h3 id="first-use-guide-title">新电脑首次使用</h3>
           <ol>
             <li><strong>运行环境：</strong>Qwen 语义搜索需要兼容的 NVIDIA 显卡和驱动；本应用不会把 Qwen 静默切换到 CPU。无模型时仍可先浏览已登记照片。</li>
-            <li><strong>准备模型：</strong>模型状态只说明固定清单是否已导入，不代表权重 SHA 或 GPU 已通过运行检查。用随包命令导入已有模型目录：<code>PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source &lt;模型目录&gt;</code>。官方模型下载入口尚未包含在此版本中。</li>
+            <li><strong>准备模型：</strong>下载固定版本需要约 4.3 GB 网络流量和约 9 GB 可用空间；解压目录中双击 <code>Download-Qwen.cmd</code>，确认后可观察进度并用 Ctrl+C 取消。也可导入已有模型目录：<code>PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source &lt;模型目录&gt;</code>。文件会校验后安装到独立数据目录。</li>
             <li><strong>选择照片目录：</strong>展开“添加图库来源”，手动填写照片文件夹路径；应用不会自动扫描硬盘，原照片保持只读。</li>
             <li><strong>新建图库：</strong>登记后点“开始建库”，等待现有任务完成；关闭应用后重新启动可继续使用已发布的索引。</li>
           </ol>
