@@ -1,12 +1,14 @@
 # Windows 新电脑首次使用（本机个人测试版）
 
-1. **解压并启动**：把完整 ZIP 解压到普通文件夹，运行 `Start-PhotoSearch.cmd`。首次启动数据写入 `%LOCALAPPDATA%\PhotoSearchData`，与程序目录分开。保持启动控制台打开；按 Ctrl+C 并等待退出后再关闭。
+1. **解压并启动**：把完整 ZIP 解压到普通文件夹，运行 `Start-PhotoSearch.cmd`。首次运行会提示输入数据目录，例如 `D:\PhotoSearchData`。数据库、模型、缩略图和索引统一保存在这里；以后自动使用同一路径，不会默认写入 C 盘。保持启动控制台打开；按 Ctrl+C 并等待退出后再关闭。
 2. **检查环境**：语义搜索需要兼容的 NVIDIA GPU 和驱动。无需安装 Python、uv、Git、Visual Studio 或 CUDA Toolkit。无可用 GPU 时 Qwen 会拒绝运行，不会切换到 CPU。
-3. **准备 Qwen**：512D 与 1024D 共用 Qwen3-VL-Embedding-2B 的一份固定权重。需要网络下载约 4.3 GB，并在数据盘预留约 9 GB；在解压目录双击 `Download-Qwen.cmd`，确认后显示下载进度，按 Ctrl+C 可取消。下载固定 commit 的白名单文件后会逐项校验 SHA，再安装到独立数据目录。也可使用预先下载好的同版目录，在程序目录打开终端运行：
-   `PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source <模型目录>`
+3. **准备 Qwen**：512D 与 1024D 共用 Qwen3-VL-Embedding-2B 的一份固定权重。需要网络下载约 4.3 GB，并在数据盘预留约 9 GB；在解压目录双击 `Download-Qwen.cmd`，使用同一个自选数据目录，确认后显示下载进度，按 Ctrl+C 可取消。下载固定 commit 的白名单文件后会逐项校验 SHA，再安装到独立数据目录。也可使用预先下载好的同版目录，在程序目录打开终端运行：
+   `PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source "<模型目录>" --data-root "<自选的数据目录>"`
    命令会按程序随附的清单检查必需文件和 SHA-256。下载失败、取消、空间不足或校验失败不会发布模型，也不会覆盖已校验的版本。首次使用页不会自动下载或哈希文件。模型准备通过不代表已经建立照片索引。
 4. **选择照片目录**：在“图库管理”展开“添加图库来源”，手动填写照片文件夹路径并登记。应用只读取你登记的目录，不会扫描整台电脑；原始照片不会被移动或修改。
 5. **新建并使用图库**：在来源卡片点击“开始建库”，等待扫描、缩略图和已启用处理任务推进。语义搜索需在 Qwen 模型可用并且索引发布后使用；浏览照片不要求先准备 Qwen。
 6. **以后重启**：先在原控制台按 Ctrl+C，等待服务正常退出，再重新运行启动脚本。图库、模型和索引保存在数据根中，程序 ZIP 与数据根可分开保留。
 
 本版本按本机 RTX 4060 Laptop GPU 和指定固定模型完成了合成图库验证；未在另一台干净电脑验证，也未认证其它显卡型号。若模型目录校验失败，请保留错误信息并检查 revision、文件完整性和 SHA-256。不要删除已有数据根作为修复手段。
+
+注意：数据目录不是照片原图目录。更改数据目录前先停止应用，再双击 `Set-PhotoSearch-Data.cmd`；不会迁移或删除旧库。路径选择保存在 `%APPDATA%\PhotoSearch\portable-data-root.txt` 小配置文件中。直接运行 PhotoSearch.exe 高级命令时需自行传 `--data-root`。
