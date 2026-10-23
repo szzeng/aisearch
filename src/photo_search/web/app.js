@@ -115,7 +115,7 @@
       collectionId: null, collection: null, memberCursor: null, memberHasMore: false,
       timelineMount: null, timelineScope: null, detailMode: "list" },
     memories: { cards: null, cursor: null, hasMore: false, requestVersion: 0, preview: null, previewTarget: null, previewRequestVersion: 0,
-      scrollY: 0, loading: false, pollTimer: null, appendWindow: false, revision: null, cancelPromise: null,
+      scrollY: 0, loading: false, pollTimer: null, appendWindow: false, revision: null, today: null, cancelPromise: null,
       section: "day", status: "IDLE", error: "", renderedSection: null, renderedRevision: null },
     photoCollectionKind: "ordinary",
     photoSmart: { cursor: null, hasMore: false, requestVersion: 0, viewEpoch: 0, entryEpoch: 0, smartId: null,
@@ -3298,6 +3298,7 @@
     if (previousView === "memories" && name !== "memories") {
       state.memories.requestVersion += 1;
       state.memories.previewRequestVersion += 1;
+      state.memories.loading = false;
       stopMemoriesPolling();
       state.memories.cancelPromise = request("/memories/jobs", {method:"DELETE", body:{}}).catch(function () {});
     }
@@ -3746,19 +3747,21 @@
               : "已检查全部可用年份，当前分类没有可展示的回忆。拍摄日期尚未提取的照片仍可能在建库完成后出现。";
     if (busy && state.currentView === "memories") {
       if (memory.pollTimer) window.clearTimeout(memory.pollTimer);
-      memory.pollTimer = window.setTimeout(function () { loadMemoryCards(memory.appendWindow); }, 900);
+      var delay = memory.status === "DEFERRED" ? 900 : (count ? 600 : 250);
+      memory.pollTimer = window.setTimeout(function () { loadMemoryCards(memory.appendWindow); }, delay);
     }
   }
 
   function renderMemoryCards(body, append) {
     var groups = body.cards || {};
     var memory = state.memories;
-    var currentRevision = String(body.catalog_filter_revision) + ":" + String(body.favorites_revision) + ":" + String(body.taken_time_rules_version);
-    if (!append || (memory.revision && memory.revision !== currentRevision) || !memory.cards) {
+    var currentRevision = String(body.today || "") + ":" + String(body.catalog_filter_revision) + ":" + String(body.favorites_revision) + ":" + String(body.taken_time_rules_version);
+    if ((memory.revision && memory.revision !== currentRevision) || !memory.cards) {
       memory.cards = {day: [], month: []};
       memory.appendWindow = false;
     }
     memory.revision = currentRevision;
+    memory.today = body.today || null;
     ["day", "month"].forEach(function (section) {
       var existing = new Set(memory.cards[section].map(function (item) { return String(item.year); }));
       (groups[section] || []).forEach(function (item) {
@@ -3774,8 +3777,13 @@
 
   function loadMemoryCards(append, retry) {
     var memory = state.memories;
+    if (memory.loading) return Promise.resolve();
+    if (memory.pollTimer) window.clearTimeout(memory.pollTimer);
+    memory.pollTimer = null;
     var version = ++memory.requestVersion;
+    var retryWithoutCursor = false;
     memory.loading = true;
+    memory.appendWindow = Boolean(append);
     els.memoriesRetry.hidden = true;
     memory.status = memory.cards ? memory.status : "LOADING";
     if (!memory.cards) renderMemorySection();
@@ -3784,15 +3792,36 @@
     if (retry) query += (query ? "&" : "?") + "retry=true";
     var path = "/memories/cards" + query;
     return Promise.resolve(memory.cancelPromise).catch(function () {}).then(function () { return request(path); }).then(function (result) {
-      if (version !== memory.requestVersion || state.currentView !== "memories") return;
+      if (version !== memory.requestVersion || state.currentView !== "memories" || memory.previewTarget) return;
       renderMemoryCards(result.body, append);
     }).catch(function (failure) {
-      if (version !== memory.requestVersion || state.currentView !== "memories") return;
-      state.memories.status = "ERROR";
-      state.memories.error = failure.message || "请刷新重试";
+      if (version !== memory.requestVersion || state.currentView !== "memories" || memory.previewTarget) return;
+      if (failure.status === 409) {
+        memory.cards = {day: [], month: []};
+        memory.cursor = null;
+        memory.hasMore = false;
+        memory.revision = null;
+        memory.today = null;
+        memory.renderedSection = null;
+        memory.appendWindow = false;
+        memory.error = failure.message || "回忆状态已变化，正在重新读取";
+        retryWithoutCursor = Boolean(append);
+        memory.status = retryWithoutCursor ? "LOADING" : "ERROR";
+        stopMemoriesPolling();
+      } else {
+        memory.status = "ERROR";
+        memory.error = failure.message || "请刷新重试";
+      }
       renderMemorySection();
       els.memoriesMore.hidden = !memory.cursor;
-    }).finally(function () { if (version === memory.requestVersion) memory.loading = false; });
+    }).finally(function () {
+      if (version === memory.requestVersion) {
+        memory.loading = false;
+        if (retryWithoutCursor && state.currentView === "memories" && !memory.previewTarget) {
+          loadMemoryCards(false);
+        }
+      }
+    });
   }
 
   function renderMemoryPreview(body) {
@@ -3816,6 +3845,10 @@
 
   function openMemoryPreview(card) {
     stopMemoriesPolling();
+    // Any in-flight list response belongs to the route being left. Invalidate
+    // it so Back can always request a fresh server state before reusing cards.
+    state.memories.requestVersion += 1;
+    state.memories.loading = false;
     state.memories.section = card.memory_type === "month" ? "month" : "day";
     state.memories.scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
     var url = new URL(window.location.href);
@@ -3844,6 +3877,8 @@
   function loadMemoryPreview(memoryType, year) {
     var retry = arguments.length > 2 && arguments[2];
     var memory = state.memories;
+    if (memory.pollTimer) window.clearTimeout(memory.pollTimer);
+    memory.pollTimer = null;
     var version = ++memory.previewRequestVersion;
     var monthLabel = String(new Date().getMonth() + 1) + "月";
     var targetLabel = String(year) + (memoryType === "month" ? "年" + monthLabel : "年往年今日");
@@ -3901,14 +3936,17 @@
     els.memoriesCards.hidden = Boolean(validPreview);
     els.memoriesPreview.hidden = !validPreview;
     els.memoriesBack.hidden = !validPreview;
-    if (validPreview) loadMemoryPreview(type, year);
+    if (validPreview) {
+      state.memories.requestVersion += 1;
+      state.memories.loading = false;
+      loadMemoryPreview(type, year);
+    }
     else {
       state.memories.previewRequestVersion += 1;
       state.memories.preview = null;
       state.memories.previewTarget = null;
       if (state.memories.cards) renderMemorySection();
-      else if (!state.memories.loading) loadMemoryCards(false);
-      else renderMemorySection();
+      if (!state.memories.loading) loadMemoryCards(false);
     }
   }
 

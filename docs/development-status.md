@@ -244,3 +244,6 @@ A 阶段合成 BF16 GPU smoke 已通过：固定 revision WeMM 在 RTX 4060 Lapt
 ## P4-LIBRARY-RETENTION-C2-RETRY-FIX（2026-10-20）
 
 共享未结算谓词收口 PARTIAL 创建互斥、启动恢复、worker 与进度显示；终结 run 保留历史统计并允许新点击创建新 run。ACTIVE barrier 重试重新校验当前 MANUAL/AUTOMATIC 授权、来源、扫描、副本和人工保护；人工保护变化会按既有协议撤销 barrier、清理旧 DELETE_VECTOR 并排入 UPSERT 修复，来源/证据阻断则保留待复核 barrier。受影响 retention + storage UI JUnit **40/40** 通过（`test-results/P4-LIBRARY-RETENTION-C2-RETRY-FIX-final-r4.xml`），Ruff、Python 编译、Node 语法、查询计划与 diff-check 通过。Luna H 独立复核确认人工保护 blocker 已关闭。隔离浏览器使用新会话确认 retention 页面/API 可用，但原生确认交互触发 CUA 焦点控制超时；catalog 复核为 65 assets、0 runs、0 ACTIVE barriers，确认未执行清理。T10 操作仍 PENDING，状态 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交。报告：[P4-LIBRARY-RETENTION-C2-RETRY-FIX](reports/P4-LIBRARY-RETENTION-C2-RETRY-FIX.md)，任务卡：[P4-LIBRARY-RETENTION-C2-RETRY-FIX](tasks/P4-LIBRARY-RETENTION-C2-RETRY-FIX.md)。
+## P4-PHOTO-MEMORIES-SPEED-FIX（2026-10-23）
+
+回忆发现改为单低优先级 worker 自主推进最多10年；状态轮询只读进度。进程内缓存按日期/相关修订/算法版本有效，修复旧待办身份阻塞、LRU窗口结果和重进/409核验。定向回忆 unit/API **25/25**，Ruff、Python 编译、Node 语法、`git diff --check` 通过；Luna High 最终只读复核无代码 blocker。30万合成目录的模拟轮询对照：首卡状态约 900→251ms，窗口状态约 9.15s→251ms，请求数11→2；不是实际 HTTP/DOM/封面时延。隔离内置浏览器主要流程通过；点击到 API/首卡/封面定量、SQL逐条计时、前台并发响应及真实 DEFERRED 仍未量化，故 **IMPLEMENTED / ACCEPTANCE PARTIAL**。未访问真实图库，未提交/推送。详见[任务卡](tasks/P4-PHOTO-MEMORIES-SPEED-FIX.md)与[报告](reports/P4-PHOTO-MEMORIES-SPEED-FIX.md)。

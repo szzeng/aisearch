@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import threading
+import time
 
 import pytest
 
@@ -119,10 +120,10 @@ def test_memories_use_only_active_present_images_with_trusted_capture_date(catal
     runner = MemoriesRunner(catalog, max_years=3)
     try:
         first = runner.card_state(catalog, now=dt.date(2026, 10, 23))
-        assert first["status"] in {"QUEUED", "RUNNING"}
+        assert first["status"] in {"QUEUED", "RUNNING", "PARTIAL"}
         assert runner.wait_idle()
         result = runner.card_state(catalog, now=dt.date(2026, 10, 23))
-        assert result["status"] in {"QUEUED", "RUNNING", "PARTIAL"}
+        assert result["status"] in {"QUEUED", "RUNNING", "PARTIAL", "MORE"}
         assert [(item["year"], item["selected_count"]) for item in result["cards"]["day"]] == [(2025, 1)]
         assert [(item["year"], item["selected_count"]) for item in result["cards"]["month"]] == [(2025, 2)]
         preview = runner.preview_state(catalog, memory_type="day", year=2025, now=dt.date(2026, 10, 23))
@@ -183,6 +184,196 @@ def test_memories_cache_is_bounded_and_revision_invalidates(catalog):
             connection.execute("UPDATE metadata SET value=CAST(value AS INTEGER)+1 WHERE key='favorites_revision'")
         after_favorite = runner.card_state(catalog, now=today)
         assert after_favorite["cards"] == {"day": [], "month": []}
+    finally:
+        runner.close()
+
+
+def test_memories_discovery_autonomously_processes_the_initial_ten_year_window(catalog, monkeypatch):
+    years = []
+    years_lock = threading.Lock()
+
+    def day_candidates(_connection, year, *_args, **_kwargs):
+        with years_lock:
+            years.append(int(year))
+        return []
+
+    monkeypatch.setattr(memories_module, "_day_candidates", day_candidates)
+    monkeypatch.setattr(memories_module, "_month_candidates", lambda *_args, **_kwargs: [])
+    runner = MemoriesRunner(catalog)
+    try:
+        today = dt.date(2026, 10, 23)
+        first = runner.card_state(catalog, now=today)
+        assert first["status"] in {"QUEUED", "RUNNING", "PARTIAL"}
+        assert runner.wait_idle(timeout=5)
+        assert years == list(range(2025, 2015, -1))
+        result = runner.card_state(catalog, now=today)
+        assert result["status"] == "MORE"
+        assert result["next_cursor"]
+        assert runner._next_year == 2015
+        assert years == list(range(2025, 2015, -1))  # Hot state read reused results without scheduling SQL.
+    finally:
+        runner.close()
+
+
+def test_memories_reentry_without_cursor_restores_first_window_after_paging(catalog, monkeypatch):
+    years = []
+
+    def day_candidates(_connection, year, *_args, **_kwargs):
+        years.append(int(year))
+        return []
+
+    monkeypatch.setattr(memories_module, "_day_candidates", day_candidates)
+    monkeypatch.setattr(memories_module, "_month_candidates", lambda *_args, **_kwargs: [])
+    runner = MemoriesRunner(catalog, max_years=1)
+    today = dt.date(2026, 10, 23)
+    try:
+        runner.card_state(catalog, now=today)
+        assert runner.wait_idle()
+        first_window = runner.card_state(catalog, now=today)
+        assert first_window["status"] == "MORE"
+        assert first_window["next_cursor"]
+
+        runner.card_state(catalog, cursor=first_window["next_cursor"], now=today)
+        assert runner.wait_idle()
+        older_window = runner.card_state(catalog, cursor=first_window["next_cursor"], now=today)
+        assert runner._window_start_year == 2024
+        assert older_window["status"] == "MORE"
+
+        reentered = runner.card_state(catalog, now=today)
+        assert runner._window_start_year == 2025
+        assert runner._next_year == 2025
+        assert reentered["status"] in {"QUEUED", "RUNNING", "MORE"}
+    finally:
+        runner.close()
+
+
+def test_memories_reentry_without_cursor_restores_first_window_after_page_cancel(catalog, monkeypatch):
+    second_year_started = threading.Event()
+    release_second_year = threading.Event()
+    years = []
+
+    def day_candidates(_connection, year, *_args, cancelled=None, **_kwargs):
+        years.append(int(year))
+        if year == 2024:
+            second_year_started.set()
+            assert release_second_year.wait(3)
+            if cancelled is not None and cancelled.is_set():
+                raise MemoriesCancelled()
+        return []
+
+    monkeypatch.setattr(memories_module, "_day_candidates", day_candidates)
+    monkeypatch.setattr(memories_module, "_month_candidates", lambda *_args, **_kwargs: [])
+    runner = MemoriesRunner(catalog, max_years=1)
+    today = dt.date(2026, 10, 23)
+    try:
+        runner.card_state(catalog, now=today)
+        assert runner.wait_idle()
+        first_window = runner.card_state(catalog, now=today)
+        assert first_window["next_cursor"]
+
+        runner.card_state(catalog, cursor=first_window["next_cursor"], now=today)
+        assert second_year_started.wait(2)
+        assert runner.cancel()["status"] == "CANCELLING"
+        release_second_year.set()
+        assert runner.wait_idle()
+        assert runner._status == "CANCELLED"
+
+        reentered = runner.card_state(catalog, now=today)
+        assert runner._window_start_year == 2025
+        assert runner._next_year == 2025
+        assert reentered["status"] in {"QUEUED", "RUNNING"}
+    finally:
+        release_second_year.set()
+        runner.close()
+
+
+def test_memories_deferred_discovery_resumes_with_backoff(catalog, monkeypatch):
+    busy_checks = 0
+    years = []
+
+    def busy_once(_connection):
+        nonlocal busy_checks
+        busy_checks += 1
+        return busy_checks == 1
+
+    def day_candidates(_connection, year, *_args, **_kwargs):
+        years.append(int(year))
+        return []
+
+    monkeypatch.setattr(MemoriesRunner, "_high_priority_busy", staticmethod(busy_once))
+    monkeypatch.setattr(memories_module, "_day_candidates", day_candidates)
+    monkeypatch.setattr(memories_module, "_month_candidates", lambda *_args, **_kwargs: [])
+    runner = MemoriesRunner(catalog, max_years=2)
+    try:
+        runner.card_state(catalog, now=dt.date(2026, 10, 23))
+        assert runner.wait_idle(timeout=5)
+        assert years == [2025, 2024]
+        assert busy_checks == 3
+    finally:
+        runner.close()
+
+
+def test_memories_preview_preempts_then_resumes_the_unfinished_year(catalog, monkeypatch):
+    _asset(catalog, "priority-preview", dt.datetime(2025, 10, 23, 12, 0))
+    discovery_started = threading.Event()
+    preview_started = threading.Event()
+    release_preview = threading.Event()
+    call_lock = threading.Lock()
+    calls = 0
+    original = memories_module._day_candidates
+
+    def interruptible_candidates(connection, year, *args, cancelled=None, **kwargs):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+            current = calls
+        if current == 1:
+            discovery_started.set()
+            assert cancelled is not None and cancelled.wait(3)
+            raise MemoriesCancelled()
+        if current == 2:
+            preview_started.set()
+            assert release_preview.wait(3)
+        return original(connection, year, *args, cancelled=cancelled, **kwargs)
+
+    monkeypatch.setattr(memories_module, "_day_candidates", interruptible_candidates)
+    runner = MemoriesRunner(catalog, max_years=1)
+    today = dt.date(2026, 10, 23)
+    try:
+        runner.card_state(catalog, now=today)
+        assert discovery_started.wait(2)
+        assert runner.preview_state(catalog, memory_type="day", year=2025, now=today)["status"] in {
+            "QUEUED", "RUNNING"
+        }
+        assert preview_started.wait(2)
+        assert runner.card_state(catalog, now=today)["status"] == "RUNNING"
+        release_preview.set()
+        assert runner.wait_idle(timeout=5)
+        assert calls == 3  # interrupted discovery, priority preview, resumed discovery
+        assert runner.preview_state(catalog, memory_type="day", year=2025, now=today)["status"] == "READY"
+        result = runner.card_state(catalog, now=today)
+        assert [(item["year"], item["selected_count"]) for item in result["cards"]["day"]] == [(2025, 1)]
+    finally:
+        release_preview.set()
+        runner.close()
+
+
+def test_memories_completed_cache_has_no_wall_clock_expiry_and_lru_protects_cards(catalog):
+    runner = MemoriesRunner(catalog)
+    try:
+        today = dt.date(2026, 10, 23).isoformat()
+        for year in range(2025, 2015, -1):
+            runner._remember((today, "day", year, 0, 0, contract.RULES_VERSION,
+                              ALGORITHM_VERSION), {"memory_type": "day", "year": year})
+            runner._remember((today, "month", year, 0, 0, contract.RULES_VERSION,
+                              ALGORITHM_VERSION), {"memory_type": "month", "year": year})
+        for year in range(2025, 2012, -1):
+            runner._remember((today, "day", year, 0, 0, 0, 1, ALGORITHM_VERSION), {"assets": []})
+        time.sleep(1.05)
+        assert runner.cache_size == MAX_CACHE_ENTRIES
+        assert all(runner._cached((today, kind, year, 0, 0, contract.RULES_VERSION,
+                                  ALGORITHM_VERSION)) is not None
+                   for year in range(2025, 2015, -1) for kind in ("day", "month"))
     finally:
         runner.close()
 
@@ -310,9 +501,8 @@ def test_memories_old_revision_snapshot_is_not_visible_after_revision_change(cat
         assert while_new_revision_old_batch_active["cards"] == {"day": [], "month": []}
         release_old_batch.set()
         assert current_batch_started.wait(2)
-        # The old batch is allowed to finish its coherent old snapshot after the
-        # current revision view has advanced; its cache key must keep it invisible.
-        assert any(key[0] == "2026-10-23" and key[3] == 0 for key in runner._cache)
+        # A result computed after the current revision advances is not published.
+        assert not any(key[0] == "2026-10-23" and key[3] == 0 for key in runner._cache)
         while_new_batch_active = runner.card_state(catalog, now=dt.date(2026, 10, 23))
         assert while_new_batch_active["cards"] == {"day": [], "month": []}
         release_current_batch.set()
@@ -325,6 +515,48 @@ def test_memories_old_revision_snapshot_is_not_visible_after_revision_change(cat
     finally:
         release_old_batch.set()
         release_current_batch.set()
+        runner.close()
+
+
+def test_memories_revision_change_replaces_stale_pending_discovery(catalog, monkeypatch):
+    _asset(catalog, "pending-revision-race", dt.datetime(2025, 10, 23, 12, 0))
+    today = dt.date(2026, 10, 23)
+    processed_years = []
+    original = memories_module._day_candidates
+
+    def track_year(*args, **kwargs):
+        processed_years.append(args[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(memories_module, "_day_candidates", track_year)
+    runner = MemoriesRunner(catalog, max_years=1)
+    try:
+        with catalog.read_snapshot() as connection:
+            old_revision = memories_module._revision(connection)
+        with runner._condition:
+            runner._today = today
+            runner._revision = old_revision
+            runner._window_start = 2025
+            runner._window_end = 2025
+            runner._next_year = 2025
+            runner._status = "QUEUED"
+            runner._pending = ("discover", today, old_revision, 2025, 2025)
+            with catalog.write() as connection:
+                connection.execute(
+                    "UPDATE catalog_filter_revision SET revision=revision+1 WHERE revision_id=1"
+                )
+
+            refreshed = runner.card_state(catalog, now=today)
+            assert refreshed["catalog_filter_revision"] == old_revision[0] + 1
+            assert runner._pending is not None
+            assert runner._pending[2][0] == old_revision[0] + 1
+
+        assert runner.wait_idle(timeout=3)
+        final = runner.card_state(catalog, now=today)
+        assert final["catalog_filter_revision"] == old_revision[0] + 1
+        assert [(item["year"], item["selected_count"]) for item in final["cards"]["day"]] == [(2025, 1)]
+        assert processed_years == [2025]
+    finally:
         runner.close()
 
 
@@ -391,6 +623,75 @@ def test_memories_cancelled_discovery_resumes_on_next_card_request(catalog, monk
         runner.close()
 
 
+def test_memories_cancel_after_last_query_prevents_year_publication_and_progress(catalog, monkeypatch):
+    _asset(catalog, "cancel-after-query", dt.datetime(2025, 10, 23, 12, 0))
+    month_returning = threading.Event()
+    release_month = threading.Event()
+    original_month = memories_module._month_candidates
+
+    def pause_after_month(*args, **kwargs):
+        rows = original_month(*args, **kwargs)
+        month_returning.set()
+        assert release_month.wait(3)
+        return rows
+
+    monkeypatch.setattr(memories_module, "_month_candidates", pause_after_month)
+    runner = MemoriesRunner(catalog, max_years=2)
+    today = dt.date(2026, 10, 23)
+    try:
+        runner.card_state(catalog, now=today)
+        assert month_returning.wait(2)
+        assert runner.cancel()["status"] == "CANCELLING"
+        release_month.set()
+        assert runner.wait_idle()
+        assert runner._status == "CANCELLED"
+        assert runner._next_year == 2025
+        assert not any(key[0] == today.isoformat() and len(key) == 7 for key in runner._cache)
+    finally:
+        release_month.set()
+        runner.close()
+
+
+def test_memories_cancel_after_year_publication_prevents_auto_advance(catalog, monkeypatch):
+    batch_published = threading.Event()
+    release_worker = threading.Event()
+    years = []
+
+    def candidates(_connection, year, *_args, **_kwargs):
+        years.append(int(year))
+        return []
+
+    monkeypatch.setattr(memories_module, "_day_candidates", candidates)
+    monkeypatch.setattr(memories_module, "_month_candidates", candidates)
+    runner = MemoriesRunner(catalog, max_years=2)
+    original_process = runner._process
+
+    def pause_after_publish(task, cancelled):
+        status = original_process(task, cancelled)
+        if task[0] == "discover" and status == "BATCH_COMPLETE":
+            batch_published.set()
+            assert release_worker.wait(3)
+        return status
+
+    monkeypatch.setattr(runner, "_process", pause_after_publish)
+    today = dt.date(2026, 10, 23)
+    try:
+        runner.card_state(catalog, now=today)
+        assert batch_published.wait(2)
+        assert runner._next_year == 2024
+        assert runner.cancel()["status"] == "CANCELLING"
+        release_worker.set()
+        assert runner.wait_idle()
+        assert runner._status == "CANCELLED"
+        assert runner._pending is None
+        assert runner._next_year == 2024
+        assert years.count(2025) == 2  # day and month for one completed year only
+        assert 2024 not in years
+    finally:
+        release_worker.set()
+        runner.close()
+
+
 def test_memories_cancel_without_work_preserves_completed_discovery(catalog):
     runner = MemoriesRunner(catalog, max_years=1)
     try:
@@ -414,6 +715,16 @@ def test_memories_frontend_does_not_report_cancelled_or_more_as_empty():
     assert '"CANCELLING", "CANCELLED", "STALE"' in app
     assert 'memory.status === "MORE" ? "最近检查的年份中，当前分类暂未找到回忆；还可以继续查看更早年份。"' in app
     assert '"已检查全部可用年份，当前分类没有可展示的回忆。' in app
+    assert 'memory.status === "DEFERRED" ? 900 : (count ? 600 : 250)' in app
+    assert 'String(body.today || "")' in app
+    assert 'if (!state.memories.loading) loadMemoryCards(false);' in app
+    assert 'state.memories.requestVersion += 1;\n      state.memories.previewRequestVersion += 1;\n      state.memories.loading = false;' in app
+    assert 'state.currentView !== "memories" || memory.previewTarget' in app
+    assert 'if (memory.pollTimer) window.clearTimeout(memory.pollTimer);\n    memory.pollTimer = null;' in app
+    assert 'state.memories.requestVersion += 1;\n    state.memories.loading = false;' in app
+    assert 'if (validPreview) {\n      state.memories.requestVersion += 1;\n      state.memories.loading = false;' in app
+    assert 'if (failure.status === 409)' in app
+    assert 'memory.cards = {day: [], month: []};' in app
 
 
 def test_memories_close_interrupts_and_joins_active_batch(catalog, monkeypatch):

@@ -251,14 +251,15 @@ def _spread(rows: list[sqlite3.Row], limit: int = MAX_PREVIEW) -> list[int]:
 
 class MemoriesRunner:
     """One low-priority, cancellable read worker with a one-item coalescing queue."""
-    def __init__(self, catalog: Catalog, *, max_years: int = 10, ttl_seconds: int = 3600):
+    def __init__(self, catalog: Catalog, *, max_years: int = 10):
         self.catalog = catalog
         self.path = catalog.db_path
         self.data_root = catalog.data_root
         self.max_years = max(1, min(int(max_years), 20))
-        self.ttl = min(max(int(ttl_seconds), 1), 24 * 3600)
+        # Results are valid for their date, revision tuple and algorithm version;
+        # a wall-clock TTL only forces needless rescans within the same session.
         self._condition = threading.Condition()
-        self._cache: OrderedDict[tuple[Any, ...], tuple[float, Any]] = OrderedDict()
+        self._cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._pending: tuple[Any, ...] | None = None
         self._active: tuple[Any, ...] | None = None
         self._cancelled: threading.Event | None = None
@@ -293,21 +294,21 @@ class MemoriesRunner:
 
     def _remember(self, key: tuple[Any, ...], value: Any) -> None:
         with self._condition:
-            self._cache[key] = (time.monotonic() + self.ttl, value)
+            self._cache[key] = value
             self._cache.move_to_end(key)
             while len(self._cache) > MAX_CACHE_ENTRIES:
-                self._cache.popitem(last=False)
+                # Keep a complete active 10-year discovery window (at most 20
+                # day/month cards); previews are cheaper to recompute and go first.
+                preview_key = next((candidate for candidate in self._cache if len(candidate) == 8), None)
+                self._cache.pop(preview_key if preview_key is not None else next(iter(self._cache)))
 
     def _cached(self, key: tuple[Any, ...]) -> Any | None:
         with self._condition:
-            entry = self._cache.get(key)
-            if entry is None:
-                return None
-            if entry[0] <= time.monotonic():
-                self._cache.pop(key, None)
+            value = self._cache.get(key)
+            if value is None:
                 return None
             self._cache.move_to_end(key)
-            return entry[1]
+            return value
 
     def _enqueue(self, task: tuple[Any, ...], *, priority: bool = False) -> None:
         connection = None
@@ -343,26 +344,44 @@ class MemoriesRunner:
             revision = _revision(connection)
             start_year = _cursor_decode(cursor, today, revision)
         with self._condition:
+            should_start = False
             if self._today != today or self._revision != revision:
                 self._today, self._revision = today, revision
                 self._cache.clear()
+                if (self._pending is not None
+                        and (self._pending[1] != today or self._pending[2] != revision)):
+                    # A not-yet-started task belongs to the old identity. Drop
+                    # it before scheduling the new date/revision work.
+                    self._pending = None
                 self._next_year = today.year - 1
                 self._window_start_year = today.year - 1
                 self._window_end_year = max(1, today.year - self.max_years)
                 self._status = "IDLE"
                 self._error = None
-            if cursor and self._status in {"MORE", "COMPLETE", "IDLE", "ERROR", "CANCELLED", "STALE"}:
+            if (cursor and start_year != self._window_start_year
+                    and self._status in {"MORE", "COMPLETE", "IDLE", "ERROR", "CANCELLED", "STALE"}):
                 self._next_year = start_year
                 self._window_start_year = start_year
                 self._window_end_year = max(1, start_year - self.max_years + 1)
                 self._status = "IDLE"
+            elif (cursor is None and self._status in {"MORE", "COMPLETE", "CANCELLED"}
+                  and self._active is None and self._pending is None
+                  and self._window_start_year != today.year - 1):
+                # Route re-entry starts at the first window even when the prior
+                # visit paged into older years. Keep cached cards; only restore
+                # the visible window and its discovery frontier.
+                self._next_year = today.year - 1
+                self._window_start_year = today.year - 1
+                self._window_end_year = max(1, today.year - self.max_years)
+                self._status = "IDLE"
+            should_start = self._status in {"IDLE", "CANCELLED"}
             next_year = self._next_year
             window_start = self._window_start_year
             end_year = self._window_end_year
-            discovery_active = self._active is not None and self._active[0] == "discover"
-            discovery_pending = self._pending is not None and self._pending[0] == "discover"
+            work_active = self._active is not None
+            work_pending = self._pending is not None
             discovery_failed = self._failed_task is not None and self._failed_task[0] == "discover"
-            if not discovery_active and not discovery_pending and not discovery_failed:
+            if not work_active and not work_pending and not discovery_failed:
                 if next_year is None:
                     self._status = "COMPLETE"
                 elif end_year is not None and next_year >= end_year:
@@ -376,20 +395,19 @@ class MemoriesRunner:
                 if retry and failed:
                     self._failed_task = None
                     self._failed_status = None
-            if retry or not failed:
+            # A status read never advances a running window. The first request,
+            # explicit retry, or re-entry after cancellation may start it.
+            if retry or (should_start and not failed):
                 self._enqueue(task)
         result = {"day": [], "month": []}
         with self._condition:
-            now_mono = time.monotonic()
-            for key in [key for key, entry in self._cache.items() if entry[0] <= now_mono]:
-                self._cache.pop(key, None)
             entries = list(self._cache.items())
         for key, entry in entries:
             if (len(key) == 7 and key[0] == today.isoformat() and tuple(key[3:6]) == tuple(revision[:3])
                     and key[6] == ALGORITHM_VERSION
                     and window_start is not None and end_year is not None
                     and end_year <= int(key[2]) <= window_start):
-                item = entry[1]
+                item = entry
                 result[item["memory_type"]].append(item)
         for group in result.values():
             group.sort(key=lambda item: int(item["year"]), reverse=True)
@@ -442,6 +460,8 @@ class MemoriesRunner:
                 self._status = "CANCELLING"
             elif pending:
                 self._status = "CANCELLED"
+            elif self._status == "DEFERRED":
+                self._status = "CANCELLED"
             self._condition.notify_all()
         if connection is not None:
             try:
@@ -477,7 +497,8 @@ class MemoriesRunner:
                 with catalog.read_snapshot() as conn:
                     if self._high_priority_busy(conn):
                         return "DEFERRED"
-                    if _revision(conn) != revision or not taken_time_read.rules_version_matches(conn):
+                    if (_revision(conn) != revision or not taken_time_read.rules_version_matches(conn)
+                            or self._today != today or self._revision != revision):
                         return "STALE"
                     day_rows = _day_candidates(conn, year, today.month, today.day,
                         cancelled=cancelled, foreground_busy=lambda: catalog_reads.foreground_busy(self.catalog))
@@ -485,20 +506,26 @@ class MemoriesRunner:
                     month_rows = _month_candidates(conn, year, today.month, cancelled=cancelled,
                         foreground_busy=lambda: catalog_reads.foreground_busy(self.catalog))
                     month_ids = _spread(month_rows)
-                    if _revision(conn) != revision:
+                    if cancelled.is_set():
+                        return "CANCELLED"
+                    if (_revision(conn) != revision or self._today != today or self._revision != revision):
                         return "STALE"
-                    if day_ids:
-                        item = {"memory_type":"day", "year":year,
-                            "title":f"{today.year-year}年前的今天", "selected_count":len(day_ids),
-                            "cover_asset_id":day_ids[0]}
-                        self._remember((today.isoformat(), "day", year, *revision[:3], ALGORITHM_VERSION), item)
-                    if month_ids:
-                        item = {"memory_type":"month", "year":year,
-                            "title":f"{year}年{today.month}月", "selected_count":len(month_ids),
-                            "cover_asset_id":month_ids[0]}
-                        self._remember((today.isoformat(), "month", year, *revision[:3], ALGORITHM_VERSION), item)
-                with self._condition:
-                    self._next_year = year - 1 if year > 1 else None
+                    # Serialize publication with cancel(): once cancellation
+                    # wins the condition lock, this year cannot be committed.
+                    with self._condition:
+                        if cancelled.is_set():
+                            return "CANCELLED"
+                        if day_ids:
+                            item = {"memory_type":"day", "year":year,
+                                "title":f"{today.year-year}年前的今天", "selected_count":len(day_ids),
+                                "cover_asset_id":day_ids[0]}
+                            self._remember((today.isoformat(), "day", year, *revision[:3], ALGORITHM_VERSION), item)
+                        if month_ids:
+                            item = {"memory_type":"month", "year":year,
+                                "title":f"{year}年{today.month}月", "selected_count":len(month_ids),
+                                "cover_asset_id":month_ids[0]}
+                            self._remember((today.isoformat(), "month", year, *revision[:3], ALGORITHM_VERSION), item)
+                        self._next_year = year - 1 if year > 1 else None
                 return "BATCH_COMPLETE"
             _, _, _, memory_type, year = task
             if not catalog_reads.wait_foreground_idle(self.catalog, cancelled):
@@ -537,6 +564,7 @@ class MemoriesRunner:
             catalog.close()
 
     def _loop(self) -> None:
+        deferred_delay = 0.25
         while True:
             with self._condition:
                 while self._pending is None and not self._closed:
@@ -566,15 +594,38 @@ class MemoriesRunner:
                 status = "ERROR"
                 error_message = str(error)[:240]
             with self._condition:
+                # Read the cancellation event under the same lock used by
+                # cancel(). Otherwise a cancel between this read and queueing
+                # the next year can be overwritten by the worker's old value.
+                was_cancelled = cancelled.is_set()
                 self._active = None
                 self._cancelled = None
                 self._connection = None
+                if was_cancelled:
+                    status = "CANCELLED"
                 self._status = status
                 self._error = error_message
                 if status == "BATCH_COMPLETE" and task[0] == "discover":
-                    self._status = "PARTIAL" if self._next_year is not None and self._window_end_year and self._next_year >= self._window_end_year else ("MORE" if self._next_year is not None else "COMPLETE")
+                    if (self._next_year is not None and self._window_end_year
+                            and self._next_year >= self._window_end_year):
+                        if self._pending is None:
+                            next_task = ("discover", task[1], task[2], self._next_year, self._window_end_year)
+                            self._pending = next_task
+                        self._status = "QUEUED"
+                    else:
+                        self._status = "MORE" if self._next_year is not None else "COMPLETE"
+                    deferred_delay = 0.25
                 elif status == "STALE":
                     self._status = "STALE"
+                elif (status == "COMPLETE" and task[0] == "preview"
+                      and self._pending is None and self._next_year is not None
+                      and self._window_end_year is not None
+                      and self._next_year >= self._window_end_year
+                      and self._today == task[1] and self._revision == task[2]):
+                    # A priority preview may interrupt an unfinished discovery year.
+                    # Resume that year after the preview rather than losing the window.
+                    self._pending = ("discover", task[1], task[2], self._next_year, self._window_end_year)
+                    self._status = "QUEUED"
                 if status in {"ERROR", "BUDGET"}:
                     self._failed_task = task
                     self._failed_status = status
@@ -582,6 +633,19 @@ class MemoriesRunner:
                     self._failed_task = None
                     self._failed_status = None
                 self._condition.notify_all()
+                if status == "DEFERRED" and was_cancelled:
+                    self._status = "CANCELLED"
+                    status = "CANCELLED"
+                if status == "DEFERRED" and task[0] == "discover" and not self._closed:
+                    # Yield without spinning; wake early if a preview/cancel/close
+                    # changes the queue or state while discovery is deferred.
+                    if self._pending is None:
+                        self._pending = task
+                        self._condition.wait(timeout=deferred_delay)
+                        if self._pending == task and self._status != "CANCELLED":
+                            self._status = "QUEUED"
+                            self._condition.notify_all()
+                    deferred_delay = min(deferred_delay * 2, 1.5)
 
     def close(self, *, timeout: float = 3.0) -> None:
         with self._condition:
