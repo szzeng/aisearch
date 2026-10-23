@@ -89,6 +89,15 @@ def test_archive_refuses_private_files_and_unsafe_names(tmp_path: Path) -> None:
             release._validate_zip_name(name)
 
 
+def test_archive_allows_dependency_package_named_models(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    stub = bundle / "_internal/tokenizers/models/__init__.pyi"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("class Model: ...\n", encoding="utf-8")
+    entries = release.archive_entries(bundle)
+    assert any(name.endswith("_internal/tokenizers/models/__init__.pyi") for _, name in entries)
+
+
 def test_preflight_guards_for_space_outputs_and_build_exit(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="insufficient disk space"):
         release.require_free_space(10, 11)

@@ -128,8 +128,13 @@ def archive_entries(bundle: Path) -> list[tuple[Path, str]]:
         forbidden_suffixes = {
             ".db", ".sqlite", ".sqlite3", ".safetensors", ".onnx", ".pt", ".pth", ".bin"
         }
+        # ``models`` is also a normal Python package directory (for example,
+        # tokenizers/models). Reject the bundle's top-level user model directory;
+        # model payloads elsewhere remain blocked by their file extensions.
+        user_model_directory = Path(relative).parts[0].casefold() == "models"
         if (
-            parts.intersection({"models", "photosearchdata", "user-data", "private"})
+            user_model_directory
+            or parts.intersection({"photosearchdata", "user-data", "private"})
             or path.suffix.casefold() in forbidden_suffixes
             or path.name.casefold() in {".env", ".env.local", "config.local.json", "settings.private.json"}
             or path.name.casefold().endswith((".db-wal", ".db-shm", ".db-journal", ".sqlite-wal", ".sqlite-shm"))
