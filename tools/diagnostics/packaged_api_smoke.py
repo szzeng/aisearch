@@ -43,6 +43,7 @@ from PIL import Image
 DEFAULT_BUNDLE = Path("dist") / "PhotoSearch"
 WORK_DIRNAME = "P1-05 打包页面验收"
 START_TIMEOUT_SECONDS = 180.0
+PROCESS_OUTPUT_LIMIT = 1600
 
 
 def free_port() -> int:
@@ -56,13 +57,91 @@ def drain(stream: Any, sink: list[str]) -> None:
         sink.append(line.rstrip("\n"))
 
 
-def wait_for(sink: list[str], predicate: Any, *, timeout: float) -> str | None:
+def _redact_process_output(lines: list[str]) -> str:
+    text = "\n".join(lines)
+    text = re.sub(
+        r"(?i)\b((?:csrf_)?token=)[^&\s\"']+",
+        r"\1<redacted>",
+        text,
+    )
+    if len(text) > PROCESS_OUTPUT_LIMIT:
+        text = "…[truncated]…" + text[-PROCESS_OUTPUT_LIMIT:]
+    return text or "<empty>"
+
+
+def _port_accepting(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.08):
+            return True
+    except OSError:
+        return False
+
+
+def _stop_child(process: subprocess.Popen[str]) -> None:
+    """Stop and reap only the launcher process created by this smoke run."""
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _invalid_bootstrap_message(reason: str, line: str) -> str:
+    return f"{reason}: {_redact_process_output([line])}"
+
+
+def wait_for(
+    sink: list[str],
+    predicate: Any,
+    *,
+    timeout: float,
+    process: subprocess.Popen[str] | None = None,
+    port: int | None = None,
+    stderr_sink: list[str] | None = None,
+    readers: list[threading.Thread] | None = None,
+) -> str | None:
     deadline = time.monotonic() + float(timeout)
+    listener_observed = False
     while time.monotonic() < deadline:
+        if port is not None and _port_accepting(port):
+            listener_observed = True
+        if process is not None:
+            exit_code = process.poll()
+            if exit_code is not None:
+                for reader in readers or []:
+                    reader.join(timeout=1.0)
+                unsigned_code = int(exit_code) & 0xFFFFFFFF
+                signed_code = (
+                    unsigned_code
+                    if unsigned_code < 0x80000000
+                    else unsigned_code - 0x100000000
+                )
+                session_url_observed = any(predicate(line) for line in sink)
+                raise RuntimeError(
+                    "packaged launcher exited before smoke startup completed: "
+                    f"exit={signed_code} (0x{unsigned_code:08X}); "
+                    f"raw_exit={exit_code}; "
+                    f"session_url_observed={session_url_observed}; "
+                    f"listener_observed={listener_observed}; "
+                    f"stdout={_redact_process_output(sink)}; "
+                    f"stderr={_redact_process_output(stderr_sink or [])}"
+                )
         for line in list(sink):
             if predicate(line):
                 return line
         time.sleep(0.2)
+    if process is not None:
+        raise TimeoutError(
+            "timed out waiting for packaged launcher session URL; "
+            f"listener_observed={listener_observed}; "
+            f"stdout={_redact_process_output(sink)}; "
+            f"stderr={_redact_process_output(stderr_sink or [])}"
+        )
     return None
 
 
@@ -468,17 +547,33 @@ def run_smoke(
 
     started = time.monotonic()
     try:
-        bootstrap = wait_for(stdout, lambda line: "token=" in line, timeout=timeout)
+        bootstrap = wait_for(
+            stdout,
+            lambda line: "token=" in line,
+            timeout=timeout,
+            process=process,
+            port=port,
+            stderr_sink=stderr,
+            readers=readers,
+        )
         if not bootstrap:
             raise SystemExit(f"packaged launcher never printed its session URL: {stdout} {stderr}")
         match = re.search(r"https?://\S+", bootstrap)
         if not match:
-            raise SystemExit(f"the launcher did not print a usable session URL: {bootstrap}")
+            raise SystemExit(
+                _invalid_bootstrap_message(
+                    "the launcher did not print a usable session URL", bootstrap
+                )
+            )
         bootstrap_url = urlsplit(match.group(0))
         query = parse_qs(bootstrap_url.query)
         token = (query.get("token") or [""])[0]
         if not token:
-            raise SystemExit(f"the printed session URL carries no credential: {bootstrap}")
+            raise SystemExit(
+                _invalid_bootstrap_message(
+                    "the printed session URL carries no credential", bootstrap
+                )
+            )
         checks["startup_seconds"] = round(time.monotonic() - started, 2)
         checks["bootstrap_line_present"] = True
         checks["bootstrap_next"] = (query.get("next") or [None])[0]
@@ -1165,11 +1260,7 @@ def run_smoke(
             checks["detail"] = client.get(f"/api/v1/assets/{asset_id}").status_code
             checks["capabilities"] = client.get("/api/v1/capabilities").status_code
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=60)
-        except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-            process.kill()
+        _stop_child(process)
         for reader in readers:
             reader.join(timeout=10.0)
 
@@ -1195,7 +1286,15 @@ def run_smoke(
     for reader in restart_readers:
         reader.start()
     try:
-        restart_bootstrap = wait_for(restart_stdout, lambda line: "token=" in line, timeout=timeout)
+        restart_bootstrap = wait_for(
+            restart_stdout,
+            lambda line: "token=" in line,
+            timeout=timeout,
+            process=restart,
+            port=restart_port,
+            stderr_sink=restart_stderr,
+            readers=restart_readers,
+        )
         checks["credential_rotation_second_startup"] = restart_bootstrap is not None
         if restart_bootstrap is not None:
             restart_match = re.search(r"https?://\S+", restart_bootstrap)
@@ -1209,11 +1308,7 @@ def run_smoke(
             checks["credential_rotation_uses_fresh_token"] = False
             checks["credential_rotation_health"] = None
     finally:
-        restart.terminate()
-        try:
-            restart.wait(timeout=60)
-        except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-            restart.kill()
+        _stop_child(restart)
         for reader in restart_readers:
             reader.join(timeout=10.0)
     checks["credential_rotation_stderr_free_of_token"] = all(

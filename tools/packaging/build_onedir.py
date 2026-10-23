@@ -11,6 +11,7 @@ registers it before the CUDA session is created.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,20 @@ from pathlib import Path
 import onnxruntime
 
 DLL_TARGET_DIRECTORY = "nvidia_dlls"
+
+
+def pyinstaller_environment() -> dict[str, str]:
+    """Prefer Windows' active VC runtime over unrelated DLLs earlier on PATH.
+
+    PyInstaller resolves transitive Windows DLL dependencies through PATH. On this
+    machine, a third-party application's older ``msvcp140.dll`` was ahead of
+    System32 and was copied into the package, where it crashed before Python
+    could print even ``--help``. Keep the change scoped to the PyInstaller child.
+    """
+    env = os.environ.copy()
+    system32 = Path(os.environ["WINDIR"]) / "System32"
+    env["PATH"] = os.pathsep.join((str(system32), env.get("PATH", "")))
+    return env
 
 
 def site_packages_directory() -> Path:
@@ -94,7 +109,9 @@ def main() -> int:
         command += ["--add-binary", f"{dll};{DLL_TARGET_DIRECTORY}"]
     command.append(str(root / "src" / "photo_search" / "__main__.py"))
     print(f"bundling {len(dlls)} NVIDIA runtime DLLs into {DLL_TARGET_DIRECTORY}/")
-    result = subprocess.run(command, cwd=root, check=False).returncode
+    result = subprocess.run(
+        command, cwd=root, env=pyinstaller_environment(), check=False
+    ).returncode
     if result == 0:
         bundle = args.distpath.resolve() / "PhotoSearch"
         for filename in (

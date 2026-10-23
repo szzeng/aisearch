@@ -1,3 +1,7 @@
+## Current task: P4-WINDOWS-EXE-STARTUP-CRASH-FIX（2026-10-23）
+
+冻结 EXE `--help` 与子命令 help 复现 `0xC0000005`；Application Error 1000 指向包内 `MSVCP140.dll`。PyInstaller 收集来源是 PATH 前置的 VanDyke 14.32 VC runtime，而 System32/libheif 为 14.51。构建脚本现仅在 PyInstaller 子进程优先 Windows System32；启动 smoke 补早退退出码、监听、脱敏输出和子进程清理。定向 JUnit 7/7、Ruff、py_compile、diff-check 通过；有限范围独立打包代码复核 PASS。新包尚未构建，F4 PENDING；用户授权本地简单提交后，本轮仅提交、不推送。详见[任务卡](tasks/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)与[报告](reports/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)。未访问真实图库/模型，未读取 dump，未改系统环境。
+
 ## P4-WINDOWS-RELEASE-ONE-CLICK（2026-10-23）
 
 新增 tools/packaging/release_windows.ps1 一键个人便携 ZIP 编排、ZIP64/SHA helper、打包 smoke 原地执行模式和 docs/windows-release.md。定向 JUnit 8/8、Ruff、Python 编译、PowerShell AST 与 git diff --check 通过；Luna High 有界独立复核无 blocker。状态 IMPLEMENTED / VALIDATION PENDING：首轮构建及 bundle 校验成功；冻结 smoke 的 3 项旧断言已修正，同一包复跑 exit 0、problems=[]。从干净 checkout 重跑正式入口时，D: 仅 21.80 GiB，低于 25.61 GiB 预检门槛，未开始新构建/ZIP。任务失败 staging 共 10.93 GiB，自动删除策略拒绝，保留原始失败报告与 warnings。R1 新构建/ZIP 与 R3 GPU 仍 pending。任务代码已本地提交，未推送/tag/发布。详见[任务卡](tasks/P4-WINDOWS-RELEASE-ONE-CLICK.md)与[报告](reports/P4-WINDOWS-RELEASE-ONE-CLICK.md)。
