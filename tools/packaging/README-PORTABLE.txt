@@ -7,19 +7,19 @@ System requirements
 
 Start
 1. Extract the complete ZIP to a normal directory. The application data is stored separately.
-2. Double-click Download-Qwen.cmd to confirm and download the fixed Qwen revision (about 4.3 GB); keep its console visible for progress. Ctrl+C cancels. Or use the `embedding prepare-local` command below for an existing verified local model directory.
+2. On first use, the console asks for a data directory (for example D:\PhotoSearchData). This selected root is reused by both Download-Qwen.cmd and Start-PhotoSearch.cmd. Double-click Download-Qwen.cmd to confirm and download the fixed Qwen revision (about 4.3 GB); keep its console visible for progress. Ctrl+C cancels. Or use the `embedding prepare-local` command below for an existing verified local model directory.
 3. Double-click Start-PhotoSearch.cmd. Keep its console window open while using the app.
 4. To exit normally, press Ctrl+C in that console and wait for shutdown to complete. Closing the browser tab does not stop the local service.
 5. You may move the complete program directory and launch it again. Deleting the ZIP or program directory does not remove the data root.
 
 Model files
 The shipped manifests are templates, not weights. Do not download an unpinned upstream "latest" model. Use a locally prepared model whose revision and every file SHA-256 match the manifest under _internal/tools/prepare_models/manifests. Qwen3-VL-Embedding-2B is pinned to revision 9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda; its model.safetensors SHA-256 is c73fa9caeddeb3ff831d46c085a7a5708343248ca777e90f2d486964464509c1. The 512D and 1024D EXIF v2 providers share these weights but use independent vector spaces. To install an already-prepared local directory, use:
-  PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source <prepared-model-directory>
-  PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-1024d-exif-v2 --source <prepared-model-directory>
+  PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-exif-v2 --source <prepared-model-directory> --data-root <chosen-data-root>
+  PhotoSearch.exe embedding prepare-local --provider qwen3-vl-embedding-2b-1024d-exif-v2 --source <prepared-model-directory> --data-root <chosen-data-root>
 The app verifies every pinned size and SHA-256 before accepting files. Download uses the pinned repository/commit and allowlisted filenames only. It stages under the data root and does not publish incomplete downloads or replace a valid install.
 
 Data and diagnostics
-Default data root: %LOCALAPPDATA%\PhotoSearchData. The data root is independent of this program directory. For isolated diagnostics, pass --data-root <directory> after PhotoSearch.exe; never point a smoke test at a personal library.
+Portable launchers prompt for a data root on first use (e.g. D:\PhotoSearchData) and remember it in %APPDATA%\PhotoSearch\portable-data-root.txt (a tiny settings file). Models, database, indexes and caches go to the chosen data root, not the C: default. To change it, stop the app and run Set-PhotoSearch-Data.cmd; this does not move old data. Direct PhotoSearch.exe CLI usage must pass --data-root explicitly. The data root is independent of this program directory. For isolated diagnostics, pass --data-root <directory> after PhotoSearch.exe; never point a smoke test at a personal library.
 The app binds to 127.0.0.1 and creates a one-time local session. If startup fails, keep the console open and read its error. No model, CUDA, port, permission, or worker failure is supposed to silently switch the AI provider or run Qwen on CPU.
 
 Supported content and safety

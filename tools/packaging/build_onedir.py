@@ -119,6 +119,8 @@ def main() -> int:
             "NEW-PC-QUICK-START.txt",
             "Download-Qwen.cmd",
             "Start-PhotoSearch.cmd",
+            "Select-PhotoSearchDataRoot.ps1",
+            "Set-PhotoSearch-Data.cmd",
         ):
             shutil.copy2(root / "tools" / "packaging" / filename, bundle / filename)
     return result

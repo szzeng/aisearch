@@ -41,6 +41,8 @@ def validate_bundle(bundle: Path) -> None:
         executable,
         bundle / "Start-PhotoSearch.cmd",
         bundle / "Download-Qwen.cmd",
+        bundle / "Select-PhotoSearchDataRoot.ps1",
+        bundle / "Set-PhotoSearch-Data.cmd",
         bundle / "README-PORTABLE.txt",
         bundle / "NEW-PC-QUICK-START.txt",
         bundle / "_internal" / "tools" / "prepare_models" / "manifests",
