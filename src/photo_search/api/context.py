@@ -93,6 +93,7 @@ class ApiContext:
         self._retention_cleanup_runner: Any | None = None
         self._face_detail_recovery_started = False
         self._photo_smart_refresh_runner: Any | None = None
+        self._memories_runner: Any | None = None
         self._data_root_lease_acquired = False
         self._smart_refresh_recovery_complete = False
         self._smart_refresh_recovery_lock = threading.Lock()
@@ -210,6 +211,14 @@ class ApiContext:
             except Exception:  # noqa: BLE001 - app startup remains available if batch recovery fails
                 logger.exception("recovering source-detail face batches failed")
         return self._service
+
+    def memories_runner(self) -> Any:
+        """The one bounded, low-priority read worker for on-demand photo memories."""
+        if self._memories_runner is None:
+            from photo_search.api.memories import MemoriesRunner
+
+            self._memories_runner = MemoriesRunner(self.service().catalog)
+        return self._memories_runner
 
     def recover_smart_refreshes_after_lock(self) -> bool:
         """Confirm exclusive data-root ownership, then recover prior-process work."""
@@ -447,6 +456,13 @@ class ApiContext:
             self._closed = True
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
+        memories_runner = self._memories_runner
+        self._memories_runner = None
+        if memories_runner is not None:
+            try:
+                memories_runner.close()
+            except Exception:  # pragma: no cover - shutdown must not fail.
+                logger.debug("stopping the photo memories worker failed", exc_info=True)
         candidate_manager = self._embedding_candidate_manager
         self._embedding_candidate_manager = None
         if candidate_manager is not None:

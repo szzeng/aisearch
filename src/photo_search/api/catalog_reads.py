@@ -83,6 +83,7 @@ class _CatalogWorkers:
             max_workers=CATALOG_WORKERS, thread_name_prefix="catalog-worker",
         )
         self._lock = threading.RLock()
+        self._activity = threading.Condition()
         self._closed = False
         self._requests: dict[Future[Any], _Request] = {}
 
@@ -99,11 +100,33 @@ class _CatalogWorkers:
             )
             self._requests[future] = request
             future.add_done_callback(self._finished)
+        with self._activity:
+            self._activity.notify_all()
         return future, request
 
     def _finished(self, future: Future[Any]) -> None:
         with self._lock:
             self._requests.pop(future, None)
+        with self._activity:
+            self._activity.notify_all()
+
+    def foreground_busy(self) -> bool:
+        with self._lock:
+            return bool(self._requests)
+
+    def wait_foreground_idle(self, cancelled: threading.Event) -> bool:
+        """Wait for owned foreground reads to drain; new work wakes low-priority callers."""
+        with self._activity:
+            while not cancelled.is_set():
+                with self._lock:
+                    if not self._requests:
+                        return True
+                self._activity.wait(timeout=0.25)
+            return False
+
+    def wake_activity_waiters(self) -> None:
+        with self._activity:
+            self._activity.notify_all()
 
     def _run(self, request: _Request, query: Callable[..., Any], args: tuple[Any, ...],
              kwargs: dict[str, Any], projection: bool,
@@ -185,6 +208,27 @@ def _workers(catalog: Catalog) -> _CatalogWorkers:
                 raise
             catalog._catalog_workers = pool
         return pool
+
+
+def foreground_busy(catalog: Catalog) -> bool:
+    """Whether a foreground catalog request is active for this app-owned catalog."""
+    with _POOL_INIT_LOCK:
+        pool = getattr(catalog, "_catalog_workers", None)
+    return False if pool is None else pool.foreground_busy()
+
+
+def wait_foreground_idle(catalog: Catalog, cancelled: threading.Event) -> bool:
+    """Event-driven foreground priority gate for bounded background catalog work."""
+    with _POOL_INIT_LOCK:
+        pool = getattr(catalog, "_catalog_workers", None)
+    return True if pool is None else pool.wait_foreground_idle(cancelled)
+
+
+def wake_foreground_idle(catalog: Catalog) -> None:
+    with _POOL_INIT_LOCK:
+        pool = getattr(catalog, "_catalog_workers", None)
+    if pool is not None:
+        pool.wake_activity_waiters()
 
 
 async def _run_catalog_work(catalog: Catalog, query: Callable[..., Any], args: tuple[Any, ...],

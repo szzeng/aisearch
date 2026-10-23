@@ -452,6 +452,7 @@ class PhotoCollectionCreateRequest(BaseModel):
     name: StrictStr = Field(min_length=1, max_length=80)
     create_request_id: StrictStr = Field(min_length=1, max_length=128)
     asset_ids: list[StrictInt] | None = Field(default=None, min_length=1, max_length=500)
+    require_present: bool = False
 
     @field_validator("asset_ids")
     @classmethod

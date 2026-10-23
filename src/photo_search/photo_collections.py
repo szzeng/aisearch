@@ -11,6 +11,7 @@ import unicodedata
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
+from photo_search.catalog.image_policy import image_location_sql
 from photo_search.catalog.video import photo_asset_sql
 
 MAX_BATCH = 500
@@ -140,6 +141,7 @@ def list_collections(catalog: Any, *, limit: int = 20, cursor: str | None = None
 
 def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: str = "empty",
                      asset_ids: list[int] | None = None,
+                     require_present: bool = False,
                      request_payload_hash: str | None = None,
                      auth_session_hash: str | None = None,
                      source_token_hash: str | None = None,
@@ -157,6 +159,10 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
     if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 128:
         raise _fail("create_request_id 无效")
     payload_hash = request_payload_hash or hashlib.sha256(json.dumps([display, source_hash, ids], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    if require_present:
+        payload_hash = hashlib.sha256(json.dumps(
+            [payload_hash, "require_present", True], separators=(",", ":")
+        ).encode()).hexdigest()
     with catalog.write() as connection:
         old = connection.execute("SELECT * FROM photo_collections WHERE create_request_id=?", (request_id,)).fetchone()
         if old is not None:
@@ -206,11 +212,19 @@ def create_collection(catalog: Any, name: Any, request_id: str, *, source_hash: 
                 raise _fail("人物合集搜索范围已变化，请重新搜索", status=409, code="PERSON_COLLECTION_REVISION_STALE")
         if ids:
             marks = ",".join("?" for _ in ids)
+            availability_sql = (
+                " AND EXISTS (SELECT 1 FROM file_locations AS p INDEXED BY "
+                "idx_file_locations_present_asset WHERE p.asset_id=a.asset_id "
+                "AND p.availability='PRESENT' AND " + image_location_sql("p") + ")"
+                if require_present else ""
+            )
             valid = {int(row[0]) for row in connection.execute(
-                "SELECT a.asset_id FROM assets a WHERE a.asset_id IN (" + marks + ") AND a.state='ACTIVE' AND " + photo_sql,
+                "SELECT a.asset_id FROM assets a WHERE a.asset_id IN (" + marks + ") AND a.state='ACTIVE' AND " + photo_sql + availability_sql,
                 (*ids, *photo_params))}
             if valid != set(ids):
-                raise _fail("照片不存在、不可用或不符合图片资格", status=409, code="PHOTO_COLLECTION_ASSET_INVALID")
+                message = ("所选照片已失效、缺少可用图片路径或不符合图片资格，请刷新回忆后重试"
+                           if require_present else "照片不存在、不可用或不符合图片资格")
+                raise _fail(message, status=409, code="PHOTO_COLLECTION_ASSET_INVALID")
         token = secrets.token_hex(16)
         now = catalog.now_ms()
         try:

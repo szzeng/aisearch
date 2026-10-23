@@ -8,14 +8,16 @@
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/web/styles.css?v=p4-windows-new-pc-2" />
     <link rel="stylesheet" href="/web/photo-timeline.css?v=p4-photo-collection-a-1" />
+    <link rel="stylesheet" href="/web/memories.css?v=p4-photo-memories-ux-a-1" />
     <script src="/web/map-config.js" defer></script>
     <link rel="stylesheet" href="/web/photo-info.css?v=p4-photo-ocr-display-a-1" />
     <script src="/web/favorites-ui.js?v=p4-favorites-icon-20261019-1" defer></script>
     <script src="/web/photo-info.js?v=p4-ui2-overall-ux-polish-8" defer></script>
+    <script src="/web/memories.js?v=p4-photo-memories-a-2" defer></script>
     <script src="/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-photo-random-browse-7" defer></script>
+    <script src="/web/app.js?v=p4-photo-memories-ux-a-3" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -25,6 +27,7 @@
       <a class="app-brand" href="/" aria-label="本机图片搜索首页">相册</a>
       <nav class="app-nav" aria-label="主要导航">
         <a class="nav-link" data-shell-page="photos" href="/" aria-current="page"><span class="nav-icon" aria-hidden="true">▦</span>照片</a>
+        <a class="nav-link" data-shell-page="memories" href="/?view=memories"><span class="nav-icon" aria-hidden="true">◷</span>回忆</a>
         <a class="nav-link" data-shell-page="favorites" href="/?view=favorites"><span class="nav-icon" aria-hidden="true">☆</span>收藏</a>
         <a class="nav-link" data-shell-page="photo-collections" href="/?view=photo-collections"><span class="nav-icon" aria-hidden="true">▤</span>照片合集</a>
         <a class="nav-link" id="nav-persons" href="/persons" hidden data-shell-page="persons"><span class="nav-icon" aria-hidden="true">♙</span>人物</a>
@@ -330,6 +333,27 @@
           <div id="photo-smart-collections-status" class="state-block" role="status" aria-live="polite"></div>
           <ul id="photo-smart-collections-list" class="smart-collection-list"></ul>
           <button id="photo-smart-collections-more" type="button" hidden>加载更多</button>
+        </div>
+      </section>
+
+      <section id="view-memories" class="view gallery-management-page memories-page" hidden aria-labelledby="memories-title">
+        <p><a id="memories-back" href="/?view=memories" hidden>返回回忆</a></p>
+        <h2 id="memories-title">回忆</h2>
+        <div id="memories-switcher" class="memories-switcher" role="group" aria-label="选择回忆类型">
+          <button id="memories-section-day" type="button" aria-pressed="true">往年今日</button>
+          <button id="memories-section-month" type="button" aria-pressed="false">那年这个月</button>
+        </div>
+        <p id="memories-section-description" class="hint">回看过去同一天拍摄的照片。</p>
+        <p id="memories-status" class="state-block" role="status" aria-live="polite">正在寻找过去的照片…</p>
+        <button id="memories-retry" type="button" hidden>重试回忆生成</button>
+        <div id="memories-cards" class="memories-groups">
+          <div id="memories-list" class="memories-grid"></div>
+          <button id="memories-more" type="button" hidden>查看更多年份</button>
+        </div>
+        <div id="memories-preview" hidden>
+          <p id="memories-preview-title" class="page-intro"></p>
+          <p class="home-actions"><button id="memories-view-all" type="button">查看该日期全部照片</button><button id="memories-save" type="button">保存为相册</button></p>
+          <div id="memories-assets" class="grid memories-assets" aria-label="回忆精选照片"></div>
         </div>
       </section>
 

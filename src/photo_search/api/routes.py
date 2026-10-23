@@ -1081,6 +1081,38 @@ async def get_favorites(
     )
 
 
+@router.get("/memories/cards", summary="Discover a bounded page of photo memories")
+async def get_memory_cards(
+    request: Request,
+    cursor: str | None = Query(default=None, max_length=2048),
+    retry: bool = Query(default=False),
+) -> dict[str, Any]:
+    context = context_of(request)
+    service = context.service()
+    return await run_catalog_read(service.catalog, context.memories_runner().card_state,
+                                  cursor=cursor, retry=retry)
+
+
+@router.get("/memories/preview", summary="Read a bounded photo memory preview")
+async def get_memory_preview(
+    request: Request,
+    memory_type: Literal["day", "month"] = Query(...),
+    year: int = Query(..., ge=1, le=9998),
+    retry: bool = Query(default=False),
+) -> dict[str, Any]:
+    context = context_of(request)
+    service = context.service()
+    return await run_catalog_read(service.catalog, context.memories_runner().preview_state,
+        memory_type=memory_type, year=year, retry=retry)
+
+
+@router.delete("/memories/jobs", summary="Cancel the in-memory photo memories calculation")
+async def cancel_memory_jobs(request: Request) -> dict[str, Any]:
+    context = context_of(request)
+    runner = context._memories_runner
+    return {"status": "IDLE"} if runner is None else runner.cancel()
+
+
 @router.get("/favorites/states", response_model=FavoriteStatesResponse, summary="Batch favorite states")
 async def get_favorite_states(
     request: Request,
@@ -1114,7 +1146,7 @@ async def list_photo_collections(request: Request, limit: int = Query(default=20
 @router.post("/photo-collections", summary="Create an ordinary photo collection")
 async def create_photo_collection(payload: PhotoCollectionCreateRequest, request: Request) -> dict[str, Any]:
     return photo_collections.create_collection(service_of(request).catalog, payload.name, payload.create_request_id,
-        asset_ids=payload.asset_ids)
+        asset_ids=payload.asset_ids, require_present=payload.require_present)
 
 
 @router.get("/photo-collections/{collection_id}", summary="Read one ordinary photo collection")

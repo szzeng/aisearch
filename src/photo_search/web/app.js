@@ -114,6 +114,9 @@
     photoCollections: { cursor: null, hasMore: false, revision: null, requestVersion: 0,
       collectionId: null, collection: null, memberCursor: null, memberHasMore: false,
       timelineMount: null, timelineScope: null, detailMode: "list" },
+    memories: { cards: null, cursor: null, hasMore: false, requestVersion: 0, preview: null, previewTarget: null, previewRequestVersion: 0,
+      scrollY: 0, loading: false, pollTimer: null, appendWindow: false, revision: null, cancelPromise: null,
+      section: "day", status: "IDLE", error: "", renderedSection: null, renderedRevision: null },
     photoCollectionKind: "ordinary",
     photoSmart: { cursor: null, hasMore: false, requestVersion: 0, viewEpoch: 0, entryEpoch: 0, smartId: null,
       collection: null, rule: null, assetCursor: null, assetHasMore: false,
@@ -3278,6 +3281,11 @@
     }
   }
 
+  function stopMemoriesPolling() {
+    if (state.memories.pollTimer) window.clearTimeout(state.memories.pollTimer);
+    state.memories.pollTimer = null;
+  }
+
   function showView(name) {
     var previousView = state.currentView;
     if (previousView === "photoSmartCollection" && name !== "photoSmartCollection") {
@@ -3287,6 +3295,12 @@
       stopPhotoSmartRefreshObserver();
       if (state.photoSmart.pager) state.photoSmart.pager.setEnabled(false);
     }
+    if (previousView === "memories" && name !== "memories") {
+      state.memories.requestVersion += 1;
+      state.memories.previewRequestVersion += 1;
+      stopMemoriesPolling();
+      state.memories.cancelPromise = request("/memories/jobs", {method:"DELETE", body:{}}).catch(function () {});
+    }
     if (name === "sources") enterEmbeddingManagementView(previousView);
     state.currentView = name;
     if (name !== "sources") stopEmbeddingTaskPoll();
@@ -3295,7 +3309,7 @@
       state.detailInfoMount = null;
       state.detailSeq = (state.detailSeq || 0) + 1;
     }
-    ["sources", "browse", "detail", "photoCollections", "photoCollection", "photoSmartCollection"].forEach(function (view) {
+    ["sources", "browse", "detail", "photoCollections", "photoCollection", "photoSmartCollection", "memories"].forEach(function (view) {
       var section = els.views[view];
       if (!section) return;
       var active = view === name;
@@ -3307,8 +3321,9 @@
     var shellLinks = document.querySelectorAll ? document.querySelectorAll("[data-shell-page]") : [];
     Array.prototype.forEach.call(shellLinks, function (link) {
       var activePage = name === "sources" ? "management" :
+        (name === "memories" ? "memories" :
         (name === "photoCollections" || name === "photoCollection" || name === "photoSmartCollection" ? "photo-collections" :
-          (name === "browse" && state.browse.scope === "favorites" ? "favorites" : "photos"));
+          (name === "browse" && state.browse.scope === "favorites" ? "favorites" : "photos")));
       if (link.dataset.shellPage === activePage) {
         link.setAttribute("aria-current", "page");
       } else {
@@ -3327,6 +3342,7 @@
     }
     if (name === "photoCollection") loadPhotoCollectionAssets(false);
     if (name === "photoSmartCollection") loadPhotoSmartAssets(false);
+    if (name === "memories") loadMemoriesRoute();
     updateSearchScopeAction();
   }
 
@@ -3687,6 +3703,226 @@
       })
       .finally(function () { embeddingStatusRequest = null; });
     return embeddingStatusRequest;
+  }
+
+  function renderMemorySection() {
+    var memory = state.memories;
+    var section = memory.section === "month" ? "month" : "day";
+    var month = section === "month";
+    var items = memory.cards && memory.cards[section] ? memory.cards[section] : [];
+    els.memoriesSectionDay.setAttribute("aria-pressed", month ? "false" : "true");
+    els.memoriesSectionMonth.setAttribute("aria-pressed", month ? "true" : "false");
+    els.memoriesSectionDescription.textContent = month
+      ? "回看过去同一个月拍摄的照片，按年份浏览。"
+      : "回看过去同一天拍摄的照片，按年份浏览。";
+    els.memoriesList.setAttribute("aria-label", month ? "那年这个月回忆卡片" : "往年今日回忆卡片");
+    els.memoriesBack.href = "/?view=memories&section=" + section;
+    if (memory.renderedSection !== section || memory.renderedRevision !== memory.revision) {
+      els.memoriesList.replaceChildren();
+      memory.renderedSection = section;
+      memory.renderedRevision = memory.revision;
+    }
+    var rendered = new Set(Array.prototype.map.call(els.memoriesList.children, function (node) {
+      return node.dataset.memoryKey || "";
+    }));
+    items.forEach(function (item) {
+      var key = item.memory_type + "-" + item.year;
+      if (!rendered.has(key)) {
+        els.memoriesList.appendChild(window.PhotoMemoriesUI.card(item, openMemoryPreview));
+        rendered.add(key);
+      }
+    });
+    els.memoriesMore.hidden = !memory.hasMore;
+    var count = items.length;
+    var busy = ["QUEUED", "RUNNING", "DEFERRED", "PARTIAL", "CANCELLING", "CANCELLED", "STALE"].includes(memory.status);
+    els.memoriesRetry.hidden = !["ERROR", "BUDGET"].includes(memory.status);
+    els.memoriesStatus.textContent = count
+      ? "已找到 " + count + " 组" + (month ? "那年这个月" : "往年今日") + "回忆。卡片仅展示精选照片。" + (memory.status === "BUDGET" ? " 查询未完成，可手动重试。" : (busy ? " 正在分批寻找更早年份。" : ""))
+      : busy ? "正在分批寻找可信拍摄日期的回忆；尚未完成的年份不会显示为空结果。"
+        : memory.status === "ERROR" ? "回忆生成遇到问题：" + (memory.error || "可重试")
+          : memory.status === "BUDGET" ? "查询达到单批工作预算，当前结果尚未完成；这不表示没有回忆。可点击重试。"
+            : memory.status === "MORE" ? "最近检查的年份中，当前分类暂未找到回忆；还可以继续查看更早年份。"
+            : memory.status === "IDLE" || memory.status === "LOADING" ? "正在寻找过去的照片…"
+              : "已检查全部可用年份，当前分类没有可展示的回忆。拍摄日期尚未提取的照片仍可能在建库完成后出现。";
+    if (busy && state.currentView === "memories") {
+      if (memory.pollTimer) window.clearTimeout(memory.pollTimer);
+      memory.pollTimer = window.setTimeout(function () { loadMemoryCards(memory.appendWindow); }, 900);
+    }
+  }
+
+  function renderMemoryCards(body, append) {
+    var groups = body.cards || {};
+    var memory = state.memories;
+    var currentRevision = String(body.catalog_filter_revision) + ":" + String(body.favorites_revision) + ":" + String(body.taken_time_rules_version);
+    if (!append || (memory.revision && memory.revision !== currentRevision) || !memory.cards) {
+      memory.cards = {day: [], month: []};
+      memory.appendWindow = false;
+    }
+    memory.revision = currentRevision;
+    ["day", "month"].forEach(function (section) {
+      var existing = new Set(memory.cards[section].map(function (item) { return String(item.year); }));
+      (groups[section] || []).forEach(function (item) {
+        if (!existing.has(String(item.year))) memory.cards[section].push(item);
+      });
+    });
+    memory.cursor = body.next_cursor || null;
+    memory.hasMore = Boolean(body.next_cursor);
+    memory.status = String(body.status || "COMPLETE");
+    memory.error = String(body.error || "");
+    renderMemorySection();
+  }
+
+  function loadMemoryCards(append, retry) {
+    var memory = state.memories;
+    var version = ++memory.requestVersion;
+    memory.loading = true;
+    els.memoriesRetry.hidden = true;
+    memory.status = memory.cards ? memory.status : "LOADING";
+    if (!memory.cards) renderMemorySection();
+    else els.memoriesStatus.textContent = append ? "正在继续寻找更早的回忆…" : "正在刷新回忆…";
+    var query = append && memory.cursor ? "?cursor=" + encodeURIComponent(memory.cursor) : "";
+    if (retry) query += (query ? "&" : "?") + "retry=true";
+    var path = "/memories/cards" + query;
+    return Promise.resolve(memory.cancelPromise).catch(function () {}).then(function () { return request(path); }).then(function (result) {
+      if (version !== memory.requestVersion || state.currentView !== "memories") return;
+      renderMemoryCards(result.body, append);
+    }).catch(function (failure) {
+      if (version !== memory.requestVersion || state.currentView !== "memories") return;
+      state.memories.status = "ERROR";
+      state.memories.error = failure.message || "请刷新重试";
+      renderMemorySection();
+      els.memoriesMore.hidden = !memory.cursor;
+    }).finally(function () { if (version === memory.requestVersion) memory.loading = false; });
+  }
+
+  function renderMemoryPreview(body) {
+    if (body.status !== "READY") return;
+    state.memories.preview = body;
+    state.memories.previewTarget = {memory_type:body.memory_type, year:body.year};
+    els.memoriesCards.hidden = true;
+    els.memoriesSwitcher.hidden = true;
+    els.memoriesSectionDescription.hidden = true;
+    els.memoriesPreview.hidden = false;
+    els.memoriesBack.hidden = false;
+    els.memoriesPreviewTitle.textContent = body.title + " · 精选 " + body.selected_count + " 张";
+    els.memoriesStatus.textContent = "精选照片最多 24 张；“查看该日期全部照片”会打开完整拍摄日期范围。";
+    els.memoriesViewAll.hidden = false;
+    els.memoriesSave.hidden = false;
+    els.memoriesAssets.replaceChildren();
+    body.assets.forEach(function (asset) {
+      els.memoriesAssets.appendChild(window.PhotoMemoriesUI.tile(asset, function (item) { openMemoryAsset(item); }));
+    });
+  }
+
+  function openMemoryPreview(card) {
+    stopMemoriesPolling();
+    state.memories.section = card.memory_type === "month" ? "month" : "day";
+    state.memories.scrollY = Math.max(0, Number(window.scrollY || window.pageYOffset) || 0);
+    var url = new URL(window.location.href);
+    url.searchParams.set("view", "memories"); url.searchParams.set("section", state.memories.section); url.searchParams.set("type", card.memory_type);
+    url.searchParams.set("year", String(card.year));
+    window.history.pushState({ memoryPreview: true }, "", url.pathname + url.search);
+    loadMemoryPreview(card.memory_type, Number(card.year));
+  }
+
+  function setMemorySection(section) {
+    if (section !== "day" && section !== "month") return;
+    var memory = state.memories;
+    if (memory.section === section && !memory.preview) return;
+    memory.section = section;
+    memory.preview = null;
+    memory.previewTarget = null;
+    var url = new URL(window.location.href);
+    url.searchParams.set("view", "memories");
+    url.searchParams.set("section", section);
+    url.searchParams.delete("type");
+    url.searchParams.delete("year");
+    window.history.pushState({memorySection: section}, "", url.pathname + url.search);
+    loadMemoriesRoute();
+  }
+
+  function loadMemoryPreview(memoryType, year) {
+    var retry = arguments.length > 2 && arguments[2];
+    var memory = state.memories;
+    var version = ++memory.previewRequestVersion;
+    var monthLabel = String(new Date().getMonth() + 1) + "月";
+    var targetLabel = String(year) + (memoryType === "month" ? "年" + monthLabel : "年往年今日");
+    memory.preview = null;
+    memory.previewTarget = {memory_type:memoryType, year:year};
+    els.memoriesCards.hidden = true;
+    els.memoriesSwitcher.hidden = true;
+    els.memoriesSectionDescription.hidden = true;
+    els.memoriesPreview.hidden = false;
+    els.memoriesBack.hidden = false;
+    els.memoriesBack.href = "/?view=memories&section=" + (memoryType === "month" ? "month" : "day");
+    els.memoriesPreviewTitle.textContent = targetLabel + " · 正在加载精选…";
+    els.memoriesAssets.replaceChildren();
+    els.memoriesViewAll.hidden = true;
+    els.memoriesSave.hidden = true;
+    els.memoriesStatus.textContent = "正在读取这组回忆的精选照片…";
+    els.memoriesRetry.hidden = true;
+    return Promise.resolve(memory.cancelPromise).catch(function () {}).then(function () {
+      return request("/memories/preview?memory_type=" + encodeURIComponent(memoryType) + "&year=" + encodeURIComponent(year) + (retry ? "&retry=true" : ""));
+    })
+      .then(function (result) {
+        if (version !== state.memories.previewRequestVersion || state.currentView !== "memories") return;
+        if (result.body.status === "READY") renderMemoryPreview(result.body);
+        else if (["ERROR", "BUDGET"].includes(result.body.status)) {
+          els.memoriesPreviewTitle.textContent = targetLabel + (result.body.status === "BUDGET" ? " · 精选查询未完成" : " · 精选生成失败");
+          els.memoriesStatus.textContent = result.body.status === "BUDGET"
+            ? "精选查询达到单批工作预算，结果未完成；这不表示该日期没有照片。可以手动重试。"
+            : "读取精选失败：" + (result.body.error || "可重试");
+          els.memoriesRetry.hidden = false;
+        }
+        else {
+          els.memoriesCards.hidden = true; els.memoriesPreview.hidden = false; els.memoriesBack.hidden = false;
+          els.memoriesPreviewTitle.textContent = targetLabel + " · 正在生成精选…";
+          els.memoriesStatus.textContent = "回忆在低优先级后台分批计算，前台浏览与搜索优先。";
+          state.memories.pollTimer = window.setTimeout(function () { loadMemoryPreview(memoryType, year); }, 900);
+        }
+      }).catch(function (failure) {
+        if (version !== state.memories.previewRequestVersion || state.currentView !== "memories") return;
+        els.memoriesPreviewTitle.textContent = targetLabel + " · 精选读取失败";
+        els.memoriesStatus.textContent = "读取精选失败：" + (failure.message || "请刷新重试");
+        els.memoriesRetry.hidden = false;
+      });
+  }
+
+  function loadMemoriesRoute() {
+    stopMemoriesPolling();
+    var params = new URLSearchParams(String(location.search || ""));
+    var type = params.get("type"), year = Number(params.get("year"));
+    var validPreview = (type === "day" || type === "month") && Number.isInteger(year);
+    var section = params.get("section") || (validPreview ? type : "day");
+    state.memories.section = section === "month" ? "month" : "day";
+    els.memoriesBack.href = "/?view=memories&section=" + state.memories.section;
+    els.memoriesSwitcher.hidden = Boolean(validPreview);
+    els.memoriesSectionDescription.hidden = Boolean(validPreview);
+    els.memoriesCards.hidden = Boolean(validPreview);
+    els.memoriesPreview.hidden = !validPreview;
+    els.memoriesBack.hidden = !validPreview;
+    if (validPreview) loadMemoryPreview(type, year);
+    else {
+      state.memories.previewRequestVersion += 1;
+      state.memories.preview = null;
+      state.memories.previewTarget = null;
+      if (state.memories.cards) renderMemorySection();
+      else if (!state.memories.loading) loadMemoryCards(false);
+      else renderMemorySection();
+    }
+  }
+
+  function openMemoryAsset(asset) {
+    if (!window.AIPhotoInfo) return;
+    window.AIPhotoInfo.open(String(asset.asset_id), {
+      title: "回忆照片", alt: "照片 #" + asset.asset_id,
+      onOpenFullDetails: function (id) { return window.AIPhotoInfo.navigateToDetails(id, "home"); },
+      onFavoriteChanged: function () {
+        var current = state.memories.preview;
+        if (current) loadMemoryPreview(current.memory_type, current.year, true);
+        else loadMemoryCards(false);
+      }
+    });
   }
 
   function loadPhotoCollections(append) {
@@ -4567,6 +4803,18 @@
     } else if (view === "photo-smart-collection") {
       enterPhotoSmartCollection(params.get("id"));
       showView("photoSmartCollection");
+    } else if (view === "memories") {
+      showView("memories");
+    } else if (view === "memories-all") {
+      state.browse.captureFrom = params.get("capture_from") || "";
+      state.browse.captureTo = params.get("capture_to_exclusive") || "";
+      state.browse.mode = "list";
+      showView("browse");
+      showBrowseMode("list");
+      els.browseCaptureFrom.value = state.browse.captureFrom;
+      els.browseCaptureTo.value = state.browse.captureTo;
+      if (params.get("memory_title")) text(els.browseTitle, params.get("memory_title") + " · 全部照片");
+      loadBrowse(true);
     } else {
       showView(view === "sources" ? "sources" : "browse");
     }
@@ -4719,6 +4967,21 @@
       photoCollectionShowList: document.getElementById("photo-collection-show-list"),
       photoCollectionShowTimeline: document.getElementById("photo-collection-show-timeline"),
       photoCollectionSearch: document.getElementById("photo-collection-search"),
+      memoriesStatus: document.getElementById("memories-status"),
+      memoriesRetry: document.getElementById("memories-retry"),
+      memoriesSwitcher: document.getElementById("memories-switcher"),
+      memoriesSectionDay: document.getElementById("memories-section-day"),
+      memoriesSectionMonth: document.getElementById("memories-section-month"),
+      memoriesSectionDescription: document.getElementById("memories-section-description"),
+      memoriesCards: document.getElementById("memories-cards"),
+      memoriesList: document.getElementById("memories-list"),
+      memoriesMore: document.getElementById("memories-more"),
+      memoriesPreview: document.getElementById("memories-preview"),
+      memoriesPreviewTitle: document.getElementById("memories-preview-title"),
+      memoriesAssets: document.getElementById("memories-assets"),
+      memoriesBack: document.getElementById("memories-back"),
+      memoriesViewAll: document.getElementById("memories-view-all"),
+      memoriesSave: document.getElementById("memories-save"),
       navButtons: document.querySelectorAll(".nav-button"),
       views: {
         sources: document.getElementById("view-sources"),
@@ -4727,6 +4990,7 @@
         photoCollections: document.getElementById("view-photo-collections"),
         photoCollection: document.getElementById("view-photo-collection"),
         photoSmartCollection: document.getElementById("view-photo-smart-collection"),
+        memories: document.getElementById("view-memories"),
       },
     };
 
@@ -4803,6 +5067,50 @@
     els.photoCollectionSearch.addEventListener("click", function () {
       updateSearchScopeAction();
       if (!els.searchScopeAction.hidden) els.searchScopeAction.click();
+    });
+    els.memoriesMore.addEventListener("click", function () {
+      if (!state.memories.loading && state.memories.cursor) {
+        state.memories.appendWindow = true;
+        loadMemoryCards(true);
+      }
+    });
+    els.memoriesSectionDay.addEventListener("click", function () { setMemorySection("day"); });
+    els.memoriesSectionMonth.addEventListener("click", function () { setMemorySection("month"); });
+    els.memoriesRetry.addEventListener("click", function () {
+      var current = state.memories.preview || state.memories.previewTarget;
+      if (current) loadMemoryPreview(current.memory_type, current.year, true);
+      else loadMemoryCards(false, true);
+    });
+    els.memoriesBack.addEventListener("click", function (event) {
+      event.preventDefault();
+      if (window.history.state && window.history.state.memoryPreview) window.history.back();
+      else window.location.assign(els.memoriesBack.href || "/?view=memories");
+    });
+    els.memoriesViewAll.addEventListener("click", function () {
+      var preview = state.memories.preview;
+      if (!preview) return;
+      var target = new URL("/", window.location.origin);
+      target.searchParams.set("view", "memories-all");
+      target.searchParams.set("capture_from", preview.all_range.capture_from);
+      target.searchParams.set("capture_to_exclusive", preview.all_range.capture_to_exclusive);
+      target.searchParams.set("memory_title", preview.title);
+      window.location.assign(target.pathname + target.search);
+    });
+    els.memoriesSave.addEventListener("click", function () {
+      var preview = state.memories.preview;
+      if (!preview || !preview.assets.length || !window.AIPhotoInfo) return;
+      var submittedPreview = preview;
+      window.AIPhotoInfo.actionDialog({kind:"text", title:"保存为相册", message:"只会保存当前精选的 " + preview.assets.length + " 张照片。", label:"相册名称", value:preview.title})
+        .then(function (name) {
+          if (!name || state.memories.preview !== submittedPreview) return;
+          return request("/photo-collections", {method:"POST", body:{
+            name:name, create_request_id:window.crypto.randomUUID(),
+            require_present:true,
+            asset_ids:submittedPreview.assets.map(function (asset) { return Number(asset.asset_id); })
+          }}).then(function () { els.memoriesStatus.textContent = "已将精选 " + submittedPreview.assets.length + " 张保存为普通照片合集。"; });
+        }).catch(function (failure) {
+          els.memoriesStatus.textContent = "保存失败，未创建不完整合集：" + (failure.message || "请重试");
+        });
     });
     els.photoCollectionsMore.addEventListener("click", function () { loadPhotoCollections(true); });
     els.photoCollectionMore.addEventListener("click", function () { loadPhotoCollectionAssets(true); });
@@ -5008,6 +5316,26 @@
       });
     });
     window.addEventListener("hashchange", handleHash);
+    window.addEventListener("pagehide", function () {
+      if (state.currentView !== "memories") return;
+      try {
+        fetch(API + "/memories/jobs", {method:"DELETE", credentials:"same-origin", keepalive:true,
+          headers:{"Content-Type":"application/json", "X-CSRF-Token":cookieValue("ps_csrf")}, body:"{}"});
+      } catch (_) {}
+    });
+    window.addEventListener("popstate", function (event) {
+      if (state.detailViewer && state.detailViewer.dialog && state.detailViewer.dialog.open) return;
+      var params = new URLSearchParams(String(location.search || ""));
+      if (params.get("view") === "memories") {
+        state.detailRouteActive = false;
+        showView("memories");
+        if (!params.get("type") && state.memories.preview) {
+          state.memories.preview = null;
+          window.requestAnimationFrame(function () { window.scrollTo(0, state.memories.scrollY); });
+        }
+        loadMemoriesRoute();
+      }
+    });
 
     state.observer = buildObserver();
     handleHash();

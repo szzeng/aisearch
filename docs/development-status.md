@@ -1,3 +1,8 @@
+## P4-PHOTO-MEMORIES-A（2026-10-23）
+
+智能回忆第一版已实现：首次进入后启动单只读后台线程，按年渐进发现；日查询按4时段限240候选，月查询按日/来源采样，单SQL 75ms预算，精选最多24，卡片缓存最多32。最终受影响 JUnit **48/48**（回忆、普通合集、拍摄日期提取集成），Ruff/py_compile/Node/diff-check 通过；日期补提取会递增共享图库修订且同结果重放幂等。Luna High 最终只读复核 **PASS，无代码 blocker**。隔离内置浏览器验证主要卡片、月份精选/全部日期、Viewer/详情 Back/Forward、保存合集、1440×900及约450px面板；30万合成元数据检查索引计划及前后台浏览延迟，另对30万全失效路径候选验证75ms预算的未完成状态、手动重试和活动 SQLite 取消。无整库扫描/无界队列；均为定向样本，不是容量认证。本卡功能与资源边界验收 **SCOPED PASS**；所有日期抽取错误/重试组合、原生200%缩放及冷缓存/其他硬件仍未验证，不构成正式容量认证。未访问真实图库/原图/模型，已本地提交，未推送。详见[任务卡](tasks/P4-PHOTO-MEMORIES-A.md)与[执行报告](reports/P4-PHOTO-MEMORIES-A.md)。
+
+2026-10-23 状态恢复续修：修复离开页面取消覆盖目录终态、以及 MORE/CANCELLED/STALE 被误报为空结果；回忆单元/API **16/16**，内置浏览器隔离合成数据验证离开/返回恢复轮询、MORE 提示与月份卡片，Luna High 子代理独立复核 PASS。无真实图库/额外规模测试；未提交或推送。详见同一执行报告。
 ## P4-PHOTO-RANDOM-BROWSE（2026-10-23）
 
 随机照片模式、只读抽样/摘要 API 已实现：默认每批 300 张，可调 1–1000，50 张滚动页和显式下一批；12 个环形索引窗口、最多 12,000 候选，近期 1,200 ID 尽量避重，图库较小允许重复。sessionStorage 恢复当前批及滚动位置；pending 摘要失败可恢复当前批并重试相同 ID。定向 JUnit **18/18**、Ruff、py_compile、Node 语法和 diff-check 通过；Luna High 跟进无 blocker。隔离 65 张图库内置浏览器验证窄屏/主要流程并且控制台无错误；桌面宽视口未能在面板中确认，故 **IMPLEMENTED / VALIDATION PENDING**。30 万 fixture 不可用，未访问真实图库/模型，已本地提交、未推送。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE.md)与[执行报告](reports/P4-PHOTO-RANDOM-BROWSE.md)。
