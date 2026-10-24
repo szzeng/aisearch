@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Start', 'Download', 'Configure')]
+    [ValidateSet('Start', 'Download', 'Configure', 'Setup')]
     [string]$Mode,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$AdditionalArguments
@@ -13,6 +13,7 @@ $script:AppDirectory = [IO.Path]::GetFullPath($PSScriptRoot)
 $script:Exe = Join-Path $script:AppDirectory 'PhotoSearch.exe'
 $script:ConfigDirectory = Join-Path $env:APPDATA 'PhotoSearch'
 $script:ConfigPath = Join-Path $script:ConfigDirectory 'portable-data-root.txt'
+$script:OperationLock = $null
 
 function Normalize-DataRoot([string]$Value) {
     $raw = $Value.Trim().Trim('"')
@@ -88,6 +89,13 @@ function Select-NewRoot([string]$Previous) {
 
 try {
     if (-not $env:APPDATA) { throw '无法找到 Windows APPDATA 配置目录。' }
+    [IO.Directory]::CreateDirectory($script:ConfigDirectory) | Out-Null
+    $lockPath = Join-Path $script:ConfigDirectory 'portable-operation.lock'
+    try {
+        $script:OperationLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [IO.IOException] {
+        throw '另一个 PhotoSearch 启动/模型准备操作正在运行。请等待它结束后重试。'
+    }
     if ($Mode -ne 'Configure' -and -not (Test-Path -LiteralPath $script:Exe -PathType Leaf)) {
         throw "找不到 PhotoSearch.exe：$script:Exe。请先完整解压 ZIP。"
     }
@@ -116,6 +124,8 @@ try {
     if ($Mode -eq 'Configure') { exit 0 }
     if ($Mode -eq 'Download') {
         $commandArguments = @('embedding', 'download-qwen', '--confirm-large-download', '--data-root', $selected)
+    } elseif ($Mode -eq 'Setup') {
+        $commandArguments = @('models', 'prepare', '--data-root', $selected)
     } else {
         $commandArguments = @('--open-browser', '--data-root', $selected)
         if ($AdditionalArguments) { $commandArguments += $AdditionalArguments }
@@ -126,4 +136,6 @@ try {
     Write-Host ''
     Write-Host ("PhotoSearch 启动失败：" + $_.Exception.Message) -ForegroundColor Red
     exit 1
+} finally {
+    if ($null -ne $script:OperationLock) { $script:OperationLock.Dispose() }
 }

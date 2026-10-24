@@ -161,10 +161,15 @@ def run_embedding_command(args: argparse.Namespace) -> int:
 def _download_qwen(args: argparse.Namespace) -> dict[str, Any]:
     from photo_search.models.embedding.download import download_qwen
 
-    return download_qwen(
+    result = download_qwen(
         args.data_root,
         confirmed=bool(args.confirm_large_download),
     )
+    if result.get("status") in {"ok", "already_ready"}:
+        from photo_search.models.first_run import record_qwen_verified
+
+        record_qwen_verified(args.data_root)
+    return result
 
 
 def _list_providers(args: argparse.Namespace) -> dict[str, Any]:

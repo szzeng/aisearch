@@ -5426,6 +5426,9 @@ async def get_embedding_management_status(request: Request) -> dict[str, Any]:
 
     context = context_of(request)
     result = read_status(context.settings.data_root)
+    from photo_search.models.first_run import status as first_run_status
+
+    result["first_run_models"] = first_run_status(context.settings.data_root)
     result["candidate_task"] = context.embedding_candidate_manager().status()
     from photo_search.models.embedding.offline_transition import transition_status
 

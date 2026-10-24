@@ -1490,9 +1490,16 @@
     var qwen = (state.embeddingManagementStatus.providers || []).find(function (provider) {
       return provider.provider_id === "qwen3-vl-embedding-2b-exif-v2";
     });
-    // Hide only after the default provider is installed and has an active published profile.
-    // Manifest/file presence alone is deliberately never presented as hash/GPU proof.
-    guide.hidden = Boolean(state.sources.length && qwen && qwen.installed && qwen.is_active);
+    var setup = state.embeddingManagementStatus.first_run_models;
+    var components = setup && setup.components || {};
+    var states = [components.qwen && components.qwen.state, components.ocr && components.ocr.state, components.face && components.face.state];
+    var status = document.getElementById("first-use-model-status");
+    if (status) {
+      var labels = {missing: "缺失", present_unverified: "存在但待校验", installed_unverified: "已安装，运行环境未验证", weights_validated_at_install: "权重安装时校验通过，运行环境未验证"};
+      status.textContent = "模型状态：Qwen " + (labels[states[0]] || "待确认") + "；OCR " + (labels[states[1]] || "待确认") + "；Face " + (labels[states[2]] || "待确认") + "。在解压目录运行 Setup-AI-Models.cmd 可准备缺失项。";
+    }
+    // The guide stays visible while any first-run model is missing or unverified.
+    guide.hidden = Boolean(state.sources.length && qwen && qwen.installed && qwen.is_active && states.every(function (value) { return value === "installed_unverified" || value === "weights_validated_at_install"; }));
   }
 
   // -------------------------------------------------------------------- refresh

@@ -351,6 +351,17 @@ def main() -> None:
     )
     add_catalog_parser(subparsers)
     add_embedding_parser(subparsers)
+    models = subparsers.add_parser("models", help="inspect or explicitly prepare first-use AI models")
+    model_commands = models.add_subparsers(dest="models_command")
+    model_status = model_commands.add_parser("status", help="read lightweight model status")
+    model_status.add_argument("--data-root", type=Path, required=True)
+    model_status.add_argument("--json", action="store_true")
+    model_prepare = model_commands.add_parser("prepare", help="prepare missing models with per-component confirmation")
+    model_prepare.add_argument("--data-root", type=Path, required=True)
+    model_prepare.add_argument("--component", choices=("all", "qwen", "ocr", "face"), default=None)
+    model_smoke = model_commands.add_parser("smoke-ocr", help="run OCR on one supplied synthetic or test image")
+    model_smoke.add_argument("--data-root", type=Path, required=True)
+    model_smoke.add_argument("--image", type=Path, required=True)
     backup = subparsers.add_parser("backup", help="stopped-service backup and restore")
     backup_commands = backup.add_subparsers(dest="backup_command")
     for name, help_text in (
@@ -452,6 +463,10 @@ def main() -> None:
         raise SystemExit(run_catalog_command(args))
     if args.command == "embedding":
         raise SystemExit(run_embedding_command(args))
+    if args.command == "models":
+        from photo_search.models.first_run_cli import run_models_command
+
+        raise SystemExit(run_models_command(args))
     if args.command == "backup":
         try:
             if args.backup_command == "create":

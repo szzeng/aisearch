@@ -1,4 +1,8 @@
-## Current task: P4-WINDOWS-EXE-STARTUP-CRASH-FIX（2026-10-23）
+## Current task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
+
+便携版首次 AI 模型准备入口、轻量状态、OCR 离线安装、Face 安全导入、Qwen 既有下载器集成与首用页已实现。Face ZIP 增加 pinned 精确尺寸拒绝及本地归档限量流复制，收紧磁盘预检和 TOCTOU 边界；定向 JUnit **105 passed / 4 skipped / 0 failed（109 cases）**，Ruff、Python 编译、uv lock 与 diff-check 通过。最终 onedir/bundle validator、冻结 OCR 安装/合成图识别和隔离 API smoke（`ok`、无问题）通过。固定 Qwen revision 与 Face URL 的 HEAD 已验证 200，响应体读取 0 bytes；未下载模型权重，Face 真实推理为 `FACE_RUNTIME_PENDING`。用户已豁免 DS-H 复核门槛；Luna High 子代理复核未发现新 blocker。真实进程强停阶段恢复仍未直接注入验证，状态 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。用户授权本地提交，不推送或发布。详见[任务卡](tasks/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)与[执行报告](reports/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)。
+
+## Previous task: P4-WINDOWS-EXE-STARTUP-CRASH-FIX（2026-10-23）
 
 冻结 EXE 启动崩溃定位为 PATH 先命中 VanDyke 14.32 VC runtime；新构建仅为 PyInstaller 子进程优先 Windows System32。单次冻结构建后，bundle 校验通过，in-place API smoke `ok`，新包 `--help` exit 0。归档器曾将依赖 `tokenizers/models` 误报，窄修后复用同一 bundle 生成并全量校验 ZIP（16039 项），SHA-256 `B31AB115D02698CE5493C36C3C8D05D9144CCCC02C74DA80EBECC399C7D5E366`。JUnit 7/7 + 9/9、Ruff、py_compile、diff-check 通过。状态 **LOCAL PACKAGE PASS / GPU NOT TESTED**；GPU推理、第二台干净 Windows 未验证，报告 `suitable_for_sharing=false`。应用源提交 `e7becd6`，归档修复 `a221f79`；不推送、不发布。未访问真实图库/模型、未读 dump、未改系统环境。详见[任务卡](tasks/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)、[报告](reports/P4-WINDOWS-EXE-STARTUP-CRASH-FIX.md)与[ZIP](../releases/PhotoSearch-v0.6.0-win-x64.zip)。
 

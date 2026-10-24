@@ -11,6 +11,8 @@ registers it before the CUDA session is created.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.metadata
 import os
 import shutil
 import subprocess
@@ -18,6 +20,9 @@ import sys
 from pathlib import Path
 
 import onnxruntime
+import rapidocr_onnxruntime
+
+from photo_search.ocr import contract as ocr_contract
 
 DLL_TARGET_DIRECTORY = "nvidia_dlls"
 
@@ -68,6 +73,16 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     manifest_dir = root / "tools" / "prepare_models" / "manifests"
+    rapidocr_root = Path(rapidocr_onnxruntime.__file__).resolve().parent
+    if importlib.metadata.version("rapidocr-onnxruntime") != "1.4.4":
+        raise SystemExit("the portable OCR bundle requires rapidocr-onnxruntime==1.4.4")
+    for item in ocr_contract.PINNED_WEIGHTS:
+        package_file = rapidocr_root / "models" / Path(item["path"]).name
+        if item["role"] == "config":
+            package_file = rapidocr_root / "config.yaml"
+        digest = hashlib.sha256(package_file.read_bytes()).hexdigest()
+        if package_file.stat().st_size != int(item["bytes"]) or digest != str(item["sha256"]):
+            raise SystemExit(f"the installed RapidOCR resource does not match the pinned OCR contract: {package_file.name}")
     dlls = nvidia_runtime_dlls(site_packages_directory())
     if not dlls:
         raise SystemExit(
@@ -88,6 +103,11 @@ def main() -> int:
         # LibRaw is loaded at the CR2 adapter boundary rather than as a top-level import;
         # collect its extension and sibling runtime binaries explicitly.
         "--collect-all", "rawpy",
+        "--collect-submodules", "rapidocr_onnxruntime",
+        "--add-data", f"{rapidocr_root / 'models' / 'ch_PP-OCRv4_det_infer.onnx'};rapidocr_onnxruntime/models",
+        "--add-data", f"{rapidocr_root / 'models' / 'ch_ppocr_mobile_v2.0_cls_infer.onnx'};rapidocr_onnxruntime/models",
+        "--add-data", f"{rapidocr_root / 'models' / 'ch_PP-OCRv4_rec_infer.onnx'};rapidocr_onnxruntime/models",
+        "--add-data", f"{rapidocr_root / 'config.yaml'};rapidocr_onnxruntime",
         # Qwen is loaded dynamically by the manifest-selected adapter in a spawned worker.
         # Collect its framework/runtime packages explicitly, plus the one Transformers model
         # family and helper used by that adapter; do not collect unrelated model families.
@@ -121,6 +141,7 @@ def main() -> int:
             "Start-PhotoSearch.cmd",
             "Select-PhotoSearchDataRoot.ps1",
             "Set-PhotoSearch-Data.cmd",
+            "Setup-AI-Models.cmd",
         ):
             shutil.copy2(root / "tools" / "packaging" / filename, bundle / filename)
     return result

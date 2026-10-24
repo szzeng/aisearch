@@ -7,7 +7,7 @@ System requirements
 
 Start
 1. Extract the complete ZIP to a normal directory. The application data is stored separately.
-2. On first use, the console asks for a data directory (for example D:\PhotoSearchData). This selected root is reused by both Download-Qwen.cmd and Start-PhotoSearch.cmd. Double-click Download-Qwen.cmd to confirm and download the fixed Qwen revision (about 4.3 GB); keep its console visible for progress. Ctrl+C cancels. Or use the `embedding prepare-local` command below for an existing verified local model directory.
+2. On first use, the console asks for a data directory (for example D:\PhotoSearchData). This selected root is reused by Setup-AI-Models.cmd and Start-PhotoSearch.cmd. Double-click Setup-AI-Models.cmd to prepare missing components. OCR uses bundled resources offline; Qwen and optional Face downloads each require confirmation. Face pretrained weights are for non-commercial research only and require a separate license acknowledgement. The setup command and app launcher share a process lock.
 3. Double-click Start-PhotoSearch.cmd. Keep its console window open while using the app.
 4. To exit normally, press Ctrl+C in that console and wait for shutdown to complete. Closing the browser tab does not stop the local service.
 5. You may move the complete program directory and launch it again. Deleting the ZIP or program directory does not remove the data root.
@@ -27,7 +27,8 @@ Original photos are read-only. Catalog, vectors, thumbnails, runtime files and p
 
 Third-party components and notices
 This build includes Python 3.12.10, PyTorch 2.8.0+cu128, torchvision 0.23.0+cu128, Transformers 4.57.0, tokenizers, safetensors, qwen-vl-utils 0.0.14, ONNX Runtime GPU, NVIDIA runtime DLLs, Pillow/pillow-heif, rawpy, FastAPI, Uvicorn, LanceDB and their locked transitive dependencies. See each bundled *.dist-info/METADATA and LICENSE/NOTICE file under _internal for its license terms. PyTorch/torchvision and ONNX Runtime use distinct CUDA DLL locations; do not merge or replace them manually.
-Qwen3-VL-Embedding-2B is Apache-2.0 as identified by its shipped manifest. Model weights are not included. InsightFace third-party model weights are not included. Verify the license and redistribution rights of every component before sharing this ZIP; this package is for local personal evaluation only.
+Qwen3-VL-Embedding-2B is Apache-2.0 as identified by its shipped manifest; Qwen weights are not included. InsightFace third-party model weights are not included. OCR resources are included from the pinned RapidOCR wheel for offline installation. Verify the license and redistribution rights of every component before sharing this ZIP; this package is for local personal evaluation only.
+InsightFace buffalo_l pretrained model weights are for non-commercial research purposes only; the setup flow displays this restriction and requires a separate acknowledgement before import or download.
 
 Unverified
 This package is not accepted for clean-PC cross-machine operation, GTX 1660 support, public redistribution, formal capacity/performance targets, or model quality. It does not include an installer, updater, or data migration wizard.

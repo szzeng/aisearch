@@ -167,11 +167,16 @@ def test_portable_launchers_share_selected_root() -> None:
     packaging = Path(__file__).resolve().parents[2] / "tools" / "packaging"
     start = (packaging / "Start-PhotoSearch.cmd").read_text(encoding="utf-8")
     download = (packaging / "Download-Qwen.cmd").read_text(encoding="utf-8")
+    setup = (packaging / "Setup-AI-Models.cmd").read_text(encoding="utf-8")
     selector = (packaging / "Select-PhotoSearchDataRoot.ps1").read_text(encoding="utf-8-sig")
     assert "Select-PhotoSearchDataRoot.ps1" in start
     assert "-Mode Start" in start
     assert "Select-PhotoSearchDataRoot.ps1" in download
     assert "-Mode Download" in download
+    assert "Select-PhotoSearchDataRoot.ps1" in setup
+    assert "-Mode Setup" in setup
+    assert "Setup" in selector
+    assert "portable-operation.lock" in selector
     assert "portable-data-root.txt" in selector
     assert "'--data-root', $selected" in selector
     assert "Move-Item -LiteralPath $temporary -Destination $script:ConfigPath -Force | Out-Null" in selector
