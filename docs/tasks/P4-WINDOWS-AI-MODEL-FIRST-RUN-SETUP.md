@@ -54,3 +54,10 @@
 - 构建仅从 bundle 中的 OCR manifest 副本移除 `resolved_model_root` 本机绝对路径，并删除 validation-only manifests；仓库源清单保留。归档器拒绝残留路径或验证清单。定向发布 helper JUnit **17/17**、Ruff、Python 编译和 diff-check 通过；覆盖额外 ONNX 拒绝、资源变更拒绝、同时篡改资源和 bundle manifest 仍被源清单拒绝，以及隐私脱敏/拒绝。
 - Luna High 限定只读复核确认归档、源清单身份及 bundle 隐私处理 finding 关闭，无 blocker。复用用户报错对应的已构建 staging（不重建 onedir）做真实 ZIP 与完整性校验：16,040 项、5,981,575,023 bytes、SHA-256 `432FCA42046AA00B5B87A5840FB191B221073238C20CFD99846F6205755C1F3E`。该 ZIP 留在项目临时目录，仅用于验证，不是发布产物。
 - 用户模型权重仍不打包；无模型下载、发布或真实图库访问。真实 OS 强制终止恢复仍未直接注入，任务状态保持 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。
+
+## 2026-10-25 官方 Face ZIP 平铺成员兼容修复
+
+- 用户按确认从固定官方地址获取 buffalo_l ZIP 后，准备步骤报缺少两个 pinned ONNX。根因是 InsightFace 官方 ZIP 解到目标 `models/buffalo_l` 目录，成员本身为根目录平铺文件；首次准备 extractor 误要求 ZIP 成员父目录已经叫 `buffalo_l`。
+- 现在只接受两种一致布局：ZIP 根目录中的两个固定 ONNX，或 `buffalo_l/` 目录下的两个固定 ONNX。混合布局仍拒绝；路径穿越、规范化重复、重复 pinned 名、展开大小、pinned size/SHA 与原子发布检查保持不变。
+- Face 首次准备定向 JUnit **22/22**；Ruff、Python 编译、diff-check 通过。Luna High 只读复核无 blocker。新 onedir 位于 `.tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/face-flat-zip-20261025/dist/PhotoSearch/`，bundle validator `valid=true`；隔离 packaged API smoke `status=ok`、`problems=[]`、启动 1.25 秒。
+- 未重新下载官方模型包、未访问用户数据根或真实图库。新修改尚未在实际 191 MB Face ZIP 上验证；需在更新后的便携包中重新准备 Face。真实进程强停恢复仍未注入验证，任务状态保持 **IMPLEMENTED / VALIDATION PENDING**。

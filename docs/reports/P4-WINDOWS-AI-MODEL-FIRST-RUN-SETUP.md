@@ -46,6 +46,13 @@ $root = ".tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/repro-$runId"
 - 使用用户错误日志中的现成 staging `releases/.release-e6b27bb73a8e48bcb5c9acdc73a3e95e/dist/PhotoSearch`，只对 bundle manifest 副本执行同一脱敏并删除 validation-only 文件（源清单未改）：bundle validator `valid=true`；实际 ZIP **16,040 项、5,981,575,023 bytes**，归档只含清单允许的三个 OCR ONNX。helper 全量 CRC/内容检查通过，SHA-256 `432FCA42046AA00B5B87A5840FB191B221073238C20CFD99846F6205755C1F3E`。产物仅放 `.tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/release-ocr-archive-final-safe-20261025/`，不是 `releases/` 发行件；未重建 onedir、未下载权重、未发布。
 - 此修复未覆盖此前未注入的真实 OS 强制终止阶段恢复，因此任务仍为 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。
 
+## 2026-10-25 官方 Face ZIP 平铺成员兼容续修
+
+- 用户确认从固定官方地址下载后，Face 准备报 `Face ZIP is missing one or more pinned buffalo_l ONNX files`。官方 InsightFace 存储代码把归档解到 `<root>/models/buffalo_l`；因此官方 ZIP 的 pinned 成员应可平铺在归档根目录。现有 extractor 错误地要求 ZIP 内还包含 `buffalo_l/` 父目录。
+- `src/photo_search/models/first_run.py` 现在接受根目录平铺或 `buffalo_l/` 子目录两种一致布局，仍只提取两个 pinned 文件；混用拒绝。安全路径、重复、展开上限、精确 size/SHA 校验和原子发布保持启用。
+- 定向 JUnit **22/22**（`test-results/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/face-flat-zip-20261025.xml`）、Ruff、`py_compile`、`git diff --check` 通过。Luna High 对归档解析边界与用例复核无 blocker。
+- 重建实际 onedir 成功，bundle validator `valid=true`；冻结隔离 API smoke `status=ok`、`problems=[]`、启动 1.25 秒，证据 `.tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/face-flat-zip-20261025/packaged-api-smoke.json`。未下载任何模型，也未打开用户数据根。实际官方 ZIP 未复测，用户需在更新包中重试 Face 准备；如仍失败需保留新的错误信息。真实强停注入仍为 pending。
+
 
 ## Luna High 独立复核（2026-10-24）
 

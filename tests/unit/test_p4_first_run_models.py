@@ -30,6 +30,19 @@ def test_face_zip_extracts_only_pinned_model_files(tmp_path: Path) -> None:
     assert not (destination / "genderage.onnx").exists()
 
 
+def test_face_zip_extracts_flat_official_model_members(tmp_path: Path) -> None:
+    archive = _zip(tmp_path / "flat-face.zip", [
+        ("det_10g.onnx", b"det"),
+        ("w600k_r50.onnx", b"rec"),
+        ("genderage.onnx", b"ignored"),
+    ])
+    destination = tmp_path / "flat-out"
+    first_run._extract_face_zip(archive, destination)
+    assert (destination / "det_10g.onnx").read_bytes() == b"det"
+    assert (destination / "w600k_r50.onnx").read_bytes() == b"rec"
+    assert not (destination / "genderage.onnx").exists()
+
+
 @pytest.mark.parametrize("entries", [
     [("../buffalo_l/det_10g.onnx", b"x"), ("buffalo_l/w600k_r50.onnx", b"y")],
     [("det_10g.onnx", b"x"), ("buffalo_l/w600k_r50.onnx", b"y")],

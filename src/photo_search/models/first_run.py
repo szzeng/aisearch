@@ -323,6 +323,7 @@ def _extract_face_zip(
     total = 0
     seen: set[str] = set()
     seen_paths: set[str] = set()
+    member_layout: str | None = None
     destination.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(archive) as zf:
@@ -341,8 +342,17 @@ def _extract_face_zip(
                 if total > FACE_MAX_EXPANDED_BYTES:
                     raise ValueError("Face ZIP exceeds the expanded-size limit")
                 basename = path.name
-                if basename not in FACE_REQUIRED or len(path.parts) < 2 or path.parts[-2] != "buffalo_l":
+                if basename not in FACE_REQUIRED:
                     continue
+                if len(path.parts) == 1:
+                    current_layout = "flat"
+                elif path.parts[-2] == "buffalo_l":
+                    current_layout = "buffalo_l_directory"
+                else:
+                    continue
+                if member_layout is not None and member_layout != current_layout:
+                    raise ValueError("Face ZIP mixes flat and buffalo_l directory layouts")
+                member_layout = current_layout
                 key = basename.casefold()
                 if key in seen:
                     raise ValueError("Face ZIP contains duplicate pinned files")
