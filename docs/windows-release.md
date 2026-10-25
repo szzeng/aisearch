@@ -18,7 +18,7 @@ To add the optional 512D Qwen CUDA smoke, pass a model directory explicitly auth
 
 The smoke runs offline against the package's pinned 512D manifest. The model directory is not copied or recorded in the report. Without this explicit option, the report uses `GPU_NOT_TESTED`.
 
-The ZIP is a personal candidate. When no model directory is explicitly provided, the report says `GPU_NOT_TESTED` and the console says the package can start but Qwen GPU was not tested. This does not certify another Windows machine or GPU. The package does not include a user library, database, model weights, or private configuration. The script does not create tags, upload a GitHub release, or publish the ZIP.
+The ZIP is a personal candidate. When no model directory is explicitly provided, the report says `GPU_NOT_TESTED` and the console says the package can start but Qwen GPU was not tested. This does not certify another Windows machine or GPU. The package does not include a user library, database, user-provided Qwen/Face weights, or private configuration. It includes only the four hash-pinned RapidOCR resources required for offline OCR setup; the archive helper checks them against the shipped OCR manifest and rejects every other ONNX/model-weight file. The script does not create tags, upload a GitHub release, or publish the ZIP.
 
 Verify the archive hash in PowerShell:
 

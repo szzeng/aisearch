@@ -12,6 +12,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+SOURCE_OCR_MANIFEST = Path(__file__).resolve().parents[2] / "tools" / "prepare_models" / "manifests" / "face-ocr.json"
+
 
 def release_metadata(root: Path) -> dict[str, str]:
     project = (root / "pyproject.toml").read_text(encoding="utf-8")
@@ -54,6 +56,7 @@ def validate_bundle(bundle: Path) -> None:
     required_manifests = (
         "qwen3-vl-embedding-2b-exif-v2.json",
         "qwen3-vl-embedding-2b-1024d-exif-v2.json",
+        "face-ocr.json",
     )
     missing.extend(
         f"_internal/tools/prepare_models/manifests/{name}"
@@ -64,6 +67,14 @@ def validate_bundle(bundle: Path) -> None:
         raise ValueError("built onedir is missing required files/directories: " + ", ".join(missing))
     if not executable.is_file() or executable.stat().st_size <= 0:
         raise ValueError("PhotoSearch.exe is missing or empty")
+    validation_manifests = sorted(
+        path.name
+        for path in manifest_dir.glob("*-validation.json")
+        if path.is_file()
+    )
+    if validation_manifests:
+        raise ValueError("validation-only manifests must not be bundled: " + ", ".join(validation_manifests))
+    pinned_ocr_bundle_resources(bundle)
 
 
 def require_free_space(free_bytes: int, required_bytes: int) -> None:
@@ -116,8 +127,78 @@ def summarize_gpu_smoke(report_path: Path) -> dict[str, Any]:
     }
 
 
+def pinned_ocr_bundle_resources(bundle: Path) -> dict[str, tuple[int, str]]:
+    """Return the only model resources allowed in the portable bundle, after hashing them."""
+    manifest_path = bundle / "_internal/tools/prepare_models/manifests/face-ocr.json"
+    try:
+        trusted_artifacts = json.loads(SOURCE_OCR_MANIFEST.read_text(encoding="utf-8"))["ocr"]["artifacts"]
+        bundled_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        bundled_artifacts = bundled_manifest["ocr"]["artifacts"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("pinned OCR resource manifest is missing or invalid") from exc
+    if not isinstance(trusted_artifacts, dict) or not isinstance(bundled_artifacts, dict):
+        raise ValueError("pinned OCR resource manifest is missing or invalid")
+    if "resolved_model_root" in bundled_manifest:
+        raise ValueError("private local model-root path is present in bundled OCR manifest")
+    role_filenames = {
+        "classification": "ch_ppocr_mobile_v2.0_cls_infer.onnx",
+        "config": "config.yaml",
+        "detection": "ch_PP-OCRv4_det_infer.onnx",
+        "recognition": "ch_PP-OCRv4_rec_infer.onnx",
+    }
+    expected: dict[str, tuple[int, str]] = {}
+    for role, filename in role_filenames.items():
+        item = trusted_artifacts.get(role)
+        bundled_item = bundled_artifacts.get(role)
+        expected_source_path = f"ocr/ppocr-v4-mobile/{filename}"
+        if (
+            not isinstance(item, dict)
+            or not isinstance(bundled_item, dict)
+            or Path(str(item.get("path", ""))).as_posix() != expected_source_path
+            or Path(str(bundled_item.get("path", ""))).as_posix() != expected_source_path
+        ):
+            raise ValueError(f"invalid pinned OCR path for {role}")
+        relative = (
+            "_internal/rapidocr_onnxruntime/config.yaml"
+            if role == "config"
+            else f"_internal/rapidocr_onnxruntime/models/{filename}"
+        )
+        try:
+            size = int(item["bytes"])
+            digest = str(item["sha256"]).lower()
+            bundled_size = int(bundled_item["bytes"])
+            bundled_digest = str(bundled_item["sha256"]).lower()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid pinned OCR metadata for {role}") from exc
+        if (
+            size <= 0
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or bundled_size != size
+            or bundled_digest != digest
+        ):
+            raise ValueError(f"invalid pinned OCR metadata for {role}")
+        expected[relative] = (size, digest)
+    if len(expected) != 4:
+        raise ValueError("pinned OCR resource manifest must contain four artifacts")
+    for relative, (size, expected_digest) in expected.items():
+        path = bundle / relative
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"pinned OCR resource is missing from bundle: {relative}")
+        if path.stat().st_size != size:
+            raise ValueError(f"pinned OCR resource size mismatch: {relative}")
+        digest_state = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest_state.update(chunk)
+        digest = digest_state.hexdigest()
+        if digest != expected_digest:
+            raise ValueError(f"pinned OCR resource SHA-256 mismatch: {relative}")
+    return expected
+
+
 def archive_entries(bundle: Path) -> list[tuple[Path, str]]:
     bundle = bundle.resolve()
+    allowed_ocr_resources = pinned_ocr_bundle_resources(bundle)
     entries: list[tuple[Path, str]] = []
     names: set[str] = set()
     for path in sorted(bundle.rglob("*")):
@@ -134,10 +215,11 @@ def archive_entries(bundle: Path) -> list[tuple[Path, str]]:
         # tokenizers/models). Reject the bundle's top-level user model directory;
         # model payloads elsewhere remain blocked by their file extensions.
         user_model_directory = Path(relative).parts[0].casefold() == "models"
+        is_pinned_ocr_resource = relative in allowed_ocr_resources
         if (
             user_model_directory
             or parts.intersection({"photosearchdata", "user-data", "private"})
-            or path.suffix.casefold() in forbidden_suffixes
+            or (path.suffix.casefold() in forbidden_suffixes and not is_pinned_ocr_resource)
             or path.name.casefold() in {".env", ".env.local", "config.local.json", "settings.private.json"}
             or path.name.casefold().endswith((".db-wal", ".db-shm", ".db-journal", ".sqlite-wal", ".sqlite-shm"))
         ):

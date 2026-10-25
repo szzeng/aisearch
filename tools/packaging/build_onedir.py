@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.metadata
+import json
 import os
 import shutil
 import subprocess
@@ -59,6 +60,25 @@ def nvidia_runtime_dlls(site_packages: Path) -> list[Path]:
             raise SystemExit(f"conflicting NVIDIA DLLs named {path.name}: {existing} vs {path}")
         seen[path.name] = path
     return [seen[name] for name in sorted(seen)]
+
+
+def sanitize_bundled_manifests(bundle: Path) -> None:
+    """Keep local paths and validation evidence out of distributable manifest data."""
+    manifest_dir = bundle / "_internal/tools/prepare_models/manifests"
+    manifest = manifest_dir / "face-ocr.json"
+    if not manifest.is_file():
+        raise SystemExit(f"bundled OCR manifest is missing: {manifest}")
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    if "resolved_model_root" in document:
+        document.pop("resolved_model_root")
+        temporary = manifest.with_suffix(".json.tmp")
+        try:
+            temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(temporary, manifest)
+        finally:
+            temporary.unlink(missing_ok=True)
+    for validation_manifest in manifest_dir.glob("*-validation.json"):
+        validation_manifest.unlink()
 
 
 def main() -> int:
@@ -134,6 +154,7 @@ def main() -> int:
     ).returncode
     if result == 0:
         bundle = args.distpath.resolve() / "PhotoSearch"
+        sanitize_bundled_manifests(bundle)
         for filename in (
             "README-PORTABLE.txt",
             "NEW-PC-QUICK-START.txt",

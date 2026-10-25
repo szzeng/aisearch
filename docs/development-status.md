@@ -1,6 +1,6 @@
 ## Current task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
 
-便携版首次 AI 模型准备入口、轻量状态、OCR 离线安装、Face 安全导入、Qwen 既有下载器集成与首用页已实现。Face ZIP 增加 pinned 精确尺寸拒绝及本地归档限量流复制，收紧磁盘预检和 TOCTOU 边界；定向 JUnit **105 passed / 4 skipped / 0 failed（109 cases）**，Ruff、Python 编译、uv lock 与 diff-check 通过。最终 onedir/bundle validator、冻结 OCR 安装/合成图识别和隔离 API smoke（`ok`、无问题）通过。固定 Qwen revision 与 Face URL 的 HEAD 已验证 200，响应体读取 0 bytes；未下载模型权重，Face 真实推理为 `FACE_RUNTIME_PENDING`。用户已豁免 DS-H 复核门槛；Luna High 子代理复核未发现新 blocker。真实进程强停阶段恢复仍未直接注入验证，状态 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。用户授权本地提交，不推送或发布。详见[任务卡](tasks/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)与[执行报告](reports/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)。
+便携版首次 AI 模型准备入口、轻量状态、OCR 离线安装、Face 安全导入、Qwen 既有下载器集成与首用页已实现。续修便携 ZIP OCR 资源归档：只放行与仓库源清单匹配的四个固定 OCR 资源，其它权重仍拒绝；bundle manifest 副本移除本机模型根绝对路径并删除 validation-only 清单，归档器拒绝残留项。复用 staging 的真实 ZIP 全量 CRC/内容校验通过，16,040 项、5,981,575,023 bytes，SHA-256 `432FCA42046AA00B5B87A5840FB191B221073238C20CFD99846F6205755C1F3E`；只保存在 `.tmp` 作验证，不发布。归档 helper 定向 JUnit **17/17**、Ruff、Python 编译、diff-check、uv lock 检查通过；Luna High 只读复核确认隐私 finding 已关闭。首次准备原定 JUnit **105 passed / 4 skipped / 0 failed（109 cases）**，Ruff、Python 编译、uv lock 与 diff-check 通过；冻结 OCR 安装/合成图识别和隔离 API smoke（`ok`、无问题）通过。未下载模型权重，Face 真实推理为 `FACE_RUNTIME_PENDING`。真实进程强停阶段恢复仍未直接注入验证，状态 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。用户授权本地提交，不推送或发布。详见[任务卡](tasks/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)与[执行报告](reports/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)。
 
 ## Previous task: P4-WINDOWS-EXE-STARTUP-CRASH-FIX（2026-10-23）
 

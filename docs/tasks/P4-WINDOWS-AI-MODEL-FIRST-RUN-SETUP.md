@@ -47,3 +47,10 @@
 - 首用页此前已在 Codex 内置浏览器的隔离空根及窄面板观察；本轮没有 UI 改动，因此复用该观察。固定 Qwen revision API 和 Face 官方 URL 的 HEAD 返回 200，最终主机分别为 `huggingface.co` 与 `release-assets.githubusercontent.com`，响应体读取均为 0 bytes；没有下载模型权重或访问真实图库。
 - Luna High 对最新完整受影响面做只读复核，确认磁盘尺寸/TOCTOU、根级 ZIP 条目和四种锁模式问题已关闭，未发现新的代码 blocker。异常清理及模拟残留 staging 后重试已覆盖；真实 OS 强制终止发生在每个发布阶段时的恢复仍未直接注入验证。用户已豁免 DS-H 复核要求。
 - Face 真实推理仍为 `FACE_RUNTIME_PENDING`。用户已明确豁免 DS-H 复核门槛，Luna High 子代理复核未发现新代码 blocker。真实 OS 强制终止过程的阶段性恢复仍未直接注入验证，因此保持 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。用户授权本地提交，不推送或发布。
+
+## 2026-10-25 便携 ZIP 首用 OCR 资源归档兼容修复
+
+- 发行 helper 曾按扩展名拒绝所有 `.onnx`，与本任务便携包携带固定 OCR 资源、首次使用时离线复制的行为冲突。修复后仅允许固定四个 RapidOCR 资源路径；路径、size、SHA 必须同时匹配仓库源 `face-ocr.json` 与 bundle 清单，实际资源也逐个哈希核对。其它 ONNX/模型权重仍拒绝。
+- 构建仅从 bundle 中的 OCR manifest 副本移除 `resolved_model_root` 本机绝对路径，并删除 validation-only manifests；仓库源清单保留。归档器拒绝残留路径或验证清单。定向发布 helper JUnit **17/17**、Ruff、Python 编译和 diff-check 通过；覆盖额外 ONNX 拒绝、资源变更拒绝、同时篡改资源和 bundle manifest 仍被源清单拒绝，以及隐私脱敏/拒绝。
+- Luna High 限定只读复核确认归档、源清单身份及 bundle 隐私处理 finding 关闭，无 blocker。复用用户报错对应的已构建 staging（不重建 onedir）做真实 ZIP 与完整性校验：16,040 项、5,981,575,023 bytes、SHA-256 `432FCA42046AA00B5B87A5840FB191B221073238C20CFD99846F6205755C1F3E`。该 ZIP 留在项目临时目录，仅用于验证，不是发布产物。
+- 用户模型权重仍不打包；无模型下载、发布或真实图库访问。真实 OS 强制终止恢复仍未直接注入，任务状态保持 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。

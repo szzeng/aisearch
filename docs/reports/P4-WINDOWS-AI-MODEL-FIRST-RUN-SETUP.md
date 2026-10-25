@@ -38,6 +38,14 @@ $root = ".tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/repro-$runId"
 
 用户后续授权简单本地提交；不推送、不发布。
 
+## 2026-10-25 便携 ZIP OCR 资源归档续修
+
+- 用户遇到发行 helper 将 `_internal/rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx` 判作禁止模型文件，导致已完成的 ZIP 归档退出。根因为归档规则按扩展名一概拒绝 `.onnx`，没有区分随包提供、供离线首次安装使用的固定 OCR 资源。
+- 构建脚本仅从 bundle 的 OCR manifest 副本移除 `resolved_model_root` 本机绝对路径，并删除 validation-only manifests；源清单保留。release helper 拒绝残留路径或验证清单。`release_windows.py` 只放行四个确定的 RapidOCR 包内路径；路径、size、SHA 同时与仓库源清单和 bundle 清单对比，并对实际文件流式计算 SHA-256。其它 ONNX、Qwen/Face 权重、用户数据或私密配置仍拒绝。`docs/windows-release.md` 同步说明便携包只包含固定 OCR 资源，不包含用户提供的 Qwen/Face 权重。
+- 回归 JUnit **17/17**（`test-results/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/release-ocr-archive-final-20261025.xml`）、Ruff、Python 编译、diff-check、`uv lock --check` 通过。Luna High 对归档 allowlist、源清单固定身份、bundle 路径脱敏、validation-only 文件排除和测试只读复核确认 finding 已关闭，无 blocker。
+- 使用用户错误日志中的现成 staging `releases/.release-e6b27bb73a8e48bcb5c9acdc73a3e95e/dist/PhotoSearch`，只对 bundle manifest 副本执行同一脱敏并删除 validation-only 文件（源清单未改）：bundle validator `valid=true`；实际 ZIP **16,040 项、5,981,575,023 bytes**，归档只含清单允许的三个 OCR ONNX。helper 全量 CRC/内容检查通过，SHA-256 `432FCA42046AA00B5B87A5840FB191B221073238C20CFD99846F6205755C1F3E`。产物仅放 `.tmp/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP/release-ocr-archive-final-safe-20261025/`，不是 `releases/` 发行件；未重建 onedir、未下载权重、未发布。
+- 此修复未覆盖此前未注入的真实 OS 强制终止阶段恢复，因此任务仍为 **IMPLEMENTED / VALIDATION PENDING（真实进程强停故障注入）**。
+
 
 ## Luna High 独立复核（2026-10-24）
 

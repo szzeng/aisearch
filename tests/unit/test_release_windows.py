@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import zipfile
@@ -37,6 +38,32 @@ def make_bundle(root: Path) -> Path:
     manifest_dir = bundle / "_internal/tools/prepare_models/manifests"
     (manifest_dir / "qwen3-vl-embedding-2b-exif-v2.json").write_text("{}", encoding="utf-8")
     (manifest_dir / "qwen3-vl-embedding-2b-1024d-exif-v2.json").write_text("{}", encoding="utf-8")
+    ocr_files = {
+        "classification": ("ch_ppocr_mobile_v2.0_cls_infer.onnx", b"cls-ocr"),
+        "config": ("config.yaml", b"ocr-config"),
+        "detection": ("ch_PP-OCRv4_det_infer.onnx", b"det-ocr"),
+        "recognition": ("ch_PP-OCRv4_rec_infer.onnx", b"rec-ocr"),
+    }
+    artifacts = {}
+    for role, (filename, payload) in ocr_files.items():
+        relative = (
+            "_internal/rapidocr_onnxruntime/config.yaml"
+            if role == "config"
+            else f"_internal/rapidocr_onnxruntime/models/{filename}"
+        )
+        resource = bundle / relative
+        resource.parent.mkdir(parents=True, exist_ok=True)
+        resource.write_bytes(payload)
+        artifacts[role] = {
+            "path": f"ocr/ppocr-v4-mobile/{filename}",
+            "bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+    manifest_text = json.dumps({"ocr": {"artifacts": artifacts}})
+    (manifest_dir / "face-ocr.json").write_text(manifest_text, encoding="utf-8")
+    trusted_manifest = root / "trusted-face-ocr.json"
+    trusted_manifest.write_text(manifest_text, encoding="utf-8")
+    release.SOURCE_OCR_MANIFEST = trusted_manifest
     (bundle / "_internal/photo_search/web/app.js").write_text("fixture", encoding="utf-8")
     return bundle
 
@@ -71,7 +98,7 @@ def test_archive_is_zip64_readable_and_refuses_overwrite(tmp_path: Path) -> None
     bundle = make_bundle(tmp_path)
     part = tmp_path / "release.zip.part"
     details = release.create_zip(bundle, part)
-    assert details["entries"] == 10
+    assert details["entries"] == 15
     assert len(details["sha256"]) == 64
     with zipfile.ZipFile(part) as archive:
         assert archive.testzip() is None
@@ -101,6 +128,81 @@ def test_archive_allows_dependency_package_named_models(tmp_path: Path) -> None:
     weight = stub.parent / "weights.safetensors"
     weight.write_bytes(b"private model weight")
     with pytest.raises(ValueError, match="private configuration"):
+        release.archive_entries(bundle)
+
+
+def test_archive_allows_only_manifest_pinned_ocr_resources(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    entries = release.archive_entries(bundle)
+    assert sum(name.endswith(".onnx") for _, name in entries) == 3
+    unexpected = bundle / "_internal/other/model.onnx"
+    unexpected.parent.mkdir(parents=True)
+    unexpected.write_bytes(b"unapproved weight")
+    with pytest.raises(ValueError, match="private configuration"):
+        release.archive_entries(bundle)
+
+
+def test_archive_rejects_modified_pinned_ocr_resource(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    resource = bundle / "_internal/rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx"
+    resource.write_bytes(b"tamper!")
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
+        release.archive_entries(bundle)
+
+
+def test_archive_rejects_bundle_manifest_and_ocr_weight_changed_together(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    resource = bundle / "_internal/rapidocr_onnxruntime/models/ch_PP-OCRv4_det_infer.onnx"
+    replacement = b"another"
+    resource.write_bytes(replacement)
+    manifest_path = bundle / "_internal/tools/prepare_models/manifests/face-ocr.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["ocr"]["artifacts"]["detection"].update(
+        bytes=len(replacement), sha256=hashlib.sha256(replacement).hexdigest()
+    )
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid pinned OCR metadata"):
+        release.archive_entries(bundle)
+
+
+def test_build_sanitizes_local_model_root_from_bundle_manifest(tmp_path: Path) -> None:
+    build_path = Path(__file__).resolve().parents[2] / "tools" / "packaging" / "build_onedir.py"
+    build_spec = importlib.util.spec_from_file_location("build_onedir_test", build_path)
+    assert build_spec and build_spec.loader
+    build = importlib.util.module_from_spec(build_spec)
+    build_spec.loader.exec_module(build)
+    bundle = tmp_path / "PhotoSearch"
+    manifest = bundle / "_internal/tools/prepare_models/manifests/face-ocr.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({"resolved_model_root": "C:/private/PhotoSearchData/models", "ocr": {"artifacts": {}}}),
+        encoding="utf-8",
+    )
+    validation_manifest = manifest.parent / "face-ocr-validation.json"
+    validation_manifest.write_text(
+        json.dumps({"resolved_model_root": "C:/private/PhotoSearchData/models"}), encoding="utf-8"
+    )
+    build.sanitize_bundled_manifests(bundle)
+    assert "resolved_model_root" not in json.loads(manifest.read_text(encoding="utf-8"))
+    assert not manifest.with_suffix(".json.tmp").exists()
+    assert not validation_manifest.exists()
+
+
+def test_bundle_validation_rejects_validation_only_manifests(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    validation_manifest = bundle / "_internal/tools/prepare_models/manifests/face-ocr-validation.json"
+    validation_manifest.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="validation-only manifests"):
+        release.validate_bundle(bundle)
+
+
+def test_archive_refuses_local_model_root_in_bundle_manifest(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    manifest_path = bundle / "_internal/tools/prepare_models/manifests/face-ocr.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["resolved_model_root"] = "C:/private/PhotoSearchData/models"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="private local model-root path"):
         release.archive_entries(bundle)
 
 
