@@ -1,12 +1,12 @@
 # P4-PLACE-BUNDLED-DATA-A — Windows 发布包内置地名数据与首次自动安装
 
-日期：2026-11-04。状态：**IMPLEMENTED / SYNTHETIC VALIDATION PASS / REAL RELEASE VALIDATION PENDING**。
+日期：2026-11-04。状态：**IMPLEMENTED / SYNTHETIC VALIDATION PASS / LUNAH ENGINEERING REVIEW PASS / REAL RELEASE VALIDATION PENDING**。
 
 ## 目标与边界
 
 Windows onedir/ZIP 可以携带已整理的 GeoNames 亚洲城市 + 中国 OSM 行政区复合包；冻结应用在用户选定的 `PhotoSearchData` 中首次启动时，完成完整校验后安全安装并通过既有恢复流程激活。普通源码构建允许不携带地名包。不得下载/重建上游数据，不覆盖既有地点状态或照片、人工地点、排除记录和索引，不改变 Qwen、人脸或 OCR 安装流程。
 
-期望 ID：`geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3`。已知历史包为 8 个文件、76,804,462 bytes。当前 `.tmp/p4-place-cn/composite-261003/` **不存在**；历史证据没有外部固定的 `content_sha256`。发行资源清单因此将摘要和许可放行都保持 PENDING，并拒绝包含数据的发行构建，直到可校验正式候选后由内容摘要锁定。不得用 ID 后缀代替内容摘要。
+期望 ID：`geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3`。已知历史包为 8 个文件、76,804,462 bytes。当前 `.tmp/p4-place-cn/composite-261003/` **不存在**；历史证据没有外部固定的 `content_sha256` 或 Manifest 原始字节摘要。发行资源清单因此将两项摘要和许可放行都保持 PENDING，并拒绝包含数据的发行构建，直到可校验正式候选后锁定数据与 Manifest。不得用 ID 后缀代替摘要。
 
 ## 必读范围
 
@@ -16,7 +16,7 @@ Windows onedir/ZIP 可以携带已整理的 GeoNames 亚洲城市 + 中国 OSM �
 
 ## 实施不变量
 
-1. 发行资源清单锁定 dataset ID、顶层 `content_sha256`、文件数和字节数。构建、onedir 校验和 ZIP 解包后内容校验均拒绝 ID 相同但内容不同的包；完整包校验使用 `load_content()`，清单外文件、symlink/reparse point 和临时构建文件拒绝。
+1. 发行资源清单锁定 dataset ID、顶层 `content_sha256`、原始 `manifest_sha256`、文件数和字节数。构建、onedir 校验、ZIP 与运行时安装均拒绝 ID 相同但数据或 Manifest 不同的包；完整包校验使用 `load_content()`，清单外文件、symlink/reparse point 和临时构建文件拒绝。
 2. ZIP 正式归档必须含完整包与两份来源许可/归属文件；Qwen 流程不变。ZIP 校验逐文件对照 Manifest size/SHA 与锁定的内容摘要。
 3. Catalog 正常初始化后先调用既有 sole-package recovery；只在 registry 和数据目录均为空时检查 frozen bundle。先复制到数据根内带安装器所有权标记的临时目录，完整复验后在同卷原子 rename，再调 `restore_surviving_dataset()`。缺失前驱只由原恢复例外置 NULL；磁盘 Manifest 不改。
 4. registry 非空时不碰任何包状态。已 ACTIVE、STAGED、VALIDATED、RETAINED 包均不覆盖/切换；多包、冲突、损坏和未标记临时路径保留。已登记包启动不读取内置包或重算其 SHA。
@@ -30,9 +30,9 @@ Windows onedir/ZIP 可以携带已整理的 GeoNames 亚洲城市 + 中国 OSM �
 
 ## 验证及当前结果
 
-命令与最终证据见[执行报告](../reports/P4-PLACE-BUNDLED-DATA-A.md)。合成测试覆盖首装/ACTIVE、缺失前驱、重复启动、既有 ACTIVE/STAGED 保护、复制故障重试、损坏/Schema 拒绝、非安装器临时目录保护、onedir pin 及 ZIP 内文件哈希。真实候选包、真实 ZIP、中国区县+国外城市查询、干净第二台 Windows、正式 license/attribution/ODbL 衍生数据库分发义务均保持 PENDING。
+命令与最终证据见[执行报告](../reports/P4-PLACE-BUNDLED-DATA-A.md)。合成测试覆盖首装/ACTIVE、缺失前驱、重复启动、既有 ACTIVE/STAGED/VALIDATED/RETAINED 包保护、复制故障重试、marker-only 与 marker 写入故障恢复、预置 marker 保护、损坏/Manifest/Schema 拒绝、ZIP 内文件哈希，以及 ZIP 拒绝 PBF/GeoNames dump/临时文件。真实候选包、真实 ZIP、中国区县+国外城市查询、干净第二台 Windows、正式 license/attribution/ODbL 衍生数据库分发义务均保持 PENDING。
 
-该任务包含 Catalog 启动、地点包注册/激活与数据恢复状态变化。按 V3.1 §2.4/§11 必须完成**独立 DS-H 全受影响面工程审查**；本轮独立审查未执行，故审查前不标整体 PASS。审核不代替候选来源许可核准。
+该任务包含 Catalog 启动、地点包注册/激活与数据恢复状态变化。独立复核由用户指定的子代理 `lunah` 完成：初审 findings 已修复，跟审确认全部关闭且无新 blocker。工程审查只覆盖本次代码和合成证据，不代替候选来源许可核准或真实发行验收。
 
 ## 交付与停止点
 

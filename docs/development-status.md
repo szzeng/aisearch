@@ -1,6 +1,6 @@
 ## Current task: P4-PLACE-BUNDLED-DATA-A（2026-11-04）
 
-Windows 内置地名包的 fail-closed 锁、首次安装与恢复调用链、原子发布、ZIP 完整校验及便携说明已实现；隔离合成定向 JUnit **42/42**、Ruff、py_compile、diff-check 通过。真实复合包候选 `.tmp/p4-place-cn/composite-261003/` 不存在，历史报告没有外部固定内容 SHA；资源清单保持 PENDING，正式地名发行构建当前会拒绝。未运行真实 onedir/ZIP；真实包 ZIP 增量、区县/海外查询、许可交付签核、独立 DS-H 全面审查、干净第二台 Windows 均 PENDING。未访问个人图库/模型、未下载或构建地名数据，未推送/发布。详见[任务卡](tasks/P4-PLACE-BUNDLED-DATA-A.md)与[报告](reports/P4-PLACE-BUNDLED-DATA-A.md)。
+Windows 内置地名包的数据与 Manifest fail-closed 锁、首次安装/恢复、原子发布、ZIP 拒绝原始 PBF/dump/temp 及便携说明已实现。`lunah` 初审发现的问题已修复并跟审 PASS；隔离合成 JUnit **54/54**、Ruff、py_compile、PowerShell 解析、diff-check 通过。真实复合包候选 `.tmp/p4-place-cn/composite-261003/` 不存在，内容及 Manifest SHA 和许可状态仍 PENDING，真实发行构建 fail-closed。未运行真实 onedir/ZIP；实际 ZIP 增量、区县/海外查询、许可交付签核、干净第二台 Windows 均 PENDING。未访问个人图库/模型、未下载或构建地名数据，未推送/发布。详见[任务卡](tasks/P4-PLACE-BUNDLED-DATA-A.md)与[报告](reports/P4-PLACE-BUNDLED-DATA-A.md)。
 
 ## Previous task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
 

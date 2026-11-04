@@ -73,6 +73,7 @@ def make_bundle(root: Path) -> Path:
     pin = {
         "dataset_id": place_id,
         "content_sha256": manifest["content_sha256"],
+        "manifest_sha256": hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest(),
         "file_count": len(manifest["files"]),
         "uncompressed_bytes": sum(int(item["byte_size"]) for item in manifest["files"]),
         "license_review": "SYNTHETIC TEST FIXTURE",
@@ -142,6 +143,16 @@ def test_bundle_rejects_a_changed_pinned_place_dataset(tmp_path: Path) -> None:
         release.validate_bundle(bundle)
 
 
+def test_bundle_rejects_manifest_metadata_change_without_data_file_change(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    manifest_path = next((bundle / "_internal/place-datasets").glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["source"]["attribution"] = "changed attribution"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="release resource pin"):
+        release.validate_bundle(bundle)
+
+
 def test_zip_rejects_place_content_changed_after_archive_creation(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
     part = tmp_path / "release.zip.part"
@@ -155,6 +166,39 @@ def test_zip_rejects_place_content_changed_after_archive_creation(tmp_path: Path
                 payload += b"tampered\n"
             target.writestr(name, payload)
     with pytest.raises(ValueError, match="SHA-256"):
+        release.verify_zip(changed)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "source/china.osm.pbf",
+        "source/allCountries.txt",
+        "source/allCountries.zip",
+        "source/alternateNamesV2.txt",
+        ".tmp/build-piece.json",
+        "build/temp-output.txt",
+    ],
+)
+def test_release_archive_rejects_raw_source_and_temporary_files(tmp_path: Path, relative: str) -> None:
+    bundle = make_bundle(tmp_path)
+    extra = bundle / Path(relative)
+    extra.parent.mkdir(parents=True, exist_ok=True)
+    extra.write_bytes(b"forbidden release input")
+    with pytest.raises(ValueError, match="raw place source or temporary"):
+        release.archive_entries(bundle)
+
+
+def test_final_zip_verification_rejects_raw_osm_source_added_after_archive(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    part = tmp_path / "release.zip.part"
+    release.create_zip(bundle, part)
+    changed = tmp_path / "with-pbf.zip"
+    with zipfile.ZipFile(part) as source, zipfile.ZipFile(changed, "w", zipfile.ZIP_DEFLATED) as target:
+        for name in source.namelist():
+            target.writestr(name, source.read(name))
+        target.writestr("PhotoSearch/source/china.osm.pbf", b"raw input")
+    with pytest.raises(ValueError, match="raw place source or temporary"):
         release.verify_zip(changed)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -31,6 +32,7 @@ def make_bundle(root: Path, *, compatible: tuple[int, int] = (18, 18)) -> Path:
             {
                 "dataset_id": DATASET_ID,
                 "content_sha256": manifest["content_sha256"],
+                "manifest_sha256": hashlib.sha256((package / "manifest.json").read_bytes()).hexdigest(),
                 "file_count": len(manifest["files"]),
                 "uncompressed_bytes": sum(int(item["byte_size"]) for item in manifest["files"]),
             }
@@ -148,6 +150,60 @@ def test_interrupted_owned_copy_is_cleaned_and_retried(tmp_path: Path) -> None:
     assert not temporary.exists()
 
 
+def test_marker_only_crash_residue_retries_install_in_the_same_start(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path / "bundle")
+    data_root = tmp_path / "PhotoSearchData"
+    owner = data_root / "places" / ".bundled-place-installer"
+    owner.mkdir(parents=True)
+    marker = owner / f"{DATASET_ID}.json"
+    marker.write_text(
+        json.dumps({"dataset_id": DATASET_ID, "installer": "photo-search-bundled-place-dataset-v1"}),
+        encoding="utf-8",
+    )
+    with Catalog.open(data_root=data_root) as catalog:
+        assert bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")
+        assert catalog.read_one("SELECT state FROM geo_datasets WHERE dataset_id = ?", (DATASET_ID,))[0] == "ACTIVE"
+    assert not marker.exists()
+
+
+def test_unowned_owner_marker_collision_is_preserved(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path / "bundle")
+    data_root = tmp_path / "PhotoSearchData"
+    owner = data_root / "places" / ".bundled-place-installer"
+    owner.mkdir(parents=True)
+    marker = owner / f"{DATASET_ID}.json"
+    marker.write_text("user-owned marker", encoding="utf-8")
+    original = marker.read_bytes()
+    with Catalog.open(data_root=data_root) as catalog:
+        assert not bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")
+        assert catalog.read_one("SELECT 1 FROM geo_datasets") is None
+    assert marker.read_bytes() == original
+    assert not (data_root / "places" / "datasets" / DATASET_ID).exists()
+
+
+def test_owner_marker_write_failure_is_cleaned_and_next_start_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = make_bundle(tmp_path / "bundle")
+    data_root = tmp_path / "PhotoSearchData"
+    original_dump = json.dump
+
+    def fail_after_marker_creation(payload, stream, **kwargs):
+        if stream.name.endswith(f"{DATASET_ID}.json"):
+            stream.write("{")
+            raise OSError("simulated marker write failure")
+        return original_dump(payload, stream, **kwargs)
+
+    with Catalog.open(data_root=data_root) as catalog:
+        monkeypatch.setattr(bundled_dataset.json, "dump", fail_after_marker_creation)
+        assert not bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")
+        marker = data_root / "places" / ".bundled-place-installer" / f"{DATASET_ID}.json"
+        assert not marker.exists()
+        assert catalog.read_one("SELECT 1 FROM geo_datasets") is None
+        monkeypatch.setattr(bundled_dataset.json, "dump", original_dump)
+        assert bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")
+
+
 def test_copy_failure_leaves_no_final_package_and_retry_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bundle = make_bundle(tmp_path / "bundle")
     data_root = tmp_path / "PhotoSearchData"
@@ -170,12 +226,17 @@ def test_copy_failure_leaves_no_final_package_and_retry_succeeds(tmp_path: Path,
         assert bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")
 
 
-@pytest.mark.parametrize("defect", ["tampered", "schema"])
+@pytest.mark.parametrize("defect", ["tampered", "schema", "manifest"])
 def test_invalid_or_incompatible_bundle_is_refused_without_registration(tmp_path: Path, defect: str) -> None:
     bundle = make_bundle(tmp_path / "bundle", compatible=(1, 1) if defect == "schema" else (18, 18))
     if defect == "tampered":
         path = bundle / "place-datasets" / DATASET_ID / "places.jsonl"
         path.write_text(path.read_text(encoding="utf-8") + "tampered\n", encoding="utf-8")
+    elif defect == "manifest":
+        path = bundle / "place-datasets" / DATASET_ID / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest["source"]["attribution"] = "modified after pinning"
+        path.write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     data_root = tmp_path / "PhotoSearchData"
     with Catalog.open(data_root=data_root) as catalog:
         assert not bundled_dataset.install_bundled_place_dataset(catalog, bundle_root=bundle / "place-datasets")

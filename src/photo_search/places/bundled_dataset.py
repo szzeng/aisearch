@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -42,6 +43,9 @@ def validate_release_pin(document: dict[str, Any]) -> dict[str, Any]:
         or not isinstance(digest, str)
         or len(digest) != 64
         or any(char not in "0123456789abcdef" for char in digest)
+        or not isinstance(document.get("manifest_sha256"), str)
+        or len(str(document["manifest_sha256"])) != 64
+        or any(char not in "0123456789abcdef" for char in str(document["manifest_sha256"]))
     ):
         raise ValueError("the bundled place dataset release pin is incomplete")
     return document
@@ -52,9 +56,11 @@ def validate_pinned_package(source: Path, pin: dict[str, Any]) -> Any:
     content = dataset_module.load_content(
         source, supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION)
     )
+    manifest_digest = hashlib.sha256((source / dataset_module.MANIFEST_FILENAME).read_bytes()).hexdigest()
     if (
         content.dataset_id != pin["dataset_id"]
         or content.manifest["content_sha256"] != pin["content_sha256"]
+        or manifest_digest != pin["manifest_sha256"]
         or len(content.files) != int(pin["file_count"])
         or sum(item.byte_size for item in content.files) != int(pin["uncompressed_bytes"])
     ):
@@ -76,7 +82,7 @@ def _owner_record(dataset_id: str) -> dict[str, str]:
 
 
 def _owned_temporary(path: Path, marker: Path, dataset_id: str) -> bool:
-    if path.is_symlink() or not path.is_dir() or path.is_junction():
+    if path.is_symlink() or not path.is_dir() or path.is_junction() or marker.is_symlink() or marker.is_junction():
         return False
     try:
         return json.loads(marker.read_text(encoding="utf-8")) == _owner_record(dataset_id)
@@ -85,7 +91,6 @@ def _owned_temporary(path: Path, marker: Path, dataset_id: str) -> bool:
 
 
 def _copy_verified_tree(source: Path, target: Path, content: Any) -> None:
-    target.mkdir()
     for item in content.files:
         origin = source / item.relative_path
         destination = target / item.relative_path
@@ -129,6 +134,22 @@ def install_bundled_place_dataset(catalog: Catalog, *, bundle_root: Path | None 
                 return False
             shutil.rmtree(temporary)
             marker.unlink(missing_ok=True)
+        elif marker.is_symlink() or marker.is_junction():
+            logger.warning("bundled place install found an unsafe owner marker; leaving it untouched")
+            return False
+        elif marker.exists():
+            try:
+                marker_record = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                logger.warning("bundled place install found an unrecognized owner marker; leaving it untouched")
+                return False
+            if marker_record != _owner_record(dataset_id):
+                logger.warning("bundled place install found a marker not owned by this installer; leaving it untouched")
+                return False
+            # A crash may happen after writing the ownership marker but before
+            # creating the package staging directory. That marker is our only
+            # durable evidence that this reserved path belongs to the installer.
+            marker.unlink()
 
         entries = list(target_root.iterdir())
         if final.exists() or final.is_symlink() or entries:
@@ -143,23 +164,35 @@ def install_bundled_place_dataset(catalog: Catalog, *, bundle_root: Path | None 
         source = root / dataset_id
         content = validate_pinned_package(source, pin)
 
+        marker_created_by_this_attempt = False
+        temporary_created_by_this_attempt = False
         try:
             with marker.open("x", encoding="utf-8") as stream:
+                marker_created_by_this_attempt = True
                 json.dump(_owner_record(content.dataset_id), stream, sort_keys=True)
+            temporary.mkdir()
+            temporary_created_by_this_attempt = True
             _copy_verified_tree(source, temporary, content)
             validate_pinned_package(temporary, pin)
             if final.exists():
+                marker.unlink(missing_ok=True)
                 return False
             os.rename(temporary, final)
+            temporary_created_by_this_attempt = False
             marker.unlink(missing_ok=True)
             datasets_module.restore_surviving_dataset(catalog)
             if catalog.read_one("SELECT 1 FROM geo_datasets WHERE dataset_id = ? AND state = 'ACTIVE'", (content.dataset_id,)) is None:
                 raise RuntimeError("the bundled place dataset was published but could not be activated")
             return True
         except Exception:
-            if temporary.exists() and _owned_temporary(temporary, marker, content.dataset_id):
+            if (
+                temporary_created_by_this_attempt
+                and temporary.exists()
+                and _owned_temporary(temporary, marker, content.dataset_id)
+            ):
                 shutil.rmtree(temporary)
-            marker.unlink(missing_ok=True)
+            if marker_created_by_this_attempt:
+                marker.unlink(missing_ok=True)
             raise
     except Exception:  # optional package failures must not prevent ordinary browsing
         logger.exception("bundled offline place dataset installation failed; place resolver remains unavailable")

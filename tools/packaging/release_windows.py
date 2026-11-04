@@ -14,6 +14,40 @@ from typing import Any
 
 SOURCE_OCR_MANIFEST = Path(__file__).resolve().parents[2] / "tools" / "prepare_models" / "manifests" / "face-ocr.json"
 PLACE_DATASET_RELEASE_MANIFEST = Path(__file__).resolve().parents[2] / "tools" / "places" / "bundled-dataset-release.json"
+RAW_GEONAMES_DUMPS = {
+    "admin1codes.txt",
+    "admin1codesascii.txt",
+    "admin2codes.txt",
+    "allcountries.txt",
+    "alternatenames.txt",
+    "cities500.txt",
+    "cities500.zip",
+    "countryinfo.txt",
+    "featurecodes_en.txt",
+    "iso-languagecodes.txt",
+    "timezones.txt",
+}
+TEMPORARY_PATH_PARTS = {".tmp", ".pytest-tmp", ".uv-cache", "build", "staging", "temp", "temporary", "tmp", "work"}
+TEMPORARY_SUFFIXES = (".part", ".temp", ".tmp", ".bak", ".orig")
+
+
+def _reject_source_or_temporary_payload(relative: str) -> None:
+    path = PurePosixPath(relative)
+    parts = {part.casefold() for part in path.parts}
+    name = path.name.casefold()
+    raw_dump_family = re.fullmatch(
+        r"(?:allcountries|alternatenames(?:v\d+)?|cities\d+|admin\d+codes(?:ascii)?|"
+        r"countryinfo|featurecodes_en|timezones|iso-languagecodes)\.(?:txt|zip|gz)",
+        name,
+    ) is not None
+    if (
+        path.suffix.casefold() == ".pbf"
+        or name in RAW_GEONAMES_DUMPS
+        or raw_dump_family
+        or parts.intersection(TEMPORARY_PATH_PARTS)
+        or path.name.casefold().endswith(TEMPORARY_SUFFIXES)
+    ):
+        raise ValueError(f"raw place source or temporary build file is not allowed in release ZIP: {relative}")
 
 
 def release_metadata(root: Path) -> dict[str, str]:
@@ -236,6 +270,7 @@ def archive_entries(bundle: Path) -> list[tuple[Path, str]]:
         if not path.is_file():
             continue
         relative = path.relative_to(bundle).as_posix()
+        _reject_source_or_temporary_payload(relative)
         parts = {part.casefold() for part in Path(relative).parts}
         forbidden_suffixes = {
             ".db", ".sqlite", ".sqlite3", ".safetensors", ".onnx", ".pt", ".pth", ".bin"
@@ -329,6 +364,7 @@ def create_zip(bundle: Path, destination_part: Path) -> dict[str, Any]:
         "place_dataset": {
             "dataset_id": place_pin["dataset_id"],
             "content_sha256": place_pin["content_sha256"],
+            "manifest_sha256": place_pin["manifest_sha256"],
             "uncompressed_bytes": int(place_pin["uncompressed_bytes"]),
             "zip_increment_bytes": place_increment_bytes,
             "license_review": place_pin["license_review"],
@@ -347,6 +383,7 @@ def verify_zip(path: Path) -> list[str]:
             raise ValueError("ZIP contains duplicate entries")
         for name in actual:
             _validate_zip_name(name)
+            _reject_source_or_temporary_payload(name[len("PhotoSearch/") :])
         if not actual or any(not name.startswith("PhotoSearch/") for name in actual):
             raise ValueError("ZIP must contain files under one PhotoSearch/ top-level directory")
         pin_name = "PhotoSearch/_internal/place-datasets/release-resource.json"
@@ -368,14 +405,16 @@ def verify_zip(path: Path) -> list[str]:
         manifest_name = base + dataset_module.MANIFEST_FILENAME
         if manifest_name not in actual:
             raise ValueError("ZIP is missing the place dataset manifest")
+        manifest_bytes = archive.read(manifest_name)
         manifest = dataset_module.validate_manifest(
-            json.loads(archive.read(manifest_name).decode("utf-8")),
+            json.loads(manifest_bytes.decode("utf-8")),
             supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION),
         )
         files = tuple(dataset_module.DatasetFile(**item) for item in manifest["files"])
         if (
             manifest["dataset_id"] != dataset_id
             or manifest["content_sha256"] != pin["content_sha256"]
+            or hashlib.sha256(manifest_bytes).hexdigest() != pin["manifest_sha256"]
             or len(files) != int(pin["file_count"])
             or sum(item.byte_size for item in files) != int(pin["uncompressed_bytes"])
             or dataset_module.declared_content_sha256(files) != pin["content_sha256"]
