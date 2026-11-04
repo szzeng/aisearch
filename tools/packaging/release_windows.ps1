@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$Python = '',
-    [string]$QwenModelDir = ''
+    [string]$QwenModelDir = '',
+    [Parameter(Mandatory = $true)][string]$PlaceDatasetDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -103,7 +104,8 @@ try {
 
     $buildStarted = Get-Date
     $buildTimer = [Diagnostics.Stopwatch]::StartNew()
-    Invoke-Checked $pythonExe @($buildScript, '--distpath', $dist, '--workpath', $work) 'PyInstaller build'
+    $placeDataset = (Resolve-Path -LiteralPath $PlaceDatasetDir).Path
+    Invoke-Checked $pythonExe @($buildScript, '--distpath', $dist, '--workpath', $work, '--place-dataset', $placeDataset) 'PyInstaller build'
     $buildTimer.Stop()
     Invoke-Checked $pythonExe @($helper, 'validate-bundle', '--bundle', $bundle) 'onedir validation'
 
@@ -164,6 +166,7 @@ try {
         zip_bytes = [long]$archive.zip_bytes
         sha256 = [string]$archive.sha256
         entries = [int]$archive.entries
+        place_dataset = $archive.place_dataset
         suitable_for_sharing = $false
     }
     $reportPart = Join-Path $stage $reportName

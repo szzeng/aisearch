@@ -1,4 +1,8 @@
-## Current task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
+## Current task: P4-PLACE-BUNDLED-DATA-A（2026-11-04）
+
+Windows 内置地名包的 fail-closed 锁、首次安装与恢复调用链、原子发布、ZIP 完整校验及便携说明已实现；隔离合成定向 JUnit **42/42**、Ruff、py_compile、diff-check 通过。真实复合包候选 `.tmp/p4-place-cn/composite-261003/` 不存在，历史报告没有外部固定内容 SHA；资源清单保持 PENDING，正式地名发行构建当前会拒绝。未运行真实 onedir/ZIP；真实包 ZIP 增量、区县/海外查询、许可交付签核、独立 DS-H 全面审查、干净第二台 Windows 均 PENDING。未访问个人图库/模型、未下载或构建地名数据，未推送/发布。详见[任务卡](tasks/P4-PLACE-BUNDLED-DATA-A.md)与[报告](reports/P4-PLACE-BUNDLED-DATA-A.md)。
+
+## Previous task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
 
 便携版首次 AI 模型准备入口、轻量状态、OCR 离线安装、Face 安全导入、Qwen 既有下载器集成与首用页已实现。便携 ZIP 归档仅放行与仓库源清单匹配的四项固定 OCR 资源并排除本机路径/validation 清单；真实 ZIP CRC/SHA 通过，16,040 项。续修官方 Face ZIP 成员布局：现支持根目录平铺或 `buffalo_l/` 目录两种一致布局，混合布局及原有安全检查仍拒绝。Face 首次准备定向 JUnit **22/22**；Ruff、Python 编译、diff-check 通过；Luna High 无 blocker。新 onedir validator `valid=true`，冻结隔离 API smoke `ok`、`problems=[]`。未重新下载模型，尚未用用户实际官方 ZIP 复测；需在更新便携包中重试 Face 准备。首次准备原定 JUnit **105 passed / 4 skipped / 0 failed（109 cases）**，冻结 OCR 安装/合成图识别与 API smoke 通过。真实进程强停阶段恢复仍未直接注入验证，状态 **IMPLEMENTED / VALIDATION PENDING**。用户授权本地提交，不推送或发布。详见[任务卡](tasks/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)与[执行报告](reports/P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP.md)。
 

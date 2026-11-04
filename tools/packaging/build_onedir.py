@@ -90,8 +90,26 @@ def main() -> int:
         help="PyInstaller output root (use a task-local path to preserve an existing bundle)",
     )
     parser.add_argument("--workpath", type=Path, default=Path("build"))
+    parser.add_argument(
+        "--place-dataset",
+        type=Path,
+        help="verified prepared composite place dataset directory for a distributable Windows bundle",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
+    place_pin = root / "tools" / "places" / "bundled-dataset-release.json"
+    if args.place_dataset is not None:
+        sys.path.insert(0, str(root / "src"))
+        from photo_search.places.bundled_dataset import (
+            validate_pinned_package,
+            validate_release_pin,
+        )
+
+        # Keep the release pin beside the source tree and reject unreviewed or
+        # unpinned content before spending time on the frozen build.
+        document = json.loads(place_pin.read_text(encoding="utf-8"))
+        validate_release_pin(document)
+        validate_pinned_package(args.place_dataset.resolve(), document)
     manifest_dir = root / "tools" / "prepare_models" / "manifests"
     rapidocr_root = Path(rapidocr_onnxruntime.__file__).resolve().parent
     if importlib.metadata.version("rapidocr-onnxruntime") != "1.4.4":
@@ -165,6 +183,14 @@ def main() -> int:
             "Setup-AI-Models.cmd",
         ):
             shutil.copy2(root / "tools" / "packaging" / filename, bundle / filename)
+        if args.place_dataset is not None:
+            from photo_search.places.bundled_dataset import validate_pinned_package
+
+            target = bundle / "_internal" / "place-datasets"
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(args.place_dataset.resolve(), target / str(document["dataset_id"]))
+            shutil.copy2(place_pin, target / "release-resource.json")
+            validate_pinned_package(target / str(document["dataset_id"]), document)
     return result
 
 

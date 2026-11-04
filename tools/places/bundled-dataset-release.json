@@ -1,0 +1,8 @@
+{
+  "dataset_id": "geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3",
+  "content_sha256": null,
+  "file_count": 8,
+  "uncompressed_bytes": 76804462,
+  "license_review": "PENDING: GeoNames CC BY 4.0 and OSM ODbL 1.0 redistribution review",
+  "release_pin_status": "PENDING: candidate package unavailable; do not distribute"
+}

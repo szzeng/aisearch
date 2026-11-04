@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from p2_dataset_fixtures import build_package
 
 _MODULE_PATH = Path(__file__).resolve().parents[2] / "tools" / "packaging" / "release_windows.py"
 _SPEC = importlib.util.spec_from_file_location("release_windows", _MODULE_PATH)
@@ -65,6 +66,22 @@ def make_bundle(root: Path) -> Path:
     trusted_manifest.write_text(manifest_text, encoding="utf-8")
     release.SOURCE_OCR_MANIFEST = trusted_manifest
     (bundle / "_internal/photo_search/web/app.js").write_text("fixture", encoding="utf-8")
+    place_root = bundle / "_internal/place-datasets"
+    place_id = "geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3"
+    package = place_root / place_id
+    manifest = build_package(package, dataset_id=place_id, previous_dataset_id="geonames-asia-cities500-v1")
+    pin = {
+        "dataset_id": place_id,
+        "content_sha256": manifest["content_sha256"],
+        "file_count": len(manifest["files"]),
+        "uncompressed_bytes": sum(int(item["byte_size"]) for item in manifest["files"]),
+        "license_review": "SYNTHETIC TEST FIXTURE",
+        "release_pin_status": "TEST ONLY",
+    }
+    (place_root / "release-resource.json").write_text(json.dumps(pin), encoding="utf-8")
+    trusted_pin = root / "trusted-place-dataset.json"
+    trusted_pin.write_text(json.dumps(pin), encoding="utf-8")
+    release.PLACE_DATASET_RELEASE_MANIFEST = trusted_pin
     return bundle
 
 
@@ -80,6 +97,14 @@ def test_version_sources_must_match(tmp_path: Path) -> None:
     api.write_text('APP_VERSION = "1.2.4"\n', encoding="utf-8")
     with pytest.raises(ValueError, match="version mismatch"):
         release.release_metadata(tmp_path)
+
+
+def test_repository_place_dataset_pin_fails_closed_while_candidate_is_pending() -> None:
+    from photo_search.places.bundled_dataset import validate_release_pin
+
+    pending = json.loads(release.PLACE_DATASET_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="release pin is incomplete"):
+        validate_release_pin(pending)
 
 
 def test_bundle_required_paths_and_missing_executable(tmp_path: Path) -> None:
@@ -98,13 +123,39 @@ def test_archive_is_zip64_readable_and_refuses_overwrite(tmp_path: Path) -> None
     bundle = make_bundle(tmp_path)
     part = tmp_path / "release.zip.part"
     details = release.create_zip(bundle, part)
-    assert details["entries"] == 15
+    assert details["entries"] > 15
     assert len(details["sha256"]) == 64
+    assert details["place_dataset"]["dataset_id"] == "geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3"
+    assert details["place_dataset"]["zip_increment_bytes"] > 0
     with zipfile.ZipFile(part) as archive:
         assert archive.testzip() is None
         assert all(name.startswith("PhotoSearch/") for name in archive.namelist())
     with pytest.raises(FileExistsError):
         release.create_zip(bundle, part)
+
+
+def test_bundle_rejects_a_changed_pinned_place_dataset(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    package_file = next((bundle / "_internal/place-datasets").glob("*/places.jsonl"))
+    package_file.write_text("not the pinned source content", encoding="utf-8")
+    with pytest.raises(ValueError, match="place dataset"):
+        release.validate_bundle(bundle)
+
+
+def test_zip_rejects_place_content_changed_after_archive_creation(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path)
+    part = tmp_path / "release.zip.part"
+    release.create_zip(bundle, part)
+    changed = tmp_path / "changed.zip"
+    with zipfile.ZipFile(part) as source, zipfile.ZipFile(changed, "w", zipfile.ZIP_DEFLATED) as target:
+        place_member = next(name for name in source.namelist() if name.endswith("/places.jsonl"))
+        for name in source.namelist():
+            payload = source.read(name)
+            if name == place_member:
+                payload += b"tampered\n"
+            target.writestr(name, payload)
+    with pytest.raises(ValueError, match="SHA-256"):
+        release.verify_zip(changed)
 
 
 def test_archive_refuses_private_files_and_unsafe_names(tmp_path: Path) -> None:

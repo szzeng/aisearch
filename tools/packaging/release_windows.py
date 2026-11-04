@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 SOURCE_OCR_MANIFEST = Path(__file__).resolve().parents[2] / "tools" / "prepare_models" / "manifests" / "face-ocr.json"
+PLACE_DATASET_RELEASE_MANIFEST = Path(__file__).resolve().parents[2] / "tools" / "places" / "bundled-dataset-release.json"
 
 
 def release_metadata(root: Path) -> dict[str, str]:
@@ -37,7 +38,7 @@ def release_metadata(root: Path) -> dict[str, str]:
     return {"version": version_match.group(1)}
 
 
-def validate_bundle(bundle: Path) -> None:
+def validate_bundle(bundle: Path) -> dict[str, Any]:
     executable = bundle / "PhotoSearch.exe"
     required = (
         executable,
@@ -75,6 +76,34 @@ def validate_bundle(bundle: Path) -> None:
     if validation_manifests:
         raise ValueError("validation-only manifests must not be bundled: " + ", ".join(validation_manifests))
     pinned_ocr_bundle_resources(bundle)
+    return _validate_place_dataset_bundle(bundle)
+
+
+def _validate_place_dataset_bundle(bundle: Path) -> dict[str, Any]:
+    root = bundle / "_internal" / "place-datasets"
+    pin_path = root / "release-resource.json"
+    try:
+        pin = json.loads(pin_path.read_text(encoding="utf-8"))
+        project_root = Path(__file__).resolve().parents[2]
+        sys.path.insert(0, str(project_root / "src"))
+        from photo_search.places.bundled_dataset import (
+            validate_pinned_package,
+            validate_release_pin,
+        )
+
+        validate_release_pin(pin)
+        trusted = json.loads(PLACE_DATASET_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+        validate_release_pin(trusted)
+        if pin != trusted:
+            raise ValueError("bundled resource pin does not match the trusted release manifest")
+        dataset_root = root / str(pin["dataset_id"])
+        validate_pinned_package(dataset_root, pin)
+    except Exception as exc:
+        raise ValueError(f"bundled place dataset is missing, unpinned, or invalid: {exc}") from exc
+    expected_names = {"release-resource.json", str(pin["dataset_id"])}
+    if {path.name for path in root.iterdir()} != expected_names:
+        raise ValueError("bundled place dataset directory contains unexpected files")
+    return pin
 
 
 def require_free_space(free_bytes: int, required_bytes: int) -> None:
@@ -245,7 +274,7 @@ def _validate_zip_name(name: str) -> None:
 
 def create_zip(bundle: Path, destination_part: Path) -> dict[str, Any]:
     """Stream files into a ZIP64 archive and verify every member before returning."""
-    validate_bundle(bundle)
+    place_pin = validate_bundle(bundle)
     entries = archive_entries(bundle)
     destination_part.parent.mkdir(parents=True, exist_ok=True)
     if destination_part.exists():
@@ -264,6 +293,31 @@ def create_zip(bundle: Path, destination_part: Path) -> dict[str, Any]:
                 while chunk := source.read(1024 * 1024):
                     target.write(chunk)
     verify_zip(destination_part)
+    place_prefix = f"PhotoSearch/_internal/place-datasets/{place_pin['dataset_id']}/"
+    place_increment_bytes = 0
+    with zipfile.ZipFile(destination_part, "r") as archive, destination_part.open("rb") as raw:
+        for info in archive.infolist():
+            if not info.filename.startswith(place_prefix) and info.filename != "PhotoSearch/_internal/place-datasets/release-resource.json":
+                continue
+            raw.seek(info.header_offset)
+            local_header = raw.read(30)
+            if len(local_header) != 30:
+                raise ValueError("ZIP local header is truncated")
+            local_name_bytes = int.from_bytes(local_header[26:28], "little")
+            local_extra_bytes = int.from_bytes(local_header[28:30], "little")
+            encoded_name_bytes = len(info.filename.encode("utf-8"))
+            if local_name_bytes != encoded_name_bytes:
+                raise ValueError("ZIP local filename length does not match its directory entry")
+            place_increment_bytes += (
+                info.compress_size
+                + 30
+                + local_name_bytes
+                + local_extra_bytes
+                + 46
+                + encoded_name_bytes
+                + len(info.extra)
+                + len(info.comment)
+            )
     digest = hashlib.sha256()
     with destination_part.open("rb") as stream:
         while chunk := stream.read(1024 * 1024):
@@ -272,6 +326,14 @@ def create_zip(bundle: Path, destination_part: Path) -> dict[str, Any]:
         "zip_bytes": destination_part.stat().st_size,
         "sha256": digest.hexdigest().upper(),
         "entries": len(entries),
+        "place_dataset": {
+            "dataset_id": place_pin["dataset_id"],
+            "content_sha256": place_pin["content_sha256"],
+            "uncompressed_bytes": int(place_pin["uncompressed_bytes"]),
+            "zip_increment_bytes": place_increment_bytes,
+            "license_review": place_pin["license_review"],
+            "release_pin_status": place_pin["release_pin_status"],
+        },
     }
 
 
@@ -287,6 +349,65 @@ def verify_zip(path: Path) -> list[str]:
             _validate_zip_name(name)
         if not actual or any(not name.startswith("PhotoSearch/") for name in actual):
             raise ValueError("ZIP must contain files under one PhotoSearch/ top-level directory")
+        pin_name = "PhotoSearch/_internal/place-datasets/release-resource.json"
+        if pin_name not in actual:
+            raise ValueError("ZIP is missing the pinned offline place dataset")
+        pin = json.loads(archive.read(pin_name).decode("utf-8"))
+        project_root = Path(__file__).resolve().parents[2]
+        sys.path.insert(0, str(project_root / "src"))
+        from photo_search.catalog import schema as schema_module
+        from photo_search.geo import dataset as dataset_module
+        from photo_search.places.bundled_dataset import validate_release_pin
+
+        validate_release_pin(pin)
+        trusted = json.loads(PLACE_DATASET_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+        if pin != trusted:
+            raise ValueError("ZIP resource pin does not match the trusted release manifest")
+        dataset_id = str(pin["dataset_id"])
+        base = f"PhotoSearch/_internal/place-datasets/{dataset_id}/"
+        manifest_name = base + dataset_module.MANIFEST_FILENAME
+        if manifest_name not in actual:
+            raise ValueError("ZIP is missing the place dataset manifest")
+        manifest = dataset_module.validate_manifest(
+            json.loads(archive.read(manifest_name).decode("utf-8")),
+            supported_schema_version=int(schema_module.SUPPORTED_SCHEMA_VERSION),
+        )
+        files = tuple(dataset_module.DatasetFile(**item) for item in manifest["files"])
+        if (
+            manifest["dataset_id"] != dataset_id
+            or manifest["content_sha256"] != pin["content_sha256"]
+            or len(files) != int(pin["file_count"])
+            or sum(item.byte_size for item in files) != int(pin["uncompressed_bytes"])
+            or dataset_module.declared_content_sha256(files) != pin["content_sha256"]
+        ):
+            raise ValueError("ZIP place dataset identity or content digest does not match its release pin")
+        expected_files = {manifest_name}
+        for item in files:
+            name = base + item.relative_path
+            expected_files.add(name)
+            try:
+                source = archive.open(name, "r")
+            except KeyError as exc:
+                raise ValueError(f"ZIP is missing place dataset content: {item.relative_path}") from exc
+            digest = hashlib.sha256()
+            size = 0
+            with source:
+                while chunk := source.read(1024 * 1024):
+                    digest.update(chunk)
+                    size += len(chunk)
+            if size != item.byte_size or digest.hexdigest() != item.sha256:
+                raise ValueError(f"ZIP place dataset content failed SHA-256: {item.relative_path}")
+        actual_place = {name for name in actual if name.startswith(base)}
+        if actual_place != expected_files:
+            raise ValueError("ZIP place dataset contains unlisted or missing files")
+        place_root = "PhotoSearch/_internal/place-datasets/"
+        dataset_roots = {
+            name[len(place_root) :].split("/", 1)[0]
+            for name in actual
+            if name.startswith(place_root)
+        }
+        if dataset_roots != {"release-resource.json", dataset_id}:
+            raise ValueError("ZIP contains unexpected place dataset resources")
         return actual
 
 

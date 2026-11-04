@@ -122,7 +122,11 @@ class CatalogService:
         try:
             from photo_search.places.datasets import restore_surviving_dataset
 
-            restore_surviving_dataset(catalog)
+            recovered = restore_surviving_dataset(catalog)
+            if recovered is None:
+                from photo_search.places.bundled_dataset import install_bundled_place_dataset
+
+                install_bundled_place_dataset(catalog)
         except BaseException:
             catalog.close()
             raise
