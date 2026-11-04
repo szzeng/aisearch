@@ -6,7 +6,7 @@
 
 Windows onedir/ZIP 可以携带已整理的 GeoNames 亚洲城市 + 中国 OSM 行政区复合包；冻结应用在用户选定的 `PhotoSearchData` 中首次启动时，完成完整校验后安全安装并通过既有恢复流程激活。普通源码构建允许不携带地名包。不得下载/重建上游数据，不覆盖既有地点状态或照片、人工地点、排除记录和索引，不改变 Qwen、人脸或 OCR 安装流程。
 
-期望 ID：`geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3`。已知历史包为 8 个文件、76,804,462 bytes。当前 `.tmp/p4-place-cn/composite-261003/` **不存在**；历史证据没有外部固定的 `content_sha256` 或 Manifest 原始字节摘要。发行资源清单因此将两项摘要和许可放行都保持 PENDING，并拒绝包含数据的发行构建，直到可校验正式候选后锁定数据与 Manifest。不得用 ID 后缀代替摘要。
+期望 ID：`geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3`。本轮在用户给出的 `D:\SZ\project\PhotoSearchData\places\datasets\<dataset_id>` 找到完整候选；以 `load_content()` 校验通过。候选 8 个文件、76,804,462 bytes；`content_sha256=4a5ed1d4a45ca95be15bce38415f0db95266b665a096c06eef9191b37c2b78c4`，原始 Manifest SHA-256 `bb0781448e27d7a24c0cbe197c7f06165f2e761c355df9b10625bb29aba79d7a`。`.tmp/p4-place-cn/composite-261003/` 仍不存在。许可核准保持 PENDING。
 
 ## 必读范围
 
@@ -30,12 +30,12 @@ Windows onedir/ZIP 可以携带已整理的 GeoNames 亚洲城市 + 中国 OSM �
 
 ## 验证及当前结果
 
-命令与最终证据见[执行报告](../reports/P4-PLACE-BUNDLED-DATA-A.md)。合成测试覆盖首装/ACTIVE、缺失前驱、重复启动、既有 ACTIVE/STAGED/VALIDATED/RETAINED 包保护、复制故障重试、marker-only 与 marker 写入故障恢复、预置 marker 保护、损坏/Manifest/Schema 拒绝、ZIP 内文件哈希，以及 ZIP 拒绝 PBF/GeoNames dump/临时文件。真实候选包、真实 ZIP、中国区县+国外城市查询、干净第二台 Windows、正式 license/attribution/ODbL 衍生数据库分发义务均保持 PENDING。
+命令与最终证据见[执行报告](../reports/P4-PLACE-BUNDLED-DATA-A.md)。合成测试覆盖首装/ACTIVE、缺失前驱、重复启动、既有 ACTIVE/STAGED/VALIDATED/RETAINED 包保护、复制故障重试、marker-only 与 marker 写入故障恢复、预置 marker 保护、损坏/Manifest/Schema 拒绝、ZIP 内文件哈希，以及 ZIP 拒绝 PBF/GeoNames dump/临时文件。真实候选包身份、Manifest、文件 hash 与 Schema 的 `load_content()` 核验通过；真实 onedir/ZIP、区县+国外城市查询、干净第二台 Windows、正式 license/attribution/ODbL 衍生数据库分发义务仍 PENDING。
 
 该任务包含 Catalog 启动、地点包注册/激活与数据恢复状态变化。独立复核由用户指定的子代理 `lunah` 完成：初审 findings 已修复，跟审确认全部关闭且无新 blocker。工程审查只覆盖本次代码和合成证据，不代替候选来源许可核准或真实发行验收。
 
 ## 交付与停止点
 
 - 唯一任务报告：`docs/reports/P4-PLACE-BUNDLED-DATA-A.md`。
-- 只有固定摘要来自真实候选、合成验证和真实 ZIP 验证通过、独立工程审查通过后，才可标记发行集成 PASS。未经 GeoNames CC BY 4.0 / OSM ODbL 1.0 正式审查的包不得对外分发。
+- 真实候选数据与 Manifest 摘要已锁入发行资源清单；完成真实 ZIP/区县与海外城市核验后可更新本地发行验收。未经 GeoNames CC BY 4.0 / OSM ODbL 1.0 正式审查的包不得对外分发。
 - 不自动推送 GitHub、打 tag 或发布 Release；跨电脑、公开分发和模型资格是独立验收边界。

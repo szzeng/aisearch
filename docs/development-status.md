@@ -1,6 +1,6 @@
 ## Current task: P4-PLACE-BUNDLED-DATA-A（2026-11-04）
 
-Windows 内置地名包的数据与 Manifest fail-closed 锁、首次安装/恢复、原子发布、ZIP 拒绝原始 PBF/dump/temp 及便携说明已实现。`lunah` 初审发现的问题已修复并跟审 PASS；隔离合成 JUnit **54/54**、Ruff、py_compile、PowerShell 解析、diff-check 通过。真实复合包候选 `.tmp/p4-place-cn/composite-261003/` 不存在，内容及 Manifest SHA 和许可状态仍 PENDING，真实发行构建 fail-closed。未运行真实 onedir/ZIP；实际 ZIP 增量、区县/海外查询、许可交付签核、干净第二台 Windows 均 PENDING。未访问个人图库/模型、未下载或构建地名数据，未推送/发布。详见[任务卡](tasks/P4-PLACE-BUNDLED-DATA-A.md)与[报告](reports/P4-PLACE-BUNDLED-DATA-A.md)。
+Windows 内置地名包与首次安装实现、`lunah` 工程复核 PASS；合成定向 JUnit 54/54。现从用户给出的 PhotoSearchData 包通过 `load_content()` 校验并锁定 dataset `geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3` 的数据及 Manifest SHA。用户选择自行执行发行验证；真实 ZIP/增量、区县/海外查询、许可签核和跨电脑测试仍 PENDING，未经许可核准不得公开分发。未下载/构建地名数据，未推送/发布。详见[任务卡](tasks/P4-PLACE-BUNDLED-DATA-A.md)与[报告](reports/P4-PLACE-BUNDLED-DATA-A.md)。
 
 ## Previous task: P4-WINDOWS-AI-MODEL-FIRST-RUN-SETUP（2026-10-24）
 

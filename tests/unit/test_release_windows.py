@@ -100,12 +100,14 @@ def test_version_sources_must_match(tmp_path: Path) -> None:
         release.release_metadata(tmp_path)
 
 
-def test_repository_place_dataset_pin_fails_closed_while_candidate_is_pending() -> None:
+def test_repository_place_dataset_pin_matches_the_verified_composite_candidate() -> None:
     from photo_search.places.bundled_dataset import validate_release_pin
 
-    pending = json.loads(release.PLACE_DATASET_RELEASE_MANIFEST.read_text(encoding="utf-8"))
-    with pytest.raises(ValueError, match="release pin is incomplete"):
-        validate_release_pin(pending)
+    pin = json.loads(release.PLACE_DATASET_RELEASE_MANIFEST.read_text(encoding="utf-8"))
+    assert validate_release_pin(pin) is pin
+    assert pin["dataset_id"] == "geonames-asia-cities500-v1-cn-c3c03b41ffe4cbe3"
+    assert pin["content_sha256"] == "4a5ed1d4a45ca95be15bce38415f0db95266b665a096c06eef9191b37c2b78c4"
+    assert pin["manifest_sha256"] == "bb0781448e27d7a24c0cbe197c7f06165f2e761c355df9b10625bb29aba79d7a"
 
 
 def test_bundle_required_paths_and_missing_executable(tmp_path: Path) -> None:
