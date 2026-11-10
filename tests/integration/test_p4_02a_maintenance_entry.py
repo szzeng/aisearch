@@ -26,12 +26,14 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from conftest import write_jpeg
 
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CATALOG_UNREADABLE, CatalogError
 from photo_search.indexing import cli as index_cli
 from photo_search.indexing import maintenance
 from photo_search.indexing.store import IndexCoordinator
+from photo_search.ingestion.service import CatalogService
 from photo_search.places import revision as places_revision
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -434,6 +436,116 @@ def test_two_maintainers_confirm_every_event_exactly_once(tmp_path: Path) -> Non
         assert int(entry["confirmation_revision"]) == newest_revision
         assert probe._asset_distance(fixture, query=newest, asset_id=target) <= 1e-6
     finally:
+        fixture.catalog.close()
+
+
+def test_scan_completes_while_maintenance_drain_holds_an_engine_write(
+    tmp_path: Path,
+) -> None:
+    """A real scanner can make progress during a real outbox apply transaction."""
+    fixture = build(tmp_path, events=6)
+    scan_root = tmp_path / "scan-library"
+    for index in range(5):
+        write_jpeg(scan_root / f"scan-{index:02d}.jpg", noise=200 + index)
+
+    setup = CatalogService.open(data_root=fixture.data_root)
+    try:
+        source = setup.register_source(display_name="scan-overlap", root_path=scan_root)
+        source_id = int(source["source_id"])
+    finally:
+        setup.close()
+
+    apply_entered = threading.Event()
+    scan_begin_attempted = threading.Event()
+    scan_begin_acquired = threading.Event()
+    release_engine_write = threading.Event()
+    scan_service_ready = threading.Event()
+    start_scan = threading.Event()
+    scan_finished = threading.Event()
+    reports: dict[str, Any] = {}
+    failures: dict[str, str] = {}
+
+    original_upsert_batch = benchmark.LanceVectorIndex.upsert_batch
+
+    def overlap_window(index: Any, *, generation: Any, records: Any) -> Any:
+        if records:
+            apply_entered.set()
+            if not scan_begin_attempted.wait(timeout=10):
+                raise AssertionError("scan never attempted BEGIN IMMEDIATE during the drain write")
+            if not release_engine_write.wait(timeout=10):
+                raise AssertionError("test did not release the held engine write")
+        return original_upsert_batch(index, generation=generation, records=records)
+
+    def drain() -> None:
+        handle = open_like_a_second_process(fixture)
+        try:
+            reports["drain"] = maintenance.drain_semantic_outbox(
+                handle, batch_size=2, retry_limit=5, retry_backoff_ms=20
+            )
+        except BaseException as error:  # noqa: BLE001 - assert worker outcome below
+            failures["drain"] = f"{type(error).__name__}: {error}"
+        finally:
+            handle.close()
+
+    def scan() -> None:
+        service = CatalogService.open(data_root=fixture.data_root)
+        try:
+            original_write = service.catalog.write
+
+            @contextmanager
+            def observe_scan_write() -> Any:
+                scan_begin_attempted.set()
+                with original_write() as connection:
+                    scan_begin_acquired.set()
+                    yield connection
+
+            service.catalog.write = observe_scan_write
+            scan_service_ready.set()
+            if not start_scan.wait(timeout=10):
+                raise AssertionError("test did not release the prepared scan worker")
+            reports["scan"] = service.run_scan(source_id)
+        except BaseException as error:  # noqa: BLE001 - assert worker outcome below
+            failures["scan"] = f"{type(error).__name__}: {error}"
+        finally:
+            service.close()
+            scan_finished.set()
+
+    try:
+        benchmark.LanceVectorIndex.upsert_batch = overlap_window
+        scanner = threading.Thread(target=scan, name="test-catalog-scan")
+        scanner.start()
+        assert scan_service_ready.wait(timeout=10), "scan service did not finish startup"
+        drainer = threading.Thread(target=drain, name="test-maintenance-drain")
+        drainer.start()
+        assert apply_entered.wait(timeout=10), "drain never reached its engine write"
+        start_scan.set()
+        assert scan_begin_attempted.wait(timeout=10), "scan never reached its write boundary"
+        # The drain's upsert hook remains blocked with its SQLite transaction open until the
+        # main thread releases it below. The scan has entered its write boundary but cannot
+        # acquire BEGIN IMMEDIATE during that interval.
+        assert not scan_begin_acquired.wait(timeout=0.05)
+        release_engine_write.set()
+        drainer.join(timeout=60)
+        scanner.join(timeout=60)
+
+        assert not drainer.is_alive() and not scanner.is_alive()
+        assert failures == {}
+        assert scan_finished.is_set()
+        assert reports["drain"]["applied"] == 6
+        assert reports["scan"]["new_assets"] == 5
+        assert reports["scan"]["locations_added"] == 5
+        state = probe.state_digest(fixture)
+        assert state["outbox"] == {"CONFIRMED": 6}
+        assert state["lance_rows"] == state["lance_unique_assets"] == 46
+        assert int(
+            fixture.catalog.read_one(
+                "SELECT COUNT(*) AS total FROM assets WHERE state='ACTIVE'"
+            )["total"]
+        ) == 51
+    finally:
+        release_engine_write.set()
+        start_scan.set()
+        benchmark.LanceVectorIndex.upsert_batch = original_upsert_batch
         fixture.catalog.close()
 
 

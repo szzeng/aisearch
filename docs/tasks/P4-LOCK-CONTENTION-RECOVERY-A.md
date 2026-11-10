@@ -1,6 +1,6 @@
 # P4-LOCK-CONTENTION-RECOVERY-A — SQLite 与模型资源锁冲突恢复
 
-日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / LUNA H REVIEW FINDINGS / NOT CLOSED**。用户要求完成代码与测试、不提交 Git，并指定独立 Luna High 子代理复核。执行报告：[P4-LOCK-CONTENTION-RECOVERY-A](../reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。用户要求修复复核缺口，并沿用先前提交与上传授权。执行报告：[P4-LOCK-CONTENTION-RECOVERY-A](../reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 
 ## 目标、诊断与边界
 
@@ -12,7 +12,7 @@
 
 模型路径：`face.service.run_queue` 装饰器持有 `BACKGROUND_MODEL_SLOT`；候选 worker 先最多等待 5 秒获取该锁，再进入 `ModelResourceGate.exclusive(timeout=15)`，当前统一落为 `RESOURCE_BUSY`。gate 的上下文管理器对查询 reader 和 writer 使用 `try/finally`；候选 worker 对后台锁显式 acquire/release。当前没有提供原始 `RESOURCE_BUSY` 状态材料，需由定向测试分别复现两类占用。
 
-禁止改变数据库 schema、模型身份/向量定义、搜索编码器协议、P4-02V 批次语义、候选独占设计、恢复/幂等语义或 512D 搜索；不访问真实图库/模型，不触碰用户照片，不下载模型，不提交 Git。
+禁止改变数据库 schema、模型身份/向量定义、搜索编码器协议、P4-02V 批次语义、候选独占设计、恢复/幂等语义或 512D 搜索；不访问真实图库/模型，不触碰用户照片，不下载模型。本次跟进仅补测试和更新记录。
 
 ## 性能设计（PERF-BOUNDED）
 
@@ -22,11 +22,12 @@
 
 ## 验收与报告
 
-覆盖 `Catalog.write()` 的 BEGIN 重试及 COMMIT/回滚边界、扫描与维护调用、`BACKGROUND_MODEL_SLOT` 与 `ModelResourceGate` 获取/释放、候选暂停/停止/恢复及已确认向量幂等。定向测试均使用临时数据目录和合成模型；保留 JUnit 与原始诊断到 `test-results/p4-lock-contention-recovery-a/`。唯一报告：`docs/reports/P4-LOCK-CONTENTION-RECOVERY-A.md`。结束时更新 `docs/development-status.md` 和本卡；不开展其他优化，不提交。
+覆盖 `Catalog.write()` 的 BEGIN 重试及 COMMIT/回滚边界、扫描与维护调用、`BACKGROUND_MODEL_SLOT` 与 `ModelResourceGate` 获取/释放、候选暂停/停止/恢复及已确认向量幂等。定向测试均使用临时数据目录和合成模型；保留 JUnit 与原始诊断到 `test-results/`。唯一报告：`docs/reports/P4-LOCK-CONTENTION-RECOVERY-A.md`。结束时更新 `docs/development-status.md` 和本卡；不开展其他优化。
 
 ## 最终证据与停止点
 
-- 受影响集 JUnit：138 项，0 failures、0 errors、23 skipped；完整 unit/integration 首轮为 3,664 项、3,586 passed、52 skipped、26 failed。2 项直接受新重试/接口影响的旧测试已隔离其测试目标或更新替身，并在最终受影响集通过；其余 24 项超出本任务面，完整 suite 未在修订后重跑，不能标全量 PASS。
+- 原实现受影响集 JUnit 为 138 项，0 failures、0 errors、23 skipped。补齐两项直接缺口后，受影响集合最终重跑为 **140 项，0 failures、0 errors、23 skipped**；包括扫描与 drain 的事务重叠、候选任务暂停/恢复持久化向量幂等。完整 unit/integration 首轮为 3,664 项、3,586 passed、52 skipped、26 failed。2 项直接受新重试/接口影响的旧测试已隔离其测试目标或更新替身，并在最终受影响集通过；其余 24 项超出本任务面，完整 suite 未在修订后重跑，不能标全量 PASS。
 - `ruff check .` 与 `git diff --check` 均通过。真实 `buffalo_l` 权重缺失，真实人脸推理/512D GPU 搜索未验证；不下载模型、不更改权限。
 - P4-02U/V 历史 drain 持锁归因已复核，但未提供本次原始现场日志，当前事故的具体外部持有进程/线程仍未确认。
-- 独立 Luna High 完整受影响面复核已完成，结果 REVIEW FINDINGS：P2 扫描/drain 重叠缺少直接测试；P2 候选暂停/恢复缺少持久化向量幂等断言。用户本轮要求只复核，未追加代码或测试；任务仍 NOT CLOSED，不提交 Git。
+- 首次独立 Luna High 复核发现两项 P2 测试证据缺口，随后新增真实扫描/drain 锁重叠测试与候选模型真实 `semantic.build_index` 暂停/恢复向量幂等测试。Luna High 跟进只读复核 **REVIEW PASS**：确认扫描线程到达 `Catalog.write()` 边界时 drain 的 apply 事务仍持锁；候选测试核对 100 条暂停状态及恢复后 101 条 SQLite 确认项/Lance 唯一向量行。
+- 新增跟进 JUnit：`test-results/P4-LOCK-CONTENTION-RECOVERY-A-final-affected-rerun.xml`；`ruff check .` 与 `git diff --check` 通过。原始运行时事故日志仍未提供；完整 unit/integration 未因本轮纯测试补充而重跑。

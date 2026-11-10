@@ -1,6 +1,6 @@
 # P4-LOCK-CONTENTION-RECOVERY-A — SQLite 与模型资源锁冲突诊断及修复
 
-日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW FINDINGS / NOT CLOSED**。未提交 Git。
+日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。本轮补测及文档按用户授权提交并推送。
 
 ## 结论与根因
 
@@ -27,6 +27,9 @@ P4-02U 归因报告已通过线程/进程探针确认，历史搜索争用的写
 |---|---:|---|
 | 独立 Catalog 连接并发写入；外部写锁短暂释放后重试；长期占锁耗尽重试；事务体失败和 COMMIT 失败回滚 | 4/4 通过 | `test-results/p4-lock-contention-recovery-a/final-affected-20261110-192131-575.xml` |
 | 人脸槽位/语义查询持锁、释放、暂停、停止、超时、模型加载失败释放；候选暂停后同 task/generation 恢复，确认数保持 1，关闭 encoder 时 gate 仍独占 | 通过 | 同上；合计受影响集 138 项，0 failures、0 errors、23 skipped，61.5 秒 |
+| 扫描与 drain 实际重叠 | 通过 | `test_scan_completes_while_maintenance_drain_holds_an_engine_write` 使用独立 Catalog 连接；drain 在 apply/Lance 写入事务内等待扫描进入 `Catalog.write()`，扫描尚未获得 `BEGIN IMMEDIATE` 时才释放 drain；随后验证扫描进度、outbox 确认及向量唯一性 |
+| 候选暂停/恢复的持久化向量幂等 | 通过 | `test_candidate_pause_resume_preserves_confirmed_vectors` 以 101 张合成图跨越 100 项批次边界，真实运行候选管理器与 `semantic.build_index`；暂停时 100 条 SQLite 确认和 100 个 Lance 行，恢复同一任务后 101 条确认和 101 个唯一资产向量 |
+| 补测后受影响集合 | **140 项：0 failed / 0 errors / 23 skipped** | `test-results/P4-LOCK-CONTENTION-RECOVERY-A-final-affected-rerun.xml` |
 | P4-02V 查询降级、P4-02A drain 重试/原子性、扫描 API 并发与来源登记、人脸服务/人物关联、候选 provider 流程、semantic build | 通过 | 同上；完整命令见下 |
 | 完整 unit/integration | **3,664 项：3,586 passed、52 skipped、26 failed** | `test-results/p4-lock-contention-recovery-a/full-20261110-185551-064.xml`；其中 2 项直接受本改动影响的旧测试替身/断言已修正，并在上述最终受影响集通过。其余 24 项均在本次改动面之外，主要是前端静态/UI 与冻结 companion hash 断言，其中 1 项属于时间边界不稳定；完整套件未在这些测试修订后重跑，故不报告全量 PASS。 |
 | `ruff check .`；`git diff --check` | 通过 | 均 exit 0 |
@@ -45,11 +48,11 @@ git diff --check
 
 1. 缺少原始现场日志，无法将用户遇到的某一次 SQLite 错误或 `RESOURCE_BUSY` 与具体进程/线程/锁归属一一对应。新 SQLite 错误详情记录等待方和阶段，但无法反查外部 SQLite 写者。
 2. 完整 unit/integration 尚未形成最终全绿结果；其余 24 个失败位于任务外 UI/冻结契约测试面，未在本轮修复；必须在后续独立审核中确认是否可作为基线问题接受。
-3. 按用户要求，已由独立 Luna High 子代理完成全受影响面复核。结论 **REVIEW FINDINGS**，尚不足以关闭任务：
-   - **P2 — 缺少扫描与 drain 同时运行的直接覆盖。** `test_api_sources_assets.py` 验证扫描期间的 API 来源写入；维护 drain 测试单独验证了 drain 争用，最终 JUnit 没有证明扫描与 drain 的重叠场景不会使扫描失败。
-   - **P2 — 候选暂停/恢复测试未验证已持久化向量幂等。** 候选测试 stub 在两次调用都返回 `CONFIRMED: 1`，只核对同 task/generation 与状态；semantic build 的相关幂等测试不能替代暂停恢复跨路径的持久化向量断言。
-   - 审查同时确认 BEGIN 重试只发生于事务开始前且有界、COMMIT/回滚路径保留、encoder 在 gate 释放前关闭、人脸槽位在外层 finally 释放，P4-02V 未被改动。
-   用户本轮要求仅进行复核，因此本轮不追加实现或测试；两个 P2 证据缺口保持开放，任务状态不是 PASS。审查未报告必须升级 max 或 Sol 的问题。
+3. 初次独立 Luna High 复核指出扫描/drain 重叠和候选暂停/恢复持久化幂等两项 P2 测试证据缺口。已针对两项补测试并重跑受影响集合。Luna High 跟进只读复核结果 **REVIEW PASS**：
+   - 扫描线程在独立连接启动后停在闸门；真实 drain 在 apply 事务内等待扫描进入 `Catalog.write()`。测试确认扫描未获写锁时 apply 仍被保持，随后放行并验证扫描完成、6 个事件确认和向量资产唯一。
+   - 候选任务真实执行 `semantic.build_index`，101 张合成图在 100 项安全批次后暂停；持久化检查暂停时 100 条确认记录及 100 个 Lance 行，恢复同 task 后完成 101 条确认记录及 101 个唯一向量行。
+   - Luna High 也确认新测试直接覆盖两个缺口，没有指出待修复项。此前对 BEGIN 有界重试、COMMIT/回滚、encoder/gate 释放与 P4-02V 不变的判断继续成立。
+   新的受影响 JUnit 为 140 项，0 failed、0 errors、23 skipped；Ruff 与 diff-check 通过。完整 unit/integration 未因本轮纯测试补充而重跑；全套首轮的范围外 24 项失败仍需如实保留。此次追加修复与报告已按用户指示提交并推送。
 4. 源码应用需重启后加载新实现。若当前有候选任务，应先允许它到批次安全边界或正常停止；重启恢复路径会把旧 owner 的 RUNNING 状态标记为 INTERRUPTED。随后可从候选任务页继续同一任务，已确认向量与 generation 不变。无活动后台任务时无需额外恢复操作。
 
-本轮只使用隔离合成数据，未读取或修改真实图库、用户照片或模型；未下载模型；未提交 Git。
+本轮只使用隔离合成数据，未读取或修改真实图库、用户照片或模型；未下载模型。按用户授权提交并推送了测试和任务记录更新。

@@ -33,9 +33,12 @@ from photo_search.catalog.errors import (
 from photo_search.config import vectors_dir
 from photo_search.indexing import selection as selection_module
 from photo_search.indexing import semantic
+from photo_search.indexing.store import LanceVectorIndex
 from photo_search.ingestion.service import CatalogService
 from photo_search.models.embedding import cli as embedding_cli
+from photo_search.models.embedding.candidate_task import CandidateBuildManager
 from photo_search.runtime.data_root_lease import DataRootLeaseBusy
+from photo_search.runtime.model_resource_gate import ModelResourceGate
 from photo_search.search import profile as profile_module
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1254,3 +1257,115 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
     assert image_body["image_generation_id"] == candidate["build"]["generation"]["generation_id"]
     assert image_body["channels"]["vector"]["strong_match_available"] is expected_strong_match
     app.state.api.close()
+
+
+def test_candidate_pause_resume_preserves_confirmed_vectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Candidate resume continues real persisted work without duplicate vector rows."""
+    from photo_search.artifacts.store import generation_id_for
+    from photo_search.models.embedding import management as embedding_management
+    from photo_search.models.embedding import registry as registry_module
+
+    env = FlowEnv.build(tmp_path, photos=101)
+    spec = semantic.semantic_spec(CLIP_MANIFEST, {})
+    identity = SimpleNamespace(
+        space_id=str(spec.envelope["space_id"]),
+        processor_id=str(spec.processor_id),
+        dimension=int(spec.envelope["dimension"]),
+    )
+    entry = SimpleNamespace(
+        provider_id="candidate-resume-test",
+        display_name="Candidate resume test",
+        adapter="synthetic",
+        installed=True,
+        reason=None,
+        identity=identity,
+        model_dir=tmp_path / "synthetic-model",
+        manifest_path=CLIP_MANIFEST,
+        device_policy="cpu_allowed",
+    )
+    registry = SimpleNamespace(
+        providers=lambda: [entry],
+        require_installed=lambda provider_id: entry if provider_id == entry.provider_id else None,
+    )
+    monkeypatch.setattr(registry_module, "registry_for", lambda _root: registry)
+    monkeypatch.setattr(
+        "photo_search.models.embedding.candidate_task.registry_for", lambda _root: registry
+    )
+    monkeypatch.setattr(
+        embedding_management,
+        "embedding_management_status",
+        lambda _root: {"providers": []},
+    )
+
+    class _Context:
+        settings = SimpleNamespace(data_root=env.data_root)
+        data_root_lease_held = True
+        model_resource_gate = ModelResourceGate()
+
+        @staticmethod
+        def release_query_encoder_for_candidate() -> None:
+            return None
+
+    encoder = StubAdapter(spec)
+    monkeypatch.setattr(
+        "photo_search.workers.query_encoder.build_worker_query_encoder",
+        lambda **_kwargs: encoder,
+    )
+    monkeypatch.setattr(
+        "photo_search.models.embedding.cli._record_candidate_runtime", lambda *_args: None
+    )
+
+    manager = CandidateBuildManager(_Context())
+    original_build_index = semantic.build_index
+    calls = 0
+
+    def pause_after_first_batch(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        payload = original_build_index(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            state = manager.status(refresh_counts=False)
+            assert state is not None
+            manager.pause(str(state["task_id"]))
+        return payload
+
+    monkeypatch.setattr(semantic, "build_index", pause_after_first_batch)
+    started = manager.start(entry.provider_id, "candidate-pause-resume", exclusive_confirmed=True)
+    worker = manager._thread
+    assert worker is not None
+    worker.join(timeout=120)
+    assert not worker.is_alive()
+
+    paused = manager.status()
+    assert paused is not None and paused["status"] == "PAUSED"
+    generation_id = generation_id_for(identity.space_id, identity.processor_id)
+    index = LanceVectorIndex(vectors_dir(env.data_root))
+    paused_rows = index.rows(generation_id=generation_id, dimension=identity.dimension)
+    assert paused["confirmed_entries"] == len(paused_rows) == 100
+    assert len({int(row["asset_id"]) for row in paused_rows}) == 100
+
+    resumed = manager.resume(str(started["task_id"]))
+    worker = manager._thread
+    assert worker is not None
+    worker.join(timeout=120)
+    assert not worker.is_alive()
+
+    completed = manager.status()
+    assert completed is not None
+    assert completed["status"] == "COMPLETED"
+    assert completed["task_id"] == started["task_id"]
+    assert resumed["status"] == "RUNNING"
+    assert completed["confirmed_entries"] == 101
+    rows = index.rows(generation_id=generation_id, dimension=identity.dimension)
+    asset_ids = [int(row["asset_id"]) for row in rows]
+    assert len(asset_ids) == len(set(asset_ids)) == 101
+    with Catalog.open(data_root=env.data_root) as catalog:
+        counts = catalog.read_one(
+            "SELECT COUNT(*) AS total, SUM(state='CONFIRMED') AS confirmed "
+            "FROM index_entries WHERE generation_id=?",
+            (generation_id,),
+        )
+        assert int(counts["total"]) == int(counts["confirmed"]) == 101
+    assert calls >= 2

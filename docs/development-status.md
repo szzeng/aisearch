@@ -1,6 +1,6 @@
 ## Current task: P4-LOCK-CONTENTION-RECOVERY-A（2026-11-10）
 
-SQLite `Catalog.write()` 仅在 `BEGIN IMMEDIATE` 前对 `SQLITE_BUSY` 有界重试两次，保留原 5 秒 busy timeout 与事务/回滚语义；候选模型任务区分人脸槽位和语义查询占用，等待可取消，encoder 在 gate 内关闭并可靠释放锁。定向受影响 JUnit **138 项、0 failures、0 errors、23 skipped**；`ruff check .` 与 `git diff --check` 通过。完整 unit/integration 首轮 **3,586 passed / 52 skipped / 26 failed**；其中直接受影响的两个测试在最终受影响集中通过，其余 24 个失败在任务外面，未复跑全量。原始事故进程/线程日志缺失，真实 512D GPU 与权重依赖的人脸推理未验证。按用户要求由独立 Luna High 子代理复核，结果 **REVIEW FINDINGS**：P2 缺少扫描/drain 重叠直接覆盖；P2 候选暂停/恢复未验证持久化向量幂等。用户本轮要求仅复核，未追加代码/测试；状态 **IMPLEMENTED / VALIDATION PARTIAL / NOT CLOSED**。未提交。详见[任务卡](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md)与[报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+SQLite `Catalog.write()` 仅在 `BEGIN IMMEDIATE` 前对 `SQLITE_BUSY` 有界重试两次，保留原 5 秒 busy timeout 与事务/回滚语义；候选模型任务区分人脸槽位和语义查询占用，等待可取消，encoder 在 gate 内关闭并可靠释放锁。Luna High 首轮指出的两项测试缺口已补齐：合成隔离库中扫描线程在 drain apply 事务持锁时进入写边界；候选管理器真实运行 `semantic.build_index`，100 条后暂停并恢复至 101 条已确认、唯一向量。补测后受影响 JUnit **140 项、0 failures、0 errors、23 skipped**；Ruff 与 diff-check 通过；Luna High 跟进只读复核 **REVIEW PASS**。完整 unit/integration 首轮 **3,586 passed / 52 skipped / 26 failed**；24 项范围外失败未复跑全量。原始事故进程/线程日志缺失，真实 512D GPU 与权重依赖的人脸推理未验证。状态 **IMPLEMENTED / AFFECTED VALIDATION PASS / REVIEW PASS**；本次补测与文档已按用户要求提交并推送。详见[任务卡](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md)与[报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 
 ## Previous task: P4-PLACE-BUNDLED-DATA-A（2026-11-04）
 
