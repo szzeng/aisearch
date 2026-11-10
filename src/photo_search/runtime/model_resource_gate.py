@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from typing import Any, Iterator
 
 from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+
+
+class ModelResourceWaitTimeout(TimeoutError):
+    """A bounded exclusive wait expired before the candidate acquired the gate."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class ModelResourceWaitCancelled(InterruptedError):
+    """A candidate wait was cancelled before it acquired the gate."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class ModelResourceGate:
@@ -42,18 +59,33 @@ class ModelResourceGate:
                 self._condition.notify_all()
 
     @contextmanager
-    def exclusive(self, *, timeout: float = 0.0) -> Iterator[None]:
+    def exclusive(
+        self,
+        *,
+        timeout: float = 0.0,
+        cancel_check: Callable[[], str | None] | None = None,
+        poll_interval: float = 0.1,
+    ) -> Iterator[None]:
         deadline = time.monotonic() + max(0.0, float(timeout))
         with self._condition:
             if self._writer or self._writer_waiting:
-                raise TimeoutError("model resource gate is already reserved")
+                raise ModelResourceWaitTimeout(
+                    "SEMANTIC_RESOURCE_RESERVED",
+                    "semantic model resources are already reserved by another task",
+                )
             self._writer_waiting = True
             try:
                 while self._readers:
+                    cancelled = cancel_check() if cancel_check is not None else None
+                    if cancelled:
+                        raise ModelResourceWaitCancelled(cancelled)
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise TimeoutError("foreground semantic work is still active")
-                    self._condition.wait(remaining)
+                        raise ModelResourceWaitTimeout(
+                            "SEMANTIC_QUERY_ACTIVE",
+                            "foreground semantic queries are still using model resources",
+                        )
+                    self._condition.wait(min(remaining, max(0.01, float(poll_interval))))
                 self._writer = True
             except BaseException:
                 self._writer_waiting = False

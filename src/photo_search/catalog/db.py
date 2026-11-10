@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,6 +17,14 @@ from photo_search.config import catalog_db_path, resolve_data_root
 
 #: Default lease length. Tests and the P1-02 scheduler may use other values.
 DEFAULT_LEASE_SECONDS = 120
+BEGIN_BUSY_RETRIES = 2
+BEGIN_RETRY_BACKOFF_SECONDS = 0.05
+
+
+def _is_sqlite_busy(error: sqlite3.Error) -> bool:
+    """Return true only for SQLite BUSY outcomes safe to retry before BEGIN succeeds."""
+    code = getattr(error, "sqlite_errorcode", None)
+    return isinstance(code, int) and (code & 0xFF) == sqlite3.SQLITE_BUSY
 
 
 class Catalog:
@@ -105,13 +115,33 @@ class Catalog:
                 raise RuntimeError("a catalog write must not run inside a read snapshot")
             self._in_write = True
             try:
-                try:
-                    self.connection.execute("BEGIN IMMEDIATE")
-                except sqlite3.Error as error:
-                    raise CatalogError(
-                        CATALOG_UNREADABLE,
-                        f"cannot start a catalog write transaction: {error}",
-                    ) from error
+                begin_started = time.perf_counter()
+                attempts = 0
+                while True:
+                    attempts += 1
+                    try:
+                        self.connection.execute("BEGIN IMMEDIATE")
+                        break
+                    except sqlite3.Error as error:
+                        if not _is_sqlite_busy(error) or attempts > BEGIN_BUSY_RETRIES:
+                            thread = threading.current_thread()
+                            raise CatalogError(
+                                CATALOG_UNREADABLE,
+                                f"cannot start a catalog write transaction: {error}",
+                                details={
+                                    "phase": "begin_immediate",
+                                    "attempts": attempts,
+                                    "waited_ms": round(
+                                        (time.perf_counter() - begin_started) * 1000, 1
+                                    ),
+                                    "process_id": os.getpid(),
+                                    "thread_id": threading.get_ident(),
+                                    "thread_name": thread.name,
+                                    "sqlite_errorcode": getattr(error, "sqlite_errorcode", None),
+                                    "sqlite_errorname": getattr(error, "sqlite_errorname", None),
+                                },
+                            ) from error
+                        time.sleep(BEGIN_RETRY_BACKOFF_SECONDS * attempts)
                 try:
                     yield self.connection
                 except BaseException:
@@ -124,6 +154,11 @@ class Catalog:
                     raise CatalogError(
                         CATALOG_UNREADABLE,
                         f"catalog write transaction failed to commit: {error}",
+                        details={
+                            "phase": "commit",
+                            "sqlite_errorcode": getattr(error, "sqlite_errorcode", None),
+                            "sqlite_errorname": getattr(error, "sqlite_errorname", None),
+                        },
                     ) from error
             finally:
                 self._in_write = False

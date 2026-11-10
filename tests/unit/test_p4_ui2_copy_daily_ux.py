@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "src" / "photo_search" / "web"
 
@@ -112,7 +111,7 @@ vm.runInContext(source.slice(fetchStart,fetchEnd)+'\nglobalThis.fetchPlaceById=f
  context.request=async()=>({body:{places:[]}});
  assert.equal(await context.fetchPlaceById(123),null,'an empty successful read means not found');
 })().catch(error=>{console.error(error);process.exitCode=1;});
-""";
+"""
     result = subprocess.run(
         [node, "-e", script], cwd=ROOT, capture_output=True, text=True, timeout=10
     )

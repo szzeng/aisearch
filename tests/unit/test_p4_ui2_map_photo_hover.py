@@ -1,7 +1,7 @@
 """Behavioral probe for map photo hover and MapLibre marker reuse."""
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 

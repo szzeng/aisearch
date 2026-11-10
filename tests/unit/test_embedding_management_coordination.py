@@ -31,9 +31,21 @@ class _Context:
 
 
 class _Gate:
+    def __init__(self) -> None:
+        self._reserved = False
+
+    @property
+    def reserved(self) -> bool:
+        return self._reserved
+
     @contextmanager
-    def exclusive(self, *, timeout: float):
-        yield
+    def exclusive(self, *, timeout: float, cancel_check=None, poll_interval: float = 0.1):
+        del timeout, cancel_check, poll_interval
+        self._reserved = True
+        try:
+            yield
+        finally:
+            self._reserved = False
 
 
 def test_candidate_manager_joins_terminal_worker_before_relaunch(tmp_path: Path) -> None:
@@ -166,6 +178,10 @@ def test_candidate_build_uses_a_bounded_batch_without_activating_profile(
     monkeypatch.setattr("photo_search.models.embedding.registry.registry_for", fake_registry)
     monkeypatch.setattr("photo_search.models.embedding.candidate_task.registry_for", fake_registry)
     calls: dict[str, object] = {}
+    build_calls: list[dict[str, object]] = []
+    manager_holder: dict[str, CandidateBuildManager] = {}
+    context = _Context(tmp_path)
+    encoder_close_gate_states: list[bool] = []
 
     class _Encoder:
         def spec(self):
@@ -175,7 +191,7 @@ def test_candidate_build_uses_a_bounded_batch_without_activating_profile(
             return {"status": "ok"}
 
         def close(self):
-            return None
+            encoder_close_gate_states.append(context.model_resource_gate.reserved)
 
     monkeypatch.setattr(
         "photo_search.workers.query_encoder.build_worker_query_encoder",
@@ -191,24 +207,48 @@ def test_candidate_build_uses_a_bounded_batch_without_activating_profile(
 
     def build_index(*_args, **kwargs):
         calls.update(kwargs)
+        build_calls.append(dict(kwargs))
+        if len(build_calls) == 1:
+            current = manager_holder["manager"].status(refresh_counts=False)
+            assert current is not None
+            manager_holder["manager"].pause(current["task_id"])
         return {
-            "generation": {"entries": {"CONFIRMED": 0}, "jobs": {}},
-            "targets": 0,
+            "generation": {"entries": {"CONFIRMED": 1}, "jobs": {}},
+            "targets": 1 if len(build_calls) == 1 else 0,
             "checked": 0,
-            "coverage_complete": False,
+            "coverage_complete": len(build_calls) > 1,
             "run": {"jobs": {}},
         }
 
     monkeypatch.setattr("photo_search.indexing.semantic.build_index", build_index)
-    manager = CandidateBuildManager(_Context(tmp_path))
+    manager = CandidateBuildManager(context)
+    manager_holder["manager"] = manager
     started = manager.start(entry.provider_id, "request-1", exclusive_confirmed=True)
     worker = manager._thread
     assert worker is not None
     worker.join(timeout=5)
 
-    assert manager.status()["status"] == "COMPLETED"
+    paused = manager.status(refresh_counts=False)
+    assert paused is not None
+    assert paused["status"] == "PAUSED"
+    assert paused["confirmed_entries"] == 1
+    resumed = manager.resume(started["task_id"])
+    worker = manager._thread
+    assert worker is not None
+    worker.join(timeout=5)
+
+    completed = manager.status(refresh_counts=False)
+    assert completed is not None
+    assert completed["status"] == "COMPLETED"
+    assert completed["task_id"] == started["task_id"]
+    assert completed["generation_id"] == started["generation_id"]
+    assert completed["confirmed_entries"] == 1
+    assert resumed["status"] == "RUNNING"
+    assert len(build_calls) == 2
+    assert all(call["retry_failed"] is False for call in build_calls)
     assert calls["limit"] == 100
     assert calls["batch_size"] == 100
     assert calls["retry_failed"] is False
     assert calls["activate_if_unset"] is False
+    assert encoder_close_gate_states == [True, True]
     assert started["status"] == "RUNNING"

@@ -145,8 +145,13 @@ def test_the_entry_bounds_events_and_reports_its_transactions(tmp_path: Path) ->
         fixture.catalog.close()
 
 
-def test_a_busy_timeout_refusal_is_structured_and_retried(tmp_path: Path) -> None:
+def test_a_busy_timeout_refusal_is_structured_and_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The only retryable maintenance outcome: an expired ``busy_timeout`` (5 s in this build)."""
+    # Keep this regression focused on the drain retry layer. Catalog.write now has its own
+    # bounded BEGIN-only recovery, covered separately by test_catalog_write_contention_recovery.
+    monkeypatch.setattr("photo_search.catalog.db.BEGIN_BUSY_RETRIES", 0)
     fixture = build(tmp_path, events=4)
     try:
         locked = threading.Event()

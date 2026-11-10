@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,20 @@ from photo_search.models.embedding.registry import registry_for
 
 TASK_FILENAME = "embedding-candidate-task.json"
 BATCH_LIMIT = 100
+FACE_SLOT_WAIT_SECONDS = 60.0
+SEMANTIC_QUERY_WAIT_SECONDS = 15.0
+MODEL_WAIT_POLL_SECONDS = 0.1
 TASK_STATES = {"RUNNING", "PAUSE_REQUESTED", "PAUSED", "INTERRUPTED", "COMPLETED", "FAILED"}
+
+
+class _CandidateWaitCancelled(Exception):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class _FaceSlotWaitTimeout(TimeoutError):
+    pass
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> None:
@@ -258,108 +272,176 @@ class CandidateBuildManager:
         from photo_search.indexing import semantic
         from photo_search.models.embedding.cli import _record_candidate_runtime
         from photo_search.models.embedding.registry import registry_for
+        from photo_search.runtime.model_resource_gate import (
+            ModelResourceWaitCancelled,
+            ModelResourceWaitTimeout,
+        )
         from photo_search.workers.query_encoder import build_worker_query_encoder
 
         encoder = None
-        try:
-            if not BACKGROUND_MODEL_SLOT.acquire(timeout=5):
-                raise TimeoutError("background model work is active; continue after it reaches a safe boundary")
+        background_slot_acquired = False
+
+        def close_candidate_encoder() -> None:
+            nonlocal encoder
+            if encoder is None:
+                return
             try:
-                with self.context.model_resource_gate.exclusive(timeout=15):
-                    self.context.release_query_encoder_for_candidate()
-                    entry = registry_for(self.root).require_installed(str(state["provider_id"]))
-                    encoder = build_worker_query_encoder(
-                        model_dir=entry.model_dir,
-                        manifest_path=entry.manifest_path,
-                        device_policy=entry.device_policy,
-                    )
-                    with Catalog.open(data_root=self.root) as catalog:
-                        if str(encoder.spec().envelope["space_id"]) != str(state["space_id"]):
-                            raise CatalogError("SPACE_MISMATCH", "the loaded provider no longer matches the candidate task")
-                        _record_candidate_runtime(
-                            catalog, entry, encoder.health()
-                        )
-                        first = True
-                        while True:
-                            if self._stop.is_set():
-                                state["status"] = "INTERRUPTED"
-                                state["last_error"] = {"code": "PROCESS_STOPPING"}
-                                break
-                            payload = semantic.build_index(
-                                catalog,
-                                encoder=encoder,
-                                manifest_path=entry.manifest_path,
-                                expected_space_id=str(state["space_id"]),
-                                expected_processor_id=str(state["processor_id"]),
-                                limit=BATCH_LIMIT,
-                                batch_size=BATCH_LIMIT,
-                                device="auto",
-                                device_policy=str(entry.device_policy),
-                                worker_id=f"embedding-candidate-{state['task_id']}",
-                                retry_failed=retry_failed and first,
-                            )
-                            first = False
-                            profile = semantic.ensure_search_profile(
-                                catalog,
-                                semantic.semantic_spec(
-                                    entry.manifest_path,
-                                    semantic.adapter_runtime_facts(encoder),
-                                    device_policy=str(entry.device_policy),
-                                ),
-                                space_id=str(state["space_id"]),
-                                generation_id=str(state["generation_id"]),
-                                activate_if_unset=False,
-                            )
-                            summary = payload["generation"]
-                            state["profile_id"] = profile.get("profile_id")
-                            state["confirmed_entries"] = int(
-                                (summary.get("entries") or {}).get("CONFIRMED", 0)
-                            )
-                            state["last_batch"] = {
-                                "targets": int(payload.get("targets", 0)),
-                                "checked": int(payload.get("checked", 0)),
-                                "coverage_complete": bool(payload.get("coverage_complete")),
-                                "out_of_scope": payload.get("out_of_scope", {}),
-                            }
-                            self._save(state)
-                            if self._pause.is_set():
-                                state["status"] = "PAUSED"
-                                state["owner_id"] = None
-                                break
-                            jobs = summary.get("jobs") or payload.get("run", {}).get("jobs") or {}
-                            failed = int(jobs.get("FAILED", 0))
-                            if failed:
-                                state["status"] = "FAILED"
-                                state["last_error"] = {"code": "FAILED_JOBS", "failed_jobs": failed}
-                                break
-                            if int(payload.get("targets", 0)) == 0 or bool(payload.get("coverage_complete")):
-                                state["status"] = "COMPLETED"
-                                state["completed_at_ms"] = time.time_ns() // 1_000_000
-                                break
-                    state["owner_id"] = None if state.get("status") != "RUNNING" else self._owner_id
+                stop = getattr(encoder, "close", None)
+                if callable(stop):
+                    stop()
             finally:
-                if encoder is not None:
-                    stop = getattr(encoder, "close", None)
-                    if callable(stop):
-                        stop()
-                    encoder = None
-                BACKGROUND_MODEL_SLOT.release()
+                encoder = None
+
+        try:
+            self._acquire_background_model_slot(BACKGROUND_MODEL_SLOT)
+            background_slot_acquired = True
+            with ExitStack() as resource_stack:
+                resource_stack.enter_context(
+                    self.context.model_resource_gate.exclusive(
+                        timeout=SEMANTIC_QUERY_WAIT_SECONDS,
+                        cancel_check=self._wait_cancel_reason,
+                        poll_interval=MODEL_WAIT_POLL_SECONDS,
+                    )
+                )
+                resource_stack.callback(close_candidate_encoder)
+                cancelled = self._wait_cancel_reason()
+                if cancelled:
+                    raise _CandidateWaitCancelled(cancelled)
+                self.context.release_query_encoder_for_candidate()
+                entry = registry_for(self.root).require_installed(str(state["provider_id"]))
+                encoder = build_worker_query_encoder(
+                    model_dir=entry.model_dir,
+                    manifest_path=entry.manifest_path,
+                    device_policy=entry.device_policy,
+                )
+                with Catalog.open(data_root=self.root) as catalog:
+                    if str(encoder.spec().envelope["space_id"]) != str(state["space_id"]):
+                        raise CatalogError("SPACE_MISMATCH", "the loaded provider no longer matches the candidate task")
+                    _record_candidate_runtime(catalog, entry, encoder.health())
+                    first = True
+                    while True:
+                        if self._stop.is_set():
+                            state["status"] = "INTERRUPTED"
+                            state["last_error"] = {"code": "PROCESS_STOPPING"}
+                            break
+                        payload = semantic.build_index(
+                            catalog,
+                            encoder=encoder,
+                            manifest_path=entry.manifest_path,
+                            expected_space_id=str(state["space_id"]),
+                            expected_processor_id=str(state["processor_id"]),
+                            limit=BATCH_LIMIT,
+                            batch_size=BATCH_LIMIT,
+                            device="auto",
+                            device_policy=str(entry.device_policy),
+                            worker_id=f"embedding-candidate-{state['task_id']}",
+                            retry_failed=retry_failed and first,
+                        )
+                        first = False
+                        profile = semantic.ensure_search_profile(
+                            catalog,
+                            semantic.semantic_spec(
+                                entry.manifest_path,
+                                semantic.adapter_runtime_facts(encoder),
+                                device_policy=str(entry.device_policy),
+                            ),
+                            space_id=str(state["space_id"]),
+                            generation_id=str(state["generation_id"]),
+                            activate_if_unset=False,
+                        )
+                        summary = payload["generation"]
+                        state["profile_id"] = profile.get("profile_id")
+                        state["confirmed_entries"] = int(
+                            (summary.get("entries") or {}).get("CONFIRMED", 0)
+                        )
+                        state["last_batch"] = {
+                            "targets": int(payload.get("targets", 0)),
+                            "checked": int(payload.get("checked", 0)),
+                            "coverage_complete": bool(payload.get("coverage_complete")),
+                            "out_of_scope": payload.get("out_of_scope", {}),
+                        }
+                        self._save(state)
+                        if self._pause.is_set():
+                            state["status"] = "PAUSED"
+                            state["owner_id"] = None
+                            break
+                        jobs = summary.get("jobs") or payload.get("run", {}).get("jobs") or {}
+                        failed = int(jobs.get("FAILED", 0))
+                        if failed:
+                            state["status"] = "FAILED"
+                            state["last_error"] = {"code": "FAILED_JOBS", "failed_jobs": failed}
+                            break
+                        if int(payload.get("targets", 0)) == 0 or bool(payload.get("coverage_complete")):
+                            state["status"] = "COMPLETED"
+                            state["completed_at_ms"] = time.time_ns() // 1_000_000
+                            break
+                state["owner_id"] = None if state.get("status") != "RUNNING" else self._owner_id
             if state.get("status") == "RUNNING":
                 state["status"] = "INTERRUPTED"
                 state["last_error"] = {"code": "WORKER_STOPPED"}
-        except TimeoutError as error:
+        except ModelResourceWaitCancelled as error:
+            self._record_wait_cancellation(state, str(error))
+        except _CandidateWaitCancelled as error:
+            self._record_wait_cancellation(state, error.reason)
+        except ModelResourceWaitTimeout as error:
             state["status"] = "PAUSED"
-            state["last_error"] = {"code": "RESOURCE_BUSY", "message": str(error)}
+            state["last_error"] = {
+                "code": "RESOURCE_BUSY",
+                "reason": error.reason,
+                "message": str(error),
+            }
+            state["owner_id"] = None
+        except _FaceSlotWaitTimeout as error:
+            state["status"] = "PAUSED"
+            state["last_error"] = {
+                "code": "RESOURCE_BUSY",
+                "reason": "FACE_TASK_ACTIVE",
+                "message": str(error),
+            }
             state["owner_id"] = None
         except Exception as error:  # noqa: BLE001 - persisted status is the operator's recovery record.
             state["status"] = "FAILED"
             state["last_error"] = {"code": type(error).__name__, "message": str(error)[:500]}
             state["owner_id"] = None
         finally:
+            if background_slot_acquired:
+                BACKGROUND_MODEL_SLOT.release()
             try:
                 self._save(state)
             except OSError:
                 pass
+
+    def _wait_cancel_reason(self) -> str | None:
+        if self._stop.is_set():
+            return "PROCESS_STOPPING"
+        if self._pause.is_set():
+            return "PAUSE_REQUESTED"
+        return None
+
+    def _acquire_background_model_slot(self, slot: Any) -> None:
+        deadline = time.monotonic() + FACE_SLOT_WAIT_SECONDS
+        while True:
+            cancelled = self._wait_cancel_reason()
+            if cancelled:
+                raise _CandidateWaitCancelled(cancelled)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise _FaceSlotWaitTimeout(
+                    "face inference is still using the shared background model slot "
+                    f"after {FACE_SLOT_WAIT_SECONDS:.0f} seconds"
+                )
+            if slot.acquire(timeout=min(remaining, MODEL_WAIT_POLL_SECONDS)):
+                return
+
+    @staticmethod
+    def _record_wait_cancellation(state: dict[str, Any], reason: str) -> None:
+        if reason == "PROCESS_STOPPING":
+            state["status"] = "INTERRUPTED"
+            state["last_error"] = {"code": "PROCESS_STOPPING"}
+        else:
+            state["status"] = "PAUSED"
+            state["last_error"] = {"code": "PAUSE_REQUESTED"}
+        state["owner_id"] = None
 
     def close(self) -> None:
         self._stop.set()
