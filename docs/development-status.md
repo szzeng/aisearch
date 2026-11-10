@@ -1,6 +1,10 @@
-## Current task: P4-LOCK-CONTENTION-RECOVERY-B（2026-11-10）
+## Current task: P4-LOCK-CONTENTION-RECOVERY-C（2026-11-10）
 
-已补齐图库刷新模型锁范围、扫描 BEGIN 写锁争用恢复及来源删除的失效租约核对：普通 SCANNING 不持有模型槽，语义模型阶段有界等待并支持取消；仅 BEGIN 前 SQLITE_BUSY 进入现有 RETRY_WAIT 并由 runner 有界恢复；来源删除在事务内验证任务状态和有效租约。受影响与新增回归 **合并 217 项：194 passed / 23 skipped / 0 failed / 0 errors**，含 P4-02V 与上一卡 140 项集合；`ruff check .`、编译及 `git diff --check` 通过。Luna H 独立复核 **REVIEW PASS**。完整套件历史范围外 24 项失败未重跑。未提交/推送；详见[续修记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md)与[报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+C 已修复：刷新人脸识别复用有界/可取消的 60 秒 `BACKGROUND_MODEL_SLOT` 等待；忙/取消时将本轮新 delta 优先、余量补旧 backlog，幂等持久化后续工作；runner 的 30 秒恢复预算按 `_run_one()` 累计，最多3次并核验有效、过期与缺失 job/lease。受影响 JUnit **225 项：202 passed / 23 skipped / 0 failed / 0 errors**，含 A/B/P4-02V 相关回归；Ruff、编译、diff-check 通过。Luna H 独立只读复核 **REVIEW PASS**，无未关闭 P1/P2。A/B GitHub 状态已核实：`8c57f79`、`6a01ff8`、`6ee95b3` 均在 `origin/master` 历史，远端 master 与 HEAD `6ee95b3` 一致。C 未提交/推送。历史完整套件的 24 项范围外失败、真实 GPU 和 Windows EXE 状态继续按下方记录。详见 [C 续修记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md) 与 [执行报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+
+## Previous task: P4-LOCK-CONTENTION-RECOVERY-B（2026-11-10）
+
+已补齐图库刷新模型锁范围、扫描 BEGIN 写锁争用恢复及来源删除的失效租约核对：普通 SCANNING 不持有模型槽，语义模型阶段有界等待并支持取消；仅 BEGIN 前 SQLITE_BUSY 进入现有 RETRY_WAIT 并由 runner 有界恢复；来源删除在事务内验证任务状态和有效租约。受影响与新增回归 **合并 217 项：194 passed / 23 skipped / 0 failed / 0 errors**，含 P4-02V 与上一卡 140 项集合；`ruff check .`、编译及 `git diff --check` 通过。Luna H 独立复核 **REVIEW PASS**。完整套件历史范围外 24 项失败未重跑。用户随后授权简单提交并推送，B 由 `6ee95b3` 推送至 `origin/master`；远端 hash 已核对。详见[续修记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md)与[报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 
 ## Previous task: P4-LOCK-CONTENTION-RECOVERY-A（2026-11-10）
 

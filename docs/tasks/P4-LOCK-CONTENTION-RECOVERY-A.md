@@ -1,5 +1,26 @@
 # P4-LOCK-CONTENTION-RECOVERY-A/B — SQLite 与模型资源锁冲突恢复
 
+## C 后台模型锁与恢复预算收尾（2026-11-10）
+
+状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。基准 HEAD 为 B 提交 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`；已确认 A 的 `8c57f79`、`6a01ff8` 和 B 的 `6ee95b3` 均为当前 `origin/master` 的祖先，且 `git ls-remote origin refs/heads/master` 正好指向 `6ee95b3`。C 本次不提交/推送。
+
+### PERF-BOUNDED
+
+- Flow/risk：刷新进入 face inference 时可能无期限等候候选任务的人脸槽；runner 当前每轮另享 30 秒，会把自动恢复额外等待放大。
+- Approach/bounds：仅刷新 face stage 复用 60 秒 `BACKGROUND_MODEL_SLOT` 等待器与取消检查；原 `run_queue()` RLock 保留，因同线程同步调用而可重入。忙/取消时只把当前最多 5,000 个新 delta 优先、剩余预算补旧 backlog，幂等写入现有 face jobs。扫描 runner 的额外等待用 monotonic 累计至 30 秒，自动恢复最多 3 次；活动 lease 绝不重复领取。
+- Validation/stop：临时合成图库与可控锁/时间验证超时、取消、异常释放、恢复和 cap 边界；用 fake wait 校验累计预算、最大恢复数、lease 与 runner close，不等待真实 30 秒；复用 A/B/P4-02V 受影响回归。不得扩展到 schema、模型身份或发行构建。
+
+### C 诊断与最终证据
+
+- 根因：`_face_stage()` 调用 `face_service.detect()` 后，其 `run_queue()` 装饰器无超时等待 `BACKGROUND_MODEL_SLOT`。B 的 runner helper 虽有 30 秒上限，但每次恢复独立重置该上限；B 任务记录中的“未提交/未推送”后来已被用户授权提交/推送覆盖，现已按 GitHub 实际 HEAD 更正。
+- 新增集成测试覆盖 face slot 忙时不进入 detect、将新 delta job 入队、释放资源后下次日常刷新续接同一待处理 job；等待取消也持久化待办且及时退出；推理异常后 slot 可重新获取；RLock 嵌套可重入；5,000 项 cap 时当前扫描 delta 不被旧 backlog 挤掉。新增 runner 单测使用 fake wait 验证累计预算递减（30→18→6）、最多3次恢复、有效 lease 和缺失 job 不重复领取、过期 lease 走同一 claim 接管、Runner close 中止重试。B 的持续 SQLite BUSY、A/B 与 P4-02V 回归复用并重跑。
+- 主受影响 JUnit `test-results/p4-lock-contention-recovery-c/final-affected.xml`：**225 项，202 passed / 23 skipped / 0 failed / 0 errors**。其中 23 项为原有模型/环境前置条件跳过；完整 unit/integration 历史存在 24 项范围外失败，本卡不扩大范围、不重跑全套。`uv run ruff check .`、`python -m compileall -q src/photo_search tests/unit/test_p4_lock_contention_recovery_c.py tests/integration/test_catalog_scan.py tests/integration/test_p4_02y_i_source_build.py tests/integration/test_p4_02y_library_refresh.py`、`git diff --check` 通过。
+- Luna H 首审指出 cap 排序可能丢弃当前新 delta、缺失 `scan_job_id` 分支错误把 `False` 当作0秒可继续；已分别改为 fresh delta 优先及 job 缺失 fail-closed，并把两个边界纳入上述最终 JUnit。最终独立复核 **REVIEW PASS**，确认 JUnit 时间和用例覆盖最新修复、文档与 Git 状态一致，无未关闭 P1/P2。
+- 真实 GPU/人脸权重未验证，Windows EXE 未重建。源码应用需重启。C 不自动启动1024D候选，不提交、不推送、不制作发行包。
+- 完整 unit/integration 历史仍有 24 项范围外失败；真实 GPU、人脸权重与 Windows EXE 未验证。C 不提交、不推送、不生成发行包。
+
+---
+
 ## B 后续补修（2026-11-10）
 
 当前续修状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。基准 HEAD `6a01ff8281f65a920a067a6b5dcc58d00d915877`；工作区起始干净。本节只处理 B 卡三项遗留，不重做 A 的 BEGIN 有界重试、候选锁分类/取消及候选向量暂停恢复实现。
@@ -20,7 +41,7 @@
 - 独立 Luna H 首审指出 encoder load 异常与等待取消后的槽位释放缺少直接测试；已新增两项测试并独立重跑 2/2。增量复核确认 finding 关闭、无新增 blocker，**REVIEW PASS**。
 - 应用源码重启后生效。若候选任务由进程中断，应按既有候选任务页面恢复同一任务；不自动启动候选任务。冻结 Windows 版需在后续发行验证中重建并用合成目录检查刷新、512D 搜索和候选恢复；本卡未构建发行包。
 
-本卡下方 A 部分为已完成的基线记录，保留其历史验收与提交信息；B 本轮不提交、不推送。
+本卡下方 A 部分为已完成的基线记录，保留其历史验收与提交信息。B 执行时曾按任务卡要求暂不提交/推送；之后用户授权简单提交并推送，实际提交 `6ee95b3` 已位于 GitHub `origin/master`。C 开工时本地、远端与 `git ls-remote` 返回的 master 均为该 commit。
 
 ---
 

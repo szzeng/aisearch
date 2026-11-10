@@ -1283,6 +1283,8 @@ def _enrichment_stages(
             catalog, service.data_root, content, source_detail=face_profile == "source_detail",
             engine_cache=face_cache, source_ids=scopes,
             recover_cr2=mode == REFRESH_MODE_BUILD,
+            cancel_check=cancel_check,
+            resume_pending=mode != REFRESH_MODE_BUILD,
         ),
         "ocr": lambda: _ocr_stage(
             catalog, service.data_root, content, source_ids=scopes,
@@ -1327,6 +1329,7 @@ def _enrichment_stages(
                     engine_cache=face_cache,
                     source_ids=scopes,
                     recover_cr2=True,
+                    cancel_check=cancel_check,
                 ),
                 cancel_check=cancel_check,
             ),
@@ -1690,12 +1693,31 @@ def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str,
 def _face_stage(
     catalog: Any, data_root: Any, assets: set[int], *, source_detail: bool = True,
     engine_cache: Any | None = None, source_ids: Sequence[int | None] = (None,),
-    recover_cr2: bool = False,
+    recover_cr2: bool = False, cancel_check: Callable[[], bool] | None = None,
+    resume_pending: bool = False,
 ) -> dict[str, Any]:
     from photo_search.face import contract as face_contract
     from photo_search.face import service as face_service
     from photo_search.face import weights as face_weights
 
+    fresh_assets = sorted({int(asset_id) for asset_id in assets})[:ENRICH_LIMIT]
+    assets = set(fresh_assets)
+    task_type = (
+        face_contract.FACE_DETAIL_AUTO_TASK_TYPE
+        if source_detail
+        else face_contract.FACE_TASK_TYPE
+    )
+    pending_limit = max(0, ENRICH_LIMIT - len(fresh_assets))
+    if resume_pending and pending_limit:
+        assets.update(
+            _pending_face_asset_ids(
+                catalog,
+                task_type=task_type,
+                processor_id=face_contract.FACE_PROCESSOR_ID,
+                source_ids=source_ids,
+                limit=pending_limit,
+            )
+        )
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "targets": 0, "steps": 0}
     try:
@@ -1710,34 +1732,58 @@ def _face_stage(
             "targets": len(assets),
             "steps": 0,
         }
-    task_type = (
-        face_contract.FACE_DETAIL_AUTO_TASK_TYPE
-        if source_detail
-        else face_contract.FACE_TASK_TYPE
-    )
     artifact_revision = (
         face_contract.FACE_DETAIL_ARTIFACT_REVISION
         if source_detail
         else face_contract.FACE_ARTIFACT_REVISION
     )
     recovery: dict[str, int] = {}
-    if recover_cr2:
-        from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
+    try:
+        # The RLock is intentionally reentrant: detect() calls the decorated run_queue()
+        # synchronously on this same thread. Acquiring here bounds refresh wait before detect
+        # writes queue rows; run_queue retains its independent guard for every other caller.
+        with _background_model_slot(cancel_check):
+            if recover_cr2:
+                from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
 
-        recovery = recover_cr2_format_failures(
+                recovery = recover_cr2_format_failures(
+                    catalog,
+                    data_root=data_root,
+                    asset_ids=sorted(assets)[:ENRICH_LIMIT],
+                    source_ids=source_ids,
+                    task_type=task_type,
+                    processor_id=face_contract.FACE_PROCESSOR_ID,
+                    artifact_revision=artifact_revision,
+                )
+            result = face_service.detect(
+                catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT],
+                source_detail=bool(source_detail),
+                engine_cache=engine_cache,
+            )
+    except (_BackgroundModelSlotBusy, _BackgroundModelSlotCancelled) as error:
+        queued = _persist_deferred_face_jobs(
             catalog,
-            data_root=data_root,
-            asset_ids=sorted(assets)[:ENRICH_LIMIT],
-            source_ids=source_ids,
-            task_type=task_type,
-            processor_id=face_contract.FACE_PROCESSOR_ID,
-            artifact_revision=artifact_revision,
+            face_service,
+            face_contract,
+            assets=assets,
+            source_detail=source_detail,
         )
-    result = face_service.detect(
-        catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT],
-        source_detail=bool(source_detail),
-        engine_cache=engine_cache,
-    )
+        code = "MODEL_RESOURCE_BUSY" if isinstance(error, _BackgroundModelSlotBusy) else "CANCELLED"
+        message = (
+            "background model resources stayed busy; face work was queued for a later refresh"
+            if code == "MODEL_RESOURCE_BUSY"
+            else "face stage was cancelled while waiting for model resources; face work was queued for a later refresh"
+        )
+        return {
+            "state": STAGE_FAILED,
+            "reason": code,
+            "code": code,
+            "message": message,
+            "targets": len(assets),
+            "queued": int(queued.get("queued", 0)),
+            "steps": 0,
+            "deferred": len(assets),
+        }
     return {
         "state": STAGE_OK,
         "targets": int(result["enqueue"]["targets"]),
@@ -1748,6 +1794,83 @@ def _face_stage(
         else 0,
         **recovery,
     }
+
+
+def _pending_face_asset_ids(
+    catalog: Any,
+    *,
+    task_type: str,
+    processor_id: str,
+    source_ids: Sequence[int | None],
+    limit: int,
+) -> set[int]:
+    """Find durable face work deferred by an earlier refresh, bounded to this scope."""
+    source_filter = ""
+    parameters: list[Any] = [
+        str(task_type),
+        str(processor_id),
+        int(catalog.now_ms()),
+    ]
+    if source_ids and None not in source_ids:
+        selected = sorted({int(source_id) for source_id in source_ids})
+        if not selected:
+            return set()
+        source_filter = (
+            "AND EXISTS (SELECT 1 FROM file_locations l WHERE l.asset_id=a.asset_id "
+            "AND l.availability='PRESENT' AND l.source_id IN ("
+            + ",".join("?" for _ in selected)
+            + ")) "
+        )
+        parameters.extend(selected)
+    parameters.append(max(0, int(limit)))
+    rows = catalog.read_all(
+        "SELECT a.asset_id FROM jobs j JOIN assets a "
+        "ON j.subject_id=CAST(a.asset_id AS TEXT) AND j.input_revision=a.sha256 "
+        "WHERE j.subject_type='asset' AND j.task_type=? AND j.processor_id=? "
+        "AND (j.state IN ('QUEUED','RETRY_WAIT') OR "
+        "(j.state='RUNNING' AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at<=?)) "
+        "AND a.state='ACTIVE' "
+        + source_filter
+        + "ORDER BY a.asset_id LIMIT ?",
+        tuple(parameters),
+    )
+    return {int(row["asset_id"]) for row in rows}
+
+
+def _persist_deferred_face_jobs(
+    catalog: Any,
+    face_service: Any,
+    face_contract: Any,
+    *,
+    assets: set[int],
+    source_detail: bool,
+) -> dict[str, int]:
+    """Persist the bounded work set only after a refresh cannot run it now."""
+    targets = face_service.face_targets(
+        catalog, asset_ids=sorted(assets)[:ENRICH_LIMIT]
+    )
+    if source_detail:
+        from photo_search.face.detail_policy import restore
+
+        targets = [
+            target
+            for target in targets
+            if not restore(
+                catalog,
+                asset_id=int(target["asset_id"]),
+                input_revision=str(target["input_revision"]),
+            )
+        ]
+    return face_service.enqueue_targets(
+        catalog,
+        targets,
+        now_ms=catalog.now_ms(),
+        task_type=(
+            face_contract.FACE_DETAIL_AUTO_TASK_TYPE
+            if source_detail
+            else face_contract.FACE_TASK_TYPE
+        ),
+    )
 
 
 def _ocr_stage(

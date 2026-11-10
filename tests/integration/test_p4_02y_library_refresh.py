@@ -508,6 +508,162 @@ def test_background_model_slot_wait_can_cancel_without_leaking_the_slot(
     slot.release()
 
 
+def test_face_stage_defers_durable_work_when_candidate_holds_model_slot(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    asset_id = asset_of(env, "photo-000.jpg")
+    slot = threading.Lock()
+    slot.acquire()
+    detect_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    monkeypatch.setattr(pipeline, "MODEL_STAGE_SLOT_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda _root: None)
+    monkeypatch.setattr(face_service, "detect", lambda *args, **kwargs: detect_calls.append(kwargs))
+    try:
+        deferred = pipeline._face_stage(
+            env.service().catalog,
+            env.data_root,
+            {asset_id},
+            source_detail=False,
+            source_ids=[1],
+            resume_pending=True,
+        )
+        assert deferred["state"] == "FAILED"
+        assert deferred["reason"] == "MODEL_RESOURCE_BUSY"
+        assert deferred["queued"] == 1
+        assert not detect_calls
+
+        queued = env.service().catalog.read_one(
+            "SELECT state FROM jobs WHERE subject_type='asset' AND subject_id=? "
+            "AND task_type=? ORDER BY job_id DESC LIMIT 1",
+            (str(asset_id), face_service.contract.FACE_TASK_TYPE),
+        )
+        assert queued is not None and queued["state"] == "QUEUED"
+    finally:
+        slot.release()
+
+    reentrant_slot = threading.RLock()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", reentrant_slot)
+
+    def resumed_detect(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert reentrant_slot.acquire(blocking=False), "nested run_queue lock must be reentrant"
+        reentrant_slot.release()
+        detect_calls.append(kwargs)
+        return {
+            "enqueue": {"targets": 1, "queued": 0},
+            "run": {"steps": 1},
+            "association": {"reconciled": 0},
+        }
+
+    monkeypatch.setattr(face_service, "detect", resumed_detect)
+    resumed = pipeline._face_stage(
+        env.service().catalog,
+        env.data_root,
+        set(),
+        source_detail=False,
+        source_ids=[1],
+        resume_pending=True,
+    )
+    assert resumed["state"] == pipeline.STAGE_OK
+    assert detect_calls and asset_id in detect_calls[0]["asset_ids"]
+
+
+def test_face_backlog_cap_does_not_drop_current_scan_delta(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    slot = threading.RLock()
+    detect_calls: list[dict[str, Any]] = []
+    pending_calls: list[int] = []
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    monkeypatch.setattr(pipeline, "ENRICH_LIMIT", 2)
+    monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda _root: None)
+
+    def pending_assets(*_args: Any, limit: int, **_kwargs: Any) -> set[int]:
+        pending_calls.append(limit)
+        return {1, 2}
+
+    def detect(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert slot.acquire(blocking=False), "nested run_queue lock must remain reentrant"
+        slot.release()
+        detect_calls.append(kwargs)
+        return {
+            "enqueue": {"targets": 2, "queued": 0},
+            "run": {"steps": 2},
+            "association": {"reconciled": 0},
+        }
+
+    monkeypatch.setattr(pipeline, "_pending_face_asset_ids", pending_assets)
+    monkeypatch.setattr(face_service, "detect", detect)
+    result = pipeline._face_stage(
+        env.service().catalog,
+        env.data_root,
+        {100, 101},
+        source_detail=False,
+        resume_pending=True,
+    )
+
+    assert result["state"] == pipeline.STAGE_OK
+    assert detect_calls[0]["asset_ids"] == [100, 101]
+    assert pending_calls == []
+
+
+def test_face_stage_cancellation_persists_unprocessed_work_and_releases_slot(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    asset_id = asset_of(env, "photo-000.jpg")
+    slot = threading.Lock()
+    slot.acquire()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    monkeypatch.setattr(pipeline, "MODEL_STAGE_SLOT_WAIT_SECONDS", 1.0)
+    monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda _root: None)
+    try:
+        cancelled = pipeline._face_stage(
+            env.service().catalog,
+            env.data_root,
+            {asset_id},
+            source_detail=False,
+            source_ids=[1],
+            cancel_check=lambda: True,
+        )
+        assert cancelled["state"] == "FAILED"
+        assert cancelled["reason"] == "CANCELLED"
+        assert cancelled["queued"] == 1
+    finally:
+        slot.release()
+    assert slot.acquire(blocking=False)
+    slot.release()
+
+
+def test_face_inference_exception_releases_refresh_model_slot(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    slot = threading.RLock()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda _root: None)
+
+    def fail_inference(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("synthetic face inference failure")
+
+    monkeypatch.setattr(face_service, "detect", fail_inference)
+    with pytest.raises(RuntimeError, match="synthetic face inference failure"):
+        pipeline._face_stage(
+            env.service().catalog,
+            env.data_root,
+            {asset_of(env, "photo-000.jpg")},
+            source_detail=False,
+        )
+    assert slot.acquire(blocking=False)
+    slot.release()
+
+
 def test_the_refresh_entry_is_additive_next_to_the_full_scan(env: RefreshEnv) -> None:
     """The 202 answer and the read-only status keep their documented shape."""
 

@@ -185,23 +185,29 @@ class ScanRunner:
     def _run_one(self, source_id: int) -> bool:
         started = int(self._now_ms())
         recovery_attempts = 0
+        recovery_wait_seconds = 0.0
         while True:
             try:
                 outcome = self._execute(source_id)
             except CatalogError as error:
-                if (
-                    is_scan_begin_busy(error)
-                    and recovery_attempts < BUSY_AUTO_RECOVERY_ATTEMPTS
-                    and self._wait_for_scan_retry(source_id)
-                ):
-                    recovery_attempts += 1
-                    logger.info(
-                        "resuming scan for source_id=%s after bounded SQLite write contention (%s/%s)",
-                        source_id,
-                        recovery_attempts,
-                        BUSY_AUTO_RECOVERY_ATTEMPTS,
-                    )
-                    continue
+                if is_scan_begin_busy(error) and recovery_attempts < BUSY_AUTO_RECOVERY_ATTEMPTS:
+                    remaining = BUSY_AUTO_RECOVERY_WAIT_LIMIT_SECONDS - recovery_wait_seconds
+                    if remaining > 0:
+                        waited = self._wait_for_scan_retry(source_id, remaining)
+                        if waited is not None and waited < remaining:
+                            recovery_wait_seconds += max(0.0, waited)
+                            with self._condition:
+                                stopping = self._stop
+                            if not stopping:
+                                recovery_attempts += 1
+                                logger.info(
+                                    "resuming scan for source_id=%s after bounded SQLite write contention (%s/%s, %.3fs recovery wait)",
+                                    source_id,
+                                    recovery_attempts,
+                                    BUSY_AUTO_RECOVERY_ATTEMPTS,
+                                    recovery_wait_seconds,
+                                )
+                                continue
                 self._record_failure(source_id, error.code, error.message, started)
                 return False
             except ScanInterrupted as interrupted:
@@ -227,8 +233,10 @@ class ScanRunner:
                 self._condition.notify_all()
             return record.state == "SUCCEEDED"
 
-    def _wait_for_scan_retry(self, source_id: int) -> bool:
-        """Retry only when the durable scan job has no current lease owner."""
+    def _wait_for_scan_retry(
+        self, source_id: int, remaining_budget_seconds: float
+    ) -> float | None:
+        """Wait once for durable eligibility; return only time actually spent waiting."""
         try:
             service = self._service_for_thread()
             from photo_search.catalog import store
@@ -240,29 +248,38 @@ class ScanRunner:
             else:
                 job_id = store.scan_job_id(service.catalog.connection, scan_id=int(scan["scan_id"]))
                 if job_id is None:
-                    return False
+                    return None
                 job = jobs.get_job(service.catalog.connection, int(job_id))
                 if job.state == jobs.STATE_RETRY_WAIT:
                     delay_seconds = max(0.0, (int(job.run_after) - int(service.catalog.now_ms())) / 1000)
                 elif job.state == jobs.STATE_QUEUED:
                     delay_seconds = 0.25
+                elif (
+                    job.state == jobs.STATE_RUNNING
+                    and job.lease_expires_at is not None
+                    and int(job.lease_expires_at) <= int(service.catalog.now_ms())
+                ):
+                    # The prior owner no longer has write authority. execute_scan's existing
+                    # claim path safely takes over this same scan/job after lease expiry.
+                    delay_seconds = 0.0
                 else:
                     # RUNNING still has an owner/lease; do not duplicate its work. A later
                     # request may take over after that lease expires.
-                    return False
-            if delay_seconds > BUSY_AUTO_RECOVERY_WAIT_LIMIT_SECONDS:
-                return False
+                    return None
+            if delay_seconds >= max(0.0, float(remaining_budget_seconds)):
+                return None
         except (CatalogError, OSError, sqlite3.Error):
-            return False
+            return None
 
-        deadline = time.monotonic() + delay_seconds
+        wait_started = time.monotonic()
+        deadline = wait_started + delay_seconds
         with self._condition:
             while not self._stop:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return True
+                    return time.monotonic() - wait_started
                 self._condition.wait(min(remaining, 0.1))
-        return False
+        return None
 
     def _record_failure(self, source_id: int, code: str, message: str, started: int) -> None:
         with self._condition:

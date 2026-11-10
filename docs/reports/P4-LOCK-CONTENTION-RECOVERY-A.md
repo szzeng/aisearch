@@ -1,3 +1,29 @@
+# P4-LOCK-CONTENTION-RECOVERY-C 续修结果（2026-11-10）
+
+## 状态与提交核验
+
+C 基于 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`。通过 `git merge-base --is-ancestor` 确认 A 的 `8c57f79`、`6a01ff8` 和 B 的 `6ee95b3` 均在当前分支历史；`git ls-remote origin refs/heads/master` 返回 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`，与本地 HEAD 相同。B 卡原“未提交/未推送”是用户随后授权提交/推送前的历史状态，已在 current status/task 记录修正为实际 GitHub 状态。C 暂不提交、不推送。
+
+## 根因与实现
+
+- `refresh/pipeline.py::_face_stage()` 调用 `face_service.detect()`，其内 `run_queue()` 通过 `_serialize_face_work` 无超时等待 `BACKGROUND_MODEL_SLOT`。现在刷新 face stage 在写 face job 前先复用 `_background_model_slot(cancel_check)`，上限仍为 60 秒、每 100 ms 检查取消；同线程嵌套 `run_queue()` 依赖并验证现有 `threading.RLock` 可重入。忙/取消时不报告成功，而是把本轮有限目标幂等持久化到原有 face job 表，返回明确 `MODEL_RESOURCE_BUSY` / `CANCELLED` 和 steps=0。后续日常刷新按 source scope 选择 queued/retry/已过期 running 的同 revision face job 并续做。新 delta 优先占用 5,000 项预算，旧 backlog 只填余量，避免新内容被老任务挤出。
+- `api/runner.py` 之前每次 `_wait_for_scan_retry()` 独自允许 30 秒。现在 `_run_one()` 累计实际条件等待的 monotonic 时长，跨轮使用剩余预算；最多仍自动恢复 3 次，正常扫描/文件 I/O/哈希不计入额外等待。活动 lease、缺失 job 关联不重试；过期 lease 仅通过现有 scan/job claim 接管；runner close 会中止后续自动尝试。
+
+## C 验证
+
+| 验证 | 结果 |
+|---|---:|
+| A/B/P4-02V 相关受影响集 + C 新增场景 | **225 项：202 passed / 23 skipped / 0 failed / 0 errors** |
+| Face slot busy/cancel/异常释放与恢复 | 通过：忙/取消时 steps=0、明确 busy/cancelled，任务持久化；释放后下一次 refresh 从同 revision job 继续；异常后 slot 可重入获取 |
+| 5,000 项人脸预算边界 | 通过：本轮新 scan delta 优先占位，旧 backlog 只补空余，不会被较小 asset_id 的历史 job 挤掉 |
+| Runner 累计恢复预算 | 通过：fake wait 验证余量递减 30→18→6 秒；自动恢复最多3次，普通扫描/哈希耗时不进入此预算 |
+| lease、job 丢失与 Runner 关闭 | 通过：有效 lease 与缺失 job 不自动重试；过期 lease 允许既有 claim 接管；关闭停止后续尝试 |
+| Ruff、compileall、diff-check | 通过 |
+
+JUnit：`test-results/p4-lock-contention-recovery-c/final-affected.xml`，文件时间为最新代码/测试完成后，包含 cap-boundary 与缺失 `scan_job_id` 断言。首轮 Luna H 复核指出 fresh delta cap 丢失风险及缺失 `scan_job_id` 被误当成可重试的两个问题；已修复。最终 Luna H 独立复核 **REVIEW PASS**：累计等待、锁范围/释放、待办续接及 C3 Git/文档状态一致，无未关闭 P1/P2。完整 unit/integration 历史的 24 项范围外失败未重跑；真实 GPU/人脸权重未验证，Windows EXE 未重建。本卡需重启源码应用后生效；不提交、不推送、不制作发行包。
+
+---
+
 # P4-LOCK-CONTENTION-RECOVERY-B 续修结果（2026-11-10）
 
 ## 结论
@@ -22,7 +48,7 @@
 | P4-02V、A 的 SQLite/候选/512D 相关回归 | 通过，包含在主受影响集合中 |
 | `uv run ruff check .`、compileall、`git diff --check` | 通过 |
 
-JUnit：主受影响集 `test-results/p4-lock-contention-recovery-b/final-affected.xml`；增量用例 `test-results/p4-lock-contention-recovery-b/retry-wait-delete.xml`。完整 suite 历史的 24 项范围外失败没有在本续修中重跑；真实图库、GPU、人脸权重和冻结发行包验证未执行。Luna H 增量独立只读复核 **REVIEW PASS**：此前指出的 encoder load 异常/取消等待槽位释放测试缺口已关闭，未发现新增 blocker。应用源码需重启；冻结 Windows 发行版尚未重建，后续发行验证需用隔离合成目录覆盖刷新、512D 搜索和候选恢复。不提交、不推送。
+JUnit：主受影响集 `test-results/p4-lock-contention-recovery-b/final-affected.xml`；增量用例 `test-results/p4-lock-contention-recovery-b/retry-wait-delete.xml`。完整 suite 历史的 24 项范围外失败没有在本续修中重跑；真实图库、GPU、人脸权重和冻结发行包验证未执行。Luna H 增量独立只读复核 **REVIEW PASS**：此前指出的 encoder load 异常/取消等待槽位释放测试缺口已关闭，未发现新增 blocker。应用源码需重启；冻结 Windows 发行版尚未重建，后续发行验证需用隔离合成目录覆盖刷新、512D 搜索和候选恢复。B 后续由用户授权提交并推送，提交 `6ee95b3`；该结论已由远端 master hash 核验。
 
 ---
 
