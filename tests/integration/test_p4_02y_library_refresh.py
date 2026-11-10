@@ -407,6 +407,107 @@ def test_a_double_click_never_starts_a_second_refresh(tmp_path: Path) -> None:
     assert scans == 2
 
 
+def test_refresh_scanning_releases_model_slot_but_semantic_encoding_holds_it(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """File enumeration is model-free; actual semantic inference stays serialized."""
+    from photo_search.refresh import pipeline
+
+    scan_entered = threading.Event()
+    allow_scan = threading.Event()
+    encode_entered = threading.Event()
+    allow_encode = threading.Event()
+    real_scan = pipeline.execute_scan
+    real_build_index = semantic.build_index
+
+    def slow_scan(*args: Any, **kwargs: Any) -> Any:
+        scan_entered.set()
+        assert allow_scan.wait(timeout=30), "test did not release the scanner"
+        return real_scan(*args, **kwargs)
+
+    def slow_encode(*args: Any, **kwargs: Any) -> Any:
+        encode_entered.set()
+        assert allow_encode.wait(timeout=30), "test did not release semantic encoding"
+        return real_build_index(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "execute_scan", slow_scan)
+    monkeypatch.setattr(semantic, "build_index", slow_encode)
+    try:
+        env.start_refresh()
+        assert scan_entered.wait(timeout=30), "refresh did not enter SCANNING"
+        assert face_service.BACKGROUND_MODEL_SLOT.acquire(blocking=False), (
+            "ordinary file scanning must not hold the background model slot"
+        )
+        face_service.BACKGROUND_MODEL_SLOT.release()
+
+        allow_scan.set()
+        assert encode_entered.wait(timeout=60), "refresh did not reach semantic encoding"
+        assert not face_service.BACKGROUND_MODEL_SLOT.acquire(blocking=False), (
+            "semantic model loading/encoding must hold the background model slot"
+        )
+    finally:
+        allow_scan.set()
+        allow_encode.set()
+        assert env.context.refresher().wait_idle(timeout=180)
+
+
+def test_semantic_encoder_load_failure_releases_background_model_slot(
+    tmp_path: Path,
+) -> None:
+    from photo_search.refresh import pipeline
+
+    attempted = threading.Event()
+
+    def executor(service: Any, status: Any, source_ids: Any) -> dict[str, Any]:
+        def fail_to_load() -> Any:
+            attempted.set()
+            raise RuntimeError("synthetic encoder load failure")
+
+        return pipeline.refresh_library(
+            service,
+            status,
+            source_ids=source_ids,
+            batch_size=128,
+            encoder_factory=fail_to_load,
+            manifest_path=MANIFEST,
+        )
+
+    env = RefreshEnv.build(
+        tmp_path,
+        adapter=StubPinnedAdapter(),
+        manifest=MANIFEST,
+        refresher_executor=executor,
+    )
+    try:
+        write_jpeg(env.library / "photo-000.jpg", noise=91)
+        env.refresh()
+        assert attempted.is_set(), "refresh did not try to load the semantic encoder"
+        assert face_service.BACKGROUND_MODEL_SLOT.acquire(blocking=False), (
+            "encoder load failure leaked the background model slot"
+        )
+        face_service.BACKGROUND_MODEL_SLOT.release()
+    finally:
+        env.close()
+
+
+def test_background_model_slot_wait_can_cancel_without_leaking_the_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from photo_search.refresh import pipeline
+
+    slot = threading.Lock()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    slot.acquire()
+    try:
+        with pytest.raises(pipeline._BackgroundModelSlotCancelled):
+            with pipeline._background_model_slot(lambda: True):
+                pytest.fail("cancelled acquisition must not enter the model stage")
+    finally:
+        slot.release()
+    assert slot.acquire(blocking=False)
+    slot.release()
+
+
 def test_the_refresh_entry_is_additive_next_to_the_full_scan(env: RefreshEnv) -> None:
     """The 202 answer and the read-only status keep their documented shape."""
 

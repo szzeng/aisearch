@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import stat
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -534,57 +535,80 @@ def execute_scan(
     except KeyboardInterrupt as error:
         raise ScanInterrupted(f"scan {scan_id} was interrupted by the user") from error
     except CatalogError as error:
+        if is_scan_begin_busy(error):
+            retry = _requeue(
+                catalog,
+                job=run.execution.job,
+                scan_id=scan_id,
+                source_id=source_id,
+                backoff_ms=service.retry_backoff_ms,
+                error=error,
+            )
+            raise retry from error
         classified = run.classify(error)
         if classified is error:
             raise
         raise classified from error
 
     now_ms = catalog.now_ms()
-    with catalog.write() as connection:
-        run.execution.require(connection, now_ms=now_ms)
-        pending = store.count_unbound_locations(connection, source_id=source_id, scan_id=scan_id)
-        if pending:
-            # Defensive invariant: a scan may only succeed once every position it saw has a
-            # confirmed content identity (ADR-0002 §5.2).
-            raise CatalogError(
-                INPUT_UNSTABLE,
-                "scan cannot succeed while a seen position still needs content confirmation",
-                details={"source_id": source_id, "scan_id": scan_id, "pending_content": pending},
+    try:
+        with catalog.write() as connection:
+            run.execution.require(connection, now_ms=now_ms)
+            pending = store.count_unbound_locations(connection, source_id=source_id, scan_id=scan_id)
+            if pending:
+                # Defensive invariant: a scan may only succeed once every position it saw has a
+                # confirmed content identity (ADR-0002 §5.2).
+                raise CatalogError(
+                    INPUT_UNSTABLE,
+                    "scan cannot succeed while a seen position still needs content confirmation",
+                    details={"source_id": source_id, "scan_id": scan_id, "pending_content": pending},
+                )
+            from photo_search.retention import scan_missing_counts
+
+            retention_baseline, retention_newly_missing = scan_missing_counts(
+                connection, source_id=source_id, scan_id=scan_id
             )
-        from photo_search.retention import scan_missing_counts
+            reconciled = store.reconcile_missing_detail(
+                connection, source_id=source_id, scan_id=scan_id, sample_limit=DELTA_LIMIT
+            )
+            missing = int(reconciled["count"])
+            run.note_missing(reconciled["asset_ids"], truncated=bool(reconciled["truncated"]))
+            store.set_scan_state(connection, scan_id=scan_id, state="SUCCEEDED", now_ms=now_ms)
+            store.set_last_successful_scan(
+                connection, source_id=source_id, scan_id=scan_id, status="ONLINE"
+            )
+            from photo_search.retention import record_successful_source_scan
 
-        retention_baseline, retention_newly_missing = scan_missing_counts(
-            connection, source_id=source_id, scan_id=scan_id
-        )
-        reconciled = store.reconcile_missing_detail(
-            connection, source_id=source_id, scan_id=scan_id, sample_limit=DELTA_LIMIT
-        )
-        missing = int(reconciled["count"])
-        run.note_missing(reconciled["asset_ids"], truncated=bool(reconciled["truncated"]))
-        store.set_scan_state(connection, scan_id=scan_id, state="SUCCEEDED", now_ms=now_ms)
-        store.set_last_successful_scan(
-            connection, source_id=source_id, scan_id=scan_id, status="ONLINE"
-        )
-        from photo_search.retention import record_successful_source_scan
-
-        record_successful_source_scan(
-            connection,
-            source_id=source_id,
-            scan_id=scan_id,
-            now_ms=now_ms,
-            baseline_present_assets=retention_baseline,
-            newly_missing_assets=retention_newly_missing,
-        )
-        jobs.finish(
-            connection,
-            job_id=job_id,
-            lease_token=run.execution.job.lease_token or "",
-            state=jobs.STATE_SUCCEEDED,
-            input_revision=run.execution.job.input_revision,
-            processor_id=run.execution.job.processor_id,
-            now_ms=now_ms,
-            progress=1.0,
-        )
+            record_successful_source_scan(
+                connection,
+                source_id=source_id,
+                scan_id=scan_id,
+                now_ms=now_ms,
+                baseline_present_assets=retention_baseline,
+                newly_missing_assets=retention_newly_missing,
+            )
+            jobs.finish(
+                connection,
+                job_id=job_id,
+                lease_token=run.execution.job.lease_token or "",
+                state=jobs.STATE_SUCCEEDED,
+                input_revision=run.execution.job.input_revision,
+                processor_id=run.execution.job.processor_id,
+                now_ms=now_ms,
+                progress=1.0,
+            )
+    except CatalogError as error:
+        if is_scan_begin_busy(error):
+            retry = _requeue(
+                catalog,
+                job=run.execution.job,
+                scan_id=scan_id,
+                source_id=source_id,
+                backoff_ms=service.retry_backoff_ms,
+                error=error,
+            )
+            raise retry from error
+        raise
     return ScanOutcome(
         scan_id=scan_id,
         source_id=source_id,
@@ -1101,6 +1125,14 @@ class _ScanRun:
 
 def _elapsed_ms(started: float) -> int:
     return int(round((time.perf_counter() - started) * 1000))
+
+
+def is_scan_begin_busy(error: CatalogError) -> bool:
+    """Only a bounded SQLITE_BUSY before BEGIN is safe to requeue as contention."""
+    if str(error.code) != "CATALOG_UNREADABLE" or error.details.get("phase") != "begin_immediate":
+        return False
+    code = error.details.get("sqlite_errorcode")
+    return isinstance(code, int) and (int(code) & 0xFF) == sqlite3.SQLITE_BUSY
 
 
 def _recent_mtime_ms(mtime_ns: int, now_ms: int, window_ms: int) -> int | None:

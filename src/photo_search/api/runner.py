@@ -14,6 +14,7 @@ claims, no persistence beyond the rows the scan itself commits.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import time
 from collections import deque
@@ -22,12 +23,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from photo_search.catalog.errors import CatalogError
-from photo_search.ingestion.scanner import ScanInterrupted
+from photo_search.ingestion.scanner import ScanInterrupted, is_scan_begin_busy
 
 logger = logging.getLogger("photo_search.api.runner")
 
 #: Default time ``close`` waits for the worker to notice the stop flag.
 CLOSE_TIMEOUT_SECONDS = 5.0
+BUSY_AUTO_RECOVERY_ATTEMPTS = 3
+BUSY_AUTO_RECOVERY_WAIT_LIMIT_SECONDS = 30.0
 
 
 @dataclass
@@ -181,20 +184,37 @@ class ScanRunner:
 
     def _run_one(self, source_id: int) -> bool:
         started = int(self._now_ms())
-        try:
-            outcome = self._execute(source_id)
-        except CatalogError as error:
-            self._record_failure(source_id, error.code, error.message, started)
-        except ScanInterrupted as interrupted:
-            # A cancelled/killed execution leaves the job RUNNING with its lease in place;
-            # the next request recovers the same scan_run (ADR-0002 §5.3). This is a
-            # reported interruption, not an unexpected crash.
-            logger.info("scan for source_id=%s was interrupted: %s", source_id, interrupted)
-            self._record_failure(source_id, "SCAN_INTERRUPTED", str(interrupted), started)
-        except Exception as error:  # noqa: BLE001 - one bad scan must not kill the worker
-            logger.exception("scan worker failed for source_id=%s", source_id)
-            self._record_failure(source_id, type(error).__name__, str(error), started)
-        else:
+        recovery_attempts = 0
+        while True:
+            try:
+                outcome = self._execute(source_id)
+            except CatalogError as error:
+                if (
+                    is_scan_begin_busy(error)
+                    and recovery_attempts < BUSY_AUTO_RECOVERY_ATTEMPTS
+                    and self._wait_for_scan_retry(source_id)
+                ):
+                    recovery_attempts += 1
+                    logger.info(
+                        "resuming scan for source_id=%s after bounded SQLite write contention (%s/%s)",
+                        source_id,
+                        recovery_attempts,
+                        BUSY_AUTO_RECOVERY_ATTEMPTS,
+                    )
+                    continue
+                self._record_failure(source_id, error.code, error.message, started)
+                return False
+            except ScanInterrupted as interrupted:
+                # A cancelled/killed execution leaves the job RUNNING with its lease in place;
+                # the next request recovers the same scan_run (ADR-0002 §5.3). This is a
+                # reported interruption, not an unexpected crash.
+                logger.info("scan for source_id=%s was interrupted: %s", source_id, interrupted)
+                self._record_failure(source_id, "SCAN_INTERRUPTED", str(interrupted), started)
+                return False
+            except Exception as error:  # noqa: BLE001 - one bad scan must not kill the worker
+                logger.exception("scan worker failed for source_id=%s", source_id)
+                self._record_failure(source_id, type(error).__name__, str(error), started)
+                return False
             record = ScanRunRecord(
                 source_id=source_id,
                 state=str(_outcome_field(outcome, "state", "SUCCEEDED")),
@@ -206,6 +226,42 @@ class ScanRunner:
                 self._last = record
                 self._condition.notify_all()
             return record.state == "SUCCEEDED"
+
+    def _wait_for_scan_retry(self, source_id: int) -> bool:
+        """Retry only when the durable scan job has no current lease owner."""
+        try:
+            service = self._service_for_thread()
+            from photo_search.catalog import store
+            from photo_search.jobs import queue as jobs
+
+            scan = store.find_active_scan(service.catalog.connection, int(source_id))
+            if scan is None:
+                delay_seconds = 0.25  # scan creation/claim failed before a request was made durable
+            else:
+                job_id = store.scan_job_id(service.catalog.connection, scan_id=int(scan["scan_id"]))
+                if job_id is None:
+                    return False
+                job = jobs.get_job(service.catalog.connection, int(job_id))
+                if job.state == jobs.STATE_RETRY_WAIT:
+                    delay_seconds = max(0.0, (int(job.run_after) - int(service.catalog.now_ms())) / 1000)
+                elif job.state == jobs.STATE_QUEUED:
+                    delay_seconds = 0.25
+                else:
+                    # RUNNING still has an owner/lease; do not duplicate its work. A later
+                    # request may take over after that lease expires.
+                    return False
+            if delay_seconds > BUSY_AUTO_RECOVERY_WAIT_LIMIT_SECONDS:
+                return False
+        except (CatalogError, OSError, sqlite3.Error):
+            return False
+
+        deadline = time.monotonic() + delay_seconds
+        with self._condition:
+            while not self._stop:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return True
+                self._condition.wait(min(remaining, 0.1))
         return False
 
     def _record_failure(self, source_id: int, code: str, message: str, started: int) -> None:

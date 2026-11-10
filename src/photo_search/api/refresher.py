@@ -212,10 +212,7 @@ class LibraryRefresher:
             if self._executor is not None:
                 self._executor(service, status, source_ids)
             else:
-                from photo_search.face.service import BACKGROUND_MODEL_SLOT
-
-                with BACKGROUND_MODEL_SLOT:
-                    self._refresh(service, status, source_ids, mode, face_profile)
+                self._refresh(service, status, source_ids, mode, face_profile)
         except CatalogError as error:
             logger.info("library refresh failed: %s", error.code)
             status.note_error(stage="refresh", code=str(error.code), message=str(error.message)[:200])

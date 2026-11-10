@@ -5,17 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from photo_search.api.runner import ScanRunner
 from photo_search.catalog import schema
 from photo_search.catalog.errors import (
+    CATALOG_UNREADABLE,
     DATA_ROOT_INSIDE_SOURCE,
     DISK_SPACE_INSUFFICIENT,
     PATH_KEY_COLLISION,
@@ -573,6 +577,132 @@ def test_long_scan_renews_its_lease_before_it_expires(
     assert job["state"] == "SUCCEEDED"
     assert job["attempts"] == 0
     assert harness.service.counts(source_id=source_id)["locations_present"] == 6
+
+
+def test_only_begin_immediate_sqlite_busy_is_classified_as_scan_contention() -> None:
+    busy = CatalogError(
+        CATALOG_UNREADABLE,
+        "busy",
+        details={"phase": "begin_immediate", "sqlite_errorcode": sqlite3.SQLITE_BUSY},
+    )
+    extended_busy = CatalogError(
+        CATALOG_UNREADABLE,
+        "busy snapshot",
+        details={
+            "phase": "begin_immediate",
+            "sqlite_errorcode": sqlite3.SQLITE_BUSY_SNAPSHOT,
+        },
+    )
+    commit_busy = CatalogError(
+        CATALOG_UNREADABLE,
+        "commit busy",
+        details={"phase": "commit", "sqlite_errorcode": sqlite3.SQLITE_BUSY},
+    )
+    corruption = CatalogError(
+        CATALOG_UNREADABLE,
+        "corrupt",
+        details={"phase": "begin_immediate", "sqlite_errorcode": sqlite3.SQLITE_CORRUPT},
+    )
+
+    assert scanner.is_scan_begin_busy(busy)
+    assert scanner.is_scan_begin_busy(extended_busy)
+    assert not scanner.is_scan_begin_busy(commit_busy)
+    assert not scanner.is_scan_begin_busy(corruption)
+
+
+def test_runner_resumes_scan_after_sustained_external_write_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Committed scan progress survives a drain-like lock longer than BEGIN's retry budget."""
+    data_root = tmp_path / "PhotoSearchData"
+    library = tmp_path / "library"
+    _write(library / "existing.jpg", b"already-confirmed")
+
+    def service_factory() -> CatalogService:
+        service = CatalogService.open(
+            data_root=data_root,
+            lease_seconds=30,
+            retry_backoff_ms=5,
+        )
+        service.catalog.connection.execute("PRAGMA busy_timeout=50")
+        return service
+
+    setup = service_factory()
+    try:
+        source_id = setup.register_source(display_name="library", root_path=library)["source_id"]
+        setup.run_scan(source_id)
+        before = setup.counts(source_id=source_id)
+        database_path = setup.catalog.db_path
+    finally:
+        setup.close()
+
+    for index in range(3):
+        _write(library / f"new-{index}.jpg", f"new-content-{index}".encode())
+
+    entered = threading.Event()
+    continue_scan = threading.Event()
+    real_process = scanner._ScanRun.process
+    paused = False
+
+    def pause_processing(self: scanner._ScanRun, *, root: Path, total: int) -> None:
+        nonlocal paused
+        if not paused:
+            paused = True
+            entered.set()
+            assert continue_scan.wait(timeout=10), "test did not release the scan"
+        real_process(self, root=root, total=total)
+
+    monkeypatch.setattr(scanner._ScanRun, "process", pause_processing)
+    runner = ScanRunner(service_factory)
+    external = sqlite3.connect(database_path, isolation_level=None, timeout=0.1)
+    try:
+        assert runner.submit(source_id)
+        assert entered.wait(timeout=10), "scan did not reach content processing"
+        external.execute("BEGIN IMMEDIATE")
+        probe = sqlite3.connect(database_path, isolation_level=None, timeout=0.01)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                probe.execute("BEGIN IMMEDIATE")
+        finally:
+            probe.close()
+        continue_scan.set()
+        # Three 50 ms SQLite waits plus the finite retry backoff total ~300 ms. Releasing
+        # shortly after that point lets the durable RETRY_WAIT transition commit.
+        time.sleep(0.75)
+        external.execute("COMMIT")
+        assert runner.wait_idle(timeout=20), "runner did not finish its bounded recovery"
+        state = runner.state()
+        assert state.last is not None
+        assert state.last.state == "SUCCEEDED"
+
+        check = service_factory()
+        try:
+            counts = check.counts(source_id=source_id)
+            assert counts["assets_total"] == before["assets_total"] + 3
+            assert counts["locations_present"] == before["locations_present"] + 3
+            assert counts["locations_pending_content"] == 0
+            assert counts["scans"] == 2
+            scan = check.catalog.read_one(
+                "SELECT state FROM scan_runs WHERE source_id=? ORDER BY scan_id DESC LIMIT 1",
+                (source_id,),
+            )
+            assert scan["state"] == "SUCCEEDED"
+            jobs_rows = check.catalog.read_all(
+                "SELECT state, attempts FROM jobs WHERE task_type='catalog_scan' "
+                "AND subject_id=(SELECT CAST(MAX(scan_id) AS TEXT) FROM scan_runs WHERE source_id=?)",
+                (source_id,),
+            )
+            assert len(jobs_rows) == 1
+            assert jobs_rows[0]["state"] == "SUCCEEDED"
+            assert jobs_rows[0]["attempts"] == 1, dict(jobs_rows[0])
+        finally:
+            check.close()
+    finally:
+        continue_scan.set()
+        if external.in_transaction:
+            external.execute("ROLLBACK")
+        external.close()
+        runner.close(timeout=10)
 
 
 def test_persistent_instability_requeues_instead_of_succeeding(

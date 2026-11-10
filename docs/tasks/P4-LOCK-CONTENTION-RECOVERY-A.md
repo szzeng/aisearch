@@ -1,4 +1,28 @@
-# P4-LOCK-CONTENTION-RECOVERY-A — SQLite 与模型资源锁冲突恢复
+# P4-LOCK-CONTENTION-RECOVERY-A/B — SQLite 与模型资源锁冲突恢复
+
+## B 后续补修（2026-11-10）
+
+当前续修状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。基准 HEAD `6a01ff8281f65a920a067a6b5dcc58d00d915877`；工作区起始干净。本节只处理 B 卡三项遗留，不重做 A 的 BEGIN 有界重试、候选锁分类/取消及候选向量暂停恢复实现。
+
+### PERF-BOUNDED
+
+- Flow/risk：刷新扫描/投影不应占模型槽；语义阶段需与人脸及候选独占协调；扫描写锁争用需保留已提交位置与内容绑定；失效租约不应永久阻止来源删除。
+- Approach/bounds：只在语义模型 load/encode/profile 生命周期持 `BACKGROUND_MODEL_SLOT`，等待最多 60 秒并以 100 ms 检查取消；仅 BEGIN 前 SQLITE_BUSY 进入同一 scan job 的 RETRY_WAIT，由 runner 最多再执行 3 次、每次等待不超过 30 秒；删除在同一写事务核查 job 与租约。不改 schema、索引身份、P4-02V drain 让步或确认协议。
+- Validation/stop：隔离临时目录验证扫描期槽位可用、编码期互斥、超过本地缩短 busy_timeout 的持续写锁后恢复、活跃/过期租约删除边界；合并上一卡 140 项受影响集合及 P4-02V 测试，Ruff/编译/diff-check；不运行真实图库或全量回归，不提交/推送。
+
+### B 诊断、改动和证据
+
+- 刷新原先在 `LibraryRefresher._run()` 从 service 创建一直持有 `BACKGROUND_MODEL_SLOT`，因此扫描/投影期间也阻塞人脸任务。现在移除外围锁；刷新语义阶段才取得槽位，扫描本身无槽位。build 模式先做可恢复的 durable 分类，再进入模型槽位；获取槽位支持取消，超时明确返回失败并保留 backlog。`face.service.run_queue()`、候选任务的 `ModelResourceGate.exclusive()` 与候选确认/暂停恢复逻辑保留。
+- 扫描已有 BEGIN 重试仍有限；scanner 现在只把 `phase=begin_immediate` 且 SQLite base code 为 `SQLITE_BUSY` 的 `CatalogError` 通过现有 `_requeue()` 写成 RETRY_WAIT。业务体未开始时不会重放事务；SQL/COMMIT 及 SQLITE_CORRUPT 不进入 BUSY 恢复。API runner 核对 durable job 已无运行 owner 后有界等待并继续同一 scan；若 requeue 本身仍被长时间锁阻挡，保留 RUNNING 租约，由现有租约过期接管。
+- 来源删除在同一事务检查 `scan_runs` 与关联 catalog_scan job：QUEUED 或持有效 lease 的 RUNNING 仍拒绝；RETRY_WAIT、终态和 lease 已过期的 RUNNING 可安全移除登记。找不到可验证 job 时保守拒绝。删除仍不触碰原图。
+- 新增模型槽位/刷新阶段并发测试、长时间 SQLite 外部 writer 锁下同 scan 恢复测试、BEGIN busy 分类测试和过期租约及 RETRY_WAIT 来源删除测试。验证命令使用 `uv run pytest -q`，JUnit：`test-results/p4-lock-contention-recovery-b/final-affected.xml`（216 项）及 `test-results/p4-lock-contention-recovery-b/retry-wait-delete.xml`（增量 1 项）。结果为**合并 217 项，194 passed / 23 skipped / 0 failed / 0 errors**（主受影响集 216 项，加后续 RETRY_WAIT 删除增量测试 1 项；包含 A 的 140 项集合）；`uv run ruff check .`、`python -m compileall -q src/photo_search tests/integration/...`、`git diff --check` 通过。SQLite 长锁用隔离连接将 busy_timeout 缩为 50 ms、持锁 750 ms，保留生产两次重试次数并验证已有位置/绑定未重复、扫描状态收敛及 job attempts=1。
+- 完整 suite 历史存在 24 项范围外失败，本次未扩大或重跑全套。真实图库、真实 GPU 和冻结 Windows 发行版未验证；不声称容量/硬件验证。
+- 独立 Luna H 首审指出 encoder load 异常与等待取消后的槽位释放缺少直接测试；已新增两项测试并独立重跑 2/2。增量复核确认 finding 关闭、无新增 blocker，**REVIEW PASS**。
+- 应用源码重启后生效。若候选任务由进程中断，应按既有候选任务页面恢复同一任务；不自动启动候选任务。冻结 Windows 版需在后续发行验证中重建并用合成目录检查刷新、512D 搜索和候选恢复；本卡未构建发行包。
+
+本卡下方 A 部分为已完成的基线记录，保留其历史验收与提交信息；B 本轮不提交、不推送。
+
+---
 
 日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。用户要求修复复核缺口，并沿用先前提交与上传授权。执行报告：[P4-LOCK-CONTENTION-RECOVERY-A](../reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 

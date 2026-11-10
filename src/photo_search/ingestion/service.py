@@ -302,7 +302,9 @@ class CatalogService:
                     (source_id,),
                 ).fetchall()
             ]
-            result = store.delete_source(connection, source_id=source_id)
+            result = store.delete_source(
+                connection, source_id=source_id, now_ms=self.catalog.now_ms()
+            )
             if affected:
                 filter_revision.bump_filter_revision(
                     connection,

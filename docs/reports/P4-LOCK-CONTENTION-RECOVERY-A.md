@@ -1,3 +1,31 @@
+# P4-LOCK-CONTENTION-RECOVERY-B 续修结果（2026-11-10）
+
+## 结论
+
+确认并修复 B 卡三项缺口：刷新扫描阶段曾被全周期 `BACKGROUND_MODEL_SLOT` 包围；短期 BEGIN 争用 exhausted 后缺少 runner 对同一持久化 scan job 的有界续跑；来源删除仅检查 scan_run 状态，未辨别 `RETRY_WAIT` 或已过期 lease。未修改 schema、候选独占协议、512D/1024D 模型身份、搜索协议、向量确认规则或 P4-02V drain 让步实现。
+
+## 改动
+
+- `api/refresher.py` 移除 `_run()` 全周期人脸槽位；`refresh/pipeline.py` 将槽位限制到语义模型加载、编码和 profile 确认，最长等待 60 秒并可取消。等待超时明确报告语义阶段延后并保留持久化 backlog。`face.service.run_queue()` 与候选任务原双锁和 `finally` 生命周期不变。
+- `ingestion/scanner.py` 对枚举/内容处理和最终成功事务，仅在 `BEGIN IMMEDIATE` 尚未启动且 `SQLITE_BUSY` 时使用已有 `_requeue()`。不会重试事务体、SQL 或 COMMIT 错误，也不把数据库损坏当作争用。`api/runner.py` 检查 job 已到 `RETRY_WAIT/QUEUED` 且没有活动 owner 后，最多续跑 3 次，总等待上限 30 秒；长锁若连 retry transition 都无法提交，则保留有效租约，后续按现有 lease expiry 接管。
+- `catalog/store.py` 在来源删除事务内核验关联 scan job：Queued/有效 lease 拒绝；Retry wait、终态和过期 lease 放行；job 缺失时保守拒绝。`ingestion/service.py` 传入事务核验时刻。只删除来源管理记录，不删除原图。
+- 新增测试覆盖刷新扫描期间模型槽位可用、语义编码期间槽位被持有、encoder 加载异常释放、等待时取消且不泄漏槽位，过期 lease 下来源删除与活跃扫描拒绝，BEGIN busy 分类，以及持续外部写锁超过有限重试预算后的恢复与进度保留。
+
+## 验证
+
+| 验证 | 结果 |
+|---|---:|
+| 上一任务 140 项受影响集合 + B 主受影响集合及 RETRY_WAIT 删除增量 | **合并 217 项：194 passed / 23 skipped / 0 failed / 0 errors**（主 JUnit 216 项，另 1 项增量 JUnit） |
+| SQLite 长锁恢复 | 通过；临时库连接 busy_timeout=50 ms，外部 writer 持锁 750 ms；同一 scan_run 最终成功，已有资产保留，新增 3 个位置正确绑定，pending=0，job attempts=1 |
+| 刷新锁范围 | 通过；扫描停在闸门时可取 `BACKGROUND_MODEL_SLOT`；进入语义 `build_index` 后槽位不可取得 |
+| 活跃、过期 lease 与 RETRY_WAIT 扫描删除 | 通过；活跃 queued 扫描仍返回 `SCAN_IN_PROGRESS`；过期 lease 和无 lease 的 RETRY_WAIT 可删除登记，合成原图仍存在 |
+| P4-02V、A 的 SQLite/候选/512D 相关回归 | 通过，包含在主受影响集合中 |
+| `uv run ruff check .`、compileall、`git diff --check` | 通过 |
+
+JUnit：主受影响集 `test-results/p4-lock-contention-recovery-b/final-affected.xml`；增量用例 `test-results/p4-lock-contention-recovery-b/retry-wait-delete.xml`。完整 suite 历史的 24 项范围外失败没有在本续修中重跑；真实图库、GPU、人脸权重和冻结发行包验证未执行。Luna H 增量独立只读复核 **REVIEW PASS**：此前指出的 encoder load 异常/取消等待槽位释放测试缺口已关闭，未发现新增 blocker。应用源码需重启；冻结 Windows 发行版尚未重建，后续发行验证需用隔离合成目录覆盖刷新、512D 搜索和候选恢复。不提交、不推送。
+
+---
+
 # P4-LOCK-CONTENTION-RECOVERY-A — SQLite 与模型资源锁冲突诊断及修复
 
 日期：2026-11-10。状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。本轮补测及文档按用户授权提交并推送。

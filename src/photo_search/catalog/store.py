@@ -643,7 +643,9 @@ def count_unbound_locations(
     )
 
 
-def delete_source(connection: sqlite3.Connection, *, source_id: int) -> dict[str, Any]:
+def delete_source(
+    connection: sqlite3.Connection, *, source_id: int, now_ms: int
+) -> dict[str, Any]:
     """Cancel the management of one source root inside the caller's transaction.
 
     This is *registration* deletion, never file deletion (P4-02Y-I §5): the registered root,
@@ -653,26 +655,52 @@ def delete_source(connection: sqlite3.Connection, *, source_id: int) -> dict[str
     only lived here becomes an orphan (no location at all), which this card deliberately does
     not garbage-collect (``orphan asset/artifact/vector GC`` is explicitly out of scope).
 
-    A source with a scan in flight (``QUEUED``/``RUNNING``) is refused: the scan worker would
-    otherwise keep writing locations for a source that no longer exists. A ``BLOCKED`` scan
-    (an offline root) is not a live execution, so it is simply removed together with the
-    rest of the source's scan state.
+    A queued job or a running scan with a valid job lease is refused: the scan worker would
+    otherwise keep writing locations for a source that no longer exists. A running scan whose
+    job is waiting for retry, terminal, or has an expired lease has no current write authority
+    and is safe to remove in this same transaction. A missing job is ambiguous and refused.
     """
     source_id = int(source_id)
     row = get_source_row(connection, source_id)
-    live = connection.execute(
+    pending_scans = connection.execute(
         "SELECT scan_id, state FROM scan_runs WHERE source_id = ? "
-        "AND state IN ('QUEUED', 'RUNNING') ORDER BY scan_id LIMIT 1",
+        "AND state IN ('QUEUED', 'RUNNING') ORDER BY scan_id",
         (source_id,),
-    ).fetchone()
-    if live is not None:
+    ).fetchall()
+    for scan in pending_scans:
+        scan_id = int(scan["scan_id"])
+        job_id = scan_job_id(connection, scan_id=scan_id)
+        job = None if job_id is None else connection.execute(
+            "SELECT state, lease_expires_at FROM jobs WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if job is None:
+            raise CatalogError(
+                INVALID_STATE_TRANSITION,
+                f"source {source_id} has a scan without a verifiable catalog_scan job",
+                details={
+                    "source_id": source_id,
+                    "scan_id": scan_id,
+                    "reason": "SCAN_JOB_UNAVAILABLE",
+                },
+            )
+        job_state = str(job["state"])
+        lease_expires_at = job["lease_expires_at"]
+        active = (
+            job_state == "QUEUED"
+            or job_state == "RUNNING"
+            and (lease_expires_at is None or int(lease_expires_at) > int(now_ms))
+        )
+        if not active:
+            continue
         raise CatalogError(
             INVALID_STATE_TRANSITION,
             f"source {source_id} has a scan in flight",
             details={
                 "source_id": source_id,
-                "scan_id": int(live["scan_id"]),
-                "state": str(live["state"]),
+                "scan_id": scan_id,
+                "state": str(scan["state"]),
+                "job_state": job_state,
+                "lease_expires_at": lease_expires_at,
                 "reason": "SCAN_IN_PROGRESS",
             },
         )

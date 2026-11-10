@@ -761,6 +761,64 @@ def test_deleting_a_source_is_refused_while_its_scan_is_running(tmp_path: Path) 
         env.close()
 
 
+def test_source_can_be_deleted_after_scan_lease_expires(tmp_path: Path) -> None:
+    """An abandoned scan is not an active writer once its durable lease expires."""
+    env = RefreshEnv.build(tmp_path, photos=1, adapter=None, manifest=None)
+    try:
+        original = env.library / "second.jpg"
+        write_jpeg(original, noise=23)
+        requested = env.service().start_scan(1)
+        assert requested["state"] == "QUEUED"
+        service = env.service()
+        from photo_search.catalog.store import scan_job_id
+
+        job_id = scan_job_id(service.catalog.connection, scan_id=requested["scan_id"])
+        assert job_id is not None
+        with service.catalog.write() as connection:
+            connection.execute(
+                "UPDATE jobs SET state='RUNNING', lease_token='orphaned-worker', "
+                "worker_id='orphaned-worker', lease_expires_at=? WHERE job_id=?",
+                (service.catalog.now_ms() - 1, job_id),
+            )
+
+        status, body = delete_source(env, 1)
+
+        assert status == 200
+        assert body["deleted"] is True
+        assert body["originals_touched"] == 0
+        assert original.is_file()
+        assert service.catalog.read_one("SELECT COUNT(*) AS n FROM source_roots")["n"] == 0
+    finally:
+        env.close()
+
+
+def test_source_can_be_deleted_while_scan_job_waits_for_retry(tmp_path: Path) -> None:
+    """A durable retry with no lease owner must not strand source removal."""
+    env = RefreshEnv.build(tmp_path, photos=1, adapter=None, manifest=None)
+    try:
+        requested = env.service().start_scan(1)
+        service = env.service()
+        from photo_search.catalog.store import scan_job_id
+
+        job_id = scan_job_id(service.catalog.connection, scan_id=requested["scan_id"])
+        assert job_id is not None
+        with service.catalog.write() as connection:
+            connection.execute(
+                "UPDATE jobs SET state='RETRY_WAIT', lease_token=NULL, worker_id=NULL, "
+                "lease_expires_at=NULL WHERE job_id=?",
+                (job_id,),
+            )
+
+        status, body = delete_source(env, 1)
+
+        assert status == 200
+        assert body["deleted"] is True
+        assert body["originals_touched"] == 0
+        assert (env.library / "photo-000.jpg").is_file()
+    finally:
+        env.close()
+
+
 def test_a_source_that_became_offline_can_still_be_deleted(tmp_path: Path) -> None:
     """§5/§6.8: an OFFLINE source (a BLOCKED scan) must be deletable, not stuck for ever."""
     env = RefreshEnv.build(tmp_path, photos=2, adapter=StubPinnedAdapter(), manifest=MANIFEST)

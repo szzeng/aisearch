@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -73,8 +74,54 @@ REFRESH_MODES = (REFRESH_MODE_DAILY, REFRESH_MODE_BUILD)
 #: that keeps producing no durable progress.
 BUILD_PAGE_SIZE = 5000
 BUILD_ROUND_CAP = 10_000
+MODEL_STAGE_SLOT_WAIT_SECONDS = 60.0
 #: The frozen job task type of the image-text embedding processor (P2/P4 spelling).
 SEMANTIC_TASK_TYPE = "image_embedding"
+
+
+class _BackgroundModelSlotBusy(TimeoutError):
+    pass
+
+
+class _BackgroundModelSlotCancelled(Exception):
+    pass
+
+
+@contextmanager
+def _background_model_slot(
+    cancel_check: Callable[[], bool] | None = None,
+) -> Iterable[None]:
+    """Serialize refresh model load/encoding with face work and exclusive candidate builds."""
+    from photo_search.face.service import BACKGROUND_MODEL_SLOT
+
+    deadline = time.monotonic() + MODEL_STAGE_SLOT_WAIT_SECONDS
+    acquired = False
+    while not acquired:
+        if cancel_check is not None and cancel_check():
+            raise _BackgroundModelSlotCancelled
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        acquired = BACKGROUND_MODEL_SLOT.acquire(timeout=min(0.1, remaining))
+    if not acquired:
+        raise _BackgroundModelSlotBusy(
+            f"shared background model resources stayed busy for {MODEL_STAGE_SLOT_WAIT_SECONDS:.0f} seconds"
+        )
+    try:
+        yield
+    finally:
+        BACKGROUND_MODEL_SLOT.release()
+
+
+def _model_slot_busy_stage(
+    status: RefreshStatus, *, detail: dict[str, Any]
+) -> dict[str, Any]:
+    message = (
+        "shared background model resources remained in use; semantic indexing was deferred. "
+        "Run refresh again to continue the durable backlog."
+    )
+    status.note_error(stage="semantic", code="MODEL_RESOURCE_BUSY", message=message)
+    return {"state": STAGE_FAILED, "reason": "BACKGROUND_MODEL_SLOT_BUSY", "message": message, **detail}
 
 
 def resolve_face_profile(catalog: Any, *, source_ids: Sequence[int] | None,
@@ -483,115 +530,143 @@ def _semantic_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     try:
-        encoder = encoder_factory()
-    except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
-        status.note_error(
-            stage="semantic",
-            code=RUNTIME_CAPABILITY_UNAVAILABLE,
-            message=f"the image encoder could not be loaded ({type(error).__name__})",
+        with _background_model_slot(cancel_check):
+            try:
+                encoder = encoder_factory()
+            except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
+                status.note_error(
+                    stage="semantic",
+                    code=RUNTIME_CAPABILITY_UNAVAILABLE,
+                    message=f"the image encoder could not be loaded ({type(error).__name__})",
+                )
+                return {
+                    "state": STAGE_SKIPPED,
+                    "reason": "MODEL_LOAD_FAILED",
+                    "space_id": space_id,
+                    "generation_id": generation_id,
+                    "targets": targets,
+                    "encoded": 0,
+                    "batches": 0,
+                    **_content_report(catalog, space_id, content_delta, spec),
+                }
+            batches = 0
+            encoded = 0
+            last: dict[str, Any] | None = None
+            try:
+                while batches < SEMANTIC_BATCH_CAP:
+                    payload = semantic.build_index(
+                        catalog,
+                        encoder=encoder,
+                        manifest_path=manifest_path,
+                        expected_space_id=space_id,
+                        expected_processor_id=str(spec.processor_id),
+                        limit=SEMANTIC_BATCH_LIMIT,
+                        device=device,
+                        device_policy=device_policy,
+                        worker_id="library-refresh",
+                    )
+                    batches += 1
+                    encoded += int(payload["targets"])
+                    last = payload
+                    if bool(payload["coverage_complete"]) or int(payload["targets"]) == 0:
+                        break
+                    if cancel_check is not None and cancel_check():
+                        break
+                # A run that confirmed nothing into a space which has never been published leaves no
+                # generation row for a profile to point at. That is not "up to date": this build has
+                # no image index to serve at all, so the stage reports it instead of letting the
+                # activation foreign key fail or claiming a searchable library (P4-02Y-I review B1).
+                published = semantic.generation_published(
+                    catalog, space_id=space_id, processor_id=str(spec.processor_id)
+                )
+                if published:
+                    live_spec = semantic.semantic_spec(
+                        manifest_path,
+                        semantic.adapter_runtime_facts(encoder),
+                        device_policy=device_policy,
+                    )
+                    profile = semantic.ensure_search_profile(
+                        catalog,
+                        live_spec,
+                        space_id=space_id,
+                        generation_id=(
+                            str(last["generation"]["generation_id"]) if last else generation_id
+                        ),
+                    )
+                else:
+                    profile = {
+                        "profile_id": None,
+                        "activated": False,
+                        "reason": "GENERATION_NOT_PUBLISHED",
+                    }
+            except CatalogError as error:
+                status.note_error(
+                    stage="semantic", code=str(error.code), message=str(error.message)[:200]
+                )
+                return {
+                    "state": STAGE_FAILED,
+                    "code": str(error.code),
+                    "space_id": space_id,
+                    "generation_id": generation_id,
+                    "targets": targets,
+                    "encoded": encoded,
+                    "batches": batches,
+                    **_content_report(catalog, space_id, content_delta, spec),
+                }
+            if not published:
+                return {
+                    "state": STAGE_SKIPPED,
+                    "reason": "GENERATION_NOT_PUBLISHED",
+                    "space_id": space_id,
+                    "generation_id": generation_id,
+                    "targets": targets,
+                    "encoded": encoded,
+                    "batches": batches,
+                    "profile": None,
+                    "profile_activated": False,
+                    **_content_report(catalog, space_id, content_delta, spec),
+                    "delta_overflow": bool(delta_overflow),
+                }
+            return {
+                "state": STAGE_OK,
+                "space_id": space_id,
+                "generation_id": generation_id,
+                "targets": targets,
+                "encoded": encoded,
+                "batches": batches,
+                "coverage_complete": bool(last["coverage_complete"]) if last else False,
+                "profile": profile["profile_id"],
+                "profile_activated": bool(profile["activated"]),
+                "profile_reason": profile.get("reason"),
+                **_content_report(catalog, space_id, content_delta, spec),
+                "delta_overflow": bool(delta_overflow),
+            }
+
+    except _BackgroundModelSlotBusy:
+        return _model_slot_busy_stage(
+            status,
+            detail={
+                "space_id": space_id,
+                "generation_id": generation_id,
+                "targets": targets,
+                "encoded": 0,
+                "batches": 0,
+                "required": required,
+                **_content_report(catalog, space_id, content_delta, spec),
+            },
         )
+    except _BackgroundModelSlotCancelled:
         return {
             "state": STAGE_SKIPPED,
-            "reason": "MODEL_LOAD_FAILED",
+            "reason": "CANCELLED",
             "space_id": space_id,
             "generation_id": generation_id,
             "targets": targets,
             "encoded": 0,
             "batches": 0,
+            "required": required,
             **_content_report(catalog, space_id, content_delta, spec),
         }
-    batches = 0
-    encoded = 0
-    last: dict[str, Any] | None = None
-    try:
-        while batches < SEMANTIC_BATCH_CAP:
-            payload = semantic.build_index(
-                catalog,
-                encoder=encoder,
-                manifest_path=manifest_path,
-                expected_space_id=space_id,
-                expected_processor_id=str(spec.processor_id),
-                limit=SEMANTIC_BATCH_LIMIT,
-                device=device,
-                device_policy=device_policy,
-                worker_id="library-refresh",
-            )
-            batches += 1
-            encoded += int(payload["targets"])
-            last = payload
-            if bool(payload["coverage_complete"]) or int(payload["targets"]) == 0:
-                break
-            if cancel_check is not None and cancel_check():
-                break
-        # A run that confirmed nothing into a space which has never been published leaves no
-        # generation row for a profile to point at. That is not "up to date": this build has
-        # no image index to serve at all, so the stage reports it instead of letting the
-        # activation foreign key fail or claiming a searchable library (P4-02Y-I review B1).
-        published = semantic.generation_published(
-            catalog, space_id=space_id, processor_id=str(spec.processor_id)
-        )
-        if published:
-            live_spec = semantic.semantic_spec(
-                manifest_path,
-                semantic.adapter_runtime_facts(encoder),
-                device_policy=device_policy,
-            )
-            profile = semantic.ensure_search_profile(
-                catalog,
-                live_spec,
-                space_id=space_id,
-                generation_id=(
-                    str(last["generation"]["generation_id"]) if last else generation_id
-                ),
-            )
-        else:
-            profile = {
-                "profile_id": None,
-                "activated": False,
-                "reason": "GENERATION_NOT_PUBLISHED",
-            }
-    except CatalogError as error:
-        status.note_error(
-            stage="semantic", code=str(error.code), message=str(error.message)[:200]
-        )
-        return {
-            "state": STAGE_FAILED,
-            "code": str(error.code),
-            "space_id": space_id,
-            "generation_id": generation_id,
-            "targets": targets,
-            "encoded": encoded,
-            "batches": batches,
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
-    if not published:
-        return {
-            "state": STAGE_SKIPPED,
-            "reason": "GENERATION_NOT_PUBLISHED",
-            "space_id": space_id,
-            "generation_id": generation_id,
-            "targets": targets,
-            "encoded": encoded,
-            "batches": batches,
-            "profile": None,
-            "profile_activated": False,
-            **_content_report(catalog, space_id, content_delta, spec),
-            "delta_overflow": bool(delta_overflow),
-        }
-    return {
-        "state": STAGE_OK,
-        "space_id": space_id,
-        "generation_id": generation_id,
-        "targets": targets,
-        "encoded": encoded,
-        "batches": batches,
-        "coverage_complete": bool(last["coverage_complete"]) if last else False,
-        "profile": profile["profile_id"],
-        "profile_activated": bool(profile["activated"]),
-        "profile_reason": profile.get("reason"),
-        **_content_report(catalog, space_id, content_delta, spec),
-        "delta_overflow": bool(delta_overflow),
-    }
 
 
 def _generation_for(processor_id: str, space_id: str) -> str:
@@ -707,68 +782,6 @@ def _semantic_build_stage(
         "pages": 0,
         "coverage_complete": False,
     }
-    if encoder_factory is None:
-        message = (
-            f"the required semantic model {processor_id} is unavailable; verify its weights and CUDA/runtime requirements"
-        )
-        status.note_error(stage="semantic", code="EMBEDDING_MODEL_UNAVAILABLE", message=message)
-        return {
-            "state": STAGE_FAILED,
-            "reason": "EMBEDDING_MODEL_UNAVAILABLE",
-            "message": message,
-            "targets": 0,
-            "encoded": 0,
-            "batches": 0,
-            **report,
-            **_backlog_report(catalog, space_id, processor_id, scopes),
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
-    try:
-        encoder = encoder_factory()
-    except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
-        code = str(error.code) if isinstance(error, CatalogError) else RUNTIME_CAPABILITY_UNAVAILABLE
-        message = (
-            str(error.message) if isinstance(error, CatalogError)
-            else f"the required semantic model {processor_id} could not be loaded ({type(error).__name__})"
-        )
-        status.note_error(
-            stage="semantic",
-            code=code,
-            message=message,
-        )
-        return {
-            "state": STAGE_FAILED,
-            "reason": "MODEL_LOAD_FAILED",
-            "code": code,
-            "message": message,
-            "targets": 0,
-            "encoded": 0,
-            "batches": 0,
-            **report,
-            **_backlog_report(catalog, space_id, processor_id, scopes),
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
-    if encoder is None:
-        message = (
-            f"the required semantic model {processor_id} did not load; verify its weights and CUDA/runtime requirements"
-        )
-        status.note_error(
-            stage="semantic", code=RUNTIME_CAPABILITY_UNAVAILABLE, message=message
-        )
-        return {
-            "state": STAGE_FAILED,
-            "reason": "MODEL_LOAD_FAILED",
-            "code": RUNTIME_CAPABILITY_UNAVAILABLE,
-            "message": message,
-            "targets": 0,
-            "encoded": 0,
-            "batches": 0,
-            **report,
-            **_backlog_report(catalog, space_id, processor_id, scopes),
-            **_content_report(catalog, space_id, content_delta, spec),
-        }
-    # Validate model availability before classification writes jobs/outbox rows or marks
-    # the source as built. This avoids leaving a failed first-build state when Qwen cannot load.
     classified = 0
     pages = 0
     cancelled = False
@@ -810,98 +823,184 @@ def _semantic_build_stage(
         _mark_scopes_built(catalog, scopes=scopes)
     report["classified"] = classified
     report["pages"] = pages
-    encoded = 0
-    batches = 0
-    last: dict[str, Any] | None = None
-    try:
-        for scope in scopes:
-            while batches < BUILD_ROUND_CAP:
-                payload = semantic.build_index(
-                    catalog,
-                    encoder=encoder,
-                    manifest_path=manifest_path,
-                    expected_space_id=space_id,
-                    expected_processor_id=processor_id,
-                    limit=SEMANTIC_BATCH_LIMIT,
-                    source_id=None if scope is None else int(scope),
-                    device=device,
-                    device_policy=device_policy,
-                    worker_id="library-refresh",
-                )
-                batches += 1
-                encoded += int(payload["targets"])
-                last = payload
-                if int(payload["targets"]) == 0:
-                    break
-                if int(payload["drain"]["confirmed_delta"]) == 0:
-                    # The batch handed work to the encoder and got nothing confirmed back
-                    # (every remaining image was refused). Stop, report the remainder and
-                    # leave it to the next run instead of spinning on the same assets.
-                    break
-                if cancel_check is not None and cancel_check():
-                    break
-        if semantic.generation_published(
-            catalog, space_id=space_id, processor_id=processor_id
-        ):
-            live_spec = semantic.semantic_spec(
-                manifest_path,
-                semantic.adapter_runtime_facts(encoder),
-                device_policy=device_policy,
-            )
-            profile = semantic.ensure_search_profile(
-                catalog,
-                live_spec,
-                space_id=space_id,
-                generation_id=(
-                    str(last["generation"]["generation_id"]) if last else generation_id
-                ),
-            )
-        else:
-            # Nothing of this scope entered the served generation (a scope without any
-            # indexable image, or one whose images the encoder refused), so there is no
-            # generation row for a profile to point at. That is a *reported* outcome: the
-            # backlog below decides whether the scope has nothing to index or nothing that
-            # could be encoded (P4-02Y-I review B1/F2).
-            profile = {
-                "profile_id": None,
-                "created": False,
-                "activated": False,
-                "reason": "GENERATION_NOT_PUBLISHED",
-            }
-    except CatalogError as error:
-        status.note_error(
-            stage="semantic", code=str(error.code), message=str(error.message)[:200]
+    if encoder_factory is None:
+        message = (
+            f"the required semantic model {processor_id} is unavailable; verify its weights and CUDA/runtime requirements"
         )
+        status.note_error(stage="semantic", code="EMBEDDING_MODEL_UNAVAILABLE", message=message)
         return {
             "state": STAGE_FAILED,
-            "code": str(error.code),
+            "reason": "EMBEDDING_MODEL_UNAVAILABLE",
+            "message": message,
             "targets": 0,
-            "encoded": encoded,
-            "batches": batches,
+            "encoded": 0,
+            "batches": 0,
             **report,
             **_backlog_report(catalog, space_id, processor_id, scopes),
             **_content_report(catalog, space_id, content_delta, spec),
         }
-    backlog = _backlog_report(catalog, space_id, processor_id, scopes)
-    nothing_to_index = int(backlog["backlog_total"]) == 0
-    return {
-        # "There is no image this index is about" is a terminal, honest answer - not a failure
-        # and not an "up to date" index either. It stays distinguishable from a normal OK run
-        # so the card can say 已扫描、无可索引图片 instead of an empty progress bar.
-        "state": STAGE_SKIPPED_NO_TARGETS if nothing_to_index else STAGE_OK,
-        "reason": "NO_INDEXABLE_CONTENT" if nothing_to_index else None,
-        "profile": profile["profile_id"],
-        "profile_activated": bool(profile["activated"]),
-        "profile_reason": profile.get("reason"),
-        "targets": 0,
-        "encoded": encoded,
-        "batches": batches,
-        "coverage_complete": int(backlog["backlog_pending"]) == 0,
-        **report,
-        **backlog,
-        **_content_report(catalog, space_id, content_delta, spec),
-        "delta_overflow": bool(delta_overflow),
-    }
+    try:
+        with _background_model_slot(cancel_check):
+            try:
+                encoder = encoder_factory()
+            except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
+                code = str(error.code) if isinstance(error, CatalogError) else RUNTIME_CAPABILITY_UNAVAILABLE
+                message = (
+                    str(error.message) if isinstance(error, CatalogError)
+                    else f"the required semantic model {processor_id} could not be loaded ({type(error).__name__})"
+                )
+                status.note_error(
+                    stage="semantic",
+                    code=code,
+                    message=message,
+                )
+                return {
+                    "state": STAGE_FAILED,
+                    "reason": "MODEL_LOAD_FAILED",
+                    "code": code,
+                    "message": message,
+                    "targets": 0,
+                    "encoded": 0,
+                    "batches": 0,
+                    **report,
+                    **_backlog_report(catalog, space_id, processor_id, scopes),
+                    **_content_report(catalog, space_id, content_delta, spec),
+                }
+            if encoder is None:
+                message = (
+                    f"the required semantic model {processor_id} did not load; verify its weights and CUDA/runtime requirements"
+                )
+                status.note_error(
+                    stage="semantic", code=RUNTIME_CAPABILITY_UNAVAILABLE, message=message
+                )
+                return {
+                    "state": STAGE_FAILED,
+                    "reason": "MODEL_LOAD_FAILED",
+                    "code": RUNTIME_CAPABILITY_UNAVAILABLE,
+                    "message": message,
+                    "targets": 0,
+                    "encoded": 0,
+                    "batches": 0,
+                    **report,
+                    **_backlog_report(catalog, space_id, processor_id, scopes),
+                    **_content_report(catalog, space_id, content_delta, spec),
+                }
+            encoded = 0
+            batches = 0
+            last: dict[str, Any] | None = None
+            try:
+                for scope in scopes:
+                    while batches < BUILD_ROUND_CAP:
+                        payload = semantic.build_index(
+                            catalog,
+                            encoder=encoder,
+                            manifest_path=manifest_path,
+                            expected_space_id=space_id,
+                            expected_processor_id=processor_id,
+                            limit=SEMANTIC_BATCH_LIMIT,
+                            source_id=None if scope is None else int(scope),
+                            device=device,
+                            device_policy=device_policy,
+                            worker_id="library-refresh",
+                        )
+                        batches += 1
+                        encoded += int(payload["targets"])
+                        last = payload
+                        if int(payload["targets"]) == 0:
+                            break
+                        if int(payload["drain"]["confirmed_delta"]) == 0:
+                            # The batch handed work to the encoder and got nothing confirmed back
+                            # (every remaining image was refused). Stop, report the remainder and
+                            # leave it to the next run instead of spinning on the same assets.
+                            break
+                        if cancel_check is not None and cancel_check():
+                            break
+                if semantic.generation_published(
+                    catalog, space_id=space_id, processor_id=processor_id
+                ):
+                    live_spec = semantic.semantic_spec(
+                        manifest_path,
+                        semantic.adapter_runtime_facts(encoder),
+                        device_policy=device_policy,
+                    )
+                    profile = semantic.ensure_search_profile(
+                        catalog,
+                        live_spec,
+                        space_id=space_id,
+                        generation_id=(
+                            str(last["generation"]["generation_id"]) if last else generation_id
+                        ),
+                    )
+                else:
+                    # Nothing of this scope entered the served generation (a scope without any
+                    # indexable image, or one whose images the encoder refused), so there is no
+                    # generation row for a profile to point at. That is a *reported* outcome: the
+                    # backlog below decides whether the scope has nothing to index or nothing that
+                    # could be encoded (P4-02Y-I review B1/F2).
+                    profile = {
+                        "profile_id": None,
+                        "created": False,
+                        "activated": False,
+                        "reason": "GENERATION_NOT_PUBLISHED",
+                    }
+            except CatalogError as error:
+                status.note_error(
+                    stage="semantic", code=str(error.code), message=str(error.message)[:200]
+                )
+                return {
+                    "state": STAGE_FAILED,
+                    "code": str(error.code),
+                    "targets": 0,
+                    "encoded": encoded,
+                    "batches": batches,
+                    **report,
+                    **_backlog_report(catalog, space_id, processor_id, scopes),
+                    **_content_report(catalog, space_id, content_delta, spec),
+                }
+            backlog = _backlog_report(catalog, space_id, processor_id, scopes)
+            nothing_to_index = int(backlog["backlog_total"]) == 0
+            return {
+                # "There is no image this index is about" is a terminal, honest answer - not a failure
+                # and not an "up to date" index either. It stays distinguishable from a normal OK run
+                # so the card can say 已扫描、无可索引图片 instead of an empty progress bar.
+                "state": STAGE_SKIPPED_NO_TARGETS if nothing_to_index else STAGE_OK,
+                "reason": "NO_INDEXABLE_CONTENT" if nothing_to_index else None,
+                "profile": profile["profile_id"],
+                "profile_activated": bool(profile["activated"]),
+                "profile_reason": profile.get("reason"),
+                "targets": 0,
+                "encoded": encoded,
+                "batches": batches,
+                "coverage_complete": int(backlog["backlog_pending"]) == 0,
+                **report,
+                **backlog,
+                **_content_report(catalog, space_id, content_delta, spec),
+                "delta_overflow": bool(delta_overflow),
+            }
+
+    except _BackgroundModelSlotBusy:
+        return _model_slot_busy_stage(
+            status,
+            detail={
+                **report,
+                "targets": 0,
+                "encoded": 0,
+                "batches": 0,
+                **_backlog_report(catalog, space_id, processor_id, scopes),
+                **_content_report(catalog, space_id, content_delta, spec),
+            },
+        )
+    except _BackgroundModelSlotCancelled:
+        return {
+            "state": STAGE_SKIPPED,
+            "reason": "CANCELLED",
+            **report,
+            "targets": 0,
+            "encoded": 0,
+            "batches": 0,
+            **_backlog_report(catalog, space_id, processor_id, scopes),
+            **_content_report(catalog, space_id, content_delta, spec),
+        }
 
 
 def _mark_scopes_built(catalog: Any, *, scopes: Sequence[int | None]) -> None:
