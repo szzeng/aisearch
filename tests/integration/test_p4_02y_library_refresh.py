@@ -640,6 +640,167 @@ def test_face_stage_cancellation_persists_unprocessed_work_and_releases_slot(
     slot.release()
 
 
+def test_face_stage_async_cancel_during_model_slot_wait_keeps_resumable_job(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancellation during a real lock wait keeps one durable revision-scoped job."""
+    from photo_search.refresh import pipeline
+
+    asset_id = asset_of(env, "photo-000.jpg")
+    asset = env.service().catalog.read_one(
+        "SELECT sha256 FROM assets WHERE asset_id=?", (asset_id,)
+    )
+    assert asset is not None
+    input_revision = str(asset["sha256"])
+
+    underlying = threading.RLock()
+    holder_acquired = threading.Event()
+    release_holder = threading.Event()
+    waiter_attempted = threading.Event()
+    cancel_requested = threading.Event()
+    waiter_done = threading.Event()
+    holder_errors: list[BaseException] = []
+
+    class ObservableRLock:
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if timeout == -1:
+                acquired = underlying.acquire(blocking)
+            else:
+                acquired = underlying.acquire(blocking, timeout)
+            if threading.current_thread().name == "face-lock-waiter" and not acquired:
+                # Signal only after the underlying RLock actually waited and timed out.
+                waiter_attempted.set()
+            return acquired
+
+        def release(self) -> None:
+            underlying.release()
+
+    slot = ObservableRLock()
+    detect_calls: list[dict[str, Any]] = []
+    worker_results: list[dict[str, Any]] = []
+    worker_errors: list[BaseException] = []
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    monkeypatch.setattr("photo_search.face.weights.resolve_and_verify", lambda _root: None)
+
+    def hold_slot() -> None:
+        try:
+            underlying.acquire()
+            holder_acquired.set()
+            if not release_holder.wait(timeout=15):
+                raise AssertionError("test did not release the original model-slot owner")
+            underlying.release()
+        except BaseException as error:  # surface thread failures in the test thread
+            holder_errors.append(error)
+            if underlying._is_owned():
+                underlying.release()
+
+    def run_face_stage(*, resume_pending: bool) -> None:
+        service = env.factory()
+        try:
+            worker_results.append(
+                pipeline._face_stage(
+                    service.catalog,
+                    env.data_root,
+                    {asset_id} if not resume_pending else set(),
+                    source_detail=False,
+                    source_ids=[1],
+                    cancel_check=(cancel_requested.is_set if not resume_pending else None),
+                    resume_pending=resume_pending,
+                )
+            )
+        except BaseException as error:
+            worker_errors.append(error)
+        finally:
+            service.close()
+            waiter_done.set()
+
+    holder = threading.Thread(target=hold_slot, name="face-lock-holder")
+    waiter = threading.Thread(
+        target=run_face_stage, kwargs={"resume_pending": False}, name="face-lock-waiter"
+    )
+    holder.start()
+    try:
+        assert holder_acquired.wait(timeout=5), "holder did not acquire the model slot"
+        waiter.start()
+        assert waiter_attempted.wait(timeout=5), "refresh never attempted the busy lock"
+        assert not release_holder.is_set(), "original owner released the slot before cancellation"
+
+        # Its underlying acquire call has waited to timeout while the holder still owns RLock.
+        cancel_requested.set()
+        assert waiter_done.wait(timeout=3), "cancellation did not interrupt the lock wait promptly"
+        assert not waiter.is_alive()
+        assert not worker_errors
+        assert len(worker_results) == 1
+        cancelled = worker_results[0]
+        assert cancelled["state"] == "FAILED"
+        assert cancelled["reason"] == "CANCELLED"
+        assert cancelled["code"] == "CANCELLED"
+        assert cancelled["steps"] == 0
+        assert cancelled["queued"] == 1
+        assert not detect_calls, "detect ran without acquiring the model slot"
+
+        # A different thread still cannot acquire the holder's lock: cancellation must not
+        # release a lock it did not own.
+        other_acquired = threading.Event()
+
+        def probe_lock() -> None:
+            acquired = underlying.acquire(blocking=False)
+            if acquired:
+                underlying.release()
+                other_acquired.set()
+
+        probe = threading.Thread(target=probe_lock, name="face-lock-probe")
+        probe.start()
+        probe.join(timeout=2)
+        assert not probe.is_alive()
+        assert not other_acquired.is_set(), "cancelled waiter released another thread's lock"
+
+        with env.factory() as service:
+            jobs_before = service.catalog.read_all(
+                "SELECT job_id, input_revision, state FROM jobs "
+                "WHERE subject_type='asset' AND subject_id=? AND task_type=?",
+                (str(asset_id), face_service.contract.FACE_TASK_TYPE),
+            )
+        assert len(jobs_before) == 1
+        job_id = int(jobs_before[0]["job_id"])
+        assert str(jobs_before[0]["input_revision"]) == input_revision
+        assert str(jobs_before[0]["state"]) == "QUEUED"
+    finally:
+        release_holder.set()
+        holder.join(timeout=5)
+        if waiter.ident is not None:
+            waiter.join(timeout=5)
+    assert not holder.is_alive()
+    assert not holder_errors
+    assert underlying.acquire(blocking=False), "model slot leaked after the holder exited"
+    underlying.release()
+
+    def resume_detect(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        detect_calls.append(kwargs)
+        return {
+            "enqueue": {"targets": 1, "queued": 0},
+            "run": {"steps": 1},
+            "association": {"reconciled": 0},
+        }
+
+    monkeypatch.setattr(face_service, "detect", resume_detect)
+    run_face_stage(resume_pending=True)
+    assert not worker_errors
+    assert len(worker_results) == 2
+    resumed = worker_results[1]
+    assert resumed["state"] == pipeline.STAGE_OK
+    assert detect_calls and detect_calls[0]["asset_ids"] == [asset_id]
+    with env.factory() as service:
+        jobs_after = service.catalog.read_all(
+            "SELECT job_id, input_revision FROM jobs "
+            "WHERE subject_type='asset' AND subject_id=? AND task_type=?",
+            (str(asset_id), face_service.contract.FACE_TASK_TYPE),
+        )
+    assert len(jobs_after) == 1
+    assert int(jobs_after[0]["job_id"]) == job_id
+    assert str(jobs_after[0]["input_revision"]) == input_revision
+
+
 def test_face_inference_exception_releases_refresh_model_slot(
     env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:

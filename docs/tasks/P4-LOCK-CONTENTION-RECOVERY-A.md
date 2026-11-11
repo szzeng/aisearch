@@ -1,8 +1,33 @@
 # P4-LOCK-CONTENTION-RECOVERY-A/B — SQLite 与模型资源锁冲突恢复
 
+## D 最终验证与锁范围审查（2026-11-11）
+
+状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / LOCK-SCOPE REVIEW COMPLETE**。C 提交核验：本地 HEAD、`origin/master` 与 GitHub `master` 均为 `7a24a338c416067252a058d9cc3b79e60e3f2e7d`。C 的旧记录曾因当时任务卡要求而写为暂不提交；用户之后授权提交并推送，当前文档按实际 Git 状态更新。D 的代码/文档改动只在本地，不提交、不推送。
+
+### PERF-BOUNDED
+
+- Flow/risk：刷新人脸阶段与候选模型共用后台模型槽；取消必须能及时退出等待且保留可续做的人脸任务。审查关注锁持有范围，不新增运行时工作。
+- Approach/bounds：新增一个基于隔离合成图库、线程事件和真实 `RLock` 的确定性异步取消测试；不改 100 ms 轮询、60 秒上限、推理锁或任务协议。
+- Validation/stop：复用 C 的 225 项受影响集合并附加新测试；验证同 job/revision 可恢复、RLock 所有权及锁范围调用链；不运行 GPU、真实图库、全套压力测试或发行验证。
+
+### D 改动与证据
+
+- 新增 `test_face_stage_async_cancel_during_model_slot_wait_keeps_resumable_job`：holder 线程持有实际 `RLock`；刷新线程通过可观察代理确认已调用 `acquire()` 后才触发取消。测试断言在锁仍被 holder 持有时刷新及时退出，原 owner 的锁仍不可被第三线程取得，返回 stage 未成功且 reason/code 为 `CANCELLED`、steps=0；`detect()` 未被调用；已持久化一条 `QUEUED` job，其 `input_revision` 等于资产 SHA。释放 holder 后再次刷新，detect 收到同一 asset；数据库仍只有原 `job_id` 和 revision。
+- `test-results/p4-lock-contention-recovery-d/final-affected.xml`：**226 项，203 passed / 23 skipped / 0 failed / 0 errors**。包含 C 原 225 项集合及新增异步测试。Ruff、全 `src/photo_search` 与 `tests` Python 编译、diff-check 全部通过。
+- C 已提交并推送的真实状态见本节开头；C 原有 **225 项：202 passed / 23 skipped / 0 failed / 0 errors**、历史范围外 24 项失败、GPU/人脸权重/EXE 限制均保留，不将 D 的验证冒充完整测试或发行验收。
+
+### 人脸锁持有范围审查（只读）
+
+- `refresh/pipeline.py::_face_stage()` 在调用 `face_service.detect()` 前获取 `BACKGROUND_MODEL_SLOT`，外层持锁范围覆盖可选 `recover_cr2_format_failures()`、`detect()` 的目标查询/策略读取/任务入队与 job 查询、同步 `run_queue()` 推理，以及推理后的 face index catch-up 和人物关联/再次 catch-up。
+- CR2 历史失败恢复、目标/策略读取、job 入队与选择、候选发布、人物关联均是数据库或索引工作，不执行人脸模型推理，本身不需要 GPU 模型槽；这些阶段会增加刷新等待者持有槽的时间。
+- `face/service.py::run_queue()` 的 `_serialize_face_work` 保护实际调度和推理，必须继续持有槽，保证与候选 Qwen 等不兼容模型互斥。`detect()` 同步调用该装饰函数，因此现有 `threading.RLock` 的可重入是外层保护成立的前提；D 没有替换 RLock 或改变这一关系。
+- 结论：外围锁正确保护当前完整 detect 闭环，但范围大于真实推理临界区，存在可避免等待。由于缩窄需要拆分 `detect()` 的准备、run_queue 推理和发布/关联阶段，并重新证明队列与发布状态边界，本卡按限制不改锁范围。若仍需降低等待，应另立小范围后续任务，不能直接移除外围锁或放开 run_queue 的互斥。
+
+真实 GPU/人脸权重尚未验证，Windows EXE 未重建。没有修改模型身份、向量定义、数据库 schema、候选暂停恢复协议或搜索协议；完整 unit/integration 历史的 24 项范围外失败未重跑。本卡结束后停止，不提交、不推送、不制作发行包。
+
 ## C 后台模型锁与恢复预算收尾（2026-11-10）
 
-状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。基准 HEAD 为 B 提交 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`；已确认 A 的 `8c57f79`、`6a01ff8` 和 B 的 `6ee95b3` 均为当前 `origin/master` 的祖先，且 `git ls-remote origin refs/heads/master` 正好指向 `6ee95b3`。C 本次不提交/推送。
+状态：**IMPLEMENTED / AFFECTED VALIDATION PASS / INDEPENDENT LUNA H REVIEW PASS**。C 开工基准 HEAD 为 B 提交 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`；A 的 `8c57f79`、`6a01ff8` 和 B 的 `6ee95b3` 当时均已在 GitHub `master`。C 执行结束时按当时任务卡要求暂不提交/推送；之后用户授权提交并推送，现核实提交 `7a24a338c416067252a058d9cc3b79e60e3f2e7d` 是本地 HEAD、`origin/master` 与 GitHub `master` 当前共同指向的版本。
 
 ### PERF-BOUNDED
 
@@ -17,7 +42,7 @@
 - 主受影响 JUnit `test-results/p4-lock-contention-recovery-c/final-affected.xml`：**225 项，202 passed / 23 skipped / 0 failed / 0 errors**。其中 23 项为原有模型/环境前置条件跳过；完整 unit/integration 历史存在 24 项范围外失败，本卡不扩大范围、不重跑全套。`uv run ruff check .`、`python -m compileall -q src/photo_search tests/unit/test_p4_lock_contention_recovery_c.py tests/integration/test_catalog_scan.py tests/integration/test_p4_02y_i_source_build.py tests/integration/test_p4_02y_library_refresh.py`、`git diff --check` 通过。
 - Luna H 首审指出 cap 排序可能丢弃当前新 delta、缺失 `scan_job_id` 分支错误把 `False` 当作0秒可继续；已分别改为 fresh delta 优先及 job 缺失 fail-closed，并把两个边界纳入上述最终 JUnit。最终独立复核 **REVIEW PASS**，确认 JUnit 时间和用例覆盖最新修复、文档与 Git 状态一致，无未关闭 P1/P2。
 - 真实 GPU/人脸权重未验证，Windows EXE 未重建。源码应用需重启。C 不自动启动1024D候选，不提交、不推送、不制作发行包。
-- 完整 unit/integration 历史仍有 24 项范围外失败；真实 GPU、人脸权重与 Windows EXE 未验证。C 不提交、不推送、不生成发行包。
+- 完整 unit/integration 历史仍有 24 项范围外失败；真实 GPU、人脸权重与 Windows EXE 未验证。C 后续已按用户授权提交并推送；D 本地补测未提交/推送。
 
 ---
 

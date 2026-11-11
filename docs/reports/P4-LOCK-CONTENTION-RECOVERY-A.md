@@ -1,8 +1,34 @@
 # P4-LOCK-CONTENTION-RECOVERY-C 续修结果（2026-11-10）
 
+## D 最终验证与锁范围审查（2026-11-11）
+
+### 状态与提交核验
+
+D 基于提交 `7a24a338c416067252a058d9cc3b79e60e3f2e7d`。执行前核对 `git rev-parse HEAD`、`git rev-parse origin/master` 和 `git ls-remote origin refs/heads/master`，三者均返回该 SHA；工作区干净。C 已提交并推送，修正了开发状态/任务记录中遗留的“C 未提交/未推送”描述。D 当前仅有本地修改，不提交、不推送。
+
+### 异步取消测试
+
+新增集成用例在独立线程持有真实 `RLock`，刷新线程使用可观察锁代理；只有底层 `RLock.acquire(timeout=0.1)` 实际等待并超时后才设置取消 Event。测试通过，刷新在 holder 仍持锁时快速退出，stage 为失败而非成功，reason/code 明确为 `CANCELLED`，steps=0，未调用 detect。待办保持一条 QUEUED face job，`input_revision` 与资产 SHA 一致；取消线程不能释放 holder 的锁。释放 holder 后再跑刷新，detect 收到原 asset，持久化 `job_id` 和 revision 未变、没有重复任务。
+
+### 人脸模型锁范围审查
+
+`_face_stage()` 当前外层锁覆盖 CR2 job 状态恢复、detect 的准备与任务入队、被 RLock 保护的实际 `run_queue()` 推理，以及随后的人脸索引发布与人物关联。CR2 恢复、查询、入队、发布和关联本身都不运行模型，理论上不必持 GPU 槽，故外围锁会增加候选任务等待。但 `run_queue()` 的 `_serialize_face_work` 必须保留以防与 Qwen 等候选推理并行；`detect()` 同步嵌套调用该函数，依赖 `RLock` 可重入。为了拆分锁范围需拆开 detect 调用闭环并验证 job claim/发布原子性，超出本卡限制。本次未改锁实现。若要缩短上述无模型步骤的等待，应另立专门任务并证明拆分边界安全。
+
+### 最终验证
+
+| 验证 | 结果 |
+|---|---:|
+| C 受影响测试集合 + 新增异步取消用例 | **226 项：203 passed / 23 skipped / 0 failed / 0 errors** |
+| 新增异步取消场景 | 通过：真实等待期间取消、保留 QUEUED job 与 revision、无 detect、无错误释放、释放后同 job 续做 |
+| `uv run ruff check .` | 通过 |
+| `python -m compileall -q src/photo_search tests` | 通过 |
+| `git diff --check` | 通过 |
+
+JUnit：`test-results/p4-lock-contention-recovery-d/final-affected.xml`。23 项跳过与 C 基线相同，为既有模型/环境前置条件；C 原集合仍是 225 项、202 passed / 23 skipped / 0 failed / 0 errors。完整 suite 历史 24 项范围外失败未重跑。真实 GPU/人脸权重未验证，Windows EXE 未重建；未改 512D 数据或模型身份。C 提交 SHA 已核对与 GitHub master 一致；D 未提交/推送。无需恢复任何任务或重启服务，因为没有运行时实现改动。本卡完成后停止。
+
 ## 状态与提交核验
 
-C 基于 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`。通过 `git merge-base --is-ancestor` 确认 A 的 `8c57f79`、`6a01ff8` 和 B 的 `6ee95b3` 均在当前分支历史；`git ls-remote origin refs/heads/master` 返回 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`，与本地 HEAD 相同。B 卡原“未提交/未推送”是用户随后授权提交/推送前的历史状态，已在 current status/task 记录修正为实际 GitHub 状态。C 暂不提交、不推送。
+C 执行时基于 `6ee95b3799dce2ce56948de54e2e4544d41fbdae`。当时 A/B 提交在 GitHub master 历史中，远端 master 与 C 开工 HEAD 相同。C 的原始执行按任务卡暂不提交；用户后续授权提交并推送，当前确认 C SHA `7a24a338c416067252a058d9cc3b79e60e3f2e7d` 位于 GitHub master 且与本地 HEAD 一致。B 曾经“未提交/未推送”的描述仅代表提交授权前状态。
 
 ## 根因与实现
 

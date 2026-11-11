@@ -1,6 +1,10 @@
-## Current task: P4-LOCK-CONTENTION-RECOVERY-C（2026-11-10）
+## Current task: P4-LOCK-CONTENTION-RECOVERY-D（2026-11-11）
 
-C 已修复：刷新人脸识别复用有界/可取消的 60 秒 `BACKGROUND_MODEL_SLOT` 等待；忙/取消时将本轮新 delta 优先、余量补旧 backlog，幂等持久化后续工作；runner 的 30 秒恢复预算按 `_run_one()` 累计，最多3次并核验有效、过期与缺失 job/lease。受影响 JUnit **225 项：202 passed / 23 skipped / 0 failed / 0 errors**，含 A/B/P4-02V 相关回归；Ruff、编译、diff-check 通过。Luna H 独立只读复核 **REVIEW PASS**，无未关闭 P1/P2。A/B GitHub 状态已核实：`8c57f79`、`6a01ff8`、`6ee95b3` 均在 `origin/master` 历史，远端 master 与 HEAD `6ee95b3` 一致。C 未提交/推送。历史完整套件的 24 项范围外失败、真实 GPU 和 Windows EXE 状态继续按下方记录。详见 [C 续修记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md) 与 [执行报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+D 已补充真正发生在 `BACKGROUND_MODEL_SLOT` 等待过程中的异步取消测试，并完成锁范围调用链审查。C 的提交状态已核实：本地 HEAD、`origin/master` 与 GitHub `master` 均为 `7a24a338c416067252a058d9cc3b79e60e3f2e7d`。新增测试等待中取消后返回 `CANCELLED` 原因，保留单条原 revision 待办且不进入 detect；释放锁后同一 job 可续做。最终受影响 JUnit **226 项：203 passed / 23 skipped / 0 failed / 0 errors**；`uv run ruff check .`、`python -m compileall -q src/photo_search tests`、`git diff --check` 通过。真实 GPU/人脸权重及 Windows EXE 未验证；完整 suite 的历史 24 项范围外失败未重跑。D 当前仅本地修改，未提交/推送。详见 [D 收尾记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md) 与 [执行报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
+
+## Previous task: P4-LOCK-CONTENTION-RECOVERY-C（2026-11-10）
+
+C 已修复：刷新人脸识别复用有界/可取消的 60 秒 `BACKGROUND_MODEL_SLOT` 等待；忙/取消时将本轮新 delta 优先、余量补旧 backlog，幂等持久化后续工作；runner 的 30 秒恢复预算按 `_run_one()` 累计，最多3次并核验有效、过期与缺失 job/lease。受影响 JUnit **225 项：202 passed / 23 skipped / 0 failed / 0 errors**，含 A/B/P4-02V 相关回归；Ruff、编译、diff-check 通过。Luna H 独立只读复核 **REVIEW PASS**，无未关闭 P1/P2。C 已由用户授权提交并推送，提交 `7a24a33`；本轮重新核对本地 HEAD、`origin/master` 和 GitHub master 均指向完整 SHA `7a24a338c416067252a058d9cc3b79e60e3f2e7d`。历史完整套件的 24 项范围外失败、真实 GPU 和 Windows EXE 状态继续按下方记录。详见 [C 续修记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md) 与 [执行报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 
 ## Previous task: P4-LOCK-CONTENTION-RECOVERY-B（2026-11-10）
 
