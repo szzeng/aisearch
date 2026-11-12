@@ -443,18 +443,21 @@ class CandidateBuildManager:
             state["last_error"] = {"code": "PAUSE_REQUESTED"}
         state["owner_id"] = None
 
-    def close(self) -> None:
+    def close(self, *, timeout: float = 5.0) -> bool:
         self._stop.set()
         with self._lock:
             thread = self._thread
         if thread is not None and thread.is_alive():
-            thread.join()
+            thread.join(timeout=max(0.0, float(timeout)))
+            if thread.is_alive():
+                return False
         state = _read_state(self.root)
         if state and state.get("owner_id") == self._owner_id and state.get("status") in {"RUNNING", "PAUSE_REQUESTED"}:
             state["status"] = "INTERRUPTED"
             state["owner_id"] = None
             state["last_error"] = {"code": "PROCESS_STOPPING"}
             self._save(state)
+        return True
 
 
 __all__ = ["BATCH_LIMIT", "CandidateBuildManager", "TASK_FILENAME", "TASK_STATES"]

@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -243,3 +244,179 @@ def test_lifespan_drains_running_read_before_releasing_real_lease(api_env, monke
 
     asyncio.run(scenario())
     assert len(release_observations) == 1
+
+
+@pytest.mark.parametrize("transferred", [False, True])
+def test_lifespan_retains_lease_until_candidate_worker_exits(api_env, monkeypatch, transferred):
+    from photo_search.app import create_app
+    from photo_search.models.embedding.candidate_task import _read_state
+
+    api = api_env.app.state.api
+    startup_lease = acquire_data_root_lease(api.settings.data_root) if transferred else None
+    app = create_app(settings=api.settings, context=api, startup_lease=startup_lease) if transferred else api_env.app
+    monkeypatch.setattr(api, "start_place_cover_warming", lambda: None)
+    monkeypatch.setattr(api, "start_automatic_retention_cleanup", lambda: None)
+    started = threading.Event()
+    release = threading.Event()
+    worker = None
+
+    async def scenario():
+        nonlocal worker
+        try:
+            async with app.router.lifespan_context(app):
+                owned_catalog = api.service().catalog
+                manager = api.embedding_candidate_manager()
+                manager._save({"owner_id": manager._owner_id, "status": "RUNNING"})
+                def blocked():
+                    started.set()
+                    release.wait(10)
+                worker = threading.Thread(target=blocked, daemon=True)
+                manager._thread = worker
+                worker.start()
+                assert started.wait(2)
+                close = manager.close
+                monkeypatch.setattr(manager, "close", lambda: close(timeout=0.01))
+            assert worker.is_alive()
+            state = _read_state(manager.root)
+            assert state["status"] == "RUNNING"
+            assert state["owner_id"] == manager._owner_id
+            with pytest.raises(DataRootLeaseBusy):
+                acquire_data_root_lease(api.settings.data_root)
+            release.set()
+            assert await asyncio.to_thread(api._shutdown_complete.wait, 3)
+            with pytest.raises(sqlite3.ProgrammingError):
+                owned_catalog.connection.execute("SELECT 1")
+            # Lease release is performed by the app's separate shutdown waiter.
+            deadline = time.monotonic() + 3
+            while True:
+                try:
+                    lease = acquire_data_root_lease(api.settings.data_root)
+                    break
+                except DataRootLeaseBusy:
+                    if time.monotonic() >= deadline:
+                        raise
+                    await asyncio.sleep(0.01)
+            lease.close()
+            assert _read_state(manager.root)["status"] == "INTERRUPTED"
+        finally:
+            release.set()
+            if worker is not None:
+                worker.join(timeout=3)
+
+    asyncio.run(scenario())
+
+
+def test_lifespan_retains_lease_until_refresh_worker_exits(api_env, monkeypatch):
+    api = api_env.app.state.api
+    monkeypatch.setattr(api, "start_place_cover_warming", lambda: None)
+    monkeypatch.setattr(api, "start_automatic_retention_cleanup", lambda: None)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_refresh(_service, _status, _source_ids):
+        entered.set()
+        release.wait(10)
+
+    api._refresher_executor = blocked_refresh
+
+    async def scenario():
+        try:
+            async with api_env.app.router.lifespan_context(api_env.app):
+                refresher = api.refresher()
+                close = refresher.close
+                monkeypatch.setattr(refresher, "close", lambda: close(timeout=0.01))
+                refresher.start([1])
+                assert entered.wait(2)
+            assert refresher.is_running()
+            with pytest.raises(DataRootLeaseBusy):
+                acquire_data_root_lease(api.settings.data_root)
+            release.set()
+            assert await asyncio.to_thread(api._shutdown_complete.wait, 3)
+            deadline = time.monotonic() + 3
+            while True:
+                try:
+                    lease = acquire_data_root_lease(api.settings.data_root)
+                    break
+                except DataRootLeaseBusy:
+                    if time.monotonic() >= deadline:
+                        raise
+                    await asyncio.sleep(0.01)
+            lease.close()
+            assert not refresher.is_running()
+        finally:
+            release.set()
+
+    asyncio.run(scenario())
+
+
+def test_lifespan_retains_lease_for_active_smart_refresh(api_env, monkeypatch):
+    from concurrent.futures import Future
+
+    api = api_env.app.state.api
+    monkeypatch.setattr(api, "start_place_cover_warming", lambda: None)
+    monkeypatch.setattr(api, "start_automatic_retention_cleanup", lambda: None)
+    future = Future()
+    future.set_running_or_notify_cancel()
+
+    class SmartWorker:
+        def __init__(self):
+            self._shutdown_futures = []
+        def close(self):
+            self._shutdown_futures = [future]
+
+    async def scenario():
+        try:
+            async with api_env.app.router.lifespan_context(api_env.app):
+                api._photo_smart_refresh_runner = SmartWorker()
+            with pytest.raises(DataRootLeaseBusy):
+                acquire_data_root_lease(api.settings.data_root)
+            future.set_result(None)
+            assert await asyncio.to_thread(api._shutdown_complete.wait, 3)
+            deadline = time.monotonic() + 3
+            while True:
+                try:
+                    lease = acquire_data_root_lease(api.settings.data_root)
+                    break
+                except DataRootLeaseBusy:
+                    if time.monotonic() >= deadline:
+                        raise
+                    await asyncio.sleep(0.01)
+            lease.close()
+        finally:
+            if not future.done():
+                future.set_result(None)
+
+    asyncio.run(scenario())
+
+
+def test_shutdown_keeps_lease_when_worker_cleanup_fails(api_env, monkeypatch):
+    api = api_env.app.state.api
+    monkeypatch.setattr(api, "start_place_cover_warming", lambda: None)
+    monkeypatch.setattr(api, "start_automatic_retention_cleanup", lambda: None)
+
+    class FailedWorker:
+        _thread = None
+        _cleanup_failed = True
+        def close(self):
+            pass
+
+    async def scenario():
+        async with api_env.app.router.lifespan_context(api_env.app):
+            api._runner = FailedWorker()
+        assert not api._shutdown_complete.is_set()
+        with pytest.raises(DataRootLeaseBusy):
+            acquire_data_root_lease(api.settings.data_root)
+        # Test teardown only: the production path intentionally retains the lease.
+        api._shutdown_complete.set()
+        deadline = time.monotonic() + 3
+        while True:
+            try:
+                lease = acquire_data_root_lease(api.settings.data_root)
+                break
+            except DataRootLeaseBusy:
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.01)
+        lease.close()
+
+    asyncio.run(scenario())

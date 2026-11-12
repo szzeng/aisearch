@@ -1760,3 +1760,47 @@ def test_a_refresh_in_flight_never_refuses_a_legal_search(tmp_path: Path) -> Non
         releases["count"] = 1
         env.context.refresher().wait_idle(timeout=180)
         env.close()
+
+
+def test_refresh_cancelled_before_scan_is_not_reported_complete(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+    from photo_search.refresh.state import RefreshStatus
+
+    def unexpected_scan(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("cancelled refresh started a scan")
+
+    monkeypatch.setattr(pipeline, "_scan_one", unexpected_scan)
+    status = RefreshStatus(refresh_id="cancel-test", source_ids=[1], batch_size=10, started_at_ms=0)
+    result = pipeline.refresh_library(
+        env.service(), status, source_ids=[1], cancel_check=lambda: True,
+    )
+    assert result["state"] == "FAILED"
+    assert result["failed_stages"] == ["cancelled"]
+    assert result["errors"][-1]["code"] == "CANCELLED"
+
+
+def test_cancel_between_enrichment_stages_prevents_new_work(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+    from photo_search.refresh.state import RefreshStatus
+
+    cancelled = threading.Event()
+    calls = []
+
+    def fake_stage(_status, name, _runner):
+        calls.append(name)
+        cancelled.set()
+        return {"state": "OK"}
+
+    monkeypatch.setattr(pipeline, "_stage", fake_stage)
+    status = RefreshStatus(refresh_id="cancel-stages", source_ids=[1], batch_size=10, started_at_ms=0)
+    result = pipeline._enrichment_stages(
+        env.service(), status, content_delta={1}, location_delta=set(), delta_overflow=False,
+        encoder_factory=None, manifest_path=None, device="cpu", device_policy="cpu_allowed",
+        cancel_check=cancelled.is_set,
+    )
+    assert calls == ["thumbnail"]
+    assert list(result) == ["thumbnail"]

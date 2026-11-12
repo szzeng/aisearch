@@ -193,6 +193,14 @@ def refresh_library(
             target.add(int(value))
         return bounded
 
+    def cancelled() -> dict[str, Any] | None:
+        if cancel_check is None or not cancel_check():
+            return None
+        status.note_error(stage="refresh", code="CANCELLED", message="Refresh cancelled.")
+        status.set_failed_stages(["cancelled"])
+        status.finish(state="FAILED", elapsed_ms=_elapsed_ms(started))
+        return status.snapshot()
+
     # ------------------------------------------------------------------ A. fast scan
     status.set_state("SCANNING")
     requested = (
@@ -204,6 +212,9 @@ def refresh_library(
     )
     status.set_counters(sources_requested=len(requested))
     for source_id in requested:
+        stopped = cancelled()
+        if stopped is not None:
+            return stopped
         outcome = _scan_one(
             service,
             status,
@@ -216,6 +227,9 @@ def refresh_library(
         if outcome is None:
             continue
         overflow = overflow or bool(outcome["delta_overflow"])
+    stopped = cancelled()
+    if stopped is not None:
+        return stopped
     if overflow:
         content_delta.clear()
         location_delta.clear()
@@ -231,6 +245,9 @@ def refresh_library(
         round_cap=BUILD_ROUND_CAP if build else PROJECTION_ROUND_CAP,
     )
     status.set_stage("search_projection", projection)
+    stopped = cancelled()
+    if stopped is not None:
+        return stopped
 
     # ------------------------------------------------ C. semantic (the SEARCH_READY gate)
     if build:
@@ -259,6 +276,9 @@ def refresh_library(
             cancel_check=cancel_check,
         )
     status.set_stage("semantic", semantic)
+    stopped = cancelled()
+    if stopped is not None:
+        return stopped
 
     search_ready, basis = _search_ready(projection, semantic, mode=mode)
     if search_ready:
@@ -287,6 +307,10 @@ def refresh_library(
             device_policy=device_policy,
             cancel_check=cancel_check,
         )
+
+    stopped = cancelled()
+    if stopped is not None:
+        return stopped
 
     failures = [
         name
@@ -1288,7 +1312,7 @@ def _enrichment_stages(
         ),
         "ocr": lambda: _ocr_stage(
             catalog, service.data_root, content, source_ids=scopes,
-            recover_cr2=mode == REFRESH_MODE_BUILD,
+            recover_cr2=mode == REFRESH_MODE_BUILD, cancel_check=cancel_check,
         ),
     }
     if mode == REFRESH_MODE_BUILD:
@@ -1337,13 +1361,16 @@ def _enrichment_stages(
                 catalog,
                 scopes=scopes,
                 runner=lambda page: _ocr_stage(
-                    catalog, service.data_root, page, source_ids=scopes, recover_cr2=True
+                    catalog, service.data_root, page, source_ids=scopes, recover_cr2=True,
+                    cancel_check=cancel_check,
                 ),
                 cancel_check=cancel_check,
             ),
         }
         runners = scoped
     for name, runner in runners.items():
+        if cancel_check is not None and cancel_check():
+            break
         payload = _stage(status, name, runner)
         stages[name] = payload
         status.set_stage(name, payload)
@@ -1876,6 +1903,7 @@ def _persist_deferred_face_jobs(
 def _ocr_stage(
     catalog: Any, data_root: Any, assets: set[int], *,
     source_ids: Sequence[int | None] = (None,), recover_cr2: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     from photo_search.ocr import contract as ocr_contract
     from photo_search.ocr import service as ocr_service
@@ -1908,9 +1936,12 @@ def _ocr_stage(
             artifact_revision=ocr_contract.OCR_ARTIFACT_REVISION,
         )
     enqueued = ocr_service.enqueue_targets(catalog, targets, now_ms=catalog.now_ms())
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(targets),
+                "queued": int(enqueued["queued"]), "steps": 0}
     run = ocr_service.run_queue(
         catalog, data_root=data_root, worker_id="library-refresh",
-        asset_ids=[int(target["asset_id"]) for target in targets],
+        asset_ids=[int(target["asset_id"]) for target in targets], stop_check=cancel_check,
     )
     return {
         "state": STAGE_OK,

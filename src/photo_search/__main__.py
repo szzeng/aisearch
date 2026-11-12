@@ -216,7 +216,7 @@ def _serve(args: argparse.Namespace) -> int:
             log_config=_log_config(),
         )
     finally:
-        if startup_lease is not None:
+        if startup_lease is not None and not api._lease_release_deferred:
             api.set_data_root_lease(None)
             startup_lease.close()
     return 0

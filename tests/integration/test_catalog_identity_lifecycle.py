@@ -668,11 +668,11 @@ def test_source_vanishing_during_confirmation_blocks_the_scan(
     real_hash = scanner.sha256_file
     state = {"moved": False}
 
-    def detach_then_hash(path: Path) -> str:
+    def detach_then_hash(path: Path, **kwargs) -> str:
         if not state["moved"]:
             state["moved"] = True
             os.replace(root, moved)  # the volume is unplugged during content confirmation
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr(scanner, "sha256_file", detach_then_hash)
     with pytest.raises(CatalogError) as error:
@@ -711,11 +711,11 @@ def test_position_vanishing_before_confirmation_is_blocked(
     real_hash = scanner.sha256_file
     state = {"deleted": False}
 
-    def delete_then_hash(path: Path) -> str:
+    def delete_then_hash(path: Path, **kwargs) -> str:
         if not state["deleted"]:
             state["deleted"] = True
             target.unlink()
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr(scanner, "sha256_file", delete_then_hash)
     with pytest.raises(CatalogError) as error:

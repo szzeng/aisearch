@@ -559,9 +559,9 @@ def test_the_fast_scan_never_reads_an_unchanged_original(library, monkeypatch) -
     hashed: list[str] = []
     real_hash = scanner_module_hash()
 
-    def recording_hash(path: Path) -> str:
+    def recording_hash(path: Path, **kwargs) -> str:
         hashed.append(str(path))
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr("photo_search.ingestion.scanner.sha256_file", recording_hash)
     outcome = scan(library)

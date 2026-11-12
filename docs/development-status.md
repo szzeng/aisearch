@@ -1,4 +1,8 @@
-## Current task: P4-LOCK-CONTENTION-RECOVERY-D（2026-11-11）
+## Current task: P4-BUILD-STABILITY-A（2026-11-12）
+
+**IMPLEMENTATION PARTIAL / VALIDATION PENDING**：补充关闭时工作线程/数据根租约保护、OCR 任务间停止及 30 秒 SQLite 持锁后显式恢复；生命周期/扫描 200 passed、其他消费者 76 passed、OCR/刷新 101 passed / 11 skipped（集合有重叠）。GPU OCR 协调、进度诊断、完整故障矩阵、独立 DS-H 审查和 GTX 1660 + 机械硬盘必测仍未完成，用户确认当前无目标实机。未提交、未推送。详见[任务卡](tasks/P4-BUILD-STABILITY-A.md)与[报告](reports/P4-BUILD-STABILITY-A.md)。
+
+## Previous task: P4-LOCK-CONTENTION-RECOVERY-D（2026-11-11）
 
 D 已补充真正发生在 `BACKGROUND_MODEL_SLOT` 等待过程中的异步取消测试，并完成锁范围调用链审查。C 的提交状态已核实：本地 HEAD、`origin/master` 与 GitHub `master` 均为 `7a24a338c416067252a058d9cc3b79e60e3f2e7d`。新增测试等待中取消后返回 `CANCELLED` 原因，保留单条原 revision 待办且不进入 detect；释放锁后同一 job 可续做。最终受影响 JUnit **226 项：203 passed / 23 skipped / 0 failed / 0 errors**；`uv run ruff check .`、`python -m compileall -q src/photo_search tests`、`git diff --check` 通过。真实 GPU/人脸权重及 Windows EXE 未验证；完整 suite 的历史 24 项范围外失败未重跑。D 当前仅本地修改，未提交/推送。详见 [D 收尾记录](tasks/P4-LOCK-CONTENTION-RECOVERY-A.md) 与 [执行报告](reports/P4-LOCK-CONTENTION-RECOVERY-A.md)。
 

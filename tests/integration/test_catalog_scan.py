@@ -531,8 +531,8 @@ def test_input_change_during_hashing_discards_the_stale_hash(
     real_hash = scanner.sha256_file
     mutated = {"done": False}
 
-    def hashing_mutator(path: Path) -> str:
-        digest = real_hash(path)
+    def hashing_mutator(path: Path, **kwargs) -> str:
+        digest = real_hash(path, **kwargs)
         if path.name == "a.jpg" and not mutated["done"]:
             mutated["done"] = True
             target.write_bytes(b"REPLACED-CONTENT")
@@ -564,9 +564,9 @@ def test_long_scan_renews_its_lease_before_it_expires(
     source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
     real_hash = scanner.sha256_file
 
-    def slow_hash(path: Path) -> str:
+    def slow_hash(path: Path, **kwargs) -> str:
         harness.clock.advance(600)
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr(scanner, "sha256_file", slow_hash)
     outcome = harness.service.run_scan(source_id, lease_seconds=1)
@@ -715,8 +715,8 @@ def test_persistent_instability_requeues_instead_of_succeeding(
     real_hash = scanner.sha256_file
     state = {"grow": True, "writes": 0}
 
-    def always_changing(path: Path) -> str:
-        digest = real_hash(path)
+    def always_changing(path: Path, **kwargs) -> str:
+        digest = real_hash(path, **kwargs)
         if path.name == "a.jpg" and state["grow"]:
             state["writes"] += 1
             target.write_bytes(b"X" * (8 + state["writes"]))
@@ -822,8 +822,8 @@ def test_unstable_input_ceiling_fails_job_and_scan_together(
     real_hash = scanner.sha256_file
     state = {"writes": 0}
 
-    def always_changing(path: Path) -> str:
-        digest = real_hash(path)
+    def always_changing(path: Path, **kwargs) -> str:
+        digest = real_hash(path, **kwargs)
         if path.name == "a.jpg":
             state["writes"] += 1
             target.write_bytes(b"X" * (8 + state["writes"]))
@@ -924,11 +924,11 @@ def test_resume_ignores_unbound_leftovers_from_a_killed_execution(
     real_hash = scanner.sha256_file
     killed = {"done": False}
 
-    def kill_after_observe(path: Path) -> str:
+    def kill_after_observe(path: Path, **kwargs) -> str:
         if not killed["done"]:
             killed["done"] = True
             raise ScanInterrupted("simulated kill between observe and bind")
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr(scanner, "sha256_file", kill_after_observe)
     with pytest.raises(ScanInterrupted):
@@ -1199,3 +1199,228 @@ def test_cli_reports_json_results_and_structured_errors(tmp_path: Path) -> None:
     plain_error = _run_cli(data_root, "status", "--source-id", "42")
     assert plain_error.returncode == 1
     assert "SOURCE_NOT_FOUND" in plain_error.stderr
+
+
+def test_slow_hash_renews_lease_at_chunk_boundaries(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "slow-library"
+    _write(root / "photo.jpg", b"abcdefghij")
+    source_id = harness.service.register_source(display_name="slow", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    real_heartbeat = jobs.heartbeat
+    heartbeats = []
+    monkeypatch.setattr(scanner, "HASH_CHUNK_BYTES", 2)
+
+    def heartbeat(*args, **kwargs):
+        heartbeats.append(kwargs["now_ms"])
+        return real_heartbeat(*args, **kwargs)
+
+    def slow_hash(path: Path, *, on_chunk=None):
+        def checkpoint():
+            assert not harness.service.catalog.connection.in_transaction
+            harness.clock.advance(300)
+            on_chunk()
+            assert not harness.service.catalog.connection.in_transaction
+        return real_hash(path, on_chunk=checkpoint)
+
+    monkeypatch.setattr(jobs, "heartbeat", heartbeat)
+    monkeypatch.setattr(scanner, "sha256_file", slow_hash)
+    result = harness.service.run_scan(source_id, lease_seconds=1)
+    assert result["state"] == "SUCCEEDED"
+    assert len(heartbeats) == 3
+    assert _jobs(harness)[0]["state"] == "SUCCEEDED"
+    assert harness.service.counts(source_id=source_id)["assets"] == 1
+
+
+def test_cancel_inside_hash_preserves_unfinished_scan_for_recovery(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "slow-library"
+    _write(root / "photo.jpg", b"abcdefghij")
+    source_id = harness.service.register_source(display_name="slow", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    checkpoints = []
+    cancelled = threading.Event()
+    monkeypatch.setattr(scanner, "HASH_CHUNK_BYTES", 2)
+
+    def interrupt_hash(path: Path, *, on_chunk=None):
+        def checkpoint():
+            checkpoints.append(1)
+            if len(checkpoints) == 3:
+                cancelled.set()
+            on_chunk()
+        return real_hash(path, on_chunk=checkpoint)
+
+    monkeypatch.setattr(scanner, "sha256_file", interrupt_hash)
+    with pytest.raises(ScanInterrupted):
+        harness.service.run_scan(source_id, lease_seconds=1, cancel_check=cancelled.is_set)
+    assert len(checkpoints) == 3
+    assert _jobs(harness)[0]["state"] == "RUNNING"
+    assert harness.service.counts(source_id=source_id)["assets"] == 0
+    monkeypatch.setattr(scanner, "sha256_file", real_hash)
+    harness.clock.advance(1001)
+    result = harness.service.run_scan(source_id, lease_seconds=1)
+    assert result["state"] == "SUCCEEDED"
+    assert harness.service.counts(source_id=source_id)["assets"] == 1
+    assert len(_jobs(harness)) == 1
+
+
+def test_expired_lease_during_single_hash_read_cannot_bind_content(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "slow-library"
+    _write(root / "photo.jpg", b"abcdefghij")
+    source_id = harness.service.register_source(display_name="slow", root_path=root)["source_id"]
+    real_hash = scanner.sha256_file
+    calls = []
+    monkeypatch.setattr(scanner, "HASH_CHUNK_BYTES", 2)
+
+    def stalled_hash(path: Path, *, on_chunk=None):
+        def checkpoint():
+            calls.append(1)
+            if len(calls) == 2:
+                harness.clock.advance(1001)
+            on_chunk()
+        return real_hash(path, on_chunk=checkpoint)
+
+    monkeypatch.setattr(scanner, "sha256_file", stalled_hash)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id, lease_seconds=1)
+    assert error.value.code == STALE_LEASE
+    assert harness.service.counts(source_id=source_id)["assets"] == 0
+    assert _jobs(harness)[0]["state"] == "RUNNING"
+    monkeypatch.setattr(scanner, "sha256_file", real_hash)
+    assert harness.service.run_scan(source_id, lease_seconds=1)["state"] == "SUCCEEDED"
+    assert harness.service.counts(source_id=source_id)["assets"] == 1
+    assert len(_jobs(harness)) == 1
+
+
+def test_lease_expiring_while_waiting_for_write_is_not_used_for_binding(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    root = tmp_path / "slow-library"
+    _write(root / "photo.jpg", b"content")
+    source_id = harness.service.register_source(display_name="slow", root_path=root)["source_id"]
+    catalog = harness.service.catalog
+    real_hash = scanner.sha256_file
+    real_write = catalog.write
+    after_hash = threading.Event()
+
+    def finish_hash(path: Path, *, on_chunk=None):
+        digest = real_hash(path, on_chunk=on_chunk)
+        after_hash.set()
+        return digest
+
+    @contextmanager
+    def delayed_write():
+        with real_write() as connection:
+            if after_hash.is_set():
+                after_hash.clear()
+                harness.clock.advance(1001)
+            yield connection
+
+    monkeypatch.setattr(scanner, "sha256_file", finish_hash)
+    monkeypatch.setattr(catalog, "write", delayed_write)
+    with pytest.raises(CatalogError) as error:
+        harness.service.run_scan(source_id, lease_seconds=1)
+    assert error.value.code == STALE_LEASE
+    assert harness.service.counts(source_id=source_id)["assets"] == 0
+    assert _jobs(harness)[0]["state"] == "RUNNING"
+
+
+def test_external_writer_lock_thirty_seconds_keeps_scan_recoverable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data_root = tmp_path / "data"
+    library = tmp_path / "library"
+    _write(library / "photo.jpg", b"content")
+
+    def factory():
+        return CatalogService.open(data_root=data_root, lease_seconds=2, retry_backoff_ms=5)
+
+    setup = factory()
+    try:
+        source_id = setup.register_source(display_name="library", root_path=library)["source_id"]
+        db_path = setup.catalog.db_path
+    finally:
+        setup.close()
+    entered = threading.Event()
+    go = threading.Event()
+    real_process = scanner._ScanRun.process
+    first = True
+
+    def pause_once(self, *, root, total):
+        nonlocal first
+        if first:
+            first = False
+            entered.set()
+            assert go.wait(5)
+        return real_process(self, root=root, total=total)
+
+    monkeypatch.setattr(scanner._ScanRun, "process", pause_once)
+    runner = ScanRunner(factory)
+    external = sqlite3.connect(db_path, isolation_level=None, timeout=1)
+    try:
+        assert runner.submit(source_id)
+        assert entered.wait(5)
+        external.execute("BEGIN IMMEDIATE")
+        go.set()
+        started = time.monotonic()
+        threading.Event().wait(30.0)
+        external.execute("COMMIT")
+        assert time.monotonic() - started >= 30.0
+        assert runner.wait_idle(timeout=25)
+        check = factory()
+        try:
+            current = check.catalog.read_one("SELECT state FROM jobs WHERE task_type='catalog_scan'")
+            assert current is not None
+            if current["state"] != "SUCCEEDED":
+                # The first bounded wait may end while the external writer is still active.
+                check.run_scan(source_id)
+            assert check.counts(source_id=source_id)["assets"] == 1
+            rows = check.catalog.read_all("SELECT state FROM jobs WHERE task_type='catalog_scan'")
+            assert len(rows) == 1
+            assert rows[0]["state"] == "SUCCEEDED"
+        finally:
+            check.close()
+    finally:
+        go.set()
+        if external.in_transaction:
+            external.execute("ROLLBACK")
+        external.close()
+        runner.close(timeout=5)
+
+
+def test_requeue_rechecks_lease_after_writer_wait(
+    harness: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    root = tmp_path / "library"
+    _write(root / "photo.jpg", b"content")
+    source_id = harness.service.register_source(display_name="library", root_path=root)["source_id"]
+    with pytest.raises(ScanInterrupted):
+        harness.service.run_scan(source_id, lease_seconds=1, cancel_check=lambda: True)
+    catalog = harness.service.catalog
+    job_id = _jobs(harness)[0]["job_id"]
+    job = jobs.get_job(catalog.connection, job_id)
+    real_write = catalog.write
+
+    @contextmanager
+    def delayed_write():
+        with real_write() as connection:
+            harness.clock.advance(1001)
+            yield connection
+
+    monkeypatch.setattr(catalog, "write", delayed_write)
+    with pytest.raises(CatalogError) as error:
+        scanner._requeue(
+            catalog, job=job, scan_id=int(job.subject_id), source_id=source_id,
+            backoff_ms=5, error=CatalogError(CATALOG_UNREADABLE, "busy"),
+        )
+    assert error.value.code == STALE_LEASE
+    assert _jobs(harness)[0]["state"] == "RUNNING"
+    assert _scan_row(harness, int(job.subject_id))["state"] == "RUNNING"

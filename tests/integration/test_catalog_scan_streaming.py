@@ -208,8 +208,8 @@ def test_an_edit_during_hashing_never_binds_the_old_content(
     real_hash = scanner.sha256_file
     mutated = {"done": False}
 
-    def hash_then_replace(path: Path) -> str:
-        digest = real_hash(path)
+    def hash_then_replace(path: Path, **kwargs) -> str:
+        digest = real_hash(path, **kwargs)
         if path.name == "a.jpg" and not mutated["done"]:
             mutated["done"] = True
             target.write_bytes(b"REPLACED-CONTENT")
@@ -282,11 +282,11 @@ def test_keyboard_interrupt_keeps_the_lease_and_is_recoverable(
     real_hash = scanner.sha256_file
     stopped = {"done": False}
 
-    def interrupt_once(path: Path) -> str:
+    def interrupt_once(path: Path, **kwargs) -> str:
         if path.name == "a.jpg" and not stopped["done"]:
             stopped["done"] = True
             raise KeyboardInterrupt
-        return real_hash(path)
+        return real_hash(path, **kwargs)
 
     monkeypatch.setattr(scanner, "sha256_file", interrupt_once)
     with pytest.raises(ScanInterrupted):

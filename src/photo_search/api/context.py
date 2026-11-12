@@ -7,6 +7,7 @@ or unreadable has to be re-checked on the next request instead of poisoning the 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -79,6 +80,8 @@ class ApiContext:
         self._place_cover_warmer: Any | None = None
         self._lifecycle_lock = threading.Lock()
         self._closed = False
+        self._shutdown_complete = threading.Event()
+        self._lease_release_deferred = False
         #: P4-02Y: the single background library refresh. It reuses the *same* ADR-0003 §7
         #: adapter as the query path (never a second model instance), resolves its own
         #: connection inside its worker thread, and reports through ``photo_search.refresh``.
@@ -450,9 +453,15 @@ class ApiContext:
             self._reranker_resolved = True
             return self._reranker
 
-    def close(self) -> None:
-        """Stop the worker, the query encoder and both connections; safe to call twice."""
+    def close(self) -> bool:
+        """Request shutdown; return false while a worker still owns resources."""
+        try:
+            shutdown_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            shutdown_loop = None
         with self._lifecycle_lock:
+            if self._closed:
+                return self._shutdown_complete.is_set()
             self._closed = True
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
@@ -510,14 +519,66 @@ class ApiContext:
                 place_cover_warmer.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("stopping the place-cover warmer failed", exc_info=True)
+        workers = (memories_runner, candidate_manager, refresher, face_detail_runner,
+                   retention_runner, runner, place_cover_warmer)
+        threads = [thread for worker in workers if worker is not None
+                   if isinstance((thread := getattr(worker, "_thread", None)), threading.Thread)
+                   and thread.is_alive()]
+        futures = [future for future in getattr(smart_runner, "_shutdown_futures", ())
+                   if not future.done()]
+        if threads or futures:
+            logger.warning("shutdown incomplete: %d worker(s) still active; retaining data-root lease", len(threads) + len(futures))
+            def finish_after_workers() -> None:
+                for thread in threads:
+                    thread.join()
+                for future in futures:
+                    try:
+                        future.result()
+                    except Exception:
+                        logger.debug("smart refresh ended with an error during shutdown", exc_info=True)
+                for worker in (candidate_manager, refresher, face_detail_runner, runner):
+                    if worker is not None:
+                        try:
+                            worker.close()
+                        except Exception:
+                            logger.exception("deferred worker cleanup failed")
+                if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
+                    logger.error("worker cleanup failed; retaining data-root lease")
+                    return
+                if shutdown_loop is None or shutdown_loop.is_closed():
+                    logger.error("shutdown cleanup needs its owning event loop; retaining data-root lease")
+                    return
+                try:
+                    shutdown_loop.call_soon_threadsafe(self._finish_shutdown)
+                except RuntimeError:
+                    logger.exception("shutdown event loop unavailable; retaining data-root lease")
+            threading.Thread(target=finish_after_workers, name="photo-search-shutdown", daemon=True).start()
+            return False
+        if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
+            logger.error("worker cleanup failed; retaining data-root lease")
+            return False
+        self._finish_shutdown()
+        return self._shutdown_complete.is_set()
+
+    def defer_data_root_lease_release(self, lease: Any) -> None:
+        """Transfer lease release to the cleanup waiter when shutdown is incomplete."""
+        self._lease_release_deferred = True
+        def release_after_shutdown() -> None:
+            self._shutdown_complete.wait()
+            self.set_data_root_lease(None)
+            lease.close()
+        threading.Thread(target=release_after_shutdown, name="photo-search-lease-release", daemon=True).start()
+
+    def _finish_shutdown(self) -> None:
         service = self._service
-        self._service = None
         self._face_detail_recovery_started = False
         if service is not None:
             try:
                 service.close()
             except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("closing the catalog service failed", exc_info=True)
+                logger.exception("closing the catalog service failed; retaining data-root lease")
+                return
+            self._service = None
         # P4-02N: an adapter that owns a worker process is stopped here as well. The seam is
         # duck-typed on purpose - the documented ADR-0003 adapter has ``close()`` and a test
         # stand-in may not, which must never turn a shutdown into a failure.
@@ -530,5 +591,7 @@ class ApiContext:
             try:
                 stop()
             except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the query encoder failed", exc_info=True)
+                logger.exception("stopping the query encoder failed; retaining data-root lease")
+                return
         self.search_sessions.clear()
+        self._shutdown_complete.set()

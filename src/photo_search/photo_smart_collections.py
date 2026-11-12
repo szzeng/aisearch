@@ -9,7 +9,7 @@ import json
 import secrets
 import threading
 import unicodedata
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
@@ -922,6 +922,7 @@ class SmartRefreshRunner:
         self._lock = threading.Lock()
         self._closed = False
         self._tasks: dict[int, dict[str, Any]] = {}
+        self._shutdown_futures: list[Future[Any]] = []
 
     def submit(self, smart_id: int, *, instance_token: str, manual: bool = False) -> dict[str, Any]:
         smart_id = int(smart_id)
@@ -1099,7 +1100,9 @@ class SmartRefreshRunner:
         finally:
             heartbeat_stop.set()
             if heartbeat_thread is not None:
-                heartbeat_thread.join(timeout=SMART_REFRESH_HEARTBEAT_SECONDS + 1)
+                # The future stays active until the heartbeat stops touching the data root.
+                # Application shutdown is bounded and retains its lease while this waits.
+                heartbeat_thread.join()
             if service is not None and owns_service:
                 service.close()
 
@@ -1108,6 +1111,7 @@ class SmartRefreshRunner:
             self._closed = True
             pending = [(smart_id, dict(task)) for smart_id, task in self._tasks.items()
                        if task.get("future") is not None]
+        self._shutdown_futures = [task["future"] for _, task in pending]
         # Future.cancel() can synchronously invoke callbacks. Never call it under _lock.
         for smart_id, task in pending:
             future = task["future"]
@@ -1124,4 +1128,6 @@ class SmartRefreshRunner:
                         )
                 except Exception:
                     pass
-        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._executor.shutdown(wait=False, cancel_futures=True)
+        if self._shutdown_futures:
+            wait(self._shutdown_futures, timeout=5.0)

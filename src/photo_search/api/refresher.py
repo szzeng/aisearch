@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from photo_search.catalog.errors import CatalogError
-from photo_search.ingestion.scanner import DEFAULT_OBSERVATION_BATCH
+from photo_search.ingestion.scanner import DEFAULT_OBSERVATION_BATCH, ScanInterrupted
 from photo_search.refresh.pipeline import (
     REFRESH_MODE_DAILY,
     REFRESH_MODES,
@@ -80,6 +80,7 @@ class LibraryRefresher:
         self._status: RefreshStatus | None = None
         self._running = False
         self._closed = False
+        self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         # ``None`` is an all-sources scope; concrete lists remain source-scoped.
         self._pending_builds: deque[tuple[list[int] | None, str | None]] = deque()
@@ -166,6 +167,7 @@ class LibraryRefresher:
         """
         with self._lock:
             self._closed = True
+            self._cancel.set()
             self._pending_builds.clear()
             thread = self._thread
         if thread is not None and thread.is_alive():
@@ -213,6 +215,10 @@ class LibraryRefresher:
                 self._executor(service, status, source_ids)
             else:
                 self._refresh(service, status, source_ids, mode, face_profile)
+        except ScanInterrupted:
+            status.note_error(stage="scan", code="CANCELLED", message="Refresh cancelled.")
+            status.set_failed_stages(["cancelled"])
+            status.finish(state="FAILED", elapsed_ms=0)
         except CatalogError as error:
             logger.info("library refresh failed: %s", error.code)
             status.note_error(stage="refresh", code=str(error.code), message=str(error.message)[:200])
@@ -251,6 +257,7 @@ class LibraryRefresher:
             enrich=self._enrich,
             mode=mode,
             face_profile=face_profile,
+            cancel_check=self._cancel.is_set,
         )
 
     # -------------------------------------------------------------------- internals

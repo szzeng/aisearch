@@ -73,6 +73,7 @@ class ScanRunner:
     ) -> None:
         self._service_factory = service_factory
         self._service: Any | None = None
+        self._cleanup_failed = False
         self._executor = executor
         self._on_idle_after_success = on_idle_after_success
         self._worker_id = worker_id
@@ -158,6 +159,19 @@ class ScanRunner:
 
     # ---------------------------------------------------------------------- worker
     def _loop(self) -> None:
+        try:
+            self._loop_body()
+        finally:
+            # SQLite connections are created on this worker and must close here too.
+            service, self._service = self._service, None
+            if service is not None:
+                try:
+                    service.close()
+                except Exception:
+                    self._cleanup_failed = True
+                    logger.exception("closing the worker catalog failed")
+
+    def _loop_body(self) -> None:
         succeeded_while_pending = False
         while True:
             with self._condition:
@@ -298,7 +312,7 @@ class ScanRunner:
         service = self._service_for_thread()
         if self._executor is not None:
             return self._executor(service, source_id)
-        options: dict[str, Any] = {}
+        options: dict[str, Any] = {"cancel_check": lambda: self._stop}
         if self._worker_id is not None:
             options["worker_id"] = self._worker_id
         return service.run_scan(source_id, **options)

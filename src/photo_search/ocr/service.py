@@ -670,6 +670,7 @@ def run_queue(
     limit: int | None = None,
     engine_cache: OcrEngineCache | None = None,
     cancel: Callable[[], bool] | None = None,
+    stop_check: Callable[[], bool] | None = None,
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
     asset_ids: Sequence[int] | None = None,
@@ -704,6 +705,10 @@ def run_queue(
     steps = 0
     remaining = None if limit is None else max(0, int(limit))
     while remaining is None or steps < remaining:
+        # Stop before claiming another job; an in-flight job finishes normally so it
+        # is not turned into a terminal CANCELLED record that a later build cannot resume.
+        if stop_check is not None and stop_check():
+            break
         if selected_assets is not None:
             scheduler.job_ids = _job_ids_for_assets(catalog, selected_assets)
         if scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):

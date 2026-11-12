@@ -821,3 +821,38 @@ def test_changed_input_does_not_create_cpu_fallback(harness: Any, monkeypatch: A
     jobs = jobs_for(harness, asset_id)
     assert jobs[contract.OCR_GPU_PROCESSOR_ID]["state"] == "BLOCKED"
     assert contract.OCR_CPU_PROCESSOR_ID not in jobs
+
+
+def test_stop_between_ocr_jobs_preserves_unclaimed_work_for_resume(
+    harness: Any, monkeypatch: Any
+) -> None:
+    first = make_asset(harness, "stop-first.jpg")
+    Image.new("RGB", (241, 120), "white").save(harness.library / "stop-second.jpg", "JPEG")
+    harness.scan()
+    second = harness.asset_id("stop-second.jpg")
+    enqueue(harness, first, device="cpu")
+    enqueue(harness, second, device="cpu")
+    install_runtime_evidence(monkeypatch)
+    checks = []
+
+    def stop_after_first():
+        checks.append(True)
+        return len(checks) > 1
+
+    partial = ocr_service.run_queue(
+        harness.catalog, data_root=harness.data_root, engine_cache=FakeEngineCache(),
+        stop_check=stop_after_first,
+    )
+    assert partial["steps"] == 1
+    states = [row["state"] for row in harness.catalog.read_all(
+        "SELECT state FROM jobs WHERE task_type=? ORDER BY job_id", (contract.OCR_TASK_TYPE,)
+    )]
+    assert states == ["SUCCEEDED", "QUEUED"]
+    resumed = ocr_service.run_queue(
+        harness.catalog, data_root=harness.data_root, engine_cache=FakeEngineCache(),
+    )
+    assert resumed["steps"] == 1
+    states = [row["state"] for row in harness.catalog.read_all(
+        "SELECT state FROM jobs WHERE task_type=? ORDER BY job_id", (contract.OCR_TASK_TYPE,)
+    )]
+    assert states == ["SUCCEEDED", "SUCCEEDED"]

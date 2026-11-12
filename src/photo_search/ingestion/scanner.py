@@ -378,11 +378,18 @@ def check_path_key_collisions(observations: Sequence[FileObservation]) -> None:
         seen[observation.path_key] = observation.relative_path
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path, *, on_chunk: Callable[[], None] | None = None) -> str:
     digest = hashlib.sha256()
     try:
         with path.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(HASH_CHUNK_BYTES), b""):
+            while True:
+                if on_chunk is not None:
+                    on_chunk()
+                chunk = stream.read(HASH_CHUNK_BYTES)
+                if not chunk:
+                    if on_chunk is not None:
+                        on_chunk()
+                    break
                 digest.update(chunk)
     except OSError as error:
         raise _wrap_os_error(error, target=path, directory=False) from error
@@ -550,9 +557,10 @@ def execute_scan(
             raise
         raise classified from error
 
-    now_ms = catalog.now_ms()
+    run._check_cancel()
     try:
         with catalog.write() as connection:
+            now_ms = catalog.now_ms()
             run.execution.require(connection, now_ms=now_ms)
             pending = store.count_unbound_locations(connection, source_id=source_id, scan_id=scan_id)
             if pending:
@@ -763,8 +771,8 @@ class _ScanRun:
         batch_size = self.observation_batch if self.fast else 1
         for batch in _batched(iterator, batch_size):
             self._check_cancel()
-            now_ms = self.catalog.now_ms()
             with self.catalog.write() as connection:
+                now_ms = self.catalog.now_ms()
                 self.execution.maybe_extend(
                     connection, worker=self.worker, lease_seconds=self.lease, now_ms=now_ms
                 )
@@ -961,8 +969,8 @@ class _ScanRun:
         attempts = 0
         while True:
             current = self._await_stability(relative, absolute, current)
-            now_ms = self.catalog.now_ms()
             with self.catalog.write() as connection:
+                now_ms = self.catalog.now_ms()
                 self.execution.maybe_extend(
                     connection, worker=self.worker, lease_seconds=self.lease, now_ms=now_ms
                 )
@@ -980,7 +988,20 @@ class _ScanRun:
                 self._write_progress(
                     connection, _processing_progress(self.processed, total), now_ms
                 )
-            digest = sha256_file(current.absolute_path)
+            def hash_checkpoint() -> None:
+                self._check_cancel()
+                now_ms = self.catalog.now_ms()
+                expires = self.execution.job.lease_expires_at
+                if expires is not None and now_ms + self.lease * 500 >= expires:
+                    # File reads occur outside the short heartbeat transaction. Recheck the
+                    # clock after acquiring the writer so an expired owner cannot revive.
+                    with self.catalog.write() as connection:
+                        self.execution.maybe_extend(
+                            connection, worker=self.worker, lease_seconds=self.lease,
+                            now_ms=self.catalog.now_ms(),
+                        )
+
+            digest = sha256_file(current.absolute_path, on_chunk=hash_checkpoint)
             confirmed = observe_file(current.relative_path, current.absolute_path)
             if confirmed.size != current.size or confirmed.mtime_ns != current.mtime_ns:
                 attempts += 1
@@ -996,8 +1017,8 @@ class _ScanRun:
                 self.unstable_retries += 1
                 current = confirmed
                 continue
-            now_ms = self.catalog.now_ms()
             with self.catalog.write() as connection:
+                now_ms = self.catalog.now_ms()
                 self.execution.maybe_extend(
                     connection, worker=self.worker, lease_seconds=self.lease, now_ms=now_ms
                 )
@@ -1191,9 +1212,9 @@ def _requeue(
     error: CatalogError,
 ) -> CatalogError:
     """Return the scan request to RETRY_WAIT; the scan_run keeps RUNNING (ADR-0002 §3.3)."""
-    now_ms = catalog.now_ms()
     terminal: CatalogError | None = None
     with catalog.write() as connection:
+        now_ms = catalog.now_ms()
         from photo_search.retention import invalidate_source_retention_evidence
 
         invalidate_source_retention_evidence(
@@ -1239,8 +1260,8 @@ def _block(
     source_status: str,
 ) -> CatalogError:
     """Persist a BLOCKED scan/job pair (no negative facts, no finished_at)."""
-    now_ms = catalog.now_ms()
     with catalog.write() as connection:
+        now_ms = catalog.now_ms()
         from photo_search.retention import invalidate_source_retention_evidence
 
         invalidate_source_retention_evidence(
@@ -1272,8 +1293,8 @@ def _fail(
     error: CatalogError,
 ) -> CatalogError:
     """Persist a FAILED scan/job pair; existing identities and annotations stay untouched."""
-    now_ms = catalog.now_ms()
     with catalog.write() as connection:
+        now_ms = catalog.now_ms()
         from photo_search.retention import invalidate_source_retention_evidence
 
         invalidate_source_retention_evidence(

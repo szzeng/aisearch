@@ -29,6 +29,7 @@ class FaceDetailRunner:
         self._service_factory = service_factory
         self._executor = executor
         self._service: Any | None = None
+        self._cleanup_failed = False
         self._engine_cache: Any | None = None
         self._condition = threading.Condition()
         self._pending: deque[tuple[str, str]] = deque()
@@ -95,6 +96,19 @@ class FaceDetailRunner:
                 logger.debug("closing the face-detail catalog failed", exc_info=True)
 
     def _loop(self) -> None:
+        try:
+            self._loop_body()
+        finally:
+            # SQLite connections are created on this worker and must close here too.
+            service, self._service = self._service, None
+            if service is not None:
+                try:
+                    service.close()
+                except Exception:
+                    self._cleanup_failed = True
+                    logger.exception("closing the worker catalog failed")
+
+    def _loop_body(self) -> None:
         while True:
             with self._condition:
                 while not self._pending and not self._closed:

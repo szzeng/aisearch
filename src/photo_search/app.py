@@ -83,10 +83,13 @@ def create_app(
             api.start_place_cover_warming()
             yield
         finally:
-            api.close()
-            api.set_data_root_lease(None)
-            if owns_lease:
-                lease.close()
+            if api.close():
+                api.set_data_root_lease(None)
+                if owns_lease:
+                    lease.close()
+            else:
+                # This also transfers a startup lease: its original owner must not close it.
+                api.defer_data_root_lease_release(lease)
 
     application = FastAPI(
         title="Photo Search",

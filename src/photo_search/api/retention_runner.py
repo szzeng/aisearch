@@ -49,13 +49,15 @@ class RetentionCleanupRunner:
             self._thread.start()
             return True
 
-    def close(self) -> None:
+    def close(self, *, timeout: float = 5.0) -> None:
         with self._lock:
             self._closed = True
             self._stop_requested.set()
             thread = self._thread
         if thread is not None:
-            thread.join()
+            thread.join(timeout=max(0.0, float(timeout)))
+            if thread.is_alive():
+                logger.warning("retention worker still active after %.1fs", float(timeout))
 
     def _run(self, run_id: str) -> None:
         current = str(run_id)

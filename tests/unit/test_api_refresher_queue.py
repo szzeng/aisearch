@@ -470,3 +470,109 @@ def test_retention_on_success_callback_runs_only_after_complete_refresh() -> Non
         assert callbacks == ["checked"]
     finally:
         refresher.close()
+
+
+def test_close_passes_cancellation_to_refresh_pipeline(monkeypatch) -> None:
+    entered = threading.Event()
+    observed = threading.Event()
+    closed = threading.Event()
+
+    class Service:
+        def close(self):
+            closed.set()
+
+    def refresh(_service, _status, **kwargs):
+        cancel_check = kwargs["cancel_check"]
+        assert not cancel_check()
+        entered.set()
+        for _ in range(100):
+            if cancel_check():
+                observed.set()
+                return
+            threading.Event().wait(0.01)
+        raise AssertionError("close did not propagate cancellation")
+
+    monkeypatch.setattr("photo_search.api.refresher.refresh_library", refresh)
+    refresher = LibraryRefresher(Service)
+    refresher.start([1])
+    assert entered.wait(2)
+    refresher.close(timeout=2)
+    assert observed.is_set()
+    assert closed.is_set()
+    assert not refresher.is_running()
+
+
+def test_scan_interruption_reports_cancellation_without_success_callback(monkeypatch) -> None:
+    from photo_search.ingestion.scanner import ScanInterrupted
+
+    class Service:
+        def close(self):
+            pass
+
+    successes = []
+    def interrupted(*_args, **_kwargs):
+        raise ScanInterrupted("interrupted at a file boundary")
+
+    monkeypatch.setattr("photo_search.api.refresher.refresh_library", interrupted)
+    refresher = LibraryRefresher(Service, on_success=lambda: successes.append(True))
+    try:
+        refresher.start([1])
+        assert refresher.wait_idle(timeout=2)
+        status = refresher.status()
+        assert status["state"] == "FAILED"
+        assert status["failed_stages"] == ["cancelled"]
+        assert status["errors"][-1]["code"] == "CANCELLED"
+        assert successes == []
+    finally:
+        refresher.close()
+
+
+def test_scan_runner_passes_close_cancellation_to_service() -> None:
+    from photo_search.api.runner import ScanRunner
+    from photo_search.ingestion.scanner import ScanInterrupted
+
+    entered = threading.Event()
+    observed = threading.Event()
+
+    class Service:
+        def run_scan(self, _source_id, *, cancel_check):
+            entered.set()
+            for _ in range(200):
+                if cancel_check():
+                    observed.set()
+                    raise ScanInterrupted("stopped")
+                threading.Event().wait(0.01)
+            raise AssertionError("runner did not propagate cancellation")
+
+        def close(self):
+            pass
+
+    runner = ScanRunner(Service)
+    assert runner.submit(1)
+    assert entered.wait(2)
+    runner.close(timeout=2)
+    assert observed.is_set()
+    assert not runner._thread.is_alive()
+    assert runner.state().last.code == "SCAN_INTERRUPTED"
+
+
+def test_scan_runner_closes_service_on_worker_thread() -> None:
+    from photo_search.api.runner import ScanRunner
+
+    opened = []
+    closed = []
+
+    class Service:
+        def __init__(self):
+            opened.append(threading.get_ident())
+        def run_scan(self, _source_id, **_options):
+            return {"state": "SUCCEEDED"}
+        def close(self):
+            closed.append(threading.get_ident())
+
+    runner = ScanRunner(Service)
+    runner.submit(1)
+    assert runner.wait_idle(timeout=2)
+    runner.close(timeout=2)
+    assert len(opened) == len(closed) == 1
+    assert opened == closed
