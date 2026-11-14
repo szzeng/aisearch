@@ -110,6 +110,7 @@ class StubAdapter:
     def health(self) -> dict[str, Any]:
         return {
             "loaded": True,
+            "runtime_observed_at": 1_700_000_000_000,
             "spec": self._spec.envelope,
             "device": {
                 "device": self.device,
@@ -921,3 +922,50 @@ def test_api_queries_import_does_not_eagerly_reenter_person_service() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_clip_health_revalidates_both_loaded_session_providers(monkeypatch):
+    from types import SimpleNamespace
+
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.models.embedding import chinese_clip_onnx
+
+    class Session:
+        def __init__(self):
+            self.providers = ["CUDAExecutionProvider"]
+        def get_providers(self):
+            return self.providers
+    adapter = chinese_clip_onnx.ChineseClipOnnxAdapter.__new__(
+        chinese_clip_onnx.ChineseClipOnnxAdapter
+    )
+    adapter._image_session = Session()
+    adapter._text_session = Session()
+    adapter._resolution = SimpleNamespace(
+        provider="CUDAExecutionProvider", as_dict=lambda: {"device": "cuda"},
+    )
+    adapter._spec = SimpleNamespace(as_dict=lambda: {})
+    adapter._capabilities = None
+    adapter._dll_report = None
+    adapter._runtime_observed_at = 10
+    monkeypatch.setattr(chinese_clip_onnx.time, "time_ns", lambda: 100_000_000)
+    health = adapter.health()
+    assert health["runtime_observed_at"] == 100
+    adapter._text_session.providers = ["CPUExecutionProvider"]
+    with pytest.raises(CatalogError) as error:
+        adapter.health()
+    assert error.value.code == "RUNTIME_RESOLUTION_MISMATCH"
+    assert error.value.details["role"] == "text"
+
+
+def test_qwen_fp32_health_rejects_fp16_parameter(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    adapter = qwen_adapter(tmp_path)
+    adapter._spec = replace(adapter._spec, precision="FP32")
+    adapter._torch = FakeTorch()
+    adapter._resolution = fake_resolution("cuda")
+    adapter._model = FakeModel({"wrong": FakeParameter("cuda:0", adapter._torch.float16)})
+    adapter._processor = object()
+    with pytest.raises(CatalogError) as refused:
+        adapter.health()
+    assert refused.value.details["parameter"] == "wrong"

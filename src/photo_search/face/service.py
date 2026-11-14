@@ -23,7 +23,6 @@ degradation instead of hiding it).
 from __future__ import annotations
 
 import sqlite3
-import threading
 from collections.abc import Callable, Sequence
 from functools import wraps
 from pathlib import Path
@@ -36,19 +35,42 @@ from photo_search.face.engine import FaceEngineCache
 from photo_search.face.index import FaceIndexCoordinator, reconcile
 from photo_search.face.processor import face_executor, face_processor_spec
 from photo_search.jobs import queue as jobs
+from photo_search.runtime.background_slot import (
+    BackgroundSlotBusy,
+    BackgroundSlotCancelled,
+    background_model_slot,
+)
 from photo_search.runtime.device import CPU_PROVIDER, CUDA_PROVIDER
+from photo_search.runtime.machine_model_slot import MachineModelSlot
 from photo_search.scheduler import engine as scheduler_engine
 from photo_search.scheduler.contracts import RuntimeCapabilities
 
-BACKGROUND_MODEL_SLOT = threading.RLock()
+BACKGROUND_MODEL_SLOT = MachineModelSlot()
 
 
 def _serialize_face_work(function: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
     """Share one inference slot across refreshes, per-photo requests, and batches."""
     @wraps(function)
-    def guarded(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        with BACKGROUND_MODEL_SLOT:
-            return function(*args, **kwargs)
+    def guarded(catalog: Catalog, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        cancel = kwargs.get("cancel")
+        claim_check = kwargs.get("claim_check")
+        def stopped() -> bool:
+            return bool((cancel is not None and cancel()) or (claim_check is not None and not claim_check()))
+        try:
+            with background_model_slot(cancel_check=stopped):
+                return function(catalog, *args, **kwargs)
+        except (BackgroundSlotBusy, BackgroundSlotCancelled) as error:
+            task_type = (
+                contract.FACE_DETAIL_AUTO_TASK_TYPE if kwargs.get("automatic_detail")
+                else contract.FACE_DETAIL_TASK_TYPE if kwargs.get("source_detail")
+                else contract.FACE_TASK_TYPE
+            )
+            return {
+                "steps": 0, "jobs": job_counts(catalog, task_type=task_type),
+                "pending_jobs": pending_job_count(catalog),
+                "reason": "CANCELLED" if isinstance(error, BackgroundSlotCancelled)
+                else "BACKGROUND_MODEL_SLOT_BUSY",
+            }
 
     return guarded
 
@@ -348,13 +370,29 @@ def record_runtime_evidence(
     data_root: str | Path | None,
     device: str,
     now_ms: int,
+    observation_clock: Callable[[], int] | None = None,
 ) -> dict[str, Any]:
     """Probe the devices, record the capability snapshot and the real qualifications."""
-    probe = cache.probe(data_root, include_gpu=str(device) != "cpu")
-    snapshot = seal_snapshot(
-        probe, runtime_package_id=str(spec.runtime_package_id), now_ms=int(now_ms)
+    probe = cache.probe(
+        data_root, include_gpu=str(device) != "cpu", observation_clock=observation_clock,
     )
-    scheduler.record_capability(snapshot, now_ms=int(now_ms))
+    times = probe.get("observed_at") or {}
+    enumeration = times.get("enumeration")
+    snapshot = seal_snapshot(
+        probe, runtime_package_id=str(spec.runtime_package_id),
+        now_ms=int(now_ms if enumeration is None else enumeration),
+    )
+    facts = dict(snapshot.envelope)
+    facts["providers"] = [dict(provider) for provider in facts["providers"]]
+    for provider in facts["providers"]:
+        observed_at = times.get(provider["device"])
+        if observed_at is not None:
+            provider["health_checked_at"] = int(observed_at)
+    snapshot = RuntimeCapabilities.seal(facts)
+    observed_devices = ("cpu", "gpu") if probe["gpu"].get("checked") else ("cpu",)
+    snapshot = scheduler.record_observation(
+        snapshot, observed_devices=observed_devices, now_ms=scheduler.catalog.now_ms(),
+    )
     qualified: list[str] = []
     for name, entry in (("cpu", probe["cpu"]), ("gpu", probe["gpu"])):
         if not entry.get("usable"):
@@ -366,7 +404,7 @@ def record_runtime_evidence(
             precision=str(spec.supported_precisions[0]),
             provider_name=str(entry["provider"]),
             runtime_package_id=str(spec.runtime_package_id),
-            now_ms=int(now_ms),
+            now_ms=int(times.get(name) if times.get(name) is not None else now_ms),
             note=("pinned buffalo_l detection+recognition sessions created for this device"),
         )
         qualified.append(str(name))
@@ -414,7 +452,9 @@ def run_queue(
         data_root=data_root if data_root is not None else catalog.data_root,
         device=str(device),
         now_ms=catalog.now_ms(),
+        observation_clock=catalog.now_ms,
     )
+    scheduler.capability_revision = str(evidence["capability_revision"])
     executor = face_executor(
         catalog,
         data_root=data_root,

@@ -11,6 +11,7 @@ identity. The two profiles are coordinated per asset/input so only one can run a
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,17 @@ from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogE
 from photo_search.jobs import queue as jobs
 from photo_search.ocr import contract
 from photo_search.ocr.engine import OcrEngineCache
+from photo_search.ocr.lease_heartbeat import OcrLeaseHeartbeat
 from photo_search.ocr.processor import ocr_executor, ocr_processor_spec
+from photo_search.runtime.background_slot import (
+    BackgroundSlotBusy,
+    background_model_slot,
+    foreground_model_waiting,
+)
 from photo_search.scheduler import capability as capability_module
 from photo_search.scheduler import engine as scheduler_engine
 from photo_search.scheduler.capability import snapshot_from_runtime
+from photo_search.scheduler.contracts import RuntimeCapabilities
 from photo_search.search import documents as search_documents
 
 #: States a forced re-recognition may rewind: everything except a live execution.
@@ -40,6 +48,8 @@ _RETIRED_PENDING_STATES = (
 )
 _RETIRED_REASON = "OCR_PROCESSOR_RETIRED"
 DEFAULT_RECONCILE_BATCH_SIZE = 100
+OCR_GPU_WAIT_SECONDS = 60.0
+OCR_GPU_BATCH_LIMIT = 8
 
 
 def processor_id_for_request(requested_device: str) -> str:
@@ -405,6 +415,8 @@ def record_runtime_evidence(
     data_root: str | Path,
     now_ms: int,
     note: str,
+    devices: Sequence[str] = ("cpu", "gpu"),
+    observation_clock: Callable[[], int] | None = None,
 ) -> dict[str, Any]:
     """Record the capability snapshot and this processor's qualification evidence.
 
@@ -418,8 +430,13 @@ def record_runtime_evidence(
         runtime_capabilities,
     )
 
+    requested_devices = tuple(dict.fromkeys(str(device) for device in devices))
+    if not requested_devices or any(device not in ("cpu", "gpu") for device in requested_devices):
+        raise ValueError("OCR evidence requires cpu and/or gpu")
     engines_by_device: dict[str, Any] = {}
     probe_errors: dict[str, Exception] = {}
+    sample_clock = observation_clock or (lambda: int(now_ms))
+    device_observed_at: dict[str, int] = {}
     shared_failure_codes = {
         "OCR_WEIGHTS_MISSING", "OCR_WEIGHTS_HASH_MISMATCH", "OCR_RUNTIME_UNAVAILABLE"
     }
@@ -429,11 +446,13 @@ def record_runtime_evidence(
         "OCR_SESSION_PROVIDER_UNVERIFIED",
         "RUNTIME_RESOLUTION_MISMATCH",
     }
-    for device_name in ("cpu", "gpu"):
+    for device_name in requested_devices:
         try:
-            engines_by_device[device_name] = cache.engine(
-                data_root, resolved_device=device_name, orientation_retry=True,
-            )
+            engine = cache.engine(data_root, resolved_device=device_name, orientation_retry=True)
+            verify_provider = getattr(engine, "verify_runtime_provider", None)
+            if callable(verify_provider):
+                verify_provider()
+            engines_by_device[device_name] = engine
         except Exception as error:  # each device contributes independent qualification evidence
             code = str(getattr(error, "code", ""))
             if code in shared_failure_codes:
@@ -447,21 +466,24 @@ def record_runtime_evidence(
                     details={"cause_code": code},
                 )
             probe_errors[device_name] = error
+        finally:
+            device_observed_at[device_name] = int(sample_clock())
     cpu_engine = engines_by_device.get("cpu")
     gpu_engine = engines_by_device.get("gpu")
     runtime = runtime_capabilities()
+    enumerated_at = int(sample_clock())
     provider_health: dict[str, str] = {}
     provider_precisions: dict[str, list[str]] = {}
-    if CPU_PROVIDER in runtime.providers:
+    if CPU_PROVIDER in runtime.providers and "cpu" in requested_devices:
         provider_health[CPU_PROVIDER] = "healthy" if cpu_engine is not None else "unhealthy"
         provider_precisions[CPU_PROVIDER] = list(spec.supported_precisions)
-    if CUDA_PROVIDER in runtime.providers:
+    if CUDA_PROVIDER in runtime.providers and "gpu" in requested_devices:
         provider_health[CUDA_PROVIDER] = "healthy" if gpu_engine is not None else "unhealthy"
         provider_precisions[CUDA_PROVIDER] = list(spec.supported_precisions)
     representative_error = probe_errors.get("gpu") or probe_errors.get("cpu")
     snapshot = snapshot_from_runtime(
         runtime,
-        now_ms=int(now_ms),
+        now_ms=enumerated_at,
         health=("healthy" if not probe_errors else "degraded"),
         provider_health=provider_health,
         provider_precisions=provider_precisions,
@@ -471,7 +493,16 @@ def record_runtime_evidence(
             else None
         ),
     )
-    scheduler.record_capability(snapshot, now_ms=int(now_ms))
+    facts = dict(snapshot.envelope)
+    facts["providers"] = [dict(provider) for provider in facts["providers"]]
+    for provider in facts["providers"]:
+        device_name = provider["device"]
+        if device_name in device_observed_at:
+            provider["health_checked_at"] = device_observed_at[device_name]
+    snapshot = scheduler.record_observation(
+        RuntimeCapabilities.seal(facts), observed_devices=requested_devices,
+        now_ms=int(scheduler.catalog.now_ms()),
+    )
     engines = [
         ("cpu", cpu_engine, CPU_PROVIDER),
         ("gpu", gpu_engine, CUDA_PROVIDER),
@@ -497,7 +528,7 @@ def record_runtime_evidence(
             precision=str(profile_spec.supported_precisions[0]),
             provider_name=expected_provider,
             runtime_package_id=str(profile_spec.runtime_package_id),
-            now_ms=int(now_ms),
+            now_ms=device_observed_at[device_name],
             note=str(note),
         )
         qualified.append((device_name, engine, expected_provider))
@@ -567,15 +598,24 @@ def _requeue_auto_fallback_cpu(
     return bool(cursor.rowcount)
 
 
-def _coordinate_gpu_fallbacks(catalog: Catalog, *, now_ms: int) -> int:
+_PROBE_NOT_GIVEN = object()
+
+
+def _coordinate_gpu_fallbacks(
+    catalog: Catalog, *, now_ms: int, gpu_probe_error: Any = _PROBE_NOT_GIVEN,
+    job_ids: Sequence[int] | None = None,
+) -> int:
     """Atomically stop a recoverable auto GPU branch and create its CPU counterpart."""
     created = 0
+    if job_ids is not None and not job_ids:
+        return 0
+    scope = "" if job_ids is None else " AND job_id IN (" + ",".join("?" for _ in job_ids) + ")"
     with catalog.write() as connection:
         rows = connection.execute(
             "SELECT job_id, subject_id, input_revision, state, requested_device, "
             "last_error_code, blocking_reason FROM jobs WHERE task_type = ? AND processor_id = ? "
-            "AND state IN ('BLOCKED', 'FAILED') ORDER BY job_id",
-            (contract.OCR_TASK_TYPE, contract.OCR_GPU_PROCESSOR_ID),
+            "AND state IN ('BLOCKED', 'FAILED')" + scope + " ORDER BY job_id",
+            (contract.OCR_TASK_TYPE, contract.OCR_GPU_PROCESSOR_ID, *(job_ids or ())),
         ).fetchall()
         for row in rows:
             if str(row["requested_device"]) != "auto":
@@ -586,10 +626,15 @@ def _coordinate_gpu_fallbacks(catalog: Catalog, *, now_ms: int) -> int:
             ) == "OCR_SESSION_PROVIDER_UNVERIFIED":
                 continue
             if str(row["state"]) == jobs.STATE_BLOCKED and code == RUNTIME_CAPABILITY_UNAVAILABLE:
-                snapshot = capability_module.latest_capability(
-                    connection, runtime_package_id=contract.OCR_RUNTIME_PACKAGE_ID
-                )
-                observed_code = None if snapshot is None else snapshot.failure_code
+                if gpu_probe_error is _PROBE_NOT_GIVEN:
+                    snapshot = capability_module.latest_capability(
+                        connection, runtime_package_id=contract.OCR_RUNTIME_PACKAGE_ID
+                    )
+                    observed_code = None if snapshot is None else snapshot.failure_code
+                else:
+                    observed_code = gpu_probe_error
+                    if observed_code is None:
+                        continue
                 if observed_code == "OCR_SESSION_PROVIDER_UNVERIFIED":
                     connection.execute(
                         "UPDATE jobs SET last_error_code = ? WHERE job_id = ? "
@@ -677,54 +722,165 @@ def run_queue(
 ) -> dict[str, Any]:
     """Drain the runnable OCR jobs; bounded, single-threaded, no sleeping."""
     reconcile_retired_ocr_jobs(catalog, now_ms=catalog.now_ms())
-    specs = (ocr_processor_spec("cpu"), ocr_processor_spec("gpu"))
-    scheduler = scheduler_engine.Scheduler(catalog, specs, lease_seconds=catalog.lease_seconds)
+    cpu_spec, gpu_spec = ocr_processor_spec("cpu"), ocr_processor_spec("gpu")
+    cpu_scheduler = scheduler_engine.Scheduler(catalog, [cpu_spec], lease_seconds=catalog.lease_seconds)
+    gpu_scheduler = scheduler_engine.Scheduler(catalog, [gpu_spec], lease_seconds=catalog.lease_seconds)
     selected_assets = None if asset_ids is None else tuple(sorted({int(value) for value in asset_ids}))
-    if selected_assets is not None:
-        scheduler.job_ids = _job_ids_for_assets(catalog, selected_assets)
-    spec = next(item for item in specs if item.processor_id == contract.OCR_GPU_PROCESSOR_ID)
     cache = engine_cache or OcrEngineCache()
-    # Creating the pinned sessions is the evidence for the "healthy" capability record.
     resolved_data_root = data_root if data_root is not None else catalog.data_root
-    evidence = record_runtime_evidence(
-        scheduler,
-        spec,
-        cache,
-        data_root=resolved_data_root,
-        now_ms=catalog.now_ms(),
-        note="pinned PP-OCRv4 ONNX sessions created and their actual providers inspected",
-    )
     executor = ocr_executor(
-        catalog,
-        data_root=data_root,
-        engine_cache=cache,
-        cancel=cancel,
-        deadline_ms=deadline_ms,
-        clock=clock,
+        catalog, data_root=data_root, engine_cache=cache, cancel=cancel,
+        deadline_ms=deadline_ms, clock=clock,
     )
+    evidence: dict[str, Any] = {}
+    gpu_evidence: dict[str, Any] = {}
+    cpu_probed = False
+    stopped = False
+    gpu_exhausted = False
+    gpu_wait_started: float | None = None
+    waiting_gpu = False
     steps = 0
     remaining = None if limit is None else max(0, int(limit))
-    while remaining is None or steps < remaining:
-        # Stop before claiming another job; an in-flight job finishes normally so it
-        # is not turned into a terminal CANCELLED record that a later build cannot resume.
-        if stop_check is not None and stop_check():
-            break
-        if selected_assets is not None:
-            scheduler.job_ids = _job_ids_for_assets(catalog, selected_assets)
-        if scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
-            steps += 1
-            _coordinate_gpu_fallbacks(catalog, now_ms=catalog.now_ms())
-            continue
-        if _coordinate_gpu_fallbacks(catalog, now_ms=catalog.now_ms()):
-            continue
-        break
+    heartbeat = OcrLeaseHeartbeat(catalog, lease_seconds=catalog.lease_seconds)
+    try:
+        while remaining is None or steps < remaining:
+            if stop_check is not None and stop_check():
+                stopped = True
+                break
+            scoped_jobs = None if selected_assets is None else _job_ids_for_assets(catalog, selected_assets)
+            cpu_scheduler.job_ids = scoped_jobs
+            gpu_scheduler.job_ids = scoped_jobs
+            cpu_ran = False
+            if _processor_has_work(catalog, contract.OCR_CPU_PROCESSOR_ID, scoped_jobs):
+                if not cpu_probed:
+                    evidence = record_runtime_evidence(
+                        cpu_scheduler, cpu_spec, cache, data_root=resolved_data_root,
+                        now_ms=catalog.now_ms(), note="OCR CPU session inspected", devices=("cpu",),
+                        observation_clock=catalog.now_ms,
+                    )
+                    cpu_scheduler.capability_revision = str(evidence["capability_revision"])
+                    cpu_probed = True
+                if (stop_check is not None and stop_check()) or (
+                    steps > 0 and cancel is not None and cancel()
+                ):
+                    stopped = True
+                    break
+                if cpu_scheduler.run_once(
+                    executor, worker_id=worker_id, now_ms=catalog.now_ms(),
+                    completion_clock=catalog.now_ms,
+                    lease_monitor=lambda request: heartbeat.track(request, worker_id),
+                ):
+                    steps += 1
+                    cpu_ran = True
+                    if cancel is not None and cancel():
+                        stopped = True
+                        break
+                    if remaining is not None and steps >= remaining:
+                        break
+            if not gpu_exhausted and _processor_has_work(
+                catalog, contract.OCR_GPU_PROCESSOR_ID, scoped_jobs, include_blocked=True,
+            ):
+                try:
+                    # Acquire before probing or claiming, outside any SQLite transaction.
+                    with background_model_slot(timeout=0):
+                        if foreground_model_waiting():
+                            raise BackgroundSlotBusy("foreground model request is waiting")
+                        had_waited = gpu_wait_started is not None
+                        waiting_gpu = False
+                        gpu_wait_started = None
+                        if (stop_check is not None and stop_check()) or (
+                            (had_waited or steps > 0) and cancel is not None and cancel()
+                        ):
+                            stopped = True
+                            break
+                        evidence = record_runtime_evidence(
+                            gpu_scheduler, gpu_spec, cache, data_root=resolved_data_root,
+                            now_ms=catalog.now_ms(), note="OCR GPU session inspected", devices=("gpu",),
+                            observation_clock=catalog.now_ms,
+                        )
+                        gpu_evidence = dict(evidence)
+                        gpu_scheduler.capability_revision = str(evidence["capability_revision"])
+                        if (stop_check is not None and stop_check()) or (
+                            (had_waited or steps > 0) and cancel is not None and cancel()
+                        ):
+                            stopped = True
+                            break
+                        probe_error = gpu_evidence.get("gpu_probe_error")
+                        probe_code = None if probe_error is None else probe_error.get("code")
+                        if probe_code is None and "gpu" not in gpu_evidence.get("qualified_devices", []):
+                            probe_code = RUNTIME_CAPABILITY_UNAVAILABLE
+                        if probe_code is None:
+                            gpu_scheduler.recover_blocked(
+                                now_ms=catalog.now_ms(), capability_revision=gpu_scheduler.capability_revision,
+                            )
+                        batch_progress = False
+                        for _ in range(OCR_GPU_BATCH_LIMIT):
+                            if foreground_model_waiting():
+                                if batch_progress:
+                                    break
+                                raise BackgroundSlotBusy("foreground model request is waiting")
+                            if stop_check is not None and stop_check():
+                                stopped = True
+                                break
+                            if (had_waited or steps > 0) and cancel is not None and cancel():
+                                stopped = True
+                                break
+                            scoped_jobs = None if selected_assets is None else _job_ids_for_assets(catalog, selected_assets)
+                            gpu_scheduler.job_ids = scoped_jobs
+                            ran = gpu_scheduler.run_once(
+                                executor, worker_id=worker_id, now_ms=catalog.now_ms(),
+                                completion_clock=catalog.now_ms,
+                                lease_monitor=lambda request: heartbeat.track(request, worker_id),
+                            )
+                            if ran:
+                                steps += 1
+                                batch_progress = True
+                            if cancel is not None and cancel():
+                                stopped = True
+                                break
+                            fallback = _coordinate_gpu_fallbacks(
+                                catalog, now_ms=catalog.now_ms(), gpu_probe_error=probe_code,
+                                job_ids=scoped_jobs,
+                            )
+                            batch_progress = batch_progress or bool(fallback)
+                            if not ran:
+                                gpu_exhausted = True
+                            if not ran or fallback or (remaining is not None and steps >= remaining):
+                                break
+                            if _processor_has_work(catalog, contract.OCR_CPU_PROCESSOR_ID, scoped_jobs):
+                                break
+                        if stopped:
+                            break
+                        if batch_progress:
+                            continue
+                except BackgroundSlotBusy:
+                    waiting_gpu = True
+                    if cancel is not None and cancel():
+                        stopped = True
+                        break
+                    if gpu_wait_started is None:
+                        gpu_wait_started = time.monotonic()
+                    if cpu_ran:
+                        continue
+                    if time.monotonic() - gpu_wait_started >= OCR_GPU_WAIT_SECONDS:
+                        break
+                    time.sleep(0.1)
+                    continue
+            if not cpu_ran:
+                break
+    finally:
+        heartbeat.close()
+    fallback_scope = "" if selected_assets is None else (
+        " AND c.subject_id IN (" + ",".join("?" for _ in selected_assets) + ")"
+        if selected_assets else " AND 0"
+    )
     fallbacks = catalog.read_all(
         "SELECT c.job_id, c.subject_id, c.input_revision, g.last_error_code AS fallback_reason "
         "FROM jobs AS c JOIN jobs AS g ON g.subject_type = c.subject_type "
         "AND g.subject_id = c.subject_id AND g.input_revision = c.input_revision "
         "AND g.task_type = c.task_type AND g.processor_id = ? "
         "WHERE c.task_type = ? AND c.processor_id = ? "
-        "AND g.last_error_code IN (?, ?, ?) ORDER BY c.job_id",
+        "AND g.last_error_code IN (?, ?, ?)" + fallback_scope + " ORDER BY c.job_id",
         (
             contract.OCR_GPU_PROCESSOR_ID,
             contract.OCR_TASK_TYPE,
@@ -732,15 +888,42 @@ def run_queue(
             RUNTIME_CAPABILITY_UNAVAILABLE,
             "OCR_GPU_INITIALIZATION_FAILED",
             "OCR_GPU_EXECUTION_FAILED",
+            *(str(asset_id) for asset_id in (selected_assets or ())),
         ),
     )
+    if gpu_evidence:
+        evidence = {**evidence, **gpu_evidence}
     return {
         "steps": steps,
         "jobs": job_counts(catalog),
         "pending_jobs": pending_job_count(catalog),
         "cpu_fallbacks": [dict(row) for row in fallbacks],
+        "waiting_gpu": waiting_gpu,
+        "stopped": stopped,
         **evidence,
     }
+
+
+def _processor_has_work(
+    catalog: Catalog, processor_id: str, scoped_jobs: Sequence[int] | None,
+    *, include_blocked: bool = False,
+) -> bool:
+    if scoped_jobs is not None and not scoped_jobs:
+        return False
+    runnable = "state IN ('QUEUED','RETRY_WAIT','RUNNING')"
+    if include_blocked:
+        runnable = (
+            "(" + runnable + " OR (state IN ('BLOCKED','FAILED') AND requested_device='auto' "
+            "AND last_error_code IN ('RUNTIME_CAPABILITY_UNAVAILABLE',"
+            "'OCR_GPU_INITIALIZATION_FAILED','OCR_GPU_EXECUTION_FAILED')))"
+        )
+    scope = "" if scoped_jobs is None else " AND job_id IN (" + ",".join("?" for _ in scoped_jobs) + ")"
+    row = catalog.read_one(
+        "SELECT 1 FROM jobs WHERE task_type=? AND processor_id=? AND "
+        + runnable + scope + " LIMIT 1",
+        (contract.OCR_TASK_TYPE, processor_id, *(scoped_jobs or ())),
+    )
+    return row is not None
 
 
 def _job_ids_for_assets(catalog: Catalog, asset_ids: Sequence[int]) -> tuple[int, ...]:

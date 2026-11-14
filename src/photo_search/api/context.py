@@ -15,6 +15,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any
 
 from photo_search.api.errors import Redactor
@@ -391,6 +392,15 @@ class ApiContext:
             self._photo_smart_refresh_runner = SmartRefreshRunner(self)
         return self._photo_smart_refresh_runner
 
+    def search_model_intent(self) -> Any:
+        """Advertise a real search until its first GPU encode, without holding the GPU."""
+        from photo_search.runtime.background_slot import foreground_model_intent
+
+        with self._adapter_lock:
+            subject = self._encoder if self._encoder_resolved else self._encoder_factory
+            needs_slot = subject is not None and bool(getattr(subject, "requires_gpu_slot", True))
+        return foreground_model_intent() if needs_slot else nullcontext()
+
     def query_encoder(self) -> QueryEncoder | None:
         """The query half of the embedding adapter, or ``None`` when none is wired.
 
@@ -410,7 +420,28 @@ class ApiContext:
                 "semantic model resources are reserved for candidate index work",
                 details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
             )
+        from photo_search.runtime.background_slot import foreground_model_slot
+
+        # Fast reads may return an existing proxy, but initialization always releases
+        # the adapter lock before acquiring a model permit and then rechecks state.
         with self._adapter_lock:
+            if self._closed:
+                return None
+            if self._encoder_resolved:
+                return self._gated_encoder
+            if self._encoder_factory is None:
+                self._encoder_resolved = True
+                return None
+            needs_slot = bool(getattr(self._encoder_factory, "requires_gpu_slot", True))
+        resource = foreground_model_slot() if needs_slot else nullcontext()
+        with resource, self._adapter_lock:
+            if self.model_resource_gate.reserved:
+                from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+
+                raise CatalogError(
+                    RUNTIME_CAPABILITY_UNAVAILABLE, "semantic model resources are reserved",
+                    details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+                )
             if self._closed:
                 return None
             if self._encoder_resolved:
@@ -427,7 +458,11 @@ class ApiContext:
                 self._encoder_failure_code = type(error).__name__
             self._encoder_resolved = True
             if self._encoder is not None:
-                self._gated_encoder = GatedEncoder(self._encoder, self.model_resource_gate)
+                encoder = self._encoder
+                def is_current() -> bool:
+                    with self._adapter_lock:
+                        return not self._closed and self._encoder is encoder
+                self._gated_encoder = GatedEncoder(encoder, self.model_resource_gate, is_current)
             return self._gated_encoder
 
     def reranker(self) -> Any:

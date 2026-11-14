@@ -20,6 +20,7 @@ decide what is written here:
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Sequence
@@ -223,6 +224,7 @@ class Qwen3VLEmbeddingAdapter:
         self._torch: Any | None = None
         self._resolution: DeviceResolution | None = None
         self._runtime: RuntimeFacts | None = None
+        self._runtime_observed_at: int | None = None
         self._verification: dict[str, Any] | None = None
 
     # ----------------------------------------------------------------- established surface
@@ -247,6 +249,7 @@ class Qwen3VLEmbeddingAdapter:
         torch = _import_torch()
         transformers = _import_transformers()
         self._torch = torch
+        self._runtime_observed_at = time.time_ns() // 1_000_000
         cuda_available = bool(torch.cuda.is_available())
         self._runtime = RuntimeFacts(
             backend="pytorch",
@@ -381,20 +384,25 @@ class Qwen3VLEmbeddingAdapter:
                         "expected": device,
                     },
                 )
-            if self._spec.precision == "FP16" and parameter.dtype.is_floating_point:
-                if parameter.dtype != expected_dtype:
-                    raise CatalogError(
-                        EMBEDDING_DEVICE_UNAVAILABLE,
-                        "a model parameter has an unexpected precision",
-                        details={"parameter": name, "dtype": str(parameter.dtype)},
-                    )
+            if parameter.dtype.is_floating_point and parameter.dtype != expected_dtype:
+                raise CatalogError(
+                    EMBEDDING_DEVICE_UNAVAILABLE,
+                    "a model parameter has an unexpected precision",
+                    details={"parameter": name, "dtype": str(parameter.dtype)},
+                )
 
     def health(self) -> dict[str, Any]:
+        loaded = self._model is not None and self._processor is not None
+        observed_at = self._runtime_observed_at
+        if loaded and self._resolution is not None and self._torch is not None:
+            observed_at = time.time_ns() // 1_000_000
+            self._assert_placement()
         return {
-            "loaded": self._model is not None and self._processor is not None,
+            "loaded": loaded,
             "spec": self._spec.as_dict(),
             "device": self._resolution.as_dict() if self._resolution else None,
             "runtime": self._runtime_document(),
+            "runtime_observed_at": observed_at,
             "verification": self._verification,
             "reference": {
                 "repository": REFERENCE_REPOSITORY,

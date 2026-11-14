@@ -41,6 +41,7 @@ from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     INDEX_REPAIR_REQUIRED,
     PROCESSOR_MISMATCH,
+    RUNTIME_CAPABILITY_UNAVAILABLE,
     RUNTIME_RESOLUTION_MISMATCH,
     SPACE_MISMATCH,
     CatalogError,
@@ -400,6 +401,8 @@ def adapter_runtime_facts(adapter: Any) -> dict[str, Any]:
         devices.insert(0, "gpu")
     return {
         "runtime_package_id": f"{package}@{version}" if version else package,
+        # Worker health returns cached load-time facts, never a live enumeration.
+        "observed_at": int(health.get("runtime_observed_at") or 0),
         "runtime_backend": str(runtime.get("runtime_backend") or "onnxruntime"),
         "supported_devices": tuple(devices),
         "supported_precisions": (precision,),
@@ -429,6 +432,14 @@ def record_runtime_evidence(
     now_ms: int,
 ) -> dict[str, Any]:
     """Record the capability snapshot and the qualification of the device really used."""
+    observed_at = int(facts.get("observed_at") or 0)
+    if observed_at <= 0:
+        raise CatalogError(
+            RUNTIME_CAPABILITY_UNAVAILABLE,
+            "the loaded model has no trustworthy runtime observation time",
+            details={"reason": "RUNTIME_OBSERVATION_TIME_UNKNOWN", "retryable": True},
+        )
+    now_ms = observed_at
     resolved = str(facts["resolved_device"])
     provider = str(facts["resolved_provider"])
     precision = str(facts["resolved_precision"])
@@ -475,7 +486,10 @@ def record_runtime_evidence(
             "failure_code": None,
         }
     )
-    scheduler.record_capability(snapshot, now_ms=int(now_ms))
+    snapshot = scheduler.record_observation(
+        snapshot, observed_devices=(resolved,), now_ms=scheduler.catalog.now_ms(),
+        authoritative_enumeration=False,
+    )
     evidence = scheduler.record_qualification(
         processor_id=str(spec.processor_id),
         spec_revision=str(spec.spec_revision),
@@ -679,6 +693,7 @@ def build_index(
     ran, the outbox confirmation it drained, and the resulting generation/entry counts.
     """
     facts = adapter_runtime_facts(encoder)
+    facts_observed_at = int(facts.get("observed_at") or 0)
     spec = semantic_spec(manifest_path, facts, device_policy=device_policy)
     space_id = str(spec.envelope["space_id"])
     dimension = int(spec.envelope["dimension"])
@@ -706,7 +721,8 @@ def build_index(
         )
     refuse_orphan_generation_table(catalog, space_id=space_id, processor_id=str(spec.processor_id))
     scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
-    evidence = record_runtime_evidence(scheduler, spec, facts, now_ms=catalog.now_ms())
+    evidence = record_runtime_evidence(scheduler, spec, facts, now_ms=facts_observed_at)
+    scheduler.capability_revision = str(evidence["capability_revision"])
     selection = semantic_selection(
         catalog,
         space_id=space_id,

@@ -420,3 +420,66 @@ def test_shutdown_keeps_lease_when_worker_cleanup_fails(api_env, monkeypatch):
         lease.close()
 
     asyncio.run(scenario())
+
+
+def test_shutdown_keeps_data_root_lease_until_ocr_heartbeat_finishes(api_env, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from photo_search.ocr.lease_heartbeat import OcrLeaseHeartbeat
+
+    api = api_env.app.state.api
+    monkeypatch.setattr(api, "start_place_cover_warming", lambda: None)
+    monkeypatch.setattr(api, "start_automatic_retention_cleanup", lambda: None)
+    heartbeat_entered = threading.Event()
+    release_heartbeat = threading.Event()
+    drain_entered = threading.Event()
+    real_write = Catalog.write
+
+    @contextmanager
+    def delayed_write(catalog):
+        if threading.current_thread().name == "ocr-lease-heartbeat":
+            heartbeat_entered.set()
+            assert release_heartbeat.wait(10)
+        with real_write(catalog) as connection:
+            yield connection
+    monkeypatch.setattr(Catalog, "write", delayed_write)
+
+    def blocked_refresh(service, _status, _source_ids):
+        heartbeat = OcrLeaseHeartbeat(service.catalog, lease_seconds=1)
+        try:
+            with heartbeat.track(SimpleNamespace(job_id=-1, lease_token="synthetic"), "synthetic"):
+                drain_entered.set()
+                assert heartbeat_entered.wait(3)
+        finally:
+            heartbeat.close()
+    api._refresher_executor = blocked_refresh
+
+    async def scenario():
+        try:
+            async with api_env.app.router.lifespan_context(api_env.app):
+                refresher = api.refresher()
+                close = refresher.close
+                monkeypatch.setattr(refresher, "close", lambda: close(timeout=0.01))
+                refresher.start([1])
+                assert drain_entered.wait(2)
+                assert heartbeat_entered.wait(3)
+            assert refresher.is_running()
+            with pytest.raises(DataRootLeaseBusy):
+                acquire_data_root_lease(api.settings.data_root)
+            release_heartbeat.set()
+            assert await asyncio.to_thread(api._shutdown_complete.wait, 4)
+            deadline = time.monotonic() + 3
+            while True:
+                try:
+                    lease = acquire_data_root_lease(api.settings.data_root)
+                    break
+                except DataRootLeaseBusy:
+                    if time.monotonic() >= deadline:
+                        raise
+                    await asyncio.sleep(0.01)
+            lease.close()
+            assert not refresher.is_running()
+        finally:
+            release_heartbeat.set()
+    asyncio.run(scenario())

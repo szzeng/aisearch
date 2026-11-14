@@ -1297,7 +1297,10 @@ def _enrichment_stages(
     location = set(sorted(location_delta))
     stages: dict[str, Any] = {}
     from photo_search.face.engine import FaceEngineCache
+    from photo_search.ocr.engine import OcrEngineCache
+
     face_cache = FaceEngineCache()
+    ocr_cache = OcrEngineCache()
     runners: dict[str, Callable[[], dict[str, Any]]] = {
         "thumbnail": lambda: _thumbnail_stage(service, content, cancel_check),
         "taken_time": lambda: _taken_time_stage(catalog, content | location),
@@ -1313,6 +1316,7 @@ def _enrichment_stages(
         "ocr": lambda: _ocr_stage(
             catalog, service.data_root, content, source_ids=scopes,
             recover_cr2=mode == REFRESH_MODE_BUILD, cancel_check=cancel_check,
+            engine_cache=ocr_cache,
         ),
     }
     if mode == REFRESH_MODE_BUILD:
@@ -1362,7 +1366,7 @@ def _enrichment_stages(
                 scopes=scopes,
                 runner=lambda page: _ocr_stage(
                     catalog, service.data_root, page, source_ids=scopes, recover_cr2=True,
-                    cancel_check=cancel_check,
+                    cancel_check=cancel_check, engine_cache=ocr_cache,
                 ),
                 cancel_check=cancel_check,
             ),
@@ -1415,9 +1419,17 @@ def _drain_scope(
     payloads: list[dict[str, Any]] = []
     page_size = BUILD_PAGE_SIZE
     walked = 0
+    stop_stage = False
+    cancelled = False
     for scope in scopes:
+        if stop_stage:
+            break
         cursor = 0
         while len(payloads) < BUILD_ROUND_CAP:
+            if cancel_check is not None and cancel_check():
+                cancelled = True
+                stop_stage = True
+                break
             page = _scoped_asset_page(
                 catalog, source_id=scope, after_asset_id=cursor, limit=page_size
             )
@@ -1428,15 +1440,21 @@ def _drain_scope(
             walked += len(page)
             cursor = page[-1]
             state = str(payload.get("state"))
+            if cancel_check is not None and cancel_check():
+                cancelled = True
+                stop_stage = True
+                break
             if state in (STAGE_FAILED, STAGE_SKIPPED):
-                # An unavailable or broken processor will not become available by walking
-                # the next page, so stop here and report what happened.
+                # A global cancellation or shared GPU contention applies to all scopes.
+                if str(payload.get("reason")) in ("CANCELLED", "BACKGROUND_MODEL_SLOT_BUSY"):
+                    stop_stage = True
                 break
             if len(page) < page_size:
                 break
-            if cancel_check is not None and cancel_check():
-                break
     merged = _merge_stage_payloads(payloads)
+    if cancelled:
+        merged["state"] = STAGE_FAILED
+        merged["reason"] = "CANCELLED"
     # ``assets`` is the number of assets this stage really walked, whichever keys the
     # processor itself reports.
     merged["assets"] = walked
@@ -1904,6 +1922,7 @@ def _ocr_stage(
     catalog: Any, data_root: Any, assets: set[int], *,
     source_ids: Sequence[int | None] = (None,), recover_cr2: bool = False,
     cancel_check: Callable[[], bool] | None = None,
+    engine_cache: Any | None = None,
 ) -> dict[str, Any]:
     from photo_search.ocr import contract as ocr_contract
     from photo_search.ocr import service as ocr_service
@@ -1911,16 +1930,28 @@ def _ocr_stage(
 
     if not assets:
         return {"state": STAGE_SKIPPED_NO_TARGETS, "targets": 0, "steps": 0}
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(assets),
+                "queued": 0, "steps": 0}
     try:
         ocr_weights.resolve_and_verify(data_root)
     except CatalogError as error:
+        if cancel_check is not None and cancel_check():
+            return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(assets),
+                    "queued": 0, "steps": 0}
         return {
             "state": STAGE_SKIPPED,
             "reason": str(error.code),
             "targets": len(assets),
             "steps": 0,
         }
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(assets),
+                "queued": 0, "steps": 0}
     targets = ocr_service.ocr_targets(catalog, asset_ids=sorted(assets)[:ENRICH_LIMIT])
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(targets),
+                "queued": 0, "steps": 0}
     processor_id = ocr_service.processor_id_for_request("auto")
     recovery: dict[str, int] = {}
     if recover_cr2:
@@ -1935,6 +1966,9 @@ def _ocr_stage(
             processor_id=processor_id,
             artifact_revision=ocr_contract.OCR_ARTIFACT_REVISION,
         )
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(targets),
+                "queued": 0, "steps": 0, **recovery}
     enqueued = ocr_service.enqueue_targets(catalog, targets, now_ms=catalog.now_ms())
     if cancel_check is not None and cancel_check():
         return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(targets),
@@ -1942,7 +1976,15 @@ def _ocr_stage(
     run = ocr_service.run_queue(
         catalog, data_root=data_root, worker_id="library-refresh",
         asset_ids=[int(target["asset_id"]) for target in targets], stop_check=cancel_check,
+        engine_cache=engine_cache,
     )
+    if run.get("waiting_gpu") or run.get("stopped"):
+        return {
+            "state": STAGE_FAILED,
+            "reason": "CANCELLED" if run.get("stopped") else "BACKGROUND_MODEL_SLOT_BUSY",
+            "targets": len(targets), "queued": int(enqueued["queued"]),
+            "steps": int(run["steps"]), "pending_jobs": int(run["pending_jobs"]),
+        }
     return {
         "state": STAGE_OK,
         "targets": len(targets),

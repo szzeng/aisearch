@@ -26,6 +26,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ from photo_search.runtime.device import (
     CUDA_PROVIDER,
     DevicePolicy,
     build_session_options,
+    normalize_device,
     preload_runtime_dlls,
     resolve_device,
     runtime_capabilities,
@@ -626,6 +628,33 @@ class FaceEngine:
             )
         return session
 
+    def verify_runtime_provider(self) -> None:
+        """Recheck the two existing sessions without creating another model."""
+        try:
+            detection = tuple(self.detector.get_providers())
+            recognition = tuple(self.recognizer.get_providers())
+        except Exception as error:
+            raise CatalogError(
+                FACE_DEVICE_UNAVAILABLE,
+                "the loaded face session provider could not be checked",
+                details={"reason": type(error).__name__},
+            ) from error
+        for role, actual in (("detection", detection), ("recognition", recognition)):
+            if not actual or actual[0] != self.provider:
+                raise CatalogError(
+                    FACE_DEVICE_UNAVAILABLE,
+                    "the loaded face session no longer uses its resolved provider",
+                    details={"role": role, "expected": self.provider, "actual": list(actual)},
+                )
+        if self.device == "cuda" and CPU_PROVIDER not in detection:
+            raise CatalogError(
+                FACE_DEVICE_UNAVAILABLE,
+                "the loaded face detector lost its required CPU provider",
+                details={"role": "detection", "actual": list(detection)},
+            )
+        self.detector_providers = detection
+        self.recognizer_providers = recognition
+
     def detect(self, blob: Any) -> list[Any]:
         return list(self.detector.run(None, {self.detector.get_inputs()[0].name: blob}))
 
@@ -665,6 +694,17 @@ def _onnx_session(*args: Any, **kwargs: Any) -> Any:
     return onnxruntime.InferenceSession(*args, **kwargs)
 
 
+FACE_FAILED_PROBE_RETRY_MS = 5_000
+
+
+def _face_device_cache_key(device: str) -> str:
+    """Face auto uses the existing CPU_ALLOWED default, which resolves to CUDA."""
+    requested = str(device)
+    if requested == "auto":
+        return "gpu"
+    return "cpu" if normalize_device(requested) == "cpu" else "gpu"
+
+
 class FaceEngineCache:
     """Process-local cache of the verified weights and their ONNX sessions, per device.
 
@@ -680,6 +720,7 @@ class FaceEngineCache:
         self._weights: dict[tuple[Any, ...], FaceWeights] = {}
         self._engines: dict[tuple[Any, ...], FaceEngine] = {}
         self._attempts: dict[tuple[Any, ...], dict[str, Any]] = {}
+        self._device_locks: dict[tuple[Any, ...], threading.RLock] = {}
 
     @staticmethod
     def _signature(weights: FaceWeights) -> tuple[Any, ...]:
@@ -707,30 +748,98 @@ class FaceEngineCache:
             self._weights[key] = verified
         return verified
 
+    def _device_lock(self, cache_key: tuple[Any, ...]) -> threading.RLock:
+        with self._lock:
+            return self._device_locks.setdefault(cache_key, threading.RLock())
+
     def engine(self, data_root: str | Path | None = None, *, device: str = "auto") -> FaceEngine:
+        """Reuse a device session; its reason describes the request that created it.
+
+        Per-request diagnostic metadata is returned by ``attempt`` instead.
+        """
+        from photo_search.runtime.background_slot import background_model_slot
+
         verified = self.verified_weights(data_root)
         key = self._signature(verified)
-        cache_key = (*key, str(device))
-        with self._lock:
-            cached = self._engines.get(cache_key)
-            if cached is not None:
-                return cached
-        engine = FaceEngine(verified, device=str(device), session_factory=self._factory)
-        with self._lock:
-            self._engines[cache_key] = engine
-        return engine
+        device_key = _face_device_cache_key(device)
+        cache_key = (*key, device_key)
+        resource = nullcontext() if device_key == "cpu" else background_model_slot()
+        # GPU admission always precedes a per-device cache lock.
+        with resource, self._device_lock(cache_key):
+            with self._lock:
+                cached = self._engines.get(cache_key)
+                if cached is not None:
+                    return cached
+            engine = FaceEngine(verified, device=str(device), session_factory=self._factory)
+            with self._lock:
+                self._engines[cache_key] = engine
+            return engine
 
-    def attempt(self, data_root: str | Path | None, device: str) -> dict[str, Any]:
+    def attempt(
+        self, data_root: str | Path | None, device: str, *,
+        observation_clock: Callable[[], int] | None = None,
+    ) -> dict[str, Any]:
+        """Serialize each device attempt behind the shared GPU permit when required."""
+        from photo_search.face import weights as weights_module
+        from photo_search.runtime.background_slot import background_model_slot
+
+        device_key = _face_device_cache_key(device)
+        cache_key = (*self._signature(weights_module.resolve(data_root)), device_key)
+        resource = nullcontext() if device_key == "cpu" else background_model_slot()
+        with resource, self._device_lock(cache_key):
+            result = dict(self._attempt_serialized(
+                data_root, device, observation_clock=observation_clock,
+            ))
+        result["device"] = str(device)
+        if result.get("usable"):
+            result["reason"] = (
+                "default for cpu_allowed" if str(device) == "auto"
+                else "explicit CPU request" if device_key == "cpu"
+                else "explicit CUDA request"
+            )
+        return result
+
+    def _attempt_serialized(
+        self, data_root: str | Path | None, device: str, *,
+        observation_clock: Callable[[], int] | None = None,
+    ) -> dict[str, Any]:
         """Try one device and remember both outcomes, so a probe never doubles the work."""
         from photo_search.face import weights as weights_module
 
         # The key deliberately comes from the *unverified* resolution: a broken weight set is
         # a recorded capability outcome, not an exception that escapes the probe.
-        cache_key = (*self._signature(weights_module.resolve(data_root)), str(device))
+        cache_key = (*self._signature(weights_module.resolve(data_root)), _face_device_cache_key(device))
         with self._lock:
             cached = self._attempts.get(cache_key)
+            cached_engine = self._engines.get(cache_key)
         if cached is not None:
-            return cached
+            if cached.get("usable") and cached_engine is not None and observation_clock is not None:
+                observed_at = int(observation_clock())
+                cached_engine.verify_runtime_provider()
+                refreshed = dict(cached)
+                refreshed["_observed_at"] = observed_at
+                refreshed["execution"] = {
+                    **dict(cached.get("execution") or {}),
+                    "detection_providers": list(cached_engine.detector_providers),
+                    "recognition_providers": list(cached_engine.recognizer_providers),
+                }
+                with self._lock:
+                    self._attempts[cache_key] = refreshed
+                return refreshed
+            if cached.get("usable") or observation_clock is None:
+                return cached
+            previous_at = cached.get("_observed_at")
+            retry_at = int(observation_clock())
+            if previous_at is not None and retry_at - int(previous_at) < FACE_FAILED_PROBE_RETRY_MS:
+                return cached
+            # A previously failed session gets a bounded fresh attempt. Never
+            # refresh the old failure's timestamp without attempting the device.
+            with self._lock:
+                current = self._attempts.get(cache_key)
+                if current is cached:
+                    self._attempts.pop(cache_key, None)
+                elif current is not None:
+                    return dict(current)
         record: dict[str, Any]
         try:
             engine = self.engine(data_root, device=str(device))
@@ -760,20 +869,29 @@ class FaceEngineCache:
                 "execution": None,
                 "error": {"code": str(error.code), **error.details},
             }
+        record["_observed_at"] = None if observation_clock is None else int(observation_clock())
         with self._lock:
             record = dict(record)
             self._attempts[cache_key] = record
         return record
 
-    def probe(self, data_root: str | Path | None = None, *, include_gpu: bool = True) -> dict[str, Any]:
+    def probe(
+        self, data_root: str | Path | None = None, *, include_gpu: bool = True,
+        observation_clock: Callable[[], int] | None = None,
+    ) -> dict[str, Any]:
         """What this runtime really offers the face processor right now.
 
         ``include_gpu=False`` (an explicit CPU request) never touches the GPU driver: CUDA
         is then reported as listed-but-unchecked instead of probed and remembered as broken.
         """
         capabilities = runtime_capabilities()
+        enumerated_at = None if observation_clock is None else int(observation_clock())
         reported = tuple(capabilities.providers)
-        cpu = self.attempt(data_root, "cpu")
+        cpu = dict(self.attempt(data_root, "cpu", observation_clock=observation_clock))
+        cpu_at = cpu.pop("_observed_at", None)
+        if cpu_at is None and observation_clock is not None:
+            cpu_at = 0
+        gpu_at = None
         gpu: dict[str, Any] = {
             "device": "gpu",
             "usable": False,
@@ -786,7 +904,11 @@ class FaceEngineCache:
         }
         if CUDA_PROVIDER in reported:
             if include_gpu:
-                gpu = {**self.attempt(data_root, "gpu"), "checked": True}
+                gpu = dict(self.attempt(data_root, "gpu", observation_clock=observation_clock))
+                gpu_at = gpu.pop("_observed_at", None)
+                if gpu_at is None and observation_clock is not None:
+                    gpu_at = 0
+                gpu["checked"] = True
             else:
                 gpu = {
                     **gpu,
@@ -795,6 +917,7 @@ class FaceEngineCache:
                 }
         return {
             "reported_providers": list(reported),
+            "observed_at": {"enumeration": enumerated_at, "cpu": cpu_at, "gpu": gpu_at},
             "cpu_available_provider": CPU_PROVIDER in reported,
             "cuda_listed": CUDA_PROVIDER in reported,
             "cpu": cpu,

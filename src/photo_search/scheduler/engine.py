@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from typing import Any
 
 from photo_search.artifacts.store import ArtifactStore, PreparedArtifact
@@ -66,9 +67,11 @@ class Scheduler:
         retry_max_ms: int = state.DEFAULT_RETRY_MAX_MS,
         artifact_store: ArtifactStore | None = None,
         job_ids: Sequence[int] | None = None,
+        capability_revision: str | None = None,
     ) -> None:
         self.catalog = catalog
         self.job_ids = None if job_ids is None else tuple(int(value) for value in job_ids)
+        self.capability_revision = capability_revision
         self._specs: dict[str, ProcessorSpec] = {}
         for spec in specs:
             self._specs[spec.processor_id] = spec
@@ -122,6 +125,16 @@ class Scheduler:
         with self.catalog.write() as connection:
             return capability_module.record_capability(connection, snapshot, now_ms=now_ms)
 
+    def record_observation(
+        self, snapshot: RuntimeCapabilities, *, observed_devices: Sequence[str], now_ms: int,
+        authoritative_enumeration: bool = True,
+    ) -> RuntimeCapabilities:
+        with self.catalog.write() as connection:
+            return capability_module.record_observation(
+                connection, snapshot, observed_devices=observed_devices, recorded_at=now_ms,
+                authoritative_enumeration=authoritative_enumeration,
+            )
+
     def record_qualification(self, **options: Any) -> capability_module.QualificationEvidence:
         with self.catalog.write() as connection:
             return capability_module.record_qualification(connection, **options)
@@ -136,8 +149,21 @@ class Scheduler:
         worker_id: str,
         now_ms: int,
         limit: int = MAX_CANDIDATES_PER_CLAIM,
+        _ocr_gpu_managed: bool = False,
     ) -> JobRequest | None:
-        """Claim the best runnable job, or return ``None`` when nothing can be served."""
+        """Claim work; GPU OCR requires the managed run_once lifecycle and permit."""
+        from photo_search.runtime.background_slot import background_slot_owned_by_current_thread
+
+        gpu_ids = [
+            str(spec.processor_id) for spec in self.specs
+            if spec.task_type == "image_ocr"
+            and tuple(spec.envelope.get("supported_devices") or ()) == ("gpu",)
+        ]
+        owns_slot = background_slot_owned_by_current_thread() if gpu_ids else False
+        permit_gpu = bool(_ocr_gpu_managed and owns_slot)
+        blocked_ids = [] if permit_gpu else gpu_ids
+        processor_ids = [name for name in self._processor_ids() if name not in blocked_ids]
+        waiting_ocr_gpu = False
         with self.catalog.write() as connection:
             policy = state.read_state(connection)
             if policy.paused:
@@ -146,10 +172,26 @@ class Scheduler:
                     "background scheduling is paused; no new job is claimed",
                     details={"revision": policy.revision},
                 )
-            processor_ids = self._processor_ids()
-            jobs.requeue_due_retries(connection, now_ms=now_ms, processor_ids=processor_ids)
+            if blocked_ids and (self.job_ids is None or self.job_ids):
+                placeholders = ",".join("?" for _ in blocked_ids)
+                job_filter = "" if self.job_ids is None else (
+                    " AND job_id IN (" + ",".join("?" for _ in self.job_ids) + ")"
+                )
+                waiting_ocr_gpu = connection.execute(
+                    "SELECT 1 FROM jobs WHERE processor_id IN (" + placeholders + ") "
+                    "AND ((state IN (?, ?) AND run_after <= ?) "
+                    "OR (state = ? AND lease_expires_at <= ?)) "
+                    "AND NOT (subject_type='asset' AND EXISTS (SELECT 1 FROM "
+                    "asset_retention_barriers b WHERE CAST(b.asset_id AS TEXT)=jobs.subject_id))"
+                    + job_filter + " LIMIT 1",
+                    (*blocked_ids, jobs.STATE_QUEUED, jobs.STATE_RETRY_WAIT, int(now_ms),
+                     jobs.STATE_RUNNING, int(now_ms), *(self.job_ids or ())),
+                ).fetchone() is not None
+            jobs.requeue_due_retries(
+                connection, now_ms=now_ms, processor_ids=processor_ids, job_ids=self.job_ids,
+            )
             jobs.fail_exhausted_leases(
-                connection, now_ms=now_ms, processor_ids=processor_ids
+                connection, now_ms=now_ms, processor_ids=processor_ids, job_ids=self.job_ids,
             )
             candidates = jobs.claimable_candidates(
                 connection,
@@ -160,7 +202,7 @@ class Scheduler:
                 task_types=[spec.task_type for spec in self.specs],
                 job_ids=self.job_ids,
             )
-            if not candidates:
+            if not candidates and not waiting_ocr_gpu:
                 return None
             # One capability lookup per runtime package: an unhealthy GPU package must not
             # decide the fate of a processor that runs on a different runtime.
@@ -170,8 +212,12 @@ class Scheduler:
                 if spec is None:  # pragma: no cover - the SQL already filters this
                     continue
                 if spec.runtime_package_id not in snapshots:
-                    snapshots[spec.runtime_package_id] = capability_module.latest_capability(
-                        connection, runtime_package_id=spec.runtime_package_id
+                    snapshots[spec.runtime_package_id] = (
+                        capability_module.capability_by_revision(connection, self.capability_revision)
+                        if self.capability_revision is not None
+                        else capability_module.latest_capability(
+                            connection, runtime_package_id=spec.runtime_package_id
+                        )
                     )
                 snapshot = snapshots[spec.runtime_package_id]
                 evidence = capability_module.qualification_evidence(
@@ -221,7 +267,19 @@ class Scheduler:
                     ),
                 )
                 return self._request_from(jobs.get_job(connection, claimed.job_id))
-            return None
+            if not waiting_ocr_gpu:
+                return None
+        if owns_slot and not _ocr_gpu_managed:
+            raise CatalogError(
+                "GPU_OCR_MANAGED_DISPATCH_REQUIRED",
+                "GPU OCR cannot be claimed outside the managed execution lifecycle",
+                details={"reason": "GPU_LEASE_MONITOR_REQUIRED", "retryable": False},
+            )
+        raise CatalogError(
+            "BACKGROUND_MODEL_SLOT_BUSY",
+            "GPU OCR must acquire the shared model slot before claiming a task",
+            details={"reason": "GPU_PERMIT_REQUIRED", "retryable": True},
+        )
 
     def _block_unqualified(
         self,
@@ -309,7 +367,10 @@ class Scheduler:
                 lease_seconds=self.lease_seconds if lease_seconds is None else int(lease_seconds),
             )
 
-    def submit(self, result: JobResult, *, now_ms: int) -> jobs.Job:
+    def submit(
+        self, result: JobResult, *, now_ms: int,
+        qualification_clock: Callable[[], int] | None = None,
+    ) -> jobs.Job:
         """Validate, publish and atomically commit artifact/outbox plus job state."""
         # File hashing/staging stays outside a SQLite transaction. This first qualification
         # avoids even a temporary file for an already stale/late execution; the exact same
@@ -339,6 +400,8 @@ class Scheduler:
             for ref in result.artifacts:
                 prepared.append(self.artifact_store.prepare(ref))
             with self.catalog.write() as connection:
+                if qualification_clock is not None:
+                    now_ms = int(qualification_clock())
                 job = jobs.validate_submission(
                     connection,
                     job_id=result.job_id,
@@ -558,11 +621,16 @@ class Scheduler:
                 if pinned is None:
                     return resumed
             placeholders = ", ".join("?" for _ in processor_ids) or "''"
+            if self.job_ids is not None and not self.job_ids:
+                return resumed
+            job_scope = "" if self.job_ids is None else (
+                " AND job_id IN (" + ",".join("?" for _ in self.job_ids) + ")"
+            )
             rows = connection.execute(
                 "SELECT job_id, processor_id, requested_device FROM jobs "
                 "WHERE state = ? AND blocking_reason = ? "
-                f"AND processor_id IN ({placeholders}) ORDER BY created_at, job_id",
-                (jobs.STATE_BLOCKED, RUNTIME_CAPABILITY_UNAVAILABLE, *processor_ids),
+                f"AND processor_id IN ({placeholders})" + job_scope + " ORDER BY created_at, job_id",
+                (jobs.STATE_BLOCKED, RUNTIME_CAPABILITY_UNAVAILABLE, *processor_ids, *(self.job_ids or ())),
             ).fetchall()
             for row in rows:
                 spec = self._specs.get(str(row["processor_id"]))
@@ -597,19 +665,41 @@ class Scheduler:
 
     # ------------------------------------------------------------------- driving
     def run_once(
-        self, executor: Executor, *, worker_id: str, now_ms: int
+        self, executor: Executor, *, worker_id: str, now_ms: int,
+        completion_clock: Callable[[], int] | None = None,
+        lease_monitor: Callable[[JobRequest], Any] | None = None,
     ) -> bool:
         """Claim, dispatch and commit at most one job; ``False`` when nothing ran."""
         try:
-            request = self.claim_next(worker_id=worker_id, now_ms=now_ms)
+            request = self.claim_next(
+                worker_id=worker_id, now_ms=now_ms, _ocr_gpu_managed=True,
+            )
         except CatalogError as error:
             if error.code == SCHEDULER_PAUSED:
                 return False
             raise
         if request is None:
             return False
-        result = self._run_executor(executor, request, now_ms=now_ms)
-        self.submit(result, now_ms=now_ms)
+        heartbeat = None
+        if request.task_type == "image_ocr":
+            if completion_clock is None:
+                completion_clock = self.catalog.now_ms
+            if lease_monitor is None:
+                from photo_search.ocr.lease_heartbeat import OcrLeaseHeartbeat
+
+                heartbeat = OcrLeaseHeartbeat(self.catalog, lease_seconds=self.lease_seconds)
+                lease_monitor = lambda item: heartbeat.track(item, worker_id)
+        try:
+            with lease_monitor(request) if lease_monitor is not None else nullcontext():
+                result = self._run_executor(executor, request, now_ms=now_ms)
+                completed_now = int(completion_clock()) if completion_clock is not None else now_ms
+                if completion_clock is None:
+                    self.submit(result, now_ms=completed_now)
+                else:
+                    self.submit(result, now_ms=completed_now, qualification_clock=completion_clock)
+        finally:
+            if heartbeat is not None:
+                heartbeat.close()
         return True
 
     def run_until_idle(
@@ -622,8 +712,10 @@ class Scheduler:
     ) -> int:
         """Drain every currently runnable job; never sleeps and never busy-waits."""
         steps = 0
+        contains_ocr = any(spec.task_type == "image_ocr" for spec in self.specs)
         while steps < int(max_steps):
-            if not self.run_once(executor, worker_id=worker_id, now_ms=now_ms):
+            claim_time = max(int(now_ms), int(self.catalog.now_ms())) if contains_ocr else now_ms
+            if not self.run_once(executor, worker_id=worker_id, now_ms=claim_time):
                 break
             steps += 1
         return steps

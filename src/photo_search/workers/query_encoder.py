@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -135,7 +137,12 @@ def pinned_embedding_spec(
 class WorkerQueryEncoder:
     """The one adapter object the API process owns: the worker client plus its spec."""
 
-    def __init__(self, client: Any, spec: ProcessorSpec) -> None:
+    def __init__(
+        self, client: Any, spec: ProcessorSpec, *, requires_gpu_slot: bool = False,
+        runtime_observed_at: int | None = None,
+    ) -> None:
+        self.requires_gpu_slot = requires_gpu_slot
+        self._runtime_observed_at = runtime_observed_at
         self._client = client
         self._spec = spec
         self._closed = False
@@ -159,7 +166,12 @@ class WorkerQueryEncoder:
         with self._lock:
             self._require_open()
             reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
-        return reply if isinstance(reply, dict) else {}
+        if not isinstance(reply, dict):
+            return {}
+        reply = dict(reply)
+        if not reply.get("runtime_observed_at") and self._runtime_observed_at is not None:
+            reply["runtime_observed_at"] = self._runtime_observed_at
+        return reply
 
     def encode_queries(
         self, texts: Sequence[str], cancellation: Any = None
@@ -308,8 +320,15 @@ def build_worker_query_encoder(
     client = client_factory(
         Path(model_dir), Path(manifest_path), device=device, device_policy=effective_policy
     )
+    from photo_search.runtime.background_slot import background_model_slot
+
+    gpu_requested = device != "cpu" and not (
+        device is None and effective_policy == DevicePolicy.CPU_PREFERRED
+    )
+    runtime_observed_at = time.time_ns() // 1_000_000
     try:
-        health = client.health(timeout=COLD_START_TIMEOUT_SECONDS)
+        with background_model_slot() if gpu_requested else nullcontext():
+            health = client.health(timeout=COLD_START_TIMEOUT_SECONDS)
         if not bool(health.get("loaded")):
             raise CatalogError(
                 RUNTIME_CAPABILITY_UNAVAILABLE,
@@ -323,7 +342,12 @@ def build_worker_query_encoder(
     except Exception:
         client.shutdown()
         raise
-    return WorkerQueryEncoder(client, spec)
+    resolution = health.get("device")
+    actual_device = str(resolution.get("device") or "") if isinstance(resolution, Mapping) else ""
+    return WorkerQueryEncoder(
+        client, spec, requires_gpu_slot=actual_device not in ("cpu",),
+        runtime_observed_at=runtime_observed_at,
+    )
 
 
 def _check_worker_space(worker_spec: Any, expected: ProcessorSpec) -> None:
@@ -410,6 +434,12 @@ def resolve_query_encoder(
             client_factory=client_factory,
         )
 
+    initial_policy = effective_device_policy(
+        provider_block(read_manifest(manifest))["device_policy"], device_policy
+    )
+    factory.requires_gpu_slot = device != "cpu" and not (
+        device is None and initial_policy == DevicePolicy.CPU_PREFERRED
+    )
     return EncoderWiring(
         "READY",
         str(directory),
@@ -477,6 +507,12 @@ def resolve_provider_encoder(
             client_factory=client_factory,
         )
 
+    initial_policy = effective_device_policy(
+        provider_block(read_manifest(manifest))["device_policy"], policy
+    )
+    factory.requires_gpu_slot = device != "cpu" and not (
+        device is None and initial_policy == DevicePolicy.CPU_PREFERRED
+    )
     return EncoderWiring(
         "READY", str(directory), str(manifest), factory, str(provider.provider_id)
     )

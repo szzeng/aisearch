@@ -17,6 +17,7 @@ import secrets
 import sqlite3
 import sys
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
@@ -3493,11 +3494,17 @@ async def post_search(request: Request, payload: SearchRequestModel) -> dict[str
 
 
 def _search_request_worker(catalog: Any, envelope: SearchRequest, *, context: ApiContext) -> dict[str, Any]:
-    return search_request(
-        catalog, envelope, sessions=context.search_sessions,
-        encoder=None if envelope.retrieval_mode == "text" else context.query_encoder(),
-        reranker=None if envelope.retrieval_mode == "text" else context.reranker(),
+    intent = (
+        context.search_model_intent()
+        if envelope.retrieval_mode != "text" and envelope.cursor is None and envelope.text is not None
+        else nullcontext()
     )
+    with intent:
+        return search_request(
+            catalog, envelope, sessions=context.search_sessions,
+            encoder=None if envelope.retrieval_mode == "text" else context.query_encoder(),
+            reranker=None if envelope.retrieval_mode == "text" else context.reranker(),
+        )
 
 
 @router.get("/search/sessions/{session_id}/time")
@@ -4510,28 +4517,34 @@ def _place_aware_search_worker(
         return result
     collection_revision = () if collection_scope is None else ("person_collection", collection_scope["collection_id"], collection_scope["instance_token"], collection_scope["revision"])
     session_revision = tuple(revision or ()) + collection_revision + tuple(search_time_identity)
-    encoder_started = perf_diagnostics.started() if perf_metrics is not None and not text_mode else 0.0
-    encoder = None if text_mode else context.query_encoder()
-    if perf_metrics is not None and not text_mode:
-        perf_metrics["encoder_resolve_ms"] = perf_diagnostics.elapsed_ms(encoder_started)
-    if perf_metrics is not None:
-        perf_metrics["place_aware_prepare_ms"] = perf_diagnostics.elapsed_ms(
-            place_aware_prepare_started,
-        )
-    result = search_request(
-        service.catalog, envelope, sessions=context.search_sessions,
-        encoder=encoder,
-        reranker=None if text_mode else context.reranker(),
-        album_asset_ids=None if place_membership_sql is not None else album_ids,
-        album_scope_revision=session_revision or None,
-        collection_id=None if collection_scope is None else collection_scope["collection_id"],
-        album_membership_sql=place_membership_sql,
-        album_membership_parameters=place_membership_parameters,
-        additional_condition_sql=search_time_sql,
-        additional_condition_parameters=search_time_parameters,
-        favorites_only=favorites_only,
-        perf_metrics=perf_metrics,
+    intent = (
+        context.search_model_intent()
+        if not text_mode and envelope.cursor is None and envelope.text is not None
+        else nullcontext()
     )
+    with intent:
+        encoder_started = perf_diagnostics.started() if perf_metrics is not None and not text_mode else 0.0
+        encoder = None if text_mode else context.query_encoder()
+        if perf_metrics is not None and not text_mode:
+            perf_metrics["encoder_resolve_ms"] = perf_diagnostics.elapsed_ms(encoder_started)
+        if perf_metrics is not None:
+            perf_metrics["place_aware_prepare_ms"] = perf_diagnostics.elapsed_ms(
+                place_aware_prepare_started,
+            )
+        result = search_request(
+            service.catalog, envelope, sessions=context.search_sessions,
+            encoder=encoder,
+            reranker=None if text_mode else context.reranker(),
+            album_asset_ids=None if place_membership_sql is not None else album_ids,
+            album_scope_revision=session_revision or None,
+            collection_id=None if collection_scope is None else collection_scope["collection_id"],
+            album_membership_sql=place_membership_sql,
+            album_membership_parameters=place_membership_parameters,
+            additional_condition_sql=search_time_sql,
+            additional_condition_parameters=search_time_parameters,
+            favorites_only=favorites_only,
+            perf_metrics=perf_metrics,
+        )
     place_aware_finalize_started = (
         perf_diagnostics.started() if perf_metrics is not None else 0.0
     )
@@ -5230,14 +5243,16 @@ def _search_image_worker(
             "(or an activated search profile)",
             field="profile_id",
         )
-    encoder = image_encoder_of(context.query_encoder())
-    facts, vector = _prepare_upload(
-        upload.payload,
-        encoder,
-        str(binding.space_id),
-        int(binding.dimension),
-        envelope.cursor is not None,
-    )
+    intent = context.search_model_intent() if envelope.cursor is None else nullcontext()
+    with intent:
+        encoder = image_encoder_of(context.query_encoder())
+        facts, vector = _prepare_upload(
+            upload.payload,
+            encoder,
+            str(binding.space_id),
+            int(binding.dimension),
+            envelope.cursor is not None,
+        )
     if vector is None and envelope.cursor is None:
         # No image tower in this process (ADR-0003 §7). The text channel is *not* used as a
         # stand-in: "no image encoder" and "nothing looked similar" must stay different.

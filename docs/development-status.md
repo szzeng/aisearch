@@ -1,4 +1,8 @@
-## Current task: P4-BUILD-STABILITY-A（2026-11-12）
+## Current task: P4-BUILD-STABILITY-A2（2026-11-12）
+
+**PAUSED / IMPLEMENTATION PARTIAL / VALIDATION PENDING**：用户要求暂停、提交并推送当前 A2 工作。GPU OCR 领取前许可、CPU 独立、租约与取消保护、跨页缓存等已部分实现；全量首轮 3780 项有 33 失败、52 跳过，后续受影响回归及未取得退出码的 JUnit 详见报告。AI 子进程异常退出、显存驻留、多进程公平与时钟域仍未闭合；阶段 B、进度诊断、关闭重试、最终独审及 GTX 1660 + HDD 验证均 PENDING。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
+
+## Previous task: P4-BUILD-STABILITY-A（2026-11-12）
 
 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**：补充关闭时工作线程/数据根租约保护、OCR 任务间停止及 30 秒 SQLite 持锁后显式恢复；生命周期/扫描 200 passed、其他消费者 76 passed、OCR/刷新 101 passed / 11 skipped（集合有重叠）。GPU OCR 协调、进度诊断、完整故障矩阵、独立 DS-H 审查和 GTX 1660 + 机械硬盘必测仍未完成，用户确认当前无目标实机。未提交、未推送。详见[任务卡](tasks/P4-BUILD-STABILITY-A.md)与[报告](reports/P4-BUILD-STABILITY-A.md)。
 

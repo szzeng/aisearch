@@ -57,6 +57,7 @@ class StubPinnedAdapter:
     def health(self) -> dict[str, Any]:
         return {
             "loaded": True,
+            "runtime_observed_at": 1_700_000_000_000,
             "spec": {"dimension": DIMENSION},
             "device": {"device": "cpu", "provider": "CPUExecutionProvider", "precision": "FP32"},
             "runtime": {
@@ -1804,3 +1805,271 @@ def test_cancel_between_enrichment_stages_prevents_new_work(
     )
     assert calls == ["thumbnail"]
     assert list(result) == ["thumbnail"]
+
+
+@pytest.mark.parametrize(
+    ("waiting", "stopped", "reason"),
+    [(True, False, "BACKGROUND_MODEL_SLOT_BUSY"), (True, True, "CANCELLED")],
+)
+def test_ocr_stage_reports_deferred_work_instead_of_success(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch, waiting: bool, stopped: bool, reason: str,
+) -> None:
+    from photo_search.refresh import pipeline
+
+    asset_id = asset_of(env, "photo-000.jpg")
+    monkeypatch.setattr("photo_search.ocr.weights.resolve_and_verify", lambda _root: None)
+    monkeypatch.setattr(ocr_service, "ocr_targets", lambda *_args, **_kwargs: [{"asset_id": asset_id}])
+    monkeypatch.setattr(ocr_service, "enqueue_targets", lambda *_args, **_kwargs: {"queued": 1})
+    monkeypatch.setattr(ocr_service, "run_queue", lambda *_args, **_kwargs: {
+        "steps": 0, "pending_jobs": 1, "waiting_gpu": waiting, "stopped": stopped,
+    })
+    result = pipeline._ocr_stage(env.service().catalog, env.data_root, {asset_id})
+    assert result["state"] == "FAILED"
+    assert result["reason"] == reason
+    assert result["pending_jobs"] == 1
+
+
+def test_face_queue_reports_busy_without_losing_pending_job(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.runtime.background_slot import background_model_slot
+
+    asset_id = asset_of(env, "photo-000.jpg")
+    catalog = env.service().catalog
+    targets = face_service.face_targets(catalog, asset_ids=[asset_id])
+    face_service.enqueue_targets(catalog, targets, now_ms=catalog.now_ms())
+    lock = threading.RLock()
+    held = threading.Event()
+    release = threading.Event()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", lock)
+    monkeypatch.setattr(face_service, "background_model_slot", lambda **kwargs: background_model_slot(
+        timeout=0.05, cancel_check=kwargs.get("cancel_check"),
+    ))
+    def holder():
+        with lock:
+            held.set()
+            assert release.wait(3)
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    try:
+        assert held.wait(2)
+        result = face_service.run_queue(catalog, data_root=env.data_root)
+        assert result["reason"] == "BACKGROUND_MODEL_SLOT_BUSY"
+        assert result["steps"] == 0
+        assert result["pending_jobs"] >= 1
+        rows = catalog.read_all("SELECT state,attempts,lease_token FROM jobs WHERE task_type=?", (
+            face_contract.FACE_TASK_TYPE,
+        ))
+        assert len(rows) == 1
+        assert (rows[0]["state"], rows[0]["attempts"], rows[0]["lease_token"]) == ("QUEUED", 0, None)
+    finally:
+        release.set()
+        thread.join(timeout=2)
+
+
+def test_build_reuses_one_ocr_cache_across_scope_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from photo_search.refresh import pipeline
+
+    seen = []
+    def fake_ocr(_catalog, _root, assets, **kwargs):
+        seen.append((set(assets), kwargs["engine_cache"]))
+        return {"state": "OK", "targets": len(assets), "steps": 1}
+    def two_pages(_catalog, *, scopes, runner, cancel_check):
+        runner({1})
+        runner({2})
+        return {"state": "OK"}
+    def only_ocr(_status, name, runner):
+        return runner() if name == "ocr" else {"state": "SKIPPED"}
+    class Status:
+        def set_stage(self, _name, _payload):
+            pass
+    monkeypatch.setattr(pipeline, "_ocr_stage", fake_ocr)
+    monkeypatch.setattr(pipeline, "_drain_scope", two_pages)
+    monkeypatch.setattr(pipeline, "_stage", only_ocr)
+    pipeline._enrichment_stages(
+        SimpleNamespace(catalog=object(), data_root="synthetic"), Status(),
+        mode=pipeline.REFRESH_MODE_BUILD, content_delta=set(), location_delta=set(),
+        delta_overflow=False, encoder_factory=None, manifest_path=None, device="cpu",
+        device_policy="cpu_allowed", cancel_check=None,
+    )
+    assert [item[0] for item in seen] == [{1}, {2}]
+    assert seen[0][1] is seen[1][1]
+
+
+@pytest.mark.parametrize("reason", ["CANCELLED", "BACKGROUND_MODEL_SLOT_BUSY"])
+def test_scoped_drain_stops_all_sources_on_global_ocr_wait_or_cancel(
+    monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    from photo_search.refresh import pipeline
+
+    pages, calls = [], []
+    def page(_catalog, *, source_id, after_asset_id, limit):
+        pages.append(source_id)
+        return [int(source_id)]
+    def runner(assets):
+        calls.append(assets)
+        return {"state": pipeline.STAGE_FAILED, "reason": reason}
+    monkeypatch.setattr(pipeline, "_scoped_asset_page", page)
+    result = pipeline._drain_scope(object(), scopes=[1, 2], runner=runner, cancel_check=None)
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == reason
+    assert pages == [1] and calls == [{1}]
+
+
+def test_scoped_drain_cancels_before_any_source_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    from photo_search.refresh import pipeline
+
+    monkeypatch.setattr(
+        pipeline, "_scoped_asset_page", lambda *_args, **_kwargs: pytest.fail("unexpected page read"),
+    )
+    result = pipeline._drain_scope(
+        object(), scopes=[1, 2], runner=lambda _assets: pytest.fail("unexpected work"),
+        cancel_check=lambda: True,
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["assets"] == 0 and result["pages"] == 0
+
+
+def test_scoped_drain_counts_only_executed_pages_when_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    from photo_search.refresh import pipeline
+
+    cancelled = [False]
+    sources = []
+    def page(_catalog, *, source_id, after_asset_id, limit):
+        sources.append(source_id)
+        return [int(source_id)]
+    def runner(_assets):
+        cancelled[0] = True
+        return {"state": pipeline.STAGE_OK, "steps": 1}
+    monkeypatch.setattr(pipeline, "_scoped_asset_page", page)
+    result = pipeline._drain_scope(
+        object(), scopes=[1, 2], runner=runner, cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["pages"] == 1 and result["assets"] == 1 and sources == [1]
+
+
+def test_ocr_stage_cancels_before_weight_validation_or_enqueue(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    monkeypatch.setattr(
+        "photo_search.ocr.weights.resolve_and_verify",
+        lambda *_args: pytest.fail("unexpected weight check"),
+    )
+    monkeypatch.setattr(
+        ocr_service, "enqueue_targets", lambda *_args, **_kwargs: pytest.fail("unexpected enqueue"),
+    )
+    asset = asset_of(env, "photo-000.jpg")
+    result = pipeline._ocr_stage(
+        env.service().catalog, env.data_root, {asset}, cancel_check=lambda: True,
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["queued"] == 0
+
+
+def test_scoped_drain_short_final_page_reports_cancellation(monkeypatch: pytest.MonkeyPatch) -> None:
+    from photo_search.refresh import pipeline
+
+    cancelled = [False]
+    monkeypatch.setattr(pipeline, "_scoped_asset_page", lambda *_args, **_kwargs: [1])
+    def runner(_assets):
+        cancelled[0] = True
+        return {"state": pipeline.STAGE_OK, "steps": 1}
+    result = pipeline._drain_scope(
+        object(), scopes=[1], runner=runner, cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["pages"] == 1 and result["assets"] == 1
+
+
+def test_ocr_cancel_during_weight_check_prevents_recovery_and_enqueue(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import pipeline
+
+    cancelled = [False]
+    def verify(_root):
+        cancelled[0] = True
+    monkeypatch.setattr("photo_search.ocr.weights.resolve_and_verify", verify)
+    monkeypatch.setattr(
+        ocr_service, "ocr_targets", lambda *_args, **_kwargs: pytest.fail("unexpected target query"),
+    )
+    monkeypatch.setattr(
+        ocr_service, "enqueue_targets", lambda *_args, **_kwargs: pytest.fail("unexpected enqueue"),
+    )
+    asset = asset_of(env, "photo-000.jpg")
+    result = pipeline._ocr_stage(
+        env.service().catalog, env.data_root, {asset}, recover_cr2=True,
+        cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["queued"] == 0
+
+
+def test_ocr_cancel_during_recovery_prevents_enqueue(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import cr2_recovery, pipeline
+
+    cancelled = [False]
+    monkeypatch.setattr("photo_search.ocr.weights.resolve_and_verify", lambda *_args: None)
+    asset = asset_of(env, "photo-000.jpg")
+    monkeypatch.setattr(ocr_service, "ocr_targets", lambda *_args, **_kwargs: [{"asset_id": asset}])
+    def recover(*_args, **_kwargs):
+        cancelled[0] = True
+        return {"recovered": 0}
+    monkeypatch.setattr(cr2_recovery, "recover_cr2_format_failures", recover)
+    monkeypatch.setattr(
+        ocr_service, "enqueue_targets", lambda *_args, **_kwargs: pytest.fail("unexpected enqueue"),
+    )
+    result = pipeline._ocr_stage(
+        env.service().catalog, env.data_root, {asset}, recover_cr2=True,
+        cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["queued"] == 0
+
+
+def test_ocr_cancel_during_failed_weight_check_reports_cancelled(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.refresh import pipeline
+
+    cancelled = [False]
+    def verify(_root):
+        cancelled[0] = True
+        raise CatalogError("OCR_WEIGHTS_MISSING", "synthetic failure")
+    monkeypatch.setattr("photo_search.ocr.weights.resolve_and_verify", verify)
+    asset = asset_of(env, "photo-000.jpg")
+    result = pipeline._ocr_stage(
+        env.service().catalog, env.data_root, {asset}, cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+
+
+def test_ocr_cancel_during_target_read_prevents_recovery(
+    env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.refresh import cr2_recovery, pipeline
+
+    cancelled = [False]
+    monkeypatch.setattr("photo_search.ocr.weights.resolve_and_verify", lambda *_args: None)
+    asset = asset_of(env, "photo-000.jpg")
+    def targets(*_args, **_kwargs):
+        cancelled[0] = True
+        return [{"asset_id": asset}]
+    monkeypatch.setattr(ocr_service, "ocr_targets", targets)
+    monkeypatch.setattr(
+        cr2_recovery, "recover_cr2_format_failures",
+        lambda *_args, **_kwargs: pytest.fail("unexpected recovery"),
+    )
+    result = pipeline._ocr_stage(
+        env.service().catalog, env.data_root, {asset}, recover_cr2=True,
+        cancel_check=lambda: cancelled[0],
+    )
+    assert result["state"] == pipeline.STAGE_FAILED and result["reason"] == "CANCELLED"
+    assert result["queued"] == 0

@@ -148,7 +148,7 @@ def synthetic_runtime(scheduler, spec, cache, *, now_ms, **kwargs):
         runtime_package_id=spec.runtime_package_id,
         now_ms=now_ms,
     )
-    return {"synthetic_runtime": True}
+    return {"synthetic_runtime": True, "capability_revision": snapshot.capability_revision}
 
 
 def synthetic_executor(catalog, **options):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, Iterator
 
 from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
@@ -103,9 +103,26 @@ class ModelResourceGate:
 class GatedEncoder:
     """Query adapter proxy that gates only calls capable of using the model runtime."""
 
-    def __init__(self, encoder: Any, gate: ModelResourceGate) -> None:
+    def __init__(
+        self, encoder: Any, gate: ModelResourceGate,
+        is_current: Callable[[], bool] | None = None,
+    ) -> None:
         self._encoder = encoder
         self._gate = gate
+        self._is_current = is_current
+
+    @contextmanager
+    def _access(self) -> Iterator[None]:
+        from photo_search.runtime.background_slot import foreground_model_slot
+
+        resource = foreground_model_slot(consume_intent=True) if getattr(self._encoder, "requires_gpu_slot", True) else nullcontext()
+        with resource, self._gate.query():
+            if self._is_current is not None and not self._is_current():
+                raise CatalogError(
+                    RUNTIME_CAPABILITY_UNAVAILABLE, "semantic model adapter was replaced",
+                    details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+                )
+            yield
 
     def spec(self) -> Any:
         return self._encoder.spec()
@@ -115,20 +132,20 @@ class GatedEncoder:
         return callable(getattr(self._encoder, "encode_images", None))
 
     def encode_queries(self, texts: Any, cancellation: Any = None) -> Any:
-        with self._gate.query():
+        with self._access():
             return self._encoder.encode_queries(texts, cancellation=cancellation)
 
     def encode_images(self, images: Any, cancellation: Any = None) -> Any:
-        with self._gate.query():
+        with self._access():
             return self._encoder.encode_images(images, cancellation=cancellation)
 
     def encode_image(self, image: Any) -> Any:
         """Keep the singular indexing adapter call behind the same foreground gate."""
-        with self._gate.query():
+        with self._access():
             return self._encoder.encode_image(image)
 
     def health(self) -> Any:
-        with self._gate.query():
+        with self._access():
             return self._encoder.health()
 
     def close(self) -> None:

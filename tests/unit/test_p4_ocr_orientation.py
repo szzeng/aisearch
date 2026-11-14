@@ -79,6 +79,8 @@ def pinned(pipeline, *, enabled=True):
     result._engine = pipeline
     result.orientation_retry = enabled
     result.resolved_device = "cpu"
+    # Orientation tests use a synthetic pipeline without ONNX sessions.
+    result.verify_runtime_provider = lambda: None
     return result
 
 

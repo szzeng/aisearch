@@ -12,7 +12,9 @@ Two different facts decide whether a device may be dispatched:
 
 from __future__ import annotations
 
+import platform
 import sqlite3
+import sys
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -113,6 +115,144 @@ def record_capability(
         ),
     )
     return snapshot
+
+
+def _same_runtime_identity(previous: RuntimeCapabilities, current: RuntimeCapabilities) -> bool:
+    fields = (
+        "runtime_package_id", "runtime_backend", "runtime_package_name",
+        "runtime_package_version", "python_version", "driver_version",
+    )
+    if not all(getattr(previous, field) == getattr(current, field) for field in fields):
+        return False
+    if previous.platform == current.platform:
+        return True
+    # The existing semantic producer used this fixed spelling on x64 Windows.
+    if sys.platform != "win32" or platform.machine().casefold() not in ("amd64", "x86_64"):
+        return False
+    names = (str(previous.platform).casefold(), str(current.platform).casefold())
+    return "windows-x86_64" in names and any(
+        name.startswith("windows-") and name != "windows-x86_64" for name in names
+    )
+
+
+def record_observation(
+    connection: sqlite3.Connection, snapshot: RuntimeCapabilities, *,
+    observed_devices: Sequence[str], recorded_at: int,
+    authoritative_enumeration: bool = True,
+) -> RuntimeCapabilities:
+    """Atomically publish observed devices, preserving other devices' actual observation times.
+
+    The caller owns the write transaction. Never call this while probing or executing models.
+    """
+    observed = frozenset(str(value) for value in observed_devices)
+    if not observed or not observed <= {"cpu", "gpu"}:
+        raise ValueError("capability observation must name cpu and/or gpu")
+    previous = latest_capability(connection, runtime_package_id=snapshot.runtime_package_id)
+    if previous is not None:
+        recorded = connection.execute(
+            "SELECT recorded_at FROM runtime_capabilities WHERE capability_revision = ?",
+            (previous.capability_revision,),
+        ).fetchone()
+        if recorded is not None and int(recorded_at) < int(recorded["recorded_at"]):
+            raise CatalogError(
+                "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                "the recording clock moved behind the current runtime evidence",
+            )
+    facts = dict(snapshot.envelope)
+    facts["providers"] = [dict(provider) for provider in facts["providers"]]
+    if not authoritative_enumeration and previous is None:
+        facts["providers"] = [
+            provider for provider in facts["providers"] if provider["device"] in observed
+        ]
+        facts["measured_at"] = 0
+    if previous is not None and not _same_runtime_identity(previous, snapshot):
+        latest_observation = max(
+            [previous.measured_at]
+            + [item.health_checked_at for item in previous.providers if item.health != "unknown"]
+        )
+        if snapshot.measured_at <= latest_observation:
+            raise CatalogError(
+                "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                "an older runtime identity cannot replace a newer observation",
+            )
+    if previous is not None and _same_runtime_identity(previous, snapshot):
+        old_by_name = {provider.name: provider for provider in previous.providers}
+        incoming = []
+        for provider in facts["providers"]:
+            old = old_by_name.get(provider["name"])
+            if old is None and not authoritative_enumeration and provider["device"] not in observed:
+                continue
+            if old is None and snapshot.measured_at <= previous.measured_at:
+                if snapshot.measured_at == previous.measured_at or provider["device"] in observed:
+                    raise CatalogError(
+                        "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                        "provider appearance conflicts with newer enumeration",
+                    )
+                continue
+            incoming.append(provider)
+            if old is None:
+                continue
+            if old.device != provider["device"]:
+                raise CatalogError(
+                    "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                    "provider device identity changed without a new runtime identity",
+                )
+            if provider["device"] in observed:
+                if old.health != "unknown" and (
+                    old.health_checked_at > provider["health_checked_at"]
+                    or (
+                        old.health_checked_at == provider["health_checked_at"]
+                        and old.to_envelope() != provider
+                    )
+                ):
+                    raise CatalogError(
+                        "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                        "newer or conflicting device evidence already exists",
+                    )
+            else:
+                provider.update(old.to_envelope())
+        facts["providers"] = incoming
+        facts["measured_at"] = (
+            max(snapshot.measured_at, previous.measured_at)
+            if authoritative_enumeration else previous.measured_at
+        )
+        new_names = {str(provider["name"]) for provider in facts["providers"]}
+        for old in previous.providers:
+            if old.name in new_names:
+                continue
+            if not authoritative_enumeration:
+                facts["providers"].append(old.to_envelope())
+                continue
+            if old.health == "unknown":
+                continue
+            # A provider absent from an older enumeration must not erase a later
+            # positive observation. An equal-time contradiction is ambiguous.
+            if old.health_checked_at > snapshot.measured_at:
+                facts["providers"].append(old.to_envelope())
+            elif old.health_checked_at == snapshot.measured_at:
+                raise CatalogError(
+                    "RUNTIME_CAPABILITY_OBSERVATION_STALE",
+                    "provider enumeration conflicts with equal-time evidence",
+                )
+        if "gpu" not in observed:
+            facts["failure_code"] = previous.failure_code
+    elif "gpu" not in observed:
+        # A CPU failure is not evidence that an unprobed GPU failed.
+        facts["failure_code"] = None
+    healths = {provider["health"] for provider in facts["providers"]}
+    if healths == {"unhealthy"}:
+        facts["health_status"] = "unhealthy"
+    elif "unhealthy" in healths:
+        facts["health_status"] = "degraded"
+    elif "healthy" in healths:
+        # Existing semantic snapshots consider a genuinely healthy provider usable
+        # even while a second, unprobed provider remains unknown. Eligibility still
+        # checks the individual provider and processor qualification.
+        facts["health_status"] = "healthy"
+    else:
+        facts["health_status"] = "unknown"
+    combined = RuntimeCapabilities.seal(facts)
+    return record_capability(connection, combined, now_ms=int(recorded_at))
 
 
 def latest_capability(

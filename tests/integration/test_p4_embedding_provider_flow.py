@@ -74,6 +74,7 @@ class StubAdapter:
         if self.pytorch:
             return {
                 "loaded": True,
+                "runtime_observed_at": 1_700_000_000_000,
                 "spec": self._spec.envelope,
                 "device": {
                     "device": "cuda",
@@ -91,6 +92,7 @@ class StubAdapter:
             }
         return {
             "loaded": True,
+            "runtime_observed_at": 1_700_000_000_000,
             "spec": self._spec.envelope,
             "device": {
                 "device": "cuda",

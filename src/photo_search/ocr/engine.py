@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from math import hypot
 from pathlib import Path
@@ -38,6 +39,7 @@ from photo_search.catalog.errors import (
 from photo_search.ocr import contract
 from photo_search.ocr.weights import OcrWeights, verify
 from photo_search.runtime import device as runtime_device
+from photo_search.runtime.background_slot import background_model_slot
 
 Point = tuple[float, float]
 Box = tuple[float, float, float, float]
@@ -455,48 +457,60 @@ class PinnedOcrEngine:
                 "the requested OCR provider is unavailable",
                 details={"resolved_device": str(resolved_device), "reason": error.reason},
             ) from error
-        if resolution.device == "cuda":
-            runtime_device.preload_runtime_dlls()
-        self.resolved_device = "gpu" if resolution.device == "cuda" else "cpu"
-        self.runtime_provider = str(runtime_provider or resolution.provider)
-        self.precision = str(precision)
-        try:
-            self._engine = factory(
-                config_path=str(weights.config_path),
-                det_model_path=str(weights.detection_path),
-                cls_model_path=str(weights.classification_path),
-                rec_model_path=str(weights.recognition_path),
-                text_score=float(contract.MIN_TEXT_SCORE),
-                print_verbose=False,
-                max_side_len=int(contract.MAX_LONG_EDGE),
-                det_use_cuda=self.resolved_device == "gpu",
-                cls_use_cuda=self.resolved_device == "gpu",
-                rec_use_cuda=self.resolved_device == "gpu",
+        with background_model_slot() if resolution.device == "cuda" else nullcontext():
+            if resolution.device == "cuda":
+                runtime_device.preload_runtime_dlls()
+            self.resolved_device = "gpu" if resolution.device == "cuda" else "cpu"
+            self.runtime_provider = str(runtime_provider or resolution.provider)
+            self.precision = str(precision)
+            try:
+                self._engine = factory(
+                    config_path=str(weights.config_path),
+                    det_model_path=str(weights.detection_path),
+                    cls_model_path=str(weights.classification_path),
+                    rec_model_path=str(weights.recognition_path),
+                    text_score=float(contract.MIN_TEXT_SCORE),
+                    print_verbose=False,
+                    max_side_len=int(contract.MAX_LONG_EDGE),
+                    det_use_cuda=self.resolved_device == "gpu",
+                    cls_use_cuda=self.resolved_device == "gpu",
+                    rec_use_cuda=self.resolved_device == "gpu",
+                )
+            except Exception as error:
+                if self.resolved_device == "gpu" and _is_onnx_cuda_failure(error):
+                    raise CatalogError(
+                        "OCR_GPU_INITIALIZATION_FAILED",
+                        "the dispatched CUDA OCR sessions failed during initialization",
+                        details={"exception_type": type(error).__name__},
+                    ) from error
+                raise
+            self.session_providers = self._read_session_providers(self._engine)
+            expected_provider = (
+                runtime_device.CUDA_PROVIDER
+                if self.resolved_device == "gpu"
+                else runtime_device.CPU_PROVIDER
             )
-        except Exception as error:
-            if self.resolved_device == "gpu" and _is_onnx_cuda_failure(error):
+            mismatches = {
+                role: providers
+                for role, providers in self.session_providers.items()
+                if not providers or providers[0] != expected_provider
+            }
+            if mismatches or self.runtime_provider != expected_provider:
+                if self.resolved_device == "gpu":
+                    raise CatalogError(
+                        "OCR_GPU_INITIALIZATION_FAILED",
+                        "RapidOCR did not create all sessions on the dispatched CUDA provider",
+                        details={
+                            "resolved_device": self.resolved_device,
+                            "expected_provider": expected_provider,
+                            "reported_provider": self.runtime_provider,
+                            "session_providers": self.session_providers,
+                            "mismatched_roles": sorted(mismatches),
+                        },
+                    )
                 raise CatalogError(
-                    "OCR_GPU_INITIALIZATION_FAILED",
-                    "the dispatched CUDA OCR sessions failed during initialization",
-                    details={"exception_type": type(error).__name__},
-                ) from error
-            raise
-        self.session_providers = self._read_session_providers(self._engine)
-        expected_provider = (
-            runtime_device.CUDA_PROVIDER
-            if self.resolved_device == "gpu"
-            else runtime_device.CPU_PROVIDER
-        )
-        mismatches = {
-            role: providers
-            for role, providers in self.session_providers.items()
-            if not providers or providers[0] != expected_provider
-        }
-        if mismatches or self.runtime_provider != expected_provider:
-            if self.resolved_device == "gpu":
-                raise CatalogError(
-                    "OCR_GPU_INITIALIZATION_FAILED",
-                    "RapidOCR did not create all sessions on the dispatched CUDA provider",
+                    RUNTIME_RESOLUTION_MISMATCH,
+                    "RapidOCR did not create all sessions on the dispatched provider",
                     details={
                         "resolved_device": self.resolved_device,
                         "expected_provider": expected_provider,
@@ -505,17 +519,6 @@ class PinnedOcrEngine:
                         "mismatched_roles": sorted(mismatches),
                     },
                 )
-            raise CatalogError(
-                RUNTIME_RESOLUTION_MISMATCH,
-                "RapidOCR did not create all sessions on the dispatched provider",
-                details={
-                    "resolved_device": self.resolved_device,
-                    "expected_provider": expected_provider,
-                    "reported_provider": self.runtime_provider,
-                    "session_providers": self.session_providers,
-                    "mismatched_roles": sorted(mismatches),
-                },
-            )
 
     @staticmethod
     def _read_session_providers(engine: Any) -> dict[str, tuple[str, ...]]:
@@ -539,12 +542,29 @@ class PinnedOcrEngine:
             ) from error
         return observed
 
+    def verify_runtime_provider(self) -> None:
+        """Re-read all live session providers without claiming GPU memory was freed."""
+        expected = (
+            runtime_device.CUDA_PROVIDER if self.resolved_device == "gpu"
+            else runtime_device.CPU_PROVIDER
+        )
+        observed = self._read_session_providers(self._engine)
+        if self.runtime_provider != expected or any(
+            not providers or providers[0] != expected for providers in observed.values()
+        ):
+            code = "OCR_GPU_INITIALIZATION_FAILED" if self.resolved_device == "gpu" else RUNTIME_RESOLUTION_MISMATCH
+            raise CatalogError(code, "OCR session providers changed after initialization")
+        self.session_providers = observed
+
     def read(self, bgr: Any) -> Any:
         """Run detection + direction classification + recognition on one BGR array."""
         try:
-            engine = self._orientation_retry_engine() if self.orientation_retry else self._engine
-            raw, _elapsed = engine(bgr)
-            return raw
+            with background_model_slot() if self.resolved_device == "gpu" else nullcontext():
+                if self.resolved_device == "gpu":
+                    self.verify_runtime_provider()
+                engine = self._orientation_retry_engine() if self.orientation_retry else self._engine
+                raw, _elapsed = engine(bgr)
+                return raw
         except Exception as error:
             if self.resolved_device == "gpu" and _is_onnx_cuda_failure(error):
                 raise CatalogError(
@@ -708,21 +728,33 @@ class OcrEngineCache:
         precision: str = "FP32",
         orientation_retry: bool = False,
     ) -> PinnedOcrEngine:
+        normalized = runtime_device.normalize_device(str(resolved_device))
+        device_key = "gpu" if normalized == "cuda" else "cpu"
         verified = self.verified_weights(data_root)
-        key = (*self._signature(verified), str(resolved_device), runtime_provider,
+        provider_key = runtime_provider
+        if provider_key is None:
+            provider_key = (
+                runtime_device.CUDA_PROVIDER if device_key == "gpu"
+                else runtime_device.CPU_PROVIDER
+            )
+        key = (*self._signature(verified), device_key, provider_key,
                str(precision), bool(orientation_retry))
-        with self._lock:
-            cached = self._engines.get(key)
-            if cached is not None:
-                return cached
-        engine = PinnedOcrEngine(
-            verified,
-            resolved_device=resolved_device,
-            runtime_provider=runtime_provider,
-            precision=precision,
-            orientation_retry=orientation_retry,
-            engine_factory=self._factory,
-        )
-        with self._lock:
-            self._engines[key] = engine
-        return engine
+        # Acquire the GPU slot before checking/inserting the cache. This prevents two
+        # concurrent misses from creating two live CUDA session sets; no cache mutex is
+        # held while waiting for the GPU slot. CPU sessions never acquire the GPU slot.
+        with background_model_slot() if device_key == "gpu" else nullcontext():
+            with self._lock:
+                cached = self._engines.get(key)
+                if cached is not None:
+                    return cached
+            engine = PinnedOcrEngine(
+                verified,
+                resolved_device=resolved_device,
+                runtime_provider=runtime_provider,
+                precision=precision,
+                orientation_retry=orientation_retry,
+                engine_factory=self._factory,
+            )
+            with self._lock:
+                self._engines[key] = engine
+            return engine

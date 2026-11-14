@@ -39,6 +39,7 @@ class StubPinnedAdapter:
     def health(self) -> dict[str, Any]:
         return {
             "loaded": True,
+            "runtime_observed_at": 1_700_000_000_000,
             "spec": {"dimension": DIMENSION},
             "device": {
                 "device": self.device,

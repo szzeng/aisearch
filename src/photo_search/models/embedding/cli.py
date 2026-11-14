@@ -593,7 +593,7 @@ def _record_candidate_runtime(
     )
     scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
     evidence = semantic.record_runtime_evidence(
-        scheduler, spec, facts, now_ms=catalog.now_ms()
+        scheduler, spec, facts, now_ms=int(facts.get("observed_at") or 0)
     )
     return spec, evidence
 

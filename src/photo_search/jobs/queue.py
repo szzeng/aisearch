@@ -284,6 +284,7 @@ def requeue_due_retries(
     *,
     now_ms: int,
     processor_ids: Sequence[str] | None = None,
+    job_ids: Sequence[int] | None = None,
 ) -> int:
     """Move every RETRY_WAIT job whose backoff has elapsed back to QUEUED.
 
@@ -291,6 +292,11 @@ def requeue_due_retries(
     fact and never a sleep: a caller that runs earlier simply finds nothing runnable.
     """
     filter_sql, parameters = _processor_filter(processor_ids)
+    if job_ids is not None:
+        if not job_ids:
+            return 0
+        filter_sql += " AND job_id IN (" + ",".join("?" for _ in job_ids) + ")"
+        parameters.extend(int(value) for value in job_ids)
     filter_sql += (
         " AND NOT (subject_type='asset' AND EXISTS (SELECT 1 FROM asset_retention_barriers b "
         "WHERE CAST(b.asset_id AS TEXT)=jobs.subject_id))"
@@ -615,6 +621,7 @@ def fail_exhausted_leases(
     now_ms: int,
     task_type: str | None = None,
     processor_ids: Sequence[str] | None = None,
+    job_ids: Sequence[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Fail expired executions that have no retry budget left before claiming again.
 
@@ -624,11 +631,14 @@ def fail_exhausted_leases(
     task_filter = "" if task_type is None else " AND task_type = ?"
     filter_parameters: tuple = () if task_type is None else (task_type,)
     processor_sql, processor_parameters = _processor_filter(processor_ids)
+    if job_ids is not None and not job_ids:
+        return []
+    job_sql = "" if job_ids is None else " AND job_id IN (" + ",".join("?" for _ in job_ids) + ")"
     predicate = (
         "state = ? AND lease_expires_at <= ? AND attempts + 1 >= max_attempts"
-        f"{task_filter}{processor_sql}"
+        f"{task_filter}{processor_sql}{job_sql}"
     )
-    parameters = (STATE_RUNNING, int(now_ms), *filter_parameters, *processor_parameters)
+    parameters = (STATE_RUNNING, int(now_ms), *filter_parameters, *processor_parameters, *(job_ids or ()))
     rows = connection.execute(
         "SELECT job_id, subject_type, subject_id, attempts, max_attempts FROM jobs "
         f"WHERE {predicate}",

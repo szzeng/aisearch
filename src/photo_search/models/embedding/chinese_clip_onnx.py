@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -27,6 +28,7 @@ import numpy as np
 import onnxruntime
 from PIL import Image, ImageOps
 
+from photo_search.catalog.errors import RUNTIME_RESOLUTION_MISMATCH, CatalogError
 from photo_search.media.decode import restore_recorded_orientation
 from photo_search.models.embedding.base import analyze_manifest, image_orientation_policy
 from photo_search.runtime.device import (
@@ -130,6 +132,7 @@ class ChineseClipOnnxAdapter:
         self._tokenizer: Any | None = None
         self._resolution: DeviceResolution | None = None
         self._capabilities: RuntimeCapabilities | None = None
+        self._runtime_observed_at: int | None = None
         self._dll_report: dict[str, Any] | None = None
         self._profile_prefix = f"photo-search-{uuid.uuid4().hex[:8]}-"
 
@@ -148,6 +151,7 @@ class ChineseClipOnnxAdapter:
                 raise FileNotFoundError(f"required model artifact not found: {path}")
         from transformers import BertTokenizerFast
 
+        self._runtime_observed_at = time.time_ns() // 1_000_000
         self._capabilities = runtime_capabilities()
         self._resolution = resolve_device(
             self._config.requested_device,
@@ -208,11 +212,25 @@ class ChineseClipOnnxAdapter:
         return str(directory / self._profile_prefix)
 
     def health(self) -> dict[str, Any]:
+        loaded = self._image_session is not None and self._text_session is not None
+        observed_at = self._runtime_observed_at
+        if loaded and self._resolution is not None:
+            observed_at = time.time_ns() // 1_000_000
+            expected = self._resolution.provider
+            for role, session in (("image", self._image_session), ("text", self._text_session)):
+                actual = tuple(session.get_providers())
+                if not actual or actual[0] != expected:
+                    raise CatalogError(
+                        RUNTIME_RESOLUTION_MISMATCH,
+                        "the loaded embedding session no longer uses its resolved provider",
+                        details={"role": role, "expected_provider": expected, "providers": actual},
+                    )
         return {
-            "loaded": self._image_session is not None and self._text_session is not None,
+            "loaded": loaded,
             "spec": self.spec().as_dict(),
             "device": self._resolution.as_dict() if self._resolution else None,
             "runtime": self._capabilities.as_dict() if self._capabilities else None,
+            "runtime_observed_at": observed_at,
             "cuda_dlls": self._dll_report,
         }
 
