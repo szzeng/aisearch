@@ -202,3 +202,47 @@ OCR 已开始的单张推理允许完成；观察到前台等待后不领取下�
 - ONNX/PyTorch Session 引用清空仍不等于可观测的显存归还；6GB 安全预算只能由目标硬件证明。
 - 系统时钟大幅前跳后回拨及进程重启组合仍可能保留未来租约；单实例高水位不跨重启保存。
 - 更一般的 refresher/face/runner 等 worker close 引用保留仍属于 D 阶段收尾；本轮只闭合与 B 直接相关的 encoder/candidate/face-session 路径。
+
+## 2026-11-14 C 阶段：建库进度与运行状态显示
+
+### 实现
+
+- `RefreshStatus.activity` 复用现有内存快照和轮询，只增加短生命周期显示字段：`phase/detail/completed/total/waiting_reason/source_index/source_total`；另以 `progress_updated_at_ms` 区分最近真实进度和状态更新时间。
+- 扫描器新增可选 `progress_callback`，在枚举批次和文件内容确认后上报真实计数；未提供回调时行为不变。
+- 语义阶段在分类、等待模型、加载模型和编码期间更新真实 backlog/本次确认数量。
+- 人脸和 OCR 服务新增可选进度回调；刷新流水线只在单任务安全边界更新状态，不改变 claim、heartbeat、lease、GPU 锁或批次语义。
+- 前端仅在现有 `#refresh-status` 内显示紧凑活动卡：阶段、细分动作、已完成/总数、当前图库序号和最近进度；不增加轮询器。
+- 30 秒以上无新进度时只显示“当前仍在处理，暂不能判断是否异常”，不会推断死锁或停止任务。
+- 旧响应无 `activity` 时使用原状态文本。建库完成/失败、部分失败与排队提示保持。
+- `index.html` 更新 app/styles cache-bust 版本为 `p4-a2-c-progress-1`。
+
+### 验证
+
+- `c-affected-r10.xml`：130 项，130 passed / 0 failed / 0 errors / 0 skipped，退出 0。
+- `c-affected-r7.xml` 曾扩展到已知旧 API/photo-view 测试：16 个失败均属于历史同集合，C 新增纯进度集未新增失败。
+- `ruff check .`、`compileall`、`node --check src/photo_search/web/app.js`、`git diff --check` 退出 0。
+- 隔离合成图库 2500 张，真实源码服务 + Codex 内置浏览器：
+  - 桌面与 480×900 视口显示活动卡，无横向溢出；
+  - 扫描开始：正在扫描照片 / 准备扫描 / 已完成 0 / 当前图库 1/1 / 刚刚更新；
+  - 扫描后段：当前阶段确认照片内容 / 已完成 2500/2500；
+  - 完成失败：建库失败，原因显示为用户可读的“语义模型尚未准备好”，不显示内部错误代码；
+  - 浏览器覆盖恢复，服务已停止。
+- 等待模型资源的视觉与 35 秒无更新文案由 Node harness 验证。
+
+### 独立聚焦复核
+
+独立 DS-H 复核最终 **PASS（仅 C 进度显示范围）**，无 P0/P1。复核期间发现并修复：
+
+- 多图库切换时 completed 可能继承上一图库；`activity` 现按 `phase + cycle + source_index + total` 区分周期，并新增多来源从 0 开始的回归测试。
+- `SCANNING → INDEXING` 与 `ENRICHING` 切换时立即发布对应 activity，不再短暂沿用上一阶段卡。
+- face/OCR 分批使用独立 UUID cycle，避免页/来源之间的低概率计数碰撞。
+- 所有扫描、人脸、OCR 显示 callback 异常均被隔离，不影响任务执行、提交或恢复。
+
+复核确认 activity 不包含路径/文件名，旧响应可回退，现有轮询复用，无 claim/heartbeat/lease、批次、GPU 锁、模型选择或 outbox 变更。C 阶段可以按显示范围关闭。
+
+### 未验证
+
+- 真实 GPU 资源等待的持续时长、真实人脸/OCR 进度与 GTX 1660 + HDD 仍 PENDING。
+- 窄屏浏览器只验证到 480×900，不等同原生 200% 缩放。
+- 本轮不改变 A2 最终硬件验收状态。
+- 独立聚焦复核已完成 PASS；C 阶段停止，等待后续安排。

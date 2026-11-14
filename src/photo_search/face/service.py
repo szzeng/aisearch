@@ -441,6 +441,7 @@ def run_queue(
     job_ids: Sequence[int] | None = None,
     claim_check: Callable[[], bool] | None = None,
     release_semantic_worker: Callable[[], None] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable face jobs; bounded, single-threaded, no sleeping."""
     spec = face_processor_spec(
@@ -476,6 +477,17 @@ def run_queue(
         preserve_source_detail=source_detail,
     )
     steps = 0
+
+    def report_progress() -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback({"steps": steps, "detail": "processing_faces"})
+        except Exception:
+            pass
+
+    if progress_callback is not None:
+        report_progress()
     while limit is None or steps < max(0, int(limit)):
         if claim_check is not None and not claim_check():
             break
@@ -488,6 +500,7 @@ def run_queue(
         if not scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             break
         steps += 1
+        report_progress()
     return {
         "steps": steps,
         "jobs": job_counts(
@@ -634,6 +647,7 @@ def detect(
     asset_ids: Sequence[int] | None = None,
     engine_cache: FaceEngineCache | None = None,
     source_detail: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """The whole closed loop: queue, detect, publish candidates, group conservatively."""
     targets = face_targets(catalog, asset_ids=asset_ids, limit=limit)
@@ -660,6 +674,7 @@ def detect(
         source_detail=bool(source_detail),
         automatic_detail=bool(source_detail),
         job_ids=selected_jobs,
+        progress_callback=progress_callback,
     ) if selected_jobs else {"steps": 0, "jobs": job_counts(catalog, task_type=task_type)}
     spec_revision = (
         contract.FACE_DETAIL_SPEC_REVISION if source_detail else contract.FACE_SPEC_REVISION

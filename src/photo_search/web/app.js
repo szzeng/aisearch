@@ -1508,13 +1508,13 @@
   // server reports, so "可搜索" is shown as soon as the new content is really searchable.
   var REFRESH_STATE_TEXT = {
     IDLE: "尚未刷新",
-    SCANNING: "正在快速扫描来源",
-    INDEXING: "正在更新搜索索引",
+    SCANNING: "正在扫描照片",
+    INDEXING: "正在建立语义索引",
     SEARCH_READY: "可搜索：新增内容已进入搜索",
-    ENRICHING: "可搜索；正在生成缩略图与增强信息",
-    COMPLETE: "刷新完成",
-    PARTIAL_FAILED: "刷新部分完成（部分增强未完成）",
-    FAILED: "刷新失败",
+    ENRICHING: "正在整理照片信息",
+    COMPLETE: "建库完成",
+    PARTIAL_FAILED: "建库部分完成（部分增强未完成）",
+    FAILED: "建库失败",
   };
   //: P4-02Y-I §1/§2: the first build of one source. The card calls it "开始建库"; the server
   //: runs the same additive refresh entry in its ``build`` mode.
@@ -1535,9 +1535,77 @@
     MANIFEST_UNCONFIGURED: "未配置语义模型",
     MODEL_UNAVAILABLE: "无法加载图像编码器",
     MODEL_LOAD_FAILED: "图像编码器加载失败",
+    EMBEDDING_MODEL_UNAVAILABLE: "语义模型尚未准备好",
+    MODEL_RESOURCE_RELEASE_FAILED: "模型资源尚未安全释放，后续识别已暂停",
     ACTIVE_PROFILE_SPACE_MISMATCH: "活动搜索档案与本模型的向量空间不一致",
     "projection-lagging": "搜索投影尚未追赶完成",
   };
+  var REFRESH_ACTIVITY_TITLE = {
+    scanning: "正在扫描照片",
+    semantic: "正在建立语义索引",
+    face: "正在人脸识别",
+    ocr: "正在识别照片文字",
+    enrichment: "正在整理照片信息",
+  };
+  var REFRESH_DETAIL_TEXT = {
+    preparing_scan: "准备扫描",
+    listing_files: "检查照片文件",
+    hashing_files: "确认照片内容",
+    preparing_index: "准备建立语义索引",
+    classifying_images: "整理待建库照片",
+    loading_model: "加载模型",
+    waiting_model: "等待模型资源",
+    encoding_images: "图片编码",
+    processing_faces: "检测和识别人脸",
+    recognizing_text: "识别照片文字",
+    generating_thumbnails: "生成缩略图",
+    organizing_taken_time: "整理拍摄时间",
+    organizing_places: "整理地点信息",
+    processing_images: "整理照片信息",
+    preparing_enrichment: "准备整理照片信息",
+  };
+
+  function refreshAgeText(status) {
+    var observed = Number(
+      status && (status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms)
+    );
+    if (!isFinite(observed) || observed <= 0) return "暂未报告";
+    var age = Math.max(0, Date.now() - observed);
+    if (age < 10000) return "刚刚更新";
+    if (age < 60000) return Math.floor(age / 1000) + " 秒前";
+    if (age < 3600000) return Math.floor(age / 60000) + " 分钟前";
+    return Math.floor(age / 3600000) + " 小时前";
+  }
+
+  function refreshActivityText(status) {
+    var activity = status && status.activity;
+    if (!activity || typeof activity !== "object") return null;
+    var waiting = activity.waiting_reason === "MODEL_RESOURCE";
+    var title = waiting ? "正在等待模型资源" : (REFRESH_ACTIVITY_TITLE[activity.phase] || "");
+    if (!title) return null;
+    var lines = [title];
+    var detail = REFRESH_DETAIL_TEXT[activity.detail] || "";
+    if (!waiting && detail) lines.push("当前阶段：" + detail);
+    var completed = Number(activity.completed);
+    var total = Number(activity.total);
+    if (isFinite(completed) && activity.completed !== null && activity.completed !== undefined) {
+      lines.push("已完成：" + completed + (isFinite(total) && total > 0 ? " / " + total : ""));
+    }
+    if (activity.source_index && activity.source_total) {
+      lines.push("当前图库：" + activity.source_index + " / " + activity.source_total);
+    }
+    lines.push("最近进度：" + refreshAgeText(status));
+    if (waiting) {
+      lines.push("后台任务暂时让出资源，等待后继续。");
+    } else if (
+      status.running &&
+      Number(status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms) > 0 &&
+      Date.now() - Number(status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms) >= 30000
+    ) {
+      lines.push("当前仍在处理，暂不能判断是否异常。");
+    }
+    return lines;
+  }
 
   function refreshLibrary(sourceIds, mode) {
     if (!sourceIds && !state.sources.length) {
@@ -1627,11 +1695,23 @@
         : (refusedAll
           ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
           : (REFRESH_STATE_TEXT[status.state] || String(status.state || ""))));
+    var activityLines = status.running ? refreshActivityText(status) : null;
     var parts = [];
     if (status.mode === "build") {
       parts.push("开始建库");
     }
-    parts.push(stateText);
+    var stateNote = sourcesFailed > 0
+      ? (status.running ? "部分来源扫描失败，本轮仍在进行" : "部分来源扫描失败（可重试）")
+      : (unfinished
+        ? "尚未完成建立语义索引（可再次点击继续）"
+        : (refusedAll
+          ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
+          : ""));
+    if (stateNote) {
+      parts.push(stateNote);
+    } else if (!activityLines) {
+      parts.push(stateText);
+    }
     state.refreshRunning = Boolean(status.running);
     state.refreshStatus = status;
     updateSourceActions(els.sourcesList);
@@ -1646,7 +1726,7 @@
       parts.push("全部建库已排队（执行时包含当时登记的所有图库）");
     }
     var semantic = status.stages && status.stages.semantic ? status.stages.semantic : null;
-    if (semantic && semantic.backlog_total !== undefined) {
+    if (!activityLines && semantic && semantic.backlog_total !== undefined) {
       parts.push(
         "语义索引 " + String(semantic.backlog_confirmed) + " / " + String(semantic.backlog_total) +
         "（待处理 " + String(semantic.backlog_pending) + "）"
@@ -1666,10 +1746,19 @@
       ? "error"
       : (status.state === "PARTIAL_FAILED" ? "error" : "");
     setStatus(els.refreshStatus, "", kind);
-    if (parts.length) {
+    if (activityLines || parts.length) {
       els.refreshStatus.hidden = false;
-      var summary = element("p", null, parts.join("；"));
-      els.refreshStatus.appendChild(summary);
+      if (activityLines) {
+        var activity = element("div", "refresh-progress");
+        activity.appendChild(element("strong", "refresh-progress-title", activityLines[0]));
+        activityLines.slice(1).forEach(function (line) {
+          activity.appendChild(element("p", "hint", line));
+        });
+        els.refreshStatus.appendChild(activity);
+      }
+      if (parts.length) {
+        els.refreshStatus.appendChild(element("p", null, parts.join("；")));
+      }
     }
     if (terminal && sourceRows.length) {
       var details = element("details", "refresh-details");

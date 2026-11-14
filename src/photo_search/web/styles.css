@@ -422,6 +422,33 @@ main {
   gap: 0.5rem;
 }
 
+#refresh-status {
+  flex-basis: 100%;
+  min-width: 0;
+  margin: 0.15rem 0 0;
+}
+
+.refresh-progress {
+  max-width: 46rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+
+.refresh-progress-title {
+  display: block;
+  color: var(--fg);
+  line-height: 1.35;
+}
+
+.refresh-progress p {
+  margin: 0.3rem 0 0;
+  line-height: 1.45;
+}
+
 .source-primary-actions {
   width: auto;
   margin: 0;

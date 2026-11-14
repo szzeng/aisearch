@@ -42,7 +42,10 @@ function node(tag) {
       return found;
     }};
 }
-const context = {document: {readyState: "loading", addEventListener() {}, createElement: node}};
+const context = {
+  document: {readyState: "loading", addEventListener() {}, createElement: node},
+  Date: {now: () => 100000}
+};
 vm.createContext(context);
 vm.runInContext(source, context);
 const ui = context.queueUI;
@@ -181,7 +184,10 @@ function node(tag) {
     getAttribute(name) { return this.attrs[name] ?? null; },
     hasAttribute(name) { return name in this.attrs; }};
 }
-const context = {document: {readyState: "loading", addEventListener() {}, createElement: node}};
+const context = {
+  document: {readyState: "loading", addEventListener() {}, createElement: node},
+  Date: {now: () => 100000}
+};
 vm.createContext(context);
 vm.runInContext(source, context);
 const ui = context.summaryUI;
@@ -239,6 +245,45 @@ assert.match(changed, /变为缺失的位置 1 个/);
 assert.match(changed, /真正新内容 1 个/);
 assert.match(changed, /重新关联已有内容 2 个/);
 assert.doesNotMatch(changed, /移动 2/);
+
+const semanticActivity = render({state:"INDEXING",running:true,mode:"build",source_ids:[1],
+  activity:{phase:"semantic",detail:"encoding_images",completed:1200,total:5000,
+    waiting_reason:null},progress_updated_at_ms:65000,
+  counters:{sources_requested:1,sources_scanned:1,sources_failed:0}},
+  [{source_id:1,display_name:"图库 A"}]);
+assert.match(semanticActivity, /正在建立语义索引/);
+assert.match(semanticActivity, /当前阶段：图片编码/);
+assert.match(semanticActivity, /已完成：1200 \/ 5000/);
+assert.match(semanticActivity, /最近进度：35 秒前/);
+assert.match(semanticActivity, /暂不能判断是否异常/);
+
+const waitingActivity = render({state:"ENRICHING",running:true,mode:"build",
+  activity:{phase:"ocr",detail:"waiting_model",completed:18,total:40,
+    waiting_reason:"MODEL_RESOURCE"},progress_updated_at_ms:90000,
+  counters:{sources_requested:1,sources_scanned:1,sources_failed:0}},
+  [{source_id:1,display_name:"图库 A"}]);
+assert.match(waitingActivity, /正在等待模型资源/);
+assert.match(waitingActivity, /后台任务暂时让出资源，等待后继续/);
+assert.match(waitingActivity, /最近进度：10 秒前/);
+assert.doesNotMatch(waitingActivity, /暂不能判断是否异常/);
+
+const legacyActivity = render({state:"SCANNING",running:true,mode:"refresh",source_ids:[1],
+  counters:{sources_requested:1,sources_scanned:0,sources_failed:0}},
+  [{source_id:1,display_name:"图库 A"}]);
+assert.match(legacyActivity, /正在扫描照片/);
+assert.doesNotThrow(() => flatten(node("div")));
+
+const failedActivity = render({state:"FAILED",running:false,mode:"build",source_ids:[1],
+  counters:{sources_requested:1,sources_scanned:1,sources_failed:0},errors:[]},
+  [{source_id:1,display_name:"图库 A"}]);
+assert.match(failedActivity, /建库失败/);
+
+const missingModel = render({state:"FAILED",running:false,mode:"build",source_ids:[1],
+  search_ready_basis:"EMBEDDING_MODEL_UNAVAILABLE",
+  counters:{sources_requested:1,sources_scanned:1,sources_failed:0},errors:[]},
+  [{source_id:1,display_name:"图库 A"}]);
+assert.match(missingModel, /语义模型尚未准备好/);
+assert.doesNotMatch(missingModel, /EMBEDDING_MODEL_UNAVAILABLE/);
 '''
     result = subprocess.run(
         [node, "-e", script],
@@ -500,6 +545,47 @@ def test_close_passes_cancellation_to_refresh_pipeline(monkeypatch) -> None:
     assert observed.is_set()
     assert closed.is_set()
     assert not refresher.is_running()
+
+
+def test_refresher_status_exposes_live_activity_counts_and_waiting() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class Service:
+        def close(self):
+            pass
+
+    def executor(_service, status, _source_ids):
+        status.set_activity(
+            phase="face",
+            detail="waiting_model",
+            completed=3,
+            total=9,
+            waiting_reason="MODEL_RESOURCE",
+        )
+        entered.set()
+        assert release.wait(5)
+        status.finish(state="COMPLETE", elapsed_ms=0)
+
+    refresher = LibraryRefresher(Service, executor=executor)
+    try:
+        refresher.start([1], mode="build")
+        assert entered.wait(5)
+        live = refresher.status()
+        assert live["activity"] == {
+            "phase": "face",
+            "detail": "waiting_model",
+            "completed": 3,
+            "total": 9,
+            "waiting_reason": "MODEL_RESOURCE",
+        }
+        assert live["progress_updated_at_ms"] is not None
+        release.set()
+        assert refresher.wait_idle(timeout=5)
+        assert refresher.status()["state"] == "COMPLETE"
+    finally:
+        release.set()
+        refresher.close()
 
 
 def test_scan_interruption_reports_cancellation_without_success_callback(monkeypatch) -> None:

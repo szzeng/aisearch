@@ -724,6 +724,7 @@ def run_queue(
     deadline_ms: int | None = None,
     clock: Callable[[], float] | None = None,
     asset_ids: Sequence[int] | None = None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable OCR jobs; bounded, single-threaded, no sleeping."""
     reconcile_retired_ocr_jobs(catalog, now_ms=catalog.now_ms())
@@ -756,6 +757,22 @@ def run_queue(
     waiting_gpu = False
     steps = 0
     remaining = None if limit is None else max(0, int(limit))
+
+    def report_progress(*, waiting_reason: str | None = None) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(
+                {
+                    "steps": int(steps),
+                    "detail": "recognizing_text",
+                    "waiting_reason": waiting_reason,
+                }
+            )
+        except Exception:
+            pass
+
+    report_progress()
     heartbeat = OcrLeaseHeartbeat(catalog, lease_seconds=catalog.lease_seconds)
     try:
         while remaining is None or steps < remaining:
@@ -787,6 +804,7 @@ def run_queue(
                 ):
                     steps += 1
                     cpu_ran = True
+                    report_progress()
                     if cancel is not None and cancel():
                         stopped = True
                         break
@@ -798,6 +816,7 @@ def run_queue(
                 try:
                     # Acquire before probing or claiming, outside any SQLite transaction.
                     with background_model_slot(timeout=0):
+                        report_progress()
                         if foreground_model_waiting():
                             raise BackgroundSlotBusy("foreground model request is waiting")
                         had_waited = gpu_wait_started is not None
@@ -850,6 +869,7 @@ def run_queue(
                             if ran:
                                 steps += 1
                                 batch_progress = True
+                                report_progress()
                             if cancel is not None and cancel():
                                 stopped = True
                                 break
@@ -870,6 +890,7 @@ def run_queue(
                             continue
                 except BackgroundSlotBusy:
                     waiting_gpu = True
+                    report_progress(waiting_reason="MODEL_RESOURCE")
                     if cancel is not None and cancel():
                         stopped = True
                         break

@@ -1,6 +1,6 @@
 ## Current task: P4-BUILD-STABILITY-A2（2026-11-12）
 
-**B BLOCKER FIXES REVIEW PASS / AFFECTED PASS / TARGET HARDWARE PENDING**：上一轮独立审查的 P1 已修复并经独立 DS-H 子代理复核 **REVIEW PASS**，包括 semantic 提前返回时仍回收驻留 Qwen、释放失败阻断 face/OCR，Job Object 分配失败完整清理 Job/Process/队列并支持 CloseHandle 重试，候选与 Face Session 关闭失败保留所有权并可重试，`demo-search` 纳入共享 GPU 槽。定向修复集 139/139，DS-H P2 收口后 53/53；最终受影响面 398 项为 392 passed / 6 skipped / 0 failed / 0 errors，退出 0；全量 3837 项为 3759 passed / 26 failed / 52 skipped / 0 errors，退出 1，26 个失败与历史同名且原因一致，无新增失败。Ruff、compileAll、diff-check 通过。真实 GTX 1660 6GB + HDD、实际显存归还、系统时钟前跳后回拨与 D 阶段其余 worker 关闭重试仍 PENDING；可准备进入 C，但 A2 不是最终 ACCEPTED。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
+**C PASS（仅建库进度显示范围）/ A2 OVERALL PENDING**：B 阶段阻塞项仍为 REVIEW PASS。C 复用 `RefreshStatus` 和现有轮询，新增阶段/细分动作/真实 completed-total/资源等待/最近进度内存快照；扫描、语义、人脸和 OCR 通过可选回调上报，不增加数据库、后台监控线程、轮询器或调度变更。前端在现有状态区显示紧凑活动卡，旧响应缺字段可回退，不把长时间无更新判为死锁。独立 DS-H 聚焦复核最终 PASS，无 P0/P1；多图库计数继承、阶段切换和 face/OCR activity 身份已修复。最终无历史噪声受影响集 **130/130 passed**；扩大到旧 API/photo-view 测试的 16 个失败均为历史同集合。Ruff、compileAll、Node 语法、diff-check 通过。隔离 2500 张合成图库已在源码服务和 Codex 内置浏览器验证桌面/480×900 活动卡、2500/2500 扫描进度、资源等待文案和可读失败原因。真实 GPU 等待、GTX 1660 6GB/HDD、真实显存与 D 阶段剩余关闭重试仍 PENDING；C 已完成，等待下一步安排。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
 
 ## Previous task: P4-BUILD-STABILITY-A（2026-11-12）
 

@@ -630,7 +630,10 @@ class LibraryRefreshStatus(BaseModel):
     batch_size: int
     started_at_ms: int | None = None
     updated_at_ms: int | None = None
+    progress_updated_at_ms: int | None = None
     finished_at_ms: int | None = None
+    #: Current in-memory work summary. Older servers omit it and clients fall back to state.
+    activity: dict[str, Any] | None = None
     stages: dict[str, Any] = Field(default_factory=dict)
     failed_stages: list[str] = Field(default_factory=list)
     sources: list[dict[str, Any]] = Field(default_factory=list)

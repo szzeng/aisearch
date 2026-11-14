@@ -23,7 +23,8 @@ Two rules are structural rather than incidental:
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Iterable, Sequence
+import uuid
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
@@ -213,10 +214,30 @@ def refresh_library(
         )]
     )
     status.set_counters(sources_requested=len(requested))
-    for source_id in requested:
+    status.set_activity(
+        phase="scanning",
+        detail="preparing_scan",
+        completed=0,
+        total=None,
+        source_index=1 if requested else None,
+        source_total=len(requested) or None,
+    )
+    for source_index, source_id in enumerate(requested, start=1):
         stopped = cancelled()
         if stopped is not None:
             return stopped
+
+        def scan_progress(update: Mapping[str, Any]) -> None:
+            status.set_activity(
+                phase="scanning",
+                detail=str(update.get("detail") or "listing_files"),
+                completed=update.get("completed"),
+                total=update.get("total"),
+                source_index=source_index,
+                source_total=len(requested),
+                cycle=f"scan:{source_index}",
+            )
+
         outcome = _scan_one(
             service,
             status,
@@ -225,6 +246,7 @@ def refresh_library(
             location_delta=location_delta,
             absorb=absorb,
             cancel_check=cancel_check,
+            progress_callback=scan_progress,
         )
         if outcome is None:
             continue
@@ -241,6 +263,13 @@ def refresh_library(
 
     # ------------------------------------------------- B. search projection catch-up
     status.set_state("INDEXING")
+    status.set_activity(
+        phase="semantic",
+        detail="preparing_index",
+        completed=0,
+        total=None,
+        cycle=f"semantic-prepare:{uuid.uuid4().hex}",
+    )
     projection = _catch_up_projection(
         catalog,
         cancel_check=cancel_check,
@@ -324,6 +353,13 @@ def refresh_library(
     enrichment: dict[str, Any] = {}
     if enrich and not model_family_release_failed:
         status.set_state("ENRICHING")
+        status.set_activity(
+            phase="enrichment",
+            detail="preparing_enrichment",
+            completed=0,
+            total=len(content_delta) or None,
+            cycle=f"enrichment-prepare:{uuid.uuid4().hex}",
+        )
         enrichment = _enrichment_stages(
             service,
             status,
@@ -397,6 +433,7 @@ def _scan_one(
     location_delta: set[int],
     absorb: Callable[[set[int], Iterable[int]], bool],
     cancel_check: Callable[[], bool] | None,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any] | None:
     """Fast-scan one source; a source that cannot be read must not stop the others."""
     started = time.perf_counter()
@@ -406,6 +443,7 @@ def _scan_one(
             int(source_id),
             mode=SCAN_MODE_FAST,
             cancel_check=cancel_check,
+            progress_callback=progress_callback,
         )
     except CatalogError as error:
         status.add_source(
@@ -552,6 +590,7 @@ def _semantic_stage(
             **_content_report(catalog, derived_space, content_delta, spec),
         }
     space_id, generation_id = served
+    semantic_cycle = f"semantic:{space_id}"
     report = _content_report(catalog, space_id, content_delta, spec)
     required = report["required"]
     selection = semantic.semantic_selection(
@@ -561,6 +600,8 @@ def _semantic_stage(
         limit=SEMANTIC_BATCH_LIMIT,
     )
     targets = len(selection["targets"])
+    semantic_total = max(required, targets)
+    semantic_completed = min(int(report["confirmed"]), semantic_total)
     if targets == 0 and bool(selection["coverage_complete"]):
         # Nothing pending in the served generation: either the changed content is already
         # confirmed, or every changed file is one this index is not about (a document, a
@@ -587,8 +628,25 @@ def _semantic_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     try:
+        status.set_activity(
+            phase="semantic",
+            detail="waiting_model",
+            completed=semantic_completed,
+            total=semantic_total,
+            waiting_reason="MODEL_RESOURCE",
+            cycle=semantic_cycle,
+            mark_progress=False,
+        )
         with ExitStack() as resources:
             resources.enter_context(_background_model_slot(cancel_check))
+            status.set_activity(
+                phase="semantic",
+                detail="loading_model",
+                completed=semantic_completed,
+                total=semantic_total,
+                cycle=semantic_cycle,
+                mark_progress=False,
+            )
             try:
                 encoder = encoder_factory()
             except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
@@ -611,7 +669,15 @@ def _semantic_stage(
                 resources.callback(encoder_release)
             batches = 0
             encoded = 0
+            confirmed_this_run = 0
             last: dict[str, Any] | None = None
+            status.set_activity(
+                phase="semantic",
+                detail="encoding_images",
+                completed=semantic_completed,
+                total=semantic_total,
+                cycle=semantic_cycle,
+            )
             try:
                 while batches < SEMANTIC_BATCH_CAP:
                     if foreground_model_waiting():
@@ -630,6 +696,18 @@ def _semantic_stage(
                     )
                     batches += 1
                     encoded += int(payload["targets"])
+                    confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
+                    semantic_completed = min(
+                        semantic_total, semantic_completed + confirmed_this_run
+                    )
+                    status.set_activity(
+                        phase="semantic",
+                        detail="encoding_images",
+                        completed=semantic_completed,
+                        total=semantic_total,
+                        cycle=semantic_cycle,
+                    )
+                    confirmed_this_run = 0
                     last = payload
                     if bool(payload["coverage_complete"]) or int(payload["targets"]) == 0:
                         break
@@ -815,6 +893,7 @@ def _semantic_build_stage(
             **_backlog_report(catalog, derived_space, processor_id, scopes),
         }
     space_id, generation_id = served
+    semantic_cycle = f"semantic-build:{space_id}"
     try:
         # Refuse orphan reuse before classification writes jobs/outbox rows or marks the
         # source as built. build_index repeats the same check immediately before its writes.
@@ -851,6 +930,13 @@ def _semantic_build_stage(
     classified = 0
     pages = 0
     cancelled = False
+    status.set_activity(
+        phase="semantic",
+        detail="classifying_images",
+        completed=0,
+        total=None,
+        cycle=semantic_cycle,
+    )
     for scope in scopes:
         cursor = 0
         while pages < BUILD_ROUND_CAP:
@@ -874,6 +960,13 @@ def _semantic_build_stage(
             )
             classified += len(targets)
             pages += 1
+            status.set_activity(
+                phase="semantic",
+                detail="classifying_images",
+                completed=classified,
+                total=None,
+                cycle=semantic_cycle,
+            )
             last_asset = max(int(item["asset_id"]) for item in targets)
             if last_asset <= cursor:
                 break
@@ -889,6 +982,11 @@ def _semantic_build_stage(
         _mark_scopes_built(catalog, scopes=scopes)
     report["classified"] = classified
     report["pages"] = pages
+    initial_backlog = _backlog_report(catalog, space_id, processor_id, scopes)
+    semantic_total = int(initial_backlog["backlog_total"])
+    semantic_completed = min(
+        semantic_total, int(initial_backlog["backlog_confirmed"])
+    )
     if encoder_factory is None:
         message = (
             f"the required semantic model {processor_id} is unavailable; verify its weights and CUDA/runtime requirements"
@@ -906,8 +1004,25 @@ def _semantic_build_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     try:
+        status.set_activity(
+            phase="semantic",
+            detail="waiting_model",
+            completed=semantic_completed,
+            total=semantic_total,
+            waiting_reason="MODEL_RESOURCE",
+            cycle=semantic_cycle,
+            mark_progress=False,
+        )
         with ExitStack() as resources:
             resources.enter_context(_background_model_slot(cancel_check))
+            status.set_activity(
+                phase="semantic",
+                detail="loading_model",
+                completed=semantic_completed,
+                total=semantic_total,
+                cycle=semantic_cycle,
+                mark_progress=False,
+            )
             try:
                 encoder = encoder_factory()
             except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
@@ -956,7 +1071,15 @@ def _semantic_build_stage(
                 resources.callback(encoder_release)
             encoded = 0
             batches = 0
+            confirmed_this_run = 0
             last: dict[str, Any] | None = None
+            status.set_activity(
+                phase="semantic",
+                detail="encoding_images",
+                completed=semantic_completed,
+                total=semantic_total,
+                cycle=semantic_cycle,
+            )
             try:
                 for scope in scopes:
                     while batches < BUILD_ROUND_CAP:
@@ -977,6 +1100,18 @@ def _semantic_build_stage(
                         )
                         batches += 1
                         encoded += int(payload["targets"])
+                        confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
+                        semantic_completed = min(
+                            semantic_total, semantic_completed + confirmed_this_run
+                        )
+                        status.set_activity(
+                            phase="semantic",
+                            detail="encoding_images",
+                            completed=semantic_completed,
+                            total=semantic_total,
+                            cycle=semantic_cycle,
+                        )
+                        confirmed_this_run = 0
                         last = payload
                         if int(payload["targets"]) == 0:
                             break
@@ -1362,11 +1497,12 @@ def _enrichment_stages(
             recover_cr2=mode == REFRESH_MODE_BUILD,
             cancel_check=cancel_check,
             resume_pending=mode != REFRESH_MODE_BUILD,
+            status=status,
         ),
         "ocr": lambda: _ocr_stage(
             catalog, service.data_root, content, source_ids=scopes,
             recover_cr2=mode == REFRESH_MODE_BUILD, cancel_check=cancel_check,
-            engine_cache=ocr_cache,
+            engine_cache=ocr_cache, status=status,
         ),
     }
     if mode == REFRESH_MODE_BUILD:
@@ -1408,6 +1544,7 @@ def _enrichment_stages(
                     source_ids=scopes,
                     recover_cr2=True,
                     cancel_check=cancel_check,
+                status=status,
                 ),
                 cancel_check=cancel_check,
             ),
@@ -1416,7 +1553,7 @@ def _enrichment_stages(
                 scopes=scopes,
                 runner=lambda page: _ocr_stage(
                     catalog, service.data_root, page, source_ids=scopes, recover_cr2=True,
-                    cancel_check=cancel_check, engine_cache=ocr_cache,
+                    cancel_check=cancel_check, engine_cache=ocr_cache, status=status,
                 ),
                 cancel_check=cancel_check,
             ),
@@ -1425,6 +1562,23 @@ def _enrichment_stages(
     for name, runner in runners.items():
         if cancel_check is not None and cancel_check():
             break
+        activity_phase = "face" if name == "face" else "ocr" if name == "ocr" else "enrichment"
+        activity_detail = {
+            "thumbnail": "generating_thumbnails",
+            "taken_time": "organizing_taken_time",
+            "gps": "organizing_places",
+            "place_resolver": "organizing_places",
+            "face": "loading_model",
+            "ocr": "loading_model",
+        }.get(name, "processing_images")
+        _set_activity(
+            status,
+            phase=activity_phase,
+            detail=activity_detail,
+            completed=0,
+            total=len(content) or None,
+            cycle=f"enrichment:{name}",
+        )
         payload = _stage(status, name, runner)
         stages[name] = payload
         status.set_stage(name, payload)
@@ -1585,6 +1739,13 @@ def _stage(
         }
     payload["elapsed_ms"] = _elapsed_ms(started)
     return payload
+
+
+def _set_activity(status: RefreshStatus | None, **fields: Any) -> None:
+    if status is not None:
+        publish = getattr(status, "set_activity", None)
+        if callable(publish):
+            publish(**fields)
 
 
 def _thumbnail_stage(
@@ -1812,6 +1973,7 @@ def _face_stage(
     engine_cache: Any | None = None, source_ids: Sequence[int | None] = (None,),
     recover_cr2: bool = False, cancel_check: Callable[[], bool] | None = None,
     resume_pending: bool = False,
+    status: RefreshStatus | None = None,
 ) -> dict[str, Any]:
     from photo_search.face import contract as face_contract
     from photo_search.face import service as face_service
@@ -1849,6 +2011,17 @@ def _face_stage(
             "targets": len(assets),
             "steps": 0,
         }
+    face_total = len(assets)
+    face_cycle = f"face:{uuid.uuid4().hex}"
+    _set_activity(
+        status,
+        phase="face",
+        detail="loading_model",
+        completed=0,
+        total=face_total,
+        cycle=face_cycle,
+        mark_progress=False,
+    )
     artifact_revision = (
         face_contract.FACE_DETAIL_ARTIFACT_REVISION
         if source_detail
@@ -1859,7 +2032,25 @@ def _face_stage(
         # The RLock is intentionally reentrant: detect() calls the decorated run_queue()
         # synchronously on this same thread. Acquiring here bounds refresh wait before detect
         # writes queue rows; run_queue retains its independent guard for every other caller.
+        _set_activity(
+            status,
+            phase="face",
+            detail="waiting_model",
+            completed=0,
+            total=face_total,
+            waiting_reason="MODEL_RESOURCE",
+            cycle=face_cycle,
+            mark_progress=False,
+        )
         with _background_model_slot(cancel_check):
+            _set_activity(
+                status,
+                phase="face",
+                detail="processing_faces",
+                completed=0,
+                total=face_total,
+                cycle=face_cycle,
+            )
             if recover_cr2:
                 from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
 
@@ -1876,6 +2067,14 @@ def _face_stage(
                 catalog, data_root=data_root, asset_ids=sorted(assets)[:ENRICH_LIMIT],
                 source_detail=bool(source_detail),
                 engine_cache=engine_cache,
+                progress_callback=lambda update: _set_activity(
+                    status,
+                    phase="face",
+                    detail=str(update.get("detail") or "processing_faces"),
+                    completed=update.get("steps"),
+                    total=face_total,
+                    cycle=face_cycle,
+                ),
             )
     except (_BackgroundModelSlotBusy, _BackgroundModelSlotCancelled) as error:
         queued = _persist_deferred_face_jobs(
@@ -1995,6 +2194,7 @@ def _ocr_stage(
     source_ids: Sequence[int | None] = (None,), recover_cr2: bool = False,
     cancel_check: Callable[[], bool] | None = None,
     engine_cache: Any | None = None,
+    status: RefreshStatus | None = None,
 ) -> dict[str, Any]:
     from photo_search.ocr import contract as ocr_contract
     from photo_search.ocr import service as ocr_service
@@ -2025,6 +2225,17 @@ def _ocr_stage(
         return {"state": STAGE_FAILED, "reason": "CANCELLED", "targets": len(targets),
                 "queued": 0, "steps": 0}
     processor_id = ocr_service.processor_id_for_request("auto")
+    ocr_total = len(targets)
+    ocr_cycle = f"ocr:{uuid.uuid4().hex}"
+    _set_activity(
+        status,
+        phase="ocr",
+        detail="loading_model",
+        completed=0,
+        total=ocr_total,
+        cycle=ocr_cycle,
+        mark_progress=False,
+    )
     recovery: dict[str, int] = {}
     if recover_cr2:
         from photo_search.refresh.cr2_recovery import recover_cr2_format_failures
@@ -2049,6 +2260,16 @@ def _ocr_stage(
         catalog, data_root=data_root, worker_id="library-refresh",
         asset_ids=[int(target["asset_id"]) for target in targets], stop_check=cancel_check,
         engine_cache=engine_cache,
+        progress_callback=lambda update: _set_activity(
+            status,
+            phase="ocr",
+            detail=str(update.get("detail") or "recognizing_text"),
+            completed=update.get("steps"),
+            total=ocr_total,
+            waiting_reason=update.get("waiting_reason"),
+            cycle=ocr_cycle,
+            mark_progress=update.get("waiting_reason") is None,
+        ),
     )
     if run.get("waiting_gpu") or run.get("stopped"):
         return {

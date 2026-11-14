@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -86,7 +87,9 @@ class RefreshStatus:
             "batch_size": int(batch_size),
             "started_at_ms": int(started_at_ms),
             "updated_at_ms": int(started_at_ms),
+            "progress_updated_at_ms": int(started_at_ms),
             "finished_at_ms": None,
+            "activity": None,
             "stages": {},
             "failed_stages": [],
             "sources": [],
@@ -120,6 +123,62 @@ class RefreshStatus:
         with self._lock:
             self._data["counters"].update(values)
             self._touch(self._data)
+
+    def set_activity(
+        self,
+        *,
+        phase: str,
+        detail: str,
+        completed: int | None = None,
+        total: int | None = None,
+        waiting_reason: str | None = None,
+        source_index: int | None = None,
+        source_total: int | None = None,
+        cycle: str | None = None,
+        mark_progress: bool = True,
+    ) -> None:
+        """Publish the current in-memory activity without creating durable progress rows."""
+        observed = (
+            int(self._now_ms())
+            if self._now_ms is not None
+            else int(time.time_ns() // 1_000_000)
+        )
+        with self._lock:
+            previous = self._data.get("activity")
+            previous = previous if isinstance(previous, Mapping) else {}
+            if (
+                previous.get("phase") == str(phase)
+                and previous.get("cycle") == cycle
+                and previous.get("source_index") == source_index
+                and previous.get("total") == total
+                and completed is not None
+                and previous.get("completed") is not None
+            ):
+                completed = max(int(completed), int(previous["completed"]))
+            if completed is not None:
+                completed = max(0, int(completed))
+            if total is not None:
+                total = max(0, int(total))
+                if completed is not None:
+                    completed = min(completed, total)
+            activity: dict[str, Any] = {
+                "phase": str(phase),
+                "detail": str(detail),
+                "completed": completed,
+                "total": total,
+                "waiting_reason": None if waiting_reason is None else str(waiting_reason),
+            }
+            if source_index is not None:
+                activity["source_index"] = max(1, int(source_index))
+            if source_total is not None:
+                activity["source_total"] = max(1, int(source_total))
+            if cycle is not None:
+                activity["cycle"] = str(cycle)
+            self._data["activity"] = activity
+            if mark_progress:
+                self._data["progress_updated_at_ms"] = observed
+            if self._now_ms is not None:
+                self._data["updated_at_ms"] = observed
 
     def add_counters(self, **values: int) -> None:
         with self._lock:
@@ -195,7 +254,9 @@ def idle_status(*, batch_size: int) -> dict[str, Any]:
         "batch_size": int(batch_size),
         "started_at_ms": None,
         "updated_at_ms": None,
+        "progress_updated_at_ms": None,
         "finished_at_ms": None,
+        "activity": None,
         "stages": {},
         "failed_stages": [],
         "sources": [],

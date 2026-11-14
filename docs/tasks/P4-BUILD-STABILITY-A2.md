@@ -526,3 +526,21 @@ PHASE A REVIEWED / IMPLEMENTATION PENDING：核实 OCR GPU 探测与执行未协
 - Ruff、compileAll、`git diff --check` 退出 0。
 
 DS-H 复核记录见 `test-results/p4-build-stability-a2/ds-h-recheck-review-20261114.md`。真实 GTX 1660 6GB/HDD、真实模型 VRAM 与驱动归还时间仍 PENDING；系统时钟前跳后回拨及进程重启组合、D 阶段其余 worker 关闭重试仍保留为 P2。可准备进入 C，但 A2 仍不是最终 ACCEPTED。
+
+### 2026-11-14 C 阶段：建库进度与运行状态显示
+
+状态 **PASS（仅 C 进度显示范围）/ INDEPENDENT FOCUSED REVIEW PASS / A2 OVERALL PENDING**。
+
+- `RefreshStatus` 新增可选内存 `activity`：当前阶段、细分动作、真实 completed/total、资源等待原因、当前图库序号和最近进度时间；不修改数据库、任务身份、批次、锁、租约或 outbox。
+- 扫描器通过可选回调上报文件枚举和内容确认的真实数量；语义阶段上报分类、模型加载/等待、图片编码；人脸和 OCR 上报逐任务完成数及 `MODEL_RESOURCE` 等待。
+- 后台刷新进入 enrichment 前继续统一释放 Qwen；face/OCR 回调只做内存状态发布，不改变 B 阶段资源所有权。
+- 旧响应缺少 `activity` 时前端回退原有文本，不报错。
+- `index.html` 的 app/styles 缓存版本更新为 `p4-a2-c-progress-1`。
+
+定向验证 `c-affected-r10.xml`：130 项，130 passed / 0 skipped / 0 failed / 0 errors。另有 `c-affected-r7.xml` 扩大到旧 API/photo-view 回归后保留 16 个历史同名失败，未发现新增失败。Ruff、compileAll、Node 语法和 diff-check 通过。
+
+实际浏览器使用隔离 2500 张合成 JPEG：桌面和 480×900 窄屏均确认“正在扫描照片 / 准备扫描 / 0 / 当前图库 1/1 / 刚刚更新”，随后更新为“确认照片内容 / 2500/2500”；完成态显示“建库失败”，缺失模型原因显示为“语义模型尚未准备好”。未访问真实图库。
+
+真实等待 GPU 视觉态由 Node 确定性渲染验证。独立 DS-H 聚焦复核最终 **PASS**，无 P0/P1：多图库计数继承、阶段切换 activity 和 face/OCR 活动周期身份均已修好。C 阶段按显示范围关闭并停止。
+
+真实模型等待时长、GTX 1660 6GB + HDD、真实人脸/OCR 进度、显存峰值与切换归还、原生 200% 缩放仍 PENDING；D 阶段其他关闭重试继续保留。A2 整体不是最终 ACCEPTED。

@@ -424,6 +424,7 @@ def execute_scan(
     cancel_check: Callable[[], bool] | None = None,
     mode: str = SCAN_MODE_FULL,
     observation_batch: int = DEFAULT_OBSERVATION_BATCH,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> ScanOutcome:
     """Run one logical scan request to a terminal state, or raise with it persisted.
 
@@ -500,6 +501,7 @@ def execute_scan(
         cancel_check=cancel_check,
         mode=mode,
         observation_batch=max(int(observation_batch), 1),
+        progress_callback=progress_callback,
     )
     run.prepare_ms = _elapsed_ms(prepare_started)
 
@@ -670,6 +672,7 @@ class _ScanRun:
         cancel_check: Callable[[], bool] | None,
         mode: str = SCAN_MODE_FULL,
         observation_batch: int = DEFAULT_OBSERVATION_BATCH,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.service = service
         self.catalog = service.catalog
@@ -684,6 +687,7 @@ class _ScanRun:
         self.mode = str(mode)
         self.fast = self.mode == SCAN_MODE_FAST
         self.observation_batch = max(int(observation_batch), 1)
+        self.progress_callback = progress_callback
         self.enumerated = 0
         self.processed = 0
         self.unchanged_reused = 0
@@ -731,6 +735,24 @@ class _ScanRun:
             raise ScanInterrupted(
                 f"scan {self.scan_id} was cancelled after {self.processed} confirmed files"
             )
+
+    def _notify_progress(
+        self, detail: str, *, completed: int | None, total: int | None
+    ) -> None:
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(
+                {
+                    "source_id": int(self.source_id),
+                    "detail": str(detail),
+                    "completed": None if completed is None else int(completed),
+                    "total": None if total is None else int(total),
+                }
+            )
+        except Exception:
+            # Display progress must never alter the scan's durable semantics.
+            pass
 
     def _write_progress(
         self, connection: Any, value: float, now_ms: int, *, force: bool = False
@@ -795,6 +817,9 @@ class _ScanRun:
                     now_ms,
                 )
             self.enumerated += len(batch)
+            self._notify_progress(
+                "listing_files", completed=self.enumerated, total=None
+            )
             for observation in batch:
                 recent = _recent_mtime_ms(
                     observation.mtime_ns, self.wall_now_ms(), self.policy.window_ms
@@ -932,6 +957,7 @@ class _ScanRun:
                 scan_id=self.scan_id,
                 chunk_size=LOCATION_CHUNK_SIZE,
             )
+        self._notify_progress("hashing_files", completed=0, total=total)
         for row in iterator:
             self._check_cancel()
             if self.interrupt_after is not None and self.processed >= self.interrupt_after:
@@ -954,6 +980,9 @@ class _ScanRun:
                 if self.fast:
                     self._note_content(bound.asset_id)
             self.processed += 1
+            self._notify_progress(
+                "hashing_files", completed=self.processed, total=total
+            )
 
     def _process_file(
         self, *, row: Any, relative: str, absolute: Path, total: int

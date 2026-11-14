@@ -46,7 +46,7 @@ def test_map_and_collection_copy_explain_what_the_count_means() -> None:
     assert "规则候选照片：" in app
     assert "规则候选照片经排除项复核后，实际可浏览数量可能不同。" in app
     assert map_source.count("地图底图暂不可用，仍可通过照片列表浏览。") >= 5
-    assert "app.js?v=p4-ui2-copy-daily-ux-2" in (WEB / "index.html").read_text(encoding="utf-8")
+    assert "app.js?v=p4-a2-c-progress-1" in (WEB / "index.html").read_text(encoding="utf-8")
     assert "places.js?v=p4-ui2-copy-daily-ux-3" in (WEB / "places.html").read_text(encoding="utf-8")
     assert "map.js?v=p4-ui2-copy-daily-ux-1" in (WEB / "map.html").read_text(encoding="utf-8")
 
