@@ -6,8 +6,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.db import Catalog
+from photo_search.catalog.errors import CatalogError
 from photo_search.config import catalog_db_path
 from photo_search.models.embedding import management
 from photo_search.models.embedding.candidate_task import CandidateBuildManager
@@ -62,6 +65,30 @@ def test_candidate_manager_joins_terminal_worker_before_relaunch(tmp_path: Path)
 
     assert manager._thread is None
     assert not worker.is_alive()
+
+
+def test_candidate_manager_retains_a_failed_worker_release_for_retry(tmp_path: Path) -> None:
+    class Encoder:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def close(self) -> None:
+            self.calls += 1
+            if self.calls <= 2:
+                raise OSError("synthetic candidate worker shutdown failure")
+
+    manager = CandidateBuildManager(_Context(tmp_path))
+    encoder = Encoder()
+    manager._unreleased_encoder = encoder
+
+    with pytest.raises(CatalogError, match="still being released"):
+        manager._launch({"status": "RUNNING"}, retry_failed=False)
+    assert manager._unreleased_encoder is encoder
+    assert manager.close(timeout=0) is False
+    assert manager._unreleased_encoder is encoder
+    assert manager.close(timeout=0) is True
+    assert manager._unreleased_encoder is None
+    assert encoder.calls == 3
 
 
 def test_concurrent_offline_requests_do_not_overwrite_each_other(tmp_path: Path) -> None:

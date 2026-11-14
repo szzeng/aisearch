@@ -84,6 +84,7 @@ class AiWorkerClient:
         self._shutdown_lock = threading.RLock()
         self._shutdown_complete = False
         self._closed_queues: set[str] = set()
+        self._process_closed = False
 
     @property
     def pid(self) -> int | None:
@@ -91,16 +92,45 @@ class AiWorkerClient:
 
     def start(self) -> None:
         if not self._started:
-            self._process.start()
             try:
+                self._process.start()
                 job = WindowsJobObject()
-                job.assign(int(self._process.pid))
+                # Retain the job immediately so any failure after CreateJobObject can
+                # still be retried by the shared cleanup path.
                 self._job = job
-            except BaseException:
-                self._stop()
-                self._close_job(raise_errors=True)
-                self._start_gate.set()
-                raise
+                job.assign(int(self._process.pid))
+            except BaseException as error:
+                errors: list[BaseException] = []
+                try:
+                    self._stop()
+                except BaseException as cleanup_error:
+                    errors.append(cleanup_error)
+                if not self._process_is_alive():
+                    errors.extend(self._close_process())
+                errors.extend(self._close_queues())
+                errors.extend(self._close_job())
+                if not self._process_is_alive():
+                    errors.extend(self._close_process())
+                try:
+                    self._cleanup_stderr_file()
+                except BaseException as cleanup_error:
+                    errors.append(cleanup_error)
+                # Keep the gate closed if termination failed, so the unowned child can
+                # never load a model merely because startup reported failure.
+                process_alive = self._process_is_alive()
+                if not process_alive:
+                    self._start_gate.set()
+                else:
+                    errors.append(
+                        WorkerShutdownError(
+                            "the AI worker remained alive after startup cleanup"
+                        )
+                    )
+                if errors:
+                    raise WorkerShutdownError(
+                        "AI worker startup failed and its child resources could not all be released"
+                    ) from errors[0]
+                raise error
             self._started = True
             self._start_gate.set()
 
@@ -151,13 +181,11 @@ class AiWorkerClient:
                 raise WorkerShutdownError(
                     "AI worker shutdown did not release every resource"
                 ) from errors[0]
-            if self._started:
-                try:
-                    self._process.close()
-                except BaseException as error:
-                    raise WorkerShutdownError(
-                        "the AI worker process handle could not be closed"
-                    ) from error
+            process_errors = self._close_process()
+            if process_errors:
+                raise WorkerShutdownError(
+                    "the AI worker process handle could not be closed"
+                ) from process_errors[0]
             self._shutdown_complete = True
 
     def _call(self, request: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -242,6 +270,23 @@ class AiWorkerClient:
             if raise_errors:
                 raise
             return [error]
+
+    def _close_process(self) -> list[BaseException]:
+        if self._process_closed or self._process.pid is None:
+            return []
+        if self._process.is_alive():
+            return [WorkerShutdownError("the AI worker process is still alive")]
+        try:
+            self._process.close()
+            self._process_closed = True
+            return []
+        except BaseException as error:
+            return [error]
+
+    def _process_is_alive(self) -> bool:
+        if self._process_closed or self._process.pid is None:
+            return False
+        return self._process.is_alive()
 
     def _cleanup_stderr_file(self) -> None:
         try:

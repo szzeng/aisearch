@@ -84,6 +84,7 @@ class CandidateBuildManager:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._owner_id = uuid.uuid4().hex
+        self._unreleased_encoder: Any | None = None
 
     @property
     def path(self) -> Path:
@@ -251,6 +252,13 @@ class CandidateBuildManager:
             self._thread = None
 
     def _launch(self, state: dict[str, Any], *, retry_failed: bool) -> None:
+        if self._unreleased_encoder is not None:
+            self._release_unreleased_encoder()
+            if self._unreleased_encoder is not None:
+                raise CatalogError(
+                    SELECTION_WRITER_ACTIVE,
+                    "the previous candidate model worker is still being released",
+                )
         if self._thread is not None and self._thread.is_alive():
             raise CatalogError(SELECTION_WRITER_ACTIVE, "a candidate worker is already active")
         thread = threading.Thread(
@@ -289,7 +297,11 @@ class CandidateBuildManager:
                 stop = getattr(encoder, "close", None)
                 if callable(stop):
                     stop()
-            finally:
+            except BaseException:
+                self._unreleased_encoder = encoder
+                raise
+            else:
+                self._unreleased_encoder = None
                 encoder = None
 
         try:
@@ -451,6 +463,9 @@ class CandidateBuildManager:
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
                 return False
+        self._release_unreleased_encoder()
+        if self._unreleased_encoder is not None:
+            return False
         state = _read_state(self.root)
         if state and state.get("owner_id") == self._owner_id and state.get("status") in {"RUNNING", "PAUSE_REQUESTED"}:
             state["status"] = "INTERRUPTED"
@@ -458,6 +473,18 @@ class CandidateBuildManager:
             state["last_error"] = {"code": "PROCESS_STOPPING"}
             self._save(state)
         return True
+
+    def _release_unreleased_encoder(self) -> None:
+        encoder = self._unreleased_encoder
+        if encoder is None:
+            return
+        try:
+            stop = getattr(encoder, "close", None)
+            if callable(stop):
+                stop()
+        except BaseException:
+            return
+        self._unreleased_encoder = None
 
 
 __all__ = ["BATCH_LIMIT", "CandidateBuildManager", "TASK_FILENAME", "TASK_STATES"]

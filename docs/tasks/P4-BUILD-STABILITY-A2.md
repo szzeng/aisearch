@@ -508,3 +508,21 @@ PHASE A REVIEWED / IMPLEMENTATION PENDING：核实 OCR GPU 探测与执行未协
 本轮最终受影响 JUnit `affected-final-r1.xml`：382 项，376 passed / 6 skipped / 0 failed / 0 errors，终端退出码 0。全量首轮 `full-after-b-r1.xml`：3826 项，3747 passed / 27 failed / 52 skipped / 0 errors，终端退出码 1；新增的 1 个并发交错断言单独复跑通过。终轮全量 `full-final-b-r2.xml`：3827 项，3749 passed / 26 failed / 52 skipped / 0 errors，终端退出码 1；26 个失败与历史全量全部同名，本轮无新增失败。Ruff、compileAll、diff-check 退出 0。
 
 尚未完成：GTX 1660 6 GB + HDD 真实模型/显存/恢复验收、独立 DS-H 全受影响面审查。当前仅有 RTX 4060 Laptop 8188 MiB 观察，且模型权重不可用。阶段 C/D/E 不开始；B 不能标记最终 ACCEPTED。详见[报告](../reports/P4-BUILD-STABILITY-A2.md)。
+
+### 2026-11-14 独立审查阻塞项修复
+
+状态 **B BLOCKER FIXES REVIEW PASS / AFFECTED PASS / TARGET HARDWARE PENDING**。上一轮独立审查指出的三个 P1 已修复，独立 DS-H 子代理复核 **REVIEW PASS**，无未关闭 P1：
+
+- 后台刷新在 semantic 无待办、跳过或失败后，只要准备进入 enrichment，就先尝试释放此前驻留的 Qwen Worker；释放失败把 semantic 标为 `MODEL_RESOURCE_RELEASE_FAILED` 并停止 face/OCR。新增“已驻留 Qwen + 零语义待办”和“释放失败阻断 enrichment”测试。
+- Windows Job 对象在 `AssignProcessToJobObject` 失败时关闭 Job；`AiWorkerClient.start()` 对所有启动后失败统一清理 child、进程句柄、队列和诊断文件，关闭失败的句柄保留给后续 `shutdown()` 重试。新增分配失败与 CloseHandle 失败测试。
+- 候选建库关闭失败保留 encoder 和 CandidateBuildManager，阻止新 build 并允许 close/resume 重试；`ApiContext` 不再在 candidate 尚未释放时清空引用，延迟清理也检查 `close() is False`。同时收紧 Face Session 释放失败：保留缓存、记录 cleanup failure，并禁止后续 OCR。
+- `demo-search` 直接 GPU 入口现在也取得共享后台槽。
+
+验证：
+
+- `review-fixes-r6.xml`：139 passed / 0 skipped / 0 failed；DS-H 指出的两个 P2 收口后，`review-fixes-r8.xml` 再跑 53 passed。
+- 最终 `review-affected-r4.xml`：398 项，392 passed / 6 skipped / 0 failed / 0 errors，退出码 0。
+- `review-full-r1.xml`：3837 项，3759 passed / 26 failed / 52 skipped / 0 errors，退出码 1；26 项与历史 `full-regression-r1.xml` 全部同名且首行错误一致，无新增失败。
+- Ruff、compileAll、`git diff --check` 退出 0。
+
+DS-H 复核记录见 `test-results/p4-build-stability-a2/ds-h-recheck-review-20261114.md`。真实 GTX 1660 6GB/HDD、真实模型 VRAM 与驱动归还时间仍 PENDING；系统时钟前跳后回拨及进程重启组合、D 阶段其余 worker 关闭重试仍保留为 P2。可准备进入 C，但 A2 仍不是最终 ACCEPTED。

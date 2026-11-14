@@ -757,17 +757,30 @@ class FaceEngineCache:
 
         RapidOCR/InsightFace expose no portable VRAM-release acknowledgement. This
         method therefore records only what the product can prove: this process no
-        longer owns the sessions. Real provider memory release remains a hardware
-        measurement, not an assumption used for concurrent execution.
+        longer owns the sessions after the engine supplied a successful release hook.
+        A failing hook remains cached for retry. Real provider memory release remains
+        a hardware measurement, not an assumption used for concurrent execution.
         """
         with self._lock:
-            engines = tuple(self._engines.values())
-            self._engines.clear()
-            self._attempts.clear()
-        for engine in engines:
+            engines = tuple(self._engines.items())
+        released: list[tuple[Any, FaceEngine]] = []
+        errors: list[BaseException] = []
+        for key, engine in engines:
             close = getattr(engine, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as error:
+                    errors.append(error)
+                    continue
+            released.append((key, engine))
+        with self._lock:
+            for key, engine in released:
+                if self._engines.get(key) is engine:
+                    self._engines.pop(key, None)
+                self._attempts.pop(key, None)
+        if errors:
+            raise RuntimeError("one or more face sessions could not be released") from errors[0]
 
     def engine(self, data_root: str | Path | None = None, *, device: str = "auto") -> FaceEngine:
         """Reuse a device session; its reason describes the request that created it.

@@ -8,7 +8,9 @@ from typing import Any
 
 import pytest
 
+import photo_search.__main__ as main_module
 from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+from photo_search.runtime.device import DevicePolicy
 from photo_search.workers.query_encoder import WorkerQueryEncoder, pinned_embedding_spec
 
 MANIFEST = (
@@ -16,6 +18,59 @@ MANIFEST = (
     / "tools/prepare_models/manifests/chinese-clip-vit-b-16.json"
 )
 VECTOR = [0.01] * 512
+
+
+def test_demo_search_acquires_the_shared_gpu_slot(monkeypatch, tmp_path: Path) -> None:
+    from photo_search.face import service as face_service
+
+    slot = threading.RLock()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+    owner_states: list[bool] = []
+
+    class Worker:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: Any) -> None:
+            return None
+
+        def health(self, timeout: float) -> dict[str, Any]:
+            del timeout
+            owner_states.append(slot._is_owned())
+            return {}
+
+        def demo_search(self, timeout: float) -> dict[str, Any]:
+            del timeout
+            owner_states.append(slot._is_owned())
+            return {
+                "device": {"device": "cuda"},
+                "query": "red",
+                "query_l2_norm": 1.0,
+                "images": [],
+                "top_k": [],
+            }
+
+        def provider_usage(self, timeout: float) -> dict[str, Any]:
+            del timeout
+            owner_states.append(slot._is_owned())
+            return {"sessions": {}}
+
+    monkeypatch.setattr(main_module, "AiWorkerClient", Worker)
+    assert (
+        main_module._demo_search(
+            tmp_path / "model",
+            tmp_path / "manifest.json",
+            "cuda",
+            DevicePolicy.GPU_REQUIRED,
+            None,
+        )
+        == 0
+    )
+    assert owner_states == [True, True, True]
+    assert slot._is_owned() is False
 
 
 class Upload:

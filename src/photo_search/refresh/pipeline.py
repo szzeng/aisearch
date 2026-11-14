@@ -284,6 +284,34 @@ def refresh_library(
     if stopped is not None:
         return stopped
 
+    # A refresh runs semantic, face and OCR as a serial model-family sequence. The
+    # semantic stage normally releases its worker through ExitStack, but several
+    # legitimate no-work paths return before constructing an encoder. In that case a
+    # worker left resident by an earlier foreground search must still be released before
+    # face/OCR opens another GPU family. The callback is idempotent.
+    model_family_release_failed = False
+    if enrich and encoder_release is not None:
+        try:
+            encoder_release()
+        except Exception as error:  # noqa: BLE001 - refuse the next family, do not leak ownership
+            previous_semantic_reason = (
+                semantic.get("reason") or semantic.get("code") or semantic.get("state")
+            )
+            status.note_error(
+                stage="semantic",
+                code=type(error).__name__,
+                message="the semantic model worker could not be released before enrichment",
+            )
+            semantic = {
+                **semantic,
+                "state": STAGE_FAILED,
+                "reason": "MODEL_RESOURCE_RELEASE_FAILED",
+                "model_resource_release_error": type(error).__name__,
+                "model_resource_release_previous_reason": previous_semantic_reason,
+            }
+            status.set_stage("semantic", semantic)
+            model_family_release_failed = True
+
     search_ready, basis = _search_ready(projection, semantic, mode=mode)
     if search_ready:
         status.mark_search_ready(
@@ -294,7 +322,7 @@ def refresh_library(
 
     # -------------------------------------------------------------- D..G. enrichment
     enrichment: dict[str, Any] = {}
-    if enrich:
+    if enrich and not model_family_release_failed:
         status.set_state("ENRICHING")
         enrichment = _enrichment_stages(
             service,
@@ -1412,11 +1440,16 @@ def _enrichment_stages(
                     code=type(error).__name__,
                     message="face session references could not be released before OCR",
                 )
-                stages["face"] = {
+                failed_face = {
                     **payload,
                     "state": STAGE_FAILED,
                     "reason": "SESSION_RELEASE_FAILED",
                 }
+                stages["face"] = failed_face
+                status.set_stage("face", failed_face)
+                # OCR is the next GPU model family. A failed ownership release must
+                # stop the sequence rather than allowing a second family to start.
+                break
     return stages
 
 

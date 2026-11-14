@@ -549,6 +549,8 @@ class ApiContext:
                 if self._close_running:
                     return False
                 retry_now = not self._deferred_cleanup_active
+                if retry_now:
+                    self._close_running = True
             else:
                 self._closed = True
                 self._close_running = True
@@ -557,8 +559,18 @@ class ApiContext:
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
         if retry_now:
-            with self._lifecycle_lock:
-                self._close_running = True
+            candidate_manager = self._embedding_candidate_manager
+            if candidate_manager is not None:
+                try:
+                    candidate_released = candidate_manager.close()
+                except Exception:
+                    logger.debug("retrying candidate worker cleanup failed", exc_info=True)
+                    candidate_released = False
+                if candidate_released is False:
+                    with self._lifecycle_lock:
+                        self._close_running = False
+                    return False
+                self._embedding_candidate_manager = None
             return self._finish_shutdown()
         if deferred:
             return False
@@ -570,12 +582,20 @@ class ApiContext:
             except Exception:  # pragma: no cover - shutdown must not fail.
                 logger.debug("stopping the photo memories worker failed", exc_info=True)
         candidate_manager = self._embedding_candidate_manager
-        self._embedding_candidate_manager = None
+        candidate_cleanup_failed = False
         if candidate_manager is not None:
             try:
-                candidate_manager.close()
+                released = candidate_manager.close()
             except Exception:  # pragma: no cover - shutdown must release the data-root lease.
                 logger.debug("stopping the embedding candidate builder failed", exc_info=True)
+                candidate_cleanup_failed = True
+            else:
+                if released is False:
+                    candidate_cleanup_failed = True
+                else:
+                    self._embedding_candidate_manager = None
+        if candidate_manager is None or candidate_cleanup_failed:
+            self._embedding_candidate_manager = candidate_manager
         refresher = self._refresher
         self._refresher = None
         if refresher is not None:
@@ -635,13 +655,20 @@ class ApiContext:
                         future.result()
                     except Exception:
                         logger.debug("smart refresh ended with an error during shutdown", exc_info=True)
+                deferred_cleanup_failed = False
                 for worker in (candidate_manager, refresher, face_detail_runner, runner):
                     if worker is not None:
                         try:
-                            worker.close()
+                            if worker.close() is False:
+                                deferred_cleanup_failed = True
                         except Exception:
                             logger.exception("deferred worker cleanup failed")
-                if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
+                            deferred_cleanup_failed = True
+                if deferred_cleanup_failed or any(
+                    getattr(worker, "_cleanup_failed", False)
+                    for worker in workers
+                    if worker is not None
+                ):
                     logger.error("worker cleanup failed; retaining data-root lease")
                     with self._lifecycle_lock:
                         self._deferred_cleanup_active = False
@@ -662,7 +689,9 @@ class ApiContext:
                         self._close_running = False
             threading.Thread(target=finish_after_workers, name="photo-search-shutdown", daemon=True).start()
             return False
-        if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
+        if candidate_cleanup_failed or any(
+            getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None
+        ):
             logger.error("worker cleanup failed; retaining data-root lease")
             with self._lifecycle_lock:
                 self._close_running = False

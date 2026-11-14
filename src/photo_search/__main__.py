@@ -304,7 +304,16 @@ def _demo_search(
     output: Path | None,
 ) -> int:
     """Run the deterministic fixture search inside the managed AI worker."""
-    with AiWorkerClient(
+    from contextlib import nullcontext
+
+    from photo_search.runtime.background_slot import background_model_slot
+
+    gpu_requested = device != "cpu" and not (
+        device is None and device_policy == DevicePolicy.CPU_PREFERRED
+    )
+    with (
+        background_model_slot() if gpu_requested else nullcontext()
+    ), AiWorkerClient(
         model_dir, manifest, device=device, device_policy=device_policy
     ) as worker:
         health = worker.health(timeout=COLD_START_TIMEOUT_SECONDS)

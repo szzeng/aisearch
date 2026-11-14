@@ -273,3 +273,26 @@ def test_context_close_retains_encoder_after_failure_and_retries(tmp_path):
     assert context._encoder is None
     assert adapter.calls == 2
     assert context._shutdown_complete.is_set() is True
+
+
+def test_context_retains_candidate_manager_until_release_can_be_retried(tmp_path):
+    class Candidate:
+        def __init__(self):
+            self.calls = 0
+
+        def close(self):
+            self.calls += 1
+            return self.calls > 1
+
+    candidate = Candidate()
+    context = ApiContext(ApiSettings(data_root=tmp_path))
+    context._embedding_candidate_manager = candidate
+
+    assert context.close() is False
+    assert context._embedding_candidate_manager is candidate
+    assert context._shutdown_complete.is_set() is False
+
+    assert context.close() is True
+    assert context._embedding_candidate_manager is None
+    assert candidate.calls == 2
+    assert context._shutdown_complete.is_set() is True

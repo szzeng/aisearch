@@ -571,6 +571,58 @@ def test_face_stage_defers_durable_work_when_candidate_holds_model_slot(
     assert detect_calls and asset_id in detect_calls[0]["asset_ids"]
 
 
+def test_face_session_release_failure_stops_before_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from photo_search.face import engine as face_engine
+    from photo_search.ocr import engine as ocr_engine
+    from photo_search.refresh import pipeline
+    from photo_search.refresh.state import RefreshStatus
+
+    class FailingFaceCache:
+        def release_sessions(self) -> None:
+            raise OSError("synthetic face session release failure")
+
+    monkeypatch.setattr(face_engine, "FaceEngineCache", FailingFaceCache)
+    monkeypatch.setattr(ocr_engine, "OcrEngineCache", lambda: object())
+    visited: list[str] = []
+
+    def stage(_status: Any, name: str, _runner: Any) -> dict[str, Any]:
+        visited.append(name)
+        return {"state": "SKIPPED_NO_TARGETS"}
+
+    monkeypatch.setattr(pipeline, "_stage", stage)
+    status = RefreshStatus(
+        refresh_id="face-release",
+        source_ids=[1],
+        batch_size=128,
+        started_at_ms=1,
+    )
+    stages = pipeline._enrichment_stages(
+        SimpleNamespace(catalog=None, data_root=tmp_path),
+        status,
+        mode="refresh",
+        face_profile="source_detail",
+        scopes=[1],
+        content_delta=set(),
+        location_delta=set(),
+        delta_overflow=False,
+        encoder_factory=None,
+        manifest_path=None,
+        device="cuda",
+        device_policy="GPU_REQUIRED",
+        cancel_check=None,
+    )
+
+    assert visited == ["thumbnail", "taken_time", "gps", "place_resolver", "face"]
+    assert stages["face"]["state"] == "FAILED"
+    assert stages["face"]["reason"] == "SESSION_RELEASE_FAILED"
+    assert "ocr" not in stages
+    assert status.snapshot()["stages"]["face"]["reason"] == "SESSION_RELEASE_FAILED"
+
+
 def test_face_backlog_cap_does_not_drop_current_scan_delta(
     env: RefreshEnv, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1010,6 +1062,79 @@ def test_a_no_op_refresh_does_no_ai_work_and_keeps_the_generation(env: RefreshEn
     assert outcome["stages"]["ocr"]["state"] in ("SKIPPED_UNAVAILABLE", "SKIPPED_NO_TARGETS")
     assert len(env.adapter.image_calls) == encoded_before
     assert _state(catalog, env) == snapshot
+
+
+def test_no_op_refresh_releases_a_resident_semantic_worker_before_enrichment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from photo_search.refresh import pipeline
+
+    class ClosingAdapter(StubPinnedAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed = 0
+
+        def close(self) -> None:
+            self.closed += 1
+
+    adapter = ClosingAdapter()
+    env = RefreshEnv.build(tmp_path, adapter=adapter, manifest=MANIFEST)
+    try:
+        env.refresh()
+        assert env.context.query_encoder() is not None
+        before = adapter.closed
+        observed: list[Any] = []
+
+        def enrichment(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            observed.append(env.context._encoder)
+            return {}
+
+        monkeypatch.setattr(pipeline, "_enrichment_stages", enrichment)
+        outcome = env.refresh()
+        assert outcome["stages"]["semantic"]["state"] == "SKIPPED_NO_TARGETS"
+        assert adapter.closed == before + 1
+        assert observed == [None]
+    finally:
+        env.close()
+
+
+def test_semantic_release_failure_stops_before_face_or_ocr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from photo_search.refresh import pipeline
+
+    class FailingCloseAdapter(StubPinnedAdapter):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 2:
+                raise OSError("synthetic semantic worker shutdown failure")
+
+    adapter = FailingCloseAdapter()
+    env = RefreshEnv.build(tmp_path, adapter=adapter, manifest=MANIFEST)
+    try:
+        env.refresh()
+        assert env.context.query_encoder() is not None
+        enriched: list[bool] = []
+
+        def enrichment(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            del args, kwargs
+            enriched.append(True)
+            return {}
+
+        monkeypatch.setattr(pipeline, "_enrichment_stages", enrichment)
+        outcome = env.refresh()
+        semantic = outcome["stages"]["semantic"]
+        assert semantic["state"] == "FAILED"
+        assert semantic["reason"] == "MODEL_RESOURCE_RELEASE_FAILED"
+        assert semantic["model_resource_release_previous_reason"] == "SKIPPED_NO_TARGETS"
+        assert enriched == []
+    finally:
+        env.close()
 
 
 def _state(catalog: Any, env: RefreshEnv) -> dict[str, Any]:

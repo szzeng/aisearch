@@ -155,19 +155,21 @@ class WindowsJobObject:
             raise error
         try:
             if not kernel.AssignProcessToJobObject(handle, process):
-                raise ctypes.WinError(ctypes.get_last_error())
+                error = ctypes.WinError(ctypes.get_last_error())
+                self.close()
+                raise error
         finally:
             kernel.CloseHandle(process)
 
     def close(self) -> None:
         kernel, handle = self._kernel, self._handle
-        self._kernel = None
-        self._handle = None
         if kernel is not None and handle is not None:
             if not kernel.CloseHandle(handle):
                 import ctypes
 
                 raise ctypes.WinError(ctypes.get_last_error())
+            self._kernel = None
+            self._handle = None
 
     @property
     def assigned(self) -> bool:

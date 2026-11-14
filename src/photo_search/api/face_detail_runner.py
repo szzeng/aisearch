@@ -90,12 +90,24 @@ class FaceDetailRunner:
             if thread.is_alive():
                 logger.warning("face-detail worker still active after %.1fs", float(timeout))
                 return
+        cache = self._engine_cache
+        if cache is not None:
+            try:
+                release = getattr(cache, "release_sessions", None)
+                if callable(release):
+                    release()
+            except Exception:
+                self._cleanup_failed = True
+                logger.exception("releasing face-detail sessions failed")
+            else:
+                self._engine_cache = None
         service, self._service = self._service, None
         if service is not None:
             try:
                 service.close()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.debug("closing the face-detail catalog failed", exc_info=True)
+                self._cleanup_failed = True
 
     def _loop(self) -> None:
         try:
@@ -173,10 +185,15 @@ class FaceDetailRunner:
                         # batch still reuses one cache across all of its photos.
                         cache = self._engine_cache
                         if cache is not None:
-                            release = getattr(cache, "release_sessions", None)
-                            if callable(release):
-                                release()
-                        self._engine_cache = None
+                            try:
+                                release = getattr(cache, "release_sessions", None)
+                                if callable(release):
+                                    release()
+                            except Exception:
+                                self._cleanup_failed = True
+                                logger.exception("releasing face-detail sessions failed")
+                            else:
+                                self._engine_cache = None
                     self._condition.notify_all()
 
     def _service_for_thread(self) -> Any:

@@ -555,6 +555,29 @@ def test_batch_api_session_csrf_scope_and_resume(api_env):
     api_env.scenario(scenario)
 
 
+def test_face_detail_runner_retains_a_failed_session_release_for_close():
+    runner = FaceDetailRunner(lambda: None)
+
+    class Cache:
+        def __init__(self):
+            self.calls = 0
+
+        def release_sessions(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("synthetic face session release failure")
+
+    cache = Cache()
+    runner._engine_cache = cache
+    runner.close()
+    assert runner._engine_cache is cache
+    assert runner._cleanup_failed is True
+
+    runner.close()
+    assert runner._engine_cache is None
+    assert cache.calls == 2
+
+
 def test_schema19_upgrade_preserves_manual_facts_and_batch_cursor(api_env):
     catalog = api_env.service.catalog
     photo = seed_library(api_env, {"upgrade.jpg": [(40, 30, 120, 110)]})["upgrade.jpg"]

@@ -1,6 +1,6 @@
 ## Current task: P4-BUILD-STABILITY-A2（2026-11-12）
 
-**B CODE CONVERGED / AUTOMATED + WINDOWS PROCESS PASS / TARGET HARDWARE + INDEPENDENT REVIEW PENDING**：基于 `5fc7b73` 续做，已用 Windows Job Object + 启动门绑定 AI 子进程生命周期，统一 GPU 直接入口许可，保持 OCR GPU 主路径，在语义/人脸/OCR 间建立模型族串行边界，统一生产任务租约时钟，并修复 Worker/Context 关闭失败重试。真实父进程强杀后 child 退出与 GPU Mutex 释放、child 异常退出、串行前台后 OCR 恢复、时钟回拨/未来时间、CPU OCR 独立及关闭重试均有测试。受影响 JUnit 382 项为 376 passed / 6 skipped / 0 failed，退出 0；终轮全量 3827 项为 3749 passed / 26 failed / 52 skipped / 0 errors，退出 1，26 个失败与历史 33 失败中的同名项完全一致且本轮无新增失败。当前无模型权重且无 GTX 1660 + HDD，真实显存/切换/长时恢复及独立 DS-H 全受影响面审查仍 PENDING；阶段 C/D/E 不开始，A2 不是最终 ACCEPTED。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
+**B BLOCKER FIXES REVIEW PASS / AFFECTED PASS / TARGET HARDWARE PENDING**：上一轮独立审查的 P1 已修复并经独立 DS-H 子代理复核 **REVIEW PASS**，包括 semantic 提前返回时仍回收驻留 Qwen、释放失败阻断 face/OCR，Job Object 分配失败完整清理 Job/Process/队列并支持 CloseHandle 重试，候选与 Face Session 关闭失败保留所有权并可重试，`demo-search` 纳入共享 GPU 槽。定向修复集 139/139，DS-H P2 收口后 53/53；最终受影响面 398 项为 392 passed / 6 skipped / 0 failed / 0 errors，退出 0；全量 3837 项为 3759 passed / 26 failed / 52 skipped / 0 errors，退出 1，26 个失败与历史同名且原因一致，无新增失败。Ruff、compileAll、diff-check 通过。真实 GTX 1660 6GB + HDD、实际显存归还、系统时钟前跳后回拨与 D 阶段其余 worker 关闭重试仍 PENDING；可准备进入 C，但 A2 不是最终 ACCEPTED。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
 
 ## Previous task: P4-BUILD-STABILITY-A（2026-11-12）
 

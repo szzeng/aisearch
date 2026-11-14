@@ -13,7 +13,8 @@ import pytest
 
 from photo_search.runtime.machine_model_slot import MachineModelSlot
 from photo_search.runtime.process_ownership import process_is_alive
-from photo_search.workers.client import AiWorkerClient, WorkerError
+from photo_search.workers import client as client_module
+from photo_search.workers.client import AiWorkerClient, WorkerError, WorkerShutdownError
 from tests.integration.worker_process_fixture import exit_worker, hold_worker
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -125,3 +126,77 @@ def test_normal_close_waits_for_child_exit_and_releases_resources(
     assert worker._job is None
     assert worker._closed_queues == {"requests", "responses"}
     assert not worker._stderr_file.exists()
+
+
+def test_job_assignment_failure_cleans_child_job_process_and_queues(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    created: list[FailingJob] = []
+
+    class FailingJob:
+        def __init__(self) -> None:
+            self.closed = False
+            created.append(self)
+
+        def assign(self, _pid: int) -> None:
+            raise OSError("synthetic AssignProcessToJobObject failure")
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(client_module, "WindowsJobObject", FailingJob)
+    worker = AiWorkerClient(
+        tmp_path / "model",
+        tmp_path / "manifest.json",
+        device="cpu",
+        worker_target=hold_worker,
+    )
+
+    with pytest.raises(OSError, match="AssignProcessToJobObject"):
+        worker.start()
+
+    assert worker._process_closed is True
+    assert worker._job is None
+    assert created and created[0].closed is True
+    assert worker._closed_queues == {"requests", "responses"}
+    assert not worker._stderr_file.exists()
+    worker.shutdown()
+    assert worker._shutdown_complete is True
+
+
+def test_job_assignment_failure_retains_a_failed_job_close_for_shutdown(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    created: list[RetryingJob] = []
+
+    class RetryingJob:
+        def __init__(self) -> None:
+            self.close_calls = 0
+            created.append(self)
+
+        def assign(self, _pid: int) -> None:
+            raise OSError("synthetic AssignProcessToJobObject failure")
+
+        def close(self) -> None:
+            self.close_calls += 1
+            if self.close_calls == 1:
+                raise OSError("synthetic CloseHandle failure")
+
+    monkeypatch.setattr(client_module, "WindowsJobObject", RetryingJob)
+    worker = AiWorkerClient(
+        tmp_path / "model",
+        tmp_path / "manifest.json",
+        device="cpu",
+        worker_target=hold_worker,
+    )
+
+    with pytest.raises(WorkerShutdownError):
+        worker.start()
+    assert worker._job is created[0]
+    assert created[0].close_calls == 1
+
+    worker.shutdown()
+    assert created[0].close_calls == 2
+    assert worker._job is None
+    assert worker._process_closed is True
+    assert worker._shutdown_complete is True

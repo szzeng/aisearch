@@ -721,6 +721,32 @@ def test_face_sessions_are_released_before_the_ocr_model_family_starts():
     assert cache._attempts == {}
 
 
+def test_face_session_release_failure_remains_retryable():
+    from photo_search.face.engine import FaceEngineCache
+
+    class Engine:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def close(self) -> None:
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("synthetic face session shutdown failure")
+
+    key = ("weights", "gpu")
+    engine = Engine()
+    cache = FaceEngineCache()
+    cache._engines[key] = engine
+    cache._attempts[key] = {"usable": True}
+
+    with pytest.raises(RuntimeError, match="could not be released"):
+        cache.release_sessions()
+    assert cache._engines[key] is engine
+    cache.release_sessions()
+    assert cache._engines == {}
+    assert cache._attempts == {}
+
+
 @pytest.mark.parametrize("first,second", [("auto", "gpu"), ("gpu", "auto"), ("cpu", "host")])
 def test_face_cache_reports_current_request_device_and_reason(monkeypatch, first, second):
     from types import SimpleNamespace

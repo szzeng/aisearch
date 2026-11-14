@@ -161,3 +161,44 @@ OCR 已开始的单张推理允许完成；观察到前台等待后不领取下�
 - 目标 GTX 1660 6 GB + HDD 不存在；当前只观察到 RTX 4060 Laptop 8188 MiB。模型目录也没有可执行真实 Qwen/CLIP/OCR/face 权重。真实 VRAM 峰值、模型切换后的实际归还时间、OOM 余量和 HDD 长时恢复仍为 **PENDING**，不能由合成测试替代。
 - 独立 DS-H 全受影响面工程审查尚未执行；按仓库策略不能由实现者自检冒充独立审查。阶段 C 建库进度诊断、D 的其余非必要清理、E 最终发布验收均未开始。
 - 因此 **B 的代码面已收敛，但不是最终完整 ACCEPTED**：自动化受影响面和 Windows 进程所有权通过，目标硬件/真实显存/独立审查未完成。下一阶段 C、D、E 不应在用户接受本结果并决定真实硬件验收前宣称已完成或正式开始。
+
+## 2026-11-14 独立审查阻塞项修复
+
+上一轮独立工程审查把 B 判为 FAIL，指出三项 P1：semantic 无待办时未回收驻留 Qwen、Job Object 分配失败泄漏句柄、候选关闭失败丢失 Worker 所有权。另指出 Face Session 释放 fail-open、`demo-search` 直接 GPU 入口和真实显存证据等风险。本轮只读审查后按以下方式修复；独立 DS-H 子代理复核随后给出 **REVIEW PASS，无未关闭 P1**。
+
+### 模型族切换
+
+- `refresh_library()` 在准备进入 enrichment 前无条件调用幂等的 `encoder_release`，覆盖 semantic 无待办、space 不匹配、manifest 缺失等提前返回路径。
+- 释放失败时 semantic 状态改为 `FAILED / MODEL_RESOURCE_RELEASE_FAILED`，停止 face/OCR，不启动第二模型族。
+- `FaceEngineCache.release_sessions()` 不再先清空全部缓存：只有可选 close hook 成功后才移除对应 engine；失败项保留供重试。
+- 后台 enrichment 的 face Session 释放失败会停止后续 OCR；`FaceDetailRunner` 保留失败 cache，并在后续 close 中重试。
+- 新增“已驻留语义 Worker + 无语义待办 + 进入 enrichment”“semantic 释放失败不进入 face/OCR”“face 释放失败不进入 OCR”的隔离测试。
+
+### Windows 子进程所有权
+
+- `WindowsJobObject.assign()` 在 `AssignProcessToJobObject` 失败时关闭 Job；Job close 只有在 `CloseHandle` 成功后才清空内部句柄，失败可重试。
+- `AiWorkerClient.start()` 将 `Process.start()` 后的一切失败纳入统一清理：terminate/kill child、关闭 Process、Job、请求/响应队列和临时 stderr 文件。
+- 启动清理失败时保持启动门关闭，避免未归属 child 继续加载模型；已关闭的 Process 不会再被 `is_alive()` 二次访问。
+- 新增 AssignProcessToJobObject 失败、首次 CloseHandle 失败后 shutdown 重试、正常关闭和父进程真实强杀测试。
+
+### 候选与寿命
+
+- `CandidateBuildManager` 在 encoder close 失败时保存 `_unreleased_encoder`，拒绝启动新 build；`close()` 和后续 `_launch()` 会重试释放。
+- `ApiContext` 在 candidate close 返回 false 时保留 manager；再次 `close()` 会先重试 candidate，再继续 catalog/encoder 收尾。延迟 worker 清理也把 `close() is False` 视为失败并继续保留数据根租约。
+- `demo-search` 的 raw `AiWorkerClient` 入口现在先取得共享后台 GPU 槽。
+
+### 验证结果
+
+- 定向修复集 `review-fixes-r6.xml`：139 passed / 0 skipped / 0 failed / 0 errors，终端退出码 0；DS-H 指出的 face 逐阶段状态和 semantic 原失败原因保留两个 P2 收口后，`review-fixes-r8.xml` 再跑 53 passed。
+- 最终受影响面 `review-affected-r4.xml`：398 项，392 passed / 6 skipped / 0 failed / 0 errors，终端退出码 0。
+- 全量 `review-full-r1.xml`：3837 项，3759 passed / 26 failed / 52 skipped / 0 errors，终端退出码 1。26 项与历史 `full-regression-r1.xml` 同名且首行错误一致，无新增失败；历史 7 项本轮已不再出现。
+- `ruff check .`、`compileall`、`git diff --check` 退出 0。
+
+独立 DS-H 复核记录：`test-results/p4-build-stability-a2/ds-h-recheck-review-20261114.md`。复核确认上述三项 P1、Face Session fail-closed 和 `demo-search` GPU 槽均正确；其提出的 face 逐阶段状态未回写、semantic 原失败原因可被覆盖两项 P2 已在本轮修复并由最终受影响面覆盖。剩余 P2 为 D 阶段其他 worker 关闭重试、时钟跨重启高水位及真实 VRAM/目标硬件。
+
+### 仍未关闭
+
+- GTX 1660 6GB + 机械硬盘、真实 Qwen/OCR/face 权重、实际峰值 VRAM、驱动归还时间和长时恢复未验证。
+- ONNX/PyTorch Session 引用清空仍不等于可观测的显存归还；6GB 安全预算只能由目标硬件证明。
+- 系统时钟大幅前跳后回拨及进程重启组合仍可能保留未来租约；单实例高水位不跨重启保存。
+- 更一般的 refresher/face/runner 等 worker close 引用保留仍属于 D 阶段收尾；本轮只闭合与 B 直接相关的 encoder/candidate/face-session 路径。
